@@ -49,9 +49,14 @@ const MAX_LOCKED_READ: usize = u16::MAX as usize;
 const MAX_FINAL_DRAIN_READS: usize = 64;
 
 // alacritty's tokens for the pty's data and its child-exit notification. Its
-// `Pty` registers with these keys and does not export them.
+// `Pty` registers with these keys, whatever key it's given; on Unix it does
+// not export them.
+#[cfg(unix)]
 const PTY_READ_WRITE_TOKEN: usize = 0;
+#[cfg(unix)]
 const PTY_CHILD_EVENT_TOKEN: usize = 1;
+#[cfg(windows)]
+use alacritty_terminal::tty::{PTY_CHILD_EVENT_TOKEN, PTY_READ_WRITE_TOKEN};
 
 /// Messages for the loop.
 pub(crate) enum Msg {
@@ -136,6 +141,17 @@ where
         };
         if registered.is_err() {
             return self.pty;
+        }
+        // alacritty's Windows pty tells the poller of the child's exit only
+        // once it is registered: a child that exited before then is found
+        // by a look the loop asks itself for.
+        #[cfg(windows)]
+        {
+            use polling::os::iocp::{CompletionPacket, PollerIocpExt as _};
+            let look = polling::Event::readable(PTY_CHILD_EVENT_TOKEN);
+            if self.poll.post(CompletionPacket::new(look)).is_err() {
+                return self.pty;
+            }
         }
 
         let mut child_exited = false;
@@ -514,9 +530,28 @@ mod tests {
     use alacritty_terminal::grid::Dimensions;
     use alacritty_terminal::term::{Config, TermMode};
     use alacritty_terminal::tty::ChildEvent;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::net::UnixStream;
     use std::sync::Mutex;
+
+    /// A connected pair of sockets, for wake-ups the poller sees.
+    #[cfg(unix)]
+    type WakeStream = std::os::unix::net::UnixStream;
+    #[cfg(windows)]
+    type WakeStream = std::net::TcpStream;
+
+    #[cfg(unix)]
+    fn wake_pair() -> (WakeStream, WakeStream) {
+        WakeStream::pair().unwrap()
+    }
+
+    /// Windows' poller takes sockets alone, and std has no socket pair there:
+    /// a loopback connection is one.
+    #[cfg(windows)]
+    fn wake_pair() -> (WakeStream, WakeStream) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let near = WakeStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (far, _) = listener.accept().unwrap();
+        (near, far)
+    }
 
     struct Size;
 
@@ -606,15 +641,15 @@ mod tests {
     /// data token or (for a child that exited) the child token.
     struct FakePty {
         script: Script,
-        wake: UnixStream,
-        _peer: UnixStream,
+        wake: WakeStream,
+        _peer: WakeStream,
         token: usize,
         child_exited: bool,
     }
 
     impl FakePty {
         fn new(script: Script, token: usize) -> FakePty {
-            let (wake, peer) = UnixStream::pair().unwrap();
+            let (wake, peer) = wake_pair();
             (&peer).write_all(b"x").unwrap();
             FakePty {
                 script,
@@ -636,13 +671,7 @@ mod tests {
             _: polling::Event,
             mode: polling::PollMode,
         ) -> io::Result<()> {
-            unsafe {
-                poll.add_with_mode(
-                    self.wake.as_raw_fd(),
-                    polling::Event::readable(self.token),
-                    mode,
-                )
-            }
+            unsafe { poll.add_with_mode(&self.wake, polling::Event::readable(self.token), mode) }
         }
 
         fn reregister(

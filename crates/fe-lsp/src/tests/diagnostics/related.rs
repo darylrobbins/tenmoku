@@ -108,7 +108,7 @@ fn related_information_and_code_description_are_kept() {
             assert_eq!(same.message, "declared here", "{what}");
             assert_eq!(same.row, 0, "{what}");
             assert_eq!(other.range, None, "{what}");
-            assert_eq!(other.path, Some(PathBuf::from("/fake/root/b.rs")), "{what}");
+            assert_eq!(other.path, Some(crate::fake::fake_path("b.rs")), "{what}");
             assert_eq!(other.row, 7, "{what}");
             assert_eq!(other.message, "expected because of this", "{what}");
         }

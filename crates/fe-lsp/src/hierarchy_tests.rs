@@ -20,7 +20,7 @@ use crate::fake::{
 use crate::hierarchy::{HierarchyItem, MAX_EDGES};
 use crate::{LspEvent, LspManager, ManualClock, ServerSpec, SystemClock};
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 const PREPARE_CALLS: &str = "textDocument/prepareCallHierarchy";
 const PREPARE_TYPES: &str = "textDocument/prepareTypeHierarchy";
 const INCOMING: &str = "callHierarchy/incomingCalls";

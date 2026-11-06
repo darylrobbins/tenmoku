@@ -1,7 +1,9 @@
 //! Merge staging while it waits in the git queue: its editors are checked
 //! again as their turn comes, and files are read in their own encodings.
 
-use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::{fs, path::Path, process::Command};
 
 use gpui::TestAppContext;
 
@@ -144,6 +146,7 @@ fn a_utf16_file_with_restored_markers_still_asks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn an_unreadable_file_aborts_merge_staging_naming_it(cx: &mut TestAppContext) {
     let dir = conflicted();
     let root = dir.path();

@@ -3,6 +3,9 @@
 //! the user's keys only, each one undo step; refused, failed, stopped or
 //! overtaken by an edit, the text as it was; `%` shell-escaped.
 
+// What only its Unix tests use goes unused elsewhere.
+#![cfg_attr(not(unix), allow(unused_imports))]
+
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -28,6 +31,7 @@ fn settings(limit: u64) -> String {
 }
 
 /// A config service holding the user's settings file, and its sender.
+#[cfg_attr(not(unix), allow(dead_code))]
 struct Settings {
     path: std::path::PathBuf,
     sender: BatchSender,
@@ -53,6 +57,7 @@ impl Settings {
     }
 
     /// Sets `vim.filter_time_limit` to `limit`.
+    #[cfg(unix)]
     fn limit(&self, limit: u64, cx: &mut VisualTestContext) {
         std::fs::write(&self.path, settings(limit)).unwrap();
         self.sender.send(vec![self.path.clone()]);
@@ -198,6 +203,7 @@ fn filter_runs_through_the_shell(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -567,6 +573,7 @@ fn names_go_only_in_plain_commands() {
 }
 
 #[test]
+#[cfg(unix)]
 fn containment_follows_symlinks_dangling_or_not() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
@@ -643,6 +650,7 @@ fn quoted_names_come_back_from_the_shells() {
 }
 
 #[test]
+#[cfg(unix)]
 fn output_past_the_cap_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let run = |command: &str| {
@@ -687,6 +695,7 @@ fn output_past_the_cap_is_refused() {
 
 /// Whether process `pid` is still there, not counting a zombie its reaper
 /// hasn't come for.
+#[cfg(unix)]
 fn alive(pid: i32) -> bool {
     // SAFETY: signal 0 only asks.
     if unsafe { libc::kill(pid, 0) } != 0 {
@@ -701,6 +710,7 @@ fn alive(pid: i32) -> bool {
 }
 
 /// The pid the command wrote to `file`, once it has.
+#[cfg(unix)]
 fn pid_in(file: &Path) -> i32 {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -715,6 +725,7 @@ fn pid_in(file: &Path) -> i32 {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_stopped_commands_group_dies(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -747,6 +758,7 @@ fn a_stopped_commands_group_dies(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn closing_the_tab_or_the_window_cancels(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -801,6 +813,7 @@ fn closing_the_tab_or_the_window_cancels(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn quitting_stops_every_command(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -900,6 +913,7 @@ fn toasts_show_in_the_commands_window(cx: &mut TestAppContext) {
 }
 
 /// A workbench on a trusted root holding `a.txt`, through `/bin/sh`.
+#[cfg(unix)]
 fn trusted(
     dir: &Path,
     cx: &mut TestAppContext,
@@ -920,6 +934,7 @@ fn trusted(
 
 /// Waits a little for `pid` to go, as only its reaper may lag once the
 /// app has quit.
+#[cfg(unix)]
 fn reaped(pid: i32) {
     let deadline = Instant::now() + Duration::from_millis(500);
     while alive(pid) {
@@ -929,9 +944,11 @@ fn reaped(pid: i32) {
 }
 
 /// What ignores SIGTERM, with its streams elsewhere, writing its pid.
+#[cfg(unix)]
 const STUBBORN: &str = ".!trap '' TERM; sleep 30 </dev/null >/dev/null 2>&1 & echo $! >pid; wait";
 
 #[gpui::test]
+#[cfg(unix)]
 fn quitting_right_after_a_command_is_typed_stops_it(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -950,6 +967,7 @@ fn quitting_right_after_a_command_is_typed_stops_it(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn quitting_while_a_cancelled_command_stops_kills_it(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();

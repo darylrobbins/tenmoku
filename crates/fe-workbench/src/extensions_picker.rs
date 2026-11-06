@@ -148,7 +148,7 @@ impl Row {
     ) -> Self {
         let (major, minor, patch) = manifest.version;
         // The consents' directories are canonical.
-        let dir = (manifest.dir.canonicalize()).unwrap_or_else(|_| manifest.dir.clone());
+        let dir = (dunce::canonicalize(&manifest.dir)).unwrap_or_else(|_| manifest.dir.clone());
         let own: Vec<PendingConsent> = (pending.iter())
             .filter(|pending| pending.extension_dir == dir)
             .cloned()

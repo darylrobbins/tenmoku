@@ -369,7 +369,7 @@ fn active_path(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Opt
 fn ops(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     write_files(dir.path());
-    let root = &fs::canonicalize(dir.path()).unwrap();
+    let root = &dunce::canonicalize(dir.path()).unwrap();
     let (workbench, panel, cx) = open_root(cx, root);
 
     press("/", cx);
@@ -467,7 +467,7 @@ fn ops_delete(cx: &mut TestAppContext) {
     let dir = trashable_project();
     // Names of the test's own, to find them in the trash.
     let unique = (dir.path().file_name().unwrap().to_string_lossy()).into_owned();
-    let root = &fs::canonicalize(dir.path()).unwrap();
+    let root = &dunce::canonicalize(dir.path()).unwrap();
     write_files(root);
     let first = format!("{unique}-main.rs");
     let last = format!("{unique}-only.txt");
@@ -522,7 +522,7 @@ fn ops_delete(cx: &mut TestAppContext) {
 fn hidden_rows_take_no_ops(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     write_files(dir.path());
-    let root = &fs::canonicalize(dir.path()).unwrap();
+    let root = &dunce::canonicalize(dir.path()).unwrap();
     let (workbench, panel, cx) = open_root(cx, root);
     select(&panel, root, "README.md", cx);
 
@@ -630,7 +630,7 @@ fn clear_cancels_pending_listings(cx: &mut TestAppContext) {
 fn new_matches_expand_their_folders(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     write_files(dir.path());
-    let root = &fs::canonicalize(dir.path()).unwrap();
+    let root = &dunce::canonicalize(dir.path()).unwrap();
     let (_workbench, panel, cx) = open_root(cx, root);
     press("/", cx);
     type_text("main", cx);

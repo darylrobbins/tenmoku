@@ -2,9 +2,10 @@
 //! `workspace/applyEdit`: applied in order with their text edits, the
 //! first that fails stopping the rest.
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
 use std::{
     fs,
-    os::unix::fs::MetadataExt as _,
     path::Path,
     thread::{self, JoinHandle},
     time::Duration,
@@ -46,6 +47,7 @@ impl Lsp {
 /// Whether `path`, as it was, is in the test trash, where every trash of a
 /// test build goes (`fe_project::fs_ops::testing`): an entry of its name
 /// that is the file it was.
+#[cfg(unix)]
 fn in_test_trash(path: &Path, ino: u64) -> bool {
     fe_project::fs_ops::testing::trashed(path.file_name().unwrap())
         .iter()
@@ -53,6 +55,7 @@ fn in_test_trash(path: &Path, ino: u64) -> bool {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn renames_creates_and_deletes_apply_in_order(cx: &mut gpui::TestAppContext) {
     let (mut s, _) = setup(cx);
     fs::write(s.path("src/a.rs"), "pub fn a() {}\n").unwrap();
@@ -259,6 +262,7 @@ fn a_create_over_a_file_empties_it(cx: &mut gpui::TestAppContext) {
 
 /// Sets extended attribute `name` of `path` to `value`: false where its
 /// file system has none.
+#[cfg(unix)]
 fn set_xattr(path: &Path, name: &str, value: &[u8]) -> bool {
     use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
 
@@ -299,6 +303,7 @@ fn set_xattr(path: &Path, name: &str, value: &[u8]) -> bool {
 }
 
 /// Extended attribute `name` of `path`, if it has one.
+#[cfg(unix)]
 fn xattr(path: &Path, name: &str) -> Option<Vec<u8>> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
 
@@ -337,6 +342,7 @@ fn xattr(path: &Path, name: &str) -> Option<Vec<u8>> {
 /// A create over a file empties that file, rather than making another: it
 /// keeps its inode, its permissions and its extended attributes.
 #[gpui::test]
+#[cfg(unix)]
 fn a_create_over_a_file_keeps_the_file(cx: &mut gpui::TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -367,6 +373,7 @@ fn a_create_over_a_file_keeps_the_file(cx: &mut gpui::TestAppContext) {
 /// A create over a symlink moves the link to the Trash and makes a file in
 /// its place, never emptying what it leads to.
 #[gpui::test]
+#[cfg(unix)]
 fn a_create_over_a_symlink_replaces_the_link(cx: &mut gpui::TestAppContext) {
     let (mut s, server) = setup(cx);
     let link = s.path("src/link.rs");
@@ -508,6 +515,7 @@ fn a_repeated_skippable_rename_resolves_each_occurrence(cx: &mut gpui::TestAppCo
 
 /// A create over a file keeps its permissions.
 #[gpui::test]
+#[cfg(unix)]
 fn a_create_over_a_file_keeps_its_permissions(cx: &mut gpui::TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
 

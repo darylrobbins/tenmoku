@@ -30,7 +30,6 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     fs,
-    os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
     rc::Rc,
     time::SystemTime,
@@ -350,12 +349,18 @@ impl Workbench {
                 .find_map(|workbench| workbench.editors_of(buffer, cx).into_iter().next())
                 .map(|editor| editor.read(cx).model().buffer().version())
         };
-        let stat = |meta: std::io::Result<fs::Metadata>| {
+        let stat = |path: &Path, follow: bool| {
+            let meta = if follow {
+                fs::metadata(path)
+            } else {
+                fs::symlink_metadata(path)
+            };
             let meta = meta.ok()?;
-            Some((meta.ino(), meta.modified().ok()?, meta.len()))
+            let (_, file) = kiln::core::platform::path_identity(path, follow).ok()?;
+            Some((file, meta.modified().ok()?, meta.len()))
         };
         // A closed file is written where its symlinks lead.
-        let file = |path: &Path| (stat(fs::symlink_metadata(path)), stat(fs::metadata(path)));
+        let file = |path: &Path| (stat(path, false), stat(path, true));
         Marks {
             buffers: buffers.into_iter().map(version).collect(),
             files: paths.into_iter().map(file).collect(),

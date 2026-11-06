@@ -116,7 +116,7 @@ impl Nav {
     /// left unsynced.
     pub(super) fn with(readiness: ReadinessMode, script: Script, max_bytes: Option<usize>) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         std::fs::create_dir(root.join("src")).unwrap();
         for (name, text) in [
             ("src/main.rs", MAIN),
@@ -689,11 +689,9 @@ fn references_and_symbols() {
     // One file a batch, the request's first.
     assert!(batches.iter().all(|batch| batch.len() == 1), "{batches:?}");
     let files: Vec<FileReferences> = batches.into_iter().flatten().collect();
-    let rels: Vec<_> = files
-        .iter()
-        .map(|file| file.rel.to_str().unwrap())
-        .collect();
-    assert_eq!(rels, ["src/main.rs", "src/far.rs", "src/other.rs"]);
+    let rels: Vec<_> = files.iter().map(|file| file.rel.as_path()).collect();
+    let expected = ["src/main.rs", "src/far.rs", "src/other.rs"].map(Path::new);
+    assert_eq!(rels, expected);
     let refs: Vec<_> = (files.iter().flat_map(|file| &file.refs))
         .map(|reference| {
             (
@@ -771,7 +769,7 @@ fn references_and_symbols() {
                 symbol.name.as_str(),
                 symbol.kind,
                 symbol.container.as_deref(),
-                symbol.location.rel.to_str().unwrap(),
+                symbol.location.rel.as_path(),
                 symbol.location.range.clone(),
                 symbol.location.snapshot,
             )
@@ -784,7 +782,7 @@ fn references_and_symbols() {
                 "helper",
                 OutlineKind::Function,
                 Some("main"),
-                "src/main.rs",
+                Path::new("src/main.rs"),
                 3..9,
                 Some((s.main.id(), s.main.version())),
             ),
@@ -792,7 +790,7 @@ fn references_and_symbols() {
                 "Helper",
                 OutlineKind::Struct,
                 None,
-                "src/far.rs",
+                Path::new("src/far.rs"),
                 far_at + far_name.start..far_at + far_name.end,
                 None,
             ),

@@ -1,3 +1,7 @@
+// The launch handoff runs over Unix sockets; Windows builds stand in for
+// them, and every launch there is its own instance.
+#![cfg(unix)]
+
 //! A `tenmoku` launch handed to the running instance: the server's end in a
 //! live app, with the real binary, or `ipc::start`, as the client.
 
@@ -174,7 +178,7 @@ impl Drop for Client {
 fn second_launch_routes_files_to_the_live_window_and_exits_0(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let base = tempfile::tempdir().unwrap();
-    let project = fs::canonicalize(dir.path()).unwrap();
+    let project = dunce::canonicalize(dir.path()).unwrap();
     let (a, b) = (project.join("a.txt"), project.join("b.txt"));
     fs::write(&a, "one\ntwo words\nthree\n").unwrap();
     fs::write(&b, "bee\n").unwrap();
@@ -233,7 +237,7 @@ fn second_launch_routes_files_to_the_live_window_and_exits_0(cx: &mut TestAppCon
 fn new_window_opens_a_second_window_on_the_target_folder(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let base = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let project = root.join("project");
     let other = root.join("other");
     fs::create_dir_all(&project).unwrap();

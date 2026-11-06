@@ -23,7 +23,7 @@ pub(crate) mod watcher_recovery;
 /// `/private/var`, and watchers report the latter).
 fn temp() -> (TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let path = fs::canonicalize(dir.path()).unwrap();
+    let path = dunce::canonicalize(dir.path()).unwrap();
     (dir, path)
 }
 
@@ -91,16 +91,62 @@ fn with_hook<T>(hook: impl FnMut(listing::Point) + 'static, f: impl FnOnce() -> 
     result
 }
 
-/// Moves directory `path` aside and puts a symlink to `target` in its place.
+/// Moves directory `path` aside and puts a link to `target` in its place.
 fn swap_for_link(path: &Path, target: &Path) {
     fs::rename(path, aside(path)).unwrap();
-    std::os::unix::fs::symlink(target, path).unwrap();
+    dir_link(target, path);
 }
 
 /// Undoes [`swap_for_link`].
 fn swap_back(path: &Path) {
-    fs::remove_file(path).unwrap();
+    remove_link(path);
     fs::rename(aside(path), path).unwrap();
+}
+
+/// Relative path `path`, written with `/`, as the finder and search spell
+/// it: with the platform's separator (`\` on Windows).
+fn native(path: &str) -> String {
+    path.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
+
+/// A relative path as the finder or search spells it, written with `/`, so
+/// tests compare it alike on every platform.
+fn slashed(path: String) -> String {
+    if std::path::MAIN_SEPARATOR == '/' {
+        path
+    } else {
+        path.replace(std::path::MAIN_SEPARATOR, "/")
+    }
+}
+
+/// Links folder `link` to folder `target`: a symlink, or on Windows a
+/// junction, which needs no privilege and is a link all the same.
+fn dir_link(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        // `mklink` takes plain paths, not `canonicalize`'s `\\?\` ones.
+        let plain = |path: &Path| {
+            let text = path.to_str().unwrap();
+            text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
+        };
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", &plain(link), &plain(target)])
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J failed");
+    }
+}
+
+/// Removes link `link` made by [`dir_link`], never what it leads to: on
+/// Windows a junction is a folder's entry.
+fn remove_link(link: &Path) {
+    #[cfg(unix)]
+    fs::remove_file(link).unwrap();
+    #[cfg(windows)]
+    fs::remove_dir(link).unwrap();
 }
 
 /// Moves directory `path` back from where [`aside`] put it.
@@ -115,16 +161,28 @@ fn swap_for_dir(path: &Path) {
 }
 
 /// `path`, absolute, as a path relative to the current directory (which no
-/// test changes).
-fn relative(path: &Path) -> PathBuf {
+/// test changes); `None` where none leads there, as from another Windows
+/// drive.
+fn relative(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+
     let cwd = std::env::current_dir().unwrap();
-    let ups = cwd
-        .components()
-        .filter(|component| matches!(component, std::path::Component::Normal(_)))
-        .count();
+    // A drive, however it's spelled (`C:` or `\\?\C:`).
+    let drive = |path: &Path| match path.components().next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => Some(drive.to_ascii_uppercase()),
+            _ => None,
+        },
+        _ => None,
+    };
+    if drive(&cwd) != drive(path) {
+        return None;
+    }
+    let normal = |component: &Component<'_>| matches!(component, Component::Normal(_));
+    let ups = cwd.components().filter(normal).count();
     let mut rel: PathBuf = std::iter::repeat_n("..", ups).collect();
-    rel.push(path.strip_prefix("/").unwrap());
-    rel
+    rel.extend(path.components().filter(normal));
+    Some(rel)
 }
 
 fn aside(path: &Path) -> PathBuf {

@@ -1,9 +1,12 @@
 //! A new file is saved with the umask's permissions, and on a volume with no
 //! exclusive rename.
 
+#[cfg(unix)]
 use fe_buffer::Buffer;
+#[cfg(unix)]
 use fe_editor::EditorModel;
 
+#[cfg(unix)]
 fn save_new(path: &std::path::Path, text: &str) {
     let mut model = EditorModel::new(Buffer::new(text), Some(path.to_path_buf()));
     model.buffer_mut().set_disk_stamp(None);

@@ -75,6 +75,7 @@ fn preserves_the_rest() {
 }
 
 #[test]
+#[cfg(unix)]
 fn creates_from_the_template() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir

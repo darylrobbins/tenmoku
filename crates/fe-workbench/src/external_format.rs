@@ -66,8 +66,8 @@ use std::fs::{self, DirBuilder};
 use std::future::Future;
 use std::io::{self, Read, Write as _};
 use std::ops::Range;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
-use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::pin::{Pin, pin};
 use std::process::{Child, Command, Stdio};
@@ -76,6 +76,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use crate::process_group;
 use fe_config::FormatterSettings;
 use fe_lsp::LoginPath;
 use futures::future::{Either, select};
@@ -341,10 +342,11 @@ fn too_much_output() -> String {
 /// may have left anything there: opening without blocking means a FIFO with no
 /// writer can't hold a worker thread, and it's then refused for what it is.
 fn read_limited(file: &Path) -> io::Result<Vec<u8>> {
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(file)?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK);
+    let file = options.open(file)?;
     if !file.metadata()?.is_file() {
         return Err(io::Error::other("it isn't a regular file any more"));
     }
@@ -369,7 +371,13 @@ impl TempCopy {
             let number = NEXT.fetch_add(1, Ordering::Relaxed);
             let dir = temp.join(format!("tenmoku-format-{}-{number}", std::process::id()));
             // Fails rather than follow anything already there.
-            match DirBuilder::new().mode(0o700).create(&dir) {
+            #[cfg_attr(not(unix), allow(unused_mut))]
+            let mut builder = DirBuilder::new();
+            // Windows keeps the temporary directory's own restrictions: a
+            // user's is in their profile.
+            #[cfg(unix)]
+            builder.mode(0o700);
+            match builder.create(&dir) {
                 Ok(()) => {
                     let copy = TempCopy {
                         file: dir.join(name),
@@ -458,8 +466,8 @@ fn run_process(spec: RunSpec, stopped: &AtomicBool) -> io::Result<RunOutput> {
             None => Stdio::null(),
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
+        .stderr(Stdio::piped());
+    process_group::lead_group(&mut command);
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);
     }
@@ -529,7 +537,11 @@ pub(crate) fn resolve_program(
     if let Some(resolved) = login.resolve(program, path, cwd) {
         return Ok(resolved);
     }
-    let bare = !program.as_os_str().as_encoded_bytes().contains(&b'/');
+    let bare = !program
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .any(|&byte| std::path::is_separator(char::from(byte)));
     // The directories resolve searches: the same PATH, absolute entries only.
     let path = path
         .or_else(|| login.path())
@@ -559,15 +571,7 @@ pub(crate) fn resolve_program(
 /// Whether `child` has exited, without reaping it: until it's reaped, its id,
 /// which is its group's, can't go to another process.
 fn exited(child: &Child) -> bool {
-    let pid: libc::id_t = child.id();
-    // SAFETY: a zeroed siginfo_t is valid, and waitid(2) only writes it.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let options = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-    // SAFETY: as above; WNOWAIT leaves the child to be reaped by `wait`.
-    let waited = unsafe { libc::waitid(libc::P_PID, pid, &mut info, options) };
-    // With WNOHANG, no child that has exited leaves si_pid 0.
-    // SAFETY: waitid filled in the pid, or left it 0.
-    waited == 0 && unsafe { info.si_pid() } != 0
+    process_group::exited(child)
 }
 
 /// Reads `pipe` to its end on a thread of its own, up to one byte past
@@ -592,17 +596,16 @@ fn read_capped(
 /// to whatever is left of it, on a thread of its own. The child, the group's
 /// leader, is reaped only after that, so the group's id is still its own.
 fn stop_group(mut child: Child) {
-    let Ok(group) = libc::pid_t::try_from(child.id()) else {
+    let Some(group) = process_group::group_of(&child) else {
         let _ = child.kill();
         let _ = child.wait();
         return;
     };
-    // SAFETY: kill(2) on the group whose leader isn't reaped, so it keeps its id.
-    unsafe { libc::kill(-group, libc::SIGTERM) };
+    // The group's leader isn't reaped until below, so it keeps its id.
+    process_group::terminate(group);
     thread::spawn(move || {
         thread::sleep(GRACE);
-        // SAFETY: as above: the leader is reaped only below.
-        unsafe { libc::kill(-group, libc::SIGKILL) };
+        process_group::kill(group);
         let _ = child.wait();
     });
 }

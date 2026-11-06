@@ -234,18 +234,27 @@ fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
     written
 }
 
-/// Flushes `dir`'s entries, so a rename or a new file in it survives a crash.
+/// Flushes `dir`'s entries, so a rename or a new file in it survives a crash. Nothing to do on
+/// Windows, where a folder doesn't open as a `File` and NTFS journals its entries itself.
 fn sync_dir(dir: &Path) -> io::Result<()> {
     #[cfg(test)]
     if tests::take_fault(dir) {
         return Err(io::Error::other("injected sync failure"));
     }
-    let dir = if dir.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        dir
-    };
-    File::open(dir)?.sync_all()
+    #[cfg(unix)]
+    {
+        let dir = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
+        };
+        File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 /// Creates `dir` and its missing ancestors, flushing each entry into its parent. Every ancestor

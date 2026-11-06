@@ -1882,7 +1882,7 @@ fn placeholder(head: Option<&Head>) -> String {
 /// Where `root` is in the working tree at `workdir`, through symlinks and
 /// `..`: `None` if it isn't in it. Spelled as given if either is gone.
 pub(crate) fn locate(root: &Path, workdir: &Path) -> Option<Located> {
-    let (prefix, resolved) = match (root.canonicalize(), workdir.canonicalize()) {
+    let (prefix, resolved) = match (dunce::canonicalize(root), dunce::canonicalize(workdir)) {
         (Ok(root), Ok(resolved)) => (root.strip_prefix(&resolved).ok()?.to_owned(), resolved),
         _ => (
             root.strip_prefix(workdir).ok()?.to_owned(),

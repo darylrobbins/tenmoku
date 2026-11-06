@@ -121,7 +121,7 @@ fn opened(cx: &mut TestAppContext) -> Opened<'_> {
 /// As [`opened`], with `main` for `main.rs`.
 fn opened_on<'a>(cx: &'a mut TestAppContext, main: &str) -> Opened<'a> {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/main.rs"), main).unwrap();
     fs::write(root.join("src/util.rs"), util()).unwrap();

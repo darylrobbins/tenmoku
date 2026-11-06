@@ -66,6 +66,7 @@ fn w_bang_overwrites_a_copy(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_dangling_symlink_is_an_existing_file(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -138,6 +139,7 @@ fn a_copys_destination_is_held_while_it_is_written(cx: &mut TestAppContext) {
 
 #[cfg(unix)]
 #[gpui::test]
+#[cfg(unix)]
 fn a_dangling_symlink_created_after_the_check_gives_e13(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

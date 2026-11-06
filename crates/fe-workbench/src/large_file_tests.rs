@@ -43,7 +43,7 @@ fn large_text() -> String {
 /// under it, its large files' indexes held unless `free`.
 fn project(large: &[&str], small: &[&str], free: bool) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     test_support::lower_threshold(&root, THRESHOLD, !free);
     let text = large_text();
     for name in large {

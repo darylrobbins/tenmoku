@@ -256,7 +256,7 @@ pub(crate) fn chats_dir(state_dir: &Path, root: Option<&Path>) -> PathBuf {
 
 /// `root` with its symlinks resolved, or as it is if that fails.
 fn canonical_root(root: &Path) -> PathBuf {
-    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned())
+    dunce::canonicalize(root).unwrap_or_else(|_| root.to_owned())
 }
 
 /// The chats directory of the folder at `canonical`, which is worked out

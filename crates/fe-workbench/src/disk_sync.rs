@@ -586,11 +586,11 @@ fn matching(
 
 /// `path` with its symlinks resolved; for a missing file, its directory's.
 fn canonicalize(path: &Path) -> PathBuf {
-    if let Ok(canonical) = std::fs::canonicalize(path) {
+    if let Ok(canonical) = dunce::canonicalize(path) {
         return canonical;
     }
     match (path.parent(), path.file_name()) {
-        (Some(dir), Some(name)) => match std::fs::canonicalize(dir) {
+        (Some(dir), Some(name)) => match dunce::canonicalize(dir) {
             Ok(dir) => dir.join(name),
             Err(_) => path.to_owned(),
         },

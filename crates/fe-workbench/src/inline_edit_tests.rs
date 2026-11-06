@@ -68,7 +68,7 @@ fn setup(
     replies: Vec<Vec<ChatEvent>>,
     key: bool,
 ) -> (Fixture, &mut VisualTestContext) {
-    let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let temp = dunce::canonicalize(std::env::temp_dir()).unwrap();
     let dir = tempfile::tempdir_in(temp).unwrap();
     fs::write(dir.path().join("main.go"), MAIN).unwrap();
     let launch = Launch {

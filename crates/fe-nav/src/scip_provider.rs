@@ -11,7 +11,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt, fs,
+    fmt,
     io::Read,
     ops::Range,
     path::{Path, PathBuf},
@@ -71,7 +71,7 @@ impl ScipNavigation {
         let root = root.into();
         // Files are opened under the root without following a symlink, so a
         // root reached through one is resolved first.
-        let root = fs::canonicalize(&root).unwrap_or(root);
+        let root = dunce::canonicalize(&root).unwrap_or(root);
         let languages = index.languages().map(syntax_name).collect();
         let has_globals = index.has_global_symbols();
         Self {

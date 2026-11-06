@@ -53,6 +53,176 @@ pub fn owned_and_unshared(metadata: &fs::Metadata, reference: &fs::Metadata) -> 
     }
 }
 
+/// [`fs::canonicalize`], in the form a user writes: on Windows, without the
+/// `\\?\` that it puts before a drive path (`\\?\C:\x` is `C:\x`), so
+/// canonical paths compare equal to, and read like, the ones typed or shown.
+/// A verbatim path with no plainer form (a UNC share's, or one too long) is
+/// kept as it is.
+pub fn canonicalize(path: &Path) -> io::Result<std::path::PathBuf> {
+    let canonical = fs::canonicalize(path)?;
+    #[cfg(windows)]
+    {
+        if let Some(rest) = canonical
+            .to_str()
+            .and_then(|text| text.strip_prefix(r"\\?\"))
+        {
+            let bytes = rest.as_bytes();
+            let drive = bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && bytes[2] == b'\\';
+            // `MAX_PATH`: longer ones need the prefix to be opened.
+            if drive && rest.len() < 260 {
+                return Ok(std::path::PathBuf::from(rest));
+            }
+        }
+    }
+    Ok(canonical)
+}
+
+/// The identity of open file `file`: its device and inode on Unix, its
+/// volume serial number and file index on Windows. Two handles to the same
+/// file have the same identity; a file put in another's place has another.
+pub fn file_identity(file: &File) -> io::Result<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = file.metadata()?;
+        Ok((meta.dev(), meta.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+        // SAFETY: `file` is an open handle and `info` is valid for writes.
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the call succeeded, so it filled `info`.
+        let info = unsafe { info.assume_init() };
+        Ok((
+            u64::from(info.dwVolumeSerialNumber),
+            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        ))
+    }
+}
+
+/// The identity of the entry at `path`, as [`file_identity`] gives it:
+/// what a symlink there leads to if `follow`, else the symlink itself.
+pub fn path_identity(path: &Path, follow: bool) -> io::Result<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = if follow {
+            fs::metadata(path)?
+        } else {
+            fs::symlink_metadata(path)?
+        };
+        Ok((meta.dev(), meta.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        };
+        // No access but to its attributes, which any entry gives; a folder
+        // opens only with backup semantics.
+        let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
+        if !follow {
+            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+        }
+        let file = OpenOptions::new()
+            .access_mode(0)
+            .custom_flags(flags)
+            .open(path)?;
+        file_identity(&file)
+    }
+}
+
+/// `metadata`'s modification time as seconds and nanoseconds since the Unix
+/// epoch, as `MetadataExt::mtime` and `mtime_nsec` give it on Unix.
+pub fn modified_parts(metadata: &fs::Metadata) -> (i64, i64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (metadata.mtime(), metadata.mtime_nsec())
+    }
+    #[cfg(not(unix))]
+    {
+        use std::time::UNIX_EPOCH;
+        match metadata.modified() {
+            Ok(time) => match time.duration_since(UNIX_EPOCH) {
+                Ok(after) => (after.as_secs() as i64, i64::from(after.subsec_nanos())),
+                Err(before) => {
+                    let before = before.duration();
+                    (
+                        -(before.as_secs() as i64),
+                        -i64::from(before.subsec_nanos()),
+                    )
+                }
+            },
+            Err(_) => (0, 0),
+        }
+    }
+}
+
+/// Whether a regular file with `metadata` at `path` can be run as a program:
+/// on Unix, it has an execute bit; on Windows, its extension is one of
+/// `PATHEXT`'s (`.exe`, `.cmd` and the like).
+pub fn is_executable(path: &Path, metadata: &fs::Metadata) -> bool {
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let _ = path;
+        metadata.mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+            return false;
+        };
+        program_extensions().iter().any(|known| {
+            known
+                .trim_start_matches('.')
+                .eq_ignore_ascii_case(extension)
+        })
+    }
+}
+
+/// The paths a program named `name` may have in directory `dir`: `name`
+/// itself, and on Windows `name` with each of `PATHEXT`'s extensions, as a
+/// shell searches for it.
+pub fn program_candidates(dir: &Path, name: &str) -> Vec<std::path::PathBuf> {
+    let mut candidates = vec![dir.join(name)];
+    #[cfg(not(unix))]
+    for extension in program_extensions() {
+        candidates.push(dir.join(format!("{name}{extension}")));
+    }
+    candidates
+}
+
+/// `PATHEXT`'s extensions, each with its leading dot, or Windows' default.
+#[cfg(not(unix))]
+fn program_extensions() -> Vec<String> {
+    let value = std::env::var("PATHEXT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_owned());
+    value
+        .split(';')
+        .map(str::trim)
+        .filter(|ext| ext.starts_with('.') && ext.len() > 1)
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
 /// What a path's own metadata (`symlink_metadata`) says of its identity and
 /// last change, as finely as the OS reports it: on Unix its device, inode,
 /// size, and modification and status-change times to the nanosecond, so a

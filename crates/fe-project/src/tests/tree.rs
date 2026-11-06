@@ -1,10 +1,6 @@
-use std::{
-    cmp::Ordering,
-    ffi::OsStr,
-    fs, io,
-    os::unix::fs::{PermissionsExt, symlink},
-    thread,
-};
+use std::{cmp::Ordering, ffi::OsStr, fs, thread};
+#[cfg(unix)]
+use std::{io, os::unix::fs::PermissionsExt};
 
 use super::*;
 use crate::listing::{self, Lost, Point};
@@ -499,6 +495,7 @@ fn rescan_relists_each_loaded_directory_once() {
 }
 
 #[test]
+#[cfg(unix)]
 fn unreadable_directory_keeps_an_error() {
     let (_dir, root) = temp();
     make(&root, &["locked/secret.txt", "open/file.txt", "z.txt"]);
@@ -663,34 +660,38 @@ fn listings_racing_apply_never_store_older_state() {
     // made unreadable as it runs, and the inner one, run before that, does
     // not. Filled in that order, the success is stored, as `k` isn't
     // listed, but `k` owes a listing, which finds the error.
-    let k = id(&tree, "k");
-    let probe = root.join("k");
-    fs::set_permissions(&probe, fs::Permissions::from_mode(0o000)).unwrap();
-    let as_root = fs::read_dir(&probe).is_ok();
-    fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).unwrap();
-    if !as_root {
-        let inner = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let hook = {
-            let (inner, mut listing, path) = (inner.clone(), tree.listing(k), root.join("k"));
-            move |point| {
-                if point == Point::Opened
-                    && let Some(listing) = listing.take()
-                {
-                    *inner.borrow_mut() = Some(listing.run());
-                    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    // Made unreadable by its mode: Unix only.
+    #[cfg(unix)]
+    {
+        let k = id(&tree, "k");
+        let probe = root.join("k");
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o000)).unwrap();
+        let as_root = fs::read_dir(&probe).is_ok();
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).unwrap();
+        if !as_root {
+            let inner = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let hook = {
+                let (inner, mut listing, path) = (inner.clone(), tree.listing(k), root.join("k"));
+                move |point| {
+                    if point == Point::Opened
+                        && let Some(listing) = listing.take()
+                    {
+                        *inner.borrow_mut() = Some(listing.run());
+                        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+                    }
                 }
-            }
-        };
-        let outer = tree.listing(k).unwrap();
-        let outer = with_hook(hook, || outer.run());
-        assert!(outer.result().is_err());
-        tree.fill(k, outer);
-        tree.fill(k, inner.take().unwrap());
-        assert!(tree.find("k/kept.txt").is_some());
-        let again = tree.listing(k).unwrap();
-        tree.fill(k, again.run());
-        assert!(tree.row(k).unwrap().error.is_some());
-        fs::set_permissions(root.join("k"), fs::Permissions::from_mode(0o755)).unwrap();
+            };
+            let outer = tree.listing(k).unwrap();
+            let outer = with_hook(hook, || outer.run());
+            assert!(outer.result().is_err());
+            tree.fill(k, outer);
+            tree.fill(k, inner.take().unwrap());
+            assert!(tree.find("k/kept.txt").is_some());
+            let again = tree.listing(k).unwrap();
+            tree.fill(k, again.run());
+            assert!(tree.row(k).unwrap().error.is_some());
+            fs::set_permissions(root.join("k"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
     }
 
     // A listing that found its directory gone, filled after the directory
@@ -966,6 +967,8 @@ fn listings_started_during_apply_are_older_than_what_it_sees_next() {
 }
 
 #[test]
+// Windows won't rename a folder while a handle holds it (or what is in it), as this race must.
+#[cfg(unix)]
 fn directories_gone_for_a_moment_lose_nothing() {
     let (_dir, root) = temp();
     make(&root, &["a.txt", "p/d/old.txt"]);
@@ -1293,7 +1296,7 @@ fn symlinks_put_in_place_of_directories_are_not_followed() {
     }
     let swap_for_link = |path: &str| {
         fs::rename(root.join(path), root.join(format!("{path}.gone"))).unwrap();
-        symlink(&outside, root.join(path)).unwrap();
+        dir_link(&outside, &root.join(path));
     };
 
     // A directory replaced by a link before its listing runs: the listing
@@ -1374,22 +1377,29 @@ fn the_root_recovers_from_failure_and_replacement() {
     assert_eq!(tree.apply(&[FsChange::Path(root.clone())]), [tree.root()]);
     assert_eq!(layout(&tree), ["newer.txt"]);
 
-    // A rescan that can't read the root, then events once it can again.
-    fs::set_permissions(&root, fs::Permissions::from_mode(0o000)).unwrap();
-    if fs::read_dir(&root).is_ok() {
+    // A rescan that can't read the root, then events once it can again: one
+    // made unreadable by its mode, on Unix.
+    #[cfg(unix)]
+    root_unreadable_then_readable(&mut tree, &root);
+}
+
+#[cfg(unix)]
+fn root_unreadable_then_readable(tree: &mut FileTree, root: &Path) {
+    fs::set_permissions(root, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(root).is_ok() {
         // Root reads everything.
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(root, fs::Permissions::from_mode(0o755)).unwrap();
         return;
     }
     tree.apply(&[FsChange::Rescan]);
     assert_eq!(tree.row_count(), 0);
-    fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(tree.apply(&changes(&root, &["newer.txt", "x/y"])), []);
+    fs::set_permissions(root, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(tree.apply(&changes(root, &["newer.txt", "x/y"])), []);
     let listing = tree.listing(tree.root()).unwrap();
     tree.fill(tree.root(), listing.run());
-    assert_eq!(layout(&tree), ["newer.txt"]);
+    assert_eq!(layout(tree), ["newer.txt"]);
     tree.apply(&[FsChange::Rescan]);
-    assert_eq!(layout(&tree), ["newer.txt"]);
+    assert_eq!(layout(tree), ["newer.txt"]);
 }
 
 /// macOS only: its `/Users` is a firmlink.
@@ -1583,6 +1593,7 @@ fn case_only_renames_reconcile() {
 }
 
 /// A listing's entries, `(ignored)` marked.
+#[cfg(unix)]
 fn entries(listed: &Listed) -> Vec<String> {
     let entries = listed.result().unwrap().iter();
     entries
@@ -1596,6 +1607,7 @@ fn entries(listed: &Listed) -> Vec<String> {
 /// A hook that swaps directory `path` for a link to `target` once a listing
 /// has opened and checked its directory, and back before it checks the path
 /// again.
+#[cfg(unix)]
 fn swap_while_reading(path: &Path, target: &Path) -> impl FnMut(Point) + 'static {
     let (path, target) = (path.to_path_buf(), target.to_path_buf());
     move |point| match point {
@@ -1606,6 +1618,8 @@ fn swap_while_reading(path: &Path, target: &Path) -> impl FnMut(Point) + 'static
 }
 
 #[test]
+// Windows won't rename a folder while a handle holds it (or what is in it), as this race must.
+#[cfg(unix)]
 fn listings_read_the_directory_they_checked() {
     // What a path swapped for a symlink could show if anything were read by
     // path: other entries, and other rules.
@@ -1707,6 +1721,8 @@ fn listings_read_the_directory_they_checked() {
 }
 
 #[test]
+// Windows won't rename a folder while a handle holds it (or what is in it), as this race must.
+#[cfg(unix)]
 fn apply_reads_rules_through_the_directory_it_checked() {
     // Other rules, and an entry `apply` will look for.
     let (_outside_dir, outside) = temp();
@@ -1875,7 +1891,7 @@ fn listings_and_apply_filter_as_the_ignore_walker_does() {
                 "x.gen",
             ],
         );
-        symlink("target", root.join("link")).unwrap();
+        dir_link(&root.join("target"), &root.join("link"));
         fs::write(
             root.join(".gitignore"),
             "*.log\n!keep.log\n*.gen\nbuild/\n/anchored.txt\nsub/deep/*.tmp\n\
@@ -1944,6 +1960,7 @@ fn case_variants_cost_io_only_where_case_is_ignored() {
 }
 
 #[test]
+#[cfg(unix)]
 fn ignore_files_are_not_followed_or_waited_on() {
     let (_outside_dir, outside) = temp();
     make(&outside, &["rules"]);
@@ -1952,7 +1969,7 @@ fn ignore_files_are_not_followed_or_waited_on() {
     make(&root, &["a.txt", "b.log"]);
     // A `.gitignore` linking out of the project is skipped, as git skips one,
     // and a FIFO `.ignore` is skipped without blocking on it.
-    symlink(outside.join("rules"), root.join(".gitignore")).unwrap();
+    std::os::unix::fs::symlink(outside.join("rules"), root.join(".gitignore")).unwrap();
     let mkfifo = std::process::Command::new("mkfifo")
         .arg(root.join(".ignore"))
         .status()

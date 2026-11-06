@@ -18,8 +18,11 @@ use crate::{LspError, LspEvent, LspManager, ManualClock, ServerId, ServerSpec, S
 #[path = "extension_servers_tests.rs"]
 mod extension_servers;
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
+#[cfg(unix)]
 const OTHER: &str = "/fake/other";
+#[cfg(windows)]
+const OTHER: &str = r"C:\fake\other";
 
 /// A manager on the fake, with a manual clock that moves only when a test
 /// moves it.

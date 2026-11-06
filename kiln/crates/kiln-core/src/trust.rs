@@ -187,7 +187,7 @@ impl TrustStore {
 /// `path`'s canonical form ([`fs::canonicalize`]), or `path` as given if
 /// it has none (it's missing, say).
 pub fn canonical(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+    crate::platform::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
 /// The decisions in `text`, or `None` if it isn't TOML or `[folders]`

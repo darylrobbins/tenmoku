@@ -238,7 +238,7 @@ fn normalize(path: &Path) -> PathBuf {
             Component::CurDir => {}
             Component::ParentDir => {
                 if out.is_symlink()
-                    && let Ok(real) = out.canonicalize()
+                    && let Ok(real) = dunce::canonicalize(&out)
                 {
                     out = real;
                 }

@@ -20,7 +20,7 @@ use crate::{ReadinessMode, ServerSpec, ServerStatus};
 /// The fake's answer once its indexing is done.
 pub(super) fn location() -> Value {
     json!([{
-        "uri": "file:///fake/root/a.rs",
+        "uri": crate::fake::fake_uri("a.rs"),
         "range": {
             "start": { "line": 1, "character": 2 },
             "end": { "line": 1, "character": 5 },
@@ -40,7 +40,7 @@ pub(super) fn definition_params() -> GotoDefinitionParams {
     GotoDefinitionParams {
         text_document_position_params: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier {
-                uri: Url::parse("file:///fake/root/a.rs").unwrap(),
+                uri: Url::parse(&crate::fake::fake_uri("a.rs")).unwrap(),
             },
             position: Position::new(0, 0),
         },

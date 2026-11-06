@@ -126,7 +126,11 @@ impl AppPaths {
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
         };
-        let home = var("HOME");
+        // Windows seldom sets `HOME`: its home is `USERPROFILE`.
+        let home = var("HOME").or_else(|| match os {
+            Os::Windows => var("USERPROFILE"),
+            Os::MacOs | Os::Linux => None,
+        });
         let xdg = |name: &str, fallback: &[&str]| {
             var(name)
                 .filter(|dir| dir.is_absolute())

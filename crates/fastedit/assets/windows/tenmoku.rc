@@ -1,0 +1,3 @@
+// The Windows executable's resources (build.rs). Icon 1 is the one GPUI
+// gives each window, and the first one Explorer and the taskbar show.
+1 ICON "tenmoku.ico"

@@ -24,17 +24,27 @@
 //! `TENMOKU_FOREGROUND=1` stays attached to the terminal, logging included.
 //! [`PARENT_CARRIES`] is the detached server's own, never for setting by hand.
 
+//! Windows has no Unix sockets in std, so there every launch runs alone
+//! ([`start`]); the rest builds against [`unix_socket`]'s stand-ins, which
+//! nothing can make.
+
+// Where the stand-ins hold a connection, what follows can't be reached.
+#![cfg_attr(windows, allow(unreachable_code, unused_variables))]
+
+#[cfg(windows)]
+use self::unix_socket::{UnixListener, UnixStream};
+#[cfg(unix)]
+use std::os::unix::{
+    ffi::{OsStrExt as _, OsStringExt as _},
+    fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _},
+    net::{UnixListener, UnixStream},
+    process::CommandExt as _,
+};
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, TryLockError},
     io::{self, IsTerminal as _, Read as _, Write as _},
     net::Shutdown,
-    os::unix::{
-        ffi::{OsStrExt as _, OsStringExt as _},
-        fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
-        net::{UnixListener, UnixStream},
-        process::CommandExt as _,
-    },
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -102,7 +112,7 @@ impl From<&Path> for WirePath {
     fn from(path: &Path) -> Self {
         match path.to_str() {
             Some(text) => WirePath::Text(text.to_owned()),
-            None => WirePath::Bytes(path.as_os_str().as_bytes().to_owned()),
+            None => WirePath::Bytes(path.as_os_str().as_encoded_bytes().to_owned()),
         }
     }
 }
@@ -111,7 +121,11 @@ impl From<WirePath> for PathBuf {
     fn from(path: WirePath) -> Self {
         match path {
             WirePath::Text(text) => text.into(),
+            #[cfg(unix)]
             WirePath::Bytes(bytes) => OsString::from_vec(bytes).into(),
+            // Bytes from the wire may not be a valid encoding of a name.
+            #[cfg(windows)]
+            WirePath::Bytes(bytes) => String::from_utf8_lossy(&bytes).into_owned().into(),
         }
     }
 }
@@ -191,8 +205,7 @@ impl Request {
 /// This user's socket under `base`, or under `/tmp` if `base` is too long a
 /// path to hold one.
 pub(crate) fn socket_path(base: &Path) -> PathBuf {
-    // SAFETY: getuid has no preconditions and can't fail.
-    let uid = unsafe { libc::getuid() };
+    let uid = user_id();
     let under = |base: &Path| base.join(format!("tenmoku-{uid}")).join("ipc.sock");
     let path = under(base);
     if path.as_os_str().len() < SOCKET_PATH_MAX {
@@ -205,6 +218,25 @@ pub(crate) fn socket_path(base: &Path) -> PathBuf {
 /// Makes `socket`'s folder this user's alone. One that's someone else's, or a
 /// symlink, is refused: `/tmp` is anyone's to create names in, and a server
 /// found through such a folder could be anyone's too.
+#[cfg(unix)]
+fn user_id() -> libc::uid_t {
+    // SAFETY: getuid has no preconditions and can't fail.
+    unsafe { libc::getuid() }
+}
+
+/// The user's name, for the socket's folder: there is no socket on Windows.
+#[cfg(windows)]
+fn user_id() -> String {
+    std::env::var("USERNAME").unwrap_or_default()
+}
+
+/// No folder on Windows, where the handoff never runs.
+#[cfg(windows)]
+fn secure_dir(_: &Path) -> io::Result<()> {
+    Err(unix_socket::unsupported())
+}
+
+#[cfg(unix)]
 fn secure_dir(socket: &Path) -> io::Result<()> {
     let dir = socket.parent().unwrap_or(Path::new("/"));
     match fs::DirBuilder::new().mode(0o700).create(dir) {
@@ -234,11 +266,12 @@ pub(crate) struct Server {
 
 /// Takes the lock beside `socket`: `None` if another process holds it.
 fn take_lock(socket: &Path) -> io::Result<Option<File>> {
-    let lock = (fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true))
-    .mode(0o600)
+    let lock = kiln::core::platform::private(
+        fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true),
+    )
     .open(socket.with_extension("lock"))?;
     match lock.try_lock() {
         Ok(()) => Ok(Some(lock)),
@@ -254,12 +287,14 @@ fn bind(socket: &Path) -> io::Result<UnixListener> {
         _ => {}
     }
     let listener = UnixListener::bind(socket)?;
+    #[cfg(unix)]
     fs::set_permissions(socket, fs::Permissions::from_mode(0o600))?;
     Ok(listener)
 }
 
 fn inode(path: &Path) -> Option<u64> {
-    fs::symlink_metadata(path).ok().map(|meta| meta.ino())
+    let (_, inode) = kiln::core::platform::path_identity(path, false).ok()?;
+    Some(inode)
 }
 
 impl Server {
@@ -354,7 +389,8 @@ impl Keeper {
     /// One look at the files. `false` once another process is the server.
     fn keep(&mut self) -> bool {
         let locked = inode(&self.socket.with_extension("lock"));
-        let lock_there = locked.is_some() && locked == self.lock.metadata().ok().map(|m| m.ino());
+        let held = kiln::core::platform::file_identity(&self.lock).ok();
+        let lock_there = locked.is_some() && locked == held.map(|(_, inode)| inode);
         let socket_there = self.bound.is_some() && inode(&self.socket) == self.bound;
         if lock_there && socket_there {
             return true;
@@ -465,7 +501,7 @@ impl Waiter {
     }
 
     /// A waiter, and the client's end of its connection.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn pair() -> (Self, UnixStream) {
         let (stream, client) = UnixStream::pair().unwrap();
         (Self { stream }, client)
@@ -646,12 +682,15 @@ impl How {
         how.terminal = std::io::stdin().is_terminal()
             || std::io::stdout().is_terminal()
             || std::io::stderr().is_terminal();
-        how.launch_services = cfg!(target_os = "macos")
-            && by_launch_services(
-                how.terminal,
-                how.foreground,
-                std::os::unix::process::parent_id(),
-            );
+        #[cfg(unix)]
+        {
+            how.launch_services = cfg!(target_os = "macos")
+                && by_launch_services(
+                    how.terminal,
+                    how.foreground,
+                    std::os::unix::process::parent_id(),
+                );
+        }
         // SAFETY: the caller is the process's only thread so far.
         unsafe {
             std::env::remove_var(FOREGROUND);
@@ -664,6 +703,7 @@ impl How {
 /// Whether a macOS process was started by LaunchServices: launchd is its
 /// parent and it has no terminal. A re-executed server looks the same once its
 /// parent exits, but is marked `foreground`.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn by_launch_services(terminal: bool, foreground: bool, parent: u32) -> bool {
     !terminal && !foreground && parent == 1
 }
@@ -694,7 +734,8 @@ pub(crate) fn start(
     how: &How,
     detach: impl FnOnce() -> io::Result<()>,
 ) -> Start {
-    if how.no_ipc {
+    // No Unix sockets on Windows: each launch is its own instance.
+    if how.no_ipc || cfg!(windows) {
         return Start::Alone;
     }
     let socket = socket_path(&how.temp_dir);
@@ -796,11 +837,80 @@ fn detached_command(
     command
         .args(args)
         .env(FOREGROUND, "1")
-        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(unix)]
+    command.process_group(0);
     command
+}
+
+/// Stand-ins for std's Unix sockets on Windows, where the handoff never runs:
+/// neither type has a value, so making one fails and nothing else is reached.
+#[cfg(windows)]
+mod unix_socket {
+    use std::{io, net::Shutdown, path::Path, time::Duration};
+
+    pub(super) fn unsupported() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "no launch handoff on Windows: each launch is its own instance",
+        )
+    }
+
+    #[derive(Debug)]
+    pub(crate) enum UnixStream {}
+
+    impl UnixStream {
+        pub(super) fn connect(_: &Path) -> io::Result<UnixStream> {
+            Err(unsupported())
+        }
+
+        pub(super) fn shutdown(&self, _: Shutdown) -> io::Result<()> {
+            match *self {}
+        }
+
+        pub(super) fn try_clone(&self) -> io::Result<UnixStream> {
+            match *self {}
+        }
+
+        pub(super) fn set_read_timeout(&self, _: Option<Duration>) -> io::Result<()> {
+            match *self {}
+        }
+
+        pub(super) fn set_write_timeout(&self, _: Option<Duration>) -> io::Result<()> {
+            match *self {}
+        }
+    }
+
+    impl io::Read for UnixStream {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            match *self {}
+        }
+    }
+
+    impl io::Write for UnixStream {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            match *self {}
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            match *self {}
+        }
+    }
+
+    #[derive(Debug)]
+    pub(crate) enum UnixListener {}
+
+    impl UnixListener {
+        pub(super) fn bind(_: &Path) -> io::Result<UnixListener> {
+            Err(unsupported())
+        }
+
+        pub(super) fn incoming(&self) -> std::iter::Empty<io::Result<UnixStream>> {
+            match *self {}
+        }
+    }
 }
 
 /// What a detached server launches when its parent stayed as the client

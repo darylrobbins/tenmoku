@@ -31,7 +31,7 @@ use crate::{
 /// How long a test waits for anything before failing.
 const WAIT: Duration = Duration::from_secs(10);
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 
 /// A server on the fake choosing UTF-16, with a manual clock.
 struct Started {
@@ -206,7 +206,9 @@ fn uri(name: &str) -> Url {
 fn assert_refused(result: Result<Vec<FileEdits>, LspError>, why: &str) {
     match result {
         Err(LspError::RefusedEdit(reason)) => {
-            assert!(reason.contains(why), "{reason:?} doesn't say {why:?}");
+            // `why` spells paths with `/`, as the reason does but on Windows.
+            let spelled = reason.replace('\\', "/");
+            assert!(spelled.contains(why), "{reason:?} doesn't say {why:?}");
         }
         other => panic!("not refused for {why:?}: {other:?}"),
     }
@@ -981,8 +983,9 @@ fn edits_after_an_operation_decode_against_their_origin() {
                 .path
                 .strip_prefix(path(""))
                 .unwrap()
-                .display()
-                .to_string();
+                .to_string_lossy()
+                // With `/` on Windows too, as the paths below are spelled.
+                .replace('\\', "/");
             match &file.target {
                 EditTarget::Rename { .. }
                 | EditTarget::Create { .. }
@@ -996,6 +999,14 @@ fn edits_after_an_operation_decode_against_their_origin() {
             }
         })
         .collect();
+    // The refusals name the file's path, which has the platform's separators.
+    let refused = |path: &str, on: &str, open: u32| {
+        format!(
+            "{path}: on {on}: made refused: it edits {}, which it renamed earlier, skipped open {open}",
+            crate::fake::fake_path(path).display()
+        )
+    };
+    let (refused_s, refused_f) = (refused("s.rs", "s.rs", 3), refused("f/z.rs", "f", 4));
     assert_eq!(
         briefs,
         [
@@ -1007,10 +1018,10 @@ fn edits_after_an_operation_decode_against_their_origin() {
             "e/y.rs: open 2",
             "s.rs: operation",
             "t.rs: on s.rs: made open 3, skipped closed",
-            "s.rs: on s.rs: made refused: it edits /fake/root/s.rs, which it renamed earlier, skipped open 3",
+            refused_s.as_str(),
             "f: operation",
             "g/z.rs: on f: made open 4, skipped closed",
-            "f/z.rs: on f: made refused: it edits /fake/root/f/z.rs, which it renamed earlier, skipped open 4",
+            refused_f.as_str(),
             "e/y.rs: operation",
             "e/y.rs: closed",
             "q.rs: operation",

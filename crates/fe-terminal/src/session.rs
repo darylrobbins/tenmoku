@@ -18,6 +18,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::tty;
+#[cfg(unix)]
 use rustix_openpty::rustix::termios::Winsize;
 
 use crate::pty_loop::{LoopSender, Msg, PtyLoop, lock};
@@ -290,8 +291,13 @@ impl Terminal {
         }
         // A directory the user cannot enter fails the same way. `access` asks
         // the OS without changing this process's cwd.
+        #[cfg(unix)]
         rustix::fs::access(&options.cwd, rustix::fs::Access::EXEC_OK)
             .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+        // Windows has no search permission to check: listing the directory
+        // fails the same way for one the user cannot enter.
+        #[cfg(windows)]
+        std::fs::read_dir(&options.cwd)?;
         let mut env = HashMap::from([
             ("TERM".to_owned(), "xterm-256color".to_owned()),
             ("COLORTERM".to_owned(), "truecolor".to_owned()),
@@ -305,24 +311,42 @@ impl Terminal {
             working_directory: Some(options.cwd),
             drain_on_exit: true,
             env,
+            // Arguments are passed through as the C runtime parses them.
+            #[cfg(windows)]
+            escape_args: true,
         };
         // The pty is opened here rather than by `tty::new` so this side keeps a
         // handle on its user end until the event loop stops. Otherwise, on
         // Linux, a child that exits at once hangs up the pty before the loop
         // reads its output: the loop skips a readable event flagged HUP, and
         // its drain on exit drops bytes it read when the next read is EIO.
-        let winsize = Winsize {
-            ws_row: window_size.num_lines,
-            ws_col: window_size.num_cols,
-            ws_xpixel: window_size.num_cols.saturating_mul(window_size.cell_width),
-            ws_ypixel: window_size
-                .num_lines
-                .saturating_mul(window_size.cell_height),
+        #[cfg(unix)]
+        let (pty, pid, user) = {
+            let winsize = Winsize {
+                ws_row: window_size.num_lines,
+                ws_col: window_size.num_cols,
+                ws_xpixel: window_size.num_cols.saturating_mul(window_size.cell_width),
+                ws_ypixel: window_size
+                    .num_lines
+                    .saturating_mul(window_size.cell_height),
+            };
+            let pair = rustix_openpty::openpty(None, Some(&winsize))?;
+            let user = pair.user.try_clone()?;
+            let pty = tty::from_fd(&tty_options, 0, pair.controller, pair.user)?;
+            let pid = pty.child().id();
+            (pty, pid, user)
         };
-        let pair = rustix_openpty::openpty(None, Some(&winsize))?;
-        let user = pair.user.try_clone()?;
-        let pty = tty::from_fd(&tty_options, 0, pair.controller, pair.user)?;
-        let pid = pty.child().id();
+        // A ConPTY has no user end to hold: alacritty opens it, and its output
+        // pipe stays readable after the child exits until the pty is closed.
+        #[cfg(windows)]
+        let (pty, pid, user) = {
+            let pty = tty::new(&tty_options, window_size, 0)?;
+            let pid = pty
+                .child_watcher()
+                .pid()
+                .map_or(0, std::num::NonZeroU32::get);
+            (pty, pid, ())
+        };
 
         let (event_loop, sender) =
             PtyLoop::new(term.clone(), shell.clone(), listener.clone(), pty)?;
@@ -338,7 +362,10 @@ impl Terminal {
             .name("fe-terminal pty".to_owned())
             .spawn(move || {
                 drop(handle.join());
+                #[cfg(unix)]
                 drop(user);
+                #[cfg(windows)]
+                let () = user;
                 reaper.exit();
             })
             .inspect_err(|_| {

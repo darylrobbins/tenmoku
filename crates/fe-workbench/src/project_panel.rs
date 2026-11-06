@@ -102,6 +102,9 @@ pub enum PanelEvent {
     Deleted(Vec<(PathBuf, bool)>),
 }
 
+// One per panel, so its size is no concern; over the lint's limit only on
+// Windows, where std's paths are a few bytes bigger.
+#[cfg_attr(windows, allow(clippy::large_enum_variant))]
 enum State {
     NoFolder,
     /// The root is being opened and listed in the background.

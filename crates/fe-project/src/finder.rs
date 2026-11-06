@@ -5,11 +5,10 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, HashSet},
     ffi::{OsStr, OsString},
-    fs::{self, File},
+    fs::File,
     io,
     num::NonZero,
     ops::Bound,
-    os::unix::ffi::OsStrExt,
     path::{Component, Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
@@ -125,7 +124,7 @@ impl Item {
     /// The real relative path's bytes.
     fn real_bytes(&self) -> &[u8] {
         match &self.real {
-            Some(real) => real.as_os_str().as_bytes(),
+            Some(real) => real.as_os_str().as_encoded_bytes(),
             None => self.path.as_bytes(),
         }
     }
@@ -135,7 +134,9 @@ impl Item {
     fn order(&self) -> (&str, Option<&[u8]>) {
         (
             &self.path,
-            self.real.as_deref().map(|real| real.as_os_str().as_bytes()),
+            self.real
+                .as_deref()
+                .map(|real| real.as_os_str().as_encoded_bytes()),
         )
     }
 
@@ -150,7 +151,9 @@ impl Item {
 
     /// The real relative path.
     fn rel(&self) -> PathBuf {
-        PathBuf::from(OsStr::from_bytes(self.real_bytes()))
+        // SAFETY: the real bytes are a whole `OsStr`'s encoded bytes, or a
+        // `str`'s, as `real_bytes` takes them.
+        PathBuf::from(unsafe { OsStr::from_encoded_bytes_unchecked(self.real_bytes()) })
     }
 }
 
@@ -171,7 +174,7 @@ fn make_key(path: &str, real: Option<&[u8]>) -> Box<[u8]> {
     key.into()
 }
 
-/// `root` as [`fs::canonicalize`] resolves it, done once for
+/// `root` as [`dunce::canonicalize`] resolves it, done once for
 /// [`FinderIndex::new`]. A root that is missing, wholly or in part, still gets
 /// an absolute path, which later walks reach without following symlinks: its
 /// longest existing ancestor resolved, then the rest of it as given, where a
@@ -184,7 +187,7 @@ fn resolve_root(root: &Path) -> PathBuf {
     let mut missing = Vec::new();
     let mut at = absolute.as_path();
     let mut resolved = loop {
-        if let Ok(resolved) = fs::canonicalize(at) {
+        if let Ok(resolved) = dunce::canonicalize(at) {
             break resolved;
         }
         match (at.parent(), at.components().next_back()) {
@@ -204,7 +207,7 @@ fn resolve_root(root: &Path) -> PathBuf {
             Component::Normal(name) => resolved.push(name),
             Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
         }
-        if let Ok(found) = fs::canonicalize(&resolved) {
+        if let Ok(found) = dunce::canonicalize(&resolved) {
             resolved = found;
         }
     }
@@ -215,7 +218,7 @@ fn resolve_root(root: &Path) -> PathBuf {
 fn key_of(rel: &Path) -> Box<[u8]> {
     match rel.as_os_str().to_string_lossy() {
         Cow::Borrowed(path) => make_key(path, None),
-        Cow::Owned(path) => make_key(&path, Some(rel.as_os_str().as_bytes())),
+        Cow::Owned(path) => make_key(&path, Some(rel.as_os_str().as_encoded_bytes())),
     }
 }
 
@@ -967,12 +970,14 @@ impl FinderIndex {
         // Lossy conversion keeps a `/` and what comes before it, so every
         // path under `rel` reads `rel` lossily, then `/`. Other directories
         // that read the same are told apart by the real bytes.
-        let mut real = rel.as_os_str().as_bytes().to_vec();
-        real.push(b'/');
+        // The separator relative paths are joined with: `\` on Windows.
+        const SEP: u8 = std::path::MAIN_SEPARATOR as u8;
+        let mut real = rel.as_os_str().as_encoded_bytes().to_vec();
+        real.push(SEP);
         let mut low = rel.as_os_str().to_string_lossy().into_owned().into_bytes();
-        low.push(b'/');
+        low.push(SEP);
         let mut high = low.clone();
-        *high.last_mut().unwrap() = b'/' + 1;
+        *high.last_mut().unwrap() = SEP + 1;
         let under: Vec<Box<[u8]>> = self
             .keys
             .range::<[u8], _>((Bound::Included(&low[..]), Bound::Excluded(&high[..])))
@@ -1036,7 +1041,7 @@ pub(crate) fn walk_root(
     }
     // Resolved once, here: rules are read and matched by canonical paths, as
     // the tree's are. A root that can't be reached has nothing to walk.
-    let Some(root) = fs::canonicalize(root).ok() else {
+    let Some(root) = dunce::canonicalize(root).ok() else {
         return true;
     };
     let Some(start) = Start::root(&root) else {

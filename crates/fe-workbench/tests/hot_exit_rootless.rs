@@ -226,7 +226,7 @@ fn crash_restores(first: &mut TestAppContext, second: &mut TestAppContext) {
     // The first app crashes: it neither quits nor closes its window.
     let image = crash_image(state.path());
     let root = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(root.path()).unwrap();
+    let root = dunce::canonicalize(root.path()).unwrap();
     let folder = layout::launch(&layouts(image.path(), Some(&root)), true);
     assert!(folder.iter().all(|(_, entry)| entry.is_none()));
     let folder_backups = backups(image.path(), Some(&root));

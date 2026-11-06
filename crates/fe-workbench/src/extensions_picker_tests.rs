@@ -82,7 +82,7 @@ fn server(dir: &std::path::Path) -> ExtensionServer {
         extension_name: "Zig".into(),
         extension_version: "1.2.3".into(),
         extension_license: "MIT".into(),
-        extension_dir: dir.join("extensions/zig").canonicalize().unwrap(),
+        extension_dir: dunce::canonicalize(dir.join("extensions/zig")).unwrap(),
         spec: ServerSpec {
             args: vec!["--stdio".into()],
             languages: vec!["zig".into()],

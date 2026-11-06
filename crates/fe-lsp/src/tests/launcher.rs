@@ -3,19 +3,23 @@
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
 use futures::{AsyncReadExt, AsyncWriteExt};
 
 use super::{manager, wait_until};
-use crate::{
-    LaunchCancel, LocalLauncher, LspError, ServerIo, ServerLauncher, ServerSpec, ServerStatus,
-};
+#[cfg(unix)]
+use crate::LocalLauncher;
+use crate::{LaunchCancel, LspError, ServerIo, ServerLauncher, ServerSpec, ServerStatus};
 
 #[test]
+// A Unix process group, of /bin/sh and what it starts.
+#[cfg(unix)]
 fn local_launcher_kills_the_process_group() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let mut spec = ServerSpec::new("sh", "/bin/sh");
     spec.args = vec![
         "-c".into(),

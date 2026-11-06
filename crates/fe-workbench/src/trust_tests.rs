@@ -2,10 +2,11 @@
 //! remembered in a trust file under a temporary state directory, and the
 //! Trust and Untrust This Folder commands.
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::{
     cell::RefCell,
     fs,
-    os::unix::fs::symlink,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -199,6 +200,7 @@ fn first_open_prompts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn when_not_to_prompt(cx: &mut TestAppContext) {
     let (state, projects) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let undecided = folder(&projects, "undecided");
@@ -414,6 +416,7 @@ fn an_ancestors_decision_leaves_a_prompt_open(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn writes_keep_other_decisions(cx: &mut TestAppContext) {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
 

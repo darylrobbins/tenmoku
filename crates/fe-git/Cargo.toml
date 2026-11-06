@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+dunce.workspace = true
 gix.workspace = true
 imara-diff.workspace = true
 thiserror.workspace = true

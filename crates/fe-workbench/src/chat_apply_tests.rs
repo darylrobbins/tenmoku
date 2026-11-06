@@ -2,10 +2,11 @@
 //! folders: each reply a [`ScriptedProvider`]'s, Apply pressed on its
 //! block's header, and the proposal it makes in the editor looked at.
 
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::{
     cell::RefCell,
     fs,
-    os::unix::fs::{PermissionsExt as _, symlink},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -71,7 +72,7 @@ fn reply(text: &str) -> Vec<ChatEvent> {
 /// macOS `/var` is a link to `/private/var`, and the workbench opens
 /// files by their real paths.
 fn project() -> tempfile::TempDir {
-    let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let temp = dunce::canonicalize(std::env::temp_dir()).unwrap();
     let dir = tempfile::tempdir_in(temp).unwrap();
     fs::create_dir(dir.path().join("src")).unwrap();
     fs::write(dir.path().join("src/main.go"), MAIN).unwrap();
@@ -558,9 +559,10 @@ fn links_open_files_under_the_root(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn blocks_and_links_stay_inside_the_real_root(cx: &mut TestAppContext) {
     // `root` and `outside` side by side, so `../outside` leaves the root.
-    let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let temp = dunce::canonicalize(std::env::temp_dir()).unwrap();
     let base = tempfile::tempdir_in(temp).unwrap();
     let (root, outside) = (base.path().join("root"), base.path().join("outside"));
     fs::create_dir_all(root.join("src")).unwrap();
@@ -627,7 +629,7 @@ fn blocks_and_links_stay_inside_the_real_root(cx: &mut TestAppContext) {
     assert_eq!(hunks(&editor, cx).len(), 1);
     // Opened at the target vetted, not through the link: retargeting it
     // now takes nothing elsewhere.
-    let target = fs::canonicalize(root.join("src/lib.go")).unwrap();
+    let target = dunce::canonicalize(root.join("src/lib.go")).unwrap();
     assert_eq!(active_path(&workbench, cx), Some(target.clone()));
     fs::remove_file(root.join("inside.go")).unwrap();
     symlink(outside.join("secret.go"), root.join("inside.go")).unwrap();
@@ -651,6 +653,7 @@ fn blocks_and_links_stay_inside_the_real_root(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn an_alias_applies_to_the_open_buffer(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -678,6 +681,7 @@ fn an_alias_applies_to_the_open_buffer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn read_only_files_take_no_proposal(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();

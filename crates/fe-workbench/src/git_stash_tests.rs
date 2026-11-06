@@ -178,7 +178,7 @@ fn picked_rows(picker: &Entity<Picker<StashPicker>>, cx: &mut VisualTestContext)
 #[gpui::test]
 fn commands(cx: &mut TestAppContext) {
     let dir = fixture();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let (workbench, mut cx) = window(cx, &root);
     let cx = &mut cx;
     let editor = active(&workbench, cx);
@@ -291,7 +291,7 @@ fn commands(cx: &mut TestAppContext) {
 #[gpui::test]
 fn include_untracked(cx: &mut TestAppContext) {
     let dir = fixture();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let (workbench, mut cx) = window(cx, &root);
     let cx = &mut cx;
 
@@ -330,7 +330,7 @@ fn include_untracked(cx: &mut TestAppContext) {
 #[gpui::test]
 fn stash_moved(cx: &mut TestAppContext) {
     let dir = fixture();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     git(&root, &["stash", "push", "-q", "-m", "wip"]);
     let (workbench, mut cx) = window(cx, &root);
     let cx = &mut cx;

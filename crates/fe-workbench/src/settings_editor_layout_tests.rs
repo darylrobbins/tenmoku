@@ -25,7 +25,7 @@ struct Dirs {
 impl Dirs {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let base = fs::canonicalize(temp.path()).unwrap();
+        let base = dunce::canonicalize(temp.path()).unwrap();
         let (root, config) = (base.join("project"), base.join("config"));
         fs::create_dir_all(&root).unwrap();
         fs::create_dir_all(&config).unwrap();

@@ -15,7 +15,9 @@
 //! every parser call, counting what it trims.
 
 use std::collections::VecDeque;
+#[cfg(unix)]
 use std::ffi::OsStr;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::PathBuf;
 
@@ -308,7 +310,22 @@ fn cwd(url: &[u8]) -> Option<PathBuf> {
     if path.contains(&0) {
         return None;
     }
+    path_from_url_bytes(path)
+}
+
+#[cfg(unix)]
+fn path_from_url_bytes(path: Vec<u8>) -> Option<PathBuf> {
     Some(PathBuf::from(OsStr::from_bytes(&path)))
+}
+
+/// A URL's path on Windows: UTF-8, its `/C:/…` a drive path, `C:/…`.
+#[cfg(windows)]
+fn path_from_url_bytes(path: Vec<u8>) -> Option<PathBuf> {
+    let path = String::from_utf8(path).ok()?;
+    let bytes = path.as_bytes();
+    let drive =
+        bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':';
+    Some(PathBuf::from(if drive { &path[1..] } else { &path[..] }))
 }
 
 /// `bytes` with each `%XX` decoded, or `None` if a `%` isn't followed by two
@@ -812,11 +829,19 @@ mod tests {
         assert_eq!(scan(&long, 100), vec![cwd_event("/ok")]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn decodes_paths_that_are_not_utf8() {
         let events = scan(b"\x1b]7;FILE://h/x/%FF%2f\x07", 3);
         let path = PathBuf::from(OsStr::from_bytes(b"/x/\xff/"));
         assert_eq!(events, vec![ShellEvent::Cwd(path)]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn decodes_drive_paths() {
+        let events = scan(b"\x1b]7;file://h/C:/Users/x%20y\x07", 3);
+        assert_eq!(events, vec![ShellEvent::Cwd(PathBuf::from("C:/Users/x y"))]);
     }
 
     #[test]

@@ -35,6 +35,8 @@ mod listing;
 mod search;
 mod tree;
 mod watcher;
+#[cfg(windows)]
+mod win;
 
 pub use finder::{FileSetDelta, FinderIndex, FinderMatch, FinderStats};
 pub use fs_ops::{

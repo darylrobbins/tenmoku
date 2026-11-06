@@ -77,7 +77,7 @@ impl Files {
         cx.executor().allow_parking();
         let dir = tempfile::tempdir().unwrap();
         // Canonical, as the watcher names files by the paths it's given.
-        let root = dir.path().canonicalize().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let files = Self {
             settings: root.join("settings.toml"),
             keymap: root.join("keymap.toml"),

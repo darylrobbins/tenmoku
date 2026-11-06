@@ -84,7 +84,7 @@ fn editing(
     cx: &mut TestAppContext,
 ) -> (tempfile::TempDir, Entity<Workbench>, &mut VisualTestContext) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let path = root.join("a.txt");
     fs::write(&path, "one two\n").unwrap();
     let (workbench, cx) = super::open_root(cx, &root);
@@ -186,7 +186,7 @@ fn search_panel_takes_caret_keys(cx: &mut TestAppContext) {
 #[gpui::test]
 fn shortcuts_editor_filter_takes_caret_keys(cx: &mut TestAppContext) {
     let temp = tempfile::tempdir().unwrap();
-    let config = fs::canonicalize(temp.path()).unwrap().join("config");
+    let config = dunce::canonicalize(temp.path()).unwrap().join("config");
     fs::create_dir_all(&config).unwrap();
     let launch = Launch {
         root: None,

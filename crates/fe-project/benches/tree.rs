@@ -3,14 +3,14 @@
 //!
 //! Run with `cargo bench -p fe-project --bench tree`.
 
-use std::{fs, hint::black_box};
+use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use fe_project::{FileTree, FsChange, TreeOptions, fixture};
 
 fn benches(c: &mut Criterion) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fixture::generate(&root, 10, 10_000).unwrap();
     let options = TreeOptions::default();
     let big_dir = fixture::dir_name(0);

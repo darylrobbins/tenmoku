@@ -20,7 +20,7 @@ fn all(index: &mut FinderIndex) -> Vec<String> {
     index
         .query("", usize::MAX)
         .into_iter()
-        .map(|found| found.path)
+        .map(|found| slashed(found.path))
         .collect()
 }
 
@@ -28,7 +28,7 @@ fn found(index: &mut FinderIndex, text: &str) -> Vec<String> {
     index
         .query(text, usize::MAX)
         .into_iter()
-        .map(|found| found.path)
+        .map(|found| slashed(found.path))
         .collect()
 }
 
@@ -383,8 +383,12 @@ fn apply_handles_replacements_rescans_and_building() {
     fs::remove_dir_all(root.join("was_dir")).unwrap();
     make(&root, &["was_dir"]);
     fs::rename(root.join("Case.rs"), root.join("case.rs")).unwrap();
+    // Windows makes file symlinks only with a privilege: there, `link.rs`
+    // is missing and `src/new.rs` gone, which index the same.
+    #[cfg(unix)]
     std::os::unix::fs::symlink(root.join("target.rs"), root.join("link.rs")).unwrap();
     fs::remove_file(root.join("src/new.rs")).unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(root.join("target.rs"), root.join("src/new.rs")).unwrap();
     index.apply(&changes(
         &root,
@@ -412,16 +416,19 @@ fn apply_handles_replacements_rescans_and_building() {
     // While building, a batch read before a change can arrive after it;
     // `finish` applies the change again.
     let mut index = FinderIndex::new(&root);
-    index.extend(["target.rs", "was_file/inner.rs"].map(PathBuf::from));
+    index.extend(["target.rs", "was_file/inner.rs"].map(|rel| PathBuf::from(native(rel))));
     fs::remove_file(root.join("target.rs")).unwrap();
     fs::remove_dir_all(root.join("was_file")).unwrap();
     make(&root, &["was_file/other.rs"]);
     index.apply(&changes(&root, &["target.rs", "was_file"]));
-    index.extend(["target.rs", "was_file/inner.rs"].map(PathBuf::from));
+    index.extend(["target.rs", "was_file/inner.rs"].map(|rel| PathBuf::from(native(rel))));
     assert_eq!(found(&mut index, "target"), ["target.rs"]);
     index.finish();
     assert!(found(&mut index, "target").is_empty());
-    assert_eq!(found(&mut index, "was_file/"), ["was_file/other.rs"]);
+    assert_eq!(
+        found(&mut index, &native("was_file/")),
+        ["was_file/other.rs"]
+    );
 }
 
 #[test]
@@ -489,6 +496,7 @@ fn highlights_cover_matches_spread_over_long_paths() {
 }
 
 #[test]
+#[cfg(unix)]
 fn names_that_are_not_utf8_are_lossy_with_the_real_path_kept() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
     let real = Path::new(OsStr::from_bytes(b"src/caf\xe9.rs"));
@@ -555,10 +563,12 @@ fn walks_filter_as_the_tree_does_across_repositories() {
         .filter(|row| row.kind == EntryKind::File)
         .map(|row| {
             let path = tree.path(row.id).unwrap();
-            path.strip_prefix(&root)
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
+            slashed(
+                path.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            )
         })
         .collect();
     files.sort();
@@ -584,5 +594,8 @@ fn walks_from_a_relative_root_filter_as_from_an_absolute_one() {
     fs::write(root.join(".gitignore"), "*.log\n").unwrap();
     let expected = [".gitignore", "a.rs", "sub/c.rs"];
     assert_eq!(all(&mut walked(&root)), expected);
-    assert_eq!(all(&mut walked(&relative(&root))), expected);
+    // None where the temporary folder is on another Windows drive.
+    if let Some(rel) = relative(&root) {
+        assert_eq!(all(&mut walked(&rel)), expected);
+    }
 }

@@ -40,7 +40,6 @@
 
 use std::{
     cell::{Cell, RefCell},
-    fs,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -238,8 +237,8 @@ pub(crate) fn formatter_folders(path: Option<&Path>, root: Option<&Path>) -> Opt
         None => root,
     };
     let working = match working.filter(|folder| !folder.as_os_str().is_empty()) {
-        Some(folder) => fs::canonicalize(folder).ok()?,
-        None => fs::canonicalize(std::env::current_dir().ok()?).ok()?,
+        Some(folder) => dunce::canonicalize(folder).ok()?,
+        None => dunce::canonicalize(std::env::current_dir().ok()?).ok()?,
     };
     let mut folders = vec![working];
     if let Some(path) = path {

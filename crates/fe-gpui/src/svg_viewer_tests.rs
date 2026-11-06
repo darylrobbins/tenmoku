@@ -127,7 +127,7 @@ fn svgz_is_decompressed(cx: &mut TestAppContext) {
 /// in each: `root/inside.png` and `outside/secret.png`.
 fn two_folders() -> (TempDir, PathBuf, PathBuf) {
     let dir = TempDir::new().unwrap();
-    let base = dir.path().canonicalize().unwrap();
+    let base = dunce::canonicalize(dir.path()).unwrap();
     let (root, outside) = (base.join("root"), base.join("outside"));
     std::fs::create_dir_all(root.join("sub")).unwrap();
     std::fs::create_dir_all(&outside).unwrap();

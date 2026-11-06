@@ -1,3 +1,5 @@
+// Its programs are shell scripts made executable by mode.
+#![cfg(unix)]
 // SPDX-License-Identifier: Apache-2.0
 
 //! Plugin grants: the load, prompt or escalation decision, program

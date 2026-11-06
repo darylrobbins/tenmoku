@@ -116,6 +116,10 @@ impl Guest {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a root is preopened at its host path, which wasi-libc can't resolve on Windows"
+)]
 fn a_guest_reads_inside_a_preopened_folder() {
     let dir = temp_dir("reads");
     let mut guest = Guest::load(&grants(&["fs.read:workspace"]), &workspace(&dir));
@@ -133,6 +137,10 @@ fn nothing_is_preopened_without_a_grant() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a root is preopened at its host path, which wasi-libc can't resolve on Windows"
+)]
 fn read_alone_cannot_write_and_write_can() {
     let dir = temp_dir("write");
     let written = dir.join("root/written.txt");
@@ -152,6 +160,7 @@ fn read_alone_cannot_write_and_write_can() {
 }
 
 #[test]
+#[cfg(unix)]
 fn dotdot_and_symlinks_cannot_leave_the_root() {
     let dir = temp_dir("escape");
     let secret = dir.join("outside/secret.txt");

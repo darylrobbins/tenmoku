@@ -492,7 +492,7 @@ pub fn save_target(path: &Path) -> io::Result<PathBuf> {
 /// even when the last one's target is missing, so a save recreates the
 /// target rather than replacing the link.
 fn resolve(path: &Path) -> io::Result<PathBuf> {
-    match std::fs::canonicalize(path) {
+    match dunce::canonicalize(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         resolved => return resolved,
     }

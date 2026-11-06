@@ -45,7 +45,7 @@ fn open_viewer(
     &mut VisualTestContext,
 ) {
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     test_support::lower_threshold(&root, THRESHOLD, false);
     let big = root.join("big.txt");
     std::fs::write(&big, text()).unwrap();
@@ -169,7 +169,7 @@ fn changed_files_are_refused(cx: &mut TestAppContext) {
 #[gpui::test]
 fn large_conversions_ask_first(cx: &mut TestAppContext) {
     let (dir, _big, pane, viewer, cx) = open_viewer(cx);
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     lower_edit_warning(&root, THRESHOLD);
     request(&viewer, cx);
     assert!(cx.has_pending_prompt());
@@ -195,7 +195,7 @@ fn viewer_reveals_wait_for_the_index(cx: &mut TestAppContext) {
         .map(line)
         .collect();
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     test_support::lower_threshold(&root, THRESHOLD, true);
     for name in ["bytes.txt", "rows.txt"] {
         std::fs::write(root.join(name), &big_text).unwrap();

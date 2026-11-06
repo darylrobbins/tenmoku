@@ -81,7 +81,7 @@ fn link_targets_resolve_as_vs_code_opens_them() {
 #[test]
 fn only_local_images_inside_the_root_or_document_folder_load() {
     let temp = tempfile::tempdir().unwrap();
-    let base = temp.path().canonicalize().unwrap();
+    let base = dunce::canonicalize(temp.path()).unwrap();
     let root = base.join("root");
     let docs = root.join("docs");
     let outside = base.join("outside");
@@ -167,7 +167,7 @@ fn only_local_images_inside_the_root_or_document_folder_load() {
 #[test]
 fn folders_reached_through_symlinks_still_hold_their_images() {
     let temp = tempfile::tempdir().unwrap();
-    let real = temp.path().canonicalize().unwrap().join("real");
+    let real = dunce::canonicalize(temp.path()).unwrap().join("real");
     fs::create_dir_all(&real).unwrap();
     fs::write(real.join("a.png"), b"png").unwrap();
     let linked = temp.path().join("linked");
@@ -186,9 +186,9 @@ fn folders_reached_through_symlinks_still_hold_their_images() {
 #[test]
 fn a_relative_document_path_allows_only_its_own_folder() {
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(temp.path()).unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let image = outside.path().canonicalize().unwrap().join("x.png");
+    let image = dunce::canonicalize(outside.path()).unwrap().join("x.png");
     fs::write(&image, b"png").unwrap();
     let url = format!("file://{}", image.display());
     // A bare file name's folder is the current directory, which holds
@@ -202,7 +202,7 @@ fn a_relative_document_path_allows_only_its_own_folder() {
         image_source(&url, doc, None),
         ImageSource::Blocked(BlockReason::Outside)
     );
-    let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let cwd = dunce::canonicalize(std::env::current_dir().unwrap()).unwrap();
     assert_eq!(
         image_source("a.png", doc, Some(&root)),
         ImageSource::Local(cwd.join("a.png"))

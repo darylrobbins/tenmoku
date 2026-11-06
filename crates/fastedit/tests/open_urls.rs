@@ -40,7 +40,7 @@ fn urls_become_paths() {
 #[test]
 fn routes_by_root() {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let outer = root.join("outer");
     let inner = outer.join("inner");
     let other = root.join("other");
@@ -96,7 +96,7 @@ fn routes_by_root() {
 #[gpui::test]
 fn opens_in_live_windows_or_asks_for_one(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let project = root.join("project");
     let elsewhere = root.join("elsewhere");
     fs::create_dir_all(&project).unwrap();

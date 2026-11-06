@@ -4,13 +4,16 @@
 //! when FSEvents drops them: a tree too big to read whole, and links to
 //! extensions outside the watched root.
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::{
     fs,
-    os::unix::fs::symlink,
     path::{Path, PathBuf},
 };
 
-use notify::{Event, EventKind, RecursiveMode, event::ModifyKind};
+use notify::RecursiveMode;
+#[cfg(unix)]
+use notify::{Event, EventKind, event::ModifyKind};
 use tempfile::TempDir;
 
 use crate::watch_tree::Trees;
@@ -26,6 +29,7 @@ fn watching(watched: &mut Watched) -> impl FnMut(&Path, RecursiveMode) -> notify
 }
 
 /// Rewrites `path` at a new length, so its stamp differs.
+#[cfg(unix)]
 fn rewrite(path: &Path) {
     let len = fs::read(path).map_or(0, |text| text.len());
     fs::write(path, "x".repeat(len + 1)).unwrap();
@@ -53,6 +57,7 @@ fn a_tree_past_the_limit_is_reported_on_every_restat() {
 }
 
 #[test]
+#[cfg(unix)]
 fn links_to_extensions_outside_the_root_are_followed() {
     let dir = TempDir::new().unwrap();
     let root = dir.path().join("extensions");

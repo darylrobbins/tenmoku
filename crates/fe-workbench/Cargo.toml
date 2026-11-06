@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+dunce.workspace = true
 async-channel.workspace = true
 fe-buffer.workspace = true
 # The AI chat panel: its conversation, view, and Claude through fe-net's
@@ -86,6 +87,14 @@ kotlin = ["fe-syntax/kotlin"]
 swift = ["fe-syntax/swift"]
 ruby = ["fe-syntax/ruby"]
 php = ["fe-syntax/php"]
+
+# Commands run as a process tree, stopped together (src/process_group.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 # The tests' trashes go to a test trash, never the user's Trash.

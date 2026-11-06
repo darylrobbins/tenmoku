@@ -50,7 +50,7 @@ fn opened<'a>(
     for (name, text) in files {
         fs::write(dir.path().join(name), text).unwrap();
     }
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let (workbench, cx) = open_in(&root, cx);
     for (name, _) in files {
         open_file(&workbench, &root.join(name), cx);
@@ -263,7 +263,7 @@ fn git(dir: &Path, args: &[&str]) {
 #[gpui::test]
 fn buttons_show_only_for_markdown(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     // `big.md` opens in a viewer; README.md has a change to diff.
     test_support::lower_threshold(&root, 4096, false);
     fs::write(root.join("big.md"), "# Big\n".repeat(2000)).unwrap();
@@ -590,7 +590,7 @@ fn the_command_toggles_and_in_place_state_is_not_persisted(cx: &mut TestAppConte
     // editor.
     let entry = workbench.read_with(cx, |workbench, cx| workbench.layout_entry(cx));
     assert!(!entry.to_string().contains("markdown_preview"), "{entry}");
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let (restored, cx) = open_in(&root, &mut app);
     restored.update_in(cx, |workbench, window, cx| {
         workbench.restore_layout(&entry, window, cx)
@@ -713,7 +713,7 @@ fn save_works_from_the_preview_shown_in_place(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-s");
     draw(cx);
     assert!(cx.did_prompt_for_new_path(), "the save panel shows");
-    let path = fs::canonicalize(dir.path()).unwrap().join("new.md");
+    let path = dunce::canonicalize(dir.path()).unwrap().join("new.md");
     cx.simulate_new_path_selection(|_| Some(path.clone()));
     draw(cx);
     assert_eq!(fs::read_to_string(&path).unwrap(), "# New\n");

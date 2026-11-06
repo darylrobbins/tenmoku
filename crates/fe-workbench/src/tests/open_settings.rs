@@ -319,6 +319,7 @@ fn a_failed_write_is_every_waiters_error() {
 /// through or removed, and a leftover link to the finished file (as after
 /// a failed cleanup) doesn't let a later initialization truncate it.
 #[test]
+#[cfg(unix)]
 fn temporary_files_are_exclusive() {
     use crate::open::{Stage, create_settings};
     let _hooked = HOOKED.lock().unwrap_or_else(|e| e.into_inner());

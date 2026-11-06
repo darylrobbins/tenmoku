@@ -1,6 +1,7 @@
 //! Messages routed to toasts: a language server's errors and warnings, and
 //! files and folders that can't open.
 
+#[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt as _};
 
 use gpui::TestAppContext;
@@ -62,6 +63,8 @@ mod lsp {
     }
 }
 
+// Makes files unreadable by their mode.
+#[cfg(unix)]
 mod open_failures {
     use super::*;
 

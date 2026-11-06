@@ -5,7 +5,6 @@
 use std::{
     fmt, fs,
     ops::Range,
-    os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -537,7 +536,7 @@ fn search_inner(
     let matcher = query.matcher()?;
     // Files are opened under the root without following a symlink, so it's
     // reached through none.
-    let open_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let open_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let shared = Shared {
         root,
         open_root: &open_root,
@@ -687,7 +686,23 @@ impl Searchers {
 /// big-endian.
 fn is_utf16(file: &fs::File) -> bool {
     let mut bom = [0; 2];
-    matches!(file.read_at(&mut bom, 0), Ok(2)) && matches!(bom, [0xFF, 0xFE] | [0xFE, 0xFF])
+    matches!(read_start(file, &mut bom), Ok(2)) && matches!(bom, [0xFF, 0xFE] | [0xFE, 0xFF])
+}
+
+/// Reads the start of `file` into `buf`, leaving its position where it was
+/// (at the start, as it is opened).
+#[cfg(unix)]
+fn read_start(file: &fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    std::os::unix::fs::FileExt::read_at(file, buf, 0)
+}
+
+/// Windows' positional read moves the file's position: it is put back.
+#[cfg(windows)]
+fn read_start(file: &fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    use std::io::Seek as _;
+    let read = std::os::windows::fs::FileExt::seek_read(file, buf, 0);
+    (&*file).seek(std::io::SeekFrom::Start(0))?;
+    read
 }
 
 /// What searching one walk entry came to.

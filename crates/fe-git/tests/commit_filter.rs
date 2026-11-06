@@ -69,7 +69,7 @@ mod commit_filter {
     /// (Grace); `side` off `Add parser`: `Parser on side` (Grace).
     fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
-        let root: PathBuf = dir.path().canonicalize().unwrap();
+        let root: PathBuf = dunce::canonicalize(dir.path()).unwrap();
         git(&root, ADA, &["init", "-q"]);
         let add = commit(&root, ADA, "Add parser\n\nUses the new LEXER.");
         let fix = commit(&root, GRACE, "Fix the Parser crash");

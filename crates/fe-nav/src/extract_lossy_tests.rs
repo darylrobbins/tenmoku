@@ -25,7 +25,7 @@ fn symbols_after_lossily_decoded_bytes_select_their_names() {
     assert_eq!(detected.encoding().label(), "UTF-8");
 
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fs::write(root.join("lossy.rs"), lossy).unwrap();
 
     let file = extract_with(&root, Path::new("lossy.rs"), |syntax| {

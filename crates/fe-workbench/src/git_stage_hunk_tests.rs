@@ -422,6 +422,7 @@ fn diff_view_put(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn stage_through_a_symlink(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

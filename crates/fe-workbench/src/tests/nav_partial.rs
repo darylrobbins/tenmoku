@@ -50,7 +50,7 @@ impl NavigationProvider for Empty {
 /// The picker's status after f12 on `helper`, given an empty answer.
 fn status_after(partial: bool, cx: &mut TestAppContext) -> String {
     let dir = tempfile::tempdir().unwrap();
-    let root: PathBuf = fs::canonicalize(dir.path()).unwrap();
+    let root: PathBuf = dunce::canonicalize(dir.path()).unwrap();
     fs::write(root.join("main.rs"), "fn main() {\n    helper();\n}\n").unwrap();
     let (workbench, cx) = open_root(cx, &root);
     let path = root.join("main.rs");

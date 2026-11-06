@@ -236,6 +236,7 @@ pub(crate) fn unattachable(start: &[u8], len: usize) -> Option<&'static str> {
 }
 
 /// What a [`walk`] ends at.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) enum Walked {
     /// A regular file, opened: what's read from it, or checked of it, is
     /// what the walk reached, whatever's at its path since.
@@ -302,6 +303,7 @@ fn text_of(walked: &Walked, stamp: Option<&DiskStamp>) -> Result<(), String> {
 }
 
 /// How many links [`walk`] follows before giving up, as Linux does.
+#[cfg(unix)]
 const MAX_LINKS: usize = 40;
 
 /// The absolute `path` walked from `/` a component at a time, each opened
@@ -426,7 +428,54 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
     Ok((resolved, end))
 }
 
-#[cfg(not(unix))]
+/// The absolute `path`'s real path, its links (symlinks and junctions)
+/// resolved by the system, and what's there: the file opened, so what's read
+/// is what was resolved. Past a component that doesn't exist the rest is
+/// taken as written. Fails if it reaches something other than a folder or a
+/// regular file.
+#[cfg(windows)]
+pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
+    match dunce::canonicalize(path) {
+        Ok(real) => {
+            let meta = std::fs::metadata(&real)?;
+            if meta.is_dir() {
+                Ok((real, Walked::Folder))
+            } else if meta.is_file() {
+                let file = File::open(&real)?;
+                Ok((real, Walked::File(file)))
+            } else {
+                Err(io::Error::other("it isn't a regular file"))
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // The deepest folder that exists, resolved, and the rest as
+            // written.
+            let mut rest = Vec::new();
+            let mut at = path;
+            loop {
+                let Some(parent) = at.parent() else {
+                    return Err(error);
+                };
+                rest.push(at.file_name().unwrap_or_default().to_owned());
+                if let Ok(real) = dunce::canonicalize(parent) {
+                    if !std::fs::metadata(&real)?.is_dir() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::NotADirectory,
+                            "a file where a folder should be",
+                        ));
+                    }
+                    let mut resolved = real;
+                    resolved.extend(rest.iter().rev());
+                    return Ok((resolved, Walked::Missing));
+                }
+                at = parent;
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn walk(_: &Path) -> io::Result<(PathBuf, Walked)> {
     Err(io::Error::other("can't check it on this system"))
 }

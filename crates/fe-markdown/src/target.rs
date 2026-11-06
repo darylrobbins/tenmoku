@@ -154,7 +154,7 @@ fn canonical(path: &Path) -> Option<PathBuf> {
     let path = normalize(&std::path::absolute(path).ok()?);
     let mut existing = path.as_path();
     loop {
-        if let Ok(canonical) = existing.canonicalize() {
+        if let Ok(canonical) = dunce::canonicalize(existing) {
             let rest = path.strip_prefix(existing).expect("an ancestor");
             return Some(if rest.as_os_str().is_empty() {
                 canonical

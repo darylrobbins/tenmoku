@@ -7,7 +7,6 @@
 //! Run with `cargo bench -p fe-project --bench finder`.
 
 use std::{
-    fs,
     hint::black_box,
     sync::{Arc, atomic::AtomicBool},
 };
@@ -42,7 +41,7 @@ fn paths() -> Vec<String> {
 
 fn benches(c: &mut Criterion) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fixture::generate(&root, 100, 1_000).unwrap();
 
     let mut group = c.benchmark_group("finder");

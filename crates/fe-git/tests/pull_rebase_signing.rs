@@ -1,3 +1,6 @@
+// Every test's signer is a shell script made executable by mode.
+#![cfg(unix)]
+
 //! A rebase pull signs as `commit.gpgSign` says and nothing else:
 //! `branch.<name>.mergeOptions` is read by `git merge` only.
 //!

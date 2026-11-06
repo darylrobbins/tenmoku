@@ -240,7 +240,7 @@ fn trust_changes_and_reloads(cx: &mut TestAppContext) {
     // filtered settings the host gave, not this root's trusted ones, nor
     // its own project's.
     let other = tempfile::tempdir().unwrap();
-    let other_root = fs::canonicalize(other.path()).unwrap();
+    let other_root = dunce::canonicalize(other.path()).unwrap();
     write_project(
         &other_root,
         "[lsp.servers.rust-analyzer]\ncommand = \"ra-other\"\n",

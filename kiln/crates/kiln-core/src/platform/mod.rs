@@ -7,7 +7,10 @@
 
 pub(crate) mod fs;
 
-pub use fs::{create_private_dir, open_for_reading, owned_and_unshared, private};
+pub use fs::{
+    canonicalize, create_private_dir, file_identity, is_executable, modified_parts,
+    open_for_reading, owned_and_unshared, path_identity, private, program_candidates,
+};
 pub(crate) mod keychain;
 
 use std::fmt;
