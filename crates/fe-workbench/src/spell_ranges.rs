@@ -193,7 +193,15 @@ pub(crate) fn words_in_spans(
         // that a literal holds is read on its own.
         let mut from = span.range.start;
         while from < span.range.end {
+            // Close what ended before opening what starts, or closed siblings
+            // pile up under the top of `open`.
             while literals.get(next).is_some_and(|it| it.range.start <= from) {
+                while open
+                    .last()
+                    .is_some_and(|it| it.range.end <= literals[next].range.start)
+                {
+                    open.pop();
+                }
                 open.push(&literals[next]);
                 next += 1;
             }
@@ -211,7 +219,7 @@ pub(crate) fn words_in_spans(
             let source = text.slice_to_string(part.clone());
             let pieces = match token {
                 Token::Comment => comment_text(&source),
-                Token::String => string_text(&source, part.clone(), open.last().copied(), host),
+                Token::String => string_text_in(&source, part.clone(), &open, host),
             };
             let words = pieces
                 .into_iter()
@@ -530,15 +538,45 @@ fn host_string_nodes(syntax: &Syntax, range: Range<usize>) -> Vec<InjectedNode> 
 /// language that it has the parts of, `literal`, host or injected. Otherwise, in
 /// a string it has as one token, they're told from the text, by the rules of the
 /// literal's language, or of `host`, the buffer's, with no literal.
+#[cfg(test)]
 pub(crate) fn string_text(
     source: &str,
     span: Range<usize>,
     literal: Option<&Literal>,
     host: &str,
 ) -> Vec<Range<usize>> {
+    let open: Vec<&Literal> = literal.into_iter().collect();
+    string_text_in(source, span, &open, host)
+}
+
+/// [`string_text`] for the literals holding `span`, the innermost last. The
+/// innermost says what the text is, but what an outer one cuts is not text
+/// either: a combined layer's string can run across a host's interpolation, a
+/// gap in the layer's own ranges, and what's in it is the host's code.
+fn string_text_in(
+    source: &str,
+    span: Range<usize>,
+    open: &[&Literal],
+    host: &str,
+) -> Vec<Range<usize>> {
+    let literal = open.last().copied();
     let language = literal.map_or(host, |it| it.language);
     let c_like = matches!(language, "c" | "cpp");
-    let not_text = literal.map_or(&[][..], |it| &it.not_text);
+    let merged: Vec<Range<usize>>;
+    let not_text = match open {
+        [] => &[][..],
+        [only] => &only.not_text[..],
+        _ => {
+            let mut cuts: Vec<Range<usize>> = open
+                .iter()
+                .flat_map(|it| it.not_text.iter().cloned())
+                .collect();
+            cuts.sort_by_key(|cut| cut.start);
+            merged = cuts;
+            &merged[..]
+        }
+    };
+    let own_cuts = literal.is_none_or(|it| it.not_text.is_empty());
     let first = not_text.partition_point(|cut| cut.end <= span.start);
     let mut pieces = Vec::new();
     let mut from = span.start;
@@ -571,13 +609,7 @@ pub(crate) fn string_text(
             let piece = piece.start - span.start..piece.end - span.start;
             let opens = starts && piece.start == 0;
             let closes = ends && piece.end == source.len();
-            text_of_piece(
-                source,
-                piece,
-                opens,
-                closes,
-                not_text.is_empty().then_some(language),
-            )
+            text_of_piece(source, piece, opens, closes, own_cuts.then_some(language))
         })
         .collect()
 }

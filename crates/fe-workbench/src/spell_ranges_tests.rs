@@ -1088,3 +1088,19 @@ fn literal_structure_comes_from_node_kinds() {
     );
     assert_eq!(strings("a = '''tri words'''\n"), ["tri words"]);
 }
+
+/// A combined layer's string can run across the host's interpolation, a gap in
+/// the layer's ranges: what's in the interpolation is the host's code, even a
+/// string, and is not checked as the layer's string.
+#[cfg(feature = "php")]
+#[test]
+fn injected_string_across_an_interpolation_keeps_the_hosts_cut() {
+    language_by_name("javascript").unwrap();
+    let php = "<?php\n$a = <<<javascript\nconst a = \"hello {$obj->look(\"codeword\")} world\";\njavascript;\n";
+    let found = found_all("php", php, &[SpellScope::Strings]);
+    assert!(
+        !found.iter().any(|text| text.contains("codeword")),
+        "{found:?}"
+    );
+    assert_eq!(words(&found), ["hello", "world"]);
+}
