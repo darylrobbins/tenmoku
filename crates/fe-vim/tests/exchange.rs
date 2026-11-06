@@ -273,6 +273,30 @@ fn marked_rows_follow_later_deletions_and_openings() {
         "d\nX\na\nb",
         (2, 0),
     );
+    // Text appended to a split-off row stays with it.
+    check(
+        "ab\nc",
+        (0, 0),
+        "cxxli<CR><Esc>AX<Esc>Gcxx",
+        "c\na\nbX",
+        (1, 0),
+    );
+    // Rows opened inside the region before its last row is deleted stay in
+    // it, whether opened below the row above or above the last.
+    check(
+        "a\nb\nc\nd",
+        (0, 0),
+        "3cxxjoX<Esc>jddGcxx",
+        "d\na\nb\nX",
+        (1, 0),
+    );
+    check(
+        "a\nb\nc\nd",
+        (0, 0),
+        "3cxxjjOX<Esc>jddGcxx",
+        "d\na\nb\nX",
+        (1, 0),
+    );
     // An empty marked row surviving both deleted boundaries stays marked.
     check("z\na\n\nc", (1, 0), "3cxxddjddggcxx", "\nz", (0, 0));
 }

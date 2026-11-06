@@ -48,9 +48,10 @@
 
 use std::ops::Range;
 
-use fe_buffer::{Anchor, BufferId, BufferSnapshot, TransactionId};
+use fe_buffer::{Anchor, BufferId, BufferSnapshot, Edit, TransactionId, Version};
 use fe_command::{Actor, CommandError, ContextPredicate, Dispatched, Effect, Registry};
 use fe_editor::{EditorModel, commands::origin};
+use fe_text::Bias;
 
 use crate::{
     Change, Mode, Motion, MoveArgs, OperateArgs, Operator, Pending, Step, Target, VimCommands,
@@ -101,6 +102,137 @@ struct Anchored {
     /// one before them, for the last row of the text): once this has
     /// collapsed, nothing marked is left, whatever rows lie there now.
     whole: Option<(Anchor, Anchor)>,
+    /// Rows only: the last row as it was marked, to follow through the
+    /// edits since ([`Trace::follow`]).
+    trace: Option<Trace>,
+}
+
+/// The last row of a marked region as it was when marked, which edits are
+/// replayed over to tell what of it survives: anchors can't say whether text
+/// put in before the row was deleted came before or after it.
+#[derive(Clone, Debug)]
+struct Trace {
+    version: Version,
+    len: usize,
+    row: Range<usize>,
+    /// Its last character, if it has one.
+    last: Option<Range<usize>>,
+}
+
+/// What [`Trace::follow`] found.
+#[derive(Clone, Copy, Debug)]
+struct Followed {
+    /// Where the rows before the last end, once the last was deleted: text
+    /// put in at that point later stays out, text put in before the
+    /// deletion went in the region.
+    tail: Option<usize>,
+    /// The start of the row's last character, if it survives.
+    last: Option<usize>,
+}
+
+impl Trace {
+    fn new(snapshot: &BufferSnapshot, row: Range<usize>) -> Self {
+        let text = snapshot.text();
+        let last = (row.end > row.start).then(|| {
+            let start = text.clip_offset(row.end - 1, Bias::Left);
+            start..row.end
+        });
+        Self {
+            version: snapshot.version(),
+            len: text.len(),
+            row,
+            last,
+        }
+    }
+
+    /// Replays the edits made since the row was marked, if they're kept.
+    fn follow(&self, snapshot: &BufferSnapshot) -> Option<Followed> {
+        if self.version > snapshot.version() || self.version < snapshot.oldest_version() {
+            return None;
+        }
+        let hollow = self.row.is_empty();
+        let (mut start, mut end) = (self.row.start, self.row.end);
+        let mut len = self.len;
+        let mut last = self.last.clone().map(|range| (range.start, range.end));
+        let mut tail: Option<usize> = None;
+        let mut dead = false;
+        for edits in snapshot.edits_since(self.version) {
+            let edits: &[Edit] = edits;
+            let (removed, added) = edits.iter().fold((0, 0), |(removed, added), edit| {
+                (removed + edit.old.len(), added + edit.new.len())
+            });
+            let after_len = len + added - removed;
+            if dead {
+                tail = tail.map(|at| map(at, true, edits).min(after_len));
+            } else {
+                let covers = |from: usize, to: usize| {
+                    edits
+                        .iter()
+                        .any(|edit| edit.old.start <= from && edit.old.end >= to)
+                };
+                let (before, after) = (start > 0 && start <= len, end < len);
+                let deleted = match hollow {
+                    true => before && after && covers(start - 1, end + 1),
+                    false => {
+                        (before && covers(start - 1, end)) || (after && covers(start, end + 1))
+                    }
+                };
+                if deleted {
+                    dead = true;
+                    let at = map(start, false, edits).min(after_len);
+                    tail = Some(match at >= after_len {
+                        true => at,
+                        false => at.saturating_sub(1),
+                    });
+                } else {
+                    start = map(start, false, edits);
+                    end = map(end, false, edits);
+                }
+            }
+            last = last.and_then(|(from, to)| {
+                let (from, to) = (map(from, false, edits), map(to, true, edits));
+                (from < to).then_some((from, to))
+            });
+            len = after_len;
+        }
+        Some(Followed {
+            tail,
+            last: last.map(|(from, _)| from),
+        })
+    }
+}
+
+/// `offset` after `edits`, staying before (`left`) or going after text
+/// inserted at it, as fe-buffer's anchors map: at the start of a replaced
+/// range it stays, at its end it goes to the end of the new text.
+fn map(offset: usize, left: bool, edits: &[Edit]) -> usize {
+    let mut ix = edits.partition_point(|edit| edit.old.end < offset);
+    while ix + 1 < edits.len()
+        && edits[ix].old.start < offset
+        && edits[ix].old.end == offset
+        && edits[ix + 1].old.start == offset
+    {
+        ix += 1;
+    }
+    let Some(edit) = edits.get(ix) else {
+        return match edits.last() {
+            Some(last) => offset + last.new.end - last.old.end,
+            None => offset,
+        };
+    };
+    if offset < edit.old.start {
+        return offset + edit.new.start - edit.old.start;
+    }
+    let left = match () {
+        _ if edit.old.is_empty() => left,
+        _ if offset == edit.old.start => true,
+        _ if offset == edit.old.end => false,
+        _ => left,
+    };
+    match left {
+        true => edit.new.start,
+        false => edit.new.end,
+    }
 }
 
 /// A region in one text: `range` is what its text is, a row's line break
@@ -148,6 +280,10 @@ impl Region {
             linewise: self.linewise,
             lead,
             whole,
+            trace: self.linewise.then(|| {
+                let first = text.row_start(row(end));
+                Trace::new(snapshot, first..end)
+            }),
         }
     }
 }
@@ -233,16 +369,30 @@ fn take_marked(state: &mut VimState, model: &mut EditorModel) -> Option<Region> 
             return None;
         }
     }
+    let followed = marked
+        .anchored
+        .trace
+        .as_ref()
+        .and_then(|trace| trace.follow(&snapshot));
     let ends_row = |offset: usize| {
         let point = text.offset_to_point(offset);
         point.column == text.row_len(point.row)
     };
     let first = first.unwrap_or_else(|| row(start));
     let last = match last {
-        Some(last) if row(end) > last && ends_row(end) => row(end),
-        Some(last) => last,
-        None => match marked.anchored.lead(&snapshot) {
-            Some(lead) if ends_row(lead) && row(lead) >= first => row(lead),
+        // Characters of the last row that survive, split off it, keep the
+        // rows they're on in the region.
+        Some(last) => match followed.and_then(|followed| followed.last) {
+            Some(at) if row(at) > last => row(at),
+            _ if row(end) > last && ends_row(end) => row(end),
+            _ => last,
+        },
+        None => match (
+            followed.and_then(|followed| followed.tail),
+            marked.anchored.lead(&snapshot),
+        ) {
+            (Some(tail), _) if row(tail) >= first => row(tail),
+            (_, Some(lead)) if ends_row(lead) && row(lead) >= first => row(lead),
             _ if end > start && end == text.row_start(row(end)) => row(end) - 1,
             _ => row(end),
         },
