@@ -106,12 +106,8 @@ struct Item {
 
 impl Item {
     fn new(rel: &Path) -> Item {
-        let lossy = rel.as_os_str().to_string_lossy();
-        let real = match lossy {
-            Cow::Borrowed(_) => None,
-            Cow::Owned(_) => Some(rel.into()),
-        };
-        let path = lossy.into_owned();
+        let (path, differs) = spelled(rel);
+        let real = differs.then(|| rel.into());
         let name = path.rfind('/').map_or(0, |slash| slash + 1);
         Item {
             name: to_u32(name),
@@ -214,12 +210,23 @@ fn resolve_root(root: &Path) -> PathBuf {
     resolved
 }
 
+/// Relative path `rel` as an [`Item`] spells it: lossily, with `/`
+/// separators; and whether that isn't `rel`'s own spelling, as for a lossy
+/// name, or on Windows for any path under a folder (`\`).
+fn spelled(rel: &Path) -> (String, bool) {
+    let lossy = rel.as_os_str().to_string_lossy();
+    let lossless = matches!(lossy, Cow::Borrowed(_));
+    let path = lossy.into_owned();
+    if cfg!(windows) && path.contains('\\') {
+        return (path.replace('\\', "/"), true);
+    }
+    (path, !lossless)
+}
+
 /// The key of relative path `rel`.
 fn key_of(rel: &Path) -> Box<[u8]> {
-    match rel.as_os_str().to_string_lossy() {
-        Cow::Borrowed(path) => make_key(path, None),
-        Cow::Owned(path) => make_key(&path, Some(rel.as_os_str().as_encoded_bytes())),
-    }
+    let (path, differs) = spelled(rel);
+    make_key(&path, differs.then(|| rel.as_os_str().as_encoded_bytes()))
 }
 
 /// The ascending indices of the chars of `path` that hold any of `bytes`.
@@ -968,16 +975,15 @@ impl FinderIndex {
     /// Removes every path under directory `rel`.
     fn remove_under(&mut self, rel: &Path) {
         // Lossy conversion keeps a `/` and what comes before it, so every
-        // path under `rel` reads `rel` lossily, then `/`. Other directories
-        // that read the same are told apart by the real bytes.
-        // The separator relative paths are joined with: `\` on Windows.
-        const SEP: u8 = std::path::MAIN_SEPARATOR as u8;
+        // path under `rel` reads `rel` as spelled, then `/`. Other
+        // directories that read the same are told apart by the real bytes,
+        // which have the platform's separator (`\` on Windows).
         let mut real = rel.as_os_str().as_encoded_bytes().to_vec();
-        real.push(SEP);
-        let mut low = rel.as_os_str().to_string_lossy().into_owned().into_bytes();
-        low.push(SEP);
+        real.push(std::path::MAIN_SEPARATOR as u8);
+        let mut low = spelled(rel).0.into_bytes();
+        low.push(b'/');
         let mut high = low.clone();
-        *high.last_mut().unwrap() = SEP + 1;
+        *high.last_mut().unwrap() = b'/' + 1;
         let under: Vec<Box<[u8]>> = self
             .keys
             .range::<[u8], _>((Bound::Included(&low[..]), Bound::Excluded(&high[..])))

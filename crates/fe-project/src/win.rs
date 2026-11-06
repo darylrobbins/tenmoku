@@ -606,6 +606,24 @@ pub(crate) fn rename_noreplace(
     to_dir: &File,
     to: &OsStr,
 ) -> io::Result<()> {
+    rename(from_dir, from, to_dir, to, false)
+}
+
+/// Renames file `from` in `dir` to `to`, atomically replacing a file there,
+/// as `renameat` does.
+pub(crate) fn rename_replacing(dir: &File, from: &OsStr, to: &OsStr) -> io::Result<()> {
+    rename(dir, from, dir, to, true)
+}
+
+/// Renames `from` in `from_dir` to `to` in `to_dir`, replacing what's at
+/// `to` if `replace`.
+fn rename(
+    from_dir: &File,
+    from: &OsStr,
+    to_dir: &File,
+    to: &OsStr,
+    replace: bool,
+) -> io::Result<()> {
     let source = nt_open(from_dir, from, Open::Attributes, false);
     let is_dir = source.is_ok_and(|file| {
         attribute_tag(&file).is_ok_and(|info| info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0)
@@ -614,7 +632,8 @@ pub(crate) fn rename_noreplace(
     // NTFS renames onto another hard link of the same file by doing
     // nothing, and says it succeeded, where `renameat2` refuses: refused
     // here too.
-    if let Ok(found) = stat_at(to_dir, to)
+    if !replace
+        && let Ok(found) = stat_at(to_dir, to)
         && found.id == identity(&file)?
     {
         return Err(io::Error::new(
@@ -633,7 +652,7 @@ pub(crate) fn rename_noreplace(
     // SAFETY: the buffer holds the header and the name, aligned for the
     // header.
     unsafe {
-        (*info).Anonymous.ReplaceIfExists = false;
+        (*info).Anonymous.ReplaceIfExists = replace;
         (*info).RootDirectory = to_dir.as_raw_handle() as HANDLE;
         (*info).FileNameLength = (name.len() * 2) as u32;
         ptr::copy_nonoverlapping(

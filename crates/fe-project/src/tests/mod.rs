@@ -126,10 +126,10 @@ fn dir_link(target: &Path, link: &Path) {
     std::os::unix::fs::symlink(target, link).unwrap();
     #[cfg(windows)]
     {
-        // `mklink` takes plain paths, not `canonicalize`'s `\\?\` ones.
+        // `mklink` takes neither `\\?\` paths nor `/` separators.
         let plain = |path: &Path| {
             let text = path.to_str().unwrap();
-            text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
+            text.strip_prefix(r"\\?\").unwrap_or(text).replace('/', r"\")
         };
         let status = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J", &plain(link), &plain(target)])
