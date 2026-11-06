@@ -1308,6 +1308,48 @@ impl Workbench {
         self.run_build_task(cx.window, cx.cx);
     }
 
+    /// Quickfix: Next Item
+    #[command(id = "quickfix.next")]
+    fn quickfix_next(&mut self, cx: &mut Cx<Self>) {
+        let action = fe_vim::QuickfixAction::Next(1);
+        self.run_typed_quickfix(action, false, cx.window, cx.cx);
+    }
+
+    /// Quickfix: Previous Item
+    #[command(id = "quickfix.previous")]
+    fn quickfix_previous(&mut self, cx: &mut Cx<Self>) {
+        let action = fe_vim::QuickfixAction::Previous(1);
+        self.run_typed_quickfix(action, false, cx.window, cx.cx);
+    }
+
+    /// Quickfix: First Item
+    #[command(id = "quickfix.first")]
+    fn quickfix_first(&mut self, cx: &mut Cx<Self>) {
+        let action = fe_vim::QuickfixAction::First;
+        self.run_typed_quickfix(action, false, cx.window, cx.cx);
+    }
+
+    /// Quickfix: Last Item
+    #[command(id = "quickfix.last")]
+    fn quickfix_last(&mut self, cx: &mut Cx<Self>) {
+        let action = fe_vim::QuickfixAction::Last;
+        self.run_typed_quickfix(action, false, cx.window, cx.cx);
+    }
+
+    /// Location List: Next Item
+    #[command(id = "location.next")]
+    fn location_next(&mut self, cx: &mut Cx<Self>) {
+        let action = fe_vim::QuickfixAction::Next(1);
+        self.run_typed_quickfix(action, true, cx.window, cx.cx);
+    }
+
+    /// Location List: Previous Item
+    #[command(id = "location.previous")]
+    fn location_previous(&mut self, cx: &mut Cx<Self>) {
+        let action = fe_vim::QuickfixAction::Previous(1);
+        self.run_typed_quickfix(action, true, cx.window, cx.cx);
+    }
+
     /// Spelling: Suggest Corrections…
     #[command(id = "spell.suggest", context = "editor")]
     fn spell_suggest_command(&mut self, cx: &mut Cx<Self>) {

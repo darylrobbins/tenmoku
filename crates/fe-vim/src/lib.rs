@@ -853,6 +853,7 @@ pub use ex::{
     HostCommand, LineSearch, Part, Pick, PickRow, PickThen, SHELL_REFUSED, ShellCommand, ShellPart,
     TabCommand, WindowCommand,
 };
+pub use ex::{QuickfixAction, QuickfixCommand};
 pub use feature::filter::FilterArgs;
 #[doc(hidden)]
 pub use feature::matchit::tags::{TAG_BUDGET, set_tag_budget, take_tag_work};

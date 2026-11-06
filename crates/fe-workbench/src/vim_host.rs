@@ -20,6 +20,10 @@
 //! The window commands, `:sp`, `:vs`, `:new`, `:vne`, `:on` and `:clo`,
 //! run as the pane commands over the window's panes: see [`vim_windows`].
 //!
+//! The quickfix and location lists' commands, `:cn`, `:cp`, `:cc`, `:col`,
+//! `:cnew`, `:cl` and their `:l` twins, walk the window's lists, landing
+//! in the active pane: see `quickfix_commands.rs`.
+//!
 //! `!` filters and `:r !{cmd}` run through the user's shell, off the UI
 //! thread, only from the user's own keys in a trusted folder: see
 //! [`vim_filter`].
@@ -206,14 +210,16 @@ impl Workbench {
             | HostCommand::Pick(_)
             | HostCommand::Buffer(_)
             | HostCommand::Window(_)
-            | HostCommand::Tab(_)) => self.run_window_command(&editor, command, window, cx),
+            | HostCommand::Tab(_)
+            | HostCommand::Quickfix(_)) => self.run_window_command(&editor, command, window, cx),
         }
     }
 
     /// Runs the day-one features' commands, `:Ex`, `:oldfiles`, `:copen`,
     /// `:cclose`, `:Replace`, the lists to pick from (`:marks`), the
     /// buffer list's (`:b`, `:bn`, `:bd`) and the panes' (`:sp`, `:on`,
-    /// `:clo`) and tabs' (`:tabn`, `:tabc`), typed in `editor`, which act on the window
+    /// `:clo`) and tabs' (`:tabn`, `:tabc`), and the quickfix lists' (`:cn`,
+    /// `:cc`, `:col`), typed in `editor`, which act on the window
     /// whichever editor they are typed in: a tab's, a diff view's side or the
     /// commit box. Any other command runs nothing.
     pub(super) fn run_window_command(
@@ -246,6 +252,7 @@ impl Workbench {
                 self.run_vim_window_command(editor, command, window, cx)
             }
             HostCommand::Tab(command) => self.run_vim_tab_command(editor, command, window, cx),
+            HostCommand::Quickfix(command) => self.run_quickfix(command, Some(editor), window, cx),
             _ => {}
         }
     }

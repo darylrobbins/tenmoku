@@ -6,7 +6,9 @@
 //! - `:{range}` alone, `:d[elete]`, `:noh[lsearch]`, `:s[ubstitute]`, `:&`
 //!   and `:&&`, the host's `:w :q :wq :x :e :qa :wa`, its buffer list's
 //!   `:b :bn :bp :bd :bf :bl` (`buffers.rs`), and its windows' `:sp :vs
-//!   :new :vne :on :clo` (`windows.rs`).
+//!   :new :vne :on :clo` (`windows.rs`), and its quickfix and location
+//!   lists' `:cn :cp :cc :col :cnew :cl` and their `:l` twins
+//!   (`quickfix.rs`).
 //! - `:y[ank] [x] [count]`: the range's lines (the cursor's by default; with
 //!   a count, that many from the range's last) yanked linewise into
 //!   register `x` (`"` and `0` without one); the cursor stays.
@@ -102,6 +104,8 @@ mod lines;
 pub(crate) mod normal;
 mod pick;
 pub use pick::{BufferRow, Pick, PickRow, PickThen};
+mod quickfix;
+pub use quickfix::{QuickfixAction, QuickfixCommand};
 mod table;
 mod tabs;
 pub use tabs::TabCommand;
@@ -345,6 +349,10 @@ pub enum HostCommand {
     /// `:tabl`: the host's editor tabs, as VSCodeVim maps them
     /// (`ex/tabs.rs`).
     Tab(TabCommand),
+    /// `:cn`, `:cp`, `:cc`, `:cfir`, `:cla`, `:cnf`, `:col`, `:cnew`,
+    /// `:cl`, their `:l` twins and the commands that fill a list (`:grep`,
+    /// `:make`): the host's quickfix and location lists (`ex/quickfix.rs`).
+    Quickfix(QuickfixCommand),
     /// `:{range}!{cmd}`: `rows` (from 0) run through `command`, whose
     /// output takes their place ([`crate::VimState::apply_filter`]); asked
     /// for by `actor`, which fe-vim lets only [`Actor::User`] be, for the
@@ -529,6 +537,7 @@ fn command_end(piece: &str) -> Option<usize> {
         || !name.is_empty()
             && (host(name).is_some()
                 || buffers::kind(name).is_some()
+                || quickfix::kind(name).is_some()
                 || windows::kind(name).is_some()
                 || tabs::kind(name).is_some()
                 || name == "Replace"
@@ -721,6 +730,9 @@ fn command(
     let mut check = |both| check.take().map_or(Ok(()), |check| check(both));
     if let Some(kind) = buffers::kind(name) {
         return buffers::parse(kind, range, after);
+    }
+    if let Some(kind) = quickfix::kind(name) {
+        return quickfix::parse(kind, range, after);
     }
     if let Some(kind) = windows::kind(name) {
         return windows::parse(kind, range, after);
@@ -1344,6 +1356,15 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
         ExCommand::NoHighlight => {
             target.state.highlight = None;
             Ok(Dispatched::new(Effect::Notify))
+        }
+        ExCommand::Host(HostCommand::Quickfix(_))
+            if global::running() || target.state.normal_suspended.is_some() =>
+        {
+            // As a buffer command: the rest would run in the file left
+            // (`ex/quickfix.rs`).
+            return Err(ExError::Unsupported(
+                "a quickfix command in :g or :normal".into(),
+            ));
         }
         ExCommand::Host(HostCommand::Buffer(_))
             if global::running() || target.state.normal_suspended.is_some() =>

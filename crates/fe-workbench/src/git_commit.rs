@@ -162,7 +162,8 @@ pub(super) fn host_command(
         | HostCommand::Pick(_)
         | HostCommand::Buffer(_)
         | HostCommand::Window(_)
-        | HostCommand::Tab(_) => workbench.run_window_command(&editor, command, window, cx),
+        | HostCommand::Tab(_)
+        | HostCommand::Quickfix(_) => workbench.run_window_command(&editor, command, window, cx),
     }
 }
 

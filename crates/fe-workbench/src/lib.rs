@@ -71,6 +71,8 @@ mod plugin_prompt;
 mod preserve_case;
 mod project_panel;
 mod quick_open;
+mod quickfix;
+mod quickfix_commands;
 mod references_panel;
 mod save_commands;
 mod search_panel;
@@ -335,6 +337,10 @@ mod middle_click_close_tests;
 mod panel_width_tests;
 #[cfg(test)]
 mod path_commands_tests;
+#[cfg(test)]
+mod quickfix_commands_tests;
+#[cfg(test)]
+mod quickfix_tests;
 #[cfg(test)]
 mod save_commands_tests;
 #[cfg(test)]
