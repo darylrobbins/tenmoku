@@ -2652,6 +2652,154 @@
           }
         }
       }
+    },
+    {
+      "name": "replace_ctrl_r_multiline_then_dot_overwrites_single_line",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj0R<C-r>0<Esc>G0\"0yiw.",
+      "expect": {
+        "buffer": "ab\nab\nccd\nxyz tail",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xyz",
+            "linewise": false
+          },
+          "0": {
+            "text": "xyz",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_r_multiline_then_dot_overwrites_single_line",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj0R<C-r><C-r>0<Esc>G0\"0yiw.",
+      "expect": {
+        "buffer": "ab\nab\nccd\nxyz tail",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xyz",
+            "linewise": false
+          },
+          "0": {
+            "text": "xyz",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_multiline_then_counted_dot_overwrites_single_line",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj0R<C-r>0<Esc>G0\"0yiw2.",
+      "expect": {
+        "buffer": "ab\nab\nccd\nxyzxyzil",
+        "cursor": [
+          3,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xyz",
+            "linewise": false
+          },
+          "0": {
+            "text": "xyz",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_single_line_then_dot_with_multiline_register",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yiwGR<C-r>0<Esc>ggvjy2G0.",
+      "expect": {
+        "buffer": "ab\nab\nabz tail",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\ncd",
+            "linewise": false
+          },
+          "0": {
+            "text": "b\ncd",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
     }
   ]
 }

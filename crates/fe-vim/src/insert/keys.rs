@@ -628,13 +628,23 @@ pub(crate) fn retype(
                 else {
                     continue;
                 };
-                if state.mode == Mode::Replace {
-                    state.marks.typing(model.snapshot(), heads(model));
-                    crate::visual::typing(state, model.snapshot(), heads(model));
-                }
-                state.insert_stackless(model, |model| insert_literal(model, value, how));
-                if state.mode == Mode::Replace {
-                    crate::visual::reanchored(state, model.snapshot());
+                if let Some(typed) = overwriting_text(
+                    state.mode == Mode::Replace && !state.is_virtual_replace(),
+                    value,
+                    how,
+                ) {
+                    // The register holds text that overwrites now, however
+                    // it was recorded.
+                    crate::replace::retype(state, model, &typed);
+                } else {
+                    if state.mode == Mode::Replace {
+                        state.marks.typing(model.snapshot(), heads(model));
+                        crate::visual::typing(state, model.snapshot(), heads(model));
+                    }
+                    state.insert_stackless(model, |model| insert_literal(model, value, how));
+                    if state.mode == Mode::Replace {
+                        crate::visual::reanchored(state, model.snapshot());
+                    }
                 }
                 let after = state
                     .session
@@ -655,6 +665,37 @@ pub(crate) fn retype(
             }
         }
     }
+}
+
+/// The text `<C-r>` (plain) inserts in replace mode when the register now
+/// holds text that overwrites as typed text does: not characterwise text
+/// with a line break in it, which nvim puts in without overwriting.
+fn overwriting_text(replacing: bool, value: &Register, how: LiteralInsert) -> Option<String> {
+    let text = value.text.replace("\r\n", "\n").replace('\r', "\n");
+    let typed = replacing
+        && how == LiteralInsert::Plain
+        && !text.is_empty()
+        && !text.contains(BACKSPACE)
+        && (value.linewise || !text.contains('\n'));
+    typed.then(|| match value.linewise && !text.ends_with('\n') {
+        true => text + "\n",
+        false => text,
+    })
+}
+
+/// `pieces` with the plain register keys that overwrite now as the text
+/// they type, as the register holds it.
+fn overwriting_pieces(pieces: &[Piece], reads: &Reads) -> Vec<Piece> {
+    pieces
+        .iter()
+        .map(|piece| match piece {
+            Piece::Key(Key::Register(how, name)) => reads
+                .get(name)
+                .and_then(|value| overwriting_text(true, value, *how))
+                .map_or_else(|| piece.clone(), Piece::Text),
+            _ => piece.clone(),
+        })
+        .collect()
 }
 
 /// Takes back the `n` characters before each caret, as `<BS>` takes back
@@ -1484,7 +1525,8 @@ pub(crate) fn repeat_replace(
         let mut overwrote: Vec<Vec<String>> = vec![Vec::new(); ranks.len()];
         // How many characters were typed since the last register went in.
         let mut since: Option<usize> = None;
-        for piece in &pieces {
+        let pieces = &overwriting_pieces(&pieces, reads);
+        for piece in pieces {
             match piece {
                 // Each line break on its own, so the indent `^<C-d>` took
                 // off goes back after it, as typing `<CR>` puts it back.

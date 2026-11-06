@@ -575,3 +575,27 @@ name = "replace_ctrl_r_ctrl_p_linewise_counted_backspace_twice"
 buffer = "abc\nxyz uvw"
 cursor = [0, 0]
 keys = "yyj2RQ<C-r><C-p>0<BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_multiline_then_dot_overwrites_single_line"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r>0<Esc>G0\"0yiw."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_r_multiline_then_dot_overwrites_single_line"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r><C-r>0<Esc>G0\"0yiw."
+
+[[case]]
+name = "replace_ctrl_r_multiline_then_counted_dot_overwrites_single_line"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r>0<Esc>G0\"0yiw2."
+
+[[case]]
+name = "replace_ctrl_r_single_line_then_dot_with_multiline_register"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "yiwGR<C-r>0<Esc>ggvjy2G0."
