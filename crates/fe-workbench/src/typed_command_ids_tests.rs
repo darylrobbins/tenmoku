@@ -238,6 +238,16 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Extensions: Install from File or Folder…",
         "workbench",
     ),
+    (
+        "workbench.link_extension_folder",
+        "Extensions: Install Folder for Development…",
+        "workbench",
+    ),
+    (
+        "workbench.show_plugin_log",
+        "Extensions: Show Plugin Log",
+        "workbench",
+    ),
     ("nav.goto_definition", "Go to Definition", "workbench"),
     ("nav.goto_declaration", "Go to Declaration", "workbench"),
     (

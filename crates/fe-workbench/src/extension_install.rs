@@ -631,7 +631,7 @@ fn extension_root(unpacked: &Path) -> Result<PathBuf, InstallError> {
 
 /// Checks the manifest in `root`: what it installs as in `extensions_dir`,
 /// or the errors refusing it.
-fn check(
+pub(crate) fn check(
     root: &Path,
     extensions_dir: &Path,
     api: &ExtensionApi,
@@ -671,7 +671,7 @@ fn diagnostic_text(diagnostic: &Diagnostic) -> String {
 /// The directories in `extensions_dir` whose manifest has `id`, whatever
 /// their names, in the order the extensions service reads them: the first
 /// is the one that loads. A staging directory has no manifest of its own.
-fn installed_with(extensions_dir: &Path, id: &str) -> io::Result<Vec<PathBuf>> {
+pub(crate) fn installed_with(extensions_dir: &Path, id: &str) -> io::Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
     for entry in fs::read_dir(extensions_dir)? {
         let dir = entry?.path();
@@ -784,7 +784,7 @@ fn set_executable(_: &fs::File, _: bool) -> io::Result<()> {
 }
 
 /// The version text people see: `1.2.0`.
-fn version_text((major, minor, patch): Version) -> String {
+pub(crate) fn version_text((major, minor, patch): Version) -> String {
     format!("{major}.{minor}.{patch}")
 }
 
@@ -830,7 +830,7 @@ struct Installs {
 
 impl Global for Installs {}
 
-fn extensions_dir(cx: &mut App) -> Option<PathBuf> {
+pub(crate) fn extensions_dir(cx: &mut App) -> Option<PathBuf> {
     let installs = cx.default_global::<Installs>();
     let dir = installs.dir.get_or_insert_with(|| {
         if cfg!(test) {
@@ -850,7 +850,7 @@ pub(crate) fn set_extensions_dir(cx: &mut App, dir: PathBuf) {
 
 /// The command namespaces an extension's id may not start with: the app's
 /// commands' and the typed commands'.
-fn reserved_namespaces(cx: &App) -> Vec<String> {
+pub(crate) fn reserved_namespaces(cx: &App) -> Vec<String> {
     let app = kiln_platform::commands::app_command_list(cx)
         .into_iter()
         .map(|meta| meta.id);
@@ -964,7 +964,7 @@ async fn install_asking(
 }
 
 /// `path`'s file name, else all of it.
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     (path.file_name()).map_or_else(
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),

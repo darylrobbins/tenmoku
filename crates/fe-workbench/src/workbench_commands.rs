@@ -1074,6 +1074,20 @@ impl Workbench {
         self.install_extension(cx.window, cx.cx);
     }
 
+    /// Extensions: Install Folder for Development…
+    #[command(id = "workbench.link_extension_folder")]
+    fn link_extension_folder_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.link_extension_folder(cx.window, cx.cx);
+    }
+
+    /// Extensions: Show Plugin Log
+    #[command(id = "workbench.show_plugin_log")]
+    fn show_plugin_log_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.pick_plugin(Purpose::ShowLog, cx.window, cx.cx);
+    }
+
     /// Go to Definition
     #[command(id = "nav.goto_definition")]
     fn go_to_definition(&mut self, cx: &mut Cx<Self>) {

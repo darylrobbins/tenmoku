@@ -38,6 +38,10 @@
 //! - **Commands.** A plugin's commands, `<id>.<name>`, are listed in the
 //!   command palette while its load runs, and a workbench runs them
 //!   ([`dispatch`]) off the main thread. Unloading withdraws them.
+//! - **Log.** What a plugin's `log` import writes goes to the app's log and
+//!   to its own ([`crate::plugin_log`]), with what the host says of it:
+//!   loaded or reloaded, failed, stopped, its shutdown failed and shut
+//!   down, and an answer to its prompt that couldn't be recorded.
 //!
 //! The extensions list reads [`plugin_states`] and calls [`unload_plugin`]
 //! and [`reevaluate`]; Enter on a plugin waiting asks through the host's
@@ -114,6 +118,7 @@ use crate::{
     KEY_CONTEXT, PendingPluginGrant, PluginAnswer, PluginAsk, RootChanged, TrustChanged, Workbench,
     plugin_bridge::{Bridge, CallDeadline},
     plugin_events::{self, Inbox},
+    plugin_log::{self, PluginLogs},
     plugin_paint::{self, Paint},
     show_plugin_prompt,
 };
@@ -692,6 +697,8 @@ pub(crate) struct PluginHost {
     bridge: Option<Bridge>,
     /// What each plugin runs under.
     pub(crate) limits: Limits,
+    /// Each plugin's own log.
+    logs: PluginLogs,
     /// The trusted roots of the open windows.
     workspace: Vec<PathBuf>,
     evaluating: Option<Task<()>>,
@@ -861,6 +868,7 @@ fn host_mut(cx: &mut App) -> &mut PluginHost {
         let preview = cx
             .try_global::<kiln::GlobalSettings<fe_config::Settings>>()
             .is_some_and(|global| global.settings().extensions.plugins_preview);
+        let logs = plugin_log::logs(cx);
         cx.set_global(PluginHost {
             dirs: default_dirs(),
             cache: None,
@@ -871,6 +879,7 @@ fn host_mut(cx: &mut App) -> &mut PluginHost {
             commands: None,
             bridge: None,
             limits: Limits::default(),
+            logs,
             workspace: Vec::new(),
             evaluating: None,
             listed: HashSet::new(),
@@ -1177,15 +1186,22 @@ fn apply(
         ids.push(id.clone());
         wants.push((id, granted, want, pending));
     }
+    let mut failures = Vec::new();
     for (id, granted, want, pending) in wants {
         // Held, or decided before a hold or a release since, it's left as
         // it is: unloaded, asking nothing, showing no grants read before.
         let stale =
             host.held.contains_key(&id) || host.generations.get(&id) != generations.get(&id);
-        let slot = host.slots.entry(id).or_insert_with(Slot::new);
+        let slot = host.slots.entry(id.clone()).or_insert_with(Slot::new);
         slot.gone = false;
         if stale {
             continue;
+        }
+        if let Want::Unload(failed) = &want
+            && let PluginState::Stopped(diagnostic) = failed
+            && slot.state != *failed
+        {
+            failures.push((id.clone(), diagnostic.to_string()));
         }
         slot.granted = granted;
         // Kept: the version it wanted, else the one it runs or is loading,
@@ -1228,6 +1244,9 @@ fn apply(
         }
     }
     invalidate_prompts(cx);
+    for (id, message) in failures {
+        plugin_log::push(&id, log::Level::Error, message, cx);
+    }
     for id in ids {
         drive(&id, cx);
     }
@@ -1304,12 +1323,19 @@ fn start_unload(id: &str, cx: &mut App) {
         shut_down.await;
         cx.update(|cx| {
             let host = cx.global_mut::<PluginHost>();
+            let mut why = "";
             if let Some(slot) = host.slots.get_mut(&id) {
                 slot.busy = false;
                 if let Want::Unload(state) = &slot.want {
                     slot.state = state.clone();
                 }
+                why = match &slot.state {
+                    _ if slot.gone => ": it's no longer installed",
+                    PluginState::PreviewOff => ": the plugins preview is off",
+                    _ => "",
+                };
             }
+            plugin_log::push(&id, log::Level::Info, format!("shut down{why}"), cx);
             drive(&id, cx);
         });
     })
@@ -1344,6 +1370,7 @@ fn start_load(id: &str, cx: &mut App) {
     let paint = plugin_paint::paint(cx);
     let host = cx.global_mut::<PluginHost>();
     let old = withdraw(id, host);
+    let reload = old.is_some();
     let dirs = host.dirs.clone();
     if host.cache.is_none() {
         host.cache = dirs
@@ -1401,7 +1428,14 @@ fn start_load(id: &str, cx: &mut App) {
     let id = id.to_owned();
     cx.spawn(async move |cx| {
         let loaded = loading.await;
-        cx.update(|cx| loaded_plugin(&id, load, identity, artifact, loaded, cx));
+        let loaded = Finished {
+            load,
+            identity,
+            artifact,
+            reload,
+            loaded,
+        };
+        cx.update(|cx| loaded_plugin(&id, loaded, cx));
     })
     .detach();
 }
@@ -1416,17 +1450,29 @@ enum LoadFailure {
     Failed(String),
 }
 
-/// What a load finished with: its plugin running, or why it stopped. A load
-/// the slot no longer wants changes nothing but what runs, which its want
-/// then replaces.
-fn loaded_plugin(
-    id: &str,
+/// A load finished: which of the session it is, what it loaded, whether it
+/// replaced a version running, and its plugin or why it didn't start.
+struct Finished {
     load: u64,
     identity: Identity,
     artifact: Arc<Artifact>,
+    reload: bool,
     loaded: Result<Started, LoadFailure>,
-    cx: &mut App,
-) {
+}
+
+/// What a load finished with: its plugin running, or why it stopped, which
+/// the plugin's log says. A load the slot no longer wants changes nothing
+/// but what runs, which its want then replaces.
+fn loaded_plugin(id: &str, finished: Finished, cx: &mut App) {
+    let Finished {
+        load,
+        identity,
+        artifact,
+        reload,
+        loaded,
+    } = finished;
+    let version = identity.version;
+    let mut diagnostic = None;
     let host = cx.global_mut::<PluginHost>();
     let Some(slot) = host.slots.get_mut(id) else {
         return;
@@ -1477,20 +1523,27 @@ fn loaded_plugin(
             if wanted {
                 slot.stopped = None;
                 slot.state = PluginState::Running;
+                let (major, minor, patch) = version;
+                let done = if reload { "reloaded" } else { "loaded" };
+                diagnostic = Some((log::Level::Info, format!("{done} {major}.{minor}.{patch}")));
             }
         }
         Err(LoadFailure::Cancelled) => {}
         Err(LoadFailure::Failed(message)) => {
             log::warn!("plugin {id} failed to load: {message}");
             if wanted {
-                let diagnostic = PluginDiagnostic {
+                let stopped = PluginDiagnostic {
                     reason: StopReason::Load,
                     message,
                 };
-                slot.stopped = Some((identity, diagnostic.clone()));
-                slot.state = PluginState::Stopped(diagnostic);
+                diagnostic = Some((log::Level::Error, stopped.to_string()));
+                slot.stopped = Some((identity, stopped.clone()));
+                slot.state = PluginState::Stopped(stopped);
             }
         }
+    }
+    if let Some((level, message)) = diagnostic {
+        plugin_log::push(id, level, message, cx);
     }
     if !listed.is_empty() {
         kiln_shell::command_palette::add_commands(cx, listed);
@@ -1552,7 +1605,8 @@ fn stopped_running(id: &str, load: u64, diagnostic: Diagnostic, cx: &mut App) {
     let slot = host.slots.get_mut(id).expect("current");
     let diagnostic = PluginDiagnostic::from(diagnostic);
     slot.stopped = Some((loaded.identity, diagnostic.clone()));
-    slot.state = PluginState::Stopped(diagnostic);
+    slot.state = PluginState::Stopped(diagnostic.clone());
+    plugin_log::push(id, log::Level::Error, format!("stopped: {diagnostic}"), cx);
     plugin_paint::unload(id, cx);
     cx.refresh_windows();
 }
@@ -1672,28 +1726,33 @@ impl LoadContext {
     }
 }
 
-/// Where the plugins' lifecycle and logs go: the `log` crate, and under
-/// test the host's record too.
+/// Where the plugins' lifecycle and logs go: the `log` crate, each
+/// plugin's log its own lines, and under test the host's record too.
 #[derive(Clone)]
-struct Record(#[cfg(test)] Arc<Mutex<Vec<String>>>);
+struct Record {
+    logs: PluginLogs,
+    #[cfg(test)]
+    lines: Arc<Mutex<Vec<String>>>,
+}
 
 impl Record {
     fn push(&self, line: String) {
         log::debug!(target: "kiln_plugin::guest", "{line}");
         #[cfg(test)]
-        lock(&self.0).push(line);
+        lock(&self.lines).push(line);
     }
 }
 
-fn record(_host: &PluginHost) -> Record {
-    Record(
+fn record(host: &PluginHost) -> Record {
+    Record {
+        logs: host.logs.clone(),
         #[cfg(test)]
-        _host.record.clone(),
-    )
+        lines: host.record.clone(),
+    }
 }
 
 /// Plugin `id`'s logs, to the `log` crate under the `kiln_plugin::guest`
-/// target, and to `record`, with the thread they came from.
+/// target, to its own log, and to `record`, with the thread they came from.
 fn guest_log(id: &str, record: Record) -> LogSink {
     let id = id.to_owned();
     Box::new(move |level, message| {
@@ -1705,6 +1764,7 @@ fn guest_log(id: &str, record: Record) -> LogSink {
             Level::Error => log::Level::Error,
         };
         log::log!(target: "kiln_plugin::guest", level, "{id}: {message}");
+        record.logs.push(&id, level, message.as_str());
         let thread = thread::current().name().unwrap_or_default().to_owned();
         record.push(format!("log {id} on {thread}: {message}"));
     })
@@ -1977,6 +2037,8 @@ fn answered(pending: PendingPluginGrant, answer: PluginAnswer, cx: &mut App) {
             cx.global_mut::<PluginHost>().answering.remove(&id);
             if let Err(message) = recorded {
                 log::error!("can't record the answer for plugin {id}: {message}");
+                let logged = format!("can't record the answer to its prompt: {message}");
+                plugin_log::push(&id, log::Level::Error, logged, cx);
                 if let Some(slot) = cx.global_mut::<PluginHost>().slots.get_mut(&id) {
                     slot.set_want(Want::Unload(PluginState::Stopped(PluginDiagnostic {
                         reason: StopReason::Grants,
@@ -2374,6 +2436,9 @@ impl Guest {
             self.guarded(async |store| exports.shutdown.call_async(store, ()).await)
         {
             log::warn!("{diagnostic}");
+            let failed = PluginDiagnostic::from(diagnostic);
+            let message = format!("its shutdown failed: {failed}");
+            self.record.logs.push(&self.id, log::Level::Error, message);
         }
         self.record.push(format!("shutdown {}", self.id));
     }

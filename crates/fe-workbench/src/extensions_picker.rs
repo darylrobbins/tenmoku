@@ -1,7 +1,8 @@
 //! Extensions: Show Installed (`workbench.show_extensions`): a [`Picker`]
 //! over the extensions kiln has loaded ([`kiln::extensions::loaded_from`]),
 //! the user's and a trusted workspace folder's, each with its kinds,
-//! licence, source and state, and its language servers' effective
+//! licence, source (where it's linked from, for one installed for
+//! development) and state, and its language servers' effective
 //! invocations (extensions record §1, §3, §6), then those of a workspace
 //! folder that isn't trusted, skipped ([`kiln::extensions::skipped`]).
 //! One the settings disable ([`kiln::extensions::disabled`]) is listed as
@@ -14,9 +15,10 @@
 //! row has to say. An extension that failed to load isn't listed: its
 //! diagnostics are in the config problems list.
 //!
-//! Extensions: Revoke Plugin Grants and Extensions: Uninstall Plugin open
-//! it over the user's plugins only ([`open_next_for`]), Enter revoking or
-//! uninstalling the plugin picked.
+//! Extensions: Revoke Plugin Grants, Extensions: Uninstall Plugin and
+//! Extensions: Show Plugin Log open it over the user's plugins only
+//! ([`open_next_for`]), Enter revoking or uninstalling the plugin picked,
+//! or opening its log.
 
 use std::{collections::VecDeque, path::PathBuf};
 
@@ -30,11 +32,12 @@ use kiln::{
 };
 
 use crate::{
-    ExtensionConsent, Invocation, PendingConsent,
+    ExtensionConsent, Invocation, PendingConsent, Workbench,
     lsp_consent::{GrantedServer, granted_extension_servers},
     lsp_consent_prompt::{Ask, ask_about, next_to_ask, server_key},
     pending_extension_consents,
     picker::{Picker, PickerDelegate},
+    plugin_dev,
     plugin_host::{PluginHost, ask_for_grant, grant_to_ask},
     plugin_kind,
     plugin_manage::{self, PluginRow},
@@ -117,6 +120,9 @@ pub(crate) struct Row {
     pub(crate) license: String,
     pub(crate) class: LicenseClass,
     pub(crate) source: ExtensionSource,
+    /// The folder it's linked from, if its directory is a link: one
+    /// installed for development.
+    pub(crate) linked: Option<PathBuf>,
     pub(crate) state: ExtensionState,
     /// Each language server, its effective invocation and its status.
     pub(crate) servers: Vec<String>,
@@ -209,6 +215,7 @@ impl Row {
             license: manifest.license.expr.clone(),
             class: manifest.license.class,
             source,
+            linked: plugin_dev::linked_from(&manifest.dir),
             state,
             servers,
             reason: None,
@@ -260,21 +267,22 @@ impl Row {
         format!("{} ({class})", self.license)
     }
 
-    fn source_text(&self) -> &'static str {
+    /// User or Workspace, or where it's linked from.
+    fn source_text(&self) -> String {
+        if let Some(folder) = &self.linked {
+            return format!("Linked from {}", folder.display());
+        }
         match self.source {
             ExtensionSource::User => "User",
             ExtensionSource::Workspace => "Workspace",
         }
+        .to_owned()
     }
 
     /// The secondary line: kinds, licence, source, servers, and why it
     /// isn't loaded.
     pub(crate) fn detail(&self) -> String {
-        let mut parts = vec![
-            self.kinds.clone(),
-            self.license_text(),
-            self.source_text().to_owned(),
-        ];
+        let mut parts = vec![self.kinds.clone(), self.license_text(), self.source_text()];
         parts.extend(self.servers.iter().cloned());
         parts.extend(self.plugin.iter().flat_map(PluginRow::detail));
         parts.extend(self.reason.clone());
@@ -376,6 +384,8 @@ pub(crate) enum Purpose {
     RevokeGrants,
     /// Extensions: Uninstall Plugin, over the user's plugins.
     Uninstall,
+    /// Extensions: Show Plugin Log, over the user's plugins.
+    ShowLog,
 }
 
 /// What the picker opens for next, once.
@@ -607,7 +617,8 @@ impl PickerDelegate for ExtensionsPicker {
     /// one's being asked about already, or none waits now, nothing. On a
     /// plugin waiting for its grant, asks for it. On any other row, shows
     /// all it has to say. To revoke or uninstall, does that to the row's
-    /// plugin, uninstalling once the user confirms. Focus goes back to
+    /// plugin, uninstalling once the user confirms; to show a log, opens
+    /// the row's plugin's. Focus goes back to
     /// where it was before the list opened first, so the prompt takes it
     /// from there and gives it back there.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
@@ -622,6 +633,18 @@ impl PickerDelegate for ExtensionsPicker {
             (Purpose::Uninstall, Some(plugin)) => {
                 self.closed(window, cx);
                 plugin_manage::confirm_uninstall(&plugin, window, cx);
+                return true;
+            }
+            (Purpose::ShowLog, Some(plugin)) => {
+                self.closed(window, cx);
+                if let Some(workbench) = window.root::<Workbench>().flatten() {
+                    // The workbench may be the one updating now.
+                    window.defer(cx, move |window, cx| {
+                        workbench.update(cx, |workbench, cx| {
+                            workbench.show_plugin_log(&plugin.id, &plugin.name, window, cx)
+                        })
+                    });
+                }
                 return true;
             }
             // Its plugin waits, whatever its servers do: that's asked

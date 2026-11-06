@@ -61,8 +61,10 @@ mod peek;
 mod persist;
 mod picker;
 mod plugin_bridge;
+mod plugin_dev;
 mod plugin_events;
 mod plugin_host;
+mod plugin_log;
 mod plugin_manage;
 mod plugin_paint;
 mod plugin_prompt;
@@ -135,6 +137,7 @@ pub use pane::{Pane, PaneEvent, Tab};
 pub use pane_group::{Axis, Direction, Member, Members, PaneGroup};
 pub use persist::save_toggles_to;
 pub use picker::{Picker, PickerDelegate};
+pub use plugin_dev::link_extension_folder;
 pub use plugin_host::{
     CACHE_DIR, GRANTS_FILE, PluginDiagnostic, PluginInfo, PluginState, REBUILD, SECRETS_INDEX_FILE,
     StopReason, pending_plugin_grants, plugin_kind, plugin_states, reevaluate, set_plugin_dirs,
