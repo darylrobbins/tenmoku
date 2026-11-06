@@ -461,8 +461,9 @@ impl Painter<'_> {
     /// The Go format verbs in a `printf` layer's `ranges` that touch the
     /// highlighted range, cut to it, found by [`crate::verbs`] rather than
     /// the C grammar's query. Each range is scanned from its start, a chunk
-    /// at a time with the scanner's state carried across, so no directive is
-    /// cut however long; it stops once past the highlighted range. False if
+    /// at a time with only the scanner's phase carried across, so no
+    /// directive is cut or rescanned however long, and the work between
+    /// deadline checks is one chunk; it stops once past the highlighted range. False if
     /// the deadline passed first.
     fn verbs(&self, ranges: &[Range<usize>]) -> (Vec<Painted>, bool) {
         let mut spans = Vec::new();
@@ -470,25 +471,17 @@ impl Painter<'_> {
             if range.end <= self.range.start || range.start >= self.range.end {
                 continue;
             }
-            // Bytes not yet scanned, at `base`.
-            let mut pending: Vec<u8> = Vec::new();
-            let mut base = range.start;
+            let mut scanner = crate::verbs::Scanner::new(range.start);
             let mut found = Vec::new();
             for chunk in chunks(self.text, range.clone()) {
                 if out_of_time(self.deadline) {
                     return (spans, false);
                 }
-                pending.extend_from_slice(chunk);
-                let (part, used) = crate::verbs::scan_part(&pending, base, false);
-                found.extend(part);
-                pending.drain(..used);
-                base += used;
-                if base >= self.range.end {
+                scanner.feed(chunk, &mut found);
+                // Past the range, once no directive is left to finish.
+                if scanner.offset() >= self.range.end && !scanner.open() {
                     break;
                 }
-            }
-            if base < self.range.end {
-                found.extend(crate::verbs::scan(&pending, base));
             }
             spans.extend(clip(found, std::slice::from_ref(&self.range)));
         }
