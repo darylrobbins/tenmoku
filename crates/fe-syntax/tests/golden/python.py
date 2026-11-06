@@ -72,5 +72,10 @@ def main() -> int:
     return 0
 
 
+def describe(log, name: str, n: int, width: int) -> str:
+    log.info("%s read %d words (%5.1f%%)", name, n, 12.5)
+    return "%-10s|%(k)s" % name + "{} {0!r:>{width}} {{ok}}".format(name, n, width=width)
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

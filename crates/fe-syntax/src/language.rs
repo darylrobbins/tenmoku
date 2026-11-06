@@ -387,7 +387,7 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
-        injections: None,
+        injections: Some(include_str!("../queries/python-injections.scm")),
         hidden: false,
     },
     #[cfg(feature = "javascript")]
@@ -525,6 +525,30 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "printf")]
     Def {
         name: "printf-c",
+        extensions: &[],
+        file_names: &[],
+        grammar: || tree_sitter_printf::LANGUAGE.into(),
+        highlights: || &[],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: true,
+    },
+    // Python's formatting forms: the same grammar, scanned with the `%`
+    // dialect and the `str.format` dialect.
+    #[cfg(feature = "printf")]
+    Def {
+        name: "format-py-percent",
+        extensions: &[],
+        file_names: &[],
+        grammar: || tree_sitter_printf::LANGUAGE.into(),
+        highlights: || &[],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: true,
+    },
+    #[cfg(feature = "printf")]
+    Def {
+        name: "format-brace",
         extensions: &[],
         file_names: &[],
         grammar: || tree_sitter_printf::LANGUAGE.into(),

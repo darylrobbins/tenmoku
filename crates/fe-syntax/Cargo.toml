@@ -39,7 +39,7 @@ default = [
     "csv",
 ]
 rust = ["dep:tree-sitter-rust"]
-python = ["dep:tree-sitter-python"]
+python = ["dep:tree-sitter-python", "printf"]
 javascript = ["dep:tree-sitter-javascript"]
 # TypeScript's highlights extend JavaScript's, as upstream configures them.
 typescript = ["dep:tree-sitter-typescript", "dep:tree-sitter-javascript"]

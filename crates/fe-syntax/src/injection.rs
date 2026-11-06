@@ -436,6 +436,8 @@ impl Painter<'_> {
             let dialect = match injection.language.name() {
                 "printf" => Some(crate::verbs::Dialect::Go),
                 "printf-c" => Some(crate::verbs::Dialect::C),
+                "format-py-percent" => Some(crate::verbs::Dialect::PyPercent),
+                "format-brace" => Some(crate::verbs::Dialect::Brace),
                 _ => None,
             };
             let (own, finished) = if let Some(dialect) = dialect {

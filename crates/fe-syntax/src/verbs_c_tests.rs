@@ -44,3 +44,18 @@ fn invalid_c_directives_paint_nothing() {
     }
     assert_eq!(whole("%y%d"), vec!["%d".to_string()]);
 }
+
+#[test]
+fn only_one_c_length_modifier_is_allowed() {
+    for t in ["%hhhd", "%hlld", "%ztd", "%lhd", "%hld", "%lllld"] {
+        assert!(whole(t).is_empty(), "{t}");
+        for size in 1..=t.len() {
+            assert!(scan_c(t, size).is_empty(), "{t} size {size}");
+        }
+    }
+    for t in [
+        "%hd", "%hhd", "%ld", "%lld", "%jd", "%zd", "%td", "%Lf", "%qd",
+    ] {
+        assert_eq!(whole(t), vec![t.to_string()], "{t}");
+    }
+}

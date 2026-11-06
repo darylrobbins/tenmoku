@@ -47,8 +47,35 @@ enum Phase {
     CPrecisionDigits,
     CPrecisionStar,
     CPrecisionStarDigits,
-    /// Length modifiers, then the conversion.
+    /// Before any length modifier; then the conversion.
     CLength,
+    /// After one `h`: another makes `hh`.
+    CLengthH,
+    /// After one `l`: another makes `ll`.
+    CLengthL,
+    /// After a complete length modifier: only the conversion is left.
+    CLengthDone,
+    // Python's `%` dialect, after `%`: an optional `(key)`, flags, width,
+    // `.precision`, one length modifier that is ignored, the conversion.
+    PyKey,
+    PyFlags,
+    PyWidth,
+    PyDot,
+    PyPrecision,
+    PyLength,
+    // Python's `str.format` fields.
+    /// Just past a `{`.
+    BraceOpen,
+    /// In the field name: names, digits, `.attr`, `[idx]`.
+    BraceArg,
+    /// Just past `!`.
+    BraceConv,
+    /// After the conversion letter: `:` or `}`.
+    BraceConvDone,
+    /// In the format spec, which may nest `{...}` once.
+    BraceSpec,
+    /// Just past a `}` outside a field.
+    BraceClose,
 }
 
 /// Which language's directive syntax a [`Scanner`] reads.
@@ -56,6 +83,10 @@ enum Phase {
 pub(crate) enum Dialect {
     Go,
     C,
+    /// Python's `%` operator and logging-style calls.
+    PyPercent,
+    /// Python's `str.format` replacement fields.
+    Brace,
 }
 
 /// A resumable scan: bytes go in a chunk at a time, and only a phase and
@@ -70,6 +101,9 @@ pub(crate) struct Scanner {
     dialect: Dialect,
     /// Inside a `[n]`: whether it has digits yet.
     bracket: Option<bool>,
+    /// Nesting: parens in a `%(key)`, braces in a format spec, or an open
+    /// `[idx]` in a field name.
+    depth: u32,
     placeholder: Option<Highlight>,
     escape: Option<Highlight>,
 }
@@ -83,6 +117,7 @@ impl Scanner {
             start: base,
             phase: Phase::Text,
             bracket: None,
+            depth: 0,
             placeholder: Highlight::from_capture("string.placeholder"),
             escape: Highlight::from_capture("escape"),
         }
@@ -105,9 +140,20 @@ impl Scanner {
             self.at += chunk.len();
             return;
         };
-        if self.dialect == Dialect::C {
-            self.feed_c(chunk, placeholder, escape, out);
-            return;
+        match self.dialect {
+            Dialect::C => {
+                self.feed_c(chunk, placeholder, escape, out);
+                return;
+            }
+            Dialect::PyPercent => {
+                self.feed_py_percent(chunk, placeholder, escape, out);
+                return;
+            }
+            Dialect::Brace => {
+                self.feed_brace(chunk, placeholder, escape, out);
+                return;
+            }
+            Dialect::Go => {}
         }
         for &b in chunk {
             // A byte that ends a phase without belonging to it is tried
@@ -186,7 +232,7 @@ impl Scanner {
                         break;
                     }
                     Phase::Dot => Phase::IndexVerb,
-                    // The C dialect's phases are not reached from Go.
+                    // The other dialects' phases are not reached from Go.
                     Phase::CNum
                     | Phase::CFlags
                     | Phase::CWidth
@@ -198,7 +244,22 @@ impl Scanner {
                     | Phase::CPrecisionDigits
                     | Phase::CPrecisionStar
                     | Phase::CPrecisionStarDigits
-                    | Phase::CLength => {
+                    | Phase::CLength
+                    | Phase::CLengthH
+                    | Phase::CLengthL
+                    | Phase::CLengthDone
+                    | Phase::PyKey
+                    | Phase::PyFlags
+                    | Phase::PyWidth
+                    | Phase::PyDot
+                    | Phase::PyPrecision
+                    | Phase::PyLength
+                    | Phase::BraceOpen
+                    | Phase::BraceArg
+                    | Phase::BraceConv
+                    | Phase::BraceConvDone
+                    | Phase::BraceSpec
+                    | Phase::BraceClose => {
                         self.phase = Phase::Text;
                         continue;
                     }
@@ -315,12 +376,27 @@ impl Scanner {
                         self.phase = Phase::Text;
                         continue;
                     }
-                    Phase::CLength
-                        if matches!(b, b'h' | b'l' | b'j' | b'z' | b't' | b'L' | b'q') =>
-                    {
+                    Phase::CLength if matches!(b, b'j' | b'z' | b't' | b'L' | b'q') => {
+                        self.phase = Phase::CLengthDone;
                         break;
                     }
-                    Phase::CLength => {
+                    Phase::CLength if b == b'h' => {
+                        self.phase = Phase::CLengthH;
+                        break;
+                    }
+                    Phase::CLength if b == b'l' => {
+                        self.phase = Phase::CLengthL;
+                        break;
+                    }
+                    Phase::CLengthH if b == b'h' => {
+                        self.phase = Phase::CLengthDone;
+                        break;
+                    }
+                    Phase::CLengthL if b == b'l' => {
+                        self.phase = Phase::CLengthDone;
+                        break;
+                    }
+                    Phase::CLength | Phase::CLengthH | Phase::CLengthL | Phase::CLengthDone => {
                         self.phase = Phase::Text;
                         if b"diouxXeEfFgGaAcCsSpnmb".contains(&b) {
                             out.push(span(self.start, self.at + 1, placeholder));
@@ -336,6 +412,194 @@ impl Scanner {
                     }
                 };
                 self.phase = next;
+            }
+            self.at += 1;
+        }
+    }
+}
+
+impl Scanner {
+    /// [`Scanner::feed`] for Python's `%`: `%`, `(key)`, flags, width,
+    /// `.precision`, an ignored length modifier, one conversion.
+    fn feed_py_percent(
+        &mut self,
+        chunk: &[u8],
+        placeholder: Highlight,
+        escape: Highlight,
+        out: &mut Vec<Painted>,
+    ) {
+        for &b in chunk {
+            loop {
+                let digit = b.is_ascii_digit();
+                let next = match self.phase {
+                    Phase::Opened if b == b'%' => {
+                        out.push(span(self.start, self.at + 1, escape));
+                        self.phase = Phase::Text;
+                        break;
+                    }
+                    Phase::Opened if b == b'(' => {
+                        self.depth = 1;
+                        self.phase = Phase::PyKey;
+                        break;
+                    }
+                    Phase::Opened => Phase::PyFlags,
+                    Phase::PyKey => {
+                        match b {
+                            b'(' => self.depth = self.depth.saturating_add(1),
+                            b')' => {
+                                self.depth -= 1;
+                                if self.depth == 0 {
+                                    self.phase = Phase::PyFlags;
+                                }
+                            }
+                            _ => {}
+                        }
+                        break;
+                    }
+                    Phase::PyFlags if matches!(b, b'-' | b'+' | b' ' | b'#' | b'0') => break,
+                    Phase::PyFlags => Phase::PyWidth,
+                    Phase::PyWidth if digit => break,
+                    Phase::PyWidth if b == b'*' => {
+                        self.phase = Phase::PyDot;
+                        break;
+                    }
+                    Phase::PyWidth => Phase::PyDot,
+                    Phase::PyDot if b == b'.' => {
+                        self.phase = Phase::PyPrecision;
+                        break;
+                    }
+                    Phase::PyDot => Phase::PyLength,
+                    Phase::PyPrecision if digit => break,
+                    Phase::PyPrecision if b == b'*' => {
+                        self.phase = Phase::PyLength;
+                        break;
+                    }
+                    Phase::PyPrecision => Phase::PyLength,
+                    Phase::PyLength if matches!(b, b'h' | b'l' | b'L') => {
+                        self.phase = Phase::CLengthDone;
+                        break;
+                    }
+                    Phase::PyLength | Phase::CLengthDone => {
+                        self.phase = Phase::Text;
+                        if b"diouxXeEfFgGcrsa".contains(&b) {
+                            out.push(span(self.start, self.at + 1, placeholder));
+                            break;
+                        }
+                        // Not a conversion: this byte may open the next directive.
+                        continue;
+                    }
+                    // Any other phase is `Text` (or not this dialect's).
+                    _ => {
+                        if b == b'%' {
+                            self.start = self.at;
+                            self.phase = Phase::Opened;
+                        } else {
+                            self.phase = Phase::Text;
+                        }
+                        break;
+                    }
+                };
+                self.phase = next;
+            }
+            self.at += 1;
+        }
+    }
+
+    /// [`Scanner::feed`] for `str.format`: `{field}` painted whole, `{{` and
+    /// `}}` as escapes; a field that doesn't close or doesn't parse paints
+    /// nothing.
+    fn feed_brace(
+        &mut self,
+        chunk: &[u8],
+        placeholder: Highlight,
+        escape: Highlight,
+        out: &mut Vec<Painted>,
+    ) {
+        for &b in chunk {
+            loop {
+                match self.phase {
+                    Phase::BraceOpen if b == b'{' => {
+                        out.push(span(self.start, self.at + 1, escape));
+                        self.phase = Phase::Text;
+                    }
+                    Phase::BraceOpen => {
+                        self.depth = 0;
+                        self.phase = Phase::BraceArg;
+                        continue;
+                    }
+                    Phase::BraceArg if self.depth == 1 => {
+                        // Inside `[idx]`: anything but a brace.
+                        match b {
+                            b']' => self.depth = 0,
+                            b'{' | b'}' => {
+                                self.phase = Phase::Text;
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Phase::BraceArg => match b {
+                        b'[' => self.depth = 1,
+                        b'!' => self.phase = Phase::BraceConv,
+                        b':' => self.phase = Phase::BraceSpec,
+                        b'}' => {
+                            out.push(span(self.start, self.at + 1, placeholder));
+                            self.phase = Phase::Text;
+                        }
+                        _ if b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.') || b >= 0x80 => {
+                        }
+                        _ => {
+                            self.phase = Phase::Text;
+                            continue;
+                        }
+                    },
+                    Phase::BraceConv if matches!(b, b'r' | b's' | b'a') => {
+                        self.phase = Phase::BraceConvDone;
+                    }
+                    Phase::BraceConvDone if b == b':' => self.phase = Phase::BraceSpec,
+                    Phase::BraceConvDone if b == b'}' => {
+                        out.push(span(self.start, self.at + 1, placeholder));
+                        self.phase = Phase::Text;
+                    }
+                    Phase::BraceConv | Phase::BraceConvDone => {
+                        self.phase = Phase::Text;
+                        continue;
+                    }
+                    Phase::BraceSpec => match (b, self.depth) {
+                        (b'}', 0) => {
+                            out.push(span(self.start, self.at + 1, placeholder));
+                            self.phase = Phase::Text;
+                        }
+                        (b'}', _) => self.depth = 0,
+                        (b'{', 0) => self.depth = 1,
+                        (b'{', _) => {
+                            self.phase = Phase::Text;
+                            continue;
+                        }
+                        _ => {}
+                    },
+                    Phase::BraceClose => {
+                        self.phase = Phase::Text;
+                        if b == b'}' {
+                            out.push(span(self.start, self.at + 1, escape));
+                        } else {
+                            continue;
+                        }
+                    }
+                    // `Text`, or a phase of another dialect.
+                    _ => match b {
+                        b'{' => {
+                            self.start = self.at;
+                            self.phase = Phase::BraceOpen;
+                        }
+                        b'}' => {
+                            self.start = self.at;
+                            self.phase = Phase::BraceClose;
+                        }
+                        _ => self.phase = Phase::Text,
+                    },
+                }
+                break;
             }
             self.at += 1;
         }
@@ -402,3 +666,7 @@ mod tests {
 #[cfg(test)]
 #[path = "verbs_c_tests.rs"]
 mod c_dialect_tests;
+
+#[cfg(test)]
+#[path = "verbs_py_tests.rs"]
+mod py_dialect_tests;
