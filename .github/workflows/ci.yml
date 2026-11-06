@@ -116,6 +116,10 @@ jobs:
       # Windows' file locking turns that collision into a racy link failure.
       # Clippy above still checks they compile.
       - name: Test
+        env:
+          # Git for Windows' system config sets core.autocrlf; the tests'
+          # repositories expect git's defaults, as on the other runners.
+          GIT_CONFIG_NOSYSTEM: 1
         run: cargo nextest run --workspace --profile ci --lib --bins --tests
 
   deny:

@@ -25,6 +25,8 @@
 //!
 //! This crate must never depend on GPUI.
 
+#[cfg(windows)]
+pub mod beneath;
 mod finder;
 #[doc(hidden)]
 pub mod fixture;
@@ -34,8 +36,6 @@ mod listing;
 mod search;
 mod tree;
 mod watcher;
-#[cfg(windows)]
-pub mod beneath;
 #[cfg(windows)]
 mod win;
 

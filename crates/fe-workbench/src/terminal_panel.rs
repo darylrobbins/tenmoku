@@ -903,8 +903,9 @@ impl TerminalPanel {
 }
 
 /// What runs `task`, which only ever runs where it says: a shell line in
-/// `/bin/sh`, not the user's login shell, so that it means the same for
-/// everyone sharing the project, and a program directly.
+/// `/bin/sh` (Windows PowerShell on Windows), not the user's login shell, so
+/// that it means the same for everyone sharing the project, and a program
+/// directly.
 ///
 /// # Errors
 ///
@@ -934,19 +935,41 @@ pub(crate) fn task_options(task: &Task, scrollback: usize) -> io::Result<Termina
 }
 
 /// `/bin/sh -c line`.
+#[cfg(not(windows))]
 fn sh_c(line: &str) -> (String, Vec<String>) {
     let args = vec!["-c".to_owned(), line.to_owned()];
     ("/bin/sh".to_owned(), args)
 }
 
+/// On Windows, Windows PowerShell's `-Command line`: the shell every
+/// Windows has, at the same place, and one that takes the line as one
+/// argument, where `cmd.exe /C` has no quoting that keeps any line whole. It
+/// exits with `exit`'s code, else 1 if the last command failed.
+#[cfg(windows)]
+fn sh_c(line: &str) -> (String, Vec<String>) {
+    let root = std::env::var("SystemRoot")
+        .ok()
+        .filter(|root| !root.is_empty())
+        .unwrap_or_else(|| r"C:\Windows".to_owned());
+    let program = format!(r"{root}\System32\WindowsPowerShell\v1.0\powershell.exe");
+    let args = ["-NoLogo", "-NoProfile", "-Command", line].map(str::to_owned);
+    (program, args.to_vec())
+}
+
 /// `cwd` if it's a directory, else the home directory, else the root.
 fn start_dir(cwd: &Path) -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = std::env::var_os("HOME")
+        .or_else(|| {
+            cfg!(windows)
+                .then(|| std::env::var_os("USERPROFILE"))
+                .flatten()
+        })
+        .map(PathBuf::from);
     [Some(cwd.to_owned()), home]
         .into_iter()
         .flatten()
         .find(|dir| dir.is_dir())
-        .unwrap_or_else(|| PathBuf::from("/"))
+        .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { r"C:\" } else { "/" }))
 }
 
 /// The terminal's style: the editor's colours and, unless `settings` set

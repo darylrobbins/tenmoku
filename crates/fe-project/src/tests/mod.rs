@@ -129,7 +129,9 @@ fn dir_link(target: &Path, link: &Path) {
         // `mklink` takes neither `\\?\` paths nor `/` separators.
         let plain = |path: &Path| {
             let text = path.to_str().unwrap();
-            text.strip_prefix(r"\\?\").unwrap_or(text).replace('/', r"\")
+            text.strip_prefix(r"\\?\")
+                .unwrap_or(text)
+                .replace('/', r"\")
         };
         let status = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J", &plain(link), &plain(target)])

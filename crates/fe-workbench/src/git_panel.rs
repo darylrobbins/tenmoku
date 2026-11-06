@@ -2124,7 +2124,7 @@ impl GitPanel {
                 directory: entry
                     .relative
                     .parent()
-                    .map(|dir| dir.display().to_string())
+                    .map(|dir| crate::tests::slashed(dir.display().to_string()))
                     .unwrap_or_default(),
                 dimmed: entry.kind == ChangeKind::Deleted,
             })
@@ -2138,7 +2138,10 @@ impl GitPanel {
             .map(|group| {
                 let range = self.group_range(group);
                 let rows = (self.entries[range.clone()].iter())
-                    .map(|entry| (letter(entry.kind), entry.relative.display().to_string()))
+                    .map(|entry| {
+                        let shown = crate::tests::slashed(entry.relative.display().to_string());
+                        (letter(entry.kind), shown)
+                    })
                     .collect();
                 (group.title(), range.len(), rows)
             })

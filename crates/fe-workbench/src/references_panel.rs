@@ -826,7 +826,8 @@ impl ReferencesPanel {
             .map(|row| match *row {
                 Row::File(file) => {
                     let file = &self.files[file];
-                    ShownRow::File(file.rel.display().to_string(), file.refs.len())
+                    let shown = crate::tests::slashed(file.rel.display().to_string());
+                    ShownRow::File(shown, file.refs.len())
                 }
                 Row::Ref(file, reference) => {
                     let reference = &self.files[file].refs[reference];
