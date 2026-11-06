@@ -169,14 +169,22 @@ fn shell_task_becomes_sh_c(cx: &mut TestAppContext) {
     );
     shell.env.insert("RUST_LOG".to_owned(), "debug".to_owned());
     let options = task_options(&shell, 7).unwrap();
-    assert_eq!(
-        options.shell,
-        Some((
-            "/bin/sh".to_owned(),
-            vec!["-c".to_owned(), "cargo test -q".to_owned()],
-        )),
-        "not the login shell"
+    #[cfg(not(windows))]
+    let expected = (
+        "/bin/sh".to_owned(),
+        vec!["-c".to_owned(), "cargo test -q".to_owned()],
     );
+    #[cfg(windows)]
+    let expected = (
+        format!(
+            r"{}\System32\WindowsPowerShell\v1.0\powershell.exe",
+            std::env::var("SystemRoot").unwrap()
+        ),
+        ["-NoLogo", "-NoProfile", "-Command", "cargo test -q"]
+            .map(str::to_owned)
+            .to_vec(),
+    );
+    assert_eq!(options.shell, Some(expected), "not the login shell");
     assert_eq!(options.cwd, dir.path());
     assert_eq!(options.scrollback, 7);
     assert_eq!(options.env, shell.env);

@@ -25,6 +25,8 @@
 //!
 //! This crate must never depend on GPUI.
 
+#[cfg(windows)]
+pub mod beneath;
 mod docker_ignore;
 mod finder;
 #[doc(hidden)]
@@ -35,8 +37,6 @@ mod listing;
 mod search;
 mod tree;
 mod watcher;
-#[cfg(windows)]
-pub mod beneath;
 #[cfg(windows)]
 mod win;
 

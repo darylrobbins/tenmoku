@@ -2,6 +2,18 @@
 //! the panel's rows and the pane's tabs, keys through the default keymap.
 //! Fixtures are `fe_project::fixture` trees in a temporary directory.
 
+/// A path as a panel shows it, with `/` for the platform's separator, so
+/// tests write it alike everywhere (`src/a.rs`, shown `src\a.rs` on
+/// Windows).
+pub(crate) fn slashed(shown: impl Into<String>) -> String {
+    let shown = shown.into();
+    if std::path::MAIN_SEPARATOR == '/' {
+        shown
+    } else {
+        shown.replace(std::path::MAIN_SEPARATOR, "/")
+    }
+}
+
 mod activity_rail;
 mod breadcrumb_symbol_icons;
 mod caret_keys_hosts;

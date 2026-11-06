@@ -35,11 +35,22 @@ You also need:
 The language servers aren't bundled. For Rust, add the `rust-analyzer` component
 to the pinned toolchain with `rustup component add rust-analyzer`.
 
-The Windows build lacks two things the other platforms have:
+Run the tests with `GIT_CONFIG_NOSYSTEM=1`, as CI does. Git for Windows' system
+config turns on `core.autocrlf`, and the tests' repositories expect git's
+defaults.
+
+Shell tasks run in Windows PowerShell (`powershell -NoProfile -Command`), where
+they run in `/bin/sh` elsewhere.
+
+The Windows build lacks some things the other platforms have:
 
 - A second launch opens its own window. It doesn't hand its files to the running
   instance.
 - Copying a symlink in the project tree is refused.
+- Plugins can't read the workspace's files: WASI preopens are named by host
+  path, which a guest can't resolve on Windows.
+- Compiled plugins aren't cached, as nothing checks that the cache folder is
+  the user's alone.
 
 ## Tests and checks
 

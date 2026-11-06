@@ -527,7 +527,10 @@ fn an_edit_renaming_a_file_is_decided_whole(cx: &mut TestAppContext) {
     );
     // Neither the file nor the operation can be decided alone.
     s.draw();
-    assert!(s.cx.debug_bounds(native_id("ai-changes-reject-src/main.rs")).is_none());
+    assert!(
+        s.cx.debug_bounds(native_id("ai-changes-reject-src/main.rs"))
+            .is_none()
+    );
     assert!(
         s.cx.debug_bounds(native_id("ai-changes-reject-src/other.rs"))
             .is_none()
@@ -887,7 +890,9 @@ fn an_operation_only_preview_lists_it(cx: &mut TestAppContext) {
     assert_eq!(message_shown(&mut s), None);
     s.draw();
     assert!(
-        (s.cx.debug_bounds(native_id("ai-changes-operation-0-src/other.rs"))).is_some(),
+        (s.cx
+            .debug_bounds(native_id("ai-changes-operation-0-src/other.rs")))
+        .is_some(),
         "the operation's row is drawn"
     );
     click(&mut s, "ai-changes-apply");

@@ -1333,7 +1333,8 @@ impl ProblemsPanel {
             .map(|row| match *row {
                 Row::File(file) => {
                     let file = &self.files[file];
-                    ShownRow::File(self.display_path(&file.path), file.problems.len())
+                    let shown = crate::tests::slashed(self.display_path(&file.path));
+                    ShownRow::File(shown, file.problems.len())
                 }
                 Row::Problem(file, problem) => {
                     let reading = self.reading(file);

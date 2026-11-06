@@ -2469,7 +2469,8 @@ impl SearchPanel {
                     let matches = (self.files[file].lines.iter())
                         .map(|line| line.ranges.len())
                         .sum();
-                    ShownRow::File(self.file_label(file).to_string(), matches)
+                    let shown = crate::tests::slashed(self.file_label(file).to_string());
+                    ShownRow::File(shown, matches)
                 }
                 ResultRow::Line(file, line) => {
                     let line = &self.files[file].lines[line];

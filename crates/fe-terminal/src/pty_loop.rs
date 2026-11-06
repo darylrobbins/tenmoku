@@ -48,6 +48,16 @@ const MAX_LOCKED_READ: usize = u16::MAX as usize;
 /// the loop from ending.
 const MAX_FINAL_DRAIN_READS: usize = 64;
 
+/// On Windows, how long output must have stopped, after the child's exit,
+/// before the loop ends ([`PtyLoop::drain_until_quiet`]).
+#[cfg(windows)]
+const QUIET_AFTER_EXIT: Duration = Duration::from_millis(100);
+
+/// On Windows, the longest the loop reads on after the child's exit, so a
+/// writer that outlives it cannot keep the loop from ending.
+#[cfg(windows)]
+const MAX_DRAIN_AFTER_EXIT: Duration = Duration::from_secs(1);
+
 // alacritty's tokens for the pty's data and its child-exit notification. Its
 // `Pty` registers with these keys, whatever key it's given; on Unix it does
 // not export them.
@@ -200,6 +210,8 @@ where
                                     _ => break,
                                 }
                             }
+                            #[cfg(windows)]
+                            self.drain_until_quiet(&mut feeder, &mut buf);
                             child_exited = true;
                             break 'event_loop;
                         }
@@ -254,6 +266,23 @@ where
 
         let _ = self.pty.deregister(&self.poll);
         self.pty
+    }
+
+    /// ConPTY passes on a child's last output on its own time, which can be
+    /// after the child's exit is reported: so after it, output is read until
+    /// none has come for [`QUIET_AFTER_EXIT`], or for [`MAX_DRAIN_AFTER_EXIT`]
+    /// at most.
+    #[cfg(windows)]
+    fn drain_until_quiet(&mut self, feeder: &mut Feeder, buf: &mut [u8]) {
+        let start = Instant::now();
+        let mut last = start;
+        while last.elapsed() < QUIET_AFTER_EXIT && start.elapsed() < MAX_DRAIN_AFTER_EXIT {
+            match self.read(feeder, buf) {
+                Ok(0) => std::thread::sleep(Duration::from_millis(5)),
+                Ok(_) => last = Instant::now(),
+                Err(_) => break,
+            }
+        }
     }
 
     /// Ends a synchronized update, putting its held bytes on the grid.
