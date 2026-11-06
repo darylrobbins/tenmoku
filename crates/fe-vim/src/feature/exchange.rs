@@ -209,7 +209,7 @@ fn survive(at: usize, edits: &[Edit], after_len: usize) -> usize {
     let mapped = map(at, true, edits).min(after_len);
     let deleted = edits
         .iter()
-        .find(|edit| edit.old.start < at && edit.old.end >= at && edit.new.is_empty());
+        .find(|edit| edit.old.start < at && edit.old.end > at && edit.new.is_empty());
     match deleted {
         Some(edit) if mapped < after_len && edit.new.start > 0 => mapped - 1,
         _ => mapped,

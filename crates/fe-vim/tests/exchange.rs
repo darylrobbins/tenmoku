@@ -197,6 +197,14 @@ fn marked_rows_survive_their_boundaries() {
         "e\nd\na",
         (2, 0),
     );
+    // Clearing the text of the row left at the tail keeps that empty row.
+    check(
+        "a\nb\nc\nd\ne",
+        (0, 0),
+        "3cxxjjddkDGcxx",
+        "e\nd\na\n",
+        (2, 0),
+    );
     // A line break typed inside the last row leaves the split-off text in.
     check("ab\nc", (0, 0), "cxxli<CR><Esc>Gcxx", "c\na\nb", (1, 0));
 }
