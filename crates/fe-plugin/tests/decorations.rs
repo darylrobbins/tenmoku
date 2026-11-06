@@ -685,3 +685,97 @@ fn an_empty_entry_that_moves_inside_the_text_is_taken_with_it() {
         assert_eq!(ranges_of(&store, &buffers, 1, plugin), [], "{plugin}");
     }
 }
+
+/// Drops buffer `id`'s edit log below its current version, as compaction does.
+fn compact(buffers: &Arc<Mutex<Buffers>>, id: u64) {
+    let mut buffers = buffers.lock().unwrap();
+    let buffer = &mut buffers.open.get_mut(&id).unwrap().buffer;
+    let version = buffer.snapshot().version();
+    buffer.compact_log(version);
+}
+
+#[test]
+fn an_empty_entry_at_the_start_is_taken_when_the_text_around_it_goes_in_separate_edits() {
+    let buffers = Buffers::with(1, "abcdef");
+    let store = DecorationStore::new();
+    let mut held = plugin("held", &["decorations"], &store, &buffers);
+    let mut late = plugin("late", &["decorations"], &store, &buffers);
+    let old = shown(&buffers, 1);
+    held.set_decorations(1, old, "set".into(), vec![highlight(0..0)])
+        .unwrap();
+    // It moves into the text when "X" is typed at the start; then what follows it goes, and
+    // then what precedes it.
+    type_in(&buffers, 1, 0..0, "X");
+    type_in(&buffers, 1, 1..7, "");
+    assert_eq!(ranges_of(&store, &buffers, 1, "held"), [1..1]);
+    type_in(&buffers, 1, 0..1, "");
+    late.set_decorations(1, old, "set".into(), vec![highlight(0..0)])
+        .unwrap();
+    assert_eq!(snapshot(&buffers, 1).len(), 0);
+    for plugin in ["held", "late"] {
+        assert_eq!(ranges_of(&store, &buffers, 1, plugin), [], "{plugin}");
+    }
+    store.provider(1).refresh(&snapshot(&buffers, 1));
+    assert_eq!(ranges_of(&store, &buffers, 1, "held"), []);
+
+    // Left at an end of the text it survives, though nothing else is left of what it had.
+    let buffers = Buffers::with(2, "abc");
+    let old = shown(&buffers, 2);
+    let mut edge = plugin("edge", &["decorations"], &store, &buffers);
+    edge.set_decorations(2, old, "set".into(), vec![highlight(0..0)])
+        .unwrap();
+    type_in(&buffers, 2, 0..3, "");
+    assert_eq!(ranges_of(&store, &buffers, 2, "edge"), [0..0]);
+}
+
+#[test]
+fn rebased_sets_still_lose_what_edits_delete_after_compaction() {
+    let buffers = Buffers::with(1, "abcdef");
+    let store = DecorationStore::new();
+    let mut held = plugin("held", &["decorations"], &store, &buffers);
+    let mut late = plugin("late", &["decorations"], &store, &buffers);
+    let old = shown(&buffers, 1);
+    let words = || vec![highlight(1..3), highlight(4..4)];
+    held.set_decorations(1, old, "set".into(), words()).unwrap();
+    // An unrelated edit, so that the sets are of a later version than the one they were set for.
+    type_in(&buffers, 1, 6..6, "!");
+    late.set_decorations(1, old, "set".into(), words()).unwrap();
+    store.provider(1).refresh(&snapshot(&buffers, 1));
+    compact(&buffers, 1);
+    for plugin in ["held", "late"] {
+        assert_eq!(
+            ranges_of(&store, &buffers, 1, plugin),
+            [1..3, 4..4],
+            "{plugin}"
+        );
+    }
+    // Everything the entries sat on goes in one edit, then another.
+    type_in(&buffers, 1, 1..3, "X");
+    type_in(&buffers, 1, 2..6, "");
+    for plugin in ["held", "late"] {
+        assert_eq!(ranges_of(&store, &buffers, 1, plugin), [], "{plugin}");
+    }
+
+    // And no longer counts toward the cap.
+    let buffers = Buffers::with(3, &"ab".repeat(MAX_ENTRIES_PER_BUFFER / 2));
+    let version = shown(&buffers, 3);
+    let mut full = plugin("full", &["decorations"], &store, &buffers);
+    let each = (0..MAX_ENTRIES_PER_BUFFER as u64)
+        .map(|at| highlight(at..at + 1))
+        .collect();
+    full.set_decorations(3, version, "all".into(), each)
+        .unwrap();
+    type_in(
+        &buffers,
+        3,
+        MAX_ENTRIES_PER_BUFFER..MAX_ENTRIES_PER_BUFFER,
+        "!",
+    );
+    store.provider(3).refresh(&snapshot(&buffers, 3));
+    compact(&buffers, 3);
+    type_in(&buffers, 3, 0..MAX_ENTRIES_PER_BUFFER, "");
+    let version = shown(&buffers, 3);
+    full.set_decorations(3, version, "more".into(), vec![highlight(0..1)])
+        .unwrap();
+    assert_eq!(ranges_of(&store, &buffers, 3, "full"), [0..1]);
+}

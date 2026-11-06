@@ -152,35 +152,76 @@ struct Record<T> {
     watch: Watch,
 }
 
-/// What an entry stays for, as of `version`: edits take it by deleting or replacing all of
-/// `bytes` (see [`span`]), or, for an empty one, everything around the point it sits at.
+/// What an entry stays for, as of `version`: edits take it by deleting or replacing all of the
+/// text it sits on (see [`neighbours`]), or, for an empty one, everything around the point it
+/// sits at. It is rebased as the set is, so edits are only ever followed from `version`, which
+/// the log is kept back to for as long as the set's anchors resolve.
 #[derive(Clone)]
 struct Watch {
     version: Version,
-    /// The text whose deletion takes it; none for one only the point can take.
-    bytes: Option<Range<usize>>,
-    /// Where an empty entry sits, and the side of text inserted there it keeps to.
-    point: Option<(usize, Bias)>,
+    kind: Kind,
+}
+
+#[derive(Clone)]
+enum Kind {
+    /// What is left of the text of a range, bytes of the text at `version`; taken when none is.
+    Text(Vec<Range<usize>>),
+    /// Where an empty entry sits (it moves with [`START`]) in a text of `len` bytes, and the
+    /// text around it whose replacement takes it, none while it is at either end of the text.
+    Point {
+        offset: usize,
+        len: usize,
+        span: Option<Vec<Range<usize>>>,
+    },
 }
 
 impl Watch {
-    fn new(text_version: Version, range: &Range<usize>, bytes: Option<Range<usize>>) -> Self {
+    /// A watch for an entry over `range` of `text`, the text at `text_version`.
+    fn new(text_version: Version, text: &Text, range: &Range<usize>) -> Self {
+        let kind = if range.is_empty() {
+            Kind::Point {
+                offset: range.start,
+                len: text.len(),
+                span: neighbours(text, range.start),
+            }
+        } else {
+            Kind::Text(vec![range.clone()])
+        };
         Self {
             version: text_version,
-            bytes,
-            point: range.is_empty().then_some((range.start, START)),
+            kind,
         }
     }
 
-    /// Whether edits since have taken it, in `snapshot`. One older than the snapshot's edit log
-    /// can't be told, and stays.
-    fn is_taken(&self, snapshot: &BufferSnapshot) -> bool {
+    /// The watch as of `snapshot`, or none if edits since have taken the entry. One older than
+    /// the snapshot's edit log can't be told, and stays as it is.
+    fn advance(&self, snapshot: &BufferSnapshot) -> Option<Self> {
         if self.version < snapshot.oldest_version() || self.version > snapshot.version() {
-            return false;
+            return Some(self.clone());
         }
-        let bytes = (self.bytes.as_ref())
-            .is_some_and(|bytes| !snapshot.survives(bytes.clone(), self.version));
-        bytes || (self.point).is_some_and(|(at, bias)| snapshot.swallowed(at, bias, self.version))
+        let kind = match &self.kind {
+            Kind::Text(spans) => {
+                let spans = snapshot.carried(spans.clone(), self.version);
+                if spans.is_empty() {
+                    return None;
+                }
+                Kind::Text(spans)
+            }
+            Kind::Point { offset, len, span } => {
+                let (offset, len, span) =
+                    snapshot.followed((*offset, *len), START, span.clone(), self.version)?;
+                Kind::Point { offset, len, span }
+            }
+        };
+        Some(Self {
+            version: snapshot.version(),
+            kind,
+        })
+    }
+
+    /// Whether edits since have taken the entry, in `snapshot`.
+    fn is_taken(&self, snapshot: &BufferSnapshot) -> bool {
+        self.advance(snapshot).is_none()
     }
 }
 
@@ -278,12 +319,10 @@ impl<T> Drawn<T> {
         let placed = found.into_iter().filter_map(|entry| {
             let index = usize::try_from(entry.priority).ok()?;
             let record = records.get_mut(index)?.take()?;
-            if record.is_gone(snapshot) {
-                return None;
-            }
+            let watch = record.watch.advance(snapshot)?;
             Some(Placed {
                 range: entry.range,
-                watch: record.watch,
+                watch,
                 item: record.item,
             })
         });
@@ -680,10 +719,9 @@ impl Attached {
         for (index, item) in items.into_iter().enumerate() {
             let range = range(then.text(), &item)
                 .map_err(|why| Error::InvalidArgument(format!("entry {index}'s {why}")))?;
-            let watch = Watch::new(from, &range, span(then.text(), &range));
-            if watch.is_taken(&now) {
+            let Some(watch) = Watch::new(from, then.text(), &range).advance(&now) else {
                 continue;
-            }
+            };
             placed.push(Placed {
                 range: mapped(range),
                 watch,
@@ -694,18 +732,17 @@ impl Attached {
     }
 }
 
-/// The text whose deletion takes an entry over `range`, bytes of `text`: the range itself, or for
-/// an empty one, the characters either side of it. None for an empty one at either end of the
-/// text, which no deletion takes.
-fn span(text: &Text, range: &Range<usize>) -> Option<Range<usize>> {
-    if !range.is_empty() {
-        return Some(range.clone());
-    }
-    let at = range.start;
+/// The text whose deletion takes an empty entry at `at` in `text`, bytes of it: the characters
+/// either side. None at either end of the text, where no deletion takes it until it has text on
+/// both sides.
+fn neighbours(text: &Text, at: usize) -> Option<Vec<Range<usize>>> {
     if at == 0 || at >= text.len() {
         return None;
     }
-    Some(text.clip_offset(at - 1, Bias::Left)..text.clip_offset(at + 1, Bias::Right))
+    Some(vec![
+        text.clip_offset(at - 1, Bias::Left)..at,
+        at..text.clip_offset(at + 1, Bias::Right),
+    ])
 }
 
 /// `decoration`'s range in `text`, or why it isn't one.

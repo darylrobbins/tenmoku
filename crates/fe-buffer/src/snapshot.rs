@@ -187,6 +187,35 @@ impl BufferSnapshot {
             .swallowed(offset, bias.into(), from, self.version())
     }
 
+    /// The parts of `spans`, bytes of the text at `from`, that edits since haven't replaced or
+    /// deleted, as bytes of this snapshot's text. Text inserted into a span splits it.
+    ///
+    /// # Panics
+    /// If `from` is below [`BufferSnapshot::oldest_version`] or after this snapshot.
+    pub fn carried(&self, spans: Vec<Range<usize>>, from: Version) -> Vec<Range<usize>> {
+        self.log.carried(spans, from, self.version())
+    }
+
+    /// Follows an empty entry through the edits since `from`: `at` is its offset and the text's
+    /// length at `from`, and it moves with `bias` as an anchor does. Returns its offset, the
+    /// length, and its span, as of this snapshot, or None if edits took it: they replaced text
+    /// strictly around it, or all of its `span` (the text around it at `from`, none at either
+    /// end of the text). An entry with no span gets one when it has text on both sides.
+    ///
+    /// # Panics
+    /// If `from` is below [`BufferSnapshot::oldest_version`] or after this snapshot.
+    #[allow(clippy::type_complexity)]
+    pub fn followed(
+        &self,
+        at: (usize, usize),
+        bias: Bias,
+        span: Option<Vec<Range<usize>>>,
+        from: Version,
+    ) -> Option<(usize, usize, Option<Vec<Range<usize>>>)> {
+        self.log
+            .followed(at, bias.into(), span, from, self.version())
+    }
+
     /// See [`EditLog::map_for_history`].
     pub(crate) fn map_for_history(
         &self,

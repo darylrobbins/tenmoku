@@ -286,6 +286,67 @@ impl EditLog {
         false
     }
 
+    /// The parts of `spans`, bytes of the text at `from`, that are still in the text at `to`,
+    /// as bytes of it: what no batch mapped through replaced or deleted.
+    pub(crate) fn carried(
+        &self,
+        spans: Vec<Range<usize>>,
+        from: Version,
+        to: Version,
+    ) -> Vec<Range<usize>> {
+        let mut pieces = spans;
+        for (_, entry) in self.mapping_entries(from, to) {
+            pieces = pieces
+                .into_iter()
+                .flat_map(|piece| carry(&entry.edits, piece))
+                .collect();
+            if pieces.is_empty() {
+                break;
+            }
+        }
+        pieces
+    }
+
+    /// Follows an empty entry at `offset` in a text of `len` bytes at `from` to `to`: its
+    /// offset and the text's length there, and its `span`, the text around it whose
+    /// replacement takes it (carried as [`EditLog::carried`] does). None if it was taken: a
+    /// batch replaced text strictly around it, or all of its span. An entry with no span, at
+    /// either end of the text, gets one the first time it has text on both sides.
+    pub(crate) fn followed(
+        &self,
+        (offset, len): (usize, usize),
+        mapping: Mapping,
+        span: Option<Vec<Range<usize>>>,
+        from: Version,
+        to: Version,
+    ) -> Option<Followed> {
+        let (mut offset, mut len, mut span) = (offset, len, span);
+        for (_, entry) in self.mapping_entries(from, to) {
+            if collapses(&entry.edits, offset) {
+                return None;
+            }
+            if let Some(pieces) = span.take() {
+                let pieces: Vec<_> = pieces
+                    .into_iter()
+                    .flat_map(|piece| carry(&entry.edits, piece))
+                    .collect();
+                if pieces.is_empty() {
+                    return None;
+                }
+                span = Some(pieces);
+            }
+            offset = map_offset(&entry.edits, offset, mapping);
+            let (old, new) = (entry.edits.iter()).fold((0, 0), |(old, new), edit| {
+                (old + edit.old.len(), new + edit.new.len())
+            });
+            len = len + new - old;
+            if span.is_none() && 0 < offset && offset < len {
+                span = Some(vec![offset - 1..offset, offset..offset + 1]);
+            }
+        }
+        Some((offset, len, span))
+    }
+
     /// Maps an offset at version `from` to the equivalent offset at version `to`.
     pub(crate) fn map(&self, offset: usize, mapping: Mapping, from: Version, to: Version) -> usize {
         self.mapping_batches(from, to)
@@ -293,6 +354,9 @@ impl EditLog {
             .fold(offset, |offset, edits| map_offset(edits, offset, mapping))
     }
 }
+
+/// An empty entry followed through edits: its offset, the text's length, and its span.
+pub(crate) type Followed = (usize, usize, Option<Vec<Range<usize>>>);
 
 /// The parts of `piece`, bytes before `edits`, that no edit replaces, as bytes after them. An
 /// insertion inside `piece` splits it.
