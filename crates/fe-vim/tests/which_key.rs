@@ -180,7 +180,7 @@ fn which_key_lists_remap_continuations() {
     assert_eq!(vim.state().remap_held(), keys("\\"));
     let which = vim.state().which_key().unwrap();
     assert_eq!(which.prefix, "\\");
-    assert_eq!(listed(&which), ["a", "f", "t", "w"]);
+    assert_eq!(listed(&which), ["a", "w", "f", "t"]);
     let f = entry(&which, "f");
     assert_eq!((&f.label, f.group), (&WhichKeyLabel::Group(2), true));
     let w = entry(&which, "w");
@@ -239,14 +239,14 @@ fn which_key_lists_remap_continuations() {
     vim.feed("<Space>").unwrap();
     let which = vim.state().which_key().unwrap();
     assert_eq!(which.prefix, "<Space>");
-    assert_eq!(listed(&which), ["a", "f", "t", "w"]);
+    assert_eq!(listed(&which), ["a", "w", "f", "t"]);
 
     // After a count, the maps still list.
     let mut vim = self::vim(&remaps, "\\");
     vim.feed("2\\").unwrap();
     assert_eq!(
         listed(&vim.state().which_key().unwrap()),
-        ["a", "f", "t", "w"]
+        ["a", "w", "f", "t"]
     );
 }
 

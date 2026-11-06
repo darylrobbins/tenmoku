@@ -142,6 +142,9 @@ A scrolling view's scrollbar. `kiln/crates/kiln-core/src/theme/tokens.rs:Scrollb
   `gutter_active_foreground`, `active_line`, `selection`, `cursor`.
 - Diagnostics: `error`, `warning`, `information`, `hint`.
 - Popovers: `popover_background`, `popover_border`.
+  Which-key's popup reuses the diagnostics colours: keys (as glyphs, `␣` `⇥` `|`)
+  `warning`, a group's title `information`, an item's `foreground`, arrows and its
+  `esc close` hint `gutter_foreground`.
 - Vim jumps: `jump_label`, `jump_label_preview`, `jump_label_foreground`.
 - Git and diffs: `change_added`, `change_modified`, `change_deleted`,
   `diff_added_row`, `diff_removed_row`, `diff_added_word`, `diff_removed_word`,

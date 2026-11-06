@@ -35,7 +35,7 @@ use std::{cell::RefCell, time::Duration};
 
 use fe_command::{CommandId, CommandMeta};
 use fe_keymap::{Key, Keystroke};
-use fe_vim::{Mode, VimKey, WhichKey, WhichKeyEntry, WhichKeyLabel};
+use fe_vim::{Mode, Step, VimKey, WhichKey, WhichKeyEntry, WhichKeyLabel};
 use gpui::{
     App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, deferred, div,
@@ -43,7 +43,7 @@ use gpui::{
 };
 use kiln_platform::keys::{PendingChord, pending_continuations};
 
-use super::{Vim, registry};
+use super::{Vim, registry, which_key_layout as layout};
 use crate::EditorView;
 
 /// `vim.which_key` and `vim.which_key_delay_ms`.
@@ -313,6 +313,35 @@ impl EditorView {
         }
     }
 
+    /// Holds `keys` as vim does when they're typed, then shows the
+    /// which-key popup for what waits after them at once, as if its delay
+    /// had passed: for screenshots of an off-screen window, which is never
+    /// the active one, the only one where keys wait for a longer map or for
+    /// the popup ([`EditorView::takes_keys`]). What it holds waits, with no
+    /// timeout, for the next key. Nothing shows if vim is off or nothing
+    /// waits after `keys`.
+    #[doc(hidden)]
+    pub fn show_which_key_for(
+        &mut self,
+        keys: &[VimKey],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_vim(cx);
+        let Some(state) = self.vim.as_mut() else {
+            return;
+        };
+        for &key in keys {
+            if !matches!(state.feed(key), Step::Wait(_)) {
+                return;
+            }
+        }
+        if let Some((which, target)) = self.which_key_now() {
+            self.which_key.close();
+            self.arm_which_key(which, target, true, window, cx);
+        }
+    }
+
     /// Closes the popup and ends its wait.
     pub(crate) fn close_which_key(&mut self, cx: &mut Context<Self>) {
         if self.which_key.close() {
@@ -406,12 +435,10 @@ fn chord_which_key(chord: &PendingChord, state: &fe_vim::VimState, cx: &App) -> 
     if entries.is_empty() {
         return None;
     }
-    entries.sort_by_cached_key(|entry| {
-        let upper = entry.key.chars().next().is_some_and(char::is_uppercase);
-        (entry.key.to_lowercase(), upper)
-    });
     let prefix = chord.held.iter().map(key_name).collect();
-    Some(WhichKey { prefix, entries })
+    let mut which = WhichKey { prefix, entries };
+    which.sort_entries();
+    Some(which)
 }
 
 /// The key vim reads for `keystroke`, a keystroke of a chord, if any, as
@@ -556,28 +583,61 @@ const MAX_HEIGHT: f32 = 0.5;
 
 /// The popup, while one shows: a panel along the bottom of the editor,
 /// over its text, with the prefix, then each key and its title in columns,
-/// at most half the editor's height, its keys scrolling past that.
+/// items before groups, and a hint to close it along the bottom; at most
+/// half the editor's height, its keys scrolling past that. Each key shows
+/// as its glyph ([`layout::key_glyph`]) in a column as wide as the widest,
+/// so every arrow starts at one x.
 pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElement + use<>> {
     let which = view.which_key_shown()?;
     let theme = &view.theme;
     let column = theme.font_size * COLUMN_CHARS;
-    let entries = which.entries.iter().map(|entry| {
+    let text = cx.text_system();
+    let font = text.resolve_font(&theme.font());
+    let ch = text.ch_advance(font, theme.font_size);
+    let ch = ch.unwrap_or(theme.font_size * 0.6);
+    let glyphs: Vec<String> = (which.entries.iter())
+        .map(|entry| layout::key_glyph(&entry.key))
+        .collect();
+    let measure = |glyph: &str| {
+        (glyph.chars())
+            .map(|c| f32::from(text.layout_width(font, theme.font_size, c)))
+            .sum()
+    };
+    let keys = ch * layout::key_column(glyphs.iter().map(String::as_str), measure, ch.into());
+    let entries = which.entries.iter().zip(glyphs).map(|(entry, glyph)| {
+        let colors = layout::entry_colors(entry, theme);
         let title = title(entry, cx);
         let title = match &entry.label {
-            WhichKeyLabel::Group(_) => div().text_color(theme.information).child(title),
-            _ if entry.group => div().child(format!("{title} +")),
-            _ => div().child(title),
+            WhichKeyLabel::Group(_) => title,
+            _ if entry.group => format!("{title} +"),
+            _ => title,
         };
         let key = entry.key.clone();
+        let arrow = entry.key.clone();
         div()
             .debug_selector(move || format!("which-key-entry-{key}"))
             .w(column)
             .flex()
             .gap_2()
             .overflow_hidden()
-            .child(div().text_color(theme.warning).child(entry.key.clone()))
-            .child(div().text_color(theme.gutter_foreground).child("→"))
-            .child(title)
+            .child(
+                // Shaped, a key can come out a hair wider than measured:
+                // it never wraps.
+                div()
+                    .flex_none()
+                    .w(keys)
+                    .whitespace_nowrap()
+                    .text_color(colors.key)
+                    .child(glyph),
+            )
+            .child(
+                div()
+                    .debug_selector(move || format!("which-key-arrow-{arrow}"))
+                    .flex_none()
+                    .text_color(colors.arrow)
+                    .child("→"),
+            )
+            .child(div().text_color(colors.title).child(title))
     });
     let panel = div()
         .absolute()
@@ -603,7 +663,7 @@ pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElemen
             div()
                 .flex_none()
                 .text_color(theme.gutter_foreground)
-                .child(which.prefix.clone()),
+                .child(layout::keys_glyphs(&which.prefix)),
         )
         .child(
             div()
@@ -615,6 +675,13 @@ pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElemen
                 .flex()
                 .flex_wrap()
                 .children(entries),
+        )
+        .child(
+            div()
+                .debug_selector(|| "which-key-footer".into())
+                .flex_none()
+                .text_color(theme.gutter_foreground)
+                .child(layout::FOOTER),
         );
     Some(deferred(panel))
 }

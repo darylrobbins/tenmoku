@@ -26,8 +26,21 @@ use crate::{Mode, Pending, RemapMode, Step, VimKey, VimState};
 pub struct WhichKey {
     /// The prefix's keys, in vim notation: `g`, or the keys held (`\f`).
     pub prefix: String,
-    /// Sorted by key, case aside, a lowercase one before its uppercase.
+    /// Items first, then groups, each sorted by key, case aside, a
+    /// lowercase one before its uppercase ([`WhichKey::sort_entries`]).
     pub entries: Vec<WhichKeyEntry>,
+}
+
+impl WhichKey {
+    /// Puts the entries in the order a popup lists them: the keys that run
+    /// something first, then the groups ([`WhichKeyEntry::group`]), each by
+    /// key, case aside, a lowercase one before its uppercase.
+    pub fn sort_entries(&mut self) {
+        self.entries.sort_by_cached_key(|entry| {
+            let upper = entry.key.chars().next().is_some_and(char::is_uppercase);
+            (entry.group, entry.key.to_lowercase(), upper)
+        });
+    }
 }
 
 /// One key that goes on from a prefix.
@@ -258,15 +271,13 @@ impl VimState {
         if entries.is_empty() {
             return None;
         }
-        entries.sort_by_cached_key(|entry| {
-            let upper = entry.key.chars().next().is_some_and(char::is_uppercase);
-            (entry.key.to_lowercase(), upper)
-        });
         let prefix = match (keys, builtin) {
             ([], Some((prefix, _))) => prefix.to_string(),
             _ => keys.iter().map(|&key| notation(key)).collect(),
         };
-        Some(WhichKey { prefix, entries })
+        let mut which = WhichKey { prefix, entries };
+        which.sort_entries();
+        Some(which)
     }
 
     /// Whether the reducer takes `key` after `pending`, as

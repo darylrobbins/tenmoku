@@ -310,7 +310,7 @@ fn command_titles_come_from_every_registry(cx: &mut TestAppContext) {
 }
 
 /// With `<leader>ff` and `<leader>w` mapped, the popup after `<leader>`
-/// lists `f` as a group and `w` with its command's title; after `f` it
+/// lists `w` with its command's title, then `f` as a group; after `f` it
 /// repaints at once with `f`'s list. The held keys resolving at
 /// [`CHORD_TIMEOUT`] close it.
 #[gpui::test]
@@ -337,7 +337,7 @@ fn lists_user_remaps(cx: &mut TestAppContext) {
     assert_ne!(undo, "editor.undo");
     assert_eq!(
         titles(&which, cx),
-        [("f".into(), "+1".into()), ("w".into(), undo)]
+        [("w".into(), undo), ("f".into(), "+1".into())]
     );
     draw(cx);
 

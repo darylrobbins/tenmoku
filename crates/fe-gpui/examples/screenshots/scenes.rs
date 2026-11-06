@@ -8,8 +8,13 @@ use fe_editor::{
     diagnostics::{Diagnostic, Severity},
 };
 use fe_gpui::{EditorTheme, EditorView, GutterAnnotation, GutterAnnotations, MinimapOptions};
-use fe_vim::search::{FindQuery, Pattern};
-use gpui::{AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, px, size};
+use fe_vim::{
+    Remap, RemapMode,
+    search::{FindQuery, Pattern},
+};
+use gpui::{
+    AnyWindowHandle, AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, px, size,
+};
 use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
 
 /// The window size of every scene, in logical pixels.
@@ -40,7 +45,12 @@ struct Scene {
     /// Whether the minimap's marks have sources: a find pattern, an error and
     /// a warning, and a diff base ([`add_marks`]). Only in their own scene.
     marks: bool,
+    /// Run once the editor is open and focused, before the capture: keys
+    /// typed, settings set. Whatever it turns on, [`reset`] turns off after.
+    setup: Option<Setup>,
 }
+
+type Setup = fn(&mut VisualTestAppContext, AnyWindowHandle);
 
 type Annotations = &'static [(Range<u32>, &'static str, Option<f32>)];
 
@@ -55,6 +65,7 @@ fn scenes() -> Vec<Scene> {
         top: None,
         sticky_scroll: false,
         marks: false,
+        setup: None,
     };
     let numbered: String = (1..=140)
         .map(|n| {
@@ -100,6 +111,7 @@ fn scenes() -> Vec<Scene> {
             top: None,
             sticky_scroll: false,
             marks: false,
+            setup: None,
         },
         Scene {
             name: "markdown_fence",
@@ -112,6 +124,7 @@ fn scenes() -> Vec<Scene> {
             top: None,
             sticky_scroll: false,
             marks: false,
+            setup: None,
         },
         Scene {
             name: "large_c",
@@ -123,6 +136,7 @@ fn scenes() -> Vec<Scene> {
             top: None,
             sticky_scroll: false,
             marks: false,
+            setup: None,
         },
         Scene {
             name: "annotated_gutter",
@@ -138,6 +152,7 @@ fn scenes() -> Vec<Scene> {
             top: None,
             sticky_scroll: false,
             marks: false,
+            setup: None,
         },
         Scene {
             name: "minimap",
@@ -154,6 +169,7 @@ fn scenes() -> Vec<Scene> {
             top: Some(140.),
             sticky_scroll: false,
             marks: false,
+            setup: None,
         },
         Scene {
             name: "sticky_scroll",
@@ -166,6 +182,7 @@ fn scenes() -> Vec<Scene> {
             top: Some(15.),
             sticky_scroll: true,
             marks: false,
+            setup: None,
         },
         Scene {
             name: "minimap_marks",
@@ -180,6 +197,7 @@ fn scenes() -> Vec<Scene> {
             top: Some(140.),
             sticky_scroll: false,
             marks: true,
+            setup: None,
         },
         Scene {
             name: "minimap_characters",
@@ -194,6 +212,7 @@ fn scenes() -> Vec<Scene> {
             top: Some(140.),
             sticky_scroll: false,
             marks: false,
+            setup: None,
         },
         Scene {
             name: "minimap_left",
@@ -209,8 +228,73 @@ fn scenes() -> Vec<Scene> {
             top: Some(140.),
             sticky_scroll: false,
             marks: true,
+            setup: None,
+        },
+        Scene {
+            name: "which_key_popup",
+            path: "scene.rs",
+            text: RUST.to_owned(),
+            cold: &[],
+            annotations: &[],
+            minimap: None,
+            top: None,
+            sticky_scroll: false,
+            marks: false,
+            setup: Some(leader_popup),
         },
     ]
+}
+
+/// The which_key_popup scene's leader maps: items (one each on `<Space>`,
+/// `<Bar>`, `<Tab>` and `<C-a>`) and groups, one also a map of its own.
+const LEADER_MAPS: &[(&str, &str)] = &[
+    ("<leader><Space>", "<Cmd>fe:editor.select_all<CR>"),
+    ("<leader><Bar>", ":vsplit<CR>"),
+    ("<leader><Tab>", "gt"),
+    ("<leader><C-a>", "ggVG"),
+    ("<leader>u", "<Cmd>fe:editor.undo<CR>"),
+    ("<leader>w", ":w<CR>"),
+    ("<leader>ff", ":find<CR>"),
+    ("<leader>fr", ":browse oldfiles<CR>"),
+    ("<leader>bd", ":bdelete<CR>"),
+    ("<leader>bb", ":buffer #<CR>"),
+    ("<leader>q", ":q<CR>"),
+    ("<leader>qa", ":qa<CR>"),
+];
+
+/// Vim on with [`LEADER_MAPS`], `<Space>` the leader, and `<Space>` held:
+/// the popup shows its keys. An off-screen window is never the active one,
+/// where alone typed keys wait for a map, so the editor holds it directly.
+fn leader_popup(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    cx.update(|cx| {
+        fe_gpui::set_vim_enabled(cx, true);
+        let remaps: Vec<Remap> = (LEADER_MAPS.iter())
+            .map(|&(from, to)| Remap {
+                modes: vec![RemapMode::Normal],
+                from: from.into(),
+                to: to.into(),
+                recursive: false,
+            })
+            .collect();
+        let issues = fe_gpui::set_vim_remaps(cx, &remaps, "<Space>");
+        assert!(issues.is_empty(), "{issues:?}");
+    });
+    cx.run_until_parked();
+    cx.update_window(window, |root, window, cx| {
+        let view = root.downcast::<EditorView>().expect("an editor");
+        let space = [fe_vim::VimKey::Char(' ')];
+        view.update(cx, |view, cx| view.show_which_key_for(&space, window, cx));
+    })
+    .expect("the scene's window");
+}
+
+/// Undoes what a scene's setup turned on, for the scenes after it.
+fn reset(cx: &mut VisualTestAppContext) {
+    cx.update(|cx| {
+        fe_gpui::set_vim_remaps(cx, &[], "\\");
+        fe_gpui::set_vim_enabled(cx, false);
+    });
+    cx.run_until_parked();
 }
 
 /// About 300 rows of Rust: [`RUST`] in nine modules, the caret on row 150.
@@ -444,6 +528,7 @@ fn capture(
     size: Size<Pixels>,
     font_family: &'static str,
     gutter: bool,
+    setup: Option<Setup>,
 ) -> Result<(RgbaImage, usize)> {
     let window = cx.open_offscreen_window(size, |_, cx| {
         let theme = EditorTheme {
@@ -472,6 +557,9 @@ fn capture(
         window.focus(&view.focus_handle(cx), cx);
         view
     })?;
+    if let Some(setup) = setup {
+        setup(cx, window.into());
+    }
     // The view notifies itself when background work lands or a frame asks
     // for another (as while soft wrap catches up): draw until it's quiet.
     let mut settle = Settle::new();
@@ -545,7 +633,11 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
             SCENE_SIZE,
             FONT_FAMILY,
             true,
+            scene.setup,
         )?;
+        if scene.setup.is_some() {
+            reset(cx);
+        }
         if !scene.cold.is_empty() && notifications < 2 {
             return Err(format!(
                 "{}: no background work landed after the language loaded",
@@ -566,6 +658,7 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
         OVERHANG_SIZE,
         OVERHANG_FONT,
         false,
+        None,
     )?;
     passed &= goldens.check("inline_diagnostics_overhang", &image)?;
     Ok(passed)
@@ -587,6 +680,7 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
         size,
         FONT_FAMILY,
         true,
+        None,
     )?
     .0
     .save(out)?;

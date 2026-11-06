@@ -154,6 +154,7 @@ use crate::{
 };
 
 pub(crate) mod which_key;
+mod which_key_layout;
 
 pub use which_key::{set_host_commands, set_vim_which_key};
 
@@ -3622,6 +3623,9 @@ mod which_key_tests;
 
 #[cfg(test)]
 mod which_key_chord_tests;
+
+#[cfg(test)]
+mod which_key_layout_tests;
 
 #[cfg(test)]
 mod remap_cmd_tests;
