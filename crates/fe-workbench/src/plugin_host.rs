@@ -24,8 +24,9 @@
 //!   of the windows open at load (a plugin with an `fs` grant reloads when
 //!   they change), secrets in the platform's secret store and the network
 //!   through fe-net. Of the editor's slices, the buffers and the editor's
-//!   commands are reached through [`crate::plugin_bridge`]; the rest answer
-//!   `unimplemented` until their cards land.
+//!   commands are reached through [`crate::plugin_bridge`], and the
+//!   decorations and status items drawn through [`crate::plugin_paint`];
+//!   the rest answer `unimplemented` until their cards land.
 //! - **Reload.** A changed manifest or component reloads the plugin, its old
 //!   version shut down before the new one's `init`; with the same grants
 //!   nothing is asked. An update that asks for more keeps the old version
@@ -113,6 +114,7 @@ use crate::{
     KEY_CONTEXT, PendingPluginGrant, PluginAnswer, PluginAsk, RootChanged, TrustChanged, Workbench,
     plugin_bridge::{Bridge, CallDeadline},
     plugin_events::{self, Inbox},
+    plugin_paint::{self, Paint},
     show_plugin_prompt,
 };
 
@@ -238,7 +240,9 @@ pub fn set_plugin_dirs(cx: &mut App, state_dir: PathBuf, cache_dir: PathBuf) {
 
 /// The plugins among `set`'s extensions, from the extensions service: each
 /// user extension with `[contributes.plugin]`. One a workspace contributes
-/// is refused, with a warning. The plugins are decided again.
+/// is refused, with a warning. The plugins are decided again, and those
+/// running hear the config reloaded: a workspace's watcher applies its
+/// extensions with no batch of changed files to tell of it.
 pub fn set_plugin_extensions(cx: &mut App, set: &ExtensionSet) {
     let found = set
         .sourced()
@@ -258,6 +262,7 @@ pub fn set_plugin_extensions(cx: &mut App, set: &ExtensionSet) {
         })
         .collect();
     set_plugins(cx, found);
+    plugin_events::config_reloaded(cx);
 }
 
 /// Every plugin found, in extension order, and where it stands.
@@ -467,6 +472,12 @@ pub(crate) fn dispatch(run: &fe_gpui::commands::RunCommand, cx: &mut App) -> boo
     })
     .detach();
     true
+}
+
+/// The host plugins' commands are registered on and authorized against,
+/// once a plugin has loaded.
+pub(crate) fn command_host(cx: &App) -> Option<CommandHost> {
+    cx.try_global::<PluginHost>()?.commands.clone()
 }
 
 /// Whether `invocation` may run `meta`'s command, as the command registry
@@ -888,8 +899,11 @@ fn host_mut(cx: &mut App) -> &mut PluginHost {
             .detach();
         // A closed window's buffers may be open nowhere else now, whoever
         // still holds its workbench.
-        cx.on_window_closed(|cx, _| cx.defer(plugin_events::sync))
-            .detach();
+        cx.on_window_closed(|cx, _| {
+            cx.defer(plugin_events::sync);
+            cx.defer(plugin_paint::sync);
+        })
+        .detach();
     }
     cx.global_mut::<PluginHost>()
 }
@@ -1283,6 +1297,7 @@ fn start_unload(id: &str, cx: &mut App) {
         return;
     };
     host.slots.get_mut(id).expect("withdrawn").busy = true;
+    plugin_paint::unload(id, cx);
     let shut_down = cx.background_spawn(async move { lock(&loaded.plugin).shutdown() });
     let id = id.to_owned();
     cx.spawn(async move |cx| {
@@ -1326,6 +1341,7 @@ fn start_load(id: &str, cx: &mut App) {
         host.commands = Some(commands);
         host.bridge = Some(bridge);
     }
+    let paint = plugin_paint::paint(cx);
     let host = cx.global_mut::<PluginHost>();
     let old = withdraw(id, host);
     let dirs = host.dirs.clone();
@@ -1348,8 +1364,13 @@ fn start_load(id: &str, cx: &mut App) {
             roots: host.workspace.clone(),
         },
         record: record(host),
+        paint,
         ticker,
     };
+    if old.is_some() {
+        plugin_paint::unload(id, cx);
+    }
+    let host = cx.global_mut::<PluginHost>();
     #[cfg(test)]
     let gate = host.load_gate.clone();
     let slot = host.slots.get_mut(id).expect("driven");
@@ -1497,6 +1518,14 @@ pub(crate) fn plugin_handle(id: &str, cx: &App) -> Option<kiln_plugin::commands:
     Some(handle)
 }
 
+/// The open buffers as a plugin reaches them, for a test to call into.
+#[cfg(test)]
+pub(crate) fn bridge_buffers(cx: &App) -> Option<Box<dyn fe_plugin::editor::BufferAccess>> {
+    let host = cx.try_global::<PluginHost>()?;
+    let bridge = host.bridge.as_ref()?;
+    Some(bridge.buffers(CallDeadline::default(), host.limits.call_deadline))
+}
+
 /// Plugin `id`'s running load's events, for a test to watch.
 #[cfg(test)]
 pub(crate) fn plugin_inbox(id: &str, cx: &App) -> Option<Inbox> {
@@ -1524,6 +1553,7 @@ fn stopped_running(id: &str, load: u64, diagnostic: Diagnostic, cx: &mut App) {
     let diagnostic = PluginDiagnostic::from(diagnostic);
     slot.stopped = Some((loaded.identity, diagnostic.clone()));
     slot.state = PluginState::Stopped(diagnostic);
+    plugin_paint::unload(id, cx);
     cx.refresh_windows();
 }
 
@@ -1557,6 +1587,8 @@ struct LoadContext {
     store: Option<GrantStore>,
     workspace: Workspace,
     record: Record,
+    /// What its decorations and status items are drawn from.
+    paint: Paint,
     /// Starts what enforces the plugin's call deadline.
     ticker: fn(&PluginEngine) -> Result<(), String>,
 }
@@ -1599,11 +1631,16 @@ impl LoadContext {
             Some(store) => process.recorded_in(store.clone(), id),
             None => process,
         };
-        let deadline = CallDeadline::default();
+        // The buffers' wait doesn't count the time the call's program runs
+        // took either.
+        let deadline = CallDeadline::new(kiln.program_runs.clone());
         let buffers = self.bridge.buffers(deadline.clone(), limits.call_deadline);
+        let shown = self.bridge.buffers(deadline.clone(), limits.call_deadline);
         let host = fe_plugin::HostState {
             kiln,
             editor: fe_plugin::editor::State::new(id, grants, &limits, buffers),
+            decorations: self.paint.decorations(id, grants, shown),
+            status: self.paint.status(id, grants),
             ..fe_plugin::HostState::default()
         };
         let inbox = Inbox::new(&limits);
@@ -1617,12 +1654,17 @@ impl LoadContext {
             host,
             inbox.clone(),
             deadline,
+            self.paint.clone(),
             &self.workspace,
             self.record.clone(),
             self.ticker,
             cancel.clone(),
         )
-        .map_err(|error| failed(error.to_string()))?;
+        .map_err(|error| {
+            // Whatever its `init` set before it failed goes with it.
+            self.paint.forget(id);
+            failed(error.to_string())
+        })?;
         let plugin = Arc::new(Mutex::new(plugin));
         let handle: kiln_plugin::commands::PluginHandle = plugin.clone();
         let commands = self.commands.commands(id, &handle);
@@ -2014,6 +2056,7 @@ impl HostedPlugin {
         host: fe_plugin::HostState,
         inbox: Inbox,
         deadline: CallDeadline,
+        paint: Paint,
         workspace: &Workspace,
         record: Record,
         ticker: fn(&PluginEngine) -> Result<(), String>,
@@ -2064,6 +2107,8 @@ impl HostedPlugin {
             deadline: None,
             call_deadline: deadline,
             timed_out: false,
+            paint,
+            painted: false,
         };
         let guest = Guest {
             id: id.to_owned(),
@@ -2168,7 +2213,10 @@ fn linker(engine: &PluginEngine) -> wasmtime::Result<Linker<Data>> {
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     bindings::add_to_linker(&mut linker, |data| &mut data.host.kiln)?;
     buffer::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| &mut data.host)?;
+    // A call that reaches the decorations or the status items repaints
+    // them once it returns.
     decorations::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| {
+        data.painted = true;
         &mut data.host
     })?;
     diagnostics::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| {
@@ -2177,7 +2225,10 @@ fn linker(engine: &PluginEngine) -> wasmtime::Result<Linker<Data>> {
     formatting::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| {
         &mut data.host
     })?;
-    status::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| &mut data.host)?;
+    status::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| {
+        data.painted = true;
+        &mut data.host
+    })?;
     // kiln-plugin's `subscribe` can't reach the plugin's queue: this host's
     // can, in its store.
     linker.allow_shadowing(true);
@@ -2207,6 +2258,10 @@ struct Data {
     call_deadline: CallDeadline,
     /// Whether the epoch stopped the running call at its deadline.
     timed_out: bool,
+    /// What the plugin's decorations and status items are drawn from.
+    paint: Paint,
+    /// Whether the running call reached them.
+    painted: bool,
 }
 
 impl WasiView for Data {
@@ -2444,6 +2499,9 @@ impl Guest {
         data.deadline = None;
         data.host.kiln.deadline = None;
         data.call_deadline.set(None);
+        if std::mem::take(&mut data.painted) {
+            data.paint.repaint();
+        }
         let timed_out = data.timed_out || overran;
         match returned {
             Some(Ok(returned)) if !timed_out => Ok(returned),
@@ -2564,6 +2622,10 @@ fn wake_on_tick(waker: &Waker) {
         waiting.push(waker.clone());
     }
 }
+
+#[cfg(test)]
+#[path = "plugin_host_paint_tests.rs"]
+mod plugin_host_paint_tests;
 
 #[cfg(test)]
 #[path = "plugin_host_tests.rs"]

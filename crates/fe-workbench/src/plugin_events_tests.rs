@@ -19,7 +19,7 @@ use kiln::{
     Config,
     core::{
         ApiVersion,
-        extension::{ExtensionApi, load_manifest},
+        extension::{ExtensionApi, ExtensionSet, load_manifest},
     },
     platform::config::{BatchSender, batch_channel},
 };
@@ -39,7 +39,7 @@ use crate::{
     plugin_bridge::{buffer_id, snapshot},
     plugin_host::{
         Found, GRANTS_FILE, PluginHost, PluginState, plugin_inbox, plugin_states, set_plugin_dirs,
-        set_plugins, set_preview,
+        set_plugin_extensions, set_plugins, set_preview,
     },
 };
 
@@ -754,4 +754,31 @@ fn a_keymap_reload_sends_config_reloaded(cx: &mut TestAppContext) {
     // Only the keymap's text changes: the settings stay as they were.
     settings.reload_keymap("# Nothing bound.\n", cx);
     assert_eq!(delivered(cx, &inbox, 1), [Event::ConfigReloaded]);
+}
+
+/// Extensions a workspace's watcher applies, which publishes no batch of
+/// changed files, still tell a plugin the config reloaded.
+#[gpui::test]
+fn extensions_applied_without_changed_files_tell_of_a_reload(cx: &mut TestAppContext) {
+    let (dir, _settings) = start(cx);
+    let inbox = load(cx, &dir, CONFIG);
+    inbox.hold(true);
+    let api = ExtensionApi {
+        app: fe_config::paths::app_id().short,
+        version: ApiVersion { major: 1, minor: 1 },
+        reserved: Vec::new(),
+        kinds: vec![crate::plugin_host::plugin_kind()],
+        allowed_licenses: None,
+        only_kinds: None,
+    };
+    let set = ExtensionSet::discover(&dir.path().join("extensions"), &api);
+    // As the watcher's callback hands them over.
+    cx.update(|cx| set_plugin_extensions(cx, &set));
+    cx.run_until_parked();
+    assert_eq!(inbox.pushed(), [HostEvent::ConfigReloaded]);
+    let running = cx.update(|cx| {
+        (plugin_states(cx).iter())
+            .any(|info| info.id == LISTENER && info.state == PluginState::Running)
+    });
+    assert!(running, "the same extensions keep it running");
 }

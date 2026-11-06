@@ -11,7 +11,8 @@
 //! - **Buffers.** The buffers live on the main thread, where their views
 //!   are, and a plugin calls on its own thread, so each call is handed off
 //!   to the main thread with a bounded wait: the plugin waits for it until
-//!   its call's deadline ([`CallDeadline`]) and no longer, the import
+//!   its call's deadline ([`CallDeadline`]), which doesn't count the time
+//!   the call's program runs took, and no longer, the import
 //!   failing then. A call the main thread hasn't started by then never
 //!   runs ([`Handoff`]). A read gives the text, version, path
 //!   and language; an edit goes in through [`fe_buffer::Buffer::edit_from`]
@@ -44,6 +45,7 @@ use gpui::{App, Entity, Focusable as _, Global};
 use kiln_plugin::{
     bindings::Error,
     commands::{CommandHost, Dispatcher, Request},
+    process::ProgramBudget,
 };
 
 use crate::Workbench;
@@ -190,17 +192,29 @@ fn lock<T: ?Sized>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// When a plugin's running call must end, which its runner sets and clears
-/// around each call. Clones share it.
+/// around each call, moved back by the time the call's program runs took,
+/// as the runner's is. Clones share it.
 #[derive(Clone, Default)]
-pub(crate) struct CallDeadline(Arc<Mutex<Option<Instant>>>);
+pub(crate) struct CallDeadline {
+    deadline: Arc<Mutex<Option<Instant>>>,
+    program_runs: ProgramBudget,
+}
 
 impl CallDeadline {
+    /// One the call's program runs, charged to `program_runs`, move back.
+    pub(crate) fn new(program_runs: ProgramBudget) -> Self {
+        Self {
+            deadline: Arc::default(),
+            program_runs,
+        }
+    }
+
     pub(crate) fn set(&self, deadline: Option<Instant>) {
-        *lock(&self.0) = deadline;
+        *lock(&self.deadline) = deadline;
     }
 
     fn get(&self) -> Option<Instant> {
-        *lock(&self.0)
+        self.program_runs.extend(*lock(&self.deadline))
     }
 }
 
@@ -423,7 +437,7 @@ pub(crate) fn advance(buffer: BufferId, version: Version, cx: &mut App) -> Optio
 /// The id plugins know `editor`'s buffer by, if it's open in a workbench.
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "decorations name buffers by it once they land")
+    expect(dead_code, reason = "the tests find an editor's buffer by it")
 )]
 pub(crate) fn buffer_id(editor: &Entity<EditorView>, cx: &mut App) -> Option<u64> {
     (open_editors(cx).into_iter())

@@ -757,8 +757,10 @@ impl Workbench {
         self.sync_problems(cx);
         self.sync_backups(cx);
         self.sync_auto_save(cx);
-        // Plugins hear of buffers opened and closed, and the focus moving.
+        // Plugins hear of buffers opened and closed, and the focus moving;
+        // the editors opened paint their decorations.
         cx.defer(crate::plugin_events::sync);
+        cx.defer(crate::plugin_paint::sync);
         self.sync_start_page(cx);
     }
 
@@ -922,7 +924,8 @@ impl Workbench {
 
     /// Runs a typed command (the `workbench.*` tab commands, the `pane.*`
     /// commands, the dock's and the panels') as its action, a git command,
-    /// or a plugin's command, off the main thread; others go on to the app.
+    /// a click on a plugin's status item, or a plugin's command, off the
+    /// main thread; others go on to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         // Under the sheet, only the app's and the window's own.
         let command = run.0.command.as_str();
@@ -932,6 +935,10 @@ impl Workbench {
         // A typed command, as its action, whose handler notes it ran: the
         // tab and pane commands.
         if kiln::commands::dispatch_typed(run, window, cx) {
+            return;
+        }
+        let editor = self.active_editor(cx).cloned();
+        if crate::plugin_paint::clicked(run, editor, window, cx) {
             return;
         }
         if crate::plugin_host::dispatch(run, cx) {

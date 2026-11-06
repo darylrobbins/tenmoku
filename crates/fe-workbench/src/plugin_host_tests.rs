@@ -1060,6 +1060,7 @@ fn no_deadline_ticker_no_plugin(cx: &mut TestAppContext) {
         store: None,
         workspace: kiln_plugin::fs::Workspace::default(),
         record: super::record(cx.global::<PluginHost>()),
+        paint: crate::plugin_paint::paint(cx),
         ticker: |_| Err("no thread to enforce plugins' deadlines: refused".into()),
     });
     let artifact = super::Artifact {

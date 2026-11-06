@@ -31,7 +31,7 @@ use kiln_plugin::{
     runner::{Call, Reply},
 };
 
-use super::{Handoff, buffer_id, snapshot};
+use super::{Bridge, CallDeadline, Handoff, buffer_id, serve, snapshot};
 use crate::{
     Launch, Workbench,
     plugin_host::{
@@ -571,4 +571,55 @@ fn a_hand_off_running_past_its_deadline_stops_the_wait() {
     let main = std::thread::spawn(move || theirs.finish(7));
     assert_eq!(handoff.wait().unwrap(), 7);
     main.join().unwrap();
+}
+
+/// A program a plugin's call runs moves the call's deadline back on the
+/// buffers too: the call reads its buffer after a run that outlasted the
+/// deadline it started with.
+#[gpui::test]
+fn a_program_run_leaves_the_call_its_time_on_the_buffers(cx: &mut TestAppContext) {
+    use kiln_plugin::bindings::kiln::extension::process::Host as _;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = start(cx, "alpha\n", false);
+    let shown = window(cx, Some((dir.path().join("a.txt"), "alpha\n")));
+    let id = active_id(cx, shown);
+    let (bridge, jobs) = Bridge::new();
+    let commands = kiln_plugin::commands::CommandHost::new(Vec::new(), bridge.dispatcher());
+    cx.update(|cx| serve(jobs, &commands, cx));
+    let bin = dir.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let nap = bin.join("nap");
+    fs::write(&nap, "#!/bin/sh\nexec sleep 0.5\n").unwrap();
+    fs::set_permissions(&nap, fs::Permissions::from_mode(0o755)).unwrap();
+    let nap = kiln_plugin::grants::resolve_program("nap", bin.as_os_str()).unwrap();
+    let record = kiln_plugin::grants::GrantRecord {
+        version: Some((1, 0, 0)),
+        granted: [Capability::parse("process.spawn:nap").unwrap()]
+            .into_iter()
+            .collect(),
+        programs: [("nap".to_owned(), nap)].into_iter().collect(),
+        ..Default::default()
+    };
+    let limits = kiln_plugin::limits::Limits::default();
+    let mut kiln = kiln_plugin::bindings::HostState::new(Box::new(|_, _| {}));
+    kiln.process = kiln_plugin::process::State::new(record, &limits);
+    let deadline = CallDeadline::new(kiln.program_runs.clone());
+    let mut buffers = bridge.buffers(deadline.clone(), Duration::ZERO);
+    // As the runner starts a call whose deadline the run outlasts.
+    kiln.program_runs.arm(kiln_plugin::limits::PROGRAM_DEADLINE);
+    deadline.set(Some(Instant::now() + Duration::from_millis(200)));
+    let call = std::thread::spawn(move || {
+        kiln.spawn("nap".into(), Vec::new(), None).unwrap();
+        buffers
+            .snapshot(id)
+            .map(|text| text.snapshot.text().to_string())
+    });
+    let waited = Instant::now() + Duration::from_secs(30);
+    while !call.is_finished() {
+        assert!(Instant::now() < waited, "the call didn't return");
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(call.join().unwrap().as_deref(), Some("alpha\n"));
 }

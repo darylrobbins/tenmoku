@@ -64,6 +64,7 @@ mod plugin_bridge;
 mod plugin_events;
 mod plugin_host;
 mod plugin_manage;
+mod plugin_paint;
 mod plugin_prompt;
 mod preserve_case;
 mod project_panel;
