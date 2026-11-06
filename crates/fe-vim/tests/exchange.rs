@@ -189,6 +189,14 @@ fn marked_rows_survive_their_boundaries() {
     check("a\nb\nc\nd", (0, 0), "3cxxddGcxx", "d\nb\nc", (1, 0));
     check("a\nb\nc\nd", (0, 0), "3cxxjjddGcxx", "d\na\nb", (1, 0));
     check("a\nb\nc\nd\ne", (0, 0), "3cxxddjddGcxx", "e\nd\nb", (2, 0));
+    // Sequential deletions of the last two marked rows leave the next row out.
+    check(
+        "a\nb\nc\nd\ne",
+        (0, 0),
+        "3cxxjjddkddGcxx",
+        "e\nd\na",
+        (2, 0),
+    );
     // A line break typed inside the last row leaves the split-off text in.
     check("ab\nc", (0, 0), "cxxli<CR><Esc>Gcxx", "c\na\nb", (1, 0));
 }

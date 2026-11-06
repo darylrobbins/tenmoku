@@ -163,7 +163,7 @@ impl Trace {
             });
             let after_len = len + added - removed;
             if dead {
-                tail = tail.map(|at| map(at, true, edits).min(after_len));
+                tail = tail.map(|at| survive(at, edits, after_len));
             } else {
                 let covers = |from: usize, to: usize| {
                     edits
@@ -199,6 +199,20 @@ impl Trace {
             tail,
             last: last.map(|(from, _)| from),
         })
+    }
+}
+
+/// The tail boundary after `edits`: one inside text they delete falls back to
+/// where the rows before the deleted ones end, not onto the row that now
+/// starts there.
+fn survive(at: usize, edits: &[Edit], after_len: usize) -> usize {
+    let mapped = map(at, true, edits).min(after_len);
+    let deleted = edits
+        .iter()
+        .find(|edit| edit.old.start < at && edit.old.end >= at && edit.new.is_empty());
+    match deleted {
+        Some(edit) if mapped < after_len && edit.new.start > 0 => mapped - 1,
+        _ => mapped,
     }
 }
 
