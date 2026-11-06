@@ -14,12 +14,18 @@ use crate::scenes::{capture_with, goldens, use_settings};
 const ICONS_SIZE: Size<Pixels> = size(px(480.), px(360.));
 
 /// Each scene: its golden, its bundled theme, and the settings that choose it.
+/// The Start page is off: it would fill the empty pane, and its recent folders
+/// list the scene's temporary directory.
 const SCENES: [(&str, &str, &str); 2] = [
-    ("file_icons_dark", "tenmoku-dark", ""),
+    (
+        "file_icons_dark",
+        "tenmoku-dark",
+        "[workbench]\nstart_page = false\n",
+    ),
     (
         "file_icons_light",
         "tenmoku-light",
-        "[theme]\nmode = \"light\"\n",
+        "[theme]\nmode = \"light\"\n\n[workbench]\nstart_page = false\n",
     ),
 ];
 
