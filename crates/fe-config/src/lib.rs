@@ -19,6 +19,7 @@
 pub mod chat_models;
 pub mod editorconfig;
 pub mod first_run;
+pub mod harpoon;
 pub mod paths;
 pub mod recent;
 pub mod settings;
@@ -34,6 +35,7 @@ pub use kiln_core::{diagnostic, layers, trust, watch};
 
 pub use diagnostic::{Diagnostic, Severity};
 pub use editorconfig::{EditorConfig, EndOfLine, IndentKind, IndentSize, editorconfig_for};
+pub use harpoon::MarkList;
 pub use layers::{Layer, load_layer, merge, parse_layer};
 pub use paths::{
     APP_NAME, config_dir, config_dir_from, project_settings_path, user_settings_path,

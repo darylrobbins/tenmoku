@@ -17,6 +17,8 @@ mod sparkle;
 #[cfg(test)]
 mod sparkle_tests;
 mod theme;
+#[cfg(test)]
+mod vim_lazyvim_harpoon_tests;
 mod vim_remaps;
 mod wait;
 mod workspace_extensions;

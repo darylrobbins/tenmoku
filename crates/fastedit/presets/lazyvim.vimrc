@@ -58,6 +58,15 @@ nnoremap <C-j> <Cmd>fe:pane.focus_down<CR>
 nnoremap <C-k> <Cmd>fe:pane.focus_up<CR>
 nnoremap <C-l> <Cmd>fe:pane.focus_right<CR>
 
+" harpoon
+nnoremap <leader>H <Cmd>fe:workbench.harpoon_add<CR>
+nnoremap <leader>h <Cmd>fe:workbench.harpoon_toggle_list<CR>
+nnoremap <leader>1 <Cmd>fe:workbench.harpoon_jump1<CR>
+nnoremap <leader>2 <Cmd>fe:workbench.harpoon_jump2<CR>
+nnoremap <leader>3 <Cmd>fe:workbench.harpoon_jump3<CR>
+nnoremap <leader>4 <Cmd>fe:workbench.harpoon_jump4<CR>
+nnoremap <leader>5 <Cmd>fe:workbench.harpoon_jump5<CR>
+
 " quit, ui
 nnoremap <leader>qq <Cmd>fe:app.quit<CR>
 nnoremap <leader>uw <Cmd>fe:editor.toggle_soft_wrap<CR>

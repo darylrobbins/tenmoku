@@ -33,6 +33,7 @@ mod git;
 mod git_panel;
 mod go_to_line;
 mod grammar_prompt;
+mod harpoon;
 mod hierarchy_panel;
 mod ignore_assist;
 mod ignore_diagnostics;

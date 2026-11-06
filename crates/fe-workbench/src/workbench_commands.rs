@@ -1194,6 +1194,81 @@ impl Workbench {
         self.recent_command(RecentOp::OpenInNewWindow, cx);
     }
 
+    /// Harpoon: Add File
+    #[command(id = "workbench.harpoon_add")]
+    fn harpoon_add_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.harpoon_add(cx.cx);
+    }
+
+    /// Harpoon: Show List
+    #[command(id = "workbench.harpoon_toggle_list")]
+    fn harpoon_toggle_list_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.harpoon_toggle_list(cx.window, cx.cx);
+    }
+
+    /// Harpoon: Remove File
+    #[command(id = "workbench.harpoon_remove_current")]
+    fn harpoon_remove_current_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.harpoon_remove_current(cx.cx);
+    }
+
+    /// Harpoon: Jump to File 1
+    #[command(id = "workbench.harpoon_jump1")]
+    fn harpoon_jump1(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(1, cx);
+    }
+
+    /// Harpoon: Jump to File 2
+    #[command(id = "workbench.harpoon_jump2")]
+    fn harpoon_jump2(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(2, cx);
+    }
+
+    /// Harpoon: Jump to File 3
+    #[command(id = "workbench.harpoon_jump3")]
+    fn harpoon_jump3(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(3, cx);
+    }
+
+    /// Harpoon: Jump to File 4
+    #[command(id = "workbench.harpoon_jump4")]
+    fn harpoon_jump4(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(4, cx);
+    }
+
+    /// Harpoon: Jump to File 5
+    #[command(id = "workbench.harpoon_jump5")]
+    fn harpoon_jump5(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(5, cx);
+    }
+
+    /// Harpoon: Jump to File 6
+    #[command(id = "workbench.harpoon_jump6")]
+    fn harpoon_jump6(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(6, cx);
+    }
+
+    /// Harpoon: Jump to File 7
+    #[command(id = "workbench.harpoon_jump7")]
+    fn harpoon_jump7(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(7, cx);
+    }
+
+    /// Harpoon: Jump to File 8
+    #[command(id = "workbench.harpoon_jump8")]
+    fn harpoon_jump8(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(8, cx);
+    }
+
+    /// Harpoon: Jump to File 9
+    #[command(id = "workbench.harpoon_jump9")]
+    fn harpoon_jump9(&mut self, cx: &mut Cx<Self>) {
+        self.harpoon_jump_command(9, cx);
+    }
+
     /// Tasks: Run Task…
     #[command(id = "tasks.run")]
     fn run_task_command(&mut self, cx: &mut Cx<Self>) {
@@ -1618,6 +1693,12 @@ impl Workbench {
     fn nav_command(&mut self, op: NavOp, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.run_nav_op(op, cx.window, cx.cx);
+    }
+
+    /// Opens the harpoon list's file in `slot`.
+    fn harpoon_jump_command(&mut self, slot: usize, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.harpoon_jump(slot, cx.window, cx.cx);
     }
 
     /// Runs the recent command `op`.

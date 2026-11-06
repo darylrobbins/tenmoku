@@ -49,6 +49,13 @@ const TABLE: &[(&str, &str)] = &[
     ("<C-j>", "pane.focus_down"),
     ("<C-k>", "pane.focus_up"),
     ("<C-l>", "pane.focus_right"),
+    ("<leader>H", "workbench.harpoon_add"),
+    ("<leader>h", "workbench.harpoon_toggle_list"),
+    ("<leader>1", "workbench.harpoon_jump1"),
+    ("<leader>2", "workbench.harpoon_jump2"),
+    ("<leader>3", "workbench.harpoon_jump3"),
+    ("<leader>4", "workbench.harpoon_jump4"),
+    ("<leader>5", "workbench.harpoon_jump5"),
     ("<leader>qq", "app.quit"),
     ("<leader>uw", "editor.toggle_soft_wrap"),
 ];
