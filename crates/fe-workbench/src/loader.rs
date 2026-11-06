@@ -13,14 +13,15 @@
 
 use std::{
     fs::File,
-    io,
+    io::{self, Seek as _, SeekFrom},
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::Instant,
 };
 
-use fe_buffer::{Buffer, DecodedFile, DiskStamp, FileEncoding};
+use fe_buffer::{Buffer, BufferId, DecodedFile, DiskStamp, Encoding, FileEncoding};
+use fe_config::editorconfig::Charset;
 use fe_fileview::{FileView, LineIndex};
 
 /// Files this large or larger open read-only in a viewer, unread.
@@ -181,15 +182,102 @@ use test_support::{build_index, threshold};
 /// Reads `path` into a buffer, detecting its encoding (`EditorModel::open`
 /// doesn't), so saving writes it back the same way, with the file's stamp
 /// ([`Buffer::from_file`]), so saving refuses a file changed since. A
-/// missing file is `Ok(None)`: a new file, which saves as UTF-8; open it in
-/// [`buffer_or_new`].
+/// missing file is `Ok(None)`: a new file; open it in [`buffer_or_new`].
+///
+/// A `.editorconfig` `charset` decides the encoding of a file whose bytes
+/// don't say otherwise (see `read_in_charset`).
 pub fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
     let file = match File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    Buffer::from_file(file).map(Some)
+    match fe_config::editorconfig_for(&path).charset {
+        Some(charset) => read_in_charset(file, &path, charset).map(Some),
+        None => Buffer::from_file(file).map(Some),
+    }
+}
+
+/// The encoding a `.editorconfig` `charset` reads and writes files in:
+/// `latin1` is windows-1252, as encoding_rs (the WHATWG) maps the label,
+/// and UTF-16 has a BOM, which EditorConfig has no value to leave out.
+pub(crate) fn charset_encoding(charset: Charset) -> FileEncoding {
+    let (encoding, bom) = match charset {
+        Charset::Latin1 => (
+            Encoding::for_label(b"latin1").expect("encoding_rs knows latin1"),
+            false,
+        ),
+        Charset::Utf8 => (Encoding::for_label(b"utf-8").expect("UTF-8"), false),
+        Charset::Utf8Bom => (Encoding::for_label(b"utf-8").expect("UTF-8"), true),
+        Charset::Utf16Be => (
+            Encoding::for_label(b"utf-16be").expect("encoding_rs knows UTF-16BE"),
+            true,
+        ),
+        Charset::Utf16Le => (
+            Encoding::for_label(b"utf-16le").expect("encoding_rs knows UTF-16LE"),
+            true,
+        ),
+    };
+    FileEncoding { encoding, bom }
+}
+
+/// Reads `file` (at `path`) as [`read`] does under `charset`. The bytes
+/// clearly disagree with it when they start with another encoding's BOM,
+/// hold BOM-less UTF-16 (by its zero bytes) that isn't the charset's, or
+/// don't decode cleanly in the charset's encoding: then the file reads in
+/// the encoding detected, as [`Buffer::from_file`] reads it, with a
+/// warning. Otherwise it reads in the charset's encoding, and saves in it,
+/// BOM included: a file whose BOM differs from the charset's needs saving.
+fn read_in_charset(file: File, path: &Path, charset: Charset) -> io::Result<Buffer> {
+    let wanted = charset_encoding(charset);
+    let detected = FileEncoding::detect(&file)?;
+    (&file).seek(SeekFrom::Start(0))?;
+    let zero_bytes_utf16 = !detected.bom && is_utf16(detected.encoding);
+    let mut clash = (detected.bom || zero_bytes_utf16) && detected.encoding != wanted.encoding;
+    let buffer = if clash {
+        None
+    } else {
+        let buffer = Buffer::from_file_with(file.try_clone()?, wanted)?;
+        clash = replaced_on_read(&buffer);
+        (!clash).then_some(buffer)
+    };
+    match buffer {
+        Some(mut buffer) => {
+            buffer.set_encoding(wanted);
+            Ok(buffer)
+        }
+        None => {
+            (&file).seek(SeekFrom::Start(0))?;
+            let buffer = Buffer::from_file(file)?;
+            log::warn!(
+                "{} doesn't hold {} text, as its .editorconfig charset says; read as {}",
+                path.display(),
+                wanted.label(),
+                buffer.encoding().label()
+            );
+            Ok(buffer)
+        }
+    }
+}
+
+fn is_utf16(encoding: &'static Encoding) -> bool {
+    encoding == Encoding::for_label(b"utf-16le").expect("UTF-16LE")
+        || encoding == Encoding::for_label(b"utf-16be").expect("UTF-16BE")
+}
+
+/// Whether reading `buffer` decoded malformed bytes to U+FFFD. Its save
+/// snapshot refuses to write then, before writing anything, if a U+FFFD is
+/// still in the text, which is always so right after the read; without
+/// one, nothing was replaced.
+fn replaced_on_read(buffer: &Buffer) -> bool {
+    let text = buffer.text();
+    if !text
+        .chunks()
+        .any(|chunk| chunk.contains(char::REPLACEMENT_CHARACTER))
+    {
+        return false;
+    }
+    buffer.save_snapshot().write_to(io::sink()).is_err()
 }
 
 /// Reads `path` again, decoded in `encoding` rather than the one detected
@@ -201,13 +289,29 @@ pub fn read_with(path: &Path, encoding: FileEncoding) -> io::Result<(DecodedFile
 }
 
 /// The buffer [`read`] read, or for a missing file an empty one that knows
-/// the file was missing, so a save refuses one created since.
+/// the file was missing, so a save refuses one created since. That one is
+/// a new file's: [`take_new_file`] tells its editor, which gives it the
+/// `.editorconfig` charset's encoding, or leaves it UTF-8.
 pub fn buffer_or_new(read: Option<Buffer>) -> Buffer {
     read.unwrap_or_else(|| {
         let mut buffer = Buffer::new("");
         buffer.set_disk_stamp(None);
+        NEW_FILES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(buffer.id());
         buffer
     })
+}
+
+/// The buffers [`buffer_or_new`] made for missing files, until taken.
+static NEW_FILES: Mutex<Vec<BufferId>> = Mutex::new(Vec::new());
+
+/// Whether [`buffer_or_new`] made `buffer` for a missing file; true once.
+pub(crate) fn take_new_file(buffer: BufferId) -> bool {
+    let mut new = NEW_FILES.lock().unwrap_or_else(|e| e.into_inner());
+    let at = new.iter().position(|&id| id == buffer);
+    at.map(|at| new.swap_remove(at)).is_some()
 }
 
 /// A read running on its own thread.
@@ -260,6 +364,10 @@ impl Reading {
 #[cfg(test)]
 #[path = "loader_encoding_tests.rs"]
 mod encoding_tests;
+
+#[cfg(test)]
+#[path = "loader_charset_tests.rs"]
+mod charset_tests;
 
 #[cfg(test)]
 #[path = "image_viewer_open_tests.rs"]

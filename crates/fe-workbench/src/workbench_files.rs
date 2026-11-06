@@ -178,7 +178,8 @@ impl Workbench {
     /// takes it meanwhile, even if the tab closes. The destination's
     /// `.editorconfig` line ending, read now, goes with the save: it's
     /// written with it, and the buffer takes it only if the save goes
-    /// through.
+    /// through. So does its charset, for an untitled buffer: it saves in
+    /// the charset's encoding, and goes back to its own if the save fails.
     pub(crate) fn save_editor_as(
         &mut self,
         editor: &Entity<EditorView>,
@@ -244,12 +245,27 @@ impl Workbench {
             trim_trailing_whitespace: config.trim_trailing_whitespace == Some(true),
             insert_final_newline: config.insert_final_newline == Some(true),
         };
+        // An untitled buffer saves in the destination's charset, if it's
+        // still untitled when the save is prepared (see
+        // `EditorView::save_as_in`); one of a file keeps its encoding.
+        let charset = (config.charset)
+            .filter(|_| model.path().is_none())
+            .map(crate::loader::charset_encoding);
         let workbench = cx.weak_entity();
         let release = move |cx: &mut App| {
             (workbench.update(cx, |w, cx| w.lsp_release(buffer, cx))).ok();
         };
         let saved = editor.update(cx, |editor, cx| {
-            editor.save_as_with(path, line_ending, fixes, overwrite, release, window, cx)
+            editor.save_as_in(
+                path,
+                line_ending,
+                charset,
+                fixes,
+                overwrite,
+                release,
+                window,
+                cx,
+            )
         });
         let editor = editor.clone();
         cx.spawn_in(window, async move |workbench, cx| {

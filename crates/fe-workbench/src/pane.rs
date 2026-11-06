@@ -643,6 +643,18 @@ impl Pane {
             configs::read(editor, cx);
             editor.update(cx, |editor, cx| editor.set_minimap(minimap, cx));
         }
+        // A diff view's working side is an editor of its file too, as
+        // `Workbench::file_editors` has it.
+        for tab in &self.tabs {
+            let Some(diff) = tab.item().downcast_ref::<fe_gpui::DiffView>() else {
+                continue;
+            };
+            let right = diff.read(cx).right().clone();
+            let view = right.read(cx);
+            if view.model().path().is_some() && !view.is_read_only() {
+                configs::read(&right, cx);
+            }
+        }
         let open: Vec<TabId> = self.tabs.iter().map(Tab::id).collect();
         self.mru.retain_open(&open);
         self.viewer_events.retain(|id, _| open.contains(id));
@@ -1706,11 +1718,49 @@ impl Pane {
             editor.update(cx, |editor, cx| {
                 let model = editor.model_mut();
                 model.set_tab_size(tab_size);
-                let detected = fe_editor::detect_indent_style(model.text());
+                let detected = fe_editor::detect_indent_style(model.buffer().text());
                 model.set_indent_style(detected);
                 cx.notify();
             });
             configs::read(editor, cx);
+            // Saved under the name: the editors under it follow it.
+            if let Some(path) = tab
+                .path
+                .clone()
+                .filter(|path| configs::is_editorconfig(path))
+            {
+                editorconfigs_changed(&[fe_project::FsChange::Path(path)], cx);
+            }
+        }
+        // A diff view's working side follows its file the same way: its
+        // tab's path is the diff's, so it's told by the path it was read
+        // for.
+        let working: Vec<Entity<EditorView>> = (self.tabs.iter())
+            .filter_map(|tab| tab.item().downcast_ref::<fe_gpui::DiffView>())
+            .map(|diff| diff.read(cx).right().clone())
+            .collect();
+        for editor in working {
+            let view = editor.read(cx);
+            let Some(path) =
+                (view.model().path().map(Path::to_owned)).filter(|_| !view.is_read_only())
+            else {
+                continue;
+            };
+            let read = configs::read_path(editor.entity_id(), cx);
+            if read.as_ref().is_some_and(|read| *read != path) {
+                let tab_size = self.settings.tab_size;
+                editor.update(cx, |editor, cx| {
+                    let model = editor.model_mut();
+                    model.set_tab_size(tab_size);
+                    let detected = fe_editor::detect_indent_style(model.buffer().text());
+                    model.set_indent_style(detected);
+                    cx.notify();
+                });
+                if configs::is_editorconfig(&path) {
+                    editorconfigs_changed(&[fe_project::FsChange::Path(path.clone())], cx);
+                }
+            }
+            configs::read(&editor, cx);
         }
         cx.notify();
     }
@@ -1792,60 +1842,246 @@ impl Pane {
     }
 }
 
+/// Has every open editor, in any pane or window, re-read its file's
+/// `.editorconfig` properties if `changes` may have changed them: each
+/// [`FsChange::Path`] named exactly `.editorconfig` re-reads the editors of
+/// files under its directory, and [`FsChange::Rescan`] every editor.
+/// Properties read equal to those applied change nothing; others replace
+/// them, as on open (see `configs::reread`). Runs once the current update
+/// is over, so a workbench or pane being updated can call it.
+///
+/// A directory and an editor's file are compared as given and, off the
+/// main thread, resolved (symlinks followed, up to the nearest folder that
+/// exists), so a change the watcher reports by the real path reaches an
+/// editor opened through a link, and the other way round.
+pub(crate) fn editorconfigs_changed(changes: &[fe_project::FsChange], cx: &mut App) {
+    let mut all = false;
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for change in changes {
+        match change {
+            fe_project::FsChange::Rescan => all = true,
+            fe_project::FsChange::Path(path) if configs::is_editorconfig(path) => {
+                if let Some(dir) = path.parent() {
+                    dirs.push(dir.to_owned());
+                }
+            }
+            fe_project::FsChange::Path(_) => {}
+        }
+    }
+    if !all && dirs.is_empty() {
+        return;
+    }
+    cx.defer(move |cx| {
+        let mut open: Vec<(Entity<EditorView>, PathBuf)> = Vec::new();
+        for editor in all_file_editors(cx) {
+            if let Some(path) = editor.read(cx).model().path().map(Path::to_owned) {
+                open.push((editor, path));
+            }
+        }
+        if all {
+            for (editor, _) in open {
+                configs::reread(&editor, cx);
+            }
+            return;
+        }
+        let paths: Vec<PathBuf> = open.iter().map(|(_, path)| path.clone()).collect();
+        let under = cx.background_spawn(async move {
+            let dirs: Vec<(PathBuf, PathBuf)> = (dirs.into_iter())
+                .map(|dir| {
+                    let resolved = resolve(&dir);
+                    (dir, resolved)
+                })
+                .collect();
+            (paths.iter())
+                .map(|path| {
+                    if dirs.iter().any(|(dir, _)| path.starts_with(dir)) {
+                        return true;
+                    }
+                    let resolved = path.parent().map(resolve);
+                    resolved
+                        .is_some_and(|parent| (dirs.iter()).any(|(_, dir)| parent.starts_with(dir)))
+                })
+                .collect::<Vec<bool>>()
+        });
+        cx.spawn(async move |cx| {
+            let under = under.await;
+            cx.update(|cx| {
+                for ((editor, _), under) in open.into_iter().zip(under) {
+                    if under {
+                        configs::reread(&editor, cx);
+                    }
+                }
+            });
+        })
+        .detach();
+    });
+}
+
+/// `path` with symlinks followed: its nearest ancestor that exists,
+/// canonicalized, with the rest joined on. Unresolvable, it's as given.
+fn resolve(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(real) = at.canonicalize() {
+            return rest.iter().rev().fold(real, |real, name| real.join(name));
+        }
+        match (at.file_name(), at.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name.to_owned());
+                at = parent;
+            }
+            _ => return path.to_owned(),
+        }
+    }
+}
+
+/// Every window's open editors of files ([`crate::Workbench::file_editors`]),
+/// each once.
+fn all_file_editors(cx: &App) -> Vec<Entity<EditorView>> {
+    let mut editors: Vec<Entity<EditorView>> = Vec::new();
+    for window in cx.windows() {
+        let Some(workbench) = window.downcast::<crate::Workbench>() else {
+            continue;
+        };
+        let Ok(workbench) = workbench.read(cx) else {
+            continue;
+        };
+        for editor in workbench.file_editors(cx) {
+            if !editors.contains(&editor) {
+                editors.push(editor);
+            }
+        }
+    }
+    editors
+}
+
+/// The `editor.tab_size` of the window `editor` is open in, as it is now.
+fn settings_tab_size(editor: &Entity<EditorView>, cx: &App) -> Option<usize> {
+    cx.windows().into_iter().find_map(|window| {
+        let workbench = window.downcast::<crate::Workbench>()?;
+        let workbench = workbench.read(cx).ok()?;
+        (workbench.file_editors(cx).contains(editor))
+            .then(|| workbench.pane().read(cx).settings.tab_size)
+    })
+}
+
 /// The `.editorconfig` properties of the editors open, read once per
-/// editor whichever pane it's in, so they follow it as its tab moves.
+/// editor whichever pane it's in, so they follow it as its tab moves, and
+/// again when an `.editorconfig` changes ([`editorconfigs_changed`]).
 mod configs {
     use std::{
         collections::HashMap,
         path::{Path, PathBuf},
     };
 
+    use fe_buffer::BufferEvent;
     use fe_config::{EditorConfig, editorconfig_for};
     use fe_gpui::EditorView;
-    use gpui::{App, AppContext as _, Entity, EntityId, Global, WeakEntity};
+    use gpui::{App, AppContext as _, Entity, EntityId, Global, Subscription, WeakEntity};
 
-    use super::apply_config;
+    use super::{apply_config, settings_tab_size};
+    use crate::loader;
 
-    /// Kept for the settings reloads and the save card.
+    /// An editor's properties, of the file they were read for.
+    struct Read {
+        editor: WeakEntity<EditorView>,
+        path: PathBuf,
+        /// Those applied; `None` until the first read lands.
+        config: Option<EditorConfig>,
+        /// The read started last, which is the one that applies.
+        latest: u64,
+    }
+
+    /// Kept for the settings reloads, the save card and the re-reads.
     #[derive(Default)]
     struct Configs {
-        /// Each editor's, of the file it was read for; `None` while the
-        /// read runs.
-        editors: HashMap<EntityId, (WeakEntity<EditorView>, PathBuf, Option<EditorConfig>)>,
+        editors: HashMap<EntityId, Read>,
+        next: u64,
+        /// The editors heard for their saves: of `.editorconfig` files, when
+        /// first seen.
+        saves: HashMap<EntityId, (WeakEntity<EditorView>, Subscription)>,
     }
 
     impl Global for Configs {}
 
+    /// Whether `path` names an `.editorconfig` file.
+    pub(super) fn is_editorconfig(path: &Path) -> bool {
+        path.file_name().is_some_and(|name| name == ".editorconfig")
+    }
+
+    /// The file `editor`'s properties were last read for, if any.
+    pub(super) fn read_path(editor: EntityId, cx: &App) -> Option<PathBuf> {
+        let configs = cx.try_global::<Configs>()?;
+        configs.editors.get(&editor).map(|read| read.path.clone())
+    }
+
     /// `editor`'s, if read for the file it has now.
     pub(super) fn get(editor: EntityId, cx: &App) -> Option<EditorConfig> {
         let configs = cx.try_global::<Configs>()?;
-        let (weak, path, config) = configs.editors.get(&editor)?;
-        let now = weak.upgrade()?.read(cx).model().path().map(Path::to_owned);
-        (now.as_ref() == Some(path)).then_some(*config)?
+        let read = configs.editors.get(&editor)?;
+        let now = (read.editor.upgrade()?.read(cx).model().path()).map(Path::to_owned);
+        (now.as_ref() == Some(&read.path)).then_some(read.config)?
     }
 
     /// Starts reading `editor`'s file's properties in the background, unless
     /// they're read or being read for that file, and applies them once read,
-    /// if the editor is still open, at that file.
+    /// if the editor is still open, at that file. An editor of an
+    /// `.editorconfig` has the editors under it re-read theirs each time a
+    /// save of it is done.
     pub(super) fn read(editor: &Entity<EditorView>, cx: &mut App) {
         let Some(path) = editor.read(cx).model().path().map(ToOwned::to_owned) else {
             return;
         };
         let id = editor.entity_id();
         let configs = cx.default_global::<Configs>();
-        configs
-            .editors
-            .retain(|_, (editor, _, _)| editor.upgrade().is_some());
+        (configs.editors).retain(|_, read| read.editor.upgrade().is_some());
+        (configs.saves).retain(|_, (editor, _)| editor.upgrade().is_some());
+        hear_saves(editor, &path, cx);
+        let configs = cx.default_global::<Configs>();
         if configs
             .editors
             .get(&id)
-            .is_some_and(|(_, read, _)| *read == path)
+            .is_some_and(|read| read.path == path)
         {
             return;
         }
-        configs
-            .editors
-            .insert(id, (editor.downgrade(), path.clone(), None));
+        start(editor, path, false, cx);
+    }
+
+    /// Reads `editor`'s file's properties again, in the background. Once
+    /// read, if they're the ones applied, nothing changes; otherwise those
+    /// are dropped, tab size back to the window's `editor.tab_size` as it is
+    /// then and indentation detected from the text, and the new ones apply
+    /// as on open. Of reads that overlap, the last one started applies.
+    pub(super) fn reread(editor: &Entity<EditorView>, cx: &mut App) {
+        let Some(path) = editor.read(cx).model().path().map(ToOwned::to_owned) else {
+            return;
+        };
+        hear_saves(editor, &path, cx);
+        start(editor, path, true, cx);
+    }
+
+    /// Reads `path`'s properties for `editor`, superseding any read of them
+    /// running, and applies them once read: over the ones applied, if any,
+    /// dropping them when `again` (see [`reread`]).
+    fn start(editor: &Entity<EditorView>, path: PathBuf, again: bool, cx: &mut App) {
+        let id = editor.entity_id();
+        let configs = cx.default_global::<Configs>();
+        let latest = configs.next;
+        configs.next += 1;
+        let applied = (configs.editors.get(&id))
+            .filter(|read| read.path == path)
+            .and_then(|read| read.config);
+        configs.editors.insert(
+            id,
+            Read {
+                editor: editor.downgrade(),
+                path: path.clone(),
+                config: applied,
+                latest,
+            },
+        );
         let read = cx.background_spawn({
             let path = path.clone();
             async move { editorconfig_for(&path) }
@@ -1861,20 +2097,96 @@ mod configs {
                 if editor.read(cx).model().path() != Some(path.as_path()) {
                     return;
                 }
-                cx.default_global::<Configs>()
-                    .editors
-                    .insert(id, (weak, path, Some(config)));
+                let configs = cx.default_global::<Configs>();
+                let Some(read) = configs.editors.get_mut(&id) else {
+                    return;
+                };
+                // Another read started since.
+                if read.latest != latest || read.path != path {
+                    return;
+                }
+                let old = read.config.replace(config);
+                if old == Some(config) {
+                    return;
+                }
+                // The fallback as it is now: settings may have changed
+                // while the read ran.
+                let tab_size = (old.is_some() && again)
+                    .then(|| settings_tab_size(&editor, cx))
+                    .flatten();
                 editor.update(cx, |editor, cx| {
+                    if old.is_some() && again {
+                        let model = editor.model_mut();
+                        if let Some(tab_size) = tab_size {
+                            model.set_tab_size(tab_size);
+                        }
+                        let detected = fe_editor::detect_indent_style(model.buffer().text());
+                        model.set_indent_style(detected);
+                    }
+                    let clean = !editor.model().is_dirty();
                     apply_config(editor.model_mut(), &config);
                     editor.set_save_fixes(fe_gpui::SaveFixes {
                         trim_trailing_whitespace: config.trim_trailing_whitespace == Some(true),
                         insert_final_newline: config.insert_final_newline == Some(true),
                     });
+                    if old.is_none() {
+                        new_file_charset(editor, config.charset, clean);
+                    }
                     cx.notify();
                 });
             });
         })
         .detach();
+    }
+
+    /// On `editor`'s first properties: has its buffer, if it's of a file
+    /// missing on disk that [`loader::buffer_or_new`] made and is still
+    /// missing (not saved since), save in `charset`'s encoding, if there is
+    /// one. If it was `clean` before its properties applied, it's clean in
+    /// it, with no edit or undo step, so closing it untouched asks nothing.
+    /// Either way the buffer is no longer a new file's after: a charset
+    /// given later doesn't change it.
+    fn new_file_charset(
+        editor: &mut EditorView,
+        charset: Option<fe_config::editorconfig::Charset>,
+        clean: bool,
+    ) {
+        let mut buffer = editor.model_mut().buffer_mut();
+        if !loader::take_new_file(buffer.id()) {
+            return;
+        }
+        let Some(charset) = charset else {
+            return;
+        };
+        if !buffer.disk_stamp_known() || buffer.disk_stamp().is_some() {
+            return;
+        }
+        buffer.set_encoding(loader::charset_encoding(charset));
+        if clean {
+            // The file is still known missing: `did_save` keeps the stamp.
+            buffer.did_save();
+        }
+    }
+
+    /// Has the editors under `editor`'s directory re-read their properties
+    /// each time a save of `editor` is done, if it's of `path`, an
+    /// `.editorconfig`, and not heard already: the view redraws after each
+    /// save. Heard, it stays so; a save under another name is ignored.
+    fn hear_saves(editor: &Entity<EditorView>, path: &Path, cx: &mut App) {
+        let id = editor.entity_id();
+        if !is_editorconfig(path) || cx.default_global::<Configs>().saves.contains_key(&id) {
+            return;
+        }
+        let saves = editor.update(cx, |editor, _| editor.model_mut().buffer_mut().subscribe());
+        let heard = cx.observe(editor, move |editor, cx| {
+            let saved =
+                (saves.drain().iter()).any(|event| matches!(event, BufferEvent::Saved { .. }));
+            let path = editor.read(cx).model().path().map(ToOwned::to_owned);
+            if let Some(path) = path.filter(|path| saved && is_editorconfig(path)) {
+                super::editorconfigs_changed(&[fe_project::FsChange::Path(path)], cx);
+            }
+        });
+        (cx.default_global::<Configs>().saves).insert(id, (editor.downgrade(), heard));
     }
 }
 
@@ -2619,6 +2931,14 @@ mod editorconfig_tests;
 #[cfg(test)]
 #[path = "editorconfig_save_tests.rs"]
 mod editorconfig_save_tests;
+
+#[cfg(test)]
+#[path = "editorconfig_charset_tests.rs"]
+mod editorconfig_charset_tests;
+
+#[cfg(test)]
+#[path = "editorconfig_reload_tests.rs"]
+mod editorconfig_reload_tests;
 
 #[cfg(test)]
 #[path = "preview_tab_tests.rs"]

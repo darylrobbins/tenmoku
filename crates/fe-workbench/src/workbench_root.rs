@@ -68,14 +68,21 @@ impl Workbench {
                         .update(cx, |git, cx| git.fs_changed(changes, cx));
                     workbench.disk_fs_changed(changes, window, cx);
                     workbench.lsp_fs_changed(changes, cx);
+                    crate::pane::editorconfigs_changed(changes, cx);
                 }
                 PanelEvent::Opened => workbench.git.update(cx, GitState::refresh_once),
                 PanelEvent::Renamed { from, to, moves } => {
                     workbench.lsp_files_renamed(from, to);
                     workbench.panel_renamed(moves, window, cx)
                 }
-                PanelEvent::Created(paths) => workbench.lsp_files_created(paths),
-                PanelEvent::Deleted(paths) => workbench.lsp_files_deleted(paths),
+                PanelEvent::Created(paths) => {
+                    workbench.lsp_files_created(paths);
+                    crate::pane::editorconfigs_changed(&tree_changes(paths), cx);
+                }
+                PanelEvent::Deleted(paths) => {
+                    workbench.lsp_files_deleted(paths);
+                    crate::pane::editorconfigs_changed(&tree_changes(paths), cx);
+                }
             },
         )
     }
@@ -274,4 +281,12 @@ impl Workbench {
         // The settings changed: the Settings tab reads its files again.
         self.reload_settings_editors(cx);
     }
+}
+
+/// The tree's own New File or Delete of `paths`, as the watcher would
+/// report them.
+fn tree_changes(paths: &[(std::path::PathBuf, bool)]) -> Vec<fe_project::FsChange> {
+    (paths.iter())
+        .map(|(path, _)| fe_project::FsChange::Path(path.clone()))
+        .collect()
 }

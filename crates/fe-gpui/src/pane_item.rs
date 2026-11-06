@@ -582,6 +582,37 @@ impl EditorView {
         fixes: SaveFixes,
         overwrite: bool,
         before_commit: impl FnOnce(&mut App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<gpui::Result<()>> {
+        self.save_as_in(
+            path,
+            line_ending,
+            None,
+            fixes,
+            overwrite,
+            before_commit,
+            window,
+            cx,
+        )
+    }
+
+    /// [`EditorView::save_as_with`], written in `untitled_encoding` if
+    /// given and the buffer has no path when this save's snapshot is
+    /// prepared: at once, or, queued behind another save, once that one is
+    /// over (an earlier Save As may have given it a path, or failed and left
+    /// it untitled). The buffer takes the encoding only once the save
+    /// commits, in the same turn, so a save queued behind it starts from
+    /// it; until then, and if the save fails, it keeps its own.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_as_in(
+        &mut self,
+        path: PathBuf,
+        line_ending: Option<fe_buffer::LineEnding>,
+        untitled_encoding: Option<FileEncoding>,
+        fixes: SaveFixes,
+        overwrite: bool,
+        before_commit: impl FnOnce(&mut App) + 'static,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
@@ -593,23 +624,34 @@ impl EditorView {
         // unsaved.
         let job = previous.is_none().then(|| {
             self.apply_save_fixes(fixes, cx);
-            self.model
-                .prepare_save_as(path.clone(), line_ending, overwrite)
+            prepare_save_as_in(
+                &mut self.model,
+                path.clone(),
+                line_ending,
+                overwrite,
+                untitled_encoding,
+            )
         });
         Self::spawn_save(cx, async move |this, cx| {
             if let Some(previous) = previous {
                 previous.over.await.ok();
             }
             let saved = async {
-                let job = match job {
+                let (job, in_encoding) = match job {
                     Some(job) => job,
                     None => this.update(cx, |view, cx| {
                         view.apply_save_fixes(fixes, cx);
-                        view.model
-                            .prepare_save_as(path.clone(), line_ending, overwrite)
+                        prepare_save_as_in(
+                            &mut view.model,
+                            path.clone(),
+                            line_ending,
+                            overwrite,
+                            untitled_encoding,
+                        )
                     })?,
                 };
                 let saved = run(job, cx).await.map_err(io::Error::from)?;
+                let written = saved.snapshot().encoding();
                 // Written, then replaced by another writer: the buffer isn't
                 // what's there, so it stays where it was.
                 let replaced = || {
@@ -623,6 +665,9 @@ impl EditorView {
                 this.update(cx, |view, cx| {
                     if !view.model.finish_save_as(saved) {
                         return Err(replaced());
+                    }
+                    if in_encoding {
+                        view.model.buffer_mut().set_encoding(written);
                     }
                     view.detect_language(cx);
                     Ok(())
@@ -788,6 +833,26 @@ impl EditorView {
 
 /// Prepares a save of `model`'s buffer, in `encoding` if one is given,
 /// without changing the buffer's own.
+/// A Save As job of `model` to `path` ([`EditorModel::prepare_save_as`]),
+/// in `untitled_encoding` if given and the buffer has no path, and whether
+/// it was: the buffer keeps its own encoding.
+fn prepare_save_as_in(
+    model: &mut EditorModel,
+    path: PathBuf,
+    line_ending: Option<fe_buffer::LineEnding>,
+    overwrite: bool,
+    untitled_encoding: Option<FileEncoding>,
+) -> (SaveJob, bool) {
+    let Some(encoding) = untitled_encoding.filter(|_| model.path().is_none()) else {
+        return (model.prepare_save_as(path, line_ending, overwrite), false);
+    };
+    let own = model.buffer().encoding();
+    model.buffer_mut().set_encoding(encoding);
+    let job = model.prepare_save_as(path, line_ending, overwrite);
+    model.buffer_mut().set_encoding(own);
+    (job, true)
+}
+
 fn prepare_save_in(model: &mut EditorModel, encoding: Option<FileEncoding>) -> io::Result<SaveJob> {
     let Some(encoding) = encoding else {
         return model.prepare_save(false);

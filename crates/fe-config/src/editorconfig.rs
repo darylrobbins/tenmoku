@@ -1,5 +1,6 @@
 //! A file's EditorConfig properties: indent style and size, tab width, line
-//! ending, final newline and trailing-whitespace trimming. ec4rs does the
+//! ending, charset, final newline, trailing-whitespace trimming and maximum
+//! line length. ec4rs does the
 //! file parsing and the glob matching; this walks the directories (every
 //! `.editorconfig` from the file's directory up, stopping at `root = true`)
 //! and reads the values we use.
@@ -30,6 +31,23 @@ pub enum EndOfLine {
     Cr,
 }
 
+/// `charset`: the encoding a file is read and written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Charset {
+    Latin1,
+    Utf8,
+    Utf8Bom,
+    Utf16Be,
+    Utf16Le,
+}
+
+/// `max_line_length`: a column count, or `off`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaxLineLength {
+    Columns(usize),
+    Off,
+}
+
 /// The EditorConfig properties that apply to one file; `None` for unset,
 /// missing or invalid values.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -40,6 +58,8 @@ pub struct EditorConfig {
     pub end_of_line: Option<EndOfLine>,
     pub insert_final_newline: Option<bool>,
     pub trim_trailing_whitespace: Option<bool>,
+    pub charset: Option<Charset>,
+    pub max_line_length: Option<MaxLineLength>,
 }
 
 /// One parsed `.editorconfig`, with the directory its globs are relative to.
@@ -280,6 +300,23 @@ fn from_properties(props: &Properties) -> EditorConfig {
         Some("cr") => Some(EndOfLine::Cr),
         _ => None,
     };
+    let charset = match raw(props, "charset").as_deref() {
+        Some("latin1") => Some(Charset::Latin1),
+        Some("utf-8") => Some(Charset::Utf8),
+        Some("utf-8-bom") => Some(Charset::Utf8Bom),
+        Some("utf-16be") => Some(Charset::Utf16Be),
+        Some("utf-16le") => Some(Charset::Utf16Le),
+        _ => None,
+    };
+    let max_line_length = match raw(props, "max_line_length").as_deref() {
+        Some("off") => Some(MaxLineLength::Off),
+        Some(v) => v
+            .parse::<usize>()
+            .ok()
+            .filter(|&n| n > 0)
+            .map(MaxLineLength::Columns),
+        None => None,
+    };
     EditorConfig {
         indent_style,
         indent_size,
@@ -287,5 +324,7 @@ fn from_properties(props: &Properties) -> EditorConfig {
         end_of_line,
         insert_final_newline: flag(props, "insert_final_newline"),
         trim_trailing_whitespace: flag(props, "trim_trailing_whitespace"),
+        charset,
+        max_line_length,
     }
 }
