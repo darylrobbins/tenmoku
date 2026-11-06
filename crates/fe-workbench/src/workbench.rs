@@ -757,6 +757,8 @@ impl Workbench {
         self.sync_problems(cx);
         self.sync_backups(cx);
         self.sync_auto_save(cx);
+        // Plugins hear of buffers opened and closed, and the focus moving.
+        cx.defer(crate::plugin_events::sync);
         self.sync_start_page(cx);
     }
 

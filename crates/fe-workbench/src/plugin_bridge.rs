@@ -28,7 +28,7 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     ops::Range,
     rc::Rc,
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
@@ -334,13 +334,40 @@ struct Tracked {
     /// The buffer's version when its plugin version last went up.
     seen: Version,
     version: u64,
+    /// The buffer's last versions plugins were told of, with their plugin
+    /// versions, oldest first: the latest and up to [`HISTORY`] before it.
+    history: VecDeque<(Version, u64)>,
+}
+
+/// How many of a buffer's versions before its latest [`advance`] can name
+/// again: a save finishing up to this many changes after the version it
+/// wrote.
+const HISTORY: usize = 256;
+
+impl Tracked {
+    /// Takes the buffer at `version`, newer than any seen, as its next
+    /// plugin version.
+    fn bump(&mut self, version: Version) {
+        self.seen = version;
+        self.version += 1;
+        self.remember();
+    }
+
+    fn remember(&mut self) {
+        if self.history.len() > HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back((self.seen, self.version));
+    }
 }
 
 /// Every window's open editors, the tabs' and the diff views' working
 /// sides ([`Workbench::file_editors`]), the active window's first, each
 /// with its buffer's id and its plugin version. A buffer no editor shows
-/// any more loses its id.
-fn open_editors(cx: &mut App) -> Vec<(u64, u64, Entity<EditorView>)> {
+/// any more loses its id. Plugins' events of the changes not sent yet go
+/// first, so that each version they name is one counted here.
+pub(crate) fn open_editors(cx: &mut App) -> Vec<(u64, u64, Entity<EditorView>)> {
+    crate::plugin_events::catch_up(cx);
     let active = cx.active_window().map(|window| window.window_id());
     let mut windows: Vec<_> = (cx.windows().into_iter())
         .filter_map(|window| window.downcast::<Workbench>())
@@ -361,28 +388,42 @@ fn open_editors(cx: &mut App) -> Vec<(u64, u64, Entity<EditorView>)> {
         .map(|(buffer, version, editor)| {
             let tracked = ids.open.entry(buffer).or_insert_with(|| {
                 ids.last += 1;
-                Tracked {
+                let mut tracked = Tracked {
                     id: ids.last,
                     seen: version,
                     version: 1,
-                }
+                    history: VecDeque::new(),
+                };
+                tracked.remember();
+                tracked
             });
             if tracked.seen != version {
-                tracked.seen = version;
-                tracked.version += 1;
+                tracked.bump(version);
             }
             (tracked.id, tracked.version, editor)
         })
         .collect()
 }
 
+/// Buffer `buffer`'s id and its plugin version at `version`, if it has an
+/// id: an event tells of each change as it comes, so a version newer than
+/// any seen is the next plugin version. An older one is the plugin version
+/// it was given, such as a save's that finished after more typing; none if
+/// it was never given one, or is past [`HISTORY`].
+pub(crate) fn advance(buffer: BufferId, version: Version, cx: &mut App) -> Option<(u64, u64)> {
+    let tracked = cx.default_global::<BufferIds>().open.get_mut(&buffer)?;
+    if version > tracked.seen {
+        tracked.bump(version);
+        return Some((tracked.id, tracked.version));
+    }
+    let (_, given) = (tracked.history.iter()).rfind(|(seen, _)| *seen == version)?;
+    Some((tracked.id, *given))
+}
+
 /// The id plugins know `editor`'s buffer by, if it's open in a workbench.
 #[cfg_attr(
     not(test),
-    expect(
-        dead_code,
-        reason = "events and decorations name buffers by it once they land"
-    )
+    expect(dead_code, reason = "decorations name buffers by it once they land")
 )]
 pub(crate) fn buffer_id(editor: &Entity<EditorView>, cx: &mut App) -> Option<u64> {
     (open_editors(cx).into_iter())

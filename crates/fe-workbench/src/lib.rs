@@ -60,6 +60,7 @@ mod peek;
 mod persist;
 mod picker;
 mod plugin_bridge;
+mod plugin_events;
 mod plugin_host;
 mod plugin_manage;
 mod plugin_prompt;

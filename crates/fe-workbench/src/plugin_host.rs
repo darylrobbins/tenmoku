@@ -30,6 +30,10 @@
 //!   version shut down before the new one's `init`; with the same grants
 //!   nothing is asked. An update that asks for more keeps the old version
 //!   running until the user answers.
+//! - **Events.** A plugin's `subscribe` sets what its [`Inbox`] takes of
+//!   the editor's events ([`crate::plugin_events`]); its thread delivers
+//!   them between calls, one per call, and one whose call fails stops it
+//!   as a command's would.
 //! - **Commands.** A plugin's commands, `<id>.<name>`, are listed in the
 //!   command palette while its load runs, and a workbench runs them
 //!   ([`dispatch`]) off the main thread. Unloading withdraws them.
@@ -53,7 +57,7 @@ use std::{
     sync::{
         Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, Receiver, SyncSender},
+        mpsc::{self, Receiver, SyncSender, TryRecvError},
     },
     task::{Poll, Waker},
     thread::{self, JoinHandle},
@@ -78,7 +82,10 @@ use kiln::core::{
     secrets::{KeychainStore, MemoryStore, Secret, SecretError, SecretStore},
 };
 use kiln_plugin::{
-    bindings::{self, Level, LogSink, kiln::extension::events::Event},
+    bindings::{
+        self, Level, LogSink,
+        kiln::extension::events::{Event, EventKinds},
+    },
     cache::ComponentCache,
     commands::{CallPlugin, CommandHost, PluginCommand},
     compat,
@@ -93,7 +100,7 @@ use kiln_plugin::{
 };
 use sha2::{Digest as _, Sha256};
 use wasmtime::{
-    Engine, Store, Trap, UpdateDeadline,
+    Engine, Store, StoreContextMut, Trap, UpdateDeadline,
     component::{Component, HasSelf, Instance, InstancePre, Linker, ResourceTable, TypedFunc},
 };
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
@@ -105,6 +112,7 @@ pub use kiln_plugin::manifest::plugin_kind;
 use crate::{
     KEY_CONTEXT, PendingPluginGrant, PluginAnswer, PluginAsk, RootChanged, TrustChanged, Workbench,
     plugin_bridge::{Bridge, CallDeadline},
+    plugin_events::{self, Inbox},
     show_plugin_prompt,
 };
 
@@ -825,6 +833,8 @@ struct Loaded {
     artifact: Arc<Artifact>,
     plugin: Arc<Mutex<HostedPlugin>>,
     commands: Vec<PluginCommand>,
+    /// Its events.
+    inbox: Inbox,
 }
 
 impl Loaded {
@@ -872,6 +882,14 @@ fn host_mut(cx: &mut App) -> &mut PluginHost {
             set_preview(cx, on);
         })
         .detach();
+        // Each batch of config files reloaded, whatever it changed: the
+        // settings, an extension, its themes, keymaps or menus.
+        cx.observe_global::<kiln::platform::config::ChangedFiles>(plugin_events::config_reloaded)
+            .detach();
+        // A closed window's buffers may be open nowhere else now, whoever
+        // still holds its workbench.
+        cx.on_window_closed(|cx, _| cx.defer(plugin_events::sync))
+            .detach();
     }
     cx.global_mut::<PluginHost>()
 }
@@ -1253,6 +1271,7 @@ fn withdraw(id: &str, host: &mut PluginHost) -> Option<Loaded> {
     if let Some(commands) = &host.commands {
         commands.unload(id);
     }
+    loaded.inbox.close();
     Some(loaded)
 }
 
@@ -1366,6 +1385,9 @@ fn start_load(id: &str, cx: &mut App) {
     .detach();
 }
 
+/// A plugin a load started: it, its commands and its events.
+type Started = (Arc<Mutex<HostedPlugin>>, Vec<PluginCommand>, Inbox);
+
 /// Why a load didn't start a plugin.
 enum LoadFailure {
     /// It was cancelled: nothing of it ran.
@@ -1381,7 +1403,7 @@ fn loaded_plugin(
     load: u64,
     identity: Identity,
     artifact: Arc<Artifact>,
-    loaded: Result<(Arc<Mutex<HostedPlugin>>, Vec<PluginCommand>), LoadFailure>,
+    loaded: Result<Started, LoadFailure>,
     cx: &mut App,
 ) {
     let host = cx.global_mut::<PluginHost>();
@@ -1398,14 +1420,19 @@ fn loaded_plugin(
         Want::Unload(_) => false,
     };
     let mut listed = Vec::new();
+    let mut inbox = None;
     match loaded {
-        Ok((plugin, commands)) => {
+        Ok((plugin, commands, events)) => {
+            if wanted {
+                inbox = Some(events.clone());
+            }
             let loaded = Loaded {
                 load,
                 identity,
                 artifact,
                 plugin,
                 commands,
+                inbox: events,
             };
             if wanted && host.listed.insert(load) {
                 let flag = ContextPredicate::identifier(loaded.flag());
@@ -1447,6 +1474,17 @@ fn loaded_plugin(
     if !listed.is_empty() {
         kiln_shell::command_palette::add_commands(cx, listed);
     }
+    if let Some(inbox) = inbox {
+        let stopped = inbox.stopped();
+        let stopped_id = id.to_owned();
+        cx.spawn(async move |cx| {
+            if let Ok(diagnostic) = stopped.recv().await {
+                cx.update(|cx| stopped_running(&stopped_id, load, diagnostic, cx));
+            }
+        })
+        .detach();
+        plugin_events::add(inbox, cx);
+    }
     drive(id, cx);
 }
 
@@ -1457,6 +1495,13 @@ pub(crate) fn plugin_handle(id: &str, cx: &App) -> Option<kiln_plugin::commands:
     let handle: kiln_plugin::commands::PluginHandle =
         host.slots.get(id)?.loaded.as_ref()?.plugin.clone();
     Some(handle)
+}
+
+/// Plugin `id`'s running load's events, for a test to watch.
+#[cfg(test)]
+pub(crate) fn plugin_inbox(id: &str, cx: &App) -> Option<Inbox> {
+    let host = cx.try_global::<PluginHost>()?;
+    Some(host.slots.get(id)?.loaded.as_ref()?.inbox.clone())
 }
 
 /// Load `load` of plugin `id` was unloaded by a call into it, as
@@ -1524,7 +1569,7 @@ impl LoadContext {
         artifact: &Artifact,
         grants: &fe_command::Grants,
         cancel: &Arc<AtomicBool>,
-    ) -> Result<(Arc<Mutex<HostedPlugin>>, Vec<PluginCommand>), LoadFailure> {
+    ) -> Result<Started, LoadFailure> {
         let cancelled = || cancel.load(Ordering::Acquire);
         let failed = |message: String| {
             if cancelled() {
@@ -1561,6 +1606,7 @@ impl LoadContext {
             editor: fe_plugin::editor::State::new(id, grants, &limits, buffers),
             ..fe_plugin::HostState::default()
         };
+        let inbox = Inbox::new(&limits);
         let plugin = HostedPlugin::load(
             engine,
             self.cache.as_deref(),
@@ -1569,6 +1615,7 @@ impl LoadContext {
             grants,
             limits,
             host,
+            inbox.clone(),
             deadline,
             &self.workspace,
             self.record.clone(),
@@ -1579,7 +1626,7 @@ impl LoadContext {
         let plugin = Arc::new(Mutex::new(plugin));
         let handle: kiln_plugin::commands::PluginHandle = plugin.clone();
         let commands = self.commands.commands(id, &handle);
-        Ok((plugin, commands))
+        Ok((plugin, commands, inbox))
     }
 }
 
@@ -1641,6 +1688,8 @@ impl PluginPrompt {
                 asking.dismissed.retain(|(_, window)| *window != me);
             }
             ask_in(window, cx);
+            // Another window's editor may have focus now.
+            cx.defer(plugin_events::sync);
         });
         let changed = cx.observe_global_in::<PluginHost>(window, |_, window, cx| {
             ask_in(window, cx);
@@ -1925,18 +1974,28 @@ fn programs(
 /// call into it under its [`Limits`], as kiln-plugin's runner runs one. A
 /// call that traps, overruns, runs out of memory or breaks protocol unloads
 /// it with a [`Diagnostic`]; [`HostedPlugin::shutdown`] calls its
-/// `shutdown` and stops its thread.
+/// `shutdown` and stops its thread. Between calls, the thread delivers the
+/// events in its [`Inbox`], one per call.
 pub(crate) struct HostedPlugin {
     id: String,
     state: kiln_plugin::runner::PluginState,
     channel: Option<Channel>,
     thread: Option<JoinHandle<()>>,
+    inbox: Inbox,
 }
 
 /// The caller's ends of the plugin thread's channels.
 struct Channel {
-    calls: SyncSender<Call>,
+    calls: SyncSender<Work>,
     replies: Receiver<Result<Reply, Diagnostic>>,
+}
+
+/// What a plugin's thread is handed.
+pub(crate) enum Work {
+    /// A call, whose reply it sends back.
+    Call(Call),
+    /// Events wait in its inbox.
+    Events,
 }
 
 impl HostedPlugin {
@@ -1953,6 +2012,7 @@ impl HostedPlugin {
         grants: &fe_command::Grants,
         limits: Limits,
         host: fe_plugin::HostState,
+        inbox: Inbox,
         deadline: CallDeadline,
         workspace: &Workspace,
         record: Record,
@@ -1997,6 +2057,7 @@ impl HostedPlugin {
         }
         let data = Data {
             host,
+            inbox: inbox.clone(),
             wasi: kiln_plugin::runner::wasi_context(grants, workspace),
             table: ResourceTable::new(),
             limiter: StoreLimiter::new(&limits),
@@ -2030,13 +2091,16 @@ impl HostedPlugin {
         });
         if let Err(error) = started {
             drop(thread.join());
+            inbox.close();
             return Err(error);
         }
+        inbox.set_wake(calls.clone());
         Ok(Self {
             id: id.to_owned(),
             state: kiln_plugin::runner::PluginState::Running,
             channel: Some(Channel { calls, replies }),
             thread: Some(thread),
+            inbox,
         })
     }
 
@@ -2049,7 +2113,7 @@ impl HostedPlugin {
         let Some(channel) = &self.channel else {
             return Err(CallError::Unloaded);
         };
-        let replied = match channel.calls.send(call) {
+        let replied = match channel.calls.send(Work::Call(call)) {
             Ok(()) => channel.replies.recv().ok(),
             Err(_) => None,
         };
@@ -2062,6 +2126,7 @@ impl HostedPlugin {
         });
         replied.map_err(|diagnostic| {
             log::warn!("{diagnostic}");
+            self.inbox.close();
             self.channel = None;
             if let Some(thread) = self.thread.take() {
                 drop(thread.join());
@@ -2074,7 +2139,9 @@ impl HostedPlugin {
     /// Calls the plugin's `shutdown` and stops its thread; later calls run
     /// nothing.
     fn shutdown(&mut self) {
-        // Closing the channel tells the thread to shut the plugin down.
+        // Closing the channel, the inbox's end too, tells the thread to
+        // shut the plugin down.
+        self.inbox.close();
         self.channel = None;
         if let Some(thread) = self.thread.take() {
             drop(thread.join());
@@ -2111,6 +2178,17 @@ fn linker(engine: &PluginEngine) -> wasmtime::Result<Linker<Data>> {
         &mut data.host
     })?;
     status::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| &mut data.host)?;
+    // kiln-plugin's `subscribe` can't reach the plugin's queue: this host's
+    // can, in its store.
+    linker.allow_shadowing(true);
+    linker.instance("kiln:extension/events@1.0.0")?.func_wrap(
+        "subscribe",
+        |store: StoreContextMut<'_, Data>, (kinds,): (EventKinds,)| {
+            store.data().inbox.subscribe(kinds);
+            Ok((Ok::<(), bindings::Error>(()),))
+        },
+    )?;
+    linker.allow_shadowing(false);
     compat::link(&mut linker)?;
     Ok(linker)
 }
@@ -2118,6 +2196,8 @@ fn linker(engine: &PluginEngine) -> wasmtime::Result<Linker<Data>> {
 /// A plugin's store data.
 struct Data {
     host: fe_plugin::HostState,
+    /// Its events, which `subscribe` subscribes it to.
+    inbox: Inbox,
     wasi: WasiCtx,
     table: ResourceTable,
     limiter: StoreLimiter,
@@ -2168,6 +2248,18 @@ impl Exports {
     }
 }
 
+/// How far [`Guest::deliver`] got.
+enum Delivered {
+    /// None waits.
+    All,
+    /// This was handed in first.
+    Until(Work),
+    /// The plugin is being shut down.
+    Closed,
+    /// A call failed, unloading the plugin.
+    Failed,
+}
+
 /// The plugin thread's side.
 struct Guest {
     id: String,
@@ -2180,13 +2272,13 @@ struct Guest {
 
 impl Guest {
     /// Instantiates the component and calls `init`, telling `started`, then
-    /// runs each call until one fails or the channel closes, when it calls
-    /// `shutdown`.
+    /// runs each call, and delivers the events waiting after each, until
+    /// one fails or the channel closes, when it calls `shutdown`.
     fn run(
         mut self,
         pre: &InstancePre<Data>,
         started: &SyncSender<Result<(), LoadError>>,
-        calls: &Receiver<Call>,
+        calls: &Receiver<Work>,
         replies: &SyncSender<Result<Reply, Diagnostic>>,
     ) {
         let exports = match self.start(pre) {
@@ -2200,22 +2292,27 @@ impl Guest {
         if started.send(Ok(())).is_err() {
             return;
         }
-        for call in calls {
-            let reply = self.guarded(async |store| match call {
-                Call::RunCommand { id, args } => exports
-                    .run_command
-                    .call_async(store, (id, args))
-                    .await
-                    .map(|(result,)| Reply::RunCommand(result)),
-                Call::HandleEvents(events) => exports
-                    .handle_events
-                    .call_async(store, (events,))
-                    .await
-                    .map(|()| Reply::HandleEvents),
-            });
-            let failed = reply.is_err();
-            if replies.send(reply).is_err() || failed {
-                return;
+        let mut next = None;
+        loop {
+            let work = match next.take() {
+                Some(work) => work,
+                None => match calls.recv() {
+                    Ok(work) => work,
+                    Err(_) => break,
+                },
+            };
+            if let Work::Call(call) = work {
+                let reply = self.call(&exports, call);
+                let failed = reply.is_err();
+                if replies.send(reply).is_err() || failed {
+                    return;
+                }
+            }
+            match self.deliver(&exports, calls) {
+                Delivered::All => {}
+                Delivered::Until(work) => next = Some(work),
+                Delivered::Closed => break,
+                Delivered::Failed => return,
             }
         }
         if let Err(diagnostic) =
@@ -2224,6 +2321,44 @@ impl Guest {
             log::warn!("{diagnostic}");
         }
         self.record.push(format!("shutdown {}", self.id));
+    }
+
+    fn call(&mut self, exports: &Exports, call: Call) -> Result<Reply, Diagnostic> {
+        self.guarded(async |store| match call {
+            Call::RunCommand { id, args } => exports
+                .run_command
+                .call_async(store, (id, args))
+                .await
+                .map(|(result,)| Reply::RunCommand(result)),
+            Call::HandleEvents(events) => exports
+                .handle_events
+                .call_async(store, (events,))
+                .await
+                .map(|()| Reply::HandleEvents),
+        })
+    }
+
+    /// Delivers the events waiting in the inbox, one per call, until none
+    /// waits or a call is handed in. One whose call fails unloads the
+    /// plugin, the host told why.
+    fn deliver(&mut self, exports: &Exports, calls: &Receiver<Work>) -> Delivered {
+        let inbox = self.store.data().inbox.clone();
+        while let Some(event) = inbox.pop() {
+            let call = Call::HandleEvents(vec![event.clone()]);
+            if let Err(diagnostic) = self.call(exports, call) {
+                log::warn!("{diagnostic}");
+                inbox.stop(diagnostic);
+                return Delivered::Failed;
+            }
+            #[cfg(test)]
+            inbox.delivered(event);
+            match calls.try_recv() {
+                Ok(Work::Call(call)) => return Delivered::Until(Work::Call(call)),
+                Ok(Work::Events) | Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => return Delivered::Closed,
+            }
+        }
+        Delivered::All
     }
 
     fn start(&mut self, pre: &InstancePre<Data>) -> Result<Exports, LoadError> {
