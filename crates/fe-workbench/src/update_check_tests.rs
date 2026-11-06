@@ -20,7 +20,7 @@ use crate::{
     workbench::toast::{Choices, Level},
 };
 
-const PAGE: &str = "https://github.com/darylrobbins/fastedit/releases/tag/v0.2.0";
+const PAGE: &str = "https://github.com/darylrobbins/tenmoku/releases/tag/v0.2.0";
 
 /// A window with its workbench focused, as the command runs from.
 fn window(cx: &mut TestAppContext) -> (Entity<Workbench>, VisualTestContext) {
@@ -65,7 +65,7 @@ fn ok(release: serde_json::Value) -> Result<Fetched, String> {
 fn release(tag: &str) -> serde_json::Value {
     json!({
         "tag_name": tag,
-        "html_url": format!("https://github.com/darylrobbins/fastedit/releases/tag/{tag}"),
+        "html_url": format!("https://github.com/darylrobbins/tenmoku/releases/tag/{tag}"),
         "draft": false,
         "prerelease": false,
     })
@@ -423,5 +423,26 @@ fn no_fake_means_no_network(cx: &mut TestAppContext) {
     assert_eq!(
         toast.message,
         "Couldn't check for updates: no fake fetcher is set"
+    );
+}
+
+#[gpui::test]
+fn tenmoku_release_page_is_opened(cx: &mut TestAppContext) {
+    let (workbench, mut cx) = window(cx);
+    let cx = &mut cx;
+
+    fake("0.1.0", ok(release("v0.2.0")), cx);
+    check(cx);
+    let toasts = shown(&workbench, cx);
+    assert_eq!(toasts.len(), 1, "{toasts:?}");
+    assert_eq!(
+        toasts[0].message,
+        "Tenmoku 0.2.0 is available (you have 0.1.0)"
+    );
+    toasts[0].choices.as_ref().unwrap().choose(0);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some("https://github.com/darylrobbins/tenmoku/releases/tag/v0.2.0")
     );
 }

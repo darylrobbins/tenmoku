@@ -48,7 +48,7 @@ fn fake(cx: &mut VisualTestContext) -> Arc<AtomicUsize> {
             counter.fetch_add(1, Ordering::SeqCst);
             let body = serde_json::json!({
                 "tag_name": "v0.1.0",
-                "html_url": "https://github.com/darylrobbins/fastedit/releases/tag/v0.1.0",
+                "html_url": "https://github.com/darylrobbins/tenmoku/releases/tag/v0.1.0",
                 "draft": false,
                 "prerelease": false,
             });

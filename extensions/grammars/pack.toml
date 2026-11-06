@@ -10,7 +10,7 @@
 # size is 0. After a grammar release, scripts/record-grammar-hashes.sh fills
 # both in; don't edit them by hand.
 
-base_url = "https://github.com/darylrobbins/fastedit/releases/download/grammars-1"
+base_url = "https://github.com/darylrobbins/tenmoku/releases/download/grammars-1"
 
 [languages.kotlin]
 file = "tree-sitter-kotlin.wasm"
