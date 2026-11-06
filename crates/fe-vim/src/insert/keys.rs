@@ -632,6 +632,7 @@ pub(crate) fn retype(
                     state.mode == Mode::Replace && !state.is_virtual_replace(),
                     value,
                     how,
+                    model.selections().len(),
                 ) {
                     // The register holds text that overwrites now, however
                     // it was recorded.
@@ -670,9 +671,18 @@ pub(crate) fn retype(
 /// The text `<C-r>` (plain) inserts in replace mode when the register now
 /// holds text that overwrites as typed text does: not characterwise text
 /// with a line break in it, which nvim puts in without overwriting.
-fn overwriting_text(replacing: bool, value: &Register, how: LiteralInsert) -> Option<String> {
+///
+/// Text that would pass [`MAX_PUT`] across `carets` is not overwriting text
+/// either: it takes the inserting path, which refuses it.
+fn overwriting_text(
+    replacing: bool,
+    value: &Register,
+    how: LiteralInsert,
+    carets: usize,
+) -> Option<String> {
     let text = value.text.replace("\r\n", "\n").replace('\r', "\n");
     let typed = replacing
+        && text.len().saturating_add(1).saturating_mul(carets) <= MAX_PUT
         && how == LiteralInsert::Plain
         && !text.is_empty()
         && !text.contains(BACKSPACE)
@@ -685,13 +695,13 @@ fn overwriting_text(replacing: bool, value: &Register, how: LiteralInsert) -> Op
 
 /// `pieces` with the plain register keys that overwrite now as the text
 /// they type, as the register holds it.
-fn overwriting_pieces(pieces: &[Piece], reads: &Reads) -> Vec<Piece> {
+fn overwriting_pieces(pieces: &[Piece], reads: &Reads, carets: usize) -> Vec<Piece> {
     pieces
         .iter()
         .map(|piece| match piece {
             Piece::Key(Key::Register(how, name)) => reads
                 .get(name)
-                .and_then(|value| overwriting_text(true, value, *how))
+                .and_then(|value| overwriting_text(true, value, *how, carets))
                 .map_or_else(|| piece.clone(), Piece::Text),
             _ => piece.clone(),
         })
@@ -1525,7 +1535,7 @@ pub(crate) fn repeat_replace(
         let mut overwrote: Vec<Vec<String>> = vec![Vec::new(); ranks.len()];
         // How many characters were typed since the last register went in.
         let mut since: Option<usize> = None;
-        let pieces = &overwriting_pieces(&pieces, reads);
+        let pieces = &overwriting_pieces(&pieces, reads, ranks.len());
         for piece in pieces {
             match piece {
                 // Each line break on its own, so the indent `^<C-d>` took

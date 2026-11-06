@@ -123,3 +123,30 @@ fn replace_copies_follow_carets_that_going_back_brings_together() {
     let (text, heads) = fed_at("a b c d", &[0, 6], "3R<C-w><C-w>x<Esc>");
     assert_eq!((text.as_str(), heads), ("x x c d", vec![0]));
 }
+
+/// A register recorded as a multiline plain insertion in replace mode, then
+/// replaced by one-line text past the budget: replaying it must be refused
+/// as inserting it is, not overwrite character by character.
+fn oversized_register_replay(keys: &str) {
+    let big = "Q".repeat(MAX_PUT + 1);
+    let text = format!("foo\nbar\nbaz\n{big}");
+    let mut vim = HeadlessVim::new(&text, (0, 0));
+    vim.feed("vjy").unwrap();
+    vim.feed("R<C-r>0<Esc>").unwrap();
+    let recorded = vim.text();
+    vim.feed("Gyiwgg2j").unwrap();
+    let started = Instant::now();
+    vim.feed(keys).unwrap();
+    assert!(started.elapsed() < Duration::from_secs(60));
+    assert_eq!(vim.text(), recorded, "{keys}");
+}
+
+#[test]
+fn dot_replay_of_an_oversized_register_is_refused() {
+    oversized_register_replay(".");
+}
+
+#[test]
+fn counted_replay_of_an_oversized_register_is_refused() {
+    oversized_register_replay("3.");
+}
