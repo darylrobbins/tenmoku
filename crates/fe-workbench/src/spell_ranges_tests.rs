@@ -16,7 +16,7 @@ use crate::{
     spell::tokenize,
     spell_ranges::{
         MAX_SPELLABLE_BYTES, checked_spellable_ranges, literals_in, raw_html, spellable_ranges,
-        string_text, words_in_spans,
+        string_text, string_text_in, words_in_spans,
     },
 };
 
@@ -1103,4 +1103,47 @@ fn injected_string_across_an_interpolation_keeps_the_hosts_cut() {
         "{found:?}"
     );
     assert_eq!(words(&found), ["hello", "world"]);
+}
+
+/// A host string with many cuts holding many injected strings is read in work
+/// that follows each string, not every cut of the host for each of them.
+#[test]
+fn many_strings_in_one_outer_literal_stay_linear() {
+    let count = 20_000;
+    let mut nodes = vec![node("php", "string", true, 0..count * 10, None)];
+    for i in 0..count {
+        nodes.push(node(
+            "php",
+            "escape_sequence",
+            true,
+            i * 10..i * 10 + 2,
+            Some(0),
+        ));
+    }
+    for i in 0..count {
+        nodes.push(node(
+            "javascript",
+            "string",
+            true,
+            i * 10 + 3..i * 10 + 7,
+            None,
+        ));
+    }
+    let literals = literals_in(&nodes);
+    assert_eq!(literals.len(), count + 1);
+    let started = Instant::now();
+    for (i, inner) in literals[1..].iter().enumerate() {
+        let found = string_text_in(
+            "\"ab\"",
+            i * 10 + 3..i * 10 + 7,
+            &[&literals[0], inner],
+            "php",
+        );
+        assert_eq!(found.len(), 1);
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
 }

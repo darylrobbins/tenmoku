@@ -553,7 +553,7 @@ pub(crate) fn string_text(
 /// innermost says what the text is, but what an outer one cuts is not text
 /// either: a combined layer's string can run across a host's interpolation, a
 /// gap in the layer's own ranges, and what's in it is the host's code.
-fn string_text_in(
+pub(crate) fn string_text_in(
     source: &str,
     span: Range<usize>,
     open: &[&Literal],
@@ -569,7 +569,15 @@ fn string_text_in(
         _ => {
             let mut cuts: Vec<Range<usize>> = open
                 .iter()
-                .flat_map(|it| it.not_text.iter().cloned())
+                .flat_map(|it| {
+                    // Only the cuts reaching `span`, so the work follows the
+                    // string and not every other cut in the open literals.
+                    let from = it.not_text.partition_point(|cut| cut.end <= span.start);
+                    it.not_text[from..]
+                        .iter()
+                        .take_while(|cut| cut.start < span.end)
+                        .cloned()
+                })
                 .collect();
             cuts.sort_by_key(|cut| cut.start);
             merged = cuts;
