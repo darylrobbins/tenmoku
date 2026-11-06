@@ -491,3 +491,87 @@ name = "replace_ctrl_r_ctrl_r_multiline_characterwise_backspace_across"
 buffer = "ab\ncd\nxyz tail"
 cursor = [0, 0]
 keys = "vjyj0R<C-r><C-r>0<BS><BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_multiline_counted"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj02R<C-r>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_multiline_dot"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r>0<Esc>G0."
+
+[[case]]
+name = "replace_ctrl_r_multiline_consecutive_dots"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r>0<Esc>G0.."
+
+[[case]]
+name = "replace_ctrl_r_multiline_counted_backspace"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj02R<C-r>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_r_multiline_counted"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj02R<C-r><C-r>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_r_multiline_dot"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r><C-r>0<Esc>G0."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_r_multiline_consecutive_dots"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r><C-r>0<Esc>G0.."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_r_multiline_counted_backspace"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj02R<C-r><C-r>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_characterwise_counted_backspace"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yiwj2RQ<C-r><C-o>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_linewise_counted_backspace"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yyj2RQ<C-r><C-o>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_linewise_counted_backspace_twice"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yyj2RQ<C-r><C-o>0<BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_characterwise_counted_backspace"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yiwj2RQ<C-r><C-p>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_linewise_counted_backspace"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yyj2RQ<C-r><C-p>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_linewise_counted_backspace_twice"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yyj2RQ<C-r><C-p>0<BS><BS><Esc>"

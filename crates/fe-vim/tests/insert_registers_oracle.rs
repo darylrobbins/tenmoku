@@ -76,6 +76,20 @@ fn insert_registers_match_neovim() {
         "replace_ctrl_r_multiline_characterwise_backspace",
         "replace_ctrl_r_multiline_characterwise_backspace_across",
         "replace_ctrl_r_ctrl_r_multiline_characterwise_backspace_across",
+        "replace_ctrl_r_multiline_counted",
+        "replace_ctrl_r_multiline_dot",
+        "replace_ctrl_r_multiline_consecutive_dots",
+        "replace_ctrl_r_multiline_counted_backspace",
+        "replace_ctrl_r_ctrl_r_multiline_counted",
+        "replace_ctrl_r_ctrl_r_multiline_dot",
+        "replace_ctrl_r_ctrl_r_multiline_consecutive_dots",
+        "replace_ctrl_r_ctrl_r_multiline_counted_backspace",
+        "replace_ctrl_r_ctrl_o_characterwise_counted_backspace",
+        "replace_ctrl_r_ctrl_o_linewise_counted_backspace",
+        "replace_ctrl_r_ctrl_o_linewise_counted_backspace_twice",
+        "replace_ctrl_r_ctrl_p_characterwise_counted_backspace",
+        "replace_ctrl_r_ctrl_p_linewise_counted_backspace",
+        "replace_ctrl_r_ctrl_p_linewise_counted_backspace_twice",
     ] {
         assert!(
             recorded.iter().any(|case| case.name == name),
@@ -135,4 +149,35 @@ fn stale_register_prefix_does_not_outlive_its_session() {
     assert!(!vim.state().insert_register_waiting());
     assert_eq!(vim.text(), "abcx");
     assert_eq!(vim.mode(), "insert");
+}
+
+#[test]
+fn register_inserted_in_replace_mode_leaves_visual_marks_on_their_row() {
+    // nvim: `'<` and `'>` stay on the second row after a line goes in above.
+    for key in ["<C-o>", "<C-p>"] {
+        let mut vim = HeadlessVim::new("abc\ndef", (0, 0));
+        vim.feed(&format!("viwyR<C-r>{key}0<Esc>0yyP")).unwrap();
+        let first = vim.mark('<');
+        vim.feed("gv<Esc>").unwrap();
+        assert_eq!(first, Some((1, 0)), "{key}");
+        assert_eq!(vim.mark('>').map(|at| at.0), Some(1), "{key}");
+    }
+}
+
+#[test]
+fn carets_on_one_row_keep_a_stackless_boundary_after_a_linewise_insertion() {
+    use fe_buffer::ResolvedSelection;
+    for key in ["<C-o>", "<C-p>"] {
+        let mut vim = HeadlessVim::new("abc\nxyz uvw", (0, 0));
+        vim.feed("yyj").unwrap();
+        vim.model_mut()
+            .set_selections([1, 5].map(|offset| ResolvedSelection {
+                range: 4 + offset..4 + offset,
+                reversed: false,
+            }));
+        vim.feed(&format!("RQ<C-r>{key}0<BS><Esc>")).unwrap();
+        // The one caret left finds its boundary: the backspace joins the
+        // rows, putting back what the first caret's key overwrote.
+        assert_eq!(vim.text(), "abc\nabcyxQz uQw", "{key}");
+    }
 }

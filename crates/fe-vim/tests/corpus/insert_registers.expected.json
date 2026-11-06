@@ -2194,6 +2194,464 @@
           ]
         }
       }
+    },
+    {
+      "name": "replace_ctrl_r_multiline_counted",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj02R<C-r>0<Esc>",
+      "expect": {
+        "buffer": "ab\nab\ncab\nccd\nxyz tail",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nc",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_multiline_dot",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj0R<C-r>0<Esc>G0.",
+      "expect": {
+        "buffer": "ab\nab\nccd\nab\ncxyz tail",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nc",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_multiline_consecutive_dots",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj0R<C-r>0<Esc>G0..",
+      "expect": {
+        "buffer": "ab\nab\nccd\nab\nab\nccxyz tail",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nc",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_multiline_counted_backspace",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj02R<C-r>0<BS><Esc>",
+      "expect": {
+        "buffer": "ab\nab\nab\ncccd\nxyz tail",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nc",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_r_multiline_counted",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj02R<C-r><C-r>0<Esc>",
+      "expect": {
+        "buffer": "ab\nab\ncab\nccd\nxyz tail",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nc",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_r_multiline_dot",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj0R<C-r><C-r>0<Esc>G0.",
+      "expect": {
+        "buffer": "ab\nab\nccd\nab\ncxyz tail",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nc",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_r_multiline_consecutive_dots",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj0R<C-r><C-r>0<Esc>G0..",
+      "expect": {
+        "buffer": "ab\nab\nccd\nab\nab\nccxyz tail",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nc",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_r_multiline_counted_backspace",
+      "buffer": "ab\ncd\nxyz tail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjyj02R<C-r><C-r>0<BS><Esc>",
+      "expect": {
+        "buffer": "ab\nab\nab\ncccd\nxyz tail",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nc",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_o_characterwise_counted_backspace",
+      "buffer": "abc\nxyz uvw",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yiwj2RQ<C-r><C-o>0<BS><Esc>",
+      "expect": {
+        "buffer": "abc\nQabQabxyz uvw",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_o_linewise_counted_backspace",
+      "buffer": "abc\nxyz uvw",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyj2RQ<C-r><C-o>0<BS><Esc>",
+      "expect": {
+        "buffer": "abc\nabcxabcQQyz uvw",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_o_linewise_counted_backspace_twice",
+      "buffer": "abc\nxyz uvw",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyj2RQ<C-r><C-o>0<BS><BS><Esc>",
+      "expect": {
+        "buffer": "abc\nabccabQxQyz uvw",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_p_characterwise_counted_backspace",
+      "buffer": "abc\nxyz uvw",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yiwj2RQ<C-r><C-p>0<BS><Esc>",
+      "expect": {
+        "buffer": "abc\nQabQabxyz uvw",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_p_linewise_counted_backspace",
+      "buffer": "abc\nxyz uvw",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyj2RQ<C-r><C-p>0<BS><Esc>",
+      "expect": {
+        "buffer": "abc\nabcxabcQQyz uvw",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "replace_ctrl_r_ctrl_p_linewise_counted_backspace_twice",
+      "buffer": "abc\nxyz uvw",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyj2RQ<C-r><C-p>0<BS><BS><Esc>",
+      "expect": {
+        "buffer": "abc\nabccabQxQyz uvw",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        }
+      }
     }
   ]
 }

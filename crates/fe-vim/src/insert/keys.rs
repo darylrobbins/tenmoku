@@ -633,6 +633,9 @@ pub(crate) fn retype(
                     crate::visual::typing(state, model.snapshot(), heads(model));
                 }
                 state.insert_stackless(model, |model| insert_literal(model, value, how));
+                if state.mode == Mode::Replace {
+                    crate::visual::reanchored(state, model.snapshot());
+                }
                 let after = state
                     .session
                     .as_ref()
@@ -938,9 +941,18 @@ impl VimState {
         // `.` and a count read these two again, whole lines above the
         // caret's row among them. Replace mode's keys hold what it typed,
         // which is what they replay.
-        let recorded = how
-            .filter(|&how| how != LiteralInsert::Plain)
-            .filter(|_| self.mode == Mode::Insert || !self.is_virtual_replace());
+        // Characterwise text with a line break goes into replace mode as
+        // it is too (both plain forms), and replays so.
+        let broken = self.mode == Mode::Replace
+            && !self.is_virtual_replace()
+            && !value.linewise
+            && value.text.contains(['\n', '\r']);
+        let recorded = match how {
+            Some(LiteralInsert::Plain) | None if broken => Some(LiteralInsert::Plain),
+            Some(LiteralInsert::Plain) | None => None,
+            Some(how) => Some(how),
+        }
+        .filter(|_| self.mode == Mode::Insert || !self.is_virtual_replace());
         let before = recorded.and_then(|_| Some(typed_so_far(self, model, self.session.as_ref()?)));
         let whole = whole_lines(&value) && !value.text.is_empty();
         let failed = self.failed;
@@ -1040,6 +1052,10 @@ impl VimState {
                 }
             }
             Some(how) => put_literal(model, text, whole_lines(&value), how),
+        }
+        if stackless {
+            // Their rows' starts, anchored as any others now.
+            crate::visual::reanchored(self, model.snapshot());
         }
         self.goals = None;
     }
@@ -1466,6 +1482,8 @@ pub(crate) fn repeat_replace(
         // (nothing past the row's end). Carets that going back brings
         // together are one from then on, with the first's.
         let mut overwrote: Vec<Vec<String>> = vec![Vec::new(); ranks.len()];
+        // How many characters were typed since the last register went in.
+        let mut since: Option<usize> = None;
         for piece in &pieces {
             match piece {
                 // Each line break on its own, so the indent `^<C-d>` took
@@ -1475,8 +1493,24 @@ pub(crate) fn repeat_replace(
                     // characters before it overwrote.
                     let backs = typed.chars().take_while(|&ch| ch == BACKSPACE).count();
                     let typed = &typed[backs..];
-                    put_back(model, session, &mut ranks, &mut overwrote, backs);
+                    // Back through what was typed since a register went in
+                    // as the stack has it, then through the register's text.
+                    let normal = since.map_or(backs, |n| backs.min(n));
+                    put_back(model, session, &mut ranks, &mut overwrote, normal);
+                    if let Some(n) = since.as_mut() {
+                        *n -= normal;
+                        for _ in normal..backs {
+                            back_stackless(model, session, &mut ranks, &mut overwrote);
+                            if ranks.is_empty() {
+                                return;
+                            }
+                        }
+                    }
                     let plain = !typed.contains(['\n', BACKSPACE]);
+                    match (&mut since, plain) {
+                        (Some(n), true) => *n += typed.chars().count(),
+                        _ => since = None,
+                    }
                     let before = match plain {
                         true => Some(overwritten(model, &ranks, typed.chars().count())),
                         false => None,
@@ -1515,7 +1549,9 @@ pub(crate) fn repeat_replace(
                     if let Some(value) = reads.get(name) {
                         insert_literal(model, value, *how);
                     }
-                    overwrote.iter_mut().for_each(Vec::clear);
+                    // The text knows nothing of the stack, which keeps what
+                    // the characters before it overwrote for a `<BS>`.
+                    since = Some(0);
                 }
                 Piece::Key(Key::Delete(key)) => {
                     back_in_copy(model, session, &mut ranks, &mut overwrote, *key);
@@ -1603,6 +1639,52 @@ fn put_back(
         place(model, &snapshot, &moved);
         follow_stacks(model, ranks, overwrote, &moved);
     }
+}
+
+/// A `<BS>` at the carets at `ranks` just after a register's text: it takes
+/// the stack's top entry whatever is before the caret
+/// ([`crate::replace::copy_back`]).
+fn back_stackless(
+    model: &mut EditorModel,
+    session: &Session,
+    ranks: &mut Vec<usize>,
+    overwrote: &mut Vec<Vec<String>>,
+) {
+    sync(model);
+    let text = model.text().clone();
+    let heads = heads(model);
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut lands: Vec<(usize, usize)> = Vec::new();
+    for (&rank, stack) in ranks.iter().zip(overwrote.iter_mut()) {
+        let head = heads[rank];
+        let Some(back) = crate::replace::copy_back(&text, stack, head) else {
+            continue;
+        };
+        stack.truncate(stack.len().saturating_sub(back.popped));
+        lands.push((head, back.range.start));
+        if !back.range.is_empty() || !back.text.is_empty() {
+            edits.push((back.range, back.text));
+        }
+    }
+    if lands.is_empty() {
+        return;
+    }
+    let moved: Vec<usize> = heads
+        .iter()
+        .map(|&head| {
+            let start = lands
+                .iter()
+                .find(|(from, _)| *from == head)
+                .map_or(head, |(_, start)| *start);
+            through(&edits, start)
+        })
+        .collect();
+    let snapshot = match edits.is_empty() {
+        true => model.snapshot().clone(),
+        false => apply(model, edits, session.origin.clone()).1,
+    };
+    place(model, &snapshot, &moved);
+    follow_stacks(model, ranks, overwrote, &moved);
 }
 
 /// `ranks` (sorted heads' ranks) and what the carets at them `overwrote`,

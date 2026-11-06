@@ -1053,6 +1053,37 @@ fn stack_back(text: &Text, typed: &[Entry], head: usize) -> (Act, Option<Undo>) 
     (act, Some(Undo::Stack { pop, to: head - 1 }))
 }
 
+/// What a `<BS>` just after stackless text does in a count's copy, whose
+/// replace stack holds `stack` (what its characters overwrote, oldest
+/// first): [`stack_back`] on entries made of it.
+pub(crate) struct CopyBack {
+    pub(crate) range: Range<usize>,
+    pub(crate) text: String,
+    /// How many of the stack's top entries it took.
+    pub(crate) popped: usize,
+}
+
+/// `None` when the caret stays (the start of the text).
+pub(crate) fn copy_back(text: &Text, stack: &[String], head: usize) -> Option<CopyBack> {
+    let mut typed: Vec<Entry> = stack
+        .iter()
+        .map(|was| Entry::new(0..0, String::new(), was.clone()))
+        .collect();
+    let mut stackless = Entry::new(0..0, String::new(), String::new());
+    stackless.stackless = true;
+    typed.push(stackless);
+    let (act, undo) = stack_back(text, &typed, head);
+    let popped = match undo? {
+        Undo::Stack { pop, .. } => pop.len(),
+        _ => 0,
+    };
+    Some(CopyBack {
+        range: act.range,
+        text: act.text,
+        popped,
+    })
+}
+
 impl VimState {
     /// Runs `insert`, which puts text in at every caret, as nvim's replace
     /// mode does the register inserts it doesn't type over: in replace mode
@@ -1076,13 +1107,34 @@ impl VimState {
         sync(model);
         let grew = model.text().len().saturating_sub(before);
         let ends = sorted_heads(model);
-        if grew == 0 || ends.len() != heads.len() || !grew.is_multiple_of(heads.len()) {
+        // Carets on one row come together where whole lines went in above
+        // it: the text went in once for them, and the one caret left takes
+        // the first of their records.
+        let groups: Vec<Option<usize>> = if ends.len() == heads.len() {
+            records
+        } else {
+            let mut rows: Vec<(u32, Option<usize>)> = Vec::new();
+            for (&head, ix) in heads.iter().zip(records) {
+                let row = text.offset_to_point(head).row;
+                match rows.last_mut() {
+                    Some((last, kept)) if *last == row => {
+                        *kept = kept.or(ix);
+                    }
+                    _ => rows.push((row, ix)),
+                }
+            }
+            if rows.len() != ends.len() {
+                return;
+            }
+            rows.into_iter().map(|(_, ix)| ix).collect()
+        };
+        if grew == 0 || ends.is_empty() || !grew.is_multiple_of(ends.len()) {
             return;
         }
-        let each = grew / heads.len();
+        let each = grew / ends.len();
         let mut record = replace.record();
         record.follow(None);
-        for (end, ix) in ends.into_iter().zip(records) {
+        for (end, ix) in ends.into_iter().zip(groups) {
             let mut entry = Entry::new(end.saturating_sub(each)..end, String::new(), String::new());
             entry.stackless = true;
             match ix.and_then(|ix| record.typed.get_mut(ix)) {
