@@ -51,7 +51,7 @@ fn on_write(hook: impl FnMut(WriteStage, &Path) + 'static) {
 }
 
 /// Runs the hook [`on_write`] set, if any.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) fn write_hook(stage: WriteStage, rel: &Path) {
     WRITE_HOOK.with(|slot| {
         if let Some(hook) = slot.borrow_mut().as_mut() {

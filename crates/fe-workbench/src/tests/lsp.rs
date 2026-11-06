@@ -399,8 +399,12 @@ impl Lsp {
         fs::write(path, text).unwrap();
     }
 
+    /// The path of `name`, relative to the root with `/` separators, as the
+    /// app spells it: with the platform's separators.
     pub(crate) fn path(&self, name: &str) -> PathBuf {
-        self.root.join(name)
+        let mut path = self.root.clone();
+        path.extend(name.split('/'));
+        path
     }
 
     pub(crate) fn uri(&self, name: &str) -> Url {

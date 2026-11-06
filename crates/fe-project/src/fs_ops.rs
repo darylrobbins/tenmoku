@@ -76,10 +76,17 @@ impl From<NameError> for io::Error {
     }
 }
 
+/// A separator in a typed name: `/`, and on Windows `\` too, which no
+/// Windows name can hold.
+fn is_separator(c: char) -> bool {
+    c == '/' || (cfg!(windows) && c == '\\')
+}
+
 /// Checks a name typed for a new entry. It may hold `/`s to name the folders
 /// to create above it, nvim-tree style (`a/b/c.rs`), and end with one `/` to
 /// name a folder. It is refused if it is empty or holds a NUL, or if a
-/// component between the `/`s is empty, `.` or `..`.
+/// component between the `/`s is empty, `.` or `..`. On Windows a `\`
+/// separates them too.
 pub fn validate_name(name: &str) -> Result<(), NameError> {
     if name.is_empty() {
         return Err(NameError::Empty);
@@ -87,8 +94,8 @@ pub fn validate_name(name: &str) -> Result<(), NameError> {
     if name.contains('\0') {
         return Err(NameError::Nul);
     }
-    let body = name.strip_suffix('/').unwrap_or(name);
-    for component in body.split('/') {
+    let body = name.strip_suffix(is_separator).unwrap_or(name);
+    for component in body.split(is_separator) {
         match component {
             "" => return Err(NameError::EmptyComponent),
             "." => return Err(NameError::Dot),
@@ -102,7 +109,7 @@ pub fn validate_name(name: &str) -> Result<(), NameError> {
 /// [`validate_name`] for a name that must be a single component.
 fn validate_component(name: &str) -> Result<(), NameError> {
     validate_name(name)?;
-    if name.contains('/') {
+    if name.contains(is_separator) {
         return Err(NameError::Separator);
     }
     Ok(())
@@ -117,7 +124,7 @@ fn validate_component(name: &str) -> Result<(), NameError> {
 /// created. Should creating fail midway, the folders made are removed again:
 /// those it made, not ones another process put in their place or in them.
 pub fn create_file(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
-    create(root, dir, name, name.ends_with('/'))
+    create(root, dir, name, name.ends_with(is_separator))
 }
 
 /// Creates folder `name` in folder `dir`, with any folders `name` names above
@@ -131,9 +138,9 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
     let root = Root::open(root)?;
     let dir_names = names_under(&root.path, dir)?;
     let names: Vec<&OsStr> = name
-        .strip_suffix('/')
+        .strip_suffix(is_separator)
         .unwrap_or(name)
-        .split('/')
+        .split(is_separator)
         .map(OsStr::new)
         .collect();
     let (last, above) = names.split_last().expect("a valid name has a component");
@@ -1061,7 +1068,7 @@ fn validate_os_component(name: &OsStr) -> Result<(), NameError> {
     if bytes.contains(&0) {
         return Err(NameError::Nul);
     }
-    if bytes.contains(&b'/') {
+    if bytes.iter().any(|&b| is_separator(char::from(b))) {
         return Err(NameError::Separator);
     }
     Ok(())
@@ -2024,9 +2031,10 @@ mod tests {
     /// unlike a symlink, needs no privilege, and is a link all the same.
     #[cfg(windows)]
     fn symlink(target: &Path, link: &Path) -> io::Result<()> {
+        // `mklink` takes neither `\\?\` paths nor `/` separators.
         let plain = |path: &Path| {
             let text = path.to_str().unwrap();
-            text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
+            text.strip_prefix(r"\\?\").unwrap_or(text).replace('/', r"\")
         };
         let status = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J", &plain(link), &plain(target)])
