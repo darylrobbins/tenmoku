@@ -10,9 +10,11 @@ This is an early, pre-1.0 release (0.1).
 ## Features
 
 - Syntax highlighting, indentation and code folding from tree-sitter grammars
-  (Rust, Python, JavaScript, TypeScript, Go, C, C++, Java, C#, Lua, HTML, CSS,
-  JSON, YAML, Markdown, Bash and more). Kotlin, Scala, Swift, Ruby, PHP, SQL and
-  other grammars ship as downloadable WebAssembly language packs.
+  (Rust, Python, JavaScript, TypeScript, Go, C, Java, Lua, HTML, CSS, JSON,
+  JSON5, TOML, YAML, XML, INI, CSV, Markdown, Bash, Dockerfile, Make, Just, diff
+  and the git file formats: gitignore, gitattributes, gitconfig, commit messages
+  and rebase todos). Kotlin, C#, Scala, Swift, C++, SQL, PHP and Ruby are
+  WebAssembly grammars, downloaded the first time a file of that language opens.
 - Language server support: diagnostics, hover, completion, go to definition,
   find references, rename, code actions, inlay hints, code lenses, semantic
   highlighting and format on save.
@@ -55,12 +57,7 @@ there is no supported Linux release yet.
    Or try to open the app once, then go to System Settings > Privacy & Security
    and choose Open Anyway.
 
-The executable inside the bundle is `Tenmoku.app/Contents/MacOS/tenmoku`. To use
-it from a shell, link it onto your `PATH`, for example:
-
-```zsh
-ln -s /Applications/Tenmoku.app/Contents/MacOS/tenmoku /usr/local/bin/tenmoku
-```
+The executable inside the bundle is `Tenmoku.app/Contents/MacOS/tenmoku`.
 
 ## Build from source
 
