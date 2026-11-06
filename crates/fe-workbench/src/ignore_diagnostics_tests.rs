@@ -397,16 +397,13 @@ fn unsaved_text_is_checked_and_edits_during_a_check_rebase(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-fn dockerignore_and_other_languages_get_none(cx: &mut TestAppContext) {
+fn other_languages_get_none(cx: &mut TestAppContext) {
     let (workbench, checks, cx) = workbench(cx);
     let files = Files::new();
-    let docker = files.write(".dockerignore", "missing.log\nmissing.log\n");
     let rust = files.write("main.rs", "fn main() {}\n");
-    for path in [&docker, &rust] {
-        let editor = open(&workbench, path, cx);
-        settle(cx);
-        assert_eq!(problems(&editor, cx), [], "{path:?}");
-    }
+    let editor = open(&workbench, &rust, cx);
+    settle(cx);
+    assert_eq!(problems(&editor, cx), [], "{rust:?}");
     assert_eq!(checks.count(), 0);
     assert_eq!(workbench.read_with(cx, |it, _| it.ignore_slot_count()), 0);
     assert_eq!(panel_rows(&workbench, cx), []);

@@ -1,7 +1,9 @@
 //! Help writing an ignore file, through each editor's completion and hover
 //! providers (`lsp.rs`), beside whatever a language server says about the file.
-//! Docker's and Podman's files aren't helped, as they aren't checked
-//! ([`crate::ignore_diagnostics`]).
+//! Docker's and Podman's files are helped too: they are checked with Docker's
+//! rules ([`crate::ignore_diagnostics`]), so a hover counts as Docker matches
+//! and the paths are relative to the build context, never inserted with a
+//! leading `/` (which Docker strips, not an anchor).
 //!
 //! - **Completing a path.** On a line that isn't a comment, the text before the
 //!   caret names a directory and the start of an entry, past a leading `!` and
@@ -47,7 +49,10 @@ use fe_project::IgnoreReport;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
-use crate::{Workbench, ignore_diagnostics::is_ignore_file};
+use crate::{
+    Workbench,
+    ignore_diagnostics::{is_container_ignore, is_ignore_file},
+};
 
 /// The most entries a completion list holds.
 pub(crate) const MAX_ENTRIES: usize = 200;
@@ -353,14 +358,28 @@ struct TypedPath {
 
 /// The path typed in `line` (without a byte order mark) up to byte `caret`:
 /// `None` if the line is a comment, or that doesn't name a directory to git.
+#[cfg(test)]
 fn typed_path(line: &str, caret: usize) -> Option<TypedPath> {
-    if line.starts_with('#') {
+    typed_path_in(line, caret, false)
+}
+
+/// [`typed_path`] for a line of a container ignore file when `docker`: Docker
+/// trims the line's surrounding whitespace, and the whitespace after a `!`.
+fn typed_path_in(line: &str, caret: usize, docker: bool) -> Option<TypedPath> {
+    let line_body = if docker { line.trim_start() } else { line };
+    if line_body.starts_with('#') {
         return None;
     }
     let before = line.get(..caret)?;
+    let before = if docker { before.trim_start() } else { before };
     let negated = before.strip_prefix('!').unwrap_or(before);
+    let negated = if docker && negated.len() < before.len() {
+        negated.trim_start()
+    } else {
+        negated
+    };
     let name = negated.strip_prefix('/').unwrap_or(negated);
-    let head = before.len() - name.len();
+    let head = caret - name.len();
 
     let mut dirs = Vec::new();
     let mut entry = String::new();
@@ -368,7 +387,14 @@ fn typed_path(line: &str, caret: usize) -> Option<TypedPath> {
     let mut chars = name.char_indices();
     while let Some((ix, c)) = chars.next() {
         match c {
-            '\\' => entry.push(chars.next()?.1),
+            '\\' => {
+                // An escaped separator would put a slash inside a name.
+                let escaped = chars.next()?.1;
+                if escaped == '/' {
+                    return None;
+                }
+                entry.push(escaped);
+            }
             '*' | '?' | '[' => return None,
             '/' => {
                 if matches!(entry.as_str(), "" | "." | ".." | ".git") {
@@ -389,10 +415,35 @@ fn typed_path(line: &str, caret: usize) -> Option<TypedPath> {
 
 /// `name` as a pattern matches it literally. Starting the line, `at_line_start`,
 /// a `#` or `!` would be taken as a comment or a negation.
+#[cfg(test)]
 fn escaped(name: &str, at_line_start: bool) -> String {
+    escaped_in(name, at_line_start, at_line_start, false)
+}
+
+/// [`escaped`] for Docker when `docker`, which trims a line's whitespace and
+/// takes no backslash for it: whitespace at the start of the line or the end of
+/// a file's name goes in a character class (`[ ]`). `dir` says a `/` follows.
+fn escaped_in(name: &str, at_line_start: bool, lead_ws: bool, docker: bool) -> String {
     let mut text = String::with_capacity(name.len());
     if at_line_start && name.starts_with(['#', '!']) {
         text.push('\\');
+    }
+    if docker {
+        let end = name.trim_end().len();
+        let start = name.len() - name.trim_start().len();
+        for (ix, c) in name.char_indices() {
+            if c.is_whitespace() && ((lead_ws && ix < start) || ix >= end) {
+                text.push('[');
+                text.push(c);
+                text.push(']');
+                continue;
+            }
+            if matches!(c, '\\' | '*' | '?' | '[') {
+                text.push('\\');
+            }
+            text.push(c);
+        }
+        return text;
     }
     let kept = name.trim_end_matches(' ').len();
     for (ix, c) in name.char_indices() {
@@ -446,12 +497,24 @@ fn listed_entries(base: &Path, typed: &TypedPath) -> (Vec<Entry>, bool) {
 }
 
 /// The item for `entry`, replacing `range`.
-fn entry_item((name, is_dir): Entry, range: Range<usize>, at_line_start: bool) -> CompletionItem {
+fn entry_item(
+    (name, is_dir): Entry,
+    range: Range<usize>,
+    at_line_start: bool,
+    lead_ws: bool,
+    docker: bool,
+) -> CompletionItem {
     let slash = if is_dir { "/" } else { "" };
     CompletionItem {
         label: format!("{name}{slash}"),
         kind: Some(if is_dir { "folder" } else { "file" }.to_owned()),
-        edit: (range, format!("{}{slash}", escaped(&name, at_line_start))),
+        edit: (
+            range,
+            format!(
+                "{}{slash}",
+                escaped_in(&name, at_line_start, lead_ws, docker)
+            ),
+        ),
         ..CompletionItem::default()
     }
 }
@@ -465,7 +528,7 @@ fn completion_request(
     version: Version,
     offset: usize,
     cx: &App,
-) -> Option<(PathBuf, TypedPath, usize)> {
+) -> Option<(PathBuf, TypedPath, usize, bool, bool, bool)> {
     let workbench = workbench.upgrade()?;
     let shown = shown_buffer(workbench.read(cx), buffer, version, cx)?;
     let snapshot = shown.snapshot;
@@ -478,8 +541,29 @@ fn completion_request(
     let text = snapshot.text();
     let offset = text.clip_offset(offset, Bias::Left);
     let (start, line) = row_text(snapshot, text.offset_to_point(offset).row);
-    let typed = typed_path(&line, offset.checked_sub(start)?)?;
-    Some((base_dir(shown.path), typed, start))
+    let docker = is_container_ignore(shown.path);
+    let typed = typed_path_in(&line, offset.checked_sub(start)?, docker)?;
+    // Where the entry sits in the pattern, as Docker trims the line: starting
+    // it (a `#` or `!` would be a comment or exclusion, and whitespace trimmed),
+    // or just after its `!`.
+    let before = &line[..typed.range.start];
+    let opening = before.trim_start();
+    let (at_start, lead_ws) = if docker {
+        let after_bang = opening
+            .strip_prefix('!')
+            .is_some_and(|rest| rest.trim().is_empty());
+        (opening.is_empty(), opening.is_empty() || after_bang)
+    } else {
+        (typed.range.start == 0, false)
+    };
+    Some((
+        base_dir(shown.path),
+        typed,
+        start,
+        at_start,
+        lead_ws,
+        docker,
+    ))
 }
 
 /// The paths to offer at byte `offset` of `buffer` at `version`: see
@@ -491,7 +575,7 @@ pub(crate) async fn path_completions(
     version: Version,
     offset: usize,
 ) -> Option<CompletionList> {
-    let (base, typed, start) =
+    let (base, typed, start, at_line_start, lead_ws, docker) =
         cx.update(|cx| completion_request(&workbench, buffer, version, offset, cx))?;
     let (typed, (entries, more)) = cx
         .background_spawn(async move {
@@ -500,10 +584,9 @@ pub(crate) async fn path_completions(
         })
         .await;
     let range = start + typed.range.start..start + typed.range.end;
-    let at_line_start = typed.range.start == 0;
     Some(CompletionList {
         items: (entries.into_iter())
-            .map(|entry| entry_item(entry, range.clone(), at_line_start))
+            .map(|entry| entry_item(entry, range.clone(), at_line_start, lead_ws, docker))
             .collect(),
         is_incomplete: more,
     })

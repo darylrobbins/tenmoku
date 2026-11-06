@@ -25,6 +25,7 @@
 //!
 //! This crate must never depend on GPUI.
 
+mod docker_ignore;
 mod finder;
 #[doc(hidden)]
 pub mod fixture;

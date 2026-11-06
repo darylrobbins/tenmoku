@@ -317,7 +317,7 @@ fn a_missing_directory_reports_no_unused_lines() {
 }
 
 #[test]
-fn dockerignore_is_not_checked() {
+fn dockerignore_is_checked_with_docker_rules() {
     let dir = project(&["src/a.txt"]);
     let text = "nothing_here/\n[abc\nx\nx\n";
     for name in [
@@ -325,9 +325,18 @@ fn dockerignore_is_not_checked() {
         "Dockerfile.dockerignore",
         ".containerignore",
     ] {
+        let report = check(dir.path(), name, text);
         assert_eq!(
-            check(dir.path(), name, text),
-            IgnoreReport::default(),
+            kinds(&report),
+            [
+                (1, IgnoreFindingKind::Unused),
+                (
+                    2,
+                    IgnoreFindingKind::Invalid("syntax error in pattern".into())
+                ),
+                (3, IgnoreFindingKind::Unused),
+                (4, IgnoreFindingKind::Duplicate { first_line: 3 }),
+            ],
             "{name}"
         );
     }

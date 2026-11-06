@@ -319,7 +319,8 @@ fn in_git_dir(path: &Path) -> bool {
 
 /// Whether `view` shows a file the check applies to: one in the ignore-file
 /// language, as picked by hand or else by its path, which is known without its
-/// grammar loading, and which Docker or Podman don't read by other rules.
+/// grammar loading. Docker's and Podman's files count: the check reads them
+/// with Docker's rules.
 pub(crate) fn is_ignore_file(view: &EditorView) -> bool {
     let Some(path) = view.model().path() else {
         return false;
@@ -328,12 +329,12 @@ pub(crate) fn is_ignore_file(view: &EditorView) -> bool {
         true => view.syntax().map(|syntax| syntax.language().name()),
         false => fe_syntax::language_name_for_path(path),
     };
-    language == Some(LANGUAGE) && !has_container_syntax(path)
+    language == Some(LANGUAGE) || (!view.is_language_chosen() && is_container_ignore(path))
 }
 
-/// Whether `path` is named as Docker's or Podman's files are, in any case, as
-/// its language is found.
-fn has_container_syntax(path: &Path) -> bool {
+/// Whether `path` is named as Docker's or Podman's ignore files are, in any
+/// case: the language table knows only `.dockerignore`.
+pub(crate) fn is_container_ignore(path: &Path) -> bool {
     let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
     let name = name.to_ascii_lowercase();
     name.ends_with(".dockerignore") || name.ends_with(".containerignore")
@@ -397,3 +398,7 @@ fn diagnostic(finding: &IgnoreFinding) -> (std::ops::Range<usize>, Diagnostic) {
 #[cfg(test)]
 #[path = "ignore_diagnostics_tests.rs"]
 mod ignore_diagnostics_tests;
+
+#[cfg(test)]
+#[path = "dockerignore_tests.rs"]
+mod dockerignore_tests;

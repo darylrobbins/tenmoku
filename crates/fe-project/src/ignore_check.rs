@@ -36,7 +36,7 @@ use crate::listing::is_git_dir;
 pub const MAX_SCAN_ENTRIES: usize = 200_000;
 
 /// The most paths [`MatchedPaths`] lists for a line.
-const MAX_LISTED_PATHS: usize = 50;
+pub(crate) const MAX_LISTED_PATHS: usize = 50;
 
 /// What [`check_ignore_file`] found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -107,9 +107,12 @@ pub struct MatchedPaths {
 /// `cancel` ends the walk at its next entry; the checks that need no walk are
 /// still reported.
 ///
-/// A `.dockerignore` returns an empty report: Docker bases its patterns at the
-/// build context, matches with Go's `filepath.Match`, and lets a `!` re-include
-/// inside an excluded directory, none of which git's rules model.
+/// A `.dockerignore`, `<name>.dockerignore` or `.containerignore` is checked
+/// with Docker's rules instead ([`crate::docker_ignore`]): patterns anchored at
+/// the build context, Go's `filepath.Match` plus `**`, and a `!` that re-includes
+/// inside an excluded directory. The context is taken to be the directory
+/// holding the file; for `<name>.dockerignore` that is a best guess, as the real
+/// context is a `docker build` argument we can't see.
 pub fn check_ignore_file(path: &Path, text: &str, cancel: &AtomicBool) -> IgnoreReport {
     check_ignore_file_capped(path, text, cancel, MAX_SCAN_ENTRIES)
 }
@@ -121,8 +124,8 @@ pub fn check_ignore_file_capped(
     cancel: &AtomicBool,
     max_entries: usize,
 ) -> IgnoreReport {
-    if has_docker_syntax(path) {
-        return IgnoreReport::default();
+    if crate::docker_ignore::is_container_ignore(path) {
+        return crate::docker_ignore::check(path, text, cancel, max_entries);
     }
     let base = base_dir(path);
     let (line_count, lines) = pattern_lines(text);
@@ -170,14 +173,6 @@ pub fn check_ignore_file_capped(
         truncated: end == ScanEnd::Truncated,
         cancelled: end == ScanEnd::Cancelled,
     }
-}
-
-/// Whether `path` is one of the files Docker reads (`.dockerignore`, or
-/// `<name>.dockerignore` beside a Dockerfile), or Podman's alike.
-fn has_docker_syntax(path: &Path) -> bool {
-    path.file_name()
-        .and_then(OsStr::to_str)
-        .is_some_and(|name| name.ends_with(".dockerignore") || name.ends_with(".containerignore"))
 }
 
 /// The directory `path`'s patterns are based at: its own, but for a

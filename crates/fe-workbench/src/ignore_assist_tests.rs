@@ -243,7 +243,7 @@ fn hover_lists_matched_files(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn comments_dockerignore_and_other_buffers_are_untouched(cx: &mut TestAppContext) {
+fn comments_and_other_buffers_are_untouched(cx: &mut TestAppContext) {
     let mut s = Lsp::new(cx);
     write(&s, "assets/logo.png", "");
     write(&s, "a.log", "");
@@ -258,12 +258,6 @@ fn comments_dockerignore_and_other_buffers_are_untouched(cx: &mut TestAppContext
     assert!(hover_at(&mut s, &editor, 3).is_none());
     assert!(hover_at(&mut s, &editor, "# assets/\n".len()).is_none());
     assert!(hover_at(&mut s, &editor, "# assets/\n\n".len()).is_some());
-
-    // Docker's file, whose patterns are read by other rules.
-    let editor = open_ignore(&mut s, ".dockerignore", "assets/");
-    assert!(!triggers(&mut s, &editor).contains(&"/".to_owned()));
-    assert_eq!(labels(&offered(&mut s, &editor)), [] as [&str; 0]);
-    assert!(hover_at(&mut s, &editor, 0).is_none());
 
     // A Rust buffer: what the server says, as it says it.
     let markup = LSPObject::from_iter([
@@ -450,7 +444,7 @@ fn typed_paths_name_a_directory_or_nothing() {
     // Git reads none of these as naming a directory.
     for line in [
         "# src/", "*.log", "src/*", "**/a", "a[b]/", "a?/", "../a", "./a", "a/../b", "a//b", "//a",
-        ".git/", "a/.git/b", "a\\",
+        ".git/", "a/.git/b", "a\\", "\\/etc/", "a\\/b",
     ] {
         assert_eq!(typed(line), None, "{line}");
     }
