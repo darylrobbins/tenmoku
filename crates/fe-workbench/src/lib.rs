@@ -24,6 +24,7 @@ mod dock;
 mod dock_focus;
 mod dock_layout;
 mod encoding_picker;
+mod extension_install;
 mod extension_snippets;
 mod extensions_picker;
 pub mod external_format;
@@ -107,6 +108,7 @@ use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::App;
 
 pub use dock::{Dock, DockPanel};
+pub use extension_install::{InstallError, Installed, install_extension};
 pub use extension_snippets::{
     ExtensionSnippet, extension_snippets, set_extension_snippets, snippet_body_error,
 };

@@ -233,6 +233,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Extensions: Uninstall Plugin",
         "workbench",
     ),
+    (
+        "workbench.install_extension",
+        "Extensions: Install from File or Folder…",
+        "workbench",
+    ),
     ("nav.goto_definition", "Go to Definition", "workbench"),
     ("nav.goto_declaration", "Go to Declaration", "workbench"),
     (

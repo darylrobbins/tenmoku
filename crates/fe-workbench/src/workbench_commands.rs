@@ -1067,6 +1067,13 @@ impl Workbench {
         self.pick_plugin(Purpose::Uninstall, cx.window, cx.cx);
     }
 
+    /// Extensions: Install from File or Folder…
+    #[command(id = "workbench.install_extension")]
+    fn install_extension_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.install_extension(cx.window, cx.cx);
+    }
+
     /// Go to Definition
     #[command(id = "nav.goto_definition")]
     fn go_to_definition(&mut self, cx: &mut Cx<Self>) {

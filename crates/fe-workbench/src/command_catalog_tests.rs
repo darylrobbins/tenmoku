@@ -365,6 +365,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "workbench.close_tab",
     "workbench.copy_active_file_path",
     "workbench.copy_active_file_relative_path",
+    "workbench.install_extension",
     "workbench.keep_editor",
     "workbench.last_editor_in_group",
     "workbench.new_file",

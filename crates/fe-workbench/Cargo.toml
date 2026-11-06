@@ -69,6 +69,10 @@ toml.workspace = true
 unicode-width.workspace = true
 # Reads inline edit's stream of updates.
 futures.workspace = true
+# Extensions: Install from File or Folder unpacks a .zip, a .tar.gz or a .tgz.
+zip.workspace = true
+tar.workspace = true
+flate2.workspace = true
 
 # Languages that are extensions by default (T427); their tests run with these.
 [features]

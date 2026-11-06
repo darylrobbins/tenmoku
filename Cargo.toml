@@ -119,6 +119,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # read with the XML parser GPUI's SVG parser reads it with (already in the
 # lock through gpui).
 usvg = { version = "0.46", default-features = false }
+# Installing an extension from a .zip or a .tar.gz (fe-workbench): deflate
+# only, through flate2's zlib-rs backend (already in the lock).
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+tar = { version = "0.4", default-features = false }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 libc = "0.2"
 log = "0.4"
 # HTTP types for the chat's transport (fe-chat-anthropic): status codes and
