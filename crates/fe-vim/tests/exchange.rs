@@ -253,3 +253,26 @@ fn comment_over_an_empty_object_ends_on_the_row_above() {
         );
     }
 }
+
+#[test]
+fn marked_rows_follow_later_deletions_and_openings() {
+    // A split-off row deleted leaves the anchor at the next row's start,
+    // which isn't marked.
+    check(
+        "ab\nc\nd",
+        (0, 0),
+        "cxxli<CR><Esc>ddGcxx",
+        "d\nc\na",
+        (2, 0),
+    );
+    // A row opened below the last once it is deleted isn't marked.
+    check(
+        "a\nb\nc\nd",
+        (0, 0),
+        "3cxxjjddkoX<Esc>Gcxx",
+        "d\nX\na\nb",
+        (2, 0),
+    );
+    // An empty marked row surviving both deleted boundaries stays marked.
+    check("z\na\n\nc", (1, 0), "3cxxddjddggcxx", "\nz", (0, 0));
+}

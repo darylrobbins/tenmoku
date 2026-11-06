@@ -92,6 +92,15 @@ struct Anchored {
     start: Anchor,
     end: Anchor,
     linewise: bool,
+    /// Rows only: the line break before the last row (when the region has
+    /// more than one), anchored to stay before it: where the rows that
+    /// survive end once the last is deleted, text put in at the row before
+    /// staying out.
+    lead: Option<Anchor>,
+    /// Rows only: the rows' text with the line break that ends them (the
+    /// one before them, for the last row of the text): once this has
+    /// collapsed, nothing marked is left, whatever rows lie there now.
+    whole: Option<(Anchor, Anchor)>,
 }
 
 /// A region in one text: `range` is what its text is, a row's line break
@@ -112,10 +121,33 @@ impl Region {
     }
 
     fn anchored(&self, snapshot: &BufferSnapshot) -> Anchored {
+        let text = snapshot.text();
+        let row = |offset| text.offset_to_point(offset).row;
+        let (start, end) = (self.range.start, self.range.end);
+        let (lead, whole) = match self.linewise {
+            true => {
+                let last = text.row_start(row(end));
+                let whole = match (end < text.len(), start) {
+                    (true, _) => (start, end + 1),
+                    (false, 0) => (0, end),
+                    (false, _) => (start - 1, end),
+                };
+                (
+                    (row(start) < row(end)).then(|| snapshot.anchor_before(last - 1)),
+                    Some((
+                        snapshot.anchor_after(whole.0),
+                        snapshot.anchor_before(whole.1),
+                    )),
+                )
+            }
+            false => (None, None),
+        };
         Anchored {
-            start: snapshot.anchor_after(self.range.start),
-            end: snapshot.anchor_before(self.range.end),
+            start: snapshot.anchor_after(start),
+            end: snapshot.anchor_before(end),
             linewise: self.linewise,
+            lead,
+            whole,
         }
     }
 }
@@ -124,14 +156,32 @@ impl Anchored {
     /// Its anchors' offsets in `snapshot`, if they can be resolved there:
     /// text put in where it was empty leaves it empty, at its end.
     fn offsets(&self, snapshot: &BufferSnapshot) -> Option<(usize, usize)> {
-        let resolvable = |anchor: &Anchor| {
-            anchor.version() <= snapshot.version() && anchor.version() >= snapshot.oldest_version()
-        };
-        if !resolvable(&self.start) || !resolvable(&self.end) {
+        if !Self::resolvable(&self.start, snapshot) || !Self::resolvable(&self.end, snapshot) {
             return None;
         }
         let end = snapshot.resolve(&self.end);
         Some((snapshot.resolve(&self.start).min(end), end))
+    }
+
+    fn resolvable(anchor: &Anchor, snapshot: &BufferSnapshot) -> bool {
+        anchor.version() <= snapshot.version() && anchor.version() >= snapshot.oldest_version()
+    }
+
+    /// Whether none of a row region's text or line breaks is left (`None`
+    /// if that can't be told): a surviving empty row has no extent of its
+    /// own, but its line break stays.
+    fn deleted(&self, snapshot: &BufferSnapshot) -> Option<bool> {
+        let (from, to) = self.whole.as_ref()?;
+        if !Self::resolvable(from, snapshot) || !Self::resolvable(to, snapshot) {
+            return None;
+        }
+        Some(snapshot.resolve(from) >= snapshot.resolve(to))
+    }
+
+    /// Where the rows before the last end, if it can be resolved.
+    fn lead(&self, snapshot: &BufferSnapshot) -> Option<usize> {
+        let lead = self.lead.as_ref()?;
+        Self::resolvable(lead, snapshot).then(|| snapshot.resolve(lead))
     }
 
     /// Where it is in `snapshot`, if it can be resolved there.
@@ -172,18 +222,30 @@ fn take_marked(state: &mut VimState, model: &mut EditorModel) -> Option<Region> 
     let (start, end) = marked.anchored.offsets(&snapshot)?;
     let text = snapshot.text();
     let row = |offset| text.offset_to_point(offset).row;
-    // A boundary row that lives is where its place says (the anchor
-    // reaching further for the last, when a row was split); a deleted one
-    // leaves the rows its anchor fell back to: the next row's start, or
-    // for the last, the line break after the row before.
-    if first.is_none() && last.is_none() && start == end {
-        return None;
+    // A boundary row that lives is where its place says, the last reaching
+    // further only to where the text of a row split off it ends. One that
+    // was deleted leaves the rows before it, as far as its anchored
+    // line break says, else the rows its anchors fell back to: the next
+    // row's start, or for the last, the line break after the row before.
+    if first.is_none() && last.is_none() {
+        let gone = marked.anchored.deleted(&snapshot).unwrap_or(start == end);
+        if gone {
+            return None;
+        }
     }
+    let ends_row = |offset: usize| {
+        let point = text.offset_to_point(offset);
+        point.column == text.row_len(point.row)
+    };
     let first = first.unwrap_or_else(|| row(start));
     let last = match last {
-        Some(last) => last.max(row(end)),
-        None if end > start && end == text.row_start(row(end)) => row(end) - 1,
-        None => row(end),
+        Some(last) if row(end) > last && ends_row(end) => row(end),
+        Some(last) => last,
+        None => match marked.anchored.lead(&snapshot) {
+            Some(lead) if ends_row(lead) && row(lead) >= first => row(lead),
+            _ if end > start && end == text.row_start(row(end)) => row(end) - 1,
+            _ => row(end),
+        },
     };
     if last < first {
         return None;
