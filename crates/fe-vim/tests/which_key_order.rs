@@ -83,7 +83,14 @@ fn keymap_chords_order_items_before_groups() {
             false,
         ),
         ("d", WhichKeyLabel::Command("lsp.definition".into()), false),
-        ("r", WhichKeyLabel::Group(5), true),
+        (
+            "r",
+            WhichKeyLabel::Group {
+                count: 5,
+                name: None,
+            },
+            true,
+        ),
     ];
     for (key, label, group) in chords {
         which.entries.retain(|entry| entry.key != key);

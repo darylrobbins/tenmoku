@@ -371,6 +371,11 @@ pub struct VimSettings {
     /// table; a later one for the same keys in the same mode replaces an
     /// earlier one.
     pub remap: Vec<VimRemap>,
+    /// Names for groups of remaps, which the which-key popup shows as
+    /// `+{name}` in place of `+{count}`. Each is a `[[vim.which_key_group]]`
+    /// table; it loads after the vimrc's `:fegroup`s and the preset's, and
+    /// a later name for the same keys in the same mode wins.
+    pub which_key_group: Vec<VimWhichKeyGroup>,
 }
 
 impl Default for VimSettings {
@@ -398,8 +403,40 @@ impl Default for VimSettings {
             leader: "\\".to_string(),
             preset: VimPreset::default(),
             remap: Vec::new(),
+            which_key_group: Vec::new(),
         }
     }
+}
+
+/// One `[[vim.which_key_group]]` entry.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct VimWhichKeyGroup {
+    /// The modes the name applies in, as `vim.remap`'s `mode`: `"n"`
+    /// (normal) unless set.
+    #[serde(default = "normal_mode")]
+    pub mode: VimRemapModes,
+    /// The prefix the group's remaps start with, in vim notation
+    /// (`"<leader>f"`).
+    #[serde(deserialize_with = "not_blank")]
+    #[schemars(length(min = 1))]
+    pub keys: String,
+    /// What the popup calls the group (`"file/find"`), after a `+`.
+    #[serde(deserialize_with = "not_blank")]
+    #[schemars(length(min = 1))]
+    pub name: String,
+}
+
+fn normal_mode() -> VimRemapModes {
+    VimRemapModes::One(VimRemapMode::Normal)
+}
+
+/// A string with something besides blanks in it.
+fn not_blank<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    if text.trim().is_empty() {
+        return Err(serde::de::Error::custom("can't be empty"));
+    }
+    Ok(text)
 }
 
 /// One `[[vim.remap]]` entry.

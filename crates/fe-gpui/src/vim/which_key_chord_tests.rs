@@ -171,7 +171,16 @@ fn bracket_and_g_chords_list_their_keys(cx: &mut TestAppContext) {
     let r = (which.entries.iter())
         .find(|entry| entry.key == "r")
         .unwrap();
-    assert_eq!((&r.label, r.group), (&WhichKeyLabel::Group(5), true));
+    assert_eq!(
+        (&r.label, r.group),
+        (
+            &WhichKeyLabel::Group {
+                count: 5,
+                name: None
+            },
+            true
+        )
+    );
     // The reducer's own `g` keys, of T1134's table.
     assert_eq!(title_of(&which, "g", cx), "first line");
     assert_eq!(title_of(&which, "e", cx), "end of previous word");

@@ -71,6 +71,19 @@ nnoremap <leader>5 <Cmd>fe:workbench.harpoon_jump5<CR>
 nnoremap <leader>qq <Cmd>fe:app.quit<CR>
 nnoremap <leader>uw <Cmd>fe:editor.toggle_soft_wrap<CR>
 
+" which-key's names for the groups above, as LazyVim's which-key spec names
+" them: only prefixes the preset has maps beneath.
+fegroup <leader>b buffer
+fegroup <leader>c code
+fegroup <leader>f file/find
+fegroup <leader>g git
+fegroup <leader>gh hunks
+fegroup <leader>q quit/session
+fegroup <leader>s search
+fegroup <leader>u ui
+fegroup <leader>w windows
+fegroup <leader>x diagnostics/quickfix
+
 " Unmapped LazyVim keys: fastedit has no command for them.
 "   <leader>sk  keymaps picker
 "   <leader>sh  help picker

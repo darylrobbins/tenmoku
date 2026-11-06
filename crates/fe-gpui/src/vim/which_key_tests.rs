@@ -328,7 +328,16 @@ fn lists_user_remaps(cx: &mut TestAppContext) {
     let f = (which.entries.iter())
         .find(|entry| entry.key == "f")
         .unwrap();
-    assert_eq!((&f.label, f.group), (&WhichKeyLabel::Group(1), true));
+    assert_eq!(
+        (&f.label, f.group),
+        (
+            &WhichKeyLabel::Group {
+                count: 1,
+                name: None
+            },
+            true
+        )
+    );
     let undo = cx.update(|_, _| {
         editor_command(&fe_command::CommandId::parse("editor.undo").unwrap())
             .expect("the editor's undo")
@@ -363,6 +372,35 @@ fn lists_user_remaps(cx: &mut TestAppContext) {
             .row
     });
     assert_eq!(row, 0);
+}
+
+/// A group named for the open editor's normal mode titles `+{name}` in
+/// place of its count, `+2`; an unnamed sibling, or one named for visual
+/// mode only, keeps its count. The popup draws with them.
+#[gpui::test]
+fn a_named_group_shows_its_name(cx: &mut TestAppContext) {
+    let remaps = vec![
+        noremap("<leader>ff", "gg"),
+        noremap("<leader>fg", "G"),
+        noremap("<leader>bd", "dd"),
+    ];
+    let (view, cx) = vim_editor(cx, remaps);
+    let name = |mode: RemapMode, keys: &str, name: &str| {
+        fe_vim::WhichKeyGroupName::parse(&[mode], keys, name, ",").unwrap()
+    };
+    let mut groups = name(RemapMode::Normal, "<leader>f", "file/find");
+    groups.extend(name(RemapMode::Visual, "<leader>b", "buffer"));
+    cx.update(|_, cx| set_vim_which_key_groups(cx, groups));
+    cx.simulate_keystrokes(",");
+    wait(DELAY, cx);
+    let which = popup(&view, cx).expect("the leader's popup");
+    let shown = titles(&which, cx);
+    assert_eq!(
+        shown,
+        [("b".into(), "+1".into()), ("f".into(), "+file/find".into())]
+    );
+    assert!(!shown.iter().any(|(_, title)| title == "+2"), "{shown:?}");
+    draw(cx);
 }
 
 /// `vim.which_key = false` shows nothing; a delay of 0 shows the popup at

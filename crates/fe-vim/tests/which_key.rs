@@ -182,7 +182,16 @@ fn which_key_lists_remap_continuations() {
     assert_eq!(which.prefix, "\\");
     assert_eq!(listed(&which), ["a", "w", "f", "t"]);
     let f = entry(&which, "f");
-    assert_eq!((&f.label, f.group), (&WhichKeyLabel::Group(2), true));
+    assert_eq!(
+        (&f.label, f.group),
+        (
+            &WhichKeyLabel::Group {
+                count: 2,
+                name: None
+            },
+            true
+        )
+    );
     let w = entry(&which, "w");
     let save = WhichKeyLabel::Command("file.save".into());
     assert_eq!((&w.label, w.group), (&save, false));

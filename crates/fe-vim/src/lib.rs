@@ -866,7 +866,7 @@ pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{HISTORY_MAX, HistoryRecall, Register, RegisterError, Registers, Write};
 pub use remap::{
     Continuation, ExLineArgs, Lookup, Remap, RemapCommand, RemapInsert, RemapIssue, RemapMode,
-    RemapSet,
+    RemapSet, WhichKeyGroupName,
 };
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};

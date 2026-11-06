@@ -17,7 +17,7 @@
 //! keymap matcher's.
 
 use crate::feature::replace_register;
-use crate::remap::Lookup;
+use crate::remap::{Lookup, group_name};
 use crate::vimrc::notation;
 use crate::{Mode, Pending, RemapMode, Step, VimKey, VimState};
 
@@ -63,8 +63,11 @@ pub enum WhichKeyLabel {
     Command(String),
     /// A map's right side, as written.
     Keys(String),
-    /// No map ends at the key: this many longer ones go on past it.
-    Group(usize),
+    /// No map ends at the key: `count` longer ones go on past it. `name`
+    /// is what a `:fegroup` or `[[vim.which_key_group]]` calls the
+    /// prefix ending at the key in the mode, if one does; keymap chords
+    /// (`ctrl-w`) have none.
+    Group { count: usize, name: Option<String> },
 }
 
 /// A built-in prefix's keys, each with its title.
@@ -255,11 +258,21 @@ impl VimState {
             }
         }
         if !keys.is_empty() {
+            let mut prefix = keys.to_vec();
             for continuation in self.remaps().continuations(mode, keys) {
                 let label = match (continuation.command, continuation.map) {
                     (Some(id), _) => WhichKeyLabel::Command(id.to_string()),
                     (None, Some(map)) => WhichKeyLabel::Keys(map.to.clone()),
-                    (None, None) => WhichKeyLabel::Group(continuation.longer),
+                    (None, None) => {
+                        prefix.push(continuation.key);
+                        let name = group_name(&self.which_key_groups, mode, &prefix);
+                        let name = name.map(str::to_string);
+                        prefix.pop();
+                        WhichKeyLabel::Group {
+                            count: continuation.longer,
+                            name,
+                        }
+                    }
                 };
                 let key = notation(continuation.key);
                 entries.retain(|entry: &WhichKeyEntry| entry.key != key);

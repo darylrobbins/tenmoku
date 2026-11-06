@@ -47,6 +47,58 @@ pub struct Remap {
     pub recursive: bool,
 }
 
+/// A name for the group of maps that go on from `keys` in `mode`, for
+/// which-key to title it `+{name}` ([`crate::WhichKeyLabel::Group`]): a
+/// vimrc's `:fegroup` or a `[[vim.which_key_group]]` entry. Of several for
+/// the same mode and keys, the last given wins ([`group_name`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WhichKeyGroupName {
+    pub mode: RemapMode,
+    pub keys: Vec<VimKey>,
+    pub name: String,
+}
+
+impl WhichKeyGroupName {
+    /// The record for each of `modes` naming `keys`, in vim notation with
+    /// `<leader>` (any case) read as `leader`, as a map's left side is
+    /// read ([`RemapSet::new`]); an error for keys a left side can't be,
+    /// or an empty name.
+    pub fn parse(
+        modes: &[RemapMode],
+        keys: &str,
+        name: &str,
+        leader: &str,
+    ) -> Result<Vec<WhichKeyGroupName>, String> {
+        let leader = parse_keys(leader).map_err(|e| e.to_string())?;
+        let keys = side(keys, &leader, true)?;
+        if keys.is_empty() {
+            return Err("a group needs keys".to_string());
+        }
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a group needs a name".to_string());
+        }
+        Ok((modes.iter())
+            .map(|&mode| WhichKeyGroupName {
+                mode,
+                keys: keys.clone(),
+                name: name.to_string(),
+            })
+            .collect())
+    }
+}
+
+/// The name `groups` give the keys `keys` in `mode`: the last one given.
+pub(crate) fn group_name<'a>(
+    groups: &'a [WhichKeyGroupName],
+    mode: RemapMode,
+    keys: &[VimKey],
+) -> Option<&'a str> {
+    (groups.iter().rev())
+        .find(|group| group.mode == mode && group.keys == keys)
+        .map(|group| group.name.as_str())
+}
+
 /// An entry that can't load, by its index in the input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemapIssue {

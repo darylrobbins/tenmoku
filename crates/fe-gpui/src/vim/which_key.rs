@@ -422,7 +422,10 @@ fn chord_which_key(chord: &PendingChord, state: &fe_vim::VimState, cx: &App) -> 
             None => {
                 let mut held = chord.held.clone();
                 held.push(next.next);
-                WhichKeyLabel::Group(keymap.continuations(&held, &chord.stack).len())
+                WhichKeyLabel::Group {
+                    count: keymap.continuations(&held, &chord.stack).len(),
+                    name: None,
+                }
             }
         };
         entries.retain(|entry| entry.key != key);
@@ -537,14 +540,17 @@ pub fn set_host_commands(commands: Vec<CommandMeta>) {
 }
 
 /// What the popup calls an entry: a built-in key's title, a command's title
-/// ([`command_title`]), a map's right side, or `+N` for a group of `N`
-/// longer maps.
+/// ([`command_title`]), a map's right side, or for a group of `N` longer
+/// maps `+{name}` with a name for it, `+N` without.
 pub(crate) fn title(entry: &WhichKeyEntry, cx: &App) -> String {
     match &entry.label {
         WhichKeyLabel::Builtin(title) => (*title).to_owned(),
         WhichKeyLabel::Command(id) => command_title(id, cx),
         WhichKeyLabel::Keys(keys) => keys.clone(),
-        WhichKeyLabel::Group(count) => format!("+{count}"),
+        WhichKeyLabel::Group {
+            name: Some(name), ..
+        } => format!("+{name}"),
+        WhichKeyLabel::Group { count, name: None } => format!("+{count}"),
     }
 }
 
@@ -608,7 +614,7 @@ pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElemen
         let colors = layout::entry_colors(entry, theme);
         let title = title(entry, cx);
         let title = match &entry.label {
-            WhichKeyLabel::Group(_) => title,
+            WhichKeyLabel::Group { .. } => title,
             _ if entry.group => format!("{title} +"),
             _ => title,
         };

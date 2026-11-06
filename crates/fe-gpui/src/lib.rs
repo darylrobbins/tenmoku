@@ -85,7 +85,8 @@ pub use vim::{
     apply_vim_reload, set_host_catalog, set_host_commands, set_vim_clipboard, set_vim_enabled,
     set_vim_highlight_yank, set_vim_inccommand, set_vim_incsearch, set_vim_jump_on_s,
     set_vim_jump_style, set_vim_quick_scope, set_vim_remaps, set_vim_replace_with_register,
-    set_vim_search_case, set_vim_subword_motions, set_vim_which_key, vim_enabled, vim_registers,
+    set_vim_search_case, set_vim_subword_motions, set_vim_which_key, set_vim_which_key_groups,
+    vim_enabled, vim_registers,
 };
 
 /// Key context active while an editor is focused: the `fe-command`

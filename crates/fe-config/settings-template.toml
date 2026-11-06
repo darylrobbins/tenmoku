@@ -226,6 +226,12 @@
 # mode = "n"
 # from = "<leader>w"
 # to = ":w<CR>"
+# Names for groups of remaps, which the which-key popup shows as +name in place
+# of +count; after the vimrc's :fegroup and the preset's, a later name for the
+# same keys wins. mode is as vim.remap's, "n" unless set.
+# [[vim.which_key_group]]
+# keys = "<leader>f"
+# name = "file/find"
 
 [status_bar]
 # Whether the status bar shows at the bottom of the window.

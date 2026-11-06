@@ -1,11 +1,12 @@
 //! A vimrc subset read into `Remap` records: the map, noremap, unmap and
 //! mapclear families for n, x and o, `let mapleader` and `"` comments, each
-//! line read as nvim reads it. Anything else is a `VimrcIssue` at its line,
+//! line read as nvim reads it; and fastedit's own `:fegroup {keys} {name}`,
+//! naming a group of normal-mode maps for which-key (`WhichKeyGroupName`). Anything else is a `VimrcIssue` at its line,
 //! never run. See `docs/decisions/vim-remaps.md` §1(c); nothing here does
 //! I/O.
 
 use crate::key::{VimKey, parse_keys};
-use crate::remap::{Remap, RemapMode, RemapSet};
+use crate::remap::{Remap, RemapMode, RemapSet, WhichKeyGroupName};
 
 /// What a vimrc's text loads as.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -13,6 +14,9 @@ pub struct Vimrc {
     pub remaps: Vec<Remap>,
     /// The 1-based line each of `remaps` was written on, in step with it.
     pub lines: Vec<usize>,
+    /// What each `:fegroup` names, in order: a later one for the same keys
+    /// wins.
+    pub groups: Vec<WhichKeyGroupName>,
     pub issues: Vec<VimrcIssue>,
 }
 
@@ -148,6 +152,13 @@ impl Parser {
         if name == "let" && !bang {
             return self.let_(line, after);
         }
+        if name.eq_ignore_ascii_case("fegroup") {
+            match bang {
+                true => self.issue(line, "not supported: fegroup!"),
+                false => self.group(line, after),
+            }
+            return None;
+        }
         let found = COMMANDS
             .iter()
             .find(|(full, min, _)| name.len() >= *min && full.starts_with(name));
@@ -215,6 +226,23 @@ impl Parser {
         self.vimrc.remaps.push(remap);
         self.vimrc.lines.push(line);
         true
+    }
+
+    /// `:fegroup {keys} {name}`, naming the normal-mode group of maps that
+    /// go on from `keys`: the name is the rest of the line, `|` and `"`
+    /// included.
+    fn group(&mut self, line: usize, args: &str) {
+        let args = args.trim_matches([' ', '\t']);
+        let keys_len = args.find([' ', '\t']).unwrap_or(args.len());
+        let (keys, name) = args.split_at(keys_len);
+        if keys.is_empty() {
+            return self.issue(line, "fegroup needs keys and a name");
+        }
+        let keys = with_leader(keys, &self.leader);
+        match WhichKeyGroupName::parse(&[N], &keys, name, "\\") {
+            Ok(groups) => self.vimrc.groups.extend(groups),
+            Err(message) => self.issue(line, format!("fegroup: {message}")),
+        }
     }
 
     /// Takes `modes` off the earlier records whose left side is the same

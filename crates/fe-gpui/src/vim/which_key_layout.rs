@@ -71,7 +71,7 @@ pub(crate) struct EntryColors {
 
 /// Whether `entry` is a group: more keys go on past it.
 pub(crate) fn is_group(entry: &WhichKeyEntry) -> bool {
-    entry.group || matches!(entry.label, WhichKeyLabel::Group(_))
+    entry.group || matches!(entry.label, WhichKeyLabel::Group { .. })
 }
 
 /// `entry`'s colours: its key in the warning colour, the arrow dim, and its

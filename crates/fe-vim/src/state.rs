@@ -191,6 +191,9 @@ pub struct VimState {
     /// The remaps, the keys held for a longer match and the keys they
     /// resolved to, for the host to feed.
     pub(crate) remap: RemapState,
+    /// The names which-key gives the groups of maps
+    /// ([`VimState::set_which_key_groups`]).
+    pub(crate) which_key_groups: Arc<Vec<crate::WhichKeyGroupName>>,
     /// The last key read, through [`VimState::feed`] or
     /// [`VimState::record_key`], was a map's.
     pub(crate) expanded: bool,
@@ -701,6 +704,17 @@ impl VimState {
 
     pub fn remaps(&self) -> &RemapSet {
         self.remap.set()
+    }
+
+    /// Replaces the names which-key titles the groups of maps by
+    /// ([`crate::WhichKeyLabel::Group`]); for the same mode and keys, a
+    /// later one wins.
+    pub fn set_which_key_groups(&mut self, groups: Arc<Vec<crate::WhichKeyGroupName>>) {
+        self.which_key_groups = groups;
+    }
+
+    pub fn which_key_groups(&self) -> &[crate::WhichKeyGroupName] {
+        &self.which_key_groups
     }
 
     /// Whether keys are held for a longer map: [`VimState::feed`] waits

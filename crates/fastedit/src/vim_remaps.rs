@@ -3,6 +3,8 @@
 //! and the settings' `[[vim.remap]]` table with `vim.leader`, built into
 //! one set for every editor and reloaded when any of their files changes.
 //! Beneath them, a bundled preset (`vim.preset`) in the same vimrc subset.
+//! The names which-key gives groups of maps (the preset's and the vimrc's
+//! `:fegroup`s, then `[[vim.which_key_group]]`) load in the same order.
 //! Their problems go to the config problems list, each at its line: see
 //! `docs/decisions/vim-remaps.md` §1(c) and §7.
 //!
@@ -18,8 +20,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use fe_config::{Diagnostic, Settings, SettingsStore, Severity, VimPreset, VimRemap, VimRemapMode};
-use fe_vim::{Remap, RemapMode, RemapSet, Vimrc, parse_keys, parse_vimrc_with_leader};
+use fe_config::{
+    Diagnostic, Settings, SettingsStore, Severity, VimPreset, VimRemap, VimRemapMode,
+    VimWhichKeyGroup,
+};
+use fe_vim::{
+    Remap, RemapMode, RemapSet, Vimrc, WhichKeyGroupName, parse_keys, parse_vimrc_with_leader,
+};
 use gpui::{App, Global};
 use kiln::{GlobalSettings, platform::config::ConfigSource};
 use std::sync::Arc;
@@ -92,6 +99,8 @@ pub(crate) struct VimRemaps {
     vimrc_remaps: Vec<Remap>,
     /// The line each of `vimrc_remaps` was written on.
     vimrc_lines: Vec<usize>,
+    /// The vimrc's `:fegroup` names, as last built.
+    vimrc_groups: Vec<WhichKeyGroupName>,
     /// A warning for each of the vimrc's problems, or the one error
     /// reading it.
     vimrc_diagnostics: Vec<Diagnostic>,
@@ -100,6 +109,8 @@ pub(crate) struct VimRemaps {
     table: Vec<VimRemap>,
     leader: String,
     preset: VimPreset,
+    /// The settings' `vim.which_key_group`, as last seen.
+    group_table: Vec<VimWhichKeyGroup>,
     /// The preset `vim.preset` names: [`bundled`], but for tests.
     presets: fn(VimPreset) -> Option<Preset>,
     /// The preset's maps, the line each was written on, and a warning for
@@ -107,8 +118,10 @@ pub(crate) struct VimRemaps {
     preset_remaps: Vec<Remap>,
     preset_lines: Vec<usize>,
     preset_diagnostics: Vec<Diagnostic>,
-    /// A warning for each `vim.remap` entry that can't load, and for a
-    /// `vim.leader` that can't be read, at its line.
+    /// The preset's `:fegroup` names, as last built.
+    preset_groups: Vec<WhichKeyGroupName>,
+    /// A warning for each `vim.remap` or `vim.which_key_group` entry that
+    /// can't load, and for a `vim.leader` that can't be read, at its line.
     table_diagnostics: Vec<Diagnostic>,
     /// The user's keymap file, watched so a change to it is seen.
     keymap_file: Option<PathBuf>,
@@ -125,6 +138,8 @@ enum Problem {
     Leader(String),
     /// The entry of `vim.remap`, and which of its keys the problem is in.
     Entry(usize, &'static str, String),
+    /// The entry of `vim.which_key_group` whose `keys` can't be read.
+    Group(usize, String),
 }
 
 impl VimRemaps {
@@ -144,14 +159,17 @@ impl VimRemaps {
             vimrc_error: None,
             vimrc_remaps: Vec::new(),
             vimrc_lines: Vec::new(),
+            vimrc_groups: Vec::new(),
             vimrc_diagnostics: Vec::new(),
             table: vim.remap.clone(),
             leader: vim.leader.clone(),
             preset: vim.preset,
+            group_table: vim.which_key_group.clone(),
             presets: bundled,
             preset_remaps: Vec::new(),
             preset_lines: Vec::new(),
             preset_diagnostics: Vec::new(),
+            preset_groups: Vec::new(),
             table_diagnostics: Vec::new(),
             keymap_file: fe_gpui::fe_keymap::user_keymap_path(),
             keymap: None,
@@ -193,11 +211,13 @@ impl VimRemaps {
                 self.preset_diagnostics = issues(Path::new(preset.name), &parsed);
                 self.preset_remaps = parsed.remaps;
                 self.preset_lines = parsed.lines;
+                self.preset_groups = parsed.groups;
             }
             None => {
                 self.preset_remaps.clear();
                 self.preset_lines.clear();
                 self.preset_diagnostics.clear();
+                self.preset_groups.clear();
             }
         }
         let Some(path) = &self.vimrc else {
@@ -210,9 +230,11 @@ impl VimRemaps {
         };
         self.vimrc_remaps = parsed.remaps;
         self.vimrc_lines = parsed.lines;
+        self.vimrc_groups = parsed.groups;
     }
 
-    /// Takes `vim.remap`, `vim.leader` and `vim.preset` from the settings
+    /// Takes `vim.remap`, `vim.leader`, `vim.preset` and
+    /// `vim.which_key_group` from the settings
     /// in use, returning whether they changed, and the text the store
     /// accepted of each file.
     fn take_settings(&mut self, cx: &App) -> bool {
@@ -221,12 +243,17 @@ impl VimRemaps {
         };
         self.accepted = kiln::platform::config::accepted_sources::<Settings>(cx);
         let vim = &global.settings().vim;
-        if vim.remap == self.table && vim.leader == self.leader && vim.preset == self.preset {
+        if vim.remap == self.table
+            && vim.leader == self.leader
+            && vim.preset == self.preset
+            && vim.which_key_group == self.group_table
+        {
             return false;
         }
         self.table = vim.remap.clone();
         self.leader = vim.leader.clone();
         self.preset = vim.preset;
+        self.group_table = vim.which_key_group.clone();
         true
     }
 
@@ -288,15 +315,21 @@ impl VimRemaps {
                 recursive: remap.recursive,
             });
         }
+        let groups = self.groups(readable, &leader, &mut problems);
         let in_use = RemapsInUse { remaps, leader };
         let in_use_keymap = cx.as_deref().map(fe_gpui::current_keymap);
         let issues = match cx {
-            Some(cx) if cx.try_global::<RemapsInUse>() != Some(&in_use) => {
-                let issues = fe_gpui::set_vim_remaps(cx, &in_use.remaps, &in_use.leader);
-                cx.set_global(in_use.clone());
-                issues
+            Some(cx) => {
+                fe_gpui::set_vim_which_key_groups(cx, groups);
+                if cx.try_global::<RemapsInUse>() != Some(&in_use) {
+                    let issues = fe_gpui::set_vim_remaps(cx, &in_use.remaps, &in_use.leader);
+                    cx.set_global(in_use.clone());
+                    issues
+                } else {
+                    RemapSet::new(&in_use.remaps, &in_use.leader).1
+                }
             }
-            _ => RemapSet::new(&in_use.remaps, &in_use.leader).1,
+            None => RemapSet::new(&in_use.remaps, &in_use.leader).1,
         };
         // The preset's records, then the vimrc's, then the table's.
         let in_vimrc = self.preset_remaps.len();
@@ -339,6 +372,32 @@ impl VimRemaps {
         self.table_diagnostics = self.place(problems);
     }
 
+    /// The group names: the preset's, the vimrc's, then the table's, each
+    /// of whose `keys` is read with `leader`; one naming `<leader>` while
+    /// `vim.leader` can't be read, or whose keys can't be read, is left
+    /// out with a problem.
+    fn groups(
+        &self,
+        readable: bool,
+        leader: &str,
+        problems: &mut Vec<Problem>,
+    ) -> Vec<WhichKeyGroupName> {
+        let mut groups = self.preset_groups.clone();
+        groups.extend_from_slice(&self.vimrc_groups);
+        for (entry, group) in self.group_table.iter().enumerate() {
+            if !readable && group.keys.to_ascii_lowercase().contains("<leader>") {
+                problems.push(Problem::Group(entry, "vim.leader can't be read".to_owned()));
+                continue;
+            }
+            let modes = remap_modes(group.mode.modes());
+            match WhichKeyGroupName::parse(&modes, &group.keys, &group.name, leader) {
+                Ok(named) => groups.extend(named),
+                Err(message) => problems.push(Problem::Group(entry, message)),
+            }
+        }
+        groups
+    }
+
     /// A warning for each of `problems`, at its key in the last settings
     /// file whose accepted text sets that key.
     fn place(&self, problems: Vec<Problem>) -> Vec<Diagnostic> {
@@ -375,8 +434,22 @@ impl VimRemaps {
                 }
                 Problem::Entry(entry, side, message) => {
                     let Some(ix) = origin("remap") else { continue };
-                    let at = offset(ix, &|table| entry_offset(table, entry, side));
+                    let at = offset(ix, &|table| entry_offset(table, "remap", entry, side));
                     (format!("vim.remap[{entry}].{side}"), ix, at, message)
+                }
+                Problem::Group(entry, message) => {
+                    let Some(ix) = origin("which_key_group") else {
+                        continue;
+                    };
+                    let at = offset(ix, &|table| {
+                        entry_offset(table, "which_key_group", entry, "keys")
+                    });
+                    (
+                        format!("vim.which_key_group[{entry}].keys"),
+                        ix,
+                        at,
+                        message,
+                    )
                 }
             };
             let (line, column) = line_column(&sources[ix], offset);
@@ -545,16 +618,17 @@ fn failing_side(record: &Remap, leader: &str) -> &'static str {
     if issues.is_empty() { "to" } else { "from" }
 }
 
-/// Where `vim.remap`'s entry `entry` has its `side` key in the source, or
-/// where the deepest of the entry, the array and `vim` found is.
-fn entry_offset(table: &DeTable<'_>, entry: usize, side: &str) -> usize {
+/// Where the `vim.{array}` array's entry `entry` (`vim.remap`'s, or
+/// `vim.which_key_group`'s) has its `side` key in the source, or where the
+/// deepest of the entry, the array and `vim` found is.
+fn entry_offset(table: &DeTable<'_>, array: &str, entry: usize, side: &str) -> usize {
     let Some((vim_at, vim)) = find(table, "vim") else {
         return 0;
     };
     let DeValue::Table(vim) = vim.get_ref() else {
         return vim_at;
     };
-    let Some((remap_at, remap)) = find(vim, "remap") else {
+    let Some((remap_at, remap)) = find(vim, array) else {
         return vim_at;
     };
     let DeValue::Array(entries) = remap.get_ref() else {
@@ -599,6 +673,9 @@ fn line_column(source: &str, offset: usize) -> (usize, usize) {
     )
 }
 
+#[cfg(test)]
+#[path = "vim_lazyvim_groups_tests.rs"]
+mod vim_lazyvim_groups_tests;
 #[cfg(test)]
 #[path = "vim_lazyvim_preset_tests.rs"]
 mod vim_lazyvim_preset_tests;

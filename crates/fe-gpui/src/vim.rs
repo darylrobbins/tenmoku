@@ -139,7 +139,7 @@ use fe_editor::{EditorModel, commands::EditorHost};
 use fe_keymap::{CatalogError, CommandCatalog};
 use fe_vim::{
     CommandLineKind, Registers, Remap, RemapCommand, RemapInsert, RemapIssue, RemapSet, Step,
-    VimCommands, VimKey, VimState, VimTarget, jump::JumpStyle, search::Pattern,
+    VimCommands, VimKey, VimState, VimTarget, WhichKeyGroupName, jump::JumpStyle, search::Pattern,
 };
 use gpui::{
     AnyWindowHandle, App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, Pixels,
@@ -387,6 +387,9 @@ struct Vim {
     subword_motions: bool,
     /// `vim.remap` and `vim.leader`, built.
     remaps: Arc<RemapSet>,
+    /// The names which-key titles groups of maps by: a vimrc's `:fegroup`s
+    /// and `vim.which_key_group`.
+    which_key_groups: Arc<Vec<WhichKeyGroupName>>,
     /// `vim.which_key` and `vim.which_key_delay_ms`.
     which_key: which_key::WhichKeySettings,
     /// `vim.highlight_yank` and `vim.highlight_yank_ms`; unset, on for [`YANK_FLASH`].
@@ -687,6 +690,29 @@ pub fn set_vim_remaps(cx: &mut App, remaps: &[Remap], leader: &str) -> Vec<Remap
             .ok();
     }
     issues
+}
+
+/// Names groups of maps for every editor's which-key popup
+/// ([`fe_vim::WhichKeyLabel::Group`]): for the same mode and keys, a later
+/// name wins.
+pub fn set_vim_which_key_groups(cx: &mut App, groups: Vec<WhichKeyGroupName>) {
+    let groups = Arc::new(groups);
+    let vim = cx.default_global::<Vim>();
+    if vim.which_key_groups == groups {
+        return;
+    }
+    vim.which_key_groups = Arc::clone(&groups);
+    let editors: Vec<_> = vim.editors.iter().map(|(_, view)| view.clone()).collect();
+    for editor in editors {
+        editor
+            .update(cx, |view, cx| {
+                if let Some(state) = &mut view.vim {
+                    state.set_which_key_groups(Arc::clone(&groups));
+                }
+                cx.notify();
+            })
+            .ok();
+    }
 }
 
 /// Applies a settings reload's `vim.enabled` and `vim.clipboard`, each as
@@ -1337,6 +1363,7 @@ impl EditorView {
                 state.set_replace_with_register(vim.replace_with_register);
                 state.set_subword_motions(vim.subword_motions);
                 state.set_remaps(Arc::clone(&vim.remaps));
+                state.set_which_key_groups(Arc::clone(&vim.which_key_groups));
             }
             state
         });
