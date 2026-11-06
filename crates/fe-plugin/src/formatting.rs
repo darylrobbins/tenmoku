@@ -114,10 +114,11 @@ impl Formatters {
             .find(|formatter| formatter.language == language)
     }
 
-    /// Sets `handle`, the loaded plugin `plugin`, as what [`request`](Self::request) calls.
-    pub fn bind(&self, plugin: &str, handle: PluginHandle) {
+    /// Sets `handle`, plugin `plugin`'s load number `load`, as what [`request`](Self::request)
+    /// calls. A load that is no longer the current one is refused.
+    fn bind(&self, plugin: &str, load: u64, handle: PluginHandle) {
         let mut shared = self.lock();
-        if let Some(&load) = shared.attached.get(plugin) {
+        if shared.attached.get(plugin) == Some(&load) {
             shared.handles.insert(plugin.to_owned(), (load, handle));
         }
     }
@@ -349,6 +350,14 @@ impl State {
                 commands: commands.clone(),
                 buffers,
             }),
+        }
+    }
+
+    /// Sets `handle` as what requests call on this load of the plugin. Once a newer load has
+    /// attached, or this one is unloaded, it binds nothing.
+    pub fn bind(&self, handle: PluginHandle) {
+        if let Some(attached) = &self.attached {
+            (attached.formatters).bind(&attached.plugin, attached.load, handle);
         }
     }
 

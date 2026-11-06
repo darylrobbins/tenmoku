@@ -116,6 +116,13 @@ fn setup(grants: &[&str]) -> Setup {
 
 /// The plugin, loaded again or anew on `formatters`.
 fn setup_on(grants: &[&str], formatters: &Formatters) -> Setup {
+    let setup = load_on(grants, formatters);
+    setup.bind();
+    setup
+}
+
+/// The plugin, loaded on `formatters` but not yet bound.
+fn load_on(grants: &[&str], formatters: &Formatters) -> Setup {
     static COMPILED: OnceLock<(Engine, Component, Linker<HostState>)> = OnceLock::new();
     let (engine, component, linker) = COMPILED.get_or_init(|| {
         let mut config = Config::new();
@@ -159,12 +166,21 @@ fn setup_on(grants: &[&str], formatters: &Formatters) -> Setup {
         extension,
         during: None,
     }));
-    let handle: PluginHandle = guest.clone();
-    formatters.bind(PLUGIN, handle);
     Setup { formatters, guest }
 }
 
 impl Setup {
+    fn bind(&self) {
+        let handle: PluginHandle = self.guest.clone();
+        self.guest
+            .lock()
+            .unwrap()
+            .store
+            .data()
+            .formatting
+            .bind(handle);
+    }
+
     fn register(&self, command: &str, languages: &str) -> Result<(), Error> {
         let args = format!("{command} {languages}");
         self.guest.lock().unwrap().run("register-formatter", &args)
@@ -328,4 +344,23 @@ fn an_old_loads_failure_leaves_the_new_load_alone() {
     // The old load's slice can register nothing more.
     let denied = old.register("fmt.format", "rust");
     assert!(matches!(denied, Err(Error::Denied(_))), "{denied:?}");
+}
+
+#[test]
+fn an_old_loads_late_bind_leaves_the_new_load_bound() {
+    let formatters = Formatters::new();
+    let old = load_on(&ALL, &formatters);
+    old.register("fmt.slow", "slow").unwrap();
+    // The plugin is loaded again and bound before the old load's bind completes.
+    let new = setup_on(&ALL, &formatters);
+    new.register("fmt.format", "text").unwrap();
+    old.bind();
+
+    // Requests still run on the new load, and the old load's bind didn't revive its formatters.
+    assert!(formatters.request(1, 1, "text").unwrap().is_some());
+    assert_eq!(new.listed(), [pair("text", "fmt.format")]);
+    assert_eq!(
+        formatters.request(1, 1, "slow"),
+        Err(FormatError::NoFormatter("slow".into()))
+    );
 }
