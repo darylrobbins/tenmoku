@@ -434,7 +434,7 @@ impl Painter<'_> {
                 continue;
             };
             let (own, finished) = if injection.language.name() == "printf" {
-                (self.verbs(&injection.ranges), true)
+                self.verbs(&injection.ranges)
             } else {
                 highlight_query_finished(
                     injection.language,
@@ -458,18 +458,41 @@ impl Painter<'_> {
         spans
     }
 
-    /// The Go format verbs in a `printf` layer's `ranges`, found by
-    /// [`crate::verbs`] rather than the C grammar's query.
-    fn verbs(&self, ranges: &[Range<usize>]) -> Vec<Painted> {
+    /// The Go format verbs in a `printf` layer's `ranges` that touch the
+    /// highlighted range, cut to it, found by [`crate::verbs`] rather than
+    /// the C grammar's query. Only the text near the range is read, a chunk
+    /// at a time; false if the deadline passed first.
+    fn verbs(&self, ranges: &[Range<usize>]) -> (Vec<Painted>, bool) {
+        // How far past the range a directive is looked for, and how far
+        // before it one is allowed to have started.
+        const MARGIN: usize = 256;
         let mut spans = Vec::new();
         for range in ranges {
-            let bytes: Vec<u8> = chunks(self.text, range.clone())
-                .flatten()
-                .copied()
-                .collect();
-            spans.extend(crate::verbs::scan(&bytes, range.start));
+            if range.end <= self.range.start || range.start >= self.range.end {
+                continue;
+            }
+            let start = range.start.max(self.range.start.saturating_sub(MARGIN));
+            let end = range.end.min(self.range.end.saturating_add(MARGIN));
+            let mut bytes = Vec::new();
+            for chunk in chunks(self.text, start..end) {
+                if out_of_time(self.deadline) {
+                    return (spans, false);
+                }
+                bytes.extend_from_slice(chunk);
+            }
+            // Start at a directive that can't be cut: a `%` after a byte that
+            // isn't one, unless this is the content's own start.
+            let from = if start == range.start {
+                0
+            } else {
+                (1..bytes.len())
+                    .find(|&i| bytes[i] == b'%' && bytes[i - 1] != b'%')
+                    .unwrap_or(bytes.len())
+            };
+            let found = crate::verbs::scan(&bytes[from..], start + from);
+            spans.extend(clip(found, std::slice::from_ref(&self.range)));
         }
-        spans
+        (spans, true)
     }
 
     /// The injections in `tree` overlapping the range, in a language of

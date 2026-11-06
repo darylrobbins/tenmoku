@@ -972,3 +972,29 @@ fn injections_and_layers_kept_are_bounded() {
     assert_eq!(layers.parses.len(), super::MAX_INJECTIONS);
     assert_eq!(layers.keys().len(), super::MAX_KEPT_LAYERS);
 }
+
+/// A large raw Go format string on a cached layer is scanned under the
+/// deadline: it reports incomplete once the deadline passes, and a range
+/// away from the string reads none of it.
+#[cfg(all(feature = "go", feature = "printf"))]
+#[test]
+fn go_format_scan_stops_at_the_deadline() {
+    language_by_name("printf");
+    let text = format!(
+        "package p\nfunc f() {{\n\tfmt.Printf(`{}`, x)\n}}\n",
+        "%d ".repeat(200_000)
+    );
+    let text = text.replace("\\\n", "\n").replace("\\\t", "\t");
+    let buffer = Buffer::new(&text);
+    let syntax = parsed("go", &buffer);
+    let deadline = far_deadline();
+    let mut layers = Layers::default();
+    assert!(paint_all(&buffer, &syntax, deadline, &mut layers));
+    let paint = &mut || paint_all(&buffer, &syntax, deadline, &mut layers.clone());
+    let (complete, checks) = with_deadline_after(usize::MAX, paint);
+    assert!(complete);
+    for after in [0, checks / 2] {
+        let (complete, _) = with_deadline_after(after, paint);
+        assert!(!complete, "deadline after {after} checks");
+    }
+}

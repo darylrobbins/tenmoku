@@ -154,3 +154,56 @@ fn a_value_argument_is_not_a_format() {
         vec!["%s".to_string()]
     );
 }
+
+/// The highlights of `text[range]` alone, as `(text, highlight)`.
+fn spans_in(text: &str, range: std::ops::Range<usize>) -> Vec<(String, &'static str)> {
+    let mut syntax = Syntax::new(language_by_name("go").unwrap(), Buffer::new(text).current());
+    syntax.finish(syntax.parse_job().run());
+    loop {
+        let spans = syntax.highlights(range.clone());
+        let missing = syntax.take_missing_languages();
+        if missing.is_empty() {
+            return spans
+                .into_iter()
+                .filter(|s| matches!(s.highlight.name(), "string.placeholder" | "escape"))
+                .map(|s| (text[s.range].to_string(), s.highlight.name()))
+                .collect();
+        }
+        for name in missing {
+            language_by_name(name);
+        }
+    }
+}
+
+#[test]
+fn a_partial_range_gets_only_its_own_verbs() {
+    let text = "package p\nfunc f() {\n\tfmt.Printf(\"%d aa %5.2f bb %% cc %s\", a, b, c)\n}\n";
+    let at = |s: &str| text.find(s).unwrap();
+    // Between directives: nothing outside the range.
+    let (a, b) = (at("aa"), at("bb"));
+    assert_eq!(
+        spans_in(text, a..b),
+        vec![("%5.2f".to_string(), "string.placeholder")]
+    );
+    // Starting inside a directive, and ending inside one: clipped to the range.
+    let f = at("%5.2f");
+    assert_eq!(
+        spans_in(text, f + 2..f + 4),
+        vec![(".2".to_string(), "string.placeholder")]
+    );
+    let s = at("%s");
+    assert_eq!(
+        spans_in(text, a..s + 1),
+        vec![
+            ("%5.2f".to_string(), "string.placeholder"),
+            ("%%".to_string(), "escape"),
+            ("%".to_string(), "string.placeholder"),
+        ]
+    );
+    // Starting at the second `%` of an escape clips the escape, not a verb.
+    let e = at("%%");
+    assert_eq!(
+        spans_in(text, e + 1..e + 4),
+        vec![("%".to_string(), "escape")]
+    );
+}
