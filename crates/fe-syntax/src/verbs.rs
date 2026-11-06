@@ -9,16 +9,26 @@ use crate::highlight::{Highlight, Painted};
 
 /// The verbs and `%%` escapes in `text`, which starts at byte `base`.
 pub(crate) fn scan(text: &[u8], base: usize) -> Vec<Painted> {
+    scan_part(text, base, true).0
+}
+
+/// Like [`scan`] for text that may continue past its end, unless `last`.
+/// Also returns how many bytes were consumed: a trailing directive that more
+/// text could still complete or break is left for the next call.
+pub(crate) fn scan_part(text: &[u8], base: usize, last: bool) -> (Vec<Painted>, usize) {
     let mut spans = Vec::new();
     let (Some(placeholder), Some(escape)) = (
         Highlight::from_capture("string.placeholder"),
         Highlight::from_capture("escape"),
     ) else {
-        return spans;
+        return (spans, text.len());
     };
     let mut at = 0;
     while let Some(found) = text[at..].iter().position(|&b| b == b'%') {
         let start = at + found;
+        if !last && may_continue(&text[start + 1..]) {
+            return (spans, start);
+        }
         if text.get(start + 1) == Some(&b'%') {
             spans.push(span(base, start..start + 2, escape));
             at = start + 2;
@@ -29,7 +39,14 @@ pub(crate) fn scan(text: &[u8], base: usize) -> Vec<Painted> {
             at = start + 1;
         }
     }
-    spans
+    (spans, text.len())
+}
+
+/// Whether the text after a `%` ends before settling what the `%` is.
+fn may_continue(rest: &[u8]) -> bool {
+    rest.iter().all(|b| {
+        b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'#' | b' ' | b'.' | b'*' | b'[' | b']')
+    })
 }
 
 fn span(base: usize, range: Range<usize>, highlight: Highlight) -> Painted {

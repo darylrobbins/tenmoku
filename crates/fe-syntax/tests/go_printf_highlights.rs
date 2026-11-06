@@ -207,3 +207,40 @@ fn a_partial_range_gets_only_its_own_verbs() {
         vec![("%".to_string(), "escape")]
     );
 }
+
+#[test]
+fn a_long_directive_is_found_from_its_middle_or_before_its_start() {
+    let flags = "0".repeat(600);
+    let text = format!("package p\nfunc f() {{\n\tfmt.Printf(\"a %{flags}d b\", x)\n}}\n");
+    let at = text.find('%').unwrap();
+    let whole = format!("%{flags}d");
+    for range in [at + 300..at + 310, at - 2..at + 2, at + 598..at + 700] {
+        let found = spans_in(&text, range.clone());
+        assert_eq!(found.len(), 1, "{range:?}");
+        assert!(whole.contains(&found[0].0), "{range:?}");
+    }
+}
+
+#[test]
+fn a_long_run_of_percents_is_escapes() {
+    let text = format!(
+        "package p\nfunc f() {{\n\tfmt.Printf(\"{}\")\n}}\n",
+        "%".repeat(1000)
+    );
+    let at = text.find('%').unwrap();
+    let found = spans_in(&text, at + 500..at + 504);
+    assert_eq!(found, vec![("%%%%".to_string(), "escape")]);
+}
+
+#[test]
+fn multibyte_text_before_the_range_does_not_shift_spans() {
+    let text = format!(
+        "package p\nfunc f() {{\n\tfmt.Printf(\"{}a%d!\", x)\n}}\n",
+        "é".repeat(150)
+    );
+    let at = text.find("%d").unwrap();
+    assert_eq!(
+        spans_in(&text, at..at + 2),
+        vec![("%d".to_string(), "string.placeholder")]
+    );
+}

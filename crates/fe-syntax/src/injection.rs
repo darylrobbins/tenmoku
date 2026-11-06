@@ -460,36 +460,36 @@ impl Painter<'_> {
 
     /// The Go format verbs in a `printf` layer's `ranges` that touch the
     /// highlighted range, cut to it, found by [`crate::verbs`] rather than
-    /// the C grammar's query. Only the text near the range is read, a chunk
-    /// at a time; false if the deadline passed first.
+    /// the C grammar's query. Each range is scanned from its start, a chunk
+    /// at a time with the scanner's state carried across, so no directive is
+    /// cut however long; it stops once past the highlighted range. False if
+    /// the deadline passed first.
     fn verbs(&self, ranges: &[Range<usize>]) -> (Vec<Painted>, bool) {
-        // How far past the range a directive is looked for, and how far
-        // before it one is allowed to have started.
-        const MARGIN: usize = 256;
         let mut spans = Vec::new();
         for range in ranges {
             if range.end <= self.range.start || range.start >= self.range.end {
                 continue;
             }
-            let start = range.start.max(self.range.start.saturating_sub(MARGIN));
-            let end = range.end.min(self.range.end.saturating_add(MARGIN));
-            let mut bytes = Vec::new();
-            for chunk in chunks(self.text, start..end) {
+            // Bytes not yet scanned, at `base`.
+            let mut pending: Vec<u8> = Vec::new();
+            let mut base = range.start;
+            let mut found = Vec::new();
+            for chunk in chunks(self.text, range.clone()) {
                 if out_of_time(self.deadline) {
                     return (spans, false);
                 }
-                bytes.extend_from_slice(chunk);
+                pending.extend_from_slice(chunk);
+                let (part, used) = crate::verbs::scan_part(&pending, base, false);
+                found.extend(part);
+                pending.drain(..used);
+                base += used;
+                if base >= self.range.end {
+                    break;
+                }
             }
-            // Start at a directive that can't be cut: a `%` after a byte that
-            // isn't one, unless this is the content's own start.
-            let from = if start == range.start {
-                0
-            } else {
-                (1..bytes.len())
-                    .find(|&i| bytes[i] == b'%' && bytes[i - 1] != b'%')
-                    .unwrap_or(bytes.len())
-            };
-            let found = crate::verbs::scan(&bytes[from..], start + from);
+            if base < self.range.end {
+                found.extend(crate::verbs::scan(&pending, base));
+            }
             spans.extend(clip(found, std::slice::from_ref(&self.range)));
         }
         (spans, true)
