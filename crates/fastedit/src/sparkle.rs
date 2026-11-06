@@ -56,6 +56,19 @@ impl Policy {
     }
 }
 
+/// The `SULastCheckTime` to write before Sparkle starts, in seconds since the
+/// Unix epoch, so that its first automatic check comes one interval after the
+/// first launch rather than at once. A fresh install has no last check, which
+/// Sparkle reads as "never" and checks for at once; a last check in the future
+/// (the clock was set back) would delay checks for as long. A past last check is
+/// Sparkle's own record, and is left alone.
+pub(crate) fn first_check_seed(last_check: Option<f64>, now: f64) -> Option<f64> {
+    match last_check {
+        Some(last) if last <= now => None,
+        _ => Some(now),
+    }
+}
+
 /// Starts Sparkle as [`Policy::decide`] says, on the main thread. A symlink's
 /// launch counts as its bundle's: 'tenmoku' in PATH is one.
 pub(crate) fn start(
@@ -104,11 +117,15 @@ mod platform {
     use gpui::{App, Global};
     use kiln::GlobalSettings;
     use objc2::{
-        msg_send, msg_send_id,
+        ClassType, msg_send, msg_send_id,
         rc::{Allocated, Retained},
         runtime::AnyObject,
     };
-    use objc2_foundation::{MainThreadMarker, NSBundle, NSClassFromString, NSString};
+    use objc2_foundation::{
+        MainThreadMarker, NSBundle, NSClassFromString, NSDate, NSString, NSUserDefaults,
+    };
+
+    use super::first_check_seed;
 
     /// The running updater, kept for the life of the app.
     struct Updater {
@@ -123,14 +140,47 @@ mod platform {
     impl Updater {
         /// Gives Sparkle the setting, which it also keeps in its own user
         /// defaults: a launch can't assume they already agree.
-        fn set_automatic_checks(&mut self, automatic_checks: bool) {
+        ///
+        /// With `only_if_changed`, Sparkle isn't told what it already has:
+        /// setting it resets its update cycle, and so its schedule.
+        fn set_automatic_checks(&mut self, automatic_checks: bool, only_if_changed: bool) {
             self.automatic_checks = automatic_checks;
             // SAFETY: `updater` is a property of the controller, which returns
             // an `SPUUpdater`, whose `automaticallyChecksForUpdates` property
-            // takes a BOOL.
+            // is a BOOL.
             unsafe {
                 let updater: Retained<AnyObject> = msg_send_id![&*self.controller, updater];
+                if only_if_changed {
+                    let current: bool = msg_send![&*updater, automaticallyChecksForUpdates];
+                    if current == automatic_checks {
+                        return;
+                    }
+                }
                 let () = msg_send![&*updater, setAutomaticallyChecksForUpdates: automatic_checks];
+            }
+        }
+
+        /// Starts the updater, which the controller was made without starting
+        /// so that a failure (an invalid public key, a missing XPC service)
+        /// comes back here rather than as a controller that does nothing.
+        fn start_updater(&self) -> Result<(), String> {
+            // SAFETY: `startUpdater:` takes an NSError out-pointer and returns
+            // a BOOL.
+            unsafe {
+                let updater: Retained<AnyObject> = msg_send_id![&*self.controller, updater];
+                let mut error: *mut AnyObject = ptr::null_mut();
+                let ok: bool = msg_send![&*updater, startUpdater: &mut error];
+                if ok {
+                    return Ok(());
+                }
+                let description = (!error.is_null())
+                    .then(|| {
+                        let text: Option<Retained<NSString>> =
+                            msg_send_id![&*error, localizedDescription];
+                        text.map(|text| text.to_string())
+                    })
+                    .flatten();
+                Err(description.unwrap_or_else(|| "its updater did not start".into()))
             }
         }
 
@@ -152,9 +202,34 @@ mod platform {
         })
     }
 
-    /// Loads the framework and starts its standard updater. If that fails,
-    /// as it does for a bundle whose signature the framework's doesn't match,
-    /// no hook is set and Check for Updates… asks GitHub as before.
+    /// Seeds `SULastCheckTime` in the app's user defaults when
+    /// [`first_check_seed`] says so. Sparkle reads it when the updater starts.
+    fn seed_last_check() {
+        // SAFETY: NSUserDefaults and NSDate calls with matching types; the key
+        // holds an NSDate when Sparkle wrote it.
+        unsafe {
+            let defaults = NSUserDefaults::standardUserDefaults();
+            let key = NSString::from_str("SULastCheckTime");
+            let now = NSDate::now().timeIntervalSince1970();
+            let last = defaults.objectForKey(&key).and_then(|value| {
+                let is_date: bool = msg_send![&*value, isKindOfClass: NSDate::class()];
+                // SAFETY: just checked to be an NSDate.
+                is_date.then(|| {
+                    let secs: f64 = msg_send![&*value, timeIntervalSince1970];
+                    secs
+                })
+            });
+            if let Some(seed) = first_check_seed(last, now) {
+                defaults
+                    .setObject_forKey(Some(&*NSDate::dateWithTimeIntervalSince1970(seed)), &key);
+            }
+        }
+    }
+
+    /// Loads the framework and creates its standard updater controller, not
+    /// yet started. If that fails, as it does for a bundle whose signature the
+    /// framework's doesn't match, no hook is set and Check for Updates… asks
+    /// GitHub as before.
     fn load(framework: &Path) -> Result<Retained<AnyObject>, &'static str> {
         MainThreadMarker::new().ok_or("not on the main thread")?;
         let path = NSString::from_str(&framework.to_string_lossy());
@@ -173,7 +248,7 @@ mod platform {
             let controller: Allocated<AnyObject> = msg_send_id![class, alloc];
             let controller: Option<Retained<AnyObject>> = msg_send_id![
                 controller,
-                initWithStartingUpdater: true,
+                initWithStartingUpdater: false,
                 updaterDelegate: delegate,
                 userDriverDelegate: delegate
             ];
@@ -184,6 +259,9 @@ mod platform {
     /// Starts the updater from `framework`, takes over Check for Updates… and
     /// follows the setting from here on.
     pub(super) fn start(framework: &Path, automatic_checks: bool, cx: &mut App) {
+        if automatic_checks {
+            seed_last_check();
+        }
         let controller = match load(framework) {
             Ok(controller) => controller,
             Err(why) => {
@@ -199,9 +277,18 @@ mod platform {
             controller,
             automatic_checks,
         };
-        // Before the run loop turns, so before the updater's first scheduled
-        // look at it.
-        updater.set_automatic_checks(automatic_checks);
+        // Before the updater starts, so before its first scheduled look. A
+        // scheduled launch leaves a value Sparkle already has alone; a manual
+        // one overrides the plist's SUEnableAutomaticChecks always.
+        updater.set_automatic_checks(automatic_checks, automatic_checks);
+        if let Err(why) = updater.start_updater() {
+            log::warn!(
+                target: "fastedit",
+                "Sparkle at {}: {why}; Check for Updates… will ask GitHub",
+                framework.display()
+            );
+            return;
+        }
         cx.set_global(updater);
         set_updater_hook(
             cx,
@@ -216,7 +303,7 @@ mod platform {
             let now = cx.global::<GlobalSettings<Settings>>().settings();
             let now = now.update.automatic_checks;
             if cx.global::<Updater>().automatic_checks != now {
-                cx.global_mut::<Updater>().set_automatic_checks(now);
+                cx.global_mut::<Updater>().set_automatic_checks(now, false);
             }
         })
         .detach();

@@ -112,3 +112,27 @@ fn policy_off_without_feed_keys() {
         );
     }
 }
+
+#[test]
+fn first_launch_seeds_the_last_check_time() {
+    let now = 1_800_000_000.0;
+    assert_eq!(crate::sparkle::first_check_seed(None, now), Some(now));
+}
+
+#[test]
+fn a_past_last_check_is_left_alone() {
+    let now = 1_800_000_000.0;
+    assert_eq!(
+        crate::sparkle::first_check_seed(Some(now - 3600.0), now),
+        None
+    );
+}
+
+#[test]
+fn a_future_last_check_is_reseeded() {
+    let now = 1_800_000_000.0;
+    assert_eq!(
+        crate::sparkle::first_check_seed(Some(now + 86400.0), now),
+        Some(now)
+    );
+}
