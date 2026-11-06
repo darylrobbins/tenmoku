@@ -146,9 +146,10 @@ pub(crate) fn clear(cx: &mut App) {
     );
 }
 
-/// The list's entries that still exist, read after the jobs queued before.
-/// Empty if there's no file, or it can't be read.
-fn load(cx: &mut App) -> Task<RecentList> {
+/// The list's entries that still exist, read after the jobs queued before:
+/// the picker's and the Start page's ([`crate::start_page`]). Empty if
+/// there's no file, or it can't be read.
+pub(crate) fn load(cx: &mut App) -> Task<RecentList> {
     let (sender, loaded) = async_channel::bounded(1);
     let queued = queue(
         move |file| {

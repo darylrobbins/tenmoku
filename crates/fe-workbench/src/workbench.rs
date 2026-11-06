@@ -46,6 +46,7 @@ use crate::{
     pane_toolbar::NavButtons,
     project_panel,
     setup_wizard::SetupWizard,
+    start_page::StartPageView,
     terminal_panel::TerminalPanel,
     theme_picker::ThemePicker,
     title_bar,
@@ -307,6 +308,14 @@ pub struct Workbench {
     pub(crate) zen: zen_mode::ZenMode,
     /// The setup wizard's sheet over the window, while it shows.
     setup: Option<Entity<SetupWizard>>,
+    /// The Start page, which the active pane shows while no tab is open in
+    /// the window: see [`crate::start_page`].
+    start_page: Entity<StartPageView>,
+    /// `workbench.start_page`: whether the Start page shows at all.
+    start_page_on: bool,
+    /// Whether the Start page showed, as last synced: it reads the recent
+    /// list again each time it comes back.
+    start_page_shown: bool,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -605,6 +614,13 @@ impl Workbench {
             tree_opens: HashMap::new(),
             preview_tabs: (cx.try_global::<kiln::GlobalSettings<fe_config::Settings>>())
                 .is_none_or(|global| global.settings().workbench.preview_tabs),
+            start_page_on: (cx.try_global::<kiln::GlobalSettings<fe_config::Settings>>())
+                .is_none_or(|global| global.settings().workbench.start_page),
+            start_page_shown: false,
+            start_page: {
+                let workbench = cx.weak_entity();
+                cx.new(|cx| StartPageView::new(workbench, cx))
+            },
             _release: cx.on_release(|workbench, cx| {
                 let editors = workbench.editors.drain().map(|(_, (editor, _))| editor);
                 DetachedSaves::keep(editors, cx);
@@ -741,6 +757,39 @@ impl Workbench {
         self.sync_problems(cx);
         self.sync_backups(cx);
         self.sync_auto_save(cx);
+        self.sync_start_page(cx);
+    }
+
+    /// Gives the Start page to the active pane while the window has no tab
+    /// open, `workbench.start_page` is on and no saved layout is still being
+    /// read in, and takes it from every other pane; the pane draws it while
+    /// it's empty. Coming back, it reads the recent list again.
+    fn sync_start_page(&mut self, cx: &mut Context<Self>) {
+        let panes = self.panes(cx);
+        let empty = panes.iter().all(|pane| pane.read(cx).tabs().is_empty());
+        let show = self.start_page_on && !self.restoring && empty;
+        for pane in &panes {
+            let page = (show && *pane == self.active).then(|| self.start_page.clone());
+            pane.update(cx, |pane, cx| pane.set_start_page(page, cx));
+        }
+        if show && !self.start_page_shown {
+            self.start_page.update(cx, |page, cx| page.reload(cx));
+        }
+        self.start_page_shown = show;
+    }
+
+    /// Turns the Start page on or off: `workbench.start_page`.
+    pub(crate) fn set_start_page_on(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.start_page_on != on {
+            self.start_page_on = on;
+            self.sync_start_page(cx);
+        }
+    }
+
+    /// The Start page, whether or not it shows.
+    #[cfg(test)]
+    pub(crate) fn start_page(&self) -> &Entity<StartPageView> {
+        &self.start_page
     }
 
     /// Tints each open editor's tab title in its file's status colour from
@@ -831,6 +880,8 @@ impl Workbench {
         let setup = cx.new(|cx| SetupWizard::new(workbench, window, cx));
         window.focus(&setup.read(cx).focus_handle(), cx);
         self.setup = Some(setup);
+        // Under the sheet, the Start page runs nothing.
+        self.start_page.update(cx, |page, _| page.set_inert(true));
         cx.notify();
     }
 
@@ -845,8 +896,9 @@ impl Workbench {
         self.setup.as_ref()
     }
 
-    /// Takes the sheet away, giving focus back to `previous`, what had it, or
-    /// if that's gone to the active item.
+    /// Takes the sheet away, giving focus to the Start page if it shows, as on
+    /// a first launch with nothing to open, else back to `previous`, what had
+    /// it, or if that's gone to the active item.
     pub(crate) fn close_setup(
         &mut self,
         previous: Option<WeakFocusHandle>,
@@ -854,8 +906,14 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         self.setup = None;
-        let focus =
-            (previous.and_then(|focus| focus.upgrade())).unwrap_or_else(|| self.focus_handle(cx));
+        self.start_page.update(cx, |page, _| page.set_inert(false));
+        let page =
+            (self.active.read(cx).shown_start_page()).map(|page| page.read(cx).focus_handle());
+        let focus = match page {
+            Some(page) => page.clone(),
+            None => (previous.and_then(|focus| focus.upgrade()))
+                .unwrap_or_else(|| self.focus_handle(cx)),
+        };
         window.focus(&focus, cx);
         cx.notify();
     }

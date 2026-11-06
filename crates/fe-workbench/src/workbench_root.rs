@@ -226,6 +226,9 @@ impl Workbench {
     /// changed it, so reloading for any other key keeps a toggle.
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         self.preview_tabs = event.settings.workbench.preview_tabs;
+        self.set_start_page_on(event.settings.workbench.start_page, cx);
+        // Drawn again, it follows vim turned on or off.
+        self.start_page.update(cx, |_, cx| cx.notify());
         self.follow_zen_settings(&event.settings.workbench.zen_mode);
         let icon_theme = event.settings.workbench.icon_theme;
         if icon_theme != event.previous.workbench.icon_theme {

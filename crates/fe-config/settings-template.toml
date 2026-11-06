@@ -240,6 +240,11 @@
 # name and folder name; minimal draws plain line icons in the theme's colours.
 # A project file can't set it.
 # icon_theme = "tenmoku"
+# Show the Start page in a window's empty pane while no tabs are open: New
+# File, Open File, Open Folder, the recent folders and files, and the
+# settings, with LazyVim's dashboard keys while vim is on. Off, the pane says
+# "No open files".
+# start_page = true
 
 [workbench.zen_mode]
 # What Zen Mode (cmd-k z, ctrl-k z off macOS, again to leave it) hides

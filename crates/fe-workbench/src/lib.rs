@@ -79,6 +79,8 @@ pub mod spell;
 mod spell_commands;
 pub mod spell_ranges;
 mod spell_squiggles;
+mod start_page;
+mod start_page_model;
 mod status_bar;
 mod symbol_picker;
 mod tab_index_commands;
@@ -350,6 +352,8 @@ mod spell_ranges_tests;
 mod spell_squiggles_tests;
 #[cfg(test)]
 mod spell_tests;
+#[cfg(test)]
+mod start_page_tests;
 #[cfg(test)]
 mod tab_index_commands_tests;
 #[cfg(test)]

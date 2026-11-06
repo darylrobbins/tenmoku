@@ -33,7 +33,7 @@ use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, Pixels, PromptLevel, Render, Styled as _, Subscription, Task, WeakEntity,
-    Window, div,
+    Window, div, prelude::FluentBuilder as _,
 };
 use kiln::ViewCommands as _;
 pub use kiln_shell::PaneEvent;
@@ -46,6 +46,7 @@ use crate::{
     nav::Place,
     pane_drag::{DraggedTab, TabDropped},
     pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
+    start_page::StartPageView,
     tab_switcher::Mru,
     workbench::toast::{self, Toast},
     workbench_commands::markdown_preview::{
@@ -204,6 +205,10 @@ pub struct Pane {
     /// The reads of `open_as_text` running, by path: a newer request, or
     /// `open_as_image`, drops (cancels) the older one.
     text_reads: HashMap<PathBuf, Task<()>>,
+    /// The Start page, which the workbench gives the pane while no tab is
+    /// open in the window: drawn while the pane has no tab, nothing being
+    /// read into it and no read error, with the pane's focus.
+    start_page: Option<Entity<StartPageView>>,
     /// The tab bar's buttons' laid-out bounds.
     #[cfg(test)]
     actions: gpui::ScrollHandle,
@@ -336,6 +341,7 @@ impl Pane {
             conversions: HashMap::new(),
             svg_zooms: HashMap::new(),
             text_reads: HashMap::new(),
+            start_page: None,
             #[cfg(test)]
             actions: gpui::ScrollHandle::new(),
             #[cfg(test)]
@@ -345,6 +351,33 @@ impl Pane {
             #[cfg(test)]
             last_tooltip: Rc::default(),
         }
+    }
+
+    /// Shows `page` in the pane's empty state, the Start page, tracking the
+    /// pane's focus, or with `None` the plain "No open files" again.
+    pub(crate) fn set_start_page(
+        &mut self,
+        page: Option<Entity<StartPageView>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.start_page == page {
+            return;
+        }
+        if let Some(page) = &page {
+            let focus = self.state.focus().clone();
+            page.update(cx, |page, cx| page.set_focus(focus, cx));
+        }
+        self.start_page = page;
+        cx.notify();
+    }
+
+    /// The Start page, if the pane shows it: it has it, no tab, nothing
+    /// being read into it and no read error.
+    pub(crate) fn shown_start_page(&self) -> Option<&Entity<StartPageView>> {
+        let empty = self.state.items().is_empty() && self.opening.is_none();
+        self.start_page
+            .as_ref()
+            .filter(|_| empty && self.error.is_none())
     }
 
     /// Makes the pane `owner`'s, a workbench's: see [`Pane::owner`].
@@ -1832,7 +1865,9 @@ impl Pane {
     }
 
     fn message(&self, text: String, cx: &App) -> gpui::AnyElement {
+        let selector = format!("pane-message:{text}");
         div()
+            .debug_selector(|| selector)
             .size_full()
             .px_3()
             .py_2()
@@ -2509,9 +2544,14 @@ impl Render for Pane {
                 .into_any_element()
         } else if let Some(tab) = self.active_tab() {
             tab.item().to_any_view().into_any_element()
+        } else if let Some(page) = self.shown_start_page() {
+            page.clone().into_any_element()
         } else {
             self.message("No open files".into(), cx)
         };
+        // The Start page tracks the pane's focus in its place, so that its
+        // keys and commands are on the focus path.
+        let page_shown = self.shown_start_page().is_some();
         let drop_layer = self.state.drop_layer(cx);
         // Zen Mode can leave the tab strip out, the toolbar with it.
         let (tab_row, toolbar_row) = match self.state.tab_bar_hidden() {
@@ -2523,7 +2563,7 @@ impl Render for Pane {
             true => (None, None),
         };
         Self::attach(div(), cx)
-            .track_focus(self.state.focus())
+            .when(!page_shown, |pane| pane.track_focus(self.state.focus()))
             .capture_any_mouse_down(cx.listener(|_, _, _, cx| cx.emit(PaneEvent::Activated)))
             .on_drag_move(
                 cx.listener(|pane, event: &DragMoveEvent<DraggedTab>, _, cx| {

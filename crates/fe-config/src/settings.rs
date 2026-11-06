@@ -554,6 +554,11 @@ pub struct WorkbenchSettings {
     /// file name and folder name; `minimal` draws plain line icons in the
     /// theme's colours. A project file can't set it.
     pub icon_theme: IconTheme,
+    /// Whether a window with no tabs open shows the Start page in its empty
+    /// pane: New File, Open File, Open Folder, the recent folders and files,
+    /// and the settings, with LazyVim's dashboard keys while vim is on.
+    /// Off, the pane says "No open files".
+    pub start_page: bool,
 }
 
 /// `workbench.icon_theme`.
@@ -573,6 +578,7 @@ impl Default for WorkbenchSettings {
             preview_tabs: true,
             zen_mode: ZenModeSettings::default(),
             icon_theme: IconTheme::default(),
+            start_page: true,
         }
     }
 }
