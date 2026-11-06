@@ -486,7 +486,15 @@ fn senders_at_once_share_one_capacity_and_lose_nothing_uncounted() {
 
 #[test]
 fn a_stuck_plugin_does_not_delay_the_sender() {
-    let (mut plugin, logged) = load(Duration::from_millis(100), limits());
+    // Stuck for far longer than 1000 pushes can take even on a starved machine; the proof is
+    // that the plugin has not returned when they are done, not how fast they ran.
+    let (mut plugin, logged) = load(
+        Duration::from_millis(600),
+        Limits {
+            call_deadline: Duration::from_secs(10),
+            ..Limits::default()
+        },
+    );
     let queue = plugin.events();
     queue.push(opened(1));
     let (returned, returns) = mpsc::channel();
@@ -497,7 +505,6 @@ fn a_stuck_plugin_does_not_delay_the_sender() {
     });
     assert_eq!(logged.recv_timeout(Duration::from_secs(2)).unwrap(), "e");
 
-    let started = Instant::now();
     for push in 0..1000 {
         queue.push(match push % 4 {
             0 => opened(push),
@@ -506,12 +513,7 @@ fn a_stuck_plugin_does_not_delay_the_sender() {
             _ => saved(push % 8, push),
         });
     }
-    let took = started.elapsed();
-    assert!(
-        took < Duration::from_millis(50),
-        "1000 pushes took {took:?}"
-    );
-    // The plugin is still inside the call the pushes ran beside.
+    // The plugin is still inside the call the pushes ran beside: none of them waited for it.
     assert_eq!(returns.try_recv(), Err(TryRecvError::Empty));
     assert_eq!(queue.len(), 256);
 
