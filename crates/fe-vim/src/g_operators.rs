@@ -52,6 +52,15 @@
 //! text is at the first changed character, where nvim has the first row's
 //! column 0.
 //!
+//! `g-` and `g+` (`vim.earlier` and `vim.later`, `:help g-`) go to older
+//! and newer text states, `count` of them: in fe-buffer's linear history
+//! they are `u` and `<C-r>`, through the same code, except that running out
+//! doesn't fail (nvim says "Already at oldest change"). They differ from
+//! nvim only after an undo followed by a new change: nvim's undo tree keeps
+//! the undone branch, which `g-` then reaches, while fe-buffer discards it.
+//! Like `u`, neither is repeated by `.`; after an operator or in a visual
+//! mode they cancel. See `ex/earlier.rs` for `:earlier` and `:later`.
+//!
 //! Known differences from nvim, at the edges: its undo puts back the marks
 //! a change moved, which fe-vim's doesn't (`J` alike); with a tab in the
 //! first row's indent, nvim sometimes leaves marks on that row where they
@@ -67,8 +76,8 @@ use fe_text::{Bias, Text};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    Change, JoinArgs, Motion, MoveArgs, OperateArgs, Operator, Pending, RangeClass, Step, Target,
-    VimCommands, VimKey, VimState, VimTarget, cmdline,
+    Change, CountArgs, JoinArgs, Motion, MoveArgs, OperateArgs, Operator, Pending, RangeClass,
+    Step, Target, VimCommands, VimKey, VimState, VimTarget, cmdline,
     commands::follow,
     edit,
     feature::Feature,
@@ -128,6 +137,21 @@ fn g(pending: &Pending, key: VimKey) -> Option<Step> {
             Some(_) => Some(Step::Cancel),
         };
     }
+    // `g-` and `g+`, in normal mode only.
+    if let Some(command) = match ch {
+        '-' => Some("vim.earlier"),
+        '+' => Some("vim.later"),
+        _ => None,
+    } {
+        return (pending.operator().is_none() && !pending.is_visual()).then(|| {
+            invocation(
+                command,
+                CountArgs {
+                    count: pending.count(),
+                },
+            )
+        });
+    }
     let operator = named(ch)?;
     let pending = pending.clone();
     match pending.operator() {
@@ -140,10 +164,35 @@ fn g(pending: &Pending, key: VimKey) -> Option<Step> {
     }
 }
 
-/// `vim.join_raw`.
+/// `vim.join_raw`, `vim.earlier` and `vim.later`.
 fn register(registry: &mut Registry<VimCommands>) {
     let context = ContextPredicate::parse("editor && vim.mode == normal")
         .expect("vim's context predicate parses");
+    for (id, title, later, description) in [
+        (
+            "vim.earlier",
+            "Vim Earlier Text State",
+            false,
+            "Goes back `count` text states, as `g-` does: in the linear undo history, `count` undos, stopping at the oldest without failing.",
+        ),
+        (
+            "vim.later",
+            "Vim Later Text State",
+            true,
+            "Goes forward `count` text states, as `g+` does: in the linear undo history, `count` redos, stopping at the newest without failing.",
+        ),
+    ] {
+        let run = move |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+            let count = args.count.unwrap_or(1);
+            history::step_quietly(target, actor, count, later)
+        };
+        registry
+            .register_with_args(id, title, run)
+            .expect("vim command IDs are valid and distinct")
+            .description(description)
+            .context(context.clone())
+            .mutates_buffer(true);
+    }
     registry
         .register_with_args(
             "vim.join_raw",

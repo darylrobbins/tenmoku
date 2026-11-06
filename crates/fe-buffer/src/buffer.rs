@@ -8,7 +8,7 @@ use std::{
         Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
     },
-    time::SystemTime,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use fe_text::{Bias, DecodedFile, EncodeError, FileEncoding, LineEnding, Text};
@@ -148,6 +148,8 @@ pub struct SaveSnapshot {
     /// The encoding the file was read in, if reading decoded malformed
     /// bytes to U+FFFD.
     replaced_on_read: Option<FileEncoding>,
+    /// The history as of the snapshot, for [`Buffer::history_writes`].
+    write_mark: Arc<[OriginMark]>,
 }
 
 impl SaveSnapshot {
@@ -241,6 +243,8 @@ pub struct Buffer {
     aside: Option<TransactionId>,
     next_transaction: u64,
     undo_clock: u64,
+    /// See [`Buffer::history_revision`].
+    history_revision: u64,
     /// How many undone (redoable) transactions each origin has, so edits only
     /// scan the history to discard redos when there are some.
     redoable: HashMap<Origin, usize>,
@@ -273,6 +277,17 @@ pub struct Buffer {
     /// Who new text is by, instead of its batch's origin, while
     /// [`Buffer::with_author`] or a load has it set.
     authoring: Option<Option<Author>>,
+    /// Where history entries' times come from; see [`Buffer::set_clock`].
+    clock: Clock,
+    /// The newest [`MAX_WRITES`] saves, oldest first: each the history as
+    /// it was saved; see [`Buffer::history_writes`].
+    writes: VecDeque<WriteMark>,
+    /// How many saves there have been, numbering them.
+    writes_made: u64,
+    /// How many of each origin's transactions the history limit or
+    /// [`Buffer::compact_log`] dropped, so a save made before can tell that
+    /// undo no longer reaches it.
+    dropped: HashMap<Origin, u64>,
     pub(crate) subscribers: Vec<Weak<Mutex<Vec<BufferEvent>>>>,
 }
 
@@ -303,6 +318,9 @@ struct OpenTransaction {
 
 struct HistoryEntry {
     id: TransactionId,
+    /// When the entry was made, in milliseconds since the Unix epoch, by
+    /// [`Buffer::set_clock`]'s clock.
+    at_unix_ms: u64,
     origin: Origin,
     batches: Vec<AppliedBatch>,
     undone: Option<Undone>,
@@ -333,6 +351,68 @@ struct AppliedBatch {
     /// collapsed positions this batch was computed from. If one of them is
     /// reverted, this batch's positions can no longer be trusted.
     collapsed_by: Arc<[Collapse]>,
+}
+
+/// A [`Buffer`]'s source of wall-clock time, in milliseconds since the Unix
+/// epoch.
+type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+/// The system's clock, in milliseconds since the Unix epoch (0 before it).
+fn system_clock() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// How many saves [`Buffer::history_writes`] remembers.
+const MAX_WRITES: usize = 256;
+
+/// A save, for [`Buffer::history_writes`].
+struct WriteMark {
+    /// Its [`HistoryWrite::number`].
+    number: u64,
+    /// The history as it was saved: one for each origin that had history,
+    /// or had some dropped.
+    origins: Arc<[OriginMark]>,
+}
+
+/// One origin's history as of a save.
+#[derive(Clone, Debug)]
+struct OriginMark {
+    origin: Origin,
+    /// Its newest applied transaction, if it had one.
+    newest: Option<TransactionId>,
+    /// How many batches its transactions up to `newest` held: if one of
+    /// them gains another after the save, undo no longer reaches the text
+    /// saved.
+    batches: usize,
+    /// How many of its transactions had been dropped from the history.
+    dropped: u64,
+}
+
+/// A save in [`Buffer::history_writes`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct HistoryWrite {
+    /// The save's number: 1 for the buffer's first, and so on, whichever
+    /// are still listed.
+    pub number: u64,
+    /// The newest transaction of the origins asked about that was applied
+    /// as of the save, or `None` if none was.
+    pub transaction: Option<TransactionId>,
+}
+
+/// One transaction in [`Buffer::history_times`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct HistoryTime {
+    pub transaction: TransactionId,
+    /// When the transaction was made (opened, for one
+    /// [`Buffer::start_transaction`] began), in milliseconds since the Unix
+    /// epoch, by [`Buffer::set_clock`]'s clock.
+    pub at_unix_ms: u64,
+    /// Whether it's undone, so redo would reapply it.
+    pub undone: bool,
 }
 
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
@@ -459,10 +539,13 @@ impl Buffer {
     /// Records an empty transaction of `origin`, closed, for a restore
     /// that changes no text.
     fn record_empty(&mut self, origin: Origin) -> TransactionId {
+        self.history_revision += 1;
         debug_assert!(self.open.is_none() && self.history.is_empty());
         let id = self.next_transaction_id();
         *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
+        let at_unix_ms = self.now();
         self.history.push_back(HistoryEntry {
+            at_unix_ms,
             id,
             origin,
             batches: Vec::new(),
@@ -530,6 +613,10 @@ impl Buffer {
             unsaved: false,
             provenance: Provenance::unauthored(text.len()),
             authoring: None,
+            clock: Arc::new(system_clock),
+            writes: VecDeque::new(),
+            writes_made: 0,
+            dropped: HashMap::new(),
             snapshot: BufferSnapshot {
                 id: BufferId(NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed)),
                 text,
@@ -543,6 +630,7 @@ impl Buffer {
             aside: None,
             next_transaction: 0,
             undo_clock: 0,
+            history_revision: 0,
             redoable: HashMap::new(),
             history_bytes: HashMap::new(),
             history_limit: Self::DEFAULT_HISTORY_LIMIT,
@@ -581,10 +669,25 @@ impl Buffer {
     }
 
     fn with_authoring<R>(&mut self, author: Option<Author>, f: impl FnOnce(&mut Self) -> R) -> R {
+        /// Puts the outer author back when dropped, so a panic in `f` that
+        /// its caller catches doesn't leave `f`'s author in place.
+        struct Restore<'a> {
+            buffer: &'a mut Buffer,
+            outer: Option<Option<Author>>,
+        }
+
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.buffer.authoring = self.outer.take();
+            }
+        }
+
         let outer = self.authoring.replace(author);
-        let result = f(self);
-        self.authoring = outer;
-        result
+        let restore = Restore {
+            buffer: self,
+            outer,
+        };
+        f(&mut *restore.buffer)
     }
 
     /// Follows a fresh `batch` of `origin` in the provenance.
@@ -633,11 +736,14 @@ impl Buffer {
         if self.line_ending == line_ending {
             return None;
         }
+        self.history_revision += 1;
         self.close_open_transaction();
         self.discard_redos(&origin);
         let id = self.next_transaction_id();
         *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
+        let at_unix_ms = self.now();
         self.history.push_back(HistoryEntry {
+            at_unix_ms,
             id,
             origin: origin.clone(),
             batches: Vec::new(),
@@ -749,6 +855,7 @@ impl Buffer {
             line_ending: self.line_ending,
             encoding: self.encoding,
             replaced_on_read: self.replaced_on_read.then_some(self.encoding),
+            write_mark: self.write_mark(),
         }
     }
 
@@ -773,8 +880,16 @@ impl Buffer {
     }
 
     /// Records that the current text is on disk. A save-as goes through
-    /// here; see [`Buffer::reload`] for reading the file again.
+    /// here; see [`Buffer::reload`] for reading the file again. The save
+    /// is one of [`Buffer::history_writes`].
     pub fn did_save(&mut self) {
+        let mark = self.write_mark();
+        self.note_write(mark);
+        self.mark_saved();
+    }
+
+    /// Marks the current text as the file's, as a save or a reload does.
+    fn mark_saved(&mut self) {
         self.saved_text = self.snapshot.text.clone();
         self.saved_line_ending = self.line_ending;
         self.saved_encoding = self.encoding;
@@ -793,8 +908,9 @@ impl Buffer {
     /// until they're undone, or retyped back to the snapshot's text.
     pub fn did_save_snapshot(&mut self, snapshot: &SaveSnapshot, stamp: Option<DiskStamp>) {
         debug_assert_eq!(snapshot.buffer, self.id(), "another buffer's snapshot");
+        self.note_write(snapshot.write_mark.clone());
         if snapshot.version == self.version() {
-            self.did_save();
+            self.mark_saved();
             self.saved_line_ending = snapshot.line_ending;
             self.saved_encoding = snapshot.encoding;
         } else {
@@ -826,8 +942,10 @@ impl Buffer {
     /// that follow come after the reload in undo order; the matching
     /// [`Buffer::end_transaction`]s close the new one.
     ///
-    /// The text has no author after, even where the file's equals it, and an
-    /// undo of the reload brings the old text back with none. Undoing an older
+    /// The text has no author after, even where the file's equals it. An
+    /// undo of the reload gives the text it replaced back to who wrote it, as
+    /// any undo does, and a redo leaves it with none again; the text outside
+    /// that, which equals the file's, stays with none. Undoing an older
     /// transaction still gives back the spans it replaced.
     pub fn reload(
         &mut self,
@@ -835,7 +953,6 @@ impl Buffer {
         stamp: Option<DiskStamp>,
         origin: Origin,
     ) -> Option<TransactionId> {
-        self.provenance.clear(self.snapshot.text.len());
         let (old, new) = differing_ranges(&self.snapshot.text, &file.text);
         let id = if old.is_empty() && new.is_empty() {
             None
@@ -863,10 +980,13 @@ impl Buffer {
             }
             id
         };
+        // After the edit, which kept the authors of what it replaced for
+        // undo, and before the save marks the text as the file's.
+        self.provenance.clear(self.snapshot.text.len());
         self.line_ending = file.line_ending;
         self.encoding = file.encoding;
         self.replaced_on_read = file.replaced;
-        self.did_save();
+        self.mark_saved();
         self.disk_stamp = Some(stamp);
         id
     }
@@ -896,6 +1016,176 @@ impl Buffer {
         self.history_bytes.get(origin).copied().unwrap_or(0)
     }
 
+    /// Makes `clock` the source of the times history entries are given
+    /// from now on (see [`Buffer::history_times`]): milliseconds since the
+    /// Unix epoch. The system's clock is the default.
+    pub fn set_clock(&mut self, clock: impl Fn() -> u64 + Send + Sync + 'static) {
+        self.clock = Arc::new(clock);
+    }
+
+    fn now(&self) -> u64 {
+        (self.clock)()
+    }
+
+    /// A number that changes whenever the undo history or the place in it
+    /// does: a change recorded (or added to a transaction), an undo, a
+    /// redo, a line ending changed as a step, or transactions dropped. Saves
+    /// don't change it. Undoing and redoing back to the same state gives a
+    /// new number, even when the text's [`Buffer::version`] stays (a
+    /// line-ending step's).
+    pub fn history_revision(&self) -> u64 {
+        self.history_revision
+    }
+
+    /// The transactions of the origins `filter` matches that undo and redo
+    /// can reach, with when each was made: first the applied ones, oldest
+    /// first, then the undone ones in the order redo reapplies them. An
+    /// open transaction that hasn't changed anything yet isn't one.
+    ///
+    /// For one origin, whose history is linear (a new change discards its
+    /// redos), the applied ones are the steps undo takes back, newest
+    /// first, and the undone ones those redo takes forward.
+    pub fn history_times(&self, filter: impl Fn(&Origin) -> bool) -> Vec<HistoryTime> {
+        let time = |entry: &HistoryEntry| HistoryTime {
+            transaction: entry.id,
+            at_unix_ms: entry.at_unix_ms,
+            undone: entry.undone.is_some(),
+        };
+        let reachable: Vec<&HistoryEntry> = self
+            .history
+            .iter()
+            .filter(|entry| filter(&entry.origin) && self.reachable(entry))
+            .collect();
+        let mut undone: Vec<&HistoryEntry> = reachable
+            .iter()
+            .copied()
+            .filter(|entry| entry.undone.is_some())
+            .collect();
+        // Redo reapplies the most recently undone first.
+        undone.sort_by_key(|entry| {
+            std::cmp::Reverse(entry.undone.as_ref().map_or(0, |undone| undone.at))
+        });
+        reachable
+            .iter()
+            .copied()
+            .filter(|entry| entry.undone.is_none())
+            .chain(undone)
+            .map(time)
+            .collect()
+    }
+
+    /// The saves ([`Buffer::did_save`] and [`Buffer::did_save_snapshot`],
+    /// not a reload) whose text undo and redo can still reach, as far as the
+    /// changes of the origins `filter` matches go, oldest first, of the
+    /// newest 256. For one origin, undoing or redoing until the save's
+    /// [`HistoryWrite::transaction`] is its newest applied one (none at
+    /// all for `None`) gives the text as it was saved.
+    ///
+    /// A save is left out once that can't be: a transaction it had applied
+    /// was discarded as a redo by a newer change, or one up to its newest
+    /// gained a batch after it (an open transaction, or
+    /// [`Buffer::edit_in`]), or the history limit or
+    /// [`Buffer::compact_log`] dropped one of the origin's transactions
+    /// since.
+    pub fn history_writes(&self, filter: impl Fn(&Origin) -> bool) -> Vec<HistoryWrite> {
+        self.writes
+            .iter()
+            .filter_map(|write| {
+                let matching: Vec<&OriginMark> = (write.origins.iter())
+                    .filter(|mark| filter(&mark.origin))
+                    .collect();
+                // An origin the save has no mark for had no history then.
+                let unmarked_dropped = self.dropped.iter().any(|(origin, &dropped)| {
+                    dropped > 0
+                        && filter(origin)
+                        && !matching.iter().any(|mark| mark.origin == *origin)
+                });
+                let reached = matching.iter().all(|mark| self.still_reaches(mark));
+                (reached && !unmarked_dropped).then(|| HistoryWrite {
+                    number: write.number,
+                    transaction: matching.iter().filter_map(|mark| mark.newest).max(),
+                })
+            })
+            .collect()
+    }
+
+    /// Whether undo and redo still reach the history `mark` saw.
+    fn still_reaches(&self, mark: &OriginMark) -> bool {
+        let dropped = self.dropped.get(&mark.origin).copied().unwrap_or(0);
+        dropped == mark.dropped
+            && mark.newest.is_none_or(|newest| {
+                self.history.iter().any(|entry| entry.id == newest)
+                    && self.batches_through(&mark.origin, Some(newest)) == mark.batches
+            })
+    }
+
+    /// How many batches `origin`'s transactions up to `newest` hold,
+    /// applied or undone.
+    fn batches_through(&self, origin: &Origin, newest: Option<TransactionId>) -> usize {
+        let Some(newest) = newest else {
+            return 0;
+        };
+        self.history
+            .iter()
+            .filter(|entry| entry.origin == *origin && entry.id <= newest)
+            .map(|entry| {
+                entry
+                    .undone
+                    .as_ref()
+                    .map_or(entry.batches.len(), |undone| undone.batches.len())
+            })
+            .sum()
+    }
+
+    /// Whether undo or redo can reach `entry`: all can but an open
+    /// transaction that hasn't changed anything yet, which closing drops.
+    fn reachable(&self, entry: &HistoryEntry) -> bool {
+        !entry.batches.is_empty()
+            || entry.undone.is_some()
+            || entry.line_ending.is_some()
+            || self.open.as_ref().is_none_or(|open| open.id != entry.id)
+    }
+
+    /// The history as it is now, for a save.
+    fn write_mark(&self) -> Arc<[OriginMark]> {
+        let mark = |origin: &Origin, dropped: u64| OriginMark {
+            origin: origin.clone(),
+            newest: None,
+            batches: 0,
+            dropped,
+        };
+        let mut marks: Vec<OriginMark> = (self.dropped.iter())
+            .map(|(origin, &dropped)| mark(origin, dropped))
+            .collect();
+        for entry in self.history.iter().filter(|entry| self.reachable(entry)) {
+            let ix = match marks.iter().position(|mark| mark.origin == entry.origin) {
+                Some(ix) => ix,
+                None => {
+                    marks.push(mark(&entry.origin, 0));
+                    marks.len() - 1
+                }
+            };
+            if entry.undone.is_none() {
+                marks[ix].newest = Some(entry.id);
+            }
+        }
+        for mark in &mut marks {
+            mark.batches = self.batches_through(&mark.origin, mark.newest);
+        }
+        marks.into()
+    }
+
+    fn note_write(&mut self, origins: Arc<[OriginMark]>) {
+        self.writes_made += 1;
+        if self.writes.len() == MAX_WRITES {
+            self.writes.pop_front();
+        }
+        self.writes.push_back(WriteMark {
+            number: self.writes_made,
+            origins,
+        });
+    }
+
     /// Drops edit-log entries below `floor` (clamped to the current version),
     /// which the caller promises no live anchor, snapshot or `edits_since`
     /// cursor still needs: the buffer can't see those, so whoever holds them
@@ -914,7 +1204,7 @@ impl Buffer {
         self.snapshot.log.compact(floor);
         let floor = self.snapshot.log.floor();
         let open = self.open.as_ref().map(|open| open.id);
-        let mut freed: HashMap<Origin, (usize, usize)> = HashMap::new();
+        let mut freed: HashMap<Origin, (usize, usize, u64)> = HashMap::new();
         self.history.retain(|entry| {
             let undone = entry.undone.iter().flat_map(|undone| &undone.batches);
             let keep = Some(entry.id) == open
@@ -924,13 +1214,16 @@ impl Buffer {
                     .chain(undone)
                     .all(|batch| batch.version > floor);
             if !keep {
-                let (bytes, undone) = freed.entry(entry.origin.clone()).or_default();
+                let (bytes, undone, entries) = freed.entry(entry.origin.clone()).or_default();
                 *bytes += entry_bytes(entry);
                 *undone += usize::from(entry.undone.is_some());
+                *entries += 1;
             }
             keep
         });
-        for (origin, (bytes, undone)) in freed {
+        for (origin, (bytes, undone, entries)) in freed {
+            self.history_revision += 1;
+            *self.dropped.entry(origin.clone()).or_default() += entries;
             if let Some(held) = self.history_bytes.get_mut(&origin) {
                 *held -= bytes;
             }
@@ -1074,7 +1367,9 @@ impl Buffer {
         }
         let id = self.next_transaction_id();
         *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
+        let at_unix_ms = self.now();
         self.history.push_back(HistoryEntry {
+            at_unix_ms,
             id,
             origin: origin.clone(),
             batches: Vec::new(),
@@ -1166,6 +1461,7 @@ impl Buffer {
         self.snapshot = state;
         self.provenance.set_settled(runs);
         self.undo_clock += 1;
+        self.history_revision += 1;
         let entry = &mut self.history[ix];
         let added = batches_bytes(&batches);
         entry.undone = Some(Undone {
@@ -1218,6 +1514,7 @@ impl Buffer {
         let entry = &mut self.history[ix];
         let removed = entry_bytes(entry);
         entry.undone = None;
+        self.history_revision += 1;
         entry.batches = batches.clone();
         let added = entry_bytes(entry);
         let (id, origin) = (entry.id, entry.origin.clone());
@@ -1246,6 +1543,7 @@ impl Buffer {
     /// Bookkeeping for a fresh batch from `origin`: discards the origin's
     /// redo history and counts the batch's bytes.
     fn charge_batch(&mut self, origin: &Origin, batch: &AppliedBatch) {
+        self.history_revision += 1;
         self.discard_redos(origin);
         *self.history_bytes.entry(origin.clone()).or_default() += batch_bytes(batch);
     }
@@ -1284,7 +1582,9 @@ impl Buffer {
         }
         let id = self.next_transaction_id();
         *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
+        let at_unix_ms = self.now();
         self.history.push_back(HistoryEntry {
+            at_unix_ms,
             id,
             origin: origin.clone(),
             batches: vec![batch],
@@ -1335,6 +1635,7 @@ impl Buffer {
         };
         // Only the prefix up to the last dropped entry is touched; every
         // droppable entry of the origin in it is dropped.
+        let before = self.history.len();
         let mut prefix = last + 1;
         while prefix > 0 && self.history.front().is_some_and(&droppable) {
             self.history.pop_front();
@@ -1350,6 +1651,9 @@ impl Buffer {
                 self.history.push_front(entry);
             }
         }
+        let dropped = (before - self.history.len()) as u64;
+        self.history_revision += 1;
+        *self.dropped.entry(origin.clone()).or_default() += dropped;
         self.history_bytes.insert(origin.clone(), held);
         if undone > 0
             && let Some(count) = self.redoable.get_mut(origin)

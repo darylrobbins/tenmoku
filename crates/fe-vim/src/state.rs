@@ -19,7 +19,7 @@ use crate::search::Pattern;
 use crate::{
     CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
     cmdline::{self, CommandLine},
-    history::Carets,
+    history::{Carets, LandedWrite},
     insert::{Closing, Completion, OneCommand, Session},
     jump,
     macros::Macros,
@@ -137,6 +137,8 @@ pub struct VimState {
     /// a clone is still closing (see `insert::Closing`).
     pub(crate) changes: u64,
     pub(crate) carets: Carets,
+    /// Where `:earlier` or `:later` by file write last went.
+    pub(crate) landed_write: Option<LandedWrite>,
     /// Set while `.` replays a change inside its own transaction.
     pub(crate) replaying: bool,
     /// Set in a visual mode: its anchor and cursor.

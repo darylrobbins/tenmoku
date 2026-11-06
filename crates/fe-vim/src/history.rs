@@ -182,10 +182,25 @@ pub(crate) fn undo(
     args: CountArgs,
     redo: bool,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    let count = args.count.unwrap_or(1).max(1);
+    steps(target, actor, count, redo, false)
+}
+
+/// `count` steps of `u` (or `<C-r>` if `redo`). A conflict part way (a
+/// change another origin's edits have since overwritten) stops there and
+/// fails; running out of history fails too unless `quiet`.
+fn steps(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    count: u32,
+    redo: bool,
+    quiet: bool,
+) -> Result<Dispatched<TransactionId>, CommandError> {
     let VimTarget { model, state, .. } = target;
     crate::insert::adopt_closing(state);
     let mut reverted = Vec::new();
-    for _ in 0..args.count.unwrap_or(1).max(1) {
+    let mut conflicted = false;
+    for _ in 0..count {
         let outgoing = undo_marks::outgoing(state, model);
         let (step, _) = model.run_as(origin(actor), |model| match redo {
             true => model.redo(),
@@ -197,14 +212,18 @@ pub(crate) fn undo(
                 reverted.push(id);
             }
             Ok(None) => break,
-            // A conflict after some steps stops there, as running out does.
-            Err(_) if !reverted.is_empty() => break,
+            // A conflict after some steps stops there, failing.
+            Err(_) if !reverted.is_empty() => {
+                conflicted = true;
+                break;
+            }
             Err(error) => return Err(CommandError::new(error.to_string())),
         }
     }
-    // Running out of history, even part way, fails as in nvim.
-    let count = args.count.unwrap_or(1).max(1) as usize;
-    state.failed |= reverted.len() < count;
+    // Running out of history, even part way, fails as in nvim (but not for
+    // `g-`, `g+`, `:earlier` and `:later`, which are `quiet`).
+    let ran_out = !conflicted && reverted.len() < count as usize;
+    state.failed |= conflicted || (ran_out && !quiet);
     let Some(&last) = reverted.last() else {
         return Ok(Dispatched::new(Effect::Nothing));
     };
@@ -230,4 +249,44 @@ pub(crate) fn undo(
     }));
     state.goals = None;
     Ok(Dispatched::new(Effect::Changed).with_transactions(reverted))
+}
+
+/// `count` steps of `u` (or `<C-r>` if `redo`), none for 0, that, unlike
+/// them, don't fail for running out of history part way or at once: `g-`,
+/// `g+`, `:earlier` and `:later`, which nvim stops at the oldest or newest
+/// state with a message, not an error. A conflict still fails.
+pub(crate) fn step_quietly(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    count: u32,
+    redo: bool,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    crate::commands::follow(target);
+    if count == 0 {
+        return Ok(Dispatched::new(Effect::Nothing));
+    }
+    steps(target, actor, count, redo, true)
+}
+
+/// Where `:earlier {N}f` or `:later {N}f` last went (see `ex/earlier.rs`):
+/// nvim counts writes from the last one it went to, which the state alone
+/// doesn't tell when two writes saved the same state. It holds only until
+/// anything else happens to the history or the saves: once the state, the
+/// history's revision or the newest write isn't as it left them, it's
+/// forgotten.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LandedWrite {
+    /// The write's `fe_buffer::HistoryWrite::number`, or 0 for the state
+    /// before the first change.
+    pub(crate) number: u64,
+    /// The state it went to: how many of the origin's changes were applied,
+    /// and the newest of them.
+    pub(crate) state: (usize, Option<TransactionId>),
+    /// `fe_buffer::Buffer::history_revision` then: any change, undo or redo
+    /// since changes it, even one that comes back to the same state, or
+    /// changes only the line ending.
+    pub(crate) revision: u64,
+    /// The number of the newest write then (0 for none), so a save since
+    /// shows.
+    pub(crate) last_write: u64,
 }

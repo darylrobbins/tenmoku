@@ -407,20 +407,76 @@ fn reload_clears_authors() {
 }
 
 #[test]
-fn undoing_a_reload_brings_the_text_back_with_no_author() {
+fn undoing_a_reload_gives_the_replaced_text_its_authors_back() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("file.txt");
     std::fs::write(&path, "disk").unwrap();
+    let disk = || Origin::Host("disk".into());
     let mut buffer = Buffer::new("");
     buffer.edit([(0..0, "user")], Origin::User);
+    buffer.edit([(4..4, " ai")], ai("a"));
     let (file, stamp) = Buffer::read_file(std::fs::File::open(&path).unwrap()).unwrap();
-    buffer.reload(file, Some(stamp), Origin::Host("disk".into()));
-    buffer
-        .undo(|origin| origin == &Origin::Host("disk".into()))
-        .unwrap()
-        .unwrap();
-    assert_eq!(buffer.text().to_string(), "user");
+    buffer.reload(file, Some(stamp), disk());
     assert_eq!(spans(&buffer), []);
+
+    buffer.undo(|origin| origin == &disk()).unwrap().unwrap();
+    assert_eq!(buffer.text().to_string(), "user ai");
+    assert_eq!(
+        spans(&buffer),
+        [(0..4, Author::User), (4..7, ai_author("a"))]
+    );
+    // Redoing the reload leaves the file's text with no author again.
+    buffer.redo(|origin| origin == &disk()).unwrap().unwrap();
+    assert_eq!(buffer.text().to_string(), "disk");
+    assert_eq!(spans(&buffer), []);
+    buffer.undo(|origin| origin == &disk()).unwrap().unwrap();
+    assert_eq!(
+        spans(&buffer),
+        [(0..4, Author::User), (4..7, ai_author("a"))]
+    );
+}
+
+#[test]
+fn a_caught_panic_in_with_author_puts_the_author_back() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let mut buffer = Buffer::new("");
+    let caught = catch_unwind(AssertUnwindSafe(|| {
+        buffer.with_author(ai("a"), |buffer| {
+            buffer.edit([(0..0, "a")], Origin::User);
+            panic!("in with_author");
+        })
+    }));
+    assert!(caught.is_err());
+    buffer.edit([(1..1, "u")], Origin::User);
+    assert_eq!(
+        spans(&buffer),
+        [(0..1, ai_author("a")), (1..2, Author::User)]
+    );
+
+    // Nested: the inner call's panic, caught inside the outer, leaves the
+    // outer's author in place, and the outer's leaves none.
+    let caught = catch_unwind(AssertUnwindSafe(|| {
+        buffer.with_author(ai("outer"), |buffer| {
+            let inner = catch_unwind(AssertUnwindSafe(|| {
+                buffer.with_author(ai("inner"), |_| panic!("inner"))
+            }));
+            assert!(inner.is_err());
+            buffer.edit([(2..2, "o")], Origin::User);
+            panic!("outer");
+        })
+    }));
+    assert!(caught.is_err());
+    buffer.edit([(3..3, "u")], Origin::User);
+    assert_eq!(
+        spans(&buffer),
+        [
+            (0..1, ai_author("a")),
+            (1..2, Author::User),
+            (2..3, ai_author("outer")),
+            (3..4, Author::User),
+        ]
+    );
 }
 
 #[test]

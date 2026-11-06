@@ -34,6 +34,8 @@ use crate::VimTarget;
 mod clearjumps;
 #[path = "delmarks.rs"]
 mod delmarks;
+#[path = "earlier.rs"]
+mod earlier;
 #[path = "filter.rs"]
 pub(super) mod filter;
 #[path = "jumps.rs"]
@@ -99,6 +101,8 @@ pub(super) const COMMANDS: &[Entry] = &[
     set::COMMAND,
     undo::UNDO,
     undo::REDO,
+    earlier::EARLIER,
+    earlier::LATER,
 ];
 
 /// The entry `name` names.

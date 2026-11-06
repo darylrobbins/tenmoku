@@ -49,8 +49,8 @@ mod stream;
 
 pub use backup::{Backup, BackupId, BackupMeta, BackupStore, ParseBackupIdError};
 pub use buffer::{
-    Buffer, BufferEvent, DiskStamp, EditError, EditKind, Origin, SaveSnapshot, Subscription,
-    TransactionId, UndoError,
+    Buffer, BufferEvent, DiskStamp, EditError, EditKind, HistoryTime, HistoryWrite, Origin,
+    SaveSnapshot, Subscription, TransactionId, UndoError,
 };
 pub use edit::Edit;
 pub use fe_text::{Bias, DecodedFile, Encoding, FileEncoding, LineEnding, Point, PointUtf16, Text};
