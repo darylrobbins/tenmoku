@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use sum_tree::{ContextLessSummary, Item, SumTree};
 
@@ -251,10 +251,82 @@ impl EditLog {
         Some(offset)
     }
 
+    /// Whether any byte of `range`, in the text at `from`, is still in the text at `to`: not
+    /// replaced or deleted by a batch mapped through (see [`EditLog::mapping_batches`]).
+    pub(crate) fn survives(&self, range: Range<usize>, from: Version, to: Version) -> bool {
+        let mut pieces = vec![range];
+        for (_, entry) in self.mapping_entries(from, to) {
+            pieces = pieces
+                .into_iter()
+                .flat_map(|piece| carry(&entry.edits, piece))
+                .collect();
+            if pieces.is_empty() {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether a batch mapped through from `from` to `to` replaced or deleted text strictly
+    /// around `offset`, which moves with `bias` like an anchor, swallowing it.
+    pub(crate) fn swallowed(
+        &self,
+        offset: usize,
+        mapping: Mapping,
+        from: Version,
+        to: Version,
+    ) -> bool {
+        let mut offset = offset;
+        for (_, entry) in self.mapping_entries(from, to) {
+            if collapses(&entry.edits, offset) {
+                return true;
+            }
+            offset = map_offset(&entry.edits, offset, mapping);
+        }
+        false
+    }
+
     /// Maps an offset at version `from` to the equivalent offset at version `to`.
     pub(crate) fn map(&self, offset: usize, mapping: Mapping, from: Version, to: Version) -> usize {
         self.mapping_batches(from, to)
             .into_iter()
             .fold(offset, |offset, edits| map_offset(edits, offset, mapping))
     }
+}
+
+/// The parts of `piece`, bytes before `edits`, that no edit replaces, as bytes after them. An
+/// insertion inside `piece` splits it.
+fn carry(edits: &[Edit], piece: Range<usize>) -> Vec<Range<usize>> {
+    let mut parts = Vec::new();
+    let mut cursor = piece.start;
+    for edit in edits {
+        if edit.old.is_empty() {
+            if cursor < edit.old.start && edit.old.start < piece.end {
+                parts.push(cursor..edit.old.start);
+                cursor = edit.old.start;
+            }
+        } else if edit.old.start < piece.end && edit.old.end > cursor {
+            if edit.old.start > cursor {
+                parts.push(cursor..edit.old.start);
+            }
+            cursor = cursor.max(edit.old.end);
+        }
+    }
+    if cursor < piece.end {
+        parts.push(cursor..piece.end);
+    }
+    parts
+        .into_iter()
+        .map(|part| {
+            let shift = |edit: &&Edit| edit.old.end <= part.start;
+            let (grown, shrunk) = edits
+                .iter()
+                .filter(shift)
+                .fold((0, 0), |(grown, shrunk), edit| {
+                    (grown + edit.new.len(), shrunk + edit.old.len())
+                });
+            let start = part.start + grown - shrunk;
+            start..start + part.len()
+        })
+        .collect()
 }

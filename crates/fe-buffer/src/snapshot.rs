@@ -167,6 +167,26 @@ impl BufferSnapshot {
         self.log.map(offset, bias.into(), from, self.version())
     }
 
+    /// Whether any byte of `range`, in the text at `from`, is still in this snapshot's text:
+    /// edits (counting undo and redo as `resolve` does) haven't replaced or deleted all of it.
+    /// Text inserted into the range doesn't count.
+    ///
+    /// # Panics
+    /// If `from` is below [`BufferSnapshot::oldest_version`] or after this snapshot.
+    pub fn survives(&self, range: Range<usize>, from: Version) -> bool {
+        self.log.survives(range, from, self.version())
+    }
+
+    /// Whether edits since `from` replaced or deleted text on both sides of `offset`, a position
+    /// at that version which moves with `bias` as an anchor does, so that no neighbour is left.
+    ///
+    /// # Panics
+    /// If `from` is below [`BufferSnapshot::oldest_version`] or after this snapshot.
+    pub fn swallowed(&self, offset: usize, bias: Bias, from: Version) -> bool {
+        self.log
+            .swallowed(offset, bias.into(), from, self.version())
+    }
+
     /// See [`EditLog::map_for_history`].
     pub(crate) fn map_for_history(
         &self,

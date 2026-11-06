@@ -19,7 +19,7 @@ use std::collections::btree_map::Entry;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use fe_buffer::{Anchor, Bias, BufferId, BufferSnapshot, Text, Version};
+use fe_buffer::{Bias, BufferId, BufferSnapshot, Text, Version};
 use fe_editor::decorations::{
     Decoration as Painted, DecorationKind, DecorationProvider, DecorationSet, Tint,
 };
@@ -148,21 +148,53 @@ struct Drawn<T> {
 struct Record<T> {
     /// As the plugin set it; its range or line is as of the version it named.
     item: T,
-    /// The text whose deletion takes it (see [`span`]); none for one nothing takes.
-    span: Option<Range<Anchor>>,
+    /// What edits must not take for it to stay.
+    watch: Watch,
+}
+
+/// What an entry stays for, as of `version`: edits take it by deleting or replacing all of
+/// `bytes` (see [`span`]), or, for an empty one, everything around the point it sits at.
+#[derive(Clone)]
+struct Watch {
+    version: Version,
+    /// The text whose deletion takes it; none for one only the point can take.
+    bytes: Option<Range<usize>>,
+    /// Where an empty entry sits, and the side of text inserted there it keeps to.
+    point: Option<(usize, Bias)>,
+}
+
+impl Watch {
+    fn new(text_version: Version, range: &Range<usize>, bytes: Option<Range<usize>>) -> Self {
+        Self {
+            version: text_version,
+            bytes,
+            point: range.is_empty().then_some((range.start, START)),
+        }
+    }
+
+    /// Whether edits since have taken it, in `snapshot`. One older than the snapshot's edit log
+    /// can't be told, and stays.
+    fn is_taken(&self, snapshot: &BufferSnapshot) -> bool {
+        if self.version < snapshot.oldest_version() || self.version > snapshot.version() {
+            return false;
+        }
+        let bytes = (self.bytes.as_ref())
+            .is_some_and(|bytes| !snapshot.survives(bytes.clone(), self.version));
+        bytes || (self.point).is_some_and(|(at, bias)| snapshot.swallowed(at, bias, self.version))
+    }
 }
 
 impl<T> Record<T> {
-    /// Whether edits have deleted all of its span, in `snapshot`, which its anchors resolve in.
+    /// Whether edits have taken it, in `snapshot`.
     fn is_gone(&self, snapshot: &BufferSnapshot) -> bool {
-        (self.span.as_ref()).is_some_and(|span| snapshot.resolve_range(span).is_empty())
+        self.watch.is_taken(snapshot)
     }
 }
 
 /// An entry being kept: its range and its span, bytes of one snapshot.
 struct Placed<T> {
     range: Range<usize>,
-    span: Option<Range<usize>>,
+    watch: Watch,
     item: T,
 }
 
@@ -177,12 +209,9 @@ impl<T> Drawn<T> {
                 Painted::new(placed.range, DecorationKind::Highlight, Tint::Accent)
                     .with_priority(priority),
             );
-            let span = (placed.span).map(|span| {
-                snapshot.anchor_at(span.start, START)..snapshot.anchor_at(span.end, END)
-            });
             records.push(Record {
                 item: placed.item,
-                span,
+                watch: placed.watch,
             });
         }
         let mut anchored = DecorationSet::new();
@@ -254,10 +283,7 @@ impl<T> Drawn<T> {
             }
             Some(Placed {
                 range: entry.range,
-                span: record
-                    .span
-                    .as_ref()
-                    .map(|span| snapshot.resolve_range(span)),
+                watch: record.watch,
                 item: record.item,
             })
         });
@@ -654,13 +680,13 @@ impl Attached {
         for (index, item) in items.into_iter().enumerate() {
             let range = range(then.text(), &item)
                 .map_err(|why| Error::InvalidArgument(format!("entry {index}'s {why}")))?;
-            let span = span(then.text(), &range).map(mapped);
-            if span.as_ref().is_some_and(Range::is_empty) {
+            let watch = Watch::new(from, &range, span(then.text(), &range));
+            if watch.is_taken(&now) {
                 continue;
             }
             placed.push(Placed {
                 range: mapped(range),
-                span,
+                watch,
                 item,
             });
         }

@@ -634,3 +634,54 @@ fn undone_edits_map_as_anchors_do() {
         assert_eq!(lines_of(&store, &buffers, 2, plugin), [0], "{plugin}");
     }
 }
+
+#[test]
+fn replacing_what_an_entry_sits_on_takes_it() {
+    let buffers = Buffers::with(1, "abcdef");
+    open(&buffers, 2, "one\ntwo\nthree\n");
+    let store = DecorationStore::new();
+    let mut held = plugin("held", &["decorations"], &store, &buffers);
+    let mut late = plugin("late", &["decorations"], &store, &buffers);
+    let (old, old_lines) = (shown(&buffers, 1), shown(&buffers, 2));
+    let words = || vec![highlight(3..3), highlight(2..4), highlight(0..1)];
+    let lines = || vec![gutter(0, "0"), gutter(1, "1"), gutter(2, "2")];
+    held.set_decorations(1, old, "set".into(), words()).unwrap();
+    held.set_gutter(2, old_lines, "set".into(), lines())
+        .unwrap();
+
+    // "cd" is replaced, not deleted: the empty decoration between "c" and "d" and the one over
+    // "cd" are gone, though the span they had left isn't empty. Line "two" is replaced whole.
+    type_in(&buffers, 1, 2..4, "X");
+    type_in(&buffers, 2, 4..8, "2\n");
+    late.set_decorations(1, old, "set".into(), words()).unwrap();
+    late.set_gutter(2, old_lines, "set".into(), lines())
+        .unwrap();
+    for plugin in ["held", "late"] {
+        assert_eq!(ranges_of(&store, &buffers, 1, plugin), [0..1], "{plugin}");
+        assert_eq!(lines_of(&store, &buffers, 2, plugin), [0, 2], "{plugin}");
+    }
+    store.provider(1).refresh(&snapshot(&buffers, 1));
+    store.provider(2).refresh(&snapshot(&buffers, 2));
+    assert_eq!(ranges_of(&store, &buffers, 1, "held"), [0..1]);
+    assert_eq!(lines_of(&store, &buffers, 2, "held"), [0, 2]);
+}
+
+#[test]
+fn an_empty_entry_that_moves_inside_the_text_is_taken_with_it() {
+    let buffers = Buffers::with(1, "abcdef");
+    let store = DecorationStore::new();
+    let mut held = plugin("held", &["decorations"], &store, &buffers);
+    let mut late = plugin("late", &["decorations"], &store, &buffers);
+    let old = shown(&buffers, 1);
+    held.set_decorations(1, old, "set".into(), vec![highlight(0..0)])
+        .unwrap();
+    // Text typed at the start moves it in; deleting that and everything after it takes it.
+    type_in(&buffers, 1, 0..0, "X");
+    assert_eq!(ranges_of(&store, &buffers, 1, "held"), [1..1]);
+    type_in(&buffers, 1, 0..7, "");
+    late.set_decorations(1, old, "set".into(), vec![highlight(0..0)])
+        .unwrap();
+    for plugin in ["held", "late"] {
+        assert_eq!(ranges_of(&store, &buffers, 1, plugin), [], "{plugin}");
+    }
+}
