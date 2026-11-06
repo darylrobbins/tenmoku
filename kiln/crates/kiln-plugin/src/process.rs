@@ -10,7 +10,9 @@
 //! the plugin passes, and a minimal environment; its output is capped, and a run past its
 //! deadline is killed. A run has its own limit, [`PROGRAM_DEADLINE`] (10 s), not the 100 ms call
 //! deadline: the time a call waits on a run isn't charged to the call, and the runs of one call
-//! share that limit.
+//! share that limit. Everything before a launch comes out of that share and stops at its end: the
+//! check of the program, the waiting for a suspension to reach the store (the writing goes on
+//! elsewhere, until it is written), and the setup, after which no child starts.
 
 use std::ffi::OsString;
 use std::io::{self, Read as _, Write as _};
@@ -27,7 +29,9 @@ use kiln_command::capability::{Capability, Target};
 
 use crate::bindings::kiln::extension::process::{Host, Output};
 use crate::bindings::{Error, HostState};
-use crate::grants::{self, GrantRecord, GrantStore, GrantStoreError, ProgramIdentity, Suspended};
+use crate::grants::{
+    self, GrantRecord, GrantStore, ProgramIdentity, Suspended, SuspensionWrite, SuspensionWriter,
+};
 use crate::limits::{Limits, PROGRAM_DEADLINE};
 
 /// What the program runs of the call now running have used of its share, and what is left.
@@ -119,8 +123,8 @@ const IDLE: Duration = Duration::from_millis(2);
 /// The process slice of [`HostState`]: the plugin's spawn grants, and how far a spawn may go.
 pub struct State {
     record: GrantRecord,
-    /// Where a suspension is recorded, and the plugin's id there.
-    store: Option<(GrantStore, String)>,
+    /// Where a suspension is recorded, the plugin's id there, and what writes to it.
+    store: Option<(GrantStore, String, Arc<SuspensionWriter>)>,
     max_output: usize,
     deadline: Duration,
     environment: Vec<(OsString, OsString)>,
@@ -148,7 +152,9 @@ impl State {
 
     /// Records a suspension in `store` too, under `plugin`, so the next load asks again.
     pub fn recorded_in(mut self, store: GrantStore, plugin: &str) -> Self {
-        self.store = Some((store, plugin.to_owned()));
+        let writer = SuspensionWriter::of(&store);
+        writer.start();
+        self.store = Some((store, plugin.to_owned(), writer));
         self
     }
 
@@ -200,6 +206,7 @@ impl State {
         left: Option<Duration>,
         entered: Instant,
     ) -> Result<Output, SpawnError> {
+        self.start_writer();
         let share_ends = left.map(|left| entered.checked_add(left));
         // What is left of the share now, if there is one: none is no limit but the run's own.
         let share = || {
@@ -217,7 +224,7 @@ impl State {
         if share().is_some_and(|share| share.is_zero()) {
             return Err(timed_out(Duration::ZERO));
         }
-        // Reading the program, and recording a suspension, stop at the share's end too.
+        // Reading the program, and waiting for a suspension to be recorded, stop at its end too.
         let ends = share_ends.flatten();
         let checked = match ends {
             Some(ends) => grants::check_program_by(&identity, ends),
@@ -226,9 +233,7 @@ impl State {
         match checked {
             Err(grants::CheckTimedOut) => return Err(timed_out(share().unwrap_or_default())),
             Ok(Err(suspended)) => {
-                if !self.suspend(program, suspended, ends) {
-                    return Err(timed_out(share().unwrap_or_default()));
-                }
+                self.suspend(program, &identity, suspended, ends);
                 return Err(SpawnError::Suspended {
                     program: program.to_owned(),
                     suspended,
@@ -241,13 +246,12 @@ impl State {
             .args(args)
             .env_clear()
             .envs(self.environment.iter().map(|(name, value)| (name, value)));
-        // The check and the setup took their time from the share too: what is left is the run's,
-        // and none left means nothing launches.
-        let deadline = share().map_or(self.deadline, |share| share.min(self.deadline));
-        if deadline.is_zero() {
-            return Err(timed_out(deadline));
-        }
-        run(command, stdin, self.max_output, deadline).map_err(|failure| match failure {
+        // The check took its time from the share too: what is left is the run's.
+        let now = Instant::now();
+        let own_end = now + self.deadline;
+        let ends_at = ends.map_or(own_end, |ends| ends.min(own_end));
+        let deadline = ends_at.saturating_duration_since(now);
+        run(command, stdin, self.max_output, ends_at).map_err(|failure| match failure {
             Failure::Io(source) => SpawnError::Io {
                 path: identity.path.clone(),
                 source,
@@ -259,19 +263,44 @@ impl State {
         })
     }
 
-    /// Withdraws `program`'s grant here, and records that in the store by `by`: false if the
-    /// store couldn't be written in time, so the suspension isn't persisted.
-    fn suspend(&mut self, program: &str, suspended: Suspended, by: Option<Instant>) -> bool {
+    /// Withdraws `program`'s grant here at once, and hands the store's writer the record of that.
+    /// This thread waits for it only until `by`, or for the run's own deadline with no share: past
+    /// it the writing goes on without it, and is retried until it's done.
+    fn suspend(
+        &mut self,
+        program: &str,
+        identity: &ProgramIdentity,
+        suspended: Suspended,
+        by: Option<Instant>,
+    ) {
         log::warn!("process.spawn:{program}: {suspended}");
         self.record.suspend(program, suspended.reason);
-        if let Some((store, plugin)) = &self.store
-            && let Err(error) = store.check_programs_by(plugin, by)
-        {
-            log::warn!("can't record that process.spawn:{program} is suspended: {error}");
-            return !matches!(&error, GrantStoreError::Io { source, .. }
-                if source.kind() == io::ErrorKind::TimedOut);
+        let Some((store, plugin, writer)) = &self.store else {
+            return;
+        };
+        let written = writer.submit(SuspensionWrite {
+            store: store.clone(),
+            plugin: plugin.clone(),
+            program: program.to_owned(),
+            identity: identity.clone(),
+            grant_token: self.record.grant_token(program).map(str::to_owned),
+            reason: suspended.reason,
+        });
+        let Some(written) = written else {
+            return;
+        };
+        let by = by.unwrap_or_else(|| Instant::now() + self.deadline);
+        let left = by.saturating_duration_since(Instant::now());
+        if written.recv_timeout(left).is_err() {
+            log::warn!("process.spawn:{program}: its suspension isn't recorded yet");
         }
-        true
+    }
+
+    /// Gives a writer that couldn't start another chance at what is queued for it.
+    fn start_writer(&self) {
+        if let Some((_, _, writer)) = &self.store {
+            writer.start();
+        }
     }
 
     /// What `program`'s grant is bound to, if it is granted and bound.
@@ -295,6 +324,14 @@ impl State {
             .get(program)
             .cloned()
             .ok_or_else(not_granted)
+    }
+}
+
+impl Drop for State {
+    /// Unloading a plugin is one more chance for a writer that couldn't start: what is queued
+    /// outlives this state either way.
+    fn drop(&mut self) {
+        self.start_writer();
     }
 }
 
@@ -341,7 +378,8 @@ pub enum SpawnError {
         #[source]
         suspended: Suspended,
     },
-    /// It ran past its deadline and was killed.
+    /// It ran past its deadline and was killed, or the call's share of program time ended
+    /// before it started: then nothing ran.
     #[error("{program} ran past its {deadline:?} deadline and was killed")]
     TimedOut { program: String, deadline: Duration },
     #[error("can't run {}: {source}", path.display())]
@@ -380,7 +418,8 @@ impl From<io::Error> for Failure {
 
 /// Runs `command` to completion, feeding it `stdin`, its stdout and stderr each kept to
 /// `max_output` bytes: one still running when it writes past that is killed. It is killed too
-/// at `deadline`, which is then [`Failure::TimedOut`].
+/// at `deadline`, which is then [`Failure::TimedOut`]; and if the setup takes it there, nothing
+/// starts.
 ///
 /// The program's stdio are sockets rather than pipes, so this thread alone can feed and drain
 /// them without blocking: when it returns, by any path, the host's ends close with it and no
@@ -389,9 +428,8 @@ fn run(
     mut command: Command,
     stdin: Option<&[u8]>,
     max_output: usize,
-    deadline: Duration,
+    deadline: Instant,
 ) -> Result<Output, Failure> {
-    let deadline = Instant::now() + deadline;
     let mut feed = match stdin {
         Some(bytes) => {
             let (ours, theirs) = UnixStream::pair()?;
@@ -410,6 +448,13 @@ fn run(
     command.stdout(OwnedFd::from(theirs));
     let (stderr, theirs) = UnixStream::pair()?;
     command.stderr(OwnedFd::from(theirs));
+    #[cfg(test)]
+    crate::prelaunch_tests::seams::during_setup();
+    if Instant::now() >= deadline {
+        return Err(Failure::TimedOut);
+    }
+    #[cfg(test)]
+    crate::prelaunch_tests::seams::launching();
     let mut child = command.spawn()?;
     // The command holds the program's ends: they must close here for its output to end.
     drop(command);

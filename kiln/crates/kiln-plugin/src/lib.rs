@@ -14,6 +14,8 @@ pub mod grants;
 pub mod limits;
 pub mod manifest;
 pub mod net;
+#[cfg(test)]
+mod prelaunch_tests;
 pub mod process;
 #[cfg(test)]
 mod program_budget_tests;

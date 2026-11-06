@@ -15,7 +15,9 @@
 //! request; [`GrantStore`] keeps the records in `<state>/plugin-grants.toml`,
 //! read and written under a lock so two processes don't lose each other's
 //! changes. Prompt text is the app's; enforcing a spawn grant at run time
-//! is the host's.
+//! is the host's. A plugin's thread never writes the file: a suspension
+//! found during a call goes to the store's [`SuspensionWriter`], which
+//! retries it until it is written.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -24,7 +26,8 @@ use std::io::{self, Read as _, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use kiln_command::capability::{Capability, Grants, Target};
 use serde::{Deserialize, Serialize};
@@ -69,9 +72,20 @@ pub struct GrantRecord {
     /// went, and why: for the prompt that asks again.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub suspended: BTreeMap<String, SuspendReason>,
+    /// What marks each program's binding as made by one grant and no other. A program can be
+    /// granted again with its file's identity unchanged, even after its record was removed, so
+    /// this is what tells a suspension found under an earlier grant from one that still applies.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub grant_tokens: BTreeMap<String, String>,
 }
 
 impl GrantRecord {
+    /// The token of the grant that bound `program`, if it has one: a record written before there
+    /// were tokens has none.
+    pub(crate) fn grant_token(&self, program: &str) -> Option<&str> {
+        self.grant_tokens.get(program).map(String::as_str)
+    }
+
     /// Withdraws `program`'s spawn grant, as [`check_program`] found it
     /// `reason`: [`evaluate`] then gives an [`Decision::Escalation`] for any
     /// request that names it.
@@ -98,6 +112,7 @@ impl GrantRecord {
         path_var: &OsStr,
     ) -> Result<Self, GrantStoreError> {
         let mut programs = BTreeMap::new();
+        let mut grant_tokens = self.grant_tokens.clone();
         for capability in requested {
             let Capability::ProcessSpawn(Target::Named(program)) = capability else {
                 continue;
@@ -107,12 +122,16 @@ impl GrantRecord {
             }
             let identity = match self.programs.get(program) {
                 Some(identity) => identity.clone(),
-                None => resolve_program(program, path_var).map_err(|source| {
-                    GrantStoreError::Unresolved {
-                        program: program.clone(),
-                        source,
-                    }
-                })?,
+                None => {
+                    let resolved = resolve_program(program, path_var).map_err(|source| {
+                        GrantStoreError::Unresolved {
+                            program: program.clone(),
+                            source,
+                        }
+                    })?;
+                    grant_tokens.insert(program.clone(), new_grant_token());
+                    resolved
+                }
             };
             programs.insert(program.clone(), identity);
         }
@@ -132,8 +151,19 @@ impl GrantRecord {
             wildcards_accepted: self.wildcards_accepted && has_wildcard(requested),
             declined: self.declined.clone(),
             suspended,
+            grant_tokens,
         })
     }
+}
+
+/// A token no other grant has, in this process or another, whatever was removed since: the clock,
+/// the process and a count within it.
+fn new_grant_token() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH);
+    let now = now.unwrap_or_default().as_nanos();
+    let (process, next) = (std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+    format!("{now:x}-{process:x}-{next:x}")
 }
 
 /// Whether `capability` is `process.spawn:<program>`.
@@ -461,7 +491,17 @@ fn check_with(
     let changed = Suspended {
         reason: SuspendReason::Changed,
     };
-    let (mut file, meta) = match open_executable(&identity.path) {
+    if passed(by) {
+        return Err(CheckTimedOut);
+    }
+    let opened = open_executable(&identity.path);
+    #[cfg(test)]
+    crate::prelaunch_tests::seams::after_open();
+    // Past the end nothing the file turned out to be counts, an error from it included.
+    if passed(by) {
+        return Err(CheckTimedOut);
+    }
+    let (mut file, meta) = match opened {
         Ok(opened) => opened,
         Err(error) => return Ok(Err(suspended(error))),
     };
@@ -480,11 +520,19 @@ fn check_with(
         },
         None => hash(&mut file),
     };
+    if hashed.is_err() && passed(by) {
+        return Err(CheckTimedOut);
+    }
     Ok(match hashed {
         Ok(hashed) if hashed == identity.sha256 => Ok(()),
         Ok(_) => Err(changed),
         Err(error) => Err(suspended(error)),
     })
+}
+
+/// Whether `by`, if there is one, has passed.
+fn passed(by: Option<Instant>) -> bool {
+    by.is_some_and(|by| Instant::now() >= by)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -631,6 +679,7 @@ impl GrantStore {
             }
             let mut bound = BTreeMap::new();
             let mut rebound = Vec::new();
+            let mut grant_tokens = previous.grant_tokens.clone();
             for capability in requested {
                 let Capability::ProcessSpawn(Target::Named(program)) = capability else {
                     continue;
@@ -651,6 +700,7 @@ impl GrantStore {
                 })?;
                 if fresh.is_some() {
                     rebound.push(program.clone());
+                    grant_tokens.insert(program.clone(), new_grant_token());
                 }
                 bound.insert(program.clone(), identity.clone());
             }
@@ -665,6 +715,7 @@ impl GrantStore {
                     .filter(|(program, _)| covers(requested, program) && !rebound.contains(program))
                     .collect(),
                 programs: bound,
+                grant_tokens,
             };
             granted = Some(record.clone());
             Ok(Some(record))
@@ -689,8 +740,10 @@ impl GrantStore {
         self.check_programs_by(id, None)
     }
 
-    /// [`Self::check_programs`], taking the lock, checking the programs and writing by `by`:
-    /// past it nothing is written, and the error is an [`io::ErrorKind::TimedOut`] one.
+    /// [`Self::check_programs`], taking the lock, checking each program and writing by `by`: past
+    /// it nothing more is read or written, and the error is an [`io::ErrorKind::TimedOut`] one.
+    /// The write itself can't be stopped once it has started, so a plugin's thread doesn't call
+    /// this with one to make: it hands a suspension to the store's [`SuspensionWriter`].
     pub fn check_programs_by(
         &self,
         id: &str,
@@ -755,7 +808,7 @@ impl GrantStore {
                 file.plugins.insert(id.to_owned(), record);
             }
             let body = toml::to_string(&file).map_err(|error| io_error(io::Error::other(error)))?;
-            if by.is_some_and(|by| Instant::now() >= by) {
+            if passed(by) {
                 return Err(io_error(io::ErrorKind::TimedOut.into()));
             }
             write(&self.path, format!("{HEADER}{body}").as_bytes()).map_err(io_error)
@@ -783,14 +836,202 @@ impl GrantStore {
     }
 }
 
+/// How long a suspension that failed to be written first waits to try again; each failure doubles
+/// it.
+const RETRY_FIRST: Duration = Duration::from_millis(50);
+/// The most a suspension waits between tries.
+const RETRY_MOST: Duration = Duration::from_secs(30);
+
+/// A finding that a program's file is no longer the one granted, for the store to record.
+#[derive(Debug)]
+pub(crate) struct SuspensionWrite {
+    pub(crate) store: GrantStore,
+    pub(crate) plugin: String,
+    pub(crate) program: String,
+    /// What the program was bound to when it was found so.
+    pub(crate) identity: ProgramIdentity,
+    /// The [`GrantRecord::grant_token`] it was found under.
+    pub(crate) grant_token: Option<String>,
+    pub(crate) reason: SuspendReason,
+}
+
+impl SuspensionWrite {
+    /// Records the suspension, while the plugin's record still holds the grant it was found
+    /// under. If it doesn't, because the program was granted again since or the plugin forgotten,
+    /// nothing changes: the finding was about a grant that has gone.
+    fn write(&self) -> Result<(), GrantStoreError> {
+        #[cfg(test)]
+        crate::prelaunch_tests::seams::store_io(self.store.path()).map_err(|source| {
+            GrantStoreError::Io {
+                path: self.store.path.clone(),
+                source,
+            }
+        })?;
+        self.store.update(&self.plugin, |record| {
+            Ok(record.map(|mut record| {
+                if record.programs.get(&self.program) == Some(&self.identity)
+                    && record.grant_token(&self.program) == self.grant_token.as_deref()
+                {
+                    record.suspend(&self.program, self.reason);
+                }
+                record
+            }))
+        })
+    }
+}
+
+/// Writes one store's suspensions away from the threads that find them: the lock, the read and
+/// the write with its sync can each take as long as the disk does, and a plugin's thread can't
+/// wait for that past its call's share.
+///
+/// It lasts as long as the process, whatever plugin found a suspension or has since unloaded, so
+/// while its thread runs a suspension stays queued and is retried until it's written. The thread
+/// starts when a plugin that records in the store loads, so finding a suspension later needs no
+/// new thread. A thread that can't start leaves the queue as it is, and the next load, spawn or
+/// unload on this store tries again.
+///
+/// An accepted limit: if the thread can't be created at load and no later load, spawn or unload on
+/// this store comes before the process ends, nothing retries, as nothing here runs without a
+/// thread and the engine's ticker isn't made to. The suspension then isn't recorded, and the next
+/// launch's load finds it only if the program is still changed.
+pub(crate) struct SuspensionWriter {
+    path: PathBuf,
+    state: Mutex<WriterState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct WriterState {
+    queue: Vec<Queued>,
+    running: bool,
+}
+
+struct Queued {
+    write: SuspensionWrite,
+    written: mpsc::Sender<()>,
+    wait: Duration,
+    next_try: Instant,
+}
+
+static WRITERS: Mutex<BTreeMap<PathBuf, Arc<SuspensionWriter>>> = Mutex::new(BTreeMap::new());
+
+impl SuspensionWriter {
+    /// The writer of the store at `store`'s path, the same one for every plugin and window.
+    pub(crate) fn of(store: &GrantStore) -> Arc<Self> {
+        let mut writers = WRITERS.lock().unwrap_or_else(PoisonError::into_inner);
+        let writer = writers.entry(store.path.clone()).or_insert_with(|| {
+            Arc::new(Self {
+                path: store.path.clone(),
+                state: Mutex::default(),
+                wake: Condvar::new(),
+            })
+        });
+        Arc::clone(writer)
+    }
+
+    fn locked(&self) -> MutexGuard<'_, WriterState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Starts the thread if it isn't running. It finds whatever is queued.
+    pub(crate) fn start(self: &Arc<Self>) {
+        let mut state = self.locked();
+        if state.running {
+            return;
+        }
+        match self.spawn() {
+            Ok(()) => state.running = true,
+            Err(error) => log::warn!("can't start the writer of {}: {error}", self.path.display()),
+        }
+    }
+
+    fn spawn(self: &Arc<Self>) -> io::Result<()> {
+        #[cfg(test)]
+        crate::prelaunch_tests::seams::thread_start(&self.path)?;
+        let writer = Arc::clone(self);
+        std::thread::Builder::new()
+            .name("plugin-grant-suspension".to_owned())
+            .spawn(move || writer.run())
+            .map(drop)
+    }
+
+    /// Queues `write`. The receiver hears once it's written, if a thread is running to write it;
+    /// with none, it stays queued for one, and there's nothing to wait for.
+    pub(crate) fn submit(self: &Arc<Self>, write: SuspensionWrite) -> Option<mpsc::Receiver<()>> {
+        let (written, receiver) = mpsc::channel();
+        self.locked().queue.push(Queued {
+            write,
+            written,
+            wait: RETRY_FIRST,
+            next_try: Instant::now(),
+        });
+        self.wake.notify_one();
+        self.start();
+        self.locked().running.then_some(receiver)
+    }
+
+    fn run(&self) {
+        let mut state = self.locked();
+        loop {
+            let now = Instant::now();
+            let due = state.queue.iter().position(|queued| queued.next_try <= now);
+            let Some(due) = due else {
+                let soonest = state.queue.iter().map(|queued| queued.next_try).min();
+                state = match soonest {
+                    Some(soonest) => {
+                        let wait = soonest.saturating_duration_since(now);
+                        let waited = self.wake.wait_timeout(state, wait);
+                        waited.unwrap_or_else(PoisonError::into_inner).0
+                    }
+                    None => (self.wake.wait(state)).unwrap_or_else(PoisonError::into_inner),
+                };
+                continue;
+            };
+            let queued = state.queue.remove(due);
+            drop(state);
+            let again = Self::attempt(queued);
+            state = self.locked();
+            state.queue.extend(again);
+        }
+    }
+
+    /// Tries `queued`'s write: what's left to retry, if it failed.
+    fn attempt(mut queued: Queued) -> Option<Queued> {
+        match queued.write.write() {
+            Ok(()) => {
+                #[cfg(test)]
+                crate::prelaunch_tests::seams::written(queued.write.store.path());
+                // Whoever was waiting may have stopped.
+                let _ = queued.written.send(());
+                None
+            }
+            Err(error) => {
+                // Only the first failure is logged: a store that stays unwritable goes on failing.
+                if queued.wait == RETRY_FIRST {
+                    let program = &queued.write.program;
+                    log::warn!(
+                        "can't yet record that process.spawn:{program} is suspended: {error}"
+                    );
+                }
+                queued.next_try = Instant::now() + queued.wait;
+                queued.wait = (queued.wait * 2).min(RETRY_MOST);
+                Some(queued)
+            }
+        }
+    }
+}
+
 // The lock and write below are `kiln_core::trust`'s, which that crate keeps
 // to itself.
 
 /// Runs `f` holding an exclusive lock on `<path>.lock` (created, mode 0600, beside `path` and
 /// never removed), blocking while another, in this process or another, holds it. With `by`, it
-/// waits no longer than that: past it, the error is [`io::ErrorKind::TimedOut`] and `f` doesn't
-/// run. Errs if the lock can't be taken.
+/// neither waits for the lock nor accepts it past that, a free lock included: then the error is
+/// [`io::ErrorKind::TimedOut`] and `f` doesn't run. Errs if the lock can't be taken.
 fn locked_by<T>(path: &Path, by: Option<Instant>, f: impl FnOnce() -> T) -> io::Result<T> {
+    if passed(by) {
+        return Err(io::ErrorKind::TimedOut.into());
+    }
     let mut lock_name = path.file_name().unwrap_or_default().to_owned();
     lock_name.push(".lock");
     let lock_path = path.with_file_name(lock_name);
@@ -805,14 +1046,12 @@ fn locked_by<T>(path: &Path, by: Option<Instant>, f: impl FnOnce() -> T) -> io::
     match by {
         None => lock.lock()?,
         Some(by) => loop {
+            if Instant::now() >= by {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
             match lock.try_lock() {
                 Ok(()) => break,
-                Err(fs::TryLockError::WouldBlock) => {
-                    if Instant::now() >= by {
-                        return Err(io::ErrorKind::TimedOut.into());
-                    }
-                    std::thread::sleep(LOCK_POLL);
-                }
+                Err(fs::TryLockError::WouldBlock) => std::thread::sleep(LOCK_POLL),
                 Err(fs::TryLockError::Error(error)) => return Err(error),
             }
         },
@@ -822,7 +1061,7 @@ fn locked_by<T>(path: &Path, by: Option<Instant>, f: impl FnOnce() -> T) -> io::
 }
 
 /// How long a deadlined lock waits between tries.
-const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(1);
+const LOCK_POLL: Duration = Duration::from_millis(1);
 
 /// Writes `contents` to `path` through a temporary file beside it, renamed
 /// over it, creating the directory (mode 0700) and the file (mode 0600).
