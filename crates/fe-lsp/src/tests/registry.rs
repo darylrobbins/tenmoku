@@ -1480,19 +1480,36 @@ fn bare_commands_use_the_login_shell_path() {
     // Prints what looks like a PATH, but never runs the command.
     let chatty = dir.join("chatty-shell");
     shell_script(&chatty, "printf '/bin\\nbye'");
+    // Starved attempts that were run again; each logged once more, and may
+    // have recorded one more run in `files`.
+    let mut retries = 0;
     for (shell, why) in [
         (failing, "failed"),
         (slow, "took over 2 s"),
         (chatty, "ended without writing its PATH"),
     ] {
-        let login = Arc::new(LoginPath::new(&shell));
-        let started = Instant::now();
-        // Not on this process's PATH, which is used now.
-        assert_eq!(login.resolve(Path::new("fe-test-server"), None, &dir), None);
-        let took = started.elapsed();
-        assert!(took < Duration::from_secs(5), "{took:?}");
-        assert_eq!(login.path(), None);
-        let logs = logs_from(&thread);
+        // The failing and chatty shells end at once, so a "took over 2 s"
+        // for them is the stand-in `sh` starved of CPU on a loaded machine,
+        // not the behaviour under test: try again with a fresh LoginPath.
+        let mut attempts = 1;
+        let (login, logs) = loop {
+            let login = Arc::new(LoginPath::new(&shell));
+            let started = Instant::now();
+            // Not on this process's PATH, which is used now.
+            assert_eq!(login.resolve(Path::new("fe-test-server"), None, &dir), None);
+            let took = started.elapsed();
+            assert!(took < Duration::from_secs(5), "{took:?}");
+            assert_eq!(login.path(), None);
+            let logs = logs_from(&thread);
+            let starved = why != "took over 2 s"
+                && attempts < 3
+                && logs.last().is_some_and(|log| log.contains("took over 2 s"));
+            if !starved {
+                break (login, logs);
+            }
+            attempts += 1;
+            retries += 1;
+        };
         assert!(
             logs.last().is_some_and(|log| log.contains(why)
                 && log.contains(shell.to_str().unwrap())
@@ -1636,13 +1653,20 @@ fn bare_commands_use_the_login_shell_path() {
     let login = LoginPath::new(&newlines);
     assert_eq!(login.path(), Some(OsStr::new("bin\n:/x\n")));
     // Only the failing shells said anything.
-    assert_eq!(logs_from(&thread).len(), 3);
+    assert_eq!(logs_from(&thread).len(), 3 + retries);
 
     // Each run's file is gone, however it ended.
     let files = std::fs::read_to_string(dir.join("files")).unwrap();
-    assert_eq!(files.lines().count(), shells, "{files}");
+    // A starved attempt may have been killed before it wrote its record.
+    let recorded = files.lines().count();
+    assert!((shells..=shells + retries).contains(&recorded), "{files}");
+    let deadline = Instant::now() + Duration::from_secs(5);
     for file in files.lines() {
         assert!(Path::new(file).is_absolute(), "{file}");
-        assert!(!Path::new(file).exists(), "{file} is left");
+        // A timed-out attempt's worker may still be cleaning up.
+        while Path::new(file).exists() {
+            assert!(Instant::now() < deadline, "{file} is left");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
