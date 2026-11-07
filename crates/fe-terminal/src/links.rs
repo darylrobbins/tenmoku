@@ -203,12 +203,24 @@ fn uri_target(uri: &str) -> LinkTarget {
     // `file://host/path`: the host is usually empty or `localhost`.
     match rest.and_then(|rest| rest.find('/').map(|slash| &rest[slash..])) {
         Some(path) => LinkTarget::File {
-            path: PathBuf::from(percent_decode(path)),
+            path: PathBuf::from(drive_path(percent_decode(path))),
             line: None,
             column: None,
         },
         None => LinkTarget::Url(uri.to_owned()),
     }
+}
+
+/// A `file:` URI's path as a path: on Windows its `/C:/…` is the drive path
+/// `C:/…`.
+fn drive_path(path: String) -> String {
+    let bytes = path.as_bytes();
+    let drive = cfg!(windows)
+        && bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':';
+    if drive { path[1..].to_owned() } else { path }
 }
 
 /// A `file://` target whose path ends in `:line[:column]` (a Node.js ES module

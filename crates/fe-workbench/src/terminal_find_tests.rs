@@ -164,6 +164,7 @@ fn label(
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn show_type_close(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
 
@@ -195,6 +196,7 @@ fn show_type_close(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn steps_and_wraps(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
@@ -235,6 +237,7 @@ fn steps_and_wraps(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn toggles_and_errors(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     run("terminal.find", cx);
@@ -304,6 +307,7 @@ fn dock_shown(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn focus_in_the_row_is_the_terminals(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     run("terminal.find", cx);
@@ -336,6 +340,7 @@ fn focus_in_the_row_is_the_terminals(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn errors_follow_sessions(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     run("terminal.find", cx);
@@ -408,6 +413,7 @@ fn input_text(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Stri
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn a_selection_on_one_row_is_the_query(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     terminal(&workbench, cx).update(cx, |terminal, _| {

@@ -105,6 +105,7 @@ fn vi_mode_is_in_the_palette_in_the_terminal(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn vi_mode_toggles_vi_mode_in_the_active_session(cx: &mut TestAppContext) {
     let script = "i=1; while [ $i -le 100 ]; do echo line $i; i=$((i+1)); done; read x";
     let (workbench, cx, _dir) = opened(cx, script);
@@ -144,6 +145,7 @@ fn vi_mode_toggles_vi_mode_in_the_active_session(cx: &mut TestAppContext) {
 /// With Linux's keymap, which binds ctrl-b (`dock.toggle`) and other keys
 /// vi mode reads, vi mode gets them while it's on, and the keymap after.
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn vi_mode_keys_win_over_the_keymap(cx: &mut TestAppContext) {
     let script = "i=1; while [ $i -le 100 ]; do echo line $i; i=$((i+1)); done; read x";
     let (workbench, cx, _dir) = opened(cx, script);

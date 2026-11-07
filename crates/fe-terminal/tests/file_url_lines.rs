@@ -37,7 +37,11 @@ fn file_urls_take_a_line_and_column_suffix() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("index.mjs");
     std::fs::write(&file, "x\n").unwrap();
+    // As Node prints it: `file:///C:/…` on Windows.
+    #[cfg(unix)]
     let url = format!("file://{}", file.display());
+    #[cfg(windows)]
+    let url = format!("file:///{}", file.display().to_string().replace('\\', "/"));
     let prefix = "    at main (".chars().count();
     for (suffix, line, column) in [
         (":3:9", Some(3), Some(9)),

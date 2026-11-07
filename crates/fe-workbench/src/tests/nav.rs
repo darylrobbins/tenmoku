@@ -143,7 +143,7 @@ fn symbols(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<(St
             .map(|found| {
                 (
                     found.name.clone(),
-                    crate::nav_picker::place(&found.location),
+                    crate::tests::slashed(crate::nav_picker::place(&found.location)),
                 )
             })
             .collect()

@@ -1,5 +1,9 @@
 //! A terminal view in a test window, running a real shell on a pty.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;

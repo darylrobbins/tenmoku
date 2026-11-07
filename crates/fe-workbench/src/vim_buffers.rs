@@ -778,9 +778,17 @@ impl Workbench {
 /// in `root` is matched relative to it, as well as whole.
 fn find_named(name: &str, rounds: &[&[(u32, &Path)]], root: Option<&Path>) -> Result<u32, String> {
     let fold = !name.chars().any(char::is_uppercase);
-    let folded = |text: &str| match fold {
-        true => text.to_lowercase(),
-        false => text.to_owned(),
+    // On Windows `/` and `\` separate alike, as nvim compares names there.
+    let folded = |text: &str| {
+        let text = match fold {
+            true => text.to_lowercase(),
+            false => text.to_owned(),
+        };
+        if cfg!(windows) {
+            text.replace('\\', "/")
+        } else {
+            text
+        }
     };
     let pattern = folded(name);
     let matches = |text: &str, attempt: u8| {

@@ -1,6 +1,10 @@
 //! The terminal's font fallbacks: every font the element asks the text system
 //! for carries them.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::thread;

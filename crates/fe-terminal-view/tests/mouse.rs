@@ -1,6 +1,10 @@
 //! The mouse in a terminal view: what a report encodes, and selecting,
 //! scrolling back and reporting in a window over a real pty.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::thread;
 use std::time::{Duration, Instant};
 

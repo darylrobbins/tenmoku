@@ -96,8 +96,8 @@ impl Repo {
         let mut restore = Vec::new();
         let mut delete = Vec::new();
         for (path, rela) in paths.iter().zip(relas) {
-            let name = gix::path::os_str_into_bstr(&rela).ok();
-            if name.is_some_and(|name| tracked.contains::<[u8]>(name.as_ref())) {
+            let name = crate::blame::git_path(Path::new(&rela));
+            if tracked.contains::<[u8]>(name.as_ref()) {
                 restore.push(rela);
             } else {
                 delete.push(path);
@@ -266,13 +266,15 @@ impl Repo {
     /// The mode for `path`'s index entry: the entry's own, else by the file on disk.
     fn index_mode(&self, path: &Path, rela: &OsString) -> &'static str {
         use gix::index::entry::Mode;
-        let existing = gix::path::os_str_into_bstr(rela).ok().and_then(|name| {
+        // As the index names it: with `/`, on Windows too.
+        let name = crate::blame::git_path(Path::new(rela));
+        let existing = (|| {
             let repo = self.repo.to_thread_local();
             let index = repo.index_or_empty().ok()?;
-            let entry =
-                index.entry_by_path_and_stage(name, gix::index::entry::Stage::Unconflicted)?;
+            let entry = index
+                .entry_by_path_and_stage(name.as_ref(), gix::index::entry::Stage::Unconflicted)?;
             Some(entry.mode)
-        });
+        })();
         match existing {
             Some(Mode::FILE_EXECUTABLE) => "100755",
             Some(Mode::SYMLINK) => "120000",

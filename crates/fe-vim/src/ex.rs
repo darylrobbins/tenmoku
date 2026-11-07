@@ -1029,13 +1029,17 @@ fn trim_unescaped_end(args: &str) -> &str {
 
 /// A file name as nvim reads it: a backslash escapes the character after
 /// it (a blank, another backslash or any other) and is itself dropped; a
-/// lone backslash at the end stays.
+/// lone backslash at the end stays. On Windows, where a backslash separates
+/// a path's folders, it escapes only a blank, `#` or `%`, as there
+/// (`:help dos-backslash`): `C:\a\b` and `\\host\share` stay as they are.
 fn unescape(args: &str) -> String {
     let mut name = String::with_capacity(args.len());
     let mut chars = args.chars();
     while let Some(ch) = chars.next() {
         match (ch, chars.clone().next()) {
-            ('\\', Some(escaped)) => {
+            ('\\', Some(escaped))
+                if !cfg!(windows) || matches!(escaped, ' ' | '\t' | '#' | '%') =>
+            {
                 name.push(escaped);
                 chars.next();
             }

@@ -204,14 +204,20 @@ where
                             // The child's last output. One read call stops at
                             // `MAX_LOCKED_READ`, so read until caught up or
                             // the cap says a writer is still going.
-                            for _ in 0..MAX_FINAL_DRAIN_READS {
+                            let mut reads = 0;
+                            while reads < MAX_FINAL_DRAIN_READS {
+                                reads += 1;
                                 match self.read(&mut feeder, &mut buf) {
                                     Ok(processed) if processed >= MAX_LOCKED_READ => {}
                                     _ => break,
                                 }
                             }
                             #[cfg(windows)]
-                            self.drain_until_quiet(&mut feeder, &mut buf);
+                            self.drain_until_quiet(
+                                &mut feeder,
+                                &mut buf,
+                                MAX_FINAL_DRAIN_READS - reads,
+                            );
                             child_exited = true;
                             break 'event_loop;
                         }
@@ -270,16 +276,23 @@ where
 
     /// ConPTY passes on a child's last output on its own time, which can be
     /// after the child's exit is reported: so after it, output is read until
-    /// none has come for [`QUIET_AFTER_EXIT`], or for [`MAX_DRAIN_AFTER_EXIT`]
-    /// at most.
+    /// none has come for [`QUIET_AFTER_EXIT`], for [`MAX_DRAIN_AFTER_EXIT`]
+    /// at most, and in at most `reads` reads that get output (what's left of
+    /// the final drain's [`MAX_FINAL_DRAIN_READS`]).
     #[cfg(windows)]
-    fn drain_until_quiet(&mut self, feeder: &mut Feeder, buf: &mut [u8]) {
+    fn drain_until_quiet(&mut self, feeder: &mut Feeder, buf: &mut [u8], mut reads: usize) {
         let start = Instant::now();
         let mut last = start;
-        while last.elapsed() < QUIET_AFTER_EXIT && start.elapsed() < MAX_DRAIN_AFTER_EXIT {
+        while reads > 0
+            && last.elapsed() < QUIET_AFTER_EXIT
+            && start.elapsed() < MAX_DRAIN_AFTER_EXIT
+        {
             match self.read(feeder, buf) {
                 Ok(0) => std::thread::sleep(Duration::from_millis(5)),
-                Ok(_) => last = Instant::now(),
+                Ok(_) => {
+                    reads -= 1;
+                    last = Instant::now();
+                }
                 Err(_) => break,
             }
         }

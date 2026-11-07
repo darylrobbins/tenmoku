@@ -1,6 +1,10 @@
 //! `ge` and `gE` in a terminal's vi copy mode: back to the end of the
 //! previous word or WORD, counted.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::thread;
 use std::time::{Duration, Instant};
 

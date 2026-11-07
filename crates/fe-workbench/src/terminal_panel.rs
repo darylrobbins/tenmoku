@@ -1114,6 +1114,14 @@ impl TerminalPanel {
     /// Runs `shell` in place of the user's in the sessions started from
     /// now.
     pub(crate) fn set_shell(&mut self, shell: &str, args: &[&str]) {
+        // `/bin/sh` alone is the tests' interactive shell, whichever: on
+        // Windows, cmd.exe.
+        #[cfg(windows)]
+        let shell = if shell == "/bin/sh" && args.is_empty() {
+            "cmd.exe"
+        } else {
+            shell
+        };
         let args = args.iter().map(|arg| (*arg).to_owned()).collect();
         self.shell = Some((shell.to_owned(), args));
     }

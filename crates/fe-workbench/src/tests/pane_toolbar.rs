@@ -400,7 +400,10 @@ fn path_crumbs_open_entry_pickers(cx: &mut TestAppContext) {
     let shown = picker(&workbench, cx).unwrap();
     shown.read_with(cx, |picker, _| {
         assert_eq!(picker.delegate.reads(), (1, 1), "read off the main thread");
-        assert_eq!(picker.delegate.status_text(), Some("src/util".into()));
+        assert_eq!(
+            picker.delegate.status_text().map(crate::tests::slashed),
+            Some("src/util".into())
+        );
     });
     cx.simulate_keystrokes("escape");
     assert_eq!(picker_rows(&workbench, cx), None);

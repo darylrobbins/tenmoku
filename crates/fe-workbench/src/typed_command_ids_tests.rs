@@ -698,6 +698,7 @@ fn the_find_bar_keys_stay_in_the_find_bar(cx: &mut TestAppContext) {
 /// holds, as its registry's dispatch checked: a menu pick or `RunCommand`
 /// with the editor or the project panel focused doesn't show the terminal.
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn terminal_commands_run_only_in_the_terminals_context(cx: &mut TestAppContext) {
     // Shown, the terminal starts a session, whose pty's threads wake its
     // event task.

@@ -146,6 +146,7 @@ fn canonical(path: &Path) -> PathBuf {
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn new_starts_in_the_active_shells_directory(cx: &mut TestAppContext) {
     let scratch = tempfile::tempdir().unwrap();
     let deep = scratch.path().join("src/deep dir");
@@ -162,6 +163,7 @@ fn new_starts_in_the_active_shells_directory(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn new_starts_in_the_panels_directory_without_a_report(cx: &mut TestAppContext) {
     let scratch = tempfile::tempdir().unwrap();
     let log = scratch.path().join("log");
@@ -174,6 +176,7 @@ fn new_starts_in_the_panels_directory_without_a_report(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn new_starts_in_the_panels_directory_when_the_reported_one_is_gone(cx: &mut TestAppContext) {
     let scratch = tempfile::tempdir().unwrap();
     let gone = scratch.path().join("gone");
@@ -215,6 +218,7 @@ const PROMPTS: &str = r"for i in 1 2 3; do
     done; printf '\033]133;A\007$ '; read x";
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn prompt_commands_scroll_between_the_prompts(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx, PROMPTS);
     shown(&workbench, "out 3 100", cx);
@@ -241,6 +245,7 @@ fn prompt_commands_scroll_between_the_prompts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn prompt_commands_do_nothing_without_marks(cx: &mut TestAppContext) {
     let script = "i=1; while [ $i -le 300 ]; do echo line $i; i=$((i+1)); done; read x";
     let (workbench, cx, _dir) = opened(cx, script);
