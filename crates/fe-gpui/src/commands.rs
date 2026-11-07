@@ -41,7 +41,7 @@ pub use kiln_platform::commands::{AppCommands, RunCommand, observe_invocations};
 /// What a host such as a diff view sets on an editor and hears from it
 /// (`EditorView::set_read_only`, `set_blocks` and `set_scroll_top`): their
 /// types are reachable here, as the crate root doesn't re-export them.
-pub use crate::view::{EditorViewEvent, HostBlock, HostBlockKind};
+pub use crate::view::{EditorInputEvent, EditorViewEvent, HostBlock, HostBlockKind};
 
 /// The name app commands are titled with (`Hide Tenmoku`).
 const APP_NAME: &str = fe_config::APP_NAME;
@@ -549,7 +549,19 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.run_command(run.0.clone(), Some(window), cx);
+        // Enter in the editor, from its key, is a line break typed: not a
+        // replay's (which runs the command itself), a menu's or another
+        // actor's.
+        let invocation = &run.0;
+        let typed = invocation.command.as_str() == vim::NEWLINE
+            && invocation.source == Source::Keyboard
+            && invocation.actor == fe_command::Actor::User
+            && !self.vim_replaying;
+        let before = self.model.buffer().version();
+        let ok = self.run_command(run.0.clone(), Some(window), cx);
+        if typed && ok {
+            self.emit_typed("\n", before, cx);
+        }
     }
 
     /// Runs `invocation` on this editor, in its context: the stack it was
@@ -582,8 +594,16 @@ impl EditorView {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) -> bool {
+        let before = self.model.buffer().version();
+        // A vim put tells the host where every vim command runs, however its
+        // keys came ([`EditorView::run_vim_once`]).
+        let pasted = (invocation.command.as_str() == "editor.paste")
+            .then(|| (invocation.clone(), self.paste_anchor()));
         let ok = self.run_command_inner(invocation, window, cx);
         self.command_failed = !ok;
+        if let Some((invocation, at)) = pasted.filter(|_| ok) {
+            self.emit_pasted(&invocation, before, Some(at), cx);
+        }
         ok
     }
 

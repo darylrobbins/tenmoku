@@ -679,6 +679,14 @@ pub struct EditorSettings {
     /// Format a file with its language server before saving it. A server that
     /// doesn't answer within a second is skipped and the file saves unformatted.
     pub format_on_save: bool,
+    /// Format the row as you type with the language server's on-type
+    /// formatting (`textDocument/onTypeFormatting`): typing one of its
+    /// trigger characters, such as `}` or `;`, with one caret applies its
+    /// edits, which one undo takes back with the character.
+    pub format_on_type: bool,
+    /// Format pasted text spanning more than one row with the language
+    /// server's range formatting, which one undo takes back with the paste.
+    pub format_on_paste: bool,
     /// Show language servers' inlay hints (type and parameter names) inside
     /// the text.
     pub inlay_hints: bool,
@@ -1017,6 +1025,8 @@ impl Default for EditorSettings {
             wrap_column: 0,
             wrap_mode: WrapMode::default(),
             format_on_save: false,
+            format_on_type: false,
+            format_on_paste: false,
             inlay_hints: true,
             semantic_highlighting: true,
             lightbulb: true,

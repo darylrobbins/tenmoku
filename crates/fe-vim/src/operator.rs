@@ -16,6 +16,7 @@ use fe_command::{Actor, CommandError, Dispatched, Effect};
 use fe_editor::{EditorModel, IndentStyle, commands::origin};
 use fe_text::{Bias, Text};
 
+use crate::state::PutLanded;
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
     Registers, Target, TextObject, VimState, VimTarget, Write, cmdline,
@@ -1606,6 +1607,11 @@ pub(crate) fn put_value(
             state.carets.record(id, carets_before);
         }
         let end = starts[1] + starts[2];
+        if transaction.is_some() {
+            // A block's rows, an empty last one counted.
+            let landed = PutLanded::new(snapshot.version(), start..end, "", Some(rows.len()));
+            state.put_landed = Some(landed);
+        }
         land(
             model,
             &snapshot,
@@ -1728,6 +1734,20 @@ pub(crate) fn put_value(
             state
                 .marks
                 .note(snapshot.version(), marks::Note::Put { rows });
+        }
+        // Puts are in text order, so the first's offsets are the same after.
+        // A linewise put's rows end in a line break, but for those put below
+        // the last row, which start with one instead.
+        if let Some((at, inserted, _, first)) = puts.first() {
+            let lines = (value.linewise).then(|| payload.matches('\n').count() * count);
+            let start = at + first;
+            let end = at + inserted.len() - usize::from(lines.is_some() && *first == 0);
+            state.put_landed = Some(PutLanded::new(
+                snapshot.version(),
+                start..end,
+                inserted,
+                lines,
+            ));
         }
     }
     let after = snapshot.text().clone();

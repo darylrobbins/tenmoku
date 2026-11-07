@@ -123,13 +123,16 @@ fn initialize_advertises_m4_capabilities() {
             "{expected} missing from {paths:?}"
         );
     }
-    // Watched files are registered dynamically (watched_files.rs).
+    // Watched files (watched_files.rs) and on-type formatting
+    // (registration.rs) are registered dynamically.
+    let registered = [
+        "capabilities.workspace.didChangeWatchedFiles.dynamicRegistration",
+        "capabilities.textDocument.onTypeFormatting.dynamicRegistration",
+    ];
     for (path, value) in &dynamic {
         assert_eq!(
             value,
-            &Value::Bool(
-                path == "capabilities.workspace.didChangeWatchedFiles.dynamicRegistration"
-            ),
+            &Value::Bool(registered.contains(&path.as_str())),
             "{path}"
         );
     }

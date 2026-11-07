@@ -385,6 +385,7 @@ impl Workbench {
         let color_decorators = settings.color_decorators;
         let lightbulb = settings.lightbulb;
         let linked_editing = settings.linked_editing;
+        let (format_on_type, format_on_paste) = (settings.format_on_type, settings.format_on_paste);
         let inline_blame = settings.inline_blame;
         let spelling = crate::spell_squiggles::Spelling::new(&settings);
         let todos = crate::todo_comments::Todos::new(&settings);
@@ -725,6 +726,8 @@ impl Workbench {
         workbench.lsp.color_decorators_on.set(color_decorators);
         workbench.lsp.lightbulb_on.set(lightbulb);
         workbench.lsp.linked_editing_on.set(linked_editing);
+        workbench.lsp.format_on_type_on.set(format_on_type);
+        workbench.lsp.format_on_paste_on.set(format_on_paste);
         workbench.start_lsp(window, cx);
         workbench.sync_config_problems(window, cx);
         if inline_blame {

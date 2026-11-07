@@ -1,5 +1,14 @@
 //! `textDocument/formatting` and `textDocument/rangeFormatting`: a
-//! document, or a range of it, formatted by its server.
+//! document, or a range of it, formatted by its server; and
+//! `textDocument/onTypeFormatting`, the edits a character just typed asks
+//! for.
+//!
+//! - **On type.** Sent only for one of the buffer's trigger characters
+//!   ([`LspManager::on_type_formatting_triggers`]): the server's static
+//!   `documentOnTypeFormattingProvider`, or a dynamic registration for the
+//!   document. Any other character, or a buffer whose server's capabilities
+//!   aren't known yet, is `Ok(None)` with nothing sent: typing never waits
+//!   for a server to start.
 //!
 //! - **Edits.** The reply's edits are decoded against the text the server
 //!   had at the request's version, as byte edits of that version, sorted
@@ -16,10 +25,10 @@ use std::ops::Range;
 use fe_buffer::{BufferId, Version};
 use fe_text::Bias;
 use futures::FutureExt;
-use lsp_types::request::{Formatting, RangeFormatting};
+use lsp_types::request::{Formatting, OnTypeFormatting, RangeFormatting};
 use lsp_types::{
-    DocumentFormattingParams, DocumentRangeFormattingParams, FormattingOptions, OneOf,
-    TextDocumentIdentifier,
+    DocumentFormattingParams, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams,
+    FormattingOptions, OneOf, TextDocumentIdentifier,
 };
 
 use crate::document::Admitted;
@@ -121,6 +130,53 @@ impl LspManager {
     }
 }
 
+impl LspManager {
+    /// The edits the server makes after `ch` was typed, leaving the caret
+    /// at byte `offset` of open buffer `buffer` at its `version`: sent only
+    /// if `ch` is one of the buffer's on-type formatting triggers (see the
+    /// [module](self)) and the server has that version.
+    ///
+    /// `Ok(None)` if `ch` isn't a trigger there. `Err(Timeout)` if the
+    /// server doesn't answer within 3 s. It doesn't borrow the manager.
+    pub fn on_type_formatting(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+        ch: char,
+        options: FormatOptions,
+    ) -> impl Future<Output = Result<Option<Edits>, LspError>> + Send + 'static + use<> {
+        let triggered = self.on_type_formatting_triggers(buffer).contains(&ch);
+        let reply = triggered.then(|| {
+            // The triggers were read from the capabilities and registrations
+            // known now: the request goes whichever provided them.
+            self.document_request_if_provided::<OnTypeFormatting>(
+                buffer,
+                version,
+                FEATURE,
+                |_| true,
+                move |at| DocumentOnTypeFormattingParams {
+                    text_document_position: at.position(offset),
+                    ch: ch.to_string(),
+                    options: options.lsp(),
+                },
+            )
+            .boxed()
+        });
+        async move {
+            let Some(reply) = reply else {
+                return Ok(None);
+            };
+            let (reply, admitted) = reply.await?;
+            let edits = reply.result.unwrap_or_default();
+            let text = &admitted.document.sent.text;
+            decode_closed(text, &edits, admitted.encoding)
+                .map(Some)
+                .map_err(LspError::RefusedEdit)
+        }
+    }
+}
+
 /// The `Unavailable` reason for a server without the provider.
 const FEATURE: &str = "formatting";
 
@@ -142,3 +198,7 @@ fn document(at: &Admitted) -> TextDocumentIdentifier {
 #[cfg(test)]
 #[path = "formatting_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "on_type_formatting_tests.rs"]
+mod on_type_formatting_tests;

@@ -270,6 +270,8 @@ impl Workbench {
         self.lsp
             .linked_editing_on
             .set(event.settings.editor.linked_editing);
+        (self.lsp.format_on_type_on).set(event.settings.editor.format_on_type);
+        (self.lsp.format_on_paste_on).set(event.settings.editor.format_on_paste);
         self.lsp
             .semantic_highlighting_on
             .set(event.settings.editor.semantic_highlighting);

@@ -690,6 +690,7 @@ impl EditorView {
         if vim {
             self.cancel_vim(cx);
         }
+        let before = self.model.buffer().version();
         self.split_session(
             fe_vim::Splits::Edits,
             |model| {
@@ -699,6 +700,7 @@ impl EditorView {
             },
             cx,
         );
+        self.emit_pasted_at(&at, before, cx);
         self.sync_completion(cx);
         self.changed(cx);
     }
@@ -2151,7 +2153,7 @@ impl EditorView {
 }
 
 pub use ghost_text::GhostTextEvent;
-pub use host::{EditorViewEvent, HostBlock, HostBlockKind, ReservedBlock};
+pub use host::{EditorInputEvent, EditorViewEvent, HostBlock, HostBlockKind, ReservedBlock};
 pub use minimap::minimap_options;
 pub(crate) use proposal::ProposalButton;
 pub use proposal::ProposalEvent;

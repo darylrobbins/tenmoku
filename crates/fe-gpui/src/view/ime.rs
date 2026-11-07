@@ -454,8 +454,14 @@ impl EntityInputHandler for EditorView {
         let range = range_utf16.filter(|range| Some(range) != marked.as_ref());
         let Some(range) = range else {
             // Typing, or the composition committing: at every caret,
-            // recorded like any key binding.
+            // recorded like any key binding. Only typing is the host's to
+            // hear of.
+            let typed = self.composition.is_none();
+            let before = self.model.buffer().version();
             self.commit(text, cx);
+            if typed {
+                self.emit_typed(text, before, cx);
+            }
             return;
         };
         let composed = self.composed();

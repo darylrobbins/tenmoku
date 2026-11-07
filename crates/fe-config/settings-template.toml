@@ -36,6 +36,16 @@
 # doesn't answer within a second is skipped and the file saves unformatted.
 # format_on_save = false
 
+# Format the row as you type with the language server's on-type formatting
+# (textDocument/onTypeFormatting): typing one of its trigger characters, such as
+# } or ;, with one caret applies its edits, which one undo takes back with the
+# character.
+# format_on_type = false
+
+# Format pasted text spanning more than one row with the language server's range
+# formatting, which one undo takes back with the paste.
+# format_on_paste = false
+
 # Show language servers' inlay hints (type and parameter names) inside the text.
 # inlay_hints = true
 

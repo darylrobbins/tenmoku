@@ -870,7 +870,7 @@ pub use remap::{
     RemapSet, WhichKeyGroupName,
 };
 pub use repeat::{Change, LastChange};
-pub use state::{Mode, VimState, context};
+pub use state::{Mode, PutLanded, VimState, context};
 pub use substitute::{
     Answer, AnswerArgs, Flags, SUBSTITUTE_PREVIEW_BYTES, SUBSTITUTE_PREVIEW_CAP, Substitute,
     SubstitutePreview,

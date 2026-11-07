@@ -3546,6 +3546,9 @@ impl EditorView {
             log::warn!("{error}");
             ok = false;
         }
+        if ok {
+            self.emit_pasted(invocation, before, None, cx);
+        }
         self.settle_search_preview(was_open, place, invocation);
         ok
     }

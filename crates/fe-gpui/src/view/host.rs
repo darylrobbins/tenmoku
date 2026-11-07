@@ -27,6 +27,7 @@
 
 use std::ops::Range;
 
+use fe_buffer::Version;
 use fe_command::{Invocation, Value};
 use fe_editor::decorations::Tint;
 use fe_vim::{CommandLineKind, Ex, ExCommand, Mode, Step, VimKey, VimState};
@@ -104,6 +105,145 @@ pub enum EditorViewEvent {
 }
 
 impl EventEmitter<EditorViewEvent> for EditorView {}
+
+/// What the user put into an [`EditorView`] themselves, typed or pasted,
+/// for a host that acts on it, such as formatting on type or on paste.
+/// Neither is told of a vim replay (a macro, `.`, a map's expansion), an
+/// input method's composition, nor a command another actor (an agent, a
+/// host) runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditorInputEvent {
+    /// `text` was typed from the keyboard and changed the buffer, to
+    /// `version`: a key's text, as an input method hands it in with nothing
+    /// composing (not a composition's commit), or `"\n"` for `editor.newline`
+    /// from its key, Enter, with vim off or in insert mode.
+    Typed { text: String, version: Version },
+    /// `editor.paste`, or vim's put (`p`, `P`, a visual-mode put), changed
+    /// the buffer, to `version`: `range` of it is the text put in, which
+    /// takes up `rows` rows. For a put, that's the register's text at its
+    /// first caret as vim landed it ([`fe_vim::PutLanded`]): not a line
+    /// break it adds to start or end its rows, nor the one ending its last
+    /// row, whose rows count a linewise register's empty last line. For a
+    /// paste, the span of every edit it made, and the rows that touches.
+    Pasted {
+        range: Range<usize>,
+        rows: u32,
+        version: Version,
+    },
+}
+
+impl EventEmitter<EditorInputEvent> for EditorView {}
+
+/// The commands a paste is: [`EditorInputEvent::Pasted`].
+const PASTES: [&str; 3] = ["editor.paste", "vim.put", "vim.visual_put"];
+
+impl EditorView {
+    /// Tells the host `text` was typed, if it changed the buffer since
+    /// `before`.
+    pub(crate) fn emit_typed(&mut self, text: &str, before: Version, cx: &mut Context<Self>) {
+        let version = self.model.buffer().version();
+        if version != before && !text.is_empty() {
+            cx.emit(EditorInputEvent::Typed {
+                text: text.to_owned(),
+                version,
+            });
+        }
+    }
+
+    /// Tells the host `invocation` pasted, if it's a paste the user ran
+    /// that changed the buffer since `before`, outside a vim replay. A vim
+    /// put says what it put ([`VimState::put_landed`]); an `editor.paste`
+    /// put its text from `at`, the primary selection's start, to the
+    /// primary caret it leaves, so a mirror it edits too (a linked range, a
+    /// snippet's) isn't in it.
+    pub(crate) fn emit_pasted(
+        &mut self,
+        invocation: &Invocation,
+        before: Version,
+        at: Option<fe_buffer::Anchor>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.vim_replaying
+            || invocation.actor != fe_command::Actor::User
+            || !PASTES.contains(&invocation.command.as_str())
+        {
+            return;
+        }
+        let version = self.model.buffer().version();
+        if version == before {
+            return;
+        }
+        let landed = match at {
+            Some(at) => self.pasted_from(&at),
+            None => (self.vim.as_ref())
+                .and_then(|state| state.put_landed(version))
+                .map(|put| (put.range.clone(), put.rows)),
+        };
+        if let Some((range, rows)) = landed {
+            cx.emit(EditorInputEvent::Pasted {
+                range,
+                rows,
+                version,
+            });
+        }
+    }
+
+    /// Tells the host text was pasted from `at` to the primary caret, if
+    /// that changed the buffer since `before`: for a paste that isn't a
+    /// command, a middle click's.
+    pub(crate) fn emit_pasted_at(
+        &mut self,
+        at: &fe_buffer::Anchor,
+        before: Version,
+        cx: &mut Context<Self>,
+    ) {
+        let version = self.model.buffer().version();
+        if version == before {
+            return;
+        }
+        if let Some((range, rows)) = self.pasted_from(at) {
+            cx.emit(EditorInputEvent::Pasted {
+                range,
+                rows,
+                version,
+            });
+        }
+    }
+
+    /// The text from `at` to the primary caret, and the rows it takes up: a
+    /// line break ending it doesn't reach the next.
+    fn pasted_from(&mut self, at: &fe_buffer::Anchor) -> Option<(Range<usize>, u32)> {
+        self.model.sync_display();
+        let start = self.model.snapshot().resolve(at);
+        let end = self.model.primary_selection().head();
+        let text = self.model.text().slice_to_string(start..end.max(start));
+        if text.is_empty() {
+            return None;
+        }
+        let rows = text.matches('\n').count() + 1 - usize::from(text.ends_with('\n'));
+        Some((start..end, rows as u32))
+    }
+
+    /// Where the last frame drew the caret at byte `offset`, in window
+    /// coordinates: `None` before a frame, or for an offset it didn't lay
+    /// out. For a host placing something at the text, or a test pointing
+    /// at it.
+    pub fn caret_bounds_at(&mut self, offset: usize) -> Option<gpui::Bounds<Pixels>> {
+        self.layout.as_mut()?.caret_bounds(offset)
+    }
+
+    /// Where a paste puts its text: an anchor before the primary
+    /// selection's start, for [`EditorView::emit_pasted`].
+    pub(crate) fn paste_anchor(&mut self) -> fe_buffer::Anchor {
+        self.model.sync_display();
+        let start = self.model.primary_selection().range.start;
+        self.model.snapshot().anchor_before(start)
+    }
+}
+
+#[cfg(test)]
+#[path = "input_event_tests.rs"]
+mod input_event_tests;
 
 impl EditorView {
     /// Refuses or allows edits. Made read-only in vim's insert or replace

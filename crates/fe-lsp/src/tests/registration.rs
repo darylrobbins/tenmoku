@@ -1,5 +1,6 @@
-//! Dynamic registration (§3.6): only `workspace/didChangeConfiguration`
-//! and `workspace/didChangeWatchedFiles` are accepted, and the
+//! Dynamic registration (§3.6): only `workspace/didChangeConfiguration`,
+//! `workspace/didChangeWatchedFiles` and `textDocument/onTypeFormatting`
+//! are accepted (the last in on_type_formatting_tests.rs), and the
 //! configuration notification never depends on its registration.
 
 mod globs;
@@ -20,7 +21,7 @@ use crate::{LspManager, ManualClock, ServerId, ServerStatus};
 
 const CONFIGURATION: &str = "workspace/didChangeConfiguration";
 const WATCHED: &str = "workspace/didChangeWatchedFiles";
-const ON_TYPE_FORMATTING: &str = "textDocument/onTypeFormatting";
+const RANGE_FORMATTING: &str = "textDocument/rangeFormatting";
 
 fn register(fake: &FakeServer, registrations: &[(&str, &str)]) -> Result<Value, FakeError> {
     fake.request::<RegisterCapability>(RegistrationParams {
@@ -120,12 +121,12 @@ fn dynamic_registration_policy() {
     // An unsupported method, alone or with a supported one, is refused as
     // a whole, naming it, and nothing is recorded.
     for registrations in [
-        vec![("w", ON_TYPE_FORMATTING)],
-        vec![("c", CONFIGURATION), ("w", ON_TYPE_FORMATTING)],
+        vec![("w", RANGE_FORMATTING)],
+        vec![("c", CONFIGURATION), ("w", RANGE_FORMATTING)],
     ] {
         let refused = register(&fake, &registrations).unwrap_err();
         assert_eq!(refused.code, Some(-32803), "{refused:?}");
-        assert!(refused.message.contains(ON_TYPE_FORMATTING), "{refused:?}");
+        assert!(refused.message.contains(RANGE_FORMATTING), "{refused:?}");
         assert!(!refused.message.contains(CONFIGURATION), "{refused:?}");
         assert!(manager.registrations(server).is_empty());
     }

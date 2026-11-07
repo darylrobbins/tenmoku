@@ -453,6 +453,17 @@ fn put_over(
             (vec![(at..at, put.clone())], at, at + put.len(), blank)
         }
     };
+    // What the register's text takes up once in, for a host
+    // ([`crate::PutLanded`]): a block's rows, a linewise register's lines,
+    // and characters put on each of a block's rows across all of them.
+    let block_rows = payload.split('\n').count();
+    let (landed, lines) = match (value.block_width, ends.kind) {
+        (Some(_), VisualKind::Line) => (start..end, Some(block_rows * count)),
+        (Some(_), _) => (start..end, Some(block_rows)),
+        (None, _) if value.linewise => (start..end, Some(payload.matches('\n').count() * count)),
+        (None, VisualKind::Block) => (spanned(&edits).unwrap_or(start..end), None),
+        (None, _) => (start..end, None),
+    };
     let extent = match columns {
         Some(_) => Extent::Block {
             rows: last - first + 1,
@@ -467,6 +478,11 @@ fn put_over(
         state.carets.record(id, begins);
     }
     let after = snapshot.text().clone();
+    if transaction.is_some() {
+        let put = after.slice_to_string(landed.clone());
+        let landed = crate::PutLanded::new(snapshot.version(), landed, &put, lines);
+        state.put_landed = Some(landed);
+    }
     // The first and last characters put in (a line break ending it is at
     // the next row's start).
     let start = Cursor::at(&after, start).offset();
@@ -508,4 +524,18 @@ fn put_over(
     let dispatched =
         Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect());
     Ok((dispatched, deleted, extent))
+}
+
+/// Where `edits` (sorted, apart, in the text before them) span once made:
+/// from the first's new text's start to the last's end.
+fn spanned(edits: &[(Range<usize>, String)]) -> Option<Range<usize>> {
+    let mut delta = 0isize;
+    let mut span: Option<Range<usize>> = None;
+    for (range, text) in edits {
+        let start = range.start.checked_add_signed(delta)?;
+        let end = start + text.len();
+        span = Some(span.map_or(start..end, |span| span.start..end));
+        delta += text.len() as isize - range.len() as isize;
+    }
+    span
 }

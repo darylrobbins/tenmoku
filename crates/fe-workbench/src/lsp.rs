@@ -575,6 +575,12 @@ pub(crate) struct Lsp {
     pub(crate) code_lens_on: std::cell::Cell<bool>,
     /// Whether `editor.linked_editing` is on (set from the settings each reload).
     pub(crate) linked_editing_on: std::cell::Cell<bool>,
+    /// Whether `editor.format_on_type` and `editor.format_on_paste` are on
+    /// (set from the settings each reload).
+    pub(crate) format_on_type_on: std::cell::Cell<bool>,
+    pub(crate) format_on_paste_on: std::cell::Cell<bool>,
+    /// Every open editor's typing and pasting, heard for those.
+    on_type: format_on_type::OnType,
     /// The active editor's linked editing.
     linked: linked_editing::Linked,
     /// Whether `editor.lightbulb` is on (set from the settings each reload).
@@ -789,6 +795,9 @@ impl Lsp {
             code_lens_on: std::cell::Cell::new(true),
             lightbulb_on: std::cell::Cell::new(true),
             linked_editing_on: std::cell::Cell::new(false),
+            format_on_type_on: std::cell::Cell::new(false),
+            format_on_paste_on: std::cell::Cell::new(false),
+            on_type: Default::default(),
             linked: Default::default(),
             lightbulb: Default::default(),
             folds: Default::default(),
@@ -1389,6 +1398,7 @@ impl Workbench {
         self.sync_save_hooks(cx);
         self.sync_highlights(cx);
         self.sync_linked_editing(cx);
+        self.sync_format_on_type(&editors, cx);
         self.sync_lightbulb(cx);
         self.sync_inlay_hints(cx);
         self.sync_lenses(cx);
@@ -2626,6 +2636,8 @@ pub(crate) struct TestClock(pub(crate) Arc<dyn fe_lsp::Clock>);
 #[cfg(test)]
 impl Global for TestClock {}
 
+#[path = "lsp_format_on_type.rs"]
+mod format_on_type;
 #[path = "lsp_highlights.rs"]
 mod highlights;
 #[path = "lsp_lightbulb.rs"]

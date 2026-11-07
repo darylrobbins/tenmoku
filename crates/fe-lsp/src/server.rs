@@ -2471,6 +2471,11 @@ fn client_capabilities() -> ClientCapabilities {
             range_formatting: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,
             }),
+            // Registered dynamically too (registration.rs), with its trigger
+            // characters and documents.
+            on_type_formatting: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
             signature_help: Some(SignatureHelpClientCapabilities {
                 dynamic_registration: dynamic,
                 signature_information: Some(SignatureInformationSettings {

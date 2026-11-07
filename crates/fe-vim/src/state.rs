@@ -92,6 +92,41 @@ pub(crate) enum LiteralInsert {
 /// Each caret's head and its goal column.
 pub(crate) type Goals = Vec<(usize, Option<usize>)>;
 
+/// The text a put put in, at its first caret.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PutLanded {
+    /// The text's version once it went in.
+    pub version: Version,
+    /// The bytes of the register's text put there (every copy), in that
+    /// version: not a line break the put adds to start or end its rows (below
+    /// the last row, or over characters), nor the line break ending the
+    /// last whole row put.
+    pub range: std::ops::Range<usize>,
+    /// How many rows the register's text takes up: a linewise register's
+    /// lines, every copy's (an empty last line counted), or else the rows
+    /// the range touches, a line break ending it not reaching the next.
+    pub rows: u32,
+}
+
+impl PutLanded {
+    /// What `text`, put at `range` of the text at `version`, takes up: as
+    /// `lines` whole rows if linewise.
+    pub(crate) fn new(
+        version: Version,
+        range: std::ops::Range<usize>,
+        text: &str,
+        lines: Option<usize>,
+    ) -> Self {
+        let rows = lines
+            .unwrap_or_else(|| text.matches('\n').count() + 1 - usize::from(text.ends_with('\n')));
+        Self {
+            version,
+            range,
+            rows: rows.max(1) as u32,
+        }
+    }
+}
+
 /// One editor's vim state: its mode, the pending input, each caret's goal
 /// column, the last character search, the open insert session, the last
 /// change for `.`, the carets before each change for `u` and `<C-r>`, and
@@ -104,6 +139,8 @@ pub struct VimState {
     /// `gg` and `G` (Vim's `curswant`; `usize::MAX` is the line end, after
     /// `$`; `None` is the caret's own column), as of a version of the text.
     pub(crate) goals: Option<(Version, Goals)>,
+    /// What the last put put in, at the text's version it made.
+    pub(crate) put_landed: Option<PutLanded>,
     /// The display column along its row each caret's last `gj` or `gk`
     /// aimed for, with the goal it came with: only they set it, and it
     /// holds only while that goal does in the same version of the text.
@@ -263,6 +300,15 @@ impl VimState {
 
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// What the last put (`p`, `P`, a visual-mode put, as typed, replayed
+    /// or repeated) put in at its first caret, while the text is still at
+    /// `version`: none once it's moved on.
+    pub fn put_landed(&self, version: Version) -> Option<&PutLanded> {
+        self.put_landed
+            .as_ref()
+            .filter(|put| put.version == version)
     }
 
     /// Gives `gr` to ReplaceWithRegister

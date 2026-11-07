@@ -181,9 +181,19 @@
           "minimum": 6.0,
           "type": "number"
         },
+        "format_on_paste": {
+          "default": false,
+          "description": "Format pasted text spanning more than one row with the language\nserver's range formatting, which one undo takes back with the paste.",
+          "type": "boolean"
+        },
         "format_on_save": {
           "default": false,
           "description": "Format a file with its language server before saving it. A server that\ndoesn't answer within a second is skipped and the file saves unformatted.",
+          "type": "boolean"
+        },
+        "format_on_type": {
+          "default": false,
+          "description": "Format the row as you type with the language server's on-type\nformatting (`textDocument/onTypeFormatting`): typing one of its\ntrigger characters, such as `}` or `;`, with one caret applies its\nedits, which one undo takes back with the character.",
           "type": "boolean"
         },
         "indent_guides": {
@@ -1434,7 +1444,9 @@
         "cursor_surrounding_lines": 3,
         "font_ligatures": false,
         "font_size": 13.0,
+        "format_on_paste": false,
         "format_on_save": false,
+        "format_on_type": false,
         "indent_guides": true,
         "inlay_hints": true,
         "inline_blame": false,

@@ -61,7 +61,9 @@ const FORMAT_TIMEOUT_MS: u64 = 3000;
 /// for methods it doesn't name.
 pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> {
     let ms = match method {
-        "textDocument/formatting" | "textDocument/rangeFormatting" => FORMAT_TIMEOUT_MS,
+        "textDocument/formatting"
+        | "textDocument/rangeFormatting"
+        | "textDocument/onTypeFormatting" => FORMAT_TIMEOUT_MS,
         "textDocument/definition"
         | "textDocument/declaration"
         | "textDocument/typeDefinition"

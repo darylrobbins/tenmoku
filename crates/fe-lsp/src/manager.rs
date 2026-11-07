@@ -186,6 +186,9 @@ impl Handle {
 struct Placed {
     subscribed: Subscribed,
     kind: Kind,
+    /// Its URI and language id, as its server has them: what a
+    /// registration's document selector is matched against.
+    filtered_as: (Url, String),
 }
 
 enum Kind {
@@ -995,10 +998,12 @@ impl LspManager {
             generation: self.identities.open(buffer),
             max_bytes: self.max_file_bytes,
         };
+        let filtered_as = (opening.uri.clone(), opening.language_id.clone());
         self.documents.insert(
             buffer,
             Placed {
                 subscribed,
+                filtered_as,
                 kind: Kind::Routed(Route {
                     root: root.clone(),
                     window: window.map(Path::to_owned),
@@ -1294,6 +1299,7 @@ impl LspManager {
         // drops nothing the manager still tracks.
         self.close(buffer);
         let subscription = Subscribed::new(subscription);
+        let filtered_as = (uri.clone(), language_id(language, path));
         let opening = Opening {
             buffer,
             text,
@@ -1317,6 +1323,7 @@ impl LspManager {
             Placed {
                 subscribed: subscription,
                 kind: Kind::On(server),
+                filtered_as,
             },
         );
         Ok(())
@@ -1590,6 +1597,36 @@ impl LspManager {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner),
         )
+    }
+
+    /// The characters that ask `buffer`'s server for on-type formatting
+    /// when typed: its `documentOnTypeFormattingProvider`'s, and those of
+    /// each `textDocument/onTypeFormatting` registration whose document
+    /// selector takes the buffer. None for a buffer on no server, or whose
+    /// server's capabilities aren't known yet.
+    pub fn on_type_formatting_triggers(&self, buffer: BufferId) -> Vec<char> {
+        let (Some(server), Some(placed)) = (self.server_of(buffer), self.documents.get(&buffer))
+        else {
+            return Vec::new();
+        };
+        let (uri, language_id) = &placed.filtered_as;
+        self.session(server, |session| {
+            let provider = (session.capabilities.as_ref())
+                .and_then(|capabilities| capabilities.document_on_type_formatting_provider.clone());
+            let mut chars = provider.map_or_else(Vec::new, |provider| {
+                crate::registration::trigger_chars(
+                    &provider.first_trigger_character,
+                    provider.more_trigger_character.as_deref(),
+                )
+            });
+            for ch in session.registrations.on_type_triggers(uri, language_id) {
+                if !chars.contains(&ch) {
+                    chars.push(ch);
+                }
+            }
+            Some(chars)
+        })
+        .unwrap_or_default()
     }
 
     /// The ids of `server`'s current session's registrations.
