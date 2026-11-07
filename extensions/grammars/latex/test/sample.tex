@@ -1,0 +1,87 @@
+% !TeX program = pdflatex
+% A short article: commands, environments, maths and an embedded script.
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amsthm}
+\usepackage{graphicx}
+\usepackage{pythontex}
+\usetikzlibrary{arrows.meta}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\renewcommand*{\vec}[1]{\mathbf{#1}}
+\def\eps{\varepsilon}
+\let\oldemph\emph
+\newenvironment{remark}{\par\noindent\textit{Remark.}}{\par}
+\newtheorem{theorem}{Theorem}[section]
+\definecolor{accent}{RGB}{200, 40, 40}
+
+\newif\ifdraft
+\drafttrue
+
+\title{Notes on Norms}
+\author{A. Author \and B. Writer}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}\label{sec:intro}
+We work in $\R^n$ with $n = 3$ and a tolerance of 0.25. Costs run to
+\$100 \& 50\% of that; see Section~\ref{sec:main} and \cite{knuth1984}.
+
+\ifdraft
+  \textcolor{accent}{Draft: check the constants.}
+\else
+  Final version.
+\fi
+
+\section[Main]{Main result}\label{sec:main}
+\begin{theorem}\label{thm:triangle}
+  For all $\vec{x}, \vec{y} \in \R^n$,
+  \begin{equation}
+    \norm{\vec{x} + \vec{y}} \le \norm{\vec{x}} + \norm{\vec{y}}.
+  \end{equation}
+\end{theorem}
+
+\begin{proof}
+  Square both sides and apply Cauchy--Schwarz:
+  \[
+    \lvert \langle x, y \rangle \rvert \leq \norm{x}\,\norm{y}.
+  \]
+\end{proof}
+
+\begin{remark}
+  Equality holds when $\vec{y} = \lambda \vec{x}$ for some $\lambda \ge 0$.
+\end{remark}
+
+\subsection*{A figure}
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.8\textwidth]{figures/norms.pdf}
+  \caption[Norms]{Unit balls for $p = 1, 2$ and $\infty$.}
+  \label{fig:balls}
+\end{figure}
+
+\begin{itemize}
+  \item First, see Figure~\ref{fig:balls}.
+  \item Then \emph{read} \textbf{everything}.
+\end{itemize}
+
+\begin{pycode}
+for p in (1, 2):
+    print(r"$p = %d$\\" % p)
+\end{pycode}
+
+\iffalse
+This block is never typeset.
+\fi
+
+\begin{comment}
+An environment the comment package skips.
+\end{comment}
+
+\bibliographystyle{plain}
+\bibliography{refs}
+\input{appendix}
+\end{document}

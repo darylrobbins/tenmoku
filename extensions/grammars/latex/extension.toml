@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_latex"
+name = "LaTeX syntax"
+version = "0.3.0"
+license = "MIT AND Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "latex"
+wasm = "tree-sitter-latex.wasm"
+extensions = ["tex", "sty", "cls", "ltx"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+license = "MIT"
+line_comment = "%"
