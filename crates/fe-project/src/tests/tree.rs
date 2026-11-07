@@ -1243,8 +1243,11 @@ fn apply_replaces_directories_with_new_identity() {
     fs::rename(root.join("left"), root.join("tmp")).unwrap();
     fs::rename(root.join("right"), root.join("left")).unwrap();
     fs::rename(root.join("tmp"), root.join("right")).unwrap();
-    // Deleted and made again with other contents.
-    fs::remove_dir_all(root.join("same")).unwrap();
+    // Gone and made again with other contents. Moved out of the project
+    // rather than deleted: Linux would give the new folder the freed inode,
+    // and the tree knows a folder by its device and inode.
+    let aside = tempfile::tempdir().unwrap();
+    fs::rename(root.join("same"), aside.path().join("same")).unwrap();
     make(&root, &["same/other.txt"]);
     let loaded = tree.stats().loaded_entries;
     assert_eq!(
