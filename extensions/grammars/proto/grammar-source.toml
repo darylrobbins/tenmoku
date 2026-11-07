@@ -1,0 +1,4 @@
+git = "https://github.com/coder3101/tree-sitter-proto"
+rev = "18366491f37d43d6d5d02cbb1e79b650b5728145"
+src = "src"
+grammar = "proto"

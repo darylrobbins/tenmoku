@@ -224,6 +224,7 @@ licence. No module is committed.
 | ruby | `tree-sitter-ruby.wasm` | tree-sitter-ruby 0.23.1 | MIT |
 | julia | `tree-sitter-julia.wasm` | https://github.com/tree-sitter/tree-sitter-julia at `e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3` (0.25.0), `src` | MIT |
 | vue | `tree-sitter-vue.wasm` | https://github.com/tree-sitter-grammars/tree-sitter-vue `ce8011a414fdf8091f4e4071752efc376f4afb08` | MIT; `highlights.scm` and `injections.scm` are nvim-treesitter's Apache-2.0 queries (`runtime/queries/html_tags/` and `vue/` at `915f2bd3d4e2a33704bfc476b5137e9befa82f3d`), adapted, with the text in `LICENSE-APACHE` |
+| proto | `tree-sitter-proto.wasm` | https://github.com/coder3101/tree-sitter-proto `18366491f37d43d6d5d02cbb1e79b650b5728145` | MIT; `highlights.scm` is the grammar's own query, adapted |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

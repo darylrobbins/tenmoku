@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_proto"
+name = "Protocol Buffers syntax"
+version = "0.6.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "proto"
+wasm = "tree-sitter-proto.wasm"
+extensions = ["proto"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

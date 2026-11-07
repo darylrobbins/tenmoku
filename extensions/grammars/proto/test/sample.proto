@@ -1,0 +1,68 @@
+// Order service definitions.
+syntax = "proto3";
+
+package shop.orders.v1;
+
+import "google/protobuf/timestamp.proto";
+import public "shop/common.proto";
+
+option java_package = "com.example.shop";
+option go_package = "example.com/shop/orders;orders";
+option (shop.common.audit) = true;
+
+/* A line item
+   in an order. */
+message LineItem {
+  string sku = 1;
+  int32 quantity = 2 [deprecated = false];
+  double unit_price = 3;
+  repeated string tags = 4;
+  optional bytes note = 5 [default = "a\tb\n\"q\""];
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  SHIPPED = 2;
+  CANCELLED = -3;
+}
+
+message Order {
+  reserved 6, 9 to 11, 15 to max;
+  reserved "legacy", "old_name";
+
+  uint64 id = 1;
+  Status status = 2;
+  repeated LineItem items = 3;
+  map<string, string> labels = 4;
+  google.protobuf.Timestamp created = 5;
+
+  oneof payment {
+    string card_token = 7;
+    bool cash = 8;
+    float discount = 12 [default = 1.5e-1];
+  }
+
+  message Address {
+    string street = 1;
+    string city = 2;
+  }
+  Address ship_to = 13;
+  bool gift = 14 [default = true];
+}
+
+service OrderService {
+  rpc Create(Order) returns (Order);
+  rpc Watch(OrderQuery) returns (stream Order);
+  rpc Upload(stream LineItem) returns (Order) {
+    option deprecated = true;
+  }
+}
+
+message OrderQuery {
+  int64 id = 1 [(shop.common.index) = 0x1F];
+}
+
+extend google.protobuf.MessageOptions {
+  optional string owner = 50000;
+}
