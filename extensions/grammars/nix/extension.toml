@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_nix"
+name = "Nix syntax"
+version = "0.3.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "nix"
+wasm = "tree-sitter-nix.wasm"
+extensions = ["nix"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
+line_comment = "#"
+block_comment = ["/*", "*/"]

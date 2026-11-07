@@ -1,0 +1,4 @@
+git = "https://github.com/nix-community/tree-sitter-nix"
+rev = "e9f150648a7e0015b77f4c9b315648b389d6364e"
+src = "src"
+grammar = "nix"

@@ -226,6 +226,7 @@ licence. No module is committed.
 | vue | `tree-sitter-vue.wasm` | https://github.com/tree-sitter-grammars/tree-sitter-vue `ce8011a414fdf8091f4e4071752efc376f4afb08` | MIT; `highlights.scm` and `injections.scm` are nvim-treesitter's Apache-2.0 queries (`runtime/queries/html_tags/` and `vue/` at `915f2bd3d4e2a33704bfc476b5137e9befa82f3d`), adapted, with the text in `LICENSE-APACHE` |
 | proto | `tree-sitter-proto.wasm` | https://github.com/coder3101/tree-sitter-proto `18366491f37d43d6d5d02cbb1e79b650b5728145` | MIT; `highlights.scm` is the grammar's own query, adapted |
 | cmake | `tree-sitter-cmake.wasm` | https://github.com/uyha/tree-sitter-cmake at `a3ec2b2144daf7132e7ee824d8cab9610523d10f` (`src`), v0.7.6; `highlights.scm` is upstream's `queries/highlights.scm`, adapted to drop `#lua-match?` and unused captures, plus a number pattern | MIT |
+| nix | `tree-sitter-nix.wasm` | [nix-community/tree-sitter-nix](https://github.com/nix-community/tree-sitter-nix) @ `e9f150648a7e0015b77f4c9b315648b389d6364e` | MIT; `highlights.scm` and `injections.scm` are upstream's (same licence), less the `#is-not? local` predicates |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub
