@@ -471,6 +471,11 @@ fn escaped_names_match_literally() {
         "end ",
         "a b",
     ] {
+        // Windows names can't hold `*`, `?` or `\`, nor end in a blank.
+        let windows_name = !name.contains(['*', '?', '\\']) && !name.ends_with(' ');
+        if cfg!(windows) && !windows_name {
+            continue;
+        }
         fs::write(dir.path().join(name), "").unwrap();
         let pattern = escaped(name, true);
         let report = check(dir.path(), &format!("{pattern}\n"));

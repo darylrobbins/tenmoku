@@ -65,7 +65,9 @@ fn listed(batches: &[Vec<FileReferences>]) -> Vec<String> {
     let mut listed: Vec<String> = (batches.iter().flatten())
         .flat_map(|file| &file.refs)
         .map(|r| {
-            let mut line = format!("{}:{}", r.location.rel.display(), r.location.row);
+            // With `/` on Windows too.
+            let rel = r.location.rel.to_string_lossy().replace('\\', "/");
+            let mut line = format!("{rel}:{}", r.location.row);
             if !r.verified {
                 line.push_str(" unverified");
             }

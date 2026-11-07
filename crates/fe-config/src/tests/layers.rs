@@ -39,10 +39,15 @@ fn layers_merge_in_order() {
 
 #[test]
 fn config_dir_resolution() {
+    // `/override` isn't absolute on Windows, which wants a drive.
+    let abs = |path: &str| match path.strip_prefix('/') {
+        Some(_) if cfg!(windows) => PathBuf::from(format!("C:{path}")),
+        _ => PathBuf::from(path),
+    };
     let resolve = |vars: &[(&str, &str)]| {
         let vars: HashMap<String, OsString> = vars
             .iter()
-            .map(|(name, value)| (name.to_string(), value.into()))
+            .map(|(name, value)| (name.to_string(), abs(value).into_os_string()))
             .collect();
         config_dir_from(|name| vars.get(name).cloned())
     };
@@ -51,12 +56,9 @@ fn config_dir_resolution() {
         ("XDG_CONFIG_HOME", "/xdg"),
         ("HOME", "/home/me"),
     ];
-    assert_eq!(resolve(&all), Some(PathBuf::from("/override")));
-    assert_eq!(resolve(&all[1..]), Some(PathBuf::from("/xdg/tenmoku")));
-    assert_eq!(
-        resolve(&all[2..]),
-        Some(PathBuf::from("/home/me/.config/tenmoku"))
-    );
+    assert_eq!(resolve(&all), Some(abs("/override")));
+    assert_eq!(resolve(&all[1..]), Some(abs("/xdg/tenmoku")));
+    assert_eq!(resolve(&all[2..]), Some(abs("/home/me/.config/tenmoku")));
     // Empty or relative values don't count.
     assert_eq!(
         resolve(&[
@@ -64,7 +66,7 @@ fn config_dir_resolution() {
             ("XDG_CONFIG_HOME", "relative"),
             ("HOME", "/home/me")
         ]),
-        Some(PathBuf::from("/home/me/.config/tenmoku"))
+        Some(abs("/home/me/.config/tenmoku"))
     );
     assert_eq!(resolve(&[]), None);
 }
@@ -73,13 +75,18 @@ fn config_dir_resolution() {
 fn only_small_regular_files_are_read() {
     let dir = tempfile::tempdir().unwrap();
     let big = write(&dir, "big.toml", &"# padding\n".repeat(200_000));
-    let fifo = dir.path().join("fifo.toml");
-    let status = std::process::Command::new("mkfifo")
-        .arg(&fifo)
-        .status()
-        .unwrap();
-    assert!(status.success());
-    for path in [big, fifo, dir.path().to_owned()] {
+    let mut paths = vec![big, dir.path().to_owned()];
+    // Windows has no FIFOs in the file system.
+    if cfg!(unix) {
+        let fifo = dir.path().join("fifo.toml");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        paths.push(fifo);
+    }
+    for path in paths {
         let layer = load_layer(&path);
         assert!(layer.table.is_empty());
         let [diagnostic] = layer.diagnostics.as_slice() else {

@@ -540,7 +540,13 @@ impl LoginPath {
         cwd: &Path,
     ) -> Option<PathBuf> {
         if !is_bare(command) {
-            return Some(cwd.join(expand_home(command, self.home.as_deref())?));
+            let joined = cwd.join(expand_home(command, self.home.as_deref())?);
+            // On Windows `\tools\x.exe` is on the current drive, as a launch
+            // would find it.
+            if cfg!(windows) && joined.has_root() && !joined.is_absolute() {
+                return std::path::absolute(&joined).ok();
+            }
+            return Some(joined);
         }
         let process_path;
         let path = match spec_path.or_else(|| self.path()) {

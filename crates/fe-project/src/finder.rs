@@ -106,6 +106,7 @@ struct Item {
 
 impl Item {
     fn new(rel: &Path) -> Item {
+        let rel: &Path = &native(rel);
         let (path, differs) = spelled(rel);
         let real = differs.then(|| rel.into());
         let name = path.rfind('/').map_or(0, |slash| slash + 1);
@@ -223,8 +224,25 @@ fn spelled(rel: &Path) -> (String, bool) {
     (path, !lossless)
 }
 
+/// `rel` with the platform's separators: on Windows, `a/b` and `a\b` are one
+/// path, and must be one item with one key.
+fn native(rel: &Path) -> Cow<'_, Path> {
+    let bytes = rel.as_os_str().as_encoded_bytes();
+    if !cfg!(windows) || !bytes.contains(&b'/') {
+        return Cow::Borrowed(rel);
+    }
+    let swapped: Vec<u8> = (bytes.iter())
+        .map(|&byte| if byte == b'/' { b'\\' } else { byte })
+        .collect();
+    // SAFETY: an ASCII byte swapped for another keeps the encoding whole.
+    Cow::Owned(PathBuf::from(unsafe {
+        OsString::from_encoded_bytes_unchecked(swapped)
+    }))
+}
+
 /// The key of relative path `rel`.
 fn key_of(rel: &Path) -> Box<[u8]> {
+    let rel = &native(rel);
     let (path, differs) = spelled(rel);
     make_key(&path, differs.then(|| rel.as_os_str().as_encoded_bytes()))
 }
@@ -978,6 +996,7 @@ impl FinderIndex {
         // path under `rel` reads `rel` as spelled, then `/`. Other
         // directories that read the same are told apart by the real bytes,
         // which have the platform's separator (`\` on Windows).
+        let rel = &native(rel);
         let mut real = rel.as_os_str().as_encoded_bytes().to_vec();
         real.push(std::path::MAIN_SEPARATOR as u8);
         let mut low = spelled(rel).0.into_bytes();

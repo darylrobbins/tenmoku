@@ -632,11 +632,12 @@ impl ExtensionSource {
         };
         let mut out = Fingerprints::new();
         for manifest in self.enabled().extensions() {
-            let root = manifest.dir.canonicalize().ok();
+            let root = kiln_core::platform::canonicalize(&manifest.dir).ok();
             let stamps = files(manifest)
                 .into_iter()
                 .map(|path| {
-                    let canonical = manifest.dir.join(path).canonicalize().ok()?;
+                    let canonical =
+                        kiln_core::platform::canonicalize(&manifest.dir.join(path)).ok()?;
                     canonical.starts_with(root.as_ref()?).then_some(())?;
                     let meta = fs::metadata(&canonical).ok().filter(|m| m.is_file())?;
                     Some((canonical, meta.len(), meta.modified().ok()))
@@ -1047,14 +1048,15 @@ fn read_contained(manifest: &Manifest, path: &Path) -> Result<String, Unread> {
         },
         keep,
     };
-    let canonical = match path.canonicalize() {
+    let canonical = match kiln_core::platform::canonicalize(path) {
         Ok(canonical) => canonical,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Err(unread(false, "no such file".into()));
         }
         Err(error) => return Err(unread(true, format!("can't be read: {error}"))),
     };
-    let inside = (manifest.dir.canonicalize()).is_ok_and(|dir| canonical.starts_with(dir));
+    let inside = (kiln_core::platform::canonicalize(&manifest.dir))
+        .is_ok_and(|dir| canonical.starts_with(dir));
     if !inside {
         let message = format!(
             "leads to {}, outside {}'s directory, so it isn't read",

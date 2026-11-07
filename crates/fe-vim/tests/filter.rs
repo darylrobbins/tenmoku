@@ -257,6 +257,22 @@ fn filter_line_becomes_a_host_command() {
 type Applied = (String, (u32, usize), Option<String>, (String, (u32, usize)));
 
 #[test]
+fn crlf_output_is_read_as_dos_lines() {
+    let put = |output: &str| {
+        let mut vim = HeadlessVim::new("a\nb", (0, 0));
+        host_applies(&mut vim, |state, model| {
+            state.apply_read_command(model, 2, output)
+        });
+        vim.text()
+    };
+    // Every line CRLF, as Windows' commands write: the CRs go.
+    assert_eq!(put("x\r\ny\r\n"), "a\nb\nx\ny");
+    // Mixed, as no DOS file is: kept as they are, so the last row's CR is a
+    // line break of its own, as the buffer reads a lone CR.
+    assert_eq!(put("x\ny\r\n"), "a\nb\nx\ny\n");
+}
+
+#[test]
 fn apply_filter_replaces_rows_as_nvim_does() {
     /// `output` for `rows` of ROWS with the caret at `cursor`: the text,
     /// caret and message, then the text and caret `u` leaves.

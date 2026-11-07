@@ -206,10 +206,25 @@ impl Listener {
     }
 }
 
+/// Whether `title` is what Windows' console host titles a session whose
+/// program set none: the path of the program's `.exe`, such as
+/// `C:\WINDOWS\SYSTEM32\cmd.exe`. Never elsewhere.
+fn is_console_default_title(title: &str) -> bool {
+    let bytes = title.as_bytes();
+    let drive =
+        bytes.len() > 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\';
+    cfg!(windows) && drive && title.to_ascii_lowercase().ends_with(".exe")
+}
+
 impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         match event {
             Event::Wakeup => self.send(TerminalEvent::Wakeup),
+            // The console's own title, the program's path, isn't one the
+            // program set.
+            Event::Title(title) if is_console_default_title(&title) => {
+                self.send(TerminalEvent::Title(String::new()))
+            }
             Event::Title(title) => self.send(TerminalEvent::Title(title)),
             Event::ResetTitle => self.send(TerminalEvent::Title(String::new())),
             Event::Bell => self.send(TerminalEvent::Bell),

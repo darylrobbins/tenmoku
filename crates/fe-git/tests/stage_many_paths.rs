@@ -147,8 +147,16 @@ fn literal_names_via_stdin() {
     let (_dir, root) = init();
     fs::write(root.join("a.txt"), "a\n").unwrap();
     fs::write(root.join("b"), "b\n").unwrap();
-    fs::write(root.join("*.txt"), "star\n").unwrap();
-    fs::write(root.join(":(glob)b"), "glob\n").unwrap();
+    // Names that, as pathspecs, would match `a.txt` or `b`. Windows names
+    // can't hold `*` or `:`, but can a glob's brackets.
+    let odd_names = if cfg!(windows) {
+        ["[a].txt", "[b]"]
+    } else {
+        ["*.txt", ":(glob)b"]
+    };
+    for name in odd_names {
+        fs::write(root.join(name), "odd\n").unwrap();
+    }
     git(&root, &["add", "a.txt", "b"]);
     git(&root, &["commit", "-q", "-m", "init"]);
     let repo = open(&root);
@@ -162,7 +170,7 @@ fn literal_names_via_stdin() {
             })
             .collect()
     };
-    let odd = [root.join("*.txt"), root.join(":(glob)b")];
+    let odd = odd_names.map(|name| root.join(name));
     for path in &odd {
         repo.stage(std::slice::from_ref(path)).unwrap();
         let name = path

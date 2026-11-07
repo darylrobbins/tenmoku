@@ -507,7 +507,7 @@ impl<'a> Check<'a> {
             );
             return files;
         }
-        let canonical_dir = dir.canonicalize().ok();
+        let canonical_dir = crate::platform::canonicalize(dir).ok();
         let mut spans = None;
         for (kind, entries) in arrays {
             let mut paths = Some(Vec::new());
@@ -604,7 +604,7 @@ fn contributed_file(
         }
     }
     // Resolved as written: `link/..` is the link's parent, not `dir`.
-    let canonical = match dir.join(relative).canonicalize() {
+    let canonical = match crate::platform::canonicalize(&dir.join(relative)) {
         Ok(canonical) => canonical,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return missing_file(dir, canonical_dir, relative, entry);
@@ -640,7 +640,7 @@ fn missing_file(
     let path: PathBuf = dir.join(relative.components().collect::<PathBuf>());
     let mut ancestor = path.parent();
     while let Some(dir) = ancestor {
-        match dir.canonicalize() {
+        match crate::platform::canonicalize(dir) {
             Ok(canonical) => {
                 if canonical_dir.is_some_and(|root| canonical.starts_with(root)) {
                     return Ok(path);

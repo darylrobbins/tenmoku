@@ -207,7 +207,10 @@ fn an_extension_waiting_on_consent_shows_it(cx: &mut TestAppContext) {
         }
     );
     assert!(
-        zig.detail().contains("/opt/zls/bin/zls --stdio"),
+        zig.detail().contains(&format!(
+            "{} --stdio",
+            crate::tests::rooted("/opt/zls/bin/zls").display()
+        )),
         "{}",
         zig.detail()
     );
@@ -259,6 +262,13 @@ fn enter_on_a_waiting_row_opens_its_consent_prompt(cx: &mut TestAppContext) {
     draw(&mut cx);
     let (question, detail) = cx.pending_prompt().expect("a prompt");
     assert_eq!(question, "Allow Zig to run a language server?");
-    assert!(detail.contains("/opt/zls/bin/zls"), "{detail}");
+    assert!(
+        detail.contains(
+            &crate::tests::rooted("/opt/zls/bin/zls")
+                .display()
+                .to_string()
+        ),
+        "{detail}"
+    );
     let _: PathBuf = host.path().into();
 }

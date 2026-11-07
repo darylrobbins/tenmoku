@@ -36,7 +36,7 @@ fn temp_dir(name: &str) -> PathBuf {
     fs::create_dir_all(dir.join("outside")).unwrap();
     fs::write(dir.join("root/hello.txt"), "hello").unwrap();
     fs::write(dir.join("outside/secret.txt"), "secret").unwrap();
-    dir.canonicalize().unwrap()
+    kiln_core::platform::canonicalize(&dir).unwrap()
 }
 
 fn workspace(dir: &Path) -> Workspace {

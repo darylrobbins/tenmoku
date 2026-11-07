@@ -819,13 +819,18 @@ fn unquotes_git_paths() {
 #[gpui::test]
 fn quoted_and_renamed_paths(cx: &mut TestAppContext) {
     // A name git quotes, with an accent, a quote and a backslash, changed
-    // and then renamed.
+    // and then renamed. (Windows names can't hold the quote or backslash;
+    // the accent alone has git quote it.)
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     git(root, &["init", "-q"]);
     let first: String = (0..6).map(|row| format!("r{row}\n")).collect();
     let second = first.replace("r2\n", "R2\n");
-    let old = "q\"uo\\te caf\u{e9}.rs";
+    let old = if cfg!(windows) {
+        "quo te caf\u{e9}.rs"
+    } else {
+        "q\"uo\\te caf\u{e9}.rs"
+    };
     fs::write(root.join(old), &first).unwrap();
     let c1 = commit(root, "Add it", "Ann", 10);
     fs::write(root.join(old), &second).unwrap();

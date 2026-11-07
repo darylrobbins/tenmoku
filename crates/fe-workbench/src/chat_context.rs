@@ -78,14 +78,20 @@ pub(crate) fn gather(
     items
 }
 
-/// `path` as the chat names it: from the root, whole if outside it, and
-/// `untitled` for a buffer with no file.
-fn shown_path(root: Option<&Path>, path: Option<&Path>) -> String {
+/// `path` as the chat names it: from the root with `/` (on Windows too, as
+/// the chat's links name files), whole if outside it, and `untitled` for a
+/// buffer with no file.
+pub(super) fn shown_path(root: Option<&Path>, path: Option<&Path>) -> String {
     let Some(path) = path else {
         return "untitled".to_owned();
     };
-    let relative = root.and_then(|root| path.strip_prefix(root).ok());
-    relative.unwrap_or(path).display().to_string()
+    match root.and_then(|root| path.strip_prefix(root).ok()) {
+        Some(relative) => (relative.components())
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+        None => path.display().to_string(),
+    }
 }
 
 /// The primary selection, if it isn't empty nor over [`MAX_FILE`], with

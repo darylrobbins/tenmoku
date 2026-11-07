@@ -12,9 +12,34 @@ fn os(arg: &str) -> OsString {
 }
 
 /// What exec charges for one argument or environment entry: its bytes, a NUL
-/// and the pointer to it.
+/// and the pointer to it. On Windows, what it adds to the command line: its
+/// UTF-16 units, the quotes around it and a space.
 fn exec_cost(arg: &OsStr) -> usize {
-    arg.len() + 1 + std::mem::size_of::<usize>()
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        arg.encode_wide().count() + 3
+    }
+    #[cfg(not(windows))]
+    {
+        arg.len() + 1 + std::mem::size_of::<usize>()
+    }
+}
+
+/// The room for a command's arguments: Linux's smallest `ARG_MAX` of 128 KiB
+/// for arguments and environment; on Windows the 32,767 UTF-16 units of a
+/// command line, which holds no environment.
+const ARG_SPACE: usize = if cfg!(windows) { 32_767 } else { 128 * 1024 };
+
+/// What the inherited environment takes of [`ARG_SPACE`]: each entry's
+/// bytes, a `=`, a NUL and a pointer; nothing on Windows.
+fn environment_cost() -> usize {
+    if cfg!(windows) {
+        return 0;
+    }
+    std::env::vars_os()
+        .map(|(key, value)| key.len() + value.len() + 2 + std::mem::size_of::<usize>())
+        .sum()
 }
 
 const FROM_STDIN: &str = "--pathspec-from-file=-";
@@ -164,10 +189,9 @@ impl Repo {
     /// The names among `relas` that the index tracks at any stage, sparse
     /// directory entries expanded, asked of `ls-files` in batches that fit the
     /// argument space. Each path, fixed argument and inherited environment
-    /// entry is charged its bytes, a NUL and a pointer (see [`exec_cost`]),
+    /// entry is charged as [`exec_cost`] and [`environment_cost`] say,
     /// against half of [`ARG_SPACE`]; a batch takes at least one path.
     fn tracked_names(&self, relas: &[OsString]) -> Result<HashSet<Vec<u8>>, GitError> {
-        const ARG_SPACE: usize = 128 * 1024;
         let fixed = [
             os("git"),
             os("--literal-pathspecs"),
@@ -183,10 +207,7 @@ impl Repo {
             os("LC_ALL=C"),
             os("GIT_OPTIONAL_LOCKS=0"),
         ];
-        let inherited: usize = std::env::vars_os()
-            .map(|(key, value)| key.len() + value.len() + 2 + std::mem::size_of::<usize>())
-            .sum();
-        let overhead = inherited
+        let overhead = environment_cost()
             + fixed
                 .iter()
                 .chain(&added_env)
