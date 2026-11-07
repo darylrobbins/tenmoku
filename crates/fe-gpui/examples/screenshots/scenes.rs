@@ -242,7 +242,46 @@ fn scenes() -> Vec<Scene> {
             marks: false,
             setup: Some(leader_popup),
         },
+        Scene {
+            name: "which_key_icons",
+            path: "scene.rs",
+            text: RUST.to_owned(),
+            cold: &[],
+            annotations: &[],
+            minimap: None,
+            top: None,
+            sticky_scroll: false,
+            marks: false,
+            setup: Some(lazyvim_popup),
+        },
     ]
+}
+
+/// The bundled `lazyvim` preset, whose `<leader>` popup the
+/// which_key_icons scene shows: LazyVim's groups, each with its icon, and
+/// its commands, each with its icon if it has one.
+const LAZYVIM: &str = include_str!("../../../fastedit/presets/lazyvim.vimrc");
+
+/// Vim on with the [`LAZYVIM`] preset's maps and group names, `<Space>` the
+/// leader, the host's commands known by title, and `<Space>` held: the
+/// popup shows its keys, with their icons.
+fn lazyvim_popup(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let space = [fe_vim::VimKey::Char(' ')];
+    let preset = fe_vim::parse_vimrc_with_leader(LAZYVIM, &space);
+    assert!(preset.issues.is_empty(), "{:?}", preset.issues);
+    fe_gpui::set_host_commands(fe_workbench::command_list());
+    cx.update(|cx| {
+        fe_gpui::set_vim_enabled(cx, true);
+        let issues = fe_gpui::set_vim_remaps(cx, &preset.remaps, "<Space>");
+        assert!(issues.is_empty(), "{issues:?}");
+        fe_gpui::set_vim_which_key_groups(cx, preset.groups);
+    });
+    cx.run_until_parked();
+    cx.update_window(window, |root, window, cx| {
+        let view = root.downcast::<EditorView>().expect("an editor");
+        view.update(cx, |view, cx| view.show_which_key_for(&space, window, cx));
+    })
+    .expect("the scene's window");
 }
 
 /// The which_key_popup scene's leader maps: items (one each on `<Space>`,
@@ -290,8 +329,10 @@ fn leader_popup(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
 
 /// Undoes what a scene's setup turned on, for the scenes after it.
 fn reset(cx: &mut VisualTestAppContext) {
+    fe_gpui::set_host_commands(Vec::new());
     cx.update(|cx| {
         fe_gpui::set_vim_remaps(cx, &[], "\\");
+        fe_gpui::set_vim_which_key_groups(cx, Vec::new());
         fe_gpui::set_vim_enabled(cx, false);
     });
     cx.run_until_parked();
@@ -690,7 +731,11 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
 
 pub(crate) fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
+    // kiln-ui's icons, which the which-key popup draws.
+    let mut cx = VisualTestAppContext::with_asset_source(
+        gpui_platform::current_platform(false),
+        std::sync::Arc::new(fe_ui::Assets),
+    );
     cx.update(fe_gpui::init);
     exit_code(match args.first().map(String::as_str) {
         Some("render") => render(&mut cx, &args[1..]).map(|()| true),

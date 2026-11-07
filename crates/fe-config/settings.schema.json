@@ -1309,7 +1309,7 @@
         },
         "which_key_group": {
           "default": [],
-          "description": "Names for groups of remaps, which the which-key popup shows as\n`+{name}` in place of `+{count}`. Each is a `[[vim.which_key_group]]`\ntable; it loads after the vimrc's `:fegroup`s and the preset's, and\na later name for the same keys in the same mode wins.",
+          "description": "Names for groups of remaps, which the which-key popup shows as\n`+{name}` in place of `+{count}`. Each is a `[[vim.which_key_group]]`\ntable; it loads after the vimrc's `:fegroup`s and the preset's, and\na later name for the same keys in the same mode wins, as does a\nlater icon.",
           "items": {
             "$ref": "#/$defs/VimWhichKeyGroup"
           },
@@ -1321,6 +1321,14 @@
     "VimWhichKeyGroup": {
       "description": "One `[[vim.which_key_group]]` entry.",
       "properties": {
+        "icon": {
+          "description": "An icon the popup draws beside the group, by its name in the bundled\nLucide set (`\"search\"`, `\"git-branch\"`, `\"bug\"`). Unset keeps an\nicon an earlier name for the same keys gives, as the preset's; a\nname not in the set draws none.",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "keys": {
           "description": "The prefix the group's remaps start with, in vim notation\n(`\"<leader>f\"`).",
           "minLength": 1,

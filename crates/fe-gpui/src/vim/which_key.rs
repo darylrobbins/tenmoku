@@ -39,11 +39,11 @@ use fe_vim::{Mode, Step, VimKey, WhichKey, WhichKeyEntry, WhichKeyLabel};
 use gpui::{
     App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, deferred, div,
-    relative,
+    relative, svg,
 };
 use kiln_platform::keys::{PendingChord, pending_continuations};
 
-use super::{Vim, registry, which_key_layout as layout};
+use super::{Vim, registry, which_key_icons as icons, which_key_layout as layout};
 use crate::EditorView;
 
 /// `vim.which_key` and `vim.which_key_delay_ms`.
@@ -148,7 +148,8 @@ impl EditorView {
         if !matches!(state.mode(), Mode::Normal | Mode::Visual(_)) {
             return None;
         }
-        let which = state.which_key()?;
+        let mut which = state.which_key()?;
+        icons::fill(&mut which);
         let target = Target {
             prefix: which.prefix.clone(),
             mode: state.mode_name(),
@@ -433,6 +434,7 @@ fn chord_which_key(chord: &PendingChord, state: &fe_vim::VimState, cx: &App) -> 
             key,
             label,
             group: next.longer,
+            icon: None,
         });
     }
     if entries.is_empty() {
@@ -441,6 +443,7 @@ fn chord_which_key(chord: &PendingChord, state: &fe_vim::VimState, cx: &App) -> 
     let prefix = chord.held.iter().map(key_name).collect();
     let mut which = WhichKey { prefix, entries };
     which.sort_entries();
+    icons::fill(&mut which);
     Some(which)
 }
 
@@ -583,6 +586,10 @@ pub(crate) fn command_title(id: &str, cx: &App) -> String {
 /// The width of one key and its title, in the popup's columns.
 const COLUMN_CHARS: f32 = 30.0;
 
+/// The width of the box an icon sits in, between a row's arrow and its
+/// title, in ems: a fixed box, so every title starts at one x.
+const ICON_BOX: f32 = 1.2;
+
 /// The most of the editor's height the popup takes; its keys scroll
 /// within it.
 const MAX_HEIGHT: f32 = 0.5;
@@ -592,7 +599,8 @@ const MAX_HEIGHT: f32 = 0.5;
 /// items before groups, and a hint to close it along the bottom; at most
 /// half the editor's height, its keys scrolling past that. Each key shows
 /// as its glyph ([`layout::key_glyph`]) in a column as wide as the widest,
-/// so every arrow starts at one x.
+/// so every arrow starts at one x, then, if any entry has one, its icon
+/// ([`icons::entry_icon`]) in a fixed box, empty for one without.
 pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElement + use<>> {
     let which = view.which_key_shown()?;
     let theme = &view.theme;
@@ -610,8 +618,29 @@ pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElemen
             .sum()
     };
     let keys = ch * layout::key_column(glyphs.iter().map(String::as_str), measure, ch.into());
-    let entries = which.entries.iter().zip(glyphs).map(|(entry, glyph)| {
+    // Each row keeps an icon's room once any draws one, so titles line up.
+    let icon_box = icons::any_icon(which).then_some(theme.font_size * ICON_BOX);
+    let entries = which.entries.iter().zip(glyphs).map(move |(entry, glyph)| {
         let colors = layout::entry_colors(entry, theme);
+        let icon = icon_box.map(|room| {
+            let key = entry.key.clone();
+            let drawn = icons::entry_icon(entry, theme).map(|(icon, colour)| {
+                svg()
+                    .path(icon.path())
+                    .size(theme.font_size)
+                    .flex_none()
+                    .text_color(colour)
+            });
+            div()
+                .debug_selector(move || format!("which-key-icon-{key}"))
+                .flex_none()
+                .w(room)
+                .flex()
+                .items_center()
+                .justify_center()
+                .children(drawn)
+        });
+        let title_key = entry.key.clone();
         let title = title(entry, cx);
         let title = match &entry.label {
             WhichKeyLabel::Group { .. } => title,
@@ -643,7 +672,13 @@ pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElemen
                     .text_color(colors.arrow)
                     .child("→"),
             )
-            .child(div().text_color(colors.title).child(title))
+            .children(icon)
+            .child(
+                div()
+                    .debug_selector(move || format!("which-key-title-{title_key}"))
+                    .text_color(colors.title)
+                    .child(title),
+            )
     });
     let panel = div()
         .absolute()

@@ -1,4 +1,5 @@
-//! The bundled `lazyvim` preset's which-key group names (`:fegroup`).
+//! The bundled `lazyvim` preset's which-key group names and icons
+//! (`:fegroup`).
 
 use fe_vim::{RemapMode, VimKey};
 
@@ -71,6 +72,88 @@ fn the_preset_names_every_group_it_has_maps_in() {
             ("<leader>x".to_owned(), "diagnostics/quickfix"),
         ]
     );
+}
+
+/// Each group the preset names draws an icon, as LazyVim's which-key does:
+/// a bundled one, the one LazyVim's resembles.
+#[test]
+fn every_named_group_has_an_icon() {
+    let parsed = parsed();
+    assert_eq!(parsed.issues, []);
+    assert!(!parsed.groups.is_empty());
+    // The UI set kiln-ui bundles, one SVG per icon (its `Icon`).
+    let set = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../kiln/crates/kiln-ui/assets/icons");
+    let bundled = |name: &str| set.join(format!("{name}.svg")).is_file();
+    assert!(bundled("search"), "{set:?} holds the set");
+    let mut icons = Vec::new();
+    for group in &parsed.groups {
+        let icon = (group.icon.as_deref()).unwrap_or_else(|| panic!("{group:?} has no icon"));
+        assert!(bundled(icon), "{group:?}: {icon} isn't bundled");
+        icons.push((group.name.as_str(), icon));
+    }
+    assert_eq!(
+        icons,
+        [
+            ("buffer", "files"),
+            ("code", "code"),
+            ("file/find", "search"),
+            ("git", "git-branch"),
+            ("hunks", "file-diff"),
+            ("quit/session", "log-out"),
+            ("search", "search"),
+            ("ui", "toggle-right"),
+            ("windows", "app-window"),
+            ("diagnostics/quickfix", "triangle-alert"),
+        ]
+    );
+}
+
+/// A user's name for a preset group keeps the preset's icon; their icon
+/// replaces it.
+#[test]
+fn a_users_name_keeps_the_preset_icon() {
+    let dir = tempfile::tempdir().unwrap();
+    let vimrc = dir.path().join("vimrc");
+    std::fs::write(
+        &vimrc,
+        "fegroup <leader>f files\nfegroup <leader>c lsp icon=bug\n",
+    )
+    .unwrap();
+    let settings = dir.path().join("settings.toml");
+    std::fs::write(
+        &settings,
+        "[vim]\npreset = \"lazyvim\"\n\
+         [[vim.which_key_group]]\nkeys = \"<leader>g\"\nname = \"vcs\"\nicon = \"git-graph\"\n\
+         [[vim.which_key_group]]\nkeys = \"<leader>b\"\nname = \"bufs\"\nicon = \"Bad Icon\"\n",
+    )
+    .unwrap();
+    let store = SettingsStore::load(Some(settings), None);
+    assert_eq!(store.diagnostics(), []);
+    let remaps = VimRemaps::new(Some(vimrc), &store);
+    let groups = remaps.groups(true, "<Space>", &mut Vec::new());
+    let icon = |keys: &str| {
+        let keys = parse_keys(keys).unwrap();
+        (groups.iter().rev())
+            .filter(|group| group.mode == RemapMode::Normal && group.keys == keys)
+            .find_map(|group| group.icon.as_deref())
+    };
+    assert_eq!(icon("<Space>f"), Some("search"));
+    assert_eq!(icon("<Space>c"), Some("bug"));
+    assert_eq!(icon("<Space>g"), Some("git-graph"));
+    // A malformed icon: the name loads, the icon is a warning at `icon`.
+    assert_eq!(icon("<Space>b"), Some("files"));
+    let name = (groups.iter().rev())
+        .find(|group| group.keys == parse_keys("<Space>b").unwrap())
+        .map(|group| group.name.as_str());
+    assert_eq!(name, Some("bufs"));
+    let diagnostics = remaps.diagnostics();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(
+        diagnostics[0].key.as_deref(),
+        Some("vim.which_key_group[1].icon")
+    );
+    assert_eq!(diagnostics[0].line, 10);
 }
 
 /// The names reach the editors as the preset loads, beneath the vimrc's and

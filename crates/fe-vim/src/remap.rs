@@ -50,12 +50,18 @@ pub struct Remap {
 /// A name for the group of maps that go on from `keys` in `mode`, for
 /// which-key to title it `+{name}` ([`crate::WhichKeyLabel::Group`]): a
 /// vimrc's `:fegroup` or a `[[vim.which_key_group]]` entry. Of several for
-/// the same mode and keys, the last given wins ([`group_name`]).
+/// the same mode and keys, the last given wins ([`group_name`]); of those
+/// giving an icon, the last one's is drawn ([`group_icon`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WhichKeyGroupName {
     pub mode: RemapMode,
     pub keys: Vec<VimKey>,
     pub name: String,
+    /// The name of an icon of the host's bundled set to draw beside the
+    /// group (`"bug"`, `"git-branch"`): `:fegroup`'s `icon={name}`, or a
+    /// `[[vim.which_key_group]]`'s `icon`. One the host doesn't have draws
+    /// nothing.
+    pub icon: Option<String>,
 }
 
 impl WhichKeyGroupName {
@@ -69,6 +75,26 @@ impl WhichKeyGroupName {
         name: &str,
         leader: &str,
     ) -> Result<Vec<WhichKeyGroupName>, String> {
+        Self::parse_with_icon(modes, keys, name, None, leader)
+    }
+
+    /// [`WhichKeyGroupName::parse`], with an icon for the group: an error
+    /// for one that isn't an icon's name, lowercase ASCII letters and
+    /// digits joined by `-` (`git-branch`).
+    pub fn parse_with_icon(
+        modes: &[RemapMode],
+        keys: &str,
+        name: &str,
+        icon: Option<&str>,
+        leader: &str,
+    ) -> Result<Vec<WhichKeyGroupName>, String> {
+        if let Some(icon) = icon
+            && !is_icon_name(icon)
+        {
+            return Err(format!(
+                "{icon:?} isn't an icon's name: lowercase letters and digits joined by -"
+            ));
+        }
         let leader = parse_keys(leader).map_err(|e| e.to_string())?;
         let keys = side(keys, &leader, true)?;
         if keys.is_empty() {
@@ -83,9 +109,19 @@ impl WhichKeyGroupName {
                 mode,
                 keys: keys.clone(),
                 name: name.to_string(),
+                icon: icon.map(str::to_string),
             })
             .collect())
     }
+}
+
+/// Whether `icon` is shaped as an icon's name: lowercase ASCII letters and
+/// digits in words joined by single `-`s.
+fn is_icon_name(icon: &str) -> bool {
+    (icon.split('-')).all(|word| {
+        !word.is_empty()
+            && (word.bytes()).all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    })
 }
 
 /// The name `groups` give the keys `keys` in `mode`: the last one given.
@@ -97,6 +133,19 @@ pub(crate) fn group_name<'a>(
     (groups.iter().rev())
         .find(|group| group.mode == mode && group.keys == keys)
         .map(|group| group.name.as_str())
+}
+
+/// The icon `groups` give the keys `keys` in `mode`: the last one given,
+/// even by a record before the one whose name wins, as which-key.nvim
+/// merges the specs for one prefix (a renamed preset group keeps its icon).
+pub(crate) fn group_icon<'a>(
+    groups: &'a [WhichKeyGroupName],
+    mode: RemapMode,
+    keys: &[VimKey],
+) -> Option<&'a str> {
+    (groups.iter().rev())
+        .filter(|group| group.mode == mode && group.keys == keys)
+        .find_map(|group| group.icon.as_deref())
 }
 
 /// An entry that can't load, by its index in the input.

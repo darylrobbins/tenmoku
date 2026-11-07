@@ -1,7 +1,9 @@
 //! A vimrc subset read into `Remap` records: the map, noremap, unmap and
 //! mapclear families for n, x and o, `let mapleader` and `"` comments, each
-//! line read as nvim reads it; and fastedit's own `:fegroup {keys} {name}`,
-//! naming a group of normal-mode maps for which-key (`WhichKeyGroupName`). Anything else is a `VimrcIssue` at its line,
+//! line read as nvim reads it; and fastedit's own `:fegroup {keys} {name}
+//! [icon={icon}]`, naming a group of normal-mode maps for which-key, with an
+//! icon to draw beside it (`WhichKeyGroupName`). Anything else is a
+//! `VimrcIssue` at its line,
 //! never run. See `docs/decisions/vim-remaps.md` §1(c); nothing here does
 //! I/O.
 
@@ -228,18 +230,20 @@ impl Parser {
         true
     }
 
-    /// `:fegroup {keys} {name}`, naming the normal-mode group of maps that
-    /// go on from `keys`: the name is the rest of the line, `|` and `"`
-    /// included.
+    /// `:fegroup {keys} {name} [icon={icon}]`, naming the normal-mode group
+    /// of maps that go on from `keys`: the name is the rest of the line,
+    /// `|` and `"` included, but for a last word `icon={icon}`, naming an
+    /// icon to draw beside it.
     fn group(&mut self, line: usize, args: &str) {
         let args = args.trim_matches([' ', '\t']);
         let keys_len = args.find([' ', '\t']).unwrap_or(args.len());
-        let (keys, name) = args.split_at(keys_len);
+        let (keys, rest) = args.split_at(keys_len);
         if keys.is_empty() {
             return self.issue(line, "fegroup needs keys and a name");
         }
+        let (name, icon) = group_icon(rest);
         let keys = with_leader(keys, &self.leader);
-        match WhichKeyGroupName::parse(&[N], &keys, name, "\\") {
+        match WhichKeyGroupName::parse_with_icon(&[N], &keys, name, icon, "\\") {
             Ok(groups) => self.vimrc.groups.extend(groups),
             Err(message) => self.issue(line, format!("fegroup: {message}")),
         }
@@ -401,6 +405,17 @@ fn split_bar(text: &str, comments: bool) -> (String, Option<&str>) {
         }
     }
     (taken, None)
+}
+
+/// `:fegroup`'s name and icon: `rest` but for its last word if that's
+/// `icon={icon}`, and the icon.
+fn group_icon(rest: &str) -> (&str, Option<&str>) {
+    let rest = rest.trim_end_matches([' ', '\t']);
+    let word_at = rest.rfind([' ', '\t']).map_or(0, |at| at + 1);
+    match rest[word_at..].strip_prefix("icon=") {
+        Some(icon) => (&rest[..word_at], Some(icon)),
+        None => (rest, None),
+    }
 }
 
 /// `text` with each `<leader>` (any case) replaced by `leader`, as nvim

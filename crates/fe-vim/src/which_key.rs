@@ -17,7 +17,7 @@
 //! keymap matcher's.
 
 use crate::feature::replace_register;
-use crate::remap::{Lookup, group_name};
+use crate::remap::{Lookup, group_icon, group_name};
 use crate::vimrc::notation;
 use crate::{Mode, Pending, RemapMode, Step, VimKey, VimState};
 
@@ -51,6 +51,11 @@ pub struct WhichKeyEntry {
     pub label: WhichKeyLabel,
     /// More keys go on after it: maps longer than one ending at it.
     pub group: bool,
+    /// The name of an icon of the host's bundled set to draw beside it
+    /// (`"bug"`): a named group's from its `:fegroup` or
+    /// `[[vim.which_key_group]]` ([`crate::WhichKeyGroupName::icon`]). A
+    /// host may give an item one by its command.
+    pub icon: Option<String>,
 }
 
 /// What to call a key.
@@ -253,6 +258,7 @@ impl VimState {
                         key: notation(key),
                         label: WhichKeyLabel::Builtin(title),
                         group: false,
+                        icon: None,
                     });
                 }
             }
@@ -260,13 +266,15 @@ impl VimState {
         if !keys.is_empty() {
             let mut prefix = keys.to_vec();
             for continuation in self.remaps().continuations(mode, keys) {
+                let mut icon = None;
                 let label = match (continuation.command, continuation.map) {
                     (Some(id), _) => WhichKeyLabel::Command(id.to_string()),
                     (None, Some(map)) => WhichKeyLabel::Keys(map.to.clone()),
                     (None, None) => {
                         prefix.push(continuation.key);
-                        let name = group_name(&self.which_key_groups, mode, &prefix);
-                        let name = name.map(str::to_string);
+                        let groups = &self.which_key_groups;
+                        let name = group_name(groups, mode, &prefix).map(str::to_string);
+                        icon = group_icon(groups, mode, &prefix).map(str::to_string);
                         prefix.pop();
                         WhichKeyLabel::Group {
                             count: continuation.longer,
@@ -280,6 +288,7 @@ impl VimState {
                     key,
                     label,
                     group: continuation.longer > 0,
+                    icon,
                 });
             }
         }

@@ -77,18 +77,19 @@ nnoremap <leader>qq <Cmd>fe:app.quit<CR>
 nnoremap <leader>uw <Cmd>fe:editor.toggle_soft_wrap<CR>
 
 " which-key's names for the groups above, as LazyVim's which-key spec names
-" them: only prefixes the preset has maps beneath.
-fegroup <leader>b buffer
-fegroup <leader>c code
-fegroup <leader>f file/find
-fegroup <leader>g git
-fegroup <leader>gh hunks
-fegroup <leader>q quit/session
-fegroup <leader>s search
+" them: only prefixes the preset has maps beneath. Each icon= names a Lucide
+" icon drawn beside the group, after LazyVim's.
+fegroup <leader>b buffer icon=files
+fegroup <leader>c code icon=code
+fegroup <leader>f file/find icon=search
+fegroup <leader>g git icon=git-branch
+fegroup <leader>gh hunks icon=file-diff
+fegroup <leader>q quit/session icon=log-out
+fegroup <leader>s search icon=search
 fegroup <leader>t test
-fegroup <leader>u ui
-fegroup <leader>w windows
-fegroup <leader>x diagnostics/quickfix
+fegroup <leader>u ui icon=toggle-right
+fegroup <leader>w windows icon=app-window
+fegroup <leader>x diagnostics/quickfix icon=triangle-alert
 
 " Unmapped LazyVim keys: fastedit has no command for them.
 "   <leader>sk  keymaps picker

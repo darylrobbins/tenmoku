@@ -374,7 +374,8 @@ pub struct VimSettings {
     /// Names for groups of remaps, which the which-key popup shows as
     /// `+{name}` in place of `+{count}`. Each is a `[[vim.which_key_group]]`
     /// table; it loads after the vimrc's `:fegroup`s and the preset's, and
-    /// a later name for the same keys in the same mode wins.
+    /// a later name for the same keys in the same mode wins, as does a
+    /// later icon.
     pub which_key_group: Vec<VimWhichKeyGroup>,
 }
 
@@ -424,6 +425,13 @@ pub struct VimWhichKeyGroup {
     #[serde(deserialize_with = "not_blank")]
     #[schemars(length(min = 1))]
     pub name: String,
+    /// An icon the popup draws beside the group, by its name in the bundled
+    /// Lucide set (`"search"`, `"git-branch"`, `"bug"`). Unset keeps an
+    /// icon an earlier name for the same keys gives, as the preset's; a
+    /// name not in the set draws none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(regex(pattern = r"^[a-z0-9]+(-[a-z0-9]+)*$"))]
+    pub icon: Option<String>,
 }
 
 fn normal_mode() -> VimRemapModes {

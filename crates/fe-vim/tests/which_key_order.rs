@@ -98,6 +98,7 @@ fn keymap_chords_order_items_before_groups() {
             key: key.into(),
             label,
             group,
+            icon: None,
         });
     }
     which.sort_entries();

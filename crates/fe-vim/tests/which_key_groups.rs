@@ -1,6 +1,7 @@
 //! Which-key group names: a vimrc's `:fegroup {keys} {name}` (or a
 //! `WhichKeyGroupName` from the settings) titles the group of maps that go
-//! on from a held prefix, per mode, the last name given winning.
+//! on from a held prefix, per mode, the last name given winning; an
+//! `icon={icon}` after it names the group's icon.
 
 use std::sync::Arc;
 
@@ -144,6 +145,7 @@ fn a_malformed_fegroup_line_is_an_issue() {
             mode: N,
             keys: keys("\\f"),
             name: "file/find".into(),
+            icon: None,
         }]
     );
     assert_eq!(parsed.remaps.len(), 1);
@@ -151,4 +153,96 @@ fn a_malformed_fegroup_line_is_an_issue() {
     assert!(WhichKeyGroupName::parse(&[N], "", "x", "\\").is_err());
     assert!(WhichKeyGroupName::parse(&[N], "\\f", " ", "\\").is_err());
     assert!(WhichKeyGroupName::parse(&[N], "<Bogus>", "x", "\\").is_err());
+}
+
+/// The icon a group's entry carries.
+fn icon(vim: &HeadlessVim, prefix: &str, key: &str) -> Option<String> {
+    let which = vim.state().which_key_for(&keys(prefix)).unwrap();
+    let entry = (which.entries.into_iter().find(|entry| entry.key == key))
+        .unwrap_or_else(|| panic!("{key} not listed after {prefix}"));
+    entry.icon
+}
+
+#[test]
+fn a_group_icon_is_carried() {
+    let vim = vim(
+        "nnoremap \\dd x\nnnoremap \\db y\nnnoremap \\ff z\nnnoremap \\x w\n\
+         fegroup \\d debug icon=bug\n\
+         fegroup \\f file/find\n",
+        &[],
+    );
+    assert_eq!(label(&vim, "\\", "d"), group(2, Some("debug")));
+    assert_eq!(icon(&vim, "\\", "d").as_deref(), Some("bug"));
+    // A group named without one, and an item, carry none: the host gives
+    // an item its command's.
+    assert_eq!(icon(&vim, "\\", "f"), None);
+    assert_eq!(icon(&vim, "\\", "x"), None);
+    // The name is the rest of the line but the icon, spaces and all.
+    let spaced = self::vim(
+        "nnoremap \\dd x\nfegroup \\d run  and debug\ticon=bug\n",
+        &[],
+    );
+    assert_eq!(label(&spaced, "\\", "d"), group(1, Some("run  and debug")));
+    assert_eq!(icon(&spaced, "\\", "d").as_deref(), Some("bug"));
+    // A later name without an icon keeps the earlier icon, as which-key.nvim
+    // merges specs; a later icon wins.
+    let renamed = self::vim(
+        "nnoremap \\dd x\nfegroup \\d debug icon=bug\nfegroup \\d dbg\n",
+        &[],
+    );
+    assert_eq!(label(&renamed, "\\", "d"), group(1, Some("dbg")));
+    assert_eq!(icon(&renamed, "\\", "d").as_deref(), Some("bug"));
+    let settings = WhichKeyGroupName::parse_with_icon(&[N], "\\d", "debug", Some("play"), "\\");
+    let replaced = self::vim(
+        "nnoremap \\dd x\nfegroup \\d debug icon=bug\n",
+        &settings.unwrap(),
+    );
+    assert_eq!(icon(&replaced, "\\", "d").as_deref(), Some("play"));
+    // Per mode: `:fegroup`'s icon is normal mode's only.
+    let mut visual = self::vim(
+        "nnoremap \\dd x\nxnoremap \\dd y\nfegroup \\d debug icon=bug\n",
+        &[],
+    );
+    visual.feed("v").unwrap();
+    assert_eq!(icon(&visual, "\\", "d"), None);
+}
+
+#[test]
+fn a_malformed_icon_is_an_issue() {
+    let parsed = parse_vimrc(
+        "nnoremap \\dd x\n\
+         fegroup \\d icon=bug\n\
+         fegroup \\d debug icon=\n\
+         fegroup \\d debug icon=Bug\n\
+         fegroup \\d debug icon=-bug\n\
+         fegroup \\d debug icon=git--branch\n\
+         fegroup \\d debug icon=git-branch\n",
+    );
+    let lines: Vec<usize> = parsed.issues.iter().map(|issue| issue.line).collect();
+    assert_eq!(lines, [2, 3, 4, 5, 6], "{:?}", parsed.issues);
+    assert!(
+        parsed.issues[0].message.contains("name"),
+        "{:?}",
+        parsed.issues
+    );
+    assert!(
+        parsed.issues[1].message.contains("icon"),
+        "{:?}",
+        parsed.issues
+    );
+    assert_eq!(
+        parsed.groups,
+        [WhichKeyGroupName {
+            mode: N,
+            keys: keys("\\d"),
+            name: "debug".into(),
+            icon: Some("git-branch".into()),
+        }]
+    );
+    // `icon=` only as the last word: earlier, it's part of the name.
+    let inner = parse_vimrc("nnoremap \\dd x\nfegroup \\d icon=bug debug\n");
+    assert_eq!(inner.issues, []);
+    assert_eq!(inner.groups[0].name, "icon=bug debug");
+    assert_eq!(inner.groups[0].icon, None);
+    assert!(WhichKeyGroupName::parse_with_icon(&[N], "\\d", "x", Some(""), "\\").is_err());
 }

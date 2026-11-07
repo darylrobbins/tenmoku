@@ -353,7 +353,7 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
 
 ## Icons
 
-- **Set:** Lucide, unmodified, 68 SVGs in `kiln/crates/kiln-ui/assets/icons/`, named
+- **Set:** Lucide, unmodified, 83 SVGs in `kiln/crates/kiln-ui/assets/icons/`, named
   by `kiln/crates/kiln-ui/src/file_icons.rs:Icon`. `FILE_NAMES` and `EXTENSIONS` map a
   file to its icon. An app can swap the set with `set_icon_set`
   (`kiln/crates/kiln-ui/src/file_icons.rs:IconSet`, default `LucideIcons`).
@@ -362,6 +362,13 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
 - **Drawing:** monochrome strokes, which GPUI's `svg()` draws as an alpha mask in the
   element's text colour (`kiln/crates/kiln-ui/src/file_icons.rs`). So a Lucide icon's
   colour is always a `text_color` call, and it has no colours of its own.
+- **Which-key rows:** the editor's which-key popup draws a Lucide icon per row, a
+  group's from its `:fegroup … icon={name}` or `[[vim.which_key_group]]` `icon`, an
+  item's by its command (`crates/fe-gpui/src/vim/which_key_icons.rs:COMMAND_ICONS`,
+  `NAMESPACE_ICONS`), tinted with one of the editor theme's semantic colours
+  (`information`, `warning`, `error`, `hint`, and `change_added` for success) by a fixed
+  table per icon (`ICON_COLOURS`): no colours of its own. A group's title shares its
+  icon's colour.
 - **Second set, for files and folders:** a curated subset of Material Icon Theme, MIT,
   unmodified, 142 SVGs in `kiln/crates/kiln-ui/assets/file-icons/`
   (`kiln/crates/kiln-ui/src/file_icons_coloured.rs:ColouredIcons`): an icon per
@@ -387,6 +394,7 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
 | 14 | Crumbs | `list.icon` | `kiln/crates/kiln-ui/src/breadcrumbs.rs` |
 | 14 | Button icon | The button's text | `kiln/crates/kiln-ui/src/controls.rs` |
 | 14 | Window controls | `text.muted` | `kiln/crates/kiln-shell/src/window_frame.rs` |
+| 1em (in a 1.2em box) | Which-key popup rows | The icon's semantic colour (`ICON_COLOURS`) | `crates/fe-gpui/src/vim/which_key.rs:ICON_BOX`, `popup_layer` |
 | 12 | Crumb separators | `text.muted` | `kiln/crates/kiln-ui/src/breadcrumbs.rs` |
 | 11 | Git log ref labels | The label's | `crates/fe-workbench/src/git_log.rs` |
 | 11 | A Markdown task's check (an image, not `svg()`) | One of two baked SVGs, by the link colour's lightness | `crates/fe-markdown-view/src/blocks.rs` |

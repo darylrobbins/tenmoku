@@ -75,13 +75,19 @@ pub(crate) fn is_group(entry: &WhichKeyEntry) -> bool {
 }
 
 /// `entry`'s colours: its key in the warning colour, the arrow dim, and its
-/// title in the information colour for a group, the text's for an item.
+/// title in the text's colour for an item; for a group, in its icon's
+/// ([`super::which_key_icons::entry_icon`]), so the two share one, or the
+/// information colour without one.
 pub(crate) fn entry_colors(entry: &WhichKeyEntry, theme: &EditorTheme) -> EntryColors {
+    let group = || match super::which_key_icons::entry_icon(entry, theme) {
+        Some((_, colour)) => colour,
+        None => theme.information,
+    };
     EntryColors {
         key: theme.warning,
         arrow: theme.gutter_foreground,
         title: match is_group(entry) {
-            true => theme.information,
+            true => group(),
             false => theme.foreground,
         },
     }

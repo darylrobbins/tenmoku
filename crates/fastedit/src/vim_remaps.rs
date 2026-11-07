@@ -138,8 +138,9 @@ enum Problem {
     Leader(String),
     /// The entry of `vim.remap`, and which of its keys the problem is in.
     Entry(usize, &'static str, String),
-    /// The entry of `vim.which_key_group` whose `keys` can't be read.
-    Group(usize, String),
+    /// The entry of `vim.which_key_group`, and which of its keys can't be
+    /// read: `keys` (the entry is left out) or `icon` (it loads without).
+    Group(usize, &'static str, String),
 }
 
 impl VimRemaps {
@@ -386,13 +387,23 @@ impl VimRemaps {
         groups.extend_from_slice(&self.vimrc_groups);
         for (entry, group) in self.group_table.iter().enumerate() {
             if !readable && group.keys.to_ascii_lowercase().contains("<leader>") {
-                problems.push(Problem::Group(entry, "vim.leader can't be read".to_owned()));
+                let message = "vim.leader can't be read".to_owned();
+                problems.push(Problem::Group(entry, "keys", message));
                 continue;
             }
             let modes = remap_modes(group.mode.modes());
-            match WhichKeyGroupName::parse(&modes, &group.keys, &group.name, leader) {
-                Ok(named) => groups.extend(named),
-                Err(message) => problems.push(Problem::Group(entry, message)),
+            let (keys, name, icon) = (&group.keys, &group.name, group.icon.as_deref());
+            match WhichKeyGroupName::parse(&modes, keys, name, leader) {
+                Ok(named) => {
+                    match WhichKeyGroupName::parse_with_icon(&modes, keys, name, icon, leader) {
+                        Ok(with_icon) => groups.extend(with_icon),
+                        Err(message) => {
+                            problems.push(Problem::Group(entry, "icon", message));
+                            groups.extend(named);
+                        }
+                    }
+                }
+                Err(message) => problems.push(Problem::Group(entry, "keys", message)),
             }
         }
         groups
@@ -437,15 +448,15 @@ impl VimRemaps {
                     let at = offset(ix, &|table| entry_offset(table, "remap", entry, side));
                     (format!("vim.remap[{entry}].{side}"), ix, at, message)
                 }
-                Problem::Group(entry, message) => {
+                Problem::Group(entry, side, message) => {
                     let Some(ix) = origin("which_key_group") else {
                         continue;
                     };
                     let at = offset(ix, &|table| {
-                        entry_offset(table, "which_key_group", entry, "keys")
+                        entry_offset(table, "which_key_group", entry, side)
                     });
                     (
-                        format!("vim.which_key_group[{entry}].keys"),
+                        format!("vim.which_key_group[{entry}].{side}"),
                         ix,
                         at,
                         message,

@@ -148,6 +148,22 @@ icons! {
     // The Git Log's ref pills: a remote branch and a tag.
     Cloud => "cloud",
     Tag => "tag",
+    // The which-key popup's row icons, by command or group; not mapped
+    // from names.
+    AppWindow => "app-window",
+    Bot => "bot",
+    Bug => "bug",
+    FlaskConical => "flask-conical",
+    LogOut => "log-out",
+    PanelsTopLeft => "panels-top-left",
+    Play => "play",
+    Redo => "redo",
+    Save => "save",
+    Settings => "settings",
+    Terminal => "terminal",
+    TextWrap => "text-wrap",
+    ToggleRight => "toggle-right",
+    Undo => "undo",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.
