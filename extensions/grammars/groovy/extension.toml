@@ -1,0 +1,19 @@
+id = "tenmoku.grammar_groovy"
+name = "Groovy syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "groovy"
+wasm = "tree-sitter-groovy.wasm"
+extensions = ["groovy", "gradle", "gvy", "gy", "gsh"]
+file_names = ["Jenkinsfile"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+shebangs = ["groovy"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

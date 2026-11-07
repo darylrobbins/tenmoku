@@ -241,6 +241,7 @@ licence. No module is committed.
 | properties | `tree-sitter-properties.wasm` | [tree-sitter-grammars/tree-sitter-properties](https://github.com/tree-sitter-grammars/tree-sitter-properties) @ `6310671b24d4e04b803577b1c675d765cbd5773b` (`src`), package version 0.3.0 | MIT; `highlights.scm` is upstream's (same licence), with the secret provider key as `@string.special` rather than `@function` |
 | kdl | `tree-sitter-kdl.wasm` | [tree-sitter-grammars/tree-sitter-kdl](https://github.com/tree-sitter-grammars/tree-sitter-kdl) @ `e8ff98a113e175b84b92ec2096820517c1e10a66` (`src`) | MIT; `highlights.scm` is upstream's (same licence), less the `#any-of?` pattern and `@spell`; `injections.scm` is comment-only |
 | terraform | `tree-sitter-terraform.wasm` | https://github.com/tree-sitter-grammars/tree-sitter-hcl at `64ad62785d442eb4d45df3a1764962dafd5bc98b` (`dialects/terraform/src`) | Apache-2.0; `highlights.scm` is nvim-treesitter's Apache-2.0 `runtime/queries/hcl/highlights.scm` and `runtime/queries/terraform/highlights.scm` at `915f2bd3d4e2a33704bfc476b5137e9befa82f3d`, adapted, with the text in `LICENSE-APACHE` |
+| groovy | `tree-sitter-groovy.wasm` | https://github.com/murtaza64/tree-sitter-groovy `2a6ddd558b6aa39c5b77d8db9fe9baf817486b2c` (`src`) | MIT; `highlights.scm` is that repository's own `queries/highlights.scm` (MIT) |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

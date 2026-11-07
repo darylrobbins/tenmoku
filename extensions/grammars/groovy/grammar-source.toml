@@ -1,0 +1,4 @@
+git = "https://github.com/murtaza64/tree-sitter-groovy"
+rev = "2a6ddd558b6aa39c5b77d8db9fe9baf817486b2c"
+src = "src"
+grammar = "groovy"
