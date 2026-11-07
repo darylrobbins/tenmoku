@@ -179,6 +179,9 @@ pub(crate) struct Listener {
     /// the child's last output.
     exit_code: Arc<Mutex<Option<i32>>>,
     exited: Arc<AtomicBool>,
+    /// What Windows' console host puts before each title, learned from its
+    /// default one: `Administrator: ` when elevated, the word localized.
+    title_prefix: Arc<Mutex<Option<String>>>,
 }
 
 impl Listener {
@@ -206,66 +209,28 @@ impl Listener {
     }
 }
 
-/// The title a session's program set, from the one its console reports:
-/// without what Windows' console host adds to it, and empty for the
-/// console's own default.
-fn program_title(title: String) -> String {
-    let title = without_elevated_prefix(&title, elevated());
-    if is_console_default_title(title) {
+/// The title a session's program set, from `title`, the one its console
+/// reports: empty for the console's own default, and without what Windows'
+/// console host puts before every title. That prefix (`Administrator: `
+/// when elevated, the word localized) is learned from the default title,
+/// which the console sends first, and kept in `prefix`.
+fn program_title(title: String, prefix: &mut Option<String>) -> String {
+    if is_console_default_title(&title) {
+        *prefix = Some(String::new());
         return String::new();
     }
-    title.to_owned()
-}
-
-/// `title` without the `Administrator: ` an elevated Windows console puts
-/// before every title, the word localized. The console always adds one, so
-/// the first `: ` is its own. Unchanged when not `elevated`.
-fn without_elevated_prefix(title: &str, elevated: bool) -> &str {
-    match elevated {
-        true => title.split_once(": ").map_or(title, |(_, rest)| rest),
-        false => title,
+    if let Some((before, path)) = title.split_once(": ")
+        && is_console_default_title(path)
+    {
+        *prefix = Some(format!("{before}: "));
+        return String::new();
     }
-}
-
-/// Whether this process runs elevated, so its consoles' titles are
-/// prefixed. Never elsewhere than Windows.
-#[cfg(windows)]
-fn elevated() -> bool {
-    use std::sync::OnceLock;
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, HANDLE},
-        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
-        System::Threading::{GetCurrentProcess, OpenProcessToken},
-    };
-    static ELEVATED: OnceLock<bool> = OnceLock::new();
-    *ELEVATED.get_or_init(|| {
-        let mut token: HANDLE = std::ptr::null_mut();
-        // SAFETY: the pseudo-handle is always valid; `token` receives the
-        // process token, closed below.
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-            return false;
-        }
-        let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
-        let mut written = 0u32;
-        // SAFETY: `elevation` is a TOKEN_ELEVATION of the size passed.
-        let read = unsafe {
-            GetTokenInformation(
-                token,
-                TokenElevation,
-                (&raw mut elevation).cast(),
-                size_of::<TOKEN_ELEVATION>() as u32,
-                &mut written,
-            )
-        };
-        // SAFETY: `token` was opened above and is closed once.
-        unsafe { CloseHandle(token) };
-        read != 0 && elevation.TokenIsElevated != 0
-    })
-}
-
-#[cfg(not(windows))]
-fn elevated() -> bool {
-    false
+    match prefix.as_deref() {
+        Some(prefix) if !prefix.is_empty() => title
+            .strip_prefix(prefix)
+            .map_or_else(|| title.clone(), str::to_owned),
+        _ => title,
+    }
 }
 
 /// Whether `title` is what Windows' console host titles a session whose
@@ -282,7 +247,12 @@ impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         match event {
             Event::Wakeup => self.send(TerminalEvent::Wakeup),
-            Event::Title(title) => self.send(TerminalEvent::Title(program_title(title))),
+            Event::Title(title) => {
+                let mut prefix = self.title_prefix.lock().unwrap_or_else(|e| e.into_inner());
+                let title = program_title(title, &mut prefix);
+                drop(prefix);
+                self.send(TerminalEvent::Title(title));
+            }
             Event::ResetTitle => self.send(TerminalEvent::Title(String::new())),
             Event::Bell => self.send(TerminalEvent::Bell),
             Event::ClipboardStore(_, text) => self.send(TerminalEvent::ClipboardStore(text)),
@@ -336,6 +306,7 @@ impl Terminal {
             size: Arc::new(Mutex::new(window_size)),
             exit_code: Arc::new(Mutex::new(None)),
             exited: Arc::new(AtomicBool::new(false)),
+            title_prefix: Arc::new(Mutex::new(None)),
         };
 
         // The loop trims history back to the scrollback (`ShellState`).
@@ -655,25 +626,34 @@ impl Drop for Terminal {
 
 #[cfg(test)]
 mod console_title_tests {
-    use super::{is_console_default_title, without_elevated_prefix};
+    use super::{is_console_default_title, program_title};
+
+    /// The labels `titles`, in order, come to as one session's.
+    fn program_titles(titles: &[&str]) -> Vec<String> {
+        let mut prefix = None;
+        (titles.iter())
+            .map(|title| program_title((*title).to_owned(), &mut prefix))
+            .collect()
+    }
 
     #[test]
-    fn an_elevated_consoles_prefix_goes_and_its_own_title_is_none() {
-        let elevated = r"Administrator: C:\Windows\SYSTEM32\cmd.exe";
-        assert_eq!(
-            without_elevated_prefix(elevated, true),
-            r"C:\Windows\SYSTEM32\cmd.exe"
-        );
-        assert_eq!(
-            without_elevated_prefix("Administrator: build: x", true),
-            "build: x"
-        );
-        assert_eq!(without_elevated_prefix("build: x", false), "build: x");
-        assert_eq!(
-            is_console_default_title(r"C:\WINDOWS\system32\cmd.exe"),
-            cfg!(windows)
-        );
-        assert!(!is_console_default_title("build: cargo test"));
+    #[cfg(windows)]
+    fn an_elevated_consoles_prefix_is_learned_and_dropped() {
+        let titles = [
+            r"Administrator: C:\Windows\SYSTEM32\cmd.exe",
+            "Administrator: build",
+            "Administrator: build: x",
+            "other",
+        ];
+        assert_eq!(program_titles(&titles), ["", "build", "build: x", "other"]);
+        // Not elevated, a title keeps its own colon.
+        let titles = [r"C:\WINDOWS\system32\cmd.exe", "build: x"];
+        assert_eq!(program_titles(&titles), ["", "build: x"]);
+    }
+
+    #[test]
+    fn titles_are_kept_without_a_console() {
+        assert_eq!(program_titles(&["build: x", "y"]), ["build: x", "y"]);
         assert!(!is_console_default_title("Terminal 1"));
     }
 }

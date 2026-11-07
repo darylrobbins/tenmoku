@@ -24,7 +24,13 @@ fn serially(state: &std::path::Path) -> MutexGuard<'static, ()> {
     // With no config directory (HOME gone too), the workbench neither reads
     // the user's settings nor starts a user-layer watcher thread, whose
     // wake-ups the test scheduler rejects. TENMOKU_STATE_DIR doesn't need HOME.
-    for var in ["TENMOKU_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME", "APPDATA"] {
+    for var in [
+        "TENMOKU_CONFIG_DIR",
+        "XDG_CONFIG_HOME",
+        "HOME",
+        "APPDATA",
+        "USERPROFILE",
+    ] {
         // SAFETY: as above.
         unsafe { std::env::remove_var(var) };
     }

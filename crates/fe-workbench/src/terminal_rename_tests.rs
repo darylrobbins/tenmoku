@@ -4,7 +4,8 @@
 use gpui::{Modifiers, MouseButton, SharedString, TestAppContext};
 
 use super::terminal_tabs_tests::{
-    draw, drawn_tabs, ids, opened, run, tab_bounds, title_command, type_line, until, with_sessions,
+    draw, drawn_tabs, ids, opened, run, tab_bounds, title_command, type_line, until, until_tabs,
+    with_sessions,
 };
 use crate::workbench::Palette;
 
@@ -97,9 +98,12 @@ fn custom_name_wins_over_shell_title(cx: &mut TestAppContext) {
 
     // The third, active, is named after its shell set a title.
     type_line(&all[2], &title_command("three"), cx);
-    until(cx, "the third's title", |cx| {
-        labels(&workbench, cx)[2] == "three"
-    });
+    until_tabs(
+        cx,
+        "the third's title",
+        |cx| labels(&workbench, cx),
+        |tabs| tabs[2] == "three",
+    );
     run("terminal.rename", cx);
     clear_input(cx);
     cx.simulate_input("mine");
@@ -110,9 +114,12 @@ fn custom_name_wins_over_shell_title(cx: &mut TestAppContext) {
     // Other sessions keep their own labels, and a new title doesn't
     // replace the name.
     type_line(&all[1], &title_command("two"), cx);
-    until(cx, "the second's title", |cx| {
-        labels(&workbench, cx)[1] == "two"
-    });
+    until_tabs(
+        cx,
+        "the second's title",
+        |cx| labels(&workbench, cx),
+        |tabs| tabs[1] == "two",
+    );
     let then = if cfg!(windows) { "&" } else { ";" };
     type_line(
         &all[2],

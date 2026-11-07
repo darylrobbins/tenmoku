@@ -444,7 +444,9 @@ fn filter_runs_through_cmd(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
     std::fs::create_dir(&root).unwrap();
-    std::fs::write(root.join("a.txt"), "c\na\nb\n").unwrap();
+    // An odd number of bytes: sort.exe takes some even-length input with
+    // no BOM for UTF-16, as `IsTextUnicode` guesses.
+    std::fs::write(root.join("a.txt"), "c\na\nbb\n").unwrap();
     let _settings = Settings::start(dir.path(), cx);
     let (workbench, mut vcx) = window(cx, &root, &["a.txt"]);
     let cx = &mut vcx;
@@ -457,16 +459,16 @@ fn filter_runs_through_cmd(cx: &mut TestAppContext) {
     ex("%!sort", cx);
     let shown =
         |cx: &mut VisualTestContext| format!("{:?}, {:?}", text(&a, cx), message(&workbench, cx));
-    let sorted = |cx: &mut VisualTestContext| text(&a, cx) == "a\nb\nc\n";
+    let sorted = |cx: &mut VisualTestContext| text(&a, cx) == "a\nbb\nc\n";
     until_within(cx, "sorted", Duration::from_secs(60), sorted, shown);
     cx.simulate_keystrokes("u");
-    assert_eq!(text(&a, cx), "c\na\nb\n");
+    assert_eq!(text(&a, cx), "c\na\nbb\n");
 
     // :r !cmd puts its rows below the caret's line.
     ex("$r !echo z", cx);
-    until(cx, "read at the end", |cx| text(&a, cx) == "c\na\nb\nz\n");
+    until(cx, "read at the end", |cx| text(&a, cx) == "c\na\nbb\nz\n");
     cx.simulate_keystrokes("u");
-    assert_eq!(text(&a, cx), "c\na\nb\n");
+    assert_eq!(text(&a, cx), "c\na\nbb\n");
 
     // A file name isn't put in a cmd.exe command line.
     ex(".!echo %", cx);
@@ -475,7 +477,7 @@ fn filter_runs_through_cmd(cx: &mut TestAppContext) {
         message(&workbench, cx).as_deref(),
         Some(NO_NAMES_ON_WINDOWS)
     );
-    assert_eq!(text(&a, cx), "c\na\nb\n");
+    assert_eq!(text(&a, cx), "c\na\nbb\n");
 }
 
 #[test]
