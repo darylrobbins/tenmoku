@@ -119,11 +119,14 @@ adoption = "auto"
 [scopes]
 # Any task may add lines to these without claiming them, so tasks that add a crate or a
 # dependency run in parallel; a change to an existing line is still a scope expansion.
+# Module declarations and command registrations are added lines, so cards that add a module or a
+# command run in parallel; editing an existing line is still a scope expansion.
 # Regatta's four defaults are repeated because setting the key replaces them.
 shared_append_only = [
   "docs/recovery.md", "docs/compat.md", "docs/recovery/**", "docs/compat/**",
   "Cargo.toml", "Cargo.lock", "crates/fastedit/Cargo.toml",
   "PERF.md", "THIRD_PARTY.md",
+  "crates/*/src/lib.rs", "crates/fe-workbench/src/workbench_commands.rs",
 ]
 
 [caps]
