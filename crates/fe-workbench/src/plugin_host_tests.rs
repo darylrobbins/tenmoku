@@ -131,6 +131,14 @@ fn found(dir: &Path) -> Found {
 /// The app with the workbench's commands, and the plugin host keeping its
 /// files in a directory of the test's, with the preview on.
 fn start(cx: &mut TestAppContext) -> Plugins {
+    // Loading runs under the call deadline too: a starved thread can push
+    // instantiate and init past the real 100 ms and stop the plugin for good.
+    start_with_call_deadline(cx, Duration::from_secs(30))
+}
+
+/// `start`, with the plugin host's call deadline set to `deadline`: tests
+/// whose subject is the deadline pass `CALL_DEADLINE`.
+fn start_with_call_deadline(cx: &mut TestAppContext, deadline: Duration) -> Plugins {
     // Plugins run on threads of their own.
     cx.executor().allow_parking();
     let dir = tempfile::tempdir().unwrap();
@@ -141,6 +149,7 @@ fn start(cx: &mut TestAppContext) -> Plugins {
         crate::init(cx);
         set_plugin_dirs(cx, state, cache);
         set_preview(cx, true);
+        cx.global_mut::<PluginHost>().limits.call_deadline = deadline;
     });
     Plugins { dir }
 }
@@ -178,7 +187,11 @@ fn until(cx: &mut TestAppContext, what: &str, done: impl Fn(&App) -> bool) {
         if cx.update(|cx| done(cx)) {
             return;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {what}: {:#?}",
+            cx.update(|cx| plugin_states(cx))
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -508,7 +521,7 @@ fn a_rebuilt_component_reloads_without_a_prompt(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_stuck_plugin_does_not_freeze_the_window(cx: &mut TestAppContext) {
-    let plugins = start(cx);
+    let plugins = start_with_call_deadline(cx, CALL_DEADLINE);
     plugins.grant(TOOL, (1, 0, 0), &["commands"]);
     let tool = plugins.install(TOOL, "1.0.0", COMMANDS, &["commands"]);
     let (workbench, vcx) = window(cx);
@@ -1000,7 +1013,7 @@ fn a_granted_program_runs_and_an_ungranted_one_is_denied(cx: &mut TestAppContext
 
 #[gpui::test]
 fn a_command_runs_only_in_its_context_with_args_that_fit(cx: &mut TestAppContext) {
-    let plugins = start(cx);
+    let plugins = start_with_call_deadline(cx, CALL_DEADLINE);
     plugins.grant(TOOL, (1, 0, 0), &["commands"]);
     let tool = plugins.install(TOOL, "1.0.0", COMMANDS, &["commands"]);
     let (_, vcx) = window(cx);
@@ -1229,7 +1242,7 @@ fn spawn(
 
 #[gpui::test]
 fn a_granted_program_that_outlasts_the_call_deadline_completes(cx: &mut TestAppContext) {
-    let plugins = start(cx);
+    let plugins = start_with_call_deadline(cx, CALL_DEADLINE);
     let bin = tempfile::tempdir().unwrap();
     let plugin = spawner(
         cx,
@@ -1250,14 +1263,7 @@ fn a_spawn_in_flight_ends_before_the_plugin_unloads(cx: &mut TestAppContext) {
     let bin = tempfile::tempdir().unwrap();
     let plugin = spawner(cx, &plugins, script(bin.path(), "nap", "exec sleep 1"));
 
-    // A program run has its own, longer limit: it isn't killed at the call's.
-    let napped = spawn(&plugin, "nap");
-    assert_eq!(napped, Ok(Reply::RunCommand(Ok(()))));
-
     // A preview turned off mid-spawn unloads the plugin once the run ends.
-    cx.update(reevaluate);
-    until(cx, "the plugin to run again", running(SPAWNER));
-    let plugin = loaded_plugin(cx, SPAWNER);
     let started = Instant::now();
     let napping = std::thread::spawn(move || spawn(&plugin, "nap"));
     std::thread::sleep(Duration::from_millis(20));
