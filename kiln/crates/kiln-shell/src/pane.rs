@@ -16,6 +16,14 @@
 //! place. It's kept, made an ordinary item, once it's dirty, its tab is
 //! double-clicked, or [`PaneView::pin_item`] pins it.
 //!
+//! A tab can be pinned to the strip's start ([`PaneView::pin_tab`]), as
+//! VS Code's sticky tabs are: the pinned items lead, in the order they were
+//! pinned, and are drawn compact, at their icon's width
+//! ([`kiln_ui::Tab::pinned`]). No reorder or insert crosses the boundary:
+//! a pinned item moves only among the pinned, and an item put in the pane
+//! goes after them. A layout saves and restores the flag
+//! ([`crate::layout`]).
+//!
 //! A tab can be dragged ([`DraggedTab`]) into another pane's tab strip or
 //! onto its content, whose edges split it ([`DropZone`]); the pane it's
 //! dropped on emits [`TabDropped`], for the host to move it with
@@ -23,7 +31,7 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Component, Path, PathBuf},
     rc::Rc,
 };
@@ -231,6 +239,8 @@ pub struct PaneState<V> {
     /// The preview item, which the next preview replaces. The items'
     /// observers clear it once it's dirty.
     preview: Rc<Cell<Option<ItemId>>>,
+    /// The pinned items, which lead the others: see [`PaneView::pin_tab`].
+    pinned: HashSet<ItemId>,
     peers: Peers<V>,
     /// The view's.
     id: EntityId,
@@ -258,6 +268,7 @@ impl<V: PaneView> PaneState<V> {
             hint_bounds: Rc::default(),
             hover: None,
             preview: Rc::default(),
+            pinned: HashSet::new(),
             peers: Peers::default(),
             id: cx.entity_id(),
             view: cx.weak_entity(),
@@ -294,10 +305,32 @@ impl<V: PaneView> PaneState<V> {
         self.insert(self.items.len(), item, cx)
     }
 
-    /// Puts `item` at `ix`, clamped, without showing it: the active item
-    /// stays the same one.
+    /// Puts `item` at `ix`, clamped, and after the pinned items, without
+    /// showing it: the active item stays the same one.
     pub fn insert(&mut self, ix: usize, item: Box<dyn ItemHandle>, cx: &mut App) -> usize {
-        let ix = ix.min(self.items.len());
+        let ix = ix.clamp(self.pinned_count(), self.items.len());
+        self.insert_at(ix, item, cx)
+    }
+
+    /// Puts `item` just before item `ix`, which it's to replace in place,
+    /// pinned if that one is, without showing it: the active item stays the
+    /// same one. The host then takes the old item out by its ID, now at
+    /// `ix + 1`. `None`, adding nothing, if there's no item `ix`.
+    pub fn insert_replacing(
+        &mut self,
+        ix: usize,
+        item: Box<dyn ItemHandle>,
+        cx: &mut App,
+    ) -> Option<usize> {
+        let old = self.items.get(ix)?.id();
+        if self.pinned.contains(&old) {
+            self.pinned.insert(item.id());
+        }
+        Some(self.insert_at(ix, item, cx))
+    }
+
+    /// Puts `item` at `ix`, which must keep the pinned items leading.
+    fn insert_at(&mut self, ix: usize, item: Box<dyn ItemHandle>, cx: &mut App) -> usize {
         let (pane, preview, watched) = (self.id, self.preview.clone(), item.boxed_clone());
         let observed = item.observe(
             Box::new(move |cx| {
@@ -331,6 +364,61 @@ impl<V: PaneView> PaneState<V> {
     pub fn set_preview(&mut self, ix: Option<usize>) {
         let id = ix.and_then(|ix| self.items.get(ix)).map(|item| item.id());
         self.preview.set(id);
+    }
+
+    /// Whether item `ix` is pinned.
+    pub fn is_pinned(&self, ix: usize) -> bool {
+        (self.items.get(ix)).is_some_and(|item| self.pinned.contains(&item.id()))
+    }
+
+    /// How many items are pinned: the first that many.
+    pub fn pinned_count(&self) -> usize {
+        (self.items.iter())
+            .take_while(|item| self.pinned.contains(&item.id()))
+            .count()
+    }
+
+    /// Pins item `ix`, moving it to the end of the pinned items; a preview
+    /// is kept as an ordinary item. The active item stays the same one.
+    /// Its index after, or `None` if there's no such item.
+    pub fn pin(&mut self, ix: usize) -> Option<usize> {
+        let id = self.items.get(ix)?.id();
+        if self.pinned.contains(&id) {
+            return Some(ix);
+        }
+        if self.preview.get() == Some(id) {
+            self.preview.set(None);
+        }
+        let to = self.pinned_count();
+        self.pinned.insert(id);
+        Some(self.move_item(ix, to))
+    }
+
+    /// Unpins item `ix`, moving it to just after the pinned items. The
+    /// active item stays the same one. Its index after, or `None` if there's
+    /// no such item.
+    pub fn unpin(&mut self, ix: usize) -> Option<usize> {
+        let id = self.items.get(ix)?.id();
+        if !self.pinned.remove(&id) {
+            return Some(ix);
+        }
+        // The pinned items before and after it, less itself.
+        let to = (self.items.iter())
+            .filter(|item| self.pinned.contains(&item.id()))
+            .count();
+        Some(self.move_item(ix, to))
+    }
+
+    /// Moves item `from` to `to`, the active item staying the same one.
+    fn move_item(&mut self, from: usize, to: usize) -> usize {
+        let active = self.items.get(self.active).map(|item| item.id());
+        let item = self.items.remove(from);
+        let to = to.min(self.items.len());
+        self.items.insert(to, item);
+        if let Some(ix) = active.and_then(|id| self.position(id)) {
+            self.active = ix;
+        }
+        to
     }
 
     /// Makes `ix` the active index, without focusing anything.
@@ -573,6 +661,7 @@ impl<V: PaneView> PaneState<V> {
             .map(|(ix, ((item, title), description))| {
                 kiln_ui::Tab::new(("tab", ix), title, &ui)
                     .preview(Some(ix) == preview)
+                    .pinned(self.is_pinned(ix))
                     .icon(item.tab_icon_ref(cx))
                     .description(description)
                     .label_color(item.tab_title_color(cx))
@@ -760,6 +849,7 @@ pub trait PaneView:
         }
         let item = state.items.remove(ix);
         state.observed.remove(&item.id());
+        state.pinned.remove(&item.id());
         if state.preview.get() == Some(item.id()) {
             state.preview.set(None);
         }
@@ -848,8 +938,28 @@ pub trait PaneView:
         }
     }
 
+    /// Pins item `ix` to the strip's start, after the items pinned before
+    /// it, drawn compact; a preview is kept. The active item stays the same
+    /// one. Bulk closes a host makes may leave pinned items be; a close of
+    /// the item itself closes it.
+    fn pin_tab(&mut self, ix: usize, cx: &mut App) {
+        if self.pane_mut().pin(ix).is_some() {
+            self.items_changed(cx);
+            cx.notify(self.pane().id);
+        }
+    }
+
+    /// Unpins item `ix`, moving it to just after the pinned items.
+    fn unpin_tab(&mut self, ix: usize, cx: &mut App) {
+        if self.pane_mut().unpin(ix).is_some() {
+            self.items_changed(cx);
+            cx.notify(self.pane().id);
+        }
+    }
+
     /// Moves item `ix` to before the item now at `index`, or else to the
-    /// end, and shows and focuses it.
+    /// end, and shows and focuses it. It stays on its side of the pinned
+    /// items' boundary: a pinned item among the pinned, another after them.
     fn reorder_item(&mut self, ix: usize, index: Option<usize>, window: &mut Window, cx: &mut App) {
         let state = self.pane_mut();
         if ix >= state.items.len() {
@@ -859,6 +969,12 @@ pub trait PaneView:
             Some(index) if index > ix => index - 1,
             Some(index) => index,
             None => state.items.len() - 1,
+        };
+        let pinned = state.pinned_count();
+        let to = if state.is_pinned(ix) {
+            to.min(pinned - 1)
+        } else {
+            to.max(pinned)
         };
         let item = state.items.remove(ix);
         let to = to.min(state.items.len());

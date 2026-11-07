@@ -20,9 +20,9 @@
 //! - **is one of its kind at a time.** While one waits on an answer, a
 //!   request for the same close (the same kind, window and items: a second
 //!   click on the close button) joins it and resolves as it does; any other
-//!   waits for it to resolve, then starts. One that has nothing to ask (each
-//!   item it closes has its document open in an item that stays) closes at
-//!   once all the same.
+//!   waits for it to resolve, then starts, reading its items afresh. One
+//!   that has nothing to ask (each item it closes has its document open in
+//!   an item that stays) closes at once all the same.
 //! - **remembers each answer with the item's
 //!   [`close_revision`](crate::PaneItem::close_revision)** as it was asked.
 //! - **revalidates before it commits.** After each answer it reads its
@@ -55,6 +55,11 @@ use crate::{CloseAnswer, ItemHandle, ItemId};
 pub enum CloseKind {
     /// Some items, such as a tab.
     Items,
+    /// The items a rule picks among some others (all of a pane's, say, but
+    /// those it keeps), which may pick fewer by the time it closes them:
+    /// never one close with [`CloseKind::Items`] over the same items, so a
+    /// request for an item itself doesn't resolve as the rule's does.
+    Bulk,
     /// A pane, with its items.
     Pane,
     /// A window, with its items.
@@ -400,8 +405,14 @@ impl Pending {
 }
 
 /// A request that waited for another close to resolve: it joins one for
-/// the same close, waits again for any other, or else starts.
+/// the same close, waits again for any other, or else starts, its items
+/// read afresh.
 async fn queued(mut transaction: Transaction, key: Key, commit: Commit, cx: &mut AsyncApp) -> bool {
+    // Its items as the caller read them are stale after the wait: each
+    // pass reads them live.
+    for scope in &mut transaction.request.scopes {
+        scope.now = None;
+    }
     enum Next {
         Join(Receiver<bool>),
         Wait(Receiver<()>),

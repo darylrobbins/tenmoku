@@ -335,6 +335,8 @@ mod lsp_consent_tests;
 #[cfg(test)]
 mod middle_click_close_tests;
 #[cfg(test)]
+mod pane_pin_tests;
+#[cfg(test)]
 mod panel_width_tests;
 #[cfg(test)]
 mod path_commands_tests;

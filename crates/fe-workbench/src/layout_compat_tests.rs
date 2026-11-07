@@ -523,3 +523,63 @@ fn closing_onto_a_reading_or_failed_pane_focuses_the_pane(cx: &mut TestAppContex
     );
     assert!(!editor_focused(&a, cx));
 }
+
+/// An entry saved before tabs could be pinned, whose items have no
+/// `pinned` flag, restores every tab unpinned and saves again without the
+/// flag; a tab pinned then saves at once, flagged, first in its pane.
+#[gpui::test]
+fn a_layout_without_pinned_flags_loads_unpinned(cx: &mut TestAppContext) {
+    let project = project();
+    init(cx);
+    let entry = todays_entry(&project.root);
+    let claim = project.store.claim_new().unwrap();
+    project.store.write(&claim, entry.clone()).unwrap();
+    drop(claim);
+    let (layout, restored) = layout::launch(&project.store, true).remove(0);
+    let (workbench, mut cx) = open(&project, layout, restored, cx);
+    let cx = &mut cx;
+
+    let pinned = |workbench: &Entity<Workbench>, cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, cx| {
+            (workbench.pane_group(cx).panes().iter())
+                .map(|pane| {
+                    let pane = pane.read(cx);
+                    (0..pane.tabs().len())
+                        .map(|ix| pane.is_pinned(ix))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(pinned(&workbench, cx), [[false, false], [false, false]]);
+    let flagged = |entry: &Value| -> Vec<Vec<bool>> {
+        (entry["panes"]["tree"]["members"].as_array().unwrap().iter())
+            .map(|member| {
+                (member["pane"]["items"].as_array().unwrap().iter())
+                    .map(|item| item.get("pinned") == Some(&json!(true)))
+                    .collect()
+            })
+            .collect()
+    };
+    let saved_entry = saved(&project.store).remove(0);
+    assert_eq!(flagged(&saved_entry), [[false, false], [false, false]]);
+    assert!(!saved_entry.to_string().contains("pinned"), "{saved_entry}");
+
+    // c.txt, active in the right pane, pinned: saved first, flagged.
+    written(&project.store);
+    run("workbench.pin_tab", cx);
+    assert_eq!(pinned(&workbench, cx), [[false, false], [true, false]]);
+    let mut entries = saved(&project.store);
+    assert!(written(&project.store), "pinning saved the layout");
+    let saved_entry = entries.remove(0);
+    assert_eq!(flagged(&saved_entry), [[false, false], [true, false]]);
+    let right = &saved_entry["panes"]["tree"]["members"][1]["pane"];
+    assert!(
+        right["items"][0]["state"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("c.txt"),
+        "{right}"
+    );
+    assert_eq!(right["active"], json!(0));
+}

@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use gpui::{
-    App, ClickEvent, Div, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement,
-    ParentElement as _, Pixels, Point, Render, RenderOnce, ScrollHandle, SharedString, Stateful,
-    StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
+    App, AppContext as _, ClickEvent, Div, ElementId, Entity, Hsla, InteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, Point, Render, RenderOnce, ScrollHandle, SharedString,
+    Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
     prelude::FluentBuilder as _, px,
 };
 
-use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, Tooltip, UiTheme};
 
 pub const TAB_HEIGHT: gpui::Pixels = px(30.);
 /// A tab's icon, square.
 const TAB_ICON_SIZE: Pixels = px(14.);
+/// The pin glyph, or dirty dot, in a pinned tab's corner, square.
+const PIN_GLYPH_SIZE: Pixels = px(8.);
 
 /// A row of [`Tab`]s that scrolls sideways when they don't fit.
 #[derive(IntoElement)]
@@ -99,6 +101,11 @@ impl RenderOnce for TabBar {
 /// and description are in italics. An inactive tab's
 /// close button shows only while the pointer is over the tab, as VS Code's
 /// does; its dirty dot always shows.
+///
+/// A pinned tab ([`Tab::pinned`]) is drawn compact, as VS Code's are: its
+/// icon alone, [`Tab::PINNED_WIDTH`] wide, a pin glyph in its corner (or
+/// its dirty dot), and its label and description in its tooltip. It has
+/// no close button; a middle click still closes it.
 #[derive(IntoElement)]
 pub struct Tab {
     id: ElementId,
@@ -109,6 +116,7 @@ pub struct Tab {
     dirty: bool,
     active: bool,
     preview: bool,
+    pinned: bool,
     on_click: Option<ClickHandler>,
     on_close: Option<ClickHandler>,
     on_middle_click: Option<ClickHandler>,
@@ -128,6 +136,7 @@ impl Tab {
             dirty: false,
             active: false,
             preview: false,
+            pinned: false,
             on_click: None,
             on_close: None,
             on_middle_click: None,
@@ -206,6 +215,30 @@ impl Tab {
         self.preview
     }
 
+    /// The width of a pinned tab: its icon and the padding around it.
+    pub const PINNED_WIDTH: Pixels = px(38.);
+
+    /// Draws the tab compact, its icon alone at [`Tab::PINNED_WIDTH`], its
+    /// label in its tooltip: a pinned tab, kept at the strip's start.
+    pub fn pinned(mut self, pinned: bool) -> Self {
+        self.pinned = pinned;
+        self
+    }
+
+    /// Whether the tab is drawn pinned, compact.
+    pub fn is_pinned(&self) -> bool {
+        self.pinned
+    }
+
+    /// What a pinned tab's tooltip says: its label, then its description
+    /// if it has one. `None` for a tab that isn't pinned, whose label shows.
+    pub fn tooltip_text(&self) -> Option<SharedString> {
+        self.pinned.then(|| match &self.description {
+            Some(description) => format!("{} — {description}", self.label).into(),
+            None => self.label.clone(),
+        })
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -280,7 +313,10 @@ fn tab_label_color(active: bool, tint: Option<Hsla>, cx: &App) -> Hsla {
 const TAB_GROUP: &str = "kiln-tab";
 
 impl RenderOnce for Tab {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.pinned {
+            return self.render_pinned(window, cx).into_any_element();
+        }
         let title_color = self.title_color(cx);
         let colors = &cx.theme().colors;
         let (hover, muted) = (colors.list.row_hover, colors.text.muted);
@@ -374,5 +410,100 @@ impl RenderOnce for Tab {
                 })
             })
             .map(|tab| apply(tab, self.drag))
+            .into_any_element()
+    }
+}
+
+impl Tab {
+    /// A pinned tab: its icon centred at [`Tab::PINNED_WIDTH`], the pin
+    /// glyph, or its dirty dot, in its top right corner, and its label in a
+    /// tooltip.
+    fn render_pinned(self, _: &mut Window, cx: &mut App) -> Stateful<Div> {
+        let colors = &cx.theme().colors;
+        let tip = self.tooltip_text().unwrap_or_else(|| self.label.clone());
+        let label = self.label.clone();
+        let icon = self.icon.clone().unwrap_or(IconRef::Bundled(Icon::Pin));
+        let corner = div()
+            .absolute()
+            .top(px(4.))
+            .right(px(4.))
+            .size(PIN_GLYPH_SIZE)
+            .flex()
+            .items_center()
+            .justify_center()
+            .map(|corner| {
+                if self.dirty {
+                    corner.child(
+                        div()
+                            .size(px(6.))
+                            .rounded_full()
+                            .bg(colors.state.dirty)
+                            .debug_selector(|| format!("tab-dirty:{label}")),
+                    )
+                } else {
+                    corner.debug_selector(|| format!("tab-pin:{label}")).child(
+                        IconRef::Bundled(Icon::Pin).element(PIN_GLYPH_SIZE, colors.text.muted),
+                    )
+                }
+            });
+        div()
+            .id(self.id)
+            .group(TAB_GROUP)
+            .relative()
+            .flex()
+            .flex_none()
+            .w(Self::PINNED_WIDTH)
+            .h_full()
+            .items_center()
+            .justify_center()
+            .border_r_1()
+            .border_color(colors.border.default)
+            .bg(if self.active {
+                colors.tab.active
+            } else {
+                colors.tab.inactive
+            })
+            .child(
+                div()
+                    .size(TAB_ICON_SIZE)
+                    .flex_none()
+                    .debug_selector(|| format!("tab-icon:{}:{}", self.label, icon.name()))
+                    .child(icon.element(TAB_ICON_SIZE, colors.list.icon)),
+            )
+            .child(corner)
+            .tooltip(move |_, cx| {
+                let text = tip.clone();
+                cx.new(|cx| PinnedTip {
+                    tip: cx
+                        .new(|cx| Tooltip::new(text.clone(), None::<&str>, &crate::ui_theme(cx))),
+                    text,
+                })
+                .into()
+            })
+            .when_some(self.on_click, |tab, on_click| tab.on_click(on_click))
+            .when_some(self.on_middle_click, |tab, on_middle_click| {
+                tab.on_aux_click(move |event, window, cx| {
+                    if event.is_middle_click() {
+                        on_middle_click(event, window, cx);
+                    }
+                })
+            })
+            .map(|tab| apply(tab, self.drag))
+    }
+}
+
+/// A pinned tab's tooltip: its label, and its description if any, which
+/// the tab no longer shows. Found in tests as `tab-tooltip:<text>`.
+struct PinnedTip {
+    tip: Entity<Tooltip>,
+    text: SharedString,
+}
+
+impl Render for PinnedTip {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let text = self.text.clone();
+        div()
+            .debug_selector(move || format!("tab-tooltip:{text}"))
+            .child(self.tip.clone())
     }
 }

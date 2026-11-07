@@ -13,8 +13,10 @@
 //!   members' ratios, each pane's items and its active one, and the
 //!   active pane by its path in the tree. An item is `{kind, document,
 //!   state}`: its [`PaneItem::KIND`], a number shared by the items of the
-//!   window that show one document, and what [`PaneItem::serialize`] gave.
-//!   An item that gives nothing is left out;
+//!   window that show one document, and what [`PaneItem::serialize`] gave,
+//!   and `pinned: true` if it's pinned ([`PaneView::pin_tab`]): an entry
+//!   saved without it restores its items unpinned. An item that gives
+//!   nothing is left out;
 //! - `dock`, a dock's state ([`DockState::save`](crate::DockState::save));
 //! - whatever else the host keeps, such as whether its breadcrumbs show.
 //!
@@ -170,11 +172,17 @@ fn save_member<V: PaneView>(
                         documents.push(item.boxed_clone());
                         documents.len() - 1
                     });
-                items.push(Value::from_iter([
+                let mut saved = Value::from_iter([
                     ("kind", Value::from(item.kind())),
                     ("document", Value::from(document)),
                     ("state", saved),
-                ]));
+                ]);
+                if state.is_pinned(ix)
+                    && let Some(object) = saved.as_object_mut()
+                {
+                    object.insert("pinned".into(), Value::Bool(true));
+                }
+                items.push(saved);
             }
             let pane = Value::from_iter([
                 ("items", Value::Array(items)),
@@ -251,6 +259,7 @@ struct Slot {
     kind: String,
     document: u64,
     state: Value,
+    pinned: bool,
 }
 
 /// Rebuilds the pane tree `saved` describes, making each pane with
@@ -298,6 +307,7 @@ pub fn restore_panes_with<V: PaneView>(
                     kind: kind.to_owned(),
                     document,
                     state: item.get("state").cloned().unwrap_or_default(),
+                    pinned: item.get("pinned").and_then(Value::as_bool) == Some(true),
                 });
             }
             let active = saved.get("active").and_then(Value::as_u64);
@@ -348,6 +358,10 @@ pub fn restore_panes_with<V: PaneView>(
     })
 }
 
+/// An item restored into a pane: its saved index there, and whether it's
+/// pinned.
+type Placed = (usize, Box<dyn ItemHandle>, bool);
+
 /// Puts each document's restored item in its first slot, and a split of
 /// it in each other, into the panes.
 fn fill<V: PaneView>(
@@ -359,8 +373,7 @@ fn fill<V: PaneView>(
     cx: &mut App,
 ) -> Vec<Entity<V>> {
     let mut placed: HashSet<u64> = HashSet::new();
-    let mut items: Vec<Vec<(usize, Box<dyn ItemHandle>)>> =
-        panes.iter().map(|_| Vec::new()).collect();
+    let mut items: Vec<Vec<Placed>> = panes.iter().map(|_| Vec::new()).collect();
     let mut counts = vec![0; panes.len()];
     for slot in slots {
         let ix = counts[slot.pane];
@@ -377,7 +390,7 @@ fn fill<V: PaneView>(
             split.apply_state(&slot.state, window, cx);
             split
         };
-        items[slot.pane].push((ix, item));
+        items[slot.pane].push((ix, item, slot.pinned));
     }
     restored.clear();
     let mut empty = Vec::new();
@@ -386,9 +399,24 @@ fn fill<V: PaneView>(
             empty.push(pane.clone());
             continue;
         }
-        let shown = items.iter().position(|(ix, _)| ix >= active).unwrap_or(0);
-        let items = items.into_iter().map(|(_, item)| item).collect();
-        pane.update(cx, |pane, cx| pane.add_items(items, shown, cx));
+        let shown = items
+            .iter()
+            .position(|(ix, _, _)| ix >= active)
+            .unwrap_or(0);
+        // Pinned in their saved order, which led the others.
+        let pinned: Vec<_> = (items.iter())
+            .filter(|(_, _, pinned)| *pinned)
+            .map(|(_, item, _)| item.id())
+            .collect();
+        let items = items.into_iter().map(|(_, item, _)| item).collect();
+        pane.update(cx, |pane, cx| {
+            pane.add_items(items, shown, cx);
+            for id in pinned {
+                if let Some(ix) = pane.pane().position(id) {
+                    pane.pin_tab(ix, cx);
+                }
+            }
+        });
     }
     empty
 }

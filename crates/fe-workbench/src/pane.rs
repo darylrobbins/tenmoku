@@ -917,12 +917,18 @@ impl Pane {
             .item_focus_handle(cx)
             .contains_focused(window, cx);
         let focus = item.item_focus_handle(cx);
-        self.state.insert(ix, item, cx);
+        // Where the old tab is, pinned or not, the old one taken by its ID.
+        let old = self.tabs[ix].id();
+        if self.state.insert_replacing(ix, item, cx).is_none() {
+            return;
+        }
         if was_active {
             self.state.set_active(ix);
             self.note_activation(ix, cx);
         }
-        self.take_item(ix + 1, window, cx);
+        if let Some(at) = self.state.position(old) {
+            self.take_item(at, window, cx);
+        }
         if was_active && had_focus {
             window.focus(&focus, cx);
         }
@@ -1574,6 +1580,27 @@ impl Pane {
         }
     }
 
+    /// Whether tab `ix` is pinned: kept at the strip's start, drawn at its
+    /// icon's width, and left open by Close Other Tabs, Close Saved and
+    /// Close All Editors ([`PaneState::pin`](kiln_shell::PaneState::pin)).
+    pub fn is_pinned(&self, ix: usize) -> bool {
+        self.state.is_pinned(ix)
+    }
+
+    /// Pins tab `ix`, moving it after the tabs pinned before it, as VS
+    /// Code's Pin Tab does: a preview tab is kept. The active tab stays
+    /// the same one.
+    pub fn pin(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.pin_tab(ix, cx);
+        cx.notify();
+    }
+
+    /// Unpins tab `ix`, moving it to just after the pinned tabs.
+    pub fn unpin(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.unpin_tab(ix, cx);
+        cx.notify();
+    }
+
     /// Activates the next tab, or with `back` the previous one, wrapping. A
     /// sole tab activates itself, so it too replaces a file being read or a
     /// read error.
@@ -1592,10 +1619,10 @@ impl Pane {
         self.close_active_item(window, cx);
     }
 
-    /// Closes every tab but the active one: Close Other Tabs and vim's
-    /// `:tabo`. A tab with unsaved changes stays open, as Close Tab leaves
-    /// it, unless `force` or another tab, in this pane or another, shows
-    /// its buffer still open. Returns how many it kept.
+    /// Closes every tab but the active one and the pinned ones: Close Other
+    /// Tabs and vim's `:tabo`. A tab with unsaved changes stays open, as
+    /// Close Tab leaves it, unless `force` or another tab, in this pane or
+    /// another, shows its buffer still open. Returns how many it kept.
     pub fn close_others(&mut self, force: bool, window: &mut Window, cx: &mut App) -> usize {
         let Some(active) = self.pane().active_item().map(|item| item.id()) else {
             return 0;
@@ -1605,7 +1632,8 @@ impl Pane {
 
     /// Closes the tabs `pick` chooses, as [`Pane::close_others`] does: a tab
     /// with unsaved changes stays open, unless `force` or another tab shows
-    /// its buffer still open. Returns how many chosen tabs it kept.
+    /// its buffer still open, and a pinned tab isn't chosen, as VS Code's
+    /// bulk closes skip sticky tabs. Returns how many chosen tabs it kept.
     pub(crate) fn close_matching(
         &mut self,
         force: bool,
@@ -1615,9 +1643,9 @@ impl Pane {
     ) -> usize {
         let order: Vec<ItemId> = self.pane().items().iter().map(|item| item.id()).collect();
         let active = self.pane().active_item().map(|item| item.id());
-        let closing: Vec<_> = (self.pane().items().iter())
-            .filter(|item| pick(&***item, cx))
-            .map(|item| item.id())
+        let closing: Vec<_> = (self.pane().items().iter().enumerate())
+            .filter(|(ix, item)| !self.is_pinned(*ix) && pick(&***item, cx))
+            .map(|(_, item)| item.id())
             .collect();
         let mut kept = 0;
         for id in closing {
@@ -1661,6 +1689,16 @@ impl Pane {
         }
         // Else the workspace closes a pane its last tab left.
         self.pane_mut().take_emptied();
+    }
+
+    /// [`Pane::take_ids`], but for the tabs pinned now: the close of a bulk
+    /// request that waited on a prompt, a tab pinned meanwhile staying, as
+    /// the request's live items had it ([`crate::close_many`]).
+    pub(crate) fn take_unpinned_ids(&mut self, ids: &[ItemId], window: &mut Window, cx: &mut App) {
+        let ids: Vec<ItemId> = (ids.iter().copied())
+            .filter(|id| (self.pane().position(*id)).is_some_and(|ix| !self.is_pinned(ix)))
+            .collect();
+        self.take_ids(&ids, window, cx);
     }
 
     /// Closes the tabs of the editors on `buffers`, whose buffers the host

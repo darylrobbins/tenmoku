@@ -106,6 +106,28 @@ impl Workbench {
         self.close_editors(true, cx.window, cx.cx);
     }
 
+    /// Pin Tab
+    #[command(id = "workbench.pin_tab")]
+    fn pin_tab(&mut self, cx: &mut Cx<Self>) {
+        self.on_active_pane(cx, |pane, _, cx| {
+            if let Some(ix) = pane.active() {
+                kiln_shell::PaneView::pin_tab(pane, ix, cx);
+            }
+        });
+        self.save_layout_in_full(cx.cx);
+    }
+
+    /// Unpin Tab
+    #[command(id = "workbench.unpin_tab")]
+    fn unpin_tab(&mut self, cx: &mut Cx<Self>) {
+        self.on_active_pane(cx, |pane, _, cx| {
+            if let Some(ix) = pane.active() {
+                kiln_shell::PaneView::unpin_tab(pane, ix, cx);
+            }
+        });
+        self.save_layout_in_full(cx.cx);
+    }
+
     /// Reopen Closed Editor
     #[command(id = "workbench.reopen_closed_editor")]
     fn reopen_closed_editor(&mut self, cx: &mut Cx<Self>) {

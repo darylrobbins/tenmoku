@@ -4,7 +4,7 @@
 //! the others close once their tabs agree, as a pane's do
 //! ([`kiln_shell::close`]): a dirty one asks whether to discard, unless
 //! another tab outside the request shows its buffer, and a Cancel stops
-//! the close.
+//! the close. Pinned tabs stay open through each ([`Pane::is_pinned`]).
 
 use std::rc::Rc;
 
@@ -55,13 +55,15 @@ impl Workbench {
             };
             for pane in commit_weak.iter().filter_map(|pane| pane.upgrade()) {
                 pane.update(cx, |pane, cx| {
-                    pane.take_ids(&commit_ids, window, cx);
+                    // Not a tab pinned while the close was asking, which
+                    // the live items left out too.
+                    pane.take_unpinned_ids(&commit_ids, window, cx);
                     cx.notify();
                 });
             }
         };
         let request =
-            CloseRequest::new(CloseKind::Items).scope(window.window_handle(), Some(now), live);
+            CloseRequest::new(CloseKind::Bulk).scope(window.window_handle(), Some(now), live);
         match close::confirm(request, commit, Some(window), cx) {
             Closing::Now => {
                 for pane in &panes {
@@ -77,15 +79,22 @@ impl Workbench {
     }
 }
 
-/// The items of `closing` panes, and of every pane open.
+/// The unpinned items of `closing` panes, and the items of every pane
+/// open.
 fn scope(closing: &[Entity<Pane>], open: &[Entity<Pane>], cx: &App) -> Items {
-    let items = |panes: &[Entity<Pane>]| -> Vec<Box<dyn ItemHandle>> {
+    let items = |panes: &[Entity<Pane>], pinned: bool| -> Vec<Box<dyn ItemHandle>> {
         (panes.iter())
-            .flat_map(|pane| pane.read(cx).pane().items().to_vec())
+            .flat_map(|pane| {
+                let pane = pane.read(cx);
+                (pane.pane().items().iter().enumerate())
+                    .filter(|(ix, _)| pinned || !pane.is_pinned(*ix))
+                    .map(|(_, item)| item.boxed_clone())
+                    .collect::<Vec<_>>()
+            })
             .collect()
     };
     Items {
-        closing: items(closing),
-        open: items(open),
+        closing: items(closing, false),
+        open: items(open, true),
     }
 }

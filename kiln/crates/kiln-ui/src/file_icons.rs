@@ -103,6 +103,8 @@ icons! {
     Eye => "eye",
     Code => "code",
     PanelRightOpen => "panel-right-open",
+    // A pinned tab's glyph; not mapped from names.
+    Pin => "pin",
     // The window buttons drawn under client-side decorations; not mapped
     // from names.
     Minus => "minus",

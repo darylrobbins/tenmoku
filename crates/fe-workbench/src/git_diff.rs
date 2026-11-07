@@ -992,12 +992,20 @@ impl Workbench {
                 || old.right().focus_handle(cx).contains_focused(window, cx)
         };
         let focus = new.read(cx).right().focus_handle(cx);
+        let old_id = kiln_shell::ItemId(old.entity_id());
         pane.update(cx, |pane, cx| {
-            let at = pane.pane_mut().insert(ix + 1, Box::new(new.clone()), cx);
+            // In the old tab's place, pinned if it was; the old one taken
+            // by its ID.
+            let state = pane.pane_mut();
+            let Some(at) = state.insert_replacing(ix, Box::new(new.clone()), cx) else {
+                return;
+            };
             if shown {
-                pane.pane_mut().set_active(at);
+                state.set_active(at);
             }
-            pane.take_item(ix, window, cx);
+            if let Some(old) = state.position(old_id) {
+                pane.take_item(old, window, cx);
+            }
             cx.notify();
         });
         if focused {
