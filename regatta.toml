@@ -121,12 +121,20 @@ adoption = "auto"
 # dependency run in parallel; a change to an existing line is still a scope expansion.
 # Module declarations and command registrations are added lines, so cards that add a module or a
 # command run in parallel; editing an existing line is still a scope expansion.
+# String catalogues (l10n.rs), their allow lists, test-module lists and the screenshot audit's scene
+# list only gain lines as cards move strings or add tests, so the i18n and UI refresh cards run in
+# parallel (2026-11-07, user-approved).
 # Regatta's four defaults are repeated because setting the key replaces them.
 shared_append_only = [
   "docs/recovery.md", "docs/compat.md", "docs/recovery/**", "docs/compat/**",
   "Cargo.toml", "Cargo.lock", "crates/fastedit/Cargo.toml",
   "PERF.md", "THIRD_PARTY.md",
   "crates/*/src/lib.rs", "crates/fe-workbench/src/workbench_commands.rs",
+  "kiln/crates/*/src/lib.rs",
+  "crates/*/src/l10n.rs", "kiln/crates/*/src/l10n.rs",
+  "crates/*/l10n-allow.toml", "kiln/crates/*/l10n-allow.toml",
+  "crates/fe-workbench/src/tests/mod.rs", "kiln/crates/kiln-ui/src/tests/mod.rs",
+  "crates/fe-workbench/examples/screenshots/audit/mod.rs",
 ]
 
 [caps]
