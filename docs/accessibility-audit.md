@@ -1,4 +1,5 @@
 # Accessibility audit: what screen readers see today
+> Follow-up plan: [`docs/decisions/qenw9xxdzk-accessibility-design.md`](decisions/qenw9xxdzk-accessibility-design.md) (T294) replaces the card list below.
 
 Spike T389. No production code changed; `crates/fe-workbench/tests/a11y_tree_dump.rs`
 makes the baseline reproducible. Mac follow-up: T1266.
