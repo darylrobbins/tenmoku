@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_hcl"
+name = "HCL syntax"
+version = "1.2.0"
+license = "Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "hcl"
+wasm = "tree-sitter-hcl.wasm"
+extensions = ["hcl"]
+line_comment = "#"
+block_comment = ["/*", "*/"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
