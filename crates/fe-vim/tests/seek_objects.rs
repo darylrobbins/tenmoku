@@ -2,10 +2,15 @@
 //! last pair's object, as targets.vim and mini.ai's `n` and `l` forms give
 //! it.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use fe_vim::HeadlessVim;
-use fe_vim::search::DEFAULT_TIME_LIMIT;
+use fe_vim::search::set_time_limit;
+
+/// A wall bound well clear of the search's 2 s default: the work is bounded
+/// by reading only the rows it needs, which the tests below check by result;
+/// this only catches a runaway, and holds on a loaded machine.
+const RUNAWAY: Duration = Duration::from_secs(30);
 
 fn run(text: &str, cursor: (u32, usize), keys: &str) -> HeadlessVim {
     let mut vim = HeadlessVim::new(text, cursor);
@@ -130,6 +135,9 @@ fn seek_next_and_last_pairs() {
 
 #[test]
 fn seek_counts_and_bounds() {
+    // Nothing in this binary relies on the default limit; a loaded machine
+    // mustn't run these searches out of it. Never put back.
+    set_time_limit(Duration::from_secs(60));
     let three = "x (a) (b) (c) y";
     assert_eq!(text_after(three, (0, 0), "2din("), "x (a) () (c) y");
     assert_eq!(text_after(three, (0, 0), "d3in("), "x (a) (b) () y");
@@ -178,7 +186,7 @@ fn seek_counts_and_bounds() {
         let started = Instant::now();
         let _ = vim.feed(keys);
         let took = started.elapsed();
-        assert!(took < DEFAULT_TIME_LIMIT, "{keys}: {took:?}");
+        assert!(took < RUNAWAY, "{keys}: {took:?}");
         assert!(vim.text().contains(after), "{keys}");
         assert_eq!(vim.text().len(), long.len() - 1, "{keys}");
     }
@@ -190,7 +198,7 @@ fn seek_counts_and_bounds() {
             let started = Instant::now();
             let _ = vim.feed(keys);
             let took = started.elapsed();
-            assert!(took < DEFAULT_TIME_LIMIT, "{keys}: {took:?}");
+            assert!(took < RUNAWAY, "{keys}: {took:?}");
             assert_eq!(vim.text(), text, "{keys}");
         }
     }

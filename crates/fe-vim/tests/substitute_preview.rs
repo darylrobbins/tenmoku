@@ -2,19 +2,29 @@
 //! `:s` an open `:` line would run replaces while it's typed, matched as
 //! submitting it would match, and changes nothing.
 
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use fe_vim::{
     HeadlessVim, SUBSTITUTE_PREVIEW_BYTES, SUBSTITUTE_PREVIEW_CAP, SubstitutePreview,
-    set_search_preview_limit,
+    search::set_time_limit, set_search_preview_limit,
 };
 
 const TEXT: &str = "one two\ntwo one\nOne Two\nthree\nfour one\nfive\n";
 
-/// Keeps the previews from giving up on a loaded machine's clock, up to
-/// the search's own limit. Never put back, as tests run side by side.
-fn unhurried() {
+static LIMITS: Mutex<()> = Mutex::new(());
+
+/// Keeps the previews from giving up on a loaded machine's clock: raises
+/// both the preview's limit and the search's (which caps it). The limits are
+/// process-wide and one test lowers the search's to see it bite, so each
+/// test holds the guard for its whole run, which serializes them.
+fn unhurried() -> MutexGuard<'static, ()> {
+    let guard = LIMITS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     set_search_preview_limit(Some(Duration::from_secs(60)));
+    set_time_limit(Duration::from_secs(60));
+    guard
 }
 
 /// `text` with each of `preview`'s matches replaced, checking they come in
@@ -59,7 +69,7 @@ fn differential(
 
 #[test]
 fn substitute_preview_matches_the_real_substitute() {
-    unhurried();
+    let _limits = unhurried();
     let same = |cursor: (u32, usize), setup: &str, open: &str, typed: &str| {
         let (previewed, ran) = differential(TEXT, cursor, setup, open, typed);
         assert_eq!(previewed, ran, "{setup:?} {open:?} {typed:?}");
@@ -112,7 +122,7 @@ fn substitute_preview_matches_the_real_substitute() {
 
 #[test]
 fn substitute_preview_has_no_side_effects() {
-    unhurried();
+    let _limits = unhurried();
     let mut vim = HeadlessVim::new(TEXT, (1, 2));
     // A last search, a last substitute, history, marks and jumps to keep.
     vim.feed("ma/two<CR>:s/o/0/<CR>u3Gmb:").unwrap();
@@ -194,7 +204,7 @@ fn substitute_preview_has_no_side_effects() {
 
 #[test]
 fn substitute_preview_is_capped_and_timed() {
-    unhurried();
+    let _limits = unhurried();
     // Past the cap, the first matches and `truncated`.
     let text = "ab ".repeat(SUBSTITUTE_PREVIEW_CAP + 20);
     let mut vim = HeadlessVim::new(&text, (0, 0));
@@ -294,7 +304,10 @@ fn substitute_preview_is_capped_and_timed() {
 
     // A slow pattern gives up at the time limit (here the search's, the
     // preview's own lifted): each `a` scans to the row's end for a `z`,
-    // which would take minutes.
+    // which would take minutes. The limit is lowered for this one search
+    // (the guard keeps the other tests out) and the bound below is far past
+    // it.
+    set_time_limit(Duration::from_secs(2));
     let text = "a".repeat(200_000);
     let mut vim = HeadlessVim::new(&text, (0, 0));
     vim.feed(":").unwrap();

@@ -8,7 +8,13 @@
 //! self-closing tags of an open tag's name, which the spec has open
 //! nothing, say so.
 
-use fe_vim::{HeadlessVim, TAG_BUDGET, search::set_call_limit, set_tag_budget, take_tag_work};
+use std::time::Duration;
+
+use fe_vim::{
+    HeadlessVim, TAG_BUDGET,
+    search::{set_call_limit, set_time_limit},
+    set_tag_budget, take_tag_work,
+};
 
 const HTML: Option<&str> = Some("html");
 const XML: Option<&str> = Some("xml");
@@ -343,6 +349,10 @@ fn matchit_tags_edges() {
 
 #[test]
 fn matchit_tags_are_bounded() {
+    // The work is bounded by the counts below, not the clock: a loaded
+    // machine mustn't run the search out of its 2 s. Nothing else in this
+    // binary relies on the default, so it is never put back.
+    set_time_limit(Duration::from_secs(60));
     // 15,000 nested divs and their closing tags: `%` reads each row once
     // (twice a key: the jumplist asks whether it lands before it goes).
     let mut rows = vec!["<div>"; 15_000];

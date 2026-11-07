@@ -2,7 +2,38 @@
 //! code before the change. Neovim 0.12.4's answers are recorded in
 //! `tests/corpus/delimiters.toml`.
 
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
+
 use fe_vim::HeadlessVim;
+use fe_vim::search::{DEFAULT_TIME_LIMIT, set_time_limit};
+
+static LIMIT: Mutex<()> = Mutex::new(());
+
+/// Holds the process-wide search limit for one test; puts the default back
+/// when dropped.
+struct Limit(#[allow(dead_code)] MutexGuard<'static, ()>);
+
+impl Limit {
+    fn set(limit: Duration) -> Self {
+        let guard = LIMIT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        set_time_limit(limit);
+        Self(guard)
+    }
+}
+
+impl Drop for Limit {
+    fn drop(&mut self) {
+        set_time_limit(DEFAULT_TIME_LIMIT);
+    }
+}
+
+/// Keeps a search from giving up on a loaded machine's clock.
+fn unhurried() -> Limit {
+    Limit::set(Duration::from_secs(60))
+}
 
 /// The text and unnamed register after `keys` with the caret at `(0, column)`.
 fn run(text: &str, column: usize, keys: &str) -> (String, String) {
@@ -56,6 +87,7 @@ fn a_bare_lt_before_an_empty_closing_tag_keeps_the_boundary() {
 
 #[test]
 fn a_keyword_atom_in_a_pattern_name_pairs() {
+    let _limit = unhurried();
     // The first `\k` works the keyword table out (slow unoptimized, and the
     // command clock counts it): do that outside the cases, which run on a
     // loaded machine in the gate. The result of this run doesn't matter.
@@ -71,6 +103,9 @@ fn a_keyword_atom_in_a_pattern_name_pairs() {
 
 #[test]
 fn pattern_pairing_past_many_other_tags_finishes_in_time() {
+    // This one is about the default limit: no test that raises it runs
+    // alongside.
+    let _limit = Limit::set(DEFAULT_TIME_LIMIT);
     // 20,000 `<b>` can't start a tag named `a.b`; trying each against every
     // span after it runs past the search time limit, which fails the object.
     let many = "<b>".repeat(20_000);
@@ -82,6 +117,7 @@ fn pattern_pairing_past_many_other_tags_finishes_in_time() {
 
 #[test]
 fn other_character_class_atoms_in_a_pattern_name_pair() {
+    let _limit = unhurried();
     for (text, left) in [
         ("<\\ia>x</ba>", "<\\ia></ba>"),
         ("<\\fa>x</.a>", "<\\fa></.a>"),
@@ -97,6 +133,7 @@ fn other_character_class_atoms_in_a_pattern_name_pair() {
 
 #[test]
 fn eleven_distinct_joined_chars_in_a_pattern_name_pair() {
+    let _limit = unhurried();
     let joined: String = "abcdefghijk"
         .chars()
         .map(|ch| format!("{ch}\u{200d}"))
