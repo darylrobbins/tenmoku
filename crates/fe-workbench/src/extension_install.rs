@@ -873,13 +873,12 @@ impl Workbench {
         if cx.default_global::<Installs>().busy {
             return;
         }
-        let Some(extensions_dir) = extensions_dir(cx) else {
+        if extensions_dir(cx).is_none() {
             let detail = "There's no state directory to install extensions in.".to_owned();
             let message = "Can't install an extension".to_owned();
             return Workbench::notify(cx, log::Level::Error, message, Some(detail));
-        };
+        }
         cx.default_global::<Installs>().busy = true;
-        let api = check_api(reserved_namespaces(cx));
         let answer = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -897,8 +896,19 @@ impl Workbench {
             };
             let outcome = match source {
                 Some(source) => {
-                    let outcome = install_asking(&source, extensions_dir, api, workbench, cx).await;
-                    outcome.map(|outcome| (source, outcome))
+                    // Taken now, not before the dialog: it can stay open while
+                    // a plugin registers a namespace.
+                    let taken = AsyncApp::update(cx, |cx| {
+                        let dir = extensions_dir(cx)?;
+                        Some((dir, check_api(reserved_namespaces(cx))))
+                    });
+                    match taken {
+                        Some((dir, api)) => {
+                            let outcome = install_asking(&source, dir, api, workbench, cx).await;
+                            outcome.map(|outcome| (source, outcome))
+                        }
+                        None => None,
+                    }
                 }
                 None => None,
             };
