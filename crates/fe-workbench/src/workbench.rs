@@ -304,6 +304,8 @@ pub struct Workbench {
     pub(crate) link_epoch: u64,
     /// The spelling squiggles in its editors.
     pub(crate) spelling: crate::spell_squiggles::Spelling,
+    /// The keyword badges in its editors.
+    pub(crate) todos: crate::todo_comments::Todos,
     /// The checks of the open ignore files.
     pub(crate) ignore_diagnostics: crate::ignore_diagnostics::IgnoreDiagnostics,
     /// Zen Mode: see [`zen_mode`].
@@ -385,6 +387,7 @@ impl Workbench {
         let linked_editing = settings.linked_editing;
         let inline_blame = settings.inline_blame;
         let spelling = crate::spell_squiggles::Spelling::new(&settings);
+        let todos = crate::todo_comments::Todos::new(&settings);
         let auto_save = AutoSave::new(&settings, window, cx);
         let root = launch.root.clone();
         let launch_root = launch.root.clone();
@@ -702,6 +705,7 @@ impl Workbench {
             activations: 0,
             link_epoch: 0,
             spelling,
+            todos,
             ignore_diagnostics: Default::default(),
             zen: zen_mode::ZenMode::new(cx),
             setup: None,
@@ -984,6 +988,9 @@ impl Render for Workbench {
             cx.defer_in(window, |workbench, _, cx| {
                 workbench.sync_spell_squiggles(cx)
             });
+        }
+        if self.todos.is_active() {
+            cx.defer_in(window, |workbench, _, cx| workbench.sync_todo_comments(cx));
         }
         let name = title_bar::name(self.root.as_deref());
         self.shell.update(cx, |shell, cx| {

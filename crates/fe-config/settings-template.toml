@@ -122,6 +122,9 @@
 # The language to check words in: "auto" for the system's languages, or a
 # BCP-47 tag such as "en-GB".
 # spell_check_language = "auto"
+# Highlight TODO:, FIXME:, HACK:, NOTE:, PERF: and WARN: keywords (and their
+# aliases) in comments.
+# todo_comments = true
 
 [editor.minimap]
 # Show the minimap: the whole file drawn small beside the text.

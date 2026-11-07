@@ -769,6 +769,9 @@ pub struct EditorSettings {
     /// or a BCP-47 tag such as `"en-GB"`.
     #[schemars(length(min = 1))]
     pub spell_check_language: String,
+    /// Highlight `TODO:`, `FIXME:`, `HACK:`, `NOTE:`, `PERF:` and `WARN:`
+    /// keywords (and their aliases) in comments.
+    pub todo_comments: bool,
 }
 
 /// One of `editor.spell_check_scopes`.
@@ -1040,6 +1043,7 @@ impl Default for EditorSettings {
             spell_check: true,
             spell_check_scopes: vec![SpellScope::Comments, SpellScope::Strings, SpellScope::Text],
             spell_check_language: "auto".into(),
+            todo_comments: true,
         }
     }
 }

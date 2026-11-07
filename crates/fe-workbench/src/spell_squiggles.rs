@@ -658,7 +658,7 @@ fn all_squiggles(squiggles: &Squiggles, snapshot: &BufferSnapshot) -> Vec<Decora
 }
 
 /// The language `view` checks its text as: `None` for plain text.
-fn language_of(view: &EditorView) -> Option<&'static str> {
+pub(crate) fn language_of(view: &EditorView) -> Option<&'static str> {
     view.syntax().map(|syntax| syntax.language().name())
 }
 
@@ -668,7 +668,7 @@ fn language_of(view: &EditorView) -> Option<&'static str> {
 /// take up, and a wrapped row or a fold keeps from being as many buffer rows. So
 /// that only bounds where to look: from the first display row the view can start
 /// on, the view's start being partway down a wrapped row, past where it can end.
-fn rows_to_check(view: &EditorView) -> Option<Vec<Range<u32>>> {
+pub(crate) fn rows_to_check(view: &EditorView) -> Option<Vec<Range<u32>>> {
     let (top, fits) = view.viewport_rows()?;
     let model = view.model();
     let display = model.display();
@@ -704,7 +704,7 @@ fn rows_to_check(view: &EditorView) -> Option<Vec<Range<u32>>> {
 }
 
 /// The rows of `wanted` not in `checked`.
-fn unchecked_rows(wanted: &[Range<u32>], checked: &[Range<u32>]) -> Vec<Range<u32>> {
+pub(crate) fn unchecked_rows(wanted: &[Range<u32>], checked: &[Range<u32>]) -> Vec<Range<u32>> {
     (wanted.iter())
         .flat_map(|rows| missing_rows(rows, checked))
         .collect()

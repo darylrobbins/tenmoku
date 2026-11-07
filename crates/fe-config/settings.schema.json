@@ -312,6 +312,11 @@
           "minimum": 1,
           "type": "integer"
         },
+        "todo_comments": {
+          "default": true,
+          "description": "Highlight `TODO:`, `FIXME:`, `HACK:`, `NOTE:`, `PERF:` and `WARN:`\nkeywords (and their aliases) in comments.",
+          "type": "boolean"
+        },
         "wrap_column": {
           "anyOf": [
             {
@@ -1466,6 +1471,7 @@
           "scroll_with_editor": true
         },
         "tab_size": 4,
+        "todo_comments": true,
         "wrap_column": 0,
         "wrap_mode": "viewport"
       },

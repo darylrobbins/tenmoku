@@ -102,6 +102,7 @@ mod task_run;
 mod terminal_panel;
 mod theme_picker;
 mod title_bar;
+pub mod todo_comments;
 mod toolbar_picker;
 mod trust;
 pub mod update_check;
@@ -393,6 +394,10 @@ mod task_run_tests;
 mod tests;
 #[cfg(test)]
 mod theme_tests;
+#[cfg(test)]
+mod todo_comments_tests;
+#[cfg(test)]
+mod todo_decorations_tests;
 #[cfg(test)]
 mod typed_command_ids_tests;
 #[cfg(test)]
