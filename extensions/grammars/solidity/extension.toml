@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_solidity"
+name = "Solidity syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "solidity"
+wasm = "tree-sitter-solidity.wasm"
+extensions = ["sol"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "//"
+block_comment = ["/*", "*/"]

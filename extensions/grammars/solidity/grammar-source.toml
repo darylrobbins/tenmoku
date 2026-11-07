@@ -1,0 +1,7 @@
+git = "https://github.com/JoranHonig/tree-sitter-solidity"
+# The full 40-hex commit.
+rev = "048fe686cb1fde267243739b8bdbec8fc3a55272"
+# The directory holding parser.c, relative to the repository.
+src = "src"
+# The export tree_sitter_<grammar>.
+grammar = "solidity"
