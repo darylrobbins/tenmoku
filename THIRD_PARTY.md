@@ -247,6 +247,7 @@ licence. No module is committed.
 | erlang | `tree-sitter-erlang.wasm` | https://github.com/WhatsApp/tree-sitter-erlang at `62c82e67b73e13f3ef06e4c8c07ff035a8235d30` | Apache-2.0; `highlights.scm` is upstream's `queries/highlights.scm`, with captures renamed and type names as `@type` |
 | r | `tree-sitter-r.wasm` | https://github.com/r-lib/tree-sitter-r at `58a22794466c0fc15b0d3b40531db751593721e8` | MIT; `highlights.scm` is upstream's `queries/highlights.scm`, with the `(ERROR)` capture dropped |
 | ocaml | `tree-sitter-ocaml.wasm` | https://github.com/tree-sitter/tree-sitter-ocaml at `a1c562e73ab787dcc69fdc2e5510c53bbce5364f` (grammar `ocaml`, not `ocaml_interface` or `ocaml_type`) | MIT; `highlights.scm` is upstream's `queries/highlights.scm` at that commit, unchanged but for its header |
+| perl | `tree-sitter-perl.wasm` | https://github.com/tree-sitter-perl/tree-sitter-perl at `4e56e286bbe60b1da410cf5cb3ebef75e134f30e` | MIT; `highlights.scm` and `injections.scm` are upstream's `queries/`, adapted as their headers say |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

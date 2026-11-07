@@ -1,0 +1,16 @@
+# Where this extension's WebAssembly grammar comes from: tree-sitter-perl's
+# repository at this commit of its release branch, whose tree has the
+# generated parser.c (master has none), which scripts/build-grammar-wasm.sh
+# fetches and compiles.
+git = "https://github.com/tree-sitter-perl/tree-sitter-perl"
+# The full 40-hex commit (the release branch's head, deploying master's
+# 80781e3dd98108199a3a1b5860f00fac22088b79, version 2.0.4).
+rev = "4e56e286bbe60b1da410cf5cb3ebef75e134f30e"
+# The directory holding parser.c, and scanner.c, relative to the repository.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "perl"
+# The other first-party languages the sample injects, which the parity test
+# registers under their names: the heredoc <<SQL is sql.
+parity_needs = ["sql"]
