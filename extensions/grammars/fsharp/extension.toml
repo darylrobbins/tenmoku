@@ -1,0 +1,19 @@
+id = "tenmoku.grammar_fsharp"
+name = "F# syntax"
+version = "0.3.12"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "fsharp"
+wasm = "tree-sitter-fsharp.wasm"
+# Not fsi: signature files take upstream's separate fsharp_signature
+# grammar, and this one reads their `val` declarations as expressions.
+extensions = ["fs", "fsx"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "//"
+block_comment = ["(*", "*)"]

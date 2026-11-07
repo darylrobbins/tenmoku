@@ -248,6 +248,7 @@ licence. No module is committed.
 | r | `tree-sitter-r.wasm` | https://github.com/r-lib/tree-sitter-r at `58a22794466c0fc15b0d3b40531db751593721e8` | MIT; `highlights.scm` is upstream's `queries/highlights.scm`, with the `(ERROR)` capture dropped |
 | ocaml | `tree-sitter-ocaml.wasm` | https://github.com/tree-sitter/tree-sitter-ocaml at `a1c562e73ab787dcc69fdc2e5510c53bbce5364f` (grammar `ocaml`, not `ocaml_interface` or `ocaml_type`) | MIT; `highlights.scm` is upstream's `queries/highlights.scm` at that commit, unchanged but for its header |
 | perl | `tree-sitter-perl.wasm` | https://github.com/tree-sitter-perl/tree-sitter-perl at `4e56e286bbe60b1da410cf5cb3ebef75e134f30e` | MIT; `highlights.scm` and `injections.scm` are upstream's `queries/`, adapted as their headers say |
+| fsharp | `tree-sitter-fsharp.wasm` | https://github.com/ionide/tree-sitter-fsharp at `aefd0c8741bdf3aeb827a228aa4a996a6536697e` (grammar `fsharp`, not `fsharp_signature`) | MIT; `highlights.scm` is upstream's `queries/highlights.scm` at that commit, with captures renamed as its header says |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub
