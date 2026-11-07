@@ -1320,3 +1320,246 @@ fn a_reauthorized_program_reloads_the_plugin(cx: &mut TestAppContext) {
         &format!("log {SPAWNER} on plugin {SPAWNER}: hello there\n")
     );
 }
+
+/// The napping plugin's id.
+const NAPPER: &str = "acme.napper";
+
+/// A plugin that subscribes to `buffer-opened` in its `init`. Its handler
+/// runs the granted program `nap`, then reads the opened buffer, logging its
+/// text, and edits it to put an `X` first, logging `edited`; a failed step
+/// logs `failed` at `error` and stops.
+const NAPPER_WAT: &str = r#"
+(component $C
+  (import "kiln:extension/types@1.0.0" (instance $types
+    (type $range (record (field "start" u64) (field "end" u64)))
+    (export "range" (type (eq $range)))
+    (type $error (variant
+      (case "unimplemented" string)
+      (case "denied" string)
+      (case "not-found" string)
+      (case "invalid-argument" string)
+      (case "conflict" string)
+      (case "failed" string)))
+    (export "error" (type (eq $error)))))
+  (alias export $types "range" (type $range))
+  (alias export $types "error" (type $error))
+
+  (import "kiln:extension/log@1.0.0" (instance $log
+    (type $level (enum "trace" "debug" "info" "warn" "error"))
+    (export "level" (type $level' (eq $level)))
+    (export "log" (func (param "level" $level') (param "message" string)))))
+
+  (import "kiln:extension/process@1.0.0" (instance $process
+    (alias outer $C $error (type $error))
+    (type $output (record
+      (field "status" (option s32))
+      (field "stdout" (list u8))
+      (field "stderr" (list u8))))
+    (export "output" (type $output' (eq $output)))
+    (export "spawn" (func
+      (param "program" string)
+      (param "args" (list string))
+      (param "stdin" (option (list u8)))
+      (result (result $output' (error $error)))))))
+
+  (import "fastedit:editor/buffer@1.0.0" (instance $buffer
+    (alias outer $C $range (type $range))
+    (alias outer $C $error (type $error))
+    (type $snapshot (record
+      (field "buffer" u64)
+      (field "version" u64)
+      (field "text" string)
+      (field "path" (option string))
+      (field "language" (option string))))
+    (export "snapshot" (type $snapshot' (eq $snapshot)))
+    (type $text-edit (record (field "range" $range) (field "text" string)))
+    (export "text-edit" (type $text-edit' (eq $text-edit)))
+    (export "read" (func
+      (param "buffer" u64)
+      (param "range" (option $range))
+      (result (result $snapshot' (error $error)))))
+    (export "edit" (func
+      (param "buffer" u64)
+      (param "version" u64)
+      (param "edits" (list $text-edit'))
+      (result (result u64 (error $error)))))))
+
+  (import "kiln:extension/events@1.0.0" (instance $events
+    (alias outer $C $range (type $range))
+    (alias outer $C $error (type $error))
+    (type $event-kinds (flags
+      "buffer-opened" "buffer-changed" "buffer-saved" "buffer-closed"
+      "focus-changed" "selection-changed" "config-reloaded"))
+    (export "event-kinds" (type $event-kinds' (eq $event-kinds)))
+    (type $buffer-opened (record
+      (field "buffer" u64)
+      (field "version" u64)
+      (field "path" (option string))
+      (field "language" (option string))))
+    (export "buffer-opened" (type $buffer-opened' (eq $buffer-opened)))
+    (type $buffer-changed (record
+      (field "buffer" u64) (field "version" u64) (field "ranges" (list $range))))
+    (export "buffer-changed" (type $buffer-changed' (eq $buffer-changed)))
+    (type $buffer-saved (record
+      (field "buffer" u64) (field "version" u64) (field "path" string)))
+    (export "buffer-saved" (type $buffer-saved' (eq $buffer-saved)))
+    (type $selection-changed (record
+      (field "buffer" u64) (field "version" u64) (field "ranges" (list $range))))
+    (export "selection-changed" (type $selection-changed' (eq $selection-changed)))
+    (type $event (variant
+      (case "buffer-opened" $buffer-opened')
+      (case "buffer-changed" $buffer-changed')
+      (case "buffer-saved" $buffer-saved')
+      (case "buffer-closed" u64)
+      (case "focus-changed" (option u64))
+      (case "selection-changed" $selection-changed')
+      (case "config-reloaded")
+      (case "lagged" u64)))
+    (export "event" (type (eq $event)))
+    (export "subscribe" (func (param "kinds" $event-kinds') (result (result (error $error)))))))
+  (alias export $events "event" (type $event))
+
+  (core module $libc
+    (memory (export "memory") 1)
+    ;; Results are laid out at 64 (`subscribe`, `spawn`), 128 (`read`) and
+    ;; 256 (`edit`); the edits at 320; the heap starts at 1024.
+    (global $heap (mut i32) (i32.const 1024))
+    (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
+      (local $p i32)
+      (local.set $p
+        (i32.and
+          (i32.add (global.get $heap) (i32.sub (local.get $align) (i32.const 1)))
+          (i32.sub (i32.const 0) (local.get $align))))
+      (global.set $heap (i32.add (local.get $p) (local.get $size)))
+      (local.get $p)))
+  (core instance $libc (instantiate $libc))
+  (alias core export $libc "memory" (core memory $memory))
+  (alias core export $libc "realloc" (core func $realloc))
+
+  (alias export $log "log" (func $log-log))
+  (alias export $process "spawn" (func $process-spawn))
+  (alias export $buffer "read" (func $buffer-read))
+  (alias export $buffer "edit" (func $buffer-edit))
+  (alias export $events "subscribe" (func $events-subscribe))
+  (core func $log (canon lower (func $log-log) (memory $memory)))
+  (core func $spawn (canon lower (func $process-spawn) (memory $memory) (realloc $realloc)))
+  (core func $read (canon lower (func $buffer-read) (memory $memory) (realloc $realloc)))
+  (core func $edit (canon lower (func $buffer-edit) (memory $memory) (realloc $realloc)))
+  (core func $subscribe (canon lower (func $events-subscribe) (memory $memory) (realloc $realloc)))
+  (core instance $host
+    (export "log" (func $log))
+    (export "spawn" (func $spawn))
+    (export "read" (func $read))
+    (export "edit" (func $edit))
+    (export "subscribe" (func $subscribe)))
+
+  (core module $main
+    (import "libc" "memory" (memory 1))
+    (import "host" "log" (func $log (param i32 i32 i32)))
+    (import "host" "spawn" (func $spawn (param i32 i32 i32 i32 i32 i32 i32 i32)))
+    (import "host" "read" (func $read (param i64 i32 i64 i64 i32)))
+    (import "host" "edit" (func $edit (param i64 i64 i32 i32 i32)))
+    (import "host" "subscribe" (func $subscribe (param i32 i32)))
+    (data (i32.const 352) "X")
+    (data (i32.const 512) "nap")
+    (data (i32.const 520) "edited")
+    (data (i32.const 528) "failed")
+    (func (export "init") (result i32)
+      ;; `buffer-opened` is the first kind.
+      (call $subscribe (i32.const 1) (i32.const 64))
+      (i32.const 64))
+    (func (export "shutdown"))
+    (func (export "run-command") (param i32 i32 i32 i32) (result i32) (i32.const 0))
+    (func $failed (call $log (i32.const 4) (i32.const 528) (i32.const 6)))
+    (func (export "handle-events") (param $events i32) (param $count i32)
+      (local $buffer i64)
+      ;; Only a `buffer-opened`, tag 0, with its buffer at 8.
+      (if (i32.ne (i32.load8_u (local.get $events)) (i32.const 0)) (then (return)))
+      (local.set $buffer (i64.load (i32.add (local.get $events) (i32.const 8))))
+      (call $spawn
+        (i32.const 512) (i32.const 3)
+        (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 64))
+      (if (i32.ne (i32.load8_u (i32.const 64)) (i32.const 0)) (then (call $failed) (return)))
+      ;; The snapshot in the `ok` at 128: its version at 144, its text at
+      ;; 152 and 156.
+      (call $read (local.get $buffer) (i32.const 0) (i64.const 0) (i64.const 0) (i32.const 128))
+      (if (i32.ne (i32.load8_u (i32.const 128)) (i32.const 0)) (then (call $failed) (return)))
+      (call $log (i32.const 2) (i32.load (i32.const 152)) (i32.load (i32.const 156)))
+      ;; One edit at 320: the range 0..0, then the text at 352.
+      (i64.store (i32.const 320) (i64.const 0))
+      (i64.store (i32.const 328) (i64.const 0))
+      (i32.store (i32.const 336) (i32.const 352))
+      (i32.store (i32.const 340) (i32.const 1))
+      (call $edit (local.get $buffer) (i64.load (i32.const 144)) (i32.const 320) (i32.const 1) (i32.const 256))
+      (if (i32.ne (i32.load8_u (i32.const 256)) (i32.const 0)) (then (call $failed) (return)))
+      (call $log (i32.const 2) (i32.const 520) (i32.const 6))))
+  (core instance $main (instantiate $main
+    (with "libc" (instance $libc))
+    (with "host" (instance $host))))
+
+  (func (export "init") (result (result (error $error)))
+    (canon lift (core func $main "init") (memory $memory)))
+  (func (export "shutdown")
+    (canon lift (core func $main "shutdown")))
+
+  (func $run-command (param "id" string) (param "args" string) (result (result (error $error)))
+    (canon lift (core func $main "run-command") (memory $memory) (realloc $realloc)))
+  (instance $command-handler (export "run-command" (func $run-command)))
+  (export "kiln:extension/command-handler@1.0.0" (instance $command-handler))
+
+  (func $handle-events (param "events" (list $event))
+    (canon lift (core func $main "handle-events") (memory $memory) (realloc $realloc)))
+  (instance $event-handler (export "handle-events" (func $handle-events)))
+  (export "kiln:extension/event-handler@1.0.0" (instance $event-handler)))
+"#;
+
+/// An event handler's call deadline doesn't count the time its program
+/// ran, on the buffers either: after a process longer than the deadline it
+/// reads its buffer and edits it.
+#[gpui::test]
+fn an_event_handler_edits_its_buffer_after_a_slow_process(cx: &mut TestAppContext) {
+    let plugins = start_with_call_deadline(cx, CALL_DEADLINE);
+    let bin = tempfile::tempdir().unwrap();
+    let nap = script(bin.path(), "nap", "sleep 0.3");
+    let capabilities = ["process.spawn:nap", "buffer.read", "buffer.write"];
+    plugins
+        .store()
+        .grant(NAPPER, (1, 0, 0), &grants(&capabilities), &[nap], false)
+        .unwrap();
+    let found = plugins.install(NAPPER, "1.0.0", NAPPER_WAT, &capabilities);
+    let (workbench, vcx) = window(cx);
+    vcx.update(|_, cx| set_plugins(cx, vec![found]));
+    until(vcx, "the plugin to run", running(NAPPER));
+
+    // Opening a file is the event; its handler outlasts the call deadline.
+    let file = plugins.dir.path().join("a.txt");
+    fs::write(&file, "alpha\n").unwrap();
+    vcx.update(|window, cx| {
+        let pane = workbench.read(cx).pane().clone();
+        pane.update(cx, |pane, cx| pane.open(file, window, cx));
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !logged(vcx).iter().any(|line| line.ends_with(": edited")) {
+        assert!(
+            Instant::now() < deadline,
+            "the handler didn't finish: {:#?}",
+            logged(vcx)
+        );
+        draw(vcx);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        logged(vcx),
+        [
+            format!("log {NAPPER} on plugin {NAPPER}: alpha\n"),
+            format!("log {NAPPER} on plugin {NAPPER}: edited"),
+        ]
+    );
+    let editor = vcx
+        .update(|_, cx| workbench.read(cx).open_editors(cx))
+        .remove(0);
+    let text = editor.read_with(vcx, |editor, _| editor.model().buffer().text().to_string());
+    assert_eq!(text, "Xalpha\n");
+}
