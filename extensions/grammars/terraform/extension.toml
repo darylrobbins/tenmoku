@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_terraform"
+name = "Terraform syntax"
+version = "1.0.0"
+license = "Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "terraform"
+wasm = "tree-sitter-terraform.wasm"
+extensions = ["tf", "tfvars"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+line_comment = "#"
+block_comment = ["/*", "*/"]
+earlier_patterns_win = false
