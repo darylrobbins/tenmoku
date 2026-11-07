@@ -154,6 +154,17 @@ enum Target {
     Position(PathBuf, u32, u32, ColumnUnit),
 }
 
+/// A problem the panel lists ([`ProblemsPanel::listed`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ListedProblem {
+    /// Its file, as the panel lists it.
+    pub(crate) path: PathBuf,
+    pub(crate) problem: Problem,
+    /// Its file's text is being read, so its column isn't known.
+    pub(crate) reading: bool,
+    target: Target,
+}
+
 /// What a tool's columns count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColumnUnit {
@@ -434,6 +445,34 @@ impl ProblemsPanel {
     /// [`Workbench::sync_problems`].
     pub(crate) fn clear_source(&mut self, key: u64) {
         self.sources.remove(&key);
+    }
+
+    /// Every problem listed, file by file in the panel's order, each with
+    /// where opening it goes ([`Workbench::open_listed_problem`]): for the
+    /// diagnostics picker.
+    pub(crate) fn listed(&self) -> Vec<ListedProblem> {
+        let mut listed = Vec::new();
+        for (ix, file) in self.files.iter().enumerate() {
+            let reading = self.reading(ix);
+            for (problem_ix, problem) in file.problems.iter().enumerate() {
+                let target = match &self.sent[ix] {
+                    Some(sent) => sent.targets[problem_ix].clone(),
+                    None => Target::Range(file.path.clone(), problem.range.clone()),
+                };
+                listed.push(ListedProblem {
+                    path: file.path.clone(),
+                    problem: problem.clone(),
+                    reading,
+                    target,
+                });
+            }
+        }
+        listed
+    }
+
+    /// `severity`'s colour, as the editor marks it.
+    pub(crate) fn severity_color(&self, severity: Severity) -> Hsla {
+        self.color(severity)
     }
 
     /// Lists `files`, with paths relative to `root`, each with its
@@ -1057,6 +1096,17 @@ impl Workbench {
             ProblemsOp::Next => self.go_to_diagnostic(true, cx),
             ProblemsOp::Previous => self.go_to_diagnostic(false, cx),
         }
+    }
+
+    /// Opens `listed` as the panel opens its row: its file's editor
+    /// activated, focused, with the problem's range selected.
+    pub(crate) fn open_listed_problem(
+        &mut self,
+        listed: &ListedProblem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_problem(listed.target.clone(), window, cx);
     }
 
     /// Puts the active editor's caret at the start of the diagnostic after

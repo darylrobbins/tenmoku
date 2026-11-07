@@ -1,7 +1,8 @@
 //! The palettes shown over the window, one at a time
 //! ([`Workbench::show_palette`]): quick open and the language, theme,
 //! go-to-line, recent and toolbar pickers (and those made afresh each
-//! time: the buffer, git files and config files pickers), and the breadcrumbs and
+//! time: the buffer, git files, config files, keymaps, diagnostics and
+//! buffer lines pickers), and the breadcrumbs and
 //! navigation buttons they read from.
 
 use std::path::PathBuf;
@@ -423,10 +424,17 @@ pub(crate) enum Palette {
     GitFiles,
     /// `workbench.show_config_files`' files in the config folder.
     ConfigFiles,
+    /// `keymaps.search`'s bindings and vim maps.
+    Keymaps,
+    /// `diagnostics.search_document`'s and `diagnostics.search_workspace`'s
+    /// problems.
+    Diagnostics,
+    /// `search.buffer_lines`' rows of the active editor.
+    BufferLines,
 }
 
 impl Palette {
-    const ALL: [Palette; 17] = [
+    const ALL: [Palette; 20] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -444,6 +452,9 @@ impl Palette {
         Palette::Buffers,
         Palette::GitFiles,
         Palette::ConfigFiles,
+        Palette::Keymaps,
+        Palette::Diagnostics,
+        Palette::BufferLines,
     ];
 
     /// Its id in the modal layer.
@@ -466,6 +477,9 @@ impl Palette {
             Palette::Buffers => "buffers",
             Palette::GitFiles => "git_files",
             Palette::ConfigFiles => "config_files",
+            Palette::Keymaps => "keymaps",
+            Palette::Diagnostics => "diagnostics",
+            Palette::BufferLines => "buffer_lines",
         })
     }
 

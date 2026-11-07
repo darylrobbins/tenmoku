@@ -23,6 +23,12 @@ nnoremap <leader>ss <Cmd>fe:outline.show<CR>
 nnoremap <leader>sS <Cmd>fe:nav.workspace_symbols<CR>
 nnoremap <leader>: <Cmd>fe:command_palette.toggle<CR>
 nnoremap <leader>sc <Cmd>fe:command_palette.toggle<CR>
+nnoremap <leader>sk <Cmd>fe:keymaps.search<CR>
+" No :help to search: the Keyboard Shortcuts editor is the nearest reference.
+nnoremap <leader>sh <Cmd>fe:workbench.open_keyboard_shortcuts<CR>
+nnoremap <leader>sd <Cmd>fe:diagnostics.search_document<CR>
+nnoremap <leader>sD <Cmd>fe:diagnostics.search_workspace<CR>
+nnoremap <leader>sb <Cmd>fe:search.buffer_lines<CR>
 
 " explorer, buffers
 nnoremap <leader>e <Cmd>fe:dock.show_project<CR>
@@ -95,10 +101,6 @@ fegroup <leader>w windows icon=app-window
 fegroup <leader>x diagnostics/quickfix icon=triangle-alert
 
 " Unmapped LazyVim keys: fastedit has no command for them.
-"   <leader>sk  keymaps picker
-"   <leader>sh  help picker
-"   <leader>sd  diagnostics picker
-"   <leader>sb  buffer grep
 "   <leader>l   lazy
 "   <leader>L   changelog
 "   <leader>K   keywordprg

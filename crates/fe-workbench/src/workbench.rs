@@ -1163,6 +1163,15 @@ mod git_files_picker;
 #[path = "config_files_picker.rs"]
 pub(crate) mod config_files_picker;
 
+#[path = "keymaps_picker.rs"]
+mod keymaps_picker;
+
+#[path = "diagnostics_picker.rs"]
+mod diagnostics_picker;
+
+#[path = "buffer_lines_picker.rs"]
+mod buffer_lines_picker;
+
 #[path = "hot_exit.rs"]
 mod hot_exit;
 

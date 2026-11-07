@@ -26,6 +26,11 @@ const TABLE: &[(&str, &str)] = &[
     ("<leader>sS", "nav.workspace_symbols"),
     ("<leader>:", "command_palette.toggle"),
     ("<leader>sc", "command_palette.toggle"),
+    ("<leader>sk", "keymaps.search"),
+    ("<leader>sh", "workbench.open_keyboard_shortcuts"),
+    ("<leader>sd", "diagnostics.search_document"),
+    ("<leader>sD", "diagnostics.search_workspace"),
+    ("<leader>sb", "search.buffer_lines"),
     ("<leader>e", "dock.show_project"),
     ("<leader>E", "dock.show_project"),
     ("<leader>bd", "workbench.close_tab"),
@@ -140,7 +145,7 @@ fn listed_but_mapped(listed: &[String], text: &str) -> Vec<String> {
 #[test]
 fn unmapped_keys_are_listed_and_absent() {
     let listed = unmapped();
-    assert_eq!(listed.len(), 18, "{listed:?}");
+    assert_eq!(listed.len(), 14, "{listed:?}");
     assert_eq!(
         listed_but_mapped(&listed, preset().text),
         Vec::<String>::new()
@@ -148,10 +153,10 @@ fn unmapped_keys_are_listed_and_absent() {
 
     // A listed key the file maps is caught.
     let both = format!(
-        "{}nnoremap <leader>sk <Cmd>fe:search.show<CR>\n",
+        "{}nnoremap <leader>cm <Cmd>fe:search.show<CR>\n",
         preset().text
     );
-    assert_eq!(listed_but_mapped(&listed, &both), ["<leader>sk"]);
+    assert_eq!(listed_but_mapped(&listed, &both), ["<leader>cm"]);
 }
 
 fn vim() -> HeadlessVim {
