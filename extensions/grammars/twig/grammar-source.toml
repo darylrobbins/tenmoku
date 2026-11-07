@@ -1,0 +1,9 @@
+# Where this extension's WebAssembly grammar comes from: that commit of the
+# repository, fetched whole by scripts/build-grammar-wasm.sh.
+git = "https://github.com/gbprod/tree-sitter-twig"
+rev = "2208d2a3c3ee7ef378e97df2e51c18feb7ee9dfc"
+# The directory holding parser.c.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm.
+grammar = "twig"

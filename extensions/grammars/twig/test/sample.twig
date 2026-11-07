@@ -1,0 +1,61 @@
+{# Product listing page.
+   Rendered by the catalogue controller. #}
+{% import "macros/forms.twig" as forms %}
+{% from "macros/price.twig" import format_price as price, badge %}
+
+{% set title = "Shop \"All\" products" %}
+{% set page, per_page = 1, 24 %}
+{% set featured = ['book', 'lamp', 'desk'] %}
+{% set labels = {'new': 'New', 'sale': "On sale", count: 3.5e+2} %}
+
+{% macro stars(rating, max = 5) %}
+  <span class="stars">{{ rating|round }} / {{ max }}</span>
+{% endmacro %}
+
+<!doctype html>
+<html lang="{{ app.request.locale }}">
+  <head>
+    <title>{{ title|upper }} - {{ site.name|default('Shop') }}</title>
+    <style>
+      .product { margin: 0 auto; color: #333; }
+    </style>
+  </head>
+  <body class="{{ body_class ?? 'listing' }}">
+    {# Navigation #}
+    {% include 'partials/nav.twig' with {'active': 'shop'} only %}
+    {% include ['custom.twig', 'fallback.twig'] ignore missing %}
+
+    <h1>{{ title }}</h1>
+
+    {% if products is empty %}
+      <p>{{ 'No products found'|trans }}</p>
+    {% elseif products|length > per_page and not is_admin %}
+      <p>Too many products: {{ products|length }}</p>
+    {% else %}
+      <ul>
+      {% for product in products %}
+        <li class="product {{ loop.index is even ? 'even' : 'odd' }}">
+          <a href="{{ path('product_show', {id: product.id}) }}">
+            {{ product.name|e('html')|capitalize }}
+          </a>
+          {{ price(product.price, "USD") }}
+          {% if product.stock is defined and product.stock > 0 %}
+            {{ forms.button("Buy", true) }}
+          {% endif %}
+          {% if product.discount is not null %}
+            <em>-{{ product.discount * 100 }}%</em>
+          {% endif %}
+          <p>{{ "Item #{loop.index} of #{products|length}" }}</p>
+          {{ product.tags|join(', ') }}
+          {{ product.owner?.name }}
+          {{ labels.new ~ ' ' ~ product.label }}
+        </li>
+      {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% block footer %}
+      <footer>&copy; {{ 'now'|date('Y') }} {{ site.name }}</footer>
+    {% endblock %}
+  </body>
+</html>

@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_twig"
+name = "Twig syntax"
+version = "1.1.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "twig"
+wasm = "tree-sitter-twig.wasm"
+extensions = ["twig"]
+block_comment = ["{#", "#}"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
