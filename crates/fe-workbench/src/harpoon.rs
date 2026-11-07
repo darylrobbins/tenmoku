@@ -440,6 +440,23 @@ struct Asked {
     root: PathBuf,
     pane: EntityId,
     tab: Option<TabId>,
+    /// The pane's open and tab navigation serials: another open or
+    /// navigation since supersedes this one.
+    serials: (u64, u64),
+}
+
+impl Opens {
+    /// Supersedes `window`'s open number `open`, if it's still the latest.
+    fn cancel(window: EntityId, open: u64, cx: &mut App) {
+        if !cx.has_global::<Opens>() {
+            return;
+        }
+        if let Some(latest) = cx.global_mut::<Opens>().0.get_mut(&window)
+            && *latest == open
+        {
+            *latest += 1;
+        }
+    }
 }
 
 impl Asked {
@@ -449,11 +466,13 @@ impl Asked {
         let open = cx.default_global::<Opens>().0.entry(id).or_default();
         *open += 1;
         let open = *open;
+        let pane = workbench.pane().read(cx);
         Asked {
             open,
             root,
             pane: workbench.pane().entity_id(),
-            tab: workbench.pane().read(cx).active_tab().map(|tab| tab.id()),
+            tab: pane.active_tab().map(|tab| tab.id()),
+            serials: (pane.open_serial(), pane.navigations()),
         }
     }
 
@@ -467,6 +486,7 @@ impl Asked {
             && workbench.root() == Some(self.root.as_path())
             && pane.entity_id() == self.pane
             && pane.read(cx).active_tab().map(|tab| tab.id()) == self.tab
+            && (pane.read(cx).open_serial(), pane.read(cx).navigations()) == self.serials
     }
 }
 
@@ -523,9 +543,12 @@ pub(crate) struct HarpoonPicker {
     /// one's landing late is dropped.
     asked: u64,
     shown: u64,
+    /// The window's open number of the row last confirmed, until it lands.
+    opening: Option<u64>,
     _load: Option<Task<()>>,
     _keys: Option<Subscription>,
     _root_changed: Option<Subscription>,
+    _released: Option<Subscription>,
 }
 
 impl HarpoonPicker {
@@ -541,15 +564,27 @@ impl HarpoonPicker {
             pending_d: false,
             asked: 0,
             shown: 0,
+            opening: None,
             _load: None,
             _keys: None,
             _root_changed: None,
+            _released: None,
+        }
+    }
+
+    /// Drops the open of the last row confirmed, if still pending.
+    fn cancel_opening(&mut self, cx: &mut App) {
+        if let (Some(open), Some(workbench)) = (self.opening.take(), self.workbench.upgrade()) {
+            Opens::cancel(workbench.entity_id(), open, cx);
         }
     }
 
     /// It's opening: reads the list, and takes its keys while focused.
     fn opened(&mut self, root_changed: Subscription, cx: &mut Context<Picker<Self>>) {
         self._root_changed = Some(root_changed);
+        // However the picker goes (Escape, toggled off, replaced), an open
+        // it still waits on is dropped.
+        self._released = Some(cx.on_release(|picker, cx| picker.delegate.cancel_opening(cx)));
         let picker = cx.weak_entity();
         self._keys = Some(cx.intercept_keystrokes(move |event, window, cx| {
             if let Some(picker) = picker.upgrade() {
@@ -769,14 +804,20 @@ impl PickerDelegate for HarpoonPicker {
         let rel = self.rows[row].rel.clone();
         let mark = Mark::File(rel.clone());
         let root = self.root.clone();
-        let opened = workbench.update(cx, |workbench, cx| {
-            workbench.open_mark(root, mark, window, cx)
+        let (opened, open) = workbench.update(cx, |workbench, cx| {
+            let opened = workbench.open_mark(root, mark, window, cx);
+            let open = cx
+                .try_global::<Opens>()
+                .and_then(|o| o.0.get(&cx.entity_id()).copied());
+            (opened, open)
         });
+        self.opening = open;
         cx.spawn_in(window, async move |picker, cx| {
             let Some(opened) = opened.await else {
                 return;
             };
             (picker.update(cx, |picker, cx| {
+                picker.delegate.opening = None;
                 if let Some(row) = (picker.delegate.rows.iter_mut()).find(|row| row.rel == rel) {
                     row.missing = !opened;
                 }
@@ -791,7 +832,9 @@ impl PickerDelegate for HarpoonPicker {
         false
     }
 
-    fn dismissed(&mut self, _: &mut Window, _: &mut Context<Picker<Self>>) {}
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.cancel_opening(cx);
+    }
 
     fn status(&self) -> Option<SharedString> {
         (self.loaded && self.rows.is_empty())
