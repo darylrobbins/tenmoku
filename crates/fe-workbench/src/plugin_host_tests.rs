@@ -1336,12 +1336,14 @@ fn a_reauthorized_program_reloads_the_plugin(cx: &mut TestAppContext) {
 }
 
 /// The napping plugin's id.
+#[cfg(unix)]
 const NAPPER: &str = "acme.napper";
 
 /// A plugin that subscribes to `buffer-opened` in its `init`. Its handler
 /// runs the granted program `nap`, then reads the opened buffer, logging its
 /// text, and edits it to put an `X` first, logging `edited`; a failed step
 /// logs `failed` at `error` and stops.
+#[cfg(unix)]
 const NAPPER_WAT: &str = r#"
 (component $C
   (import "kiln:extension/types@1.0.0" (instance $types
@@ -1532,6 +1534,8 @@ const NAPPER_WAT: &str = r#"
 /// An event handler's call deadline doesn't count the time its program
 /// ran, on the buffers either: after a process longer than the deadline it
 /// reads its buffer and edits it.
+// Its program is a `/bin/sh` script, as `script` writes one.
+#[cfg(unix)]
 #[gpui::test]
 fn an_event_handler_edits_its_buffer_after_a_slow_process(cx: &mut TestAppContext) {
     let plugins = start_with_call_deadline(cx, CALL_DEADLINE);

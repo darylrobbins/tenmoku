@@ -85,7 +85,10 @@ fn a_linked_folder_installs_as_a_link() {
     fs::remove_file(&at).unwrap();
     let other = dir.path().join("work/other");
     fs::create_dir_all(&other).unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&other, &at).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&other, &at).unwrap();
     let reason = refusal(link(&folder, &extensions, &api));
     assert!(reason.contains("isn't a link to this folder"), "{reason}");
     assert_eq!(fs::read_link(&at).unwrap(), other);

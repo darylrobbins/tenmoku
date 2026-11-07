@@ -55,7 +55,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    os::unix::fs::FileExt as _,
+    io::{Read as _, Seek as _, SeekFrom},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -434,7 +434,10 @@ fn char_column(path: &Path, line: &LineMatch, start: usize) -> u32 {
         return chars_before(&line.preview, start);
     }
     let mut bytes = vec![0; start];
-    let read = File::open(path).and_then(|file| file.read_exact_at(&mut bytes, line.line_offset));
+    let read = File::open(path).and_then(|mut file| {
+        file.seek(SeekFrom::Start(line.line_offset))?;
+        file.read_exact(&mut bytes)
+    });
     match read {
         Ok(()) => chars_before(&String::from_utf8_lossy(&bytes), start),
         // Gone since: the preview's chars past its start, a byte each before.

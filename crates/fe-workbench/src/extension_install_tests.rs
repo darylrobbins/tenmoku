@@ -19,8 +19,10 @@ use gpui::{Action as _, Entity, Focusable as _, TestAppContext, VisualTestContex
 use kiln::core::ExtensionSet;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
+#[cfg(unix)]
+use super::same_file;
 use super::{
-    InstallError, Installed, MAX_ENTRIES, MAX_UNPACKED, check_api, install_extension, same_file,
+    InstallError, Installed, MAX_ENTRIES, MAX_UNPACKED, check_api, install_extension,
     set_extensions_dir, stage,
 };
 use crate::{
