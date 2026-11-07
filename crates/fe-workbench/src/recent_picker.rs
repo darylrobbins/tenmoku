@@ -86,6 +86,17 @@ struct Queue {
 
 impl gpui::Global for Queue {}
 
+/// Counts the changes made to the list through [`record`] and [`clear`]; a
+/// view that shows it observes the global and reads it again.
+pub(crate) struct Changes(u64);
+
+impl gpui::Global for Changes {}
+
+fn changed(cx: &mut App) {
+    let count = cx.try_global::<Changes>().map_or(0, |changes| changes.0);
+    cx.set_global(Changes(count + 1));
+}
+
 /// Queues `job` on the list's file, after the jobs queued before it. False
 /// if there's no file to keep the list in.
 fn queue(job: impl FnOnce(&Path) + Send + 'static, cx: &mut App) -> bool {
@@ -132,6 +143,7 @@ pub(crate) fn record(path: PathBuf, folder: bool, cx: &mut App) {
         },
         cx,
     );
+    changed(cx);
 }
 
 /// Empties the list.
@@ -144,6 +156,7 @@ pub(crate) fn clear(cx: &mut App) {
         },
         cx,
     );
+    changed(cx);
 }
 
 /// The list's entries that still exist, read after the jobs queued before:

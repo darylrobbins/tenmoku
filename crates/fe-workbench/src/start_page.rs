@@ -28,15 +28,16 @@ use fe_command::{CommandId, Source};
 use fe_ui::{Icon, IconRef, ROW_HEIGHT, file_icon_ref, folder_icon_ref};
 use gpui::{
     AnyElement, App, AppContext as _, Context, FocusHandle, FontWeight, HighlightStyle,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, StyledText, Task, UnderlineStyle, WeakEntity,
-    Window, div, prelude::FluentBuilder as _, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, StyledText, Task, UnderlineStyle,
+    WeakEntity, Window, canvas, div, prelude::FluentBuilder as _, px,
 };
 use kiln::{
     Cx, ViewCommands as _,
     platform::command_actions::{dispatch_invocation, typed_command},
     platform::keys,
 };
+use std::{cell::Cell, rc::Rc};
 
 use crate::{
     Workbench,
@@ -56,6 +57,10 @@ pub(crate) struct StartPageView {
     loaded: bool,
     /// The selected row, among all the sections' rows in order.
     selected: usize,
+    scroll: ScrollHandle,
+    /// Set when the selection moved: the selected row, once laid out, is
+    /// scrolled into the page's bounds.
+    reveal: Rc<Cell<bool>>,
     /// While the setup wizard shows: no keys, no runs.
     inert: bool,
     _load: Option<Task<()>>,
@@ -101,6 +106,8 @@ impl StartPageView {
             page: StartPage::default(),
             loaded: false,
             selected: 0,
+            scroll: ScrollHandle::new(),
+            reveal: Rc::new(Cell::new(false)),
             inert: false,
             _load: None,
             #[cfg(test)]
@@ -145,6 +152,7 @@ impl StartPageView {
                 view.page = page;
                 view.loaded = true;
                 view.selected = 0;
+                view.reveal.set(true);
                 cx.notify();
             })
             .ok();
@@ -173,6 +181,7 @@ impl StartPageView {
         }
         let at = self.selected.min(len - 1) as isize + by;
         self.selected = at.clamp(0, len as isize - 1) as usize;
+        self.reveal.set(true);
         cx.notify();
     }
 
@@ -268,6 +277,7 @@ impl StartPageView {
         div()
             .id(("start-page-row", ix))
             .debug_selector(|| format!("start-page-row:{}", row.label))
+            .relative()
             .h(ROW_HEIGHT)
             .px_2()
             .flex()
@@ -281,6 +291,31 @@ impl StartPageView {
             .on_click(
                 cx.listener(move |view, _, window, cx| view.run(ix, Source::Mouse, window, cx)),
             )
+            .when(selected, |row| {
+                let (scroll, reveal) = (self.scroll.clone(), self.reveal.clone());
+                row.child(
+                    canvas(
+                        move |bounds, window, _| {
+                            if reveal.replace(false) {
+                                let view = scroll.bounds();
+                                let mut offset = scroll.offset();
+                                if bounds.top() < view.top() {
+                                    offset.y += view.top() - bounds.top();
+                                } else if bounds.bottom() > view.bottom() {
+                                    offset.y -= bounds.bottom() - view.bottom();
+                                } else {
+                                    return;
+                                }
+                                scroll.set_offset(offset);
+                                window.refresh();
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
             .child(icon.element(px(16.), tint))
             .child(div().flex_none().text_color(ui.text).child(label))
             .children(row.detail.clone().map(|detail| {
@@ -350,10 +385,14 @@ impl Render for StartPageView {
             .debug_selector(|| "start-page".into())
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
+            .track_scroll(&self.scroll)
             .size_full()
             .overflow_y_scroll()
+            // A column, so the content's height is the page's scroll extent:
+            // a row's stretched item would clip to the page's height.
             .flex()
-            .justify_center()
+            .flex_col()
+            .items_center()
             .text_size(px(12.))
             .bg(ui.background);
         page.child(

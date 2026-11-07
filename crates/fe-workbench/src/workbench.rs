@@ -126,6 +126,8 @@ pub struct Workbench {
     /// focus in it, and to the bottom dock showing or hiding, which the
     /// sidebar's Terminal button follows.
     _terminal: [Subscription; 3],
+    /// Reads the recent list again for a shown Start page when it changes.
+    _recents: Subscription,
     /// The window's shell around the panes, which it keeps in step: their
     /// group, the active one, a pane emptied closing, tabs dropped moving.
     workspace: Entity<Workspace<Pane>>,
@@ -601,6 +603,11 @@ impl Workbench {
             terminal_dock,
             terminal,
             _terminal: terminal_subscriptions,
+            _recents: cx.observe_global::<recent_picker::Changes>(|workbench, cx| {
+                if workbench.start_page_shown {
+                    workbench.start_page.update(cx, |page, cx| page.reload(cx));
+                }
+            }),
             workspace,
             active: pane.clone(),
             template,
