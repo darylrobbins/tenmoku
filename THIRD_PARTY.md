@@ -235,6 +235,7 @@ licence. No module is committed.
 | elm | `tree-sitter-elm.wasm` | https://github.com/elm-tooling/tree-sitter-elm `e1e8fea161a1e66f3997855d316be2a43e4e956f` | MIT; `highlights.scm` is the grammar's own query, adapted: captures renamed to fe-syntax's vocabulary, GLSL injection dropped |
 | gleam | `tree-sitter-gleam.wasm` | https://github.com/gleam-lang/tree-sitter-gleam @ `fa6d0d94804f1b342e175865a3dbeb316ee5115e` | Apache-2.0; `highlights.scm` and `injections.scm` are adapted from its `queries/` |
 | solidity | `tree-sitter-solidity.wasm` | [JoranHonig/tree-sitter-solidity](https://github.com/JoranHonig/tree-sitter-solidity) @ `048fe686cb1fde267243739b8bdbec8fc3a55272` | MIT; `highlights.scm` is upstream's `queries/highlights-nvim.scm` (same licence and holder), with a few patterns dropped or adapted for our predicates and captures, and the member-call pattern reordered |
+| astro | `tree-sitter-astro.wasm` | https://github.com/virchau13/tree-sitter-astro @ `213f6e6973d9b456c6e50e86f19f66877e7ef0ee` | MIT; `highlights.scm` and `injections.scm` are adapted from the grammar's own `queries/` at that commit, and add tree-sitter-html 0.23.2's `"/>"` pattern and `<style>` → css injection, whose licence is MIT too; their headers say what changed |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

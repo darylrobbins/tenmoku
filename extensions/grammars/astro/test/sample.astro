@@ -1,0 +1,84 @@
+---
+// The blog's post list: frontmatter runs on the server, as TypeScript.
+import Layout from "../layouts/Layout.astro";
+import { getCollection, type CollectionEntry } from "astro:content";
+
+interface Props {
+  title: string;
+  limit?: number;
+}
+
+type Post = CollectionEntry<"blog">;
+
+const { title, limit = 10 } = Astro.props as Props;
+const ratio = 0.75;
+const banner = 'Tabs\tand "quotes" and a newline\n';
+
+/* Newest first, at most `limit` of them. */
+function newest(posts: Post[], count: number): Post[] {
+  return posts
+    .filter((post) => !post.data.draft)
+    .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
+    .slice(0, count);
+}
+
+const posts = newest(await getCollection("blog"), limit);
+const heading = `${title} (${posts.length} of ${0x10})`;
+---
+
+<!doctype html>
+<Layout title={title}>
+  <!-- The list renders once per request. -->
+  <main class="posts" data-ratio={ratio * 100}>
+    <h1>{heading}</h1>
+    <p class:list={["intro", { hidden: posts.length === 0 }]}>{banner}</p>
+    <ul>
+      {posts.map((post) => (
+        <li>
+          <a href={`/blog/${post.slug}/`}>{post.data.title}</a>
+          <time datetime={post.data.date.toISOString()}>
+            {post.data.date.toLocaleDateString("en-CA")}
+          </time>
+        </li>
+      ))}
+    </ul>
+    <>
+      <img src="/hero.png" alt="A hero image" width="640" />
+      <input type="checkbox" checked disabled />
+    </>
+    {posts.length === 0 && <p>No posts yet.</p>}
+  </main>
+</Layout>
+
+<script>
+  // Client-side: Astro bundles this as TypeScript.
+  const button = document.querySelector<HTMLButtonElement>("#top");
+  let clicks: number = 0;
+
+  function scrollToTop(event: MouseEvent): void {
+    clicks += 1;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    console.log(`clicked ${clicks} times`, event.type);
+  }
+
+  button?.addEventListener("click", scrollToTop);
+</script>
+
+<style>
+  /* Scoped to this component. */
+  .posts {
+    max-width: 42rem;
+    margin: 0 auto;
+    color: #333;
+  }
+
+  .posts h1::after {
+    content: "\2014";
+  }
+
+  @media (max-width: 600px) {
+    .posts {
+      padding: 0 1rem;
+    }
+  }
+</style>

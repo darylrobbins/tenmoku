@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_astro"
+name = "Astro syntax"
+version = "0.0.1"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "astro"
+wasm = "tree-sitter-astro.wasm"
+extensions = ["astro"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+block_comment = ["<!--", "-->"]
+earlier_patterns_win = true

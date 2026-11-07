@@ -1,0 +1,11 @@
+# Where this extension's WebAssembly grammar comes from: a commit of the
+# grammar's repository, whose tree has the generated parser.c, which
+# scripts/build-grammar-wasm.sh fetches and compiles.
+git = "https://github.com/virchau13/tree-sitter-astro"
+# The full 40-hex commit: master's head, "bindings(rust): Add queries to rust binding".
+rev = "213f6e6973d9b456c6e50e86f19f66877e7ef0ee"
+# The directory holding parser.c and scanner.c.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "astro"
