@@ -1,0 +1,4 @@
+git = "https://github.com/gleam-lang/tree-sitter-gleam"
+rev = "fa6d0d94804f1b342e175865a3dbeb316ee5115e"
+src = "src"
+grammar = "gleam"

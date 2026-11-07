@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_gleam"
+name = "Gleam syntax"
+version = "1.0.0"
+license = "Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "gleam"
+wasm = "tree-sitter-gleam.wasm"
+extensions = ["gleam"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "//"
