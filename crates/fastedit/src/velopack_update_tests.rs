@@ -19,11 +19,13 @@ use velopack::{
     sources::{FileSource, UpdateSource},
 };
 
+#[cfg(target_os = "macos")]
+use crate::velopack_update::utf8_args;
 use crate::{
     update_signature::{PrivateKey, PublicKey, SignatureError, generate, sign},
     velopack_update::{
         Feed, Fetcher, Install, Policy, Refusal, SignedSource, check_and_download, check_package,
-        download_checked, update_now, utf8_args,
+        download_checked, update_now,
     },
 };
 
@@ -740,6 +742,7 @@ fn excluded_launches_never_reach_the_check() {
 }
 
 /// The app binary that this test binary was built beside.
+#[cfg(target_os = "macos")]
 fn tenmoku_binary() -> PathBuf {
     let mut candidates: Vec<PathBuf> = ["NEXTEST_BIN_EXE_tenmoku", "CARGO_BIN_EXE_tenmoku"]
         .iter()
