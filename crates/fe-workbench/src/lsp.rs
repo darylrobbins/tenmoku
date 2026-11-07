@@ -86,9 +86,10 @@
 //!   timeout or an error, shows nothing.
 //! - **Completion.** The same provider asks for an editor's completions
 //!   ([`LspManager::completion`]), resolves the selected one, and reports
-//!   the server's trigger characters for the buffer. It adds extensions'
-//!   snippets after them, server or none, unless a punctuation trigger
-//!   character asked ([`crate::extension_snippets`]).
+//!   the server's trigger characters for the buffer. It adds the user's
+//!   snippets ([`crate::user_snippets`]) and extensions' after them, server
+//!   or none, unless a punctuation trigger character asked
+//!   ([`crate::extension_snippets`]).
 //! - **Signature help.** So does it for an editor's signature help
 //!   ([`LspManager::signature_help`]) and its trigger characters
 //!   ([`LspManager::signature_help_triggers`]). fe-lsp keeps no parameter's
@@ -2184,8 +2185,8 @@ impl CodeActioner {
 /// Hover text, completions and signature help for an editor, from the
 /// server its buffer is open on, through whichever manager the workbench has
 /// now: none (no root, or a closed window) answers nothing. Completions
-/// add extensions' snippets ([`crate::extension_snippets`]), server or
-/// none, unless a punctuation trigger character asked. In an ignore file,
+/// add the user's and extensions' snippets ([`crate::extension_snippets`]),
+/// server or none, unless a punctuation trigger character asked. In an ignore file,
 /// completions add paths and hovers add a pattern's matches, server or none
 /// ([`crate::ignore_assist`]).
 #[derive(Default)]
@@ -2271,7 +2272,7 @@ impl fe_gpui::CompletionProvider for LspHover {
             .map(|manager| lock(&manager).completion(buffer, version, offset, trigger));
         Box::pin(async move {
             // Read on the first poll, before the server answers.
-            let snippets = host.map_or_else(Vec::new, |(workbench, cx)| {
+            let snippets = host.map_or_else(CompletionList::default, |(workbench, cx)| {
                 cx.update(|cx| {
                     crate::extension_snippets::snippet_completions(
                         cx, &workbench, buffer, version, offset,
@@ -2298,11 +2299,12 @@ impl fe_gpui::CompletionProvider for LspHover {
                 },
                 None => None,
             };
-            if snippets.is_empty() && paths.is_none() {
+            if snippets.items.is_empty() && !snippets.is_incomplete && paths.is_none() {
                 return list;
             }
             let mut list = list.unwrap_or_default();
-            list.items.extend(snippets);
+            list.items.extend(snippets.items);
+            list.is_incomplete |= snippets.is_incomplete;
             if let Some(paths) = paths {
                 list.items.extend(paths.items);
                 list.is_incomplete |= paths.is_incomplete;

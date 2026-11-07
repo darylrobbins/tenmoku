@@ -1042,6 +1042,20 @@ impl Workbench {
         self.select_language(cx.window, cx.cx);
     }
 
+    /// Insert Snippet
+    #[command(id = "workbench.insert_snippet")]
+    fn insert_snippet_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.insert_snippet(cx.window, cx.cx);
+    }
+
+    /// Configure User Snippets
+    #[command(id = "workbench.configure_snippets")]
+    fn configure_snippets_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.configure_snippets(cx.window, cx.cx);
+    }
+
     /// Change File Encoding
     #[command(id = "workbench.change_encoding")]
     fn change_encoding_command(&mut self, cx: &mut Cx<Self>) {

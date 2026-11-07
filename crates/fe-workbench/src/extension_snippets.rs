@@ -1,6 +1,9 @@
 //! Snippets extensions contribute (`[[contributes.snippets]]`, extensions
 //! record §9), offered as completions that expand through the snippet
-//! engine ([`fe_editor::snippet`]).
+//! engine ([`fe_editor::snippet`]), with the user's own
+//! ([`crate::user_snippets`]), which are offered alike ([`offers`]): their
+//! detail "User snippet", one for each of a snippet's prefixes, and sorted
+//! before an extension's that matches as well.
 //!
 //! - **Set** by the host for every window ([`set_extension_snippets`]): one
 //!   with no prefix, no body or a body that doesn't parse
@@ -22,12 +25,20 @@
 //!   Tab walks its tabstops. It's worked out from the editor as it is when
 //!   the provider's answer is first polled, so text typed at the caret
 //!   since the request doesn't lose it; an edit before the caret does.
+//! - **Built once**: each snippet's offers ([`Offer`]), one for each of
+//!   its prefixes, are made when the snippets are set or read, sharing one
+//!   copy of its text, unexpanded. A request filters them by language and
+//!   word before copying any body into an item, and copies at most
+//!   [`SNIPPET_PAYLOAD_LIMIT`] of text in all, the list incomplete if that
+//!   left any out, so typing narrows by asking again; it expands bodies
+//!   for documentation only for items it offers, up to
+//!   [`SNIPPET_DOCUMENTATION_LIMIT`].
 
-use std::ops::Range;
+use std::{ops::Range, rc::Rc};
 
 use fe_buffer::{Bias, BufferId, BufferSnapshot, Version};
 use fe_editor::{
-    completion::{CompletionItem, CompletionTrigger},
+    completion::{CompletionItem, CompletionList, CompletionTrigger},
     snippet::{MAX_DEPTH, Snippet},
 };
 use gpui::{App, Global, WeakEntity};
@@ -51,9 +62,12 @@ pub struct ExtensionSnippet {
     pub languages: Vec<String>,
 }
 
-/// What [`set_extension_snippets`] last set.
+/// What [`set_extension_snippets`] last set, and their offers, built once.
 #[derive(Default)]
-struct ExtensionSnippets(Vec<ExtensionSnippet>);
+struct ExtensionSnippets {
+    snippets: Vec<ExtensionSnippet>,
+    offers: Rc<[Offer]>,
+}
 
 impl Global for ExtensionSnippets {}
 
@@ -101,8 +115,15 @@ pub fn set_extension_snippets(cx: &mut App, snippets: Vec<ExtensionSnippet>) {
             }
             error.is_none()
         })
+        .collect::<Vec<_>>();
+    let offers = (snippets.iter())
+        .flat_map(|snippet| {
+            let text = SnippetText::new(&snippet.body, snippet.description.as_deref());
+            let (languages, name) = (&snippet.languages, &snippet.extension_name);
+            Offer::each_prefix([&snippet.prefix], text, languages, name, false)
+        })
         .collect();
-    cx.set_global(ExtensionSnippets(snippets));
+    cx.set_global(ExtensionSnippets { snippets, offers });
 }
 
 /// Why `body` isn't a snippet in the LSP snippet grammar, which the engine
@@ -289,27 +310,124 @@ impl BodyCheck<'_> {
 /// them.
 pub fn extension_snippets(cx: &App) -> Vec<ExtensionSnippet> {
     cx.try_global::<ExtensionSnippets>()
-        .map(|snippets| snippets.0.clone())
+        .map(|snippets| snippets.snippets.clone())
         .unwrap_or_default()
+}
+
+/// A snippet as completions offer it, under one of its prefixes: the
+/// user's ([`crate::user_snippets`]) or an extension's. Built once when
+/// the snippets are read or set, its text shared by all of a snippet's
+/// prefixes, so asking for completions copies no body until an item is
+/// made of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Offer {
+    pub(crate) prefix: String,
+    pub(crate) text: Rc<SnippetText>,
+    /// The languages it's offered in: every one if none.
+    pub(crate) languages: Rc<[String]>,
+    /// Whose it is: the extension's name, or [`USER_SNIPPET`].
+    pub(crate) detail: Rc<str>,
+    /// Whether it's the user's, which comes before an extension's that
+    /// matches as well.
+    pub(crate) user: bool,
+}
+
+/// A snippet's text, shared by the offers of its prefixes. What it
+/// expands to isn't kept: an item's documentation is rendered only once
+/// it matches ([`items`]), as a few bytes of mirrors can expand to
+/// megabytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SnippetText {
+    pub(crate) body: String,
+    pub(crate) description: Option<String>,
+}
+
+impl SnippetText {
+    pub(crate) fn new(body: &str, description: Option<&str>) -> Rc<Self> {
+        Rc::new(SnippetText {
+            body: body.to_owned(),
+            description: description.map(str::to_owned),
+        })
+    }
+}
+
+/// The detail of a user snippet's completion item.
+pub(crate) const USER_SNIPPET: &str = "User snippet";
+
+/// The most text one request's snippet items carry in their bodies and
+/// descriptions: past it, further matches aren't offered, the user's first
+/// in line, and the list is incomplete, so typing asks again. However many
+/// prefixes a large snippet has, a request copies no more than this.
+pub(crate) const SNIPPET_PAYLOAD_LIMIT: usize = 4 << 20;
+
+/// The most expanded text one request's snippet items show as their
+/// documentation. Bodies are expanded, one item at a time, only while
+/// the expansions so far are within it; an item past it, and every item
+/// after, shows none. One expansion is itself bounded by the engine
+/// ([`fe_editor::snippet::MAX_MIRROR_BYTES`]).
+pub(crate) const SNIPPET_DOCUMENTATION_LIMIT: usize = 1 << 20;
+
+impl Offer {
+    /// The offers of a snippet with `text` under each of `prefixes`, all
+    /// sharing its text, languages and detail.
+    pub(crate) fn each_prefix<'a>(
+        prefixes: impl IntoIterator<Item = &'a String>,
+        text: Rc<SnippetText>,
+        languages: &[String],
+        detail: &str,
+        user: bool,
+    ) -> impl Iterator<Item = Offer> {
+        let languages: Rc<[String]> = languages.into();
+        let detail: Rc<str> = detail.into();
+        (prefixes.into_iter()).map(move |prefix| Offer {
+            prefix: prefix.clone(),
+            text: text.clone(),
+            languages: languages.clone(),
+            detail: detail.clone(),
+            user,
+        })
+    }
+
+    /// Whether it's offered in a buffer of `language` (`None`: plain text).
+    pub(crate) fn is_for(&self, language: Option<&str>) -> bool {
+        self.languages.is_empty()
+            || language.is_some_and(|language| {
+                (self.languages.iter()).any(|name| name.eq_ignore_ascii_case(language))
+            })
+    }
+}
+
+/// Extensions' snippets' offers, built when they were set: one each.
+pub(crate) fn extension_offers(cx: &App) -> Rc<[Offer]> {
+    cx.try_global::<ExtensionSnippets>()
+        .map_or_else(|| Rc::from([]), |snippets| snippets.offers.clone())
+}
+
+/// Every snippet to offer, as built when read or set: the user's
+/// ([`crate::user_snippets`], read again if their files changed), one for
+/// each of a snippet's prefixes, then extensions'.
+pub(crate) fn offers(cx: &mut App) -> [Rc<[Offer]>; 2] {
+    [crate::user_snippets::user_offers(cx), extension_offers(cx)]
 }
 
 /// The snippet items to offer at byte `offset` of `buffer` at its
 /// `version`, in that version's offsets, as one of `workbench`'s editors
 /// shows it now: none if none shows that version or a later one, or if an
 /// edit since reached before `offset`, as typing at the caret doesn't.
+/// Incomplete if matches were left out ([`SNIPPET_PAYLOAD_LIMIT`]).
 pub(crate) fn snippet_completions(
-    cx: &App,
+    cx: &mut App,
     workbench: &WeakEntity<Workbench>,
     buffer: BufferId,
     version: Version,
     offset: usize,
-) -> Vec<CompletionItem> {
-    let snippets = match cx.try_global::<ExtensionSnippets>() {
-        Some(snippets) if !snippets.0.is_empty() => &snippets.0,
-        _ => return Vec::new(),
-    };
+) -> CompletionList {
+    let snippets = offers(cx);
+    if snippets.iter().all(|offers| offers.is_empty()) {
+        return CompletionList::default();
+    }
     let Some(workbench) = workbench.upgrade() else {
-        return Vec::new();
+        return CompletionList::default();
     };
     let editors = workbench.read(cx).open_editors(cx);
     let view = (editors.iter().map(|editor| editor.read(cx))).find(|view| {
@@ -319,7 +437,7 @@ pub(crate) fn snippet_completions(
             && snapshot.oldest_version() <= version
     });
     let Some(view) = view else {
-        return Vec::new();
+        return CompletionList::default();
     };
     let snapshot = view.model().snapshot();
     // Then `offset`, and the text before it, are as they were.
@@ -327,20 +445,27 @@ pub(crate) fn snippet_completions(
         .flat_map(|batch| batch.iter())
         .all(|edit| edit.old.start >= offset);
     if !untouched {
-        return Vec::new();
+        return CompletionList::default();
     }
     let language = view.syntax().map(|syntax| syntax.language().name());
-    items(snippets, language, snapshot, offset)
+    items(
+        snippets.iter().flat_map(|offers| offers.iter()),
+        language,
+        snapshot,
+        offset,
+    )
 }
 
 /// `snippets`' items for a buffer in `language` (`None`: plain text) at
-/// byte `offset` of `snapshot`.
-fn items(
-    snippets: &[ExtensionSnippet],
+/// byte `offset` of `snapshot`: those for the language whose prefix the
+/// word matches, in order, up to [`SNIPPET_PAYLOAD_LIMIT`], incomplete if
+/// any were left out; documented up to [`SNIPPET_DOCUMENTATION_LIMIT`].
+fn items<'a>(
+    snippets: impl Iterator<Item = &'a Offer>,
     language: Option<&str>,
     snapshot: &BufferSnapshot,
     offset: usize,
-) -> Vec<CompletionItem> {
+) -> CompletionList {
     let text = snapshot.text();
     let offset = text.clip_offset(offset, Bias::Left);
     let row_start = text.row_start(text.offset_to_point(offset).row);
@@ -350,19 +475,48 @@ fn items(
         .map(char::len_utf8)
         .sum();
     let word = &before[before.len() - word_len..];
-    (snippets.iter())
-        .filter(|snippet| {
-            snippet.languages.is_empty()
-                || language.is_some_and(|language| {
-                    (snippet.languages.iter()).any(|name| name.eq_ignore_ascii_case(language))
-                })
-        })
-        .filter(|snippet| matches(word, &snippet.prefix))
-        .map(|snippet| {
-            let replaced = replaced(&before, word_len, &snippet.prefix);
-            item(snippet, language, offset - replaced..offset)
-        })
-        .collect()
+    let mut budget = SNIPPET_PAYLOAD_LIMIT;
+    let mut documentation = Some(SNIPPET_DOCUMENTATION_LIMIT);
+    let mut left_out = 0usize;
+    let mut items = Vec::new();
+    for snippet in snippets {
+        if !snippet.is_for(language) || !matches(word, &snippet.prefix) {
+            continue;
+        }
+        let payload = snippet.prefix.len()
+            + snippet.text.body.len()
+            + snippet.text.description.as_ref().map_or(0, String::len);
+        if payload > budget {
+            left_out += 1;
+            continue;
+        }
+        budget -= payload;
+        let replaced = replaced(&before, word_len, &snippet.prefix);
+        let mut item = item(snippet, offset - replaced..offset);
+        item.documentation = documentation.and_then(|left| {
+            let expanded = Snippet::parse(&snippet.text.body);
+            let expanded = expanded.text();
+            match expanded.len() <= left {
+                true => {
+                    documentation = Some(left - expanded.len());
+                    documented(expanded, language)
+                }
+                // None from here on, so no more is expanded.
+                false => {
+                    documentation = None;
+                    None
+                }
+            }
+        });
+        items.push(item);
+    }
+    if left_out > 0 {
+        log::debug!("{left_out} matching snippets left out: their text is too long to offer");
+    }
+    CompletionList {
+        items,
+        is_incomplete: left_out > 0,
+    }
 }
 
 /// Whether `word`'s chars are in `prefix` in order, case aside, as the
@@ -384,11 +538,27 @@ fn replaced(before: &str, word_len: usize, prefix: &str) -> usize {
         .map_or(word_len, |ix| before.len() - ix)
 }
 
-/// `snippet`'s item, replacing `range`, its documentation the text it
-/// expands to, if any.
-fn item(snippet: &ExtensionSnippet, language: Option<&str>, range: Range<usize>) -> CompletionItem {
-    let expanded = Snippet::parse(&snippet.body);
-    let expanded = expanded.text();
+/// `snippet`'s item, replacing `range`, undocumented. A user snippet's
+/// sorts before an extension's, as the menu takes the sort text after how
+/// well an item matches.
+fn item(snippet: &Offer, range: Range<usize>) -> CompletionItem {
+    CompletionItem {
+        label: snippet.prefix.clone(),
+        label_detail: (snippet.text.description.as_ref())
+            .map(|description| format!(" {description}")),
+        kind: Some("snippet".to_owned()),
+        detail: Some(snippet.detail.to_string()),
+        sort_text: snippet.user.then(|| format!("\0{}", snippet.prefix)),
+        group: SNIPPET_GROUP,
+        edit: (range, snippet.text.body.clone()),
+        snippet: true,
+        ..CompletionItem::default()
+    }
+}
+
+/// An item's documentation: `expanded`, the text its snippet expands to,
+/// fenced as `language`'s code; none if it's empty.
+fn documented(expanded: &str, language: Option<&str>) -> Option<String> {
     // Longer than any run of backticks in it.
     let mut fence = 3;
     let mut run = 0;
@@ -397,21 +567,10 @@ fn item(snippet: &ExtensionSnippet, language: Option<&str>, range: Range<usize>)
         fence = fence.max(run + 1);
     }
     let fence = "`".repeat(fence);
-    let documentation = (!expanded.is_empty()).then(|| {
+    (!expanded.is_empty()).then(|| {
         format!(
             "{fence}{}\n{expanded}\n{fence}",
             language.unwrap_or_default()
         )
-    });
-    CompletionItem {
-        label: snippet.prefix.clone(),
-        label_detail: (snippet.description.as_ref()).map(|description| format!(" {description}")),
-        kind: Some("snippet".to_owned()),
-        detail: Some(snippet.extension_name.clone()),
-        documentation,
-        group: SNIPPET_GROUP,
-        edit: (range, snippet.body.clone()),
-        snippet: true,
-        ..CompletionItem::default()
-    }
+    })
 }

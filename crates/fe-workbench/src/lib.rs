@@ -83,6 +83,7 @@ mod setup_wizard;
 mod setup_wizard_model;
 mod setup_wizard_preview;
 mod shortcuts_editor;
+mod snippet_picker;
 pub mod spell;
 mod spell_commands;
 pub mod spell_ranges;
@@ -103,6 +104,7 @@ mod title_bar;
 mod toolbar_picker;
 mod trust;
 pub mod update_check;
+mod user_snippets;
 mod workbench;
 mod workbench_commands;
 mod workspace_edit;
@@ -361,6 +363,8 @@ mod setup_wizard_tests;
 #[cfg(test)]
 mod shortcuts_editor_tests;
 #[cfg(test)]
+mod snippet_picker_tests;
+#[cfg(test)]
 mod spell_commands_tests;
 #[cfg(test)]
 mod spell_ranges_tests;
@@ -392,6 +396,8 @@ mod typed_command_ids_tests;
 mod update_check_tests;
 #[cfg(test)]
 mod update_hook_tests;
+#[cfg(test)]
+mod user_snippets_tests;
 #[cfg(test)]
 mod workbench_commands_tests;
 #[cfg(test)]
