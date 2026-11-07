@@ -35,7 +35,7 @@
 use self::unix_socket::{UnixListener, UnixStream};
 #[cfg(unix)]
 use std::os::unix::{
-    ffi::{OsStrExt as _, OsStringExt as _},
+    ffi::OsStringExt as _,
     fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _},
     net::{UnixListener, UnixStream},
     process::CommandExt as _,
