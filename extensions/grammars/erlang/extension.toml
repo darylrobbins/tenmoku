@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_erlang"
+name = "Erlang syntax"
+version = "1.0.0"
+license = "Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "erlang"
+wasm = "tree-sitter-erlang.wasm"
+extensions = ["erl", "hrl", "escript"]
+file_names = ["rebar.config"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "%"
+shebangs = ["escript"]
