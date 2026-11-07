@@ -41,6 +41,32 @@ thread_local! {
 
     // The regex-call budget for [`set_call_limit`]; `u64::MAX` for none.
     static CALL_LIMIT: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
+
+    /// The work units [`Deadline::work`] has been given on this thread.
+    static WORK_DONE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+
+    /// The work budget for [`set_work_limit`]; `u64::MAX` for none.
+    static WORK_LIMIT: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
+}
+
+/// How many work units a [`Deadline`] lets pass between samples of the clock.
+const WORK_PER_SAMPLE: u64 = 256;
+
+/// How many work units [`Deadline::work`] has counted on this thread. For
+/// tests, as [`regex_calls`] is.
+#[doc(hidden)]
+pub fn work_done() -> u64 {
+    WORK_DONE.with(|work| work.get())
+}
+
+/// Gives each [`Deadline`] made from now on, on this thread, a budget of
+/// `limit` work units (the bytes and pieces a `:s` preview's replacement
+/// handles), or none with `None`: it passes once that many have been counted
+/// since it started, as if its time had run out. Like [`set_call_limit`], for
+/// tests that need an interruption at a counted point of the work.
+#[doc(hidden)]
+pub fn set_work_limit(limit: Option<u64>) {
+    WORK_LIMIT.with(|cell| cell.set(limit.unwrap_or(u64::MAX)));
 }
 
 /// How many regex calls searches have made so far on this thread, each
@@ -109,6 +135,10 @@ pub struct Deadline {
     calls_end: Option<u64>,
     /// What says it has passed whatever the time: see [`Deadline::cancelled_by`].
     cancelled: Option<Box<dyn Fn() -> bool + Send>>,
+    /// The [`work_done`] count it passes at, from [`set_work_limit`].
+    work_end: Option<u64>,
+    /// Work counted since the clock was last sampled.
+    unsampled: std::cell::Cell<u64>,
     ran_out: std::cell::Cell<bool>,
 }
 
@@ -135,6 +165,8 @@ impl Deadline {
             end: None,
             calls_end: None,
             cancelled: None,
+            work_end: None,
+            unsampled: std::cell::Cell::new(0),
             ran_out: std::cell::Cell::new(false),
         }
     }
@@ -161,6 +193,11 @@ impl Deadline {
             end: Instant::now().checked_add(limit),
             calls_end,
             cancelled: None,
+            work_end: match WORK_LIMIT.with(|cell| cell.get()) {
+                u64::MAX => None,
+                work => work_done().checked_add(work),
+            },
+            unsampled: std::cell::Cell::new(0),
             ran_out: std::cell::Cell::new(false),
         }
     }
@@ -170,7 +207,8 @@ impl Deadline {
         if !self.ran_out.get()
             && (self.end.is_some_and(|end| Instant::now() >= end)
                 || self.calls_end.is_some_and(|end| regex_calls() >= end)
-                || self.cancelled.as_ref().is_some_and(|cancelled| cancelled()))
+                || self.cancelled.as_ref().is_some_and(|cancelled| cancelled())
+                || self.work_end.is_some_and(|end| work_done() >= end))
         {
             self.ran_out.set(true);
         }
@@ -193,9 +231,29 @@ impl Deadline {
         self.ran_out.get()
     }
 
-    /// `Err` if it ran out.
-    pub(crate) fn check(&self) -> Result<(), Interrupted> {
+    /// Counts `units` of work that make no regex call, sampling the clock
+    /// once [`WORK_PER_SAMPLE`] have gone by since it last was: `Err` if it
+    /// ran out.
+    pub(crate) fn work(&self, units: usize) -> Result<(), Interrupted> {
+        let units = units as u64;
+        WORK_DONE.with(|work| work.set(work.get().saturating_add(units)));
+        let unsampled = self.unsampled.get().saturating_add(units);
+        // A work limit is counted exactly, the clock in batches.
+        if unsampled >= WORK_PER_SAMPLE || self.work_end.is_some() {
+            self.unsampled.set(0);
+            self.passed();
+        } else {
+            self.unsampled.set(unsampled);
+        }
         match self.ran_out() {
+            true => Err(Interrupted),
+            false => Ok(()),
+        }
+    }
+
+    /// `Err` if it ran out, sampling the clock to find out.
+    pub(crate) fn check(&self) -> Result<(), Interrupted> {
+        match self.passed() {
             true => Err(Interrupted),
             false => Ok(()),
         }
@@ -4287,5 +4345,26 @@ mod across_tests {
         window.hold(3, &Deadline::never()).unwrap();
         assert_eq!((window.first, window.last), (3, 9_999));
         assert_eq!(window.hay.len(), buffer.len() + 1 - text.row_start(3));
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+
+    #[test]
+    fn check_samples_the_clock() {
+        // Nothing else has looked at the clock, yet time has passed.
+        let past = Deadline::after(Duration::ZERO);
+        assert!(!past.ran_out());
+        assert_eq!(past.check(), Err(Interrupted));
+        assert!(Deadline::never().check().is_ok());
+    }
+
+    #[test]
+    fn work_samples_the_clock_in_batches() {
+        let past = Deadline::after(Duration::ZERO);
+        assert!(past.work(1).is_ok());
+        assert_eq!(past.work(WORK_PER_SAMPLE as usize), Err(Interrupted));
     }
 }

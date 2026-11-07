@@ -121,7 +121,7 @@ impl Substitute {
             Some(after) => split_replacement(after, delimiter),
             None => (String::new(), ""),
         };
-        Replacement::compile(&replacement)?;
+        validate_template(&replacement)?;
         let joins = pattern == "\\n"
             && replacement.is_empty()
             && matches!(after, "" | "g" | "l" | "p" | "#");
@@ -142,7 +142,7 @@ impl Substitute {
             return Err(ExError::BackslashDelimiter);
         };
         let (replacement, after) = split_replacement(&args[1..], delimiter);
-        Replacement::compile(&replacement)?;
+        validate_template(&replacement)?;
         let (flags, count) = flags_and_count(after, true)?;
         let pattern = match delimiter {
             '&' => LAST_SUBSTITUTE_PATTERN.to_string(),
@@ -168,6 +168,34 @@ impl Substitute {
             joins: false,
         })
     }
+}
+
+thread_local! {
+    /// The deadline a preview's reading of the line is under, if one is.
+    static PARSE_DEADLINE: std::cell::RefCell<Option<Deadline>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Holds a deadline for [`validate_template`] while a preview reads its line.
+struct ParseDeadline;
+
+impl ParseDeadline {
+    fn set(deadline: Deadline) -> Self {
+        PARSE_DEADLINE.with(|cell| *cell.borrow_mut() = Some(deadline));
+        Self
+    }
+}
+
+impl Drop for ParseDeadline {
+    fn drop(&mut self) {
+        PARSE_DEADLINE.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+/// Reads a typed replacement for errors, counting its work against the
+/// preview's deadline if it is under one: before anything caps its size.
+fn validate_template(raw: &str) -> Result<(), ExError> {
+    PARSE_DEADLINE.with(|cell| Replacement::compile_within(raw, cell.borrow().as_ref()).map(drop))
 }
 
 /// Stands for the last substitute's pattern where a [`Substitute`]'s pattern
@@ -242,11 +270,24 @@ fn flags_and_count(args: &str, keep_allowed: bool) -> Result<(Flags, Option<u32>
 }
 
 /// `raw` with each unescaped `~` replaced by `previous`, the last
-/// replacement as it was run (`\~` stays, for [`Replacement::compile`]).
+/// replacement as it was run (`\~` stays, for [`Replacement::compile_within`]).
+#[cfg(test)]
 fn expand_tilde(raw: &str, previous: &str) -> String {
+    expand_tilde_within(raw, previous, None).expect("no deadline")
+}
+
+/// [`expand_tilde`], counting its work against `deadline`, if any.
+fn expand_tilde_within(
+    raw: &str,
+    previous: &str,
+    deadline: Option<&Deadline>,
+) -> Result<String, Interrupted> {
     let mut out = String::with_capacity(raw.len());
     let mut chars = raw.chars();
     while let Some(ch) = chars.next() {
+        if let Some(deadline) = deadline {
+            deadline.work(1 + if ch == '~' { previous.len() } else { 0 })?;
+        }
         match ch {
             '\\' => {
                 out.push(ch);
@@ -256,21 +297,39 @@ fn expand_tilde(raw: &str, previous: &str) -> String {
             _ => out.push(ch),
         }
     }
-    out
+    Ok(out)
 }
 
 /// The length of [`expand_tilde`]'s result, without building it.
+#[cfg(test)]
 fn tilde_len(raw: &str, previous: &str) -> usize {
+    tilde_len_within(raw, previous, None).expect("no deadline")
+}
+
+/// [`tilde_len`], counting its work against `deadline`, if any.
+fn tilde_len_within(
+    raw: &str,
+    previous: &str,
+    deadline: Option<&Deadline>,
+) -> Result<usize, Interrupted> {
     let mut len = 0usize;
     let mut chars = raw.chars();
     while let Some(ch) = chars.next() {
+        if let Some(deadline) = deadline {
+            deadline.work(1)?;
+        }
         len = len.saturating_add(match ch {
             '\\' => 1 + chars.next().map_or(0, char::len_utf8),
             '~' => previous.len(),
             _ => ch.len_utf8(),
         });
     }
-    len
+    Ok(len)
+}
+
+/// What a replacement that ran past its deadline fails with.
+fn preview_timed_out() -> ExError {
+    ExError::Unsupported("the preview's time limit".into())
 }
 
 /// One piece of a compiled replacement.
@@ -298,8 +357,9 @@ pub(crate) struct Replacement {
 
 impl Replacement {
     /// Reads `raw`'s specials (`:help sub-replace-special`, magic). `\n`
-    /// (a NUL in Vim) and `\=` (an expression) are refused.
-    pub(crate) fn compile(raw: &str) -> Result<Self, ExError> {
+    /// (a NUL in Vim) and `\=` (an expression) are refused. Its work counts
+    /// against `deadline`, if any: an error once it passes.
+    fn compile_within(raw: &str, deadline: Option<&Deadline>) -> Result<Self, ExError> {
         if raw.starts_with("\\=") {
             return Err(ExError::Unsupported(
                 tr!("vim-unsupported-expression-replacement").into(),
@@ -315,6 +375,9 @@ impl Replacement {
         };
         let mut chars = raw.chars();
         while let Some(ch) = chars.next() {
+            if let Some(deadline) = deadline {
+                deadline.work(1).map_err(|_| preview_timed_out())?;
+            }
             match ch {
                 '&' => push(&mut pieces, &mut text, Piece::Group(0)),
                 // A typed carriage return breaks the line, as `\r` does.
@@ -419,8 +482,6 @@ impl Replacement {
 struct Budget<'a> {
     left: usize,
     deadline: &'a Deadline,
-    /// Spends since the deadline was last checked.
-    since_check: u32,
 }
 
 /// Why a replacement stopped short.
@@ -435,12 +496,7 @@ enum Stopped {
 impl Budget<'_> {
     fn spend(&mut self, n: usize) -> Result<(), Stopped> {
         self.left = self.left.checked_sub(n).ok_or(Stopped::Full)?;
-        self.since_check += 1;
-        if self.since_check == 256 {
-            self.since_check = 0;
-            self.deadline.check().map_err(|_| Stopped::Interrupted)?;
-        }
-        Ok(())
+        self.deadline.work(n).map_err(|_| Stopped::Interrupted)
     }
 }
 
@@ -488,6 +544,7 @@ fn resolve(
     sub: &Substitute,
     flags: Flags,
     limit: Option<usize>,
+    deadline: Option<&Deadline>,
 ) -> Result<Resolved, ExError> {
     let last = &registers.substitute;
     // The last search's pattern, and whether it is `*`'s or `#`'s.
@@ -519,13 +576,17 @@ fn resolve(
         None => (last_substitute()?, last.replacement.clone()),
     };
     // A preview's: `~` expanded no further than `limit`, before it's built.
-    if limit.is_some_and(|limit| tilde_len(&raw, &last.tilde) > limit) {
+    // The template is read first, before its size is capped.
+    Replacement::compile_within(&raw, deadline)?;
+    let too_long = |len: usize| limit.is_some_and(|limit| len > limit);
+    if too_long(tilde_len_within(&raw, &last.tilde, deadline).map_err(|_| preview_timed_out())?) {
         return Err(ExError::Unsupported(
             tr!("vim-unsupported-replacement-past-preview").into(),
         ));
     }
-    let replacement = expand_tilde(&raw, &last.tilde);
-    let compiled = Replacement::compile(&replacement)?;
+    let replacement =
+        expand_tilde_within(&raw, &last.tilde, deadline).map_err(|_| preview_timed_out())?;
+    let compiled = Replacement::compile_within(&replacement, deadline)?;
     let searched_ignoring = registers.ignores_case(&pattern, word);
     let ignore_case = flags.ignore_case.unwrap_or(searched_ignoring);
     let parsed = Pattern::parse_across(&pattern, ignore_case);
@@ -590,7 +651,7 @@ pub(crate) fn run(
         compiled,
         searched_ignoring,
         parsed,
-    } = resolve(target.registers, sub, flags, None)?;
+    } = resolve(target.registers, sub, flags, None, None)?;
     // The prompt shows the replacement `~` expanded, as nvim's does.
     let replacement_shown = replacement.clone();
     // As nvim's: the next `~` is this replacement only if the pattern is
@@ -741,7 +802,10 @@ pub(crate) fn preview(
     if !registers.inccommand() || state.cmdline.as_ref()?.args.kind != CommandLineKind::Ex {
         return None;
     }
-    let deadline = Deadline::after(search_preview_limit().min(search::time_limit()));
+    let limit = search_preview_limit().min(search::time_limit());
+    let deadline = Deadline::after(limit);
+    // Reading the line validates its template under the same time limit.
+    let _parsing = ParseDeadline::set(Deadline::after(limit));
     let mut peek = Peek {
         model,
         state,
@@ -765,7 +829,14 @@ pub(crate) fn preview(
     }
     let Resolved {
         compiled, parsed, ..
-    } = resolve(registers, &sub, flags, Some(SUBSTITUTE_PREVIEW_BYTES)).ok()?;
+    } = resolve(
+        registers,
+        &sub,
+        flags,
+        Some(SUBSTITUTE_PREVIEW_BYTES),
+        Some(&deadline),
+    )
+    .ok()?;
     let parsed = parsed.ok()?;
     let text = model.text();
     let preview = match sub.joins {
@@ -865,7 +936,6 @@ impl Found {
         self.each.as_ref().map(|each| Budget {
             left: each.left,
             deadline,
-            since_check: 0,
         })
     }
 
