@@ -409,10 +409,14 @@ fn drain(buffer: fe_buffer::BufferId, path: Option<String>, cx: &mut App) {
         return;
     }
     let editor = watched.editor.clone();
+    let snapshot = editor
+        .upgrade()
+        .map(|editor| editor.read(cx).model().buffer().snapshot());
     for event in happened {
         match event {
             BufferEvent::Edited { to, edits, .. } => {
-                let Some((id, version)) = plugin_bridge::advance(buffer, to, cx) else {
+                let Some((id, version)) = plugin_bridge::advance(buffer, to, snapshot.as_ref(), cx)
+                else {
                     continue;
                 };
                 let edits = (edits.iter())
@@ -431,7 +435,9 @@ fn drain(buffer: fe_buffer::BufferId, path: Option<String>, cx: &mut App) {
             BufferEvent::Saved { version } => {
                 // Saved once more typing had moved it on: the version the
                 // text it wrote had then.
-                let Some((id, version)) = plugin_bridge::advance(buffer, version, cx) else {
+                let Some((id, version)) =
+                    plugin_bridge::advance(buffer, version, snapshot.as_ref(), cx)
+                else {
                     log::debug!("a save of buffer {buffer:?} names a version plugins never had");
                     continue;
                 };
@@ -481,7 +487,7 @@ fn selection(cx: &mut App) {
     // Its changes not yet sent go first, each counted at its own version:
     // another editor's notification can bring it here.
     drain(buffer, None, cx);
-    let Some((id, version)) = plugin_bridge::advance(buffer, version, cx) else {
+    let Some((id, version)) = plugin_bridge::advance(buffer, version, None, cx) else {
         return;
     };
     let events = cx.global_mut::<PluginEvents>();

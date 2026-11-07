@@ -720,7 +720,7 @@ fn a_focused_buffers_changes_go_before_its_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_save_finishing_256_changes_later_names_its_version(cx: &mut TestAppContext) {
+fn a_save_finishing_over_256_changes_later_names_its_version(cx: &mut TestAppContext) {
     let (dir, _settings) = start(cx);
     let window = window(cx, Some(dir.file("a.txt")));
     let editor = active_editor(cx, window);
@@ -755,8 +755,7 @@ fn a_save_finishing_256_changes_later_names_its_version(cx: &mut TestAppContext)
         drop(saving);
         sent.push(wrote);
     }
-    // The last named a version evicted: not sent.
-    assert_eq!(saves(&inbox), sent[..2]);
+    assert_eq!(saves(&inbox), sent);
 }
 
 #[gpui::test]

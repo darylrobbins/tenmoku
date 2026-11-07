@@ -346,7 +346,9 @@ fn caught_up(editor: &Entity<EditorView>, cx: &mut App) {
     let buffer = painted.buffer;
     let snapshot = editor.read(cx).model().buffer().snapshot();
     plugin_events::catch_up(cx);
-    let Some((id, version)) = plugin_bridge::advance(snapshot.id(), snapshot.version(), cx) else {
+    let Some((id, version)) =
+        plugin_bridge::advance(snapshot.id(), snapshot.version(), Some(&snapshot), cx)
+    else {
         return;
     };
     if id == buffer {

@@ -46,7 +46,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use fe_buffer::{BufferId, Origin, Version};
+use fe_buffer::{BufferId, BufferSnapshot, Origin, Version};
 use fe_command::{
     Actor, CommandError, DispatchError, Invocation, PluginDenied, PluginPolicy, Registry,
 };
@@ -522,15 +522,10 @@ struct Tracked {
     /// The buffer's version when its plugin version last went up.
     seen: Version,
     version: u64,
-    /// The buffer's last versions plugins were told of, with their plugin
-    /// versions, oldest first: the latest and up to [`HISTORY`] before it.
-    history: VecDeque<(Version, u64)>,
+    /// The buffer's version when plugins first heard of it: no older
+    /// version has a plugin version.
+    first: Version,
 }
-
-/// How many of a buffer's versions before its latest [`advance`] can name
-/// again: a save finishing up to this many changes after the version it
-/// wrote.
-const HISTORY: usize = 256;
 
 impl Tracked {
     /// Takes the buffer at `version`, newer than any seen, as its next
@@ -538,14 +533,6 @@ impl Tracked {
     fn bump(&mut self, version: Version) {
         self.seen = version;
         self.version += 1;
-        self.remember();
-    }
-
-    fn remember(&mut self) {
-        if self.history.len() > HISTORY {
-            self.history.pop_front();
-        }
-        self.history.push_back((self.seen, self.version));
     }
 }
 
@@ -576,14 +563,12 @@ pub(crate) fn open_editors(cx: &mut App) -> Vec<(u64, u64, Entity<EditorView>)> 
         .map(|(buffer, version, editor)| {
             let tracked = ids.open.entry(buffer).or_insert_with(|| {
                 ids.last += 1;
-                let mut tracked = Tracked {
+                Tracked {
                     id: ids.last,
                     seen: version,
                     version: 1,
-                    history: VecDeque::new(),
-                };
-                tracked.remember();
-                tracked
+                    first: version,
+                }
             });
             if tracked.seen != version {
                 tracked.bump(version);
@@ -596,16 +581,34 @@ pub(crate) fn open_editors(cx: &mut App) -> Vec<(u64, u64, Entity<EditorView>)> 
 /// Buffer `buffer`'s id and its plugin version at `version`, if it has an
 /// id: an event tells of each change as it comes, so a version newer than
 /// any seen is the next plugin version. An older one is the plugin version
-/// it was given, such as a save's that finished after more typing; none if
-/// it was never given one, or is past [`HISTORY`].
-pub(crate) fn advance(buffer: BufferId, version: Version, cx: &mut App) -> Option<(u64, u64)> {
+/// it was given, such as a save's that finished after more typing: each
+/// batch of edits since is one plugin version, counted in `snapshot`, of the
+/// buffer at `version` or later. None if it was never given one,
+/// or the buffer no longer keeps its edits back that far.
+pub(crate) fn advance(
+    buffer: BufferId,
+    version: Version,
+    snapshot: Option<&BufferSnapshot>,
+    cx: &mut App,
+) -> Option<(u64, u64)> {
     let tracked = cx.default_global::<BufferIds>().open.get_mut(&buffer)?;
     if version > tracked.seen {
         tracked.bump(version);
         return Some((tracked.id, tracked.version));
     }
-    let (_, given) = (tracked.history.iter()).rfind(|(seen, _)| *seen == version)?;
-    Some((tracked.id, *given))
+    if version == tracked.seen {
+        return Some((tracked.id, tracked.version));
+    }
+    let snapshot = snapshot?;
+    if version < tracked.first || version < snapshot.oldest_version() {
+        return None;
+    }
+    let behind = snapshot.edits_since(version).count() - snapshot.edits_since(tracked.seen).count();
+    let given = tracked
+        .version
+        .checked_sub(behind as u64)
+        .filter(|given| *given >= 1)?;
+    Some((tracked.id, given))
 }
 
 /// The id plugins know `editor`'s buffer by, if it's open in a workbench.
