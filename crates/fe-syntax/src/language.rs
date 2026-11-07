@@ -6,7 +6,7 @@ use std::{
 use tree_sitter::{Query, QueryError};
 
 use crate::{
-    Highlight,
+    Highlight, detect,
     injection::InjectionQuery,
     runtime::{self, Clash, GrammarSpec},
 };
@@ -214,28 +214,41 @@ pub fn language_names() -> impl Iterator<Item = &'static str> {
     listed().map(|def| def.name).chain(runtime::names())
 }
 
-/// The built-in language `spec` would take a name, extension or file name
-/// from, and which.
+/// The built-in language `spec` would take a name, extension, file name or
+/// shebang interpreter from, and which.
 pub(crate) fn built_in_clash(spec: &GrammarSpec) -> Option<(&'static str, Clash)> {
-    DEFS.iter().find_map(|def| {
-        if def.name.eq_ignore_ascii_case(&spec.language) {
-            return Some((def.name, Clash::Name));
-        }
-        let extension = spec.extensions.iter().find(|extension| {
-            def.extensions
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(extension))
-        });
-        if let Some(extension) = extension {
-            return Some((def.name, Clash::Extension(extension.clone())));
-        }
-        let file_name = spec.file_names.iter().find(|file_name| {
-            def.file_names
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(file_name))
-        });
-        file_name.map(|file_name| (def.name, Clash::FileName(file_name.clone())))
-    })
+    DEFS.iter()
+        .find_map(|def| {
+            if def.name.eq_ignore_ascii_case(&spec.language) {
+                return Some((def.name, Clash::Name));
+            }
+            let extension = spec.extensions.iter().find(|extension| {
+                def.extensions
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(extension))
+            });
+            if let Some(extension) = extension {
+                return Some((def.name, Clash::Extension(extension.clone())));
+            }
+            let file_name = spec.file_names.iter().find(|file_name| {
+                def.file_names
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(file_name))
+            });
+            file_name.map(|file_name| (def.name, Clash::FileName(file_name.clone())))
+        })
+        .or_else(|| {
+            spec.shebangs.iter().find_map(|interpreter| {
+                let built_in = detect::built_in_interpreter_clash(interpreter)?;
+                Some((built_in, Clash::Interpreter(interpreter.clone())))
+            })
+        })
+}
+
+/// `name` if a language compiled into this build is called it, as
+/// opposed to a [registered](crate::register_language) one.
+pub(crate) fn built_in_name(name: &str) -> Option<&'static str> {
+    listed().find(|def| def.name == name).map(|def| def.name)
 }
 
 fn listed() -> impl Iterator<Item = &'static Def> {

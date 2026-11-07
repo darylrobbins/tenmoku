@@ -161,6 +161,7 @@ fn fixture_spec() -> GrammarSpec {
         extensions: vec![FIXTURE_EXTENSION.into()],
         file_names: Vec::new(),
         earlier_patterns_win: false,
+        ..GrammarSpec::default()
     }
 }
 

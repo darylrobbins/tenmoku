@@ -20,7 +20,10 @@ const fn tokens(
 
 /// The comment delimiters of the language called `language`, by the names
 /// [`crate::language_names`] gives (and `markdown_inline`), whether or not its
-/// Cargo feature is on. `None` for an unknown name.
+/// Cargo feature is on. A name no built-in has gets the tokens its
+/// [registered](crate::register_language) language's spec gives
+/// ([`crate::GrammarSpec::line_comment`]). `None` for an unknown name, and
+/// for a registered language given no tokens.
 pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
     let c_like = tokens(Some("//"), Some(("/*", "*/")));
     let hash = tokens(Some("#"), None);
@@ -37,7 +40,7 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
         "css" => tokens(None, Some(("/*", "*/"))),
         "html" | "xml" | "markdown" => html,
         "markdown_inline" | "rustdoc_inline" | "diff" | "csv" | "tsv" => tokens(None, None),
-        _ => return None,
+        _ => return crate::runtime::comment_tokens(language),
     })
 }
 

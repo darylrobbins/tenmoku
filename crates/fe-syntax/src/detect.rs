@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::path::Path;
 
-use crate::language::{language_name_for_path, language_names};
+use crate::language::{built_in_name, language_name_for_path, language_names};
 
 /// Interpreter names and the language each one runs.
 const INTERPRETERS: &[(&str, &str)] = &[
@@ -30,7 +30,9 @@ const INTERPRETERS: &[(&str, &str)] = &[
     ("just", "just"),
 ];
 
-/// The language a `#!` line runs, if its interpreter is known and compiled in.
+/// The language a `#!` line runs, if its interpreter is known and compiled in,
+/// or else one a [registered](crate::register_language) language's
+/// [shebangs](crate::GrammarSpec::shebangs) name.
 ///
 /// Only the first line of `first_line` is read. `env` is looked through to the
 /// command it runs, past its options and `NAME=value` assignments, so
@@ -45,11 +47,50 @@ pub fn language_name_for_shebang(first_line: &str) -> Option<&'static str> {
         _ => interpreter.to_owned(),
     };
     let name = base_name(&program);
-    let language = INTERPRETERS.iter().find_map(|&(interpreter, language)| {
-        let version = name.strip_prefix(interpreter)?;
-        is_version_suffix(version).then_some(language)
-    })?;
-    language_names().find(|&compiled| compiled == language)
+    built_in_interpreter(name)
+        .map(|(_, language)| language)
+        .or_else(|| crate::runtime::name_for_interpreter(name))
+}
+
+/// Whether the interpreter called `interpreter` in a shebang table runs
+/// the program whose base name is `program`: the same name, or it with a
+/// version suffix.
+pub(crate) fn interpreter_matches(interpreter: &str, program: &str) -> bool {
+    program
+        .strip_prefix(interpreter)
+        .is_some_and(is_version_suffix)
+}
+
+/// The first of [`INTERPRETERS`] that matches `program`, if its language
+/// is compiled in: its name and its language. A registered language of
+/// the same name isn't it, and goes by its own shebangs.
+fn built_in_interpreter(program: &str) -> Option<(&'static str, &'static str)> {
+    let &(interpreter, language) = INTERPRETERS
+        .iter()
+        .find(|&&(interpreter, _)| interpreter_matches(interpreter, program))?;
+    Some((interpreter, built_in_name(language)?))
+}
+
+/// The built-in language that a program some registered `interpreter`
+/// matches could go to instead: one whose interpreter in [`INTERPRETERS`]
+/// matches a program name `interpreter` matches too. Only languages
+/// compiled in count, as only their names, extensions and file names do.
+pub(crate) fn built_in_interpreter_clash(interpreter: &str) -> Option<&'static str> {
+    INTERPRETERS.iter().find_map(|&(built_in, language)| {
+        // Both match some name only if one is the other with something a
+        // version suffix can start with after it, digits and dots that a
+        // final digit makes a suffix.
+        let (short, long) = if built_in.len() <= interpreter.len() {
+            (built_in, interpreter)
+        } else {
+            (interpreter, built_in)
+        };
+        let rest = long.strip_prefix(short)?;
+        if !is_version_suffix(&format!("{rest}0")) {
+            return None;
+        }
+        built_in_name(language)
+    })
 }
 
 /// The language VS Code's `firstLine` patterns pick for the first line of

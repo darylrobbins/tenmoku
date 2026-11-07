@@ -197,8 +197,53 @@ pub(crate) struct ExtensionGrammar {
     /// tree-sitter's own highlighter, rather than the last.
     #[serde(default)]
     earlier_patterns_win: bool,
+    /// The token starting a line comment, as `//`.
+    #[schemars(length(min = 1))]
+    line_comment: Option<String>,
+    /// The tokens opening and closing a block comment, as `["/*", "*/"]`.
+    #[schemars(length(min = 2, max = 2), inner(length(min = 1)))]
+    block_comment: Option<Vec<String>>,
+    /// Interpreters whose `#!` line, read through `env`, picks it for a
+    /// file no path decides, as `["elixir"]`; a version suffix is allowed
+    /// (`elixir1.17`). One a built-in language's would match is refused.
+    #[serde(default)]
+    #[schemars(inner(length(min = 1), regex(pattern = r"^[^\s/]+$")))]
+    shebangs: Vec<String>,
     /// The grammar's SPDX licence, when it isn't the extension's.
     license: Option<String>,
+}
+
+impl ExtensionGrammar {
+    /// Its block comment tokens, which must be two non-empty ones.
+    fn block_comment(&self) -> Result<Option<(String, String)>, String> {
+        match self.block_comment.as_deref() {
+            None => Ok(None),
+            Some([open, close]) if !open.is_empty() && !close.is_empty() => {
+                Ok(Some((open.clone(), close.clone())))
+            }
+            Some(tokens) => Err(format!(
+                "block_comment {tokens:?} must be two non-empty tokens"
+            )),
+        }
+    }
+
+    /// Its line comment token and shebang interpreters, checked to the
+    /// shapes its schema gives: kiln's manifest check doesn't look inside
+    /// the array of tables.
+    fn line_comment_and_shebangs(&self) -> Result<(Option<String>, Vec<String>), String> {
+        if self.line_comment.as_deref() == Some("") {
+            return Err("line_comment must not be empty".to_owned());
+        }
+        let malformed = (self.shebangs.iter()).find(|interpreter| {
+            interpreter.is_empty() || interpreter.contains(|c: char| c == '/' || c.is_whitespace())
+        });
+        if let Some(interpreter) = malformed {
+            return Err(format!(
+                "shebang {interpreter:?} must be an interpreter's name, without a path"
+            ));
+        }
+        Ok((self.line_comment.clone(), self.shebangs.clone()))
+    }
 }
 
 /// One of an extension's `[[contributes.snippets]]`, in the LSP snippet
@@ -305,6 +350,7 @@ fn extension_grammars(extensions: &[kiln::core::Manifest]) -> Vec<Grammar> {
         for grammar in grammars {
             let file = |entry: &str| extension_file(&manifest.dir, entry);
             let spec = (|| {
+                let (line_comment, shebangs) = grammar.line_comment_and_shebangs()?;
                 Ok::<_, String>(fe_syntax::GrammarSpec {
                     wasm: file(&grammar.wasm)?,
                     highlights: grammar.highlights.as_deref().map(file).transpose()?,
@@ -313,6 +359,9 @@ fn extension_grammars(extensions: &[kiln::core::Manifest]) -> Vec<Grammar> {
                     extensions: grammar.extensions.clone(),
                     file_names: grammar.file_names.clone(),
                     earlier_patterns_win: grammar.earlier_patterns_win,
+                    line_comment,
+                    block_comment: grammar.block_comment()?,
+                    shebangs,
                 })
             })();
             match spec {

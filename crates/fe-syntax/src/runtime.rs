@@ -14,6 +14,7 @@
 
 use std::{
     cell::Cell,
+    collections::BTreeSet,
     fmt, fs,
     hash::{DefaultHasher, Hash as _, Hasher as _},
     io::{self, Read as _},
@@ -30,7 +31,7 @@ use tree_sitter::{
 };
 
 use crate::{
-    Language,
+    CommentTokens, Language, detect,
     language::{self, QueryKind},
 };
 
@@ -94,6 +95,15 @@ pub struct GrammarSpec {
     /// tree-sitter's own highlighter and most grammars' queries. Otherwise the
     /// last does, as in Neovim's.
     pub earlier_patterns_win: bool,
+    /// The token starting a line comment, for [`crate::comment_tokens`].
+    pub line_comment: Option<String>,
+    /// The tokens opening and closing a block comment.
+    pub block_comment: Option<(String, String)>,
+    /// Interpreters whose `#!` line picks it for a file no path decides,
+    /// by base name, as [`crate::language_name_for_shebang`] matches the
+    /// built-in ones: `elixir` takes `#!/usr/bin/env elixir` and
+    /// `#!/usr/bin/elixir1.17`.
+    pub shebangs: Vec<String>,
 }
 
 /// Why [`register_language`] refused a grammar.
@@ -128,6 +138,9 @@ pub enum Clash {
     Name,
     Extension(String),
     FileName(String),
+    /// A [shebang](GrammarSpec::shebangs) interpreter, some name of which
+    /// a built-in's would also match.
+    Interpreter(String),
 }
 
 impl GrammarError {
@@ -169,6 +182,7 @@ impl fmt::Display for GrammarError {
                     Clash::Name => "its name".to_owned(),
                     Clash::Extension(extension) => format!("the extension {extension:?}"),
                     Clash::FileName(name) => format!("the file name {name:?}"),
+                    Clash::Interpreter(name) => format!("the interpreter {name:?}"),
                 };
                 write!(f, "{language}: {what} is the built-in {built_in}'s")
             }
@@ -246,6 +260,11 @@ pub fn register_language(spec: &GrammarSpec) -> Result<&'static Language, Gramma
         name: language.name(),
         extensions: spec.extensions.clone(),
         file_names: spec.file_names.clone(),
+        comments: comment_tokens_of(spec),
+        shebangs: (spec.shebangs.iter())
+            .filter(|name| !name.is_empty())
+            .cloned()
+            .collect(),
         language,
         version,
     };
@@ -434,6 +453,10 @@ struct Registered {
     name: &'static str,
     extensions: Vec<String>,
     file_names: Vec<String>,
+    /// `None` when its spec gave no tokens, as for a language without
+    /// them before they could be given.
+    comments: Option<CommentTokens>,
+    shebangs: Vec<String>,
     language: &'static Language,
     /// A hash of the files it was loaded from.
     version: u64,
@@ -454,6 +477,45 @@ fn find<T>(f: impl FnMut(&Registered) -> Option<T>) -> Option<T> {
 
 pub(crate) fn by_name(name: &str) -> Option<&'static Language> {
     find(|entry| (entry.name == name).then_some(entry.language))
+}
+
+/// The comment tokens `spec` gives, interned: `None` if it gives none.
+/// An empty token is none.
+fn comment_tokens_of(spec: &GrammarSpec) -> Option<CommentTokens> {
+    let line = (spec.line_comment.as_deref())
+        .filter(|token| !token.is_empty())
+        .map(intern);
+    let block = (spec.block_comment.as_ref())
+        .filter(|(open, close)| !open.is_empty() && !close.is_empty())
+        .map(|(open, close)| (intern(open), intern(close)));
+    (line.is_some() || block.is_some()).then_some(CommentTokens { line, block })
+}
+
+/// `text` as a string that lives for the process, one copy each: a
+/// grammar registered again with the same tokens leaks nothing more.
+fn intern(text: &str) -> &'static str {
+    static INTERNED: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
+    let mut interned = INTERNED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(&kept) = interned.get(text) {
+        return kept;
+    }
+    let kept = String::leak(text.to_owned());
+    interned.insert(kept);
+    kept
+}
+
+pub(crate) fn comment_tokens(name: &str) -> Option<CommentTokens> {
+    find(|entry| (entry.name == name).then_some(entry.comments)).flatten()
+}
+
+/// The registered language whose shebangs match the interpreter `program`,
+/// a base name; see [`detect::interpreter_matches`].
+pub(crate) fn name_for_interpreter(program: &str) -> Option<&'static str> {
+    find(|entry| {
+        (entry.shebangs.iter())
+            .any(|interpreter| detect::interpreter_matches(interpreter, program))
+            .then_some(entry.name)
+    })
 }
 
 pub(crate) fn name_for_file(file_name: &str, extension: Option<&str>) -> Option<&'static str> {
