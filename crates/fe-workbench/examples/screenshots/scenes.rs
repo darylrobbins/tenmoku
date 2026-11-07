@@ -232,12 +232,15 @@ pub(crate) fn main() -> ExitCode {
     });
     exit_code(match args.first().map(String::as_str) {
         Some("render") => render(&mut cx, &args[1..]).map(|()| true),
+        Some("audit") => crate::audit_scenes::main(&mut cx, &args[1..]),
         // The setup and icon scenes last: they leave their settings, theme
         // and icon set in use.
         None => check_scene(&mut cx)
             .and_then(|matched| Ok(crate::token_probe::check(&mut cx)? && matched))
             .and_then(|matched| Ok(crate::setup_scene::check(&mut cx)? && matched))
             .and_then(|matched| Ok(crate::icons_scene::check(&mut cx)? && matched)),
-        Some(_) => Err("usage: screenshots [render <out.png> <dir> [--size WxH]]".into()),
+        Some(_) => {
+            Err("usage: screenshots [render <out.png> <dir> [--size WxH] | audit <out-dir>]".into())
+        }
     })
 }
