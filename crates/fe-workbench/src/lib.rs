@@ -74,6 +74,7 @@ mod project_panel;
 mod quick_open;
 mod quickfix;
 mod quickfix_commands;
+mod quickfix_fill;
 mod references_panel;
 mod save_commands;
 mod search_panel;
@@ -344,6 +345,8 @@ mod panel_width_tests;
 mod path_commands_tests;
 #[cfg(test)]
 mod quickfix_commands_tests;
+#[cfg(test)]
+mod quickfix_fill_tests;
 #[cfg(test)]
 mod quickfix_tests;
 #[cfg(test)]

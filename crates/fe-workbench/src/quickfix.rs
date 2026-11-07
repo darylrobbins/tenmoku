@@ -16,15 +16,6 @@
 //!
 //! Item paths are absolute; nothing here touches the disk.
 
-// Only the tests fill lists until `:grep`, `:vimgrep` and `:make` do.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "lists are filled by the next card's :grep and :make"
-    )
-)]
-
 use std::{
     collections::{HashMap, VecDeque},
     hash::Hash,
@@ -37,23 +28,30 @@ pub(crate) const STACK_DEPTH: usize = 10;
 /// How many items `:clist` puts in the status line.
 pub(crate) const LIST_CAP: usize = 10;
 
-/// What an item reports, as nvim's `type` (`e`, `w`, `i`, `n`) names it.
+/// What an item reports, as nvim's `type` (`e`, `w`, `i`, `n`, or none)
+/// names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum QuickfixKind {
     Error,
     Warning,
+    #[cfg_attr(not(test), expect(dead_code, reason = "no filler reports infos yet"))]
     Info,
+    #[cfg_attr(not(test), expect(dead_code, reason = "no filler reports notes yet"))]
     Note,
+    /// No type, as a `:grep` match has.
+    Untyped,
 }
 
 impl QuickfixKind {
-    /// The word nvim shows for it (`qf_types`).
+    /// The word nvim shows for it after a space (`qf_types`): none for
+    /// [`QuickfixKind::Untyped`].
     fn word(self) -> &'static str {
         match self {
-            Self::Error => "error",
-            Self::Warning => "warning",
-            Self::Info => "info",
-            Self::Note => "note",
+            Self::Error => " error",
+            Self::Warning => " warning",
+            Self::Info => " info",
+            Self::Note => " note",
+            Self::Untyped => "",
         }
     }
 }
@@ -220,14 +218,14 @@ impl QuickfixList {
     }
 
     /// nvim's message on landing at the selected item: `(2 of 3) error:
-    /// text`, the text's leading blanks skipped and each line break (and
+    /// text`, or untyped `(2 of 3): text`, the text's leading blanks skipped and each line break (and
     /// the blanks after it) one space. Empty for an empty list.
     pub(crate) fn landed_message(&self) -> String {
         let Some(item) = self.current_item() else {
             return String::new();
         };
         format!(
-            "({} of {}) {}: {}",
+            "({} of {}){}: {}",
             self.current + 1,
             self.items.len(),
             item.kind.word(),
@@ -236,7 +234,8 @@ impl QuickfixList {
     }
 
     /// `:clist`, on one line: up to [`LIST_CAP`] items from the first,
-    /// each as nvim lists it (`1 src/a.rs:3 col 5 error: text`, a path
+    /// each as nvim lists it (`1 src/a.rs:3 col 5 error: text`, untyped
+    /// `1 src/a.rs:3 col 5: text`, a path
     /// under `root` relative to it), and how many more there are.
     pub(crate) fn listing(&self, root: Option<&Path>) -> String {
         let mut rows: Vec<String> = (self.items.iter().enumerate().take(LIST_CAP))
@@ -245,7 +244,7 @@ impl QuickfixList {
                     .and_then(|root| item.path.strip_prefix(root).ok())
                     .unwrap_or(&item.path);
                 format!(
-                    "{} {}:{} col {} {}: {}",
+                    "{} {}:{} col {}{}: {}",
                     ix + 1,
                     path.display(),
                     item.row as u64 + 1,
@@ -300,6 +299,7 @@ impl QuickfixStack {
     }
 
     /// How many lists it holds.
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.lists.len()
     }
@@ -402,6 +402,7 @@ impl<P: Hash + Eq> Quickfixes<P> {
     }
 
     /// Whether `pane` has a location stack.
+    #[cfg(test)]
     pub(crate) fn has_location(&self, pane: &P) -> bool {
         self.locations.contains_key(pane)
     }

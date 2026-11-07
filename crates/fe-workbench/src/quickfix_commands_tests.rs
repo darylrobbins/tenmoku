@@ -12,7 +12,6 @@ use gpui::{Entity, Focusable as _, SharedString, TestAppContext, VisualTestConte
 use crate::{
     Launch, StatusItem, StatusSide, Workbench,
     quickfix::{QuickfixItem, QuickfixKind, QuickfixList},
-    quickfix_commands::NO_FILLING,
 };
 
 /// Each file's text: rows long enough for a column.
@@ -246,8 +245,12 @@ fn lists_answer_in_the_status_line(cx: &mut TestAppContext) {
         message(&workbench, cx).as_deref(),
         Some("E776: No location list")
     );
+    // Nothing to fill a list with keeps the stack as it is.
     ex("grep foo", cx);
-    assert_eq!(message(&workbench, cx).as_deref(), Some(NO_FILLING));
+    assert_eq!(
+        message(&workbench, cx).as_deref(),
+        Some("E480: No match: foo")
+    );
 
     push(
         &workbench,

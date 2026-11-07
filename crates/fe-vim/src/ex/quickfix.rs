@@ -19,7 +19,8 @@
 //! - `:cl[ist]` and `:lli[st]`: the items, in the status line.
 //! - `:gr[ep]`, `:lgr[ep]`, `:vim[grep]`, `:lv[imgrep]` (each needing an
 //!   argument, E471 without) and `:mak[e]`, `:lmak[e]`, with the rest of
-//!   the line as it was typed: the commands that fill a list.
+//!   the line as it was typed: the commands that fill a list. The host
+//!   splits `:vimgrep`'s with [`QuickfixAction::parse_vimgrep`].
 //!
 //! `:cope[n]`, `:ccl[ose]`, `:lop[en]` and `:lcl[ose]` are the host's
 //! [`HostCommand::OpenProblems`] and [`HostCommand::CloseProblems`]
@@ -253,4 +254,119 @@ fn count(args: &str) -> Result<Option<u32>, ExError> {
         0 => Err(ExError::ZeroCount),
         count => Ok(Some(count)),
     }
+}
+
+impl QuickfixAction {
+    /// `:vim[grep] {args}` (as [`QuickfixAction::VimGrep`] carries them)
+    /// split as nvim splits them (`skip_vimgrep_pat()`): `(pattern, flags,
+    /// globs)`.
+    ///
+    /// - `/{pattern}/[g][j] {glob}…`: the delimiter is the first char, any
+    ///   but a word char (a letter, digit or `_`); the pattern runs to the
+    ///   next one not escaped by `\` nor inside a `[…]` collection, and is
+    ///   kept as typed, escapes and all. Then any of the flags `g` (every
+    ///   match on a line, not only the first) and `j` (don't jump to the
+    ///   first item), in the order typed.
+    /// - `{pattern} {glob}…`, the pattern starting with a word char: the
+    ///   pattern is the first word, with no flags.
+    ///
+    /// The globs are the rest, split at blanks not escaped by `\`, each as
+    /// typed (`\ ` and all). As in nvim, nothing need come between the
+    /// flags and the first glob: `/a/gx` searches `x`.
+    ///
+    /// A pattern with no closing delimiter is E682, and the `f` (fuzzy)
+    /// flag isn't supported. An empty pattern (`//`) is the host's to
+    /// answer, with the last search's.
+    pub fn parse_vimgrep(args: &str) -> Result<(String, String, Vec<String>), ExError> {
+        let args = args.trim_start_matches([' ', '\t']);
+        let Some(delimiter) = args.chars().next() else {
+            return Err(ExError::ArgumentRequired);
+        };
+        let (pattern, flags, rest) = if delimiter.is_alphanumeric() || delimiter == '_' {
+            let end = args.find([' ', '\t']).unwrap_or(args.len());
+            (&args[..end], "", &args[end..])
+        } else {
+            let body = &args[delimiter.len_utf8()..];
+            let end = pattern_end(body, delimiter).ok_or_else(|| {
+                ExError::Pattern("E682: Invalid search pattern or delimiter".into())
+            })?;
+            let after = &body[end + delimiter.len_utf8()..];
+            let flags_end = after
+                .find(|ch: char| !matches!(ch, 'g' | 'j' | 'f'))
+                .unwrap_or(after.len());
+            let flags = &after[..flags_end];
+            if flags.contains('f') {
+                return Err(ExError::Unsupported(":vimgrep's f flag".into()));
+            }
+            (&body[..end], flags, &after[flags_end..])
+        };
+        Ok((pattern.to_owned(), flags.to_owned(), words(rest)))
+    }
+}
+
+/// Where in `body` the pattern ends at an unescaped `delimiter` outside a
+/// `[…]` collection, as nvim's `skip_regexp()` finds it; none if it never
+/// does.
+fn pattern_end(body: &str, delimiter: char) -> Option<usize> {
+    let mut ix = 0;
+    while let Some(ch) = body[ix..].chars().next() {
+        let next = ix + ch.len_utf8();
+        ix = match ch {
+            _ if ch == delimiter => return Some(ix),
+            '\\' => body[next..]
+                .chars()
+                .next()
+                .map_or(next, |ch| next + ch.len_utf8()),
+            // A collection with no `]` is a plain `[`, as in nvim.
+            '[' => collection_len(&body[next..]).map_or(next, |len| next + len),
+            _ => next,
+        };
+    }
+    None
+}
+
+/// The length of a collection's body after its `[`, up to and with its
+/// `]`: a `^` first, then a `]` or `-` first, are members, and `\` escapes
+/// the char after it. None if it never closes.
+fn collection_len(after: &str) -> Option<usize> {
+    let mut chars = after.char_indices().peekable();
+    chars.next_if(|&(_, ch)| ch == '^');
+    chars.next_if(|&(_, ch)| ch == ']' || ch == '-');
+    while let Some((ix, ch)) = chars.next() {
+        match ch {
+            ']' => return Some(ix + 1),
+            '\\' => {
+                chars.next();
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `text` split at blanks not escaped by `\`, each word as typed.
+fn words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            ' ' | '\t' => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            '\\' => {
+                word.push(ch);
+                if let Some(next) = chars.next() {
+                    word.push(next);
+                }
+            }
+            _ => word.push(ch),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
 }

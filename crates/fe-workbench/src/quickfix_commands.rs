@@ -17,9 +17,8 @@
 //! go to the editor the line was typed in, or for a typed command the
 //! active editor, the same way.
 //!
-//! Nothing fills a list yet: `:grep`, `:vimgrep` and `:make` (and their
-//! `:l` twins) say they aren't supported. [`Workbench::push_quickfix_list`]
-//! is the seam the fillers put their lists through.
+//! `:grep`, `:vimgrep` and `:make` (and their `:l` twins) fill lists
+//! (`quickfix_fill.rs`), through [`Workbench::push_quickfix_list_to`].
 
 use std::{collections::HashMap, path::Path};
 
@@ -33,9 +32,6 @@ use crate::{
     quickfix::{QuickfixError, QuickfixItem, QuickfixList, QuickfixStack, Quickfixes},
     workbench::toast::{self, Toast},
 };
-
-/// What `:grep`, `:vimgrep` and `:make` say until they fill lists.
-pub(crate) const NO_FILLING: &str = "Not supported yet: filling a quickfix list";
 
 /// Each window's lists, by its workbench's id, a window's location stacks
 /// by their pane's: kept apart from the workbench, and dropped with it.
@@ -81,28 +77,58 @@ impl Workbench {
     }
 
     /// Puts `list` on this window's quickfix stack, or with `location` on
-    /// the active pane's location stack, after the list in use (dropping
-    /// any newer, and past ten the oldest), and uses it, its first item
-    /// selected. Nothing is opened.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "lists are filled by the next card's :grep and :make"
-        )
-    )]
+    /// the active pane's location stack, as
+    /// [`Workbench::push_quickfix_list_to`] does. For the tests.
+    #[cfg(test)]
     pub(crate) fn push_quickfix_list(
         &mut self,
         location: bool,
         list: QuickfixList,
         cx: &mut Context<Self>,
     ) {
-        let pane = self.pane().entity_id();
-        let lists = self.quickfixes(cx);
-        match location {
-            true => lists.push_location(pane, list),
-            false => lists.quickfix.push(list),
+        let pane = location.then(|| self.pane().entity_id());
+        self.push_quickfix_list_to(pane, list, cx);
+    }
+
+    /// Puts `list` on this window's quickfix stack, or with a `pane` on that
+    /// pane's location stack, after the list in use (dropping any newer,
+    /// and past ten the oldest), and uses it, the item it selects selected.
+    /// Nothing is opened. False, and nothing kept, if `pane` is no longer
+    /// one of this window's.
+    pub(crate) fn push_quickfix_list_to(
+        &mut self,
+        pane: Option<EntityId>,
+        list: QuickfixList,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if let Some(pane) = pane {
+            let panes = self.pane_group(cx).panes();
+            if !panes.iter().any(|open| open.entity_id() == pane) {
+                return false;
+            }
         }
+        let lists = self.quickfixes(cx);
+        match pane {
+            Some(pane) => lists.push_location(pane, list),
+            None => lists.quickfix.push(list),
+        }
+        true
+    }
+
+    /// The summary line of the list in use (`error list 1 of 2; 3 errors
+    /// …`): the quickfix stack's, or with a `pane` that pane's location
+    /// stack's.
+    pub(crate) fn quickfix_summary(
+        &mut self,
+        pane: Option<EntityId>,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let lists = self.quickfixes(cx);
+        let stack = match pane {
+            Some(pane) => lists.location(&pane).ok(),
+            None => Some(&mut lists.quickfix),
+        };
+        stack.map(|stack| stack.summary()).unwrap_or_default()
     }
 
     /// The list in use: the quickfix stack's, or with `location` the active
@@ -149,11 +175,14 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let QuickfixCommand { action, location } = command;
-        if let QuickfixAction::Grep(_) | QuickfixAction::VimGrep(_) | QuickfixAction::Make(_) =
-            action
-        {
-            return say(editor, NO_FILLING, cx);
-        }
+        let action = match action {
+            QuickfixAction::Grep(args) => return self.grep(&args, location, editor, window, cx),
+            QuickfixAction::VimGrep(args) => {
+                return self.vimgrep(&args, location, editor, window, cx);
+            }
+            QuickfixAction::Make(args) => return self.make(&args, location, editor, window, cx),
+            action => action,
+        };
         let pane = self.pane().entity_id();
         let root = self.root().map(Path::to_owned);
         let lists = self.quickfixes(cx);
@@ -169,7 +198,7 @@ impl Workbench {
 
     /// Opens `item`'s file in the active pane at its row and column, then
     /// says `text` in the editor there.
-    fn land_on(
+    pub(crate) fn land_on(
         &mut self,
         item: QuickfixItem,
         text: String,
@@ -202,7 +231,7 @@ fn answer(
     let moved = match action {
         Older(count) => return stack.older(count).map(Outcome::Say),
         Newer(count) => return stack.newer(count).map(Outcome::Say),
-        Grep(_) | VimGrep(_) | Make(_) => return Ok(Outcome::Say(NO_FILLING.to_owned())),
+        Grep(_) | VimGrep(_) | Make(_) => unreachable!("run_quickfix fills lists itself"),
         List => {
             let list = stack.current_mut()?;
             if list.items.is_empty() {
@@ -232,7 +261,7 @@ fn landed_editor(pane: &Entity<Pane>, path: &Path, cx: &App) -> Option<Entity<Ed
 
 /// Says `text` as `editor`'s vim message, or with no editor or vim off as
 /// a toast.
-fn say(editor: Option<&Entity<EditorView>>, text: impl Into<String>, cx: &mut App) {
+pub(crate) fn say(editor: Option<&Entity<EditorView>>, text: impl Into<String>, cx: &mut App) {
     let text = text.into();
     match editor {
         Some(editor) if editor.read(cx).vim_state().is_some() => {

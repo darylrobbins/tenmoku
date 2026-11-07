@@ -46,7 +46,7 @@ const READING: &str = "Reading tasks…";
 pub(crate) type Files = Arc<dyn ProjectFiles + Send + Sync>;
 
 /// A root's tasks and what was wrong with its tasks file.
-type Listing = (Vec<Task>, Vec<TaskDiagnostic>);
+pub(crate) type Listing = (Vec<Task>, Vec<TaskDiagnostic>);
 
 #[cfg(not(test))]
 fn project_files(_: &App) -> Files {
@@ -67,7 +67,7 @@ fn project_files(cx: &App) -> Files {
 }
 
 /// Reads `root`'s tasks, off the main thread: none with no root.
-fn read_tasks(root: Option<PathBuf>, cx: &App) -> gpui::Task<Listing> {
+pub(crate) fn read_tasks(root: Option<PathBuf>, cx: &App) -> gpui::Task<Listing> {
     let files = project_files(cx);
     cx.background_spawn(async move {
         match root {
@@ -120,11 +120,16 @@ fn detail(task: &Task) -> String {
 }
 
 /// What the list shows with nothing to run.
-fn nothing_to_run(group: Option<Group>) -> String {
+pub(crate) fn nothing_to_run(group: Option<Group>) -> String {
     match group {
         None => format!("No tasks: add {TASKS_FILE}"),
         Some(group) => format!("No {group} tasks: add {TASKS_FILE}"),
     }
+}
+
+/// The default build task among `tasks`, the one `tasks.run_build` runs.
+pub(crate) fn default_build(tasks: &[Task]) -> Option<&Task> {
+    (tasks.iter()).find(|task| task.default && task.group == Some(Group::Build))
 }
 
 /// A row of the picker. Only a task can be picked.
@@ -370,10 +375,7 @@ impl Workbench {
     }
 
     fn build_from(&mut self, listing: Listing, window: &mut Window, cx: &mut Context<Self>) {
-        let default = (listing.0.iter())
-            .find(|task| task.default && task.group == Some(Group::Build))
-            .cloned();
-        match default {
+        match default_build(&listing.0).cloned() {
             Some(task) => self.run_task(task, window, cx),
             None => {
                 let picker = self.show_task_picker(Some(Group::Build), window, cx);

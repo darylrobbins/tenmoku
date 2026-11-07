@@ -7,7 +7,9 @@
 //! ([`crate::task_problems`]) and the files it names are read, off the main
 //! thread, and the Problems panel
 //! lists what it found as the tab's source: replacing what its last run found,
-//! until the tab closes. Two tabs of one label are two sources.
+//! until the tab closes. Two tabs of one label are two sources. A run started
+//! by [`Workbench::run_task_then`] hands the same problems to its caller too
+//! (vim's `:make`, `quickfix_fill.rs`), with columns in chars.
 
 use std::{collections::HashMap, path::PathBuf};
 
@@ -23,6 +25,32 @@ use crate::{
     task_problems::{self, Matcher, TaskProblem},
     workbench::toast::{self, Toast},
 };
+
+/// What hears the problems one run found, once its session exits
+/// ([`Workbench::run_task_then`]).
+pub(crate) type RunHeard =
+    Box<dyn FnOnce(&mut Workbench, Vec<RunProblem>, &mut Context<Workbench>)>;
+
+/// A problem one run found, as its caller hears it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RunProblem {
+    pub path: PathBuf,
+    /// From 0.
+    pub row: u32,
+    /// From 0, in chars: the tool's column as the file on disk reads, else
+    /// as the tool printed it.
+    pub column: u32,
+    pub severity: task_problems::Severity,
+    pub message: String,
+}
+
+/// The output the tests' fake sessions, which never start, leave once they
+/// exit.
+#[cfg(test)]
+pub(crate) struct FakeTaskOutput(pub(crate) String);
+
+#[cfg(test)]
+impl gpui::Global for FakeTaskOutput {}
 
 /// What running a task says in a folder that isn't trusted.
 pub(crate) const UNTRUSTED: &str = "Trust this folder to run its tasks";
@@ -48,6 +76,9 @@ struct TaskTab {
     _exited: Subscription,
     /// Reading the session's output: dropped with the session it read.
     _matching: Option<gpui::Task<()>>,
+    /// What hears this session's problems, if its run was asked for by
+    /// [`Workbench::run_task_then`]: not a rerun's.
+    heard: Option<RunHeard>,
 }
 
 /// How to read one run's output.
@@ -94,6 +125,32 @@ fn from_clang(output: &str) -> bool {
     })
 }
 
+/// `problem`, as a [`RunProblem`]: its column in chars in `text`, the file
+/// it names.
+fn run_problem(problem: &SourceProblem, text: Option<&Text>) -> RunProblem {
+    let row = problem.problem.row;
+    // The panel's `file_column` is in bytes when the file was read.
+    let column = match text {
+        Some(text) if row < text.row_count() => {
+            let line = text.row_to_string(row);
+            let bytes = problem.file_column as usize;
+            (line.char_indices().take_while(|(ix, _)| *ix < bytes)).count() as u32
+        }
+        _ => problem.problem.column,
+    };
+    let severity = match problem.problem.severity {
+        Severity::Error => task_problems::Severity::Error,
+        _ => task_problems::Severity::Warning,
+    };
+    RunProblem {
+        path: problem.path.clone(),
+        row,
+        column,
+        severity,
+        message: problem.problem.message.clone(),
+    }
+}
+
 /// `problem`, from the task `label`, as the panel lists it. It has no range:
 /// its offsets aren't known until its file's opened.
 fn source_problem(
@@ -133,6 +190,19 @@ impl Workbench {
     /// comes from the project, so one in a root that isn't trusted is refused
     /// with a toast offering to trust it.
     pub fn run_task(&mut self, task: Task, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_task_then(task, None, window, cx);
+    }
+
+    /// [`Workbench::run_task`], then once its session exits, hands what its
+    /// matcher found, as the Problems panel lists them, to `heard`: not if
+    /// it doesn't start, nor if its tab closes or reruns before then.
+    pub(crate) fn run_task_then(
+        &mut self,
+        task: Task,
+        heard: Option<RunHeard>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.root_trusted() {
             let trust = fe_command::CommandId::parse("workbench.trust_folder")
                 .expect("the command's id is valid");
@@ -143,7 +213,7 @@ impl Workbench {
         let before: Vec<EntityId> = (terminal.read(cx).views()).map(Entity::entity_id).collect();
         let started = terminal.update(cx, |terminal, cx| terminal.add_task(&task, window, cx));
         if started {
-            self.follow_task_tab(&task, &before, cx);
+            self.follow_task_tab(&task, &before, heard, cx);
             self.show_terminal_dock(window, cx);
         }
     }
@@ -151,7 +221,13 @@ impl Workbench {
     /// Hears the session `task` just started in the active tab. If it took the
     /// place of one of the sessions `before`, its tab keeps its source, and
     /// what that run found stays listed until this one's done.
-    fn follow_task_tab(&mut self, task: &Task, before: &[EntityId], cx: &mut Context<Self>) {
+    fn follow_task_tab(
+        &mut self,
+        task: &Task,
+        before: &[EntityId],
+        heard: Option<RunHeard>,
+        cx: &mut Context<Self>,
+    ) {
         let terminal = self.terminal().clone();
         let Some(view) = terminal.read(cx).view().cloned() else {
             return;
@@ -186,6 +262,7 @@ impl Workbench {
                     tab.view = view;
                     tab._exited = exited;
                     tab._matching = None;
+                    tab.heard = heard;
                 }
                 None => {
                     let key = tabs.next_key;
@@ -195,6 +272,7 @@ impl Workbench {
                         view,
                         _exited: exited,
                         _matching: None,
+                        heard,
                     });
                 }
             }
@@ -209,12 +287,20 @@ impl Workbench {
         reader: &OutputReader,
         cx: &mut Context<Self>,
     ) {
-        let Some(terminal) = view.read(cx).terminal() else {
-            return;
+        let output = match view.read(cx).terminal() {
+            Some(terminal) => reader.matcher.map(|_| terminal.output_text()),
+            #[cfg(test)]
+            None if cx.has_global::<FakeTaskOutput>() => {
+                let FakeTaskOutput(text) = cx.global::<FakeTaskOutput>();
+                reader.matcher.map(|_| text.clone())
+            }
+            None => return,
         };
-        let text = reader.matcher.map(|_| terminal.output_text());
         let id = view.entity_id();
-        let matched = reader.matcher.zip(text).map(|(matcher, text)| {
+        let panel = self.dock().read(cx).problems().clone();
+        let hearing =
+            (panel.read(cx).task_tabs.tabs.iter()).any(|tab| tab.view == id && tab.heard.is_some());
+        let matched = reader.matcher.zip(output).map(|(matcher, text)| {
             let (cwd, root) = (reader.cwd.clone(), reader.root.clone());
             let label = reader.label.clone();
             cx.background_spawn(async move {
@@ -228,26 +314,31 @@ impl Workbench {
                 }
                 let unit = column_unit(matcher, &text);
                 let mut files: HashMap<PathBuf, Option<Text>> = HashMap::new();
-                (result.problems.into_iter())
+                let mut heard = Vec::new();
+                let problems = (result.problems.into_iter())
                     .map(|problem| {
                         let file = (files.entry(problem.path.clone()))
                             .or_insert_with_key(|path| read_text(path.clone()));
-                        source_problem(problem, &label, unit, file.as_ref())
+                        let problem = source_problem(problem, &label, unit, file.as_ref());
+                        if hearing {
+                            heard.push(run_problem(&problem, file.as_ref()));
+                        }
+                        problem
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                (problems, heard)
             })
         });
         let matching = cx.spawn(async move |workbench, cx| {
-            let problems = match matched {
+            let (problems, heard) = match matched {
                 Some(matching) => matching.await,
-                None => Vec::new(),
+                None => Default::default(),
             };
             let listed = workbench.update(cx, |workbench, cx| {
-                workbench.task_output_read(id, problems, cx)
+                workbench.task_output_read(id, problems, heard, cx)
             });
             listed.ok();
         });
-        let panel = self.dock().read(cx).problems().clone();
         panel.update(cx, |panel, _| {
             let tabs = &mut panel.task_tabs.tabs;
             if let Some(tab) = tabs.iter_mut().find(|tab| tab.view == id) {
@@ -257,24 +348,29 @@ impl Workbench {
     }
 
     /// Lists what the run of the session `view` found in place of what its tab
-    /// last found, if the tab still shows it.
+    /// last found, if the tab still shows it, then hands `heard`, the same
+    /// problems, to what asked to hear them.
     fn task_output_read(
         &mut self,
         view: EntityId,
         problems: Vec<SourceProblem>,
+        heard: Vec<RunProblem>,
         cx: &mut Context<Self>,
     ) {
         let panel = self.dock().read(cx).problems().clone();
         let found = panel.update(cx, |panel, _| {
-            let tab = panel.task_tabs.tabs.iter().find(|tab| tab.view == view);
-            let key = tab.map(|tab| tab.key);
-            if let Some(key) = key {
+            let tab = panel.task_tabs.tabs.iter_mut().find(|tab| tab.view == view);
+            let tab = tab.map(|tab| (tab.key, tab.heard.take()));
+            if let Some((key, _)) = tab {
                 panel.set_source(key, problems);
             }
-            key.is_some()
+            tab
         });
-        if found {
+        if let Some((_, hearing)) = found {
             self.sync_problems(cx);
+            if let Some(hearing) = hearing {
+                hearing(self, heard, cx);
+            }
         }
     }
 

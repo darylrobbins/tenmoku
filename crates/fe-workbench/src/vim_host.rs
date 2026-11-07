@@ -22,7 +22,10 @@
 //!
 //! The quickfix and location lists' commands, `:cn`, `:cp`, `:cc`, `:col`,
 //! `:cnew`, `:cl` and their `:l` twins, walk the window's lists, landing
-//! in the active pane: see `quickfix_commands.rs`.
+//! in the active pane: see `quickfix_commands.rs`. `:grep`, `:vimgrep` and
+//! `:make` (and `:lgrep`, `:lvimgrep` and `:lmake`) fill them, from the
+//! project search and the default build task's problems: see
+//! `quickfix_fill.rs`.
 //!
 //! `!` filters and `:r !{cmd}` run through the user's shell, off the UI
 //! thread, only from the user's own keys in a trusted folder: see
@@ -219,7 +222,8 @@ impl Workbench {
     /// `:cclose`, `:Replace`, the lists to pick from (`:marks`), the
     /// buffer list's (`:b`, `:bn`, `:bd`) and the panes' (`:sp`, `:on`,
     /// `:clo`) and tabs' (`:tabn`, `:tabc`), and the quickfix lists' (`:cn`,
-    /// `:cc`, `:col`), typed in `editor`, which act on the window
+    /// `:cc`, `:col`, and `:grep`, `:vimgrep` and `:make` filling them),
+    /// typed in `editor`, which act on the window
     /// whichever editor they are typed in: a tab's, a diff view's side or the
     /// commit box. Any other command runs nothing.
     pub(super) fn run_window_command(
