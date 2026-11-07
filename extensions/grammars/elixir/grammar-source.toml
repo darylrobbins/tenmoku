@@ -1,0 +1,10 @@
+git = "https://github.com/elixir-lang/tree-sitter-elixir"
+# The full 40-hex commit.
+rev = "cb32ccbe17c67037b09e31bf9beb22cdae6ed8e9"
+# The directory holding parser.c, relative to the repository.
+src = "src"
+# The export tree_sitter_<grammar>.
+grammar = "elixir"
+# The other first-party languages the sample injects, which the parity test
+# registers under their names: the ~SQL sigil is sql.
+parity_needs = ["sql"]
