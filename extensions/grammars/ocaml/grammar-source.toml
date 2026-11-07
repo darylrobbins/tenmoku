@@ -1,0 +1,13 @@
+# Where this extension's WebAssembly grammar comes from: tree-sitter-ocaml's
+# repository at this commit, whose tree has the generated parser.c, which
+# scripts/build-grammar-wasm.sh fetches whole and compiles: scanner.c
+# includes ../../../common/scanner.h, outside src.
+git = "https://github.com/tree-sitter/tree-sitter-ocaml"
+# The full 40-hex commit (master's head, after version 0.26.0).
+rev = "a1c562e73ab787dcc69fdc2e5510c53bbce5364f"
+# The directory holding parser.c and scanner.c, relative to the repository:
+# the implementation grammar (.ml), not the interface one (.mli).
+src = "grammars/ocaml/src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "ocaml"
