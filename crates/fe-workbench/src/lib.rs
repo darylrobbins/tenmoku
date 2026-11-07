@@ -101,6 +101,7 @@ pub mod task_problems;
 mod task_run;
 mod terminal_panel;
 mod test_commands;
+mod test_lens;
 pub mod test_runnables;
 mod theme_picker;
 mod title_bar;
@@ -193,6 +194,7 @@ pub fn init(cx: &mut App) {
     path_commands::init(cx);
     save_commands::init(cx);
     test_commands::init(cx);
+    test_lens::init(cx);
     lsp::init(cx);
     grammar_prompt::init(cx);
     kiln_shell::menu_bar::register(cx);
@@ -395,6 +397,8 @@ mod task_problems_tests;
 mod task_run_tests;
 #[cfg(test)]
 mod test_commands_tests;
+#[cfg(test)]
+mod test_lens_tests;
 #[cfg(test)]
 mod test_runnables_tests;
 #[cfg(test)]

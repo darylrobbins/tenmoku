@@ -66,6 +66,11 @@ impl TestCommands {
     #[command(id = "tests.run_at_cursor")]
     fn run_test_at_cursor(&mut self, _: &mut Cx<Self>) {}
 
+    /// Run Test at Row: the lens above a test, which runs that test, as
+    /// `tests.run_at_cursor` does for the caret, without moving it.
+    #[command(id = "tests.run_row", palette = false)]
+    fn run_test_at_row(&mut self, _: &mut Cx<Self>) {}
+
     /// Run Tests in File
     #[command(id = "tests.run_file")]
     fn run_tests_in_file(&mut self, _: &mut Cx<Self>) {}
@@ -82,6 +87,17 @@ struct LastTests(HashMap<EntityId, (PathBuf, Task)>);
 
 impl Global for LastTests {}
 
+/// What a run is of.
+#[derive(Clone, Copy)]
+enum Target {
+    /// The test at the caret.
+    Cursor,
+    /// The test at a row, as a lens gave it.
+    Row(u32),
+    /// The whole file.
+    File,
+}
+
 /// What the active editor has to run tests from.
 struct TestFile {
     path: PathBuf,
@@ -90,11 +106,11 @@ struct TestFile {
 }
 
 impl Workbench {
-    /// `tests.run_at_cursor` (`at_cursor`) and `tests.run_file`: saves the
+    /// `tests.run_at_cursor`, `tests.run_row` and `tests.run_file` (`target`): saves the
     /// window's files, as a test runs what's on disk, then builds the test's
     /// task off the main thread, and runs it if the root is still the one it
     /// was built for.
-    fn run_test(&mut self, at_cursor: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn run_test(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
         let Some(root) = self.root().map(Path::to_owned) else {
             return toast::show(cx, Toast::info(NO_FOLDER));
         };
@@ -102,7 +118,7 @@ impl Workbench {
             path,
             language,
             runnable,
-        } = match self.test_file(at_cursor, cx) {
+        } = match self.test_file(target, cx) {
             Ok(found) => found,
             Err(message) => return toast::show(cx, Toast::info(message)),
         };
@@ -150,8 +166,8 @@ impl Workbench {
     }
 
     /// The active editor's file and what in it to run: the test at the caret
-    /// (`at_cursor`), else the whole file. Why there's none, in words.
-    fn test_file(&self, at_cursor: bool, cx: &mut Context<Self>) -> Result<TestFile, String> {
+    /// or the given row, else the whole file. Why there's none, in words.
+    fn test_file(&self, target: Target, cx: &mut Context<Self>) -> Result<TestFile, String> {
         let editor = self.active_editor(cx).ok_or(NO_FILE)?.clone();
         // The caret and the tree are both read from what this catches up.
         editor.update(cx, |view, _| view.model_mut().sync_display());
@@ -168,7 +184,7 @@ impl Workbench {
         };
         let snapshot = view.model().snapshot();
         let text = snapshot.text();
-        if !at_cursor {
+        if matches!(target, Target::File) {
             let runnable = Runnable::file(&path, text.row_count());
             return Ok(TestFile {
                 path,
@@ -182,7 +198,10 @@ impl Workbench {
         let Some(syntax) = syntax else {
             return Err(NOT_READY.to_owned());
         };
-        let row = (text.offset_to_point(view.model().primary_selection().head())).row;
+        let row = match target {
+            Target::Row(row) => row,
+            _ => (text.offset_to_point(view.model().primary_selection().head())).row,
+        };
         let found = runnables(language, syntax, text);
         let runnable = runnable_at(&found, row).ok_or(NO_TEST_HERE)?.clone();
         Ok(TestFile {
@@ -254,12 +273,23 @@ fn on_workbench(
 pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &RunTestAtCursor, cx| {
         on_workbench(cx, |workbench, window, cx| {
-            workbench.run_test(true, window, cx)
+            workbench.run_test(Target::Cursor, window, cx)
         });
+    });
+    cx.on_action(|_: &RunTestAtRow, cx| {
+        // The row is the click's argument, gone once the dispatch ends.
+        let row = (kiln::current_invocation(cx))
+            .and_then(|invocation| invocation.args.get("row")?.as_u64())
+            .and_then(|row| u32::try_from(row).ok());
+        if let Some(row) = row {
+            on_workbench(cx, move |workbench, window, cx| {
+                workbench.run_test(Target::Row(row), window, cx)
+            });
+        }
     });
     cx.on_action(|_: &RunTestsInFile, cx| {
         on_workbench(cx, |workbench, window, cx| {
-            workbench.run_test(false, window, cx)
+            workbench.run_test(Target::File, window, cx)
         });
     });
     cx.on_action(|_: &RerunLastTest, cx| {
