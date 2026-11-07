@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_cmake"
+name = "CMake syntax"
+version = "0.7.6"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "cmake"
+wasm = "tree-sitter-cmake.wasm"
+extensions = ["cmake"]
+file_names = ["CMakeLists.txt"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "#"
+block_comment = ["#[[", "]]"]

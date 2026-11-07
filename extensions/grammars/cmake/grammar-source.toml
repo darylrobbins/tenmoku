@@ -1,0 +1,4 @@
+git = "https://github.com/uyha/tree-sitter-cmake"
+rev = "a3ec2b2144daf7132e7ee824d8cab9610523d10f"
+src = "src"
+grammar = "cmake"
