@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_zig"
+name = "Zig syntax"
+version = "1.1.2"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "zig"
+wasm = "tree-sitter-zig.wasm"
+extensions = ["zig", "zon"]
+line_comment = "//"
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

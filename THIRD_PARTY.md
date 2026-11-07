@@ -230,6 +230,7 @@ licence. No module is committed.
 | latex | `tree-sitter-latex.wasm` | https://github.com/latex-lsp/tree-sitter-latex at `aca6eeba1b9556685bf0aa1cdc4a902cba155823` (`src`), package version 0.3.0, the newest commit with a generated `parser.c`; `highlights.scm` and `injections.scm` are nvim-treesitter's `runtime/queries/latex/` at `2c30e515ebe79037ab8d15f7e59c0e2690f50626`, adapted to this grammar | MIT; the queries are nvim-treesitter's Apache-2.0, with the text in `LICENSE-APACHE` |
 | dart | `tree-sitter-dart.wasm` | https://github.com/UserNobody14/tree-sitter-dart at `0038280b774b65c1b89ba7fec50624d8baed9fe1` | MIT; `highlights.scm` is upstream's `queries/highlights.scm`, with captures renamed |
 | haskell | `tree-sitter-haskell.wasm` | https://github.com/tree-sitter/tree-sitter-haskell at `97288e585b0bd44199720280d067fa35bacd81ff` | MIT; `highlights.scm` and `injections.scm` are upstream's `queries/`, adapted as their headers say |
+| zig | `tree-sitter-zig.wasm` | [tree-sitter-grammars/tree-sitter-zig](https://github.com/tree-sitter-grammars/tree-sitter-zig) at `6479aa13f32f701c383083d8b28360ebd682fb7d` | MIT; `highlights.scm` is adapted from the repository's own `queries/highlights.scm` at that commit (same licence) |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub
