@@ -2164,6 +2164,13 @@ mod configs {
                         trim_trailing_whitespace: config.trim_trailing_whitespace == Some(true),
                         insert_final_newline: config.insert_final_newline == Some(true),
                     });
+                    editor.set_max_line_length(
+                        match config.max_line_length {
+                            Some(fe_config::editorconfig::MaxLineLength::Columns(n)) => Some(n),
+                            _ => None,
+                        },
+                        cx,
+                    );
                     if old.is_none() {
                         new_file_charset(editor, config.charset, clean);
                     }

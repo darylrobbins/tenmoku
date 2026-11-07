@@ -71,6 +71,8 @@ pub struct EditorView {
     /// when on ([`EditorView::wrap_limit`]).
     pub(crate) wrap_column: Option<u32>,
     pub(crate) wrap_mode: fe_config::settings::WrapMode,
+    /// The file's `.editorconfig` `max_line_length`, if it has one.
+    pub(crate) max_line_length: Option<usize>,
     /// Whether the gutter shows ([`EditorView::set_gutter`]).
     pub(crate) gutter: bool,
     /// The minimap's options, if it's on ([`EditorView::set_minimap`]).
@@ -415,6 +417,7 @@ impl EditorView {
             wrap_reserve: 0.,
             wrap_column: None,
             wrap_mode: Default::default(),
+            max_line_length: None,
             gutter: true,
             minimap: None,
             minimap_hover: Default::default(),
@@ -817,12 +820,27 @@ impl EditorView {
         self.wrap_mode = settings.wrap_mode;
     }
 
+    /// Sets the file's `.editorconfig` `max_line_length` (`None` for none, or
+    /// `off`). It is the wrap column, clamped to 20..=500, replacing
+    /// `editor.wrap_column`, where `editor.wrap_mode` is `column` or
+    /// `bounded` (not in `viewport`), and draws a ruler at the column, in any
+    /// wrap mode. Settings changes leave it alone.
+    pub fn set_max_line_length(&mut self, columns: Option<usize>, cx: &mut Context<Self>) {
+        if self.max_line_length != columns {
+            self.max_line_length = columns;
+            cx.notify();
+        }
+    }
+
     /// The width soft wrap wraps at, given the `viewport` width it would
     /// fill and the `em` of a monospace cell: `editor.wrap_column` columns
     /// for `column`, the smaller of the two for `bounded`.
     pub(crate) fn wrap_limit(&self, viewport: f32, em: f32) -> f32 {
         use fe_config::settings::WrapMode;
-        match (self.wrap_mode, self.wrap_column) {
+        let column = (self.max_line_length)
+            .map(|n| n.clamp(20, 500) as u32)
+            .or(self.wrap_column);
+        match (self.wrap_mode, column) {
             (WrapMode::Column, Some(n)) => n as f32 * em,
             (WrapMode::Bounded, Some(n)) => viewport.min(n as f32 * em),
             _ => viewport,

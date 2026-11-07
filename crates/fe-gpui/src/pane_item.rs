@@ -1102,10 +1102,12 @@ impl PaneItem for EditorView {
         let language = self.language_chosen.then_some(self.chosen_language);
         let source = self.language_source.clone();
         let (wrap_column, wrap_mode) = (self.wrap_column, self.wrap_mode);
+        let max_line_length = self.max_line_length;
         Some(cx.new(|cx| {
             let mut view = EditorView::new(model, theme, cx);
             view.wrap_column = wrap_column;
             view.wrap_mode = wrap_mode;
+            view.max_line_length = max_line_length;
             view.set_read_only(read_only, cx);
             view.accepts_when_read_only = accepts;
             view.unsavable = unsavable;

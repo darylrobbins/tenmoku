@@ -20,6 +20,11 @@ pub(super) fn layout(
         .copied()
         .filter(|&column| column > 0)
         .collect();
+    columns.extend(
+        (view.max_line_length)
+            .and_then(|n| i32::try_from(n).ok())
+            .filter(|&n| n >= 1),
+    );
     if columns.is_empty() {
         return Vec::new();
     }
@@ -63,3 +68,7 @@ thread_local! {
 #[cfg(test)]
 #[path = "rulers_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "max_line_length_ruler_tests.rs"]
+mod max_line_length_ruler_tests;
