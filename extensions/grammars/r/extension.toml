@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_r"
+name = "R syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "r"
+wasm = "tree-sitter-r.wasm"
+extensions = ["r"]
+file_names = [".Rprofile"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "#"
+shebangs = ["Rscript"]

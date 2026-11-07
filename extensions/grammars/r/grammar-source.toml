@@ -1,0 +1,9 @@
+# Where this extension's WebAssembly grammar comes from: that commit of the
+# repository, which scripts/build-grammar-wasm.sh fetches and compiles.
+git = "https://github.com/r-lib/tree-sitter-r"
+rev = "58a22794466c0fc15b0d3b40531db751593721e8"
+# The directory holding parser.c, and scanner.c if there is one.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "r"
