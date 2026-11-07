@@ -1958,6 +1958,8 @@ impl EditorView {
         self.vim_line_echo = None;
         self.vim_line_end_expanded = false;
         self.vim_line_literal = false;
+        self.vim_line_selected = false;
+        self.vim_line_platform.clear();
     }
 
     /// A character typed on the command line, asked of the `c` maps
@@ -1995,10 +1997,14 @@ impl EditorView {
     }
 
     /// Takes the last grapheme out of `text`, a command line's, as the
-    /// host's line's `<BS>` does with the caret at its end: whether there
-    /// was one.
-    pub fn line_backspace(text: &mut String) -> bool {
+    /// host's line's `<BS>` does with the caret at its end, or all of it if
+    /// it's `selected` (which the edit ends): whether there was anything.
+    pub fn line_backspace(text: &mut String, selected: &mut bool) -> bool {
         use unicode_segmentation::UnicodeSegmentation as _;
+        if std::mem::take(selected) && !text.is_empty() {
+            text.clear();
+            return true;
+        }
         let Some((at, _)) = text.grapheme_indices(true).next_back() else {
             return false;
         };
@@ -2045,6 +2051,21 @@ impl EditorView {
             return;
         }
         self.replay_from(rest.into(), line, None, cx);
+    }
+
+    /// `text`, platform text the host's line is putting in, goes in once
+    /// the keys [`EditorView::replay_line_rest`] is given, and every command
+    /// they wait for, have run: unmapped, into the line if it's still open,
+    /// else as keys of the editor's.
+    pub fn line_platform_text(&mut self, text: &str) {
+        self.vim_line_platform = text.to_owned();
+    }
+
+    /// Whether the text of the host's open line, which the keys after a
+    /// map's `<Cmd>` ([`EditorView::replay_line_rest`]) go on from, is
+    /// `selected` in its input: their `<BS>` takes it out, and a character replaces it.
+    pub fn select_line_text(&mut self, selected: bool) {
+        self.vim_line_selected = selected;
     }
 
     /// The text the keys after a map's `<Cmd>` left the host's open line
@@ -2164,7 +2185,7 @@ impl EditorView {
                     // What it takes out, or whether it cancels, is the
                     // line's to say: the keys after it wait for that.
                     VimKey::Backspace => {
-                        Self::line_backspace(echo);
+                        Self::line_backspace(echo, &mut false);
                         self.vim_line_end_expanded |= expanded;
                         keys.extend(state.take_replay());
                         keys.extend(queue.drain(..));
@@ -2831,6 +2852,7 @@ impl EditorView {
         // run, if the line is still open, as the host's line drops it if
         // they closed it.
         let mut held_back: Option<(VimKey, usize)> = None;
+        let mut drained = false;
         loop {
             if let Some((key, after)) = held_back
                 && queue.len() <= after
@@ -2851,6 +2873,7 @@ impl EditorView {
                 return self.run_remap_command_later(command, queue, line, origin, cx);
             }
             let Some(key) = queue.pop_front() else {
+                drained = true;
                 break;
             };
             if self.unmapped_after_held(key) {
@@ -2891,6 +2914,25 @@ impl EditorView {
             };
             for key in state.take_replay().into_iter().rev() {
                 queue.push_front(key);
+            }
+        }
+        // The host's platform text goes in after all the keys. A map that
+        // failed or stopped drops it.
+        let platform = std::mem::take(&mut self.vim_line_platform);
+        if drained && !platform.is_empty() {
+            let open = (self.vim.as_ref())
+                .is_some_and(|state| matches!(state.mode(), fe_vim::Mode::CmdLine(_)));
+            match line.as_mut().filter(|_| open) {
+                Some(text) => {
+                    if std::mem::take(&mut self.vim_line_selected) {
+                        text.clear();
+                    }
+                    text.push_str(&platform);
+                }
+                None => {
+                    let keys = platform.chars().map(VimKey::Char).collect();
+                    return self.replay_from(keys, line, origin, cx);
+                }
             }
         }
         self.vim_replaying = false;
@@ -3353,14 +3395,22 @@ impl EditorView {
         state.record_key(key);
         // Read before the line runs, which may read keys of its own.
         let mapped = state.expanding();
+        if line.is_none() {
+            self.vim_line_selected = false;
+        }
         let text = line.get_or_insert_with(|| state.command_line_prefill().to_owned());
         let invocation = match key {
             // [`LITERAL_NEXT`] too, read as the marker before this.
             VimKey::Char(ch) => {
+                if std::mem::take(&mut self.vim_line_selected) {
+                    text.clear();
+                }
                 text.push(ch);
                 return true;
             }
-            VimKey::Backspace if Self::line_backspace(text) => return true,
+            VimKey::Backspace if Self::line_backspace(text, &mut self.vim_line_selected) => {
+                return true;
+            }
             // `<BS>` on an empty line, and `<C-c>`, cancel it. A
             // replay's `<Esc>` runs it, as in nvim (`:help c_<Esc>`).
             VimKey::Backspace | VimKey::Ctrl('c') => {

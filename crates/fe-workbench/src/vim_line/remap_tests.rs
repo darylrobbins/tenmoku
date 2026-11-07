@@ -11,6 +11,7 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use crate::{Launch, Workbench};
 
 // Declared here, a test file, so the regression check keeps it.
+mod line_edits_tests;
 mod unmapped_input_tests;
 
 pub(super) fn cnoremap(from: &str, to: &str) -> Remap {

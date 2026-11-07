@@ -193,6 +193,13 @@ pub struct EditorView {
     /// A replay read the literal-next marker on the command line: the next character is
     /// literal text, not matched against the `c` maps.
     pub(crate) vim_line_literal: bool,
+    /// The text of the host's open line that a `<Cmd>`'s keys continue from
+    /// is selected: the next `<BS>` or character replaces it, as the line's
+    /// input does ([`EditorView::select_line_text`]).
+    pub(crate) vim_line_selected: bool,
+    /// Platform text the host's line is putting in once a `<Cmd>`'s keys
+    /// are over ([`EditorView::line_platform_text`]).
+    pub(crate) vim_line_platform: String,
     /// The pointer is over the fold column, so the chevrons of folds that
     /// are open show too.
     pub(crate) fold_column_hovered: bool,
@@ -468,6 +475,8 @@ impl EditorView {
             vim_line_echo: None,
             vim_line_end_expanded: false,
             vim_line_literal: false,
+            vim_line_selected: false,
+            vim_line_platform: String::new(),
             fold_column_hovered: false,
             gutter_glyph: None,
             overlay: None,

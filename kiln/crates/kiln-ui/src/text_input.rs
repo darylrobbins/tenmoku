@@ -181,9 +181,9 @@ type TypingFilter = Rc<dyn Fn(&str, &mut Window, &mut App) -> Typed>;
 /// [`TextInput::set_before_platform_input`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SettleEdit {
-    /// Adds this text at the end.
+    /// Adds this text at the caret, replacing the selection.
     Insert(String),
-    /// Deletes the last char.
+    /// Deletes the selection, or the grapheme before the caret.
     Backspace,
 }
 
@@ -199,7 +199,7 @@ pub struct Settled {
 /// Asked, with the text and the platform's, before an edit from the
 /// platform that isn't a single typed character goes in: see
 /// [`TextInput::set_before_platform_input`].
-type BeforeInput = Rc<dyn Fn(&str, &str, &mut Window, &mut App) -> Settled>;
+type BeforeInput = Rc<dyn Fn(&str, bool, &str, &mut Window, &mut App) -> Settled>;
 
 /// A single-line text input. Typed text goes in at the caret, which the
 /// `move_*` methods move by kiln-core's [`Motion`] rules (graphemes and
@@ -374,15 +374,17 @@ impl TextInput {
     /// commit of several characters, a replacement or deletion of a range,
     /// and the start of an IME composition. Not a paste or
     /// [`TextInput::insert`]. It is given the text and the platform's
-    /// text (empty for a deletion or a composition's start), and answers
+    /// text (empty for a deletion or a composition's start), with whether
+    /// the text is selected ([`TextInput::selected`]), and answers
     /// with the edits to make first, so a host holding typed characters
     /// back puts them in ahead of the platform's edit, in the order they
-    /// came. An insertion at the end of the text stays at the end.
+    /// came. An insertion at the end of the text stays at the end; a range
+    /// keeps naming the text it named, through each edit.
     /// It runs while the input is being updated, so it can't read or edit
     /// the input.
     pub fn set_before_platform_input(
         &mut self,
-        hook: Option<impl Fn(&str, &str, &mut Window, &mut App) -> Settled + 'static>,
+        hook: Option<impl Fn(&str, bool, &str, &mut Window, &mut App) -> Settled + 'static>,
     ) {
         self.before_input = hook.map(|hook| Rc::new(hook) as BeforeInput);
     }
@@ -401,25 +403,72 @@ impl TextInput {
             return Some(range);
         };
         let old = self.utf16_len();
-        let settled = hook(&self.text.clone(), platform, window, cx);
+        let settled = hook(&self.text.clone(), self.selected, platform, window, cx);
+        // The range in bytes, moved through each edit; an insertion at the
+        // end stays at the end.
+        let at_end = range
+            .as_ref()
+            .is_some_and(|r| r.is_empty() && r.start >= old);
+        let mut named = range.map(|range| Self::byte_range(&self.text, &range));
         for edit in settled.edits {
+            let (deleted, inserted) = match &edit {
+                SettleEdit::Insert(text) => {
+                    let line = text.lines().next().unwrap_or_default().len();
+                    match self.selected {
+                        true => (0..self.text.len(), line),
+                        false => (self.caret..self.caret, line),
+                    }
+                }
+                SettleEdit::Backspace => match self.selected {
+                    true => (0..self.text.len(), 0),
+                    false => (self.target(Motion::Left)..self.caret, 0),
+                },
+            };
             match edit {
                 SettleEdit::Insert(text) => self.insert(&text, cx),
                 SettleEdit::Backspace => self.backspace(cx),
+            }
+            if let Some(named) = &mut named {
+                *named = Self::through_edit(named, &deleted, inserted);
             }
         }
         if settled.swallow {
             return None;
         }
         let new = self.utf16_len();
-        // An insertion at the end stays at the end; any other range keeps
-        // the text it named, which settling only added to after.
-        Some(
-            range.map(|range| match range.is_empty() && range.start >= old {
-                true => new..new,
-                false => range.start.min(new)..range.end.min(new),
-            }),
-        )
+        let utf16 = |bytes: usize| {
+            let bytes = (0..=bytes.min(self.text.len()))
+                .rev()
+                .find(|at| self.text.is_char_boundary(*at))
+                .unwrap_or(0);
+            self.text[..bytes].encode_utf16().count()
+        };
+        Some(named.map(|named| match at_end {
+            true => new..new,
+            false => utf16(named.start)..utf16(named.end),
+        }))
+    }
+
+    /// Where `range` is after `deleted` was replaced by `inserted` bytes:
+    /// it keeps the text it named, so the inserted text is outside it and
+    /// text deleted from its ends is cut off. An empty range, a position,
+    /// moves past text inserted at it.
+    fn through_edit(range: &Range<usize>, deleted: &Range<usize>, inserted: usize) -> Range<usize> {
+        let shifted = |at: usize| at - deleted.len() + inserted;
+        let start = match range.start {
+            at if at < deleted.start => at,
+            at if at >= deleted.end => shifted(at),
+            _ => deleted.start + inserted,
+        };
+        let end = match range.end {
+            at if at <= deleted.start => at,
+            at if at >= deleted.end => shifted(at),
+            _ => deleted.start,
+        };
+        match range.is_empty() {
+            true => start..start,
+            false => start..end.max(start),
+        }
     }
 
     /// Asks `filter` about each character typed on its own, before it goes
@@ -1150,5 +1199,104 @@ fn select_in(
 ) {
     if let Some(input) = input.upgrade() {
         input.update(cx, |input, cx| input.select_from_a11y(selection, run, cx));
+    }
+}
+
+/// What a host settles before a platform edit goes in: the edit's range
+/// keeps naming the text it named, and the hook sees the selection.
+#[cfg(test)]
+mod settle_tests {
+    use std::{cell::Cell, rc::Rc};
+
+    use gpui::{
+        AppContext as _, Context, Entity, EntityInputHandler as _, IntoElement, ParentElement as _,
+        Render, Styled as _, TestAppContext, Window, div,
+    };
+
+    use super::{SettleEdit, Settled, TextInput};
+    use crate::UiTheme;
+
+    struct Host(Entity<TextInput>);
+
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().text_size(gpui::px(30.)).child(self.0.clone())
+        }
+    }
+
+    fn input_with<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+    ) -> (Entity<TextInput>, &'a mut gpui::VisualTestContext) {
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            Host(cx.new(|cx| TextInput::new("Find", &UiTheme::default(), cx)))
+        });
+        cx.run_until_parked();
+        let input = host.read_with(cx, |host, _| host.0.clone());
+        input.update(cx, |input, cx| input.set_text(text, cx));
+        (input, cx)
+    }
+
+    /// An insertion settled before a range's target, at a caret in the middle,
+    /// leaves the range on the target, not on the inserted text.
+    #[gpui::test]
+    fn a_settled_insertion_before_the_target_moves_the_range(cx: &mut TestAppContext) {
+        let (input, cx) = input_with(cx, "ab");
+        input.update_in(cx, |input, window, cx| {
+            input.move_left(cx);
+            input.set_before_platform_input(Some(|_: &str, _, _: &str, _: &mut _, _: &mut _| {
+                Settled {
+                    edits: vec![SettleEdit::Insert("j".into())],
+                    swallow: false,
+                }
+            }));
+            input.replace_text_in_range(Some(1..2), "X", window, cx);
+            assert_eq!(input.text(), "ajX");
+        });
+    }
+
+    /// Text deleted and put back by settling is not what a range names: the
+    /// range keeps what survived of its target.
+    #[gpui::test]
+    fn a_settled_deletion_and_reinsertion_leaves_the_range_on_the_survivors(
+        cx: &mut TestAppContext,
+    ) {
+        let (input, cx) = input_with(cx, "abc");
+        input.update_in(cx, |input, window, cx| {
+            input.set_before_platform_input(Some(|_: &str, _, _: &str, _: &mut _, _: &mut _| {
+                Settled {
+                    edits: vec![SettleEdit::Backspace, SettleEdit::Insert("zz".into())],
+                    swallow: false,
+                }
+            }));
+            // "c" is taken out and "zz" put in its place: the range over "b"
+            // and "c" is left naming "b" alone.
+            input.replace_text_in_range(Some(1..3), "X", window, cx);
+            assert_eq!(input.text(), "aXzz");
+        });
+    }
+
+    /// The hook is told the text is selected, and a settled `Backspace` takes
+    /// the selection out.
+    #[gpui::test]
+    fn the_hook_sees_the_selection(cx: &mut TestAppContext) {
+        let (input, cx) = input_with(cx, "ab");
+        let seen = Rc::new(Cell::new(false));
+        let log = seen.clone();
+        input.update_in(cx, |input, window, cx| {
+            input.select_all(cx);
+            input.set_before_platform_input(Some(
+                move |_: &str, selected: bool, _: &str, _: &mut _, _: &mut _| {
+                    log.set(selected);
+                    Settled {
+                        edits: vec![SettleEdit::Backspace],
+                        swallow: false,
+                    }
+                },
+            ));
+            input.replace_text_in_range(None, "yz", window, cx);
+            assert_eq!(input.text(), "yz");
+        });
+        assert!(seen.get());
     }
 }

@@ -104,8 +104,14 @@ pub(super) struct VimLine {
     /// Holds the keys typed on the line while a `<Cmd>`'s keys wait for a
     /// command they ran ([`EditorView::line_continuing`]).
     _hold: Option<Subscription>,
-    /// The keys it held, to go on as typed once they're over.
-    held: Vec<Keystroke>,
+    /// The edits it held, in the order they came, to go in after the
+    /// `<Cmd>`'s keys, as typed, once they're over.
+    held: Vec<HeldEdit>,
+    /// The held edits are being made, one after the other: later ones wait
+    /// behind them.
+    draining: bool,
+    /// A held key is being dispatched again: it isn't held.
+    replaying: bool,
     /// The editor previews the open `:` line as a `:s` ('inccommand'): an
     /// edit that makes it anything else tells the editor once more, which
     /// takes the preview down.
@@ -117,6 +123,24 @@ pub(super) struct VimLine {
     /// The mode segment's background and label colours in the last render.
     #[cfg(test)]
     drawn_mode: Option<(gpui::Hsla, gpui::Hsla)>,
+}
+
+/// An edit to the open line that came while a `<Cmd>`'s keys wait for a
+/// command ([`EditorView::line_continuing`]), or while those held are being
+/// made: it goes in after them.
+enum HeldEdit {
+    /// A keystroke, dispatched again.
+    Key(Keystroke),
+    /// A character the platform committed on its own, asked of the `c` maps
+    /// as a typed one.
+    Char(char),
+    /// Platform text of several characters, typed unmapped.
+    Text(String),
+    /// A paste, the text read when it came: it breaks a held `c` map, as a
+    /// paste does, and goes in unmapped.
+    Paste(String),
+    /// A command of the line's input, run as it runs when it comes.
+    Op(PaletteOp),
 }
 
 /// A cycle of command-name completions, as nvim's wildmenu steps through
@@ -268,11 +292,13 @@ impl StatusBar {
                     ));
                     input.set_before_platform_input(Some(
                         move |text: &str,
+                              selected: bool,
                               platform: &str,
                               window: &mut Window,
                               cx: &mut gpui::App| {
-                            let held = settle
-                                .update(cx, |bar, cx| bar.line_settle(text, platform, window, cx));
+                            let held = settle.update(cx, |bar, cx| {
+                                bar.line_settle(text, selected, platform, window, cx)
+                            });
                             held.unwrap_or_default()
                         },
                     ));
@@ -366,6 +392,10 @@ impl StatusBar {
         else {
             return Typed::Pass;
         };
+        if self.line_holding(cx) {
+            self.line.held.push(HeldEdit::Char(ch));
+            return Typed::Swallow;
+        }
         let Some(line) = editor.update(cx, |editor, _| editor.remap_line_key(ch)) else {
             return Typed::Pass;
         };
@@ -404,18 +434,25 @@ impl StatusBar {
     fn line_settle(
         &mut self,
         text: &str,
+        selected: bool,
         platform: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Settled {
-        self.line.remap_timer = None;
         let mut settled = Settled::default();
+        // Every edit waits for the keys of a `<Cmd>` that wait for a command.
+        if self.hold_line_text(platform, window, cx) {
+            settled.swallow = true;
+            return settled;
+        }
+        self.line.remap_timer = None;
         let Some(editor) = (self.line.open.as_ref()).and_then(|(editor, _)| editor.upgrade())
         else {
             return settled;
         };
         // The line as the edits leave it.
         let mut line_text = text.to_owned();
+        let mut selected = selected;
         let mut more = None;
         loop {
             let line = match more.take() {
@@ -433,9 +470,15 @@ impl StatusBar {
                 match key {
                     VimKey::Char(ch) => {
                         settled.edits.push(SettleEdit::Insert(ch.to_string()));
+                        // A character replaces the selection.
+                        if std::mem::take(&mut selected) {
+                            line_text.clear();
+                        }
                         line_text.push(ch);
                     }
-                    VimKey::Backspace if EditorView::line_backspace(&mut line_text) => {
+                    VimKey::Backspace
+                        if EditorView::line_backspace(&mut line_text, &mut selected) =>
+                    {
                         settled.edits.push(SettleEdit::Backspace);
                     }
                     VimKey::Backspace | VimKey::Enter | VimKey::Esc => ends = true,
@@ -553,7 +596,9 @@ impl StatusBar {
                 // The `<BS>` cancelled the line: the keys after it are the
                 // editor's.
                 (Some(more), ..) => keys.extend(more),
-                (None, ..) if !after.is_empty() => keys.extend(after.drain(..)),
+                // With a `<Cmd>`'s or an editor's keys still to run, the
+                // platform's text goes in after them, not here.
+                (None, ..) if !after.is_empty() && rest.is_empty() => keys.extend(after.drain(..)),
                 (None, ..) => break,
             }
         }
@@ -563,11 +608,19 @@ impl StatusBar {
         let Some(editor) = editor.filter(|_| !rest.is_empty()) else {
             return;
         };
-        let line = (self.line.input.as_ref())
-            .filter(|_| self.line.open.is_some())
-            .map(|input| input.read(cx).text().to_owned());
+        let platform: String = (after.iter())
+            .filter_map(|key| match key {
+                VimKey::Char(ch) => Some(*ch),
+                _ => None,
+            })
+            .collect();
+        let input = (self.line.input.as_ref()).filter(|_| self.line.open.is_some());
+        let line = input.map(|input| input.read(cx).text().to_owned());
+        let selected = input.is_some_and(|input| input.read(cx).selected());
         let handed = std::mem::take(&mut self.line.handed);
         editor.update(cx, |editor, cx| {
+            editor.select_line_text(selected);
+            editor.line_platform_text(&platform);
             editor.replay_line_rest(rest, line, handed, cx)
         });
         self.show_line_text(window, cx);
@@ -635,9 +688,11 @@ impl StatusBar {
         }
     }
 
-    /// Holds the keys typed on the line from now, until
-    /// [`StatusBar::release_line_keys`]: they can't come between the keys a
-    /// `<Cmd>` left, which wait for a command they ran.
+    /// Holds the edits made to the line from now, until
+    /// [`StatusBar::release_line_keys`]: keys typed on it, platform text and
+    /// the input's commands. They can't come between the keys a `<Cmd>`
+    /// left, which wait for a command they ran, nor edit the text those
+    /// keys go on from.
     fn hold_line_keys(&mut self, cx: &mut Context<Self>) {
         if self.line._hold.is_some() {
             return;
@@ -653,25 +708,165 @@ impl StatusBar {
         let focused = (self.line.input.as_ref())
             .filter(|_| self.line.open.is_some())
             .is_some_and(|input| input.focus_handle(cx).is_focused(window));
-        if focused {
-            self.line.held.push(keystroke);
+        if focused && !self.line.replaying {
+            self.line.held.push(HeldEdit::Key(keystroke));
             cx.stop_propagation();
         }
     }
 
-    /// Stops holding the line's keys, and types those held, as typed, once
-    /// this update is over.
+    /// Whether edits to the line wait: its `<Cmd>`'s keys wait for a command
+    /// ([`EditorView::line_continuing`]), or edits held before them are
+    /// being made. Not those being made.
+    fn line_holding(&self, cx: &mut Context<Self>) -> bool {
+        if self.line.replaying {
+            return false;
+        }
+        let editor = (self.line.open.as_ref()).and_then(|(editor, _)| editor.upgrade());
+        self.line.draining
+            || editor
+                .is_some_and(|editor| editor.update(cx, |editor, cx| editor.line_continuing(cx)))
+    }
+
+    /// Holds `platform`, text the platform is putting in the line, if the
+    /// line's edits are held: whether it did, so the input drops the edit.
+    /// Not a deletion, nor the start of a composition (no text), which the
+    /// hook gives no range for: the text they named is the `<Cmd>`'s to
+    /// replace.
+    fn hold_line_text(
+        &mut self,
+        platform: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.line_holding(cx) {
+            return false;
+        }
+        if !platform.is_empty() {
+            self.line.held.push(HeldEdit::Text(platform.to_owned()));
+        }
+        true
+    }
+
+    /// Holds a command of the line's input, `op`, which edits it. A paste
+    /// is held as the text on the clipboard now.
+    fn hold_line_op(&mut self, op: PaletteOp, cx: &mut Context<Self>) {
+        match op {
+            PaletteOp::Paste => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    self.line.held.push(HeldEdit::Paste(text));
+                }
+            }
+            op => self.line.held.push(HeldEdit::Op(op)),
+        }
+    }
+
+    /// Stops holding the line's edits, and makes those held, one after the
+    /// other, as made, once this update is over: each after the work the
+    /// last one deferred.
     fn release_line_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.line._hold = None;
-        let held = std::mem::take(&mut self.line.held);
-        if held.is_empty() {
+        if self.line.draining {
             return;
         }
-        window.defer(cx, move |window, cx| {
-            for keystroke in held {
+        if self.line.held.is_empty() {
+            self.line._hold = None;
+            return;
+        }
+        self.line.draining = true;
+        let bar = cx.weak_entity();
+        window.defer(cx, move |window, cx| Self::make_next_held(bar, window, cx));
+    }
+
+    /// Makes the next edit that was held, then defers the one after it. It
+    /// stops if the line is held again for a `<Cmd>`'s command, which
+    /// releases the rest once it's over.
+    fn make_next_held(bar: WeakEntity<Self>, window: &mut Window, cx: &mut gpui::App) {
+        let next = bar.update(cx, |bar, cx| {
+            if bar.line_holding_for_command(cx) {
+                bar.line.draining = false;
+                return None;
+            }
+            if bar.line.held.is_empty() {
+                bar.line.draining = false;
+                bar.line._hold = None;
+                return None;
+            }
+            bar.line.replaying = true;
+            Some((bar.line.held.remove(0), bar.line.open.is_some()))
+        });
+        let Ok(Some((edit, open))) = next else {
+            return;
+        };
+        match edit {
+            // Outside the bar's update, which they may need.
+            HeldEdit::Key(keystroke) => {
                 window.dispatch_keystroke(keystroke, cx);
             }
+            HeldEdit::Char(ch) if !open => Self::type_in_editor(&ch.to_string(), window, cx),
+            HeldEdit::Text(text) | HeldEdit::Paste(text) if !open => {
+                Self::type_in_editor(&text, window, cx)
+            }
+            HeldEdit::Op(_) if !open => {}
+            edit => {
+                (bar.update(cx, |bar, cx| bar.make_held(edit, window, cx))).ok();
+            }
+        }
+        let again = bar.clone();
+        (bar.update(cx, |bar, _| bar.line.replaying = false)).ok();
+        window.defer(cx, move |window, cx| {
+            Self::make_next_held(again, window, cx)
         });
+    }
+
+    /// Whether the line's `<Cmd>` waits for a command, whatever else is held.
+    fn line_holding_for_command(&self, cx: &mut Context<Self>) -> bool {
+        let editor = (self.line.open.as_ref()).and_then(|(editor, _)| editor.upgrade());
+        editor.is_some_and(|editor| editor.update(cx, |editor, cx| editor.line_continuing(cx)))
+    }
+
+    /// Text a `<Cmd>`'s keys left the line closed before it was typed: keys
+    /// for the editor, as the mode it left takes them.
+    fn type_in_editor(text: &str, window: &mut Window, cx: &mut gpui::App) {
+        for ch in text.chars() {
+            let key = match ch {
+                ' ' => "space".to_owned(),
+                ch => ch.to_lowercase().to_string(),
+            };
+            let keystroke = Keystroke {
+                modifiers: gpui::Modifiers {
+                    shift: ch.is_uppercase(),
+                    ..Default::default()
+                },
+                key,
+                key_char: Some(ch.to_string()),
+            };
+            window.dispatch_keystroke(keystroke, cx);
+        }
+    }
+
+    /// Makes one edit that was held, other than a key, on the open line.
+    fn make_held(&mut self, edit: HeldEdit, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(input) = (self.line.input.clone()).filter(|_| self.line.open.is_some()) else {
+            return;
+        };
+        match edit {
+            HeldEdit::Key(_) => {}
+            HeldEdit::Char(ch) => match self.line_typed(ch, window, cx) {
+                Typed::Pass => input.update(cx, |input, cx| input.insert(&ch.to_string(), cx)),
+                Typed::Swallow => {}
+                Typed::Insert(text) => input.update(cx, |input, cx| input.insert(&text, cx)),
+            },
+            HeldEdit::Text(text) => input.update(cx, |input, cx| input.insert(&text, cx)),
+            HeldEdit::Paste(text) => {
+                // Keys held for a longer map go in first, and may end the line.
+                self.resolve_line_prefix(window, cx);
+                if self.line.open.is_some() {
+                    input.update(cx, |input, cx| input.insert(&text, cx));
+                }
+            }
+            HeldEdit::Op(op) => {
+                self.line_op(op, window, cx);
+            }
+        }
     }
 
     /// Shows in its editor what the open `/` or `?` line would land on, or
@@ -777,21 +972,38 @@ impl StatusBar {
         if super::is_cancel_line(run, cx) {
             return self.end_line(None, VimKey::Esc, window, cx);
         }
-        // An edit of its own breaks a held `c` map: what's held goes in first.
-        if picker::op(run, cx).is_some() {
-            self.resolve_line_prefix(window, cx);
-            if self.line.open.is_none() {
-                return;
-            }
-        }
-        let op = picker::op(run, cx);
-        if op == Some(PaletteOp::Backspace) && input.read(cx).text().is_empty() {
-            return self.end_line(None, VimKey::Backspace, window, cx);
-        }
-        let Some(edit) = op.and_then(PaletteOp::edit) else {
+        let Some(op) = picker::op(run, cx) else {
             return cx.propagate();
         };
+        // Its input's edits wait with its keys, for a `<Cmd>`'s command.
+        if op.edit().is_some() && self.line_holding(cx) {
+            return self.hold_line_op(op, cx);
+        }
+        if !self.line_op(op, window, cx) {
+            cx.propagate();
+        }
+    }
+
+    /// Runs `op`, a command of the line's input. An edit breaks a held `c`
+    /// map: what's held goes in first. A `<BS>` on an empty line cancels
+    /// it. Returns whether the line took it; if not, it's the workbench's.
+    fn line_op(&mut self, op: PaletteOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(input) = self.line.input.clone() else {
+            return false;
+        };
+        self.resolve_line_prefix(window, cx);
+        if self.line.open.is_none() {
+            return true;
+        }
+        if op == PaletteOp::Backspace && input.read(cx).text().is_empty() {
+            self.end_line(None, VimKey::Backspace, window, cx);
+            return true;
+        }
+        let Some(edit) = op.edit() else {
+            return false;
+        };
         input.update(cx, edit);
+        true
     }
 
     /// Up and Down (unmodified) replace the line's text with the next older
