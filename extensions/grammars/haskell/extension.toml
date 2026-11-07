@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_haskell"
+name = "Haskell syntax"
+version = "0.24.1"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "haskell"
+wasm = "tree-sitter-haskell.wasm"
+extensions = ["hs"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "--"
+block_comment = ["{-", "-}"]
+shebangs = ["runhaskell", "runghc"]

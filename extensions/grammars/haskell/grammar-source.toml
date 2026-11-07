@@ -1,0 +1,14 @@
+# Where this extension's WebAssembly grammar comes from: tree-sitter-haskell's
+# repository at this commit, whose tree has the generated parser.c, which
+# scripts/build-grammar-wasm.sh fetches and compiles.
+git = "https://github.com/tree-sitter/tree-sitter-haskell"
+# The full 40-hex commit (master's head, version 0.24.1).
+rev = "97288e585b0bd44199720280d067fa35bacd81ff"
+# The directory holding parser.c, and scanner.c, relative to the repository.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "haskell"
+# The other first-party languages the sample injects, which the parity test
+# registers under their names: the quasi-quote [sql| ... |] is sql.
+parity_needs = ["sql"]
