@@ -382,7 +382,18 @@ fn nothing_outlives_a_call_that_ends() {
     let sleep = copied(&dir, "sleep");
     let printf = copied(&dir, "printf");
     // Leaves a program of its own holding stdout and stderr open after it exits.
-    let holder = script(&dir, "holder", "sleep 3 &\necho started");
+    // The background program is far longer than the elapsed bound below, so a call that waited for
+    // it would blow that bound. It is not the call's child, so the call's kill does not reach it:
+    // it records its pid and `Reaper` kills it when the test ends, however it ends.
+    let background_pid = dir.join("background.pid");
+    let holder = script(
+        &dir,
+        "holder",
+        &format!(
+            "sleep 30 &\necho $! > '{}'\necho started",
+            background_pid.display()
+        ),
+    );
     let record = record(
         &[
             "process.spawn:sleep",
@@ -395,17 +406,21 @@ fn nothing_outlives_a_call_that_ends() {
         State::new(record.clone(), &Limits::default()).with_deadline(Duration::from_millis(300));
     let before = threads();
     let unread = vec![b'x'; 1 << 20];
+    let _reaper = Reaper(background_pid);
 
     let started = Instant::now();
     let held = state.spawn("holder", &[], None);
     assert!(matches!(held, Err(SpawnError::TimedOut { .. })), "{held:?}");
-    let ignored = state.spawn("sleep", &args(&["5"]), Some(&unread));
+    let ignored = state.spawn("sleep", &args(&["30"]), Some(&unread));
     assert!(
         matches!(ignored, Err(SpawnError::TimedOut { .. })),
         "{ignored:?}"
     );
+    // Nominally about 600 ms. The bound leaves seconds of headroom for a loaded machine, yet stays
+    // well under the 30 s sleeps, so a call that waited for either would fail it. The `sleep 30`
+    // given stdin is the call's own child, which the call's kill ends.
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < Duration::from_secs(10),
         "{:?}",
         started.elapsed()
     );
@@ -418,6 +433,17 @@ fn nothing_outlives_a_call_that_ends() {
         .unwrap();
     assert_eq!(output.stdout, b"ok");
     assert_eq!(threads(), before, "a call left a thread behind");
+}
+
+/// Kills the program a pid file names when dropped.
+struct Reaper(std::path::PathBuf);
+
+impl Drop for Reaper {
+    fn drop(&mut self) {
+        if let Ok(pid) = fs::read_to_string(&self.0) {
+            drop(std::process::Command::new("kill").arg(pid.trim()).status());
+        }
+    }
 }
 
 /// How many threads this process has, where the system says.
