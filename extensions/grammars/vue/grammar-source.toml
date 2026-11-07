@@ -1,0 +1,12 @@
+# Where this extension's WebAssembly grammar comes from: a commit of the
+# grammar's repository, which scripts/build-grammar-wasm.sh fetches whole and
+# compiles (parser.c and the C scanner.c).
+git = "https://github.com/tree-sitter-grammars/tree-sitter-vue"
+# The full 40-hex commit: main's head, "fix(scanner): support Windows line
+# endings" (2026-01-24).
+rev = "ce8011a414fdf8091f4e4071752efc376f4afb08"
+# The directory holding parser.c, relative to the repository.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "vue"
