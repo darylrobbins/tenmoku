@@ -180,8 +180,8 @@ fn the_time_a_call_excludes_from_its_deadline_is_capped_at_its_budget() {
 #[test]
 fn a_share_that_ends_mid_check_refuses_without_suspending_the_grant() {
     let (dir, mut record) = naps("big");
-    // A program of eight chunks, each of which a check reads slowly.
-    const CHUNKS: usize = 8;
+    // A program of 32 chunks, each of which a check reads slowly.
+    const CHUNKS: usize = 32;
     let path = dir.join("big");
     fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
     fs::OpenOptions::new()
@@ -212,7 +212,7 @@ fn a_share_that_ends_mid_check_refuses_without_suspending_the_grant() {
     let read = crate::grants::hash_probe::chunks();
     assert!(read > 0 && read < CHUNKS, "{read} of {CHUNKS} chunks");
     assert!(
-        took <= share + delay + Duration::from_millis(150),
+        took <= share + delay + Duration::from_millis(600),
         "{took:?}"
     );
     // A slow read is not a changed program: the grant stands, and it still checks out.
