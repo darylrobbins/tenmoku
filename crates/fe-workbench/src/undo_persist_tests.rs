@@ -883,11 +883,9 @@ fn a_queued_write_of_a_window_waiting_for_its_settings_is_not_written(cx: &mut T
     assert!(!f.record_file().exists(), "not written while waiting");
 }
 
-/// Known limit (spec "Known limits", follow-up T508): a read landing while
-/// the buffer holds an open transaction that has changed nothing, as vim's
-/// insert mode opens one, isn't imported for that open. The buffer's text
-/// and the record on disk are left as they were, so the next open imports
-/// it.
+/// A read landing in an open transaction that has changed nothing, as vim's
+/// insert mode opens one, still imports: the history goes in beneath it. The
+/// buffer's text and the record on disk are left as they were.
 #[gpui::test]
 fn a_read_landing_in_an_open_empty_transaction_keeps_the_record(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
@@ -904,9 +902,11 @@ fn a_read_landing_in_an_open_empty_transaction_keeps_the_record(cx: &mut TestApp
     assert_eq!(f.text(&first), "one two\n", "the text is as it was");
     first.update(&mut f.cx, |editor, _| {
         let mut buffer = editor.model_mut().buffer_mut();
-        assert!(buffer.undo(user).unwrap().is_none(), "nothing imported");
+        assert!(buffer.open_transaction().is_some(), "still open");
         buffer.end_transaction();
+        assert!(buffer.undo(user).unwrap().is_some(), "history imported");
     });
+    assert_eq!(f.text(&first), "one\n", "undid the persisted edit");
     drop((first, second));
     draw(&mut f.cx);
     assert_eq!(
@@ -914,8 +914,53 @@ fn a_read_landing_in_an_open_empty_transaction_keeps_the_record(cx: &mut TestApp
         kept,
         "the record is as it was"
     );
+}
 
-    let editor = f.open();
-    f.keys("u");
-    assert_eq!(f.text(&editor), "one\n", "the next open imports it");
+/// Vim insert mode entered before the read lands, then left without typing,
+/// still gets the history, and `u` undoes the persisted edit.
+#[gpui::test]
+fn insert_mode_entered_before_the_read_lands_still_gets_the_history(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    let (first, second) = f.two_editors_reading(|first, _, cx| {
+        first.update(cx, |editor, _| {
+            editor
+                .model_mut()
+                .buffer_mut()
+                .start_transaction(Origin::User);
+        });
+    });
+    draw(&mut f.cx);
+    first.update(&mut f.cx, |editor, _| {
+        editor.model_mut().buffer_mut().end_transaction();
+    });
+    assert_eq!(f.text(&first), "one two\n");
+    first.update(&mut f.cx, |editor, _| {
+        let mut buffer = editor.model_mut().buffer_mut();
+        assert!(buffer.undo(user).unwrap().is_some(), "history imported");
+    });
+    assert_eq!(f.text(&first), "one\n");
+    drop(second);
+}
+
+/// An import is still refused once the open transaction has a typed edit,
+/// and `u` undoes only that edit.
+#[gpui::test]
+fn typing_before_the_read_lands_still_gets_no_history(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    let (first, second) = f.two_editors_reading(|first, _, cx| {
+        first.update(cx, |editor, _| {
+            let mut buffer = editor.model_mut().buffer_mut();
+            buffer.start_transaction(Origin::User);
+            buffer.edit([(0..0, "x")], Origin::User);
+        });
+    });
+    draw(&mut f.cx);
+    first.update(&mut f.cx, |editor, _| {
+        let mut buffer = editor.model_mut().buffer_mut();
+        buffer.end_transaction();
+        assert!(buffer.undo(user).unwrap().is_some(), "the typed edit");
+        assert!(buffer.undo(user).unwrap().is_none(), "no imported history");
+    });
+    assert_eq!(f.text(&first), "one two\n");
+    drop(second);
 }

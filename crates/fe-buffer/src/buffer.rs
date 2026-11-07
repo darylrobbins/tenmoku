@@ -1243,7 +1243,8 @@ impl Buffer {
     /// their times, the undone ones redoable. Fails, changing nothing, with
     /// [`UndoImportError::Stale`] if the text's [`text_hash`] or length isn't
     /// the record's, [`UndoImportError::Edited`] if the buffer has history of
-    /// its own, and [`UndoImportError::Invalid`] if the record's edits don't
+    /// its own (an open transaction that has changed nothing is not: the
+    /// history goes in beneath it, which stays open), and [`UndoImportError::Invalid`] if the record's edits don't
     /// apply to its text.
     ///
     /// The history is rebuilt by real edits, which subscribers see: the text
@@ -1259,9 +1260,21 @@ impl Buffer {
         {
             return Err(UndoImportError::Stale);
         }
-        if self.open.is_some() || !self.history.is_empty() {
-            return Err(UndoImportError::Edited);
-        }
+        // An open transaction that has changed nothing doesn't count as an
+        // edit: the history goes in beneath it, which stays open on top.
+        let held = match &self.open {
+            None if self.history.is_empty() => None,
+            Some(open)
+                if self.history.len() == 1
+                    && self.history[0].id == open.id
+                    && self.history[0].batches.is_empty()
+                    && self.history[0].undone.is_none()
+                    && self.history[0].line_ending.is_none() =>
+            {
+                Some(())
+            }
+            _ => return Err(UndoImportError::Edited),
+        };
         let applied = record
             .entries
             .iter()
@@ -1292,6 +1305,11 @@ impl Buffer {
         // ones undone, which would leave an entry's text behind; the limit
         // applies once it's whole, dropping only entries, never text.
         let limit = std::mem::replace(&mut self.history_limit, usize::MAX);
+        let held = held.and_then(|()| {
+            let open = self.open.take()?;
+            let entry = self.history.pop_back()?;
+            Some((open, entry))
+        });
         self.with_authoring(None, |buffer| {
             let (old, new) = differing_ranges(&buffer.snapshot.text, &base);
             if !old.is_empty() || !new.is_empty() {
@@ -1323,6 +1341,11 @@ impl Buffer {
             }
         });
         self.set_history_limit(limit);
+        if let Some((open, entry)) = held {
+            *self.history_bytes.entry(entry.origin.clone()).or_default() += ENTRY_OVERHEAD;
+            self.history.push_back(entry);
+            self.open = Some(open);
+        }
         debug_assert_eq!(self.len() as u64, record.text_len, "the text is as it was");
         Ok(())
     }

@@ -488,3 +488,34 @@ fn a_small_history_limit_leaves_the_imported_text_unchanged() {
     assert_eq!(reopened.undo(user), Ok(None));
     assert_eq!(text(&reopened), "one two ");
 }
+
+#[test]
+fn import_beneath_an_empty_open_transaction_keeps_it_open() {
+    let mut buffer = Buffer::new("a\n");
+    buffer.edit([(1..1, "b")], Origin::User);
+    let record = buffer.export_undo().unwrap();
+
+    let mut reopened = Buffer::new("ab\n");
+    let id = reopened.start_transaction(Origin::User);
+    reopened.import_undo(record.clone()).unwrap();
+    assert_eq!(reopened.open_transaction(), Some(id), "still open");
+    assert_eq!(text(&reopened), "ab\n");
+    reopened.edit([(2..2, "c")], Origin::User);
+    assert_eq!(reopened.end_transaction(), Some(id), "typing extends it");
+    reopened.undo(user).unwrap();
+    assert_eq!(text(&reopened), "ab\n");
+    reopened.undo(user).unwrap();
+    assert_eq!(text(&reopened), "a\n", "the imported edit");
+
+    let mut empty = Buffer::new("ab\n");
+    empty.start_transaction(Origin::User);
+    empty.import_undo(record.clone()).unwrap();
+    assert_eq!(empty.end_transaction(), None, "closes empty, dropped");
+    empty.undo(user).unwrap();
+    assert_eq!(text(&empty), "a\n");
+
+    let mut edited = Buffer::new("a\n");
+    edited.start_transaction(Origin::User);
+    edited.edit([(1..1, "b")], Origin::User);
+    assert_eq!(edited.import_undo(record), Err(UndoImportError::Edited));
+}
