@@ -1022,7 +1022,7 @@ impl Render for Workbench {
         // by `on_run_command`.
         let root = match self.setup {
             Some(_) => div().key_context(KEY_CONTEXT),
-            None => Self::attach(div(), cx),
+            None => Self::attach_picker_commands(Self::attach(div(), cx), cx),
         };
         let root = match crate::plugin_host::key_context(cx) {
             Some(context) if self.setup.is_none() => root.key_context(context),
@@ -1150,6 +1150,18 @@ mod external_drop;
 
 #[path = "recent_picker.rs"]
 pub(crate) mod recent_picker;
+
+#[path = "picker_commands.rs"]
+mod picker_commands;
+
+#[path = "buffer_picker.rs"]
+mod buffer_picker;
+
+#[path = "git_files_picker.rs"]
+mod git_files_picker;
+
+#[path = "config_files_picker.rs"]
+pub(crate) mod config_files_picker;
 
 #[path = "hot_exit.rs"]
 mod hot_exit;

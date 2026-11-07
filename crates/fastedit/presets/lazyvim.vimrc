@@ -7,6 +7,9 @@
 nnoremap <leader>ff <Cmd>fe:quick_open.toggle<CR>
 nnoremap <leader><space> <Cmd>fe:quick_open.toggle<CR>
 nnoremap <leader>fr <Cmd>fe:workbench.open_recent<CR>
+nnoremap <leader>fb <Cmd>fe:buffers.show<CR>
+nnoremap <leader>fg <Cmd>fe:git.show_files<CR>
+nnoremap <leader>fc <Cmd>fe:workbench.show_config_files<CR>
 nnoremap <leader>fn <Cmd>fe:workbench.new_file<CR>
 nnoremap <leader>fp <Cmd>fe:workbench.open_folder<CR>
 nnoremap <leader>ft <Cmd>fe:terminal.toggle<CR>
@@ -25,8 +28,8 @@ nnoremap <leader>sc <Cmd>fe:command_palette.toggle<CR>
 nnoremap <leader>e <Cmd>fe:dock.show_project<CR>
 nnoremap <leader>E <Cmd>fe:dock.show_project<CR>
 nnoremap <leader>bd <Cmd>fe:workbench.close_tab<CR>
-nnoremap <leader>bb <Cmd>fe:workbench.next_tab<CR>
-nnoremap <leader>, <Cmd>fe:workbench.next_tab<CR>
+nnoremap <leader>bb <Cmd>fe:buffers.show<CR>
+nnoremap <leader>, <Cmd>fe:buffers.show<CR>
 
 " code
 nnoremap <leader>cr <Cmd>fe:lsp.rename<CR>
@@ -96,9 +99,6 @@ fegroup <leader>x diagnostics/quickfix icon=triangle-alert
 "   <leader>sh  help picker
 "   <leader>sd  diagnostics picker
 "   <leader>sb  buffer grep
-"   <leader>fb  buffer list
-"   <leader>fg  git files
-"   <leader>fc  config files
 "   <leader>l   lazy
 "   <leader>L   changelog
 "   <leader>K   keywordprg

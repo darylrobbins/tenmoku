@@ -7,7 +7,8 @@
 //! which commit last changed each row of a file ([`Repo::blame`]); and which
 //! commits changed a file, following renames ([`Repo::file_log`], through the `git` CLI);
 //! a branch's or every branch's commits with parents and ref names ([`Repo::log`]) and the
-//! files a commit changed ([`Repo::commit_files`]) with their line counts ([`Repo::commit_stats`]), with [`graph`] laying out their lanes.
+//! files a commit changed ([`Repo::commit_files`]) with their line counts ([`Repo::commit_stats`]), with [`graph`] laying out their lanes;
+//! and the files it tracks or would add ([`Repo::listed_files`]).
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
 //! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
 //! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`], [`Repo::stash_push`], [`Repo::stash_pop`], [`Repo::stash_apply`]) and
@@ -22,6 +23,7 @@ mod commit;
 mod commit_log;
 mod commit_stats;
 pub mod conflict_markers;
+mod files;
 pub mod graph;
 mod index;
 mod log;

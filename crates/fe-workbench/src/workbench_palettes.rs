@@ -1,6 +1,7 @@
 //! The palettes shown over the window, one at a time
 //! ([`Workbench::show_palette`]): quick open and the language, theme,
-//! go-to-line, recent and toolbar pickers, and the breadcrumbs and
+//! go-to-line, recent and toolbar pickers (and those made afresh each
+//! time: the buffer, git files and config files pickers), and the breadcrumbs and
 //! navigation buttons they read from.
 
 use std::path::PathBuf;
@@ -257,6 +258,20 @@ impl Workbench {
         }
     }
 
+    /// The picker shown as `palette`, if it's the one showing: those made
+    /// afresh each time they show, which the workbench doesn't keep.
+    #[cfg(test)]
+    pub(crate) fn shown_palette<D: crate::PickerDelegate>(
+        &self,
+        palette: Palette,
+        cx: &gpui::App,
+    ) -> Option<Entity<Picker<D>>> {
+        (self.palette == Some(palette)).then_some(())?;
+        let layer = self.shell().read(cx).modals().read(cx);
+        layer.modal().filter(|id| *id == palette.id())?;
+        layer.modal_view()?.clone().downcast().ok()
+    }
+
     /// Dismisses the palette that shows, as Escape would.
     pub(crate) fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette.take().is_some() {
@@ -402,10 +417,16 @@ pub(crate) enum Palette {
     Extensions,
     /// `nav.document_symbols`' list.
     DocumentSymbols,
+    /// `buffers.show`'s open editors.
+    Buffers,
+    /// `git.show_files`' tracked and untracked files.
+    GitFiles,
+    /// `workbench.show_config_files`' files in the config folder.
+    ConfigFiles,
 }
 
 impl Palette {
-    const ALL: [Palette; 14] = [
+    const ALL: [Palette; 17] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -420,6 +441,9 @@ impl Palette {
         Palette::Theme,
         Palette::Extensions,
         Palette::DocumentSymbols,
+        Palette::Buffers,
+        Palette::GitFiles,
+        Palette::ConfigFiles,
     ];
 
     /// Its id in the modal layer.
@@ -439,6 +463,9 @@ impl Palette {
             Palette::Theme => "theme",
             Palette::Extensions => "extensions",
             Palette::DocumentSymbols => "document_symbols",
+            Palette::Buffers => "buffers",
+            Palette::GitFiles => "git_files",
+            Palette::ConfigFiles => "config_files",
         })
     }
 

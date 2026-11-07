@@ -12,6 +12,9 @@ const TABLE: &[(&str, &str)] = &[
     ("<leader>ff", "quick_open.toggle"),
     ("<leader><space>", "quick_open.toggle"),
     ("<leader>fr", "workbench.open_recent"),
+    ("<leader>fb", "buffers.show"),
+    ("<leader>fg", "git.show_files"),
+    ("<leader>fc", "workbench.show_config_files"),
     ("<leader>fn", "workbench.new_file"),
     ("<leader>fp", "workbench.open_folder"),
     ("<leader>ft", "terminal.toggle"),
@@ -26,8 +29,8 @@ const TABLE: &[(&str, &str)] = &[
     ("<leader>e", "dock.show_project"),
     ("<leader>E", "dock.show_project"),
     ("<leader>bd", "workbench.close_tab"),
-    ("<leader>bb", "workbench.next_tab"),
-    ("<leader>,", "workbench.next_tab"),
+    ("<leader>bb", "buffers.show"),
+    ("<leader>,", "buffers.show"),
     ("<leader>cr", "lsp.rename"),
     ("<leader>ca", "lsp.code_actions"),
     ("<leader>cf", "lsp.format_document"),
@@ -137,7 +140,7 @@ fn listed_but_mapped(listed: &[String], text: &str) -> Vec<String> {
 #[test]
 fn unmapped_keys_are_listed_and_absent() {
     let listed = unmapped();
-    assert_eq!(listed.len(), 21, "{listed:?}");
+    assert_eq!(listed.len(), 18, "{listed:?}");
     assert_eq!(
         listed_but_mapped(&listed, preset().text),
         Vec::<String>::new()
