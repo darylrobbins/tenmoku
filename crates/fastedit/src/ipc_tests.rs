@@ -4,7 +4,7 @@
 
 //! The handoff's wire format, socket, and what [`start`] makes of a launch.
 
-use std::{cell::Cell, ffi::OsStr, fs, path::Path, thread};
+use std::{cell::Cell, ffi::OsStr, fs, os::unix::ffi::OsStrExt as _, path::Path, thread};
 
 use super::*;
 
