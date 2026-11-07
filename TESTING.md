@@ -55,6 +55,14 @@ whole workspace, and so does `post_merge`. So a test that a task criterion or
 that crate's reverse dependencies: Regatta refuses a criterion whose test did
 not run in the gate.
 
+**No build in the gate.** The gate and `rgt ci run --fast` no longer run
+`cargo build --workspace --all-targets`, so they do not build bins, examples or
+benches: `vet` type-checks every target and `test` compiles what it runs, but
+nothing links the rest. `post_merge` still runs the `build` stage, so a
+link-only failure shows up there. When changing a `build.rs`, a bin's link
+setup or an example, run `scripts/ci-env.sh cargo build --workspace --all-targets`
+locally first.
+
 **Integration tests, one binary per crate.** Cargo links each `tests/*.rs`
 into an executable of its own, a copy of GPUI in each (100–375 MB apiece),
 and every lane, gate and regression build holds them all. `kiln-shell`

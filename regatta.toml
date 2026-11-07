@@ -53,7 +53,7 @@ test = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci --ignore-de
 test_one = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci --ignore-default-filter -E "test(={test})"'
 
 [pipeline]
-gate = ["fmt", "vet", "build", "test", "no_gpui", "syntax_features", "deny"]
+gate = ["fmt", "vet", "test", "no_gpui", "syntax_features", "deny"]
 fast = ["fmt", "vet", "test"]
 post_merge = ["build", "test_all"]
 # Each lane has its own target/; ci-env.sh caps cargo at 6 jobs apiece. 1 stage at a time since 2026-10-10
@@ -76,7 +76,6 @@ run = "build"
 name = "test"
 run = "test"
 component = "fastedit"
-needs = ["build"]
 
 [[pipeline.stages]]
 name = "test_all"
