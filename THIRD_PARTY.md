@@ -228,6 +228,7 @@ licence. No module is committed.
 | cmake | `tree-sitter-cmake.wasm` | https://github.com/uyha/tree-sitter-cmake at `a3ec2b2144daf7132e7ee824d8cab9610523d10f` (`src`), v0.7.6; `highlights.scm` is upstream's `queries/highlights.scm`, adapted to drop `#lua-match?` and unused captures, plus a number pattern | MIT |
 | nix | `tree-sitter-nix.wasm` | [nix-community/tree-sitter-nix](https://github.com/nix-community/tree-sitter-nix) @ `e9f150648a7e0015b77f4c9b315648b389d6364e` | MIT; `highlights.scm` and `injections.scm` are upstream's (same licence), less the `#is-not? local` predicates |
 | latex | `tree-sitter-latex.wasm` | https://github.com/latex-lsp/tree-sitter-latex at `aca6eeba1b9556685bf0aa1cdc4a902cba155823` (`src`), package version 0.3.0, the newest commit with a generated `parser.c`; `highlights.scm` and `injections.scm` are nvim-treesitter's `runtime/queries/latex/` at `2c30e515ebe79037ab8d15f7e59c0e2690f50626`, adapted to this grammar | MIT; the queries are nvim-treesitter's Apache-2.0, with the text in `LICENSE-APACHE` |
+| dart | `tree-sitter-dart.wasm` | https://github.com/UserNobody14/tree-sitter-dart at `0038280b774b65c1b89ba7fec50624d8baed9fe1` | MIT; `highlights.scm` is upstream's `queries/highlights.scm`, with captures renamed |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

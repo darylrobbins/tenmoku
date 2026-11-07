@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_dart"
+name = "Dart syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "dart"
+wasm = "tree-sitter-dart.wasm"
+extensions = ["dart"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "//"
+block_comment = ["/*", "*/"]
+shebangs = ["dart"]
