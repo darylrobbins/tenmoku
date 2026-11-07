@@ -16,16 +16,28 @@ use gpui::TestAppContext;
 use kiln::{Config, platform::config::batch_channel, ui::ThemeMode};
 
 use crate::grammar_install::{
-    ExtensionFiles, GRANTED_HOSTS, Grammar, InstallError, Pack, fetch_from_release, grants,
-    install_fetched, install_first_party, install_from_pack_dir, publish, stage_extension,
+    ExtensionFiles, GRANTED_HOSTS, Grammar, InstallError, Pack, fetch_from_release,
+    first_party_languages, grants, install_fetched, install_first_party, install_from_pack_dir,
+    publish, stage_extension,
 };
 
 /// The tiny JSON grammar fe-syntax's runtime grammar tests load.
 const WASM: &[u8] = include_bytes!("../../fe-syntax/tests/fixtures/tree-sitter-json.wasm");
 
-const EIGHT: [&str; 8] = [
-    "kotlin", "csharp", "scala", "swift", "cpp", "sql", "php", "ruby",
-];
+/// The directories under `extensions/grammars/`, sorted, as they are now.
+fn directories() -> Vec<String> {
+    // Read at run time: a path compiled in can name a deleted snapshot.
+    let manifest = std::env::var_os("CARGO_MANIFEST_DIR").expect("run by cargo");
+    let grammars = Path::new(&manifest).join("../../extensions/grammars");
+    let mut languages: Vec<String> = fs::read_dir(&grammars)
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.file_type().unwrap().is_dir())
+        .map(|entry| entry.file_name().into_string().unwrap())
+        .collect();
+    languages.sort();
+    languages
+}
 
 /// The fixture grammar, as the manifest would describe it, under a language
 /// nothing else registers: `kotlin` and the rest are built in under the
@@ -423,17 +435,26 @@ fn an_unreleased_grammar_is_refused_everywhere() {
     assert_eq!(entries(&extensions), Vec::<String>::new());
 }
 
-/// The compiled-in manifest and files agree, for each of the eight.
+/// Each directory is compiled in, and its manifest and files agree with the
+/// pack's; a recorded entry is for a directory, and names its wasm.
 #[test]
 fn every_first_party_grammar_is_complete() {
+    let languages: Vec<&str> = first_party_languages().collect();
+    assert!(!languages.is_empty());
+    assert_eq!(
+        languages,
+        directories(),
+        "build.rs compiles in each directory under extensions/grammars"
+    );
     let pack = Pack::embedded().unwrap();
-    let mut listed: Vec<&str> = pack.languages().collect();
-    listed.sort_unstable();
-    let mut eight = EIGHT;
-    eight.sort_unstable();
-    assert_eq!(listed, eight);
+    for recorded in pack.recorded() {
+        assert!(
+            languages.contains(&recorded),
+            "pack.toml records {recorded}, which has no directory"
+        );
+    }
 
-    for language in EIGHT {
+    for language in languages {
         let grammar = pack.grammar(language).unwrap();
         let manifest: toml::Table = toml::from_str(grammar.files.extension_toml).unwrap();
         assert_eq!(
@@ -442,7 +463,11 @@ fn every_first_party_grammar_is_complete() {
         );
         let contributed = &manifest["contributes"]["grammars"][0];
         assert_eq!(contributed["language"].as_str(), Some(language));
-        assert_eq!(contributed["wasm"].as_str(), Some(grammar.file.as_str()));
+        assert_eq!(
+            contributed["wasm"].as_str(),
+            Some(grammar.file.as_str()),
+            "{language}: pack.toml's file is its extension.toml's wasm"
+        );
         assert_eq!(contributed["highlights"].as_str(), Some("highlights.scm"));
         assert_eq!(contributed["injections"].as_str(), Some("injections.scm"));
         assert_eq!(
@@ -464,10 +489,123 @@ fn every_first_party_grammar_is_complete() {
         );
         assert_eq!(fs::read(dir.join(&grammar.file)).unwrap(), b"stub");
     }
+    // No directory can have this name.
     assert!(matches!(
-        pack.grammar("cobol"),
+        pack.grammar("no/such-language"),
         Err(InstallError::UnknownLanguage(_))
     ));
+}
+
+/// What the extension loader says of an `extension.toml`: kiln's checks,
+/// warnings too (an unknown key is one), and the grammars' own type, which
+/// takes no key it doesn't know.
+fn manifest_problems(extension_toml: &str) -> Vec<String> {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("extension.toml"), extension_toml).unwrap();
+    let api = kiln::core::ExtensionApi {
+        app: fe_config::paths::app_id().short,
+        version: kiln::core::ApiVersion { major: 1, minor: 1 },
+        reserved: Vec::new(),
+        kinds: vec![kiln::core::AppKind {
+            name: "grammars",
+            schema: schemars::schema_for!(Vec<crate::config::ExtensionGrammar>).to_value(),
+        }],
+        allowed_licenses: None,
+        only_kinds: None,
+    };
+    let (manifest, diagnostics) = kiln::core::load_manifest(dir.path(), &api);
+    let mut problems: Vec<String> = diagnostics.iter().map(ToString::to_string).collect();
+    match manifest
+        .as_ref()
+        .and_then(|manifest| manifest.app.get("grammars"))
+    {
+        Some(grammars) => {
+            if let Err(error) = grammars
+                .clone()
+                .try_into::<Vec<crate::config::ExtensionGrammar>>()
+            {
+                problems.push(error.to_string());
+            }
+        }
+        None if manifest.is_some() => problems.push("it contributes no grammars".to_owned()),
+        None => {}
+    }
+    problems
+}
+
+/// Each compiled-in `extension.toml` is one the extension loader takes
+/// without a word, so a language card's unknown key fails here.
+#[test]
+fn every_first_party_manifest_parses() {
+    let pack = Pack::embedded().unwrap();
+    for language in first_party_languages() {
+        let grammar = pack.grammar(language).unwrap();
+        let problems = manifest_problems(grammar.files.extension_toml);
+        assert!(problems.is_empty(), "{language}: {problems:#?}");
+    }
+    assert_eq!(manifest_problems(FIXTURE_TOML), Vec::<String>::new());
+}
+
+#[test]
+fn an_unknown_manifest_key_is_a_problem() {
+    let in_grammar = FIXTURE_TOML.replace(
+        "highlights = ",
+        "highlight_query = \"highlights.scm\"\nhighlights = ",
+    );
+    let problems = manifest_problems(&in_grammar);
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.contains("highlight_query")),
+        "{problems:#?}"
+    );
+    let at_top = FIXTURE_TOML.replace("license = ", "licence = \"MIT\"\nlicense = ");
+    let problems = manifest_problems(&at_top);
+    assert!(
+        problems.iter().any(|problem| problem.contains("licence")),
+        "{problems:#?}"
+    );
+}
+
+/// A directory pack.toml has no entry for is offered, and refused, as an entry
+/// with no hash is.
+#[test]
+fn a_language_with_no_entry_is_not_released() {
+    let base = "base_url = \"https://github.com/a/b/releases/download/t\"\n";
+    let language = first_party_languages().next().unwrap();
+    let unrecorded = Pack::parse(base).unwrap();
+    let file = unrecorded.grammar(language).unwrap().file;
+    let empty = Pack::parse(&format!(
+        "{base}[languages.{language}]\nfile = {file:?}\nsize = 0\nsha256 = \"\"\n"
+    ))
+    .unwrap();
+    for pack in [&unrecorded, &empty] {
+        let grammar = pack.grammar(language).unwrap();
+        assert_eq!(grammar.file, file);
+        assert_eq!(
+            grammar.url,
+            format!("https://github.com/a/b/releases/download/t/{file}")
+        );
+        assert_eq!((grammar.size, grammar.sha256.as_str()), (0, ""));
+        let offer = (pack.catalog().into_iter())
+            .find(|offer| offer.language == language)
+            .expect("it's offered");
+        assert_eq!((offer.size, offer.sha256.as_str()), (0, ""));
+
+        let state = tempfile::tempdir().unwrap();
+        let mut fetched = false;
+        let error = block_on(install_fetched(&grammar, state.path(), |_| {
+            fetched = true;
+            ready(Ok(WASM.to_vec()))
+        }))
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            InstallError::Fetch(GrammarFetchError::NotReleased)
+        ));
+        assert!(!fetched);
+        assert_eq!(entries(state.path()), Vec::<String>::new());
+    }
 }
 
 #[test]
@@ -513,7 +651,7 @@ fn the_real_install_refuses_while_nothing_is_released() {
     let state = tempfile::tempdir().unwrap();
     let extensions = state.path().join("extensions");
     let pack = Pack::embedded().unwrap();
-    for language in EIGHT.into_iter().filter(|language| {
+    for language in first_party_languages().filter(|language| {
         // A release recorded later makes the check vacuous for that language.
         pack.grammar(language).unwrap().sha256.is_empty()
     }) {

@@ -8,7 +8,9 @@
 # merge-base is that base even after main moves. The change is `git diff <base> HEAD`, committed
 # state only. A file belongs to the package whose directory is its longest prefix; a root package
 # would own only src/, tests/, benches/, examples/ and build.rs. A .rs, .scm or .toml file under
-# crates/ or kiln/ also selects fastedit, whose provenance test reads them all.
+# crates/ or kiln/ also selects fastedit, whose provenance test reads them all. A file under
+# extensions/grammars/ selects fe-syntax and fastedit, its only readers, without their reverse
+# dependencies: it is data their tests read and fastedit's build.rs compiles in.
 #
 # It runs the whole workspace instead, and says why, when there is no usable base, the diff is
 # empty, jq or cargo metadata fails, or a changed path can change every crate's build or tests
@@ -68,6 +70,7 @@ fi
 # the packages that read a changed file without depending on its package.
 pkg_paths=
 readers=
+data_readers=
 while IFS= read -r f; do
 	case $f in
 	# fastedit's tests/third_party.rs checks the headers of every such file, and fe-plugin and
@@ -91,6 +94,10 @@ while IFS= read -r f; do
 		whole "$@"
 		;;
 	docs/*) ;;
+	# fe-syntax's wasm_parity and benches, and fastedit's grammar tests and build.rs, read them.
+	extensions/grammars/*)
+		data_readers="fe-syntax fastedit"
+		;;
 	*/*)
 		pkg_paths="$pkg_paths$f
 "
@@ -114,7 +121,7 @@ if ! meta=$(cargo metadata --format-version 1 --locked --offline 2>/dev/null); t
 	whole "$@"
 fi
 
-if [ -z "$pkg_paths" ]; then
+if [ -z "$pkg_paths" ] && [ -z "$data_readers" ]; then
 	docs_pkg=${FASTEDIT_AFFECTED_DOCS_PACKAGE:-fe-text}
 	if ! printf '%s' "$meta" | jq -e --arg p "$docs_pkg" \
 		'. as $m | any(.packages[]; .name == $p and (.id as $id | $m.workspace_members | index($id)))' >/dev/null; then
@@ -127,8 +134,9 @@ fi
 
 # Prints "outside <path>" for each path no package owns, else "changed <names>" and
 # "affected <names>" (the changed packages and the readers that are workspace members, and their
-# reverse dependencies), sorted.
-result=$(printf '%s' "$meta" | jq -r --arg files "$pkg_paths" --arg readers "$readers" '
+# reverse dependencies, then the data readers that are members), sorted.
+result=$(printf '%s' "$meta" | jq -r --arg files "$pkg_paths" --arg readers "$readers" \
+	--arg data_readers "$data_readers" '
 	. as $m
 	| ($m.workspace_root + "/") as $root
 	| [$m.packages[] | select(.id as $id | $m.workspace_members | index($id))] as $ws
@@ -150,7 +158,9 @@ result=$(printf '%s' "$meta" | jq -r --arg files "$pkg_paths" --arg readers "$re
 			| if . == $s then . else close end;
 		  ($owned | map(.p) + ($readers | split(" ") | map(select(. as $r | $names | index($r))))
 			| unique) as $changed
-		| "changed \($changed | join(" "))", "affected \($changed | close | join(" "))"
+		| ($data_readers | split(" ") | map(select(. as $r | $names | index($r)))) as $data
+		| "changed \($changed + $data | unique | join(" "))",
+		  "affected \($changed | close | . + $data | unique | join(" "))"
 	  end
 ') || {
 	why="jq failed on cargo metadata"

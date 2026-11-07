@@ -1,7 +1,7 @@
 # Tenmoku language pack
 
-One download with the eight first-party WebAssembly grammars (Kotlin, C#, Scala,
-Swift, C++, SQL, PHP, Ruby), for machines that can't reach GitHub from the app.
+One download with every first-party WebAssembly grammar (one for each directory
+under `extensions/grammars/`), for machines that can't reach GitHub from the app.
 The in-app **Install** action offers the same files online, each checked against
 the hash the app carries; use this pack only when that isn't possible.
 
@@ -9,7 +9,7 @@ Each grammar release (`v*` tag) has, among its assets:
 
 - `Tenmoku-language-pack.tar.gz`
 - `Tenmoku-language-pack.tar.gz.sha256`
-- the eight `tree-sitter-*.wasm` files
+- each language's `tree-sitter-*.wasm` file
 
 ## Verify
 
@@ -54,3 +54,5 @@ disable it in the extensions picker.
 `scripts/build-grammar-wasm.sh` builds the wasm into `target/grammar-wasm/`, then
 `scripts/package-language-pack.sh` writes `dist/Tenmoku-language-pack.tar.gz` and
 its `.sha256`. `.github/workflows/grammars.yml` runs both and uploads the results.
+Adding a language to the pack is adding its directory: see
+`extensions/grammars/README.md`.

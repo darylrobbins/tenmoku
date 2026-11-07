@@ -178,7 +178,7 @@ pub(crate) const WORKSPACE_KINDS: [&str; 3] = ["grammars", "lsp", "snippets"];
 /// [`fe_syntax::GrammarSpec`] for what each key means.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ExtensionGrammar {
+pub(crate) struct ExtensionGrammar {
     /// The language's name; a built-in language's is refused.
     #[schemars(length(min = 1))]
     language: String,

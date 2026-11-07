@@ -8,15 +8,25 @@ use std::{
     process::{Command, Output},
 };
 
-const LANGUAGES: [&str; 8] = [
-    "kotlin", "csharp", "scala", "swift", "cpp", "sql", "php", "ruby",
-];
 const ARCHIVE: &str = "Tenmoku-language-pack.tar.gz";
 
 fn root() -> PathBuf {
     // Read at run time: a path compiled in can name a deleted snapshot.
     let manifest = std::env::var_os("CARGO_MANIFEST_DIR").expect("run by cargo");
     Path::new(&manifest).join("../..")
+}
+
+/// The first-party languages: the directories under `extensions/grammars/`.
+fn languages() -> Vec<String> {
+    let mut languages: Vec<String> = fs::read_dir(root().join("extensions/grammars"))
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.file_type().unwrap().is_dir())
+        .map(|entry| entry.file_name().into_string().unwrap())
+        .collect();
+    languages.sort();
+    assert!(!languages.is_empty());
+    languages
 }
 
 fn have(tool: &str) -> bool {
@@ -84,9 +94,9 @@ fn package(without: Option<&str>) -> Run {
     let wasm = dir.path().join("wasm");
     let dist = dir.path().join("dist");
     fs::create_dir(&wasm).unwrap();
-    for language in LANGUAGES {
-        if Some(language) != without {
-            fs::write(wasm.join(wasm_name(language)), stub(language)).unwrap();
+    for language in languages() {
+        if Some(language.as_str()) != without {
+            fs::write(wasm.join(wasm_name(&language)), stub(&language)).unwrap();
         }
     }
     let output = Command::new(root().join("scripts/package-language-pack.sh"))
@@ -125,7 +135,7 @@ fn unpack(run: &Run) -> tempfile::TempDir {
 }
 
 #[test]
-fn pack_has_eight_loadable_extensions() {
+fn pack_has_every_languages_loadable_extension() {
     if skip() {
         return;
     }
@@ -144,19 +154,20 @@ fn pack_has_eight_loadable_extensions() {
         .filter(|line| !line.ends_with('/'))
         .collect();
     let mut expected = BTreeSet::new();
-    let wasm_names: Vec<String> = LANGUAGES.iter().map(|l| wasm_name(l)).collect();
-    for (language, wasm) in LANGUAGES.iter().zip(&wasm_names) {
+    let languages = languages();
+    let wasm_names: Vec<String> = languages.iter().map(|l| wasm_name(l)).collect();
+    for (language, wasm) in languages.iter().zip(&wasm_names) {
         for file in ["extension.toml", "highlights.scm", "injections.scm", wasm] {
             expected.insert(format!("tenmoku.grammar_{language}/{file}"));
         }
     }
     let expected: BTreeSet<&str> = expected.iter().map(String::as_str).collect();
     assert_eq!(files, expected);
-    // Directories, if the listing has them, are only the eight.
+    // Directories, if the listing has them, are only the languages'.
     for line in listing.lines().filter(|line| line.ends_with('/')) {
         let name = line.trim_start_matches("./").trim_end_matches('/');
         assert!(
-            LANGUAGES
+            languages
                 .iter()
                 .any(|l| name == format!("tenmoku.grammar_{l}")),
             "{line}"
@@ -174,7 +185,7 @@ fn pack_matches_the_installer_layout() {
     let unpacked = unpack(&run);
     // grammar_install writes the wasm under the name the extension's manifest
     // gives, and the other three files as they are in extensions/grammars/.
-    for language in LANGUAGES {
+    for language in languages() {
         let dir = unpacked.path().join(format!("tenmoku.grammar_{language}"));
         let source = root().join(format!("extensions/grammars/{language}"));
         for file in ["extension.toml", "highlights.scm", "injections.scm"] {
@@ -184,8 +195,12 @@ fn pack_matches_the_installer_layout() {
                 "{language}/{file}"
             );
         }
-        let wasm = wasm_name(language);
-        assert_eq!(fs::read(dir.join(&wasm)).unwrap(), stub(language), "{wasm}");
+        let wasm = wasm_name(&language);
+        assert_eq!(
+            fs::read(dir.join(&wasm)).unwrap(),
+            stub(&language),
+            "{wasm}"
+        );
         let names: BTreeSet<String> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
@@ -234,11 +249,12 @@ fn missing_wasm_fails_naming_the_script() {
     if skip() {
         return;
     }
-    let run = package(Some("sql"));
+    let missing = languages().pop().unwrap();
+    let run = package(Some(&missing));
     assert!(!run.output.status.success());
     let stderr = String::from_utf8_lossy(&run.output.stderr);
     assert!(stderr.contains("scripts/build-grammar-wasm.sh"), "{stderr}");
-    assert!(stderr.contains(&wasm_name("sql")), "{stderr}");
+    assert!(stderr.contains(&wasm_name(&missing)), "{stderr}");
     assert!(!run.dist.join(ARCHIVE).exists());
     assert!(!run.dist.join(format!("{ARCHIVE}.sha256")).exists());
     assert!(run.wasm.is_dir());

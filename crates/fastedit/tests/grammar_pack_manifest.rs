@@ -8,14 +8,23 @@ use std::{
     process::{Command, Output},
 };
 
-const LANGUAGES: [&str; 8] = [
-    "kotlin", "csharp", "scala", "swift", "cpp", "sql", "php", "ruby",
-];
-
 fn root() -> PathBuf {
     // Read at run time: a path compiled in can name a deleted snapshot.
     let manifest = std::env::var_os("CARGO_MANIFEST_DIR").expect("run by cargo");
     Path::new(&manifest).join("../..")
+}
+
+/// The first-party languages: the directories under `extensions/grammars/`.
+fn languages() -> Vec<String> {
+    let mut languages: Vec<String> = fs::read_dir(root().join("extensions/grammars"))
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.file_type().unwrap().is_dir())
+        .map(|entry| entry.file_name().into_string().unwrap())
+        .collect();
+    languages.sort();
+    assert!(!languages.is_empty());
+    languages
 }
 
 fn table(path: &Path) -> toml::Table {
@@ -35,9 +44,17 @@ fn extension_wasm(language: &str) -> String {
     grammars[0]["wasm"].as_str().unwrap().to_owned()
 }
 
+/// pack.toml is a release's URL, and the entries recorded from it: each for a
+/// directory, naming its extension's wasm, with a size the loader takes and
+/// its hash.
 #[test]
-fn pack_lists_all_eight() {
+fn pack_holds_its_release_and_recorded_entries() {
     let pack = table(&root().join("extensions/grammars/pack.toml"));
+    let keys: Vec<&str> = pack.keys().map(String::as_str).collect();
+    assert!(
+        keys == ["base_url"] || keys == ["base_url", "languages"],
+        "{keys:?}"
+    );
 
     let base_url = pack["base_url"].as_str().unwrap();
     let release = base_url
@@ -50,10 +67,17 @@ fn pack_lists_all_eight() {
         "{base_url} isn't a release's URL"
     );
 
-    let languages = pack["languages"].as_table().unwrap();
-    assert_eq!(languages.len(), LANGUAGES.len(), "{languages:?}");
-    for language in LANGUAGES {
-        let entry = languages[language].as_table().unwrap();
+    let languages = languages();
+    let empty = toml::Table::new();
+    let entries = pack
+        .get("languages")
+        .map_or(&empty, |entries| entries.as_table().unwrap());
+    for (language, entry) in entries {
+        assert!(
+            languages.contains(language),
+            "pack.toml records {language}, which has no directory"
+        );
+        let entry = entry.as_table().unwrap();
         assert_eq!(
             entry["file"].as_str(),
             Some(extension_wasm(language).as_str()),
@@ -61,20 +85,12 @@ fn pack_lists_all_eight() {
         );
         let size = entry["size"].as_integer().unwrap();
         let sha256 = entry["sha256"].as_str().unwrap();
+        // What's recorded is released; what isn't has no entry.
+        assert!(is_sha256(sha256), "{language}'s sha256 {sha256:?}");
         assert!(
-            sha256.is_empty() || is_sha256(sha256),
-            "{language}'s sha256 {sha256:?}"
+            size > 0 && size as u64 <= fe_syntax::MAX_GRAMMAR_BYTES,
+            "{language}'s size {size}"
         );
-        // Until it's released neither is known; after, both are, and the
-        // loader must be able to take it.
-        if sha256.is_empty() {
-            assert_eq!(size, 0, "{language} has a size but no hash");
-        } else {
-            assert!(
-                size > 0 && size as u64 <= fe_syntax::MAX_GRAMMAR_BYTES,
-                "{language}'s size {size}"
-            );
-        }
     }
 }
 
@@ -116,8 +132,8 @@ impl Fixture {
 
     /// Every language's file, `<file>` as its contents.
     fn release_all(&self) {
-        for language in LANGUAGES {
-            let file = extension_wasm(language);
+        for language in languages() {
+            let file = extension_wasm(&language);
             self.release(&file, file.as_bytes());
         }
     }
@@ -159,11 +175,16 @@ fn the_script_records_each_files_size_and_hash() {
     assert!(output.status.success(), "{output:?}");
 
     let pack = table(&fixture.pack());
-    let languages = pack["languages"].as_table().unwrap();
-    assert_eq!(languages.len(), LANGUAGES.len());
-    for language in LANGUAGES {
+    let entries = pack["languages"].as_table().unwrap();
+    let languages = languages();
+    assert_eq!(
+        entries.keys().collect::<Vec<_>>(),
+        languages.iter().collect::<Vec<_>>(),
+        "an entry for every directory"
+    );
+    for language in &languages {
         let file = extension_wasm(language);
-        let entry = languages[language].as_table().unwrap();
+        let entry = entries[language].as_table().unwrap();
         assert_eq!(entry["file"].as_str(), Some(file.as_str()));
         assert_eq!(entry["size"].as_integer(), Some(file.len() as i64));
         assert_eq!(
@@ -177,14 +198,17 @@ fn the_script_records_each_files_size_and_hash() {
         table(&root().join("extensions/grammars/pack.toml"))["base_url"].as_str()
     );
 
-    // The comments stay, and only the sizes and hashes moved.
+    // What's before the entries stays, and the entries are written anew: so
+    // recording again, as after another release, gives the same file.
     let after = fs::read_to_string(fixture.pack()).unwrap();
-    assert_eq!(before.lines().count(), after.lines().count());
-    for (before, after) in before.lines().zip(after.lines()) {
-        if !before.starts_with("size = ") && !before.starts_with("sha256 = ") {
-            assert_eq!(before, after);
-        }
-    }
+    let head = |text: &str| -> String {
+        let end = text.find("\n[languages.").unwrap_or(text.len());
+        text[..end].trim_end().to_owned()
+    };
+    assert_eq!(head(&after), head(&before));
+    let output = fixture.run(&[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read_to_string(fixture.pack()).unwrap(), after);
 
     let log = fs::read_to_string(fixture.dir.path().join("gh.log")).unwrap();
     let base_url = table(&fixture.pack())["base_url"]
@@ -220,7 +244,7 @@ fn the_script_can_move_to_another_release() {
 fn the_script_leaves_the_manifest_alone_when_a_file_is_missing() {
     let fixture = Fixture::new();
     fixture.release_all();
-    let missing = extension_wasm("ruby");
+    let missing = extension_wasm(languages().last().unwrap());
     fs::remove_file(fixture.dir.path().join("release").join(&missing)).unwrap();
     let before = fs::read_to_string(fixture.pack()).unwrap();
 

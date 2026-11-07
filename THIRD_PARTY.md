@@ -223,6 +223,14 @@ licence. No module is committed.
 | php | `tree-sitter-php.wasm` | tree-sitter-php 0.24.2 (grammar `php`, not `php_only`) | MIT |
 | ruby | `tree-sitter-ruby.wasm` | tree-sitter-ruby 0.23.1 | MIT |
 
+A language added after these needn't have a `Cargo.lock` pin. Its directory's
+`grammar-source.toml` names its source in one of two more forms: a GitHub
+repository at a full 40-hex commit (`git`, `rev`), fetched whole, or a crates.io
+archive checked against its SHA-256 (`registry = "crates.io"`, `crate`,
+`version`, `sha256`). Its row's pin is that repository and commit, or that crate
+and version; its queries say in their headers where they came from
+(`extensions/grammars/README.md`).
+
 ## Icons
 
 | Our path | Source | Tag / commit | License | Files |

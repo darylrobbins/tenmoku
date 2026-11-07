@@ -8,3 +8,6 @@ version = "0.24.2"
 grammar = "php"
 # The directory holding parser.c, and scanner.c if there is one.
 src = "php/src"
+# The other first-party languages the sample injects, which the parity test
+# registers under their names: the heredoc <<<SQL is sql.
+parity_needs = ["sql"]

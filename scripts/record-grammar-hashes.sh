@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Records a grammar release's wasm files in extensions/grammars/pack.toml: each
-# language's size in bytes and SHA-256, which the app checks a download against.
-# Run it after a grammar release, then commit pack.toml.
+# Records a grammar release's wasm files in extensions/grammars/pack.toml: an
+# entry for each language, each directory under extensions/grammars/, with its
+# wasm's file (its extension.toml's), size in bytes and SHA-256, which the app
+# checks a download against. Run it after a grammar release, then commit
+# pack.toml.
 #
 #   scripts/record-grammar-hashes.sh            # the release base_url names
 #   scripts/record-grammar-hashes.sh grammars-2 # that release; base_url moves to it
 #
 # Every language's file must be in the release, or pack.toml is left as it was.
-# PACK_TOML names another manifest, for the tests.
+# What's before the entries stays, but base_url; the entries are written anew,
+# by language. PACK_TOML names another manifest, for the tests.
 #
 # See docs/decisions/c1pt00h80c-grammar-fetch.md.
 set -euo pipefail
@@ -29,7 +32,8 @@ for tool in awk mktemp wc; do
   command -v "$tool" >/dev/null 2>&1 || die "needs $tool"
 done
 
-pack=${PACK_TOML:-"$(dirname "$0")/../extensions/grammars/pack.toml"}
+grammars=$(dirname "$0")/../extensions/grammars
+pack=${PACK_TOML:-"$grammars/pack.toml"}
 [ -f "$pack" ] || die "no manifest at $pack"
 
 base_url=$(awk -F'"' '/^base_url = /{ print $2; exit }' "$pack")
@@ -44,23 +48,32 @@ trap 'rm -rf "$dir"' EXIT
 gh release download "$tag" --repo "$repo" --pattern '*.wasm' --dir "$dir" ||
   die "couldn't download the release $tag of $repo"
 
-# "file size sha256" for each file the manifest lists.
+# "language file size sha256" for each language.
 : >"$dir/recorded"
-for file in $(awk -F'"' '/^file = /{ print $2 }' "$pack"); do
+for manifest in "$grammars"/*/extension.toml; do
+  [ -f "$manifest" ] || continue
+  language=$(basename "$(dirname "$manifest")")
+  file=$(sed -n 's/^wasm *= *"\(.*\)"$/\1/p' "$manifest" | head -n 1)
+  [ -n "$file" ] || die "$manifest names no wasm"
   [ -f "$dir/$file" ] || die "the release $tag has no $file"
   size=$(wc -c <"$dir/$file")
   hash=$(sha256 "$dir/$file")
-  echo "$file $((size)) ${hash%% *}" >>"$dir/recorded"
+  echo "$language $file $((size)) ${hash%% *}" >>"$dir/recorded"
 done
+[ -s "$dir/recorded" ] || die "no language under $grammars"
 
+# What's before the first entry, base_url moved, without its trailing blank
+# lines; then the entries.
 awk -v base="https://github.com/$repo/releases/download/$tag" '
-  NR == FNR { sizes[$1] = $2; hashes[$1] = $3; next }
-  /^base_url = /  { print "base_url = \"" base "\""; next }
-  /^file = /      { split($0, part, "\""); file = part[2] }
-  /^size = /      { print "size = " sizes[file]; next }
-  /^sha256 = /    { print "sha256 = \"" hashes[file] "\""; next }
-  { print }
-' "$dir/recorded" "$pack" >"$dir/pack.toml"
+  /^\[languages\./ { exit }
+  /^base_url = / { $0 = "base_url = \"" base "\"" }
+  /^$/ { blank++; next }
+  { while (blank > 0) { print ""; blank-- } print }
+' "$pack" >"$dir/pack.toml"
+while read -r language file size hash; do
+  printf '\n[languages.%s]\nfile = "%s"\nsize = %s\nsha256 = "%s"\n' \
+    "$language" "$file" "$size" "$hash" >>"$dir/pack.toml"
+done <"$dir/recorded"
 
 # Through cat, so that a symlink or the file's mode survives.
 cat "$dir/pack.toml" >"$pack"

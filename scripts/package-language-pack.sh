@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Packs the eight first-party grammar extensions into one tarball that unpacks
-# into the user extensions directory, with its checksum.
+# Packs the first-party grammar extensions, one per directory under
+# extensions/grammars/, into one tarball that unpacks into the user extensions
+# directory, with its checksum.
 #
 #   scripts/package-language-pack.sh
 #   GRAMMAR_WASM_DIR=dir DIST_DIR=out scripts/package-language-pack.sh
@@ -11,7 +12,7 @@
 #   .sha256, in the format `sha256sum -c` and `shasum -a 256 -c` read.
 # - Each directory is what crates/fastedit/src/grammar_install.rs writes:
 #   tenmoku.grammar_<language>/ with the wasm, highlights.scm, injections.scm
-#   and extension.toml.
+#   and extension.toml, and nothing else (not test/ or grammar-source.toml).
 #
 # .github/workflows/grammars.yml runs this and publishes the files.
 # docs/release/language-pack.md is the install guide.
@@ -45,10 +46,9 @@ field() {
 
 languages=()
 for source in extensions/grammars/*/extension.toml; do
-  languages+=("$(basename "$(dirname "$source")")")
+  [ -f "$source" ] && languages+=("$(basename "$(dirname "$source")")")
 done
-[ "${#languages[@]}" -eq 8 ] ||
-  die "expected 8 languages under extensions/grammars/, found ${#languages[@]}"
+[ "${#languages[@]}" -gt 0 ] || die "no language under extensions/grammars/"
 
 # Check every wasm before writing anything.
 missing=()

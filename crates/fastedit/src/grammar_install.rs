@@ -1,9 +1,11 @@
 //! Installs a first-party WebAssembly grammar as an ordinary user extension
 //! (the decision record: `docs/decisions/c1pt00h80c-grammar-fetch.md`).
 //!
-//! `extensions/grammars/pack.toml`, compiled in, says where each grammar's wasm
-//! is and what it hashes to. Only the wasm travels: its extension's other files
-//! are compiled in too. The result is `<extensions>/tenmoku.grammar_<language>/`,
+//! Each directory under `extensions/grammars/` is a first-party grammar, its
+//! extension's files compiled in (`build.rs` lists them). Only the wasm
+//! travels. `extensions/grammars/pack.toml`, compiled in too, says which
+//! release the wasm are in, and what each recorded one hashes to: a language
+//! it has no entry for isn't released yet, and every install of it is refused. The result is `<extensions>/tenmoku.grammar_<language>/`,
 //! which the extension loader ([`crate::config::with_extensions`]) registers as
 //! it would any other.
 //!
@@ -45,10 +47,14 @@ const PACK_TOML: &str = include_str!("../../../extensions/grammars/pack.toml");
 pub(crate) struct Pack {
     /// The release's URL, which the file names are relative to.
     base_url: String,
+    /// The languages a release has been recorded for.
+    #[serde(default)]
     languages: BTreeMap<String, PackEntry>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// A language's wasm in the release. An empty `sha256`, and a language with
+/// no entry, is one not released yet: its size is 0.
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PackEntry {
     file: String,
@@ -75,54 +81,60 @@ impl Pack {
         Ok(pack)
     }
 
-    /// The languages the manifest lists, by name.
+    /// The languages a release is recorded for, by name.
     #[cfg_attr(
         not(test),
         allow(dead_code, reason = "only the manifest's tests list them")
     )]
-    pub(crate) fn languages(&self) -> impl Iterator<Item = &str> {
+    pub(crate) fn recorded(&self) -> impl Iterator<Item = &str> {
         self.languages.keys().map(String::as_str)
     }
 
-    /// Each language with its size, hash, name and extensions. One whose
-    /// extension manifest doesn't say is left out, which a test rules out.
+    /// Each first-party language with its size, hash, name and extensions.
+    /// One whose extension manifest doesn't say is left out, which a test
+    /// rules out.
     pub(crate) fn catalog(&self) -> Vec<GrammarOffer> {
-        (self.languages.iter())
-            .filter_map(|(language, entry)| {
-                let files = first_party_files(language)?;
-                let manifest = match toml::from_str::<OfferManifest>(files.extension_toml) {
-                    Ok(manifest) => manifest,
+        (FIRST_PARTY.iter())
+            .filter_map(|(language, files)| {
+                let grammar = match offer_grammar(language, files) {
+                    Ok(grammar) => grammar,
                     Err(error) => {
-                        log::error!("{language}'s extension manifest: {error}");
+                        log::error!("{error}");
                         return None;
                     }
                 };
-                let grammar = (manifest.contributes.grammars.into_iter())
-                    .find(|grammar| grammar.language == *language)?;
+                let entry = self.languages.get(*language).cloned().unwrap_or_default();
                 Some(GrammarOffer {
-                    language: language.clone(),
-                    name: (manifest.name.strip_suffix(" syntax"))
-                        .unwrap_or(&manifest.name)
-                        .to_owned(),
+                    language: (*language).to_owned(),
+                    name: grammar.name,
                     extensions: grammar.extensions,
                     size: entry.size,
-                    sha256: entry.sha256.clone(),
+                    sha256: entry.sha256,
                 })
             })
             .collect()
     }
 
-    /// What installing `language` takes: its manifest entry and its files.
+    /// What installing `language` takes: its manifest entry, if it has one,
+    /// and its files.
     pub(crate) fn grammar(&self, language: &str) -> Result<Grammar, InstallError> {
-        let unknown = || InstallError::UnknownLanguage(language.to_owned());
-        let entry = self.languages.get(language).ok_or_else(unknown)?;
-        let files = first_party_files(language).ok_or_else(unknown)?;
+        let files = first_party_files(language)
+            .ok_or_else(|| InstallError::UnknownLanguage(language.to_owned()))?;
+        let entry = match self.languages.get(language) {
+            Some(entry) => entry.clone(),
+            None => PackEntry {
+                file: offer_grammar(language, &files)
+                    .map_err(InstallError::Manifest)?
+                    .wasm,
+                ..PackEntry::default()
+            },
+        };
         Ok(Grammar {
             language: language.to_owned(),
             url: format!("{}/{}", self.base_url.trim_end_matches('/'), entry.file),
-            file: entry.file.clone(),
+            file: entry.file,
             size: entry.size,
-            sha256: entry.sha256.clone(),
+            sha256: entry.sha256,
             files,
         })
     }
@@ -143,8 +155,38 @@ struct OfferContributes {
 #[derive(Deserialize)]
 struct OfferGrammar {
     language: String,
+    wasm: String,
     #[serde(default)]
     extensions: Vec<String>,
+}
+
+/// `language`'s grammar in its extension's manifest, `files`', with the
+/// manifest's name for it.
+struct Offered {
+    name: String,
+    wasm: String,
+    extensions: Vec<String>,
+}
+
+fn offer_grammar(language: &str, files: &ExtensionFiles) -> Result<Offered, String> {
+    let manifest = toml::from_str::<OfferManifest>(files.extension_toml)
+        .map_err(|error| format!("{language}'s extension manifest: {error}"))?;
+    let grammar = (manifest.contributes.grammars.into_iter())
+        .find(|grammar| grammar.language == language)
+        .ok_or_else(|| format!("{language}'s extension manifest has no grammar for it"))?;
+    if !is_wasm_file_name(&grammar.wasm) {
+        return Err(format!(
+            "{language}'s wasm {:?} isn't a .wasm file's name",
+            grammar.wasm
+        ));
+    }
+    Ok(Offered {
+        name: (manifest.name.strip_suffix(" syntax"))
+            .unwrap_or(&manifest.name)
+            .to_owned(),
+        wasm: grammar.wasm,
+        extensions: grammar.extensions,
+    })
 }
 
 /// A plain file name, so that it stays in the extension's directory, and not
@@ -162,30 +204,14 @@ pub(crate) struct ExtensionFiles {
     pub(crate) injections: &'static str,
 }
 
-macro_rules! first_party {
-    ($($language:literal),* $(,)?) => {
-        [$((
-            $language,
-            ExtensionFiles {
-                extension_toml: include_str!(concat!(
-                    "../../../extensions/grammars/", $language, "/extension.toml"
-                )),
-                highlights: include_str!(concat!(
-                    "../../../extensions/grammars/", $language, "/highlights.scm"
-                )),
-                injections: include_str!(concat!(
-                    "../../../extensions/grammars/", $language, "/injections.scm"
-                )),
-            },
-        )),*]
-    };
-}
+include!(concat!(env!("OUT_DIR"), "/first_party.rs"));
 
-/// The files of each first-party grammar's extension, those the wasm parity
-/// tests check.
-const FIRST_PARTY: [(&str, ExtensionFiles); 8] = first_party!(
-    "kotlin", "csharp", "scala", "swift", "cpp", "sql", "php", "ruby"
-);
+/// The first-party languages, sorted: one per directory under
+/// `extensions/grammars/`.
+#[cfg_attr(not(test), allow(dead_code, reason = "only the tests list them"))]
+pub(crate) fn first_party_languages() -> impl Iterator<Item = &'static str> {
+    FIRST_PARTY.iter().map(|(language, _)| *language)
+}
 
 fn first_party_files(language: &str) -> Option<ExtensionFiles> {
     FIRST_PARTY
@@ -551,12 +577,8 @@ mod offers_tests {
             .iter()
             .map(|offer| offer.language.as_str())
             .collect();
-        assert_eq!(
-            languages,
-            [
-                "cpp", "csharp", "kotlin", "php", "ruby", "scala", "sql", "swift"
-            ]
-        );
+        // Every directory, released or not.
+        assert_eq!(languages, first_party_languages().collect::<Vec<_>>());
         let of = |language: &str| catalog.iter().find(|o| o.language == language).unwrap();
         assert_eq!(of("kotlin").name, "Kotlin");
         assert_eq!(of("kotlin").extensions, ["kt", "kts"]);
