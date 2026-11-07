@@ -1027,6 +1027,13 @@ impl Workbench {
         self.change_encoding(cx.window, cx.cx);
     }
 
+    /// Change End of Line Sequence…
+    #[command(id = "workbench.change_line_ending")]
+    fn change_line_ending_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.change_line_ending(cx.window, cx.cx);
+    }
+
     /// Reopen Editor with Encoding…
     #[command(id = "workbench.reopen_with_encoding")]
     fn reopen_with_encoding_command(&mut self, cx: &mut Cx<Self>) {

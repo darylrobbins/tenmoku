@@ -512,6 +512,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "workbench",
     ),
     (
+        "workbench.change_line_ending",
+        "Change End of Line Sequence…",
+        "workbench",
+    ),
+    (
         "workbench.reopen_with_encoding",
         "Reopen Editor with Encoding…",
         "workbench",

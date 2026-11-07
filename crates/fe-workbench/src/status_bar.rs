@@ -20,6 +20,8 @@
 //!
 //! A click on an editor's encoding item runs `workbench.change_encoding`
 //! ([`crate::encoding_picker`]), which the editor's own items don't name.
+//! A click on its LF/CRLF item runs `workbench.change_line_ending`
+//! ([`crate::line_ending_picker`]), which that item names itself.
 //!
 //! Its commands, `view.toggle_status_bar` and `language.select`, are those
 //! of [`init`]'s registry, in the workbench's [`crate::KEY_CONTEXT`], with
@@ -104,7 +106,8 @@ impl StatusItem {
     /// The file's encoding, such as `UTF-8`, `UTF-8 with BOM` or `windows-1252`;
     /// a click runs `workbench.change_encoding`: priority 300.
     pub const ENCODING: &str = built_in::ENCODING;
-    /// `LF` or `CRLF`: priority 400.
+    /// `LF` or `CRLF`; a click on an editable one runs
+    /// `workbench.change_line_ending`: priority 400.
     pub const LINE_ENDING: &str = built_in::LINE_ENDING;
     /// The language's name, `Plain Text`, or `…` while it loads; a click
     /// runs `language.select`: priority 500.

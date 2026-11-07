@@ -40,6 +40,7 @@ mod ignore_assist;
 mod ignore_diagnostics;
 mod inline_edit;
 mod language_picker;
+mod line_ending_picker;
 pub mod loader;
 mod lsp;
 mod lsp_code_actions;

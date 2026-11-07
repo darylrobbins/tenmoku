@@ -1745,6 +1745,10 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
     };
     let language_command = Invocation::of("language.select").expect("a valid command ID");
     let go_to_line_command = Invocation::of("go_to_line.toggle").expect("a valid command ID");
+    let line_ending_command = (!editor.is_read_only()).then(|| {
+        let change = Invocation::of("workbench.change_line_ending").expect("a valid command ID");
+        (change, "Select End of Line Sequence")
+    });
     let texts: [(SharedString, Option<(Invocation, &str)>); 5] = [
         (
             cursor.into(),
@@ -1752,7 +1756,7 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
         ),
         (indent.into(), None),
         (encoding.into(), None),
-        (line_ending.into(), None),
+        (line_ending.into(), line_ending_command),
         (language, Some((language_command, "Change Language Mode"))),
     ];
     let right = status::RIGHT
