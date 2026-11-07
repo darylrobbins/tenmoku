@@ -542,6 +542,5 @@ fn canonical_dir(path: &Path) -> PathBuf {
     } else {
         dir
     };
-    dir.canonicalize()
-        .map_or_else(|_| path.to_owned(), |dir| dir.join(name))
+    crate::platform::canonicalize(dir).map_or_else(|_| path.to_owned(), |dir| dir.join(name))
 }

@@ -175,13 +175,11 @@ fn wasm_file(dir: &Path, entry: &str) -> Result<PathBuf, &'static str> {
             _ => return Err("is outside the extension's directory"),
         }
     }
-    let canonical_dir = dir
-        .canonicalize()
+    // Without Windows' `\\?\`, as paths are shown and compared elsewhere.
+    let canonical_dir = kiln_core::platform::canonicalize(dir)
         .map_err(|_| "the extension's directory is unreadable")?;
-    let canonical = dir
-        .join(relative)
-        .canonicalize()
-        .map_err(|_| "no such file")?;
+    let canonical =
+        kiln_core::platform::canonicalize(&dir.join(relative)).map_err(|_| "no such file")?;
     if !canonical.starts_with(&canonical_dir) {
         return Err("is outside the extension's directory");
     }

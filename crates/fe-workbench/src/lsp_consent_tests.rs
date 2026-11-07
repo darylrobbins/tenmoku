@@ -17,7 +17,7 @@ use crate::lsp_consent::{ConsentGate, ConsentStore, Decision, Entry};
 use crate::{
     CONSENT_FILE, ExtensionServer, Invocation, PendingConsent, decline_extension_server,
     extension_servers, grant_extension_server, pending_extension_consents,
-    set_extension_consent_file, set_extension_servers,
+    set_extension_consent_file, set_extension_servers, tests::rooted,
 };
 
 /// An extension `acme.zig` in `dir`, with `server.js` beside its manifest.
@@ -227,7 +227,8 @@ fn an_unconsented_server_is_withheld_and_pending(cx: &mut TestAppContext) {
 
     assert_eq!(handed(cx), []);
     let pending = pending(cx);
-    let expected = Invocation::of(&server(&extension).spec, &extension, None);
+    let spec = server(&extension).spec;
+    let expected = Invocation::of(&spec, &extension, Some(&rooted(&spec.command)));
     assert_eq!(
         pending,
         [PendingConsent {
@@ -324,7 +325,11 @@ fn a_changed_invocation_keeps_the_old_and_asks_again(cx: &mut TestAppContext) {
         assert_eq!(pending[0].previous.as_ref(), Some(&invocation));
         assert_eq!(
             pending[0].invocation,
-            Invocation::of(&changed.spec, &extension, None)
+            Invocation::of(
+                &changed.spec,
+                &extension,
+                Some(&rooted(&changed.spec.command))
+            )
         );
         assert!(!pending[0].declined);
     };
@@ -378,7 +383,11 @@ fn a_later_session_runs_the_granted_only_while_its_script_is_as_granted(
     assert_eq!(handed.len(), 1);
     assert_eq!(
         (&handed[0].command, &handed[0].args, &handed[0].env),
-        (&granted.spec.command, &granted.spec.args, &granted.spec.env)
+        (
+            &rooted(&granted.spec.command),
+            &granted.spec.args,
+            &granted.spec.env
+        )
     );
     assert_eq!(pending(later)[0].previous.as_ref(), Some(&asked.invocation));
 

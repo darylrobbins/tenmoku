@@ -13,7 +13,10 @@ use fe_config::{Settings, SettingsEvent, TerminalSettings};
 use fe_terminal_view::TerminalView;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext, px};
 
-use crate::{Launch, TerminalPanel, Workbench, tests::open};
+use crate::{
+    Launch, TerminalPanel, Workbench,
+    tests::{SHELL_END, open, printing_shell},
+};
 
 fn opened(
     cx: &mut TestAppContext,
@@ -105,19 +108,11 @@ fn reload(
     draw(cx);
 }
 
-fn sh(script: &str) -> TerminalSettings {
-    TerminalSettings {
-        shell: "/bin/sh".to_owned(),
-        shell_args: vec!["-c".to_owned(), script.to_owned()],
-        ..TerminalSettings::default()
-    }
-}
-
 #[gpui::test]
 fn a_configured_shell_runs(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     workbench.update(cx, |workbench, cx| {
-        workbench.set_terminal_settings(&sh("printf configured; exec cat"), cx)
+        workbench.set_terminal_settings(&printing_shell("configured"), cx)
     });
     let view = start(&workbench, cx);
     until(cx, "the configured shell's output", |cx| {
@@ -130,16 +125,14 @@ fn an_empty_shell_is_the_login_shell(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     let panel = panel(&workbench, cx);
     panel.read_with(cx, |panel, _| assert_eq!(panel.shell(), None));
+    let configured = printing_shell("");
     workbench.update(cx, |workbench, cx| {
-        workbench.set_terminal_settings(&sh("exec cat"), cx)
+        workbench.set_terminal_settings(&configured, cx)
     });
     panel.read_with(cx, |panel, _| {
         assert_eq!(
             panel.shell(),
-            Some((
-                "/bin/sh".to_owned(),
-                vec!["-c".to_owned(), "exec cat".to_owned()]
-            ))
+            Some((configured.shell.clone(), configured.shell_args.clone()))
         )
     });
     workbench.update(cx, |workbench, cx| {
@@ -151,7 +144,7 @@ fn an_empty_shell_is_the_login_shell(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_reload_restyles_the_running_session(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
-    let first = sh("exec cat");
+    let first = printing_shell("");
     workbench.update(cx, |workbench, cx| {
         workbench.set_terminal_settings(&first, cx)
     });
@@ -174,18 +167,20 @@ fn a_reload_restyles_the_running_session(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_reload_changing_the_shell_waits_for_the_next_session(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
-    let first = sh("exec cat");
+    let first = printing_shell("");
     workbench.update(cx, |workbench, cx| {
         workbench.set_terminal_settings(&first, cx)
     });
     let view = start(&workbench, cx);
-    let second = sh("printf second; exec cat");
+    let second = printing_shell("second");
     reload(&workbench, &first, second, cx);
     assert_eq!(session(&workbench, cx).entity_id(), view.entity_id());
     assert!(!screen(&view, cx).contains("second"));
 
     // The session's shell exits (cat reads EOF), then the next one starts.
-    view.read_with(cx, |view, _| view.terminal().unwrap().input(vec![4]));
+    view.read_with(cx, |view, _| {
+        view.terminal().unwrap().input(SHELL_END.to_vec())
+    });
     until(cx, "the session to end", |cx| {
         panel(&workbench, cx).read_with(cx, |panel, _| panel.view().is_none())
     });

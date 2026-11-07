@@ -1569,9 +1569,11 @@ impl BackupJob {
                     _ => backup.id,
                 };
                 // Past the newest slot's, so a read takes this one even if
-                // the clock has gone back.
+                // the clock has gone back: by the clock's smallest step,
+                // which on Windows is 100 ns (a nanosecond less is lost).
+                const STEP: Duration = Duration::from_nanos(if cfg!(windows) { 100 } else { 1 });
                 if let Some((_, written)) = newest {
-                    meta.written = meta.written.max(written + Duration::from_nanos(1));
+                    meta.written = meta.written.max(written + STEP);
                 }
                 backup.store.write(slot, &meta, &text)?;
                 let mut landed = backup.landed();

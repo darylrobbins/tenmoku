@@ -370,10 +370,21 @@ fn enter_on_any_other_row_shows_all_of_it(cx: &mut TestAppContext) {
     let lines: Vec<&str> = detail.lines().collect();
     assert!(lines.contains(&"State: Active"), "{detail}");
     assert!(lines.contains(&"Contributes: 2 lsp servers"), "{detail}");
-    let first = format!("  zls: /opt/zls/bin/zls {} (granted)", long.join(" "));
+    let shown = |command: &str| crate::tests::rooted(command).display().to_string();
+    let first = format!(
+        "  zls: {} {} (granted)",
+        shown("/opt/zls/bin/zls"),
+        long.join(" ")
+    );
     assert!(lines.contains(&first.as_str()), "{detail}");
     assert!(
-        lines.contains(&"  zls_two: /opt/zls_two/bin/zls_two --stdio (granted)"),
+        lines.contains(
+            &format!(
+                "  zls_two: {} --stdio (granted)",
+                shown("/opt/zls_two/bin/zls_two")
+            )
+            .as_str()
+        ),
         "{detail}"
     );
     answer(&mut cx, "OK");

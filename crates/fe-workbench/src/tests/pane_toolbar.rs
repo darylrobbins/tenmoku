@@ -431,7 +431,10 @@ fn path_crumbs_open_entry_pickers(cx: &mut TestAppContext) {
     assert_eq!(picker_rows(&workbench, cx).unwrap(), ["deep.rs"]);
     shown.read_with(cx, |picker, cx| {
         assert_eq!(picker.input().read(cx).text(), "");
-        assert_eq!(picker.delegate.status_text(), Some("src/util/Inner".into()));
+        assert_eq!(
+            picker.delegate.status_text().map(crate::tests::slashed),
+            Some("src/util/Inner".into())
+        );
     });
 
     // A file opens in the pane, active and focused.

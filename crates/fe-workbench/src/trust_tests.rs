@@ -122,7 +122,9 @@ fn trust_file(state: &tempfile::TempDir, trusted: &[&Path]) -> PathBuf {
 
 /// A new folder `name` in `dir`, by its canonical path.
 fn folder(dir: &tempfile::TempDir, name: &str) -> PathBuf {
-    let path = canonical(dir.path()).join(name);
+    // A part at a time, so the path reads as the prompt shows it (`\` on
+    // Windows).
+    let path = (name.split('/')).fold(canonical(dir.path()), |path, part| path.join(part));
     fs::create_dir_all(&path).unwrap();
     path
 }

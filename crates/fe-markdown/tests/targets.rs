@@ -5,6 +5,16 @@ use std::{
 
 use fe_markdown::{BlockReason, ImageSource, LinkTarget, image_source, link_target};
 
+/// The `file:` URL of absolute `path`: `file:///C:/a/b` on Windows.
+fn file_url(path: &Path) -> String {
+    let path = path.display().to_string();
+    if cfg!(windows) {
+        format!("file:///{}", path.replace('\\', "/"))
+    } else {
+        format!("file://{path}")
+    }
+}
+
 fn file(path: impl Into<PathBuf>, line: Option<u32>) -> LinkTarget {
     LinkTarget::File {
         path: path.into(),
@@ -114,8 +124,17 @@ fn only_local_images_inside_the_root_or_document_folder_load() {
         source("/logo.png"),
         ImageSource::Local(root.join("logo.png"))
     );
-    let url = format!("file://{}", root.join("logo.png").display());
+    let url = file_url(&root.join("logo.png"));
     assert_eq!(source(&url), ImageSource::Local(root.join("logo.png")));
+    // A drive's path isn't a URL with a one-letter scheme.
+    #[cfg(windows)]
+    {
+        let drive_path = root.join("logo.png").display().to_string();
+        assert_eq!(
+            image_source(&drive_path, &doc, Some(&root)),
+            ImageSource::Local(root.join("logo.png"))
+        );
+    }
     // A missing file is still local: the preview shows it as broken.
     assert_eq!(source("new.png"), ImageSource::Local(docs.join("new.png")));
 
@@ -123,7 +142,7 @@ fn only_local_images_inside_the_root_or_document_folder_load() {
     assert_eq!(source("../../outside/x.png"), outside_blocked);
     assert_eq!(source("/../outside/x.png"), outside_blocked);
     assert_eq!(source("../../outside/missing.png"), outside_blocked);
-    let url = format!("file://{}", outside.join("x.png").display());
+    let url = file_url(&outside.join("x.png"));
     assert_eq!(source(&url), outside_blocked);
     // A symlink inside that points outside is outside.
     #[cfg(unix)]
@@ -190,7 +209,7 @@ fn a_relative_document_path_allows_only_its_own_folder() {
     let outside = tempfile::tempdir().unwrap();
     let image = dunce::canonicalize(outside.path()).unwrap().join("x.png");
     fs::write(&image, b"png").unwrap();
-    let url = format!("file://{}", image.display());
+    let url = file_url(&image);
     // A bare file name's folder is the current directory, which holds
     // neither the image nor the root.
     let doc = Path::new("README.md");

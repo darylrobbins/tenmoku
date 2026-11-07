@@ -168,42 +168,22 @@ fn argument_object_unclosed_list_is_bounded() {
     assert_eq!(vim.text(), text);
 }
 
-/// CPU time this thread has used: kernel plus user time, from `GetThreadTimes`.
+/// This thread's CPU cycles, counted as nanoseconds: the tests compare only
+/// ratios of these, and `QueryThreadCycleTime` counts every cycle the thread
+/// runs, where `GetThreadTimes` moves in 15.6 ms clock ticks.
 #[cfg(windows)]
 fn thread_cpu_time() -> Duration {
-    #[repr(C)]
-    #[derive(Default)]
-    struct FileTime {
-        low: u32,
-        high: u32,
-    }
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GetCurrentThread() -> isize;
-        fn GetThreadTimes(
-            thread: isize,
-            creation: *mut FileTime,
-            exit: *mut FileTime,
-            kernel: *mut FileTime,
-            user: *mut FileTime,
-        ) -> i32;
+        fn QueryThreadCycleTime(thread: isize, cycles: *mut u64) -> i32;
     }
-    let [mut creation, mut exit, mut kernel, mut user] = Default::default();
-    // SAFETY: the pseudo-handle names this thread, and each out-pointer is a
-    // valid, writable FILETIME for the call to fill in.
-    let ok = unsafe {
-        GetThreadTimes(
-            GetCurrentThread(),
-            &mut creation,
-            &mut exit,
-            &mut kernel,
-            &mut user,
-        )
-    };
-    assert_ne!(ok, 0, "GetThreadTimes failed");
-    let ticks = |t: FileTime| (u64::from(t.high) << 32) | u64::from(t.low);
-    // FILETIME counts 100 ns ticks.
-    Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+    let mut cycles = 0;
+    // SAFETY: the pseudo-handle names this thread, and `cycles` is a valid,
+    // writable u64 for the call to fill in.
+    let ok = unsafe { QueryThreadCycleTime(GetCurrentThread(), &mut cycles) };
+    assert_ne!(ok, 0, "QueryThreadCycleTime failed");
+    Duration::from_nanos(cycles)
 }
 
 /// CPU time this thread has used. Unlike wall clock it doesn't grow while the

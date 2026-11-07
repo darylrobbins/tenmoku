@@ -209,10 +209,19 @@ pub(in crate::ex) fn fill(state: &mut VimState, command: &mut ShellCommand) -> R
 /// A command's output as rows: split at line breaks, the last (if any)
 /// ending the last row rather than starting another. Empty, it's none.
 fn output_rows(output: &str) -> Vec<&str> {
-    match output.strip_suffix('\n').unwrap_or(output) {
+    let rows: Vec<&str> = match output.strip_suffix('\n').unwrap_or(output) {
         "" if !output.starts_with('\n') => Vec::new(),
         rows => rows.split('\n').collect(),
+    };
+    // Output whose every line ends in CRLF, as Windows' commands write it,
+    // is read as DOS lines, as vim's 'fileformats' detection reads it.
+    let breaks = output.matches('\n').count();
+    if breaks > 0 && output.matches("\r\n").count() == breaks {
+        return (rows.into_iter())
+            .map(|row| row.strip_suffix('\r').unwrap_or(row))
+            .collect();
     }
+    rows
 }
 
 /// Catches the marks up with the text before an edit, and follows the

@@ -4,7 +4,7 @@
 //! overtaken by an edit, the text as it was; `%` shell-escaped.
 
 // What only its Unix tests use goes unused elsewhere.
-#![cfg_attr(not(unix), allow(unused_imports))]
+#![cfg_attr(not(unix), allow(unused_imports, dead_code))]
 
 use std::path::Path;
 use std::thread;
@@ -25,9 +25,11 @@ use super::super::vim_host::vim_filter::{
 use super::{active, draw, ex, message, open, run, window};
 use crate::Workbench;
 
-/// The user's settings: `/bin/sh` as the shell, and `limit` ms to run.
+/// The user's settings: `/bin/sh` as the shell (`cmd.exe` on Windows), and
+/// `limit` ms to run.
 fn settings(limit: u64) -> String {
-    format!("[vim]\nshell = \"/bin/sh\"\nfilter_time_limit = {limit}\n")
+    let shell = if cfg!(windows) { "cmd.exe" } else { "/bin/sh" };
+    format!("[vim]\nshell = \"{shell}\"\nfilter_time_limit = {limit}\n")
 }
 
 /// A config service holding the user's settings file, and its sender.
@@ -143,6 +145,9 @@ fn row(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> u32 {
 }
 
 #[gpui::test]
+// POSIX shell scripts: Windows filters through cmd.exe (see
+// filter_runs_through_cmd).
+#[cfg(unix)]
 fn filter_runs_through_the_shell(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -331,6 +336,9 @@ fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+// POSIX shell scripts: Windows filters through cmd.exe (see
+// filter_runs_through_cmd).
+#[cfg(unix)]
 fn file_names_are_shell_escaped(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -410,6 +418,44 @@ fn file_names_are_shell_escaped(cx: &mut TestAppContext) {
     let said: Option<SharedString> = message(&workbench, cx);
     assert_eq!(said.as_deref(), Some(E499));
     assert_eq!(text(&untitled, cx), "");
+}
+
+#[gpui::test]
+#[cfg(windows)]
+fn filter_runs_through_cmd(cx: &mut TestAppContext) {
+    // The command's thread wakes the task waiting for it.
+    cx.executor().allow_parking();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "c\na\nb\n").unwrap();
+    let _settings = Settings::start(dir.path(), cx);
+    let (workbench, mut vcx) = window(cx, &root, &["a.txt"]);
+    let cx = &mut vcx;
+    trust(&workbench, cx);
+    let a = active(&workbench, cx);
+
+    // :%!sort sorts the buffer through Windows' own sort, one undo step,
+    // its CRLF rows read as the buffer's.
+    ex("%!sort", cx);
+    until(cx, "sorted", |cx| text(&a, cx) == "a\nb\nc\n");
+    cx.simulate_keystrokes("u");
+    assert_eq!(text(&a, cx), "c\na\nb\n");
+
+    // :r !cmd puts its rows below the caret's line.
+    ex("$r !echo z", cx);
+    until(cx, "read at the end", |cx| text(&a, cx) == "c\na\nb\nz\n");
+    cx.simulate_keystrokes("u");
+    assert_eq!(text(&a, cx), "c\na\nb\n");
+
+    // A file name isn't put in a cmd.exe command line.
+    ex(".!echo %", cx);
+    linger(cx);
+    assert_eq!(
+        message(&workbench, cx).as_deref(),
+        Some(NO_NAMES_ON_WINDOWS)
+    );
+    assert_eq!(text(&a, cx), "c\na\nb\n");
 }
 
 #[test]
@@ -841,6 +887,9 @@ fn quitting_stops_every_command(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+// POSIX shell scripts: Windows filters through cmd.exe (see
+// filter_runs_through_cmd).
+#[cfg(unix)]
 fn toasts_show_in_the_commands_window(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();

@@ -83,8 +83,8 @@ fn links_to_extensions_outside_the_root_are_followed() {
         trees.register(&mut watching(&mut watched)),
         std::slice::from_ref(&root)
     );
-    let outside = outside.canonicalize().unwrap();
-    let elsewhere = elsewhere.canonicalize().unwrap();
+    let outside = crate::platform::canonicalize(&outside).unwrap();
+    let elsewhere = crate::platform::canonicalize(&elsewhere).unwrap();
     assert!(watched.contains(&(root.clone(), RecursiveMode::Recursive)));
     assert!(watched.contains(&(outside.clone(), RecursiveMode::Recursive)));
     assert!(watched.contains(&(elsewhere.clone(), RecursiveMode::NonRecursive)));
