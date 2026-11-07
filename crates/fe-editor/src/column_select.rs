@@ -25,6 +25,14 @@ pub(crate) struct ColumnBox {
     selections: Vec<ResolvedSelection>,
 }
 
+impl ColumnBox {
+    /// The box as of `version`, for a buffer whose text came back to what
+    /// it was when the box was made.
+    pub(crate) fn at_version(self, version: Version) -> Self {
+        Self { version, ..self }
+    }
+}
+
 /// Which way a command moves the box's head.
 #[derive(Clone, Copy)]
 enum Direction {
@@ -94,3 +102,32 @@ impl EditorModel {
 #[cfg(test)]
 #[path = "column_select_tests.rs"]
 mod tests;
+
+/// A box selection under way goes on after an undo history import, whose
+/// edits take the text away and back (T483).
+#[cfg(test)]
+mod import_tests {
+    use fe_buffer::{Buffer, Origin};
+
+    use super::Direction;
+    use crate::EditorModel;
+
+    #[test]
+    fn a_box_goes_on_after_an_undo_history_import() {
+        let mut typed = Buffer::new("abcdef\nabcdef\nabcdef\n");
+        typed.edit([(21..21, "abcdef\n")], Origin::User);
+        let record = typed.export_undo().unwrap();
+        let mut model = EditorModel::new(Buffer::new(&typed.text().to_string()), None);
+        model.set_cursor(10);
+        model.column_select(Direction::Down);
+        assert_eq!(model.selections().len(), 2);
+        let state = model.selection_state();
+        model.buffer_mut().import_undo(record).unwrap();
+        model.restore_selection_state(state);
+        model.column_select(Direction::Down);
+        let heads: Vec<usize> = (model.selections().iter())
+            .map(|selection| selection.head())
+            .collect();
+        assert_eq!(heads, [10, 17, 24], "the box grew a row");
+    }
+}

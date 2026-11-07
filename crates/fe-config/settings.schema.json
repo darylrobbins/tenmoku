@@ -257,6 +257,11 @@
           },
           "description": "The minimap: the whole file drawn small beside the text, VS Code's\n`editor.minimap.*`."
         },
+        "persistent_undo": {
+          "default": true,
+          "description": "Keep each file's undo history on disk when it's saved or closed, so\n`u` and `<C-r>` reach edits made before it was last closed, as nvim's\n`undofile`. History is kept only while the file's text is what it was\nleft at; one changed outside the editor starts with none. Off, none is\nread or written, and none kept is removed.",
+          "type": "boolean"
+        },
         "render_whitespace": {
           "$ref": "#/$defs/RenderWhitespace",
           "default": "selection",
@@ -1473,6 +1478,7 @@
           "side": "right",
           "size": "proportional"
         },
+        "persistent_undo": true,
         "render_whitespace": "selection",
         "rulers": [],
         "semantic_highlighting": true,

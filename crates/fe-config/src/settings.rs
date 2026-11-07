@@ -723,6 +723,12 @@ pub struct EditorSettings {
     /// it, and delete both with backspace. Off, typing inserts only what's
     /// typed.
     pub auto_close_pairs: bool,
+    /// Keep each file's undo history on disk when it's saved or closed, so
+    /// `u` and `<C-r>` reach edits made before it was last closed, as nvim's
+    /// `undofile`. History is kept only while the file's text is what it was
+    /// left at; one changed outside the editor starts with none. Off, none is
+    /// read or written, and none kept is removed.
+    pub persistent_undo: bool,
     /// When a changed file saves itself.
     pub auto_save: AutoSave,
     /// How long after the last edit, in milliseconds, `after_delay` saves.
@@ -1044,6 +1050,7 @@ impl Default for EditorSettings {
             linked_editing: false,
             code_actions_on_save: Vec::new(),
             auto_close_pairs: true,
+            persistent_undo: true,
             auto_save: AutoSave::default(),
             auto_save_delay: 1000,
             indent_guides: true,

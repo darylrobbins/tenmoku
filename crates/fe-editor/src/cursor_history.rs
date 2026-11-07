@@ -7,7 +7,7 @@
 //! selection's row, which keeps arrowing along a line from filling the
 //! stack.
 
-use fe_buffer::{Origin, ResolvedSelection, SelectionSet, Text};
+use fe_buffer::{BufferSnapshot, Origin, ResolvedSelection, SelectionSet, Text};
 use fe_command::{Effect, Registry};
 
 use crate::{
@@ -28,7 +28,48 @@ pub(crate) struct CursorHistory {
     pub(crate) coalesce: bool,
 }
 
+/// A [`CursorHistory`] as offsets, each set with its primary, to anchor
+/// again once edits that leave the text as it was are over.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ResolvedHistory {
+    undo: Vec<ResolvedSet>,
+    redo: Vec<ResolvedSet>,
+    coalesce: bool,
+}
+
+/// A selection set as offsets, with which is primary.
+type ResolvedSet = (Vec<ResolvedSelection>, Option<usize>);
+
 impl CursorHistory {
+    /// The sets as offsets in `snapshot`.
+    pub(crate) fn resolve(&self, snapshot: &BufferSnapshot) -> ResolvedHistory {
+        let resolve = |set: &SelectionSet| {
+            let selections = set.resolve(snapshot);
+            let primary = set.primary_in(snapshot);
+            let primary = primary.and_then(|primary| selections.iter().position(|s| *s == primary));
+            (selections, primary)
+        };
+        ResolvedHistory {
+            undo: self.undo.iter().map(resolve).collect(),
+            redo: self.redo.iter().map(resolve).collect(),
+            coalesce: self.coalesce,
+        }
+    }
+
+    /// `resolved` anchored in `snapshot`, whose text is the one it was
+    /// resolved in.
+    pub(crate) fn anchored(resolved: ResolvedHistory, snapshot: &BufferSnapshot) -> Self {
+        let anchor = |(selections, primary): ResolvedSet| match primary {
+            Some(ix) => SelectionSet::from_resolved_with_primary(snapshot, selections, ix),
+            None => SelectionSet::from_resolved(snapshot, selections),
+        };
+        Self {
+            undo: resolved.undo.into_iter().map(anchor).collect(),
+            redo: resolved.redo.into_iter().map(anchor).collect(),
+            coalesce: resolved.coalesce,
+        }
+    }
+
     fn push(stack: &mut Vec<SelectionSet>, set: SelectionSet) {
         if stack.len() == MAX_ENTRIES {
             stack.remove(0);
@@ -163,3 +204,37 @@ impl EditorModel {
 #[cfg(test)]
 #[path = "cursor_history_tests.rs"]
 mod tests;
+
+/// Cursor Undo and Redo still reach the selections made before an undo
+/// history import, whose edits take the text away and back (T483).
+#[cfg(test)]
+mod import_tests {
+    use fe_buffer::{Buffer, Origin};
+
+    use crate::EditorModel;
+
+    #[test]
+    fn cursor_undo_reaches_selections_from_before_an_import() {
+        let rows: String = (0..30).map(|row| format!("row {row}\n")).collect();
+        let mut typed = Buffer::new("");
+        typed.edit([(0..0, rows.as_str())], Origin::User);
+        let record = typed.export_undo().unwrap();
+        let mut model = EditorModel::new(Buffer::new(&rows), None);
+        model.cursor_history = super::CursorHistory::default();
+        let start = |model: &EditorModel, row| model.text().row_start(row);
+        for row in [1, 8, 20] {
+            let offset = start(&model, row);
+            model.set_cursor(offset);
+        }
+        let state = model.selection_state();
+        model.buffer_mut().import_undo(record).unwrap();
+        model.restore_selection_state(state);
+        assert_eq!(model.primary_selection().head(), start(&model, 20));
+        model.cursor_undo();
+        assert_eq!(model.primary_selection().head(), start(&model, 8));
+        model.cursor_undo();
+        assert_eq!(model.primary_selection().head(), start(&model, 1));
+        model.cursor_redo();
+        assert_eq!(model.primary_selection().head(), start(&model, 8));
+    }
+}

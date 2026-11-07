@@ -412,6 +412,8 @@ mod todo_decorations_tests;
 #[cfg(test)]
 mod typed_command_ids_tests;
 #[cfg(test)]
+mod undo_persist_tests;
+#[cfg(test)]
 mod update_check_tests;
 #[cfg(test)]
 mod update_hook_tests;

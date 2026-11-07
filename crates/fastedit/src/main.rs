@@ -133,6 +133,9 @@ struct WindowSettings {
     launch_root: Option<PathBuf>,
     /// What each window was last given, as the next event's `previous`.
     given: HashMap<WindowId, Arc<Settings>>,
+    /// Each window's newest settings load, counting up: every `settle` (a
+    /// re-root, a reload) starts one and outdates those before it.
+    loads: HashMap<WindowId, u64>,
 }
 
 impl Global for WindowSettings {}
@@ -151,7 +154,7 @@ fn current_settings(cx: &App) -> Arc<Settings> {
 fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
     cx.set_global(WindowSettings {
         launch_root,
-        given: HashMap::new(),
+        ..Default::default()
     });
     cx.observe_global::<GlobalSettings<Settings>>(move |cx| {
         let global = cx.global::<GlobalSettings<Settings>>();
@@ -203,8 +206,11 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
 
 /// Gives `window` the settings of its root: the config service's for the
 /// launch root (or none), else its root's own, read off the main thread.
+/// Each call is a new load of the window's ([`begin_load`]); one read off
+/// the main thread is given only if it's still the window's newest, for
+/// the root it still has ([`finish_load`]).
 fn settle(window: WindowHandle<Workbench>, diagnostics: Vec<Diagnostic>, cx: &mut App) {
-    let Ok(root) = window.read_with(cx, |workbench, _| workbench.root().map(Path::to_owned)) else {
+    let Some((load, root)) = begin_load(window, cx) else {
         return;
     };
     let launch_root = cx
@@ -214,13 +220,50 @@ fn settle(window: WindowHandle<Workbench>, diagnostics: Vec<Diagnostic>, cx: &mu
         let settings = current_settings(cx);
         return give(window, settings, diagnostics, cx);
     }
-    let read =
-        cx.background_spawn(async move { load_settings(root.as_deref()).settings().clone() });
+    let read = cx.background_spawn({
+        let root = root.clone();
+        async move { load_settings(root.as_deref()).settings().clone() }
+    });
     cx.spawn(async move |cx| {
         let settings = read.await;
-        cx.update(|cx| give(window, settings, diagnostics, cx));
+        cx.update(|cx| finish_load(window, load, root, settings, diagnostics, cx));
     })
     .detach();
+}
+
+/// Starts a settings load for `window`: its number, which outdates every
+/// load of the window's before it, and the root it's for. `None` once the
+/// window is gone.
+fn begin_load(window: WindowHandle<Workbench>, cx: &mut App) -> Option<(u64, Option<PathBuf>)> {
+    let root = window
+        .read_with(cx, |workbench, _| workbench.root().map(Path::to_owned))
+        .ok()?;
+    let loads = &mut cx.default_global::<WindowSettings>().loads;
+    let load = loads.entry(window.window_id()).or_default();
+    *load += 1;
+    Some((*load, root))
+}
+
+/// Gives `window` `settings`, read by its load `load` for `root`, if that
+/// is still its newest load and `root` still its root. A load overtaken
+/// (by a re-root, back to the launch root too, or by a later load that
+/// finished first) is dropped before it changes anything: the window's
+/// `persistent_undo`, the undo reads waiting for it, or its settings.
+fn finish_load(
+    window: WindowHandle<Workbench>,
+    load: u64,
+    root: Option<PathBuf>,
+    settings: Arc<Settings>,
+    diagnostics: Vec<Diagnostic>,
+    cx: &mut App,
+) {
+    let newest = (cx.try_global::<WindowSettings>())
+        .and_then(|settings| settings.loads.get(&window.window_id()).copied());
+    let current = window.read_with(cx, |workbench, _| workbench.root().map(Path::to_owned));
+    if newest != Some(load) || current.ok() != Some(root) {
+        return;
+    }
+    give(window, settings, diagnostics, cx);
 }
 
 /// Applies `settings` to `window`'s workbench, against what it was given
@@ -232,6 +275,9 @@ fn give(
     cx: &mut App,
 ) {
     let id = window.window_id();
+    // Its editors keep undo history as its root says, whatever the others'.
+    let persistent_undo = Some(settings.editor.persistent_undo);
+    fe_gpui::pane_item::set_window_persistent_undo(id, persistent_undo, cx);
     let previous = cx
         .default_global::<WindowSettings>()
         .given
@@ -254,11 +300,16 @@ fn give(
 /// workbench is re-rooted.
 fn watch_window(window: WindowHandle<Workbench>, settings: Arc<Settings>, cx: &mut App) {
     let id = window.window_id();
+    // Its editors keep no undo history, and read none, until its root's
+    // settings are in: `settle` gives them, at once for the launch root's,
+    // else once read off the main thread.
+    fe_gpui::pane_item::wait_for_window_persistent_undo(id, cx);
     cx.default_global::<WindowSettings>()
         .given
         .insert(id, settings);
     if let Ok(workbench) = window.update(cx, |_, _, cx| cx.entity()) {
         cx.subscribe(&workbench, move |_, _: &RootChanged, cx| {
+            fe_gpui::pane_item::wait_for_window_persistent_undo(id, cx);
             settle(window, Vec::new(), cx)
         })
         .detach();
@@ -266,7 +317,11 @@ fn watch_window(window: WindowHandle<Workbench>, settings: Arc<Settings>, cx: &m
     settle(window, Vec::new(), cx);
     cx.on_window_closed(move |cx, closed| {
         if closed == id {
-            cx.default_global::<WindowSettings>().given.remove(&id);
+            let settings = cx.default_global::<WindowSettings>();
+            settings.given.remove(&id);
+            settings.loads.remove(&id);
+            // Its `persistent_undo` stays: its editors are released after
+            // this, and their close writes still go by it.
         }
     })
     .detach();
@@ -635,6 +690,20 @@ fn main() {
                 })
                 .detach();
             fe_gpui::pane_item::set_local_history(cx, Some(history));
+            // Each file's undo history, kept between opens. Off, nothing
+            // is removed, so the prune waits for it to be on.
+            let undo = fe_buffer::UndoStore::new(dir.join("undo"));
+            if settings.editor.persistent_undo {
+                let pruned = undo.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        if let Err(error) = pruned.prune(std::time::SystemTime::now()) {
+                            log::debug!(target: "fastedit", "undo store: pruning: {error}");
+                        }
+                    })
+                    .detach();
+            }
+            fe_gpui::pane_item::set_undo_store(cx, Some(undo));
         }
         // Syntax highlighting to offer for files with none, kept where the
         // extensions the loader reads are.
@@ -903,6 +972,196 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         };
         assert_eq!(tabs, [valid]);
+    }
+
+    /// Each window's editors keep undo history as its own root's settings
+    /// say: giving one window settings with `editor.persistent_undo` off
+    /// leaves another's on (T483 F1).
+    #[gpui::test]
+    fn each_window_keeps_undo_as_its_root_says(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+        });
+        let window = |cx: &mut TestAppContext| {
+            let dir = tempfile::tempdir().unwrap();
+            let launch = Launch {
+                root: Some(fs::canonicalize(dir.path()).unwrap()),
+                file: None,
+            };
+            let window = cx.add_window(move |window, cx| {
+                let theme = EditorTheme::default_dark(cx);
+                Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+            });
+            (window, dir)
+        };
+        let ((on, _a), (off, _b)) = (window(cx), window(cx));
+        let settings = |persistent_undo: bool| {
+            let mut settings = fe_config::Settings::default();
+            settings.editor.persistent_undo = persistent_undo;
+            std::sync::Arc::new(settings)
+        };
+        cx.update(|cx| {
+            super::give(on, settings(true), Vec::new(), cx);
+            super::give(off, settings(false), Vec::new(), cx);
+        });
+        let given = |window: gpui::WindowHandle<Workbench>, cx: &mut TestAppContext| {
+            cx.update(|cx| fe_gpui::pane_item::window_persistent_undo(window.window_id(), cx))
+        };
+        assert_eq!(given(on, cx), Some(true));
+        assert_eq!(given(off, cx), Some(false));
+        cx.update(|cx| super::give(off, settings(true), Vec::new(), cx));
+        assert_eq!(given(off, cx), Some(true), "a reload turns it on again");
+        assert_eq!(given(on, cx), Some(true));
+    }
+
+    /// A window on a root other than the launch root waits for its root's
+    /// settings before its editors read or write undo history: until then
+    /// it has no setting of its own, and the launch root's isn't used
+    /// (T483 round 3 F2).
+    #[gpui::test]
+    fn a_window_on_another_root_waits_for_its_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+            fe_gpui::pane_item::set_undo_store(cx, None);
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let launch = Launch {
+            root: Some(root),
+            file: None,
+        };
+        let window = cx.add_window(move |window, cx| {
+            let theme = EditorTheme::default_dark(cx);
+            Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+        });
+        let given = |cx: &mut TestAppContext| {
+            cx.update(|cx| fe_gpui::pane_item::window_persistent_undo(window.window_id(), cx))
+        };
+        cx.update(|cx| super::watch_window(window, Default::default(), cx));
+        assert_eq!(
+            given(cx),
+            None,
+            "nothing given before its settings are read"
+        );
+        cx.executor().allow_parking();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while given(cx).is_none() && std::time::Instant::now() < deadline {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(given(cx), Some(true), "its root's settings, once read");
+    }
+
+    /// A window on `root`, with the launch root `launch`, watched as the
+    /// app watches its windows, its first load of `root`'s settings
+    /// still to finish.
+    fn watched_window(
+        cx: &mut TestAppContext,
+        root: &std::path::Path,
+        launch: &std::path::Path,
+    ) -> gpui::WindowHandle<Workbench> {
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+            fe_gpui::pane_item::set_undo_store(cx, None);
+            cx.set_global(super::WindowSettings {
+                launch_root: Some(launch.to_owned()),
+                ..Default::default()
+            });
+        });
+        let launch = Launch {
+            root: Some(root.to_owned()),
+            file: None,
+        };
+        let window = cx.add_window(move |window, cx| {
+            let theme = EditorTheme::default_dark(cx);
+            Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+        });
+        cx.update(|cx| super::watch_window(window, Default::default(), cx));
+        window
+    }
+
+    fn undo_setting(persistent_undo: bool) -> std::sync::Arc<fe_config::Settings> {
+        let mut settings = fe_config::Settings::default();
+        settings.editor.persistent_undo = persistent_undo;
+        std::sync::Arc::new(settings)
+    }
+
+    fn given_undo(window: gpui::WindowHandle<Workbench>, cx: &mut TestAppContext) -> Option<bool> {
+        cx.update(|cx| fe_gpui::pane_item::window_persistent_undo(window.window_id(), cx))
+    }
+
+    /// A load of a root's settings that a re-root overtakes, here back to
+    /// the launch root, whose settings apply at once, is dropped when it
+    /// finishes: it changes neither the window's `persistent_undo` nor its
+    /// settings (T483 round 3 F1).
+    #[gpui::test]
+    fn a_settings_load_overtaken_by_a_re_root_is_discarded(cx: &mut TestAppContext) {
+        let (dir, launch) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let launch = fs::canonicalize(launch.path()).unwrap();
+        let window = watched_window(cx, &root, &launch);
+        let (load, for_root) = cx.update(|cx| super::begin_load(window, cx)).unwrap();
+        assert_eq!(for_root.as_deref(), Some(root.as_path()));
+        window
+            .update(cx, |workbench, window, cx| {
+                workbench.set_root(launch.clone(), window, cx)
+            })
+            .unwrap();
+        assert_eq!(
+            given_undo(window, cx),
+            Some(true),
+            "the launch root's, at once"
+        );
+        let given = |cx: &mut TestAppContext| {
+            cx.update(|cx| cx.global::<super::WindowSettings>().given[&window.window_id()].clone())
+        };
+        let before = given(cx);
+        cx.update(|cx| {
+            super::finish_load(window, load, for_root, undo_setting(false), Vec::new(), cx);
+        });
+        assert_eq!(
+            given_undo(window, cx),
+            Some(true),
+            "the old root's load is dropped"
+        );
+        assert!(
+            std::sync::Arc::ptr_eq(&given(cx), &before),
+            "and its settings too"
+        );
+    }
+
+    /// Two loads of the window's settings finishing newest first: the older,
+    /// finishing last, is dropped (T483 round 3 F1).
+    #[gpui::test]
+    fn settings_loads_completing_out_of_order_keep_the_newest(cx: &mut TestAppContext) {
+        let (dir, launch) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let launch = fs::canonicalize(launch.path()).unwrap();
+        let window = watched_window(cx, &root, &launch);
+        let older = cx.update(|cx| super::begin_load(window, cx)).unwrap();
+        let newer = cx.update(|cx| super::begin_load(window, cx)).unwrap();
+        cx.update(|cx| {
+            super::finish_load(
+                window,
+                newer.0,
+                newer.1,
+                undo_setting(false),
+                Vec::new(),
+                cx,
+            );
+        });
+        assert_eq!(
+            given_undo(window, cx),
+            Some(false),
+            "the newest load applies"
+        );
+        cx.update(|cx| {
+            super::finish_load(window, older.0, older.1, undo_setting(true), Vec::new(), cx);
+        });
+        assert_eq!(given_undo(window, cx), Some(false), "the older is dropped");
     }
 
     fn enabled(level: Level, target: &str) -> bool {

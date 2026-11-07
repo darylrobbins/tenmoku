@@ -18,6 +18,10 @@ use crate::{
     edit::{Mapping, normalize},
     log::{Collapse, EditLog},
     provenance::{Author, Provenance, ReplacedSpans, Runs},
+    undo_store::{
+        MAX_BYTES, MAX_ENTRIES, UndoBatch, UndoEdit, UndoEntry, UndoImportError, UndoRecord,
+        text_hash,
+    },
 };
 
 /// Who made an edit. Undo can be scoped by origin, so the AI's edits can be
@@ -1137,6 +1141,192 @@ impl Buffer {
             .sum()
     }
 
+    /// The user's undo history, to keep on disk ([`undo_store`]): the
+    /// newest run of [`Origin::User`] entries, back to the newest entry of
+    /// another origin or the first that no longer undoes cleanly, then the
+    /// undone ones redo would reapply, as far as they redo cleanly. Entries
+    /// that change no text (a line-ending change, an empty restore) are left
+    /// out. At most [`MAX_ENTRIES`] entries and [`MAX_BYTES`] of edits are
+    /// kept: the undone ones first, as far as redo would reach, then the
+    /// applied ones newest first, so the oldest drop. `None` when that leaves
+    /// none.
+    ///
+    /// Each entry's edits are as undo and redo would apply them now, in the
+    /// text before each batch: an entry's carets aren't kept.
+    pub fn export_undo(&self) -> Option<UndoRecord> {
+        let entries: Vec<&HistoryEntry> = (self.history.iter())
+            .filter(|entry| self.reachable(entry) && !entry.batches.is_empty())
+            .collect();
+        let is_user = |entry: &HistoryEntry| entry.origin == Origin::User;
+        let mut tail = entries.len();
+        while tail > 0 && is_user(entries[tail - 1]) && entries[tail - 1].undone.is_some() {
+            tail -= 1;
+        }
+        let mut head = tail;
+        while head > 0 && is_user(entries[head - 1]) && entries[head - 1].undone.is_none() {
+            head -= 1;
+        }
+
+        let mut room = (MAX_ENTRIES, MAX_BYTES);
+        let mut fits = |entry: &UndoEntry| {
+            let bytes = entry.bytes();
+            let fits = room.0 > 0 && bytes <= room.1;
+            if fits {
+                room = (room.0 - 1, room.1 - bytes);
+            }
+            fits
+        };
+
+        // Redone in the order redo would, from the text as it is.
+        let mut redone = Vec::new();
+        let mut state = self.snapshot.clone();
+        let mut runs = self.provenance.settled();
+        for entry in &entries[tail..] {
+            let undone = entry.undone.as_ref().expect("the tail is undone");
+            let Ok(produced) = revert(&mut state, &mut runs, &undone.batches) else {
+                break;
+            };
+            let batches: Vec<UndoBatch> = (produced.iter())
+                .map(|(batch, _)| forward_batch(batch))
+                .collect();
+            let record = UndoEntry {
+                at_unix_ms: entry.at_unix_ms,
+                undone: true,
+                batches,
+            };
+            if record.batches.is_empty() {
+                continue;
+            }
+            if !fits(&record) {
+                break;
+            }
+            redone.push(record);
+        }
+
+        // Undone newest first, from the text as it is.
+        let mut kept = Vec::new();
+        let mut state = self.snapshot.clone();
+        let mut runs = self.provenance.settled();
+        for entry in entries[head..tail].iter().rev() {
+            let Ok(produced) = revert(&mut state, &mut runs, &entry.batches) else {
+                break;
+            };
+            // Each inverse batch reversed, last first, applies the entry.
+            let batches: Vec<UndoBatch> = (produced.iter().rev())
+                .map(|(batch, _)| inverse_batch(batch))
+                .collect();
+            let record = UndoEntry {
+                at_unix_ms: entry.at_unix_ms,
+                undone: false,
+                batches,
+            };
+            if record.batches.is_empty() {
+                continue;
+            }
+            if !fits(&record) {
+                break;
+            }
+            kept.push(record);
+        }
+        kept.reverse();
+        kept.extend(redone);
+        (!kept.is_empty()).then(|| UndoRecord {
+            text_hash: text_hash(&self.snapshot.text),
+            text_len: self.len() as u64,
+            entries: kept,
+        })
+    }
+
+    /// Gives the buffer `record`'s history, as [`Buffer::export_undo`] took
+    /// it from a buffer whose text was this one's, so undo and redo walk it
+    /// as they walked that one's: its entries are [`Origin::User`]'s, keeping
+    /// their times, the undone ones redoable. Fails, changing nothing, with
+    /// [`UndoImportError::Stale`] if the text's [`text_hash`] or length isn't
+    /// the record's, [`UndoImportError::Edited`] if the buffer has history of
+    /// its own, and [`UndoImportError::Invalid`] if the record's edits don't
+    /// apply to its text.
+    ///
+    /// The history is rebuilt by real edits, which subscribers see: the text
+    /// is taken back to where the history starts, the entries reapplied and
+    /// the undone ones undone, so it ends as it began, as clean as it was.
+    /// Anchors in the text the history changed may move. The text keeps no
+    /// author, as when it was read. The buffer's history limit
+    /// ([`Buffer::set_history_limit`]) applies once the history is whole:
+    /// it drops the oldest entries, never changing the text.
+    pub fn import_undo(&mut self, record: UndoRecord) -> Result<(), UndoImportError> {
+        if record.text_len != self.len() as u64
+            || record.text_hash != text_hash(&self.snapshot.text)
+        {
+            return Err(UndoImportError::Stale);
+        }
+        if self.open.is_some() || !self.history.is_empty() {
+            return Err(UndoImportError::Edited);
+        }
+        let applied = record
+            .entries
+            .iter()
+            .take_while(|entry| !entry.undone)
+            .count();
+        let (done, undone) = record.entries.split_at(applied);
+        if undone.iter().any(|entry| !entry.undone)
+            || (record.entries.iter()).any(|entry| {
+                entry.batches.is_empty() || entry.batches.iter().any(|b| b.edits.is_empty())
+            })
+        {
+            return Err(UndoImportError::Invalid);
+        }
+        let mut base = self.snapshot.text.clone();
+        for batch in done
+            .iter()
+            .rev()
+            .flat_map(|entry| entry.batches.iter().rev())
+        {
+            unapply(&mut base, batch)?;
+        }
+        let mut ahead = self.snapshot.text.clone();
+        for batch in undone.iter().flat_map(|entry| &entry.batches) {
+            reapply(&mut ahead, batch)?;
+        }
+
+        // No entry is trimmed while the history is rebuilt and the undone
+        // ones undone, which would leave an entry's text behind; the limit
+        // applies once it's whole, dropping only entries, never text.
+        let limit = std::mem::replace(&mut self.history_limit, usize::MAX);
+        self.with_authoring(None, |buffer| {
+            let (old, new) = differing_ranges(&buffer.snapshot.text, &base);
+            if !old.is_empty() || !new.is_empty() {
+                buffer.edit([(old, base.slice_to_string(new))], Origin::User);
+            }
+            buffer.history.clear();
+            buffer.history_bytes.clear();
+            buffer.redoable.clear();
+            buffer.history_revision += 1;
+            for entry in &record.entries {
+                buffer.start_transaction(Origin::User);
+                for batch in &entry.batches {
+                    let edits = (batch.edits.iter())
+                        .map(|edit| (edit.range.clone(), edit.new_text.as_str()));
+                    buffer.edit(edits, Origin::User);
+                }
+                if let Some(id) = buffer.end_transaction()
+                    && let Some(made) = buffer.history.iter_mut().rfind(|made| made.id == id)
+                {
+                    made.at_unix_ms = entry.at_unix_ms;
+                }
+            }
+            for _ in undone {
+                let undid = buffer.undo(|origin| *origin == Origin::User);
+                debug_assert!(matches!(undid, Ok(Some(_))), "an imported entry undoes");
+                if !matches!(undid, Ok(Some(_))) {
+                    break;
+                }
+            }
+        });
+        self.set_history_limit(limit);
+        debug_assert_eq!(self.len() as u64, record.text_len, "the text is as it was");
+        Ok(())
+    }
+
     /// Whether undo or redo can reach `entry`: all can but an open
     /// transaction that hasn't changed anything yet, which closing drops.
     fn reachable(&self, entry: &HistoryEntry) -> bool {
@@ -1849,6 +2039,110 @@ fn revert(
         }
     }
     Ok(produced)
+}
+
+/// `batch`, as [`revert`] produced it to redo an entry, as the record's
+/// batch that applies it.
+fn forward_batch(batch: &AppliedBatch) -> UndoBatch {
+    let edits = (batch
+        .edits
+        .iter()
+        .zip(&batch.old_texts)
+        .zip(&batch.new_texts))
+    .map(|((edit, old_text), new_text)| UndoEdit {
+        range: edit.old.clone(),
+        old_text: old_text.to_string(),
+        new_text: new_text.to_string(),
+    })
+    .collect();
+    UndoBatch { edits }
+}
+
+/// `batch`, as [`revert`] produced it to undo an entry, as the record's
+/// batch that applies the entry again: each edit put back where the undo
+/// left it.
+fn inverse_batch(batch: &AppliedBatch) -> UndoBatch {
+    let edits = (batch
+        .edits
+        .iter()
+        .zip(&batch.old_texts)
+        .zip(&batch.new_texts))
+    .map(|((edit, old_text), new_text)| UndoEdit {
+        range: edit.new.clone(),
+        old_text: new_text.to_string(),
+        new_text: old_text.to_string(),
+    })
+    .collect();
+    UndoBatch { edits }
+}
+
+/// Whether `edit` can follow an edit ending at `previous_end` in a batch
+/// [`Buffer::edit`] applies as given: in order, not overlapping, changing
+/// something, with text a buffer can hold.
+fn well_formed(edit: &UndoEdit, previous_end: usize) -> bool {
+    edit.range.start >= previous_end
+        && edit.range.start <= edit.range.end
+        && edit.range.len() == edit.old_text.len()
+        && !(edit.old_text.is_empty() && edit.new_text.is_empty())
+        && !edit.old_text.contains('\r')
+        && !edit.new_text.contains('\r')
+}
+
+/// Whether `range` is in `text`, on char boundaries, and holds `expected`.
+fn holds(text: &Text, range: Range<usize>, expected: &str) -> bool {
+    range.end <= text.len()
+        && text.is_char_boundary(range.start)
+        && text.is_char_boundary(range.end)
+        && text.range_eq(range, expected)
+}
+
+/// Takes `text`, as `batch` left it, back to what it was before.
+fn unapply(text: &mut Text, batch: &UndoBatch) -> Result<(), UndoImportError> {
+    let mut written = Vec::with_capacity(batch.edits.len());
+    let (mut previous_end, mut delta) = (0, 0isize);
+    for edit in &batch.edits {
+        let start = edit.range.start.checked_add_signed(delta);
+        let Some(start) = start.filter(|_| well_formed(edit, previous_end)) else {
+            return Err(UndoImportError::Invalid);
+        };
+        let Some(end) = start.checked_add(edit.new_text.len()) else {
+            return Err(UndoImportError::Invalid);
+        };
+        let range = start..end;
+        if !holds(text, range.clone(), &edit.new_text) {
+            return Err(UndoImportError::Invalid);
+        }
+        written.push(range);
+        previous_end = edit.range.end;
+        let change = isize::try_from(edit.new_text.len())
+            .ok()
+            .zip(isize::try_from(edit.old_text.len()).ok())
+            .and_then(|(new, old)| new.checked_sub(old))
+            .and_then(|change| delta.checked_add(change));
+        let Some(change) = change else {
+            return Err(UndoImportError::Invalid);
+        };
+        delta = change;
+    }
+    for (range, edit) in written.into_iter().zip(&batch.edits).rev() {
+        text.replace(range, &edit.old_text);
+    }
+    Ok(())
+}
+
+/// Applies `batch` to `text`, which must hold its old texts.
+fn reapply(text: &mut Text, batch: &UndoBatch) -> Result<(), UndoImportError> {
+    let mut previous_end = 0;
+    for edit in &batch.edits {
+        if !well_formed(edit, previous_end) || !holds(text, edit.range.clone(), &edit.old_text) {
+            return Err(UndoImportError::Invalid);
+        }
+        previous_end = edit.range.end;
+    }
+    for edit in batch.edits.iter().rev() {
+        text.replace(edit.range.clone(), &edit.new_text);
+    }
+    Ok(())
 }
 
 /// The ranges of `old` and `new` between their longest common prefix and

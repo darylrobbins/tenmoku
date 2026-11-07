@@ -21,7 +21,7 @@ use std::{
 
 use fe_buffer::{
     Backup, BackupId, BackupMeta, BackupStore, Bias, Buffer, BufferId, FileEncoding, LocalHistory,
-    Version, local_history::Reason,
+    UndoRecord, UndoStore, Version, local_history::Reason,
 };
 use fe_editor::{EditorModel, IndentStyle, SaveError, SaveJob, Saved, auto_save::SaveReason};
 
@@ -507,7 +507,9 @@ impl EditorView {
             if edits {
                 self.apply_save_fixes(self.save_fixes, cx);
             }
-            prepare_save_in(&mut self.model, encoding)
+            let job = prepare_save_in(&mut self.model, encoding);
+            let undo = undo_at_save(&self.model, job.as_ref().ok(), cx);
+            (job, undo)
         });
         let editor = cx.entity();
         let window = window.window_handle();
@@ -613,45 +615,51 @@ impl EditorView {
         fixes: SaveFixes,
         overwrite: bool,
         before_commit: impl FnOnce(&mut App) + 'static,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
         if self.unsavable {
             return Task::ready(Err(io::Error::other(UNSAVABLE).into()));
         }
+        let window = window.window_handle().window_id();
         let (previous, guard) = self.queue_save();
         // With none running, the text as it is now; typing from here on is
         // unsaved.
         let job = previous.is_none().then(|| {
             self.apply_save_fixes(fixes, cx);
-            prepare_save_as_in(
+            let (job, in_encoding) = prepare_save_as_in(
                 &mut self.model,
                 path.clone(),
                 line_ending,
                 overwrite,
                 untitled_encoding,
-            )
+            );
+            let undo = undo_at_save(&self.model, Some(&job), cx);
+            (job, in_encoding, undo)
         });
         Self::spawn_save(cx, async move |this, cx| {
             if let Some(previous) = previous {
                 previous.over.await.ok();
             }
             let saved = async {
-                let (job, in_encoding) = match job {
+                let (job, in_encoding, undo_at_save) = match job {
                     Some(job) => job,
                     None => this.update(cx, |view, cx| {
                         view.apply_save_fixes(fixes, cx);
-                        prepare_save_as_in(
+                        let (job, in_encoding) = prepare_save_as_in(
                             &mut view.model,
                             path.clone(),
                             line_ending,
                             overwrite,
                             untitled_encoding,
-                        )
+                        );
+                        let undo = undo_at_save(&view.model, Some(&job), cx);
+                        (job, in_encoding, undo)
                     })?,
                 };
                 let saved = run(job, cx).await.map_err(io::Error::from)?;
                 let written = saved.snapshot().encoding();
+                let saved_text = saved.snapshot().text().clone();
                 // Written, then replaced by another writer: the buffer isn't
                 // what's there, so it stays where it was.
                 let replaced = || {
@@ -670,6 +678,7 @@ impl EditorView {
                         view.model.buffer_mut().set_encoding(written);
                     }
                     view.detect_language(cx);
+                    queue_save_write(view, Some(window), undo_at_save, &saved_text, cx);
                     Ok(())
                 })??;
                 Ok(())
@@ -872,15 +881,20 @@ fn prepare_save_in(model: &mut EditorModel, encoding: Option<FileEncoding>) -> i
 /// ask: the conflict is the error.
 async fn save_asking(
     this: &WeakEntity<EditorView>,
-    job: Option<io::Result<SaveJob>>,
+    job: Option<(io::Result<SaveJob>, Option<UndoAtSave>)>,
     encoding: Option<FileEncoding>,
     window: Option<AnyWindowHandle>,
     cx: &mut AsyncApp,
 ) -> gpui::Result<()> {
-    let job = match job {
+    let (job, undo_at_save) = match job {
         Some(job) => job,
-        None => this.update(cx, |view, _| prepare_save_in(&mut view.model, encoding))?,
-    }?;
+        None => this.update(cx, |view, cx| {
+            let job = prepare_save_in(&mut view.model, encoding);
+            let undo = undo_at_save(&view.model, job.as_ref().ok(), cx);
+            (job, undo)
+        })?,
+    };
+    let job = job?;
     let name = file_name(Some(job.path()));
     let saved_path = job.path().to_owned();
     let saved = match run(job.clone(), cx).await {
@@ -916,10 +930,17 @@ async fn save_asking(
         record_history(
             history,
             saved_path,
-            saved_text,
+            saved_text.clone(),
             Reason::Saved,
             cx.background_executor(),
         );
+    }
+    if recorded {
+        let window = window.map(|window| window.window_id());
+        let saved = &saved_text;
+        this.update(cx, |view, cx| {
+            queue_save_write(view, window, undo_at_save, saved, cx)
+        })?;
     }
     // In an encoding, the buffer keeps its own unless the save is its.
     if let Some(encoding) = encoding
@@ -968,6 +989,544 @@ pub fn set_local_history(cx: &mut App, history: Option<LocalHistory>) {
 /// The installed local history, if any.
 pub fn local_history(cx: &App) -> Option<LocalHistory> {
     cx.try_global::<LocalHistoryGlobal>()?.0.clone()
+}
+
+/// Persistent undo ([`set_undo_store`]): where each file's undo history is
+/// kept, each live editor's buffer and window, each window's
+/// `persistent_undo`, and the writes not yet on disk.
+#[derive(Default)]
+struct UndoPersist {
+    store: Option<UndoStore>,
+    editors: HashMap<EntityId, UndoEditor>,
+    /// Windows given to editors not tracked yet ([`set_editor_window`]):
+    /// GPUI tells of a new editor once the update that made it is over.
+    placed: HashMap<EntityId, WindowId>,
+    windows: HashMap<WindowId, bool>,
+    /// Windows whose setting isn't known yet
+    /// ([`wait_for_window_persistent_undo`]), with the reads their editors
+    /// asked for meanwhile: each a buffer and its file.
+    waiting: HashMap<WindowId, Vec<(BufferId, PathBuf)>>,
+    writes: Arc<UndoWrites>,
+}
+
+impl Global for UndoPersist {}
+
+/// A live editor, as persistent undo knows it.
+struct UndoEditor {
+    buffer: BufferId,
+    /// The window it opened in, or last saved from.
+    window: Option<WindowId>,
+    view: WeakEntity<EditorView>,
+}
+
+/// Each file's newest undo history not yet on disk, shared with the
+/// writers on the background executor. A writer writes whatever is newest
+/// for its file when it runs, so an older capture never lands after a newer
+/// one, and a read for a file opening takes a capture still waiting over
+/// what's on disk. One that fails to write stays waiting.
+#[derive(Default)]
+struct UndoWrites {
+    /// A record to write, or `None` to remove the file's: with the number
+    /// it was captured under, counting up, and the window it was captured
+    /// for.
+    pending: Mutex<HashMap<PathBuf, UndoCapture>>,
+    /// Held by the writer writing, so one file's writes go one at a time.
+    writing: Mutex<()>,
+    next: AtomicU64,
+}
+
+/// A file's undo history waiting to be written; see [`UndoWrites`].
+#[derive(Clone)]
+struct UndoCapture {
+    number: u64,
+    record: Option<UndoRecord>,
+    window: Option<WindowId>,
+}
+
+impl UndoWrites {
+    fn capture(&self, path: PathBuf, record: Option<UndoRecord>, window: Option<WindowId>) {
+        let number = self.next.fetch_add(1, Ordering::Relaxed);
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        let capture = UndoCapture {
+            number,
+            record,
+            window,
+        };
+        pending.insert(path, capture);
+    }
+
+    /// `path`'s capture still waiting, if there is one: `Some(None)` for a
+    /// removal.
+    fn waiting(&self, path: &Path) -> Option<Option<UndoRecord>> {
+        let pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        pending.get(path).map(|capture| capture.record.clone())
+    }
+
+    /// Forgets the captures waiting for windows `keep` turns down: those
+    /// whose window no longer keeps undo history.
+    fn forget_unless(&self, keep: impl Fn(Option<WindowId>) -> bool) {
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        pending.retain(|_, capture| keep(capture.window));
+    }
+
+    /// Writes `path`'s newest capture to `store`, if one is still waiting.
+    fn flush(&self, store: &UndoStore, path: &Path) {
+        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(UndoCapture { number, record, .. }) = self.waiting_numbered(path) else {
+            return;
+        };
+        let written = match &record {
+            Some(record) => store.write(path, record),
+            None => store.remove(path),
+        };
+        if let Err(error) = written {
+            // Kept waiting, so reads still get it, until a newer capture
+            // replaces it or quitting tries again.
+            log::debug!("undo store: writing {}: {error}", path.display());
+            return;
+        }
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        if pending
+            .get(path)
+            .is_some_and(|newest| newest.number == number)
+        {
+            pending.remove(path);
+        }
+    }
+
+    fn waiting_numbered(&self, path: &Path) -> Option<UndoCapture> {
+        let pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        pending.get(path).cloned()
+    }
+
+    /// Writes every capture still waiting, here and now.
+    fn flush_all(&self, store: &UndoStore) {
+        let paths: Vec<PathBuf> = {
+            let pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+            pending.keys().cloned().collect()
+        };
+        for path in paths {
+            self.flush(store, &path);
+        }
+    }
+}
+
+/// Keeps each file's undo history in `store`, or in none: read into a
+/// file's buffer when its first editor opens it, and written after each
+/// save (Save As included) and when the last editor of a clean buffer
+/// closes, and for every clean buffer as the app quits, while the editor's
+/// window has `persistent_undo` on ([`set_window_persistent_undo`]). Only
+/// the app installs one.
+///
+/// The read is off the main thread, and its history is given to the buffer
+/// ([`Buffer::import_undo`]) through whichever of its editors is still open,
+/// only if the buffer has none of its own by then and its text is the one
+/// the history ends at: a file changed outside the editor since starts with
+/// none, and a buffer restored from a hot-exit backup, which holds the
+/// restore as history, gets none. Every editor of the buffer keeps its
+/// selections. A save or close that leaves no history to keep removes the
+/// file's record, unless the buffer never had any history at all.
+///
+/// Writes run on the background executor, newest per file winning; a read
+/// takes a write still waiting over the disk. Quitting writes what's
+/// waiting before the app exits.
+pub fn set_undo_store(cx: &mut App, store: Option<UndoStore>) {
+    let observing = cx.has_global::<UndoPersist>();
+    cx.default_global::<UndoPersist>().store = store;
+    if !observing {
+        cx.observe_new(editor_opened).detach();
+        cx.on_app_quit(|cx| {
+            write_all_on_quit(cx);
+            async {}
+        })
+        .detach();
+    }
+}
+
+/// Has editors in `window` keep their files' undo history if `on`, as its
+/// root's `editor.persistent_undo` says, or, with `None`, as the host's
+/// editor settings ([`set_restore_style`]) say. Reads its editors asked for
+/// while it waited ([`wait_for_window_persistent_undo`]) go ahead.
+pub fn set_window_persistent_undo(window: WindowId, on: Option<bool>, cx: &mut App) {
+    let persist = cx.default_global::<UndoPersist>();
+    match on {
+        Some(on) => persist.windows.insert(window, on),
+        None => persist.windows.remove(&window),
+    };
+    let deferred = persist.waiting.remove(&window).unwrap_or_default();
+    for (buffer, path) in deferred {
+        start_undo_read(buffer, path, cx);
+    }
+}
+
+/// Has editors in `window` read and write no undo history until
+/// [`set_window_persistent_undo`] gives it a setting, for a window whose
+/// root's settings are still loading; reads they ask for meanwhile wait for
+/// it.
+pub fn wait_for_window_persistent_undo(window: WindowId, cx: &mut App) {
+    (cx.default_global::<UndoPersist>().waiting)
+        .entry(window)
+        .or_default();
+}
+
+/// What [`set_window_persistent_undo`] gave `window`.
+pub fn window_persistent_undo(window: WindowId, cx: &App) -> Option<bool> {
+    cx.try_global::<UndoPersist>()?
+        .windows
+        .get(&window)
+        .copied()
+}
+
+/// The installed undo store, if any, while `persistent_undo` is on for
+/// `window`: its own setting, or the host's editor settings.
+fn undo_store_for(window: Option<WindowId>, cx: &App) -> Option<UndoStore> {
+    let persist = cx.try_global::<UndoPersist>()?;
+    if window.is_some_and(|window| persist.waiting.contains_key(&window)) {
+        return None;
+    }
+    let on = match window.and_then(|window| persist.windows.get(&window)) {
+        Some(&on) => on,
+        // A window not known (or given none) is on only if every window
+        // given a setting is, and none waits for one: never on where some
+        // root has it off.
+        None => {
+            (cx.try_global::<RestoreStyle>())
+                .is_none_or(|RestoreStyle(_, settings)| settings.persistent_undo)
+                && persist.windows.values().all(|&on| on)
+                && persist.waiting.is_empty()
+        }
+    };
+    persist.store.clone().filter(|_| on)
+}
+
+/// The window the editor `id` is in: as tracked, or else the one GPUI last
+/// drew it in, which is then tracked.
+fn editor_window(id: EntityId, cx: &mut App) -> Option<WindowId> {
+    if let Some(window) = tracked_editor(id, cx).and_then(|editor| editor.window) {
+        return Some(window);
+    }
+    let window = cx.with_window(id, |window, _| window.window_handle().window_id())?;
+    if let Some(editor) = tracked_editor(id, cx) {
+        editor.window = Some(window);
+    }
+    Some(window)
+}
+
+/// The window of one of `buffer`'s live editors, if one's is known.
+fn buffer_window(buffer: BufferId, cx: &mut App) -> Option<WindowId> {
+    let ids: Vec<EntityId> = (cx.try_global::<UndoPersist>()?.editors.iter())
+        .filter(|(_, editor)| editor.buffer == buffer)
+        .map(|(&id, _)| id)
+        .collect();
+    ids.into_iter().find_map(|id| editor_window(id, cx))
+}
+
+/// Tracks the editor `id` as in `window`: for editors made outside a
+/// window's update, such as restored ones.
+pub fn set_editor_window(id: EntityId, window: WindowId, cx: &mut App) {
+    if !cx.has_global::<UndoPersist>() {
+        return;
+    }
+    let persist = cx.global_mut::<UndoPersist>();
+    match persist.editors.get_mut(&id) {
+        Some(editor) => editor.window = Some(window),
+        None => {
+            persist.placed.insert(id, window);
+        }
+    }
+}
+
+/// Queues `record` as `path`'s undo history, or with `None` the removal of
+/// its record, for a writer on the background executor, on behalf of
+/// `window`.
+fn queue_undo_write(
+    store: UndoStore,
+    path: PathBuf,
+    record: Option<UndoRecord>,
+    window: Option<WindowId>,
+    cx: &App,
+) {
+    let writes = cx.global::<UndoPersist>().writes.clone();
+    writes.capture(path.clone(), record, window);
+    cx.background_spawn(async move { writes.flush(&store, &path) })
+        .detach();
+}
+
+/// Tracks `editor`, and if it's the first of a file's buffer, reads the
+/// file's undo history for the buffer.
+fn editor_opened(
+    editor: &mut EditorView,
+    window: Option<&mut Window>,
+    cx: &mut Context<EditorView>,
+) {
+    let id = cx.entity_id();
+    let window = window.map(|window| window.window_handle().window_id());
+    let buffer = editor.model.buffer().id();
+    let view = cx.weak_entity();
+    let persist = cx.default_global::<UndoPersist>();
+    let window = persist.placed.remove(&id).or(window);
+    let first = !persist
+        .editors
+        .values()
+        .any(|editor| editor.buffer == buffer);
+    persist.editors.insert(
+        id,
+        UndoEditor {
+            buffer,
+            window,
+            view,
+        },
+    );
+    cx.on_release(move |editor, cx| editor_closed(id, editor, cx))
+        .detach();
+    if !first || editor.model.buffer().history_revision() != 0 {
+        return;
+    }
+    let Some(path) = editor.model.path().map(Path::to_owned) else {
+        return;
+    };
+    // Once the update that made the editor is over, which may give it its
+    // window (as restoring does).
+    cx.spawn(async move |_, cx| cx.update(|cx| start_undo_read(buffer, path, cx)))
+        .detach();
+}
+
+/// Reads `path`'s undo history for `buffer` off the main thread, then gives
+/// it to the buffer ([`import_undo_into`]), if its window keeps history;
+/// one whose window waits for its setting reads once it has one.
+fn start_undo_read(buffer: BufferId, path: PathBuf, cx: &mut App) {
+    let window = buffer_window(buffer, cx);
+    if !cx.has_global::<UndoPersist>() {
+        return;
+    }
+    let persist = cx.global_mut::<UndoPersist>();
+    if let Some(deferred) = window.and_then(|window| persist.waiting.get_mut(&window)) {
+        deferred.push((buffer, path));
+        return;
+    }
+    let writes = persist.writes.clone();
+    let Some(store) = undo_store_for(window, cx) else {
+        return;
+    };
+    cx.spawn(async move |cx| {
+        let read = cx.background_spawn({
+            let path = path.clone();
+            async move {
+                match writes.waiting(&path) {
+                    Some(record) => Ok(record),
+                    None => store.read(&path),
+                }
+            }
+        });
+        let record = match read.await {
+            Ok(Some(record)) => record,
+            Ok(None) => return,
+            Err(error) => {
+                log::debug!("undo store: reading {}: {error}", path.display());
+                return;
+            }
+        };
+        cx.update(|cx| import_undo_into(buffer, &path, record, cx));
+    })
+    .detach();
+}
+
+/// Gives `record` to the buffer `buffer` through one of its live editors,
+/// if it's still `path`'s and has no history of its own, keeping each of
+/// its editors' selections.
+fn import_undo_into(buffer: BufferId, path: &Path, record: UndoRecord, cx: &mut App) {
+    let Some(persist) = cx.try_global::<UndoPersist>() else {
+        return;
+    };
+    let editors: Vec<Entity<EditorView>> = (persist.editors.values())
+        .filter(|editor| editor.buffer == buffer)
+        .filter_map(|editor| editor.view.upgrade())
+        .collect();
+    let Some(first) = editors.first().cloned() else {
+        return;
+    };
+    let fresh = {
+        let model = &first.read(cx).model;
+        model.buffer().id() == buffer
+            && model.buffer().history_revision() == 0
+            && model.path() == Some(path)
+    };
+    let window = buffer_window(buffer, cx);
+    if !fresh || undo_store_for(window, cx).is_none() {
+        return;
+    }
+    let states: Vec<_> = (editors.iter())
+        .map(|editor| editor.read(cx).model.selection_state())
+        .collect();
+    let imported = first.update(cx, |editor, _| {
+        editor.model.buffer_mut().import_undo(record)
+    });
+    if let Err(error) = imported {
+        log::debug!("undo store: not restoring {}: {error}", path.display());
+        return;
+    }
+    // No editor made these, so none recorded where their carets go: `u`
+    // and `<C-r>` put one at the start of the text each changes.
+    first.update(cx, |editor, _| {
+        let user = |origin: &fe_buffer::Origin| *origin == fe_buffer::Origin::User;
+        let times = editor.model.buffer().history_times(user);
+        let made = times.into_iter().map(|time| time.transaction);
+        editor.model.put_carets_at_change_start(made);
+    });
+    // The text is as it was, so each editor's selections, primary and
+    // movement goals go back as they were, as though nothing moved them.
+    for (editor, state) in editors.iter().zip(states) {
+        editor.update(cx, |editor, cx| {
+            editor.model.restore_selection_state(state);
+            cx.notify();
+        });
+    }
+}
+
+/// Stops tracking the closed editor `id`, and if it was its buffer's last,
+/// writes the buffer's undo history ([`queue_close_write`]).
+fn editor_closed(id: EntityId, editor: &mut EditorView, cx: &mut App) {
+    if !cx.has_global::<UndoPersist>() {
+        return;
+    }
+    let window = editor_window(id, cx);
+    let persist = cx.global_mut::<UndoPersist>();
+    let Some(closed) = persist.editors.remove(&id) else {
+        return;
+    };
+    if !persist
+        .editors
+        .values()
+        .any(|other| other.buffer == closed.buffer)
+    {
+        queue_close_write(editor, window, cx);
+    }
+}
+
+/// Queues `editor`'s undo history as its file's, if its window keeps it, it
+/// has a file, its buffer is clean (its text is the file's) and has had
+/// history: none left to keep removes the file's record.
+fn queue_close_write(editor: &EditorView, window: Option<WindowId>, cx: &App) {
+    let Some(store) = undo_store_for(window, cx) else {
+        return;
+    };
+    let Some(path) = editor.model.path().map(Path::to_owned) else {
+        return;
+    };
+    let record = {
+        let buffer = editor.model.buffer();
+        if buffer.is_dirty() || buffer.history_revision() == 0 {
+            return;
+        }
+        buffer.export_undo()
+    };
+    queue_undo_write(store, path, record, window, cx);
+}
+
+/// As the app quits: queues the undo history of each clean buffer still
+/// open, then writes everything waiting, before the app exits.
+fn write_all_on_quit(cx: &mut App) {
+    let Some(persist) = cx.try_global::<UndoPersist>() else {
+        return;
+    };
+    let mut buffers = HashSet::new();
+    let open: Vec<(EntityId, Entity<EditorView>)> = (persist.editors.iter())
+        .filter(|(_, editor)| buffers.insert(editor.buffer))
+        .filter_map(|(&id, editor)| Some((id, editor.view.upgrade()?)))
+        .collect();
+    for (id, editor) in open {
+        let window = editor_window(id, cx);
+        queue_close_write(editor.read(cx), window, cx);
+    }
+    // What was captured for a window that has since turned it off, or
+    // waits for its setting, isn't written.
+    let persist = cx.global::<UndoPersist>();
+    persist
+        .writes
+        .forget_unless(|window| undo_store_for(window, cx).is_some());
+    if let Some(store) = &persist.store {
+        persist.writes.flush_all(store);
+    }
+}
+
+/// A buffer's undo history as a save's snapshot was prepared, for
+/// [`queue_save_write`].
+struct UndoAtSave {
+    /// [`Buffer::history_revision`] then.
+    revision: u64,
+    record: Option<UndoRecord>,
+}
+
+/// `model`'s undo history as `job` is prepared from it, while there's an
+/// undo store; `None` if the buffer had none, or there's no job.
+fn undo_at_save(model: &EditorModel, job: Option<&SaveJob>, cx: &App) -> Option<UndoAtSave> {
+    let job = job?;
+    cx.try_global::<UndoPersist>()?.store.as_ref()?;
+    let buffer = model.buffer();
+    (buffer.version() == job.snapshot().version() && buffer.history_revision() != 0).then(|| {
+        UndoAtSave {
+            revision: buffer.history_revision(),
+            record: buffer.export_undo(),
+        }
+    })
+}
+
+/// After a save of `saved` (the text written) from `window`, if any,
+/// queues the buffer's undo history as its file's: as it is now if the
+/// buffer is clean (`at_save`'s, if the history hasn't changed since),
+/// else `at_save`'s, if that ends at the text saved. No history left to
+/// keep removes the file's record, unless the buffer never had any.
+fn queue_save_write(
+    view: &EditorView,
+    window: Option<WindowId>,
+    at_save: Option<UndoAtSave>,
+    saved: &Text,
+    cx: &mut Context<EditorView>,
+) {
+    let id = cx.entity_id();
+    if let Some(window) = window {
+        set_editor_window(id, window, cx);
+    }
+    let window = window.or_else(|| editor_window(id, cx));
+    let Some(store) = undo_store_for(window, cx) else {
+        return;
+    };
+    let Some(path) = view.model.path().map(Path::to_owned) else {
+        return;
+    };
+    let record = {
+        let buffer = view.model.buffer();
+        if buffer.history_revision() == 0 {
+            return;
+        }
+        match at_save {
+            Some(at_save)
+                if !buffer.is_dirty() && at_save.revision == buffer.history_revision() =>
+            {
+                at_save.record
+            }
+            _ if !buffer.is_dirty() => buffer.export_undo(),
+            Some(UndoAtSave {
+                record: Some(record),
+                ..
+            }) if record.text_len == saved.len() as u64
+                && record.text_hash == fe_buffer::undo_store::text_hash(saved) =>
+            {
+                Some(record)
+            }
+            Some(UndoAtSave { record: None, .. }) => None,
+            _ => return,
+        }
+    };
+    queue_undo_write(store, path, record, window, cx);
+}
+
+/// The persistent-undo entry of the live editor `id`.
+fn tracked_editor(id: EntityId, cx: &mut App) -> Option<&mut UndoEditor> {
+    if !cx.has_global::<UndoPersist>() {
+        return None;
+    }
+    cx.global_mut::<UndoPersist>().editors.get_mut(&id)
 }
 
 /// Runs `job` on the background executor.
@@ -1209,6 +1768,9 @@ impl PaneItem for EditorView {
                     view
                 });
                 view.update(cx, |view, cx| place_caret(view, &state, cx));
+                // Made outside the window's update: its undo history is
+                // kept as the window's setting says.
+                set_editor_window(view.entity_id(), window, cx);
                 if let Some(backup) = backup {
                     adopt_backup(&view, backup, cx);
                 }
@@ -1803,3 +2365,56 @@ mod indent_status_tests;
 #[cfg(test)]
 #[path = "vim_mode_status_tests.rs"]
 mod vim_mode_status_tests;
+
+#[cfg(test)]
+mod undo_writes_tests {
+    use std::path::Path;
+
+    use fe_buffer::{Buffer, Origin, UndoStore};
+
+    use super::UndoWrites;
+
+    fn record(text: &str) -> fe_buffer::UndoRecord {
+        let mut buffer = Buffer::new("");
+        buffer.edit([(0..0, text)], Origin::User);
+        buffer.export_undo().unwrap()
+    }
+
+    /// Two captures, their writers running newest first: the older one,
+    /// running last, finds nothing to write, so the newer stays on disk.
+    #[test]
+    fn an_older_writer_running_last_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = UndoStore::new(dir.path().join("undo"));
+        let path = dir.path().join("a.txt");
+        let writes = UndoWrites::default();
+        let new = record("new");
+        writes.capture(path.clone(), Some(record("old")), None);
+        writes.capture(path.clone(), Some(new.clone()), None);
+        assert_eq!(writes.waiting(&path), Some(Some(new.clone())));
+        writes.flush(&store, &path);
+        writes.flush(&store, &path);
+        assert_eq!(writes.waiting(&path), None);
+        assert_eq!(store.read(&path).unwrap(), Some(new));
+    }
+
+    /// A capture that can't be written stays waiting, for reads and the
+    /// next try.
+    #[test]
+    fn a_failed_write_stays_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("blocked");
+        std::fs::write(&blocked, "a file, not a directory").unwrap();
+        let store = UndoStore::new(blocked.join("undo"));
+        let path = Path::new("/a.txt");
+        let writes = UndoWrites::default();
+        let kept = record("kept");
+        writes.capture(path.to_owned(), Some(kept.clone()), None);
+        writes.flush(&store, path);
+        assert_eq!(writes.waiting(path), Some(Some(kept.clone())));
+        let good = UndoStore::new(dir.path().join("undo"));
+        writes.flush_all(&good);
+        assert_eq!(writes.waiting(path), None);
+        assert_eq!(good.read(path).unwrap(), Some(kept));
+    }
+}

@@ -32,6 +32,9 @@
 //!   restores one, dirty over the file's current text.
 //! - [`LocalHistory`] keeps past texts of each file on disk, by path, newest
 //!   first, bounded by count, age and total size; see [`local_history`].
+//! - [`UndoStore`] keeps each file's undo history on disk between opens, as
+//!   [`Buffer::export_undo`] takes it and [`Buffer::import_undo`] gives it
+//!   back to a buffer holding the same text; see [`undo_store`].
 //!
 //! This crate must never depend on GPUI.
 
@@ -46,6 +49,7 @@ mod provenance;
 mod selection;
 mod snapshot;
 mod stream;
+pub mod undo_store;
 
 pub use backup::{Backup, BackupId, BackupMeta, BackupStore, ParseBackupIdError};
 pub use buffer::{
@@ -64,6 +68,7 @@ pub use provenance::{Author, Provenance};
 pub use selection::{ResolvedSelection, Selection, SelectionSet};
 pub use snapshot::{Anchor, BufferId, BufferSnapshot, Version};
 pub use stream::{EditStream, StreamError};
+pub use undo_store::{UndoImportError, UndoRecord, UndoStore};
 
 #[cfg(test)]
 mod tests;

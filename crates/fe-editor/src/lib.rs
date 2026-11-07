@@ -4,7 +4,7 @@
 
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
@@ -957,6 +957,70 @@ impl EditorModel {
         self.replace_selections(set);
     }
 
+    /// The selections as offsets, with what moving them keeps (which is
+    /// primary, the columns vertical moves aim for, a box selection under
+    /// way) and the cursor history's earlier selections, for
+    /// [`EditorModel::restore_selection_state`].
+    pub fn selection_state(&self) -> SelectionState {
+        let selections = self.selections();
+        let primary = self.primary_selection();
+        let primary = selections
+            .iter()
+            .position(|selection| *selection == primary);
+        SelectionState {
+            selections,
+            primary,
+            goals: self.goals.clone(),
+            column_box: self.column_box.clone(),
+            cursor_history: self.cursor_history.resolve(&self.snapshot),
+        }
+    }
+
+    /// Puts back `state`, taken from this model, once the buffer is back at
+    /// the text it had then, after edits that took it away and back (as
+    /// [`Buffer::import_undo`] makes): catches up with the buffer, then
+    /// selects the same offsets, with the same primary, goals and box
+    /// selection (which goes on from the text as it is now), and puts the
+    /// cursor history's earlier selections back at their offsets, without
+    /// ending a run of typing or recording cursor history, as though the
+    /// edits never moved them. A state from a text of another length is
+    /// ignored.
+    pub fn restore_selection_state(&mut self, state: SelectionState) {
+        self.refresh();
+        let len = self.text().len();
+        if state
+            .selections
+            .iter()
+            .any(|selection| selection.range.end > len)
+        {
+            return;
+        }
+        self.selections = match state.primary {
+            Some(ix) => {
+                SelectionSet::from_resolved_with_primary(&self.snapshot, state.selections, ix)
+            }
+            None => SelectionSet::from_resolved(&self.snapshot, state.selections),
+        };
+        self.goals = state.goals;
+        let version = self.snapshot.version();
+        self.column_box = (state.column_box).map(|column_box| column_box.at_version(version));
+        self.cursor_history =
+            cursor_history::CursorHistory::anchored(state.cursor_history, &self.snapshot);
+    }
+
+    /// Has undoing and redoing each of `transactions`, from this model or
+    /// any other of its buffer, put one caret at the start of the text it
+    /// changes (the first edit of the batch it ends with), rather than one
+    /// at the end of each edit: for transactions no editor made, as an
+    /// undo history read from disk.
+    pub fn put_carets_at_change_start(
+        &mut self,
+        transactions: impl IntoIterator<Item = TransactionId>,
+    ) {
+        let mut history = self.history.borrow_mut();
+        history.change_start_carets.extend(transactions);
+    }
+
     fn replace_selections(&mut self, selections: SelectionSet) {
         self.end_typing();
         self.goals.clear();
@@ -1457,7 +1521,8 @@ impl EditorModel {
         self.end_typing();
         let ours = &self.origin;
         let result = self.buffer.borrow_mut().undo(|origin| origin == ours);
-        let pick = self.caret_pick(&result).and_then(|pick| pick.undo);
+        let pick = (self.caret_pick(&result).and_then(|pick| pick.undo))
+            .or_else(|| self.change_start(&result));
         let starts = self.typing_starts(&result);
         self.place_carets_after_history_change(EditKind::Undo, pick, starts);
         self.produced(result)
@@ -1468,7 +1533,8 @@ impl EditorModel {
         self.end_typing();
         let ours = &self.origin;
         let result = self.buffer.borrow_mut().redo(|origin| origin == ours);
-        let pick = self.caret_pick(&result).and_then(|pick| pick.redo);
+        let pick = (self.caret_pick(&result).and_then(|pick| pick.redo))
+            .or_else(|| self.change_start(&result));
         self.place_carets_after_history_change(EditKind::Redo, pick, None);
         self.produced(result)
     }
@@ -1480,6 +1546,23 @@ impl EditorModel {
             return None;
         };
         self.history.borrow().caret_picks.get(id).copied()
+    }
+
+    /// For a transaction [`EditorModel::put_carets_at_change_start`] named,
+    /// a caret at the start of the first edit of the batch it ends with.
+    fn change_start(&self, result: &Result<Option<TransactionId>, UndoError>) -> Option<CaretAt> {
+        let Ok(Some(id)) = result else {
+            return None;
+        };
+        self.history
+            .borrow()
+            .change_start_carets
+            .contains(id)
+            .then_some(CaretAt {
+                edit: 0,
+                count: CaretAt::ANY,
+                offset: 0,
+            })
     }
 
     /// Where the run of deletes `result` undid began, if its carets are
@@ -1580,7 +1663,10 @@ impl EditorModel {
             let snapshot = self.buffer.borrow().snapshot();
             let heads: Vec<usize> = match pick {
                 _ if starts.is_some() => starts.unwrap_or_default(),
-                Some(at) if edits.len() == at.count => {
+                Some(at)
+                    if (edits.len() == at.count || at.count == CaretAt::ANY)
+                        && at.edit < edits.len() =>
+                {
                     let new = &edits[at.edit].new;
                     vec![(new.start + at.offset).min(new.end)]
                 }
@@ -1784,6 +1870,11 @@ pub(crate) struct CaretAt {
     pub(crate) offset: usize,
 }
 
+impl CaretAt {
+    /// A `count` that matches a batch with any number of edits.
+    pub(crate) const ANY: usize = usize::MAX;
+}
+
 /// The shared buffer, borrowed for editing by [`EditorModel::buffer_mut`].
 /// Dropping it catches the model up with the edits made through it.
 pub struct BufferMut<'a> {
@@ -1829,6 +1920,17 @@ impl Drop for BufferMut<'_> {
         );
         self.events.drain();
     }
+}
+
+/// An [`EditorModel`]'s selections and what moving them keeps; see
+/// [`EditorModel::selection_state`].
+#[derive(Clone, Debug)]
+pub struct SelectionState {
+    selections: Vec<ResolvedSelection>,
+    primary: Option<usize>,
+    goals: Vec<Option<usize>>,
+    column_box: Option<column_select::ColumnBox>,
+    cursor_history: cursor_history::ResolvedHistory,
 }
 
 /// The [`DiagnosticSet`] in `slot`, made afresh if there's none or it's
@@ -1906,6 +2008,9 @@ struct History {
     /// given one: accepted completions. Kept while the buffer lives, a few
     /// words each: fe-buffer doesn't say when it drops a transaction.
     caret_picks: HashMap<TransactionId, CaretPick>,
+    /// Transactions whose undo and redo put one caret at the start of the
+    /// text they change ([`EditorModel::put_carets_at_change_start`]).
+    change_start_carets: HashSet<TransactionId>,
     /// For runs of typing that delete: the carets when the run began, where
     /// undoing it puts them back, since the restored text ends after a
     /// forward delete's caret. Each is an offset in the text of the version
@@ -1940,6 +2045,7 @@ impl History {
             batches: VecDeque::new(),
             models: Vec::new(),
             caret_picks: HashMap::new(),
+            change_start_carets: HashSet::new(),
             typing_starts: HashMap::new(),
             save_marks: 0,
             stamped: None,
