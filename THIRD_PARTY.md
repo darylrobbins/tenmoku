@@ -232,6 +232,7 @@ licence. No module is committed.
 | haskell | `tree-sitter-haskell.wasm` | https://github.com/tree-sitter/tree-sitter-haskell at `97288e585b0bd44199720280d067fa35bacd81ff` | MIT; `highlights.scm` and `injections.scm` are upstream's `queries/`, adapted as their headers say |
 | zig | `tree-sitter-zig.wasm` | [tree-sitter-grammars/tree-sitter-zig](https://github.com/tree-sitter-grammars/tree-sitter-zig) at `6479aa13f32f701c383083d8b28360ebd682fb7d` | MIT; `highlights.scm` is adapted from the repository's own `queries/highlights.scm` at that commit (same licence) |
 | elixir | `tree-sitter-elixir.wasm` | https://github.com/elixir-lang/tree-sitter-elixir at `cb32ccbe17c67037b09e31bf9beb22cdae6ed8e9` | Apache-2.0 (with upstream's `NOTICE`); `highlights.scm` and `injections.scm` are upstream's queries, adapted |
+| elm | `tree-sitter-elm.wasm` | https://github.com/elm-tooling/tree-sitter-elm `e1e8fea161a1e66f3997855d316be2a43e4e956f` | MIT; `highlights.scm` is the grammar's own query, adapted: captures renamed to fe-syntax's vocabulary, GLSL injection dropped |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

@@ -1,0 +1,7 @@
+git = "https://github.com/elm-tooling/tree-sitter-elm"
+# The full 40-hex commit.
+rev = "e1e8fea161a1e66f3997855d316be2a43e4e956f"
+# The directory holding parser.c, relative to the repository.
+src = "src"
+# The export tree_sitter_<grammar>.
+grammar = "elm"
