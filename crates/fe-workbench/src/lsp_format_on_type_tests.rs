@@ -452,6 +452,7 @@ fn vim_puts_count_the_register_rows_not_their_line_breaks(cx: &mut TestAppContex
 }
 
 /// Middle-clicks `editor` at byte `offset`, pasting the primary selection.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn middle_click(s: &mut Lsp, editor: &Entity<EditorView>, offset: usize) {
     let caret =
         s.cx.update(|_, cx| editor.update(cx, |view, _| view.caret_bounds_at(offset)));
@@ -463,6 +464,8 @@ fn middle_click(s: &mut Lsp, editor: &Entity<EditorView>, offset: usize) {
     s.draw();
 }
 
+/// GPUI has a primary selection on Linux and FreeBSD only.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[gpui::test]
 fn middle_click_pastes_format_and_linked_mirrors_do_not_count(cx: &mut TestAppContext) {
     let start = "fn main() {\n}\n";

@@ -89,7 +89,7 @@ fegroup <leader>g git icon=git-branch
 fegroup <leader>gh hunks icon=file-diff
 fegroup <leader>q quit/session icon=log-out
 fegroup <leader>s search icon=search
-fegroup <leader>t test
+fegroup <leader>t test icon=flask-conical
 fegroup <leader>u ui icon=toggle-right
 fegroup <leader>w windows icon=app-window
 fegroup <leader>x diagnostics/quickfix icon=triangle-alert

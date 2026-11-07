@@ -102,6 +102,7 @@ fn every_named_group_has_an_icon() {
             ("hunks", "file-diff"),
             ("quit/session", "log-out"),
             ("search", "search"),
+            ("test", "flask-conical"),
             ("ui", "toggle-right"),
             ("windows", "app-window"),
             ("diagnostics/quickfix", "triangle-alert"),

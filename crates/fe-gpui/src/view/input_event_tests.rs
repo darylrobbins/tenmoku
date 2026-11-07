@@ -306,6 +306,8 @@ fn a_paste_is_its_own_text_not_a_snippet_mirror(cx: &mut TestAppContext) {
     );
 }
 
+/// GPUI has a primary selection on Linux and FreeBSD only.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[gpui::test]
 fn a_middle_click_paste_is_heard(cx: &mut TestAppContext) {
     let (view, cx, heard) = editor(cx, "fn f() {\n}\n", false);
