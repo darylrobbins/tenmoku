@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_vim"
+name = "Vim script syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "vim"
+wasm = "tree-sitter-vim.wasm"
+extensions = ["vim", "vimrc"]
+file_names = ["vimrc", ".vimrc", "_vimrc", ".gvimrc", ".exrc"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "\""
+license = "MIT"
