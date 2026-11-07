@@ -418,6 +418,19 @@ with capabilities granted by the app.
 - Plugins run on their own wasmtime `Engine` (tree-sitter's lives inside its C
   API), sharing the one wasmtime crate version through feature unification.
 
+### Stage 2 decisions (user, 2026-11-03)
+
+- Plugins ship as a **preview behind `extensions.plugins_preview`** (default
+  off). The supported path is declarative extensions.
+- The WIT is **unstable at @1.0.0** (`kiln:extension` and `fastedit:editor`)
+  until language-feature and UI imports exist; incompatible changes may come in
+  any release.
+- Trust for the preview is **local unsigned installs plus the grant prompts**;
+  no signing or registry yet.
+- **No separate Lua or scripting layer**, which settles the mlua option below.
+
+Author guide: `docs/plugins/authoring.md`.
+
 ### VS Code extension risks and this design's answer
 
 | VS Code risk | This design |
@@ -430,6 +443,10 @@ with capabilities granted by the app.
 | Extensions read the app's environment and tokens | Plugins never see the app's environment; per-plugin host-held secrets (decision 5). |
 
 ### Versioning
+
+*Preview (2026-11-03):* until the WIT is declared stable, the package versions
+stay @1.0.0 and may change incompatibly; the adapters below apply from
+stabilization on.
 
 WIT packages carry semver; the manifest's `engine` names the API it needs; the
 host keeps each supported older minor's world through adapters, and a major can
@@ -450,9 +467,8 @@ the Lua/LuaJIT it vendors are MIT, to be checked with `cargo deny` if adopted).
 
 **Recommendation: WASM components.** fastedit will run code from people the
 user didn't write, including the product's own AI features, and only WASM bounds
-that by construction with a typed, versioned contract. mlua stays an option for
-a later, separate user-scripting layer (the user's own `init.lua` with the
-user's rights), if users ask for it.
+that by construction with a typed, versioned contract. *Settled 2026-11-03:* no
+separate Lua or scripting layer; mlua is not adopted.
 
 ## 8. Out of scope
 
@@ -490,7 +506,9 @@ store and escalation; install prompt and combination warnings; host-side
 dispatch authorization; commands; events; editor read and edit; decorations,
 gutter and status items; filesystem and process spawn; network; per-plugin
 secrets; versioning adapters; compiled-component cache; running granted
-plugins in the app; management surface (list, uninstall, revoke).
+plugins in the app; management surface (list, uninstall, revoke). Since
+2026-11-03: plugins ship as a preview behind `extensions.plugins_preview`;
+the author guide, `docs/plugins/authoring.md`, is written (T1352).
 
 ## 11. Corrections to the spec's draft
 
