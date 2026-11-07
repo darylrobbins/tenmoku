@@ -565,15 +565,29 @@ fn a_plugin_that_falls_behind_never_slows_typing(cx: &mut TestAppContext) {
     assert_eq!(inbox.len(), 1, "`b.txt` opened");
 
     let typed = "x".repeat(1000);
-    let started = Instant::now();
+    let delivered_before = inbox.deliveries().len();
+    let pushed_before = changes(&inbox).len();
+    // No clock: a plugin that took nothing while all this was typed and
+    // applied cannot have slowed it, however loaded the machine is.
     cx.simulate_input(window.into(), &typed);
-    let took = started.elapsed();
     draw(cx, window);
     assert_eq!(
         b.read_with(cx, |editor, _| editor.model().buffer().text().to_string()),
         format!("{typed}beta\n")
     );
-    assert!(took < Duration::from_secs(20), "typing took {took:?}");
+    assert_eq!(
+        inbox.deliveries().len(),
+        delivered_before,
+        "it took nothing"
+    );
+    let pushed = changes(&inbox);
+    assert_eq!(pushed.len() - pushed_before, 1000, "a change per keystroke");
+    assert!(
+        pushed[pushed_before..]
+            .iter()
+            .all(|change| change.buffer == b_id)
+    );
+    assert_eq!(pushed.last().map(|change| change.version), Some(1001));
     assert_eq!(inbox.len(), 1, "bounded");
 
     inbox.hold(false);
