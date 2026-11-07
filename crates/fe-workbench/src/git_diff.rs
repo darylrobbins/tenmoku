@@ -387,8 +387,6 @@ pub(super) fn host_command(
         }
         HostCommand::Explore
         | HostCommand::OldFiles
-        | HostCommand::OpenProblems
-        | HostCommand::CloseProblems
         | HostCommand::ReplaceInFiles { .. }
         | HostCommand::Pick(_)
         | HostCommand::Buffer(_)

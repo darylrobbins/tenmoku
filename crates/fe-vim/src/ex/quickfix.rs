@@ -22,9 +22,15 @@
 //!   the line as it was typed: the commands that fill a list. The host
 //!   splits `:vimgrep`'s with [`QuickfixAction::parse_vimgrep`].
 //!
-//! `:cope[n]`, `:ccl[ose]`, `:lop[en]` and `:lcl[ose]` are the host's
-//! [`HostCommand::OpenProblems`] and [`HostCommand::CloseProblems`]
-//! (`ex.rs`).
+//! - `:[N]cope[n] [N]`, `:cw[indow] [N]`, `:lop[en]` and `:lw[indow]`:
+//!   the list's window shown and focused ([`QuickfixAction::Open`]); the
+//!   host has a panel in its place, so the height is read and dropped, and
+//!   any range is accepted, as nvim accepts one. `:cwindow` is `:copen`
+//!   here, as the panel shows an empty list as one with items.
+//! - `:ccl[ose]` and `:lcl[ose]`: the window hidden, if shown
+//!   ([`QuickfixAction::Close`]), with no range or argument.
+//!
+//! Neither takes a `!` (E477), unlike the commands that move.
 //!
 //! A count is `N` after the name or a range of one number before it, 1
 //! with neither (and for a range of 0, as nvim moves one item then); with
@@ -86,6 +92,10 @@ pub enum QuickfixAction {
     VimGrep(String),
     /// `:mak[e] [args]`: `args` as typed.
     Make(String),
+    /// `:cope[n]` and `:cw[indow]`: the list shown, and focused.
+    Open,
+    /// `:ccl[ose]`: the list hidden, if shown.
+    Close,
 }
 
 /// Which quickfix command a name is.
@@ -104,6 +114,8 @@ pub(super) enum Kind {
     Grep,
     VimGrep,
     Make,
+    Open,
+    Close,
 }
 
 /// The quickfix command `name` abbreviates, and whether it is an `:l`
@@ -137,6 +149,10 @@ pub(super) fn kind(name: &str) -> Option<(Kind, bool)> {
         _ if is("lvimgrep", 2) => (Kind::VimGrep, true),
         _ if is("make", 3) => (Kind::Make, false),
         _ if is("lmake", 4) => (Kind::Make, true),
+        _ if is("copen", 4) || is("cwindow", 2) => (Kind::Open, false),
+        _ if is("lopen", 3) || is("lwindow", 2) => (Kind::Open, true),
+        _ if is("cclose", 3) => (Kind::Close, false),
+        _ if is("lclose", 3) => (Kind::Close, true),
         _ => return None,
     })
 }
@@ -148,6 +164,9 @@ pub(super) fn parse(
     range: &[Address],
     after: &str,
 ) -> Result<ExCommand, ExError> {
+    if matches!(kind, Kind::Open | Kind::Close) && after.starts_with('!') {
+        return Err(ExError::NoBang);
+    }
     let after = after.strip_prefix('!').unwrap_or(after);
     let action = match kind {
         Kind::Grep | Kind::VimGrep | Kind::Make => {
@@ -181,9 +200,18 @@ pub(super) fn parse(
     })))
 }
 
-/// A navigating or listing command `kind`, with `range` before it and
-/// `args`, trimmed and uncommented, after it.
+/// A navigating, listing, opening or closing command `kind`, with `range`
+/// before it and `args`, trimmed and uncommented, after it.
 fn navigation(kind: Kind, range: &[Address], args: &str) -> Result<QuickfixAction, ExError> {
+    match kind {
+        // A height, checked as nvim checks it, for a window the host
+        // hasn't: any range is one too.
+        Kind::Open => return count(args).map(|_| QuickfixAction::Open),
+        Kind::Close if !range.is_empty() => return Err(ExError::NoRange),
+        Kind::Close if !args.is_empty() => return Err(ExError::Trailing(args.to_string())),
+        Kind::Close => return Ok(QuickfixAction::Close),
+        _ => {}
+    }
     if kind == Kind::List {
         if !range.is_empty() {
             return Err(ExError::NoRange);
@@ -327,21 +355,59 @@ fn pattern_end(body: &str, delimiter: char) -> Option<usize> {
 
 /// The length of a collection's body after its `[`, up to and with its
 /// `]`: a `^` first, then a `]` or `-` first, are members, and `\` escapes
-/// the char after it. None if it never closes.
+/// the char after it. A `[:name:]` class, a `[=x=]` or `[.x.]` member and,
+/// as the host's regex reads them, a nested `[…]` set are members whole, so
+/// a `]` or delimiter in one doesn't end the collection; a `[` opening
+/// none of them, or nested [`NESTING`] deep, is a plain member. None if it
+/// never closes, as it can't once a set in it doesn't.
 fn collection_len(after: &str) -> Option<usize> {
-    let mut chars = after.char_indices().peekable();
-    chars.next_if(|&(_, ch)| ch == '^');
-    chars.next_if(|&(_, ch)| ch == ']' || ch == '-');
-    while let Some((ix, ch)) = chars.next() {
-        match ch {
-            ']' => return Some(ix + 1),
-            '\\' => {
-                chars.next();
-            }
-            _ => {}
-        }
+    nested_len(after, 0)
+}
+
+/// How deep sets nest before a `[` is a plain member: bounds the
+/// recursion.
+const NESTING: usize = 32;
+
+/// [`collection_len`] of a set nested `depth` deep.
+fn nested_len(after: &str, depth: usize) -> Option<usize> {
+    let mut ix = 0;
+    let first = |ix: usize| after[ix..].chars().next();
+    if first(ix) == Some('^') {
+        ix += 1;
+    }
+    if matches!(first(ix), Some(']' | '-')) {
+        ix += 1;
+    }
+    while let Some(ch) = first(ix) {
+        let next = ix + ch.len_utf8();
+        ix = match ch {
+            ']' => return Some(next),
+            '\\' => first(next).map_or(next, |ch| next + ch.len_utf8()),
+            '[' => match class_len(&after[next..]) {
+                Some(len) => next + len,
+                // An unclosed nested set reached the end: so would this.
+                None if depth < NESTING => next + nested_len(&after[next..], depth + 1)?,
+                None => next,
+            },
+            _ => next,
+        };
     }
     None
+}
+
+/// The length of `:name:]`, `=x=]` or `.x.]` at the start of `after`, if
+/// it starts with one.
+fn class_len(after: &str) -> Option<usize> {
+    let mut chars = after.chars();
+    let end = match chars.next()? {
+        ':' => after[1..]
+            .find(|ch: char| !ch.is_ascii_alphabetic())
+            .filter(|&name| name > 0)?,
+        '=' | '.' => chars.next()?.len_utf8(),
+        _ => return None,
+    } + 1;
+    let close = [&after[..1], "]"].concat();
+    after[end..].starts_with(&close).then_some(end + 2)
 }
 
 /// `text` split at blanks not escaped by `\`, each word as typed.

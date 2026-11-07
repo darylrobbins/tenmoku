@@ -51,6 +51,10 @@ const TABLE: &[(&str, &str)] = &[
     ("<leader>tt", "tests.run_file"),
     ("<leader>tl", "tests.rerun_last"),
     ("<leader>xx", "problems.show"),
+    ("<leader>xq", "quickfix.toggle"),
+    ("<leader>xl", "location.toggle"),
+    ("]q", "quickfix.next"),
+    ("[q", "quickfix.previous"),
     ("<leader>-", "pane.split_down"),
     ("<leader><Bar>", "pane.split_right"),
     ("<leader>wd", "pane.close"),
@@ -145,7 +149,7 @@ fn listed_but_mapped(listed: &[String], text: &str) -> Vec<String> {
 #[test]
 fn unmapped_keys_are_listed_and_absent() {
     let listed = unmapped();
-    assert_eq!(listed.len(), 14, "{listed:?}");
+    assert_eq!(listed.len(), 12, "{listed:?}");
     assert_eq!(
         listed_but_mapped(&listed, preset().text),
         Vec::<String>::new()

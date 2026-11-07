@@ -1379,6 +1379,30 @@ impl Workbench {
         self.run_typed_quickfix(action, false, cx.window, cx.cx);
     }
 
+    /// Quickfix: Show List
+    #[command(id = "quickfix.show")]
+    fn quickfix_show(&mut self, cx: &mut Cx<Self>) {
+        self.show_quickfix_panel(false, None, cx.window, cx.cx);
+    }
+
+    /// Quickfix: Toggle List
+    #[command(id = "quickfix.toggle")]
+    fn quickfix_toggle(&mut self, cx: &mut Cx<Self>) {
+        self.toggle_quickfix_panel(false, cx.window, cx.cx);
+    }
+
+    /// Location List: Show List
+    #[command(id = "location.show")]
+    fn location_show(&mut self, cx: &mut Cx<Self>) {
+        self.show_quickfix_panel(true, None, cx.window, cx.cx);
+    }
+
+    /// Location List: Toggle List
+    #[command(id = "location.toggle")]
+    fn location_toggle(&mut self, cx: &mut Cx<Self>) {
+        self.toggle_quickfix_panel(true, cx.window, cx.cx);
+    }
+
     /// Location List: Next Item
     #[command(id = "location.next")]
     fn location_next(&mut self, cx: &mut Cx<Self>) {

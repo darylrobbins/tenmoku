@@ -1481,8 +1481,8 @@ command = "diagnostics.previous"
 context = "editor && vim.mode == normal && !vim.pending"
 
 # Neovim 0.11's unimpaired defaults: `]b` and `[b` step through the open
-# tabs as buffers, `]q` and `[q` through the Problems list, which stands in
-# for quickfix. The first and last (`[B`, `]Q`) have no commands.
+# tabs as buffers, `]q` and `[q` through the quickfix list (`:cnext`,
+# `:cprevious`). The first and last (`[B`, `]Q`) aren't bound.
 [[bindings]]
 keys = "] b"
 command = "workbench.next_tab"
@@ -1495,12 +1495,12 @@ context = "editor && vim.mode == normal && !vim.pending"
 
 [[bindings]]
 keys = "] q"
-command = "diagnostics.next"
+command = "quickfix.next"
 context = "editor && vim.mode == normal && !vim.pending"
 
 [[bindings]]
 keys = "[ q"
-command = "diagnostics.previous"
+command = "quickfix.previous"
 context = "editor && vim.mode == normal && !vim.pending"
 
 # The Problems panel's list, when it has focus; with vim on, `j` and `k` too.

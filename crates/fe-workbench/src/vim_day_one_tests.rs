@@ -1,13 +1,13 @@
 //! The day-one features' ex commands on the status bar's line: `:Ex`
 //! reveals the editor's file in the project tree, `:copen` and `:cclose`
-//! show and hide the Problems panel, `:oldfiles` opens Open Recent and
-//! `:Replace` runs the project search's Replace All.
+//! show and hide the Quickfix List panel (no longer Problems), `:oldfiles`
+//! opens Open Recent and `:Replace` runs the project search's Replace All.
 
 use gpui::{Focusable as _, TestAppContext, VisualTestContext};
 
 use super::super::recent_picker::set_recent_file;
 use super::super::vim_host_tests::{active, draw, ex, message, window, write};
-use crate::dock::DockPanel;
+use crate::dock::{DockOp, DockPanel};
 use crate::workbench::Palette;
 
 fn focused(handle: &impl gpui::Focusable, cx: &mut VisualTestContext) -> bool {
@@ -27,12 +27,15 @@ fn explore_and_problems(cx: &mut TestAppContext) {
     let panel = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
 
     // The tree, from the dock hidden: focused, with a.txt revealed and
-    // selected.
+    // selected. `:cclose` leaves Problems, which isn't the quickfix list.
     cx.update(|window, cx| dock.update(cx, |dock, cx| dock.show(DockPanel::Problems, window, cx)));
     cx.update(|window, cx| window.focus(&a.focus_handle(cx), cx));
     draw(cx);
     assert!(dock.read_with(cx, |dock, _| dock.is_visible()));
     ex("cclose", cx);
+    draw(cx);
+    assert!(dock.read_with(cx, |dock, _| dock.is_visible()));
+    cx.update(|window, cx| dock.update(cx, |dock, cx| dock.run(DockOp::Toggle, window, cx)));
     draw(cx);
     assert!(!dock.read_with(cx, |dock, _| dock.is_visible()));
     let selected = |cx: &mut VisualTestContext| {
@@ -58,18 +61,18 @@ fn explore_and_problems(cx: &mut TestAppContext) {
     assert_eq!(selected(cx).as_deref(), Some("a.txt"));
     assert_eq!(message(&workbench, cx), None);
 
-    // :copen from the editor: Problems shown, focused.
+    // :copen from the editor: the quickfix list shown, focused.
     cx.update(|window, cx| window.focus(&a.focus_handle(cx), cx));
     draw(cx);
     ex("copen", cx);
     draw(cx);
-    let problems = dock.read_with(cx, |dock, _| dock.problems().clone());
+    let quickfix = dock.read_with(cx, |dock, _| dock.quickfix().cloned().expect("made"));
     assert!(dock.read_with(cx, |dock, _| dock.is_visible()));
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
-        DockPanel::Problems
+        DockPanel::Quickfix
     );
-    assert!(focused(&problems, cx));
+    assert!(focused(&quickfix, cx));
 
     // :cclose hides it, the editor keeping focus.
     cx.update(|window, cx| window.focus(&a.focus_handle(cx), cx));
@@ -92,11 +95,16 @@ fn explore_and_problems(cx: &mut TestAppContext) {
         dock.read_with(cx, |dock, _| dock.active()),
         DockPanel::Explorer
     );
+    // The pane has no location list: nvim's E776, and nothing shown.
     ex("lop", cx);
     draw(cx);
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
-        DockPanel::Problems
+        DockPanel::Explorer
+    );
+    assert_eq!(
+        message(&workbench, cx).as_deref(),
+        Some("E776: No location list")
     );
 }
 

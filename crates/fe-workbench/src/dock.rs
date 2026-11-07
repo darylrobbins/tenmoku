@@ -13,7 +13,9 @@
 //! History and Chat buttons join the rail once their panel has shown; the
 //! History panel is made the first time `git.file_history` runs
 //! ([`Dock::set_history`]), the others with the dock; the Call Hierarchy panel
-//! is made by `nav.show_call_hierarchy` ([`Dock::set_hierarchy`]). With vim on,
+//! is made by `nav.show_call_hierarchy` ([`Dock::set_hierarchy`]), and the
+//! Quickfix List panel by `:copen` and its commands ([`Dock::set_quickfix`],
+//! [`quickfix_panel`]). With vim on,
 //! `<C-w>h`/`l`/`j` past the panes' edge focus what the dock shows
 //! ([`Dock::focus_active`], `dock_focus.rs`).
 //!
@@ -46,6 +48,11 @@ pub(crate) use problems_panel::{ProblemsOp, ProblemsPanel};
 #[path = "source_control.rs"]
 pub(crate) mod source_control;
 
+#[path = "quickfix_panel.rs"]
+pub(crate) mod quickfix_panel;
+
+pub(crate) use quickfix_panel::QuickfixPanel;
+
 /// A panel the dock shows: fastedit's name for the [`PanelId`]s it
 /// registers, one per [`SidebarPanel`] in [`PANELS`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +71,7 @@ impl DockPanel {
     pub const History: DockPanel = crate::workbench::git_commands::git_history::SIDEBAR.panel;
     pub const Chat: DockPanel = crate::chat_panel::SIDEBAR.panel;
     pub const CallHierarchy: DockPanel = crate::hierarchy_panel::SIDEBAR.panel;
+    pub const Quickfix: DockPanel = quickfix_panel::SIDEBAR.panel;
 }
 
 impl DockPanel {
@@ -140,6 +148,7 @@ const PANELS: &[&SidebarPanel] = &[
     &crate::workbench::git_commands::git_history::SIDEBAR,
     &crate::ai_changes_panel::SIDEBAR,
     &crate::hierarchy_panel::SIDEBAR,
+    &quickfix_panel::SIDEBAR,
 ];
 
 const _: () = {
@@ -152,21 +161,26 @@ const _: () = {
         ix += 1;
     }
     // History ([`Dock::set_history`]), then AI Changes
-    // ([`Dock::set_ai_changes`]) and Call Hierarchy
-    // ([`Dock::set_hierarchy`]), the panels registered after the dock is
-    // made, are added at the rail's end, in that order: their places.
+    // ([`Dock::set_ai_changes`]), Call Hierarchy ([`Dock::set_hierarchy`])
+    // and Quickfix List ([`Dock::set_quickfix`]), the panels registered
+    // after the dock is made, are added at the rail's end, in that order:
+    // their places.
     assert!(
-        PANELS[PANELS.len() - 3].order
+        PANELS[PANELS.len() - 4].order
             == crate::workbench::git_commands::git_history::SIDEBAR.order,
-        "History, registered third from last, is third from last on the rail"
+        "History, registered fourth from last, is fourth from last on the rail"
     );
     assert!(
-        PANELS[PANELS.len() - 2].order == crate::ai_changes_panel::SIDEBAR.order,
-        "AI Changes, registered last but one, is last but one on the rail"
+        PANELS[PANELS.len() - 3].order == crate::ai_changes_panel::SIDEBAR.order,
+        "AI Changes, registered third from last, is third from last on the rail"
     );
     assert!(
-        PANELS[PANELS.len() - 1].order == crate::hierarchy_panel::SIDEBAR.order,
-        "Call Hierarchy, registered last, is last on the rail"
+        PANELS[PANELS.len() - 2].order == crate::hierarchy_panel::SIDEBAR.order,
+        "Call Hierarchy, registered last but one, is last but one on the rail"
+    );
+    assert!(
+        PANELS[PANELS.len() - 1].order == quickfix_panel::SIDEBAR.order,
+        "Quickfix List, registered last, is last on the rail"
     );
 };
 
@@ -261,6 +275,8 @@ dock_item!(
     crate::hierarchy_panel::SIDEBAR,
     HierarchyPanel::title
 );
+// Titled with the list it shows.
+dock_item!(QuickfixPanel, quickfix_panel::SIDEBAR, QuickfixPanel::title);
 
 /// A rail button was clicked; the workbench runs [`Dock::rail_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -289,6 +305,8 @@ pub struct Dock {
     history: Option<Entity<HistoryPanel>>,
     /// Made the first time it's asked for.
     hierarchy: Option<Entity<HierarchyPanel>>,
+    /// Made the first time it's asked for.
+    quickfix: Option<Entity<QuickfixPanel>>,
     /// Made with the dock.
     git_log: Option<Entity<GitLogPanel>>,
     /// Made the first time it's asked for.
@@ -423,6 +441,7 @@ impl Dock {
             problems,
             history: None,
             hierarchy: None,
+            quickfix: None,
             git_log: Some(git_log),
             chat: Some(chat),
             ai_changes: None,
@@ -522,6 +541,18 @@ impl Dock {
     ) {
         self.state.add_panel(hierarchy.clone(), cx);
         self.hierarchy = Some(hierarchy);
+        cx.notify();
+    }
+
+    pub(crate) fn quickfix(&self) -> Option<&Entity<QuickfixPanel>> {
+        self.quickfix.as_ref()
+    }
+
+    /// Registers `quickfix`, the Quickfix List panel made on first use, as
+    /// [`Dock::set_history`] does the History panel.
+    pub(crate) fn set_quickfix(&mut self, quickfix: Entity<QuickfixPanel>, cx: &mut Context<Self>) {
+        self.state.add_panel(quickfix.clone(), cx);
+        self.quickfix = Some(quickfix);
         cx.notify();
     }
 
@@ -736,6 +767,9 @@ impl Dock {
             DockPanel::Problems => return Some(self.problems.focus_handle(cx)),
             DockPanel::History => return self.history.as_ref().map(|panel| panel.focus_handle(cx)),
             DockPanel::Chat => return self.chat.as_ref().map(|panel| panel.focus_handle(cx)),
+            DockPanel::Quickfix => {
+                return self.quickfix.as_ref().map(|panel| panel.focus_handle(cx));
+            }
             _ => return None,
         };
         let stack = container.read(cx).stack().read(cx);
@@ -851,6 +885,9 @@ pub(crate) enum DockOp {
     /// `nav.show_call_hierarchy`, once it has made the panel and its root
     /// has landed.
     ShowHierarchy,
+    /// `quickfix.show`, `location.show` and `:copen`, once they have made
+    /// the panel and set the list it shows; its rail button.
+    ShowQuickfix,
     /// The Chat button, and `chat.open` once it has made the panel.
     ShowChat,
     /// `ai.show_changes`, and a changeset set: shows the AI Changes panel.

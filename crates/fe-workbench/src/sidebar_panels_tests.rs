@@ -24,7 +24,7 @@ fn base() -> [(
     Icon,
     &'static str,
     DockOp,
-); 9] {
+); 10] {
     [
         (
             DockPanel::Explorer,
@@ -97,6 +97,14 @@ fn base() -> [(
             Icon::ListTree,
             "nav.show_call_hierarchy",
             DockOp::ShowHierarchy,
+        ),
+        (
+            DockPanel::Quickfix,
+            "Quickfix List",
+            "quickfix",
+            Icon::List,
+            "quickfix.show",
+            DockOp::ShowQuickfix,
         ),
     ]
 }
@@ -242,6 +250,7 @@ fn the_rail_always_has_the_base_four() {
             DockPanel::History,
             DockPanel::AiChanges,
             DockPanel::CallHierarchy,
+            DockPanel::Quickfix,
         ]
     );
 }
@@ -315,6 +324,7 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
         DockPanel::History,
         DockPanel::AiChanges,
         DockPanel::Chat,
+        DockPanel::Quickfix,
     ];
     for panel in order {
         dispatch(panel.show_command(), cx);

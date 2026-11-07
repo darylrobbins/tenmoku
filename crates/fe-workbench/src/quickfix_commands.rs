@@ -19,16 +19,28 @@
 //!
 //! `:grep`, `:vimgrep` and `:make` (and their `:l` twins) fill lists
 //! (`quickfix_fill.rs`), through [`Workbench::push_quickfix_list_to`].
+//!
+//! `:copen` and `:cwindow` (and the typed `quickfix.show`) show the
+//! quickfix list in the sidebar's Quickfix List panel, focused
+//! (`quickfix_panel.rs`); `:lopen` and `:lwindow` (`location.show`) show the
+//! active pane's location list there, or say `E776: No location list`.
+//! `:cclose` hides the panel if it shows the quickfix list, `:lclose` if it
+//! shows the active pane's location list; `quickfix.toggle` and
+//! `location.toggle` hide it if it shows that list, else show it. The
+//! panel hears of every change to the list it shows
+//! ([`Workbench::quickfix_changed`]), and a row picked there lands as
+//! `:cc N` does ([`Workbench::open_quickfix_row`]).
 
 use std::{collections::HashMap, path::Path};
 
 use fe_gpui::EditorView;
 use fe_vim::{QuickfixAction, QuickfixCommand};
-use gpui::{App, Context, Entity, EntityId, Global, Window};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, Focusable as _, Global, Window};
 use kiln_shell::WorkspaceEvent;
 
 use crate::{
-    Pane, Workbench,
+    DockPanel, Pane, Workbench,
+    dock::{DockOp, QuickfixPanel},
     quickfix::{QuickfixError, QuickfixItem, QuickfixList, QuickfixStack, Quickfixes},
     workbench::toast::{self, Toast},
 };
@@ -58,11 +70,12 @@ impl Workbench {
                 cx.default_global::<Lists>().0.remove(&id);
             })
             .detach();
-            cx.subscribe(self.workspace(), move |_, _, event, cx| {
+            cx.subscribe(self.workspace(), move |this, _, event, cx| {
                 if let WorkspaceEvent::PaneRemoved(pane) = event
                     && let Some(lists) = cx.default_global::<Lists>().0.get_mut(&id)
                 {
                     lists.drop_pane(pane);
+                    this.quickfix_changed(cx);
                 }
             })
             .detach();
@@ -112,6 +125,7 @@ impl Workbench {
             Some(pane) => lists.push_location(pane, list),
             None => lists.quickfix.push(list),
         }
+        self.quickfix_changed(cx);
         true
     }
 
@@ -181,6 +195,8 @@ impl Workbench {
                 return self.vimgrep(&args, location, editor, window, cx);
             }
             QuickfixAction::Make(args) => return self.make(&args, location, editor, window, cx),
+            QuickfixAction::Open => return self.show_quickfix_panel(location, editor, window, cx),
+            QuickfixAction::Close => return self.close_quickfix_panel(location, window, cx),
             action => action,
         };
         let pane = self.pane().entity_id();
@@ -189,11 +205,149 @@ impl Workbench {
         let outcome = lists
             .stack(location, &pane)
             .and_then(|stack| answer(stack, action, root.as_deref()));
+        if outcome.is_ok() {
+            self.quickfix_changed(cx);
+        }
         match outcome {
             Err(error) => say(editor, error.to_string(), cx),
             Ok(Outcome::Say(text)) => say(editor, text, cx),
             Ok(Outcome::Land(item, text)) => self.land_on(item, text, window, cx),
         }
+    }
+
+    /// Tells the Quickfix List panel, if it has been made, that a list has
+    /// changed, or moved to another item: it redraws, its cursor on the
+    /// current item.
+    pub(crate) fn quickfix_changed(&self, cx: &mut App) {
+        if let Some(panel) = self.dock().read(cx).quickfix().cloned() {
+            panel.update(cx, QuickfixPanel::list_changed);
+        }
+    }
+
+    /// The Quickfix List panel, made and registered on first use.
+    fn quickfix_panel(&mut self, cx: &mut Context<Self>) -> Entity<QuickfixPanel> {
+        if let Some(panel) = self.dock().read(cx).quickfix() {
+            return panel.clone();
+        }
+        let workbench = cx.entity();
+        let theme = self.pane().read(cx).theme().clone();
+        let panel = cx.new(|cx| QuickfixPanel::new(&workbench, &theme, cx));
+        (self.dock()).update(cx, |dock, cx| dock.set_quickfix(panel.clone(), cx));
+        panel
+    }
+
+    /// Whether the panel shows: the dock visible with it, and it showing
+    /// the quickfix list, or with `location` the active pane's location
+    /// list.
+    fn quickfix_panel_shown(&self, location: bool, cx: &App) -> bool {
+        let dock = self.dock().read(cx);
+        let Some(panel) = dock.quickfix() else {
+            return false;
+        };
+        let source = location.then(|| self.pane().entity_id());
+        dock.is_visible()
+            && dock.active() == DockPanel::Quickfix
+            && panel.read(cx).source() == source
+    }
+
+    /// `:copen`, or with `location` `:lopen`: shows the panel, focused,
+    /// with the quickfix list or the active pane's location list; for a
+    /// pane with none, `E776: No location list` in `editor` (or the active
+    /// editor), and nothing shown.
+    pub(crate) fn show_quickfix_panel(
+        &mut self,
+        location: bool,
+        editor: Option<&Entity<EditorView>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane = self.pane().entity_id();
+        if location && self.quickfixes(cx).location(&pane).is_err() {
+            let editor = editor.cloned().or_else(|| self.active_editor(cx).cloned());
+            return say(
+                editor.as_ref(),
+                QuickfixError::NoLocationList.to_string(),
+                cx,
+            );
+        }
+        // Set up to forget the pane's list with it.
+        self.quickfixes(cx);
+        let panel = self.quickfix_panel(cx);
+        panel.update(cx, |panel, cx| {
+            panel.show_list(location.then_some(pane), cx)
+        });
+        self.run_dock_op(DockOp::ShowQuickfix, window, cx);
+        window.focus(&panel.focus_handle(cx), cx);
+    }
+
+    /// `:cclose`, or with `location` `:lclose`: hides the panel if it shows
+    /// that list, focus going back to the active editor.
+    pub(crate) fn close_quickfix_panel(
+        &mut self,
+        location: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.quickfix_panel_shown(location, cx) {
+            self.run_dock_op(DockOp::Toggle, window, cx);
+        }
+    }
+
+    /// `quickfix.toggle`, or with `location` `location.toggle`: hides the
+    /// panel if it shows that list, else shows it as `:copen` does.
+    pub(crate) fn toggle_quickfix_panel(
+        &mut self,
+        location: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.quickfix_panel_shown(location, cx) {
+            self.close_quickfix_panel(location, window, cx);
+        } else {
+            self.show_quickfix_panel(location, None, window, cx);
+        }
+    }
+
+    /// A row picked in the panel: lands on item `ix` (from 0) of the
+    /// quickfix list, or with a `pane` that pane's location list, as `:cc
+    /// N` does, making it current; a location list's item opens in its
+    /// pane, made active. Nothing if the list or pane has gone.
+    pub(crate) fn open_quickfix_row(
+        &mut self,
+        pane: Option<EntityId>,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lists = self.quickfixes(cx);
+        let stack = match pane {
+            Some(pane) => lists.location(&pane).ok(),
+            None => Some(&mut lists.quickfix),
+        };
+        let Some(list) = stack.and_then(|stack| stack.current_mut().ok()) else {
+            return;
+        };
+        let number = u32::try_from(ix.saturating_add(1)).unwrap_or(u32::MAX);
+        let Ok(item) = list.go(Some(number)).cloned() else {
+            return;
+        };
+        let text = list.landed_message();
+        if let Some(pane) = pane {
+            let Some(pane) = self
+                .panes(cx)
+                .into_iter()
+                .find(|open| open.entity_id() == pane)
+            else {
+                return;
+            };
+            if pane != *self.pane() {
+                self.activate(pane, window, cx);
+            }
+        }
+        self.quickfix_changed(cx);
+        self.land_on(item, text, window, cx);
+        let focus = self.pane().read(cx).focus_target(cx);
+        window.focus(&focus, cx);
     }
 
     /// Opens `item`'s file in the active pane at its row and column, then
@@ -231,7 +385,9 @@ fn answer(
     let moved = match action {
         Older(count) => return stack.older(count).map(Outcome::Say),
         Newer(count) => return stack.newer(count).map(Outcome::Say),
-        Grep(_) | VimGrep(_) | Make(_) => unreachable!("run_quickfix fills lists itself"),
+        Grep(_) | VimGrep(_) | Make(_) | Open | Close => {
+            unreachable!("run_quickfix fills lists and shows them itself")
+        }
         List => {
             let list = stack.current_mut()?;
             if list.items.is_empty() {
@@ -257,6 +413,22 @@ fn landed_editor(pane: &Entity<Pane>, path: &Path, cx: &App) -> Option<Entity<Ed
     let pane = pane.read(cx);
     let tab = pane.position(path)?;
     pane.tabs()[tab].editor().cloned()
+}
+
+/// The list in use that `workbench`'s Quickfix List panel shows: its
+/// quickfix stack's, or with a `pane` that pane's location stack's. None
+/// before the window has had a list, or for a pane with no location list.
+pub(crate) fn shown_list(
+    workbench: EntityId,
+    pane: Option<EntityId>,
+    cx: &mut App,
+) -> Option<&QuickfixList> {
+    let lists = cx.default_global::<Lists>().0.get_mut(&workbench)?;
+    let stack = match pane {
+        Some(pane) => lists.location(&pane).ok()?,
+        None => &mut lists.quickfix,
+    };
+    stack.current()
 }
 
 /// Says `text` as `editor`'s vim message, or with no editor or vim off as

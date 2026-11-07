@@ -1,6 +1,6 @@
-//! The unimpaired pairs `]b` `[b` (tabs) and `]q` `[q` (the Problems list in
-//! quickfix's place): only in an editor in vim's normal mode with nothing
-//! pending.
+//! The unimpaired pairs `]b` `[b` (tabs) and `]q` `[q` (the quickfix
+//! list, as nvim 0.11's `:cnext` and `:cprevious`): only in an editor in
+//! vim's normal mode with nothing pending.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -15,8 +15,8 @@ use kiln_core::Os;
 const KEYS: [(&str, &str); 4] = [
     ("] b", "workbench.next_tab"),
     ("[ b", "workbench.previous_tab"),
-    ("] q", "diagnostics.next"),
-    ("[ q", "diagnostics.previous"),
+    ("] q", "quickfix.next"),
+    ("[ q", "quickfix.previous"),
 ];
 
 fn keymap(source: &str, os: Os) -> Keymap {

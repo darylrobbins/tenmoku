@@ -8,8 +8,7 @@
 //! The day-one features' commands run as their own commands do: `:Ex`
 //! shows the project tree, focused, with the editor's file revealed and
 //! selected; `:oldfiles` opens the Open Recent picker, whose dismissal
-//! focuses the editor again; `:copen` shows and focuses the Problems panel
-//! and `:cclose` hides it if shown; and `:Replace {text}` runs the project
+//! focuses the editor again; and `:Replace {text}` runs the project
 //! search's Replace All with `text`, through its question, saying "No
 //! search to replace" when its query is empty.
 //!
@@ -22,7 +21,9 @@
 //!
 //! The quickfix and location lists' commands, `:cn`, `:cp`, `:cc`, `:col`,
 //! `:cnew`, `:cl` and their `:l` twins, walk the window's lists, landing
-//! in the active pane: see `quickfix_commands.rs`. `:grep`, `:vimgrep` and
+//! in the active pane, and `:copen` and `:cclose` (`:lopen`, `:lclose`)
+//! show and hide them in the Quickfix List panel: see
+//! `quickfix_commands.rs`. `:grep`, `:vimgrep` and
 //! `:make` (and `:lgrep`, `:lvimgrep` and `:lmake`) fill them, from the
 //! project search and the default build task's problems: see
 //! `quickfix_fill.rs`.
@@ -48,7 +49,7 @@ use std::path::{Path, PathBuf};
 
 use fe_editor::SaveError;
 use fe_gpui::EditorView;
-use fe_vim::HostCommand;
+use fe_vim::{HostCommand, QuickfixAction, QuickfixCommand};
 use gpui::{App, Context, Entity, Task, WeakEntity, Window};
 use kiln_shell::{ItemHandle, PaneView as _};
 
@@ -57,7 +58,7 @@ use super::git_diff::E21;
 use super::recent_picker::RecentOp;
 use super::{Workbench, open};
 use crate::Pane;
-use crate::dock::{DockOp, DockPanel, ProblemsOp};
+use crate::dock::DockOp;
 
 #[path = "vim_pick.rs"]
 mod vim_pick;
@@ -120,8 +121,10 @@ impl Workbench {
                     | HostCommand::Read { .. }
                     | HostCommand::DiffGet { .. }
                     | HostCommand::Explore
-                    | HostCommand::OpenProblems
-                    | HostCommand::CloseProblems
+                    | HostCommand::Quickfix(QuickfixCommand {
+                        action: QuickfixAction::Open | QuickfixAction::Close,
+                        ..
+                    })
             );
         let what = match command {
             HostCommand::Quit { .. }
@@ -207,8 +210,6 @@ impl Workbench {
             }
             command @ (HostCommand::Explore
             | HostCommand::OldFiles
-            | HostCommand::OpenProblems
-            | HostCommand::CloseProblems
             | HostCommand::ReplaceInFiles { .. }
             | HostCommand::Pick(_)
             | HostCommand::Buffer(_)
@@ -218,11 +219,10 @@ impl Workbench {
         }
     }
 
-    /// Runs the day-one features' commands, `:Ex`, `:oldfiles`, `:copen`,
-    /// `:cclose`, `:Replace`, the lists to pick from (`:marks`), the
+    /// Runs the day-one features' commands, `:Ex`, `:oldfiles`, `:Replace`, the lists to pick from (`:marks`), the
     /// buffer list's (`:b`, `:bn`, `:bd`) and the panes' (`:sp`, `:on`,
     /// `:clo`) and tabs' (`:tabn`, `:tabc`), and the quickfix lists' (`:cn`,
-    /// `:cc`, `:col`, and `:grep`, `:vimgrep` and `:make` filling them),
+    /// `:cc`, `:col`, `:copen` and `:cclose`, and `:grep`, `:vimgrep` and `:make` filling them),
     /// typed in `editor`, which act on the window
     /// whichever editor they are typed in: a tab's, a diff view's side or the
     /// commit box. Any other command runs nothing.
@@ -236,15 +236,6 @@ impl Workbench {
         match command {
             HostCommand::Explore => self.vim_explore(editor, window, cx),
             HostCommand::OldFiles => self.run_recent_op(RecentOp::Open, window, cx),
-            HostCommand::OpenProblems => {
-                self.run_dock_op(DockOp::Problems(ProblemsOp::Show), window, cx);
-            }
-            HostCommand::CloseProblems => {
-                let dock = self.dock.read(cx);
-                if dock.is_visible() && dock.active() == DockPanel::Problems {
-                    self.run_dock_op(DockOp::Toggle, window, cx);
-                }
-            }
             HostCommand::ReplaceInFiles { text } => {
                 self.vim_replace_in_files(editor, text, window, cx)
             }

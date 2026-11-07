@@ -117,11 +117,11 @@ fn cnext_and_friends_parse_to_quickfix_commands() {
         assert_eq!(quickfix(line), None, ":{line}");
     }
     assert!(matches!(run("clo").0, Some(HostCommand::Window(_))));
-    // `:copen` and friends still show and hide the Problems panel.
-    assert_eq!(run("copen").0, Some(HostCommand::OpenProblems));
-    assert_eq!(run("lop").0, Some(HostCommand::OpenProblems));
-    assert_eq!(run("ccl").0, Some(HostCommand::CloseProblems));
-    assert_eq!(run("lcl").0, Some(HostCommand::CloseProblems));
+    // `:copen` and friends show and hide the list (`ex_quickfix_window.rs`).
+    assert_eq!(quickfix("copen"), c(Open));
+    assert_eq!(quickfix("lop"), l(Open));
+    assert_eq!(quickfix("ccl"), c(Close));
+    assert_eq!(quickfix("lcl"), l(Close));
 }
 
 #[test]

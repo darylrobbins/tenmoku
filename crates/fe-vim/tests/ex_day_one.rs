@@ -1,6 +1,6 @@
 //! The day-one features' ex commands as the host receives them: netrw's
-//! `:Ex`, `:oldfiles`, the quickfix and location list's `:copen` and
-//! `:cclose`, and `:Replace` across files.
+//! `:Ex`, `:oldfiles`, and `:Replace` across files; `:copen` and `:cclose`
+//! are the quickfix list's now.
 
 use fe_vim::{HeadlessVim, HostCommand};
 
@@ -65,15 +65,18 @@ fn oldfiles() {
     assert!(error("o").starts_with("E492"));
 }
 
+/// `:copen` and `:cclose` are the quickfix list's, no longer the Problems
+/// panel's (`ex_quickfix_window.rs`).
 #[test]
-fn problems() {
-    for line in ["cope", "copen", "lop", "lope", "lopen"] {
-        assert_eq!(host(line), Some(HostCommand::OpenProblems), ":{line}");
+fn copen_and_cclose_are_quickfix_commands() {
+    for line in [
+        "cope", "copen", "lop", "lope", "lopen", "ccl", "cclose", "lcl",
+    ] {
+        assert!(
+            matches!(host(line), Some(HostCommand::Quickfix(_))),
+            ":{line}"
+        );
     }
-    for line in ["ccl", "cclo", "cclose", "lcl", "lclose"] {
-        assert_eq!(host(line), Some(HostCommand::CloseProblems), ":{line}");
-    }
-    assert_eq!(error("1,2copen"), "E481: No range allowed");
     assert_eq!(error(".ccl"), "E481: No range allowed");
     assert_eq!(error("copen!"), "E477: No ! allowed");
     assert_eq!(error("cclose x"), "E488: Trailing characters: x");

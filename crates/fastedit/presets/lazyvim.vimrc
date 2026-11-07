@@ -58,8 +58,12 @@ nnoremap <leader>tr <Cmd>fe:tests.run_at_cursor<CR>
 nnoremap <leader>tt <Cmd>fe:tests.run_file<CR>
 nnoremap <leader>tl <Cmd>fe:tests.rerun_last<CR>
 
-" diagnostics
+" diagnostics/quickfix
 nnoremap <leader>xx <Cmd>fe:problems.show<CR>
+nnoremap <leader>xq <Cmd>fe:quickfix.toggle<CR>
+nnoremap <leader>xl <Cmd>fe:location.toggle<CR>
+nnoremap ]q <Cmd>fe:quickfix.next<CR>
+nnoremap [q <Cmd>fe:quickfix.previous<CR>
 
 " windows
 nnoremap <leader>- <Cmd>fe:pane.split_down<CR>
@@ -105,8 +109,6 @@ fegroup <leader>x diagnostics/quickfix icon=triangle-alert
 "   <leader>L   changelog
 "   <leader>K   keywordprg
 "   <leader>cm  mason
-"   <leader>xl  location list
-"   <leader>xq  quickfix list
 "   <leader>xt  todo list
 "   <leader>ur  redraw
 "   <leader>ud  toggle diagnostics

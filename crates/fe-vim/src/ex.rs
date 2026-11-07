@@ -326,11 +326,6 @@ pub enum HostCommand {
     /// `:ol[dfiles]` and `:bro[wse] ol[dfiles]`: the host's recent files,
     /// to choose one from, rather than a list printed.
     OldFiles,
-    /// `:cope[n]` and `:lop[en]`: the problems list, shown and focused, as
-    /// the quickfix and location windows are.
-    OpenProblems,
-    /// `:ccl[ose]` and `:lcl[ose]`: the problems list hidden, if shown.
-    CloseProblems,
     /// `:Replace {text}`, capitalised as Vim's user commands are: the
     /// project search's matches replaced with `text` in every file, as
     /// its Replace All does and with its question. `text` is the rest of
@@ -858,8 +853,8 @@ fn register_and_count(
 type Build = fn(bool, &str) -> HostCommand;
 
 /// The host command `name` abbreviates (`:help :w`, `:q`, `:x`, `:exi`,
-/// `:e`, `:qa`, `:wa`, `:ol`, `:cope`, `:ccl`, `:lop`, `:lcl`, and netrw's
-/// `:Ex`), with its `!` still to read.
+/// `:e`, `:qa`, `:wa`, `:ol`, and netrw's `:Ex`), with its `!` still to
+/// read.
 fn host(name: &str) -> Option<Build> {
     let is = |full: &str, min: usize| name.len() >= min && full.starts_with(name);
     Some(match name {
@@ -892,8 +887,6 @@ fn host(name: &str) -> Option<Build> {
         _ if is("wall", 2) => |_, _| HostCommand::WriteAll,
         _ if is("Explore", 2) => |_, _| HostCommand::Explore,
         _ if is("oldfiles", 2) => |_, _| HostCommand::OldFiles,
-        _ if is("copen", 4) || is("lopen", 3) => |_, _| HostCommand::OpenProblems,
-        _ if is("cclose", 3) || is("lclose", 3) => |_, _| HostCommand::CloseProblems,
         _ => return None,
     })
 }
@@ -990,13 +983,7 @@ fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExComman
     if !range.is_empty() {
         return Err(ExError::NoRange);
     }
-    let bangless = matches!(
-        command,
-        HostCommand::Explore
-            | HostCommand::OldFiles
-            | HostCommand::OpenProblems
-            | HostCommand::CloseProblems
-    );
+    let bangless = matches!(command, HostCommand::Explore | HostCommand::OldFiles);
     if force && bangless {
         return Err(ExError::NoBang);
     }
