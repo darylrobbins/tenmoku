@@ -178,7 +178,7 @@ fn rows(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<(Strin
     };
     panel.read_with(cx, |panel, _| {
         (panel.shown_rows().into_iter())
-            .map(|(path, added, removed, _)| (path, added, removed))
+            .map(|(path, added, removed, _)| (crate::tests::slashed(path), added, removed))
             .collect()
     })
 }

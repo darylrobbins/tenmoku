@@ -1,6 +1,9 @@
 //! The Linux primary selection in a terminal view: a selection is written to
 //! it, and a middle click pastes it, over a real pty.
 #![cfg(any(target_os = "linux", target_os = "freebsd"))]
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
 
 use std::thread;
 use std::time::{Duration, Instant};

@@ -1,6 +1,10 @@
 //! Vi copy mode's ctrl-e and ctrl-y: they scroll the view and leave the vi
 //! cursor on its line, moving it only to keep it in view.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::thread;
 use std::time::{Duration, Instant};
 

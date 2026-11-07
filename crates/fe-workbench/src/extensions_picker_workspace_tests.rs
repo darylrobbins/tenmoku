@@ -212,7 +212,7 @@ fn a_skipped_row_with_a_users_id_is_its_own_row(cx: &mut TestAppContext) {
     // (macOS `/var` -> `/private/var`), unlike the server's `extension_dir`.
     assert_eq!(
         ids[0].as_ref(),
-        dir.path().join("extensions/zig").to_string_lossy()
+        dir.path().join("extensions").join("zig").to_string_lossy()
     );
     assert_ne!(ids[0], ids[2], "each row its own identity");
 

@@ -33,9 +33,8 @@ impl Repo {
         let Ok(rela_path) = path.strip_prefix(&self.workdir) else {
             return Ok(None);
         };
-        let Ok(rela_path) = gix::path::os_str_into_bstr(rela_path.as_os_str()) else {
-            return Ok(None);
-        };
+        // As the index names it: with `/`, on Windows too.
+        let rela_path = crate::blame::git_path(rela_path);
         if rela_path.is_empty() {
             return Ok(None);
         }
@@ -63,9 +62,8 @@ impl Repo {
         let Ok(rela_path) = path.strip_prefix(&self.workdir) else {
             return Ok(None);
         };
-        let Ok(rela_path) = gix::path::os_str_into_bstr(rela_path.as_os_str()) else {
-            return Ok(None);
-        };
+        // As the index names it: with `/`, on Windows too.
+        let rela_path = crate::blame::git_path(rela_path);
         if rela_path.is_empty() {
             return Ok(None);
         }

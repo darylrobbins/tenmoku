@@ -2,6 +2,10 @@
 //! select, yank and leave, none of which reach the pty, and the search
 //! prompt drawn at the bottom of the view.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::thread;
 use std::time::{Duration, Instant};
 

@@ -191,7 +191,7 @@ fn attach_file(panel: &Entity<ChatPanel>, path: &Path, cx: &mut VisualTestContex
 fn attached(panel: &Entity<ChatPanel>, cx: &mut VisualTestContext) -> Vec<(String, String)> {
     panel.read_with(cx, |panel, cx| {
         (panel.view().read(cx).attachments().iter())
-            .map(|item| (item.label.clone(), item.text.clone()))
+            .map(|item| (crate::tests::slashed(item.label.clone()), item.text.clone()))
             .collect()
     })
 }

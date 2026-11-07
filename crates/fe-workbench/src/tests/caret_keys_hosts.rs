@@ -122,6 +122,7 @@ fn find_bar_takes_caret_keys(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn terminal_find_takes_caret_keys(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let dir = tempfile::tempdir().unwrap();
