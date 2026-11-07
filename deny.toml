@@ -35,6 +35,9 @@ exceptions = [
     # Mozilla's root certificates as data, which rustls-platform-verifier (via
     # fe-net) depends on for wasm32 only: not linked into any build we ship.
     { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+    # Mozilla's root store as data again, through velopack's ureq (T1427): it
+    # ships, unlike webpki-root-certs; THIRD_PARTY.md links the licence text.
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" },
     # dirs-sys helper via zed-font-kit; unmodified.
     { allow = ["MPL-2.0"], crate = "option-ext" },
 ]

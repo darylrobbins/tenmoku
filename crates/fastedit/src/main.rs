@@ -17,6 +17,12 @@ mod sparkle;
 #[cfg(test)]
 mod sparkle_tests;
 mod theme;
+// The signer example shares the file; only the tests sign here.
+#[cfg_attr(not(test), allow(dead_code))]
+mod update_signature;
+mod velopack_update;
+#[cfg(test)]
+mod velopack_update_tests;
 #[cfg(test)]
 mod vim_lazyvim_harpoon_tests;
 mod vim_remaps;
@@ -428,8 +434,13 @@ impl log::Log for StderrLogger {
         let ours = target.starts_with("fastedit")
             || target.starts_with("tenmoku")
             || target.starts_with("fe_");
+        // Velopack warns on every launch that we gave it the bundle's paths
+        // (to find it through a symlink); our own lines say what it did.
+        let velopack = target.starts_with("velopack");
         let level = self.level.unwrap_or(if ours {
             log::LevelFilter::Info
+        } else if velopack {
+            log::LevelFilter::Error
         } else {
             log::LevelFilter::Warn
         });
@@ -500,6 +511,9 @@ fn main() {
     let mut startup = Startup::new();
     let started = Instant::now();
     init_logging();
+    // Before the command line is parsed: Velopack's `--veloapp-*` hook
+    // launches would be unknown flags to it.
+    velopack_update::startup();
     let mut how = ipc::How::current();
     let mut cli = cli::parse(std::env::args_os().skip(1).collect()).unwrap_or_else(|error| {
         error.print();
@@ -508,6 +522,9 @@ fn main() {
     let perf = cli.perf;
     let cli_wait = cli.wait;
     how.no_ipc |= perf;
+    // The headless Velopack update, if asked for: never in a `--perf` or
+    // `--wait` launch, and before IPC, which would hand the launch on.
+    velopack_update::update_now_if_asked(perf, cli.wait || how.parent_carries);
     // Over here if the running instance takes the launch, or a detached copy
     // of this process does.
     let request = ipc::Request::of(&cli, std::env::current_dir().unwrap_or_default());
@@ -587,7 +604,11 @@ fn main() {
             cx.background_executor().is_test(),
             settings.update.automatic_checks,
         );
-        sparkle::start(perf, wait_launch, under_test, automatic_checks, cx);
+        // The Velopack spike takes Check for Updates… only in a build made
+        // for it, installed by it; otherwise Sparkle starts as before.
+        if !velopack_update::start(perf, wait_launch, under_test, cx) {
+            sparkle::start(perf, wait_launch, under_test, automatic_checks, cx);
+        }
         // Commands, keys, menus, in-window prompts where there are no
         // native alerts, and the config files watched from here on: the
         // vimrc and `vim.remap` too, which give every editor its remaps.

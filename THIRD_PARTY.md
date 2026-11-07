@@ -308,6 +308,14 @@ MPL-2.0 requires telling recipients where to get the source of these crates.
 
 `cbindgen` (MPL-2.0) is a build-time tool only and is not distributed.
 
+## Shipped CDLA-Permissive-2.0 data
+
+`webpki-roots` 1.0.11 (https://crates.io/crates/webpki-roots), pulled in by `ureq`
+via `velopack`, is Mozilla's root certificate store as Rust data, under the
+[Community Data License Agreement – Permissive 2.0](https://cdla.dev/permissive-2-0/).
+It ships in the binary, so its licence text goes with the release's other licence
+texts. `webpki-root-certs` (the same data, wasm32-only here) is not shipped.
+
 ## Binary frameworks in Tenmoku.app
 
 Not committed and not a crate: `scripts/fetch-sparkle.sh` downloads the release, refuses
