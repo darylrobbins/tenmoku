@@ -44,7 +44,7 @@ there is no supported Linux release yet.
 
 ## Install
 
-1. Download `Tenmoku-0.1.0-macos-arm64.zip` from the
+1. Download `Tenmoku-0.1.1-macos-arm64.zip` from the
    [Releases page](https://github.com/darylrobbins/tenmoku/releases).
 2. Unzip it and move `Tenmoku.app` to `/Applications`.
 3. The 0.1 build is ad-hoc signed and not notarized, so macOS Gatekeeper blocks
