@@ -21,7 +21,10 @@ fn serially(state: &std::path::Path) -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
     // SAFETY: every test takes the lock before it starts gpui.
     unsafe { std::env::set_var("TENMOKU_STATE_DIR", state) };
-    for var in ["TENMOKU_CONFIG_DIR", "XDG_CONFIG_HOME"] {
+    // With no config directory (HOME gone too), the workbench neither reads
+    // the user's settings nor starts a user-layer watcher thread, whose
+    // wake-ups the test scheduler rejects. TENMOKU_STATE_DIR doesn't need HOME.
+    for var in ["TENMOKU_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"] {
         // SAFETY: as above.
         unsafe { std::env::remove_var(var) };
     }
