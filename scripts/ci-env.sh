@@ -7,6 +7,17 @@
 # default of one job per core, times up to four lanes and a gate, swamped the machine (load
 # ~70, swap full) without adding throughput.
 #
+# NEXTEST_TEST_THREADS defaults to half the online cores (at least 2; a caller's value wins):
+# caps.host_pipeline_slots = 2 runs two pipelines at once, so two test stages then fit the
+# cores, as two builds do at 6 jobs. .config/nextest.toml stays at num-cpus for local runs.
+#
+# A command run from a lane worktree (under */.worktrees/ but not */.worktrees/.verify/) runs
+# under `nice -n $FASTEDIT_LANE_NICE` (default 10; 0 = off), so gates and checks win when they
+# contend with lane feedback runs. Snapshots and runs outside .worktrees/ keep their priority.
+#
+# One stderr line, `ci-env: test-threads=N jobs=N nice=N load=L`, records the limits and the
+# 1-minute load average at start.
+#
 # The workspace [profile.dev] builds non-incrementally everywhere (lane targets filling the disk).
 # A snapshot is built once and thrown away, so it also repeats that below and keeps only
 # line tables (panics still get file:line). It also refuses to start with less than
@@ -20,6 +31,12 @@
 PATH="$HOME/.cargo/bin:$PATH"
 export PATH
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-6}"
+if [ -z "${NEXTEST_TEST_THREADS:-}" ]; then
+	cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	NEXTEST_TEST_THREADS=$((cores / 2))
+	[ "$NEXTEST_TEST_THREADS" -ge 2 ] || NEXTEST_TEST_THREADS=2
+fi
+export NEXTEST_TEST_THREADS
 if [ -z "${RUSTC_WRAPPER+x}" ] && command -v sccache >/dev/null 2>&1; then
 	RUSTC_WRAPPER=$(cd "$(dirname "$0")" && pwd)/sccache-wrap.sh
 	export RUSTC_WRAPPER
@@ -51,4 +68,21 @@ case "$PWD" in
 	fi
 	;;
 esac
+lane_nice=0
+case "$PWD" in
+*/.worktrees/.verify/*) ;;
+*/.worktrees/*) lane_nice=${FASTEDIT_LANE_NICE:-10} ;;
+esac
+case "$lane_nice" in '' | *[!0-9]*) lane_nice=0 ;; esac
+cur_nice=$(ps -o nice= -p $$ 2>/dev/null | tr -d ' ')
+case "$cur_nice" in '' | *[!0-9-]*) cur_nice=0 ;; esac
+if [ -r /proc/loadavg ]; then
+	load=$(cut -d' ' -f1 /proc/loadavg)
+else
+	load=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{ print $1 }')
+fi
+echo "ci-env: test-threads=$NEXTEST_TEST_THREADS jobs=$CARGO_BUILD_JOBS nice=$((cur_nice + lane_nice)) load=${load:-?}" >&2
+if [ "$lane_nice" -gt 0 ]; then
+	exec nice -n "$lane_nice" "$@"
+fi
 exec "$@"

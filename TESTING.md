@@ -87,6 +87,7 @@ scripts/check-framework-standalone.sh    # kiln/ builds and tests outside this r
 scripts/prune-build-cache.sh --dry-run   # stale incremental dirs of this lane; see Disk
 scripts/test-prune-build-cache.sh        # fixture test for the prune script
 scripts/prune-build-dirs.sh --dry-run    # orphaned external build-dirs; scripts/test-prune-build-dirs.sh tests it
+scripts/test-ci-env.sh            # self-test for ci-env.sh (thread cap, lane nice, stderr line)
 scripts/ci-test-affected.sh       # the gate's test stage: changed packages and their reverse deps
 scripts/test-ci-test-affected.sh  # self-test for the affected-packages script
 cargo mutants -p fe-buffer -j 4   # by hand, before milestones
@@ -243,6 +244,15 @@ a 2.2 GiB target dir; a warm one takes a few seconds. It isn't in CI yet.
 Each regatta lane builds in its own `target/`, and so does each gate snapshot
 (`.worktrees/.verify/<id>`), cold. `scripts/ci-env.sh` also defaults `CARGO_BUILD_JOBS` to 6
 (a caller's value wins) so concurrent lanes and gates don't oversubscribe the cores.
+It also exports `NEXTEST_TEST_THREADS`, defaulting to half the online cores (at least 2; 7 on
+the 14-core Mac), because `host_pipeline_slots = 2` runs two pipelines at once and their test
+stages then fit the cores; a caller's `NEXTEST_TEST_THREADS` overrides it.
+`.config/nextest.toml` is unchanged, so local runs still use every core.
+A command run from a lane worktree (under `.worktrees/` but not `.worktrees/.verify/`) runs
+under `nice -n $FASTEDIT_LANE_NICE` (default 10, 0 turns it off), so gates and checks win over
+lane feedback runs; snapshots and runs outside `.worktrees/` keep normal priority.
+Each run prints `ci-env: test-threads=N jobs=N nice=N load=L` to stderr, so a stage log records
+its limits and the 1-minute load average at start. `scripts/test-ci-env.sh` tests all this.
 `scripts/ci-env.sh` makes snapshots light: `CARGO_INCREMENTAL=0` and
 `CARGO_PROFILE_DEV_DEBUG=line-tables-only` (panics keep file:line; the workspace
 `[profile.dev]` sets the same, so lane and local builds are light too; for a debugger
