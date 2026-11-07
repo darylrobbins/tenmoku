@@ -65,6 +65,8 @@ serde_json.workspace = true
 # The hash of a script an extension's language server runs.
 sha2 = "0.10"
 toml.workspace = true
+# The tests a file has, found by walking the tree its editor already parsed.
+tree-sitter.workspace = true
 # The columns gcc reports count display width.
 unicode-width.workspace = true
 # Reads inline edit's stream of updates.

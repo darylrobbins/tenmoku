@@ -12,13 +12,15 @@ pub const MAX_PROBLEMS: usize = 500;
 /// A tool's output format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Matcher {
-    /// rustc and cargo: a `error[E0308]: msg` line, then ` --> path:l:c`.
+    /// rustc and cargo: a `error[E0308]: msg` line, then ` --> path:l:c`;
+    /// and a test's panic, `thread 'name' (id) panicked at path:l:c:` and its
+    /// message on the next line.
     Rustc,
     /// `path(l,c): error TS2322: msg`.
     Tsc,
     /// gcc and clang: `path:l:c: warning: msg [-Wx]`.
     Gcc,
-    /// `path.go:l:c: msg`.
+    /// `path.go:l:c: msg`, and a failing test's indented `path.go:l: msg`.
     Go,
     /// ESLint's unix format: `path:l:c: msg [Error/rule]`.
     Eslint,
@@ -92,6 +94,8 @@ pub fn match_output(
     let mut pending: Option<(Severity, String)> = None;
     let mut traceback: Option<(String, u32)> = None;
     let mut in_traceback = false;
+    // A panic whose message is on the lines after it.
+    let mut panic: Option<(String, u32, u32, String)> = None;
     for raw in text.lines() {
         if out.result.truncated {
             break;
@@ -100,7 +104,21 @@ pub fn match_output(
         let line = line.trim_end_matches(['\r', '\n']);
         match matcher {
             Matcher::Rustc => {
-                if let Some(arrow) = line.trim_start().strip_prefix("--> ") {
+                if let Some((path, l, c, thread)) = panic.take()
+                    && !line.trim().is_empty()
+                {
+                    out.push(path, l, c, Severity::Error, panic_message(&thread, line));
+                    continue;
+                }
+                if let Some(found) = rust_panic(line) {
+                    match found {
+                        RustPanic::Inline(path, l, c, message) => {
+                            out.push(path, l, c, Severity::Error, message);
+                        }
+                        RustPanic::Next(path, l, c, thread) => panic = Some((path, l, c, thread)),
+                    }
+                    pending = None;
+                } else if let Some(arrow) = line.trim_start().strip_prefix("--> ") {
                     if let (Some((severity, message)), Some((path, l, c, _))) =
                         (pending.take(), split_loc(arrow, true))
                     {
@@ -123,8 +141,11 @@ pub fn match_output(
                 }
             }
             Matcher::Go => {
-                if let Some((path, l, c, rest)) = split_loc(line, true)
+                // `go test` indents a test's failures, which have no column.
+                let indented = line.starts_with([' ', '\t']);
+                if let Some((path, l, c, rest)) = split_loc(line.trim_start(), !indented)
                     && path.ends_with(".go")
+                    && !path.contains(char::is_whitespace)
                     && !rest.is_empty()
                 {
                     out.push(path, l, c, Severity::Error, rest.to_owned());
@@ -330,6 +351,49 @@ fn eslint_message(rest: &str) -> Option<(Severity, String)> {
         _ => return None,
     };
     Some((severity, rest[..open].to_owned()))
+}
+
+/// A panic's line.
+enum RustPanic {
+    /// Before Rust 1.73: `thread 'name' panicked at 'message', path:l:c`.
+    Inline(String, u32, u32, String),
+    /// `thread 'name' panicked at path:l:c:`, the message on the next line
+    /// (and on newer toolchains the thread's id after its name, `'name' (12345)`),
+    /// with the thread's name, a test's.
+    Next(String, u32, u32, String),
+}
+
+fn rust_panic(line: &str) -> Option<RustPanic> {
+    let rest = line.strip_prefix("thread '")?;
+    let (thread, rest) = rest.split_once('\'')?;
+    // Newer toolchains print the thread's id after its name: `'name' (12345)`.
+    let rest = match rest.strip_prefix(" (") {
+        Some(id) => {
+            let (id, rest) = id.split_once(')')?;
+            id.chars().all(|c| c.is_ascii_digit()).then_some(rest)?
+        }
+        None => rest,
+    };
+    let rest = rest.strip_prefix(" panicked at ")?;
+    if let Some(quoted) = rest.strip_prefix('\'') {
+        let (message, location) = quoted.rsplit_once("', ")?;
+        let (path, l, c, _) = split_loc(location, true)?;
+        let message = panic_message(thread, message);
+        return Some(RustPanic::Inline(path, l, c, message));
+    }
+    let (path, l, c, after) = split_loc(rest.trim_end(), true)?;
+    after
+        .is_empty()
+        .then(|| RustPanic::Next(path, l, c, thread.to_owned()))
+}
+
+/// A panic's message, naming the test whose thread it was.
+fn panic_message(thread: &str, message: &str) -> String {
+    let message = message.trim();
+    match thread {
+        "main" | "<unnamed>" => message.to_owned(),
+        test => format!("{test}: {message}"),
+    }
 }
 
 /// `  File "x.py", line 3, in f`.

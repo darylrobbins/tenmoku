@@ -152,3 +152,75 @@ fn unknown_matcher_and_noise() {
     assert_eq!(r.problems.len(), MAX_PROBLEMS);
     assert!(r.truncated);
 }
+
+#[test]
+fn a_failing_rust_test_is_its_panic() {
+    let text = "\
+running 2 tests
+test tests::adds ... FAILED
+
+failures:
+
+---- tests::adds stdout ----
+
+thread 'tests::adds' (2478061) panicked at src/lib.rs:12:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+";
+    one(
+        &run(Matcher::Rustc, text),
+        "src/lib.rs",
+        12,
+        9,
+        Severity::Error,
+        "tests::adds: assertion `left == right` failed",
+    );
+    // With no thread id, as older toolchains print it.
+    let text = "thread 'tests::adds' panicked at src/lib.rs:12:9:\nassertion failed: ok\n";
+    one(
+        &run(Matcher::Rustc, text),
+        "src/lib.rs",
+        12,
+        9,
+        Severity::Error,
+        "tests::adds: assertion failed: ok",
+    );
+    // A name with no id isn't something else's parentheses.
+    let text = "thread 'x' (not an id) panicked at src/lib.rs:1:1:\nboom\n";
+    assert!(run(Matcher::Rustc, text).problems.is_empty());
+    // As Rust printed it before 1.73.
+    let text = "thread 'main' panicked at 'boom, it said', src/main.rs:2:5\n";
+    one(
+        &run(Matcher::Rustc, text),
+        "src/main.rs",
+        2,
+        5,
+        Severity::Error,
+        "boom, it said",
+    );
+    // A compile error still reads as before.
+    let text = "error[E0425]: cannot find value `x`\n --> src/lib.rs:3:5\n";
+    assert_eq!(run(Matcher::Rustc, text).problems.len(), 1);
+}
+
+#[test]
+fn a_failing_go_test_is_its_indented_line() {
+    let text = "\
+--- FAIL: TestAdds (0.00s)
+    adder_test.go:12: expected 3, got 4
+FAIL
+FAIL\texample.com/adder\t0.002s
+";
+    one(
+        &run(Matcher::Go, text),
+        "adder_test.go",
+        12,
+        1,
+        Severity::Error,
+        "expected 3, got 4",
+    );
+    // A line of output that isn't indented needs its column.
+    assert!(run(Matcher::Go, "note.go:3: said\n").problems.is_empty());
+}

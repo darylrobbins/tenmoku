@@ -49,7 +49,7 @@ pub(crate) type Files = Arc<dyn ProjectFiles + Send + Sync>;
 pub(crate) type Listing = (Vec<Task>, Vec<TaskDiagnostic>);
 
 #[cfg(not(test))]
-fn project_files(_: &App) -> Files {
+pub(crate) fn project_files(_: &App) -> Files {
     Arc::new(task_defs::DiskFiles)
 }
 
@@ -62,7 +62,7 @@ pub(crate) struct TestFiles(pub(crate) Files);
 impl gpui::Global for TestFiles {}
 
 #[cfg(test)]
-fn project_files(cx: &App) -> Files {
+pub(crate) fn project_files(cx: &App) -> Files {
     cx.global::<TestFiles>().0.clone()
 }
 

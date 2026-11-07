@@ -44,6 +44,11 @@ nnoremap <leader>gb <Cmd>fe:git.toggle_blame_annotations<CR>
 nnoremap <leader>ghs <Cmd>fe:git.stage_hunk<CR>
 nnoremap <leader>ghr <Cmd>fe:git.revert_hunk<CR>
 
+" test
+nnoremap <leader>tr <Cmd>fe:tests.run_at_cursor<CR>
+nnoremap <leader>tt <Cmd>fe:tests.run_file<CR>
+nnoremap <leader>tl <Cmd>fe:tests.rerun_last<CR>
+
 " diagnostics
 nnoremap <leader>xx <Cmd>fe:problems.show<CR>
 
@@ -80,6 +85,7 @@ fegroup <leader>g git
 fegroup <leader>gh hunks
 fegroup <leader>q quit/session
 fegroup <leader>s search
+fegroup <leader>t test
 fegroup <leader>u ui
 fegroup <leader>w windows
 fegroup <leader>x diagnostics/quickfix

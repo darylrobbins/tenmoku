@@ -65,6 +65,7 @@ fn the_preset_names_every_group_it_has_maps_in() {
             ("<leader>gh".to_owned(), "hunks"),
             ("<leader>q".to_owned(), "quit/session"),
             ("<leader>s".to_owned(), "search"),
+            ("<leader>t".to_owned(), "test"),
             ("<leader>u".to_owned(), "ui"),
             ("<leader>w".to_owned(), "windows"),
             ("<leader>x".to_owned(), "diagnostics/quickfix"),
