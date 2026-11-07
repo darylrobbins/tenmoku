@@ -431,10 +431,12 @@ pub(crate) enum Palette {
     Diagnostics,
     /// `search.buffer_lines`' rows of the active editor.
     BufferLines,
+    /// `todo.list`'s TODO comments of the project.
+    Todos,
 }
 
 impl Palette {
-    const ALL: [Palette; 20] = [
+    const ALL: [Palette; 21] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -455,6 +457,7 @@ impl Palette {
         Palette::Keymaps,
         Palette::Diagnostics,
         Palette::BufferLines,
+        Palette::Todos,
     ];
 
     /// Its id in the modal layer.
@@ -480,6 +483,7 @@ impl Palette {
             Palette::Keymaps => "keymaps",
             Palette::Diagnostics => "diagnostics",
             Palette::BufferLines => "buffer_lines",
+            Palette::Todos => "todos",
         })
     }
 

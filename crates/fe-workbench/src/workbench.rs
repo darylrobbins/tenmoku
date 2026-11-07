@@ -1022,7 +1022,10 @@ impl Render for Workbench {
         // by `on_run_command`.
         let root = match self.setup {
             Some(_) => div().key_context(KEY_CONTEXT),
-            None => Self::attach_picker_commands(Self::attach(div(), cx), cx),
+            None => Self::attach_todo_commands(
+                Self::attach_picker_commands(Self::attach(div(), cx), cx),
+                cx,
+            ),
         };
         let root = match crate::plugin_host::key_context(cx) {
             Some(context) if self.setup.is_none() => root.key_context(context),
@@ -1171,6 +1174,12 @@ mod diagnostics_picker;
 
 #[path = "buffer_lines_picker.rs"]
 mod buffer_lines_picker;
+
+#[path = "todo_picker.rs"]
+mod todo_picker;
+
+#[path = "todo_commands.rs"]
+mod todo_commands;
 
 #[path = "hot_exit.rs"]
 mod hot_exit;

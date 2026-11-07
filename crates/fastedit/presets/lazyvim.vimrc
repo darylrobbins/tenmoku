@@ -29,6 +29,7 @@ nnoremap <leader>sh <Cmd>fe:workbench.open_keyboard_shortcuts<CR>
 nnoremap <leader>sd <Cmd>fe:diagnostics.search_document<CR>
 nnoremap <leader>sD <Cmd>fe:diagnostics.search_workspace<CR>
 nnoremap <leader>sb <Cmd>fe:search.buffer_lines<CR>
+nnoremap <leader>st <Cmd>fe:todo.list<CR>
 
 " explorer, buffers
 nnoremap <leader>e <Cmd>fe:dock.show_project<CR>
@@ -64,6 +65,11 @@ nnoremap <leader>xq <Cmd>fe:quickfix.toggle<CR>
 nnoremap <leader>xl <Cmd>fe:location.toggle<CR>
 nnoremap ]q <Cmd>fe:quickfix.next<CR>
 nnoremap [q <Cmd>fe:quickfix.previous<CR>
+nnoremap <leader>xt <Cmd>fe:todo.list<CR>
+
+" todo comments, as todo-comments.nvim jumps between them
+nnoremap ]t <Cmd>fe:todo.next<CR>
+nnoremap [t <Cmd>fe:todo.previous<CR>
 
 " windows
 nnoremap <leader>- <Cmd>fe:pane.split_down<CR>
@@ -109,7 +115,6 @@ fegroup <leader>x diagnostics/quickfix icon=triangle-alert
 "   <leader>L   changelog
 "   <leader>K   keywordprg
 "   <leader>cm  mason
-"   <leader>xt  todo list
 "   <leader>ur  redraw
 "   <leader>ud  toggle diagnostics
 "   <leader>un  dismiss notifications

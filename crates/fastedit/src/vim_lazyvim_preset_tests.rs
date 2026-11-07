@@ -31,6 +31,7 @@ const TABLE: &[(&str, &str)] = &[
     ("<leader>sd", "diagnostics.search_document"),
     ("<leader>sD", "diagnostics.search_workspace"),
     ("<leader>sb", "search.buffer_lines"),
+    ("<leader>st", "todo.list"),
     ("<leader>e", "dock.show_project"),
     ("<leader>E", "dock.show_project"),
     ("<leader>bd", "workbench.close_tab"),
@@ -55,6 +56,9 @@ const TABLE: &[(&str, &str)] = &[
     ("<leader>xl", "location.toggle"),
     ("]q", "quickfix.next"),
     ("[q", "quickfix.previous"),
+    ("<leader>xt", "todo.list"),
+    ("]t", "todo.next"),
+    ("[t", "todo.previous"),
     ("<leader>-", "pane.split_down"),
     ("<leader><Bar>", "pane.split_right"),
     ("<leader>wd", "pane.close"),
@@ -149,7 +153,7 @@ fn listed_but_mapped(listed: &[String], text: &str) -> Vec<String> {
 #[test]
 fn unmapped_keys_are_listed_and_absent() {
     let listed = unmapped();
-    assert_eq!(listed.len(), 12, "{listed:?}");
+    assert_eq!(listed.len(), 11, "{listed:?}");
     assert_eq!(
         listed_but_mapped(&listed, preset().text),
         Vec::<String>::new()
@@ -178,6 +182,23 @@ fn vim() -> HeadlessVim {
 fn taken(vim: &mut HeadlessVim) -> Option<String> {
     let command = vim.state_mut().take_remap_command()?;
     Some(command.0.command.to_string())
+}
+
+#[test]
+fn todo_keys_run_the_todo_commands() {
+    let mut vim = vim();
+    for (keys, command) in [
+        ("<Space>st", "todo.list"),
+        ("<Space>xt", "todo.list"),
+        ("]t", "todo.next"),
+        ("[t", "todo.previous"),
+    ] {
+        vim.feed(keys).unwrap();
+        assert_eq!(taken(&mut vim).as_deref(), Some(command), "{keys}");
+        assert_eq!(taken(&mut vim), None);
+    }
+    assert_eq!(vim.text(), "one\ntwo");
+    assert_eq!(vim.cursor(), (0, 0));
 }
 
 #[test]
