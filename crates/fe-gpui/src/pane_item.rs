@@ -1033,6 +1033,25 @@ struct UndoWrites {
     /// Held by the writer writing, so one file's writes go one at a time.
     writing: Mutex<()>,
     next: AtomicU64,
+    /// What windows may write, as last published; `None` before any was.
+    policy: Mutex<Option<UndoPolicy>>,
+}
+
+/// Which windows keep undo history: the effective setting of each window
+/// given one or waiting for one, and the fallback for any other and for
+/// captures with no known window.
+#[derive(Clone)]
+struct UndoPolicy {
+    windows: HashMap<WindowId, bool>,
+    fallback: bool,
+}
+
+impl UndoPolicy {
+    fn allows(&self, window: Option<WindowId>) -> bool {
+        window
+            .and_then(|window| self.windows.get(&window).copied())
+            .unwrap_or(self.fallback)
+    }
 }
 
 /// A file's undo history waiting to be written; see [`UndoWrites`].
@@ -1069,12 +1088,43 @@ impl UndoWrites {
         pending.retain(|_, capture| keep(capture.window));
     }
 
+    /// Publishes which windows may write now, without waiting for a writer,
+    /// and drops the captures waiting for a window that may not. A writer
+    /// checks it again under the writing lock, just before it writes or
+    /// removes, so one queued earlier never lands for a window turned off.
+    fn publish(&self, policy: UndoPolicy) {
+        // Waits for the write or removal in flight, if any, to finish.
+        let mut published = self.policy.lock().unwrap_or_else(PoisonError::into_inner);
+        *published = Some(policy.clone());
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        pending.retain(|_, capture| policy.allows(capture.window));
+        drop(published);
+    }
+
     /// Writes `path`'s newest capture to `store`, if one is still waiting.
     fn flush(&self, store: &UndoStore, path: &Path) {
         let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(UndoCapture { number, record, .. }) = self.waiting_numbered(path) else {
+        let Some(UndoCapture {
+            number,
+            record,
+            window,
+        }) = self.waiting_numbered(path)
+        else {
             return;
         };
+        // Held to the end of the write or removal, so a policy published
+        // meanwhile waits for it, and none can land once publish returns.
+        let policy = self.policy.lock().unwrap_or_else(PoisonError::into_inner);
+        if !policy.as_ref().is_none_or(|policy| policy.allows(window)) {
+            let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+            if pending
+                .get(path)
+                .is_some_and(|newest| newest.number == number)
+            {
+                pending.remove(path);
+            }
+            return;
+        }
         let written = match &record {
             Some(record) => store.write(path, record),
             None => store.remove(path),
@@ -1133,6 +1183,7 @@ impl UndoWrites {
 pub fn set_undo_store(cx: &mut App, store: Option<UndoStore>) {
     let observing = cx.has_global::<UndoPersist>();
     cx.default_global::<UndoPersist>().store = store;
+    publish_undo_policy(cx);
     if !observing {
         cx.observe_new(editor_opened).detach();
         cx.on_app_quit(|cx| {
@@ -1154,6 +1205,7 @@ pub fn set_window_persistent_undo(window: WindowId, on: Option<bool>, cx: &mut A
         None => persist.windows.remove(&window),
     };
     let deferred = persist.waiting.remove(&window).unwrap_or_default();
+    publish_undo_policy(cx);
     for (buffer, path) in deferred {
         start_undo_read(buffer, path, cx);
     }
@@ -1164,9 +1216,31 @@ pub fn set_window_persistent_undo(window: WindowId, on: Option<bool>, cx: &mut A
 /// root's settings are still loading; reads they ask for meanwhile wait for
 /// it.
 pub fn wait_for_window_persistent_undo(window: WindowId, cx: &mut App) {
-    (cx.default_global::<UndoPersist>().waiting)
-        .entry(window)
-        .or_default();
+    let persist = cx.default_global::<UndoPersist>();
+    persist.waiting.entry(window).or_default();
+    publish_undo_policy(cx);
+}
+
+/// Tells the writers which windows keep history now, as [`undo_store_for`]
+/// would say; captures of the others are dropped.
+fn publish_undo_policy(cx: &App) {
+    let persist = cx.global::<UndoPersist>();
+    let windows = (persist.windows.keys().chain(persist.waiting.keys()))
+        .map(|&window| (window, undo_store_for(Some(window), cx).is_some()))
+        .collect();
+    let fallback = undo_store_for(None, cx).is_some();
+    persist.writes.publish(UndoPolicy { windows, fallback });
+}
+
+/// Writes what is waiting, here and now, as a writer that was held back
+/// would. For tests.
+#[doc(hidden)]
+pub fn flush_undo_writes_for_test(cx: &App) {
+    if let Some(persist) = cx.try_global::<UndoPersist>()
+        && let Some(store) = &persist.store
+    {
+        persist.writes.flush_all(store);
+    }
 }
 
 /// What [`set_window_persistent_undo`] gave `window`.
@@ -1807,6 +1881,9 @@ impl Global for RestoreStyle {}
 /// called, they open in the default dark theme with default settings.
 pub fn set_restore_style(cx: &mut App, theme: EditorTheme, settings: EditorSettings) {
     cx.set_global(RestoreStyle(theme, settings));
+    if cx.has_global::<UndoPersist>() {
+        publish_undo_policy(cx);
+    }
 }
 
 pub(crate) fn restore_style(cx: &App) -> (EditorTheme, EditorSettings) {
@@ -2372,7 +2449,7 @@ mod undo_writes_tests {
 
     use fe_buffer::{Buffer, Origin, UndoStore};
 
-    use super::UndoWrites;
+    use super::{UndoPolicy, UndoWrites};
 
     fn record(text: &str) -> fe_buffer::UndoRecord {
         let mut buffer = Buffer::new("");
@@ -2416,5 +2493,80 @@ mod undo_writes_tests {
         writes.flush_all(&good);
         assert_eq!(writes.waiting(path), None);
         assert_eq!(good.read(path).unwrap(), Some(kept));
+    }
+
+    fn policy(window: gpui::WindowId, on: bool) -> UndoPolicy {
+        UndoPolicy {
+            windows: [(window, on)].into(),
+            fallback: on,
+        }
+    }
+
+    /// A policy published while a writer holds the writing lock doesn't
+    /// wait for it, and the writer that runs next honours it, for a write
+    /// and for a removal.
+    #[test]
+    fn a_policy_published_during_a_write_holds_back_the_next_writers() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = UndoStore::new(dir.path().join("undo"));
+        let path = dir.path().join("a.txt");
+        let other = dir.path().join("b.txt");
+        let old = record("old");
+        store.write(&path, &old).unwrap();
+        store.write(&other, &old).unwrap();
+        let window = gpui::WindowId::from(1u64);
+        let writes = UndoWrites::default();
+        writes.capture(path.clone(), Some(record("new")), Some(window));
+        writes.capture(other.clone(), None, Some(window));
+        // Mimics the pending captures being taken by the writers already.
+        let held = writes.writing.lock().unwrap();
+        writes.capture(path.clone(), Some(record("newer")), Some(window));
+        {
+            // The captures are dropped at publish; put them back as a
+            // writer that had read them would find them: through the
+            // policy check alone.
+            *writes.policy.lock().unwrap() = Some(policy(window, false));
+        }
+        drop(held);
+        writes.flush(&store, &path);
+        writes.flush(&store, &other);
+        assert_eq!(store.read(&path).unwrap(), Some(old.clone()));
+        assert_eq!(store.read(&other).unwrap(), Some(old));
+        assert_eq!(writes.waiting(&path), None);
+        // Publishing drops the waiting captures as well.
+        writes.capture(path.clone(), None, Some(window));
+        writes.publish(policy(window, false));
+        assert_eq!(writes.waiting(&path), None);
+        writes.capture(path.clone(), None, Some(window));
+        writes.publish(policy(window, true));
+        assert_eq!(writes.waiting(&path), Some(None));
+    }
+
+    /// A policy published while a write is in flight waits for it, so
+    /// the write can't land after the publish returns.
+    #[test]
+    fn publishing_waits_for_the_write_in_flight() {
+        let writes = std::sync::Arc::new(UndoWrites::default());
+        let window = gpui::WindowId::from(1u64);
+        let in_flight = writes.policy.lock().unwrap();
+        let (done, finished) = std::sync::mpsc::channel();
+        let publisher = {
+            let writes = writes.clone();
+            std::thread::spawn(move || {
+                writes.publish(policy(window, false));
+                done.send(()).unwrap();
+            })
+        };
+        assert!(
+            finished
+                .recv_timeout(std::time::Duration::from_millis(200))
+                .is_err(),
+            "publish returned during a write"
+        );
+        drop(in_flight);
+        finished
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        publisher.join().unwrap();
     }
 }

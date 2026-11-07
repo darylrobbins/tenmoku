@@ -756,6 +756,133 @@ fn quitting_drops_waiting_writes_of_a_window_since_turned_off(cx: &mut TestAppCo
     assert!(!f.record_file().exists(), "not written once off");
 }
 
+impl Fixture {
+    /// Runs the writers held back, as they would once released.
+    fn release_writers(&mut self) {
+        self.cx
+            .update(|_, cx| fe_gpui::pane_item::flush_undo_writes_for_test(cx));
+    }
+}
+
+/// A write held back while the window had it on, released after it turned
+/// it off with nothing quitting, writes nothing (T507).
+#[gpui::test]
+fn a_queued_write_of_a_window_turned_off_is_not_written(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    fs::create_dir_all(f.store.dir()).unwrap();
+    fs::create_dir(f.record_file()).unwrap();
+    let _editor = f.open();
+    f.append(" two");
+    f.ex("w");
+    assert!(f.record_file().is_dir(), "the write is held back");
+    f.set_window_undo(false);
+    fs::remove_dir(f.record_file()).unwrap();
+    f.release_writers();
+    assert!(!f.record_file().exists(), "not created once off");
+
+    // An existing record isn't overwritten either.
+    let mut old = Buffer::new("x");
+    old.edit([(1..1, "y")], Origin::User);
+    let old = old.export_undo().unwrap();
+    f.set_window_undo(true);
+    f.append(" three");
+    fs::remove_file(f.record_file()).ok();
+    fs::create_dir(f.record_file()).unwrap();
+    f.ex("w");
+    f.set_window_undo(false);
+    fs::remove_dir(f.record_file()).unwrap();
+    f.store.write(&f.path, &old).unwrap();
+    let kept = fs::read(f.record_file()).unwrap();
+    f.release_writers();
+    assert_eq!(fs::read(f.record_file()).unwrap(), kept, "not overwritten");
+}
+
+/// Giving a window no setting of its own, with the host allowing it, keeps
+/// the writes waiting for it (T507 review F2).
+#[gpui::test]
+fn a_queued_write_survives_a_window_inheriting_an_enabled_setting(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    f.set_window_undo(true);
+    fs::create_dir_all(f.store.dir()).unwrap();
+    fs::create_dir(f.record_file()).unwrap();
+    let _editor = f.open();
+    f.append(" two");
+    f.ex("w");
+    assert!(f.record_file().is_dir(), "the write is held back");
+    let window = f.window;
+    f.cx.update(|_, cx| fe_gpui::pane_item::set_window_persistent_undo(window, None, cx));
+    fs::remove_dir(f.record_file()).unwrap();
+    f.release_writers();
+    assert!(f.record_file().exists(), "still written");
+}
+
+/// The host's setting turning persistence on after a window inherited it
+/// off lets that window's writes through (T507 review F3).
+#[gpui::test]
+fn enabling_the_host_setting_lets_an_inheriting_window_write(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    let window = f.window;
+    let off = EditorSettings {
+        persistent_undo: false,
+        ..EditorSettings::default()
+    };
+    f.cx.update(|_, cx| {
+        let theme = EditorTheme::default_dark(cx);
+        fe_gpui::pane_item::set_restore_style(cx, theme, off);
+        fe_gpui::pane_item::set_window_persistent_undo(window, None, cx);
+    });
+    let on = EditorSettings::default();
+    f.cx.update(|_, cx| {
+        let theme = EditorTheme::default_dark(cx);
+        fe_gpui::pane_item::set_restore_style(cx, theme, on);
+    });
+    f.edit_save_and_close();
+    assert!(f.record_file().exists(), "written once the host allows it");
+}
+
+/// The same for a removal: a save leaving no user history to keep.
+#[gpui::test]
+fn a_queued_removal_of_a_window_turned_off_removes_nothing(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    f.edit_save_and_close();
+    let kept = fs::read(f.record_file()).unwrap();
+    let editor = f.open();
+    let agent = Origin::Ai {
+        agent: "agent".into(),
+        session: "session".into(),
+    };
+    editor.update(&mut f.cx, |editor, cx| {
+        editor.model_mut().buffer_mut().edit([(7..7, "!")], agent);
+        cx.notify();
+    });
+    // Hold the removal back: a directory can't be removed as a file.
+    fs::remove_file(f.record_file()).unwrap();
+    fs::create_dir(f.record_file()).unwrap();
+    f.ex("w");
+    assert!(f.record_file().is_dir(), "the removal is held back");
+    f.set_window_undo(false);
+    fs::remove_dir(f.record_file()).unwrap();
+    fs::write(f.record_file(), &kept).unwrap();
+    f.release_writers();
+    assert_eq!(fs::read(f.record_file()).unwrap(), kept, "not removed");
+}
+
+/// The same for a window that started waiting for its settings.
+#[gpui::test]
+fn a_queued_write_of_a_window_waiting_for_its_settings_is_not_written(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    fs::create_dir_all(f.store.dir()).unwrap();
+    fs::create_dir(f.record_file()).unwrap();
+    let _editor = f.open();
+    f.append(" two");
+    f.ex("w");
+    assert!(f.record_file().is_dir(), "the write is held back");
+    f.wait_for_window_undo();
+    fs::remove_dir(f.record_file()).unwrap();
+    f.release_writers();
+    assert!(!f.record_file().exists(), "not written while waiting");
+}
+
 /// Known limit (spec "Known limits", follow-up T508): a read landing while
 /// the buffer holds an open transaction that has changed nothing, as vim's
 /// insert mode opens one, isn't imported for that open. The buffer's text
