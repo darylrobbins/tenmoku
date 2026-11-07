@@ -435,27 +435,28 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
 }
 
 /// The absolute `path`'s real path, its links (symlinks and junctions)
-/// resolved by the system, and what's there: the file opened, so what's read
-/// is what was resolved. Past a component that doesn't exist the rest is
-/// taken as written. Fails if it reaches something other than a folder or a
-/// regular file.
+/// resolved by the system, and what's there: the file opened, and the real
+/// path the system reports for that open handle, so the path checked is the
+/// file read, whatever is swapped in at `path` meanwhile. Past a component
+/// that doesn't exist the rest is taken as written. Fails if it reaches
+/// something other than a folder or a regular file.
 #[cfg(windows)]
 pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
-    match dunce::canonicalize(path) {
-        Ok(real) => {
-            let meta = std::fs::metadata(&real)?;
+    match open_following(path) {
+        Ok(opened) => {
+            let real = fe_project::beneath::opened_path(&opened)?;
+            let meta = opened.metadata()?;
             if meta.is_dir() {
                 Ok((real, Walked::Folder))
             } else if meta.is_file() {
-                let file = File::open(&real)?;
-                Ok((real, Walked::File(file)))
+                Ok((real, Walked::File(opened)))
             } else {
                 Err(io::Error::other("it isn't a regular file"))
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            // The deepest folder that exists, resolved, and the rest as
-            // written.
+            // The deepest folder that exists, resolved by its handle, and
+            // the rest as written. Nothing there is read.
             let mut rest = Vec::new();
             let mut at = path;
             loop {
@@ -463,14 +464,14 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
                     return Err(error);
                 };
                 rest.push(at.file_name().unwrap_or_default().to_owned());
-                if let Ok(real) = dunce::canonicalize(parent) {
-                    if !std::fs::metadata(&real)?.is_dir() {
+                if let Ok(folder) = open_following(parent) {
+                    if !folder.metadata()?.is_dir() {
                         return Err(io::Error::new(
                             io::ErrorKind::NotADirectory,
                             "a file where a folder should be",
                         ));
                     }
-                    let mut resolved = real;
+                    let mut resolved = fe_project::beneath::opened_path(&folder)?;
                     resolved.extend(rest.iter().rev());
                     return Ok((resolved, Walked::Missing));
                 }
@@ -479,6 +480,18 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
         }
         Err(error) => Err(error),
     }
+}
+
+/// Opens `path`, a file or a folder, for reading, its links followed.
+#[cfg(windows)]
+fn open_following(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    // A folder opens only with backup semantics.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
 }
 
 #[cfg(not(any(unix, windows)))]

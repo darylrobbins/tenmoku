@@ -71,3 +71,10 @@ pub fn identity(file: &File) -> io::Result<(u64, u64)> {
 pub fn is_link_or_not_folder(error: &io::Error) -> bool {
     win::is_symlink_error(error) || win::is_not_dir_error(error)
 }
+
+/// The real path of open `file`, as the system reports it for the handle:
+/// what the open reached, links included, whatever its path names since.
+/// Without a `\\?\` prefix.
+pub fn opened_path(file: &File) -> io::Result<std::path::PathBuf> {
+    win::final_path(file)
+}

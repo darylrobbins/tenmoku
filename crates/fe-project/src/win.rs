@@ -155,6 +155,19 @@ fn wide_name(name: &OsStr) -> io::Result<Vec<u16>> {
 /// junction. For [`Open::CreateNew`], `dir_entry` makes a directory rather
 /// than a file.
 fn nt_open(dir: &File, name: &OsStr, how: Open, dir_entry: bool) -> io::Result<File> {
+    nt_open_as(dir, name, how, dir_entry, false)
+}
+
+/// [`nt_open`], or, if `through_reparse`, letting the system handle a
+/// reparse point at `name` itself (its parent is still `dir`'s handle, so
+/// nothing above `name` is looked up by path).
+fn nt_open_as(
+    dir: &File,
+    name: &OsStr,
+    how: Open,
+    dir_entry: bool,
+    through_reparse: bool,
+) -> io::Result<File> {
     let mut wide = wide_name(name)?;
     let byte_len = (wide.len() * 2) as u16;
     let unicode = UNICODE_STRING {
@@ -171,6 +184,9 @@ fn nt_open(dir: &File, name: &OsStr, how: Open, dir_entry: bool) -> io::Result<F
         SecurityQualityOfService: ptr::null(),
     };
     let mut options = how.options();
+    if through_reparse {
+        options &= !FILE_OPEN_REPARSE_POINT;
+    }
     if how == Open::CreateNew && dir_entry {
         options = (options & !FILE_NON_DIRECTORY_FILE) | FILE_DIRECTORY_FILE;
     }
@@ -269,42 +285,24 @@ pub(crate) fn open_in(dir: &File, name: &OsStr, how: Open) -> io::Result<File> {
         };
         return Err(io::Error::from_raw_os_error(code as i32));
     }
-    drop(file);
-    reopen_following(dir, name, how)
+    reopen_through_reparse(dir, name, how, &file)
 }
 
-/// [`open_in`] for a reparse point that isn't a name surrogate: opened
-/// through the system's handling of it, then checked to still not be one.
-fn reopen_following(dir: &File, name: &OsStr, how: Open) -> io::Result<File> {
-    let path = final_path(dir)?.join(name);
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
-    let flags = match how {
-        Open::Dir(_) => FILE_FLAG_BACKUP_SEMANTICS,
-        _ => FILE_ATTRIBUTE_NORMAL,
-    };
-    // SAFETY: `wide` is NUL-terminated.
-    let handle = unsafe {
-        CreateFileW(
-            wide.as_ptr(),
-            how.access(),
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            ptr::null(),
-            OPEN_EXISTING,
-            flags,
-            ptr::null_mut(),
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
+/// [`open_in`] for a reparse point that isn't a name surrogate, `checked`:
+/// `name` opened again from `dir`'s handle through the system's handling of
+/// it, and kept only if it's still the entry `checked` is. Something swapped
+/// in since, a symlink or junction among them, is followed by that open, so
+/// it's caught by being another file, and refused.
+fn reopen_through_reparse(dir: &File, name: &OsStr, how: Open, checked: &File) -> io::Result<File> {
+    let file = nt_open_as(dir, name, how, false, true)?;
+    let swapped = || io::Error::from_raw_os_error(ERROR_STOPPED_ON_SYMLINK as i32);
+    if identity(&file)? != identity(checked)? {
+        return Err(swapped());
     }
-    // SAFETY: `CreateFileW` returned a new handle that nothing else owns.
-    let file = File::from(unsafe { OwnedHandle::from_raw_handle(handle) });
     let info = attribute_tag(&file)?;
     if info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && is_name_surrogate(info.ReparseTag)
     {
-        return Err(io::Error::from_raw_os_error(
-            ERROR_STOPPED_ON_SYMLINK as i32,
-        ));
+        return Err(swapped());
     }
     Ok(file)
 }

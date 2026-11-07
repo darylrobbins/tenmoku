@@ -782,7 +782,9 @@ fn a_buffer_counts_only_for_the_file_its_text_came_from(cx: &mut TestAppContext)
     // Nor a buffer of a file since replaced by another.
     let notes = open_file(&workbench, &root.join("notes.txt"), cx);
     assert!(chips(&panel, cx).contains(&"notes.txt · ~2".to_owned()));
-    fs::remove_file(root.join("notes.txt")).unwrap();
+    // Moved aside, not deleted: Linux would give the new file the freed
+    // inode, and a file is known by its device and inode.
+    fs::rename(root.join("notes.txt"), root.join("notes.old")).unwrap();
     fs::write(root.join("notes.txt"), "other\n").unwrap();
     insert(&notes, 0, "z", cx);
     let shown = chips(&panel, cx);
