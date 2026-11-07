@@ -55,6 +55,7 @@ const BUNDLED: &[BundledTheme] = &[
     bundled!("Catppuccin Frappe", "catppuccin-frappe", Dark),
     bundled!("Catppuccin Macchiato", "catppuccin-macchiato", Dark),
     bundled!("Catppuccin Mocha", "catppuccin-mocha", Dark),
+    bundled!("Monokai", "vscode-monokai", Dark),
     bundled!("Tenmoku Dark", "tenmoku-dark", Dark),
     bundled!("Tenmoku Light", "tenmoku-light", Light),
     bundled!("Tenmoku Ember", "tenmoku-ember", Dark),

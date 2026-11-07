@@ -28,7 +28,7 @@ This is an early, pre-1.0 release (0.1).
 - Markdown preview.
 - Claude chat panel (needs your own Anthropic API key, `ANTHROPIC_API_KEY`).
 - Themes: Tenmoku Dark, Light and Ember, VS Code Dark Modern, Dark 2026 and
-  Light 2026, and the four Catppuccin flavours. Dark and light follow the system.
+  Light 2026, the four Catppuccin flavours and Monokai. Dark and light follow the system.
 - Extensions for themes and grammars, and a preview of WebAssembly plugins
   (off by default, see below).
 - A `tenmoku` command-line interface: `tenmoku [options] [path[:line[:column]] ...]`,

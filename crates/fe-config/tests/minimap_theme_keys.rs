@@ -34,7 +34,7 @@ fn every_bundled_theme_sets_every_minimap_key() {
     }
     // Appended at the end of the table.
     assert_eq!(EditorColors::KEYS[EditorColors::KEYS.len() - 11..], KEYS);
-    assert_eq!(bundled_themes().len(), 10);
+    assert_eq!(bundled_themes().len(), 11);
     for theme in bundled_themes() {
         let file = theme.file();
         let editor = &file.extensions["editor"];
@@ -79,6 +79,8 @@ fn minimap_colours_are_vscode_s() {
             ("catppuccin-frappe", _) => [0xCA9EE633, 0xCA9EE666, 0xCA9EE699, 0x626880BF],
             ("catppuccin-macchiato", _) => [0xC6A0F633, 0xC6A0F666, 0xC6A0F699, 0x5B6078BF],
             ("catppuccin-mocha", _) => [0xCBA6F733, 0xCBA6F766, 0xCBA6F799, 0x585B70BF],
+            // Monokai sets minimap.selectionHighlight but no minimapSlider.*.
+            ("vscode-monokai", _) => [0x79797933, 0x64646459, 0xBFBFBF33, 0x878B9180],
             // scrollbarSlider.* at half alpha, editor.selectionBackground.
             (_, Appearance::Dark) => [0x79797933, 0x64646459, 0xBFBFBF33, 0x264F78FF],
             (_, Appearance::Light) => [0x64646433, 0x64646459, 0x0000004D, 0xADD6FFFF],

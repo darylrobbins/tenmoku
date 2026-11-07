@@ -269,6 +269,7 @@ fn choosing_a_bundled_theme_applies_and_keeps_it(cx: &mut TestAppContext) {
             row("Catppuccin Frappe", Appearance::Dark, false),
             row("Catppuccin Macchiato", Appearance::Dark, false),
             row("Catppuccin Mocha", Appearance::Dark, false),
+            row("Monokai", Appearance::Dark, false),
             row("Tenmoku Dark", Appearance::Dark, false),
             row("Tenmoku Light", Appearance::Light, false),
             row("Tenmoku Ember", Appearance::Dark, true),

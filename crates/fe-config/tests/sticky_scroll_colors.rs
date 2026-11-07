@@ -37,7 +37,7 @@ fn every_bundled_theme_sets_vscode_s_sticky_scroll_colours() {
         .position(|&key| key == "indent_guide_active")
         .unwrap();
     assert_eq!(EditorColors::KEYS[at + 1..at + 5], KEYS);
-    let want: [(&str, [u32; 4]); 10] = [
+    let want: [(&str, [u32; 4]); 11] = [
         ("vscode-2026-dark", [0x121314FF, 0, 0x191B1D4D, 0x2A2D2EFF]),
         (
             "vscode-dark-modern",
@@ -51,6 +51,7 @@ fn every_bundled_theme_sets_vscode_s_sticky_scroll_colours() {
             [0x24273AFF, 0, 0x181926FF, 0x363A4FFF],
         ),
         ("catppuccin-mocha", [0x1E1E2EFF, 0, 0x11111BFF, 0x313244FF]),
+        ("vscode-monokai", [0x272822FF, 0, 0x000000FF, 0x2A2D2EFF]),
         ("tenmoku-dark", [0x16181DFF, 0, 0x000000FF, 0x2A2D2EFF]),
         ("tenmoku-ember", [0x1C1814FF, 0, 0x000000FF, 0x2A2D2EFF]),
         ("tenmoku-light", [0xFFFFFFFF, 0, 0xDDDDDDFF, 0xF0F0F0FF]),

@@ -1,0 +1,199 @@
+# Monokai: VS Code's classic Monokai (dark), on Tenmoku's one-colour-per-
+# highlight-name model. The window's chrome is set through kiln's semantic
+# token groups, not per component.
+#
+# Adapted from microsoft/vscode's
+# `extensions/theme-monokai/themes/monokai-color-theme.json`, as at commit
+# f93fdeb454a0f0fafe5f310408cec48dd3b6f58a. VS Code's cgmanifest.json
+# registers its colours as derived from Colorsublime-Themes' Monokai (commit
+# c10fdd8b144486b7a4f3cb4e2251c66df222a825). Copyright (c) Microsoft
+# Corporation and (c) 2015 Colorsublime.com; both MIT, the notices in this
+# repository's NOTICE.
+#
+# Left out: font styles (italic storage.type, parameters and support.type,
+# underlined class names), `invalid`, the markdown-only and find-in-files
+# scopes and the token.*-token semantic rules. Chosen from the palette, as
+# upstream sets none: the diagnostics (error pink, warning yellow, info blue,
+# hint cyan), the change bar, the brackets, the jump labels, the vim mode
+# segments, quick scope and the yank highlight. Every highlight name is set,
+# none is left to its dotted parent. The minimap's background, warning, gutter, error and find
+# match marks are the editor's and VS Code's defaults, as every bundled
+# theme's are; Monokai sets no minimapSlider.*, so the slider is VS Code's
+# dark default.
+#
+# To try it, copy it to ~/.config/tenmoku/theme.toml with `mode = "dark"`.
+# Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
+
+kiln_theme = 1
+name = "Monokai"
+appearance = "dark"
+
+[surface]
+background = "#272822"
+panel = "#1E1F1C"
+raised = "#1E1F1C"
+overlay = "#1E1F1CE6"
+
+[text]
+primary = "#F8F8F2"
+muted = "#CCCCC7"
+disabled = "#75715E"
+accent = "#A6E22E"
+on_accent = "#272822"
+
+[border]
+default = "#414339"
+subtle = "#34352F"
+focused = "#99947C"
+
+[accent]
+base = "#75715E"
+hover = "#8A866F"
+subtle = "#75715E66"
+
+[state]
+hover = "#3E3D32"
+pressed = "#414339"
+selected = "#75715E"
+selected_inactive = "#414339"
+focus_ring = "#99947C"
+drop_target = "#41433980"
+dirty = "#E6DB74"
+
+[status]
+error = "#F92672"
+warning = "#E2E22E"
+info = "#819AFF"
+success = "#A6E22E"
+
+[list]
+indent_guide = "#464741"
+chevron = "#CCCCC7"
+icon = "#CCCCC7"
+folder_icon = "#CCCCC7"
+
+[tab]
+active = "#272822"
+inactive = "#34352F"
+active_text = "#F8F8F2"
+
+[scrollbar]
+thumb = "#75715E66"
+thumb_hover = "#75715E99"
+
+[editor]
+background = "#272822"
+foreground = "#F8F8F2"
+gutter_foreground = "#90908A"
+gutter_active_foreground = "#C2C2BF"
+active_line = "#3E3D32"
+selection = "#878B9180"
+cursor = "#F8F8F0"
+error = "#F92672"
+warning = "#E2E22E"
+information = "#819AFF"
+hint = "#66D9EF"
+popover_background = "#414339"
+popover_border = "#75715E"
+# The jump labels: a live label on pink, a preview on cyan, the glyph the
+# editor's background.
+jump_label = "#F92672"
+jump_label_preview = "#66D9EF"
+jump_label_foreground = "#272822"
+vim_yank_highlight = "#E6DB7438"
+quick_scope_primary = "#A6E22E"
+quick_scope_secondary = "#66D9EF"
+change_added = "#A6E22E"
+change_modified = "#E6DB74"
+change_deleted = "#F92672"
+# A diff view's rows and changed words, at VS Code's translucent levels (its
+# diffEditor.inserted/removedLineBackground and ...TextBackground are #..33; ours are weaker still, so a comment keeps its contrast):
+# the row band is fainter and the word tint over it stronger, both behind the
+# text, so a changed word keeps its syntax colour. Green and red only.
+diff_added_row = "#9bb95514"
+diff_removed_row = "#ff000014"
+diff_added_word = "#9ccc2c1f"
+diff_removed_word = "#ff00001f"
+# The hatching of a diff view's filler rows: Tenmoku Dark's.
+diff_filler = "#cccccc1f"
+indent_guide = "#464741"
+indent_guide_active = "#767771"
+# The marks on spaces and tabs and the rulers' lines: upstream's
+# editorWhitespace.foreground, and VS Code's editorRuler.foreground default.
+whitespace = "#464741"
+ruler = "#5a5a5a"
+# Sticky scroll: monokai-color-theme.json sets none, so VS Code's defaults:
+# editorStickyScroll.background (the editor's), .border (none), .shadow
+# (scrollbar.shadow) and editorStickyScrollHover.background.
+sticky_scroll_background = "#272822"
+sticky_scroll_border = "#00000000"
+sticky_scroll_shadow = "#000000"
+sticky_scroll_hover = "#2A2D2E"
+# The vim mode segments: normal cyan, insert green, visual purple, replace
+# pink, command orange, the label the editor's background.
+vim_mode_normal = "#66D9EF"
+vim_mode_insert = "#A6E22E"
+vim_mode_visual = "#AE81FF"
+vim_mode_replace = "#F92672"
+vim_mode_command = "#FD971F"
+vim_mode_foreground = "#272822"
+# editorBracketHighlight.foreground1 to 3.
+bracket_1 = "#E6DB74"
+bracket_2 = "#AE81FF"
+bracket_3 = "#66D9EF"
+# The minimap. The selection mark is the theme's minimap.selectionHighlight.
+# The rest are VS Code's defaults: minimap.background is the editor's,
+# minimapSlider.* scrollbarSlider.* at half alpha, minimap.errorHighlight
+# #FF1212B3, minimap.warningHighlight editorWarning.foreground and
+# minimapGutter.* editorGutter.*. The find match mark is the overview ruler's
+# opaque #D18616, so a one-row match shows.
+minimap_background = "#272822"
+minimap_slider = "#79797933"
+minimap_slider_hover = "#64646459"
+minimap_slider_active = "#BFBFBF33"
+minimap_selection = "#878B9180"
+minimap_find_match = "#D18616"
+minimap_error = "#FF1212B3"
+minimap_warning = "#E2E22E"
+minimap_gutter_added = "#A6E22E"
+minimap_gutter_modified = "#E6DB74"
+minimap_gutter_deleted = "#F92672"
+
+# Every name Tenmoku Dark colours is listed, since a theme's table is laid
+# over Dark's.
+[syntax]
+"attribute" = "#A6E22E"
+"comment" = "#88846F"
+"constant" = "#AE81FF"
+"constant.builtin" = "#AE81FF"
+"constant.enum_member" = "#AE81FF"
+"constructor" = "#A6E22E"
+"escape" = "#AE81FF"
+"function" = "#A6E22E"
+"function.builtin" = "#66D9EF"
+"function.macro" = "#66D9EF"
+"keyword" = "#F92672"
+"label" = "#F8F8F2"
+"markup.deleted" = "#F92672"
+"markup.heading" = "#A6E22E"
+"markup.inserted" = "#A6E22E"
+"markup.link" = "#AE81FF"
+"markup.link.url" = "#E6DB74"
+"markup.raw" = "#FD971F"
+"module" = "#A6E22E"
+"number" = "#AE81FF"
+"operator" = "#F92672"
+"property" = "#F8F8F2"
+"punctuation" = "#F8F8F2"
+"punctuation.special" = "#F92672"
+"string" = "#E6DB74"
+"string.placeholder" = "#AE81FF"
+"string.special" = "#F8F8F2"
+"string.special.key" = "#F8F8F2"
+"tag" = "#F92672"
+"type" = "#A6E22E"
+"type.builtin" = "#66D9EF"
+"type.parameter" = "#A6E22E"
+"variable" = "#F8F8F2"
+"variable.builtin" = "#FD971F"
+"variable.parameter" = "#FD971F"

@@ -376,6 +376,15 @@ fn picking_writes_the_id(cx: &mut TestAppContext) {
     let key = "theme.dark";
     let editor = open_settings(&workbench, Scope::User, key, cx);
     click(&format!("setting-select-{key}"), cx);
+    // The installed theme is listed after the bundled ones, below the menu's
+    // fold: scroll to it with the wheel.
+    let menu = bounds(&format!("setting-menu-{key}"), cx);
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: menu.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-100_000.))),
+        ..Default::default()
+    });
+    draw(cx);
     click(&option(key, "acme.solarized/solarized-dark"), cx);
     assert!(!drawn(&option(key, "acme.solarized/solarized-dark"), cx));
     assert_eq!(

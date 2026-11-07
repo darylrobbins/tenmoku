@@ -276,7 +276,7 @@
 # light = "acme.solarized/solarized-light"
 # A bundled theme by name: Dark Modern, Dark 2026, Light 2026,
 # Catppuccin Latte, Catppuccin Frappe, Catppuccin Macchiato, Catppuccin Mocha,
-# Tenmoku Dark, Tenmoku Light or Tenmoku Ember. It's the dark or the light
+# Monokai, Tenmoku Dark, Tenmoku Light or Tenmoku Ember. It's the dark or the light
 # theme, as its appearance is; dark or light, if set, wins for that one.
 # name = "Dark Modern"
 
