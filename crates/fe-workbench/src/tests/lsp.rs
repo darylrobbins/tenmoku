@@ -400,8 +400,12 @@ impl Lsp {
     }
 
     /// The path of `name`, relative to the root with `/` separators, as the
-    /// app spells it: with the platform's separators.
+    /// app spells it: with the platform's separators. An absolute `name` is
+    /// its own path.
     pub(crate) fn path(&self, name: &str) -> PathBuf {
+        if Path::new(name).is_absolute() {
+            return PathBuf::from(name);
+        }
         let mut path = self.root.clone();
         path.extend(name.split('/'));
         path
