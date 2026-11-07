@@ -220,6 +220,7 @@ licence. No module is committed.
 | swift | `tree-sitter-swift.wasm` | tree-sitter-swift 0.7.3 | MIT |
 | cpp | `tree-sitter-cpp.wasm` | tree-sitter-cpp 0.23.4 | MIT; `highlights.scm` starts with tree-sitter-c 0.24.2's query, whose licence is the same text and holder |
 | sql | `tree-sitter-sql.wasm` | tree-sitter-sequel 0.3.11 | MIT |
+| starlark | `tree-sitter-starlark.wasm` | tree-sitter-starlark 1.3.0, commit `a453dbf3ba433db0e5ec621a38a7e59d72e4dc69` of github.com/tree-sitter-grammars/tree-sitter-starlark | MIT; `highlights.scm` is upstream's query, adapted, which comes from tree-sitter-python (MIT) |
 | php | `tree-sitter-php.wasm` | tree-sitter-php 0.24.2 (grammar `php`, not `php_only`) | MIT |
 | ruby | `tree-sitter-ruby.wasm` | tree-sitter-ruby 0.23.1 | MIT |
 | julia | `tree-sitter-julia.wasm` | https://github.com/tree-sitter/tree-sitter-julia at `e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3` (0.25.0), `src` | MIT |
