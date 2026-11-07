@@ -10,6 +10,8 @@
 //! fonts they need (PingFang, Apple Color Emoji, Arial Hebrew, Geeza Pro),
 //! and GPUI builds its text system only with the Mac platform.
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use std::ops::Range;
 
 use fe_buffer::{Buffer, ResolvedSelection};
