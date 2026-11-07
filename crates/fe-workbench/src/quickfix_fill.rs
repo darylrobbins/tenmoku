@@ -56,7 +56,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{Read as _, Seek as _, SeekFrom},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -498,18 +498,31 @@ fn include_glob(glob: &str, root: &Path, current: Option<&Path>) -> Result<Strin
         let rel = current
             .strip_prefix(root)
             .map_err(|_| format!("{} is outside the folder", current.display()))?;
-        return Ok(format!("/{}", escape_glob(&rel.to_string_lossy())));
+        let words: Vec<String> = words(rel).map(|word| escape_glob(&word)).collect();
+        return Ok(format!("/{}", words.join("/")));
     }
-    let rel = match Path::new(glob).is_absolute() {
+    // Rooted, not only absolute: Windows' `\p\src` names a folder on the
+    // current drive, as a root without one does.
+    let rel = match Path::new(glob).has_root() {
         true => {
             let rel = Path::new(glob)
                 .strip_prefix(root)
                 .map_err(|_| format!("{glob} is outside the folder"))?;
-            PathBuf::from(rel).to_string_lossy().into_owned()
+            words(rel).collect::<Vec<_>>().join("/")
         }
         false => glob.trim_start_matches("./").to_owned(),
     };
     Ok(format!("/{rel}"))
+}
+
+/// The words of `rel`, a path under the root: a glob joins them with `/` on
+/// every platform.
+fn words(rel: &Path) -> impl Iterator<Item = String> + '_ {
+    rel.components().filter_map(|component| match component {
+        std::path::Component::Normal(word) => Some(word.to_string_lossy().into_owned()),
+        std::path::Component::ParentDir => Some("..".to_owned()),
+        _ => None,
+    })
 }
 
 /// `path` with the chars a glob reads specially escaped.

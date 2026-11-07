@@ -206,6 +206,68 @@ impl Listener {
     }
 }
 
+/// The title a session's program set, from the one its console reports:
+/// without what Windows' console host adds to it, and empty for the
+/// console's own default.
+fn program_title(title: String) -> String {
+    let title = without_elevated_prefix(&title, elevated());
+    if is_console_default_title(title) {
+        return String::new();
+    }
+    title.to_owned()
+}
+
+/// `title` without the `Administrator: ` an elevated Windows console puts
+/// before every title, the word localized. The console always adds one, so
+/// the first `: ` is its own. Unchanged when not `elevated`.
+fn without_elevated_prefix(title: &str, elevated: bool) -> &str {
+    match elevated {
+        true => title.split_once(": ").map_or(title, |(_, rest)| rest),
+        false => title,
+    }
+}
+
+/// Whether this process runs elevated, so its consoles' titles are
+/// prefixed. Never elsewhere than Windows.
+#[cfg(windows)]
+fn elevated() -> bool {
+    use std::sync::OnceLock;
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+    static ELEVATED: OnceLock<bool> = OnceLock::new();
+    *ELEVATED.get_or_init(|| {
+        let mut token: HANDLE = std::ptr::null_mut();
+        // SAFETY: the pseudo-handle is always valid; `token` receives the
+        // process token, closed below.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+        let mut written = 0u32;
+        // SAFETY: `elevation` is a TOKEN_ELEVATION of the size passed.
+        let read = unsafe {
+            GetTokenInformation(
+                token,
+                TokenElevation,
+                (&raw mut elevation).cast(),
+                size_of::<TOKEN_ELEVATION>() as u32,
+                &mut written,
+            )
+        };
+        // SAFETY: `token` was opened above and is closed once.
+        unsafe { CloseHandle(token) };
+        read != 0 && elevation.TokenIsElevated != 0
+    })
+}
+
+#[cfg(not(windows))]
+fn elevated() -> bool {
+    false
+}
+
 /// Whether `title` is what Windows' console host titles a session whose
 /// program set none: the path of the program's `.exe`, such as
 /// `C:\WINDOWS\SYSTEM32\cmd.exe`. Never elsewhere.
@@ -220,12 +282,7 @@ impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         match event {
             Event::Wakeup => self.send(TerminalEvent::Wakeup),
-            // The console's own title, the program's path, isn't one the
-            // program set.
-            Event::Title(title) if is_console_default_title(&title) => {
-                self.send(TerminalEvent::Title(String::new()))
-            }
-            Event::Title(title) => self.send(TerminalEvent::Title(title)),
+            Event::Title(title) => self.send(TerminalEvent::Title(program_title(title))),
             Event::ResetTitle => self.send(TerminalEvent::Title(String::new())),
             Event::Bell => self.send(TerminalEvent::Bell),
             Event::ClipboardStore(_, text) => self.send(TerminalEvent::ClipboardStore(text)),
@@ -593,5 +650,30 @@ impl Drop for Terminal {
         // SIGHUP and reaps the child. Nothing here waits for either.
         let _ = self.pty.send(Msg::Shutdown);
         drop(self.event_loop.take());
+    }
+}
+
+#[cfg(test)]
+mod console_title_tests {
+    use super::{is_console_default_title, without_elevated_prefix};
+
+    #[test]
+    fn an_elevated_consoles_prefix_goes_and_its_own_title_is_none() {
+        let elevated = r"Administrator: C:\Windows\SYSTEM32\cmd.exe";
+        assert_eq!(
+            without_elevated_prefix(elevated, true),
+            r"C:\Windows\SYSTEM32\cmd.exe"
+        );
+        assert_eq!(
+            without_elevated_prefix("Administrator: build: x", true),
+            "build: x"
+        );
+        assert_eq!(without_elevated_prefix("build: x", false), "build: x");
+        assert_eq!(
+            is_console_default_title(r"C:\WINDOWS\system32\cmd.exe"),
+            cfg!(windows)
+        );
+        assert!(!is_console_default_title("build: cargo test"));
+        assert!(!is_console_default_title("Terminal 1"));
     }
 }

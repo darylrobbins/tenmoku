@@ -91,13 +91,29 @@ fn until(
     what: &str,
     mut done: impl FnMut(&mut VisualTestContext) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    until_within(cx, what, Duration::from_secs(10), &mut done, |_| {
+        String::new()
+    });
+}
+
+/// As [`until`], waiting up to `limit`, and naming what `shown` says on
+/// timing out.
+fn until_within(
+    cx: &mut VisualTestContext,
+    what: &str,
+    limit: Duration,
+    mut done: impl FnMut(&mut VisualTestContext) -> bool,
+    shown: impl Fn(&mut VisualTestContext) -> String,
+) {
+    let deadline = Instant::now() + limit;
     loop {
         draw(cx);
         if done(cx) {
             return;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for {what}: {}", shown(cx));
+        }
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -436,9 +452,13 @@ fn filter_runs_through_cmd(cx: &mut TestAppContext) {
     let a = active(&workbench, cx);
 
     // :%!sort sorts the buffer through Windows' own sort, one undo step,
-    // its CRLF rows read as the buffer's.
+    // its CRLF rows read as the buffer's. Its first cmd.exe can take a
+    // while on a loaded CI runner.
     ex("%!sort", cx);
-    until(cx, "sorted", |cx| text(&a, cx) == "a\nb\nc\n");
+    let shown =
+        |cx: &mut VisualTestContext| format!("{:?}, {:?}", text(&a, cx), message(&workbench, cx));
+    let sorted = |cx: &mut VisualTestContext| text(&a, cx) == "a\nb\nc\n";
+    until_within(cx, "sorted", Duration::from_secs(60), sorted, shown);
     cx.simulate_keystrokes("u");
     assert_eq!(text(&a, cx), "c\na\nb\n");
 

@@ -200,12 +200,14 @@ pub fn is_executable(path: &Path, metadata: &fs::Metadata) -> bool {
 /// itself, and on Windows `name` with each of `PATHEXT`'s extensions, as a
 /// shell searches for it.
 pub fn program_candidates(dir: &Path, name: &str) -> Vec<std::path::PathBuf> {
-    let mut candidates = vec![dir.join(name)];
+    let bare = std::iter::once(dir.join(name));
     #[cfg(not(unix))]
-    for extension in program_extensions() {
-        candidates.push(dir.join(format!("{name}{extension}")));
-    }
-    candidates
+    let bare = bare.chain(
+        program_extensions()
+            .into_iter()
+            .map(|extension| dir.join(format!("{name}{extension}"))),
+    );
+    bare.collect()
 }
 
 /// `PATHEXT`'s extensions, each with its leading dot, or Windows' default.
