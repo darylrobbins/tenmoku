@@ -248,7 +248,7 @@ impl Dirs {
     fn new(root: &Path, watcher: Shared) -> notify::Result<Dirs> {
         // Canonical, so it can be opened a directory at a time without
         // following symlinks.
-        let root = dunce::canonicalize(&root)
+        let root = dunce::canonicalize(root)
             .map_err(|err| notify::Error::io(err).add_path(root.into()))?;
         let mut dirs = Dirs {
             watcher,

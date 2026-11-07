@@ -105,7 +105,7 @@ impl Boundary {
     #[cfg(unix)]
     pub(crate) fn of(root: &Path) -> io::Result<Boundary> {
         use std::os::unix::fs::MetadataExt as _;
-        let resolved = dunce::canonicalize(&root)?;
+        let resolved = dunce::canonicalize(root)?;
         let metadata = std::fs::metadata(&resolved)?;
         Ok(Boundary {
             root: root.to_owned(),
