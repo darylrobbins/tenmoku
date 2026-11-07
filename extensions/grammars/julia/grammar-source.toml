@@ -1,0 +1,8 @@
+git = "https://github.com/tree-sitter/tree-sitter-julia"
+# The full 40-hex commit: master at 0.25.0.
+rev = "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3"
+# The directory holding parser.c and scanner.c.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm.
+grammar = "julia"

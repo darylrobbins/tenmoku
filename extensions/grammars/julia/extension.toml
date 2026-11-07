@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_julia"
+name = "Julia syntax"
+version = "0.25.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "julia"
+wasm = "tree-sitter-julia.wasm"
+extensions = ["jl"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "#"
+block_comment = ["#=", "=#"]
+shebangs = ["julia"]
