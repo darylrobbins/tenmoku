@@ -225,10 +225,12 @@ fn program_title(title: String, prefix: &mut Option<String>) -> String {
         *prefix = Some(format!("{before}: "));
         return String::new();
     }
+    // cmd's `title` puts a space of its own after the prefix, so what
+    // follows it is trimmed too.
     match prefix.as_deref() {
         Some(prefix) if !prefix.is_empty() => title
             .strip_prefix(prefix)
-            .map_or_else(|| title.clone(), str::to_owned),
+            .map_or_else(|| title.clone(), |rest| rest.trim_start().to_owned()),
         _ => title,
     }
 }
@@ -642,7 +644,8 @@ mod console_title_tests {
         let titles = [
             r"Administrator: C:\Windows\SYSTEM32\cmd.exe",
             "Administrator: build",
-            "Administrator: build: x",
+            // As cmd's `title` sets it, elevated.
+            "Administrator:  build: x",
             "other",
         ];
         assert_eq!(program_titles(&titles), ["", "build", "build: x", "other"]);
