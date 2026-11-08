@@ -34,6 +34,9 @@ usvg.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]
+# The bundled fonts, which the screenshots example (and fe-gpui's font tests)
+# register and pin, as Tenmoku does.
+fe-fonts = { path = "../fe-fonts" }
 criterion.workspace = true
 # Tiles are built from complete highlights whatever the machine's load, as in
 # fe-syntax's own tests: a 2 ms query budget cuts them short under load.

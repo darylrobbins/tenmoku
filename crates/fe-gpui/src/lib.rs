@@ -313,13 +313,32 @@ impl EditorTheme {
     }
 }
 
-/// The font family `settings` names, or else the first installed of a
-/// preferred list.
+/// The font family `settings` names, or else the host's code family
+/// ([`fe_ui::FontFamilies`]) if it's installed, or else the first installed
+/// of a preferred list, which starts with Spline Sans Mono.
 fn font_family(settings: &EditorSettings, cx: &App) -> SharedString {
     if let Some(family) = &settings.font_family {
         return family.clone().into();
     }
+    let code = cx
+        .try_global::<fe_ui::FontFamilies>()
+        .and_then(|families| families.code.clone());
+    if let Some(code) = code
+        && kiln_platform::fonts::first_installed(&[&code], cx).is_some()
+    {
+        return code;
+    }
     kiln_platform::fonts::mono_family(cx)
+}
+
+/// The family the editor's popovers (hover, completion, signature help)
+/// set their prose in: the host's UI family ([`fe_ui::FontFamilies`]), or
+/// the platform's UI font when it set none.
+pub fn ui_font_family(cx: &App) -> SharedString {
+    cx.try_global::<fe_ui::FontFamilies>().map_or_else(
+        || fe_ui::FontFamilies::default().ui,
+        |families| families.ui.clone(),
+    )
 }
 
 #[cfg(test)]

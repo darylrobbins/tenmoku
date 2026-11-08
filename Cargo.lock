@@ -2171,6 +2171,7 @@ dependencies = [
  "fe-chat",
  "fe-config",
  "fe-editor",
+ "fe-fonts",
  "fe-gpui",
  "fe-markdown",
  "fe-markdown-view",
@@ -2276,6 +2277,7 @@ dependencies = [
  "fe-display",
  "fe-editor",
  "fe-fileview",
+ "fe-fonts",
  "fe-keymap",
  "fe-syntax",
  "fe-text",
@@ -2361,6 +2363,7 @@ name = "fe-markdown-view"
 version = "0.1.1"
 dependencies = [
  "fe-config",
+ "fe-fonts",
  "fe-gpui",
  "fe-markdown",
  "fe-syntax",

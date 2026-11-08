@@ -322,13 +322,15 @@ fn row_end_hover_and_changed_diagnostics(cx: &mut TestAppContext) {
     assert_eq!(painted(&view, cx).0.len(), 4);
 
     // Each empty one shows its message from its space-wide squiggle past
-    // the row's end.
+    // the row's end. Further right than that, nothing does: each is rested
+    // on from there, so the last one's popover, which can cover the next
+    // row's middle, has gone.
+    let past = at(&view, 3, cx) + point(px(40.), px(0.));
     for (offset, message) in [(3, "row end"), (4, "empty row"), (text.len(), "eof")] {
+        assert_eq!(rest(&view, past, cx), None, "before {message}");
         let over = at(&view, offset, cx);
         assert_eq!(rest(&view, over, cx).as_deref(), Some(message));
     }
-    // Further right than that, nothing does.
-    let past = at(&view, 3, cx) + point(px(40.), px(0.));
     assert_eq!(rest(&view, past, cx), None);
 
     // With the pointer still on `x`, a publication keeping its diagnostic

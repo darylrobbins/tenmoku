@@ -6,9 +6,12 @@
 use gpui::{App, SharedString, font};
 use kiln_core::Os;
 
-/// The monospace families worth trying, in order: macOS ships SF Mono and
-/// Menlo, and common Linux distributions the others.
-pub const MONO_FAMILIES: [&str; 7] = [
+/// The monospace families worth trying, in order: Spline Sans Mono, the
+/// design's code family, which an app that bundles it registers; then
+/// JetBrains Mono if installed; macOS ships SF Mono and Menlo, and common
+/// Linux distributions the others.
+pub const MONO_FAMILIES: [&str; 8] = [
+    "Spline Sans Mono",
     "JetBrains Mono",
     "SF Mono",
     "Menlo",

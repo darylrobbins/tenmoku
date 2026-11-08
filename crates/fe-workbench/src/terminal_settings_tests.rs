@@ -194,3 +194,66 @@ fn a_reload_changing_the_shell_waits_for_the_next_session(cx: &mut TestAppContex
         screen(&next, cx).contains("second")
     });
 }
+
+/// Unset, the terminal's size is the design's small code size, 12 px, at
+/// its own line height, so rows are 15 px and box drawing still meets
+/// (T1515), whatever the editor's size.
+#[gpui::test]
+fn unset_size_is_code_small_with_15px_rows(cx: &mut TestAppContext) {
+    let (workbench, cx, _dir) = opened(cx);
+    workbench.update(cx, |workbench, cx| {
+        workbench.set_terminal_settings(&sh("exec cat"), cx)
+    });
+    let view = start(&workbench, cx);
+    let style = view.read_with(cx, |view, _| view.style().clone());
+    assert_eq!(style.font_size, px(12.));
+    assert_eq!(
+        style.line_height,
+        fe_terminal_view::TerminalStyle::LINE_HEIGHT
+    );
+    assert_eq!((style.font_size * style.line_height).round(), px(15.));
+}
+
+/// T1513's finding: a palette change with no settings reload (a theme
+/// file's reload, the system's appearance) restyles the running session
+/// and the ones to come: the `[terminal]` table's ANSI colours and
+/// overrides, and the editor colours it falls back to.
+#[gpui::test]
+fn a_palette_change_restyles_the_sessions(cx: &mut TestAppContext) {
+    let (workbench, cx, _dir) = opened(cx);
+    workbench.update(cx, |workbench, cx| {
+        workbench.set_terminal_settings(&sh("exec cat"), cx)
+    });
+    let view = start(&workbench, cx);
+    let before = view.read_with(cx, |view, _| view.style().clone());
+
+    let light = fe_config::EditorPalette::fastedit_light();
+    let mut palette = light.clone();
+    let background = fe_config::Color::rgb(0x123456);
+    palette.terminal.background = Some(background);
+    palette.terminal.foreground = None;
+    palette.terminal.cursor = None;
+    cx.update(|_, cx| fe_gpui::set_editor_palette(cx, Arc::new(palette.clone())));
+    draw(cx);
+
+    let hsla = |color: fe_config::Color| -> gpui::Hsla { gpui::rgba(color.to_rgba_u32()).into() };
+    let ansi = palette.terminal.ansi.map(hsla);
+    let check = |style: &fe_terminal_view::TerminalStyle| {
+        assert_eq!(style.ansi, ansi);
+        assert_eq!(style.background, hsla(background), "the override");
+        assert_eq!(
+            style.foreground,
+            hsla(light.editor.foreground),
+            "the editor's"
+        );
+        assert_eq!(style.cursor, hsla(light.editor.cursor), "the editor's");
+    };
+    let after = view.read_with(cx, |view, _| view.style().clone());
+    assert_ne!(after.ansi, before.ansi);
+    check(&after);
+    // The font is kept.
+    assert_eq!(after.font_size, before.font_size);
+    assert_eq!(after.font_family, before.font_family);
+    // And a session started after it is drawn in it too.
+    panel(&workbench, cx).read_with(cx, |panel, _| check(&panel.style));
+}

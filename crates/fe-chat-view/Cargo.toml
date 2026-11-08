@@ -24,6 +24,9 @@ log.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# The bundled fonts, which the screenshots example (and fe-gpui's font tests)
+# register and pin, as Tenmoku does.
+fe-fonts = { path = "../fe-fonts" }
 # The screenshots example's scenes: the default themes, Yohen and Hakuji.
 fe-config.workspace = true
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }

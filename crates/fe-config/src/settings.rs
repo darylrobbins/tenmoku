@@ -217,7 +217,8 @@ pub struct TerminalSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub font_family: Option<String>,
-    /// The terminal's font size, in points. Unset uses the editor's.
+    /// The terminal's font size, in points. Unset, 12, the design's small
+    /// code size.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 6.0, max = 72.0))]
     pub font_size: Option<f64>,
@@ -658,15 +659,17 @@ impl Default for ZenModeSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct EditorSettings {
-    /// The font family. Unset, the first installed of JetBrains Mono, SF Mono,
-    /// Menlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.
+    /// The font family. Unset, Spline Sans Mono, which Tenmoku bundles, or
+    /// else the first installed of JetBrains Mono, SF Mono, Menlo, DejaVu Sans
+    /// Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub font_family: Option<String>,
     /// The font size, in points.
     #[schemars(range(min = 6.0, max = 72.0))]
     pub font_size: f64,
-    /// The line height, as a multiple of the font size.
+    /// The line height, as a multiple of the font size. Rows round to whole
+    /// pixels: 1.54 gives 20 px rows at 13 px.
     #[schemars(range(min = 1.0, max = 3.0))]
     pub line_height: f64,
     /// How many columns a tab advances to the next multiple of.
@@ -1034,7 +1037,7 @@ impl Default for EditorSettings {
         Self {
             font_family: None,
             font_size: 13.0,
-            line_height: 1.6,
+            line_height: 1.54,
             tab_size: 4,
             soft_wrap: false,
             wrap_column: 0,

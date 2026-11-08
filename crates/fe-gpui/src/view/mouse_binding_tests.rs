@@ -334,6 +334,8 @@ fn hover_underlines_the_word_under_cmd(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(hover(&view, cx), None, "scrolled");
+    // Where the word is now that the text has moved.
+    let over = at(&view, helper.start + 2, cx);
 
     // So do focus leaving the view and the window going inactive, as when
     // cmd-tab releases cmd in another app.

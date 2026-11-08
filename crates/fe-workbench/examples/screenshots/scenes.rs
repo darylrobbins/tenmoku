@@ -24,8 +24,9 @@ use kiln_platform::{
 /// The window size of the scene, in logical pixels.
 pub(crate) const SCENE_SIZE: Size<Pixels> = size(px(1000.), px(600.));
 
-/// Pinned so goldens don't depend on which fonts are installed (TESTING.md).
-const FONT_FAMILY: &str = "Menlo";
+/// Pinned so goldens don't depend on which fonts are installed (TESTING.md):
+/// the bundled code family, which `fe_workbench::init` registers.
+const FONT_FAMILY: &str = fe_fonts::CODE;
 
 pub(crate) const SCENE: &str = "workbench";
 

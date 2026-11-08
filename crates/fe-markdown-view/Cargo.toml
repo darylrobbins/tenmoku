@@ -18,6 +18,9 @@ kiln-ui.workspace = true
 usvg.workspace = true
 
 [dev-dependencies]
+# The bundled fonts, which the screenshots example (and fe-gpui's font tests)
+# register and pin, as Tenmoku does.
+fe-fonts = { path = "../fe-fonts" }
 # The screenshots example's scenes: the default themes, Yohen and Hakuji.
 fe-config.workspace = true
 # Fences are highlighted whatever the machine's load, as in fe-syntax's own tests.

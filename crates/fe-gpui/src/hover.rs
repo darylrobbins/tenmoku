@@ -64,7 +64,8 @@ pub(crate) const MAX_POPOVER_ROWS: f32 = 16.;
 const WINDOW_MARGIN: Pixels = px(8.);
 
 /// GPUI's name for the platform's UI font, which the popover's prose is
-/// set in.
+/// set in when the host sets no UI family ([`crate::ui_font_family`]).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const UI_FONT: &str = ".SystemUIFont";
 
 /// What a [`HoverProvider`] says about the text at an offset.
@@ -970,9 +971,10 @@ impl EditorView {
         let room = window.viewport_size().height - WINDOW_MARGIN * 2. - chrome;
         let max_height = (line_height * MAX_POPOVER_ROWS).min(room).max(px(0.));
         let theme = &self.theme;
+        let ui_font = crate::ui_font_family(cx);
         let font = |block: &Block| -> SharedString {
             match block {
-                Block::Text(_) => UI_FONT.into(),
+                Block::Text(_) => ui_font.clone(),
                 Block::Code(_) => theme.font_family.clone(),
             }
         };
@@ -993,7 +995,7 @@ impl EditorView {
             // The diagnostics stay text; only the provider's is Markdown.
             if !current.hovered.items.is_empty() {
                 children.push(
-                    div().font_family(UI_FONT).child(SharedString::from(
+                    div().font_family(ui_font.clone()).child(SharedString::from(
                         (current.hovered.items.iter())
                             .map(|(_, message)| message.as_str())
                             .collect::<Vec<_>>()
@@ -1011,8 +1013,11 @@ impl EditorView {
                     .child(SharedString::from(block.text().to_owned()))
             }));
         }
+        // The prose in the UI family, a renderer's too, inheriting it; code
+        // sets its own.
         let body = div()
             .debug_selector(|| "hover-popover-body".into())
+            .font_family(ui_font.clone())
             .flex()
             .flex_col()
             .gap_1()

@@ -4,8 +4,9 @@
 # overrides it, key by key. Uncomment a line to change that setting.
 
 [editor]
-# The font family. Unset, the first installed of JetBrains Mono, SF Mono,
-# Menlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.
+# The font family. Unset, Spline Sans Mono, which Tenmoku bundles, or else
+# the first installed of JetBrains Mono, SF Mono, Menlo, DejaVu Sans Mono,
+# Ubuntu Mono, Liberation Mono and Noto Sans Mono.
 # font_family = "JetBrains Mono"
 
 # Draw the font's ligatures, such as `=>` as ⇒ and `->` as →.
@@ -14,8 +15,9 @@
 # The font size, in points (6 to 72).
 # font_size = 13.0
 
-# The line height, as a multiple of the font size (1 to 3).
-# line_height = 1.6
+# The line height, as a multiple of the font size (1 to 3). Rows round to
+# whole pixels: 1.54 gives 20 px rows at 13 px.
+# line_height = 1.54
 
 # How many columns a tab advances to the next multiple of (1 to 16).
 # tab_size = 4
@@ -314,8 +316,9 @@
 # scrollback = 10000
 # The terminal's font family. Unset uses the editor's.
 # font_family = "JetBrains Mono"
-# The terminal's font size, in points. Unset uses the editor's.
-# font_size = 13.0
+# The terminal's font size, in points. Unset, 12, the design's small code
+# size.
+# font_size = 12.0
 # Fonts to take a character from when the terminal's font lacks it, in
 # order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.
 # Or set font_family to a Nerd Font, such as "JetBrainsMono Nerd Font Mono".

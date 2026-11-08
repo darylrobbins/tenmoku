@@ -14,8 +14,9 @@ use kiln_ui::{Theme, ThemeData, UiTheme};
 /// it needs to show every construct.
 const SCENE_SIZE: Size<Pixels> = size(px(800.), px(820.));
 
-/// Pinned so goldens don't depend on which fonts are installed (TESTING.md).
-const FONT_FAMILY: &str = "Menlo";
+/// Pinned so goldens don't depend on which fonts are installed (TESTING.md):
+/// the bundled code family, which [`main`] registers.
+const FONT_FAMILY: &str = fe_fonts::CODE;
 
 /// Every construct the preview draws, in one document.
 const FIXTURE: &str = r#"# Markdown preview
@@ -122,5 +123,9 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
 
 pub(crate) fn main() -> ExitCode {
     let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
+    if let Err(error) = cx.update(|cx| cx.text_system().add_fonts(fe_fonts::all())) {
+        eprintln!("the bundled fonts weren't registered: {error:#}");
+        return ExitCode::FAILURE;
+    }
     exit_code(check_scenes(&mut cx))
 }

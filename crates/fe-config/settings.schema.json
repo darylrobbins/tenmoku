@@ -161,7 +161,7 @@
           "type": "integer"
         },
         "font_family": {
-          "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono,\nMenlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
+          "description": "The font family. Unset, Spline Sans Mono, which Tenmoku bundles, or\nelse the first installed of JetBrains Mono, SF Mono, Menlo, DejaVu Sans\nMono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
           "minLength": 1,
           "type": [
             "string",
@@ -222,8 +222,8 @@
           "type": "boolean"
         },
         "line_height": {
-          "default": 1.6,
-          "description": "The line height, as a multiple of the font size.",
+          "default": 1.54,
+          "description": "The line height, as a multiple of the font size. Rows round to whole\npixels: 1.54 gives 20 px rows at 13 px.",
           "format": "double",
           "maximum": 3.0,
           "minimum": 1.0,
@@ -924,7 +924,7 @@
           ]
         },
         "font_size": {
-          "description": "The terminal's font size, in points. Unset uses the editor's.",
+          "description": "The terminal's font size, in points. Unset, 12, the design's small\ncode size.",
           "format": "double",
           "maximum": 72.0,
           "minimum": 6.0,
@@ -1465,7 +1465,7 @@
         "inline_blame": false,
         "inline_diagnostics": "warning",
         "lightbulb": true,
-        "line_height": 1.6,
+        "line_height": 1.54,
         "line_numbers": "on",
         "linked_editing": false,
         "links": true,

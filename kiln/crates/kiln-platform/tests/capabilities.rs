@@ -75,3 +75,10 @@ fn dialog_errors_say_what_is_missing() {
     let (_, detail) = open_panel_failed("Portal request failed", Os::MacOs);
     assert_eq!(detail, "Portal request failed");
 }
+
+/// The design's code family is tried first: an app that registers it, as
+/// Tenmoku does, gets it whatever else is installed.
+#[test]
+fn spline_sans_mono_is_tried_first() {
+    assert_eq!(fonts::MONO_FAMILIES[0], "Spline Sans Mono");
+}

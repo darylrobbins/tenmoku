@@ -10,7 +10,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use kiln_platform::{Capabilities, focus};
-use kiln_ui::{ActiveTheme as _, follow_system_appearance};
+use kiln_ui::{ActiveTheme as _, FontFamilies, follow_system_appearance};
 
 use crate::{
     MenuBarView, TitleBar,
@@ -136,8 +136,10 @@ impl Render for Root {
             .flex_col()
             .bg(colors.surface.background)
             .text_color(colors.text.primary)
-            // Kiln's body text, as its prompts and fields have it; the
-            // content can set its own.
+            // Kiln's body text, as its prompts and fields have it, in the
+            // UI family the app set ([`FontFamilies`]); the content can set
+            // its own.
+            .font_family(ui_family(cx))
             .text_size(px(13.))
             .on_action(cx.listener(Self::open_menu_bar))
             .when(unified, |root| {
@@ -159,4 +161,13 @@ impl Render for Root {
             })
             .children(tiling.into_iter().flat_map(window_frame::resize_handles))
     }
+}
+
+/// The UI family of the app's [`FontFamilies`], or of the default when it
+/// set none: the platform's UI font.
+fn ui_family(cx: &gpui::App) -> SharedString {
+    cx.try_global::<FontFamilies>().map_or_else(
+        || FontFamilies::default().ui,
+        |families| families.ui.clone(),
+    )
 }

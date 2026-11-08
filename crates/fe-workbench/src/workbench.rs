@@ -15,7 +15,7 @@ use fe_gpui::{
     DiffView, EditorSettings, EditorTheme, EditorView,
     commands::{EditorViewEvent, RunCommand},
 };
-use fe_ui::ROW_HEIGHT;
+use fe_ui::{ROW_HEIGHT, UI_BODY};
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
@@ -196,6 +196,14 @@ pub struct Workbench {
     /// platform's windows only have server-side ones.
     #[cfg(test)]
     pub(crate) client_tiling: Option<gpui::Tiling>,
+    /// The text style the workspace's content inherits, as the last frame
+    /// drew it.
+    #[cfg(test)]
+    pub(crate) content_text_style: std::rc::Rc<std::cell::RefCell<Option<gpui::TextStyle>>>,
+    /// The text style the overlays over the workspace (the setup sheet, the
+    /// toasts) inherit, as the last frame drew it.
+    #[cfg(test)]
+    pub(crate) overlay_text_style: std::rc::Rc<std::cell::RefCell<Option<gpui::TextStyle>>>,
     /// The folder the workbench is rooted at, if any.
     pub(crate) root: Option<PathBuf>,
     /// The editor whose file the project panel last revealed.
@@ -654,6 +662,10 @@ impl Workbench {
             menu_bar: None,
             #[cfg(test)]
             client_tiling: None,
+            #[cfg(test)]
+            content_text_style: Default::default(),
+            #[cfg(test)]
+            overlay_text_style: Default::default(),
             root: launch_root.clone(),
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
@@ -1036,12 +1048,27 @@ impl Render for Workbench {
             // editors, for their cmd-click hover.
             .on_modifiers_changed(EditorView::modifiers_changed)
             .size_full()
-            .child(
-                div()
+            // The UI family for everything in the window: the workspace, the
+            // setup sheet and the toasts over it.
+            .font_family(fe_gpui::ui_font_family(cx))
+            .child({
+                // The design's UI body text: 13/18.
+                let content = div()
                     .size_full()
-                    .text_size(px(12.))
-                    .child(self.workspace.clone()),
-            )
+                    .text_size(UI_BODY.size)
+                    .line_height(UI_BODY.line_height)
+                    .child(self.workspace.clone());
+                #[cfg(test)]
+                let content = content.child({
+                    let probe = self.content_text_style.clone();
+                    gpui::canvas(
+                        move |_, window, _| *probe.borrow_mut() = Some(window.text_style()),
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                });
+                content
+            })
             .child(
                 // Over the panes, so an editor's mouse-up doesn't swallow the
                 // drop; without occluding, so nothing else loses the mouse.
@@ -1059,10 +1086,10 @@ impl Render for Workbench {
                     }),
             )
             .children(self.setup.clone())
-            .child(
+            .child({
                 // The window's height, for toasts to fit in, bottom first;
                 // over the setup sheet, which Install's result reports to.
-                div()
+                let toasts = div()
                     .absolute()
                     .top(px(8.))
                     .right(px(12.))
@@ -1071,8 +1098,18 @@ impl Render for Workbench {
                     .flex_col()
                     .justify_end()
                     .items_end()
-                    .child(self.toasts.clone()),
-            )
+                    .child(self.toasts.clone());
+                #[cfg(test)]
+                let toasts = toasts.child({
+                    let probe = self.overlay_text_style.clone();
+                    gpui::canvas(
+                        move |_, window, _| *probe.borrow_mut() = Some(window.text_style()),
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                });
+                toasts
+            })
     }
 }
 

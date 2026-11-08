@@ -148,6 +148,10 @@ pub struct TerminalPanel {
     theme: EditorTheme,
     /// The user's `terminal` settings.
     settings: TerminalSettings,
+    /// To [`fe_gpui::ActivePalette`], which a theme file's reload or the
+    /// system's appearance changes without a settings reload: restyles the
+    /// sessions and the ones to come.
+    _palette: Subscription,
     /// The find row, made by the first `terminal.find`.
     find: Option<TerminalFind>,
     /// The panel's, tracked by its root, so it contains the find row and
@@ -203,6 +207,7 @@ impl TerminalPanel {
             ),
             theme: theme.clone(),
             settings: TerminalSettings::default(),
+            _palette: cx.observe_global::<fe_gpui::ActivePalette>(Self::follow_palette),
             find: None,
             focus: cx.focus_handle(),
             from_sidebar: false,
@@ -246,6 +251,13 @@ impl TerminalPanel {
     /// sessions; a new shell, arguments or scrollback apply to the next one.
     pub(crate) fn set_settings(&mut self, settings: &TerminalSettings, cx: &mut Context<Self>) {
         self.settings = settings.clone();
+        self.restyle(cx);
+    }
+
+    /// Recolours the theme the terminal's colours fall back to from the
+    /// palette now active, and restyles with its `[terminal]` table.
+    fn follow_palette(&mut self, cx: &mut Context<Self>) {
+        self.theme.set_colors(&fe_gpui::editor_palette(cx));
         self.restyle(cx);
     }
 
@@ -958,7 +970,9 @@ fn start_dir(cwd: &Path) -> PathBuf {
 }
 
 /// The terminal's style: the editor's colours and, unless `settings` set
-/// them, font and size, and ANSI colours from the theme's `[terminal]` table.
+/// them, its font and the design's small code size (12 px, at
+/// [`TerminalStyle::LINE_HEIGHT`] so box drawing still meets: 15 px rows),
+/// and ANSI colours from the theme's `[terminal]` table.
 fn style(
     theme: &EditorTheme,
     terminal: &fe_config::TerminalColors,
@@ -975,7 +989,7 @@ fn style(
         font_fallbacks: settings.font_fallbacks.iter().map(Into::into).collect(),
         font_size: settings
             .font_size
-            .map_or(theme.font_size, |size| px(size as f32)),
+            .map_or(fe_ui::CODE_SMALL.size, |size| px(size as f32)),
         line_height: TerminalStyle::LINE_HEIGHT,
         background: or_editor(terminal.background, theme.background),
         foreground: or_editor(terminal.foreground, theme.foreground),

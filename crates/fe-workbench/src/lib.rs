@@ -226,6 +226,14 @@ pub fn init(cx: &mut App) {
     if let Err(e) = cx.text_system().add_fonts(fe_fonts::all()) {
         log::error!("the bundled fonts weren't registered: {e:#}");
     }
+    // The design's families (docs/design/design-system.md, "Type, spacing
+    // and sizes"), for kiln's root, the workbench's text and the editor's
+    // popovers.
+    cx.set_global(fe_ui::FontFamilies {
+        ui: fe_fonts::UI.into(),
+        code: Some(fe_fonts::CODE.into()),
+        title: fe_fonts::TITLE.into(),
+    });
 }
 
 /// The workbench's, the editor's and the app's commands, to check keymap

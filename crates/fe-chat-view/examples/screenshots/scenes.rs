@@ -22,8 +22,9 @@ use serde_json::json;
 /// The window size of every scene, in logical pixels: a chat panel's.
 const SCENE_SIZE: Size<Pixels> = size(px(520.), px(860.));
 
-/// Pinned so goldens don't depend on which fonts are installed (TESTING.md).
-const FONT_FAMILY: &str = "Menlo";
+/// Pinned so goldens don't depend on which fonts are installed (TESTING.md):
+/// the bundled code family, which [`main`] registers.
+const FONT_FAMILY: &str = fe_fonts::CODE;
 
 const MODEL: &str = "claude-opus-5-5";
 
@@ -293,5 +294,9 @@ pub(crate) fn main() -> ExitCode {
         fe_gpui::init(cx);
         fe_chat_view::init(cx);
     });
+    if let Err(error) = cx.update(|cx| cx.text_system().add_fonts(fe_fonts::all())) {
+        eprintln!("the bundled fonts weren't registered: {error:#}");
+        return ExitCode::FAILURE;
+    }
     exit_code(check_scenes(&mut cx))
 }

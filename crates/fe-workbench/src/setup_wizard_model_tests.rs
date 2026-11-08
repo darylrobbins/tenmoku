@@ -11,7 +11,7 @@ use fe_config::{
 
 use crate::setup_wizard_model::{Choices, Control, ControlId, Step, Write, steps};
 
-const FONTS: &[&str] = &["Fira Code", "Menlo"];
+const FONTS: &[&str] = &["Spline Sans Mono", "Fira Code", "Menlo"];
 
 fn all_controls(choices: &Choices) -> Vec<Control> {
     (steps().into_iter())
@@ -171,7 +171,10 @@ fn starts_from_current_settings() {
     assert_eq!(shown(&choices, ControlId::Keyboard), "Vim");
     assert_eq!(shown(&choices, ControlId::FontSize), "15");
     assert_eq!(shown(&choices, ControlId::AutoSave), "Custom");
-    assert_eq!(shown(&choices, ControlId::FontFamily), "Default (Menlo)");
+    assert_eq!(
+        shown(&choices, ControlId::FontFamily),
+        "Default (Spline Sans Mono)"
+    );
     assert_eq!(choices.changed_count(), 0);
 }
 
@@ -272,7 +275,7 @@ fn back_to_default_removes_the_key() {
         &path,
         &mut choices,
         ControlId::FontFamily,
-        "Default (Menlo)",
+        "Default (Spline Sans Mono)",
     );
     assert_eq!(in_file(&path, &["editor", "font_family"]), None);
 

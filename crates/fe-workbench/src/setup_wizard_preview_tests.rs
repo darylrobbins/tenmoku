@@ -422,29 +422,52 @@ fn labels(settings: &Settings, installed: &[&str]) -> Vec<String> {
 fn font_list_is_curated(cx: &mut TestAppContext) {
     // Those of the curated list that are installed, in its order, however the
     // system lists them.
-    let system = ["Zapfino", "Ubuntu Mono", "Comic Sans MS", "Menlo", "Arial"];
+    // Spline Sans Mono, which Tenmoku bundles, first and the default.
+    let system = [
+        "Zapfino",
+        "Ubuntu Mono",
+        "Comic Sans MS",
+        "Menlo",
+        "Spline Sans Mono",
+        "Arial",
+    ];
     let installed = font_families(|family| system.contains(&family));
-    assert_eq!(installed, ["Menlo", "Ubuntu Mono"]);
+    assert_eq!(installed, ["Spline Sans Mono", "Menlo", "Ubuntu Mono"]);
 
     let mut settings = Settings::default();
+    let default = "Default (Spline Sans Mono)";
     assert_eq!(
         labels(&settings, &installed),
-        ["Default (Menlo)", "Menlo", "Ubuntu Mono"]
+        [default, "Spline Sans Mono", "Menlo", "Ubuntu Mono"]
     );
     // One set by hand stays listed while it's the current one.
     settings.editor.font_family = Some("Comic Code".to_owned());
     assert_eq!(
         labels(&settings, &installed),
-        ["Default (Menlo)", "Menlo", "Ubuntu Mono", "Comic Code"]
+        [
+            default,
+            "Spline Sans Mono",
+            "Menlo",
+            "Ubuntu Mono",
+            "Comic Code"
+        ]
     );
     // One of the curated list isn't listed twice.
     settings.editor.font_family = Some("Ubuntu Mono".to_owned());
     assert_eq!(
         labels(&settings, &installed),
+        [default, "Spline Sans Mono", "Menlo", "Ubuntu Mono"]
+    );
+    // Without it, the next installed one is the default.
+    let installed =
+        font_families(|family| family != "Spline Sans Mono" && system.contains(&family));
+    assert_eq!(
+        labels(&Settings::default(), &installed),
         ["Default (Menlo)", "Menlo", "Ubuntu Mono"]
     );
 
     // Each is drawn in itself, the default in what it stands for.
+    assert_eq!(label_family(default), "Spline Sans Mono");
     assert_eq!(label_family("Default (Menlo)"), "Menlo");
     assert_eq!(label_family("Comic Code"), "Comic Code");
 

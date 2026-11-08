@@ -98,7 +98,11 @@ fn sticky_margin_follows_the_option(cx: &mut TestAppContext) {
     // Four pinned rows and the one between put the caret five rows down
     // whatever the margin is below that; 8 rows is the option's own, and a
     // huge one centres the caret in the 400px window's rows.
-    for (so, want) in [(0, 5.), (3, 5.), (8, 8.), (100, 9.02)] {
+    let line_height = view.read_with(cx, |view, _| {
+        view.layout.as_ref().expect("drawn").frame.line_height
+    });
+    let centred = (400. / line_height - 1.) / 2.;
+    for (so, want) in [(0, 5.), (3, 5.), (8, 8.), (100, centred)] {
         let settings = EditorSettings {
             cursor_surrounding_lines: so,
             ..defaults.clone()

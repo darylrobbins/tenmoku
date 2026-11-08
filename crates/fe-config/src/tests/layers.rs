@@ -17,7 +17,7 @@ fn layers_merge_in_order() {
     let editor = &store.settings().editor;
     assert_eq!(editor.tab_size, 2, "the project overrides the user");
     assert_eq!(editor.font_size, 15.5, "the user's other keys survive");
-    assert_eq!(editor.line_height, 1.6, "the defaults fill the rest");
+    assert_eq!(editor.line_height, 1.54, "the defaults fill the rest");
     assert!(store.diagnostics().is_empty(), "{:?}", store.diagnostics());
 
     // Tables merge key by key, at any depth.

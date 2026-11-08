@@ -39,7 +39,7 @@ use gpui::{
 
 use crate::{
     EditorView,
-    hover::{Block, UI_FONT, markdown_blocks},
+    hover::{Block, markdown_blocks},
 };
 
 /// Asks for signature help at the caret.
@@ -407,7 +407,8 @@ impl EditorView {
             AvailableSpace::Definite(viewport.width),
             AvailableSpace::MaxContent,
         );
-        let mut popover = self.signature_help_element(&help, None)?;
+        let ui_font = crate::ui_font_family(cx);
+        let mut popover = self.signature_help_element(&help, None, &ui_font)?;
         let mut laid = popover.layout_as_root(space, window, cx);
         let above =
             laid.height <= room_above || (laid.height > room_below && room_above >= room_below);
@@ -417,7 +418,7 @@ impl EditorView {
             if room < line_height {
                 return None;
             }
-            popover = self.signature_help_element(&help, Some(room))?;
+            popover = self.signature_help_element(&help, Some(room), &ui_font)?;
             laid = popover.layout_as_root(space, window, cx);
         }
         let y = if above { over - laid.height } else { under };
@@ -443,11 +444,12 @@ impl EditorView {
         Some(popover)
     }
 
-    /// `help`'s popover, `max_height` tall at most.
+    /// `help`'s popover, `max_height` tall at most, its prose in `ui_font`.
     fn signature_help_element(
         &self,
         help: &SignatureHelp,
         max_height: Option<Pixels>,
+        ui_font: &SharedString,
     ) -> Option<AnyElement> {
         let (signature, parameter) = help.active()?;
         let theme = &self.theme;
@@ -466,7 +468,7 @@ impl EditorView {
             .gap_2()
             .font_family(theme.font_family.clone())
             .children(counter(help).map(|counter| {
-                (div().font_family(UI_FONT))
+                (div().font_family(ui_font.clone()))
                     .text_color(theme.gutter_foreground)
                     .child(counter)
             }))
@@ -476,7 +478,7 @@ impl EditorView {
             .into_iter()
             .map(|block| {
                 let font: SharedString = match &block {
-                    Block::Text(_) => UI_FONT.into(),
+                    Block::Text(_) => ui_font.clone(),
                     Block::Code(_) => theme.font_family.clone(),
                 };
                 div()

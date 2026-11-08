@@ -38,7 +38,7 @@ use gpui::{
 
 use crate::{
     EditorView,
-    hover::{Block, UI_FONT, markdown_blocks},
+    hover::{Block, markdown_blocks},
 };
 
 /// `ctrl-space`: asks for completions at the caret.
@@ -646,6 +646,7 @@ impl EditorView {
             });
         }
         let dim = theme.gutter_foreground;
+        let ui_font = crate::ui_font_family(cx);
         let list = div()
             .flex()
             .flex_col()
@@ -675,7 +676,12 @@ impl EditorView {
                                     .text_color(dim)
                                     .child(detail),
                             )
-                            .child(div().text_color(dim).font_family(UI_FONT).child(kind))
+                            .child(
+                                div()
+                                    .text_color(dim)
+                                    .font_family(ui_font.clone())
+                                    .child(kind),
+                            )
                     }),
             );
         let renderer = self.markdown_renderer.clone();
@@ -690,7 +696,7 @@ impl EditorView {
                     .into_iter()
                     .map(|block| {
                         let font: SharedString = match &block {
-                            Block::Text(_) => UI_FONT.into(),
+                            Block::Text(_) => ui_font.clone(),
                             Block::Code(_) => theme.font_family.clone(),
                         };
                         div()
@@ -700,8 +706,11 @@ impl EditorView {
                     })
                     .collect(),
             };
+            // The prose in the UI family, a renderer's too, inheriting it;
+            // code sets its own.
             div()
                 .id("completion-documentation")
+                .font_family(ui_font.clone())
                 .max_w(px(420.))
                 .max_h(place.row_height * place.rows as f32)
                 .overflow_y_scroll()
@@ -809,4 +818,161 @@ pub(crate) fn stamp(stack: ContextStack, shown: bool) -> ContextStack {
             frame
         })
         .collect()
+}
+
+/// The documentation a host's [`MarkdownRenderer`] draws, in the
+/// completion menu and the hover popover, inherits the host's UI family
+/// ([`crate::ui_font_family`]), not the menu's code font (T1515).
+#[cfg(test)]
+mod ui_family_tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use fe_buffer::{Buffer, BufferId, ResolvedSelection, Version};
+    use fe_editor::{
+        EditorModel,
+        completion::{CompletionItem, CompletionList, CompletionTrigger},
+    };
+    use gpui::{
+        AnyElement, App, Focusable as _, IntoElement, RenderOnce, SharedString, TestAppContext,
+        Window, div,
+    };
+
+    use crate::*;
+
+    const TEXT: &str = "fn main() {\n    let total = al;\n}\n";
+
+    /// Draws an element that records the family it's drawn in when it's
+    /// drawn, which is when fe-markdown-view's compact element reads its
+    /// prose font (`window.text_style()`).
+    #[derive(Default)]
+    struct Probe {
+        families: Rc<RefCell<Vec<SharedString>>>,
+    }
+
+    #[derive(IntoElement)]
+    struct Probed(Rc<RefCell<Vec<SharedString>>>);
+
+    impl RenderOnce for Probed {
+        fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+            self.0.borrow_mut().push(window.text_style().font_family);
+            div()
+        }
+    }
+
+    impl MarkdownRenderer for Probe {
+        fn render(
+            &self,
+            _: &str,
+            _: &EditorTheme,
+            _: gpui::Pixels,
+            _: &mut Window,
+            _: &mut App,
+        ) -> AnyElement {
+            Probed(self.families.clone()).into_any_element()
+        }
+    }
+
+    struct Documented;
+
+    impl CompletionProvider for Documented {
+        fn trigger_characters(&self, _: BufferId) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn completions(
+            &self,
+            _: BufferId,
+            _: Version,
+            offset: usize,
+            _: CompletionTrigger,
+        ) -> CompletionFuture {
+            let item = CompletionItem {
+                label: "alpha".into(),
+                documentation: Some("The *al*.".into()),
+                edit: (offset - 2..offset, "alpha".into()),
+                ..CompletionItem::default()
+            };
+            Box::pin(async move {
+                Some(CompletionList {
+                    items: vec![item],
+                    is_incomplete: false,
+                })
+            })
+        }
+
+        fn resolve(&self, item: CompletionItem) -> ResolveFuture {
+            Box::pin(async move { item })
+        }
+    }
+
+    struct Hovered;
+
+    impl HoverProvider for Hovered {
+        fn hover(&self, _: BufferId, _: Version, _: usize) -> HoverFuture {
+            Box::pin(async move {
+                Some(HoverContent {
+                    text: "The *total*.".into(),
+                    range: None,
+                })
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn rendered_docs_inherit_the_ui_family(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            init(cx);
+            cx.set_global(fe_ui::FontFamilies {
+                ui: "Instrument Sans".into(),
+                code: Some("Spline Sans Mono".into()),
+                title: "Instrument Serif".into(),
+            });
+        });
+        let probe = Rc::new(Probe::default());
+        let families = probe.families.clone();
+        let (view, cx) = cx.add_window_view(move |_, cx| {
+            let mut model = EditorModel::new(Buffer::new(TEXT), None);
+            let at = TEXT.find("al;").unwrap() + 2;
+            model.set_selections(vec![ResolvedSelection {
+                range: at..at,
+                reversed: false,
+            }]);
+            let mut theme = EditorTheme::default_dark(cx);
+            theme.font_family = "Spline Sans Mono".into();
+            let mut view = EditorView::new(model, theme, cx);
+            view.set_markdown_renderer(Some(probe));
+            view.set_completion_provider(Some(Rc::new(Documented)));
+            view.set_hover_provider(Some(Rc::new(Hovered)));
+            view
+        });
+        cx.update(|window, cx| {
+            window.activate_window();
+            window.focus(&view.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        // The completion menu's documentation, beside rows in the code font.
+        cx.simulate_keystrokes("ctrl-space");
+        cx.run_until_parked();
+        let docs = view.read_with(cx, |view, _| view.painted_completion.clone());
+        assert_eq!(docs.unwrap().documentation.as_deref(), Some("The *al*."));
+        let drawn = std::mem::take(&mut *families.borrow_mut());
+        assert!(!drawn.is_empty(), "the renderer drew the docs");
+        assert!(
+            drawn.iter().all(|family| family == "Instrument Sans"),
+            "{drawn:?}"
+        );
+
+        // The hover popover's.
+        cx.simulate_keystrokes("escape");
+        view.update(cx, |view, cx| view.show_hover(cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let drawn = std::mem::take(&mut *families.borrow_mut());
+        assert!(!drawn.is_empty(), "the renderer drew the hover");
+        assert!(
+            drawn.iter().all(|family| family == "Instrument Sans"),
+            "{drawn:?}"
+        );
+    }
 }

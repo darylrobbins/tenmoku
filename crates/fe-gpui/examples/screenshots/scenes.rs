@@ -20,8 +20,9 @@ use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, 
 /// The window size of every scene, in logical pixels.
 const SCENE_SIZE: Size<Pixels> = size(px(800.), px(480.));
 
-/// Pinned so goldens don't depend on which fonts are installed (TESTING.md).
-const FONT_FAMILY: &str = "Menlo";
+/// Pinned so goldens don't depend on which fonts are installed (TESTING.md):
+/// the bundled code family, which [`main`] registers.
+const FONT_FAMILY: &str = fe_fonts::CODE;
 
 /// A file to show, with `‸` marking carets and `«…»` selections (head at
 /// the end).
@@ -737,6 +738,10 @@ pub(crate) fn main() -> ExitCode {
         std::sync::Arc::new(fe_ui::Assets),
     );
     cx.update(fe_gpui::init);
+    if let Err(error) = cx.update(|cx| cx.text_system().add_fonts(fe_fonts::all())) {
+        eprintln!("the bundled fonts weren't registered: {error:#}");
+        return ExitCode::FAILURE;
+    }
     exit_code(match args.first().map(String::as_str) {
         Some("render") => render(&mut cx, &args[1..]).map(|()| true),
         None => check_scenes(&mut cx),

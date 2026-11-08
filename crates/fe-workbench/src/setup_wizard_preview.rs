@@ -230,7 +230,8 @@ pub(crate) fn installed_font_families(cx: &App) -> Vec<&'static str> {
     font_families(|family| fonts::first_installed(&[family], cx).is_some())
 }
 
-/// The family a font's option is drawn in: "Default (Menlo)" is Menlo's.
+/// The family a font's option is drawn in: "Default (Spline Sans Mono)" is
+/// Spline Sans Mono's.
 pub(crate) fn label_family(label: &str) -> SharedString {
     let default = label.strip_prefix("Default (");
     let family = default.and_then(|label| label.strip_suffix(')'));

@@ -215,7 +215,7 @@ fn schema_matches_golden() {
     let editor = &schema["$defs"]["EditorSettings"]["properties"];
     for (key, ty, default, min, max) in [
         ("font_size", "number", 13.0, Some(6.0), Some(72.0)),
-        ("line_height", "number", 1.6, Some(1.0), Some(3.0)),
+        ("line_height", "number", 1.54, Some(1.0), Some(3.0)),
         ("tab_size", "integer", 4.0, Some(1.0), Some(16.0)),
     ] {
         let property = &editor[key];
