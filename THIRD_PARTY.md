@@ -261,6 +261,7 @@ licence. No module is committed.
 | clojure | `tree-sitter-clojure.wasm` | https://github.com/sogaiu/tree-sitter-clojure at `e43eff80d17cf34852dcd92ca5e6986d23a7040f` | CC0-1.0 (public-domain dedication); `highlights.scm` extends upstream's `queries/highlights.scm` (same licence) |
 | fortran | `tree-sitter-fortran.wasm` | https://github.com/stadelmanma/tree-sitter-fortran at `72f8759dea28ff6671e0868a9ed5ad4a18413917` | MIT; `highlights.scm` is adapted from upstream's `queries/highlights.scm` at that commit, as its header says |
 | objc | `tree-sitter-objc.wasm` | https://github.com/tree-sitter-grammars/tree-sitter-objc at `181a81b8f23a2d593e7ab4259981f50122909fda` | MIT; `highlights.scm` is tree-sitter-c 0.24.2's query (its licence text in `LICENSE-TREE-SITTER-C`) followed by upstream's `queries/highlights.scm`, adapted as its header says |
+| hlsl | `tree-sitter-hlsl.wasm` | [tree-sitter-grammars/tree-sitter-hlsl](https://github.com/tree-sitter-grammars/tree-sitter-hlsl) at `bab9111922d53d43668fabb61869bec51bbcb915` | MIT; `highlights.scm` inlines nvim-treesitter's `runtime/queries/c/highlights.scm`, `runtime/queries/cpp/highlights.scm` and `runtime/queries/hlsl/highlights.scm` at `19bdfc04f40ed2ccb3340591d125f759b0406875` (Apache-2.0, text in `LICENSE-APACHE`), adapted as its header says |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub
