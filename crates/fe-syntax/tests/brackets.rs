@@ -67,35 +67,46 @@ fn recovery_and_other_languages() {
 
 #[test]
 fn wide_parent_is_linear() {
-    let numbers: Vec<String> = (0..200_000).map(|n| n.to_string()).collect();
-    let text = format!("[{}]", numbers.join(","));
-    let buffer = Buffer::new(&text);
-    let snapshot = buffer.snapshot();
-    // Best of several interleaved runs: a load spike hits one sample, not the
-    // minimum of all of them, while quadratic pairing would fail every run.
-    let mut parse_time = Duration::MAX;
-    let mut first_time = Duration::MAX;
-    let mut pair_time = Duration::MAX;
-    for _ in 0..5 {
-        let mut syntax = Syntax::new(language_by_name("json").unwrap(), &snapshot);
-        let started = Instant::now();
-        syntax.finish(syntax.parse_job().run());
-        parse_time = parse_time.min(started.elapsed());
+    // Best-of-5 times for an array of `count` children: (parse, first, later).
+    // Best of several runs: a load spike hits one sample, not the minimum of
+    // all of them, while quadratic pairing would fail every run.
+    let measure = |count: usize| {
+        let numbers: Vec<String> = (0..count).map(|n| n.to_string()).collect();
+        let text = format!("[{}]", numbers.join(","));
+        let buffer = Buffer::new(&text);
+        let snapshot = buffer.snapshot();
+        let mut parse_time = Duration::MAX;
+        let mut first_time = Duration::MAX;
+        let mut pair_time = Duration::MAX;
+        for _ in 0..5 {
+            let mut syntax = Syntax::new(language_by_name("json").unwrap(), &snapshot);
+            let started = Instant::now();
+            syntax.finish(syntax.parse_job().run());
+            parse_time = parse_time.min(started.elapsed());
 
-        let started = Instant::now();
-        // The first lookup in a parse steps through the children once, to
-        // keep the parent's pairs; later ones read them.
-        let found = pair(&syntax, 0);
-        first_time = first_time.min(started.elapsed());
-        assert_eq!(found, Some((0, text.len() - 1)));
-        let started = Instant::now();
-        let found = pair(&syntax, text.len() - 1);
-        pair_time = pair_time.min(started.elapsed());
-        assert_eq!(found, Some((0, text.len() - 1)));
-    }
+            let started = Instant::now();
+            // The first lookup in a parse steps through the children once, to
+            // keep the parent's pairs; later ones read them.
+            let found = pair(&syntax, 0);
+            first_time = first_time.min(started.elapsed());
+            assert_eq!(found, Some((0, text.len() - 1)));
+            let started = Instant::now();
+            let found = pair(&syntax, text.len() - 1);
+            pair_time = pair_time.min(started.elapsed());
+            assert_eq!(found, Some((0, text.len() - 1)));
+        }
+        (parse_time, first_time, pair_time)
+    };
+    let (_, small_first, _) = measure(25_000);
+    let (parse_time, first_time, pair_time) = measure(200_000);
+    // 8x the children: linear is about 8x the time, quadratic about 64x.
     assert!(
-        first_time * 2 < parse_time && pair_time * 20 < parse_time,
-        "pairing took {first_time:?} then {pair_time:?}, parsing {parse_time:?}"
+        first_time < small_first * 32,
+        "first lookup took {small_first:?} at 25k children, {first_time:?} at 200k"
+    );
+    assert!(
+        pair_time * 20 < parse_time,
+        "later lookup took {pair_time:?}, parsing {parse_time:?}"
     );
 }
 
