@@ -464,10 +464,37 @@ fn rtl_bidi_controls_reorder_text_and_draw_nothing() {
 
 // Full-width CJK.
 
+/// How many CJK chars fit `wrap_column` 20 in the editor's font, from the
+/// shaped advance of `一` (`layout_width`, which the wrap code measures a
+/// char with) and of one ASCII column (`em_advance`, the wrap column's
+/// unit). A row breaks where `x + width > wrap width` (`fe-display`
+/// `break_points`), so an exact fit stays.
+#[cfg(target_os = "macos")]
+fn cjk_chars_in_20_columns(cx: &mut VisualTestContext) -> usize {
+    let (cjk, column): (f32, f32) = cx.update(|window, cx| {
+        let theme = EditorTheme::default_dark(cx);
+        let system = window.text_system();
+        let font = system.resolve_font(&theme.font());
+        let cjk = system.layout_width(font, theme.font_size, '一');
+        let column = system
+            .em_advance(font, theme.font_size)
+            .expect("an advance");
+        (cjk.into(), column.into())
+    });
+    // The wrap code's own sum and comparison, in f32 with no tolerance: on
+    // macOS 27 `一` is 13.000001, so 12 of them (156.00001) overflow 20 * 7.8.
+    let (mut fits, mut x) = (0, 0f32);
+    while x + cjk <= 20. * column {
+        x += cjk;
+        fits += 1;
+    }
+    fits
+}
+
 /// Limitation G8: soft wrap at a column counts a wide char by its shaped
-/// width, about 1.67 columns in JetBrains Mono with PingFang, not 2: at
-/// `wrap_column` 20, 11 CJK chars fit a row where VS Code and nvim fit 10.
-/// Rows only ever break between chars.
+/// width, a little over 1.67 columns on macOS 27 (11 chars fit
+/// `wrap_column` 20) and under 1.67 on macOS 15 (12 fit), not 2: more than
+/// the 10 VS Code and nvim fit. Rows only ever break between chars.
 #[cfg(target_os = "macos")]
 #[test]
 fn cjk_soft_wrap_at_a_column_counts_the_shaped_width() {
@@ -475,6 +502,8 @@ fn cjk_soft_wrap_at_a_column_counts_the_shaped_width() {
         let row = "一二三四五六七八九十".repeat(3);
         let (view, cx) = editor(&row, &[0], false, cx);
         wrap_at_20(&view, cx);
+        let n = cjk_chars_in_20_columns(cx);
+        assert!(n > 10, "{n}");
         let mut starts = vec![0];
         let mut top = bounds(&view, 0..0, cx).origin.y;
         for (at, _) in row.char_indices() {
@@ -484,7 +513,7 @@ fn cjk_soft_wrap_at_a_column_counts_the_shaped_width() {
                 top = y;
             }
         }
-        assert_eq!(starts, [0, 33, 66]);
+        assert_eq!(starts, [0, 3 * n, 6 * n]);
     });
 }
 
@@ -564,7 +593,8 @@ fn cjk_alt_shift_drag_selects_a_box_of_chars() {
 
 /// Vim's `gj` and `gk` move by display row over a soft-wrapped row of
 /// wide chars, keeping the caret's place along it. The offsets depend on
-/// 11 chars wrapping to a row, which is limitation G8.
+/// how many chars wrap to a row (limitation G8: 11 on macOS 27, 12 on
+/// macOS 15), so they follow the measured count `n`.
 #[cfg(target_os = "macos")]
 #[test]
 fn cjk_vim_gj_gk_move_by_display_row_over_wrapped_wide_text() {
@@ -574,13 +604,15 @@ fn cjk_vim_gj_gk_move_by_display_row_over_wrapped_wide_text() {
             let text = format!("{}\nabc", "一二三四五六七八九十".repeat(3));
             let (view, cx) = editor(&text, &[0], true, cx);
             wrap_at_20(&view, cx);
-            // 11 chars, 33 bytes, to a display row (G8).
+            // n chars, 3n bytes, to a display row (G8).
+            let n = cjk_chars_in_20_columns(cx);
+            assert!(n > 10, "{n}");
             let mut heads = Vec::new();
             for typed in ["l l l", "g j", "g j", "g k", "g k"] {
                 keys(typed, cx);
                 heads.push(head(&view, cx));
             }
-            assert_eq!(heads, [9, 33 + 9, 66 + 9, 33 + 9, 9]);
+            assert_eq!(heads, [9, 3 * n + 9, 6 * n + 9, 3 * n + 9, 9]);
         },
     );
 }
