@@ -76,21 +76,31 @@ macro_rules! tokens {
 }
 
 tokens! {
-    /// What things sit on.
+    /// What things sit on. The design system's names cross these:
+    /// `background` is its editor surface, `panel` its tool window,
+    /// `raised` its overlay, and `overlay` here is no surface of its own
+    /// but the scrim behind a modal.
     surface: Surface {
-        /// The window's and the main content's background.
+        /// The window's and the main content's background: the editor.
         background,
-        /// Side panels, bars and inactive tabs.
+        /// Side panels, bars and inactive tabs: a tool window.
         panel,
         /// What floats over content: menus, popovers, palettes.
         raised,
-        /// The dimming behind a modal.
+        /// The dimming behind a modal: a scrim, not the design's overlay
+        /// surface, which is `raised`.
         overlay,
+        /// The window's frame: the title bar, the activity rail, the tab
+        /// strip and the status bar.
+        chrome,
     }
     text: Text {
         primary,
         /// Secondary text, placeholders and ignored entries.
         muted,
+        /// The third step below `primary` and `muted`: hints, shortcuts
+        /// and paths beside a name.
+        faint,
         disabled,
         /// Links and accented labels.
         accent,
@@ -103,6 +113,8 @@ tokens! {
         subtle,
         /// Around the control that has focus.
         focused,
+        /// Around an input or a secondary button.
+        control,
     }
     accent: Accent {
         base,
@@ -126,11 +138,19 @@ tokens! {
         /// colour, such as a primary button: neutral, so its text reads.
         disabled,
     }
+    /// Signals, each with a soft ground: the signal at low alpha, behind a
+    /// badge, a banner or a row it marks.
     status: Status {
         error,
         warning,
         info,
         success,
+        /// Something changed and not yet saved or committed.
+        modified,
+        success_soft,
+        error_soft,
+        warning_soft,
+        modified_soft,
     }
     /// Rows in trees and lists.
     list: List {
@@ -159,6 +179,23 @@ tokens! {
         thumb,
         /// The thumb while it's hovered or dragged.
         thumb_hover,
+    }
+    /// What an agent did or is doing: its edits' marks, its toasts. Never
+    /// the accent, so an agent's work reads apart from the user's focus.
+    agent: Agent {
+        base,
+        /// The agent's colour at low alpha, behind what it marks.
+        soft,
+    }
+    /// A file's or a line's version-control state.
+    vcs: Vcs {
+        added,
+        modified,
+        deleted,
+        untracked,
+        ignored,
+        /// An unresolved merge conflict.
+        conflict,
     }
 }
 
@@ -204,6 +241,10 @@ pub const RULES: &[(&str, Rule)] = &[
         "text.muted",
         Rule::Mix("text.primary", "surface.background", 0.5),
     ),
+    (
+        "text.faint",
+        Rule::Mix("text.muted", "surface.background", 0.4),
+    ),
     ("text.disabled", Rule::Same("text.muted")),
     ("text.accent", Rule::Same("accent.base")),
     (
@@ -211,6 +252,7 @@ pub const RULES: &[(&str, Rule)] = &[
         Rule::Mix("border.default", "surface.background", 0.5),
     ),
     ("border.focused", Rule::Same("accent.base")),
+    ("border.control", Rule::Same("border.default")),
     ("accent.hover", Rule::Alpha("accent.base", 0xd9)),
     ("accent.subtle", Rule::Alpha("accent.base", 0x33)),
     ("state.selected", Rule::Same("accent.subtle")),
@@ -236,7 +278,22 @@ pub const RULES: &[(&str, Rule)] = &[
     ("tab.inactive", Rule::Same("surface.panel")),
     ("scrollbar.thumb", Rule::Alpha("text.muted", 0x80)),
     ("scrollbar.thumb_hover", Rule::Alpha("text.primary", 0x99)),
+    ("surface.chrome", Rule::Same("surface.panel")),
+    ("status.success_soft", Rule::Alpha("status.success", SOFT)),
+    ("status.error_soft", Rule::Alpha("status.error", SOFT)),
+    ("status.warning_soft", Rule::Alpha("status.warning", SOFT)),
+    ("status.modified_soft", Rule::Alpha("status.modified", SOFT)),
+    ("agent.soft", Rule::Alpha("agent.base", SOFT)),
+    ("vcs.added", Rule::Same("status.success")),
+    ("vcs.modified", Rule::Same("status.modified")),
+    ("vcs.deleted", Rule::Same("status.error")),
+    ("vcs.untracked", Rule::Same("status.success")),
+    ("vcs.ignored", Rule::Same("text.muted")),
+    ("vcs.conflict", Rule::Same("status.warning")),
 ];
+
+/// A soft ground's alpha: a signal's colour at 15%.
+pub const SOFT: u8 = 0x26;
 
 /// The rule for `key`, if it's derived.
 pub fn rule(key: &str) -> Option<Rule> {

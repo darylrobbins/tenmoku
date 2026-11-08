@@ -141,6 +141,14 @@ vim_mode_foreground = "#272822"
 bracket_1 = "#E6DB74"
 bracket_2 = "#AE81FF"
 bracket_3 = "#66D9EF"
+# Find matches, the identifier under the caret and its uses, the agent's
+# gutter lane and a hovered fold's tile: what the editor computes today (the
+# foreground at 0.22, the cursor's at 0.22 for an agent's rows).
+find_match = "#F8F8F238"
+find_match_other = "#F8F8F238"
+identifier_highlight = "#F8F8F238"
+agent_lane = "#F8F8F038"
+fold_hover = "#F8F8F238"
 # The minimap. The selection mark is the theme's minimap.selectionHighlight.
 # The rest are VS Code's defaults: minimap.background is the editor's,
 # minimapSlider.* scrollbarSlider.* at half alpha, minimap.errorHighlight

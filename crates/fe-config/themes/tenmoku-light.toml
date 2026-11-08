@@ -68,6 +68,16 @@ vim_mode_foreground = "#ffffff"
 bracket_1 = "#0431fa"
 bracket_2 = "#319331"
 bracket_3 = "#7b3814"
+# Find matches, the identifier under the caret and its uses, the agent's
+# gutter lane and a hovered fold's tile. Today's editor still computes these
+# (the foreground at 0.22 for matches and highlights, a highlight's accent
+# tint at 0.22 for an agent's rows), so each is that colour to the 8 bits a
+# channel a theme file has.
+find_match = "#383a4238"
+find_match_other = "#383a4238"
+identifier_highlight = "#383a4238"
+agent_lane = "#3b6fd438"
+fold_hover = "#383a4238"
 # The minimap: its background, the slider over the visible rows (at rest,
 # hovered and dragged), and the marks for the selection, find matches,
 # error and warning diagnostics and git changes. VS Code's default light

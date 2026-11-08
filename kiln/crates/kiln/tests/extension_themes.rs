@@ -13,7 +13,7 @@ use kiln::{
     core::{
         ApiVersion, Severity,
         extension::MANIFEST_FILE,
-        theme::{Appearance, TOKEN_KEYS, ThemeData, Tokens},
+        theme::{self, Appearance, TOKEN_KEYS, ThemeData, Tokens},
     },
     extensions::{ThemeInfo, select_themes, themes},
     platform::config::{self, BatchSender, batch_channel},
@@ -161,7 +161,14 @@ fn the_user_theme_lays_over_the_selected_theme(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let (dark, light) = cx.update(|cx| pair(cx));
     assert_eq!(color(&dark.tokens, "status.error"), "#ff0000");
-    for key in TOKEN_KEYS.iter().filter(|key| **key != "status.error") {
+    assert_eq!(color(&dark.tokens, "vcs.deleted"), "#ff0000");
+    // Tokens whose rule reads status.error follow the user's colour.
+    let follows = |key: &str| {
+        key == "status.error"
+            || theme::rule(key)
+                .is_some_and(|rule| rule.inputs().any(|input| input == "status.error"))
+    };
+    for key in TOKEN_KEYS.iter().filter(|key| !follows(key)) {
         assert_eq!(
             dark.tokens.get(key),
             solarized.tokens.get(key),

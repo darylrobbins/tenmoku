@@ -33,9 +33,16 @@ error = "#d93f4c"
 warning = "#b8760f"
 info = "#2f74d0"
 success = "#3f8f3a"
+# Ruri, the design's modified signal: the accent's colour for now, so nothing
+# that moves to it changes.
+modified = "#3b6fd4"
 
 [list]
 indent_guide = "#00000014"
 
 [tab]
 active_text = "#1f2329"
+
+# An agent's colour, which must never be the accent: a quiet silver-blue.
+[agent]
+base = "#6a7a92"

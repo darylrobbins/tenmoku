@@ -90,6 +90,32 @@ fn a_theme_file_resolves_to_gpui_colors(cx: &mut TestAppContext) {
     });
 }
 
+/// The design's new roles reach `cx.theme()` as GPUI colours, as every
+/// token does; a theme's accent leaves the agent's colour alone.
+#[gpui::test]
+fn the_design_roles_resolve_to_gpui_colors(cx: &mut TestAppContext) {
+    let paper = theme(
+        r##"
+        appearance = "dark"
+        [accent]
+        base = "#c84f7c"
+        "##,
+    );
+    cx.update(|cx| set_theme(cx, paper));
+    let base = &ThemeData::dark().tokens;
+    cx.read(|cx| {
+        let colors = &cx.theme().colors;
+        assert_eq!(colors.surface.chrome, colors.surface.panel);
+        assert_eq!(colors.border.control, colors.border.default);
+        assert_eq!(colors.text.faint, hsla(base.text.faint));
+        assert_eq!(colors.status.modified, hsla(base.status.modified));
+        assert_eq!(colors.vcs.deleted, colors.status.error);
+        assert_eq!(colors.agent.base, hsla(base.agent.base));
+        assert_eq!(colors.agent.soft, hsla(base.agent.base.with_alpha(0x26)));
+        assert_ne!(colors.agent.base, colors.accent.base);
+    });
+}
+
 /// The older way in still works, and moves `cx.theme()` with it.
 #[gpui::test]
 fn set_ui_theme_sets_the_theme_too(cx: &mut TestAppContext) {

@@ -161,6 +161,16 @@ colors! {
         /// The brackets of a pair inside a `bracket_2` pair. A pair inside
         /// this one takes `bracket_1` again.
         bracket_3,
+        /// Behind a find or search match.
+        find_match,
+        /// Behind the other matches when one is the current match.
+        find_match_other,
+        /// Behind the symbol under the caret and its other uses.
+        identifier_highlight,
+        /// The gutter's lane beside rows an agent wrote.
+        agent_lane,
+        /// Behind the fold chevron under the pointer.
+        fold_hover,
         /// Behind the minimap.
         minimap_background,
         /// The minimap's slider over the visible rows.

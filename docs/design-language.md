@@ -32,7 +32,10 @@ means no rule: every bundled base sets it.
 
 ### surface
 
-What things sit on. `kiln/crates/kiln-core/src/theme/tokens.rs:Surface`.
+What things sit on. `kiln/crates/kiln-core/src/theme/tokens.rs:Surface`. The design
+system's names cross these: its editor surface is `surface.background`, its tool
+window `surface.panel`, its overlay `surface.raised`; `surface.overlay` is the
+scrim behind a modal, not a surface.
 
 | Token | For | If left out |
 | --- | --- | --- |
@@ -40,6 +43,7 @@ What things sit on. `kiln/crates/kiln-core/src/theme/tokens.rs:Surface`.
 | `surface.panel` | Side panels, bars and inactive tabs | Root |
 | `surface.raised` | What floats over content: menus, popovers, palettes | `surface.background` 8% towards `text.primary` |
 | `surface.overlay` | The dimming behind a modal | Root |
+| `surface.chrome` | The window's frame: title bar, activity rail, tab strip, status bar | Same as `surface.panel` |
 
 ### text
 
@@ -49,6 +53,7 @@ What things sit on. `kiln/crates/kiln-core/src/theme/tokens.rs:Surface`.
 | --- | --- | --- |
 | `text.primary` | Body text in the chrome | Root |
 | `text.muted` | Secondary text, placeholders and ignored entries | `text.primary` 50% towards `surface.background` |
+| `text.faint` | The third step: hints, shortcuts, paths beside a name | `text.muted` 40% towards `surface.background` |
 | `text.disabled` | Text of what can't be used | Same as `text.muted` |
 | `text.accent` | Links and accented labels | Same as `accent.base` |
 | `text.on_accent` | Text and marks on an accent fill, as on a primary button | Root |
@@ -62,6 +67,7 @@ What things sit on. `kiln/crates/kiln-core/src/theme/tokens.rs:Surface`.
 | `border.default` | Lines between regions | Root |
 | `border.subtle` | Separators inside a panel | `border.default` 50% towards `surface.background` |
 | `border.focused` | Around the control that has focus | Same as `accent.base` |
+| `border.control` | Around an input or a secondary button | Same as `border.default` |
 
 ### accent
 
@@ -90,6 +96,7 @@ Interaction states, as overlays on whatever is underneath. `kiln/crates/kiln-cor
 
 ### status
 
+Signals, each with a soft ground behind a badge, banner or row it marks.
 `kiln/crates/kiln-core/src/theme/tokens.rs:Status`.
 
 | Token | For | If left out |
@@ -98,6 +105,11 @@ Interaction states, as overlays on whatever is underneath. `kiln/crates/kiln-cor
 | `status.warning` | Warnings | Root |
 | `status.info` | Information | Same as `accent.base` |
 | `status.success` | Success | Root |
+| `status.modified` | Changed and not yet saved or committed (Ruri) | Root: the bases set it to their `accent.base` |
+| `status.success_soft` | Behind what success marks | `status.success` at alpha `26` |
+| `status.error_soft` | Behind what an error marks | `status.error` at alpha `26` |
+| `status.warning_soft` | Behind what a warning marks | `status.warning` at alpha `26` |
+| `status.modified_soft` | Behind what a change marks | `status.modified` at alpha `26` |
 
 ### list
 
@@ -133,6 +145,32 @@ A scrolling view's scrollbar. `kiln/crates/kiln-core/src/theme/tokens.rs:Scrollb
 | `scrollbar.thumb` | The thumb | `text.muted` at alpha `80` |
 | `scrollbar.thumb_hover` | The thumb while it's hovered or dragged | `text.primary` at alpha `99` |
 
+### agent
+
+What an agent did or is doing: its edits' marks, its toasts. Never the accent, so
+an agent's work reads apart from the user's focus
+(`crates/fe-config/tests/design_role_tokens.rs`). Nothing reads it yet.
+`kiln/crates/kiln-core/src/theme/tokens.rs:Agent`.
+
+| Token | For | If left out |
+| --- | --- | --- |
+| `agent.base` | The agent's colour | Root: a silver-blue in each base |
+| `agent.soft` | Behind what the agent marks | `agent.base` at alpha `26` |
+
+### vcs
+
+A file's or a line's version-control state. Nothing reads it yet.
+`kiln/crates/kiln-core/src/theme/tokens.rs:Vcs`.
+
+| Token | For | If left out |
+| --- | --- | --- |
+| `vcs.added` | Added | Same as `status.success` |
+| `vcs.modified` | Modified | Same as `status.modified` |
+| `vcs.deleted` | Deleted | Same as `status.error` |
+| `vcs.untracked` | Not yet tracked | Same as `status.success` |
+| `vcs.ignored` | Ignored | Same as `text.muted` |
+| `vcs.conflict` | An unresolved merge conflict | Same as `status.warning` |
+
 ### Editor and syntax colours
 
 `crates/fe-config/src/theme.rs:EditorColors` is the `[editor]` table, its keys in
@@ -153,6 +191,10 @@ A scrolling view's scrollbar. `kiln/crates/kiln-core/src/theme/tokens.rs:Scrollb
   `bracket_1`, `bracket_2`, `bracket_3`.
 - Sticky scroll: `sticky_scroll_background`, `sticky_scroll_border`,
   `sticky_scroll_shadow`, `sticky_scroll_hover`.
+- The design's roles, which the editor doesn't read yet: `find_match`,
+  `find_match_other`, `identifier_highlight`, `agent_lane`, `fold_hover`. The
+  Tenmoku themes set each to what the editor computes today: the foreground at
+  alpha `38` (0.22), the cursor's at `38` for `agent_lane`.
 - Vim's status segment: `vim_mode_normal`, `vim_mode_insert`, `vim_mode_visual`,
   `vim_mode_replace`, `vim_mode_command`, `vim_mode_foreground`.
 - Minimap: `minimap_background`, `minimap_slider`, `minimap_slider_hover`,
@@ -456,8 +498,8 @@ list for it; the hard-coded colours below are in things that scene doesn't draw.
   `crates/fe-gpui/src/image_viewer.rs:checker_colors`.
 - Added files' letters turn the accent green with a fixed hue rather than use
   `status.success`: `crates/fe-workbench/src/git_panel.rs:ADDED_HUE`.
-- A find match is `foreground` at a fixed alpha, with no key of its own:
-  `crates/fe-gpui/src/element.rs:search_match_color`.
+- A find match is `foreground` at a fixed alpha, not the `find_match` key the themes
+  now set to that colour: `crates/fe-gpui/src/element.rs:search_match_color`.
 - A second copy of Kiln Dark's colours in literals, which match it today only
   because they're kept by hand: `kiln/crates/kiln-ui/src/theme.rs:UiTheme::default_dark`,
   `UI_OVERLAY`.
@@ -466,7 +508,8 @@ list for it; the hard-coded colours below are in things that scene doesn't draw.
 
 - Git's change colours by table: the log's file labels take the palette
   (`crates/fe-workbench/src/git_log.rs:FileColors::new`), the panel's letters the chrome's
-  tokens (`crates/fe-workbench/src/git_panel.rs:letter_color`).
+  tokens (`crates/fe-workbench/src/git_panel.rs:letter_color`); neither reads the `vcs`
+  tokens yet.
 - Warnings in Tenmoku Dark: `status.warning` `#d19a66`, `[editor] warning` `#e5c07b`.
   Light and Ember use one colour for both:
   `kiln/crates/kiln-core/themes/dark.toml`, `crates/fe-config/themes/tenmoku-dark.toml`.

@@ -216,6 +216,16 @@ pub struct EditorTheme {
     /// Which diagnostics show their message after their row, from
     /// `editor.inline_diagnostics`.
     pub inline_diagnostics: InlineDiagnostics,
+    /// Behind a find or search match.
+    pub find_match: Hsla,
+    /// Behind the other matches when one is the current match.
+    pub find_match_other: Hsla,
+    /// Behind the symbol under the caret and its other uses.
+    pub identifier_highlight: Hsla,
+    /// The gutter's lane beside rows an agent wrote.
+    pub agent_lane: Hsla,
+    /// Behind the fold chevron under the pointer.
+    pub fold_hover: Hsla,
     /// Behind the minimap.
     pub minimap_background: Hsla,
     /// The minimap's slider over the visible rows: at rest, under the

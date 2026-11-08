@@ -36,6 +36,8 @@ error = "#e0705f"
 warning = "#e0a84e"
 info = "#7fa6b8"
 success = "#a3b56f"
+# Kiln Dark's modified signal, so nothing changes while no reader uses it.
+modified = "#4f7cc8"
 
 [list]
 indent_guide = "#ffffff14"
@@ -44,6 +46,10 @@ folder_icon = "#d6a066"
 
 [tab]
 active_text = "#e3d6c3"
+
+# Kiln Dark's agent colour, as with modified; never the accent.
+[agent]
+base = "#8d9bb0"
 
 [editor]
 background = "#1c1814"
@@ -107,6 +113,14 @@ vim_mode_foreground = "#1c1814"
 bracket_1 = "#e5b45c"
 bracket_2 = "#c49bd1"
 bracket_3 = "#7fa6b8"
+# Find matches, the identifier under the caret and its uses, the agent's
+# gutter lane and a hovered fold's tile: what the editor computes today (the
+# foreground at 0.22, the cursor's at 0.22 for an agent's rows).
+find_match = "#e3d6c338"
+find_match_other = "#e3d6c338"
+identifier_highlight = "#e3d6c338"
+agent_lane = "#f0a05038"
+fold_hover = "#e3d6c338"
 # The minimap: its background, the slider over the visible rows (at rest,
 # hovered and dragged), and the marks for the selection, find matches,
 # error and warning diagnostics and git changes. VS Code's default dark
