@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_graphql"
+name = "GraphQL syntax"
+version = "0.1.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "graphql"
+wasm = "tree-sitter-graphql.wasm"
+extensions = ["graphql", "gql", "graphqls"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "#"

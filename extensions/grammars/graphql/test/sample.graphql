@@ -1,0 +1,90 @@
+# A schema and some operations, in GraphQL.
+
+"""
+A user of the service.
+"""
+type User implements Node & Entity @key(fields: "id") {
+  id: ID!
+  "Display name, such as Ada or Grace"
+  name(format: NameFormat = SHORT, limit: Int = 20): String!
+  email: String
+  score(scale: Float = 4.5): Float
+  friends(first: Int = 10, after: String): [User!]! @deprecated(reason: "use connections")
+  role: Role
+}
+
+interface Node {
+  id: ID!
+}
+
+interface Entity implements Node {
+  id: ID!
+  createdAt: String
+}
+
+union SearchResult = User | Post | Comment
+
+enum Role {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+scalar DateTime
+
+input PostInput {
+  title: String!
+  body: String
+  tags: [String!] = ["news", "tech"]
+  rating: Int = -3
+  draft: Boolean = true
+}
+
+directive @cached(ttl: Int = 60, scope: String) repeatable on FIELD_DEFINITION | OBJECT | QUERY
+
+extend type Query {
+  me: User
+  search(term: String!): [SearchResult!]!
+}
+
+extend schema @link(url: "https://example.com/spec/v1.0") {
+  subscription: Subscription
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+query GetUser($id: ID!, $withFriends: Boolean = false) {
+  user(id: $id) {
+    ...UserFields
+    friends(first: 5) @include(if: $withFriends) {
+      name
+    }
+    avatar: picture(size: 64)
+    ... on Admin {
+      permissions
+    }
+  }
+}
+
+mutation CreatePost($input: PostInput!) {
+  createPost(input: $input, meta: {source: "web", retries: 3, ratio: 0.75, silent: null}) {
+    id
+    title
+  }
+}
+
+subscription OnComment {
+  commentAdded(postId: 42) {
+    text
+  }
+}
+
+fragment UserFields on User {
+  id
+  name # trailing comment
+  role
+}
