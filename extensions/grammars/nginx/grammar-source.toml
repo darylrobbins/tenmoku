@@ -1,0 +1,4 @@
+git = "https://github.com/opa-oz/tree-sitter-nginx"
+rev = "7cdf006ed1addef698fc680ae31721950f85e5e9"
+src = "src"
+grammar = "nginx"
