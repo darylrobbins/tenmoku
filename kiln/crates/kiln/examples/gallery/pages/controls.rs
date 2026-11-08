@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Buttons in every variant and size, disabled ones, checkboxes and
-//! switches. The values are the page's: controls show what they're given
-//! and report clicks.
+//! Buttons in every variant and size, disabled ones and a focused one,
+//! checkboxes, switches, toggle buttons, segmented controls and badges,
+//! each in its states. The values are the page's: controls show what
+//! they're given and report clicks.
 
 use gpui::{
-    ClickEvent, Context, Div, ElementId, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Window, div,
+    App, ClickEvent, Context, Div, ElementId, FocusHandle, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px, svg,
 };
 use kiln::{
     prelude::*,
-    ui::{Button, ButtonSize, ButtonVariant, Checkbox, Icon, Switch, h_flex, v_flex},
+    ui::{
+        Badge, BadgeTone, Button, ButtonSize, ButtonVariant, Checkbox, Icon, SegmentedControl,
+        Switch, ToggleButton, h_flex, ui_theme, v_flex,
+    },
 };
 
 use super::{labelled, page_frame, page_root, section};
@@ -28,23 +32,47 @@ const SIZES: [(ButtonSize, &str); 3] = [
     (ButtonSize::Large, "Large"),
 ];
 
-#[derive(Default)]
 pub(crate) struct ControlsPage {
+    /// The "Focused" button's focus, which [`ControlsPage::focus_demo`]
+    /// moves to it.
+    focus_demo: FocusHandle,
     clicks: usize,
     last_clicked: Option<SharedString>,
     word_wrap: bool,
     line_numbers: bool,
     autosave: bool,
     telemetry: bool,
+    match_case: bool,
+    whole_word: bool,
+    /// The chosen segment of the scope switch.
+    scope: usize,
 }
 
 impl ControlsPage {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         Self {
+            focus_demo: cx.focus_handle(),
+            clicks: 0,
+            last_clicked: None,
+            word_wrap: false,
             line_numbers: true,
             autosave: true,
-            ..Self::default()
+            telemetry: false,
+            match_case: true,
+            whole_word: false,
+            scope: 0,
         }
+    }
+
+    /// The "Focused" button's focus handle: focused, as tabbing to it would
+    /// leave it, it shows the focus ring while the keyboard was the last
+    /// input.
+    #[allow(
+        dead_code,
+        reason = "the gallery's screenshots use it, the gallery doesn't"
+    )]
+    pub(crate) fn focus_demo(&self) -> FocusHandle {
+        self.focus_demo.clone()
     }
 
     fn clicked(&mut self, what: SharedString, cx: &mut Context<Self>) {
@@ -84,6 +112,8 @@ impl ControlsPage {
                 )
                 .child(
                     Button::icon_only(SharedString::from(format!("{name} icon")), Icon::Search)
+                        .name("Search")
+                        .shortcut("⇧⌘F")
                         .variant(variant.0)
                         .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
                             page.clicked(format!("{name} icon").into(), cx)
@@ -96,7 +126,18 @@ impl ControlsPage {
                         .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
                             page.clicked(format!("{name} Apply").into(), cx)
                         })),
-                );
+                )
+                .when(variant.0 == ButtonVariant::Secondary, |row| {
+                    // Focused from the keyboard, it shows the focus ring:
+                    // the gallery's screenshots tab to it.
+                    row.child(
+                        Button::new("focused", "Focused")
+                            .focus_handle(&self.focus_demo)
+                            .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
+                                page.clicked("Focused".into(), cx)
+                            })),
+                    )
+                });
             labelled(name, row, cx)
         });
         let c = cx.theme().colors;
@@ -178,7 +219,117 @@ impl ControlsPage {
             .items_start()
             .child(section("CHECKBOX", checkboxes, cx))
             .child(section("SWITCH", switches, cx))
+            .child(
+                v_flex()
+                    .gap_4()
+                    .child(
+                        h_flex()
+                            .gap_5()
+                            .items_start()
+                            .child(section("TOGGLE BUTTON", self.toggle_buttons(cx), cx))
+                            .child(section("BADGE", badges(cx), cx)),
+                    )
+                    .child(section("SEGMENTED CONTROL", self.segmented(cx), cx)),
+            )
     }
+
+    fn toggle_buttons(&self, cx: &mut Context<Self>) -> Div {
+        let ui = ui_theme(cx);
+        h_flex()
+            .gap_1()
+            .items_center()
+            .child(
+                ToggleButton::new("match-case", "Aa", &ui)
+                    .name("Match Case")
+                    .shortcut("⌥⌘C")
+                    .on(self.match_case)
+                    .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
+                        page.match_case = !page.match_case;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                ToggleButton::new("whole-word", "ab", &ui)
+                    .name("Whole Word")
+                    .on(self.whole_word)
+                    .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
+                        page.whole_word = !page.whole_word;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                ToggleButton::new("regex-disabled-on", ".*", &ui)
+                    .name("Regex")
+                    .on(true)
+                    .disabled(true),
+            )
+            .child(
+                ToggleButton::new("regex-disabled-off", ".*", &ui)
+                    .name("Regex")
+                    .disabled(true),
+            )
+    }
+
+    fn segmented(&self, cx: &mut Context<Self>) -> Div {
+        v_flex()
+            .gap_2()
+            .items_start()
+            .child(
+                SegmentedControl::new("scope", "Settings scope")
+                    .segments(["You", "This project"])
+                    .selected(self.scope)
+                    .on_change(cx.listener(|page, ix: &usize, _, cx| {
+                        page.scope = *ix;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        SegmentedControl::new("scope-small", "Settings scope")
+                            .segments(["You", "This project"])
+                            .selected(1)
+                            .small(),
+                    )
+                    .child(
+                        SegmentedControl::new("scope-disabled", "Settings scope")
+                            .segments(["You", "Project"])
+                            .small()
+                            .disabled(true),
+                    ),
+            )
+    }
+}
+
+/// An icon with a badge of each kind: counts by meaning and a dot.
+fn badges(cx: &App) -> Div {
+    let c = &cx.theme().colors;
+    let icon = |icon: Icon, badge: Badge| {
+        div()
+            .relative()
+            .size(px(16.))
+            .child(
+                svg()
+                    .path(icon.path())
+                    .size(px(16.))
+                    .text_color(c.list.icon),
+            )
+            .child(badge.surface(c.surface.background))
+    };
+    h_flex()
+        .gap_6()
+        .h(px(22.))
+        .items_center()
+        .pr_1()
+        .child(icon(Icon::File, Badge::count(3).tone(BadgeTone::Error)))
+        .child(icon(Icon::File, Badge::count(12).tone(BadgeTone::Warning)))
+        .child(icon(
+            Icon::GitBranch,
+            Badge::count(120).tone(BadgeTone::Modified),
+        ))
+        .child(icon(Icon::Search, Badge::dot()))
+        .child(icon(Icon::Folder, Badge::dot().tone(BadgeTone::Success)))
 }
 
 impl Render for ControlsPage {
@@ -188,7 +339,7 @@ impl Render for ControlsPage {
         page_root("controls-page", cx).child(
             page_frame(
                 "Controls",
-                "Button in each variant and size, with icons and disabled; Checkbox and Switch.",
+                "Each control in its states: enabled, disabled, focused, on and off.",
                 cx,
             )
             .child(section("BUTTON", buttons, cx))

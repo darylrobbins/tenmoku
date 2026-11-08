@@ -25,6 +25,7 @@ use crate::{
     ActiveTheme as _, ROW_HEIGHT, Tokens,
     nav::{NavKey, nav_key, page_rows},
     scroll_area::scrollbar,
+    tree_row::{selection_colors, selection_edge},
 };
 
 /// How a row is to be drawn.
@@ -33,21 +34,22 @@ pub struct RowState {
     pub selected: bool,
     /// The pointer is over it.
     pub hovered: bool,
-    /// The list has focus, so a selected row shows it strongly.
+    /// The list has focus, so a selected row shows it with an accent edge.
     pub focused: bool,
 }
 
 impl RowState {
-    /// The row's (background, border) in the theme's list colours: hovered,
-    /// selected in a focused list (outlined), or selected in one without
-    /// focus.
+    /// The row's (background, edge) in the theme's list colours: hovered,
+    /// selected in a focused list (tinted, with an accent edge down its
+    /// left), or selected in one without focus (tinted).
     pub(crate) fn colors(self, c: &Tokens<Hsla>) -> (Option<Hsla>, Option<Hsla>) {
-        let list = &c.list;
-        match (self.selected, self.focused, self.hovered) {
-            (true, true, _) => (Some(list.row_selected), Some(list.row_focus_border)),
-            (true, false, _) => (Some(list.row_selected_inactive), None),
-            (false, _, true) => (Some(list.row_hover), None),
-            (false, _, false) => (None, None),
+        match (self.selected, self.hovered) {
+            (true, _) => {
+                let (background, edge) = selection_colors(self.focused, c);
+                (Some(background), edge)
+            }
+            (false, true) => (Some(c.list.row_hover), None),
+            (false, false) => (None, None),
         }
     }
 }
@@ -88,7 +90,7 @@ impl ParentElement for ListRow {
 
 impl RenderOnce for ListRow {
     fn render(mut self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let (background, border) = self.state.colors(&cx.theme().colors);
+        let (background, edge) = self.state.colors(&cx.theme().colors);
         let caller = std::mem::take(self.base.style());
         let mut row = self
             .base
@@ -97,7 +99,10 @@ impl RenderOnce for ListRow {
             .w_full()
             .items_center()
             .when_some(background, |row, background| row.bg(background))
-            .when_some(border, |row, border| row.border_1().border_color(border));
+            .when_some(edge, |row, edge| {
+                row.relative()
+                    .child(selection_edge(edge).debug_selector(|| "list-row-edge".into()))
+            });
         row.style().refine(&caller);
         row
     }

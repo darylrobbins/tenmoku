@@ -47,7 +47,7 @@ impl Gallery {
         let pages: Vec<AnyView> = Page::ALL
             .iter()
             .map(|page| match page {
-                Page::Controls => cx.new(|_| ControlsPage::new()).into(),
+                Page::Controls => cx.new(ControlsPage::new).into(),
                 Page::Text => cx.new(|cx| TextPage::new(window, cx)).into(),
                 Page::Lists => cx.new(|cx| ListsPage::new(window, cx)).into(),
                 Page::Layout => cx.new(|cx| LayoutPage::new(window, cx)).into(),

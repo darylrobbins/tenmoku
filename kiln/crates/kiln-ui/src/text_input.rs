@@ -5,14 +5,15 @@ use std::{ops::Range, rc::Rc};
 use gpui::{
     App, Bounds, Context, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle,
     Focusable, HighlightStyle, Hsla, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Pixels, Point, Render, SharedString, Styled as _, StyledText, TextRun,
-    UTF16Selection, UnderlineStyle, Window, canvas, div, prelude::FluentBuilder as _, px, size,
+    ParentElement as _, Pixels, Point, Render, Role, SharedString, StatefulInteractiveElement as _,
+    Styled as _, StyledText, TextRun, UTF16Selection, UnderlineStyle, Window, canvas, div,
+    prelude::FluentBuilder as _, px, size,
 };
 
 use kiln_core::{Motion, TextEdit};
 use unicode_segmentation::UnicodeSegmentation as _;
 
-use crate::{ActiveTheme as _, Tokens, UiTheme};
+use crate::{ActiveTheme as _, Tokens, UiTheme, focus_ring, radius};
 
 #[cfg(test)]
 #[path = "tests/text_input_caret.rs"]
@@ -98,6 +99,8 @@ pub struct TextInput {
     /// Where typed text goes: a grapheme boundary in `text`.
     caret: usize,
     placeholder: SharedString,
+    /// Its accessible name; the placeholder stands in without one.
+    name: Option<SharedString>,
     focus: FocusHandle,
     bordered: bool,
     /// Whether typed text goes in: see [`TextInput::set_typing`].
@@ -136,6 +139,7 @@ impl TextInput {
             text: String::new(),
             caret: 0,
             placeholder: placeholder.into(),
+            name: None,
             focus: cx.focus_handle(),
             bordered: false,
             typing: true,
@@ -215,20 +219,24 @@ impl TextInput {
     }
 
     /// Draws it as a field on its own: on the panel colour, in a rounded
-    /// border that takes the accent (`border.focused`) while it has focus.
+    /// `border.control` border, with the 2 px accent focus ring (see
+    /// [`crate::focus_ring`]) outside it while it has focus.
     pub fn bordered(mut self) -> Self {
         self.bordered = true;
         self
     }
 
-    /// Its border colour, if it's [`TextInput::bordered`], as focused or
-    /// not.
-    pub(crate) fn border_color(&self, focused: bool, c: &Tokens<Hsla>) -> Option<Hsla> {
-        self.bordered.then_some(if focused {
-            c.border.focused
-        } else {
-            c.border.default
-        })
+    /// Its accessible name, which a screen reader reads: the placeholder
+    /// unless this sets one.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Its border colour, if it's [`TextInput::bordered`]: focus doesn't
+    /// change it, the focus ring shows focus.
+    pub(crate) fn border_color(&self, _focused: bool, c: &Tokens<Hsla>) -> Option<Hsla> {
+        self.bordered.then_some(c.border.control)
     }
 
     pub fn text(&self) -> &str {
@@ -801,7 +809,18 @@ impl Render for TextInput {
         }
         let styled = (!full.is_empty()).then(|| StyledText::new(full).with_highlights(highlights));
         let layout = styled.as_ref().map(|styled| styled.layout().clone());
+        let name = self
+            .name
+            .clone()
+            .unwrap_or_else(|| self.placeholder.clone());
+        let ring = (focused && self.bordered).then(|| {
+            focus_ring(radius::CONTROL, px(1.), colors)
+                .debug_selector(|| "text-input-focus-ring".into())
+        });
         div()
+            .id("text-input")
+            .role(Role::TextInput)
+            .aria_label(name)
             .key_context(Self::KEY_CONTEXT)
             .track_focus(&self.focus)
             .on_mouse_down(MouseButton::Left, {
@@ -809,7 +828,10 @@ impl Render for TextInput {
                 move |_, window, cx| window.focus(&focus, cx)
             })
             .when_some(border, |row, border| {
-                row.border_1().border_color(border).rounded_md().bg(panel)
+                row.border_1()
+                    .border_color(border)
+                    .rounded(radius::CONTROL)
+                    .bg(panel)
             })
             .relative()
             .flex()
@@ -862,5 +884,6 @@ impl Render for TextInput {
                 .absolute()
                 .inset_0(),
             )
+            .children(ring)
     }
 }

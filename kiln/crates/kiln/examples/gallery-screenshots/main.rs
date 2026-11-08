@@ -32,7 +32,7 @@ mod setup;
 
 use std::{process::ExitCode, sync::Arc};
 
-use gpui::{AppContext as _, Focusable as _, Pixels, Size, px, size};
+use gpui::{AppContext as _, Focusable as _, Keystroke, Pixels, Size, px, size};
 use kiln::{
     core::Os,
     platform::screenshots::{
@@ -96,6 +96,14 @@ fn capture(
     // The page's own view, where it has state that can still change.
     if let Ok(view) = page_view.clone().downcast::<ControlsPage>() {
         settle.observe(&view, cx);
+        // One button focused from the keyboard, as tabbing to it would
+        // leave it, so the golden shows the focus ring: a key press makes
+        // the keyboard the last input.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_keystroke(Keystroke::parse("f19").expect("a key"), cx);
+            let focus = view.read(cx).focus_demo();
+            window.focus(&focus, cx);
+        })?;
     }
     if let Ok(view) = page_view.downcast::<ListsPage>() {
         settle.observe(&view, cx);

@@ -481,6 +481,7 @@ impl ToastLayer {
             Icon::X,
             &fe_ui::ui_theme(cx),
         )
+        .name("Dismiss")
         .on_click({
             let layer = layer.clone();
             move |_, _, cx| {

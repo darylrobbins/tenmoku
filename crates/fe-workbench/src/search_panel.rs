@@ -1989,6 +1989,7 @@ impl SearchPanel {
             .map(|(id, icon, tooltip, enabled, act)| {
                 div().flex_none().debug_selector(move || id.into()).child(
                     IconButton::new(id, icon, &ui)
+                        .name(tooltip)
                         .disabled(!enabled)
                         .tooltip(move |_, cx| {
                             cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
@@ -2068,6 +2069,7 @@ impl Render for SearchPanel {
                     },
                     &ui,
                 )
+                .name("Toggle Replace")
                 .selected(self.replace_shown)
                 .on_click(cx.listener(|panel, _, window, cx| {
                     // Showing replace from the chevron keeps focus where it was.

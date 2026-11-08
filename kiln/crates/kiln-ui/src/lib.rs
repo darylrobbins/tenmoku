@@ -15,6 +15,7 @@
 
 mod activity_rail;
 mod assets;
+mod badge;
 mod breadcrumbs;
 mod controls;
 mod file_icons;
@@ -30,6 +31,7 @@ mod palette;
 mod prompt;
 mod roles;
 mod scroll_area;
+mod segmented;
 mod split_pane;
 mod status_bar;
 mod tab_bar;
@@ -44,8 +46,10 @@ mod tree_row;
 
 pub use activity_rail::{ActivityRail, RAIL_WIDTH, RailButton};
 pub use assets::Assets;
+pub use badge::{BADGE_OVERHANG, BADGE_RING, Badge, BadgeTone};
 pub use breadcrumbs::{Breadcrumbs, Crumb, CrumbKind, TOOLBAR_HEIGHT};
 pub use controls::{Button, ButtonSize, ButtonVariant, Checkbox, Switch};
+pub use controls::{ButtonLook, DISABLED_OPACITY, TOGGLE_ON_ALPHA, focus_ring};
 pub use file_icons::{
     Icon, IconRef, IconSet, LucideIcons, file_icon, file_icon_path, file_icon_ref, folder_icon,
     folder_icon_path, folder_icon_ref, folder_icon_ref_named, icon_set, reset_icon_set,
@@ -66,6 +70,7 @@ pub use roles::{
     UI_SMALL, height, radius, space, width,
 };
 pub use scroll_area::{SCROLLBAR_WIDTH, ScrollArea};
+pub use segmented::SegmentedControl;
 pub use split_pane::{SplitPane, SplitPaneEvent};
 pub use status_bar::{
     StatusBarFrame, StatusEntry, StatusEntryColors, StatusFill, StatusTone, status_entry_colors,

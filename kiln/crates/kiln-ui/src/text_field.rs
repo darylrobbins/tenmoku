@@ -29,14 +29,15 @@ use gpui::{
     App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     GlobalElementId, Hsla, InteractiveElement as _, IntoElement, KeyBinding, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render,
-    ShapedLine, SharedString, Style, Styled as _, Subscription, TextRun, UTF16Selection,
-    UnderlineStyle, Window, actions, div, fill, point, px, relative, size,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, Role,
+    ShapedLine, SharedString, StatefulInteractiveElement as _, Style, Styled as _, Subscription,
+    TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, point,
+    prelude::FluentBuilder as _, px, relative, size,
 };
 use kiln_core::{Motion, TextEdit};
 use unicode_segmentation::UnicodeSegmentation as _;
 
-use crate::ActiveTheme as _;
+use crate::{ActiveTheme as _, focus_ring, height, radius};
 
 actions!(
     text_field,
@@ -98,6 +99,8 @@ const MASK: &str = "•";
 pub struct TextField {
     edit: TextEdit,
     placeholder: SharedString,
+    /// Its accessible name; the placeholder stands in without one.
+    name: Option<SharedString>,
     /// Whether each grapheme shows as [`MASK`], and copy and cut do nothing.
     masked: bool,
     /// The text's size.
@@ -137,6 +140,7 @@ impl TextField {
         Self {
             edit: TextEdit::new(),
             placeholder: SharedString::default(),
+            name: None,
             masked: false,
             font_size: px(13.),
             focus,
@@ -151,6 +155,13 @@ impl TextField {
     /// Shown, dimmed, while the field is empty.
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    /// Its accessible name, which a screen reader reads: the placeholder
+    /// unless this sets one.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -603,7 +614,18 @@ impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let focused = self.focus.is_focused(window);
+        let name = self
+            .name
+            .clone()
+            .unwrap_or_else(|| self.placeholder.clone());
         div()
+            .id("text-field")
+            .role(if self.masked {
+                Role::PasswordInput
+            } else {
+                Role::TextInput
+            })
+            .aria_label(name)
             .key_context(Self::KEY_CONTEXT)
             .track_focus(&self.focus)
             .cursor(CursorStyle::IBeam)
@@ -645,28 +667,32 @@ impl Render for TextField {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_mouse_move(cx.listener(Self::mouse_move))
+            .relative()
             .flex()
             .items_center()
             .w_full()
-            .h(px(26.))
+            .h(height::CONTROL)
             .px_2()
-            .rounded_sm()
+            .rounded(radius::CONTROL)
             .border_1()
-            .border_color(if focused {
-                colors.list.row_focus_border
-            } else {
-                colors.border.default
-            })
+            .border_color(colors.border.control)
             .bg(colors.surface.background)
             .text_size(self.font_size)
             .line_height(px(18.))
             .text_color(colors.tab.active_text)
-            .overflow_hidden()
+            // The line clips itself to its bounds, so the field doesn't
+            // clip, which would cut off its focus ring.
             .child(TextLine {
                 field: cx.entity(),
                 placeholder_color: colors.text.muted,
                 selection_color: colors.list.row_selected,
                 caret_color: colors.tab.active_text,
+            })
+            .when(focused, |field| {
+                field.child(
+                    focus_ring(radius::CONTROL, px(1.), &colors)
+                        .debug_selector(|| "text-field-focus-ring".into()),
+                )
             })
     }
 }

@@ -1063,6 +1063,7 @@ impl GitPanel {
                     _ => action.tooltip(header),
                 };
                 IconButton::new(self.button_id(at, action), action.icon(), &ui)
+                    .name(tooltip)
                     .tooltip(move |_, cx| {
                         cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
                     })

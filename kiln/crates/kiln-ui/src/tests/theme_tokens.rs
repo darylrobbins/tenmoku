@@ -218,22 +218,28 @@ fn controls_render_with_tokens(cx: &mut TestAppContext) {
 
     cx.update(|_, cx| {
         let colors = &cx.theme().colors;
-        let (bg, fg, border, hover) = ButtonVariant::Primary.colors(colors);
+        let primary = ButtonVariant::Primary.look(false, colors);
+        let (bg, fg, border, hover) = (
+            primary.background,
+            primary.text,
+            primary.border,
+            primary.hover,
+        );
         assert_eq!(bg, hsla(Color::rgb(0xc84f7c)));
         assert_eq!(border, bg);
         assert_eq!(fg, hsla(Color::rgb(0xfffff0)));
         assert_eq!(hover, colors.accent.hover);
-        let (bg, fg, border, _) = ButtonVariant::Secondary.colors(colors);
+        let secondary = ButtonVariant::Secondary.look(false, colors);
         assert_eq!(
-            (bg, fg, border),
+            (secondary.background, secondary.text, secondary.border),
             (
-                colors.surface.panel,
+                gpui::transparent_black(),
                 colors.text.primary,
-                colors.border.default
+                colors.border.control
             )
         );
         assert_eq!(
-            ButtonVariant::Danger.colors(colors).0,
+            ButtonVariant::Danger.look(false, colors).background,
             hsla(ThemeData::light().tokens.status.error)
         );
     });

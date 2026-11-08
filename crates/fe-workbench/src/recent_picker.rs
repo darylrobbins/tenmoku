@@ -382,6 +382,7 @@ impl PickerDelegate for RecentPicker {
             let picker = self.picker.clone();
             let id = SharedString::from(format!("recent-new-window-{ix}"));
             let button = IconButton::new(id, Icon::Copy, &ui)
+                .name("Open in New Window")
                 .tooltip(move |_, cx| {
                     let tooltip = Tooltip::new(
                         "Open in New Window",

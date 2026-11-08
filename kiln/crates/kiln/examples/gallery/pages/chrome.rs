@@ -146,16 +146,19 @@ impl Render for ChromePage {
             .items_center()
             .child(
                 IconButton::new("back", Icon::ArrowLeft, &theme)
+                    .name("Back")
                     .tooltip(tooltip("Back", Some("Alt+Left")))
                     .on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.did("Back", cx))),
             )
             .child(
                 IconButton::new("forward", Icon::ArrowRight, &theme)
+                    .name("Forward")
                     .disabled(true)
                     .tooltip(tooltip("Forward (disabled)", None)),
             )
             .child(
                 IconButton::new("split", Icon::Columns2, &theme)
+                    .name("Split Right")
                     .tooltip(tooltip("Split Right", None))
                     .on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.did("Split", cx))),
             )

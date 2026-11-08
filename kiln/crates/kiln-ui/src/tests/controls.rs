@@ -132,44 +132,29 @@ fn disabled_toggles_report_nothing(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |view, _| view.0), 0);
 }
 
-/// WCAG's contrast ratio between `fg`, laid over `bg`, and `bg`, which is
-/// opaque.
-fn contrast(fg: gpui::Hsla, bg: gpui::Hsla) -> f32 {
-    let (fg, bg): (gpui::Rgba, gpui::Rgba) = (fg.into(), bg.into());
-    let over = |f: f32, b: f32| f * fg.a + b * (1. - fg.a);
-    let luminance = |[r, g, b]: [f32; 3]| {
-        let linear = |c: f32| {
-            if c <= 0.03928 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
-    };
-    let text = luminance([over(fg.r, bg.r), over(fg.g, bg.g), over(fg.b, bg.b)]);
-    let back = luminance([bg.r, bg.g, bg.b]);
-    (text.max(back) + 0.05) / (text.min(back) + 0.05)
-}
-
 #[test]
-fn disabled_filled_buttons_stay_readable() {
-    use crate::{ButtonVariant, Theme};
+fn disabled_buttons_keep_their_look_at_half_opacity() {
+    use crate::{ButtonVariant, DISABLED_OPACITY, Theme};
     for theme in [Theme::dark(), Theme::light()] {
         let c = &theme.colors;
-        for variant in [ButtonVariant::Primary, ButtonVariant::Danger] {
+        for variant in [
+            ButtonVariant::Primary,
+            ButtonVariant::Secondary,
+            ButtonVariant::Ghost,
+            ButtonVariant::Danger,
+        ] {
+            let (enabled, disabled) = (variant.look(false, c), variant.look(true, c));
+            assert_eq!(enabled.opacity, 1.);
+            assert_eq!(DISABLED_OPACITY, 0.5);
             assert_eq!(
-                variant.colors_for(false, c),
-                variant.colors(c),
-                "enabled, as before"
+                disabled,
+                crate::ButtonLook {
+                    opacity: DISABLED_OPACITY,
+                    ..enabled
+                },
+                "{variant:?} in {}: the enabled look, faded",
+                theme.name
             );
-            let (bg, fg, border, _) = variant.colors_for(true, c);
-            assert_eq!((bg, border), (c.state.disabled, c.state.disabled));
-            let ratio = contrast(fg, bg);
-            assert!(ratio >= 3., "{variant:?} in {}: {ratio}", theme.name);
         }
-        // The others keep their colours, with the disabled text.
-        let (bg, fg, _, _) = ButtonVariant::Secondary.colors_for(true, c);
-        assert_eq!((bg, fg), (c.surface.panel, c.text.disabled));
     }
 }

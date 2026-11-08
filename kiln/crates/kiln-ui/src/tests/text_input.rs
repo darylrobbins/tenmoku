@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! TextInput: a click focuses it, and a bordered one's border takes the
-//! accent while it has focus.
+//! TextInput: a click focuses it, and a bordered one keeps its
+//! `border.control` border while it has focus.
 
 use gpui::{
     AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _, IntoElement,
@@ -58,7 +58,8 @@ fn a_click_focuses_it_and_a_bordered_one_shows_focus(cx: &mut TestAppContext) {
         let c = cx.theme().colors;
         assert_eq!(plain.read(cx).border_color(true, &c), None, "opt-in");
         let input = bordered.read(cx);
-        assert_eq!(input.border_color(false, &c), Some(c.border.default));
-        assert_eq!(input.border_color(true, &c), Some(c.border.focused));
+        // Focus shows as the focus ring outside it (tests::b3_controls).
+        assert_eq!(input.border_color(false, &c), Some(c.border.control));
+        assert_eq!(input.border_color(true, &c), Some(c.border.control));
     });
 }

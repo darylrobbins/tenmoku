@@ -13,13 +13,13 @@ fn colors_follow_state() {
 
         let focused = row().selected(true).focused(true).colors(tokens);
         assert_eq!(focused.background, Some(theme.row_selected));
-        assert_eq!(focused.border, Some(theme.row_focus_border));
+        assert_eq!(focused.edge, Some(tokens.accent.base));
         let unfocused = row().selected(true).colors(tokens);
         assert_eq!(unfocused.background, Some(theme.row_selected_inactive));
-        assert_eq!(unfocused.border, None);
+        assert_eq!(unfocused.edge, None);
         for unselected in [row(), row().focused(true)] {
             let colors = unselected.colors(tokens);
-            assert_eq!((colors.background, colors.border), (None, None));
+            assert_eq!((colors.background, colors.edge), (None, None));
         }
 
         for ignored in [row().ignored(true), row().directory(true).ignored(true)] {

@@ -61,7 +61,8 @@ pub struct TreeRow {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct RowColors {
     pub background: Option<Hsla>,
-    pub border: Option<Hsla>,
+    /// The [`SELECTION_EDGE`]-wide bar down the selection's left side.
+    pub edge: Option<Hsla>,
     pub label: Hsla,
     /// A masked icon's tint; a coloured icon ignores it.
     pub icon: Hsla,
@@ -69,6 +70,35 @@ pub(crate) struct RowColors {
     pub icon_opacity: f32,
     pub chevron: Hsla,
     pub badge: Option<Hsla>,
+}
+
+/// The width of the accent bar down the left of a selected row while its
+/// list has focus.
+pub(crate) const SELECTION_EDGE: Pixels = px(2.);
+
+/// A selected row's (background, edge): without focus, the
+/// `state.selected_inactive` tint alone; with focus, the `state.selected`
+/// tint and an `accent.base` edge. Each through its `list.*` token, which
+/// follows the state's unless a theme sets it.
+pub(crate) fn selection_colors(focused: bool, c: &Tokens<Hsla>) -> (Hsla, Option<Hsla>) {
+    if focused {
+        (c.list.row_selected, Some(c.accent.base))
+    } else {
+        (c.list.row_selected_inactive, None)
+    }
+}
+
+/// The edge of a selected row in a focused list: a [`SELECTION_EDGE`]-wide
+/// bar down its left side.
+pub(crate) fn selection_edge(color: Hsla) -> gpui::Div {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .w(SELECTION_EDGE)
+        .rounded(SELECTION_EDGE / 2.)
+        .bg(color)
 }
 
 impl TreeRow {
@@ -162,7 +192,8 @@ impl TreeRow {
         self
     }
 
-    /// Whether the list has focus, which outlines the selected row.
+    /// Whether the list has focus, which marks the selected row with an
+    /// accent edge.
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
         self
@@ -179,10 +210,12 @@ impl TreeRow {
     /// Its colours in `colors`, the active theme's tokens.
     pub(crate) fn colors(&self, colors: &Tokens<Hsla>) -> RowColors {
         let (list, text) = (&colors.list, &colors.text);
-        let (background, border) = match (self.selected, self.focused) {
-            (true, true) => (Some(list.row_selected), Some(list.row_focus_border)),
-            (true, false) => (Some(list.row_selected_inactive), None),
-            (false, _) => (None, None),
+        let (background, edge) = match self.selected {
+            true => {
+                let (background, edge) = selection_colors(self.focused, colors);
+                (Some(background), edge)
+            }
+            false => (None, None),
         };
         let error = colors.status.error;
         let (label, icon, chevron) = if self.error {
@@ -204,7 +237,7 @@ impl TreeRow {
         };
         RowColors {
             background,
-            border,
+            edge,
             label,
             icon,
             icon_opacity,
@@ -235,8 +268,9 @@ impl RenderOnce for TreeRow {
                 Some(background) => selection.bg(background),
                 None => selection.hover(move |style| style.bg(hover)),
             })
-            .when_some(colors.border, |selection, border| {
-                selection.border_1().border_color(border)
+            .when_some(colors.edge, |selection, edge| {
+                selection
+                    .child(selection_edge(edge).debug_selector(|| format!("tree-row-edge:{label}")))
             });
         // Each ancestor's line runs through the centre of its chevron.
         let guides = (0..self.depth).map(|level| {

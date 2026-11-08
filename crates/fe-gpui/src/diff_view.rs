@@ -647,6 +647,7 @@ impl DiffView {
         });
         let button = |id: &'static str, icon, title: &'static str, command: &'static str| {
             IconButton::new(id, icon, &ui)
+                .name(title)
                 .disabled(count == 0)
                 .tooltip(move |_, cx| {
                     let shortcut = key_label(command, cx);

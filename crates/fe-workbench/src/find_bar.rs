@@ -762,6 +762,7 @@ impl FindBar {
                     },
                     ui,
                 )
+                .name("Toggle Replace")
                 .selected(self.replacing)
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.run_find(FindOp::ToggleReplace, window, cx)

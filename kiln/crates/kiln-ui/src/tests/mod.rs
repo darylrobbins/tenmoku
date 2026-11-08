@@ -2,6 +2,8 @@
 
 mod active_theme;
 mod assets;
+mod b3_controls;
+mod b3_keyboard;
 mod button_command;
 mod coloured_icon_set;
 mod coloured_icons;

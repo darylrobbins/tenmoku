@@ -751,10 +751,12 @@ impl CommitDiffView {
         let commit = self.diff.read(cx).commit().commit.clone();
         let none = self.stops.is_empty();
         let button = |id: &'static str, icon, title: &'static str| {
-            IconButton::new(id, icon, &ui).tooltip(move |_, cx| {
-                let tooltip = Tooltip::new(title, None::<String>, &fe_ui::ui_theme(cx));
-                cx.new(|_| tooltip).into()
-            })
+            IconButton::new(id, icon, &ui)
+                .name(title)
+                .tooltip(move |_, cx| {
+                    let tooltip = Tooltip::new(title, None::<String>, &fe_ui::ui_theme(cx));
+                    cx.new(|_| tooltip).into()
+                })
         };
         let previous = button("commit-diff-previous", Icon::ArrowLeft, "Previous Change")
             .disabled(none)

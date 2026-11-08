@@ -269,7 +269,7 @@ fn list_rows_show_their_state() {
     );
     assert_eq!(
         state(true, true, true).colors(c),
-        (Some(list.row_selected), Some(list.row_focus_border)),
+        (Some(list.row_selected), Some(c.accent.base)),
         "selected wins over hovered"
     );
     assert_eq!(
