@@ -51,14 +51,14 @@ fn types_and_folder_roles_take_their_tint(cx: &mut TestAppContext) {
         ("Makefile", Icon::Hammer, CONFIG),
         ("build.sh", Icon::FileTerminal, SCRIPT),
         ("app.tsx", Icon::BrandReact, WEB),
+        ("Cargo.toml", Icon::Package, RUST),
+        ("package.json", Icon::BrandNodejs, WEB),
     ] {
         assert_eq!(set.file(name), IconRef::Tinted(icon, tint), "{name}");
     }
     for (name, tint) in [
-        ("Cargo.toml", TOML),
         ("config.toml", TOML),
         (".env.local", CONFIG),
-        ("package.json", DATA),
         ("Cargo.lock", DATA),
         ("logo.png", IMAGE),
         ("unknown", DEFAULT),
@@ -74,21 +74,26 @@ fn types_and_folder_roles_take_their_tint(cx: &mut TestAppContext) {
             "{name}"
         );
     }
-    // Folders by role, open or closed; any other is the plain folder.
-    for (name, tint) in [
-        ("src", FOLDER_SOURCE),
-        ("crates", FOLDER_SOURCE),
-        ("tests", FOLDER_TESTS),
-        ("__tests__", FOLDER_TESTS),
-        ("docs", FOLDER_DOCS),
-        ("Docs", FOLDER_DOCS),
-        ("node_modules", FOLDER),
+    // Folders by role, a glyph each, the same open or closed; any other is
+    // the plain folder.
+    for (name, icon, tint) in [
+        ("src", Icon::FolderCode, FOLDER_SOURCE),
+        ("crates", Icon::FolderCode, FOLDER_SOURCE),
+        ("tests", Icon::FolderCheck, FOLDER_TESTS),
+        ("__tests__", Icon::FolderCheck, FOLDER_TESTS),
+        ("docs", Icon::FolderPen, FOLDER_DOCS),
+        ("Docs", Icon::FolderPen, FOLDER_DOCS),
+        ("node_modules", Icon::FolderArchive, FOLDER),
     ] {
         for expanded in [false, true] {
-            let icon = LucideIcons.folder(expanded).bundled().unwrap();
             let want = IconRef::Tinted(icon, tint);
             assert_eq!(set.folder_named(name, expanded), want, "{name}");
         }
+    }
+    for expanded in [false, true] {
+        let icon = LucideIcons.folder(expanded).bundled().unwrap();
+        let want = IconRef::Tinted(icon, FOLDER);
+        assert_eq!(set.folder_named("demo-app", expanded), want);
     }
     assert_eq!(set.folder(true), IconRef::Tinted(Icon::FolderOpen, FOLDER));
     // Drawn in its own colour, it dims as a coloured icon does.
@@ -102,7 +107,7 @@ fn types_and_folder_roles_take_their_tint(cx: &mut TestAppContext) {
     );
     assert_eq!(
         folder_icon_ref_named("docs", false),
-        IconRef::Tinted(Icon::Folder, FOLDER_DOCS)
+        IconRef::Tinted(Icon::FolderPen, FOLDER_DOCS)
     );
 
     // Under a theme that sets them, each draws in its token's colour,
@@ -148,8 +153,9 @@ fn types_and_folder_roles_take_their_tint(cx: &mut TestAppContext) {
 #[test]
 fn tables_name_file_icon_tokens() {
     let keys = file_icon_keys();
-    let named: BTreeSet<&str> = (FILE_NAMES.iter().chain(EXTENSIONS).chain(FOLDER_NAMES))
+    let named: BTreeSet<&str> = (FILE_NAMES.iter().chain(EXTENSIONS))
         .map(|&(_, tint)| tint)
+        .chain(FOLDER_NAMES.iter().map(|&(_, role)| role.tint()))
         .chain([DEFAULT, FOLDER])
         .collect();
     // Every token is one the tables or the defaults name, and back.
@@ -159,9 +165,10 @@ fn tables_name_file_icon_tokens() {
         "the file_icon tokens"
     );
     // Lowercase keys, each once, so a lookup can find them.
-    for table in [FILE_NAMES, EXTENSIONS, FOLDER_NAMES] {
+    for table in [FILE_NAMES, EXTENSIONS] {
         lowercase_and_once(table.iter().map(|&(key, _)| key));
     }
+    lowercase_and_once(FOLDER_NAMES.iter().map(|&(key, _)| key));
     for table in [ICON_NAMES, ICON_EXTENSIONS] {
         lowercase_and_once(table.iter().map(|&(key, _)| key));
     }

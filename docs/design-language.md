@@ -137,20 +137,20 @@ folders are all its muted grey.
 
 | Token | For | If left out |
 | --- | --- | --- |
-| `file_icon.rust` | Rust sources | Same as `list.icon` |
-| `file_icon.code` | The compiled and systems languages: C, C++, C#, F#, Go, Java, Kotlin, Scala, Groovy, Swift, Dart, Zig, Haskell, OCaml, Elm, Gleam, Erlang, Elixir, Racket, Solidity | Same as `list.icon` |
-| `file_icon.toml` | TOML files, `Cargo.toml` among them | Same as `list.icon` |
-| `file_icon.markdown` | Markdown and READMEs, LaTeX | Same as `list.icon` |
-| `file_icon.config` | YAML, INI and properties, `.editorconfig`, Dockerfiles, Make, just, CMake, Nginx, Nix, HCL and Terraform, Starlark, KDL, Git's files, `.env` | Same as `list.icon` |
-| `file_icon.data` | JSON, XML, CSV and TSV, SQL and databases, Protocol Buffers, diffs and patches, lock files | Same as `list.icon` |
-| `file_icon.script` | Shell scripts and shell startup files, Python, Ruby, Lua, Perl, PHP, R, Julia, PowerShell, Vim script | Same as `list.icon` |
-| `file_icon.web` | JavaScript, TypeScript, JSX and TSX, HTML, CSS, SCSS and Sass, Vue, Svelte, Astro, Twig | Same as `list.icon` |
+| `file_icon.rust` | Rust sources, `Cargo.toml` | Same as `list.icon` |
+| `file_icon.code` | The compiled and systems languages: C, C++, C#, F#, Go, Java, Kotlin, Scala, Groovy, Swift, Dart, Zig, Haskell, OCaml, Elm, Gleam, Erlang, Elixir, Racket, Solidity; their manifests (`go.mod`, `go.work`, `pom.xml`, Gradle's files) | Same as `list.icon` |
+| `file_icon.toml` | TOML files | Same as `list.icon` |
+| `file_icon.markdown` | Markdown and READMEs, LaTeX, changelogs | Same as `list.icon` |
+| `file_icon.config` | YAML, INI and properties, `.editorconfig`, Dockerfiles, Make, just, CMake, Nginx, Nix, HCL and Terraform, Starlark, KDL, Git's files, `CODEOWNERS`, `.env`, Compose files, the package managers' own (`.npmrc`, `pnpm-workspace.yaml`, `.yarnrc`, `bunfig.toml`, `deno.json`) | Same as `list.icon` |
+| `file_icon.data` | JSON, XML, CSV and TSV, SQL and databases, Protocol Buffers, diffs and patches, lock files, JSON rc files (`.babelrc`, `.eslintrc`, …) | Same as `list.icon` |
+| `file_icon.script` | Shell scripts and shell startup files, Python, Ruby, Lua, Perl, PHP, R, Julia, PowerShell, Vim script; Python's and Ruby's manifests (`pyproject.toml`, `requirements.txt`, `Gemfile`, `Rakefile`, …) | Same as `list.icon` |
+| `file_icon.web` | JavaScript, TypeScript, JSX and TSX, HTML, CSS, SCSS and Sass, Vue, Svelte, Astro, Twig; `package.json`, `.nvmrc` | Same as `list.icon` |
 | `file_icon.image` | Images, video and sound | Same as `list.icon` |
-| `file_icon.default` | Any other file | Same as `list.icon` |
-| `file_icon.folder_source` | `src`, `lib`, `crates`, … | Same as `list.icon` |
-| `file_icon.folder_tests` | `tests`, `spec`, `benches`, … | Same as `list.icon` |
-| `file_icon.folder_docs` | `docs`, `doc` | Same as `list.icon` |
-| `file_icon.folder` | Any other folder | Same as `list.icon` |
+| `file_icon.default` | Licences and notices, any other file | Same as `list.icon` |
+| `file_icon.folder_source` | Source folders: `src`, `lib`, `crates`, `packages`, `app`, … | Same as `list.icon` |
+| `file_icon.folder_tests` | Tests folders: `tests`, `spec`, `fixtures`, `mocks`, `benches`, … | Same as `list.icon` |
+| `file_icon.folder_docs` | Docs folders: `docs`, `doc`, `wiki` | Same as `list.icon` |
+| `file_icon.folder` | The other roles, each its own glyph: config (`config`, `.vscode`), Git's (`.git`, `patches`), a forge's (`.github`, `.gitlab`), build output (`target`, `dist`), dependencies (`node_modules`, `vendor`), examples, scripts and tools, assets (`assets`, `public`, `images`, `fonts`, `themes`, `locales`), temporary (`tmp`, `cache`); any other folder | Same as `list.icon` |
 
 ### tab
 
@@ -442,8 +442,12 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
   icon's colour.
 - **Tinted, for files and folders:** a glyph per language, Lucide's or, where Lucide
   has none, Tabler's brand mark or letter monogram (`ICON_NAMES`, `ICON_EXTENSIONS`
-  over Lucide's tables; a `README` takes the Markdown icon; every other extension the
-  Material set knows a Lucide kind icon, never the blank file), each in a `file_icon`
+  over Lucide's tables; a `README` takes the Markdown icon; every other extension and
+  well-known project file the Material set knows a Lucide kind icon or a tool's mark,
+  never the blank file: manifests `package`, lock files `file-lock`, licences `scale`,
+  changelogs `file-clock`), and a Lucide folder glyph per folder role (`FolderRole`:
+  `folder-code`, `folder-check`, `folder-pen`, `folder-cog`, …, the same open or
+  closed; a folder with no role is `folder`/`folder-open`), each in a `file_icon`
   token's colour by file family and folder role
   (`kiln/crates/kiln-ui/src/file_icons_tinted.rs:TintedIcons`, `FILE_NAMES`,
   `EXTENSIONS`, `FOLDER_NAMES`). They're

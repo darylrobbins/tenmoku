@@ -222,9 +222,24 @@ icons! {
         FileBox => "file-box",
         FileType => "file-type",
         ScrollText => "scroll-text",
+        // TintedIcons' project files and folder roles.
+        Croissant => "croissant",
+        FileClock => "file-clock",
+        FolderCode => "folder-code",
+        FolderCheck => "folder-check",
+        FolderPen => "folder-pen",
+        FolderCog => "folder-cog",
+        FolderGit => "folder-git",
+        FolderGit2 => "folder-git-2",
+        FolderOutput => "folder-output",
+        FolderArchive => "folder-archive",
+        FolderKanban => "folder-kanban",
+        FolderInput => "folder-input",
+        FolderBookmark => "folder-bookmark",
+        FolderClock => "folder-clock",
     }
-    // Tabler Icons 3.50.0: TintedIcons' marks for the languages Lucide has
-    // none for, brands and monograms.
+    // Tabler Icons 3.50.0: TintedIcons' marks for the languages and tools
+    // Lucide has none for, brands and monograms.
     "tabler-icons" {
         BrandRust => "brand-rust",
         BrandCpp => "brand-cpp",
@@ -247,6 +262,12 @@ icons! {
         BrandDocker => "brand-docker",
         BrandTerraform => "brand-terraform",
         BrandGit => "brand-git",
+        BrandGithub => "brand-github",
+        BrandNodejs => "brand-nodejs",
+        BrandNpm => "brand-npm",
+        BrandPnpm => "brand-pnpm",
+        BrandYarn => "brand-yarn",
+        BrandDeno => "brand-deno",
         Markdown => "markdown",
         LetterC => "letter-c",
         LetterE => "letter-e",

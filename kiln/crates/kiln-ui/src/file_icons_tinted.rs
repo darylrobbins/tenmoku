@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`TintedIcons`]: line icons, a glyph per language, each drawn in the
-//! theme's colour for its file family or folder role, the `file_icon`
-//! token group.
+//! [`TintedIcons`]: line icons, a glyph per language, well-known project
+//! file and folder role, each drawn in the theme's colour for its file
+//! family or folder role, the `file_icon` token group.
 //!
 //! A file's icon is Lucide's, or Tabler's mark where Lucide has none for its
-//! language; both are data: [`ICON_NAMES`] and [`ICON_EXTENSIONS`] say where
+//! language or tool; both are data: [`ICON_NAMES`] and [`ICON_EXTENSIONS`] say where
 //! it isn't [`LucideIcons`](crate::LucideIcons)' (a README's is Markdown's),
 //! looked up in the same order as Lucide's tables, an exact name before an
 //! extension, so a name Lucide's tables know (`Cargo.toml`) keeps its icon.
 //! Its tint is data too: [`FILE_NAMES`] and [`EXTENSIONS`] map a name to a
 //! token, a file neither names takes `file_icon.default`. [`FOLDER_NAMES`]
-//! maps a folder's name to its role's token, any other folder
-//! `file_icon.folder`. Every `file_icon` token is `list.icon` unless a theme
+//! maps a folder's name to its [`FolderRole`], a Lucide folder glyph and a
+//! token; any other folder is the plain folder in `file_icon.folder`. Every `file_icon` token is `list.icon` unless a theme
 //! sets it, so under a theme that sets none the set draws in one colour.
 
 use std::{collections::HashMap, sync::LazyLock};
@@ -95,6 +95,82 @@ pub(crate) const ICON_NAMES: &[(&str, Icon)] = &[
     (".vimrc", Icon::LetterV),
     ("_vimrc", Icon::LetterV),
     (".gvimrc", Icon::LetterV),
+    // Project files: manifests, a tool's own files, lock files, licences
+    // and changelogs. Lucide's tables already give `Cargo.toml`, `go.mod`,
+    // `pom.xml`, `build.gradle(.kts)`, `pyproject.toml` and `Gemfile`
+    // `package`, and the `lock` extension `file-lock`.
+    (".ecrc", Icon::SlidersHorizontal),
+    ("kbuild", Icon::Hammer),
+    ("cmakecache.txt", Icon::Triangle),
+    ("cmakepresets.json", Icon::Triangle),
+    ("docker-compose.yml", Icon::BrandDocker),
+    ("docker-compose.yaml", Icon::BrandDocker),
+    ("compose.yml", Icon::BrandDocker),
+    ("compose.yaml", Icon::BrandDocker),
+    ("codeowners", Icon::BrandGithub),
+    ("go.work", Icon::Package),
+    ("gradle.properties", Icon::Package),
+    ("gradlew", Icon::Package),
+    ("gradlew.bat", Icon::Package),
+    ("requirements.txt", Icon::Package),
+    ("pipfile", Icon::Package),
+    (".python-version", Icon::BrandPython),
+    ("py.typed", Icon::BrandPython),
+    ("pylintrc", Icon::SlidersHorizontal),
+    (".pylintrc", Icon::SlidersHorizontal),
+    (".coveragerc", Icon::SlidersHorizontal),
+    ("rakefile", Icon::Gem),
+    ("podfile", Icon::Gem),
+    ("brewfile", Icon::Gem),
+    ("guardfile", Icon::Gem),
+    ("capfile", Icon::Gem),
+    (".ruby-version", Icon::Gem),
+    ("pkgbuild", Icon::FileTerminal),
+    ("apkbuild", Icon::FileTerminal),
+    ("package.json", Icon::BrandNodejs),
+    (".nvmrc", Icon::BrandNodejs),
+    (".node-version", Icon::BrandNodejs),
+    (".npmrc", Icon::BrandNpm),
+    (".npmignore", Icon::BrandNpm),
+    ("pnpm-workspace.yaml", Icon::BrandPnpm),
+    (".pnpmfile.cjs", Icon::BrandPnpm),
+    (".yarnrc", Icon::BrandYarn),
+    (".yarnrc.yml", Icon::BrandYarn),
+    (".yarnrc.yaml", Icon::BrandYarn),
+    ("bunfig.toml", Icon::Croissant),
+    (".bun-version", Icon::Croissant),
+    ("deno.json", Icon::BrandDeno),
+    ("deno.jsonc", Icon::BrandDeno),
+    ("bun.lockb", Icon::FileLock),
+    ("go.work.sum", Icon::FileLock),
+    (".babelrc", Icon::FileBraces),
+    (".bowerrc", Icon::FileBraces),
+    (".eslintrc", Icon::FileBraces),
+    (".hintrc", Icon::FileBraces),
+    (".jscsrc", Icon::FileBraces),
+    (".jsfmtrc", Icon::FileBraces),
+    (".jshintrc", Icon::FileBraces),
+    (".jslintrc", Icon::FileBraces),
+    (".swcrc", Icon::FileBraces),
+    (".vuerc", Icon::FileBraces),
+    (".watchmanconfig", Icon::FileBraces),
+    ("license.md", Icon::Scale),
+    ("license.txt", Icon::Scale),
+    ("licence.md", Icon::Scale),
+    ("licence.txt", Icon::Scale),
+    ("copying.md", Icon::Scale),
+    ("copying.txt", Icon::Scale),
+    ("copyright", Icon::Scale),
+    ("copyright.md", Icon::Scale),
+    ("copyright.txt", Icon::Scale),
+    ("notice.md", Icon::Scale),
+    ("notice.txt", Icon::Scale),
+    ("changelog", Icon::FileClock),
+    ("changelog.md", Icon::FileClock),
+    ("changelog.txt", Icon::FileClock),
+    ("changes", Icon::FileClock),
+    ("changes.md", Icon::FileClock),
+    ("changes.txt", Icon::FileClock),
 ];
 
 /// Extensions without the dot, ASCII lowercase, whose icon isn't Lucide's:
@@ -297,11 +373,6 @@ pub(crate) const FILE_NAMES: &[(&str, &str)] = &[
     (".justfile", CONFIG),
     ("cmakelists.txt", CONFIG),
     ("nginx.conf", CONFIG),
-    ("gemfile", CONFIG),
-    ("go.mod", CONFIG),
-    ("pom.xml", CONFIG),
-    ("build.gradle", CONFIG),
-    ("build.gradle.kts", CONFIG),
     ("dockerfile", CONFIG),
     ("containerfile", CONFIG),
     (".dockerignore", CONFIG),
@@ -331,8 +402,83 @@ pub(crate) const FILE_NAMES: &[(&str, &str)] = &[
     (".vimrc", SCRIPT),
     ("_vimrc", SCRIPT),
     (".gvimrc", SCRIPT),
+    // Project files, as ICON_NAMES draws them; a lock file is `data` by its
+    // extension or here.
+    (".ecrc", CONFIG),
+    ("kbuild", CONFIG),
+    ("cmakecache.txt", CONFIG),
+    ("cmakepresets.json", CONFIG),
+    ("docker-compose.yml", CONFIG),
+    ("docker-compose.yaml", CONFIG),
+    ("compose.yml", CONFIG),
+    ("compose.yaml", CONFIG),
+    ("codeowners", CONFIG),
+    ("cargo.toml", RUST),
+    ("go.mod", CODE),
+    ("go.work", CODE),
+    ("pom.xml", CODE),
+    ("build.gradle", CODE),
+    ("build.gradle.kts", CODE),
+    ("gradle.properties", CODE),
+    ("gradlew", CODE),
+    ("gradlew.bat", CODE),
+    ("pyproject.toml", SCRIPT),
+    ("requirements.txt", SCRIPT),
+    ("pipfile", SCRIPT),
+    (".python-version", SCRIPT),
+    ("py.typed", SCRIPT),
+    ("pylintrc", CONFIG),
+    (".pylintrc", CONFIG),
+    (".coveragerc", CONFIG),
+    ("gemfile", SCRIPT),
+    ("rakefile", SCRIPT),
+    ("podfile", SCRIPT),
+    ("brewfile", SCRIPT),
+    ("guardfile", SCRIPT),
+    ("capfile", SCRIPT),
+    (".ruby-version", SCRIPT),
+    ("pkgbuild", SCRIPT),
+    ("apkbuild", SCRIPT),
+    ("package.json", WEB),
+    (".nvmrc", WEB),
+    (".node-version", WEB),
+    (".npmrc", CONFIG),
+    (".npmignore", CONFIG),
+    ("pnpm-workspace.yaml", CONFIG),
+    (".pnpmfile.cjs", CONFIG),
+    (".yarnrc", CONFIG),
+    (".yarnrc.yml", CONFIG),
+    (".yarnrc.yaml", CONFIG),
+    ("bunfig.toml", CONFIG),
+    (".bun-version", CONFIG),
+    ("deno.json", CONFIG),
+    ("deno.jsonc", CONFIG),
     ("pnpm-lock.yaml", DATA),
     ("go.sum", DATA),
+    ("go.work.sum", DATA),
+    ("bun.lockb", DATA),
+    (".babelrc", DATA),
+    (".bowerrc", DATA),
+    (".eslintrc", DATA),
+    (".hintrc", DATA),
+    (".jscsrc", DATA),
+    (".jsfmtrc", DATA),
+    (".jshintrc", DATA),
+    (".jslintrc", DATA),
+    (".swcrc", DATA),
+    (".vuerc", DATA),
+    (".watchmanconfig", DATA),
+    ("license.md", DEFAULT),
+    ("licence.md", DEFAULT),
+    ("copying.md", DEFAULT),
+    ("copyright.md", DEFAULT),
+    ("notice.md", DEFAULT),
+    ("changelog", MARKDOWN),
+    ("changelog.md", MARKDOWN),
+    ("changelog.txt", MARKDOWN),
+    ("changes", MARKDOWN),
+    ("changes.md", MARKDOWN),
+    ("changes.txt", MARKDOWN),
 ];
 
 /// Extensions without the dot, ASCII lowercase, to tints. A two-part key
@@ -534,25 +680,216 @@ pub(crate) const EXTENSIONS: &[(&str, &str)] = &[
     ("aac", IMAGE),
 ];
 
-/// Folder names, ASCII lowercase, to their role's tint.
-pub(crate) const FOLDER_NAMES: &[(&str, &str)] = &[
-    ("src", FOLDER_SOURCE),
-    ("source", FOLDER_SOURCE),
-    ("sources", FOLDER_SOURCE),
-    ("lib", FOLDER_SOURCE),
-    ("crates", FOLDER_SOURCE),
-    ("packages", FOLDER_SOURCE),
-    ("app", FOLDER_SOURCE),
-    ("tests", FOLDER_TESTS),
-    ("test", FOLDER_TESTS),
-    ("__tests__", FOLDER_TESTS),
-    ("spec", FOLDER_TESTS),
-    ("specs", FOLDER_TESTS),
-    ("e2e", FOLDER_TESTS),
-    ("benches", FOLDER_TESTS),
-    ("docs", FOLDER_DOCS),
-    ("doc", FOLDER_DOCS),
-    ("documentation", FOLDER_DOCS),
+/// A folder's role, its glyph and tint: Lucide folder glyphs only, so
+/// every folder keeps one shape, drawn the same open or closed (the tree's
+/// chevron shows which).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum FolderRole {
+    Source,
+    Tests,
+    Docs,
+    Config,
+    /// Git's own folders and patches.
+    Git,
+    /// A forge's: `.github`, `.gitlab`.
+    Forge,
+    /// Build output.
+    Output,
+    /// Dependencies vendored or installed.
+    Dependencies,
+    Examples,
+    /// Scripts and tools.
+    Scripts,
+    /// Assets, styles, themes and translations.
+    Assets,
+    /// Temporary files and caches.
+    Temporary,
+}
+
+impl FolderRole {
+    /// Every role.
+    #[cfg(test)]
+    pub(crate) const ALL: &[FolderRole] = &[
+        FolderRole::Source,
+        FolderRole::Tests,
+        FolderRole::Docs,
+        FolderRole::Config,
+        FolderRole::Git,
+        FolderRole::Forge,
+        FolderRole::Output,
+        FolderRole::Dependencies,
+        FolderRole::Examples,
+        FolderRole::Scripts,
+        FolderRole::Assets,
+        FolderRole::Temporary,
+    ];
+
+    /// Its glyph, open or closed.
+    pub(crate) fn icon(self) -> Icon {
+        match self {
+            FolderRole::Source => Icon::FolderCode,
+            FolderRole::Tests => Icon::FolderCheck,
+            FolderRole::Docs => Icon::FolderPen,
+            FolderRole::Config => Icon::FolderCog,
+            FolderRole::Git => Icon::FolderGit,
+            FolderRole::Forge => Icon::FolderGit2,
+            FolderRole::Output => Icon::FolderOutput,
+            FolderRole::Dependencies => Icon::FolderArchive,
+            FolderRole::Examples => Icon::FolderKanban,
+            FolderRole::Scripts => Icon::FolderInput,
+            FolderRole::Assets => Icon::FolderBookmark,
+            FolderRole::Temporary => Icon::FolderClock,
+        }
+    }
+
+    /// Its token: source, tests and docs their own, the rest the plain
+    /// folder's.
+    pub(crate) fn tint(self) -> &'static str {
+        match self {
+            FolderRole::Source => FOLDER_SOURCE,
+            FolderRole::Tests => FOLDER_TESTS,
+            FolderRole::Docs => FOLDER_DOCS,
+            _ => FOLDER,
+        }
+    }
+}
+
+/// Folder names, ASCII lowercase, to their roles: every name Material Icon
+/// Theme's set gives a folder icon, and a few more. A name with a leading
+/// `.` or `_`, or a trailing `_` (`.github`, `__tests__`), is looked up
+/// without them if it isn't here as it is.
+pub(crate) const FOLDER_NAMES: &[(&str, FolderRole)] = &[
+    ("src", FolderRole::Source),
+    ("srcs", FolderRole::Source),
+    ("source", FolderRole::Source),
+    ("sources", FolderRole::Source),
+    ("code", FolderRole::Source),
+    ("lib", FolderRole::Source),
+    ("libs", FolderRole::Source),
+    ("library", FolderRole::Source),
+    ("crates", FolderRole::Source),
+    ("package", FolderRole::Source),
+    ("packages", FolderRole::Source),
+    ("pkg", FolderRole::Source),
+    ("pkgs", FolderRole::Source),
+    ("app", FolderRole::Source),
+    ("include", FolderRole::Source),
+    ("includes", FolderRole::Source),
+    ("inc", FolderRole::Source),
+    ("util", FolderRole::Source),
+    ("utils", FolderRole::Source),
+    ("utility", FolderRole::Source),
+    ("utilities", FolderRole::Source),
+    ("rust", FolderRole::Source),
+    ("tests", FolderRole::Tests),
+    ("test", FolderRole::Tests),
+    ("testing", FolderRole::Tests),
+    ("spec", FolderRole::Tests),
+    ("specs", FolderRole::Tests),
+    ("e2e", FolderRole::Tests),
+    ("fixture", FolderRole::Tests),
+    ("fixtures", FolderRole::Tests),
+    ("mock", FolderRole::Tests),
+    ("mocks", FolderRole::Tests),
+    ("testdata", FolderRole::Tests),
+    ("snapshots", FolderRole::Tests),
+    ("bench", FolderRole::Tests),
+    ("benches", FolderRole::Tests),
+    ("benchmark", FolderRole::Tests),
+    ("benchmarks", FolderRole::Tests),
+    ("perf", FolderRole::Tests),
+    ("docs", FolderRole::Docs),
+    ("doc", FolderRole::Docs),
+    ("documentation", FolderRole::Docs),
+    ("wiki", FolderRole::Docs),
+    ("config", FolderRole::Config),
+    ("configs", FolderRole::Config),
+    ("configuration", FolderRole::Config),
+    ("cfg", FolderRole::Config),
+    ("conf", FolderRole::Config),
+    ("settings", FolderRole::Config),
+    ("options", FolderRole::Config),
+    ("prefs", FolderRole::Config),
+    ("meta-inf", FolderRole::Config),
+    ("vscode", FolderRole::Config),
+    ("idea", FolderRole::Config),
+    ("cargo", FolderRole::Config),
+    ("git", FolderRole::Git),
+    ("githooks", FolderRole::Git),
+    ("patches", FolderRole::Git),
+    ("submodules", FolderRole::Git),
+    ("github", FolderRole::Forge),
+    ("gitlab", FolderRole::Forge),
+    ("target", FolderRole::Output),
+    ("dist", FolderRole::Output),
+    ("out", FolderRole::Output),
+    ("output", FolderRole::Output),
+    ("build", FolderRole::Output),
+    ("builds", FolderRole::Output),
+    ("built", FolderRole::Output),
+    ("compiled", FolderRole::Output),
+    ("bin", FolderRole::Output),
+    ("release", FolderRole::Output),
+    ("node_modules", FolderRole::Dependencies),
+    ("node", FolderRole::Dependencies),
+    ("nodejs", FolderRole::Dependencies),
+    ("vendor", FolderRole::Dependencies),
+    ("vendors", FolderRole::Dependencies),
+    ("third_party", FolderRole::Dependencies),
+    ("third-party", FolderRole::Dependencies),
+    ("thirdparty", FolderRole::Dependencies),
+    ("external", FolderRole::Dependencies),
+    ("examples", FolderRole::Examples),
+    ("example", FolderRole::Examples),
+    ("demo", FolderRole::Examples),
+    ("demos", FolderRole::Examples),
+    ("sample", FolderRole::Examples),
+    ("samples", FolderRole::Examples),
+    ("scripts", FolderRole::Scripts),
+    ("script", FolderRole::Scripts),
+    ("xtask", FolderRole::Scripts),
+    ("tools", FolderRole::Scripts),
+    ("tooling", FolderRole::Scripts),
+    ("devtools", FolderRole::Scripts),
+    ("assets", FolderRole::Assets),
+    ("asset", FolderRole::Assets),
+    ("resources", FolderRole::Assets),
+    ("resource", FolderRole::Assets),
+    ("res", FolderRole::Assets),
+    ("static", FolderRole::Assets),
+    ("public", FolderRole::Assets),
+    ("www", FolderRole::Assets),
+    ("web", FolderRole::Assets),
+    ("images", FolderRole::Assets),
+    ("image", FolderRole::Assets),
+    ("img", FolderRole::Assets),
+    ("imgs", FolderRole::Assets),
+    ("icons", FolderRole::Assets),
+    ("icon", FolderRole::Assets),
+    ("figures", FolderRole::Assets),
+    ("screenshots", FolderRole::Assets),
+    ("pics", FolderRole::Assets),
+    ("pictures", FolderRole::Assets),
+    ("photos", FolderRole::Assets),
+    ("fonts", FolderRole::Assets),
+    ("font", FolderRole::Assets),
+    ("themes", FolderRole::Assets),
+    ("theme", FolderRole::Assets),
+    ("colors", FolderRole::Assets),
+    ("colours", FolderRole::Assets),
+    ("styles", FolderRole::Assets),
+    ("style", FolderRole::Assets),
+    ("css", FolderRole::Assets),
+    ("stylesheets", FolderRole::Assets),
+    ("i18n", FolderRole::Assets),
+    ("l10n", FolderRole::Assets),
+    ("locales", FolderRole::Assets),
+    ("locale", FolderRole::Assets),
+    ("lang", FolderRole::Assets),
+    ("translations", FolderRole::Assets),
+    ("tmp", FolderRole::Temporary),
+    ("temp", FolderRole::Temporary),
+    ("cache", FolderRole::Temporary),
 ];
 
 // Lucide's tables, then ours over them.
@@ -570,13 +907,14 @@ static NAME_MAP: LazyLock<HashMap<&'static str, &'static str>> =
     LazyLock::new(|| FILE_NAMES.iter().copied().collect());
 static EXTENSION_MAP: LazyLock<HashMap<&'static str, &'static str>> =
     LazyLock::new(|| EXTENSIONS.iter().copied().collect());
-static FOLDER_MAP: LazyLock<HashMap<&'static str, &'static str>> =
+static FOLDER_MAP: LazyLock<HashMap<&'static str, FolderRole>> =
     LazyLock::new(|| FOLDER_NAMES.iter().copied().collect());
 
-/// Line icons, a glyph per language (Lucide's, Tabler's marks where Lucide
-/// has none), in the theme's `file_icon` colours: Rust, the compiled
-/// languages, TOML, Markdown, configuration, data, scripts, the web and
-/// media each in their own, folders by role (source, tests, docs).
+/// Line icons, a glyph per language and well-known project file (Lucide's,
+/// Tabler's marks where Lucide has none), in the theme's `file_icon`
+/// colours: Rust, the compiled languages, TOML, Markdown, configuration,
+/// data, scripts, the web and media each in their own; folders by role, a
+/// glyph each, source, tests and docs in their own colours.
 ///
 /// Not installed by default: install it with
 /// [`set_icon_set`](crate::set_icon_set).
@@ -601,9 +939,18 @@ impl TintedIcons {
         by_name(&NAME_MAP, &EXTENSION_MAP, CONFIG, DEFAULT, name)
     }
 
+    /// The role of a folder called `name`, if it has one: [`FOLDER_NAMES`]'
+    /// as it is, ASCII case-insensitively, else without leading `.`s and
+    /// `_`s and trailing `_`s.
+    pub(crate) fn folder_role(name: &str) -> Option<FolderRole> {
+        let mut buf = [0u8; MAX_KEY];
+        let trimmed = name.trim_start_matches(['.', '_']).trim_end_matches('_');
+        lookup(&FOLDER_MAP, name, &mut buf).or_else(|| lookup(&FOLDER_MAP, trimmed, &mut buf))
+    }
+
     /// The token whose colour a folder called `name` is drawn in.
     pub fn folder_tint(name: &str) -> &'static str {
-        lookup(&FOLDER_MAP, name, &mut [0; MAX_KEY]).unwrap_or(FOLDER)
+        Self::folder_role(name).map_or(FOLDER, FolderRole::tint)
     }
 }
 
@@ -617,6 +964,9 @@ impl IconSet for TintedIcons {
     }
 
     fn folder_named(&self, name: &str, expanded: bool) -> IconRef {
-        IconRef::Tinted(lucide_folder(expanded), Self::folder_tint(name))
+        match Self::folder_role(name) {
+            Some(role) => IconRef::Tinted(role.icon(), role.tint()),
+            None => self.folder(expanded),
+        }
     }
 }

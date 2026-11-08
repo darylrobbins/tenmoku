@@ -2,7 +2,9 @@
 //! them, `workbench.icon_theme` at its default: dark and light, each
 //! language with its own glyph in its family's tint: Rust, Go, TypeScript,
 //! Python, HTML, TOML, a Makefile, a justfile, a Dockerfile, `.gitignore` and
-//! Markdown, `src/` expanded and `node_modules/` closed.
+//! Markdown; project files, `Cargo.toml`, `package.json` and `LICENSE`; and
+//! folders by role, `src/` expanded, `tests/`, `target/`, `.github/` and
+//! `node_modules/` closed.
 
 use std::fs;
 
@@ -13,7 +15,7 @@ use kiln_platform::screenshots::Result;
 use crate::scenes::{capture_with, goldens, use_settings};
 
 /// Tall enough for all of the tree's rows; the rest of the window is empty.
-const ICONS_SIZE: Size<Pixels> = size(px(480.), px(480.));
+const ICONS_SIZE: Size<Pixels> = size(px(480.), px(640.));
 
 /// Each scene: its golden, its bundled theme, and the settings that choose it.
 /// The Start page is off: it would fill the empty pane, and its recent folders
@@ -39,8 +41,9 @@ pub(crate) fn check(cx: &mut VisualTestAppContext) -> Result<bool> {
     for (scene, theme, settings) in SCENES {
         let parent = tempfile::tempdir()?;
         let root = parent.path().join("demo");
-        fs::create_dir_all(root.join("src"))?;
-        fs::create_dir_all(root.join("node_modules"))?;
+        for dir in ["src", "node_modules", "tests", "target", ".github"] {
+            fs::create_dir_all(root.join(dir))?;
+        }
         for rel in [
             "src/main.rs",
             "src/main.go",
@@ -48,6 +51,12 @@ pub(crate) fn check(cx: &mut VisualTestAppContext) -> Result<bool> {
             "src/main.py",
             "src/index.html",
             "node_modules/package.json",
+            "tests/smoke.rs",
+            "target/.rustc_info.json",
+            ".github/CODEOWNERS",
+            "Cargo.toml",
+            "package.json",
+            "LICENSE",
             "config.toml",
             "Makefile",
             "justfile",
