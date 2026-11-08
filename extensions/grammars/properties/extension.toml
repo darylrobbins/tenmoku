@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_properties"
+name = "Java properties syntax"
+version = "0.3.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "properties"
+wasm = "tree-sitter-properties.wasm"
+extensions = ["properties"]
+file_names = ["gradle.properties"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "#"

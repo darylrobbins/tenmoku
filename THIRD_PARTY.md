@@ -238,6 +238,7 @@ licence. No module is committed.
 | solidity | `tree-sitter-solidity.wasm` | [JoranHonig/tree-sitter-solidity](https://github.com/JoranHonig/tree-sitter-solidity) @ `048fe686cb1fde267243739b8bdbec8fc3a55272` | MIT; `highlights.scm` is upstream's `queries/highlights-nvim.scm` (same licence and holder), with a few patterns dropped or adapted for our predicates and captures, and the member-call pattern reordered |
 | astro | `tree-sitter-astro.wasm` | https://github.com/virchau13/tree-sitter-astro @ `213f6e6973d9b456c6e50e86f19f66877e7ef0ee` | MIT; `highlights.scm` and `injections.scm` are adapted from the grammar's own `queries/` at that commit, and add tree-sitter-html 0.23.2's `"/>"` pattern and `<style>` → css injection, whose licence is MIT too; their headers say what changed |
 | twig | `tree-sitter-twig.wasm` | https://github.com/gbprod/tree-sitter-twig `2208d2a3c3ee7ef378e97df2e51c18feb7ee9dfc`; `highlights.scm` and `injections.scm` are its `queries/` (`@spell` dropped) | MIT |
+| properties | `tree-sitter-properties.wasm` | [tree-sitter-grammars/tree-sitter-properties](https://github.com/tree-sitter-grammars/tree-sitter-properties) @ `6310671b24d4e04b803577b1c675d765cbd5773b` (`src`), package version 0.3.0 | MIT; `highlights.scm` is upstream's (same licence), with the secret provider key as `@string.special` rather than `@function` |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

@@ -1,0 +1,4 @@
+git = "https://github.com/tree-sitter-grammars/tree-sitter-properties"
+rev = "6310671b24d4e04b803577b1c675d765cbd5773b"
+src = "src"
+grammar = "properties"
