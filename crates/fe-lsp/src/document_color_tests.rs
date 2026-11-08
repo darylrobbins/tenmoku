@@ -18,7 +18,7 @@ use crate::{
     ColorInformation, ColorPresentation, LspError, LspManager, ManualClock, ServerSpec, SystemClock,
 };
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 const WAIT: Duration = Duration::from_secs(10);
 const COLORS: &str = "textDocument/documentColor";
 const PRESENTATIONS: &str = "textDocument/colorPresentation";
@@ -171,7 +171,10 @@ fn colors_decode_to_bytes_and_clamp() {
     );
     let sent = s.sent(COLORS);
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0]["textDocument"]["uri"], "file:///fake/root/a.css");
+    assert_eq!(
+        sent[0]["textDocument"]["uri"],
+        crate::fake::fake_uri("a.css")
+    );
 
     // Options in place of `true` provide them too.
     let options = lsp_types::ColorProviderOptions {};
@@ -237,7 +240,10 @@ fn color_presentations_decode_edits() {
     // The colour and its range went as the protocol has them.
     let sent = s.sent(PRESENTATIONS);
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0]["textDocument"]["uri"], "file:///fake/root/a.css");
+    assert_eq!(
+        sent[0]["textDocument"]["uri"],
+        crate::fake::fake_uri("a.css")
+    );
     assert_eq!(sent[0]["range"], range_of("#ff0000"));
     assert_eq!(sent[0]["color"], color(0.0, 0.0, 1.0, 0.5));
 }

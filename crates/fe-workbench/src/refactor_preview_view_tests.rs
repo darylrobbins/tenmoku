@@ -175,7 +175,10 @@ fn rows(s: &mut Lsp) -> Vec<(String, usize, usize, usize)> {
                     rejected,
                     ..
                 },
-            )| { (path, pending, accepted, rejected) },
+            )| {
+                // Shown with the platform's separators; compared with `/`.
+                (path.replace('\\', "/"), pending, accepted, rejected)
+            },
         )
         .collect()
 }
@@ -189,8 +192,19 @@ fn row(s: &mut Lsp, name: &str) -> (usize, usize, usize) {
     (pending, accepted, rejected)
 }
 
+/// `selector` as drawn: a row's ids end with its path, written here with
+/// `/`, which has the platform's separators.
+fn native_id(selector: &'static str) -> &'static str {
+    if cfg!(windows) && selector.contains('/') {
+        Box::leak(selector.replace('/', "\\").into_boxed_str())
+    } else {
+        selector
+    }
+}
+
 /// Clicks the element `selector` names.
 fn click(s: &mut Lsp, selector: &'static str) {
+    let selector = native_id(selector);
     s.draw();
     let bounds = (s.cx.debug_bounds(selector)).unwrap_or_else(|| panic!("{selector} wasn't drawn"));
     s.cx.simulate_click(bounds.center(), Modifiers::none());
@@ -200,6 +214,7 @@ fn click(s: &mut Lsp, selector: &'static str) {
 /// Clicks the row `selector` names, on its second line, clear of its
 /// buttons.
 fn click_row(s: &mut Lsp, selector: &'static str) {
+    let selector = native_id(selector);
     s.draw();
     let bounds = (s.cx.debug_bounds(selector)).unwrap_or_else(|| panic!("{selector} wasn't drawn"));
     let at = bounds.origin + gpui::point(gpui::px(24.), bounds.size.height - gpui::px(8.));
@@ -446,6 +461,7 @@ fn an_edited_buffer_refuses_apply_and_keeps_the_preview(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_failure_after_part_was_made_ends_the_preview(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
     let (mut s, editor) = setup(cx);
@@ -501,6 +517,9 @@ fn an_edit_renaming_a_file_is_decided_whole(cx: &mut TestAppContext) {
     assert_eq!(header(&mut s), "Rename foo to bar: 2 files, 3 edits");
     let panel = panel(&mut s);
     let listed = panel.read_with(&s.cx, |panel, _| panel.listed_operations());
+    let listed: Vec<_> = (listed.into_iter())
+        .map(|operation| operation.map(|text| text.replace('\\', "/")))
+        .collect();
     assert_eq!(
         listed,
         [None, Some("Rename to src/renamed.rs".to_owned())],
@@ -508,9 +527,12 @@ fn an_edit_renaming_a_file_is_decided_whole(cx: &mut TestAppContext) {
     );
     // Neither the file nor the operation can be decided alone.
     s.draw();
-    assert!(s.cx.debug_bounds("ai-changes-reject-src/main.rs").is_none());
     assert!(
-        s.cx.debug_bounds("ai-changes-reject-src/other.rs")
+        s.cx.debug_bounds(native_id("ai-changes-reject-src/main.rs"))
+            .is_none()
+    );
+    assert!(
+        s.cx.debug_bounds(native_id("ai-changes-reject-src/other.rs"))
             .is_none()
     );
     assert_eq!(text(&mut s, &editor), MAIN);
@@ -768,6 +790,7 @@ fn a_stale_buffer_after_an_operation_refuses_apply_first(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_write_through_a_symlink_then_a_failure_ends_the_preview(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
     let (mut s, _) = setup(cx);
@@ -867,7 +890,9 @@ fn an_operation_only_preview_lists_it(cx: &mut TestAppContext) {
     assert_eq!(message_shown(&mut s), None);
     s.draw();
     assert!(
-        (s.cx.debug_bounds("ai-changes-operation-0-src/other.rs")).is_some(),
+        (s.cx
+            .debug_bounds(native_id("ai-changes-operation-0-src/other.rs")))
+        .is_some(),
         "the operation's row is drawn"
     );
     click(&mut s, "ai-changes-apply");

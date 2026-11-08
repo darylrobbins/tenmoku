@@ -38,7 +38,7 @@ fn locations_in(name: &str, bytes: &[u8]) -> ([Location; 3], Buffer) {
         .unwrap();
     assert_eq!(references.provider, LspNavigation::NAME);
     let reference = (files.iter())
-        .find(|file| file.rel.to_str() == Some(rel.as_str()))
+        .find(|file| file.rel == std::path::Path::new(&rel))
         .expect("the reference in the unopened file")
         .refs[0]
         .location
@@ -60,7 +60,7 @@ fn assert_selects_target(name: &str, bytes: &[u8]) -> Buffer {
     let text = loaded.text().to_string();
     let target = text.find("target").unwrap();
     for location in locations {
-        assert_eq!(location.rel.to_str(), Some(format!("src/{name}").as_str()));
+        assert_eq!(location.rel, std::path::Path::new(&format!("src/{name}")));
         assert_eq!(location.row, 1);
         assert_eq!(&text[location.range.clone()], "target");
         assert_eq!(location.range, target..target + 6);

@@ -66,7 +66,7 @@ mod commit_log {
     /// origin/main is at c2, with origin/HEAD pointing at it.
     fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         git(&root, &["init", "-q"]);
         let c1 = commit(&root, &[("a.rs", "one\ntwo\n")], "C1");
         git(&root, &["tag", "v1"]);
@@ -232,7 +232,7 @@ mod commit_log {
         assert!(f.repo.log(LogScope::All, 0, 100).unwrap().is_empty());
 
         let empty = tempfile::tempdir().unwrap();
-        let empty_root = empty.path().canonicalize().unwrap();
+        let empty_root = dunce::canonicalize(empty.path()).unwrap();
         git(&empty_root, &["init", "-q"]);
         let repo = Repo::discover(&empty_root).unwrap().expect("a repository");
         assert!(repo.log(LogScope::Head, 0, 100).unwrap().is_empty());

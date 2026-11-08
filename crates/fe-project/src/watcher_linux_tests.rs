@@ -67,7 +67,7 @@ struct Project {
 impl Project {
     fn new(paths: &[(&str, &str)], cap: Option<usize>) -> Project {
         let dir = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         make(&root, paths);
         Project::watch(dir, root, cap)
     }
@@ -148,7 +148,7 @@ fn ignored_directories_go_last() {
         ("target/x/", ""),
     ];
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     make(&root, &paths);
     let listed = listed(&root);
     // The root, src, src/a and src/b.
@@ -193,7 +193,7 @@ fn ignored_directories_are_watched_by_depth() {
         ("target/x/", ""),
     ];
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     make(&root, &paths);
     // The root, src, src/a and src/b.
     assert_eq!(listed(&root), 4);
@@ -212,7 +212,7 @@ fn ignored_directories_are_watched_by_depth() {
 #[test]
 fn a_path_through_a_symlink_is_not_watched() {
     let dir = tempfile::tempdir().unwrap();
-    let base = fs::canonicalize(dir.path()).unwrap();
+    let base = dunce::canonicalize(dir.path()).unwrap();
     let root = base.join("project");
     make(&root, &[("src/a/sub/", ""), ("src/main.rs", "")]);
     make(&base, &[("outside/src/a/sub/", "")]);
@@ -294,7 +294,7 @@ fn git_objects_are_not_watched() {
 #[test]
 fn a_symlink_to_a_watched_directory_leaves_its_watch() {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     make(&root, &[("a/", ""), ("src/b/", "")]);
     // Once src/b is opened, before its watch, it moves aside and a symlink to
     // a, watched already (it is shallower), takes its place: inotify shares
@@ -321,9 +321,9 @@ fn a_symlink_to_a_watched_directory_leaves_its_watch() {
 #[test]
 fn new_directories_put_ignored_ones_last() {
     let base = tempfile::tempdir().unwrap();
-    let base_path = fs::canonicalize(base.path()).unwrap();
+    let base_path = dunce::canonicalize(base.path()).unwrap();
     let dir = tempfile::tempdir_in(&base_path).unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     make(&root, &[(".gitignore", "out/\n")]);
     // The root alone.
     assert_eq!(listed(&root), 1);
@@ -346,9 +346,9 @@ fn new_directories_put_ignored_ones_last() {
 #[test]
 fn a_directory_whose_event_is_lost_is_watched_after_a_rescan() {
     let base = tempfile::tempdir().unwrap();
-    let base_path = fs::canonicalize(base.path()).unwrap();
+    let base_path = dunce::canonicalize(base.path()).unwrap();
     let dir = tempfile::tempdir_in(&base_path).unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     make(&root, &[("src/", "")]);
     // The events for new become an overflow's.
     let new = root.join("new");

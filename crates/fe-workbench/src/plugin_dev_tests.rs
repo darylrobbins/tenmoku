@@ -55,6 +55,11 @@ fn write_plugin(dir: &Path, version: &str, wat: &str, capabilities: &[&str]) {
     .unwrap();
 }
 
+/// Removes the symlink `at`: a directory symlink is a directory on Windows.
+fn remove_link(at: &Path) {
+    fs::remove_file(at).or_else(|_| fs::remove_dir(at)).unwrap();
+}
+
 fn refusal(result: Result<crate::Installed, InstallError>) -> String {
     match result {
         Err(InstallError::Refused(reason)) => reason,
@@ -71,8 +76,10 @@ fn a_linked_folder_installs_as_a_link() {
     let api = check_api(Vec::new());
 
     let installed = link(&folder, &extensions, &api).unwrap();
-    let canonical = fs::canonicalize(&folder).unwrap();
-    let at = fs::canonicalize(&extensions).unwrap().join(TOOL);
+    let canonical = kiln::core::platform::canonicalize(&folder).unwrap();
+    let at = kiln::core::platform::canonicalize(&extensions)
+        .unwrap()
+        .join(TOOL);
     assert_eq!(installed.dir, at);
     assert!(installed.plugin);
     assert!(fs::symlink_metadata(&at).unwrap().file_type().is_symlink());
@@ -82,14 +89,17 @@ fn a_linked_folder_installs_as_a_link() {
     assert_eq!(fs::read_link(&at).unwrap(), canonical);
 
     // `<id>` taken by anything but that link refuses it, leaving it be.
-    fs::remove_file(&at).unwrap();
+    remove_link(&at);
     let other = dir.path().join("work/other");
     fs::create_dir_all(&other).unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&other, &at).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&other, &at).unwrap();
     let reason = refusal(link(&folder, &extensions, &api));
     assert!(reason.contains("isn't a link to this folder"), "{reason}");
     assert_eq!(fs::read_link(&at).unwrap(), other);
-    fs::remove_file(&at).unwrap();
+    remove_link(&at);
     fs::create_dir(&at).unwrap();
     refusal(link(&folder, &extensions, &api));
     assert!(fs::symlink_metadata(&at).unwrap().is_dir());
@@ -244,7 +254,7 @@ fn rebuilding_a_linked_plugin_reloads_it(cx: &mut TestAppContext) {
         let rows = picker.delegate.rows();
         rows.iter().find(|row| row.id == TOOL).unwrap().detail()
     });
-    let canonical = fs::canonicalize(&folder).unwrap();
+    let canonical = kiln::core::platform::canonicalize(&folder).unwrap();
     let source = format!("Linked from {}", canonical.display());
     assert!(detail.contains(&source), "{detail}");
     vcx.simulate_keystrokes("escape");

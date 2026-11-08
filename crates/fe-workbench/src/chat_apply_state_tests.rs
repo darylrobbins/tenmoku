@@ -84,7 +84,7 @@ fn reply(text: &str) -> Vec<ChatEvent> {
 /// A folder holding `src/main.go` and `src/lib.go`, under the real temp
 /// folder.
 fn project() -> tempfile::TempDir {
-    let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let temp = dunce::canonicalize(std::env::temp_dir()).unwrap();
     let dir = tempfile::tempdir_in(temp).unwrap();
     fs::create_dir(dir.path().join("src")).unwrap();
     fs::write(dir.path().join("src/main.go"), MAIN).unwrap();

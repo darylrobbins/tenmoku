@@ -121,6 +121,7 @@ fn a_tab_opened_after_the_status_landed_is_tinted_at_once(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_tab_opened_through_another_spelling_of_its_path_is_tinted(cx: &mut TestAppContext) {
     let dir = folder();
     let alias = tempfile::tempdir().unwrap();
@@ -141,6 +142,7 @@ fn a_tab_opened_through_another_spelling_of_its_path_is_tinted(cx: &mut TestAppC
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn deleted_files_opened_through_other_spellings_keep_their_tint(cx: &mut TestAppContext) {
     let dir = folder();
     let alias = tempfile::tempdir().unwrap();
@@ -166,6 +168,7 @@ fn deleted_files_opened_through_other_spellings_keep_their_tint(cx: &mut TestApp
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_listed_symlink_keeps_its_own_status_apart_from_its_target(cx: &mut TestAppContext) {
     let dir = folder();
     std::os::unix::fs::symlink(dir.path().join("a.rs"), dir.path().join("l.rs")).unwrap();

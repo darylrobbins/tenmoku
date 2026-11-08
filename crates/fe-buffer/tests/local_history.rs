@@ -129,13 +129,18 @@ fn a_store_that_was_never_written_lists_nothing() {
 fn entries_lay_out_under_the_fnv_key_of_the_path() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalHistory::new(dir.path());
-    // From an independent FNV-1a 64 of b"/a".
-    let key = "07d66707b49cd92d";
+    // An absolute path on each platform, and an independent FNV-1a 64 of
+    // its bytes.
+    let (file, key) = if cfg!(windows) {
+        (r"C:\a", "aaf0df9dede14117")
+    } else {
+        ("/a", "07d66707b49cd92d")
+    };
     store
-        .record(Path::new("/a"), b"one", Reason::Saved, at(0))
+        .record(Path::new(file), b"one", Reason::Saved, at(0))
         .unwrap();
     store
-        .record(Path::new("/a"), b"two", Reason::External, at(1))
+        .record(Path::new(file), b"two", Reason::External, at(1))
         .unwrap();
 
     assert_eq!(names(dir.path()), [key]);
@@ -148,7 +153,7 @@ fn entries_lay_out_under_the_fnv_key_of_the_path() {
             "path".to_owned(),
         ]
     );
-    assert_eq!(fs::read(slot.join("path")).unwrap(), b"/a");
+    assert_eq!(fs::read(slot.join("path")).unwrap(), file.as_bytes());
     assert_eq!(
         fs::read(slot.join(format!("{BASE}-0.saved"))).unwrap(),
         b"one"

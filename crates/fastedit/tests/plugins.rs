@@ -230,7 +230,8 @@ fn the_preview_setting_applies_live(cx: &mut TestAppContext) {
     save_settings(state.path(), on, &sender, vcx);
     until(vcx, "the plugin to load", is(PluginState::Running));
     assert!(!vcx.has_pending_prompt());
-    assert_eq!(cached(state.path()), 1);
+    // Windows doesn't cache compiled plugins (see CONTRIBUTING.md).
+    assert_eq!(cached(state.path()), usize::from(cfg!(unix)));
 
     // Off: it unloads once its shutdown has run, its commands withdrawn and
     // its grant kept.

@@ -15,7 +15,7 @@ fn xattr(args: &[&str], path: &Path) -> String {
 #[test]
 fn duplicate_keeps_extended_attributes() {
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(tmp.path()).unwrap();
     fs::write(root.join("a.txt"), "a").unwrap();
     fs::create_dir(root.join("d")).unwrap();
     fs::write(root.join("d/b.txt"), "b").unwrap();

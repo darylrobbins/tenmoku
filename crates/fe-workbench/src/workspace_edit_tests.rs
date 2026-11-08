@@ -342,6 +342,7 @@ fn an_edit_from_an_ended_session(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn aliases_and_reads(cx: &mut TestAppContext) {
     let (mut s, server) = setup(cx);
     let main = s.editor();

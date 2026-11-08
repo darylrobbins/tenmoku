@@ -34,7 +34,13 @@ fn serially() -> MutexGuard<'static, ()> {
     let guard = SERIAL
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for var in ["TENMOKU_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"] {
+    for var in [
+        "TENMOKU_CONFIG_DIR",
+        "XDG_CONFIG_HOME",
+        "HOME",
+        "APPDATA",
+        "USERPROFILE",
+    ] {
         // SAFETY: every test takes the lock before it starts gpui, so no
         // other thread is running to read the environment.
         unsafe { std::env::remove_var(var) };
@@ -226,7 +232,7 @@ fn crash_restores(first: &mut TestAppContext, second: &mut TestAppContext) {
     // The first app crashes: it neither quits nor closes its window.
     let image = crash_image(state.path());
     let root = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(root.path()).unwrap();
+    let root = dunce::canonicalize(root.path()).unwrap();
     let folder = layout::launch(&layouts(image.path(), Some(&root)), true);
     assert!(folder.iter().all(|(_, entry)| entry.is_none()));
     let folder_backups = backups(image.path(), Some(&root));

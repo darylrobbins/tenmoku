@@ -18,6 +18,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::tty;
+#[cfg(unix)]
 use rustix_openpty::rustix::termios::Winsize;
 
 use crate::pty_loop::{LoopSender, Msg, PtyLoop, lock};
@@ -180,6 +181,13 @@ pub(crate) struct Listener {
     exited: Arc<AtomicBool>,
 }
 
+/// What Windows' console host puts before each title, learned from a
+/// session's default one: `Administrator: ` when the app runs elevated, the
+/// word localized. One for the process, as elevation is: a session whose
+/// program sets a title before its console reports the default still has
+/// it dropped.
+static TITLE_PREFIX: Mutex<Option<String>> = Mutex::new(None);
+
 impl Listener {
     fn write(&self, text: String) {
         // An empty write would stall alacritty's writer for good.
@@ -205,11 +213,51 @@ impl Listener {
     }
 }
 
+/// The title a session's program set, from `title`, the one its console
+/// reports: empty for the console's own default, and without what Windows'
+/// console host puts before every title. That prefix ([`TITLE_PREFIX`]) is
+/// learned from a default title, and kept in `prefix`.
+fn program_title(title: String, prefix: &mut Option<String>) -> String {
+    if is_console_default_title(&title) {
+        prefix.get_or_insert_with(String::new);
+        return String::new();
+    }
+    if let Some((before, path)) = title.split_once(": ")
+        && is_console_default_title(path)
+    {
+        *prefix = Some(format!("{before}: "));
+        return String::new();
+    }
+    // cmd's `title` puts a space of its own after the prefix, so what
+    // follows it is trimmed too.
+    match prefix.as_deref() {
+        Some(prefix) if !prefix.is_empty() => title
+            .strip_prefix(prefix)
+            .map_or_else(|| title.clone(), |rest| rest.trim_start().to_owned()),
+        _ => title,
+    }
+}
+
+/// Whether `title` is what Windows' console host titles a session whose
+/// program set none: the path of the program's `.exe`, such as
+/// `C:\WINDOWS\SYSTEM32\cmd.exe`. Never elsewhere.
+fn is_console_default_title(title: &str) -> bool {
+    let bytes = title.as_bytes();
+    let drive =
+        bytes.len() > 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\';
+    cfg!(windows) && drive && title.to_ascii_lowercase().ends_with(".exe")
+}
+
 impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         match event {
             Event::Wakeup => self.send(TerminalEvent::Wakeup),
-            Event::Title(title) => self.send(TerminalEvent::Title(title)),
+            Event::Title(title) => {
+                let mut prefix = TITLE_PREFIX.lock().unwrap_or_else(|e| e.into_inner());
+                let title = program_title(title, &mut prefix);
+                drop(prefix);
+                self.send(TerminalEvent::Title(title));
+            }
             Event::ResetTitle => self.send(TerminalEvent::Title(String::new())),
             Event::Bell => self.send(TerminalEvent::Bell),
             Event::ClipboardStore(_, text) => self.send(TerminalEvent::ClipboardStore(text)),
@@ -290,8 +338,13 @@ impl Terminal {
         }
         // A directory the user cannot enter fails the same way. `access` asks
         // the OS without changing this process's cwd.
+        #[cfg(unix)]
         rustix::fs::access(&options.cwd, rustix::fs::Access::EXEC_OK)
             .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+        // Windows has no search permission to check: listing the directory
+        // fails the same way for one the user cannot enter.
+        #[cfg(windows)]
+        std::fs::read_dir(&options.cwd)?;
         let mut env = HashMap::from([
             ("TERM".to_owned(), "xterm-256color".to_owned()),
             ("COLORTERM".to_owned(), "truecolor".to_owned()),
@@ -305,24 +358,42 @@ impl Terminal {
             working_directory: Some(options.cwd),
             drain_on_exit: true,
             env,
+            // Arguments are passed through as the C runtime parses them.
+            #[cfg(windows)]
+            escape_args: true,
         };
         // The pty is opened here rather than by `tty::new` so this side keeps a
         // handle on its user end until the event loop stops. Otherwise, on
         // Linux, a child that exits at once hangs up the pty before the loop
         // reads its output: the loop skips a readable event flagged HUP, and
         // its drain on exit drops bytes it read when the next read is EIO.
-        let winsize = Winsize {
-            ws_row: window_size.num_lines,
-            ws_col: window_size.num_cols,
-            ws_xpixel: window_size.num_cols.saturating_mul(window_size.cell_width),
-            ws_ypixel: window_size
-                .num_lines
-                .saturating_mul(window_size.cell_height),
+        #[cfg(unix)]
+        let (pty, pid, user) = {
+            let winsize = Winsize {
+                ws_row: window_size.num_lines,
+                ws_col: window_size.num_cols,
+                ws_xpixel: window_size.num_cols.saturating_mul(window_size.cell_width),
+                ws_ypixel: window_size
+                    .num_lines
+                    .saturating_mul(window_size.cell_height),
+            };
+            let pair = rustix_openpty::openpty(None, Some(&winsize))?;
+            let user = pair.user.try_clone()?;
+            let pty = tty::from_fd(&tty_options, 0, pair.controller, pair.user)?;
+            let pid = pty.child().id();
+            (pty, pid, user)
         };
-        let pair = rustix_openpty::openpty(None, Some(&winsize))?;
-        let user = pair.user.try_clone()?;
-        let pty = tty::from_fd(&tty_options, 0, pair.controller, pair.user)?;
-        let pid = pty.child().id();
+        // A ConPTY has no user end to hold: alacritty opens it, and its output
+        // pipe stays readable after the child exits until the pty is closed.
+        #[cfg(windows)]
+        let (pty, pid, user) = {
+            let pty = tty::new(&tty_options, window_size, 0)?;
+            let pid = pty
+                .child_watcher()
+                .pid()
+                .map_or(0, std::num::NonZeroU32::get);
+            (pty, pid, ())
+        };
 
         let (event_loop, sender) =
             PtyLoop::new(term.clone(), shell.clone(), listener.clone(), pty)?;
@@ -338,7 +409,10 @@ impl Terminal {
             .name("fe-terminal pty".to_owned())
             .spawn(move || {
                 drop(handle.join());
+                #[cfg(unix)]
                 drop(user);
+                #[cfg(windows)]
+                let () = user;
                 reaper.exit();
             })
             .inspect_err(|_| {
@@ -551,5 +625,40 @@ impl Drop for Terminal {
         // SIGHUP and reaps the child. Nothing here waits for either.
         let _ = self.pty.send(Msg::Shutdown);
         drop(self.event_loop.take());
+    }
+}
+
+#[cfg(test)]
+mod console_title_tests {
+    use super::{is_console_default_title, program_title};
+
+    /// The labels `titles`, in order, come to as one session's.
+    fn program_titles(titles: &[&str]) -> Vec<String> {
+        let mut prefix = None;
+        (titles.iter())
+            .map(|title| program_title((*title).to_owned(), &mut prefix))
+            .collect()
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn an_elevated_consoles_prefix_is_learned_and_dropped() {
+        let titles = [
+            r"Administrator: C:\Windows\SYSTEM32\cmd.exe",
+            "Administrator: build",
+            // As cmd's `title` sets it, elevated.
+            "Administrator:  build: x",
+            "other",
+        ];
+        assert_eq!(program_titles(&titles), ["", "build", "build: x", "other"]);
+        // Not elevated, a title keeps its own colon.
+        let titles = [r"C:\WINDOWS\system32\cmd.exe", "build: x"];
+        assert_eq!(program_titles(&titles), ["", "build: x"]);
+    }
+
+    #[test]
+    fn titles_are_kept_without_a_console() {
+        assert_eq!(program_titles(&["build: x", "y"]), ["build: x", "y"]);
+        assert!(!is_console_default_title("Terminal 1"));
     }
 }

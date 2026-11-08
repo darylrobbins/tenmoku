@@ -1882,7 +1882,7 @@ fn placeholder(head: Option<&Head>) -> String {
 /// Where `root` is in the working tree at `workdir`, through symlinks and
 /// `..`: `None` if it isn't in it. Spelled as given if either is gone.
 pub(crate) fn locate(root: &Path, workdir: &Path) -> Option<Located> {
-    let (prefix, resolved) = match (root.canonicalize(), workdir.canonicalize()) {
+    let (prefix, resolved) = match (dunce::canonicalize(root), dunce::canonicalize(workdir)) {
         (Ok(root), Ok(resolved)) => (root.strip_prefix(&resolved).ok()?.to_owned(), resolved),
         _ => (
             root.strip_prefix(workdir).ok()?.to_owned(),
@@ -2124,7 +2124,7 @@ impl GitPanel {
                 directory: entry
                     .relative
                     .parent()
-                    .map(|dir| dir.display().to_string())
+                    .map(|dir| crate::tests::slashed(dir.display().to_string()))
                     .unwrap_or_default(),
                 dimmed: entry.kind == ChangeKind::Deleted,
             })
@@ -2138,7 +2138,10 @@ impl GitPanel {
             .map(|group| {
                 let range = self.group_range(group);
                 let rows = (self.entries[range.clone()].iter())
-                    .map(|entry| (letter(entry.kind), entry.relative.display().to_string()))
+                    .map(|entry| {
+                        let shown = crate::tests::slashed(entry.relative.display().to_string());
+                        (letter(entry.kind), shown)
+                    })
                     .collect();
                 (group.title(), range.len(), rows)
             })

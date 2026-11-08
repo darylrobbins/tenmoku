@@ -64,7 +64,8 @@ fn listed(defs: &Definitions) -> Vec<String> {
         .map(|def| {
             format!(
                 "{} {:?} {:?}",
-                def.location.rel.display(),
+                // With `/` on Windows too.
+                def.location.rel.to_string_lossy().replace('\\', "/"),
                 def.tier,
                 def.kind.expect("search says what each definition is")
             )

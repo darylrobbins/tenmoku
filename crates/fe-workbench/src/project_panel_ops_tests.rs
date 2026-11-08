@@ -598,7 +598,7 @@ fn delete(cx: &mut TestAppContext) {
         .to_string_lossy()
         .into_owned();
     let name = format!("{unique}.txt");
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     write_files(&root, &[(&name, "kept\n"), ("other.txt", "")]);
     let (workbench, cx) = open_root(cx, &root);
     let path = root.join(&name);
@@ -1102,9 +1102,10 @@ fn rename_waits_for_what_acts_on_the_old_path(cx: &mut TestAppContext) {
 /// opened through a symlink in one window, its real path in another)
 /// follow it too, in every window; a symlinked file keeps its link.
 #[gpui::test]
+#[cfg(unix)]
 fn rename_follows_other_spellings(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let real = fs::canonicalize(dir.path()).unwrap().join("real");
+    let real = dunce::canonicalize(dir.path()).unwrap().join("real");
     write_files(
         &real,
         &[("app/main.rs", "fn main() {}\n"), ("notes.txt", "hello\n")],
@@ -1233,9 +1234,10 @@ fn deferred_tree_opens_in_two_panes(cx: &mut TestAppContext) {
 /// duplicate started through a symlinked root holds renames through the
 /// real one, of its source and of what's beside it, where its copy goes.
 #[gpui::test]
+#[cfg(unix)]
 fn operations_hold_renames_across_spellings_and_windows(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let real = fs::canonicalize(dir.path()).unwrap().join("real");
+    let real = dunce::canonicalize(dir.path()).unwrap().join("real");
     write_files(&real, &[("a.txt", "a\n"), ("b.txt", "b\n")]);
     let link = real.with_file_name("link");
     std::os::unix::fs::symlink(&real, &link).unwrap();

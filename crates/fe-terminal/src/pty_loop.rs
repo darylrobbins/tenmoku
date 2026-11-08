@@ -48,10 +48,25 @@ const MAX_LOCKED_READ: usize = u16::MAX as usize;
 /// the loop from ending.
 const MAX_FINAL_DRAIN_READS: usize = 64;
 
+/// On Windows, how long output must have stopped, after the child's exit,
+/// before the loop ends ([`PtyLoop::drain_until_quiet`]).
+#[cfg(windows)]
+const QUIET_AFTER_EXIT: Duration = Duration::from_millis(100);
+
+/// On Windows, the longest the loop reads on after the child's exit, so a
+/// writer that outlives it cannot keep the loop from ending.
+#[cfg(windows)]
+const MAX_DRAIN_AFTER_EXIT: Duration = Duration::from_secs(1);
+
 // alacritty's tokens for the pty's data and its child-exit notification. Its
-// `Pty` registers with these keys and does not export them.
+// `Pty` registers with these keys, whatever key it's given; on Unix it does
+// not export them.
+#[cfg(unix)]
 const PTY_READ_WRITE_TOKEN: usize = 0;
+#[cfg(unix)]
 const PTY_CHILD_EVENT_TOKEN: usize = 1;
+#[cfg(windows)]
+use alacritty_terminal::tty::{PTY_CHILD_EVENT_TOKEN, PTY_READ_WRITE_TOKEN};
 
 /// Messages for the loop.
 pub(crate) enum Msg {
@@ -137,6 +152,17 @@ where
         if registered.is_err() {
             return self.pty;
         }
+        // alacritty's Windows pty tells the poller of the child's exit only
+        // once it is registered: a child that exited before then is found
+        // by a look the loop asks itself for.
+        #[cfg(windows)]
+        {
+            use polling::os::iocp::{CompletionPacket, PollerIocpExt as _};
+            let look = polling::Event::readable(PTY_CHILD_EVENT_TOKEN);
+            if self.poll.post(CompletionPacket::new(look)).is_err() {
+                return self.pty;
+            }
+        }
 
         let mut child_exited = false;
         let mut events = polling::Events::with_capacity(NonZeroUsize::new(1024).unwrap());
@@ -178,12 +204,20 @@ where
                             // The child's last output. One read call stops at
                             // `MAX_LOCKED_READ`, so read until caught up or
                             // the cap says a writer is still going.
-                            for _ in 0..MAX_FINAL_DRAIN_READS {
+                            let mut reads = 0;
+                            while reads < MAX_FINAL_DRAIN_READS {
+                                reads += 1;
                                 match self.read(&mut feeder, &mut buf) {
                                     Ok(processed) if processed >= MAX_LOCKED_READ => {}
                                     _ => break,
                                 }
                             }
+                            #[cfg(windows)]
+                            self.drain_until_quiet(
+                                &mut feeder,
+                                &mut buf,
+                                MAX_FINAL_DRAIN_READS - reads,
+                            );
                             child_exited = true;
                             break 'event_loop;
                         }
@@ -238,6 +272,30 @@ where
 
         let _ = self.pty.deregister(&self.poll);
         self.pty
+    }
+
+    /// ConPTY passes on a child's last output on its own time, which can be
+    /// after the child's exit is reported: so after it, output is read until
+    /// none has come for [`QUIET_AFTER_EXIT`], for [`MAX_DRAIN_AFTER_EXIT`]
+    /// at most, and in at most `reads` reads that get output (what's left of
+    /// the final drain's [`MAX_FINAL_DRAIN_READS`]).
+    #[cfg(windows)]
+    fn drain_until_quiet(&mut self, feeder: &mut Feeder, buf: &mut [u8], mut reads: usize) {
+        let start = Instant::now();
+        let mut last = start;
+        while reads > 0
+            && last.elapsed() < QUIET_AFTER_EXIT
+            && start.elapsed() < MAX_DRAIN_AFTER_EXIT
+        {
+            match self.read(feeder, buf) {
+                Ok(0) => std::thread::sleep(Duration::from_millis(5)),
+                Ok(_) => {
+                    reads -= 1;
+                    last = Instant::now();
+                }
+                Err(_) => break,
+            }
+        }
     }
 
     /// Ends a synchronized update, putting its held bytes on the grid.
@@ -514,9 +572,28 @@ mod tests {
     use alacritty_terminal::grid::Dimensions;
     use alacritty_terminal::term::{Config, TermMode};
     use alacritty_terminal::tty::ChildEvent;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::net::UnixStream;
     use std::sync::Mutex;
+
+    /// A connected pair of sockets, for wake-ups the poller sees.
+    #[cfg(unix)]
+    type WakeStream = std::os::unix::net::UnixStream;
+    #[cfg(windows)]
+    type WakeStream = std::net::TcpStream;
+
+    #[cfg(unix)]
+    fn wake_pair() -> (WakeStream, WakeStream) {
+        WakeStream::pair().unwrap()
+    }
+
+    /// Windows' poller takes sockets alone, and std has no socket pair there:
+    /// a loopback connection is one.
+    #[cfg(windows)]
+    fn wake_pair() -> (WakeStream, WakeStream) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let near = WakeStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (far, _) = listener.accept().unwrap();
+        (near, far)
+    }
 
     struct Size;
 
@@ -606,15 +683,15 @@ mod tests {
     /// data token or (for a child that exited) the child token.
     struct FakePty {
         script: Script,
-        wake: UnixStream,
-        _peer: UnixStream,
+        wake: WakeStream,
+        _peer: WakeStream,
         token: usize,
         child_exited: bool,
     }
 
     impl FakePty {
         fn new(script: Script, token: usize) -> FakePty {
-            let (wake, peer) = UnixStream::pair().unwrap();
+            let (wake, peer) = wake_pair();
             (&peer).write_all(b"x").unwrap();
             FakePty {
                 script,
@@ -636,13 +713,7 @@ mod tests {
             _: polling::Event,
             mode: polling::PollMode,
         ) -> io::Result<()> {
-            unsafe {
-                poll.add_with_mode(
-                    self.wake.as_raw_fd(),
-                    polling::Event::readable(self.token),
-                    mode,
-                )
-            }
+            unsafe { poll.add_with_mode(&self.wake, polling::Event::readable(self.token), mode) }
         }
 
         fn reregister(

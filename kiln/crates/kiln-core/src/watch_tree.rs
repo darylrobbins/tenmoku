@@ -245,7 +245,7 @@ impl Trees {
             }
             root.watched = true;
             root.logged = false;
-            root.canonical = root.path.canonicalize().ok();
+            root.canonical = crate::platform::canonicalize(&root.path).ok();
             // After watching, so a change while reading it is an event.
             root.tree = Some(tree(&root.path, self.limit));
             root.follow_links(watch);
@@ -371,7 +371,7 @@ impl Root {
 /// Every entry under `root`, up to `limit`: see [`Tree`].
 fn tree(root: &Path, limit: usize) -> Tree {
     let mut tree = Tree::default();
-    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
+    let canonical_root = crate::platform::canonicalize(root).unwrap_or_else(|_| root.to_owned());
     let mut visited = HashSet::from([canonical_root.clone()]);
     let mut pending = vec![root.to_owned()];
     while let Some(dir) = pending.pop() {
@@ -405,7 +405,7 @@ fn tree(root: &Path, limit: usize) -> Tree {
             let stat = if meta.file_type().is_symlink() {
                 let target = match fs::metadata(&path) {
                     Ok(target) => {
-                        let canonical = path.canonicalize().ok();
+                        let canonical = crate::platform::canonicalize(&path).ok();
                         let outside = canonical
                             .clone()
                             .filter(|canonical| !canonical.starts_with(&canonical_root));
@@ -428,7 +428,8 @@ fn tree(root: &Path, limit: usize) -> Tree {
                 }
             } else {
                 if meta.is_dir() {
-                    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                    let canonical =
+                        crate::platform::canonicalize(&path).unwrap_or_else(|_| path.clone());
                     if visited.insert(canonical) {
                         pending.push(path.clone());
                     }

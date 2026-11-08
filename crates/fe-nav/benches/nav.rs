@@ -157,18 +157,24 @@ fn build_index(root: &Path, threads: usize) -> SymbolIndex {
     index
 }
 
-/// The process's peak resident set, in bytes.
+/// The process's peak resident set, in bytes: 0 off Unix, where it isn't
+/// measured.
 fn peak_rss() -> u64 {
-    // SAFETY: `getrusage` fills in the struct it's given.
-    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-    // SAFETY: as above.
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-    // Bytes on macOS, kilobytes elsewhere.
-    let max = usage.ru_maxrss as u64;
-    if cfg!(target_os = "macos") {
-        max
-    } else {
-        max * 1024
+    #[cfg(not(unix))]
+    return 0;
+    #[cfg(unix)]
+    {
+        // SAFETY: `getrusage` fills in the struct it's given.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: as above.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        // Bytes on macOS, kilobytes elsewhere.
+        let max = usage.ru_maxrss as u64;
+        if cfg!(target_os = "macos") {
+            max
+        } else {
+            max * 1024
+        }
     }
 }
 
@@ -222,7 +228,7 @@ fn references(
 
 fn benches(c: &mut Criterion) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     generate(&root);
     let bytes: u64 = (0..FILES).map(|ix| file(ix).len() as u64).sum();
     println!("corpus: {FILES} files, {:.1} MB", bytes as f64 / 1e6);

@@ -42,11 +42,14 @@ fn position_suffix_parses_line_and_column() {
     assert_eq!(one("a.rs:", cwd), at(cwd.join("a.rs:"), None, None));
     assert_eq!(one(":12", cwd), at(cwd.join(":12"), None, None));
 
-    // A real file wins over the suffix, and may have one of its own.
-    fs::write(cwd.join("a:1"), "").unwrap();
-    assert_eq!(one("a:1", cwd), at(cwd.join("a:1"), None, None));
-    assert_eq!(one("a:1:2", cwd), at(cwd.join("a:1"), Some(2), None));
-    assert_eq!(one("a:2", cwd), at(cwd.join("a"), Some(2), None));
+    // A real file wins over the suffix, and may have one of its own. Windows
+    // file names can't hold a `:` (`a:1` names a stream of `a`).
+    if cfg!(unix) {
+        fs::write(cwd.join("a:1"), "").unwrap();
+        assert_eq!(one("a:1", cwd), at(cwd.join("a:1"), None, None));
+        assert_eq!(one("a:1:2", cwd), at(cwd.join("a:1"), Some(2), None));
+        assert_eq!(one("a:2", cwd), at(cwd.join("a"), Some(2), None));
+    }
 
     // Absolute and untidy paths too.
     let absolute = a.to_str().unwrap();

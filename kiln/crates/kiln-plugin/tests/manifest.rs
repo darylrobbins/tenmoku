@@ -87,7 +87,7 @@ fn a_plugin_entry_parses_wasm_and_capabilities() {
     assert_eq!(plugin.id, "acme.tool");
     assert_eq!(
         plugin.wasm,
-        dir.path().join("p.wasm").canonicalize().unwrap()
+        kiln_core::platform::canonicalize(&dir.path().join("p.wasm")).unwrap()
     );
 }
 

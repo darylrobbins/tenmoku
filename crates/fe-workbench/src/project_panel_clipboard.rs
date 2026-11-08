@@ -492,7 +492,7 @@ fn moved_edits(
 /// the link, never what it leads to; `None` if its folder doesn't resolve.
 fn by_folder(path: &Path) -> Option<PathBuf> {
     let (folder, name) = (path.parent()?, path.file_name()?);
-    Some(std::fs::canonicalize(folder).ok()?.join(name))
+    Some(dunce::canonicalize(folder).ok()?.join(name))
 }
 
 /// `path`'s last component, for messages.

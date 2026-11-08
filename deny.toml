@@ -64,7 +64,13 @@ deny = [
 # Vulnerabilities fail everywhere. "Unmaintained" fails only for our direct
 # dependencies: GPUI's tree (paste, rustybuzz, ttf-parser) is outside our control.
 unmaintained = "workspace"
-ignore = []
+ignore = [
+    # ttf-parser, unmaintained, no successor yet: GPUI's font stack (fontdb,
+    # rustybuzz) uses it, and our own use is tests reading the bundled fonts
+    # (fe-fonts' and fe-workbench's dev-dependencies). Drop this when GPUI
+    # moves off it.
+    { id = "RUSTSEC-2026-0192", reason = "GPUI's font stack; ours is test-only" },
+]
 
 [sources]
 unknown-registry = "deny"

@@ -163,6 +163,7 @@ fn licence_notices_are_given_once_per_version() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_missing_or_unreadable_manifest_keeps_the_last_good() {
     use std::os::unix::fs::PermissionsExt;
 

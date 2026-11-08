@@ -1,6 +1,10 @@
 //! Vi copy mode's ctrl-f and ctrl-b: they page the view by two rows less
 //! than its height and put the vi cursor on the new top or bottom row.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::thread;
 use std::time::{Duration, Instant};
 

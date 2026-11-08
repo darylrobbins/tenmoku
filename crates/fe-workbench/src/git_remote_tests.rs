@@ -65,7 +65,7 @@ struct Fixture {
 
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
-    let base = dir.path().canonicalize().unwrap();
+    let base = dunce::canonicalize(dir.path()).unwrap();
     git(&base, &["init", "-q", "--bare", "origin.git"]);
     let work = base.join("work");
     fs::create_dir(&work).unwrap();

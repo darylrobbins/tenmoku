@@ -1,3 +1,7 @@
+// The launch handoff runs over Unix sockets; Windows builds stand in for
+// them, and every launch there is its own instance.
+#![cfg(unix)]
+
 //! What ends a wait, in a live workbench: which tabs count, wherever they are.
 
 use std::{
@@ -20,7 +24,7 @@ use crate::ipc;
 /// A folder holding `a.txt` and `b.txt`.
 fn project() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let (a, b) = (root.join("a.txt"), root.join("b.txt"));
     fs::write(&a, "a\n").unwrap();
     fs::write(&b, "b\n").unwrap();

@@ -3,7 +3,9 @@
 //! the box, on repositories built with the `git` CLI in temporary
 //! directories.
 
-use std::{fs, os::unix::fs::PermissionsExt as _, path::Path, process::Command};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+use std::{fs, path::Path, process::Command};
 
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_editor::decorations::Tint;
@@ -59,6 +61,7 @@ fn fixture() -> tempfile::TempDir {
 }
 
 /// Has the repository at `root` run `body` as its `name` hook.
+#[cfg(unix)]
 fn hook(root: &Path, name: &str, body: &str) {
     let hooks = root.join(".git/hooks");
     fs::create_dir_all(&hooks).unwrap();
@@ -324,6 +327,7 @@ fn amend(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn failures(cx: &mut TestAppContext) {
     let dir = fixture();
     let root = dir.path();

@@ -3,8 +3,10 @@
 //! the project layer's trust filter end to end, `workspace/configuration`,
 //! and bare commands on the login shell's `PATH`.
 
+#[cfg(unix)]
 use std::ffi::OsStr;
 use std::future::Future;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -16,6 +18,7 @@ use std::time::{Duration, Instant};
 use fe_buffer::{Buffer, Origin};
 use fe_config::SettingsStore;
 use fe_config::settings::{LspServerSettings, LspSettings, TypescriptServer};
+#[cfg(unix)]
 use futures::{AsyncReadExt, AsyncWriteExt};
 use lsp_types::request::WorkspaceConfiguration;
 use lsp_types::{ConfigurationItem, ConfigurationParams, Url};
@@ -27,9 +30,11 @@ use crate::fake::{Echo, FakeServer, Record, Script};
 use crate::registry::{self, Registry, server_for};
 use crate::server::BACKSTOP;
 use crate::{
-    Clock, LaunchCancel, LocalLauncher, LoginPath, LspEvent, LspManager, ManualClock,
-    ReadinessMode, ServerId, ServerIo, ServerLauncher, ServerSpec, ServerStatus,
+    Clock, LaunchCancel, LspEvent, LspManager, ManualClock, ReadinessMode, ServerId, ServerIo,
+    ServerLauncher, ServerSpec, ServerStatus,
 };
+#[cfg(unix)]
+use crate::{LocalLauncher, LoginPath};
 
 mod gopls;
 mod language_ids;
@@ -378,12 +383,16 @@ fn lazy_start_per_server_and_root() {
     assert_eq!(fake.launches(), 1);
 
     // Another root gets its own instance.
+    #[cfg(unix)]
+    let (other_root, other_file) = ("/other", "/other/d.py");
+    #[cfg(windows)]
+    let (other_root, other_file) = (r"C:\other", r"C:\other\d.py");
     let mut other = Buffer::new("d = 4\n");
     let other_id = open(
         &mut manager,
-        Some(Path::new("/other")),
+        Some(Path::new(other_root)),
         &mut other,
-        "/other/d.py",
+        other_file,
         "python",
     )
     .unwrap();
@@ -391,7 +400,7 @@ fn lazy_start_per_server_and_root() {
     barrier(&manager, other_id);
     let launched = fake.launched();
     assert_eq!(names(&launched), ["pyright", "pyright"]);
-    assert_eq!(launched[1].1, Path::new("/other"));
+    assert_eq!(launched[1].1, Path::new(other_root));
 }
 
 const USER: &str = r#"
@@ -1297,6 +1306,7 @@ fn documents_bounced_off_a_failed_instance_reach_its_replacement() {
 }
 
 /// Writes an executable `#!/bin/sh` script.
+#[cfg(unix)]
 fn script(path: &Path, body: &str) {
     std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1304,6 +1314,7 @@ fn script(path: &Path, body: &str) {
 
 /// Writes a stand-in shell running `body`, which first notes the file it
 /// was given for its `PATH` in `files`, next to it.
+#[cfg(unix)]
 fn shell_script(shell: &Path, body: &str) {
     script(
         shell,
@@ -1314,6 +1325,7 @@ fn shell_script(shell: &Path, body: &str) {
 /// Writes a stand-in login shell: it runs `profile`, then the command it's
 /// given (`-l -c <command>`) with `PATH` set to `path`, then `logout`, and
 /// exits as the command did.
+#[cfg(unix)]
 fn login_shell(shell: &Path, profile: &str, path: &str, logout: &str) {
     shell_script(
         shell,
@@ -1322,6 +1334,7 @@ fn login_shell(shell: &Path, profile: &str, path: &str, logout: &str) {
 }
 
 /// Writes `ping`, expects it back, and kills the server.
+#[cfg(unix)]
 fn ping(io: ServerIo) {
     let ServerIo {
         mut input,
@@ -1341,11 +1354,13 @@ fn ping(io: ServerIo) {
 }
 
 #[test]
+// Its login shells and servers are shell scripts made executable by mode.
+#[cfg(unix)]
 fn bare_commands_use_the_login_shell_path() {
     let thread = std::thread::current().name().unwrap().to_owned();
     capture_logs(&thread);
     let dir = tempfile::tempdir().unwrap();
-    let dir = dir.path().canonicalize().unwrap();
+    let dir = dunce::canonicalize(dir.path()).unwrap();
     let bin = dir.join("bin");
     std::fs::create_dir(&bin).unwrap();
     script(

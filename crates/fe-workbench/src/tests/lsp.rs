@@ -305,7 +305,7 @@ impl Lsp {
             cx.set_global(ConfigDirOverride(Some(config_dir)));
         });
         let dir = Rc::new(project());
-        let root = fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let launch = if rootless {
             Launch {
                 root: None,
@@ -399,8 +399,16 @@ impl Lsp {
         fs::write(path, text).unwrap();
     }
 
+    /// The path of `name`, relative to the root with `/` separators, as the
+    /// app spells it: with the platform's separators. An absolute `name` is
+    /// its own path.
     pub(crate) fn path(&self, name: &str) -> PathBuf {
-        self.root.join(name)
+        if Path::new(name).is_absolute() {
+            return PathBuf::from(name);
+        }
+        let mut path = self.root.clone();
+        path.extend(name.split('/'));
+        path
     }
 
     pub(crate) fn uri(&self, name: &str) -> Url {

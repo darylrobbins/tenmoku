@@ -135,6 +135,7 @@ fn unpack(run: &Run) -> tempfile::TempDir {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a bash release script, which runs on macOS")]
 fn pack_has_every_languages_loadable_extension() {
     if skip() {
         return;
@@ -176,6 +177,7 @@ fn pack_has_every_languages_loadable_extension() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a bash release script, which runs on macOS")]
 fn pack_matches_the_installer_layout() {
     if skip() {
         return;
@@ -210,6 +212,7 @@ fn pack_matches_the_installer_layout() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a bash release script, which runs on macOS")]
 fn checksum_file_verifies() {
     if skip() {
         return;
@@ -245,6 +248,7 @@ fn checksum_file_verifies() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a bash release script, which runs on macOS")]
 fn missing_wasm_fails_naming_the_script() {
     if skip() {
         return;

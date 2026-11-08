@@ -25,6 +25,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::pin::pin;
@@ -851,10 +852,12 @@ impl<'a> Decoder<'a> {
 /// a regular file no larger than `max_bytes`. Opened without blocking, so a
 /// FIFO in its place can't hang the request.
 fn load(path: &Path, max_bytes: usize) -> Option<Text> {
-    let nonblocking = rustix::fs::OFlags::NONBLOCK.bits() as i32;
-    let file = (File::options().read(true).custom_flags(nonblocking))
-        .open(path)
-        .ok()?;
+    let mut options = File::options();
+    options.read(true);
+    // Windows has no FIFOs to wait on.
+    #[cfg(unix)]
+    options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    let file = options.open(path).ok()?;
     let metadata = file.metadata().ok()?;
     if !metadata.is_file() || metadata.len() > max_bytes as u64 {
         return None;

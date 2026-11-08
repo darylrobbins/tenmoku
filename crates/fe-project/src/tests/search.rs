@@ -42,6 +42,9 @@ fn run(
 /// Every delivered file, sorted by `rel`.
 fn files(batches: Vec<Vec<FileMatches>>) -> Vec<FileMatches> {
     let mut files: Vec<FileMatches> = batches.into_iter().flatten().collect();
+    for file in &mut files {
+        file.rel = slashed(std::mem::take(&mut file.rel));
+    }
     files.sort_by(|a, b| a.rel.cmp(&b.rel));
     files
 }
@@ -156,7 +159,7 @@ fn search_skips_what_the_tree_hides() {
         FinderIndex::walk(root, Arc::default(), |batch| paths.extend(batch));
         let mut paths: Vec<String> = paths
             .iter()
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(|path| slashed(path.to_string_lossy().into_owned()))
             .collect();
         paths.sort();
         paths
@@ -727,7 +730,8 @@ fn searches_from_a_relative_root_filter_as_from_an_absolute_one() {
     );
     let query = SearchQuery::literal("needle");
     for options in [threads(1), threads(0)] {
-        for from in [root.clone(), relative(&root)] {
+        // No relative path where the temporary folder is on another drive.
+        for from in std::iter::once(root.clone()).chain(relative(&root)) {
             let (batches, _) = run(&from, &query, &options);
             assert_eq!(
                 rels(&files(batches)),

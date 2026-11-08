@@ -427,13 +427,9 @@ fn extension_file(dir: &Path, entry: &str) -> Result<PathBuf, String> {
             "{entry:?} must be relative to the extension's directory"
         ));
     }
-    let root = dir
-        .canonicalize()
-        .map_err(|error| format!("{}: {error}", dir.display()))?;
-    let file = root
-        .join(relative)
-        .canonicalize()
-        .map_err(|error| format!("{entry:?}: {error}"))?;
+    let root = dunce::canonicalize(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    let file =
+        dunce::canonicalize(root.join(relative)).map_err(|error| format!("{entry:?}: {error}"))?;
     if !file.starts_with(&root) {
         return Err(format!("{entry:?} is outside the extension's directory"));
     }

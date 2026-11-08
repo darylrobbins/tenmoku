@@ -12,6 +12,7 @@ publish = false
 wit-bindgen = "0.57"
 
 [dev-dependencies]
+dunce.workspace = true
 fe-buffer.workspace = true
 fe-plugin.workspace = true
 kiln-command.workspace = true

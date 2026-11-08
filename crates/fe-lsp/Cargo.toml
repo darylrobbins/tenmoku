@@ -19,7 +19,6 @@ futures.workspace = true
 globset.workspace = true
 log.workspace = true
 lsp-types.workspace = true
-rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -32,7 +31,21 @@ fe-config.workspace = true
 fe-nav.workspace = true
 fe-text.workspace = true
 
+# Process groups and execute permission (src/launcher.rs).
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+# A job object per language server, killed with it (src/launcher.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
+dunce.workspace = true
 tempfile.workspace = true
 
 [lints]

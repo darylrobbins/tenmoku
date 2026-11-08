@@ -100,7 +100,7 @@ fn project() -> (tempfile::TempDir, PathBuf, LayoutStore) {
     for (name, text) in [("a.txt", "alpha\n"), ("b.txt", "beta\n")] {
         std::fs::write(root.join(name), text).unwrap();
     }
-    let root = std::fs::canonicalize(&root).unwrap();
+    let root = dunce::canonicalize(&root).unwrap();
     let store = LayoutStore::new(dir.path().join("layouts"), &root);
     (dir, root, store)
 }

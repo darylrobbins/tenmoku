@@ -2,8 +2,6 @@
 //! as it exists, once: a `Rescan` walks it after it appears, while a root
 //! swapped for a symlink later still isn't followed.
 
-use std::os::unix::fs::symlink;
-
 use super::*;
 
 /// Every indexed path, in path order.
@@ -11,7 +9,7 @@ fn all(index: &mut FinderIndex) -> Vec<String> {
     index
         .query("", usize::MAX)
         .into_iter()
-        .map(|found| found.path)
+        .map(|found| slashed(found.path))
         .collect()
 }
 
@@ -34,7 +32,11 @@ fn create_then_swap(index: &mut FinderIndex, root: &Path) {
 fn rescan_finds_a_relative_root_made_after_the_index() {
     let (_dir, base) = temp();
     let root = base.join("missing-project");
-    let mut index = FinderIndex::new(relative(&root));
+    let Some(rel) = relative(&root) else {
+        eprintln!("skipped: the temporary folder is on another drive");
+        return;
+    };
+    let mut index = FinderIndex::new(rel);
     index.finish();
     assert!(all(&mut index).is_empty());
 
@@ -46,7 +48,7 @@ fn rescan_finds_a_relative_root_made_after_the_index() {
 fn rescan_finds_a_missing_root_under_a_symlinked_ancestor() {
     let (_dir, base) = temp();
     make(&base, &["real/"]);
-    symlink(base.join("real"), base.join("link")).unwrap();
+    dir_link(&base.join("real"), &base.join("link"));
     let mut index = FinderIndex::new(base.join("link/missing-project"));
     index.finish();
     assert!(all(&mut index).is_empty());

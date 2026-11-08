@@ -7,6 +7,9 @@
 //! checked and the deadline's ticker. The plugins are kiln-plugin's WAT
 //! fixtures and one of the tests' own.
 
+// What only its Unix tests use goes unused elsewhere.
+#![cfg_attr(not(unix), allow(unused_imports))]
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -292,7 +295,8 @@ fn a_plugin_is_pending_until_granted(cx: &mut TestAppContext) {
     cx.update(reevaluate);
     until(cx, "the granted plugin to run", running(TOOL));
     assert_eq!(lifecycle(cx), [format!("init {TOOL}")]);
-    assert_eq!(plugins.cache_entries(), 1);
+    // Windows doesn't cache compiled plugins (see CONTRIBUTING.md).
+    assert_eq!(plugins.cache_entries(), usize::from(cfg!(unix)));
     assert_eq!(cx.update(|cx| pending_plugin_grants(cx)), []);
     let info = cx.update(|cx| plugin_states(cx)).remove(0);
     assert_eq!(info.granted, grants(&["commands"]));
@@ -839,6 +843,7 @@ fn a_dismissed_prompt_is_not_reopened_in_its_window(cx: &mut TestAppContext) {
 /// A plugin whose `run-command` spawns the program its args name, with no
 /// args or stdin, and logs what it wrote to stdout; the command fails with
 /// the spawn's error.
+#[cfg(unix)]
 const SPAWN: &str = r#"
 (component $C
   (import "kiln:extension/types@1.0.0" (instance $types
@@ -967,6 +972,7 @@ const SPAWN: &str = r#"
 "#;
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_granted_program_runs_and_an_ungranted_one_is_denied(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
     let plugins = start(cx);
@@ -1187,6 +1193,7 @@ fn a_prompt_for_a_replaced_request_records_nothing(cx: &mut TestAppContext) {
 
 /// An executable script `name` in `dir` running `body`, bound as a grant
 /// would bind it.
+#[cfg(unix)]
 fn script(dir: &Path, name: &str, body: &str) -> kiln_plugin::grants::ProgramIdentity {
     use std::os::unix::fs::PermissionsExt as _;
     let path = dir.join(name);
@@ -1196,6 +1203,7 @@ fn script(dir: &Path, name: &str, body: &str) -> kiln_plugin::grants::ProgramIde
 }
 
 /// The spawning plugin, granted `program`, running.
+#[cfg(unix)]
 fn spawner(
     cx: &mut TestAppContext,
     plugins: &Plugins,
@@ -1218,8 +1226,10 @@ fn spawner(
     loaded_plugin(cx, SPAWNER)
 }
 
+#[cfg(unix)]
 const SPAWNER: &str = "acme.spawn";
 
+#[cfg(unix)]
 fn loaded_plugin(
     cx: &mut TestAppContext,
     id: &str,
@@ -1230,6 +1240,7 @@ fn loaded_plugin(
     })
 }
 
+#[cfg(unix)]
 fn spawn(
     plugin: &std::sync::Mutex<super::HostedPlugin>,
     program: &str,
@@ -1241,6 +1252,7 @@ fn spawn(
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_granted_program_that_outlasts_the_call_deadline_completes(cx: &mut TestAppContext) {
     let plugins = start_with_call_deadline(cx, CALL_DEADLINE);
     let bin = tempfile::tempdir().unwrap();
@@ -1258,6 +1270,7 @@ fn a_granted_program_that_outlasts_the_call_deadline_completes(cx: &mut TestAppC
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_spawn_in_flight_ends_before_the_plugin_unloads(cx: &mut TestAppContext) {
     let plugins = start(cx);
     let bin = tempfile::tempdir().unwrap();
@@ -1280,6 +1293,7 @@ fn a_spawn_in_flight_ends_before_the_plugin_unloads(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_reauthorized_program_reloads_the_plugin(cx: &mut TestAppContext) {
     let plugins = start(cx);
     let bin = tempfile::tempdir().unwrap();
@@ -1322,12 +1336,14 @@ fn a_reauthorized_program_reloads_the_plugin(cx: &mut TestAppContext) {
 }
 
 /// The napping plugin's id.
+#[cfg(unix)]
 const NAPPER: &str = "acme.napper";
 
 /// A plugin that subscribes to `buffer-opened` in its `init`. Its handler
 /// runs the granted program `nap`, then reads the opened buffer, logging its
 /// text, and edits it to put an `X` first, logging `edited`; a failed step
 /// logs `failed` at `error` and stops.
+#[cfg(unix)]
 const NAPPER_WAT: &str = r#"
 (component $C
   (import "kiln:extension/types@1.0.0" (instance $types
@@ -1518,6 +1534,8 @@ const NAPPER_WAT: &str = r#"
 /// An event handler's call deadline doesn't count the time its program
 /// ran, on the buffers either: after a process longer than the deadline it
 /// reads its buffer and edits it.
+// Its program is a `/bin/sh` script, as `script` writes one.
+#[cfg(unix)]
 #[gpui::test]
 fn an_event_handler_edits_its_buffer_after_a_slow_process(cx: &mut TestAppContext) {
     let plugins = start_with_call_deadline(cx, CALL_DEADLINE);

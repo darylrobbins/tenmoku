@@ -1,9 +1,10 @@
 //! File operations under a project root: `fe_project::fs_ops`.
 
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::{
     fs,
     io::ErrorKind,
-    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
 };
 
@@ -17,7 +18,7 @@ use tempfile::TempDir;
 /// `/private/var`, and the operations want a root reached without one).
 fn temp() -> (TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let path = fs::canonicalize(dir.path()).unwrap();
+    let path = dunce::canonicalize(dir.path()).unwrap();
     (dir, path)
 }
 
@@ -212,6 +213,7 @@ fn a_target_outside_the_root_through_dot_dot_is_refused() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_target_through_a_symlinked_parent_is_refused() {
     let (_outer, outside) = temp();
     let root = outside.join("project");
@@ -240,6 +242,7 @@ fn a_target_through_a_symlinked_parent_is_refused() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_symlink_itself_is_renamed_and_duplicated_as_a_link() {
     let (_outer, outside) = temp();
     let root = outside.join("project");
@@ -464,9 +467,12 @@ fn duplicate_copies_a_folder_recursively() {
     write(&root, "pkg.v2/a.rs", "a");
     write(&root, "pkg.v2/sub/b.rs", "b");
     fs::create_dir(root.join("pkg.v2/empty")).unwrap();
+    // Windows makes symlinks only with a privilege, and has no modes.
+    #[cfg(unix)]
     symlink("sub/b.rs", root.join("pkg.v2/link")).unwrap();
     let script = root.join("pkg.v2/sub/run.sh");
     fs::write(&script, "#!/bin/sh").unwrap();
+    #[cfg(unix)]
     fs::set_permissions(&script, fs::Permissions::from_mode(0o750)).unwrap();
 
     // A folder's name isn't split at a dot.
@@ -476,27 +482,26 @@ fn duplicate_copies_a_folder_recursively() {
     assert_eq!(copy, root.join("pkg.v2 copy 2"));
 
     let original = snapshot(&root.join("pkg.v2"));
-    assert_eq!(
-        original,
-        [
-            "a.rs = a",
-            "empty/",
-            "link -> sub/b.rs",
-            "sub/",
-            "sub/b.rs = b",
-            "sub/run.sh = #!/bin/sh"
-        ]
-    );
+    let mut expected = vec!["a.rs = a", "empty/"];
+    if cfg!(unix) {
+        expected.push("link -> sub/b.rs");
+    }
+    expected.extend(["sub/", "sub/b.rs = b", "sub/run.sh = #!/bin/sh"]);
+    assert_eq!(original, expected);
     assert_eq!(snapshot(&root.join("pkg.v2 copy")), original);
     assert_eq!(snapshot(&root.join("pkg.v2 copy 2")), original);
-    let mode = fs::metadata(root.join("pkg.v2 copy/sub/run.sh"))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o777, 0o750);
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(root.join("pkg.v2 copy/sub/run.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o750);
+    }
 }
 
 #[test]
+#[cfg(unix)]
 fn duplicate_leaves_out_what_is_not_a_file_folder_or_symlink() {
     let (_dir, root) = temp();
     write(&root, "dir/a.rs", "a");
@@ -513,6 +518,7 @@ fn duplicate_leaves_out_what_is_not_a_file_folder_or_symlink() {
 }
 
 #[test]
+#[cfg(unix)]
 fn duplicate_leaves_out_a_socket_in_a_folder_and_refuses_one_alone() {
     let (_dir, root) = temp();
     write(&root, "dir/a.rs", "a");
@@ -526,6 +532,7 @@ fn duplicate_leaves_out_a_socket_in_a_folder_and_refuses_one_alone() {
 }
 
 #[test]
+#[cfg(unix)]
 fn duplicate_gives_folders_their_permissions_once_all_is_copied() {
     let (_dir, root) = temp();
     write(&root, "dir/a_read_only/inner.txt", "inner");
@@ -549,6 +556,7 @@ fn duplicate_gives_folders_their_permissions_once_all_is_copied() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_failed_duplicate_leaves_no_partial_copy() {
     // SAFETY: always safe to call.
     if unsafe { libc::geteuid() } == 0 {
@@ -595,10 +603,13 @@ fn relative_path_is_slash_separated_under_the_root() {
     );
     assert_eq!(relative_path(root, Path::new("src/lib.rs")), "src/lib.rs");
     assert_eq!(relative_path(root, Path::new("/work/project")), "");
-    assert_eq!(
-        relative_path(root, Path::new("/elsewhere/x")),
+    // An absolute path outside the root, whole: on Windows one has a drive.
+    let elsewhere = if cfg!(windows) {
+        r"C:\elsewhere\x"
+    } else {
         "/elsewhere/x"
-    );
+    };
+    assert_eq!(relative_path(root, Path::new(elsewhere)), elsewhere);
 }
 
 // C4: the Trash. These tests' trashes go to the test trash
@@ -609,6 +620,7 @@ fn relative_path_is_slash_separated_under_the_root() {
 
 /// A temporary project the platform's trash takes into the user's Trash, or
 /// `None` (saying why) where there is none to use.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn trashable_temp() -> Option<(TempDir, PathBuf)> {
     #[cfg(target_os = "macos")]
     let base = std::env::temp_dir();
@@ -631,7 +643,7 @@ fn trashable_temp() -> Option<(TempDir, PathBuf)> {
         .tempdir_in(&base)
     {
         Ok(dir) => {
-            let path = fs::canonicalize(dir.path()).unwrap();
+            let path = dunce::canonicalize(dir.path()).unwrap();
             Some((dir, path))
         }
         Err(err) => {
@@ -665,6 +677,7 @@ fn trash_moves_a_file_and_a_folder_to_the_trash() {
 /// (`NSFileManager` on macOS, the freedesktop.org home trash on Linux).
 #[test]
 #[ignore = "reaches the user's Trash"]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn trash_moves_a_file_and_a_folder_to_the_system_trash() {
     let _real = testing::real_trash();
     let Some((_dir, root)) = trashable_temp() else {
@@ -807,11 +820,13 @@ fn duplicate_names_near_the_longest_name_fit() {
 // Tests of process-wide state run in a child process: this test binary run
 // again for one test, which does its work only when `CHILD` is set.
 
+#[cfg(unix)]
 const CHILD: &str = "FE_PROJECT_FS_OPS_CHILD";
 
 /// Runs `test` alone in a child process (behind `wrapper`, a command and its
 /// arguments to run it through, if any), with `envs` set. `None`, saying why, if the wrapper
 /// couldn't start it; panics if the test failed.
+#[cfg(unix)]
 fn run_child(test: &str, wrapper: &[&str], envs: &[(&str, PathBuf)]) -> Option<()> {
     let exe = std::env::current_exe().unwrap();
     let mut command = match wrapper.split_first() {
@@ -847,11 +862,13 @@ fn run_child(test: &str, wrapper: &[&str], envs: &[(&str, PathBuf)]) -> Option<(
     panic!("{test} failed in a child process:\n{stdout}\n{stderr}");
 }
 
+#[cfg(unix)]
 fn in_child() -> bool {
     std::env::var_os(CHILD).is_some()
 }
 
 /// Lowers this process's limit on open files to `limit`.
+#[cfg(unix)]
 fn limit_open_files(limit: libc::rlim_t) {
     let mut rlimit = libc::rlimit {
         rlim_cur: 0,
@@ -868,6 +885,7 @@ fn limit_open_files(limit: libc::rlim_t) {
 }
 
 #[test]
+#[cfg(unix)]
 fn broad_folders_and_selections_need_few_open_files() {
     run_child(
         "broad_folders_and_selections_need_few_open_files_child",
@@ -878,6 +896,7 @@ fn broad_folders_and_selections_need_few_open_files() {
 }
 
 #[test]
+#[cfg(unix)]
 fn broad_folders_and_selections_need_few_open_files_child() {
     if !in_child() {
         return;
@@ -1140,11 +1159,13 @@ fn deny_statx() {
 /// still fills them, gives them the source's modes, and is removed whole
 /// should it fail.
 #[test]
+#[cfg(unix)]
 fn duplicate_works_under_a_restrictive_umask() {
     run_child("duplicate_works_under_a_restrictive_umask_child", &[], &[]).unwrap();
 }
 
 #[test]
+#[cfg(unix)]
 fn duplicate_works_under_a_restrictive_umask_child() {
     if !in_child() {
         return;
@@ -1199,6 +1220,7 @@ fn duplicate_works_under_a_restrictive_umask_child() {
 /// file below a new folder fails, as the folder can't be opened: the folder
 /// made is still removed.
 #[test]
+#[cfg(unix)]
 fn create_removes_its_folders_under_a_restrictive_umask() {
     run_child(
         "create_removes_its_folders_under_a_restrictive_umask_child",
@@ -1209,6 +1231,7 @@ fn create_removes_its_folders_under_a_restrictive_umask() {
 }
 
 #[test]
+#[cfg(unix)]
 fn create_removes_its_folders_under_a_restrictive_umask_child() {
     if !in_child() {
         return;

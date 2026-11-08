@@ -83,6 +83,41 @@ fn windows_uses_appdata() {
 }
 
 #[test]
+fn windows_xdg_is_under_the_user_profile_without_home() {
+    let profile = [("USERPROFILE", r"C:\Users\u")];
+    let p = paths(PathStyle::Xdg, Os::Windows, &profile);
+    let home = Path::new(r"C:\Users\u");
+    assert_eq!(
+        p.config_dir(),
+        Some(home.join(".config").join("notes").as_path())
+    );
+    assert_eq!(
+        p.state_dir(),
+        Some(home.join(".local").join("state").join("notes").as_path())
+    );
+
+    // `HOME` wins where it's set, as Git for Windows' shells set it.
+    let p = paths(
+        PathStyle::Xdg,
+        Os::Windows,
+        &[("HOME", r"D:\home"), ("USERPROFILE", r"C:\Users\u")],
+    );
+    assert_eq!(
+        p.config_dir(),
+        Some(
+            Path::new(r"D:\home")
+                .join(".config")
+                .join("notes")
+                .as_path()
+        )
+    );
+
+    // Only Windows reads `USERPROFILE`.
+    let p = paths(PathStyle::Xdg, Os::Linux, &profile);
+    assert_eq!(p.config_dir(), None);
+}
+
+#[test]
 fn the_app_variables_win() {
     let vars = [
         ("HOME", "/home/u"),

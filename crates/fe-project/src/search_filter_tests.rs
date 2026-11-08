@@ -8,7 +8,7 @@ use super::*;
 
 fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     for path in ["src/a.rs", "src/b.txt", "docs/c.rs", "target/d.rs"] {
         let full = root.join(path);
         fs::create_dir_all(full.parent().unwrap()).unwrap();
@@ -30,7 +30,12 @@ fn found(root: &Path, filter: &PathFilter, threads: usize) -> (Vec<String>, Sear
         &options,
         filter,
         Arc::new(AtomicBool::new(false)),
-        |batch| rels.extend(batch.into_iter().map(|file| file.rel)),
+        // Spelled with `/` on every platform, as the expectations are.
+        |batch| {
+            rels.extend(
+                (batch.into_iter()).map(|file| file.rel.replace(std::path::MAIN_SEPARATOR, "/")),
+            );
+        },
     )
     .unwrap();
     rels.sort();
@@ -82,7 +87,12 @@ fn errors_and_defaults() {
             &SearchQuery::literal("needle"),
             &options,
             Arc::default(),
-            |batch| plain.extend(batch.into_iter().map(|file| file.rel)),
+            |batch| {
+                plain.extend(
+                    (batch.into_iter())
+                        .map(|file| file.rel.replace(std::path::MAIN_SEPARATOR, "/")),
+                );
+            },
         )
         .unwrap();
         plain.sort();

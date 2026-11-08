@@ -4,6 +4,11 @@ fn submit(vim: &mut HeadlessVim, line: &str) {
     vim.feed(&format!(":{line}<CR>")).unwrap();
 }
 
+/// `unix`, or on Windows `windows`.
+fn win(unix: &'static str, windows: &'static str) -> &'static str {
+    if cfg!(windows) { windows } else { unix }
+}
+
 #[test]
 fn host_commands_are_handed_over() {
     let cases = [
@@ -41,16 +46,21 @@ fn host_commands_are_handed_over() {
         ("edit! src/main.rs", edit(Some("src/main.rs"), true)),
         ("e!", edit(None, true)),
         (r"e foo\ bar", edit(Some("foo bar"), false)),
-        (r"ed! a\\b\c  ", edit(Some(r"a\bc"), true)),
-        (r"e a\\\\b", edit(Some(r"a\\b"), false)),
-        (r"e a\\\ b", edit(Some(r"a\ b"), false)),
+        // On Windows a backslash escapes only a blank, `#` or `%`
+        // (`:help dos-backslash`), so the others stay.
+        (r"ed! a\\b\c  ", edit(Some(win(r"a\bc", r"a\\b\c")), true)),
+        (r"e a\\\\b", edit(Some(win(r"a\\b", r"a\\\\b")), false)),
+        (r"e a\\\ b", edit(Some(win(r"a\ b", r"a\\ b")), false)),
         (r"edit! a\\ b", edit(Some(r"a\ b"), true)),
-        (r"ex a\ \\b", edit(Some(r"a \b"), false)),
+        (r"ex a\ \\b", edit(Some(win(r"a \b", r"a \\b")), false)),
         (r"e trailing\ ", edit(Some("trailing "), false)),
         ("e a\\\\ ", edit(Some("a\\ "), false)),
         ("e a\\\\\t", edit(Some("a\\\t"), false)),
         ("ed a\\\\ \t  ", edit(Some("a\\ "), false)),
-        ("edit! a\\\\\\\\ ", edit(Some("a\\\\ "), true)),
+        (
+            "edit! a\\\\\\\\ ",
+            edit(Some(win("a\\\\ ", "a\\\\\\ ")), true),
+        ),
         ("ex a\\\t ", edit(Some("a\t"), false)),
         ("e", edit(None, false)),
         ("qa", H::QuitAll { force: false }),

@@ -1,6 +1,10 @@
 //! Typing into a terminal view: the bytes keys, composed text and pastes
 //! write to the pty, seen by a program that prints each read in hex.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::thread;

@@ -1,3 +1,5 @@
+// Its programs are shell scripts made executable by mode.
+#![cfg(unix)]
 // SPDX-License-Identifier: Apache-2.0
 
 //! Spawning programs for a plugin: only by a grant, only the file recorded for it, with
@@ -9,6 +11,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Grants};
@@ -45,25 +48,46 @@ fn copied(dir: &Path, name: &str) -> ProgramIdentity {
         .find(|path| path.is_file())
         .unwrap_or_else(|| panic!("no {name} in {SYSTEM_PATH}"));
     let copy = dir.join(name);
-    fs::copy(system, &copy).unwrap();
-    resign(&copy);
+    place(&system, &copy);
     resolve_program(name, dir.as_os_str()).unwrap()
 }
 
-/// macOS kills (SIGKILL at exec) a copied system binary: its signature is the platform's, which
-/// binds it to `/usr/bin` and `/bin`. An ad-hoc signature makes the copy an ordinary program.
-#[cfg(target_os = "macos")]
-fn resign(path: &Path) {
-    let status = std::process::Command::new("codesign")
-        .args(["--force", "--sign", "-"])
-        .arg(path)
-        .output()
-        .unwrap();
-    assert!(status.status.success(), "{status:?}");
+#[cfg(not(target_os = "macos"))]
+fn place(system: &Path, copy: &Path) {
+    fs::copy(system, copy).unwrap();
 }
 
-#[cfg(not(target_os = "macos"))]
-fn resign(_: &Path) {}
+/// macOS kills (SIGKILL at exec) a copied system binary: its signature is the platform's, which
+/// binds it to `/usr/bin` and `/bin`. Re-signing it ad hoc isn't enough everywhere: on
+/// macOS 15 (GitHub's runner) the copy is still killed, likely because its arm64e slice runs only
+/// under the platform's signature. So the copy is a program of our own, built by `cc` (which links every
+/// Rust program here): it execs the system binary in place, keeping its pid, arguments and
+/// environment as the call gave them.
+#[cfg(target_os = "macos")]
+fn place(system: &Path, copy: &Path) {
+    let source = copy.with_extension("c");
+    fs::write(
+        &source,
+        format!(
+            "#include <unistd.h>\n\
+             int main(int argc, char **argv) {{\n\
+             \x20   (void)argc;\n\
+             \x20   execv(\"{}\", argv);\n\
+             \x20   return 127;\n\
+             }}\n",
+            system.display()
+        ),
+    )
+    .unwrap();
+    let output = std::process::Command::new("cc")
+        .arg("-o")
+        .arg(copy)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    fs::remove_file(&source).unwrap();
+}
 
 /// An executable script `name` in `dir`, bound as a grant would bind it.
 fn script(dir: &Path, name: &str, body: &str) -> ProgramIdentity {
@@ -98,6 +122,7 @@ fn stdout(state: &mut State, program: &str, arguments: &[&str]) -> String {
 
 #[test]
 fn a_granted_program_runs_by_its_recorded_path() {
+    let _serial = serially();
     let dir = temp_dir("recorded");
     let printf = copied(&dir, "printf");
     assert_eq!(printf.path, dir.join("printf"));
@@ -129,6 +154,7 @@ fn a_granted_program_runs_by_its_recorded_path() {
 
 #[test]
 fn an_ungranted_program_is_refused() {
+    let _serial = serially();
     let dir = temp_dir("ungranted");
     let printf = copied(&dir, "printf");
     let marker = dir.join("ran");
@@ -158,6 +184,7 @@ fn an_ungranted_program_is_refused() {
 
 #[test]
 fn a_changed_binary_suspends_the_grant_before_spawn() {
+    let _serial = serially();
     changed_binary_suspends("named", &["process.spawn:printf"]);
     // `process.spawn:*` still covers the name, but a suspended program asks again all the same.
     changed_binary_suspends("wildcard", &["process.spawn:*", "process.spawn:printf"]);
@@ -221,6 +248,7 @@ fn changed_binary_suspends(case: &str, granted: &[&str]) {
 
 #[test]
 fn a_removed_binary_is_suspended_as_missing() {
+    let _serial = serially();
     let dir = temp_dir("removed");
     let printf = copied(&dir, "printf");
     let mut state = State::new(
@@ -238,6 +266,7 @@ fn a_removed_binary_is_suspended_as_missing() {
 
 #[test]
 fn arguments_are_not_shell_parsed() {
+    let _serial = serially();
     let dir = temp_dir("arguments");
     let printf = copied(&dir, "printf");
     let mut state = State::new(
@@ -272,6 +301,7 @@ fn arguments_are_not_shell_parsed() {
 
 #[test]
 fn the_environment_is_minimal() {
+    let _serial = serially();
     let dir = temp_dir("environment");
     let env = copied(&dir, "env");
     let mut state = State::new(record(&["process.spawn:env"], &[&env]), &Limits::default());
@@ -303,6 +333,7 @@ fn the_environment_is_minimal() {
 
 #[test]
 fn the_minimal_environment_keeps_only_its_variables() {
+    let _serial = serially();
     let app = [
         ("PATH", "/home/me/bin:/usr/bin"),
         ("HOME", "/home/me"),
@@ -337,6 +368,7 @@ fn the_minimal_environment_keeps_only_its_variables() {
 
 #[test]
 fn output_over_the_cap_and_runs_over_the_deadline_are_killed() {
+    let _serial = serially();
     let dir = temp_dir("limits");
     let sleep = copied(&dir, "sleep");
     let printf = copied(&dir, "printf");
@@ -378,6 +410,7 @@ fn output_over_the_cap_and_runs_over_the_deadline_are_killed() {
 
 #[test]
 fn nothing_outlives_a_call_that_ends() {
+    let _serial = serially();
     let dir = temp_dir("outlives");
     let sleep = copied(&dir, "sleep");
     let printf = copied(&dir, "printf");
@@ -446,6 +479,14 @@ impl Drop for Reaper {
     }
 }
 
+/// One test at a time: `nothing_outlives_a_call_that_ends` counts this
+/// process's threads, which the others' calls would add to and take from
+/// meanwhile when `cargo test` runs them side by side.
+fn serially() -> MutexGuard<'static, ()> {
+    static SERIAL: Mutex<()> = Mutex::new(());
+    SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// How many threads this process has, where the system says.
 fn threads() -> Option<usize> {
     fs::read_dir("/proc/self/task").ok().map(Iterator::count)
@@ -453,6 +494,7 @@ fn threads() -> Option<usize> {
 
 #[test]
 fn a_suspension_holds_until_the_program_is_granted_again() {
+    let _serial = serially();
     let dir = temp_dir("suspension");
     let printf = copied(&dir, "printf");
     let store = GrantStore::new(dir.join("state/plugin-grants.toml"));

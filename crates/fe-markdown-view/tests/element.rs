@@ -114,7 +114,13 @@ fn document_element_draws_without_scroll_or_images(cx: &mut TestAppContext) {
          ```rust path=src/lib.rs\nfn one() {{}}\n```\n\n\
          - an item\n\n  ```\n  nested\n  ```\n\n\
          ```py\nprint(1)\n```\n",
-        dir.path().join("pic.svg").display()
+        // With `/`: in Markdown a `\` before punctuation escapes it, so a
+        // Windows path's `\.tmp` would lose its backslash.
+        dir.path()
+            .join("pic.svg")
+            .display()
+            .to_string()
+            .replace('\\', "/")
     );
     let (cx, log) = open(cx, &markdown, Images::AltText);
 

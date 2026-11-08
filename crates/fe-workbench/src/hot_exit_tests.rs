@@ -41,7 +41,7 @@ fn project() -> Project {
     let root = dir.path().join("project");
     std::fs::create_dir(&root).unwrap();
     std::fs::write(root.join("a.txt"), "alpha\n").unwrap();
-    let root = std::fs::canonicalize(&root).unwrap();
+    let root = dunce::canonicalize(&root).unwrap();
     in_state_dir(dir, root)
 }
 
@@ -447,6 +447,7 @@ fn vim(first: &mut TestAppContext, second: &mut TestAppContext, third: &mut Test
 /// An orphan of a file that can't be opened stays in the store, for a
 /// launch that can read it; a store that can't be listed isn't pruned.
 #[gpui::test]
+#[cfg(unix)]
 fn backups_that_dont_read_are_kept(
     first: &mut TestAppContext,
     second: &mut TestAppContext,
@@ -677,6 +678,7 @@ fn saved_with_newer_edits(first: &mut TestAppContext, second: &mut TestAppContex
 /// the store can be written: a dirty buffer's write, a saved buffer's
 /// removal, and a discarded buffer's removal.
 #[gpui::test]
+#[cfg(unix)]
 fn failures_are_retried(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
     let project = project();
@@ -771,6 +773,7 @@ fn owner_files_stay_put_while_owned() {
 /// A discarded buffer's removal that failed is finished by quitting, before
 /// its retry is due: from a closed tab, then from a closed window.
 #[gpui::test]
+#[cfg(unix)]
 fn failed_cleanup_finishes_at_quit(first: &mut TestAppContext, second: &mut TestAppContext) {
     let project = project();
     let writable =
@@ -840,6 +843,7 @@ fn clock_gone_back(first: &mut TestAppContext, second: &mut TestAppContext) {
 /// A backup with one slot corrupt and the other unreadable for now isn't
 /// given up as corrupt: nothing is pruned, and it opens once readable.
 #[gpui::test]
+#[cfg(unix)]
 fn corrupt_slot_beside_an_unreadable_one(first: &mut TestAppContext, second: &mut TestAppContext) {
     let project = project();
     let orphan: BackupId = "1000-1-0".parse().unwrap();
@@ -867,6 +871,7 @@ fn corrupt_slot_beside_an_unreadable_one(first: &mut TestAppContext, second: &mu
     assert_eq!(state(&editor, &mut cx).1, "good");
 }
 
+#[cfg(unix)]
 fn set_mode(path: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();

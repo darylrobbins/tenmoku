@@ -12,20 +12,20 @@
 //! silently then: the `fsevents` test group in `.config/nextest.toml` keeps
 //! these tests apart from the 100k-file ones.
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::{
     collections::HashMap,
     fs,
-    os::unix::fs::symlink,
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 
-use notify::{
-    Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
-    event::{CreateKind, Flag, ModifyKind},
-};
+#[cfg(unix)]
+use notify::event::{CreateKind, Flag};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind};
 use tempfile::TempDir;
 
 use crate::{ConfigWatcher, watch::Tracker};
@@ -35,6 +35,7 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long [`project_edit_seen_while_registering`] waits for a batch before
 /// rewriting the user's target again.
+#[cfg(unix)]
 const RETRY: Duration = Duration::from_secs(1);
 
 /// How long before the deadline the control must have seen a sentinel for a
@@ -66,7 +67,7 @@ impl Control {
     fn new() -> Control {
         let dir = tempfile::tempdir().unwrap();
         // Canonical, as events name paths.
-        let root = dir.path().canonicalize().unwrap();
+        let root = crate::platform::canonicalize(dir.path()).unwrap();
         let (tx, events) = mpsc::channel();
         let mut watcher = notify::recommended_watcher(move |event| {
             tx.send((Instant::now(), event)).ok();
@@ -187,6 +188,7 @@ fn feed(
 }
 
 /// Points the symlink `link` at `target`, replacing it atomically.
+#[cfg(unix)]
 fn retarget(link: &Path, target: &Path) {
     let temp = link.with_extension("toml.tmp");
     symlink(target, &temp).unwrap();
@@ -194,10 +196,11 @@ fn retarget(link: &Path, target: &Path) {
 }
 
 #[test]
+#[cfg(unix)]
 fn tracker_follows_symlink_changes() {
     let temp = tempfile::tempdir().unwrap();
     // Canonical, as events name paths.
-    let dir = temp.path().canonicalize().unwrap();
+    let dir = crate::platform::canonicalize(temp.path()).unwrap();
     let (a, b, c) = (dir.join("a"), dir.join("b"), dir.join("c"));
     for sub in [&a, &b, &c] {
         fs::create_dir(sub).unwrap();
@@ -251,9 +254,10 @@ fn tracker_follows_symlink_changes() {
 /// lost, is followed all the same: every link is resolved again after
 /// registering, at startup and later.
 #[test]
+#[cfg(unix)]
 fn tracker_resolves_links_after_registering() {
     let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().canonicalize().unwrap();
+    let dir = crate::platform::canonicalize(temp.path()).unwrap();
     let [a, b, c, d, e] = ["a", "b", "c", "d", "e"].map(|name| dir.join(name));
     for sub in [&a, &b, &c, &d, &e] {
         fs::create_dir(sub).unwrap();
@@ -295,6 +299,7 @@ fn tracker_resolves_links_after_registering() {
 /// The same at startup with a real watcher: an edit to the project link's
 /// new target is seen.
 #[test]
+#[cfg(unix)]
 fn watcher_follows_links_changed_while_registering() {
     project_edit_seen_while_registering(false, |_, _| {});
 }
@@ -312,12 +317,13 @@ fn watcher_follows_links_changed_while_registering() {
 /// batch names it, so it never depends on one write. The whole wait, batches
 /// of any kind included, is bounded by [`TIMEOUT`], with a [`Control`],
 /// ready before the project's edit, marked after it and after each rewrite.
+#[cfg(unix)]
 pub(super) fn project_edit_seen_while_registering(
     await_user: bool,
     extra: impl Fn(&Path, &Path) + Send + 'static,
 ) {
     let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().canonicalize().unwrap();
+    let dir = crate::platform::canonicalize(temp.path()).unwrap();
     let [user_dir, a, project_dir, b, c] =
         ["user", "a", "project", "b", "c"].map(|name| dir.join(name));
     for sub in [&user_dir, &a, &project_dir, &b, &c] {
@@ -412,7 +418,7 @@ pub(super) fn project_edit_seen_while_registering(
 #[test]
 fn tracker_takes_up_extra_files() {
     let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().canonicalize().unwrap();
+    let dir = crate::platform::canonicalize(temp.path()).unwrap();
     let [a, b] = ["a", "b"].map(|name| dir.join(name));
     for sub in [&a, &b] {
         fs::create_dir(sub).unwrap();
@@ -465,7 +471,7 @@ fn tracker_takes_up_extra_files() {
 #[test]
 fn watcher_takes_up_extra_files() {
     let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().canonicalize().unwrap();
+    let dir = crate::platform::canonicalize(temp.path()).unwrap();
     let [user_dir, project_dir] = ["user", "project"].map(|name| dir.join(name));
     for sub in [&user_dir, &project_dir] {
         fs::create_dir(sub).unwrap();

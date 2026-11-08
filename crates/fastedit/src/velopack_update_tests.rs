@@ -2,6 +2,9 @@
 //! the downloads it allows, and when the updater is on. Flat functions, so the
 //! ids stay `velopack_update_tests::<name>`.
 
+// What only the Unix and macOS tests use goes unused elsewhere.
+#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
+
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -199,6 +202,8 @@ impl Fixture {
     }
 }
 
+// The updater is the macOS bundle's; velopack downloads elsewhere on Windows.
+#[cfg(unix)]
 #[test]
 fn good_signature_yields_the_feed_and_downloads() {
     let fixture = Fixture::new();
@@ -493,6 +498,8 @@ fn signer_and_verifier_agree() {
     ));
 }
 
+// The updater is the macOS bundle's: its feed folders are Unix paths.
+#[cfg(unix)]
 #[test]
 fn policy_off_without_build_keys_or_install() {
     let (public, _) = generate();

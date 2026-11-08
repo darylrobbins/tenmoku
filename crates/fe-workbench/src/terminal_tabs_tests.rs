@@ -62,6 +62,30 @@ pub(crate) fn until(
     }
 }
 
+/// Draws until the labels `tabs` reads satisfy `done`, a shell's title
+/// change. Panics after 20 s, naming `what` and the labels then: a CI
+/// runner's console can be slow to retitle.
+pub(crate) fn until_tabs(
+    cx: &mut VisualTestContext,
+    what: &str,
+    tabs: impl Fn(&mut VisualTestContext) -> Vec<String>,
+    done: impl Fn(&[String]) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        draw(cx);
+        let now = tabs(cx);
+        if done(&now) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {what}: {now:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Runs workbench command `id` as an unbound key or the palette would.
 pub(crate) fn run(id: &str, cx: &mut VisualTestContext) {
     let context = ContextStack::new().with(ContextFrame::new("workbench"));
@@ -160,8 +184,20 @@ pub(crate) fn with_sessions(
 }
 
 pub(crate) fn type_line(view: &Entity<TerminalView>, line: &str, cx: &mut VisualTestContext) {
-    let bytes = format!("{line}\n").into_bytes();
+    // Enter is a CR, which Windows' console takes and no other end of line.
+    let end = if cfg!(windows) { "\r" } else { "\n" };
+    let bytes = format!("{line}{end}").into_bytes();
     view.read_with(cx, |view, _| view.terminal().unwrap().input(bytes));
+}
+
+/// A command line that sets the session's title to `title`: an OSC 0 from
+/// `printf`, or on Windows cmd's `title`.
+pub(crate) fn title_command(title: &str) -> String {
+    if cfg!(windows) {
+        format!("title {title}")
+    } else {
+        format!(r"printf '\033]0;{title}\007'")
+    }
 }
 
 /// The labels of the tabs the last frame drew.
@@ -345,10 +381,17 @@ fn tab_strip(cx: &mut TestAppContext) {
     let second = new_session(&workbench, cx);
     assert_eq!(drawn_tabs(&workbench, cx), ["Terminal 1", "Terminal 2"]);
     assert!(active_and_focused(&workbench, 1, cx));
-    type_line(&second, r"printf '\033]0;build\007'", cx);
-    until(cx, "the shell to set its title", |cx| {
-        drawn_tabs(&workbench, cx) == ["Terminal 1", "build"]
-    });
+    type_line(&second, &title_command("build"), cx);
+    until_tabs(
+        cx,
+        "the shell to set its title",
+        |cx| {
+            (drawn_tabs(&workbench, cx).iter())
+                .map(ToString::to_string)
+                .collect()
+        },
+        |tabs| tabs == ["Terminal 1", "build"],
+    );
 
     // A click on a tab activates and focuses its session.
     let tab = tab_bounds(&workbench, 0, cx);

@@ -148,7 +148,7 @@ impl Row {
     ) -> Self {
         let (major, minor, patch) = manifest.version;
         // The consents' directories are canonical.
-        let dir = (manifest.dir.canonicalize()).unwrap_or_else(|_| manifest.dir.clone());
+        let dir = (dunce::canonicalize(&manifest.dir)).unwrap_or_else(|_| manifest.dir.clone());
         let own: Vec<PendingConsent> = (pending.iter())
             .filter(|pending| pending.extension_dir == dir)
             .cloned()
@@ -339,9 +339,11 @@ fn invocation_line(invocation: &Invocation) -> String {
 }
 
 /// `word` as a shell word: as it is if nothing in it is special, else
-/// single-quoted.
+/// single-quoted. On Windows a `\`, its paths' separator, is plain.
 fn quoted(word: &str) -> String {
-    let plain = |c: char| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c);
+    let plain = |c: char| {
+        c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c) || (cfg!(windows) && c == '\\')
+    };
     if !word.is_empty() && word.chars().all(plain) {
         return word.to_owned();
     }

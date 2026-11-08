@@ -1,7 +1,8 @@
 //! Compiles in each first-party grammar's extension files: a directory under
 //! `extensions/grammars/` is a language (`src/grammar_install.rs`), so a new
 //! one needs no source edit. Writes `$OUT_DIR/first_party.rs`, the table
-//! `FIRST_PARTY` of `(language, ExtensionFiles)` sorted by language.
+//! `FIRST_PARTY` of `(language, ExtensionFiles)` sorted by language. On
+//! Windows, also embeds the app icon in the executable.
 
 use std::{env, fmt::Write as _, fs, path::PathBuf};
 
@@ -43,4 +44,19 @@ fn main() {
          const FIRST_PARTY: &[(&str, ExtensionFiles)] = &{table};\n"
     );
     fs::write(&out, source).unwrap_or_else(|error| panic!("{}: {error}", out.display()));
+
+    windows_icon();
+}
+
+/// Embeds the app icon in the Windows executable (`assets/windows`), for
+/// Explorer, the taskbar and the windows' title bars. Nothing elsewhere: the
+/// macOS bundle gets its icon from `scripts/bundle-macos.sh`.
+fn windows_icon() {
+    println!("cargo:rerun-if-changed=assets/windows/tenmoku.rc");
+    println!("cargo:rerun-if-changed=assets/windows/tenmoku.ico");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        embed_resource::compile("assets/windows/tenmoku.rc", embed_resource::NONE)
+            .manifest_optional()
+            .expect("the app icon's resources compile");
+    }
 }

@@ -14,7 +14,7 @@ use crate::fake::{
 };
 use crate::{DocumentLink, LspError, LspManager, ManualClock, ServerSpec, SystemClock};
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 const WAIT: Duration = Duration::from_secs(10);
 const LINKS: &str = "textDocument/documentLink";
 const RESOLVE: &str = "documentLink/resolve";
@@ -142,7 +142,7 @@ fn links_decode_to_bytes() {
     s.reply(
         LINKS,
         json!([
-            { "range": range_of("./b.rs"), "target": "file:///fake/root/b.rs", "data": 2 },
+            { "range": range_of("./b.rs"), "target": crate::fake::fake_uri("b.rs"), "data": 2 },
             {
                 "range": range_of("https://a.example/x"),
                 "target": "https://a.example/x",
@@ -156,11 +156,17 @@ fn links_decode_to_bytes() {
     assert_eq!(links[0].target.as_deref(), Some("https://a.example/x"));
     assert_eq!(links[0].tooltip.as_deref(), Some("Follow link"));
     assert_eq!(links[1].range, bytes_of("./b.rs"));
-    assert_eq!(links[1].target.as_deref(), Some("file:///fake/root/b.rs"));
+    assert_eq!(
+        links[1].target.as_deref(),
+        Some(crate::fake::fake_uri("b.rs").as_str())
+    );
     assert_eq!(links[1].data, Some(json!(2)));
     let sent = s.sent(LINKS);
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0]["textDocument"]["uri"], "file:///fake/root/a.rs");
+    assert_eq!(
+        sent[0]["textDocument"]["uri"],
+        crate::fake::fake_uri("a.rs")
+    );
 }
 
 #[test]
@@ -178,8 +184,8 @@ fn empty_ranges_are_dropped() {
     s.reply(
         LINKS,
         json!([
-            { "range": { "start": at, "end": at }, "target": "file:///fake/root/b.rs" },
-            { "range": range_of("./b.rs"), "target": "file:///fake/root/b.rs" },
+            { "range": { "start": at, "end": at }, "target": crate::fake::fake_uri("b.rs") },
+            { "range": range_of("./b.rs"), "target": crate::fake::fake_uri("b.rs") },
         ]),
     );
     let links = s.ask().unwrap();
@@ -200,13 +206,16 @@ fn resolve_fills_the_target() {
         RESOLVE,
         json!({
             "range": range_of("./b.rs"),
-            "target": "file:///fake/root/b.rs",
+            "target": crate::fake::fake_uri("b.rs"),
             "data": { "id": 7 },
         }),
     );
     let resolved = s.resolve(link).unwrap();
     assert_eq!(resolved.range, bytes_of("./b.rs"));
-    assert_eq!(resolved.target.as_deref(), Some("file:///fake/root/b.rs"));
+    assert_eq!(
+        resolved.target.as_deref(),
+        Some(crate::fake::fake_uri("b.rs").as_str())
+    );
     // The link went back as the server gave it, data and all.
     let sent = s.sent(RESOLVE);
     assert_eq!(sent.len(), 1);
@@ -243,12 +252,13 @@ fn resolve_without_provider_is_unavailable() {
 #[test]
 fn targets_name_their_scheme_and_file() {
     let link = |target: &str| DocumentLink::new(0..1, Some(target.to_owned()));
-    let file = link("file:///fake/root/b%20c.rs#L12,5");
+    let file = link(&format!("{}#L12,5", crate::fake::fake_uri("b%20c.rs")));
     assert_eq!(file.scheme().as_deref(), Some("file"));
     assert_eq!(
         file.file_target(),
-        Some((PathBuf::from("/fake/root/b c.rs"), Some("L12,5".to_owned())))
+        Some((crate::fake::fake_path("b c.rs"), Some("L12,5".to_owned())))
     );
+    #[cfg(unix)]
     assert_eq!(link("file:///x").file_target(), Some(("/x".into(), None)));
     let web = link("HTTPS://a.example/");
     assert_eq!(web.scheme().as_deref(), Some("https"));

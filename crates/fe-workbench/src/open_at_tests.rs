@@ -315,7 +315,7 @@ fn a_place_in_a_previewed_tab_shows_the_text(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_viewer_goes_to_the_place_too(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     loader::test_support::lower_threshold(&root, 1024, false);
     let path = root.join("large.txt");
     let rows: String = (0..2000).map(|row| format!("line {row:06}\n")).collect();

@@ -308,7 +308,7 @@ fn find(root: &Path, command: GitCommand) -> Result<Option<Found>, RemoteError> 
         return Ok(None);
     };
     let shared = git_read(&repo, &["rev-parse", "--git-common-dir"])?;
-    let repository = (repo.workdir().join(shared).canonicalize())
+    let repository = (dunce::canonicalize(repo.workdir().join(shared)))
         .map_err(|error| failed(&format!("the git directory: {error}")))?;
     let target = match command {
         GitCommand::PushForceWithLease => force_target(&repo).map(Some),
@@ -438,7 +438,7 @@ fn publish_remote(repo: &Repo) -> Result<String, RemoteError> {
 /// What `git args` prints in `repo`'s working tree, trimmed, for what fe-git
 /// doesn't offer. Blocks until `git` exits.
 fn git_read(repo: &Repo, args: &[&str]) -> Result<String, RemoteError> {
-    let output = Command::new("git")
+    let output = crate::process_group::no_window(&mut Command::new("git"))
         .current_dir(repo.workdir())
         .args(args)
         .output()

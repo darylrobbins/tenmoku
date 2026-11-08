@@ -84,7 +84,7 @@ impl Dispatcher for NoInvocations {
 fn the_template_manifest_is_a_plugin() {
     let manifest = manifest();
     assert_eq!(manifest.id, ID);
-    let directory = template().canonicalize().unwrap();
+    let directory = dunce::canonicalize(template()).unwrap();
     assert_eq!(manifest.wasm, directory.join("word_count.wasm"));
     let capabilities: Grants = [
         Capability::BufferRead,

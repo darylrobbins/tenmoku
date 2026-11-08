@@ -84,17 +84,32 @@ fn lsp_globs_match_as_vs_code() {
 
 #[test]
 fn relative_patterns_match_under_their_base() {
-    let glob = relative("file:///r/sub", "*.go").unwrap();
+    // A base URI is a local file's only with a drive on Windows.
+    #[cfg(unix)]
+    let (base, drive) = ("file:///r/sub", "");
+    #[cfg(windows)]
+    let (base, drive) = ("file:///C:/r/sub", "C:");
+    let paths = |paths: &[&str]| -> Vec<String> {
+        paths.iter().map(|path| format!("{drive}{path}")).collect()
+    };
+    let check = |glob: &LspGlob, matching: &[&str], not: &[&str]| {
+        let (matching, not) = (paths(matching), paths(not));
+        fn as_str(paths: &[String]) -> Vec<&str> {
+            paths.iter().map(String::as_str).collect()
+        }
+        check(glob, &as_str(&matching), &as_str(&not));
+    };
+    let glob = relative(base, "*.go").unwrap();
     check(
         &glob,
         &["/r/sub/a.go"],
         &["/r/a.go", "/r/sub/x/a.go", "/r/subs/a.go"],
     );
-    let glob = relative("file:///r/sub", "foo{,.go}").unwrap();
+    let glob = relative(base, "foo{,.go}").unwrap();
     check(&glob, &["/r/sub/foo", "/r/sub/foo.go"], &["/r/foo"]);
-    let glob = relative("file:///r/sub", "gen/**").unwrap();
+    let glob = relative(base, "gen/**").unwrap();
     check(&glob, &["/r/sub/gen", "/r/sub/gen/a/b.go"], &["/r/gen"]);
-    assert!(relative("file:///r/sub", "[").is_err());
+    assert!(relative(base, "[").is_err());
     assert!(LspGlob::new(&GlobPattern::String("[".into())).is_err());
 }
 
@@ -137,7 +152,7 @@ fn notifications_reach_the_session_in_order() {
     // Queued before the notification, so it arrives before it.
     let hover = s.manager.hover(buffer.id(), buffer.version(), 1);
     let server = s.server;
-    let params = json!({ "changes": [{ "uri": "file:///fake/root/a.rs", "type": 2 }] });
+    let params = json!({ "changes": [{ "uri": crate::fake::fake_uri("a.rs"), "type": 2 }] });
     s.manager.notify_sessions(WATCHED, |id, _| {
         assert_eq!(id, server);
         Some(params.clone())

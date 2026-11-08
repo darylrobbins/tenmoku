@@ -159,14 +159,16 @@ fn files() {
     );
     assert_eq!(split(&repo), vec![s("mod.txt", Some(Modified), None)]);
 
-    // File names that look like pathspecs are taken literally.
-    write(&root, "[x]*.txt", b"odd\n");
+    // File names that look like pathspecs are taken literally. (Windows
+    // names can't hold `*`; `[x].txt` as a glob still matches `x.txt`.)
+    let odd = if cfg!(windows) { "[x].txt" } else { "[x]*.txt" };
+    write(&root, odd, b"odd\n");
     write(&root, "x.txt", b"other\n");
-    repo.stage(&[root.join("[x]*.txt")]).unwrap();
+    repo.stage(&[root.join(odd)]).unwrap();
     assert_eq!(
         split(&repo),
         vec![
-            s("[x]*.txt", Some(Added), None),
+            s(odd, Some(Added), None),
             s("mod.txt", Some(Modified), None),
             s("x.txt", None, Some(Untracked)),
         ]

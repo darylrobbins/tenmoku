@@ -125,6 +125,15 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 libc = "0.2"
+# The Windows side of what `libc` does on Unix: handle-relative file calls
+# (NtCreateFile), file identities, the Recycle Bin (already in the lock through
+# GPUI, std's dependencies and others). Each crate names the features it uses.
+windows-sys = "0.61"
+# Canonical paths without the `\\?\` prefix fs::canonicalize puts before a
+# Windows drive path, so a project root compares with, strips from and reads
+# like the paths built under it; fs::canonicalize itself elsewhere (already in
+# the lock through wasmtime and others; CC0-1.0 OR MIT-0 OR Apache-2.0).
+dunce = "1.0"
 log = "0.4"
 # HTTP types for the chat's transport (fe-chat-anthropic): status codes and
 # header maps (MIT OR Apache-2.0; already in the lock through gpui).

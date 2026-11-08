@@ -911,9 +911,7 @@ fn failure(error: &io::Error, name: &str) -> String {
 /// The device and inode of the entry at `path`, a symlink itself rather
 /// than its target; `None` if there's none.
 pub(super) fn entry_identity(path: &std::path::Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt as _;
-    let metadata = std::fs::symlink_metadata(path).ok()?;
-    Some((metadata.dev(), metadata.ino()))
+    kiln::core::platform::path_identity(path, false).ok()
 }
 
 /// The paths the panel's operations running in the background work in, in

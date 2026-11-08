@@ -8,7 +8,7 @@
 use std::{
     cell::RefCell,
     collections::HashSet,
-    fs::{self, File},
+    fs::File,
     io::{self, Read},
     ops::Range,
     path::Path,
@@ -135,7 +135,7 @@ pub(crate) fn find(
         // The request's text alone had more than the cap.
         return finder.finish();
     }
-    let Ok(root) = fs::canonicalize(root) else {
+    let Ok(root) = dunce::canonicalize(root) else {
         return finder.finish();
     };
     let query = SearchQuery {

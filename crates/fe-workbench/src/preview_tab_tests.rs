@@ -23,7 +23,7 @@ use crate::{Launch, Workbench, loader};
 
 fn project(files: &[&str]) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     for name in files {
         std::fs::write(root.join(name), format!("{name}\n")).unwrap();
     }

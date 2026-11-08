@@ -40,7 +40,7 @@ fn reset() -> KeymapEdit {
 /// in the worker until the returned sender is dropped or sent to.
 fn keymap(cx: &mut TestAppContext) -> (tempfile::TempDir, PathBuf, async_channel::Sender<()>) {
     let dir = tempfile::tempdir().unwrap();
-    let config = fs::canonicalize(dir.path()).unwrap();
+    let config = dunce::canonicalize(dir.path()).unwrap();
     let path = config.join(KEYMAP_FILE);
     fs::write(&path, format!("{KEYMAP_HEADER}\n{BOUND}")).unwrap();
     let (release, gate) = async_channel::bounded(1);

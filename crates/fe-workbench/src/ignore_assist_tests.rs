@@ -213,9 +213,11 @@ fn hover_lists_matched_files(cx: &mut TestAppContext) {
             .read_with(&s.cx, |view, _| view.popover_text())
             .is_some()
     });
-    let shown = editor
-        .read_with(&s.cx, |view, _| view.popover_text())
-        .unwrap();
+    let shown = crate::tests::slashed(
+        editor
+            .read_with(&s.cx, |view, _| view.popover_text())
+            .unwrap(),
+    );
     assert!(shown.contains("matches 12 files"), "{shown}");
     assert!(shown.contains("logs/00.log"), "{shown}");
     assert!(shown.contains("logs/09.log"), "{shown}");
@@ -469,6 +471,11 @@ fn escaped_names_match_literally() {
         "end ",
         "a b",
     ] {
+        // Windows names can't hold `*`, `?` or `\`, nor end in a blank.
+        let windows_name = !name.contains(['*', '?', '\\']) && !name.ends_with(' ');
+        if cfg!(windows) && !windows_name {
+            continue;
+        }
         fs::write(dir.path().join(name), "").unwrap();
         let pattern = escaped(name, true);
         let report = check(dir.path(), &format!("{pattern}\n"));

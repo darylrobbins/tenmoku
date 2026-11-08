@@ -4,7 +4,7 @@
 //! the app with its default layers: what an app that edits the user's
 //! keymap reads it on. They follow a change to the defaults.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use gpui::TestAppContext;
 use kiln_core::{KeymapLayer, KeymapStore};
@@ -22,7 +22,10 @@ fn the_started_service_has_the_store_with_its_defaults(cx: &mut TestAppContext) 
     assert!(cx.update(|cx| config::keymap_store(cx).is_none()));
     let framework = layer("framework.toml", "secondary-shift-p", "palette.toggle");
     let app = layer("app.toml", "secondary-s", "pad.save");
-    let user = PathBuf::from("/nonexistent/keymap.toml");
+    // A file that isn't there, in cargo's scratch folder: the service
+    // creates its folder, which `/nonexistent` would put at the root of
+    // the drive on Windows.
+    let user = Path::new(env!("CARGO_TARGET_TMPDIR")).join("keymap-store-defaults/keymap.toml");
     let (_sender, batches) = batch_channel();
     cx.update(|cx| {
         let store = KeymapStore::with_defaults(

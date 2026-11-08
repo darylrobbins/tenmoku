@@ -122,7 +122,7 @@ impl Quitting {
         });
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
-        let root = fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let launch = Launch {
             root: Some(root.clone()),
             file: None,

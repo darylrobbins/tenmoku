@@ -1,6 +1,10 @@
 //! Nerd Font icons painted by a terminal view: a private-use glyph wider than
 //! its cell is fitted to one cell, or two when the next is blank.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::thread;

@@ -54,7 +54,7 @@ fn non_utf8_file_names() {
     use std::os::unix::ffi::OsStrExt;
 
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     git(&root, &["init", "-q"]);
     let name = Path::new(OsStr::from_bytes(b"caf\xe9.rs"));
     let c1 = commit(&root, &[(name, BODY)], "C1");
@@ -89,7 +89,7 @@ fn non_utf8_file_names() {
 #[test]
 fn root_commit_listed_with_show_root_off() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     git(&root, &["init", "-q"]);
     git(&root, &["config", "log.showRoot", "false"]);
     let (a, only_root) = (Path::new("a.rs"), Path::new("only_root.rs"));

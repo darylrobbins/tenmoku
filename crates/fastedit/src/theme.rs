@@ -239,10 +239,14 @@ mod tests {
         let user = state.path().join("settings.toml");
         fs::write(&user, "").unwrap();
         let store = fe_config::SettingsStore::load(Some(user), None);
+        // The test's own batches, not a watcher thread, which the test
+        // scheduler refuses to hear from.
+        let (_sender, batches) = batch_channel();
         let config = Config::new("dev.fastedit.test", "fastedit")
             .settings_store(store.into_inner())
             .theme_mode(ThemeMode::Dark)
-            .theme_extensions(EXTENSIONS);
+            .theme_extensions(EXTENSIONS)
+            .watch_with(batches);
         let diagnostics = cx.update(|cx| kiln::init(cx, config));
         assert_eq!(diagnostics, []);
         cx.update(init);

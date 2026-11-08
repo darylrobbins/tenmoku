@@ -23,6 +23,35 @@ cargo build --release -p fastedit   # the package keeps its old name; produces t
 cargo run -p fastedit               # run a debug build
 ```
 
+### Windows
+
+You also need:
+
+- The MSVC toolchain: Visual Studio 2022 or its Build Tools, with the "Desktop
+  development with C++" workload.
+- CMake on `PATH`, for the WebAssembly runtime's C API. Visual Studio's own copy
+  works: `C:\Program Files\Microsoft Visual Studio\2022\<edition>\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
+
+The language servers aren't bundled. For Rust, add the `rust-analyzer` component
+to the pinned toolchain with `rustup component add rust-analyzer`.
+
+Run the tests with `GIT_CONFIG_NOSYSTEM=1`, as CI does. Git for Windows' system
+config turns on `core.autocrlf`, and the tests' repositories expect git's
+defaults.
+
+Shell tasks run in Windows PowerShell (`powershell -NoProfile -Command`), where
+they run in `/bin/sh` elsewhere.
+
+The Windows build lacks some things the other platforms have:
+
+- A second launch opens its own window. It doesn't hand its files to the running
+  instance.
+- Copying a symlink in the project tree is refused.
+- Plugins can't read the workspace's files: WASI preopens are named by host
+  path, which a guest can't resolve on Windows.
+- Compiled plugins aren't cached, as nothing checks that the cache folder is
+  the user's alone.
+
 ## Tests and checks
 
 CI runs these, and a pull request should pass all of them:

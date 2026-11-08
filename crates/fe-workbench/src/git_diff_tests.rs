@@ -952,6 +952,7 @@ fn change_bar_opens_side_by_side(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_tab_opened_through_a_symlink_shares_a_diff_only_buffer(cx: &mut TestAppContext) {
     let dir = fixture();
     std::os::unix::fs::symlink(dir.path().join("a.rs"), dir.path().join("alias.rs")).unwrap();
@@ -1240,10 +1241,10 @@ fn a_working_sides_jump_is_recorded_for_back(cx: &mut TestAppContext) {
         (history.back(None), history.back(None))
     });
     // The index's side isn't the file: only the working side's is kept.
-    let a = fs::canonicalize(dir.path().join("a.rs")).unwrap();
+    let a = dunce::canonicalize(dir.path().join("a.rs")).unwrap();
     let place = back.0.expect("recorded");
     assert_eq!(
-        (fs::canonicalize(&place.path).unwrap(), place.offset),
+        (dunce::canonicalize(&place.path).unwrap(), place.offset),
         (a, 5)
     );
     assert_eq!(back.1, None);

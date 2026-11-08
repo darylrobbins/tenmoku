@@ -678,6 +678,7 @@ fn the_entry_to_paste_outlives_being_ignored(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_name_that_isnt_utf8_is_cut_and_pasted(cx: &mut TestAppContext) {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
 
@@ -849,6 +850,7 @@ fn reopen_drops_clipboard_that_is_still_gone(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_moved_symlinks_target_keeps_its_edits(cx: &mut TestAppContext) {
     let mut s = Lsp::with_scripts(cx, participant(), Script::default());
     s.set_trust(true);
@@ -911,7 +913,7 @@ fn a_moved_symlinks_target_keeps_its_edits(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_cut_waits_for_work_in_the_folder_it_goes_in(cx: &mut TestAppContext) {
     let dir = project(&[("a.txt", "a"), ("dst/keep.txt", "")]);
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let (workbench, cx) = open_root(cx, &root, true);
     open_file(&workbench, &root.join("a.txt"), cx);
     let a = active_editor(&workbench, cx);
@@ -949,7 +951,7 @@ fn a_cut_checks_its_folder_again_once_servers_answer(cx: &mut TestAppContext) {
         (records.iter()).any(|record| record.method() == "workspace/willRenameFiles")
     });
     // Work starts in `src/sub` while the servers are asked.
-    let sub = fs::canonicalize(s.path("src/sub")).unwrap();
+    let sub = dunce::canonicalize(s.path("src/sub")).unwrap();
     let running = super::ops::Running::start(sub);
     s.clock.wait_for_sleep(Duration::from_secs(5));
     s.clock.advance(Duration::from_secs(5));

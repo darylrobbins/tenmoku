@@ -129,7 +129,7 @@ impl Invocation {
     pub fn of(spec: &ServerSpec, extension_dir: &Path, resolved_command: Option<&Path>) -> Self {
         let command = resolved_command.unwrap_or(&spec.command).to_owned();
         let mut script_hashes = BTreeMap::new();
-        if let Ok(dir) = extension_dir.canonicalize() {
+        if let Ok(dir) = dunce::canonicalize(extension_dir) {
             let named = spec.args.iter().flat_map(|arg| {
                 let value = arg
                     .strip_prefix('-')
@@ -172,7 +172,7 @@ impl Invocation {
 /// The canonical path of `candidate` and its content's hash, if it is a
 /// file inside the canonical directory `dir`, with symlinks followed.
 fn hash_inside(candidate: &Path, dir: &Path) -> Option<(String, String)> {
-    let path = candidate.canonicalize().ok()?;
+    let path = dunce::canonicalize(candidate).ok()?;
     if !path.starts_with(dir) || !path.is_file() {
         return None;
     }
@@ -582,7 +582,7 @@ fn evaluation(
     let servers: Vec<Evaluated> = servers
         .into_iter()
         .map(|mut server| {
-            if let Ok(dir) = server.extension_dir.canonicalize() {
+            if let Ok(dir) = dunce::canonicalize(&server.extension_dir) {
                 server.extension_dir = dir;
             }
             let invocation = invocation_now(&server.spec, &server.extension_dir);

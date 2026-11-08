@@ -31,11 +31,7 @@ fn a_reload_restyles_the_running_session_with_the_fallbacks(cx: &mut TestAppCont
         file: Some((path, Some(Buffer::new("fn a() {}\n").into()))),
     };
     let (workbench, cx, _) = open(cx, launch);
-    let first = TerminalSettings {
-        shell: "/bin/sh".to_owned(),
-        shell_args: vec!["-c".to_owned(), "exec cat".to_owned()],
-        ..TerminalSettings::default()
-    };
+    let first = crate::tests::printing_shell("");
     workbench.update(cx, |workbench, cx| {
         workbench.set_terminal_settings(&first, cx)
     });

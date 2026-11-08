@@ -245,7 +245,7 @@ impl SearchNavigation {
         if Instant::now() >= deadline {
             return Ok(());
         }
-        let Ok(root) = std::fs::canonicalize(&self.root) else {
+        let Ok(root) = dunce::canonicalize(&self.root) else {
             return Ok(());
         };
         let Some(slot) = self.fallback_slots.take() else {

@@ -77,7 +77,6 @@ use std::{
     collections::{HashMap, HashSet},
     fs, io,
     ops::Range,
-    os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -315,7 +314,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Result<Made, String> {
         let display = file.path.display().to_string();
-        let root = (self.root().and_then(|root| fs::canonicalize(root).ok()))
+        let root = (self.root().and_then(|root| dunce::canonicalize(root).ok()))
             .ok_or_else(|| format!("{display} isn't in the project"))?;
         // Resolved as the tree's operations take them: its folders, never
         // the entry itself, which may be a symlink.
@@ -384,11 +383,11 @@ impl Workbench {
             } => {
                 let (from, target) = (in_project(&file.path)?, in_project(&to)?);
                 let to_display = to.display();
-                let source =
-                    fs::symlink_metadata(&from).map_err(|error| match missing(&error) {
-                        true => format!("{display} doesn't exist"),
-                        false => format!("can't rename {display}: {error}"),
-                    })?;
+                let identity = |path: &Path| kiln::core::platform::path_identity(path, false);
+                let source = identity(&from).map_err(|error| match missing(&error) {
+                    true => format!("{display} doesn't exist"),
+                    false => format!("can't rename {display}: {error}"),
+                })?;
                 if from == target {
                     return Ok(Made::Nothing);
                 }
@@ -405,8 +404,7 @@ impl Workbench {
                 };
                 // The entry itself, under another case on a volume that
                 // ignores case: `fs_ops::rename` renames it.
-                let itself = (existing.as_ref())
-                    .is_some_and(|meta| (meta.dev(), meta.ino()) == (source.dev(), source.ino()));
+                let itself = existing.is_some() && identity(&target).ok() == Some(source);
                 let replaced = match existing {
                     Some(_) if itself => None,
                     Some(_) if !overwrite && ignore_if_exists => return Ok(Made::Skipped),

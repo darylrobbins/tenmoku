@@ -1,0 +1,4 @@
+# Check text out with LF everywhere, Windows included: goldens, fixtures and
+# include_str! data are compared byte for byte, and core.autocrlf (on by
+# default on Windows and its CI runners) would otherwise turn them CRLF.
+* text=auto eol=lf

@@ -68,7 +68,7 @@ fn checks(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
 #[gpui::test]
 fn a_check_of_the_old_path_landing_after_a_rename_starts_over(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let (old, new) = (root.join("notes.txt"), root.join("todo.txt"));
     fs::write(&old, "hello\n").unwrap();
     let (workbench, cx) = open(cx, &root);

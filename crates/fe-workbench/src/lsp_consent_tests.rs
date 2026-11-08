@@ -17,7 +17,7 @@ use crate::lsp_consent::{ConsentGate, ConsentStore, Decision, Entry};
 use crate::{
     CONSENT_FILE, ExtensionServer, Invocation, PendingConsent, decline_extension_server,
     extension_servers, grant_extension_server, pending_extension_consents,
-    set_extension_consent_file, set_extension_servers,
+    set_extension_consent_file, set_extension_servers, tests::rooted,
 };
 
 /// An extension `acme.zig` in `dir`, with `server.js` beside its manifest.
@@ -25,7 +25,7 @@ fn extension(dir: &Path) -> std::path::PathBuf {
     let extension = dir.join("zig");
     fs::create_dir_all(&extension).unwrap();
     fs::write(extension.join("server.js"), "console.log(1)\n").unwrap();
-    extension.canonicalize().unwrap()
+    dunce::canonicalize(&extension).unwrap()
 }
 
 /// `acme.zig`'s `zls`, run as `/usr/bin/node server.js --stdio`.
@@ -227,7 +227,8 @@ fn an_unconsented_server_is_withheld_and_pending(cx: &mut TestAppContext) {
 
     assert_eq!(handed(cx), []);
     let pending = pending(cx);
-    let expected = Invocation::of(&server(&extension).spec, &extension, None);
+    let spec = server(&extension).spec;
+    let expected = Invocation::of(&spec, &extension, Some(&rooted(&spec.command)));
     assert_eq!(
         pending,
         [PendingConsent {
@@ -324,7 +325,11 @@ fn a_changed_invocation_keeps_the_old_and_asks_again(cx: &mut TestAppContext) {
         assert_eq!(pending[0].previous.as_ref(), Some(&invocation));
         assert_eq!(
             pending[0].invocation,
-            Invocation::of(&changed.spec, &extension, None)
+            Invocation::of(
+                &changed.spec,
+                &extension,
+                Some(&rooted(&changed.spec.command))
+            )
         );
         assert!(!pending[0].declined);
     };
@@ -378,7 +383,11 @@ fn a_later_session_runs_the_granted_only_while_its_script_is_as_granted(
     assert_eq!(handed.len(), 1);
     assert_eq!(
         (&handed[0].command, &handed[0].args, &handed[0].env),
-        (&granted.spec.command, &granted.spec.args, &granted.spec.env)
+        (
+            &rooted(&granted.spec.command),
+            &granted.spec.args,
+            &granted.spec.env
+        )
     );
     assert_eq!(pending(later)[0].previous.as_ref(), Some(&asked.invocation));
 
@@ -431,6 +440,7 @@ fn launch(gate: &ConsentGate, recorder: &Recorder, spec: &ServerSpec) -> Option<
 }
 
 /// Makes `path` an executable file.
+#[cfg(unix)]
 fn executable(path: &Path) {
     use std::os::unix::fs::PermissionsExt as _;
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -450,6 +460,7 @@ fn grant(cx: &mut TestAppContext, server: &ExtensionServer) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn every_launch_is_checked_against_the_grant(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let extension = extension(dir.path());
@@ -512,6 +523,7 @@ fn every_launch_is_checked_against_the_grant(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_retargeted_or_new_script_is_a_change(cx: &mut TestAppContext, later: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let extension = extension(dir.path());
@@ -702,7 +714,7 @@ fn only_the_first_server_of_a_name_is_handed_and_checked(cx: &mut TestAppContext
     let extension = extension(dir.path());
     let other = dir.path().join("other");
     fs::create_dir_all(&other).unwrap();
-    let other = other.canonicalize().unwrap();
+    let other = dunce::canonicalize(&other).unwrap();
     // Two extensions' `zls`, both running the first's script, which is
     // outside the second's directory, so its grant doesn't hash it.
     let script = extension.join("server.js").to_string_lossy().into_owned();

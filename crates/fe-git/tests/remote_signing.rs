@@ -8,7 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use fe_git::{PullMode, RemoteError, Repo};
+#[cfg(unix)]
+use fe_git::RemoteError;
+use fe_git::{PullMode, Repo};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = run_git(dir, args);
@@ -155,6 +157,7 @@ fn sentinel_signer(dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 /// A bare `<name>.git` in `dir` with one commit on `main`.
+#[cfg(unix)]
 fn bare(dir: &Path, name: &str) -> PathBuf {
     let seed = dir.join(format!("{name}-seed"));
     fs::create_dir(&seed).unwrap();
@@ -168,10 +171,12 @@ fn bare(dir: &Path, name: &str) -> PathBuf {
     dir.join(bare)
 }
 
+#[cfg(unix)]
 fn refs(repo: &Path) -> String {
     git(repo, &["for-each-ref"])
 }
 
+#[cfg(unix)]
 fn expect_failed(result: Result<(), RemoteError>, what: &str) {
     assert!(
         matches!(result, Err(RemoteError::Failed { .. })),

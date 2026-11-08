@@ -847,7 +847,7 @@ pub(crate) fn resolved(path: &Path) -> PathBuf {
     let mut rest = Vec::new();
     let mut ancestor = parent;
     let base = loop {
-        if let Ok(real) = ancestor.canonicalize() {
+        if let Ok(real) = dunce::canonicalize(ancestor) {
             break real;
         }
         match (ancestor.file_name(), ancestor.parent()) {

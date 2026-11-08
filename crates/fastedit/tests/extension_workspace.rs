@@ -102,7 +102,10 @@ fn a_trusted_workspace_server_needs_its_own_consent(cx: &mut TestAppContext) {
         (asked.extension_id.as_str(), asked.server.as_str()),
         ("team.zig", "zls")
     );
-    assert_eq!(asked.extension_dir, workspace_zig.canonicalize().unwrap());
+    assert_eq!(
+        asked.extension_dir,
+        dunce::canonicalize(&workspace_zig).unwrap()
+    );
     assert_eq!(asked.previous, None);
     assert!(!asked.declined);
     assert_eq!(servers(cx), ["zls"], "only the user's runs");

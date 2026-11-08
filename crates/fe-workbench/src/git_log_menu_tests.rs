@@ -171,7 +171,7 @@ fn commit_menu(cx: &mut TestAppContext) {
 #[gpui::test]
 fn file_menu(cx: &mut TestAppContext) {
     let (dir, ids) = fixture();
-    let root = &dir.path().canonicalize().unwrap();
+    let root = &dunce::canonicalize(dir.path()).unwrap();
     fs::write(root.join("n.rs"), "newer\n").unwrap();
     let (workbench, mut cx) = window(cx, root);
     let cx = &mut cx;
