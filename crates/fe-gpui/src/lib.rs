@@ -254,13 +254,14 @@ pub struct EditorTheme {
 }
 
 impl EditorTheme {
-    /// Tenmoku Dark with the default settings: the first installed font
-    /// of a preferred list.
+    /// Yohen, the default dark palette, with the default settings: the
+    /// first installed font of a preferred list.
     pub fn default_dark(cx: &App) -> Self {
         Self::from_settings(&EditorSettings::default(), cx)
     }
 
-    /// Tenmoku Dark with the font and metrics of `settings`.
+    /// Yohen, the default dark palette, with the font and metrics of
+    /// `settings`.
     pub fn from_settings(settings: &EditorSettings, cx: &App) -> Self {
         Self::from_palette(EditorPalette::fastedit_dark(), settings, cx)
     }

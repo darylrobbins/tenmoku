@@ -18,6 +18,8 @@ kiln-ui.workspace = true
 usvg.workspace = true
 
 [dev-dependencies]
+# The screenshots example's scenes: the default themes, Yohen and Hakuji.
+fe-config.workspace = true
 # Fences are highlighted whatever the machine's load, as in fe-syntax's own tests.
 fe-syntax = { workspace = true, features = ["no-query-budget"] }
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }

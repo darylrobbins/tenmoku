@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use fe_config::{EditorColors, EditorPalette, theme::EXTENSIONS};
-use kiln_core::theme::ThemeFile;
+use kiln_core::theme::{ThemeData, ThemeFile};
 
 const KEYS: [&str; 5] = [
     "find_match",
@@ -27,23 +27,20 @@ fn tenmoku_palettes_set_the_new_editor_keys_to_todays_colours() {
     }
     let alpha = (TODAY_ALPHA * 255.).round() as u8;
     assert_eq!(alpha, 0x38);
-    let palettes = [
-        (
-            EditorPalette::fastedit_dark(),
-            include_str!("../themes/tenmoku-dark.toml"),
-        ),
-        (
-            EditorPalette::fastedit_light(),
-            include_str!("../themes/tenmoku-light.toml"),
-        ),
+    let sources = [
+        include_str!("../themes/tenmoku-dark.toml"),
+        include_str!("../themes/tenmoku-light.toml"),
     ];
-    for (palette, source) in palettes {
+    for source in sources {
         let (file, diagnostics) = ThemeFile::parse(Path::new("bundled.toml"), source, EXTENSIONS);
         assert_eq!(diagnostics, []);
-        let editor = &file.unwrap().extensions["editor"];
+        let file = file.unwrap();
+        let editor = &file.extensions["editor"];
         for key in KEYS {
             assert!(editor.contains_key(key), "the file sets {key}");
         }
+        let (palette, warnings) = EditorPalette::for_theme(&ThemeData::from_file(&file));
+        assert_eq!(warnings, [] as [String; 0]);
         let e = &palette.editor;
         // Find matches and the identifier's uses: the foreground, faint.
         let faint = e.foreground.with_alpha(alpha);

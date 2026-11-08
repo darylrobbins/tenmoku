@@ -49,7 +49,7 @@ fn activate(id: &str, cx: &mut gpui::App) -> EditorPalette {
     palette
 }
 
-/// A workbench with Tenmoku Dark in use, under `settings` as the config
+/// A workbench with Yohen, the default, in use, under `settings` as the config
 /// service's, with the sheet up, and every write going to their file.
 fn open<'a>(settings: &str, cx: &'a mut TestAppContext) -> Sheet<'a> {
     let dir = tempfile::tempdir().unwrap();
@@ -71,7 +71,7 @@ fn open<'a>(settings: &str, cx: &'a mut TestAppContext) -> Sheet<'a> {
             .settings(store)
             .start_with(batches, cx)
             .detach();
-        activate("tenmoku-dark", cx);
+        activate("yohen", cx);
     });
     let launch = Launch {
         root: Some(root),
@@ -188,7 +188,7 @@ fn tiles_use_each_themes_colours(cx: &mut TestAppContext) {
     let sheet = s.sheet();
     assert_eq!(
         s.cx.update(|_, cx| fe_ui::ActiveTheme::theme(&*cx).name.clone()),
-        theme_data("tenmoku-dark").name,
+        theme_data("yohen").name,
     );
     let tiles = sheet.read_with(s.cx, |sheet, _| sheet.tiles());
 
@@ -212,10 +212,7 @@ fn tiles_use_each_themes_colours(cx: &mut TestAppContext) {
     }
 
     // Mode's three are the chosen themes', the last both of them.
-    let (dark, light) = (
-        expected_swatch("tenmoku-dark"),
-        expected_swatch("tenmoku-light"),
-    );
+    let (dark, light) = (expected_swatch("yohen"), expected_swatch("hakuji"));
     let mode: Vec<_> = tiles.iter().take(3).cloned().collect();
     assert_eq!(
         mode,
@@ -250,10 +247,7 @@ fn tiles_use_each_themes_colours(cx: &mut TestAppContext) {
         tile.unwrap_or_else(|| panic!("no tile {label}: {tiles:?}"))
             .1
     };
-    assert_eq!(
-        art("acme/night"),
-        TileArt::Window(expected_swatch("tenmoku-dark"))
-    );
+    assert_eq!(art("acme/night"), TileArt::Window(expected_swatch("yohen")));
     let base = ThemeData::base(fe_ui::Appearance::Light);
     let colors = Theme::new(base.clone()).colors;
     let TileArt::Window(noon) = art("acme/noon") else {
@@ -294,7 +288,7 @@ fn sample_follows_settings(cx: &mut TestAppContext) {
     assert_eq!(
         editor.read_with(s.cx, |editor, _| editor.theme().background),
         hsla(
-            EditorPalette::for_theme(&theme_data("tenmoku-dark"))
+            EditorPalette::for_theme(&theme_data("yohen"))
                 .0
                 .editor
                 .background
@@ -322,7 +316,7 @@ fn sample_follows_settings(cx: &mut TestAppContext) {
     let workbench = s.workbench.clone();
     let light = s.cx.update(|_, cx| {
         workbench.update(cx, |workbench, cx| workbench.reload_settings(&event, cx));
-        activate("tenmoku-light", cx)
+        activate("hakuji", cx)
     });
     draw(s.cx);
     let want =
@@ -579,7 +573,7 @@ fn failed_dark_write_still_retires_name(cx: &mut TestAppContext) {
         ControlId::DarkTheme,
         "Tenmoku Ember",
         "Dark Modern",
-        "Tenmoku Dark",
+        "Yohen",
         cx,
     );
     assert_eq!(file.theme.name, None);
@@ -593,7 +587,7 @@ fn failed_light_write_still_retires_name(cx: &mut TestAppContext) {
         ControlId::LightTheme,
         "Catppuccin Latte",
         "Light 2026",
-        "Tenmoku Light",
+        "Hakuji",
         cx,
     );
     assert_eq!(file.theme.name, None);

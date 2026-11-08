@@ -72,7 +72,11 @@ fn every_bundled_theme_sets_both_readably() {
 
 #[test]
 fn quick_scope_s_own_colours_in_tenmoku_dark() {
-    let editor = &EditorPalette::fastedit_dark().editor;
+    let source = include_str!("../themes/tenmoku-dark.toml");
+    let (file, _) = ThemeFile::parse(Path::new("tenmoku-dark.toml"), source, EXTENSIONS);
+    let (palette, warnings) = EditorPalette::for_theme(&ThemeData::from_file(&file.unwrap()));
+    assert_eq!(warnings, Vec::<String>::new());
+    let editor = &palette.editor;
     assert_eq!(editor.quick_scope_primary, "#afff5f".parse().unwrap());
     assert_eq!(editor.quick_scope_secondary, "#5fffff".parse().unwrap());
 }

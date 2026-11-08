@@ -169,10 +169,14 @@ const SURFACES: &[Surface] = &[
 ];
 
 /// The two appearances every surface is rendered in: the suffix, the
-/// bundled theme and the settings that choose it.
+/// bundled theme and the settings that choose it, the defaults.
 const APPEARANCES: [(&str, &str, &str); 2] = [
-    ("dark", "tenmoku-dark", ""),
-    ("light", "tenmoku-light", "[theme]\nmode = \"light\"\n"),
+    ("dark", themes::DEFAULT_DARK, ""),
+    (
+        "light",
+        themes::DEFAULT_LIGHT,
+        "[theme]\nmode = \"light\"\n",
+    ),
 ];
 
 /// `audit <out-dir>`: renders the surfaces into `out-dir`. Re-runs itself

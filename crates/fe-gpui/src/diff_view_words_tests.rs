@@ -279,16 +279,32 @@ fn theme_colours(cx: &mut TestAppContext) {
             let listed = palette.editor.get(key).expect("a colour key").to_rgba_u32();
             assert_eq!(Hsla::from(gpui::rgba(listed)), color, "{name} {key}");
             assert!(!is_blue(color), "{name} {key} is blue: {color:?}");
-            // Over the text: see-through.
-            assert!(color.a > 0. && color.a < 1., "{name} {key}");
+            assert!(color.a > 0., "{name} {key}");
+            // A word and the filler go over a row band or the text's
+            // background: see-through. Yohen's and Hakuji's row bands are
+            // opaque, mixed with the background ahead.
+            match key.ends_with("_row") {
+                true => assert_eq!(color.a, 1., "{name} {key}"),
+                false => assert!(color.a < 1., "{name} {key}"),
+            }
         }
-        // A word stands out from its row: more opaque, the same side's
-        // hue (green added, red removed).
-        assert!(theme.diff_added_word.a > theme.diff_added_row.a, "{name}");
-        assert!(
-            theme.diff_removed_word.a > theme.diff_removed_row.a,
-            "{name}"
-        );
+        // A word stands out from its row: its tint moves the band's colour,
+        // in the same side's hue (green added, red removed).
+        for (row, word) in [
+            (theme.diff_added_row, theme.diff_added_word),
+            (theme.diff_removed_row, theme.diff_removed_word),
+        ] {
+            let (row, tint) = (gpui::Rgba::from(row), gpui::Rgba::from(word));
+            let mix = |u: f32, o: f32| o * tint.a + u * (1. - tint.a);
+            let worded = [mix(row.r, tint.r), mix(row.g, tint.g), mix(row.b, tint.b)];
+            let moved = [row.r, row.g, row.b]
+                .iter()
+                .zip(worded)
+                .map(|(row, worded)| (row - worded).abs())
+                .fold(0., f32::max);
+            // At least 8 of 255 in some channel.
+            assert!(moved >= 8. / 255., "{name}: a word shows on its row");
+        }
         let green = |color: Hsla| (0.2..0.45).contains(&color.h);
         let red = |color: Hsla| color.h < 0.05 || color.h > 0.9;
         assert!(
@@ -354,11 +370,13 @@ mod contrast {
                 ("added", theme.diff_added_row, theme.diff_added_word),
                 ("removed", theme.diff_removed_row, theme.diff_removed_word),
             ] {
-                // No stronger than VS Code's #..33.
-                assert!(
-                    row.a <= 0.2 + 0.005 && word.a <= 0.2 + 0.005,
-                    "{name} {side}"
-                );
+                // No stronger than VS Code's #..33, where it's see-through:
+                // an opaque band (Yohen's, Hakuji's) is held to the contrast
+                // checks alone.
+                assert!(word.a <= 0.2 + 0.005, "{name} {side}");
+                if row.a < 1. {
+                    assert!(row.a <= 0.2 + 0.005, "{name} {side}");
+                }
                 let banded = over(background, row);
                 let worded = over(banded, word);
                 // The default text keeps WCAG AA on the word.

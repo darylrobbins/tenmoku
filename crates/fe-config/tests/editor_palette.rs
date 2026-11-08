@@ -1,5 +1,6 @@
-//! The editor's colours: the bundled dark and light palettes, and a kiln
-//! theme's `[editor]` and `[syntax]` tables laid over them.
+//! The editor's colours: the bundled dark and light palettes, Yohen's and
+//! Hakuji's, and a kiln theme's `[editor]` and `[syntax]` tables laid over
+//! them.
 
 use std::path::Path;
 
@@ -43,16 +44,31 @@ fn bundled_palettes() {
         (light.clone(), vec![])
     );
 
-    assert_eq!(dark.editor.background, color("#16181d"));
-    assert_eq!(dark.editor.cursor, color("#7aa2f7"));
-    assert_eq!(dark.editor.popover_background, color("#21252b"));
-    assert_eq!(dark.syntax_color("keyword"), Some(color("#c678dd")));
-    assert_eq!(
-        light.editor.background,
-        ThemeData::light().tokens.surface.background
-    );
+    // Yohen's and Hakuji's: Tenmoku's default themes.
+    assert_eq!(dark.editor.background, color("#1c1613"));
+    assert_eq!(dark.editor.cursor, color("#e0874c"));
+    assert_eq!(dark.editor.popover_background, color("#2a211c"));
+    assert_eq!(dark.syntax_color("keyword"), Some(color("#c7a5e6")));
+    assert_eq!(light.editor.background, color("#ffffff"));
+    assert_eq!(light.editor.cursor, color("#a84a16"));
+    assert_eq!(light.syntax_color("keyword"), Some(color("#7b36a8")));
+    for (palette, source) in [
+        (dark, include_str!("../themes/yohen.toml")),
+        (light, include_str!("../themes/hakuji.toml")),
+    ] {
+        let (data, diagnostics) = theme(source);
+        assert_eq!(diagnostics, 0);
+        assert_eq!(EditorPalette::for_theme(&data), (palette.clone(), vec![]));
+    }
+    // Tenmoku Dark keeps its own colours over the new base.
+    let (tenmoku_dark, _) = theme(include_str!("../themes/tenmoku-dark.toml"));
+    let (tenmoku_dark, _) = EditorPalette::for_theme(&tenmoku_dark);
+    assert_eq!(tenmoku_dark.editor.background, color("#16181d"));
+    assert_eq!(tenmoku_dark.syntax_color("keyword"), Some(color("#c678dd")));
 
     let sources = [
+        include_str!("../themes/yohen.toml"),
+        include_str!("../themes/hakuji.toml"),
         include_str!("../themes/tenmoku-dark.toml"),
         include_str!("../themes/tenmoku-light.toml"),
         include_str!("../themes/tenmoku-ember.toml"),

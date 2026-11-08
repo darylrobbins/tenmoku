@@ -1,7 +1,8 @@
-//! The terminal's ANSI colours come from a theme's `[terminal]` table. A
-//! theme without one keeps the two sets the terminal drew before themes;
+//! The terminal's ANSI colours come from a theme's `[terminal]` table.
 //! Yohen and Hakuji set theirs from their palette, each readable on the
-//! editor.
+//! editor, and being the default palettes, a theme without the table takes
+//! theirs. Tenmoku Dark and Light keep the two sets the terminal drew before
+//! themes.
 
 use fe_config::{Color, EditorPalette, themes::bundled_themes};
 use kiln_core::theme::{Appearance, ThemeData};
@@ -24,19 +25,38 @@ fn palette(id: &str) -> (EditorPalette, Appearance) {
 }
 
 #[test]
-fn a_theme_without_the_table_keeps_todays_sets() {
+fn a_theme_without_the_table_inherits_the_defaults() {
+    let (yohen, _) = palette("yohen");
+    let (hakuji, _) = palette("hakuji");
+    assert_eq!(
+        EditorPalette::bundled(Appearance::Dark).terminal,
+        yohen.terminal
+    );
+    assert_eq!(
+        EditorPalette::bundled(Appearance::Light).terminal,
+        hakuji.terminal
+    );
+    let mut inheriting = 0;
     for theme in bundled_themes() {
-        if matches!(theme.id, "yohen" | "hakuji") {
-            continue;
-        }
         let (palette, appearance) = palette(theme.id);
-        let want = match appearance {
-            Appearance::Dark => DARK,
-            Appearance::Light => LIGHT,
+        let want = match (theme.id, appearance) {
+            ("tenmoku-dark", _) => DARK.map(Color::rgb),
+            ("tenmoku-light", _) => LIGHT.map(Color::rgb),
+            ("yohen" | "hakuji", _) => continue,
+            (_, Appearance::Dark) => {
+                inheriting += 1;
+                yohen.terminal.ansi
+            }
+            (_, Appearance::Light) => {
+                inheriting += 1;
+                hakuji.terminal.ansi
+            }
         };
-        assert_eq!(palette.terminal.ansi, want.map(Color::rgb), "{}", theme.id);
+        assert_eq!(palette.terminal.ansi, want, "{}", theme.id);
         assert_eq!(palette.terminal.foreground, None, "{}", theme.id);
     }
+    // Ember and the eight themes from elsewhere have no table.
+    assert_eq!(inheriting, bundled_themes().len() - 4);
 }
 
 /// WCAG 2 contrast ratio.
@@ -69,10 +89,11 @@ fn yohen_and_hakuji_ansi_clear_4_5_on_the_editor() {
             let ratio = contrast(*color, ground);
             assert!(ratio >= 4.5, "{id} ansi_{index} is {ratio:.2}:1");
         }
-        assert_ne!(
-            palette.terminal.ansi,
-            EditorPalette::bundled(palette_appearance(id)).terminal.ansi
-        );
+        let today = match palette_appearance(id) {
+            Appearance::Dark => DARK,
+            Appearance::Light => LIGHT,
+        };
+        assert_ne!(palette.terminal.ansi, today.map(Color::rgb), "{id}");
     }
 }
 

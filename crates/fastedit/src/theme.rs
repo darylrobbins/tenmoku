@@ -80,10 +80,26 @@ fn select(theme: &ThemeSettings, cx: &mut App) {
 
 /// The installed themes the dark and light slots start from, by ID: each
 /// slot's `theme.dark` or `theme.light`, else the bundled theme
-/// `theme.name` names if it's of the slot's appearance. Then what's wrong
-/// with `theme.name`, at it in `source`, the user's settings file: a name
-/// no bundled theme has, or one that a slot's own setting overrides.
+/// `theme.name` names if it's of the slot's appearance, else Tenmoku's
+/// default for the slot, Yohen or Hakuji ([`themes::DEFAULT_DARK`],
+/// [`themes::DEFAULT_LIGHT`]). Then what's wrong with `theme.name`, at it
+/// in `source`, the user's settings file: a name no bundled theme has, or
+/// one that a slot's own setting overrides.
 fn choice(
+    theme: &ThemeSettings,
+    source: Option<&str>,
+) -> (Option<String>, Option<String>, Vec<Diagnostic>) {
+    let (dark, light, notes) = named(theme, source);
+    let default = |id| Some(kiln::extensions::builtin_theme_id(id));
+    (
+        dark.or_else(|| default(themes::DEFAULT_DARK)),
+        light.or_else(|| default(themes::DEFAULT_LIGHT)),
+        notes,
+    )
+}
+
+/// [`choice`] before the defaults: the slots the settings choose, if any.
+fn named(
     theme: &ThemeSettings,
     source: Option<&str>,
 ) -> (Option<String>, Option<String>, Vec<Diagnostic>) {
@@ -186,21 +202,97 @@ mod tests {
 
     use super::*;
 
+    /// The bundled theme `id`'s data and editor palette.
+    fn bundled(id: &str) -> (ThemeData, EditorPalette) {
+        let data = ThemeData::from_file(&themes::find(id).expect("bundled").file());
+        let (palette, warnings) = EditorPalette::for_theme(&data);
+        assert_eq!(warnings, [] as [String; 0], "{id}");
+        (data, palette)
+    }
+
+    #[gpui::test]
+    fn unset_slots_are_yohen_and_hakuji(cx: &mut TestAppContext) {
+        let (yohen, yohen_palette) = bundled("yohen");
+        let (hakuji, hakuji_palette) = bundled("hakuji");
+        // The bundled palettes are theirs, so a theme leaving keys out
+        // takes Yohen's or Hakuji's.
+        assert_eq!(*EditorPalette::fastedit_dark(), yohen_palette);
+        assert_eq!(*EditorPalette::fastedit_light(), hakuji_palette);
+        assert_ne!(yohen.tokens, ThemeData::dark().tokens);
+        assert_ne!(hakuji.tokens, ThemeData::light().tokens);
+
+        // No theme settings: Yohen's slot and Hakuji's, the name aside.
+        let default = |id| Some(kiln::extensions::builtin_theme_id(id));
+        let (dark, light, notes) = choice(&ThemeSettings::default(), None);
+        assert_eq!((dark, light), (default("yohen"), default("hakuji")));
+        assert_eq!(notes, []);
+        let named = ThemeSettings {
+            name: Some("Dark Modern".to_owned()),
+            ..ThemeSettings::default()
+        };
+        let (dark, light, notes) = choice(&named, None);
+        let dark_modern = default("vscode-dark-modern");
+        assert_eq!((dark, light), (dark_modern, default("hakuji")));
+        assert_eq!(notes, []);
+
+        let state = tempfile::tempdir().unwrap();
+        let user = state.path().join("settings.toml");
+        fs::write(&user, "").unwrap();
+        let store = fe_config::SettingsStore::load(Some(user), None);
+        let config = Config::new("dev.fastedit.test", "fastedit")
+            .settings_store(store.into_inner())
+            .theme_mode(ThemeMode::Dark)
+            .theme_extensions(EXTENSIONS);
+        let diagnostics = cx.update(|cx| kiln::init(cx, config));
+        assert_eq!(diagnostics, []);
+        cx.update(init);
+        cx.run_until_parked();
+        let showing = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let theme = cx.theme();
+                let palette = (*fe_gpui::editor_palette(cx)).clone();
+                (theme.name.to_string(), theme.data().tokens, palette)
+            })
+        };
+        let (name, tokens, palette) = showing(cx);
+        assert_eq!(name, "Yohen");
+        assert_eq!(tokens, yohen.tokens);
+        assert_eq!(palette, yohen_palette);
+
+        cx.update(|cx| cx.set_theme_mode(ThemeMode::Light));
+        let (name, tokens, palette) = showing(cx);
+        assert_eq!(name, "Hakuji");
+        assert_eq!(tokens, hakuji.tokens);
+        assert_eq!(palette, hakuji_palette);
+        cx.update(|cx| assert_eq!(kiln::platform::config::diagnostics(cx), []));
+    }
+
     #[gpui::test]
     fn palette_follows_kiln(cx: &mut TestAppContext) {
         assert_eq!(mode(ThemeModeSetting::Dark), ThemeMode::Dark);
         assert_eq!(mode(ThemeModeSetting::Light), ThemeMode::Light);
         assert_eq!(mode(ThemeModeSetting::System), ThemeMode::System);
+        // Kiln's own bases, with no editor tables: the bundled palettes,
+        // Yohen's and Hakuji's.
+        let (_, yohen) = bundled("yohen");
+        let (_, hakuji) = bundled("hakuji");
         cx.update(|cx| {
             init(cx);
             set_themes(cx, ThemeMode::Light, Theme::dark(), Theme::light());
         });
         let palette = cx.update(|cx| fe_gpui::editor_palette(cx));
-        assert_eq!(*palette, *EditorPalette::fastedit_light());
+        assert_eq!(*palette, hakuji);
 
         cx.update(|cx| cx.set_theme_mode(ThemeMode::Dark));
         let palette = cx.update(|cx| fe_gpui::editor_palette(cx));
-        assert_eq!(*palette, *EditorPalette::fastedit_dark());
+        assert_eq!(*palette, yohen);
+
+        // A bundled theme of its own colours keeps them: Tenmoku Dark.
+        let (tenmoku_dark, tenmoku_palette) = bundled("tenmoku-dark");
+        assert_ne!(tenmoku_palette, yohen);
+        cx.update(|cx| set_theme(cx, Theme::new(tenmoku_dark)));
+        let palette = cx.update(|cx| fe_gpui::editor_palette(cx));
+        assert_eq!(*palette, tenmoku_palette);
 
         let source = "appearance = \"dark\"\n\n[editor]\nbackground = \"#000000\"\n";
         let (file, diagnostics) = ThemeFile::parse(Path::new("theme.toml"), source, EXTENSIONS);
@@ -264,16 +356,10 @@ mod tests {
                 )
             })
         };
-        let kiln_dark = ThemeData::dark()
-            .tokens
-            .get("surface.background")
-            .unwrap()
-            .to_string();
-        let fastedit_dark = EditorPalette::fastedit_dark()
-            .editor
-            .background
-            .to_rgba_u32();
-        assert_eq!(background(cx), (kiln_dark.clone(), fastedit_dark));
+        let (yohen, yohen_palette) = bundled("yohen");
+        let yohen = yohen.tokens.get("surface.background").unwrap().to_string();
+        let yohen_palette = yohen_palette.editor.background.to_rgba_u32();
+        assert_eq!(background(cx), (yohen.clone(), yohen_palette));
 
         fs::write(&user, "[theme]\ndark = \"acme.solarized/solarized-dark\"\n").unwrap();
         sender.send(vec![user.clone()]);
@@ -283,6 +369,6 @@ mod tests {
         fs::write(&user, "[theme]\nmode = \"dark\"\n").unwrap();
         sender.send(vec![user.clone()]);
         cx.run_until_parked();
-        assert_eq!(background(cx), (kiln_dark, fastedit_dark));
+        assert_eq!(background(cx), (yohen, yohen_palette));
     }
 }

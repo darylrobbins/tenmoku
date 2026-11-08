@@ -339,11 +339,11 @@ fn values(settings: &Settings) -> BTreeMap<Key, Value> {
     ])
 }
 
-/// The ID of the theme an unset slot is.
+/// The ID of the theme an unset slot is: Yohen or Hakuji.
 fn own_theme_id(appearance: Appearance) -> String {
     kiln::extensions::builtin_theme_id(match appearance {
-        Appearance::Dark => "tenmoku-dark",
-        Appearance::Light => "tenmoku-light",
+        Appearance::Dark => themes::DEFAULT_DARK,
+        Appearance::Light => themes::DEFAULT_LIGHT,
     })
 }
 

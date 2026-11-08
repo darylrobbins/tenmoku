@@ -11,13 +11,13 @@
 
 use std::{fs, path::PathBuf, sync::Arc};
 
-use fe_config::{EditorColors, EditorPalette};
-use fe_ui::{Appearance, Color, Theme, ThemeData};
+use fe_config::{EditorColors, EditorPalette, themes};
+use fe_ui::{Color, Theme, ThemeData};
 use gpui::VisualTestAppContext;
 use kiln_platform::screenshots::{CHANNEL_TOLERANCE, Result, RgbaImage, image::Rgba};
 use toml::{Table, Value};
 
-use crate::scenes::{SCENE, SCENE_SIZE, capture, write_project};
+use crate::scenes::{SCENE, SCENE_SIZE, bundled_theme, capture, write_project};
 
 const MAGENTA: Rgba<u8> = Rgba([255, 0, 255, 255]);
 
@@ -55,12 +55,13 @@ impl ProbeColors {
     }
 }
 
-/// Every kiln token and every editor and syntax colour replaced, the base's
-/// other fields kept. Both go through the same path a theme file does, so a
-/// colour added to either table is probed without a change here.
+/// Every kiln token and every editor and syntax colour replaced, the default
+/// dark theme's (Yohen's) other fields kept. Both go through the same path a
+/// theme file does, so a colour added to either table is probed without a
+/// change here.
 fn probe_theme(offset: u32) -> (Theme, EditorPalette) {
     let mut colors = ProbeColors::new(offset);
-    let base = ThemeData::base(Appearance::Dark).clone();
+    let (base, _) = bundled_theme(themes::DEFAULT_DARK).expect("the default dark theme");
     let tokens = base.tokens.map(|_| colors.next());
 
     let editor: Table = (EditorColors::KEYS.iter())

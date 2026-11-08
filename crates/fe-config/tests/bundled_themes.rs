@@ -23,7 +23,21 @@ fn finds_by_title_or_id() {
     assert_eq!(ember.id, "tenmoku-ember");
     assert_eq!(find("Tenmoku Ember"), Some(ember));
     assert_eq!(find("TENMOKU-EMBER"), Some(ember));
-    assert_eq!(find("dark").map(|theme| theme.id), Some("tenmoku-dark"));
+    // "dark" and "light" are Tenmoku's defaults, Yohen and Hakuji; Tenmoku
+    // Dark and Light are still found by their titles and IDs.
+    assert_eq!(find("dark").map(|theme| theme.id), Some("yohen"));
+    assert_eq!(find(" Light ").map(|theme| theme.id), Some("hakuji"));
+    assert_eq!(find("DARK").map(|theme| theme.title), Some("Yohen"));
+    for (name, id) in [
+        ("Tenmoku Dark", "tenmoku-dark"),
+        ("tenmoku-dark", "tenmoku-dark"),
+        ("Tenmoku Light", "tenmoku-light"),
+        ("tenmoku-light", "tenmoku-light"),
+        ("Yohen", "yohen"),
+        ("hakuji", "hakuji"),
+    ] {
+        assert_eq!(find(name).map(|theme| theme.id), Some(id), "{name:?}");
+    }
     assert_eq!(find("nope"), None);
     assert_eq!(find(""), None);
 }

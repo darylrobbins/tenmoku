@@ -148,14 +148,14 @@ fn steps_in_order() {
             ControlId::LightTheme
         ]
     );
-    // A list is the bundled themes of its appearance, and the Tenmoku one
-    // shows while its slot is unset.
+    // A list is the bundled themes of its appearance, and the default,
+    // Yohen or Hakuji, shows while its slot is unset.
     assert_eq!(
         labels(&choices, ControlId::LightTheme),
         ["Light 2026", "Catppuccin Latte", "Tenmoku Light", "Hakuji"]
     );
-    assert_eq!(shown(&choices, ControlId::LightTheme), "Tenmoku Light");
-    assert_eq!(shown(&choices, ControlId::DarkTheme), "Tenmoku Dark");
+    assert_eq!(shown(&choices, ControlId::LightTheme), "Hakuji");
+    assert_eq!(shown(&choices, ControlId::DarkTheme), "Yohen");
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn back_to_default_removes_the_key() {
 
     pick_into(&path, &mut choices, ControlId::DarkTheme, "Dark Modern");
     assert!(in_file(&path, &["theme", "dark"]).is_some());
-    pick_into(&path, &mut choices, ControlId::DarkTheme, "Tenmoku Dark");
+    pick_into(&path, &mut choices, ControlId::DarkTheme, "Yohen");
     assert_eq!(in_file(&path, &["theme", "dark"]), None);
 
     pick_into(&path, &mut choices, ControlId::FontFamily, "Fira Code");
@@ -315,13 +315,13 @@ fn theme_name_only_answers_for_its_own_appearance() {
     settings.theme.name = Some("Ember".to_owned());
     settings.theme.mode = ThemeModeSetting::System;
 
-    // The Tenmoku tile over a name: the slot has no key to remove.
+    // The default's tile, Yohen's, over a name: the slot has no key to remove.
     let mut choices = Choices::from_settings(&settings, FONTS);
     assert_eq!(
-        pick(&mut choices, ControlId::DarkTheme, "Tenmoku Dark"),
+        pick(&mut choices, ControlId::DarkTheme, "Yohen"),
         [(&["theme", "name"][..], None)]
     );
-    assert_eq!(shown(&choices, ControlId::DarkTheme), "Tenmoku Dark");
+    assert_eq!(shown(&choices, ControlId::DarkTheme), "Yohen");
 
     // A light theme leaves the dark one the name gives.
     let mut choices = Choices::from_settings(&settings, FONTS);
@@ -337,7 +337,7 @@ fn theme_name_only_answers_for_its_own_appearance() {
     // A name no bundled theme has chooses nothing, and goes with any choice.
     settings.theme.name = Some("Nothing Bundled".to_owned());
     let mut choices = Choices::from_settings(&settings, FONTS);
-    assert_eq!(shown(&choices, ControlId::LightTheme), "Tenmoku Light");
+    assert_eq!(shown(&choices, ControlId::LightTheme), "Hakuji");
     let writes = pick(&mut choices, ControlId::LightTheme, "Light 2026");
     assert_eq!(writes.last(), Some(&(&["theme", "name"][..], None)));
 }

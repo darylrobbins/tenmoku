@@ -1,6 +1,7 @@
 //! The setup wizard's sheet on its Appearance page, over the demo workbench:
 //! dark as the defaults have it, and light by `theme.mode`.
 
+use fe_config::themes;
 use gpui::VisualTestAppContext;
 use kiln_platform::screenshots::Result;
 
@@ -9,10 +10,10 @@ use crate::scenes::{SCENE_SIZE, capture_with, goldens, use_settings, write_proje
 /// Each scene: its golden, the bundled theme the settings come to, and the
 /// settings the sheet reads its choices from.
 const SCENES: [(&str, &str, &str); 2] = [
-    ("setup_wizard_dark", "tenmoku-dark", ""),
+    ("setup_wizard_dark", themes::DEFAULT_DARK, ""),
     (
         "setup_wizard_light",
-        "tenmoku-light",
+        themes::DEFAULT_LIGHT,
         "[theme]\nmode = \"light\"\n",
     ),
 ];

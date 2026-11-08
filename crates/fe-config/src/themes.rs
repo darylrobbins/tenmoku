@@ -68,10 +68,25 @@ pub fn bundled_themes() -> &'static [BundledTheme] {
     BUNDLED
 }
 
+/// The ID of Tenmoku's default dark theme, Yohen: the one an unset
+/// `theme.dark` means, and `[theme] name = "dark"`.
+pub const DEFAULT_DARK: &str = "yohen";
+
+/// The ID of Tenmoku's default light theme, Hakuji: the one an unset
+/// `theme.light` means, and `[theme] name = "light"`.
+pub const DEFAULT_LIGHT: &str = "hakuji";
+
 /// The bundled theme `name` is the title or ID of, ignoring case and the
-/// space around it. A title's "Tenmoku " may be left out: "Ember".
+/// space around it. "Dark" and "Light" are the defaults, Yohen and Hakuji
+/// ([`DEFAULT_DARK`], [`DEFAULT_LIGHT`]); any other title's "Tenmoku " may
+/// be left out: "Ember".
 pub fn find(name: &str) -> Option<&'static BundledTheme> {
     let name = name.trim();
+    let name = match name {
+        _ if name.eq_ignore_ascii_case("dark") => DEFAULT_DARK,
+        _ if name.eq_ignore_ascii_case("light") => DEFAULT_LIGHT,
+        _ => name,
+    };
     BUNDLED.iter().find(|theme| {
         let short = theme.title.strip_prefix("Tenmoku ");
         [Some(theme.title), short, Some(theme.id)]

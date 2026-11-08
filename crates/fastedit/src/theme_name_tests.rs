@@ -78,7 +78,7 @@ fn name_selects_a_bundled_theme_live(cx: &mut TestAppContext) {
     assert_ne!(ember, dark_modern);
     assert_eq!(editor_palette(cx), ember);
 
-    // A name nothing bundled has leaves the built-in, with a warning at it,
+    // A name nothing bundled has leaves the default, with a warning at it,
     // which a reload of something else keeps.
     let text = "[theme]\nmode = \"dark\"\nname = \"Dark Moderrn\"\n";
     write(&user, &sender, text, cx);
@@ -112,16 +112,17 @@ fn name_selects_a_bundled_theme_live(cx: &mut TestAppContext) {
         )
     );
 
-    // A light theme's name leaves the dark slot to theme.dark.
+    // A light theme's name leaves the dark slot to theme.dark: "light" is
+    // Hakuji, the default light theme.
     let text = "[theme]\ndark = \"builtin/tenmoku-ember\"\nname = \"light\"\n";
     write(&user, &sender, text, cx);
     assert_eq!(editor_palette(cx), ember);
     assert_eq!(name_warnings(cx), []);
     cx.update(|cx| cx.set_theme_mode(ThemeMode::Light));
-    assert_eq!(editor_palette(cx), palette_of("Tenmoku Light"));
+    assert_eq!(editor_palette(cx), palette_of("Hakuji"));
     cx.update(|cx| cx.set_theme_mode(ThemeMode::Dark));
 
-    // No name, no choice: the built-in again.
+    // No name, no choice: the default, Yohen, again.
     write(&user, &sender, "", cx);
     assert_eq!(editor_palette(cx), *EditorPalette::fastedit_dark());
     cx.update(|cx| assert_eq!(kiln::platform::config::diagnostics(cx), []));

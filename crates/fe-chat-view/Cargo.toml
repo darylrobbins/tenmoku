@@ -24,6 +24,8 @@ log.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# The screenshots example's scenes: the default themes, Yohen and Hakuji.
+fe-config.workspace = true
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }

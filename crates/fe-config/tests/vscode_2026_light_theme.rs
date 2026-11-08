@@ -58,6 +58,6 @@ fn syntax_keys_are_known() {
 fn not_the_default() {
     assert_eq!(Settings::default().theme.name, None);
     assert_eq!(find("Light 2026").unwrap().id, "vscode-2026-light");
-    assert_eq!(find("light").unwrap().id, "tenmoku-light");
+    assert_eq!(find("light").unwrap().id, "hakuji");
     assert_eq!(find("Light 2026").unwrap().appearance, Appearance::Light);
 }

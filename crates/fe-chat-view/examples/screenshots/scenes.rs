@@ -11,11 +11,12 @@ use fe_chat::{
     StopReason,
 };
 use fe_chat_view::{ChatOptions, ChatView};
+use fe_config::themes::{DEFAULT_DARK, DEFAULT_LIGHT};
 use fe_gpui::{EditorPalette, EditorSettings, set_editor_palette};
 use futures::StreamExt as _;
 use gpui::{AppContext as _, Pixels, Size, VisualTestAppContext, WindowHandle, px, size};
 use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code};
-use kiln_ui::{Theme, UiTheme, set_ui_theme};
+use kiln_ui::{Theme, ThemeData, UiTheme, set_ui_theme};
 use serde_json::json;
 
 /// The window size of every scene, in logical pixels: a chat panel's.
@@ -85,31 +86,38 @@ enum Chat {
     Diff,
 }
 
+/// The UI colours of the bundled theme `id`: the scenes use Tenmoku's
+/// defaults, Yohen and Hakuji, as the editor palettes do.
+fn ui_of(id: &str) -> UiTheme {
+    let theme = fe_config::themes::find(id).expect("a bundled theme");
+    Theme::new(ThemeData::from_file(&theme.file())).ui_theme()
+}
+
 fn scenes() -> Vec<Scene> {
     vec![
         Scene {
             name: "chat_dark",
             chat: Chat::Transcript,
             palette: EditorPalette::fastedit_dark(),
-            ui: UiTheme::default_dark(),
+            ui: ui_of(DEFAULT_DARK),
         },
         Scene {
             name: "chat_light",
             chat: Chat::Transcript,
             palette: EditorPalette::fastedit_light(),
-            ui: Theme::light().ui_theme(),
+            ui: ui_of(DEFAULT_LIGHT),
         },
         Scene {
             name: "chat_diff_dark",
             chat: Chat::Diff,
             palette: EditorPalette::fastedit_dark(),
-            ui: UiTheme::default_dark(),
+            ui: ui_of(DEFAULT_DARK),
         },
         Scene {
             name: "chat_diff_light",
             chat: Chat::Diff,
             palette: EditorPalette::fastedit_light(),
-            ui: Theme::light().ui_theme(),
+            ui: ui_of(DEFAULT_LIGHT),
         },
     ]
 }

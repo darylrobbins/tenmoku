@@ -66,6 +66,26 @@ pub(crate) fn write_project(parent: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
+/// The bundled theme `theme`'s data and editor palette.
+pub(crate) fn bundled_theme(theme: &str) -> Result<(ThemeData, EditorPalette)> {
+    let theme = themes::find(theme).ok_or("a bundled theme")?.file();
+    let data = ThemeData::from_file(&theme);
+    let (palette, warnings) = EditorPalette::for_theme(&data);
+    assert_eq!(warnings, [] as [String; 0], "the bundled theme's tables");
+    Ok((data, palette))
+}
+
+/// Puts the bundled theme `theme` in use, the UI's and the editors'. Returns
+/// its palette for [`capture_with`].
+pub(crate) fn use_theme(cx: &mut VisualTestAppContext, theme: &str) -> Result<EditorPalette> {
+    let (data, palette) = bundled_theme(theme)?;
+    cx.update(|cx| {
+        fe_ui::set_theme(cx, Theme::new(data));
+        fe_gpui::set_editor_palette(cx, Arc::new(palette.clone()));
+    });
+    Ok(palette)
+}
+
 /// Starts kiln's config service on a user settings file `parent/settings.toml`
 /// holding `settings`, and puts the bundled theme `theme` in use. Returns that
 /// theme's palette for [`capture_with`].
@@ -77,10 +97,6 @@ pub(crate) fn use_settings(
 ) -> Result<EditorPalette> {
     let user = parent.join("settings.toml");
     fs::write(&user, settings)?;
-    let theme = themes::find(theme).ok_or("a bundled theme")?.file();
-    let data = ThemeData::from_file(&theme);
-    let (palette, warnings) = EditorPalette::for_theme(&data);
-    assert_eq!(warnings, [] as [String; 0], "the bundled theme's tables");
     let store = SettingsStore::load(Some(user), None).into_inner();
     // Nothing changes the file, so nothing need send a batch.
     let (_, batches) = batch_channel();
@@ -89,10 +105,8 @@ pub(crate) fn use_settings(
             .settings(store)
             .start_with(batches, cx)
             .detach();
-        fe_ui::set_theme(cx, Theme::new(data));
-        fe_gpui::set_editor_palette(cx, Arc::new(palette.clone()));
     });
-    Ok(palette)
+    use_theme(cx, theme)
 }
 
 /// Opens `root` in a workbench, off screen, with `src/` expanded and
@@ -198,24 +212,27 @@ pub(crate) fn goldens() -> Goldens {
     Goldens::new(env!("CARGO_MANIFEST_DIR"), "examples/screenshots/golden")
 }
 
-/// Renders the scene and compares it with its golden, or rewrites the golden.
-/// Returns whether it matched. Failures go to the output directory fe-gpui's
-/// scenes share, as `workbench.actual.png` and `workbench.diff.png`.
+/// Renders the scene, in the default dark theme (Yohen), and compares it with
+/// its golden, or rewrites the golden. Returns whether it matched. Failures go
+/// to the output directory fe-gpui's scenes share, as `workbench.actual.png`
+/// and `workbench.diff.png`.
 fn check_scene(cx: &mut VisualTestAppContext) -> Result<bool> {
     let goldens = goldens();
     let parent = tempfile::tempdir()?;
     let root = write_project(parent.path())?;
-    let image = capture(cx, &root, SCENE_SIZE, true, EditorPalette::fastedit_dark())?;
+    let palette = use_theme(cx, themes::DEFAULT_DARK)?;
+    let image = capture(cx, &root, SCENE_SIZE, true, &palette)?;
     goldens.check(SCENE, &image)
 }
 
 /// `render <out.png> <dir> [--size WxH]`: the folder in a workbench, with
-/// nothing opened.
+/// nothing opened, in the default dark theme.
 fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <dir> [--size WxH]";
     let (out, dir, size) = render_args(args, SCENE_SIZE, usage)?;
     let root = std::path::absolute(dir)?;
-    capture(cx, &root, size, false, EditorPalette::fastedit_dark())?.save(out)?;
+    let palette = use_theme(cx, themes::DEFAULT_DARK)?;
+    capture(cx, &root, size, false, &palette)?.save(out)?;
     println!("wrote {out}");
     Ok(())
 }

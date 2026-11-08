@@ -58,5 +58,5 @@ fn syntax_keys_are_known() {
 fn not_the_default() {
     assert_eq!(Settings::default().theme.name, None);
     assert_eq!(find("Dark 2026").unwrap().id, "vscode-2026-dark");
-    assert_eq!(find("dark").unwrap().id, "tenmoku-dark");
+    assert_eq!(find("dark").unwrap().id, "yohen");
 }

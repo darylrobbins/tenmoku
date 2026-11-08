@@ -118,11 +118,13 @@ change_added = "#17773f"
 change_modified = "#1f68cf"
 change_deleted = "#a1100e"
 # A diff's rows on the soft grounds (celadon-soft, shinsha-soft), and its
-# changed words in the signal at a fifth over them.
+# changed words in the signal over them, at most a fifth: each word's alpha
+# is the highest at which a comment keeps 65% of its contrast on the bare
+# editor (docs/decisions/0xqbkrz0yh-default-themes.md).
 diff_added_row = "#e3f3e8"
 diff_removed_row = "#ffe7e2"
 diff_added_word = "#17773f33"
-diff_removed_word = "#a1100e33"
+diff_removed_word = "#a1100e26"
 diff_filler = "#1f23281f"
 # Indent guides are the design's; the caret's block is one step darker,
 # halfway to the control border.

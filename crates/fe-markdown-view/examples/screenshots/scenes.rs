@@ -2,11 +2,12 @@
 
 use std::{process::ExitCode, sync::Arc};
 
+use fe_config::themes::{DEFAULT_DARK, DEFAULT_LIGHT};
 use fe_gpui::{EditorPalette, EditorSettings, EditorTheme};
 use fe_markdown_view::{MarkdownStyle, MarkdownView};
 use gpui::{AppContext as _, Pixels, Size, VisualTestAppContext, px, size};
 use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code};
-use kiln_ui::{Theme, UiTheme};
+use kiln_ui::{Theme, ThemeData, UiTheme};
 
 /// The window size of every scene, in logical pixels. The spec's 800×600
 /// cuts the fixture off below the Rust fence, so the scenes are as tall as
@@ -61,17 +62,24 @@ struct Scene {
     ui: UiTheme,
 }
 
+/// The UI colours of the bundled theme `id`: the scenes use Tenmoku's
+/// defaults, Yohen and Hakuji, as the editor palettes do.
+fn ui_of(id: &str) -> UiTheme {
+    let theme = fe_config::themes::find(id).expect("a bundled theme");
+    Theme::new(ThemeData::from_file(&theme.file())).ui_theme()
+}
+
 fn scenes() -> Vec<Scene> {
     vec![
         Scene {
             name: "markdown_preview_dark",
             palette: EditorPalette::fastedit_dark(),
-            ui: UiTheme::default_dark(),
+            ui: ui_of(DEFAULT_DARK),
         },
         Scene {
             name: "markdown_preview_light",
             palette: EditorPalette::fastedit_light(),
-            ui: Theme::light().ui_theme(),
+            ui: ui_of(DEFAULT_LIGHT),
         },
     ]
 }

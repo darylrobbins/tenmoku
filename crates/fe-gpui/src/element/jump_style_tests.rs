@@ -154,17 +154,21 @@ fn editor_color(source: &str, key: &str) -> Color {
 
 #[gpui::test]
 fn backdrop_keeps_text_readable(cx: &mut TestAppContext) {
-    let source = include_str!("../../../fe-config/themes/tenmoku-ember.toml");
-    let mut ember = EditorPalette::fastedit_dark().clone();
-    ember.editor.background = editor_color(source, "background");
-    ember.editor.foreground = editor_color(source, "foreground");
+    // The text and background of a theme file, on the default palette.
+    let of = |source: &str| {
+        let mut palette = EditorPalette::fastedit_dark().clone();
+        palette.editor.background = editor_color(source, "background");
+        palette.editor.foreground = editor_color(source, "foreground");
+        palette
+    };
+    let tenmoku_dark = of(include_str!("../../../fe-config/themes/tenmoku-dark.toml"));
+    let tenmoku_light = of(include_str!("../../../fe-config/themes/tenmoku-light.toml"));
+    let ember = of(include_str!("../../../fe-config/themes/tenmoku-ember.toml"));
     let palettes = [
-        ("Tenmoku Dark", EditorPalette::fastedit_dark().clone(), 6.0),
-        (
-            "Tenmoku Light",
-            EditorPalette::fastedit_light().clone(),
-            4.59,
-        ),
+        ("Yohen", EditorPalette::fastedit_dark().clone(), 7.46),
+        ("Hakuji", EditorPalette::fastedit_light().clone(), 5.86),
+        ("Tenmoku Dark", tenmoku_dark, 6.0),
+        ("Tenmoku Light", tenmoku_light, 4.59),
         ("Tenmoku Ember", ember, 6.6),
     ];
     for (name, palette, expected) in palettes {
@@ -322,6 +326,7 @@ fn live_labels_survive_the_cap(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn slots_from_palette(cx: &mut TestAppContext) {
+    // Hakuji's, the default light palette.
     let theme = cx.update(|cx| {
         EditorTheme::from_palette(
             EditorPalette::fastedit_light(),
@@ -329,7 +334,7 @@ fn slots_from_palette(cx: &mut TestAppContext) {
             cx,
         )
     });
-    assert_eq!(theme.jump_label, Hsla::from(rgb(0xa8005a)));
-    assert_eq!(theme.jump_label_preview, Hsla::from(rgb(0x00727f)));
+    assert_eq!(theme.jump_label, Hsla::from(rgb(0x7b36a8)));
+    assert_eq!(theme.jump_label_preview, Hsla::from(rgb(0x776a00)));
     assert_eq!(theme.jump_label_foreground, Hsla::from(rgb(0xffffff)));
 }

@@ -981,7 +981,7 @@
       "description": "Settings for the colour theme. The theme is the app's, not a window's,\nso a project file may not set them.",
       "properties": {
         "dark": {
-          "description": "The installed theme the dark theme is, by ID: an extension's\ntheme file, as in \"acme.solarized/solarized-dark\". Unset is the\nbuilt-in one.",
+          "description": "The installed theme the dark theme is, by ID: an extension's\ntheme file, as in \"acme.solarized/solarized-dark\". Unset is Yohen,\nTenmoku's own dark theme.",
           "minLength": 1,
           "type": [
             "string",
@@ -989,7 +989,7 @@
           ]
         },
         "light": {
-          "description": "The installed theme the light theme is, by ID. Unset is the\nbuilt-in one.",
+          "description": "The installed theme the light theme is, by ID. Unset is Hakuji,\nTenmoku's own light theme.",
           "minLength": 1,
           "type": [
             "string",
@@ -1002,7 +1002,7 @@
           "description": "dark, light, or system to follow the system's appearance. Your own\ncolours go in theme.toml beside this file; its appearance says whether\nit replaces the dark or the light theme."
         },
         "name": {
-          "description": "A bundled theme by its title or ID, as in \"Dark Modern\" or \"Tenmoku\nEmber\": the dark or the light theme, as its appearance is. theme.dark\nor theme.light, if set, wins for that one.",
+          "description": "A bundled theme by its title or ID, as in \"Dark Modern\" or \"Tenmoku\nEmber\": the dark or the light theme, as its appearance is. \"dark\" and\n\"light\" are Yohen and Hakuji. theme.dark or theme.light, if set, wins\nfor that one.",
           "minLength": 1,
           "type": [
             "string",

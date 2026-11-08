@@ -175,7 +175,11 @@ fn runs_paint_in_the_texts_colours_over_the_background_at_their_display_rows(
     let main = drawn(3, cx);
     assert_ne!(fn_, main, "a keyword and a function name");
     assert_eq!(minimap.runs[0], (run(0., 0., 2.), fn_));
-    assert_eq!(minimap.runs[1], (run(3., 0., 4.), main));
+    // Yohen's first bracket pair takes the function's colour, so `main()`
+    // is one run of it.
+    assert_eq!(drawn(7, cx), main, "the outer brackets");
+    assert_eq!(drawn(8, cx), main);
+    assert_eq!(minimap.runs[1], (run(3., 0., 6.), main));
     // Indented by 4 columns on the next row.
     let let_ = text.find("let x").unwrap();
     let second = (minimap.runs.iter()).find(|(bounds, _)| bounds.top() == top + px(2.));

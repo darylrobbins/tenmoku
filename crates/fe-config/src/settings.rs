@@ -249,19 +249,20 @@ pub struct ThemeSettings {
     /// it replaces the dark or the light theme.
     pub mode: ThemeModeSetting,
     /// The installed theme the dark theme is, by ID: an extension's
-    /// theme file, as in "acme.solarized/solarized-dark". Unset is the
-    /// built-in one.
+    /// theme file, as in "acme.solarized/solarized-dark". Unset is Yohen,
+    /// Tenmoku's own dark theme.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub dark: Option<String>,
-    /// The installed theme the light theme is, by ID. Unset is the
-    /// built-in one.
+    /// The installed theme the light theme is, by ID. Unset is Hakuji,
+    /// Tenmoku's own light theme.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub light: Option<String>,
     /// A bundled theme by its title or ID, as in "Dark Modern" or "Tenmoku
-    /// Ember": the dark or the light theme, as its appearance is. theme.dark
-    /// or theme.light, if set, wins for that one.
+    /// Ember": the dark or the light theme, as its appearance is. "dark" and
+    /// "light" are Yohen and Hakuji. theme.dark or theme.light, if set, wins
+    /// for that one.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub name: Option<String>,

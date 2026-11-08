@@ -36,7 +36,7 @@ fn loads() {
     keys.sort_unstable();
     assert_eq!(keys, want);
     assert_eq!(Settings::default().theme.name, None);
-    assert_eq!(find("dark").unwrap().id, "tenmoku-dark");
+    assert_eq!(find("dark").unwrap().id, "yohen");
 }
 
 /// monokai-color-theme.json at microsoft/vscode f93fdeb.

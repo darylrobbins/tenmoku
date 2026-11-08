@@ -5,6 +5,7 @@
 
 use std::fs;
 
+use fe_config::themes;
 use gpui::{Pixels, Size, VisualTestAppContext, px, size};
 use kiln_platform::screenshots::Result;
 
@@ -19,12 +20,12 @@ const ICONS_SIZE: Size<Pixels> = size(px(480.), px(360.));
 const SCENES: [(&str, &str, &str); 2] = [
     (
         "file_icons_dark",
-        "tenmoku-dark",
+        themes::DEFAULT_DARK,
         "[workbench]\nstart_page = false\n",
     ),
     (
         "file_icons_light",
-        "tenmoku-light",
+        themes::DEFAULT_LIGHT,
         "[theme]\nmode = \"light\"\n\n[workbench]\nstart_page = false\n",
     ),
 ];

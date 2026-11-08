@@ -268,19 +268,11 @@ impl TerminalColors {
     }
 }
 
-static FASTEDIT_DARK: LazyLock<EditorPalette> = LazyLock::new(|| {
-    bundled(
-        "tenmoku-dark.toml",
-        include_str!("../themes/tenmoku-dark.toml"),
-    )
-});
+static FASTEDIT_DARK: LazyLock<EditorPalette> =
+    LazyLock::new(|| bundled("yohen.toml", include_str!("../themes/yohen.toml")));
 
-static FASTEDIT_LIGHT: LazyLock<EditorPalette> = LazyLock::new(|| {
-    bundled(
-        "tenmoku-light.toml",
-        include_str!("../themes/tenmoku-light.toml"),
-    )
-});
+static FASTEDIT_LIGHT: LazyLock<EditorPalette> =
+    LazyLock::new(|| bundled("hakuji.toml", include_str!("../themes/hakuji.toml")));
 
 /// A bundled palette, from its file's tables alone.
 fn bundled(file_name: &str, source: &str) -> EditorPalette {
@@ -302,12 +294,12 @@ fn bundled(file_name: &str, source: &str) -> EditorPalette {
 }
 
 impl EditorPalette {
-    /// The bundled dark palette, Tenmoku's colours since before themes.
+    /// The bundled dark palette: Yohen's, Tenmoku's default dark theme.
     pub fn fastedit_dark() -> &'static EditorPalette {
         &FASTEDIT_DARK
     }
 
-    /// The bundled light palette, on Kiln Light's background.
+    /// The bundled light palette: Hakuji's, Tenmoku's default light theme.
     pub fn fastedit_light() -> &'static EditorPalette {
         &FASTEDIT_LIGHT
     }

@@ -99,7 +99,8 @@ impl ThemePicker {
         self.matches = (0..self.rows.len()).collect();
         let settings = theme_settings(cx);
         let showing = showing(&settings, cx.theme().appearance, &listed);
-        self.current = self.rows.iter().position(|row| row.id() == showing);
+        self.current =
+            showing.and_then(|showing| self.rows.iter().position(|row| row.id() == showing));
     }
 
     fn row(&self, ix: usize) -> &Row {
@@ -181,27 +182,33 @@ fn named(settings: &ThemeSettings) -> Option<&'static BundledTheme> {
 
 /// The ID of the theme `settings` show for `appearance`, as the host
 /// chooses it and kiln takes the choice: the slot's setting, else the
-/// bundled theme `theme.name` names if it's of that appearance; but
-/// fastedit's own for the appearance if there's no choice, or it isn't one
-/// of the `installed` themes of that appearance, which kiln then falls back
-/// to.
-fn showing(settings: &ThemeSettings, appearance: Appearance, installed: &[ThemeInfo]) -> String {
+/// bundled theme `theme.name` names if it's of that appearance, else, with
+/// no choice, Tenmoku's default for the appearance, Yohen or Hakuji, which
+/// the host selects for an unset slot. `None` for a choice that isn't one of
+/// the `installed` themes of that appearance: kiln falls back to its own base
+/// for the slot (Kiln Dark or Light chrome) under the default's editor
+/// palette, which is no theme listed, so nothing is marked.
+fn showing(
+    settings: &ThemeSettings,
+    appearance: Appearance,
+    installed: &[ThemeInfo],
+) -> Option<String> {
     let chosen = match slot(settings, appearance).0 {
         Some(id) => Some(id.clone()),
         None => named(settings)
             .filter(|theme| theme.appearance == appearance)
             .map(|theme| kiln::extensions::builtin_theme_id(theme.id)),
     };
-    let taken = |id: &String| {
-        (installed.iter()).any(|theme| theme.id == *id && theme.appearance == appearance)
-    };
-    chosen.filter(taken).unwrap_or_else(|| {
+    let Some(chosen) = chosen else {
         let own = match appearance {
-            Appearance::Dark => "tenmoku-dark",
-            Appearance::Light => "tenmoku-light",
+            Appearance::Dark => themes::DEFAULT_DARK,
+            Appearance::Light => themes::DEFAULT_LIGHT,
         };
-        kiln::extensions::builtin_theme_id(own)
-    })
+        return Some(kiln::extensions::builtin_theme_id(own));
+    };
+    let taken =
+        (installed.iter()).any(|theme| theme.id == chosen && theme.appearance == appearance);
+    taken.then_some(chosen)
 }
 
 /// The changes to `settings.toml` that make `row` its appearance's theme

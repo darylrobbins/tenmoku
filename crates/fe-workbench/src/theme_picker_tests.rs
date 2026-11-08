@@ -97,7 +97,10 @@ fn select(theme: &ThemeSettings, cx: &mut App) {
         };
         slot.get_or_insert_with(|| builtin_theme_id(found.id));
     }
-    select_themes(cx, dark.as_deref(), light.as_deref());
+    // An unset slot is the default, Yohen or Hakuji.
+    let dark = dark.unwrap_or_else(|| builtin_theme_id(fe_config::themes::DEFAULT_DARK));
+    let light = light.unwrap_or_else(|| builtin_theme_id(fe_config::themes::DEFAULT_LIGHT));
+    select_themes(cx, Some(&dark), Some(&light));
 }
 
 /// kiln's config service over `user`'s text, with the Acme extension
@@ -400,7 +403,7 @@ fn system_mode_turns_to_show_the_pick(cx: &mut TestAppContext) {
     // The test platform's appearance is light.
     assert_eq!(cx.update(|_, cx| cx.theme().appearance), Appearance::Light);
     dispatch("theme.select", cx);
-    assert_eq!(current(&picker, cx), ["Tenmoku Light"]);
+    assert_eq!(current(&picker, cx), ["Hakuji"]);
     cx.simulate_keystrokes("escape");
     draw(cx);
 
@@ -428,7 +431,7 @@ fn system_mode_turns_to_show_the_pick(cx: &mut TestAppContext) {
     cx.update(|_, cx| kiln::ui::system_appearance_changed(cx, WindowAppearance::Dark));
     assert_eq!(cx.update(|_, cx| cx.theme().appearance), Appearance::Dark);
     dispatch("theme.select", cx);
-    assert_eq!(current(&picker, cx), ["Tenmoku Dark"]);
+    assert_eq!(current(&picker, cx), ["Yohen"]);
     pick("Acme Midnight", cx);
     let theme = theme_settings(&host);
     assert_eq!(theme.dark.as_deref(), Some("acme.night/midnight"));
@@ -459,28 +462,47 @@ fn the_current_mark_follows_kilns_fallback(cx: &mut TestAppContext) {
         draw(cx);
         marked
     };
+    // What shows: the UI tokens and the editor palette.
+    let showing = |cx: &mut VisualTestContext| {
+        let tokens = cx.update(|_, cx| cx.theme().data().tokens);
+        (tokens, active_palette(cx))
+    };
+    let bundled = |title: &str| {
+        let data = ThemeData::from_file(&find(title).expect("bundled").file());
+        (data.tokens, palette_of(title))
+    };
+    let (yohen, hakuji) = (bundled("Yohen"), bundled("Hakuji"));
 
-    // Nothing chosen: fastedit's own.
-    assert_eq!(marked("", cx), ["Tenmoku Dark"]);
-    // A light theme in the dark slot, which kiln refuses for it.
+    // Nothing chosen: the default, Yohen, all of it.
+    assert_eq!(marked("", cx), ["Yohen"]);
+    assert_eq!(showing(cx), yohen);
+    // A light theme in the dark slot, which kiln refuses for it: kiln's own
+    // base under the default palette, which is no listed theme.
     assert_eq!(
         marked("[theme]\ndark = \"acme.night/noon\"\n", cx),
-        ["Tenmoku Dark"]
+        [] as [&str; 0]
     );
-    assert_eq!(active_palette(cx), *EditorPalette::fastedit_dark());
-    // A theme not installed.
+    let kiln_dark = (
+        ThemeData::dark().tokens,
+        EditorPalette::fastedit_dark().clone(),
+    );
+    assert_eq!(showing(cx), kiln_dark);
+    assert_ne!(kiln_dark.0, yohen.0);
+    // A theme not installed: the same.
     assert_eq!(
         marked("[theme]\ndark = \"acme.gone/midnight\"\n", cx),
-        ["Tenmoku Dark"]
+        [] as [&str; 0]
     );
-    // A name nothing bundled has, then one by its short name.
-    assert_eq!(marked("[theme]\nname = \"Nope\"\n", cx), ["Tenmoku Dark"]);
+    assert_eq!(showing(cx), kiln_dark);
+    // A name nothing bundled has chooses nothing: the default.
+    assert_eq!(marked("[theme]\nname = \"Nope\"\n", cx), ["Yohen"]);
+    assert_eq!(showing(cx), yohen);
+    // One by its short name.
     assert_eq!(marked("[theme]\nname = \"ember\"\n", cx), ["Tenmoku Ember"]);
-    // A light name leaves the dark slot fastedit's own.
-    assert_eq!(
-        marked("[theme]\nname = \"Tenmoku Light\"\n", cx),
-        ["Tenmoku Dark"]
-    );
+    assert_eq!(showing(cx), bundled("Tenmoku Ember"));
+    // A light name leaves the dark slot the default.
+    assert_eq!(marked("[theme]\nname = \"Tenmoku Light\"\n", cx), ["Yohen"]);
+    assert_eq!(showing(cx), yohen);
     // A slot's own setting wins over the name.
     assert_eq!(
         marked(
@@ -489,4 +511,19 @@ fn the_current_mark_follows_kilns_fallback(cx: &mut TestAppContext) {
         ),
         ["Acme Midnight"]
     );
+
+    // Light, the same: the default is Hakuji, all of it, and a refused
+    // choice is unmarked over Kiln Light.
+    assert_eq!(marked("[theme]\nmode = \"light\"\n", cx), ["Hakuji"]);
+    assert_eq!(showing(cx), hakuji);
+    let refused = "[theme]\nmode = \"light\"\nlight = \"acme.night/midnight\"\n";
+    assert_eq!(marked(refused, cx), [] as [&str; 0]);
+    let kiln_light = (
+        ThemeData::light().tokens,
+        EditorPalette::fastedit_light().clone(),
+    );
+    assert_eq!(showing(cx), kiln_light);
+    let gone = "[theme]\nmode = \"light\"\nlight = \"acme.gone/noon\"\n";
+    assert_eq!(marked(gone, cx), [] as [&str; 0]);
+    assert_eq!(showing(cx), kiln_light);
 }
