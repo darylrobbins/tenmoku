@@ -87,13 +87,11 @@ fn every_font_file_is_listed() {
                 file.extension().and_then(|e| e.to_str()),
                 Some("ttf" | "otf")
             ) {
-                on_disk.push(
-                    file.strip_prefix(&dir)
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .to_string(),
-                );
+                // Joined with `/`, as FACES names them, on Windows too.
+                let parts: Vec<&str> = (file.strip_prefix(&dir).unwrap().components())
+                    .map(|part| part.as_os_str().to_str().unwrap())
+                    .collect();
+                on_disk.push(parts.join("/"));
             }
         }
         assert!(
