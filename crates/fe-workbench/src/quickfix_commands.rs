@@ -48,7 +48,12 @@ use crate::{
 /// Each window's lists, by its workbench's id, a window's location stacks
 /// by their pane's: kept apart from the workbench, and dropped with it.
 #[derive(Default)]
-struct Lists(HashMap<EntityId, Quickfixes<EntityId>>);
+struct Lists {
+    stacks: HashMap<EntityId, Quickfixes<EntityId>>,
+    /// Each window's landing count: bumped by every landing, so one whose
+    /// open resolves after a newer began knows it was superseded.
+    landings: HashMap<EntityId, u64>,
+}
 
 impl Global for Lists {}
 
@@ -65,14 +70,16 @@ impl Workbench {
     /// location stack when the pane goes, and all of them with the window.
     fn quickfixes<'a>(&self, cx: &'a mut Context<Self>) -> &'a mut Quickfixes<EntityId> {
         let id = cx.entity_id();
-        if !cx.default_global::<Lists>().0.contains_key(&id) {
+        if !cx.default_global::<Lists>().stacks.contains_key(&id) {
             cx.on_release(move |_, cx| {
-                cx.default_global::<Lists>().0.remove(&id);
+                let lists = cx.default_global::<Lists>();
+                lists.stacks.remove(&id);
+                lists.landings.remove(&id);
             })
             .detach();
             cx.subscribe(self.workspace(), move |this, _, event, cx| {
                 if let WorkspaceEvent::PaneRemoved(pane) = event
-                    && let Some(lists) = cx.default_global::<Lists>().0.get_mut(&id)
+                    && let Some(lists) = cx.default_global::<Lists>().stacks.get_mut(&id)
                 {
                     lists.drop_pane(pane);
                     this.quickfix_changed(cx);
@@ -80,11 +87,11 @@ impl Workbench {
             })
             .detach();
             cx.default_global::<Lists>()
-                .0
+                .stacks
                 .insert(id, Quickfixes::default());
         }
         cx.default_global::<Lists>()
-            .0
+            .stacks
             .get_mut(&id)
             .expect("set up above")
     }
@@ -351,7 +358,8 @@ impl Workbench {
     }
 
     /// Opens `item`'s file in the active pane at its row and column, then
-    /// says `text` in the editor there.
+    /// says `text` in the editor there, unless a newer landing superseded
+    /// this one or the open failed.
     pub(crate) fn land_on(
         &mut self,
         item: QuickfixItem,
@@ -362,13 +370,22 @@ impl Workbench {
         let line = item.row.saturating_add(1);
         let col = item.col.saturating_add(1);
         let path = item.path;
+        let id = cx.entity_id();
+        let landing = {
+            let count = cx.default_global::<Lists>().landings.entry(id).or_default();
+            *count += 1;
+            *count
+        };
         let opened = self.open_document_at(path.clone(), Some(line), Some(col), window, cx);
         let pane = self.pane().clone();
         cx.spawn(async move |_, cx| {
             opened.await;
             cx.update(|cx| {
-                let editor = landed_editor(&pane, &path, cx);
-                say(editor.as_ref(), text, cx);
+                let current = cx.default_global::<Lists>().landings.get(&id) == Some(&landing);
+                // Say nothing if a newer landing began, or the open failed.
+                if let Some(editor) = landed_editor(&pane, &path, cx).filter(|_| current) {
+                    say(Some(&editor), text, cx);
+                }
             });
         })
         .detach();
@@ -423,7 +440,7 @@ pub(crate) fn shown_list(
     pane: Option<EntityId>,
     cx: &mut App,
 ) -> Option<&QuickfixList> {
-    let lists = cx.default_global::<Lists>().0.get_mut(&workbench)?;
+    let lists = cx.default_global::<Lists>().stacks.get_mut(&workbench)?;
     let stack = match pane {
         Some(pane) => lists.location(&pane).ok()?,
         None => &mut lists.quickfix,

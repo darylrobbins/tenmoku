@@ -342,3 +342,68 @@ fn location_lists_follow_the_active_pane_and_close_with_it(cx: &mut TestAppConte
     run("location.previous", cx);
     assert_eq!(landed(&workbench, cx), (root.join("a.txt"), (0, 0), true));
 }
+
+#[gpui::test]
+fn a_superseded_landing_says_nothing(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (workbench, mut vcx) = window(cx, root);
+    let cx = &mut vcx;
+    // c.txt is open already; b.txt is not, so landing on it loads.
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let c = root.join("c.txt");
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(c, window, cx)));
+    draw(cx);
+    push(&workbench, false, three(root), cx);
+    cx.update(|_, cx| set_vim_enabled(cx, false));
+    draw(cx);
+
+    // Two landings with no settling between.
+    for _ in 0..2 {
+        let run = RunCommand(
+            Invocation::of("quickfix.next")
+                .unwrap()
+                .context(ContextStack::new().with(ContextFrame::new("workbench"))),
+        );
+        cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+    }
+    draw(cx);
+    let toasts = toasts(&workbench, cx);
+    assert!(
+        toasts.iter().any(|toast| toast == "(3 of 3) error: third"),
+        "{toasts:?}"
+    );
+    assert!(
+        !toasts.iter().any(|toast| toast.starts_with("(2 of 3)")),
+        "{toasts:?}"
+    );
+}
+
+#[gpui::test]
+fn a_failed_open_lands_no_message(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (workbench, mut vcx) = window(cx, root);
+    let cx = &mut vcx;
+    std::fs::create_dir(root.join("sub")).unwrap();
+    push(
+        &workbench,
+        false,
+        QuickfixList::new(
+            "dir",
+            vec![
+                item(root, "a.txt", 0, 0, "first"),
+                item(root, "sub", 0, 0, "a directory"),
+            ],
+        ),
+        cx,
+    );
+    cx.update(|_, cx| set_vim_enabled(cx, false));
+    draw(cx);
+    run("quickfix.next", cx);
+    let toasts = toasts(&workbench, cx);
+    assert!(
+        !toasts.iter().any(|toast| toast.contains("a directory")),
+        "{toasts:?}"
+    );
+}
