@@ -82,7 +82,7 @@ C++, C#, Ruby, Swift and Lua are ours, written from the grammar's
 
 One line per class of shipped non-code asset. Result: one gap, fixed in this card (see icons).
 
-- Fonts: none bundled; text renders in system fonts. No gap.
+- Fonts: none bundled at the audit; text rendered in system fonts. No gap. Since T1511, Instrument Sans, Spline Sans Mono and Instrument Serif (OFL-1.1) ship in `crates/fe-fonts/fonts/`, each with its `OFL.txt`, in the Fonts table below and NOTICE.
 - App icon: `crates/fastedit/assets/icon/fastedit.svg` and `fastedit-1024.png` are the author's own work, Apache-2.0 like Tenmoku, with a NOTICE entry. No gap.
 - Themes: `tenmoku-*` are our own; `vscode-*` and `catppuccin-*` each have a row above and a NOTICE entry (MIT). No gap.
 - Icons: Lucide (ISC, Feather-derived MIT) and Material Icon Theme (MIT), each with its LICENSE file under `kiln/crates/kiln-ui/assets/`. Gap found and fixed: eight Lucide icons (`chevron-down`, `cloud`, `fold-vertical`, `list-x`, `refresh-cw`, `rotate-ccw`, `tag`, `unfold-vertical`) shipped with no row; they are now in the icons table, the count is 68 and the Feather classification is updated.
@@ -318,6 +318,27 @@ icon.
 Some icons are logos (Rust, Go, Python, Docker, Swift, Kotlin, Java, Git,
 Node.js, …). Those marks belong to their owners and are used only to identify
 file types; no endorsement is implied.
+
+## Fonts
+
+| Our path | Source | Commit | License | Files |
+|---|---|---|---|---|
+| `crates/fe-fonts/fonts/instrument-sans/` | [Instrument Sans](https://github.com/google/fonts/tree/86aced91de05cd4f96a06838124cca45be337b2b/ofl/instrumentsans) (google/fonts `ofl/instrumentsans/`), static instances of `InstrumentSans[wdth,wght].ttf` | `86aced91de05cd4f96a06838124cca45be337b2b` | OFL-1.1 | `InstrumentSans-Regular.ttf`, `InstrumentSans-Medium.ttf`, `InstrumentSans-SemiBold.ttf`, `OFL.txt` |
+| `crates/fe-fonts/fonts/spline-sans-mono/` | [Spline Sans Mono](https://github.com/google/fonts/tree/86aced91de05cd4f96a06838124cca45be337b2b/ofl/splinesansmono) (google/fonts `ofl/splinesansmono/`), static instances of `SplineSansMono[wght].ttf` and `SplineSansMono-Italic[wght].ttf` | `86aced91de05cd4f96a06838124cca45be337b2b` | OFL-1.1 | `SplineSansMono-Regular.ttf`, `SplineSansMono-Medium.ttf`, `SplineSansMono-SemiBold.ttf`, `SplineSansMono-Italic.ttf`, `OFL.txt` |
+| `crates/fe-fonts/fonts/instrument-serif/` | [Instrument Serif](https://github.com/google/fonts/tree/86aced91de05cd4f96a06838124cca45be337b2b/ofl/instrumentserif) (google/fonts `ofl/instrumentserif/`) | `86aced91de05cd4f96a06838124cca45be337b2b` | OFL-1.1 | `InstrumentSerif-Regular.ttf` (unmodified), `OFL.txt` |
+
+Compiled into `fe-fonts` with `include_bytes!` and registered with the text
+system by `fe_workbench::init`. Upstream ships Instrument Sans and Spline Sans
+Mono as variable fonts, which GPUI's macOS text system registers at their
+default weight only, so each weight we use is a static instance made with
+fontTools' `instancer`; `crates/fe-fonts/fonts/README.md` has the commands and
+the upstream files' SHA-256s. The SIL Open Font License 1.1 permits bundling
+the fonts with software, including commercial software, and modified versions
+under the same licence; none of the three declares a Reserved Font Name. Each
+family's `OFL.txt`, copied unmodified, is beside its files, and
+`scripts/bundle-macos.sh` copies it into Tenmoku.app as
+`Contents/Resources/fonts/<family>/OFL.txt` (checked by
+`scripts/test-bundle-macos.sh`).
 
 ## Shipped MPL-2.0 dependencies (unmodified)
 

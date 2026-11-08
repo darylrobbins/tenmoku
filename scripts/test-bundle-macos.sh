@@ -70,6 +70,22 @@ roles=$(echo "$types" | grep -o '"CFBundleTypeRole":"Editor"' | wc -l | tr -d ' 
 [ "$roles" -eq 2 ] || fail "expected both document types to be role Editor"
 ok "document types are role Editor"
 
+# T1511: each bundled font family's OFL.txt, byte for byte, and nothing else under fonts/.
+families=0
+for licence in "$root"/crates/fe-fonts/fonts/*/OFL.txt; do
+	family=$(basename "$(dirname "$licence")")
+	shipped="$app/Contents/Resources/fonts/$family/OFL.txt"
+	[ -f "$shipped" ] || fail "Contents/Resources/fonts/$family/OFL.txt missing"
+	cmp -s "$licence" "$shipped" || fail "Contents/Resources/fonts/$family/OFL.txt differs from $licence"
+	grep -q 'SIL OPEN FONT LICENSE Version 1.1' "$shipped" ||
+		fail "Contents/Resources/fonts/$family/OFL.txt is not the OFL 1.1 text"
+	families=$((families + 1))
+done
+[ "$families" -eq 3 ] || fail "expected the OFL.txt of 3 font families in crates/fe-fonts/fonts, found $families"
+count=$(find "$app/Contents/Resources/fonts" -type f | wc -l | tr -d ' ')
+[ "$count" -eq "$families" ] || fail "Contents/Resources/fonts has $count files, expected $families"
+ok "the $families font families' OFL.txt ship in Contents/Resources/fonts"
+
 # C3: the bundle id is fe_config::paths::app_id()'s reverse DNS.
 app_id=$(sed -n 's/.*AppId::new("\([^"]*\)".*/\1/p' "$root/crates/fe-config/src/paths.rs")
 [ -n "$app_id" ] || fail "no AppId::new(\"...\") in crates/fe-config/src/paths.rs"

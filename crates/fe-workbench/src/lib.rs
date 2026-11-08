@@ -222,6 +222,10 @@ pub fn init(cx: &mut App) {
     // The AI chat's view's commands, and `chat.open` from anywhere.
     fe_chat_view::init(cx);
     chat_panel::init(cx);
+    // Instrument Sans, Spline Sans Mono and Instrument Serif (fe-fonts).
+    if let Err(e) = cx.text_system().add_fonts(fe_fonts::all()) {
+        log::error!("the bundled fonts weren't registered: {e:#}");
+    }
 }
 
 /// The workbench's, the editor's and the app's commands, to check keymap

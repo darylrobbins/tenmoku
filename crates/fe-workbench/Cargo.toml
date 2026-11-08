@@ -21,6 +21,8 @@ fe-config.workspace = true
 fe-editor.workspace = true
 # Files too large to read open in a read-only view.
 fe-fileview.workspace = true
+# The bundled fonts, registered with the text system at init.
+fe-fonts = { path = "../fe-fonts" }
 fe-git.workspace = true
 # Matching a buffer's rows to HEAD's as fe-git's blame does.
 imara-diff.workspace = true
@@ -97,6 +99,8 @@ gpui_platform = { workspace = true, features = ["test-support"] }
 # The screenshots example's harness: settling, comparison and goldens.
 kiln-platform = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+# The bundled fonts' glyph advances, to tell a bundled face from a fallback.
+ttf-parser = "0.25"
 # The plugin host's tests build kiln-plugin's WAT fixtures.
 wasmtime = { workspace = true, features = ["wat"] }
 

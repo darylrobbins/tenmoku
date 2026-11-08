@@ -98,7 +98,24 @@ Copyright (c) 2025 Material Extensions.
 Licensed under the MIT License.
 The logos among them are their owners' marks, used only to identify file types.
 
+Instrument Sans font (google/fonts ofl/instrumentsans at 86aced91de05,
+static instances of the variable font, in crates/fe-fonts/fonts/instrument-sans)
+Copyright 2022 The Instrument Sans Project Authors (https://github.com/Instrument/instrument-sans)
+Licensed under the SIL Open Font License, Version 1.1.
+
+Spline Sans Mono font (google/fonts ofl/splinesansmono at 86aced91de05,
+static instances of the variable fonts, in crates/fe-fonts/fonts/spline-sans-mono)
+Copyright 2022 The Spline Sans Mono Project Authors (https://github.com/SorkinType/SplineSansMono)
+Licensed under the SIL Open Font License, Version 1.1.
+
+Instrument Serif font (google/fonts ofl/instrumentserif at 86aced91de05,
+unmodified, in crates/fe-fonts/fonts/instrument-serif)
+Copyright 2022 The Instrument Serif Project Authors (https://github.com/Instrument/instrument-serif)
+Licensed under the SIL Open Font License, Version 1.1.
+
 License texts: LICENSES/Apache-2.0.txt and LICENSES/MIT.txt (the MIT text is
 the template; the holders are named above). The ISC text is Lucide's own
 kiln/crates/kiln-ui/assets/icons/LICENSE. Material Icon Theme's MIT text is
 its own kiln/crates/kiln-ui/assets/file-icons/LICENSE.
+Each font's OFL-1.1 text is its own OFL.txt, beside its files under
+crates/fe-fonts/fonts/.

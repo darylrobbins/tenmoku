@@ -31,6 +31,9 @@ build first with 'cargo build --release -p fastedit'.
 The bundle holds Contents/MacOS/tenmoku, Contents/Info.plist (from
 crates/fastedit/macos/Info.plist) and Contents/Resources/Tenmoku.icns, generated
 here from crates/fastedit/assets/icon/fastedit-1024.png with sips and iconutil.
+The binary embeds the fonts in crates/fe-fonts/fonts/, so each family's OFL.txt
+is copied, unmodified, to Contents/Resources/fonts/<family>/OFL.txt: the SIL Open
+Font License travels with the fonts.
 
 With a feed URL and a key, Info.plist gets the five SU* update keys; if either is empty
 it has none of them, so the build never polls.
@@ -198,6 +201,18 @@ if [ -n "$framework" ]; then
 	rm -rf "$bundled/Versions/B/XPCServices" "$bundled/XPCServices"
 	cp "$sparkle_license" "$app/Contents/Resources/Sparkle-LICENSE.txt"
 fi
+
+# The OFL-1.1 text of each font family the binary embeds (crates/fe-fonts), before signing.
+fonts="$root/crates/fe-fonts/fonts"
+copied=0
+for licence in "$fonts"/*/OFL.txt; do
+	[ -f "$licence" ] || continue
+	family=$(basename "$(dirname "$licence")")
+	mkdir -p "$app/Contents/Resources/fonts/$family"
+	cp "$licence" "$app/Contents/Resources/fonts/$family/OFL.txt" || die "could not copy $licence"
+	copied=$((copied + 1))
+done
+[ "$copied" -gt 0 ] || die "no OFL.txt under $fonts: the bundled fonts' licences must ship with them"
 
 iconset="$work/Tenmoku.iconset"
 mkdir "$iconset"

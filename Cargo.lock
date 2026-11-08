@@ -2249,6 +2249,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-fonts"
+version = "0.1.1"
+dependencies = [
+ "ttf-parser",
+]
+
+[[package]]
 name = "fe-git"
 version = "0.1.1"
 dependencies = [
@@ -2554,6 +2561,7 @@ dependencies = [
  "fe-config",
  "fe-editor",
  "fe-fileview",
+ "fe-fonts",
  "fe-git",
  "fe-gpui",
  "fe-keymap",
@@ -2589,6 +2597,7 @@ dependencies = [
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
  "tree-sitter",
+ "ttf-parser",
  "unicode-width",
  "wasmtime",
  "wasmtime-wasi",

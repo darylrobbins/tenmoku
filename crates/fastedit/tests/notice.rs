@@ -1,5 +1,6 @@
-//! NOTICE lists every source THIRD_PARTY.md's "Code copied or adapted" and
-//! "Icons" tables name, and each license those rows carry has a text to ship.
+//! NOTICE lists every source THIRD_PARTY.md's "Code copied or adapted",
+//! "Icons" and "Fonts" tables name, and each license those rows carry has a
+//! text to ship.
 //!
 //! The checks are functions over `(path, text)` pairs, run over the
 //! repository and over in-memory fixtures.
@@ -45,15 +46,15 @@ fn cells(line: &str) -> Vec<&str> {
         .collect()
 }
 
-/// The rows of the "Code copied or adapted…" and "Icons" tables.
+/// The rows of the "Code copied or adapted…", "Icons" and "Fonts" tables.
 fn rows(md: &str) -> Vec<Row> {
     let mut out = Vec::new();
     let mut table = None;
     let mut seen_header = false;
     for line in md.lines() {
         if let Some(h) = line.strip_prefix("## ") {
-            table =
-                (h.starts_with("Code copied or adapted") || h == "Icons").then(|| h.to_string());
+            table = (h.starts_with("Code copied or adapted") || h == "Icons" || h == "Fonts")
+                .then(|| h.to_string());
             seen_header = false;
             continue;
         }
@@ -72,7 +73,7 @@ fn rows(md: &str) -> Vec<Row> {
         if c.len() < 4 || c[0].starts_with("---") {
             continue;
         }
-        // Source is column 1; License is column 3 in both tables.
+        // Source is column 1; License is column 3 in all three tables.
         out.push(Row {
             table: table.clone(),
             path: c[0].trim_matches('`').to_string(),
@@ -105,7 +106,7 @@ fn aliases(name: &str) -> Vec<String> {
 
 /// The license identifiers in a License cell.
 fn license_ids(cell: &str) -> Vec<&'static str> {
-    ["Apache-2.0", "MIT", "ISC"]
+    ["Apache-2.0", "MIT", "ISC", "OFL-1.1"]
         .into_iter()
         .filter(|id| cell.contains(id))
         .collect()
@@ -136,6 +137,10 @@ fn check_pair(files: &Files, pair: &Pair) -> Vec<String> {
             // ISC and Feather's MIT, Material Icon Theme's MIT.
             let text = if row.table == "Icons" && id != "Apache-2.0" {
                 format!("{}{}LICENSE", pair.prefix, row.path)
+            } else if row.table == "Fonts" && id == "OFL-1.1" {
+                // A font family's OFL.txt beside its files, as Google Fonts
+                // ships it.
+                format!("{}{}OFL.txt", pair.prefix, row.path)
             } else {
                 format!("{}LICENSES/{id}.txt", pair.prefix)
             };
@@ -181,6 +186,22 @@ fn repo_files() -> Files {
                 panic!("{p}: can't read it: {e}")
             }
             Err(_) => {}
+        }
+    }
+    // Each font family's OFL.txt, beside the files its row names.
+    let fonts: Vec<String> = ["", "kiln/"]
+        .iter()
+        .flat_map(|prefix| {
+            let md = &files[&format!("{prefix}THIRD_PARTY.md")];
+            rows(md)
+                .into_iter()
+                .filter(|row| row.table == "Fonts")
+                .map(move |row| format!("{prefix}{}OFL.txt", row.path))
+        })
+        .collect();
+    for p in fonts {
+        if let Ok(text) = std::fs::read_to_string(root.join(&p)) {
+            files.insert(p, text);
         }
     }
     files
@@ -276,5 +297,70 @@ fn checks_catch_gaps() {
         "LICENSES/Apache-2.0.txt",
     ] {
         assert!(icons[0].contains(part), "{part}: {icons:?}");
+    }
+}
+
+#[test]
+fn font_rows_need_their_ofl_txt() {
+    let pair = Pair { prefix: "" };
+    let md = "## Fonts\n\n| Our path | Source | Commit | License | Files |\n|---|---|---|---|---|\n\
+              | `fonts/sans/` | [Some Sans](https://x) | abc | OFL-1.1 | `SomeSans.ttf`, `OFL.txt` |\n";
+    let mut fonts = Files::new();
+    fonts.insert("THIRD_PARTY.md".into(), md.into());
+    fonts.insert("NOTICE".into(), "Some Sans font\n".into());
+    fonts.insert("fonts/sans/OFL.txt".into(), "text".into());
+    assert_eq!(check_pair(&fonts, &pair), Vec::<String>::new());
+
+    // A LICENSES/OFL-1.1.txt doesn't stand in for the one beside the files.
+    fonts.remove("fonts/sans/OFL.txt");
+    fonts.insert("LICENSES/OFL-1.1.txt".into(), "text".into());
+    let missing = check_pair(&fonts, &pair);
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    for part in [
+        "Fonts",
+        "fonts/sans/",
+        "no license text",
+        "fonts/sans/OFL.txt",
+        "OFL-1.1",
+    ] {
+        assert!(missing[0].contains(part), "{part}: {missing:?}");
+    }
+
+    let unnamed = {
+        let mut f = fonts.clone();
+        f.insert("fonts/sans/OFL.txt".into(), "text".into());
+        f.insert("NOTICE".into(), "Other\n".into());
+        check_pair(&f, &pair)
+    };
+    assert_eq!(unnamed.len(), 1, "{unnamed:?}");
+    assert!(
+        unnamed[0].contains("doesn't name the source `Some Sans`"),
+        "{unnamed:?}"
+    );
+}
+
+#[test]
+fn repository_fonts_table_is_checked() {
+    // The Fonts table is read, and each of its rows has its OFL.txt: an empty
+    // table would pass the checks above vacuously.
+    let files = repo_files();
+    let fonts: Vec<Row> = rows(&files["THIRD_PARTY.md"])
+        .into_iter()
+        .filter(|row| row.table == "Fonts")
+        .collect();
+    assert_eq!(fonts.len(), 3, "the Fonts table's rows");
+    for row in &fonts {
+        assert!(
+            license_ids(&row.license).contains(&"OFL-1.1"),
+            "{}",
+            row.path
+        );
+        let text = format!("{}OFL.txt", row.path);
+        assert!(
+            files
+                .get(&text)
+                .is_some_and(|t| t.contains("SIL Open Font License")),
+            "{text}: not read, or not the OFL"
+        );
     }
 }
