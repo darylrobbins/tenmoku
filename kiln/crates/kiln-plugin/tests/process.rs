@@ -48,25 +48,46 @@ fn copied(dir: &Path, name: &str) -> ProgramIdentity {
         .find(|path| path.is_file())
         .unwrap_or_else(|| panic!("no {name} in {SYSTEM_PATH}"));
     let copy = dir.join(name);
-    fs::copy(system, &copy).unwrap();
-    resign(&copy);
+    place(&system, &copy);
     resolve_program(name, dir.as_os_str()).unwrap()
 }
 
-/// macOS kills (SIGKILL at exec) a copied system binary: its signature is the platform's, which
-/// binds it to `/usr/bin` and `/bin`. An ad-hoc signature makes the copy an ordinary program.
-#[cfg(target_os = "macos")]
-fn resign(path: &Path) {
-    let status = std::process::Command::new("codesign")
-        .args(["--force", "--sign", "-"])
-        .arg(path)
-        .output()
-        .unwrap();
-    assert!(status.status.success(), "{status:?}");
+#[cfg(not(target_os = "macos"))]
+fn place(system: &Path, copy: &Path) {
+    fs::copy(system, copy).unwrap();
 }
 
-#[cfg(not(target_os = "macos"))]
-fn resign(_: &Path) {}
+/// macOS kills (SIGKILL at exec) a copied system binary: its signature is the platform's, which
+/// binds it to `/usr/bin` and `/bin`. Re-signing it ad hoc isn't enough everywhere: on
+/// macOS 15 (GitHub's runner) the copy is still killed, likely because its arm64e slice runs only
+/// under the platform's signature. So the copy is a program of our own, built by `cc` (which links every
+/// Rust program here): it execs the system binary in place, keeping its pid, arguments and
+/// environment as the call gave them.
+#[cfg(target_os = "macos")]
+fn place(system: &Path, copy: &Path) {
+    let source = copy.with_extension("c");
+    fs::write(
+        &source,
+        format!(
+            "#include <unistd.h>\n\
+             int main(int argc, char **argv) {{\n\
+             \x20   (void)argc;\n\
+             \x20   execv(\"{}\", argv);\n\
+             \x20   return 127;\n\
+             }}\n",
+            system.display()
+        ),
+    )
+    .unwrap();
+    let output = std::process::Command::new("cc")
+        .arg("-o")
+        .arg(copy)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    fs::remove_file(&source).unwrap();
+}
 
 /// An executable script `name` in `dir`, bound as a grant would bind it.
 fn script(dir: &Path, name: &str, body: &str) -> ProgramIdentity {
