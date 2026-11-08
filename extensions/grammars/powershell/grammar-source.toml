@@ -1,0 +1,4 @@
+git = "https://github.com/airbus-cert/tree-sitter-powershell"
+rev = "65ea6919e816a7ac142acec7ee72757f89db8439"
+src = "src"
+grammar = "powershell"

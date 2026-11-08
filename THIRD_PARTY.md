@@ -257,6 +257,7 @@ licence. No module is committed.
 | awk | `tree-sitter-awk.wasm` | [Beaglefoot/tree-sitter-awk](https://github.com/Beaglefoot/tree-sitter-awk) @ `34bbdc7cce8e803096f47b625979e34c1be38127` (`grammar-source.toml`); `highlights.scm` is upstream's `queries/highlights.scm`, adapted to fe-syntax's capture names | MIT |
 | fish | `tree-sitter-fish.wasm` | [ram02z/tree-sitter-fish](https://github.com/ram02z/tree-sitter-fish) @ `b7f1d682941e0c62dfcd6bf9ef481638351bab16` (`src`), master HEAD; `highlights.scm` is upstream's `queries/highlights.scm`, unchanged; `injections.scm` has no patterns | Unlicense (public-domain dedication) |
 | ron | `tree-sitter-ron.wasm` | [tree-sitter-grammars/tree-sitter-ron](https://github.com/tree-sitter-grammars/tree-sitter-ron) @ `78938553b93075e638035f624973083451b29055` (`grammar-source.toml`); `highlights.scm` and `injections.scm` are upstream's, trimmed | MIT OR Apache-2.0 |
+| powershell | `tree-sitter-powershell.wasm` | [airbus-cert/tree-sitter-powershell](https://github.com/airbus-cert/tree-sitter-powershell) at `65ea6919e816a7ac142acec7ee72757f89db8439` | MIT; `highlights.scm` is adapted from the repository's own `queries/highlights.scm` at that commit (same licence) |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub
