@@ -3,7 +3,7 @@
 
 use std::ops::{Range, RangeInclusive};
 
-use fe_buffer::{Buffer, ResolvedSelection};
+use fe_buffer::{Buffer, Origin, ResolvedSelection};
 use fe_command::{Effect, Invocation};
 use fe_editor::{
     EditorModel,
@@ -151,4 +151,34 @@ fn an_edit_or_a_click_forgets_the_history() {
 /// A list of the one range, which clippy would take for a range of items.
 fn one(range: Range<usize>) -> Vec<Range<usize>> {
     vec![range]
+}
+
+#[test]
+fn shrink_steps_back_through_an_undo_history_import() {
+    let mut source = Buffer::new("");
+    source.edit([(0..0, "abcdefghijkl")], Origin::User);
+    let record = source.export_undo().unwrap();
+
+    let mut host = Nested(vec![4..6, 2..8, 0..12]);
+    let mut editor = editor(&[5]);
+    expand(&mut editor, &mut host);
+    expand(&mut editor, &mut host);
+    assert_eq!(ranges(&editor), one(2..8));
+
+    let state = editor.selection_state();
+    editor.buffer_mut().import_undo(record).unwrap();
+    editor.restore_selection_state(state);
+
+    assert_eq!(shrink(&mut editor, &mut host), Effect::Changed);
+    assert_eq!(ranges(&editor), one(4..6));
+    assert_eq!(shrink(&mut editor, &mut host), Effect::Changed);
+    assert_eq!(ranges(&editor), one(5..5));
+    assert_eq!(shrink(&mut editor, &mut host), Effect::Nothing);
+
+    let undone = editor
+        .buffer_mut()
+        .undo(|origin| *origin == Origin::User)
+        .unwrap();
+    assert!(undone.is_some());
+    assert_eq!(editor.text().to_string(), "");
 }

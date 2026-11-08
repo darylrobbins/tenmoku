@@ -973,6 +973,7 @@ impl EditorModel {
             goals: self.goals.clone(),
             column_box: self.column_box.clone(),
             cursor_history: self.cursor_history.resolve(&self.snapshot),
+            expand_history: self.live_expand_history(),
         }
     }
 
@@ -1006,6 +1007,7 @@ impl EditorModel {
         self.column_box = (state.column_box).map(|column_box| column_box.at_version(version));
         self.cursor_history =
             cursor_history::CursorHistory::anchored(state.cursor_history, &self.snapshot);
+        self.expand_history = (state.expand_history).map(|history| history.at_version(version));
     }
 
     /// Has undoing and redoing each of `transactions`, from this model or
@@ -1931,6 +1933,8 @@ pub struct SelectionState {
     goals: Vec<Option<usize>>,
     column_box: Option<column_select::ColumnBox>,
     cursor_history: cursor_history::ResolvedHistory,
+    /// The Expand Selection history, if it was live when taken.
+    expand_history: Option<smart_select::ExpandHistory>,
 }
 
 /// The [`DiagnosticSet`] in `slot`, made afresh if there's none or it's

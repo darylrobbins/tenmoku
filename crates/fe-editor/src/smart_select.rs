@@ -11,12 +11,21 @@ use crate::{
 
 /// The selections before each expand, and what identifies the state the
 /// last one left: any other change of the text or the selections drops it.
+#[derive(Clone, Debug)]
 pub(crate) struct ExpandHistory {
     version: Version,
     /// The selections the last expand or shrink set.
     current: Vec<ResolvedSelection>,
     /// The selections before each expand, oldest first.
     steps: Vec<Vec<ResolvedSelection>>,
+}
+
+impl ExpandHistory {
+    /// The history as of `version`, for a buffer whose text came back to
+    /// what it was when the history was made.
+    pub(crate) fn at_version(self, version: Version) -> Self {
+        Self { version, ..self }
+    }
 }
 
 /// Registers the commands. Neither edits the buffer.
@@ -89,6 +98,17 @@ impl EditorModel {
         self.set_selections(previous);
         self.keep_expand_steps(steps);
         true
+    }
+
+    /// The history, if it still holds: the text and the selections are as
+    /// the last expand or shrink left them.
+    pub(crate) fn live_expand_history(&self) -> Option<ExpandHistory> {
+        self.expand_history
+            .as_ref()
+            .filter(|history| {
+                history.version == self.snapshot.version() && history.current == self.selections()
+            })
+            .cloned()
     }
 
     /// The history's steps, taken out of the model; empty if the text or the
