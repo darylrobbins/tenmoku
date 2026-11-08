@@ -26,7 +26,8 @@
 //!   through fe-net. Of the editor's slices, the buffers and the editor's
 //!   commands are reached through [`crate::plugin_bridge`], and the
 //!   decorations and status items drawn through [`crate::plugin_paint`],
-//!   and its diagnostics shown through [`crate::plugin_diagnostics`];
+//!   its diagnostics shown through [`crate::plugin_diagnostics`], and its
+//!   formatters asked by Format Document through [`crate::plugin_format`];
 //!   the rest answer `unimplemented` until their cards land.
 //! - **Reload.** A changed manifest or component reloads the plugin, its old
 //!   version shut down before the new one's `init`; with the same grants
@@ -61,7 +62,7 @@ use std::{
     path::{Path, PathBuf},
     pin::pin,
     sync::{
-        Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError,
+        Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError},
     },
@@ -120,6 +121,7 @@ use crate::{
     plugin_bridge::{Bridge, CallDeadline},
     plugin_diagnostics,
     plugin_events::{self, Inbox},
+    plugin_format::{self, PluginFormatting},
     plugin_log::{self, PluginLogs},
     plugin_paint::{self, Paint},
     show_plugin_prompt,
@@ -1327,6 +1329,7 @@ fn start_unload(id: &str, cx: &mut App) {
     host.slots.get_mut(id).expect("withdrawn").busy = true;
     plugin_paint::unload(id, cx);
     plugin_diagnostics::unload(id, cx);
+    plugin_format::unload(id, cx);
     let shut_down = cx.background_spawn(async move { lock(&loaded.plugin).shutdown() });
     let id = id.to_owned();
     cx.spawn(async move |cx| {
@@ -1378,6 +1381,7 @@ fn start_load(id: &str, cx: &mut App) {
         host.bridge = Some(bridge);
     }
     let paint = plugin_paint::paint(cx);
+    let formatting = plugin_format::formatting(cx);
     let host = cx.global_mut::<PluginHost>();
     let old = withdraw(id, host);
     let reload = old.is_some();
@@ -1407,6 +1411,7 @@ fn start_load(id: &str, cx: &mut App) {
     if old.is_some() {
         plugin_paint::unload(id, cx);
         plugin_diagnostics::unload(id, cx);
+        plugin_format::unload(id, cx);
     }
     let host = cx.global_mut::<PluginHost>();
     #[cfg(test)]
@@ -1434,7 +1439,7 @@ fn start_load(id: &str, cx: &mut App) {
         if let Some(old) = old {
             lock(&old.plugin).shutdown();
         }
-        context.load(&loading_artifact, &grants, &cancel)
+        context.load_with(&loading_artifact, &grants, &cancel, &formatting)
     });
     let id = id.to_owned();
     cx.spawn(async move |cx| {
@@ -1620,6 +1625,7 @@ fn stopped_running(id: &str, load: u64, diagnostic: Diagnostic, cx: &mut App) {
     plugin_log::push(id, log::Level::Error, format!("stopped: {diagnostic}"), cx);
     plugin_paint::unload(id, cx);
     plugin_diagnostics::unload(id, cx);
+    plugin_format::unload(id, cx);
     cx.refresh_windows();
 }
 
@@ -1661,13 +1667,27 @@ struct LoadContext {
 }
 
 impl LoadContext {
-    /// Compiles and starts `artifact`'s plugin with `grants`, unless
-    /// `cancel` is set first: blocking, for the background executor.
+    /// As [`Self::load_with`], its formatters on formatting of their own
+    /// that nothing asks.
+    #[cfg(test)]
     fn load(
         &self,
         artifact: &Artifact,
         grants: &fe_command::Grants,
         cancel: &Arc<AtomicBool>,
+    ) -> Result<Started, LoadFailure> {
+        self.load_with(artifact, grants, cancel, &PluginFormatting::default())
+    }
+
+    /// Compiles and starts `artifact`'s plugin with `grants`, its formatters
+    /// registered on `formatting`, unless `cancel` is set first: blocking,
+    /// for the background executor.
+    fn load_with(
+        &self,
+        artifact: &Artifact,
+        grants: &fe_command::Grants,
+        cancel: &Arc<AtomicBool>,
+        formatting: &PluginFormatting,
     ) -> Result<Started, LoadFailure> {
         let cancelled = || cancel.load(Ordering::Acquire);
         let failed = |message: String| {
@@ -1704,13 +1724,18 @@ impl LoadContext {
         let buffers = self.bridge.buffers(deadline.clone(), limits.call_deadline);
         let shown = self.bridge.buffers(deadline.clone(), limits.call_deadline);
         let checked = self.bridge.buffers(deadline.clone(), limits.call_deadline);
+        // A new load of the plugin's formatters, bound before the plugin is
+        // made: a request asks it once it is.
+        let bound = LateHandle::default();
+        let formatters = formatting.state(id, grants, &self.commands);
+        formatters.bind(bound.handle());
         let host = fe_plugin::HostState {
             kiln,
             editor: fe_plugin::editor::State::new(id, grants, &limits, buffers),
             decorations: self.paint.decorations(id, grants, shown),
             diagnostics: self.paint.diagnostics(id, grants, checked),
+            formatting: formatters,
             status: self.paint.status(id, grants),
-            ..fe_plugin::HostState::default()
         };
         let inbox = Inbox::new(&limits);
         let plugin = HostedPlugin::load(
@@ -1732,9 +1757,11 @@ impl LoadContext {
         .map_err(|error| {
             // Whatever its `init` set before it failed goes with it.
             self.paint.forget(id);
+            formatting.forget(id);
             failed(error.to_string())
         })?;
         let plugin = Arc::new(Mutex::new(plugin));
+        bound.set(&plugin);
         let handle: kiln_plugin::commands::PluginHandle = plugin.clone();
         let commands = self.commands.commands(id, &handle);
         Ok((plugin, commands, inbox))
@@ -2274,6 +2301,36 @@ impl HostedPlugin {
 impl CallPlugin for HostedPlugin {
     fn call(&mut self, call: Call) -> Result<Reply, CallError> {
         HostedPlugin::call(self, call)
+    }
+}
+
+/// A plugin's handle for its formatters, given them before the plugin is
+/// made: it calls the plugin once [`set`](Self::set), and holds it weakly,
+/// so the formatters keep nothing of a load that ended. Clones share it.
+#[derive(Clone, Default)]
+struct LateHandle(Arc<OnceLock<Weak<Mutex<HostedPlugin>>>>);
+
+impl LateHandle {
+    fn set(&self, plugin: &Arc<Mutex<HostedPlugin>>) {
+        drop(self.0.set(Arc::downgrade(plugin)));
+    }
+
+    fn handle(&self) -> kiln_plugin::commands::PluginHandle {
+        Arc::new(Mutex::new(self.clone()))
+    }
+}
+
+impl CallPlugin for LateHandle {
+    fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        match self.0.get().map(Weak::upgrade) {
+            Some(Some(plugin)) => lock(&plugin).call(call),
+            Some(None) => Err(CallError::Unloaded),
+            // Asked while its `init` runs: a failure of the one request, not
+            // an unload of the plugin.
+            None => Ok(Reply::RunCommand(Err(bindings::Error::Failed(
+                "the plugin is still loading".into(),
+            )))),
+        }
     }
 }
 

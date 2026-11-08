@@ -24,6 +24,12 @@
 //!   caret on a line the formatter left alone stays on it. A failure shows
 //!   itself even if the other source then formats, but for a program that
 //!   isn't there, which shows only if nothing formatted.
+//! - **Plugin formatters.** Last, if neither formatted, a document whose
+//!   language a plugin registered a formatter for is the plugin's
+//!   ([`crate::plugin_format`]). Its edits go through the same checks, and
+//!   any answer to a buffer that changed while the plugin was asked is
+//!   dropped: the plugin reads the text as it is, so its edits may not fit
+//!   the text it was asked about.
 //! - **The folder's trust.** The user chose the program, but it reads its
 //!   config, which can be code, from the folder. So just before each run the
 //!   folder it runs in and the file's real folder are resolved
@@ -64,6 +70,7 @@ use crate::{
     Workbench,
     external_format::{BufferPath, FormatError, Runner, format_text},
     lsp::{Answer, CodeActioner, resolve, routed_language},
+    plugin_format::{self, PluginAnswer, PluginFormatter},
     status_bar::{PLAIN_TEXT, language_label},
     workbench::toast::{self, Toast},
 };
@@ -128,11 +135,14 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Task<Result<FormatOutcome, String>> {
         let manager = self.lsp.manager();
-        let external = match selection {
-            true => None,
-            false => self.external_formatter(editor, cx),
+        let (external, plugin) = match selection {
+            true => (None, None),
+            false => (
+                self.external_formatter(editor, cx),
+                plugin_format::formatter(editor.read(cx), cx),
+            ),
         };
-        if manager.is_none() && external.is_none() {
+        if manager.is_none() && external.is_none() && plugin.is_none() {
             return Task::ready(Ok(FormatOutcome::NoFormatter));
         }
         let (buffer, version, path, range, options) = editor.update(cx, |view, _| {
@@ -195,6 +205,13 @@ impl Workbench {
                     };
                     outcome = failures.note(step);
                 }
+            }
+            // A plugin's comes last, only if neither formatted.
+            if let (None, Some(plugin)) = (outcome, plugin) {
+                outcome = match target.current(cx) {
+                    true => failures.note(plugin_step(plugin, &target, cx).await),
+                    false => Some(FormatOutcome::Unchanged),
+                };
             }
             match outcome {
                 Some(outcome) => {
@@ -384,6 +401,26 @@ async fn server_step(reply: Option<ServerReply>, target: &FormatTarget, cx: &mut
         ProposedChange::from_edits(base, merge_inserts(edits), Origin::User)
     };
     Step::Done(target.apply(change, cx))
+}
+
+/// Asks `plugin` to format `target`'s buffer and applies what it answers.
+async fn plugin_step(plugin: PluginFormatter, target: &FormatTarget, cx: &mut AsyncApp) -> Step {
+    let answer = plugin.ask(&target.editor, target.version, cx).await;
+    // Whatever it answered, if the buffer changed meanwhile: the plugin may
+    // have read the newer text, and failed for that.
+    if !target.current(cx) {
+        return Step::Done(FormatOutcome::Unchanged);
+    }
+    match answer {
+        PluginAnswer::Edits(edits) => {
+            let change =
+                |base: &BufferSnapshot| ProposedChange::from_edits(base, edits, Origin::User);
+            Step::Done(target.apply(change, cx))
+        }
+        PluginAnswer::Unchanged => Step::Done(FormatOutcome::Unchanged),
+        PluginAnswer::NoFormatter => Step::NoFormatter,
+        PluginAnswer::Failed(message) => Step::Failed(message),
+    }
 }
 
 /// A language's external formatter, and what to run it with.

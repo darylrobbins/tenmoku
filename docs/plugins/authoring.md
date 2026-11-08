@@ -135,7 +135,8 @@ The interfaces, by module:
 - `status`: status bar items; clicking one runs its command as your plugin.
 - `diagnostics`: problems on a buffer, shown as a language server's (see
   [Diagnostics](#diagnostics)).
-- `formatting`: in the WIT, not yet wired in the app.
+- `formatting`: a formatter for Format Document and format on save (see
+  [Formatting](#formatting)).
 - `fs`, `process`, `net`: files, programs and HTTP, each behind its capability.
 - `secrets`: per-plugin storage held by the host. It is not a capability and
   needs no grant; only your plugin can read what it stores.
@@ -178,6 +179,42 @@ set is yours to replace or clear, and clearing one leaves the rest.
 - Diagnostics are for open buffers only. Closing the buffer drops them;
   unloading or reloading your plugin drops all of them, so publish again from
   `init` or your next event.
+
+### Formatting
+
+A formatter registers one of your own commands for languages, under the
+`buffer.read` and `buffer.write` capabilities, usually from `init`:
+
+```rust
+use tenmoku_plugin::formatting;
+
+formatting::register(&["toml".into()], "acme.toml.format")?;
+```
+
+**Format Document**, and format on save when `editor.format_on_save` is on,
+then run that command with JSON arguments
+`{"request": n, "buffer": id, "version": v, "language": "toml"}`. Read the
+buffer, reply once through `formatting::answer(request, &edits)` and return;
+returning without answering leaves the text as it is. The edits are as for
+`buffer.edit`: byte ranges into the text at `version`, in order, apart and on
+character boundaries. Anything else fails the request.
+
+- **Yours comes last.** The language's `[formatters.<language>]` command and
+  its language server format first: yours runs only when neither does (there
+  is none, its program isn't there, or it fails or times out). Selections are
+  never a plugin's to format.
+- **The language** is the one the language servers route by: the editor's
+  language name, as `rust`, or for a file with none, its extension, as `toml`.
+  Registering a language again replaces the formatter for it.
+- **Time.** The command runs under your call deadline, and the editor waits no
+  longer for it; overrunning it unloads your plugin. A save then writes the
+  text unformatted, without telling the user.
+- **Typing meanwhile.** If the buffer changes while you're asked, your answer
+  is dropped, whatever it is.
+- **Failures.** A Format Document the user asked for shows one line naming
+  your plugin when your formatter fails; a save only logs it.
+- Unloading or reloading your plugin drops your formatters: register them
+  again from `init`.
 
 ## Installing from an archive
 

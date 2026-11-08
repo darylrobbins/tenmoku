@@ -66,6 +66,7 @@ mod plugin_bridge;
 mod plugin_dev;
 mod plugin_diagnostics;
 mod plugin_events;
+mod plugin_format;
 mod plugin_host;
 mod plugin_log;
 mod plugin_manage;
