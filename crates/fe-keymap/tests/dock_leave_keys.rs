@@ -44,6 +44,7 @@ const LISTS: &[&[&str]] = &[
     &["outline_panel"],
     &["ReferencesPanel"],
     &["problems_panel"],
+    &["quickfix_panel"],
     &["search_panel", "search_results"],
     &["git_panel"],
 ];

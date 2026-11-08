@@ -103,8 +103,8 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                         | "completion"
                         | "ghost_text"
                         | "editor && proposal"
-                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || search_results || git_panel) && vim && !editor && !text_input"
-                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || quickfix_panel || search_results || git_panel) && vim && !editor && !text_input"
+                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
                 )
             )
     };

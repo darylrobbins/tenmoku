@@ -336,3 +336,70 @@ fn escape(cx: &mut TestAppContext) {
     press("escape", cx);
     assert!(box_focused(cx), "escape in the box's normal mode");
 }
+
+/// Three quickfix items in `root`, the second selected.
+fn quickfix_list(root: &Path) -> crate::quickfix::QuickfixList {
+    use crate::quickfix::{QuickfixItem, QuickfixKind, QuickfixList};
+    let item = |row: u32, text: &str| QuickfixItem {
+        path: root.join("a.go"),
+        row,
+        col: 0,
+        text: text.to_owned(),
+        kind: QuickfixKind::Error,
+    };
+    let mut list = QuickfixList::new(
+        ":grep x",
+        vec![item(0, "one"), item(1, "two"), item(2, "three")],
+    );
+    list.current = 1;
+    list
+}
+
+#[gpui::test]
+fn escape_and_ctrl_w_leave_the_quickfix_panel(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = opened(cx);
+    workbench.update(cx, |workbench, cx| {
+        workbench.push_quickfix_list(false, quickfix_list(dir.path()), cx)
+    });
+    for keys in ["escape", "ctrl-w h", "ctrl-w p", "ctrl-h"] {
+        focus(
+            &workbench.read_with(cx, |workbench, cx| workbench.focus_handle(cx)),
+            cx,
+        );
+        run("quickfix.show", cx);
+        assert!(
+            !editor_focused(&workbench, cx),
+            "{keys}: the panel has focus"
+        );
+        press(keys, cx);
+        assert!(editor_focused(&workbench, cx), "{keys} leaves the panel");
+        let current = workbench.update(cx, |workbench, cx| {
+            workbench.quickfix_list(false, cx).map(|list| list.current)
+        });
+        assert_eq!(current, Some(1), "{keys} keeps the current item");
+    }
+}
+
+#[gpui::test]
+fn escape_leaves_an_empty_quickfix_panel(cx: &mut TestAppContext) {
+    let (workbench, cx, _dir) = opened(cx);
+    // A pane with no location list shows nothing (E776), so `location.show`
+    // is tried on an empty one.
+    workbench.update(cx, |workbench, cx| {
+        let empty = crate::quickfix::QuickfixList::new("", Vec::new());
+        workbench.push_quickfix_list(true, empty, cx)
+    });
+    for show in ["quickfix.show", "location.show"] {
+        focus(
+            &workbench.read_with(cx, |workbench, cx| workbench.focus_handle(cx)),
+            cx,
+        );
+        run(show, cx);
+        assert!(
+            !editor_focused(&workbench, cx),
+            "{show}: the panel has focus"
+        );
+        press("escape", cx);
+        assert!(editor_focused(&workbench, cx), "escape after {show}");
+    }
+}

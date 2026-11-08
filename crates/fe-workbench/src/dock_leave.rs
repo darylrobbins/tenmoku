@@ -1,6 +1,6 @@
 //! Vim's window keys back out of a dock, the way [`super`]'s lead in: with
 //! vim on, in the sidebar's lists (the project tree, the outline,
-//! References, Problems, search's results and the Changes panel) and in
+//! References, Problems, the Quickfix List, search's results and the Changes panel) and in
 //! the terminal, `<C-w>h`, `j`, `k` and `l` run `dock.focus_left`,
 //! `_down`, `_up` and `_right`, which focus the neighbour of the dock with
 //! focus that way, if it has one: the editor, the other dock, or nothing.
@@ -96,6 +96,7 @@ impl Workbench {
         ]
         .into_iter()
         .chain(sidebar.history().map(|panel| panel.focus_handle(cx)))
+        .chain(sidebar.quickfix().map(|panel| panel.focus_handle(cx)))
         .chain(sidebar.git_log().map(|panel| panel.focus_handle(cx)))
         .chain(sidebar.chat().map(|panel| panel.focus_handle(cx)));
         (views.any(|focus| focus.contains_focused(window, cx))).then_some(Focused::Sidebar)
