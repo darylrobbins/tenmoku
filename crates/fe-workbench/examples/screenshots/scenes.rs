@@ -30,7 +30,7 @@ const FONT_FAMILY: &str = fe_fonts::CODE;
 
 pub(crate) const SCENE: &str = "workbench";
 
-const MAIN_RS: &str = r#"mod util;
+pub(crate) const MAIN_RS: &str = r#"mod util;
 
 use std::collections::HashMap;
 

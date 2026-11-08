@@ -96,8 +96,8 @@ use gpui::{
     IntoElement, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement as _,
     PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy, ScrollWheelEvent,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Subscription,
-    UniformListScrollHandle, WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _,
-    px, quad, rgba, size, svg, transparent_black, uniform_list,
+    UniformListScrollHandle, WeakEntity, Window, anchored, canvas, deferred, div, point,
+    prelude::FluentBuilder as _, px, quad, rgba, size, svg, transparent_black, uniform_list,
 };
 
 use super::{
@@ -855,6 +855,13 @@ impl Workbench {
             }
         });
     }
+
+    /// The Git Log panel, for the UI audit's captures
+    /// ([`GitLogPanel::show_card`]).
+    #[doc(hidden)]
+    pub fn git_log_panel(&self, cx: &App) -> Option<Entity<GitLogPanel>> {
+        self.dock.read(cx).git_log().cloned()
+    }
 }
 
 /// What the list's last row says, after the commits, if anything.
@@ -880,7 +887,7 @@ enum Hold {
 }
 
 /// The Git Log panel: see the module docs.
-pub(crate) struct GitLogPanel {
+pub struct GitLogPanel {
     workbench: WeakEntity<Workbench>,
     scope: LogScope,
     /// Where HEAD was when the list was read, once it has been.
@@ -945,6 +952,9 @@ pub(crate) struct GitLogPanel {
     card: Rc<RefCell<CardProbe>>,
     /// What the tests see of the rows drawn.
     rows_seen: RowsProbe,
+    /// The commit whose card shows beside its row with no mouse over it
+    /// ([`GitLogPanel::show_card`]), and the card once its row has drawn.
+    shown_card: Option<(usize, Option<Entity<CommitCard>>)>,
 }
 
 impl GitLogPanel {
@@ -991,7 +1001,18 @@ impl GitLogPanel {
             #[cfg(test)]
             card: Rc::default(),
             rows_seen: RowsProbe::default(),
+            shown_card: None,
         }
+    }
+
+    /// Shows commit `ix`'s card (from 0, newest first) as hovering its row
+    /// shows it, at the row's start, until the list is read or filtered
+    /// again: for the UI audit's captures, which have no mouse. A commit not
+    /// listed yet shows it once it's listed.
+    #[doc(hidden)]
+    pub fn show_card(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.shown_card = Some((ix, None));
+        cx.notify();
     }
 
     /// Graph's header in Source Control: `Graph: <branch>`, `Graph: HEAD
@@ -1036,8 +1057,8 @@ impl GitLogPanel {
         cx.notify();
     }
 
-    /// Forgets the commits listed, their rows and the selection, showing
-    /// the list loading.
+    /// Forgets the commits listed, their rows, the selection and any card
+    /// shown by [`GitLogPanel::show_card`], showing the list loading.
     fn clear_rows(&mut self) {
         self.commits.clear();
         self.rows.clear();
@@ -1051,6 +1072,7 @@ impl GitLogPanel {
         self.selected = None;
         self.hold = Hold::None;
         self.menu = None;
+        self.shown_card = None;
     }
 
     /// An edit of the filter box: the list is read again [`FILTER_DELAY`]
@@ -1795,6 +1817,17 @@ impl GitLogPanel {
                 let lead = (lead().child(graph))
                     .children(ref_pills(&entry.refs, lane, &ui))
                     .child(ellipsized(summary));
+                let shown_card = match &mut self.shown_card {
+                    Some((shown, card)) if *shown == ix_commit => Some(
+                        (card.get_or_insert_with(|| {
+                            let (now, repo) = (self.now, self.repo.clone());
+                            let workbench = self.workbench.clone();
+                            cx.new(|cx| CommitCard::new(entry, lane, now, repo, workbench, cx))
+                        }))
+                        .clone(),
+                    ),
+                    _ => None,
+                };
                 let (hovered, now, repo) = (entry.clone(), self.now, self.repo.clone());
                 let workbench = self.workbench.clone();
                 #[cfg(test)]
@@ -1806,6 +1839,11 @@ impl GitLogPanel {
                         panel.click(line, event.click_count(), window, cx)
                     }))
                     .on_mouse_down(MouseButton::Right, menu_on(line, cx))
+                    // Where a tooltip shows, one pixel past the pointer.
+                    .when_some(shown_card, |row, card| {
+                        let at = anchored().offset(point(px(1.), px(1.)));
+                        row.child(deferred(at.child(card)))
+                    })
                     .hoverable_tooltip(move |_, cx| {
                         let (repo, workbench) = (repo.clone(), workbench.clone());
                         let card = cx.new(|cx| {

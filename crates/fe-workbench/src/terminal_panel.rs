@@ -316,6 +316,34 @@ impl TerminalPanel {
             scrollback: self.settings.scrollback,
             ..TerminalOptions::new(reported.unwrap_or_else(|| start_dir(&self.cwd)))
         };
+        self.add_session(options, window, cx);
+    }
+
+    /// Starts a session running `/bin/sh`, which writes `bytes` to the
+    /// terminal and then waits on its input, after the last, and makes it
+    /// active: a fixed screen for the UI audit's captures, prompts, commands
+    /// and their output (OSC 133 marks them as a shell does), with no user
+    /// shell or settings in it. The process runs until the session closes.
+    #[doc(hidden)]
+    pub fn open_with_session(&mut self, bytes: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let script = "printf '%s' \"$1\"; exec cat >/dev/null";
+        let args = ["-c", script, "sh", bytes].map(str::to_owned).to_vec();
+        let options = TerminalOptions {
+            shell: Some(("/bin/sh".to_owned(), args)),
+            scrollback: self.settings.scrollback,
+            ..TerminalOptions::new(start_dir(&self.cwd))
+        };
+        self.add_session(options, window, cx);
+    }
+
+    /// Starts a shell's session running `options` after the last, and makes
+    /// it active.
+    fn add_session(
+        &mut self,
+        options: TerminalOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let view = self.new_view(options, false, window, cx);
         let exited = self.follow_exit(&view, window, cx);
         self.sessions.push(Session {

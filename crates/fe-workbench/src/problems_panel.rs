@@ -63,7 +63,7 @@ use std::{
 
 use fe_command::Invocation;
 use fe_editor::diagnostics::{
-    DiagnosticCounts, FileProblems, Problem, RelatedInfo, Severity, group_problems,
+    Diagnostic, DiagnosticCounts, FileProblems, Problem, RelatedInfo, Severity, group_problems,
 };
 use fe_gpui::{EditorTheme, EditorView, commands::RunCommand};
 use fe_lsp::{FileDiagnostic, PositionEncoding, decode_file_diagnostics};
@@ -1055,6 +1055,38 @@ impl Workbench {
             problems.push((path, rows, sent, file.text.clone().flatten()));
         }
         problems
+    }
+
+    /// Puts `diagnostics` (byte ranges in the file's text) on every open
+    /// editor of `path`, as a language server's show, and lists them in the
+    /// Problems panel: for the UI audit's captures, which run no server. They
+    /// stay until another call replaces them or the editors close.
+    #[doc(hidden)]
+    pub fn set_diagnostics_for_audit(
+        &mut self,
+        path: &Path,
+        diagnostics: Vec<(Range<usize>, Diagnostic)>,
+        cx: &mut Context<Self>,
+    ) {
+        // An owner no server or plugin gets: plugins' keys count up from 1.
+        let (owner, identity) = (
+            crate::diagnostic_owner::DiagnosticOwner::Plugin(u64::MAX),
+            crate::diagnostic_owner::DiagnosticIdentity::Plugin(u64::MAX),
+        );
+        for editor in self.open_editors(cx) {
+            editor.update(cx, |view, cx| {
+                let model = view.model_mut();
+                if model.path() != Some(path) {
+                    return;
+                }
+                let version = model.buffer().snapshot().version();
+                let items = diagnostics.clone();
+                if model.apply_diagnostics(owner, identity, version, items, Some(identity)) {
+                    cx.notify();
+                }
+            });
+        }
+        self.sync_problems(cx);
     }
 
     /// Shows `counts` on the status bar: the pair of items, or neither.

@@ -1,8 +1,14 @@
 //! `audit <out-dir>`: every surface the UI polish audit looks at
-//! (`docs/decisions/25w38k498b-ui-polish-audit.md`), dark and light, as
-//! `<out-dir>/<surface>_<dark|light>.png`, then the chrome under every
-//! bundled theme as `<out-dir>/<theme id>.png`. Nothing is compared with a
-//! golden, and the default run doesn't render these.
+//! (`docs/decisions/25w38k498b-ui-polish-audit.md`), dark (Yohen) and light
+//! (Hakuji), as `<out-dir>/<surface>_<dark|light>.png`, then the chrome under
+//! every bundled theme as `<out-dir>/<theme id>.png`. Nothing is compared with
+//! a golden, and the default run doesn't render these. Each capture's token
+//! probe points are checked (`token_probe::check_points`), and the run fails
+//! if any is off, if a surface has none, or if a step couldn't do its part.
+//!
+//! This file is the runner. Each surface is a file of its own in `audit/`,
+//! with its steps and its probes: a new surface adds its file, its `mod`
+//! line below and its entry in [`SURFACES`] (or [`LAST`]).
 //!
 //! Each surface is the demo project in a workbench, as [`capture_with`]
 //! opens it, then a few steps, each on its own frame (`Window::on_next_frame`,
@@ -10,16 +16,51 @@
 //! would dispatch it, or a call into the workbench's public API. A step
 //! notifies the workbench, so the capture draws again after it.
 //!
-//! The run re-executes itself with Tenmoku's config, state and cache
-//! directories on a fresh temporary folder, whatever the environment
-//! already says, so the Settings and Keyboard Shortcuts tabs read no real
-//! user file and the demo folders it opens are recorded in a throwaway
-//! `recent.toml`, not the user's. The child checks it was started that way
-//! (`AUDIT_ROOT`) before it opens anything. The prompt scenes come last:
-//! they turn on trust prompting (`set_trust_file`) and the in-window
-//! prompt, which nothing turns off.
+//! Like every mode of the example, the audit runs with Tenmoku's config,
+//! state and cache directories on a fresh temporary folder (`main.rs`'s
+//! `isolate`), so the Settings and Keyboard Shortcuts tabs read no real user
+//! file and the demo folders it opens are recorded in a throwaway
+//! `recent.toml`.
+
+#[path = "audit/chrome.rs"]
+mod chrome;
+#[path = "audit/command_palette.rs"]
+mod command_palette;
+#[path = "audit/file_finder.rs"]
+mod file_finder;
+#[path = "audit/find_bar.rs"]
+mod find_bar;
+#[path = "audit/git_log.rs"]
+mod git_log;
+#[path = "audit/git_log_card.rs"]
+mod git_log_card;
+#[path = "audit/git_panel.rs"]
+mod git_panel;
+#[path = "audit/hover.rs"]
+mod hover;
+#[path = "audit/problems_panel.rs"]
+mod problems_panel;
+#[path = "audit/problems_rows.rs"]
+mod problems_rows;
+#[path = "audit/project_tree_git.rs"]
+mod project_tree_git;
+#[path = "audit/prompt.rs"]
+mod prompt;
+#[path = "audit/search_panel.rs"]
+mod search_panel;
+#[path = "audit/settings_editor.rs"]
+mod settings_editor;
+#[path = "audit/shortcuts_editor.rs"]
+mod shortcuts_editor;
+#[path = "audit/start_page.rs"]
+mod start_page;
+#[path = "audit/terminal_session.rs"]
+mod terminal_session;
+#[path = "audit/toast.rs"]
+mod toast;
 
 use std::{
+    cell::RefCell,
     collections::VecDeque,
     fs,
     path::{Path, PathBuf},
@@ -28,145 +69,73 @@ use std::{
 
 use fe_command::Invocation;
 use fe_config::themes;
-use fe_gpui::{HoverContent, commands::RunCommand};
+use fe_gpui::commands::RunCommand;
 use fe_ui::Appearance;
 use fe_workbench::Workbench;
 use gpui::{Context, Entity, VisualTestAppContext, Window};
 use kiln_platform::screenshots::Result;
 
-use crate::scenes::{SCENE_SIZE, capture_with, use_settings, write_project};
+use crate::{
+    scenes::{SCENE_SIZE, bundled_theme, capture_with, use_settings, write_project},
+    token_probe::{Probe, check_points},
+};
 
-/// The variable that marks the child run: the temporary folder whose
-/// `config`, `state` and `cache` the other variables point at.
-const AUDIT_ROOT: &str = "TENMOKU_AUDIT_ROOT";
-
-/// What the child's directories are, under [`AUDIT_ROOT`]: the variable and
-/// its folder.
-const ISOLATED: [(&str, &str); 3] = [
-    ("TENMOKU_CONFIG_DIR", "config"),
-    ("TENMOKU_STATE_DIR", "state"),
-    ("XDG_CACHE_HOME", "cache"),
+/// The surfaces, in the order they're captured: T1429's first, as the
+/// audit's Captures table lists them. The first, `chrome`, is also the scene
+/// every bundled theme is captured in.
+const SURFACES: &[&Surface] = &[
+    &chrome::SURFACE,
+    &project_tree_git::SURFACE,
+    &start_page::SURFACE,
+    &settings_editor::SURFACE,
+    &shortcuts_editor::SURFACE,
+    &command_palette::SURFACE,
+    &file_finder::SURFACE,
+    &find_bar::SURFACE,
+    &search_panel::SURFACE,
+    &toast::SURFACE,
+    &git_panel::SURFACE,
+    &git_log::SURFACE,
+    &problems_panel::SURFACE,
+    &hover::SURFACE,
+    &problems_rows::SURFACE,
+    &terminal_session::SURFACE,
+    &git_log_card::SURFACE,
 ];
 
+/// The surfaces captured after the bundled themes' chrome: their setup
+/// leaves the app in a state nothing undoes.
+const LAST: &[&Surface] = &[&prompt::SURFACE];
+
 /// A step of a surface's scene, run in the workbench on a frame of its own.
-type Step = Box<dyn FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>)>;
+pub(crate) type Step = Box<dyn FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>)>;
 
 /// A surface: its file name's stem, whether the demo's two files are open,
 /// whether the project is a Git repository, settings beside the theme's,
-/// and its steps, given the project's root.
-struct Surface {
-    name: &'static str,
-    open_demo: bool,
-    git: bool,
-    settings: &'static str,
-    steps: fn(&Path) -> Vec<Step>,
+/// what's done to the app before its workbench opens (given the project's
+/// parent folder), its steps (given the project's root), and the points its
+/// captures are probed at.
+pub(crate) struct Surface {
+    pub(crate) name: &'static str,
+    pub(crate) open_demo: bool,
+    pub(crate) git: bool,
+    pub(crate) settings: &'static str,
+    pub(crate) setup: fn(&mut VisualTestAppContext, &Path),
+    pub(crate) steps: fn(&Path) -> Vec<Step>,
+    pub(crate) probes: &'static [Probe],
 }
 
-/// The surfaces, in the order the audit's Captures table lists them. The
-/// trust prompt isn't here: see [`prompt`]. Nor is the completion menu: the
-/// workbench puts its language servers' provider back on every editor
-/// after each draw (`sync_lsp`), which closes a menu another provider
-/// opened.
-const SURFACES: &[Surface] = &[
-    Surface {
-        name: "chrome",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| Vec::new(),
-    },
-    Surface {
-        name: "project_tree_git",
-        open_demo: true,
-        git: true,
-        settings: "",
-        steps: |_| Vec::new(),
-    },
-    Surface {
-        name: "start_page",
-        open_demo: false,
-        git: false,
-        settings: "",
-        steps: |_| Vec::new(),
-    },
-    Surface {
-        name: "settings_editor",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![run("workbench.open_settings_ui")],
-    },
-    Surface {
-        name: "shortcuts_editor",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![run("workbench.open_keyboard_shortcuts")],
-    },
-    Surface {
-        name: "command_palette",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![run("command_palette.toggle")],
-    },
-    Surface {
-        name: "file_finder",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![run("quick_open.toggle")],
-    },
-    Surface {
-        name: "find_bar",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![select("counts", 0), run("find.show")],
-    },
-    Surface {
-        name: "search_panel",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![run("search.show"), search("count")],
-    },
-    Surface {
-        name: "toast",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![toast()],
-    },
-    Surface {
-        name: "git_panel",
-        open_demo: true,
-        git: true,
-        settings: "",
-        steps: |_| vec![run("git.show_changes")],
-    },
-    Surface {
-        name: "git_log",
-        open_demo: true,
-        git: true,
-        settings: "",
-        steps: |_| vec![run("git.log")],
-    },
-    Surface {
-        name: "problems_panel",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![run("problems.show")],
-    },
-    Surface {
-        name: "hover",
-        open_demo: true,
-        git: false,
-        settings: "",
-        steps: |_| vec![select("HashMap::new", 0), hover()],
-    },
-];
+/// What a surface leaves out: the demo's files open in a plain folder, no
+/// settings, setup or steps. Its probes, which every surface needs, are none.
+pub(crate) const DEFAULT: Surface = Surface {
+    name: "",
+    open_demo: true,
+    git: false,
+    settings: "",
+    setup: |_, _| {},
+    steps: |_| Vec::new(),
+    probes: &[],
+};
 
 /// The two appearances every surface is rendered in: the suffix, the
 /// bundled theme and the settings that choose it, the defaults.
@@ -179,121 +148,106 @@ const APPEARANCES: [(&str, &str, &str); 2] = [
     ),
 ];
 
-/// `audit <out-dir>`: renders the surfaces into `out-dir`. Re-runs itself
-/// first with its directories on a temporary folder ([`isolated`]).
+thread_local! {
+    /// Why a step of the scene being captured couldn't do its part, if one
+    /// couldn't ([`fail`]).
+    static FAILED: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Fails the scene being captured with `why`: a step whose part didn't
+/// happen, so the capture wouldn't show its surface.
+pub(crate) fn fail(why: String) {
+    FAILED.with(|failed| *failed.borrow_mut() = Some(why));
+}
+
+/// `audit <out-dir>`: renders the surfaces into `out-dir` and checks their
+/// probes. Returns whether every probe passed; fails before rendering
+/// anything if a surface has no probes.
 pub(crate) fn main(cx: &mut VisualTestAppContext, args: &[String]) -> Result<bool> {
     let [out] = args else {
         return Err("usage: screenshots audit <out-dir>".into());
     };
-    let Some(root) = std::env::var_os(AUDIT_ROOT) else {
-        let root = tempfile::tempdir()?;
-        let mut child = Command::new(std::env::current_exe()?);
-        child.arg("audit").arg(out).env(AUDIT_ROOT, root.path());
-        for (var, dir) in ISOLATED {
-            let dir = root.path().join(dir);
-            fs::create_dir_all(&dir)?;
-            child.env(var, dir);
-        }
-        return Ok(child.status()?.success());
-    };
-    isolated(Path::new(&root))?;
+    if let Some(surface) = (SURFACES.iter().chain(LAST)).find(|surface| surface.probes.is_empty()) {
+        return Err(format!("audit surface {} has no probes", surface.name).into());
+    }
     let out = PathBuf::from(out);
     fs::create_dir_all(&out)?;
-    let mut written = 0;
-    for surface in SURFACES {
-        for (suffix, theme, settings) in APPEARANCES {
-            let settings = format!("{settings}{}", surface.settings);
-            let path = out.join(format!("{}_{suffix}.png", surface.name));
-            render(cx, surface, theme, &settings, &path)?;
-            written += 1;
-        }
-    }
+    let (mut written, mut failed) = render_each(cx, SURFACES, &out)?;
     for theme in themes::bundled_themes() {
         let settings = match theme.appearance {
             Appearance::Light => "[theme]\nmode = \"light\"\n",
             _ => "",
         };
-        let path = out.join(format!("{}.png", theme.id));
-        render(cx, &SURFACES[0], theme.id, settings, &path)?;
+        failed += usize::from(!render(
+            cx,
+            SURFACES[0],
+            theme.id,
+            settings,
+            &out,
+            theme.id,
+        )?);
         written += 1;
     }
-    for (suffix, theme, settings) in APPEARANCES {
-        let path = out.join(format!("prompt_{suffix}.png"));
-        prompt(cx, theme, settings, &path)?;
-        written += 1;
-    }
+    let (last_written, last_failed) = render_each(cx, LAST, &out)?;
+    written += last_written;
+    failed += last_failed;
     println!("wrote {written} captures to {}", out.display());
-    Ok(true)
+    if failed > 0 {
+        println!("FAILED  {failed} captures' token probes");
+    }
+    Ok(failed == 0)
 }
 
-/// Fails unless every directory Tenmoku reads or records in is the
-/// parent's temporary one under `root`: a child started some other way,
-/// say with `TENMOKU_AUDIT_ROOT` set by hand, would touch the user's.
-fn isolated(root: &Path) -> Result<()> {
-    for (var, dir) in ISOLATED {
-        let expected = root.join(dir);
-        if std::env::var_os(var).as_deref() != Some(expected.as_os_str()) {
-            return Err(format!("{var} isn't {}: not starting", expected.display()).into());
+/// Renders each of `surfaces` in both [`APPEARANCES`] into `out`. Returns how
+/// many captures it wrote and how many failed their probes.
+fn render_each(
+    cx: &mut VisualTestAppContext,
+    surfaces: &[&Surface],
+    out: &Path,
+) -> Result<(usize, usize)> {
+    let (mut written, mut failed) = (0, 0);
+    for surface in surfaces {
+        for (suffix, theme, settings) in APPEARANCES {
+            let settings = format!("{settings}{}", surface.settings);
+            let name = format!("{}_{suffix}", surface.name);
+            failed += usize::from(!render(cx, surface, theme, &settings, out, &name)?);
+            written += 1;
         }
     }
-    let paths = fe_config::paths::app_paths();
-    for (got, dir) in [
-        (paths.config_dir(), "config"),
-        (paths.state_dir(), "state"),
-        (paths.cache_dir(), "cache"),
-    ] {
-        if !got.is_some_and(|got| got.starts_with(root.join(dir))) {
-            return Err(format!("Tenmoku's {dir} directory is {got:?}: not starting").into());
-        }
-    }
-    Ok(())
+    Ok((written, failed))
 }
 
-/// Renders `surface` under bundled theme `theme` with `settings` to `path`.
+/// Renders `surface` under bundled theme `theme` with `settings` to
+/// `<out>/<name>.png`, then checks its probes. Returns whether they passed;
+/// fails if a step did ([`fail`]).
 fn render(
     cx: &mut VisualTestAppContext,
     surface: &Surface,
     theme: &str,
     settings: &str,
-    path: &Path,
-) -> Result<()> {
+    out: &Path,
+    name: &str,
+) -> Result<bool> {
     let parent = tempfile::tempdir()?;
     let root = write_project(parent.path())?;
     if surface.git {
         git_history(&root)?;
     }
+    (surface.setup)(cx, parent.path());
     let palette = use_settings(cx, parent.path(), theme, settings)?;
     let steps = (surface.steps)(&root);
+    FAILED.with(|failed| failed.borrow_mut().take());
     let image = capture_with(cx, &root, SCENE_SIZE, surface.open_demo, &palette, {
         move |_, window, cx| chain(cx.entity(), steps.into(), window)
     })?;
-    image.save(path)?;
+    if let Some(why) = FAILED.with(|failed| failed.borrow_mut().take()) {
+        return Err(format!("{name}: {why}").into());
+    }
+    let path = out.join(format!("{name}.png"));
+    image.save(&path)?;
     println!("wrote {}", path.display());
-    Ok(())
-}
-
-/// The folder trust prompt as it shows the first time a folder is opened,
-/// drawn in the window by kiln's prompt (`kiln_ui::prompt_renderer`), as
-/// where there are no native alerts. On macOS the app shows an NSAlert
-/// sheet instead, which a capture off screen can't draw.
-fn prompt(cx: &mut VisualTestAppContext, theme: &str, settings: &str, path: &Path) -> Result<()> {
-    let parent = tempfile::tempdir()?;
-    let root = write_project(parent.path())?;
-    let trust = parent.path().join("trust.toml");
-    cx.update(|cx| {
-        fe_workbench::set_trust_file(cx, trust);
-        cx.set_prompt_builder(fe_ui::prompt_renderer);
-    });
-    let palette = use_settings(cx, parent.path(), theme, settings)?;
-    // The root's trust resolves off the main thread: draw a few frames for
-    // the prompt to come.
-    let steps: Vec<Step> = (0..3).map(|_| -> Step { Box::new(|_, _, _| {}) }).collect();
-    let image = capture_with(cx, &root, SCENE_SIZE, true, &palette, {
-        move |_, window, cx| chain(cx.entity(), steps.into(), window)
-    })?;
-    image.save(path)?;
-    println!("wrote {}", path.display());
-    Ok(())
+    let (data, _) = bundled_theme(theme)?;
+    check_points(name, &image, &data, surface.probes)
 }
 
 /// Runs `steps` in `workbench`, one a frame from the next, each notifying it.
@@ -310,9 +264,15 @@ fn chain(workbench: Entity<Workbench>, mut steps: VecDeque<Step>, window: &mut W
     });
 }
 
+/// Does nothing but notify the workbench: a frame more, for work an earlier
+/// step started to land and draw.
+pub(crate) fn idle() -> Step {
+    Box::new(|_, _, _| {})
+}
+
 /// Dispatches command `id` from the focused element, in its context, as
 /// its key would.
-fn run(id: &'static str) -> Step {
+pub(crate) fn run(id: &'static str) -> Step {
     Box::new(move |_, window, cx| {
         let context = kiln_platform::keys::context_stack(&window.context_stack(), cx);
         let invocation = Invocation::of(id).expect("a command ID").context(context);
@@ -322,16 +282,16 @@ fn run(id: &'static str) -> Step {
 
 /// Selects the `nth` (from 0) `text` in the active editor, or puts the
 /// caret at its start if `text` is a call path (has `::`).
-fn select(text: &'static str, nth: usize) -> Step {
+pub(crate) fn select(text: &'static str, nth: usize) -> Step {
     Box::new(move |workbench, _, cx| {
         let Some(editor) = workbench.active_editor(cx).cloned() else {
-            return;
+            return fail("no active editor to select in".to_owned());
         };
         editor.update(cx, |editor, cx| {
             let model = editor.model_mut();
             let found = model.text().to_string();
             let Some((start, _)) = found.match_indices(text).nth(nth) else {
-                return;
+                return fail(format!("no {text:?} to select"));
             };
             let end = if text.contains("::") {
                 start
@@ -340,46 +300,6 @@ fn select(text: &'static str, nth: usize) -> Step {
             };
             model.select_range(start..end, false);
             cx.notify();
-        });
-    })
-}
-
-/// Types `query` into the search panel's input and runs the search.
-fn search(query: &'static str) -> Step {
-    Box::new(move |workbench, _, cx| {
-        let panel = workbench.dock().read(cx).search().clone();
-        let input = panel.read(cx).input().clone();
-        input.update(cx, |input, cx| input.set_text(query, cx));
-        panel.update(cx, |panel, cx| panel.run(cx));
-    })
-}
-
-/// A warning toast with a detail line, as a failed save shows one.
-fn toast() -> Step {
-    Box::new(|_, _, cx| {
-        Workbench::notify(
-            cx,
-            log::Level::Warn,
-            "Couldn't save src/main.rs".into(),
-            Some("Permission denied (os error 13)".into()),
-        );
-    })
-}
-
-/// A hover popover at the caret, with a signature and a sentence, as
-/// rust-analyzer's hover on `HashMap::new` reads.
-fn hover() -> Step {
-    Box::new(|workbench, _, cx| {
-        let Some(editor) = workbench.active_editor(cx).cloned() else {
-            return;
-        };
-        let text = "```rust\nstd::collections::hash::map::HashMap\n\npub fn new() -> \
-                    HashMap<K, V, RandomState>\n```\n\n---\n\nCreates an empty `HashMap`.\n\n\
-                    The hash map is initially created with a capacity of 0, so it will not \
-                    allocate until it is first inserted into."
-            .to_owned();
-        editor.update(cx, |editor, cx| {
-            editor.show_popover(HoverContent { text, range: None }, cx)
         });
     })
 }

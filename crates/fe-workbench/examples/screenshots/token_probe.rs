@@ -8,6 +8,15 @@
 //! tokens. A pixel the same in both captures therefore took nothing from the
 //! theme: a hard-coded colour. The check fails when there are more of those
 //! than [`ALLOWED_FIXED_PIXELS`], so a new one has to be fixed or named here.
+//!
+//! The audit scenes (`audit_scenes`) are probed at points instead: each
+//! names [`Probe`]s, a point on a flat fill and the token that fill should
+//! be (or a translucent token and the one under it), and [`check_points`]
+//! fails a capture whose pixel there isn't that colour in the theme it was
+//! drawn in. The points are logical pixels, read at the capture's own scale,
+//! so the check judges 1× and 2× captures alike
+//! (`SCREENSHOTS_ALLOW_OTHER_SCALE` doesn't excuse it). Every audit surface
+//! has probes: the run refuses one without.
 
 use std::{fs, path::PathBuf, sync::Arc};
 
@@ -18,6 +27,97 @@ use kiln_platform::screenshots::{CHANNEL_TOLERANCE, Result, RgbaImage, image::Rg
 use toml::{Table, Value};
 
 use crate::scenes::{SCENE, SCENE_SIZE, bundled_theme, capture, write_project};
+
+/// A point of an audit scene, in logical pixels from the window's top left,
+/// on a flat fill of `token`, a kiln token's `group.name`; for a translucent
+/// token, drawn over a flat fill of the opaque token `under`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Probe {
+    pub(crate) at: (f32, f32),
+    pub(crate) token: &'static str,
+    pub(crate) under: Option<&'static str>,
+}
+
+/// The probe of opaque `token` at `(x, y)`.
+pub(crate) const fn probe(x: f32, y: f32, token: &'static str) -> Probe {
+    Probe {
+        at: (x, y),
+        token,
+        under: None,
+    }
+}
+
+/// The probe of translucent `token` over opaque `under` at `(x, y)`, as a
+/// scrim over the window.
+pub(crate) const fn probe_over(x: f32, y: f32, token: &'static str, under: &'static str) -> Probe {
+    Probe {
+        at: (x, y),
+        token,
+        under: Some(under),
+    }
+}
+
+/// Checks `image`, scene `scene` drawn in `theme`, at each of `probes`:
+/// prints each point that isn't its token's colour and returns whether all
+/// were. Fails on a token that doesn't exist, a probe without `under` whose
+/// token isn't opaque or one whose `under` isn't, and a point outside the
+/// capture.
+pub(crate) fn check_points(
+    scene: &str,
+    image: &RgbaImage,
+    theme: &ThemeData,
+    probes: &[Probe],
+) -> Result<bool> {
+    let scale = image.width() as f32 / f32::from(SCENE_SIZE.width);
+    let token = |key: &str| -> Result<Color> {
+        Ok(*(theme.tokens.get(key)).ok_or_else(|| format!("{scene}: no token {key}"))?)
+    };
+    let mut passed = true;
+    for &Probe {
+        at: (x, y),
+        token: key,
+        under,
+    } in probes
+    {
+        let color = token(key)?;
+        let (want, named) = match under {
+            None if color.a() == 0xff => (color, format!("{key} is {color}")),
+            Some(under) if token(under)?.a() == 0xff => {
+                let blended = blend(color, token(under)?);
+                (blended, format!("{key} over {under} is {blended}"))
+            }
+            _ => return Err(format!("{scene}: {key} or what's under it isn't opaque").into()),
+        };
+        let (px, py) = ((x * scale) as u32, (y * scale) as u32);
+        if px >= image.width() || py >= image.height() {
+            return Err(format!("{scene}: probe ({x}, {y}) is outside the capture").into());
+        }
+        let got = image.get_pixel(px, py);
+        if !identical(got, &Rgba([want.r(), want.g(), want.b(), 0xff])) {
+            let [r, g, b, _] = got.0;
+            println!("FAILED  {scene} probe ({x}, {y}): #{r:02x}{g:02x}{b:02x}, but {named}");
+            passed = false;
+        }
+    }
+    if passed {
+        println!("ok      {scene} probes ({})", probes.len());
+    }
+    Ok(passed)
+}
+
+/// `over` drawn on opaque `under`, by `over`'s alpha.
+fn blend(over: Color, under: Color) -> Color {
+    let alpha = f32::from(over.a()) / 255.;
+    let channel = |over: u8, under: u8| {
+        (f32::from(under) + (f32::from(over) - f32::from(under)) * alpha).round() as u32
+    };
+    let (r, g, b) = (
+        channel(over.r(), under.r()),
+        channel(over.g(), under.g()),
+        channel(over.b(), under.b()),
+    );
+    Color::rgb(r << 16 | g << 8 | b)
+}
 
 const MAGENTA: Rgba<u8> = Rgba([255, 0, 255, 255]);
 
