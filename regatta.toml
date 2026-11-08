@@ -104,6 +104,9 @@ when = { paths = ["**/Cargo.toml", "Cargo.lock", "deny.toml"] }
 strategy = "squash"
 # The daemon pushes main to its upstream (origin/main) after each verified landing (user, 2026-10-10).
 push = true
+# A re-integration equivalent to the candidate it supersedes carries that candidate's passed
+# gate instead of rerunning it (Regatta T372/T376; user, 2026-11-08).
+gate_carry = "equivalent"
 # The only approval the user wants (2026-10-05) is for licenses that would stop fastedit being
 # sold commercially. The gate's cargo-deny check fails any dependency whose license isn't on
 # deny.toml's permissive allowlist, so widening that allowlist is the one path that needs a
