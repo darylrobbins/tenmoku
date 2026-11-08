@@ -92,3 +92,13 @@ async function toggle(item: Item): Promise<void> {
   color: #3c9a5f;
 }
 </style>
+
+<script lang=ts>
+export const unquoted: number = 1;
+</script>
+
+<style lang=css>
+.unquoted {
+  color: red;
+}
+</style>

@@ -17,6 +17,8 @@
 ;   #gsub! on <script type="foo/bar"> is dropped.
 ; - lang="tsx" and lang="jsx" set their language rather than capturing it,
 ;   since jsx is JavaScript's.
+; - A lang or type value may be bare (<script lang=ts>) or quoted, unlike
+;   upstream, which matches quoted values only.
 ; - Interpolations and directive values are JavaScript, not Neovim's
 ;   TypeScript, which takes most template expressions the same way; a
 ;   directive's unquoted value is injected too.
@@ -38,8 +40,10 @@
   (start_tag
     (attribute
       (attribute_name) @_type
-      (quoted_attribute_value
-        (attribute_value) @_css)))
+      [
+        (attribute_value) @_css
+        (quoted_attribute_value
+          (attribute_value) @_css)]))
   (raw_text) @injection.content)
   (#eq? @_type "type")
   (#eq? @_css "text/css")
@@ -60,8 +64,10 @@
     (attribute
       (attribute_name) @_attr
       (#eq? @_attr "type")
-      (quoted_attribute_value
-        (attribute_value) @_type)))
+      [
+        (attribute_value) @_type
+        (quoted_attribute_value
+          (attribute_value) @_type)]))
   (raw_text) @injection.content)
   (#eq? @_type "importmap")
   (#set! injection.language "json"))
@@ -72,8 +78,10 @@
     (attribute
       (attribute_name) @_attr
       (#eq? @_attr "type")
-      (quoted_attribute_value
-        (attribute_value) @_type)))
+      [
+        (attribute_value) @_type
+        (quoted_attribute_value
+          (attribute_value) @_type)]))
   (raw_text) @injection.content)
   (#eq? @_type "module")
   (#set! injection.language "javascript"))
@@ -93,8 +101,10 @@
   (start_tag
     (attribute
       (attribute_name) @_lang
-      (quoted_attribute_value
-        (attribute_value) @_css)))
+      [
+        (attribute_value) @_css
+        (quoted_attribute_value
+          (attribute_value) @_css)]))
   (raw_text) @injection.content)
   (#eq? @_lang "lang")
   (#eq? @_css "css")
@@ -106,8 +116,10 @@
   (start_tag
     (attribute
       (attribute_name) @_lang
-      (quoted_attribute_value
-        (attribute_value) @_js)))
+      [
+        (attribute_value) @_js
+        (quoted_attribute_value
+          (attribute_value) @_js)]))
   (raw_text) @injection.content)
   (#eq? @_lang "lang")
   (#any-of? @_js "js" "jsx")
@@ -118,8 +130,10 @@
   (start_tag
     (attribute
       (attribute_name) @_lang
-      (quoted_attribute_value
-        (attribute_value) @_ts)))
+      [
+        (attribute_value) @_ts
+        (quoted_attribute_value
+          (attribute_value) @_ts)]))
   (raw_text) @injection.content)
   (#eq? @_lang "lang")
   (#eq? @_ts "ts")
@@ -130,8 +144,10 @@
   (start_tag
     (attribute
       (attribute_name) @_lang
-      (quoted_attribute_value
-        (attribute_value) @_tsx)))
+      [
+        (attribute_value) @_tsx
+        (quoted_attribute_value
+          (attribute_value) @_tsx)]))
   (raw_text) @injection.content)
   (#eq? @_lang "lang")
   (#eq? @_tsx "tsx")
