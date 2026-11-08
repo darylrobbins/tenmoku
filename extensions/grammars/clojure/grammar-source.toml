@@ -1,0 +1,4 @@
+git = "https://github.com/sogaiu/tree-sitter-clojure"
+rev = "e43eff80d17cf34852dcd92ca5e6986d23a7040f"
+src = "src"
+grammar = "clojure"
