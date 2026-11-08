@@ -33,7 +33,9 @@ crates/fastedit/macos/Info.plist) and Contents/Resources/Tenmoku.icns, generated
 here from crates/fastedit/assets/icon/fastedit-1024.png with sips and iconutil.
 The binary embeds the fonts in crates/fe-fonts/fonts/, so each family's OFL.txt
 is copied, unmodified, to Contents/Resources/fonts/<family>/OFL.txt: the SIL Open
-Font License travels with the fonts.
+Font License travels with the fonts. Tenmoku's LICENSE, NOTICE, LICENSES/, THIRD_PARTY.md,
+the icon sets', tree-sitter's and every grammar's licence texts are copied, unmodified,
+to Contents/Resources/Licenses/.
 
 With a feed URL and a key, Info.plist gets the five SU* update keys; if either is empty
 it has none of them, so the build never polls.
@@ -213,6 +215,37 @@ for licence in "$fonts"/*/OFL.txt; do
 	copied=$((copied + 1))
 done
 [ "$copied" -gt 0 ] || die "no OFL.txt under $fonts: the bundled fonts' licences must ship with them"
+
+# Every other licence text the app carries, flat in Contents/Resources/Licenses/, before signing.
+# scripts/test-bundle-macos.sh checks each against its source.
+licenses="$app/Contents/Resources/Licenses"
+mkdir -p "$licenses/LICENSES"
+ship() { # ship SOURCE NAME
+	[ -f "$1" ] || die "licence missing: $1"
+	cp "$1" "$licenses/$2" || die "could not copy $1"
+}
+ship "$root/LICENSE" LICENSE
+ship "$root/NOTICE" NOTICE
+ship "$root/LICENSES/Apache-2.0.txt" LICENSES/Apache-2.0.txt
+ship "$root/LICENSES/MIT.txt" LICENSES/MIT.txt
+ship "$root/THIRD_PARTY.md" THIRD_PARTY.md
+ship "$root/kiln/crates/kiln-ui/assets/icons/LICENSE" icons-LICENSE.txt
+ship "$root/kiln/crates/kiln-ui/assets/file-icons/LICENSE" file-icons-LICENSE.txt
+ship "$root/vendor/tree-sitter/LICENSE" tree-sitter-LICENSE.txt
+# Vendored grammars compiled into the binary, and the extension grammars whose queries
+# crates/fastedit/build.rs compiles in (LICENSE, LICENSE-* and NOTICE of each).
+for dir in "$root"/vendor/tree-sitter-*/; do
+	name=$(basename "$dir")
+	ship "$dir/LICENSE" "vendor-$name-LICENSE.txt"
+done
+for dir in "$root"/extensions/grammars/*/; do
+	name=$(basename "$dir")
+	ship "$dir/LICENSE" "grammar-$name-LICENSE.txt"
+	for extra in "$dir"LICENSE-* "$dir"NOTICE; do
+		[ -f "$extra" ] || continue
+		ship "$extra" "grammar-$name-$(basename "$extra").txt"
+	done
+done
 
 iconset="$work/Tenmoku.iconset"
 mkdir "$iconset"

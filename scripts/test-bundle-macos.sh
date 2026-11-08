@@ -86,6 +86,39 @@ count=$(find "$app/Contents/Resources/fonts" -type f | wc -l | tr -d ' ')
 [ "$count" -eq "$families" ] || fail "Contents/Resources/fonts has $count files, expected $families"
 ok "the $families font families' OFL.txt ship in Contents/Resources/fonts"
 
+# T1612: every licence text under Contents/Resources/Licenses, byte for byte, and nothing else.
+lic="$app/Contents/Resources/Licenses"
+nlic=0
+same() { # same SOURCE SHIPPED-NAME
+	[ -f "$lic/$2" ] || fail "Licenses/$2 missing"
+	cmp -s "$1" "$lic/$2" || fail "Licenses/$2 differs from $1"
+	nlic=$((nlic + 1))
+}
+same "$root/LICENSE" LICENSE
+same "$root/NOTICE" NOTICE
+same "$root/LICENSES/Apache-2.0.txt" LICENSES/Apache-2.0.txt
+same "$root/LICENSES/MIT.txt" LICENSES/MIT.txt
+same "$root/THIRD_PARTY.md" THIRD_PARTY.md
+same "$root/kiln/crates/kiln-ui/assets/icons/LICENSE" icons-LICENSE.txt
+same "$root/kiln/crates/kiln-ui/assets/file-icons/LICENSE" file-icons-LICENSE.txt
+same "$root/vendor/tree-sitter/LICENSE" tree-sitter-LICENSE.txt
+for dir in "$root"/vendor/tree-sitter-*/; do
+	same "$dir/LICENSE" "vendor-$(basename "$dir")-LICENSE.txt"
+done
+for dir in "$root"/extensions/grammars/*/; do
+	[ -f "$dir/extension.toml" ] || continue
+	name=$(basename "$dir")
+	same "$dir/LICENSE" "grammar-$name-LICENSE.txt"
+	for extra in "$dir"LICENSE-* "$dir"NOTICE; do
+		[ -f "$extra" ] || continue
+		same "$extra" "grammar-$name-$(basename "$extra").txt"
+	done
+done
+found=$(find "$lic" -type f | wc -l | tr -d ' ')
+[ "$found" -eq "$nlic" ] || fail "Contents/Resources/Licenses has $found files, expected $nlic"
+[ "$nlic" -ge 50 ] || fail "only $nlic licence files checked"
+ok "$nlic licence texts ship in Contents/Resources/Licenses, identical to their sources"
+
 # C3: the bundle id is fe_config::paths::app_id()'s reverse DNS.
 app_id=$(sed -n 's/.*AppId::new("\([^"]*\)".*/\1/p' "$root/crates/fe-config/src/paths.rs")
 [ -n "$app_id" ] || fail "no AppId::new(\"...\") in crates/fe-config/src/paths.rs"
