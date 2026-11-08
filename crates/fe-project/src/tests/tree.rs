@@ -1264,8 +1264,9 @@ fn apply_replaces_directories_with_new_identity() {
     assert!(tree.find("left/r.txt").is_some());
     assert_eq!(tree.apply(&changes(&root, &["left", "right", "same"])), []);
 
-    // A rescan notices a replacement too.
-    fs::remove_dir_all(root.join("re")).unwrap();
+    // A rescan notices a replacement too (the old folder moved aside, as
+    // above).
+    fs::rename(root.join("re"), aside.path().join("re")).unwrap();
     make(&root, &["re/y.txt"]);
     tree.apply(&[FsChange::Rescan]);
     assert!(tree.children(id(&tree, "re")).is_none());
