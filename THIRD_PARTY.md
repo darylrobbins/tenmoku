@@ -243,6 +243,7 @@ licence. No module is committed.
 | terraform | `tree-sitter-terraform.wasm` | https://github.com/tree-sitter-grammars/tree-sitter-hcl at `64ad62785d442eb4d45df3a1764962dafd5bc98b` (`dialects/terraform/src`) | Apache-2.0; `highlights.scm` is nvim-treesitter's Apache-2.0 `runtime/queries/hcl/highlights.scm` and `runtime/queries/terraform/highlights.scm` at `915f2bd3d4e2a33704bfc476b5137e9befa82f3d`, adapted, with the text in `LICENSE-APACHE` |
 | groovy | `tree-sitter-groovy.wasm` | https://github.com/murtaza64/tree-sitter-groovy `2a6ddd558b6aa39c5b77d8db9fe9baf817486b2c` (`src`) | MIT; `highlights.scm` is that repository's own `queries/highlights.scm` (MIT) |
 | hcl | `tree-sitter-hcl.wasm` | https://github.com/tree-sitter-grammars/tree-sitter-hcl @ `64ad62785d442eb4d45df3a1764962dafd5bc98b` | Apache-2.0; `highlights.scm` is adapted from nvim-treesitter's, also Apache-2.0, with the text in `LICENSE-APACHE` |
+| svelte | `tree-sitter-svelte.wasm` | [tree-sitter-grammars/tree-sitter-svelte](https://github.com/tree-sitter-grammars/tree-sitter-svelte) `ae5199db47757f785e43a14b332118a5474de1a2` | MIT; `highlights.scm` and `injections.scm` start with nvim-treesitter's Apache-2.0 HTML patterns (commit `915f2bd3d4e2a33704bfc476b5137e9befa82f3d`), with the text in `LICENSE-APACHE` |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

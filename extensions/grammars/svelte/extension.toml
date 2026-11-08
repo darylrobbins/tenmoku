@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_svelte"
+name = "Svelte syntax"
+version = "1.0.2"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "svelte"
+wasm = "tree-sitter-svelte.wasm"
+extensions = ["svelte"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+block_comment = ["<!--", "-->"]
