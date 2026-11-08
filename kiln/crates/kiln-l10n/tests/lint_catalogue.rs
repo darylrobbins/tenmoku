@@ -306,3 +306,17 @@ fn crates_under_reads_each_crate_with_a_manifest() {
     assert_eq!(under.to_string(), direct.to_string());
     assert_eq!(under.unused.len(), 4, "{under}");
 }
+
+#[test]
+fn a_term_defined_only_in_another_translation_does_not_resolve_in_pl() {
+    let de = "-brand = Tenmoku\n";
+    let pl = "greeting = Cześć { -brand }\n";
+    let report = report(&[("en-US", "greeting = Hi\n"), ("de", de), ("pl", pl)]);
+    assert!(
+        report
+            .walk
+            .iter()
+            .any(|line| line.starts_with("pl: ") && line.contains("`-brand` isn't defined in pl")),
+        "{report}"
+    );
+}
