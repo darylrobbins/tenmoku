@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_racket"
+name = "Racket syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "racket"
+wasm = "tree-sitter-racket.wasm"
+extensions = ["rkt", "rktl", "rktd"]
+line_comment = ";"
+block_comment = ["#|", "|#"]
+shebangs = ["racket"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
