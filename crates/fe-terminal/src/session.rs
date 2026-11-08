@@ -179,10 +179,14 @@ pub(crate) struct Listener {
     /// the child's last output.
     exit_code: Arc<Mutex<Option<i32>>>,
     exited: Arc<AtomicBool>,
-    /// What Windows' console host puts before each title, learned from its
-    /// default one: `Administrator: ` when elevated, the word localized.
-    title_prefix: Arc<Mutex<Option<String>>>,
 }
+
+/// What Windows' console host puts before each title, learned from a
+/// session's default one: `Administrator: ` when the app runs elevated, the
+/// word localized. One for the process, as elevation is: a session whose
+/// program sets a title before its console reports the default still has
+/// it dropped.
+static TITLE_PREFIX: Mutex<Option<String>> = Mutex::new(None);
 
 impl Listener {
     fn write(&self, text: String) {
@@ -211,12 +215,11 @@ impl Listener {
 
 /// The title a session's program set, from `title`, the one its console
 /// reports: empty for the console's own default, and without what Windows'
-/// console host puts before every title. That prefix (`Administrator: `
-/// when elevated, the word localized) is learned from the default title,
-/// which the console sends first, and kept in `prefix`.
+/// console host puts before every title. That prefix ([`TITLE_PREFIX`]) is
+/// learned from a default title, and kept in `prefix`.
 fn program_title(title: String, prefix: &mut Option<String>) -> String {
     if is_console_default_title(&title) {
-        *prefix = Some(String::new());
+        prefix.get_or_insert_with(String::new);
         return String::new();
     }
     if let Some((before, path)) = title.split_once(": ")
@@ -250,7 +253,7 @@ impl EventListener for Listener {
         match event {
             Event::Wakeup => self.send(TerminalEvent::Wakeup),
             Event::Title(title) => {
-                let mut prefix = self.title_prefix.lock().unwrap_or_else(|e| e.into_inner());
+                let mut prefix = TITLE_PREFIX.lock().unwrap_or_else(|e| e.into_inner());
                 let title = program_title(title, &mut prefix);
                 drop(prefix);
                 self.send(TerminalEvent::Title(title));
@@ -308,7 +311,6 @@ impl Terminal {
             size: Arc::new(Mutex::new(window_size)),
             exit_code: Arc::new(Mutex::new(None)),
             exited: Arc::new(AtomicBool::new(false)),
-            title_prefix: Arc::new(Mutex::new(None)),
         };
 
         // The loop trims history back to the scrollback (`ShellState`).
