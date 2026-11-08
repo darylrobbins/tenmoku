@@ -5265,6 +5265,8 @@ dependencies = [
  "kiln-command",
  "kiln-core",
  "log",
+ "objc2 0.6.4",
+ "raw-window-handle",
  "schemars",
  "serde",
  "serde_json",

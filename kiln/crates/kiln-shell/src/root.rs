@@ -42,13 +42,16 @@ use crate::{
 ///
 /// Making it has the window keep keys working when the focused element
 /// stops being drawn ([`focus::watch`]) and the theme follow the system's
-/// appearance ([`follow_system_appearance`]).
+/// appearance ([`follow_system_appearance`]), and, on macOS, restarts the
+/// window's display link when its frame requests stop
+/// ([`watch_frame_requests`](crate::watch_frame_requests)).
 pub struct Root {
     content: AnyView,
     title: SharedString,
     context: Option<SharedString>,
     capabilities: Capabilities,
     menu_bar: Entity<MenuBarView>,
+    _frame_watch: Option<gpui::Task<()>>,
 }
 
 impl Root {
@@ -61,6 +64,7 @@ impl Root {
             context: None,
             capabilities: Capabilities::of(cx),
             menu_bar: cx.new(MenuBarView::new),
+            _frame_watch: crate::watch_frame_requests(window, cx),
         }
     }
 

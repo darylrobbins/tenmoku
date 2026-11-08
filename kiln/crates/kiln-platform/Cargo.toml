@@ -19,6 +19,12 @@ serde_json.workspace = true
 gpui_platform = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
 
+# The frame-request watchdog's nudge and native state (src/frame_watch/macos.rs),
+# through the window's NSView; both already in the lock through gpui.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+raw-window-handle = "0.6"
+
 [features]
 # `kiln_platform::screenshots`, the golden-screenshot harness for examples.
 test-support = ["dep:gpui_platform", "dep:image", "gpui/test-support", "gpui/leak-detection", "gpui_platform/test-support"]

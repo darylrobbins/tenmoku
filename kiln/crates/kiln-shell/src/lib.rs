@@ -62,7 +62,9 @@ use kiln_platform::Capabilities;
 
 pub use close::{CloseKind, CloseRequest, Closing};
 pub use dock::{Dock, DockItem, DockPosition, DockState, DockView, PanelId, RailAction};
+// The frame-request watchdog, for a host whose windows aren't `Root`s.
 pub use item::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem};
+pub use kiln_platform::frame_watch::watch_frame_requests;
 pub use menu_bar::MenuBarView;
 pub use modal::{ModalEvent, ModalId, ModalLayer, ModalView};
 pub use pane::{ItemPane, PaneEvent, PaneState, PaneView};

@@ -27,6 +27,7 @@ pub mod config;
 pub mod dialogs;
 pub mod focus;
 pub mod fonts;
+pub mod frame_watch;
 pub mod keys;
 pub mod menus;
 #[cfg(feature = "test-support")]
