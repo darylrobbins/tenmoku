@@ -28,8 +28,8 @@
 
 use std::collections::HashMap;
 
-use gpui::{Action, AnyWindowHandle, App, Global, Window};
-use kiln_command::{CommandId, ContextPredicate, DispatchError, Invocation, Value};
+use gpui::{Action, AnyWindowHandle, App, Global, SharedString, Window};
+use kiln_command::{CommandId, ContextPredicate, DispatchError, Invocation, Value, command_label};
 
 use crate::commands::{RunCommand, notify_observers};
 
@@ -80,6 +80,13 @@ pub struct TypedCommand {
 }
 
 impl TypedCommand {
+    /// Its title in the active locale: `command-<id>`, else the label kiln
+    /// derived for it, else `title`, silently
+    /// ([`kiln_command::command_label`]).
+    pub fn label(&self) -> SharedString {
+        command_label(self.id.as_str(), &self.title)
+    }
+
     /// The action for `args` (`Null` for none), or why they don't fit it.
     pub fn build(&self, args: &Value) -> Result<Box<dyn Action>, String> {
         (self.build)(args.clone()).map_err(|error| error.to_string())
@@ -430,4 +437,91 @@ pub fn documentation_from_doc(lines: &[&str]) -> Option<String> {
         .map(|line| format!("{}\n", line.trim()))
         .collect();
     Some(joined.trim().to_owned())
+}
+
+#[cfg(test)]
+mod label_tests {
+    use std::sync::{Mutex, PoisonError};
+
+    use kiln_command::l10n::catalogue::{
+        LanguageIdentifier, Registered, ResourceFile, Resources, set_locales,
+    };
+
+    use super::*;
+
+    /// A key in en-US and a fake locale, `qps-ploc`, for this test binary.
+    static PROBE: Resources = Resources {
+        crate_name: "kiln-platform-label-probe",
+        manifest_dir: env!("CARGO_MANIFEST_DIR"),
+        declared_in: file!(),
+        files: &[
+            ResourceFile {
+                locale: "en-US",
+                path: "en-US/probe.ftl",
+                source: "command-probe-typed = Typed Label\n",
+            },
+            ResourceFile {
+                locale: "qps-ploc",
+                path: "qps-ploc/probe.ftl",
+                source: "command-probe-typed = ⟦Týpéd Läbél⟧\n",
+            },
+        ],
+        dynamic_prefixes: &[],
+    };
+
+    gpui::private::inventory::submit! { Registered(&PROBE) }
+
+    fn typed(id: &str, title: &str) -> TypedCommand {
+        TypedCommand {
+            id: CommandId::parse(id).unwrap(),
+            action_name: "probe::Typed",
+            title: title.to_owned(),
+            context: None,
+            unlisted: false,
+            build: |_| Err(gpui::private::anyhow::anyhow!("not built here")),
+        }
+    }
+
+    /// Records every log line, to show a keyless command logs nothing.
+    struct Recorder(Mutex<Vec<String>>);
+
+    impl log::Log for Recorder {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(record.args().to_string());
+        }
+        fn flush(&self) {}
+    }
+
+    static RECORDER: Recorder = Recorder(Mutex::new(Vec::new()));
+
+    /// The only test here that switches the process catalogue's locale.
+    #[test]
+    fn label_resolves_in_the_active_locale_and_falls_back_silently() {
+        log::set_logger(&RECORDER).unwrap();
+        log::set_max_level(log::LevelFilter::Trace);
+        let keyed = typed("probe.typed", "Registered Title");
+        let plain = typed("probe.plain", "Plain Title");
+        assert_eq!(keyed.label(), "Typed Label");
+        assert_eq!(plain.label(), "Plain Title");
+
+        let fake: Vec<LanguageIdentifier> = vec!["qps-ploc".parse().unwrap()];
+        set_locales(&fake);
+        assert_eq!(keyed.label(), "⟦Týpéd Läbél⟧");
+        assert_eq!(plain.label(), "Plain Title");
+
+        set_locales(&[]);
+        assert_eq!(keyed.label(), "Typed Label");
+
+        let logged = RECORDER.0.lock().unwrap_or_else(PoisonError::into_inner);
+        assert!(
+            !logged.iter().any(|line| line.contains("probe-plain")),
+            "{logged:?}"
+        );
+    }
 }

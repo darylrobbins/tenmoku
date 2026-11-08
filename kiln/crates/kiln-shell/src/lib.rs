@@ -38,6 +38,7 @@ pub mod command_palette;
 pub mod crumbs;
 pub mod dock;
 pub mod item;
+pub mod l10n;
 pub mod layout;
 pub mod menu_bar;
 pub mod modal;

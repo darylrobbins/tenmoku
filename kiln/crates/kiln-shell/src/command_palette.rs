@@ -24,7 +24,7 @@ use gpui::{
 use kiln_command::{CommandId, CommandMeta, ContextStack, Invocation, Source, Value};
 use kiln_core::{CatalogError, CommandCatalog, shortcut_label, shortcuts};
 use kiln_platform::{
-    command_actions::{Command as _, dispatch_invocation, typed_commands},
+    command_actions::{Command as _, TypedCommand, dispatch_invocation, typed_commands},
     keys,
 };
 use kiln_ui::{HighlightedLabel, UiTheme, char_ranges, ui_theme};
@@ -82,7 +82,10 @@ pub struct Entry {
 }
 
 /// Every command the palette would list in `stack`: those without args
-/// whose context holds there, by title, each once.
+/// whose context holds there, by title, each once. Each title is its
+/// `label()` in the active locale ([`CommandMeta::label`],
+/// [`TypedCommand::label`]), so the palette sorts and matches on the text
+/// it shows.
 pub fn commands_in(stack: &ContextStack, cx: &App) -> Vec<Entry> {
     let app = kiln_platform::commands::app_command_list(cx);
     let typed = typed_commands(cx).into_iter().filter_map(|typed| {
@@ -90,25 +93,37 @@ pub fn commands_in(stack: &ContextStack, cx: &App) -> Vec<Entry> {
             return None;
         }
         typed.build(&Value::Null).ok()?;
-        Some((typed.id, typed.title, typed.context))
+        Some(Listed::Typed(typed))
     });
     let added = cx.try_global::<Added>().map(|added| &added.0[..]);
     let listed = (app.iter().chain(added.unwrap_or_default()))
         .filter(|meta| meta.args_schema.is_none())
-        .map(|meta| (meta.id.clone(), meta.title.clone(), meta.context.clone()))
+        .map(Listed::Meta)
         .chain(typed);
     let mut entries: Vec<Entry> = Vec::new();
-    for (id, title, context) in listed {
+    for command in listed {
+        let (id, context) = match &command {
+            Listed::Meta(meta) => (&meta.id, meta.context.as_ref()),
+            Listed::Typed(typed) => (&typed.id, typed.context.as_ref()),
+        };
         let applies = context.is_none_or(|context| context.eval(stack));
-        if applies && id != Toggle::id() && !entries.iter().any(|entry| entry.id == id) {
-            entries.push(Entry {
-                id,
-                title: title.into(),
-            });
+        if applies && *id != Toggle::id() && !entries.iter().any(|entry| entry.id == *id) {
+            let id = id.clone();
+            let title = match &command {
+                Listed::Meta(meta) => meta.label(),
+                Listed::Typed(typed) => typed.label(),
+            };
+            entries.push(Entry { id, title });
         }
     }
     entries.sort_by(|a, b| a.title.cmp(&b.title).then(a.id.as_str().cmp(b.id.as_str())));
     entries
+}
+
+/// A command `commands_in` may list: a registry's, or a typed one.
+enum Listed<'a> {
+    Meta(&'a CommandMeta),
+    Typed(TypedCommand),
 }
 
 /// The command palette's delegate.

@@ -8,13 +8,24 @@ rust-version.workspace = true
 license = "Apache-2.0"
 publish = false
 
+[features]
+# The registry check (`l10n::check_command_keys`): a crate takes this as a
+# dev-dependency only, and calls it from its own tests.
+lint = ["dep:fluent-syntax"]
+
 [dependencies]
+kiln-l10n.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+fluent-syntax = { workspace = true, optional = true }
+
 [dev-dependencies]
+kiln-command = { path = ".", features = ["lint"] }
+kiln-l10n = { workspace = true, features = ["lint"] }
+log.workspace = true
 toml.workspace = true
 
 [lints]

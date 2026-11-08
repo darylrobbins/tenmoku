@@ -2,13 +2,14 @@
 
 use std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc};
 
+use kiln_l10n::SharedString;
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::{
     Actor, CommandId, ContextPredicate, InvalidCommandId, Invocation, PluginAccess, PluginDenied,
-    PluginPolicy, authorize::authorize,
+    PluginPolicy, authorize::authorize, command_detail, command_label,
 };
 
 /// A kind of thing commands run against. Implemented by a marker type, so
@@ -66,6 +67,10 @@ impl CommandError {
 
 /// What the registry knows about a command, for keymaps, the palette and
 /// agents' tool lists.
+///
+/// `title` and `description` are the English text it was registered with;
+/// show [`CommandMeta::label`] and [`CommandMeta::detail`], which look them
+/// up in the active locale first.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CommandMeta {
     pub id: CommandId,
@@ -78,6 +83,20 @@ pub struct CommandMeta {
     /// Whether it can change the buffer's text, so it can't run read-only
     /// and is what a dry run would propose.
     pub mutates_buffer: bool,
+}
+
+impl CommandMeta {
+    /// Its title in the active locale: `command-<id>`, else `title`
+    /// ([`crate::command_label`]).
+    pub fn label(&self) -> SharedString {
+        command_label(self.id.as_str(), &self.title)
+    }
+
+    /// Its description in the active locale: `command-<id>`'s
+    /// `.description`, else `description` ([`crate::command_detail`]).
+    pub fn detail(&self) -> SharedString {
+        command_detail(self.id.as_str(), &self.description)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

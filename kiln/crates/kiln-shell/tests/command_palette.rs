@@ -2,7 +2,9 @@
 
 //! The command palette: the commands that apply where focus was, with
 //! their keys, filtered by what's typed; a pick runs its command there,
-//! from the palette, in that context; Escape gives focus back.
+//! from the palette, in that context; Escape gives focus back. Titles are
+//! labels in the active locale: under a fake locale it sorts and matches on
+//! them. And kiln-shell's commands and its `command-*` keys match.
 
 use std::path::Path;
 
@@ -15,7 +17,9 @@ use kiln_command::{
     Effect, Invocation, Registry, Source, Value,
 };
 use kiln_core::{Keymap, KeymapLayer, shortcut_label};
+use kiln_l10n::{LanguageIdentifier, Registered, ResourceFile, Resources, set_locales};
 use kiln_platform::{
+    command_actions::typed_commands,
     commands::{self, AppCommands, RunCommand},
     keys,
 };
@@ -262,4 +266,102 @@ fn escape_and_the_toggle_give_focus_back(cx: &mut TestAppContext) {
     assert!(palette(&shell, cx).is_none());
     assert!(focused(&notes, cx));
     assert_eq!(notes.read_with(cx, |notes, _| notes.ran.len()), 0);
+}
+
+/// A fake locale, `qps-ploc`, for this binary: one of kiln-shell's own
+/// commands (menu_bar.open), the notes' Archive Note and the platform's
+/// Quit get labels that sort elsewhere than their English titles.
+static FAKE_LOCALE: Resources = Resources {
+    crate_name: "kiln-shell-palette-fake-locale",
+    manifest_dir: env!("CARGO_MANIFEST_DIR"),
+    declared_in: file!(),
+    files: &[ResourceFile {
+        locale: "qps-ploc",
+        path: "qps-ploc/palette.ftl",
+        source: "command-menu_bar-open = ⟦Öpén Mënü Bär⟧\n\
+                 command-notes-archive = Zzz Ärchïvé Nöté\n\
+                 command-app-quit = Aaa Qüït\n",
+    }],
+    dynamic_prefixes: &[],
+};
+
+inventory::submit! { Registered(&FAKE_LOCALE) }
+
+/// Pin Note, as a plugin's command: no key in any locale.
+fn pin() -> CommandMeta {
+    CommandMeta {
+        id: CommandId::parse("notes.pin").unwrap(),
+        title: "Pin Note".into(),
+        description: String::new(),
+        args_schema: None,
+        context: None,
+        mutates_buffer: false,
+    }
+}
+
+#[gpui::test]
+fn sorts_and_matches_on_labels_in_the_active_locale(cx: &mut TestAppContext) {
+    let (notes, shell, cx) = open(cx);
+    cx.update(|_, cx| command_palette::add_commands(cx, [pin()]));
+    let fake: Vec<LanguageIdentifier> = vec!["qps-ploc".parse().unwrap()];
+    set_locales(&fake);
+
+    // It resolves when it opens.
+    press(cx, "f2");
+    let picker = palette(&shell, cx).expect("it shows");
+    let titles = super_rows(&picker, cx);
+    assert_eq!(titles.first().map(String::as_str), Some("Aaa Qüït"));
+    for shown in ["⟦Öpén Mënü Bär⟧", "Zzz Ärchïvé Nöté", "Pin Note"] {
+        assert!(titles.iter().any(|title| title == shown), "{shown}: {titles:?}");
+    }
+    for english in ["Quit", "Archive Note", "Open Menu Bar"] {
+        assert!(!titles.iter().any(|title| title == english), "{english}: {titles:?}");
+    }
+    let mut sorted = titles.clone();
+    sorted.sort();
+    assert_eq!(titles, sorted);
+
+    // Typed letters match the label, not the English title.
+    cx.simulate_input("zzz");
+    cx.run_until_parked();
+    assert_eq!(super_rows(&picker, cx), ["Zzz Ärchïvé Nöté"]);
+    press(cx, "enter");
+    cx.run_until_parked();
+    let ran = notes.read_with(cx, |notes, _| notes.ran.clone());
+    assert_eq!(
+        ran.iter().map(|run| run.command.as_str()).collect::<Vec<_>>(),
+        ["notes.archive"]
+    );
+
+    // Back in en-US, the next open lists the English titles.
+    set_locales(&[]);
+    press(cx, "f2");
+    let picker = palette(&shell, cx).expect("it shows");
+    let titles = super_rows(&picker, cx);
+    for english in ["Quit", "Archive Note", "Open Menu Bar", "Pin Note"] {
+        assert!(titles.iter().any(|title| title == english), "{english}: {titles:?}");
+    }
+}
+
+/// Every command kiln-shell registers, typed or in the picker's registry,
+/// has a `command-<id>` title in kiln-shell's catalogue, and every
+/// `command-*` key there names one of them.
+#[gpui::test]
+fn kiln_shell_commands_and_command_keys_match(cx: &mut TestAppContext) {
+    let typed = cx.update(|cx| {
+        kiln_shell::register(cx);
+        typed_commands(cx)
+    });
+    let picker = kiln_shell::picker::registry();
+    let ids = (typed.iter().map(|typed| typed.id.to_string()))
+        .chain(picker.commands().map(|meta| meta.id.to_string()));
+    let errors = kiln_command::l10n::check_command_keys(&kiln_shell::l10n::RESOURCES, ids);
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+/// kiln-shell's catalogue parses and is all listed, and every key its
+/// source uses exists.
+#[test]
+fn kiln_shell_keys_used_here_exist() {
+    kiln_l10n::lint::keys(env!("CARGO_MANIFEST_DIR"), &kiln_shell::l10n::RESOURCES).check();
 }

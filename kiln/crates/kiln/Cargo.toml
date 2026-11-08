@@ -14,6 +14,7 @@ gpui.workspace = true
 gpui_platform.workspace = true
 kiln-command.workspace = true
 kiln-core.workspace = true
+kiln-l10n.workspace = true
 # `#[kiln::command]`, and the records it submits, which `kiln::app` collects.
 kiln-macros.workspace = true
 inventory.workspace = true
@@ -52,6 +53,9 @@ kiln-platform = { workspace = true, features = ["test-support"] }
 # kiln's own tests (tests/testing.rs) use kiln::testing: this turns its
 # `test-support` on for them, so the workspace gate builds and runs them.
 kiln = { workspace = true, features = ["test-support"] }
+# The catalogue and registry checks (tests/l10n_catalogue.rs).
+kiln-command = { workspace = true, features = ["lint"] }
+kiln-l10n = { workspace = true, features = ["lint"] }
 
 [lints]
 workspace = true

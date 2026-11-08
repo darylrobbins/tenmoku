@@ -13,6 +13,7 @@ mod cx;
 mod ext;
 pub mod extensions;
 mod item;
+pub mod l10n;
 pub mod model;
 mod settings;
 mod setup;

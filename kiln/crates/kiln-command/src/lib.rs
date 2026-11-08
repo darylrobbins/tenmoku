@@ -11,12 +11,17 @@
 //! plugin's invocation runs only if its grants cover the command's
 //! [`PluginAccess`], checked against a [`PluginPolicy`].
 //!
+//! [`l10n`] resolves a command's title in the active locale: the message
+//! `command-<id>`, else the English title it was registered with
+//! ([`CommandMeta::label`]).
+//!
 //! The design is recorded in `docs/command-model.md` in kiln.
 
 mod authorize;
 pub mod capability;
 mod id;
 mod invocation;
+pub mod l10n;
 mod predicate;
 mod registry;
 
@@ -24,6 +29,7 @@ pub use authorize::{PluginAccess, PluginDenied, PluginPolicy};
 pub use capability::{Capability, CapabilityError, FsScope, Grants, NetHosts};
 pub use id::{CommandId, InvalidCommandId};
 pub use invocation::{Actor, Invocation, Source, Target};
+pub use l10n::{command_detail, command_key, command_label, derive_label, set_label_arg};
 pub use predicate::{ContextFrame, ContextPredicate, ContextStack, PredicateError};
 pub use registry::{
     CommandBuilder, CommandError, CommandMeta, CommandTarget, DispatchError, Dispatched, Effect,

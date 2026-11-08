@@ -20,12 +20,16 @@ path = "tests/it.rs"
 gpui.workspace = true
 kiln-command.workspace = true
 kiln-core.workspace = true
+kiln-l10n.workspace = true
 kiln-platform.workspace = true
 kiln-ui.workspace = true
 log.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+inventory.workspace = true
+kiln-command = { workspace = true, features = ["lint"] }
+kiln-l10n = { workspace = true, features = ["lint"] }
 kiln-platform = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 

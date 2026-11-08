@@ -50,8 +50,11 @@ use gpui::{
     Styled as _, Subscription, UniformListScrollHandle, Window, div, prelude::FluentBuilder as _,
     uniform_list,
 };
-use kiln_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
+use kiln_command::{
+    Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, command_label,
+};
 use kiln_core::CommandCatalog;
+use kiln_l10n::Text;
 use kiln_platform::commands::RunCommand;
 use kiln_ui::{PaletteFrame, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, ui_theme};
 
@@ -154,11 +157,18 @@ pub struct Picker<D: PickerDelegate> {
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
 
 impl<D: PickerDelegate> Picker<D> {
-    /// A picker over `delegate`'s matches. It draws in the active theme's
+    /// A picker over `delegate`'s matches, its input showing `placeholder`
+    /// while empty: a catalogue message (`text!`), resolved in the locale
+    /// active now, or verbatim text. It draws in the active theme's
     /// colours ([`ui_theme`]), so it follows a theme change; `_ui` is
     /// unused, left for callers until a later API cleanup.
-    pub fn new(delegate: D, placeholder: &str, _ui: UiTheme, cx: &mut Context<Self>) -> Self {
-        let placeholder = SharedString::from(placeholder.to_owned());
+    pub fn new(
+        delegate: D,
+        placeholder: impl Into<Text>,
+        _ui: UiTheme,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let placeholder = placeholder.into().resolve();
         let input = cx.new(|cx| TextInput::new(placeholder, &ui_theme(cx), cx));
         let changed = cx.subscribe(&input, |picker, input, event, cx| {
             if *event == TextInputEvent::Changed {
@@ -487,54 +497,33 @@ pub fn init(cx: &mut App) {
 pub fn registry() -> Registry<PickerCommands> {
     use PickerOp::*;
     let input = TextInput::KEY_CONTEXT;
+    // Their titles are kiln-shell's `command-<id>` messages.
     let commands = [
-        (
-            "picker.select_prev",
-            "Select Previous",
-            KEY_CONTEXT,
-            SelectPrev,
-        ),
-        ("picker.select_next", "Select Next", KEY_CONTEXT, SelectNext),
-        ("picker.confirm", "Confirm", KEY_CONTEXT, Confirm),
-        ("picker.dismiss", "Dismiss", KEY_CONTEXT, Dismiss),
-        ("text_input.backspace", "Delete Backward", input, Backspace),
-        (
-            "text_input.delete_forward",
-            "Delete Forward",
-            input,
-            DeleteForward,
-        ),
-        (
-            "text_input.delete_word_left",
-            "Delete Word Backward",
-            input,
-            DeleteWordLeft,
-        ),
-        ("text_input.clear", "Clear", input, Clear),
-        ("text_input.paste", "Paste", input, Paste),
-        ("text_input.move_left", "Move Left", input, MoveLeft),
-        ("text_input.move_right", "Move Right", input, MoveRight),
-        (
-            "text_input.move_word_left",
-            "Move Word Left",
-            input,
-            MoveWordLeft,
-        ),
-        (
-            "text_input.move_word_right",
-            "Move Word Right",
-            input,
-            MoveWordRight,
-        ),
-        ("text_input.move_home", "Move to Start", input, MoveHome),
-        ("text_input.move_end", "Move to End", input, MoveEnd),
+        ("picker.select_prev", KEY_CONTEXT, SelectPrev),
+        ("picker.select_next", KEY_CONTEXT, SelectNext),
+        ("picker.confirm", KEY_CONTEXT, Confirm),
+        ("picker.dismiss", KEY_CONTEXT, Dismiss),
+        ("text_input.backspace", input, Backspace),
+        ("text_input.delete_forward", input, DeleteForward),
+        ("text_input.delete_word_left", input, DeleteWordLeft),
+        ("text_input.clear", input, Clear),
+        ("text_input.paste", input, Paste),
+        ("text_input.move_left", input, MoveLeft),
+        ("text_input.move_right", input, MoveRight),
+        ("text_input.move_word_left", input, MoveWordLeft),
+        ("text_input.move_word_right", input, MoveWordRight),
+        ("text_input.move_home", input, MoveHome),
+        ("text_input.move_end", input, MoveEnd),
     ];
     let mut registry = Registry::new();
-    for (id, title, context, op) in commands {
+    for (id, context, op) in commands {
+        // Registered with the title it has now, its fallback; readers show
+        // `CommandMeta::label`, which looks it up when they show it.
+        let title = command_label(id, id);
         registry
             .register(
                 id,
-                title,
+                &title,
                 move |target: &mut Option<PickerOp>, _: &Actor| {
                     *target = Some(op);
                     Ok(Dispatched::new(Effect::Notify))

@@ -21,6 +21,7 @@ use gpui::{
 };
 
 use kiln_command::Source;
+use kiln_l10n::Text;
 use kiln_platform::action_dispatch::dispatch_action;
 
 use crate::{ActiveTheme as _, FOCUS_RING, Icon, Tokens, Tooltip, height, radius, ui_theme};
@@ -357,8 +358,11 @@ pub struct Button {
 }
 
 impl Button {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-        Self::bare(id).label(label)
+    /// A button labelled `label`: a catalogue message (`text!`), or
+    /// verbatim text. A button is built at each render, so this resolves it
+    /// in the locale active then.
+    pub fn new(id: impl Into<ElementId>, label: impl Into<Text>) -> Self {
+        Self::bare(id).label(label.into().resolve())
     }
 
     /// A button showing only `icon`. Give it a [`Button::name`].

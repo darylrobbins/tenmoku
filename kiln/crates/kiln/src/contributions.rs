@@ -61,12 +61,13 @@ use std::{any::TypeId, borrow::Cow, collections::HashSet, path::PathBuf, rc::Rc}
 use gpui::{App, Context, Entity, Global, SharedString, Window};
 use kiln_command::{
     CommandId, ContextFrame, ContextPredicate, ContextStack, Dispatched, Effect, Invocation,
-    RegisterError, Value,
+    RegisterError, Value, command_label, derive_label, set_label_arg,
 };
 use kiln_core::{
     CatalogError, CommandCatalog, CommandItem, Diagnostic, Entry, ItemKind, KeymapLayer, Location,
     Menu, MenuBar, MenuItem, Os, Severity,
 };
+use kiln_l10n::{text, tr};
 use kiln_platform::{
     command_actions::{
         Command, CommandInfo, current_invocation, dispatch_notifies, dispatch_window,
@@ -186,6 +187,12 @@ impl CommandSpec {
             unlisted: false,
             register: register_command::<A>,
         }
+    }
+
+    /// Its title in the active locale: `command-<id>`, else the label kiln
+    /// derived for it, else `title` ([`kiln_command::command_label`]).
+    pub fn label(&self) -> SharedString {
+        command_label(self.id.as_str(), &self.title)
     }
 
     pub fn context(mut self, context: &'static str) -> Self {
@@ -1069,7 +1076,9 @@ impl Contributions {
         let toggle = match spec.toggle_id() {
             Ok(id) => Some(CommandSpec {
                 id,
-                title: format!("Toggle {}", spec.title),
+                // A fallback: its label is the one `register_toggles`
+                // derives.
+                title: tr!("kiln-command-toggle", title = &spec.title).to_string(),
                 context: None,
                 keys: spec.toggle_key.clone(),
                 menu: Some(MenuSpec {
@@ -1376,6 +1385,11 @@ pub(crate) fn shipped_catalog(config: &Config, cx: &App) -> Rc<dyn CommandCatalo
 /// `catalog`, then the extensions' keymap and menu layers over it
 /// ([`crate::extensions`]).
 pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx: &App) -> Shipped {
+    // `$app` in command titles, such as `command-app-hide`, before any is
+    // resolved for a menu.
+    if let Some(app) = cx.try_global::<crate::AppInfo>() {
+        set_label_arg("app", app.name.clone());
+    }
     let commands = Contributions::commands(cx);
     let this = cx.try_global::<Contributions>();
     let (layers, keymap_diagnostics, mut extension_diagnostics) =
@@ -1504,7 +1518,13 @@ fn register_toggles(cx: &mut App) {
                 continue;
             };
             let (position, panel_id) = (panel.position, panel.id);
-            let title = format!("Toggle {}", panel.title);
+            // Its label, `kiln-command-toggle` resolved where it's shown;
+            // the registered title is only the fallback.
+            derive_label(
+                id.as_str(),
+                text!("kiln-command-toggle", title = &panel.title),
+            );
+            let title = tr!("kiln-command-toggle", title = &panel.title);
             let registered = registry.register(id.as_str(), &title, move |cx: &mut &mut App, _| {
                 toggle_panel(cx, position, panel_id);
                 Ok(Dispatched::new(Effect::Nothing))
@@ -1733,8 +1753,11 @@ fn table_menu_bar(
                 });
                 continue;
             }
-            let title =
-                typed_command(command, cx).map_or_else(|| title.clone(), |typed| typed.title);
+            let title = match typed_command(command, cx) {
+                Some(typed) => typed.label(),
+                None => command_label(command.as_str(), title),
+            }
+            .to_string();
             items.push(MenuItem {
                 kind: ItemKind::Command(CommandItem {
                     id: command.to_string(),
@@ -1876,7 +1899,7 @@ fn place_items(
         let item = MenuItem {
             kind: ItemKind::Command(CommandItem {
                 id: id.clone(),
-                title: command.title.clone(),
+                title: command.label().to_string(),
                 command: command.id.clone(),
                 args: Value::Null,
                 os_action: None,

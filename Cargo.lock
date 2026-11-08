@@ -5282,6 +5282,7 @@ dependencies = [
  "kiln",
  "kiln-command",
  "kiln-core",
+ "kiln-l10n",
  "kiln-macros",
  "kiln-platform",
  "kiln-shell",
@@ -5298,6 +5299,10 @@ dependencies = [
 name = "kiln-command"
 version = "0.1.1"
 dependencies = [
+ "fluent-syntax",
+ "kiln-command",
+ "kiln-l10n",
+ "log",
  "schemars",
  "serde",
  "serde_json",
@@ -5401,8 +5406,10 @@ version = "0.1.1"
 dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
+ "inventory",
  "kiln-command",
  "kiln-core",
+ "kiln-l10n",
  "kiln-platform",
  "kiln-ui",
  "log",
@@ -5417,6 +5424,7 @@ dependencies = [
  "image",
  "kiln-command",
  "kiln-core",
+ "kiln-l10n",
  "kiln-platform",
  "unicode-segmentation",
 ]
