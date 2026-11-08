@@ -72,9 +72,13 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo nextest run --workspace --profile ci
+      # The Test step downloads only Linux's crates; `cargo metadata` in the
+      # check below needs every platform's, and runs offline.
+      - name: Fetch every platform's crates
+        run: cargo fetch --locked
       - name: Kiln builds and tests on its own
         # Outside this workspace, from kiln/ plus only the entries of our root
-        # manifest it uses; offline, since the Test step filled the registry
+        # manifest it uses; offline, since the steps above filled the registry
         # cache (scripts/check-framework-standalone.sh, TESTING.md).
         run: scripts/check-framework-standalone.sh
       - name: The app launches and draws a frame
