@@ -620,10 +620,12 @@ fn new_roles_resolve_to_todays_colours() {
         }
     }
     let old: Vec<&str> = before[0].1.iter().map(|&(key, _)| key).collect();
+    // T1517's `file_icon` group came later, each token `list.icon` if left
+    // out (tests::tinted_icon_set in kiln-ui).
     let added: Vec<&str> = TOKEN_KEYS
         .iter()
         .copied()
-        .filter(|key| !old.contains(key))
+        .filter(|key| !old.contains(key) && !key.starts_with("file_icon."))
         .collect();
     let mut new: Vec<&str> = NEW.iter().map(|&(key, _)| key).collect();
     new.sort();

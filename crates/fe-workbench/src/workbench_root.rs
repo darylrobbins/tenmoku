@@ -16,6 +16,12 @@ use crate::{
     GitPanel, GitPanelEvent, ProjectPanel, git::GitState, project_panel::PanelEvent, title_bar,
 };
 
+/// The `workbench.icon_theme` installed last, as a GPUI global; there once
+/// [`Workbench::install_icon_theme`] follows the app's settings.
+struct InstalledIconTheme(IconTheme);
+
+impl gpui::Global for InstalledIconTheme {}
+
 impl Workbench {
     /// The git state for `root`, which `changes` reads through.
     pub(super) fn new_git(
@@ -213,10 +219,35 @@ impl Workbench {
     }
 
     /// Installs the icon set `workbench.icon_theme` names, redrawing every
-    /// window.
+    /// window, and the first time follows the settings service's from then
+    /// on.
+    ///
+    /// The set is the app's, so only the app's settings choose it: one
+    /// observer of [`kiln::GlobalSettings`], never a window's settings
+    /// event. A window on another project gets settings loaded for it
+    /// afresh, which fall back to the default when the user's file doesn't
+    /// parse, and may land after a newer choice; the service keeps the
+    /// user's last good value.
     pub(crate) fn install_icon_theme(theme: IconTheme, cx: &mut App) {
+        if !cx.has_global::<InstalledIconTheme>() {
+            cx.observe_global::<kiln::GlobalSettings<fe_config::Settings>>(|cx| {
+                let global = cx.global::<kiln::GlobalSettings<fe_config::Settings>>();
+                let theme = global.settings().workbench.icon_theme;
+                if cx.global::<InstalledIconTheme>().0 != theme {
+                    Self::set_icon_theme(theme, cx);
+                }
+            })
+            .detach();
+        }
+        Self::set_icon_theme(theme, cx);
+    }
+
+    /// Installs `theme`'s set, redrawing every window.
+    fn set_icon_theme(theme: IconTheme, cx: &mut App) {
+        cx.set_global(InstalledIconTheme(theme));
         match theme {
-            IconTheme::Tenmoku => fe_ui::set_icon_set(Arc::new(fe_ui::ColouredIcons), cx),
+            IconTheme::Tenmoku => fe_ui::set_icon_set(Arc::new(fe_ui::TintedIcons), cx),
+            IconTheme::Material => fe_ui::set_icon_set(Arc::new(fe_ui::ColouredIcons), cx),
             IconTheme::Minimal => fe_ui::reset_icon_set(cx),
         }
     }
@@ -230,10 +261,8 @@ impl Workbench {
         // Drawn again, it follows vim turned on or off.
         self.start_page.update(cx, |_, cx| cx.notify());
         self.follow_zen_settings(&event.settings.workbench.zen_mode);
-        let icon_theme = event.settings.workbench.icon_theme;
-        if icon_theme != event.previous.workbench.icon_theme {
-            Self::install_icon_theme(icon_theme, cx);
-        }
+        // Not `workbench.icon_theme`: the app's settings choose the icon
+        // set (`install_icon_theme`), not a window's.
         let visible = event.settings.status_bar.visible;
         if visible != event.previous.status_bar.visible {
             self.set_status_bar_visible(visible, cx);

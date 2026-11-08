@@ -76,6 +76,30 @@ chevron = "#b8a99a"
 # Icons are in their state's text colour.
 folder_icon = "#b8a99a"
 
+# File-type icons sit in the palette, folders tint by role
+# (docs/design/design-system.md, Workbench anatomy: Icons).
+[file_icon]
+# Muted kaki: hare's fur 40% of the way to the muted text.
+rust = "#d0956b"
+# Grey: the faint text.
+toml = "#a09080"
+# Lapis.
+markdown = "#8db1f2"
+# The others in the syntax glazes: muted for configuration, ame for data,
+# oribe for scripts, seiji for the web, peach bloom for media.
+config = "#b8a99a"
+data = "#f2c77a"
+script = "#b5cf86"
+web = "#7fc9be"
+image = "#f0a3c2"
+# Any other file: the muted text.
+default = "#b8a99a"
+# Folders by role: source ame, tests seiji, docs lapis; others muted.
+folder_source = "#f2c77a"
+folder_tests = "#7fc9be"
+folder_docs = "#8db1f2"
+folder = "#b8a99a"
+
 [tab]
 active_text = "#ede4d6"
 # The tab strip is chrome.

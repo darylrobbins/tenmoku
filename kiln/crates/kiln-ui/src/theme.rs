@@ -7,7 +7,7 @@
 //! a way to set one ([`set_ui_theme`]).
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     sync::{Arc, LazyLock},
 };
@@ -115,7 +115,7 @@ impl Global for ActiveUiTheme {}
 /// that read `cx.theme()` match.
 pub fn set_ui_theme(cx: &mut App, theme: UiTheme) {
     let active = Theme::from_ui_theme(&theme);
-    APPEARANCE.set(active.appearance);
+    set_active(&active);
     cx.set_global(GlobalTheme {
         active,
         choice: None,
@@ -455,8 +455,27 @@ pub(crate) fn active_appearance() -> Appearance {
     APPEARANCE.get()
 }
 
-fn activate(cx: &mut App, active: Theme, choice: Option<(ThemeMode, Theme, Theme)>) {
+thread_local! {
+    /// The active theme's colours, for what's drawn without an `App`, as a
+    /// tinted icon is ([`IconRef::Tinted`](crate::IconRef::Tinted)). `None`
+    /// until a theme is set, for the bundled dark base's.
+    static COLORS: RefCell<Option<Tokens<Hsla>>> = const { RefCell::new(None) };
+}
+
+/// The active theme's colour for the token `key`, such as
+/// `"file_icon.rust"`: the bundled dark base's until a theme is set.
+pub(crate) fn active_color(key: &str) -> Option<Hsla> {
+    COLORS.with_borrow(|colors| (colors.as_ref()).unwrap_or(&DARK.colors).get(key).copied())
+}
+
+/// Makes `active` what [`active_appearance`] and [`active_color`] answer.
+fn set_active(active: &Theme) {
     APPEARANCE.set(active.appearance);
+    COLORS.set(Some(active.colors));
+}
+
+fn activate(cx: &mut App, active: Theme, choice: Option<(ThemeMode, Theme, Theme)>) {
+    set_active(&active);
     cx.set_global(ActiveUiTheme(active.ui_theme()));
     cx.set_global(GlobalTheme { active, choice });
     cx.refresh_windows();

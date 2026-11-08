@@ -126,6 +126,31 @@ Rows in trees and lists. `kiln/crates/kiln-core/src/theme/tokens.rs:List`.
 | `list.icon` | A leaf row's icon | Same as `text.primary` |
 | `list.folder_icon` | A folder row's icon | Same as `accent.base` |
 
+### file_icon
+
+File and folder icons as the tinted set draws them (`TintedIcons`, Tenmoku's
+`workbench.icon_theme = "tenmoku"`): a file's by its type, a folder's by its role.
+`kiln/crates/kiln-core/src/theme/tokens.rs:FileIcon`. Every one is `list.icon` if left
+out, so a theme that sets none draws them in one colour. Yohen and Hakuji set them all
+(Rust in muted kaki, TOML grey, Markdown lapis); Hakuji's folders are all its muted
+grey.
+
+| Token | For | If left out |
+| --- | --- | --- |
+| `file_icon.rust` | Rust sources | Same as `list.icon` |
+| `file_icon.toml` | TOML files, `Cargo.toml` among them | Same as `list.icon` |
+| `file_icon.markdown` | Markdown and READMEs | Same as `list.icon` |
+| `file_icon.config` | YAML, INI, build files, Git's and Docker's files, `.env` | Same as `list.icon` |
+| `file_icon.data` | JSON, tables, databases, lock files | Same as `list.icon` |
+| `file_icon.script` | Shell scripts, Python, Ruby, Lua | Same as `list.icon` |
+| `file_icon.web` | JavaScript, TypeScript, HTML, CSS | Same as `list.icon` |
+| `file_icon.image` | Images, video and sound | Same as `list.icon` |
+| `file_icon.default` | Any other file | Same as `list.icon` |
+| `file_icon.folder_source` | `src`, `lib`, `crates`, … | Same as `list.icon` |
+| `file_icon.folder_tests` | `tests`, `spec`, `benches`, … | Same as `list.icon` |
+| `file_icon.folder_docs` | `docs`, `doc` | Same as `list.icon` |
+| `file_icon.folder` | Any other folder | Same as `list.icon` |
+
 ### tab
 
 `kiln/crates/kiln-core/src/theme/tokens.rs:Tab`.
@@ -395,7 +420,7 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
 
 ## Icons
 
-- **Set:** Lucide, unmodified, 83 SVGs in `kiln/crates/kiln-ui/assets/icons/`, named
+- **Set:** Lucide, redrawn at the design's 1.75 stroke, 96 SVGs in `kiln/crates/kiln-ui/assets/icons/`, named
   by `kiln/crates/kiln-ui/src/file_icons.rs:Icon`. `FILE_NAMES` and `EXTENSIONS` map a
   file to its icon. An app can swap the set with `set_icon_set`
   (`kiln/crates/kiln-ui/src/file_icons.rs:IconSet`, default `LucideIcons`).
@@ -411,6 +436,13 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
   (`information`, `warning`, `error`, `hint`, and `change_added` for success) by a fixed
   table per icon (`ICON_COLOURS`): no colours of its own. A group's title shares its
   icon's colour.
+- **Tinted, for files and folders:** Lucide's icons, each in a `file_icon` token's
+  colour by file type and folder role
+  (`kiln/crates/kiln-ui/src/file_icons_tinted.rs:TintedIcons`, `FILE_NAMES`,
+  `EXTENSIONS`, `FOLDER_NAMES`; a `README` takes the Markdown icon). They're
+  `IconRef::Tinted`, drawn in the token's colour whatever tint the surface draws with;
+  an ignored row fades them as it does a coloured icon. Tenmoku installs it by default
+  (`workbench.icon_theme = "tenmoku"`); `"minimal"` is plain Lucide.
 - **Second set, for files and folders:** a curated subset of Material Icon Theme, MIT,
   unmodified, 142 SVGs in `kiln/crates/kiln-ui/assets/file-icons/`
   (`kiln/crates/kiln-ui/src/file_icons_coloured.rs:ColouredIcons`): an icon per
@@ -421,7 +453,7 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
   light backgrounds; the few that wouldn't have a `_light` variant, drawn while the
   active theme is light. They're drawn as images (`IconRef::Coloured`), rasterised at
   the device size and never tinted; an ignored row fades them instead. Lucide stays
-  for UI chrome. Not installed by default yet: an app installs it with `set_icon_set`.
+  for UI chrome. Tenmoku installs it for `workbench.icon_theme = "material"`.
   Licence: `kiln/crates/kiln-ui/assets/file-icons/LICENSE`, `THIRD_PARTY.md`, `NOTICE`.
 
 ### Sizes and tints

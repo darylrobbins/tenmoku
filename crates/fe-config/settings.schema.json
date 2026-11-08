@@ -428,7 +428,12 @@
       "oneOf": [
         {
           "const": "tenmoku",
-          "description": "Coloured icons, by language, file name and folder name.",
+          "description": "Line icons tinted from the theme, by file type and folder role.",
+          "type": "string"
+        },
+        {
+          "const": "material",
+          "description": "Material Icon Theme's coloured icons, by language, file name and\nfolder name.",
           "type": "string"
         },
         {
@@ -1362,7 +1367,7 @@
         "icon_theme": {
           "$ref": "#/$defs/IconTheme",
           "default": "tenmoku",
-          "description": "The file and folder icons: `tenmoku` draws them in colour, by language,\nfile name and folder name; `minimal` draws plain line icons in the\ntheme's colours. A project file can't set it."
+          "description": "The file and folder icons: `tenmoku` draws line icons tinted from the\ntheme, by file type and folder role; `material` draws Material Icon\nTheme's, in colour, by language, file name and folder name; `minimal`\ndraws plain line icons in the theme's colours. A project file can't\nset it."
         },
         "preview_tabs": {
           "default": true,

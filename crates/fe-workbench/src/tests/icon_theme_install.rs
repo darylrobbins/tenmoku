@@ -1,7 +1,10 @@
 //! `workbench.icon_theme` chooses the installed icon set: a window opened on
-//! the default settings draws a `.rs` file's tree row as a coloured image, a
-//! reload to `minimal` as Lucide's `svg()`, and one back as an image again.
-//! Read off the sprites a recording renderer is handed each frame.
+//! the default settings draws a `.rs` file's tree row as Lucide's `svg()` in
+//! the theme's `file_icon.rust`, a reload to `minimal` in `list.icon`, one to
+//! `material` as a coloured image, and one back as the tinted line again.
+//! Only the app's settings choose it, never a window's settings event
+//! (T1362 F1). Read off the sprites a recording renderer is handed each
+//! frame.
 
 use std::{
     borrow::Cow,
@@ -16,25 +19,26 @@ use std::{
     },
 };
 
-use fe_config::SettingsStore;
+use fe_config::{SettingsStore, settings::IconTheme};
 use fe_gpui::{EditorSettings, EditorTheme};
-use fe_ui::{Assets, IconSet as _, LucideIcons};
+use fe_ui::{Assets, IconSet as _, LucideIcons, Theme, ThemeData};
 use gpui::{
     AnyWindowHandle, AppContext as _, AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile,
-    Bounds, DevicePixels, HeadlessAppContext, NoopTextSystem, PlatformAtlas,
-    PlatformHeadlessRenderer, Scene, SharedString, Size, TileId, px, size,
+    Bounds, DevicePixels, HeadlessAppContext, Hsla, NoopTextSystem, PlatformAtlas,
+    PlatformHeadlessRenderer, Scene, SharedString, Size, TileId, WindowHandle, px, size,
 };
 use kiln_platform::{
-    config::{ConfigService, batch_channel},
+    config::{BatchSender, ConfigService, batch_channel},
     screenshots::RgbaImage,
 };
 
 use crate::{Launch, Workbench};
 
-/// What a frame painted: each `svg()`'s asset path, and how many images.
+/// What a frame painted: each `svg()`'s asset path and colour, and how many
+/// images.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Painted {
-    svgs: Vec<SharedString>,
+    svgs: Vec<(SharedString, Hsla)>,
     images: usize,
 }
 
@@ -97,7 +101,7 @@ impl PlatformHeadlessRenderer for Recorder {
     fn render_scene(&mut self, scene: &Scene, _: Size<DevicePixels>) -> gpui::Result<()> {
         let given = self.1.given.lock().expect("tiles");
         let svgs = (scene.monochrome_sprites.iter())
-            .filter_map(|sprite| given.get(&sprite.tile.tile_id.0)?.clone())
+            .filter_map(|sprite| Some((given.get(&sprite.tile.tile_id.0)?.clone()?, sprite.color)))
             .collect();
         let images = (scene.polychrome_sprites.iter())
             .filter(|sprite| matches!(given.get(&sprite.tile.tile_id.0), Some(None)))
@@ -134,20 +138,17 @@ fn paint(
     painted.take()
 }
 
-/// How many of the frame's `svg()`s are `path`.
-fn svgs_of(painted: &Painted, path: &str) -> usize {
-    painted.svgs.iter().filter(|svg| *svg == path).count()
+/// The colours of the frame's `svg()`s of `path`.
+fn svgs_of(painted: &Painted, path: &str) -> Vec<Hsla> {
+    (painted.svgs.iter())
+        .filter(|(svg, _)| svg == path)
+        .map(|&(_, color)| color)
+        .collect()
 }
 
-#[test]
-fn reload_switches_set() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("demo");
-    fs::create_dir(&root).unwrap();
-    fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
-    let user = dir.path().join("settings.toml");
-    fs::write(&user, "").unwrap();
-
+/// An app whose settings service reads `user`, under Yohen, which tints
+/// the file icons, with a renderer that records into the returned cell.
+fn app(user: &Path) -> (HeadlessAppContext, Rc<RefCell<Painted>>, BatchSender, Theme) {
     let painted = Rc::new(RefCell::new(Painted::default()));
     let recorder = painted.clone();
     let text_system = Arc::new(NoopTextSystem::new());
@@ -155,52 +156,135 @@ fn reload_switches_set() {
         let renderer = Recorder(recorder.clone(), Arc::default());
         Ok(Some(Box::new(renderer) as Box<dyn PlatformHeadlessRenderer>))
     });
-    let service = SettingsStore::load(Some(user.clone()), None).into_inner();
-    // Nothing changes the service's file: the reloads below are the host's.
-    let (_, batches) = batch_channel();
+    let service = SettingsStore::load(Some(user.to_owned()), None).into_inner();
+    let (sender, batches) = batch_channel();
+    let yohen = fe_config::themes::find("yohen").expect("bundled").file();
+    let theme = Theme::new(ThemeData::from_file(&yohen));
     cx.update(|cx| {
         fe_gpui::init(cx);
         crate::init(cx);
+        fe_ui::set_theme(cx, theme.clone());
         (ConfigService::new().settings(service))
             .start_with(batches, cx)
             .detach();
     });
+    (cx, painted, sender, theme)
+}
+
+/// A window on `root`.
+fn open(cx: &mut HeadlessAppContext, root: &Path) -> WindowHandle<Workbench> {
     let launch = Launch {
-        root: Some(root.clone()),
+        root: Some(root.to_owned()),
         file: None,
     };
-    let window = (cx.open_window(size(px(800.), px(600.)), |window, cx| {
+    cx.open_window(size(px(800.), px(600.)), |window, cx| {
         cx.new(|cx| {
             let theme = EditorTheme::default_dark(cx);
             Workbench::new(launch, theme, EditorSettings::default(), window, cx)
         })
-    }))
-    .expect("open a window");
-    let workbench = window.root(&mut cx).expect("the workbench");
+    })
+    .expect("open a window")
+}
+
+/// A project folder `name` in `dir` with a `main.rs`.
+fn project(dir: &Path, name: &str) -> std::path::PathBuf {
+    let root = dir.join(name);
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+    root
+}
+
+/// Writes `text` to the user's settings file and has the service reload it.
+fn edit_user(user: &Path, text: &str, sender: &BatchSender, cx: &mut HeadlessAppContext) {
+    fs::write(user, text).unwrap();
+    sender.send(vec![user.to_owned()]);
+    cx.run_until_parked();
+}
+
+#[test]
+fn reload_switches_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = project(dir.path(), "demo");
+    let user = dir.path().join("settings.toml");
+    fs::write(&user, "").unwrap();
+    let (mut cx, painted, sender, theme) = app(&user);
+    let window = open(&mut cx, &root).into();
 
     let file_code = LucideIcons.file("main.rs").path();
-    let mut store = SettingsStore::load(Some(user.clone()), None);
-    let mut reload = |theme: &str, cx: &mut HeadlessAppContext| {
-        write_theme(&user, theme);
-        let event = store.reload(std::slice::from_ref(&user)).expect("changed");
-        workbench.update(cx, |workbench, cx| workbench.reload_settings(&event, cx));
-    };
-    let window = window.into();
+    let rust = theme.colors.file_icon.rust;
+    let plain = theme.colors.list.icon;
+    assert_ne!(rust, plain, "Yohen tints Rust");
 
     let by_default = paint(&mut cx, window, &painted);
-    assert!(by_default.images > 0, "{by_default:?}");
-    assert_eq!(svgs_of(&by_default, &file_code), 0, "{by_default:?}");
+    assert_eq!(by_default.images, 0, "{by_default:?}");
+    assert_eq!(svgs_of(&by_default, &file_code), [rust], "{by_default:?}");
 
-    reload("minimal", &mut cx);
+    edit_user(&user, &setting("minimal"), &sender, &mut cx);
     let minimal = paint(&mut cx, window, &painted);
     assert_eq!(minimal.images, 0, "{minimal:?}");
-    assert_eq!(svgs_of(&minimal, &file_code), 1, "{minimal:?}");
+    assert_eq!(svgs_of(&minimal, &file_code), [plain], "{minimal:?}");
 
-    reload("tenmoku", &mut cx);
+    edit_user(&user, &setting("material"), &sender, &mut cx);
+    let material = paint(&mut cx, window, &painted);
+    assert!(material.images > 0, "{material:?}");
+    assert_eq!(svgs_of(&material, &file_code), [], "{material:?}");
+
+    edit_user(&user, &setting("tenmoku"), &sender, &mut cx);
     assert_eq!(paint(&mut cx, window, &painted), by_default);
 }
 
-/// Writes `workbench.icon_theme = theme` to the user's settings file.
-fn write_theme(user: &Path, theme: &str) {
-    fs::write(user, format!("[workbench]\nicon_theme = \"{theme}\"\n")).unwrap();
+/// Two windows on two projects: the other project's settings, loaded afresh
+/// and falling back to the default while the user's file doesn't parse,
+/// leave the user's last good choice installed, and a fixed file installs
+/// its choice in both.
+#[test]
+fn window_settings_leave_the_users_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let (first, second) = (project(dir.path(), "one"), project(dir.path(), "two"));
+    let user = dir.path().join("settings.toml");
+    fs::write(&user, setting("minimal")).unwrap();
+    let (mut cx, painted, sender, theme) = app(&user);
+    let one = open(&mut cx, &first);
+    let two = open(&mut cx, &second);
+
+    let file_code = LucideIcons.file("main.rs").path();
+    let (rust, plain) = (theme.colors.file_icon.rust, theme.colors.list.icon);
+    let drawn = |window: WindowHandle<Workbench>, cx: &mut HeadlessAppContext| {
+        svgs_of(&paint(cx, window.into(), &painted), &file_code)
+    };
+    assert_eq!(drawn(one, &mut cx), [plain]);
+    assert_eq!(drawn(two, &mut cx), [plain]);
+
+    // The user's file stops parsing: the service keeps minimal.
+    let broken = "[workbench\nicon_theme = \"minimal\"\n";
+    edit_user(&user, broken, &sender, &mut cx);
+    // The second window's own load of it falls back to the default, and
+    // the host hands that window the change, as fastedit's `settle` does.
+    let fresh = SettingsStore::load(Some(user.clone()), None)
+        .settings()
+        .clone();
+    assert_eq!(fresh.workbench.icon_theme, IconTheme::Tenmoku);
+    let mut given = (*fresh).clone();
+    given.workbench.icon_theme = IconTheme::Minimal;
+    let stale = fe_gpui::SettingsEvent {
+        settings: fresh,
+        previous: Arc::new(given),
+        diagnostics: Vec::new(),
+    };
+    (two.update(&mut cx, |workbench, _, cx| {
+        workbench.reload_settings(&stale, cx)
+    }))
+    .unwrap();
+    assert_eq!(drawn(one, &mut cx), [plain], "the user's choice stays");
+    assert_eq!(drawn(two, &mut cx), [plain], "the user's choice stays");
+
+    // Fixed, the user's file's choice is every window's.
+    edit_user(&user, &setting("tenmoku"), &sender, &mut cx);
+    assert_eq!(drawn(one, &mut cx), [rust]);
+    assert_eq!(drawn(two, &mut cx), [rust]);
+}
+
+/// `workbench.icon_theme = theme` as a settings file.
+fn setting(theme: &str) -> String {
+    format!("[workbench]\nicon_theme = \"{theme}\"\n")
 }

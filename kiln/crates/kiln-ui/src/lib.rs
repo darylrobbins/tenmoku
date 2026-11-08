@@ -19,6 +19,7 @@ mod breadcrumbs;
 mod controls;
 mod file_icons;
 mod file_icons_coloured;
+mod file_icons_tinted;
 mod highlighted_label;
 mod icon_button;
 mod layout;
@@ -51,6 +52,7 @@ pub use file_icons::{
     set_icon_set,
 };
 pub use file_icons_coloured::ColouredIcons;
+pub use file_icons_tinted::TintedIcons;
 pub use highlighted_label::{HighlightedLabel, char_ranges};
 pub use icon_button::IconButton;
 pub use layout::{h_flex, v_flex};

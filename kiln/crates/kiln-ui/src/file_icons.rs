@@ -6,7 +6,8 @@
 //! see `assets/icons/LICENSE` and THIRD_PARTY.md). They're monochrome strokes, so GPUI's `svg()` draws them as
 //! an alpha mask tinted with the element's text colour. A set may answer a
 //! multi-colour SVG instead ([`IconRef::Coloured`]), which
-//! [`IconRef::element`] draws as an image in its own colours.
+//! [`IconRef::element`] draws as an image in its own colours, or a bundled
+//! icon in a theme token's colour ([`IconRef::Tinted`]).
 //!
 //! The mapping is data: [`FILE_NAMES`] and [`EXTENSIONS`], built once into hash
 //! maps.
@@ -15,8 +16,9 @@
 //! [`IconSet`] through [`file_icon_ref`], [`folder_icon_ref`] or their `_path`
 //! forms, so installing another set with [`set_icon_set`] changes them all
 //! together. With none installed the set is [`LucideIcons`], the mapping here.
-//! [`ColouredIcons`](crate::ColouredIcons) is the other bundled set, in
-//! colour.
+//! [`TintedIcons`](crate::TintedIcons) tints these icons by file type and
+//! folder role from the theme; [`ColouredIcons`](crate::ColouredIcons) is
+//! the other bundled set, in Material Icon Theme's colours.
 
 use std::{cell::RefCell, collections::HashMap, sync::Arc, sync::LazyLock};
 
@@ -25,7 +27,7 @@ use gpui::{
     Pixels, RenderImage, SharedString, Styled as _, SvgSize, Window, img, size, svg,
 };
 
-use crate::Assets;
+use crate::{Assets, theme::active_color};
 
 macro_rules! icons {
     ($($variant:ident => $name:literal,)*) => {
@@ -350,6 +352,10 @@ pub enum IconRef {
     /// An asset path to a multi-colour SVG, e.g. `"my-icons/rust.svg"`; drawn
     /// as an image in its own colours, never tinted.
     Coloured(SharedString),
+    /// A bundled icon drawn in the active theme's colour for a token, e.g.
+    /// `"file_icon.rust"`, whatever tint it's drawn with; see
+    /// [`IconRef::tint`].
+    Tinted(Icon, &'static str),
 }
 
 impl IconRef {
@@ -357,35 +363,45 @@ impl IconRef {
     /// icon, and the coloured SVG's for a coloured one.
     pub fn path(&self) -> SharedString {
         match self {
-            IconRef::Bundled(icon) => icon.path().into(),
+            IconRef::Bundled(icon) | IconRef::Tinted(icon, _) => icon.path().into(),
             IconRef::Asset(path) | IconRef::Coloured(path) => path.clone(),
         }
     }
 
-    /// The bundled icon, if it is one.
+    /// The bundled icon, if it is one, tinted or not.
     pub fn bundled(&self) -> Option<Icon> {
         match self {
-            IconRef::Bundled(icon) => Some(*icon),
+            IconRef::Bundled(icon) | IconRef::Tinted(icon, _) => Some(*icon),
             IconRef::Asset(_) | IconRef::Coloured(_) => None,
         }
     }
 
-    /// Whether it draws in its own colours, so a tint can't mute it.
+    /// Whether it draws in its own colours, so a tint can't mute it: a
+    /// coloured icon, or a tinted one in its token's.
     pub fn is_coloured(&self) -> bool {
-        matches!(self, IconRef::Coloured(_))
+        matches!(self, IconRef::Coloured(_) | IconRef::Tinted(..))
+    }
+
+    /// The colour a masked icon draws in when it's drawn with `tint`: a
+    /// tinted icon's token's in the active theme, `tint` for any other.
+    pub fn tint(&self, tint: Hsla) -> Hsla {
+        match self {
+            IconRef::Tinted(_, key) => active_color(key).unwrap_or(tint),
+            IconRef::Bundled(_) | IconRef::Asset(_) | IconRef::Coloured(_) => tint,
+        }
     }
 
     /// What debug selectors name it by: a bundled icon's name
     /// (`"file-code"`), else its asset path.
     pub fn name(&self) -> SharedString {
         match self {
-            IconRef::Bundled(icon) => icon.name().into(),
+            IconRef::Bundled(icon) | IconRef::Tinted(icon, _) => icon.name().into(),
             IconRef::Asset(path) | IconRef::Coloured(path) => path.clone(),
         }
     }
 
     /// The icon, `size` square. A bundled or masked icon is `svg()` tinted
-    /// with `tint`. A coloured one is an image, `tint` ignored, its SVG
+    /// with `tint`, a tinted one with its token's colour. A coloured one is an image, `tint` ignored, its SVG
     /// rasterised once per window scale at exactly `size` in device pixels,
     /// so it's as sharp at 2x as at 1x; it's read from the app's asset
     /// source, else from [`Assets`].
@@ -398,11 +414,11 @@ impl IconRef {
                 };
                 img(load).size(size).flex_none().into_any_element()
             }
-            IconRef::Bundled(_) | IconRef::Asset(_) => svg()
+            IconRef::Bundled(_) | IconRef::Asset(_) | IconRef::Tinted(..) => svg()
                 .path(self.path())
                 .size(size)
                 .flex_none()
-                .text_color(tint)
+                .text_color(self.tint(tint))
                 .into_any_element(),
         }
     }
@@ -603,7 +619,7 @@ pub fn folder_icon(expanded: bool) -> Icon {
 
 /// Lucide's icon for a file called `name` (a file name, not a path), by
 /// [`by_name`].
-fn lucide_file(name: &str) -> Icon {
+pub(crate) fn lucide_file(name: &str) -> Icon {
     by_name(&NAME_MAP, &EXTENSION_MAP, Icon::FileKey, Icon::File, name)
 }
 
@@ -649,7 +665,7 @@ pub(crate) fn by_name<V: Copy>(
 }
 
 /// Lucide's icon for a folder row.
-fn lucide_folder(expanded: bool) -> Icon {
+pub(crate) fn lucide_folder(expanded: bool) -> Icon {
     if expanded {
         Icon::FolderOpen
     } else {

@@ -76,6 +76,30 @@ chevron = "#4b525b"
 # Folders go neutral grey in Hakuji.
 folder_icon = "#4b525b"
 
+# File-type icons sit in the palette, folders tint by role and go neutral
+# grey in Hakuji (docs/design/design-system.md, Workbench anatomy: Icons).
+[file_icon]
+# Muted kaki: hare's fur 40% of the way to the muted text.
+rust = "#834d32"
+# Grey: the faint text.
+toml = "#5f6670"
+# Lapis.
+markdown = "#2457c5"
+# The others in the syntax glazes: muted for configuration, ame for data,
+# oribe for scripts, seiji for the web, peach bloom for media.
+config = "#4b525b"
+data = "#925a00"
+script = "#2f6f1f"
+web = "#0d6e66"
+image = "#a32f6b"
+# Any other file: the muted text.
+default = "#4b525b"
+# Every folder the muted grey, as list.folder_icon.
+folder_source = "#4b525b"
+folder_tests = "#4b525b"
+folder_docs = "#4b525b"
+folder = "#4b525b"
+
 [tab]
 active_text = "#1f2328"
 # The tab strip is chrome.

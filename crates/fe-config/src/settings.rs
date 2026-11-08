@@ -597,9 +597,11 @@ pub struct WorkbenchSettings {
     pub preview_tabs: bool,
     /// Zen Mode: the editor alone, VS Code's `zenMode.*`.
     pub zen_mode: ZenModeSettings,
-    /// The file and folder icons: `tenmoku` draws them in colour, by language,
-    /// file name and folder name; `minimal` draws plain line icons in the
-    /// theme's colours. A project file can't set it.
+    /// The file and folder icons: `tenmoku` draws line icons tinted from the
+    /// theme, by file type and folder role; `material` draws Material Icon
+    /// Theme's, in colour, by language, file name and folder name; `minimal`
+    /// draws plain line icons in the theme's colours. A project file can't
+    /// set it.
     pub icon_theme: IconTheme,
     /// Whether a window with no tabs open shows the Start page in its empty
     /// pane: New File, Open File, Open Folder, the recent folders and files,
@@ -612,9 +614,12 @@ pub struct WorkbenchSettings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IconTheme {
-    /// Coloured icons, by language, file name and folder name.
+    /// Line icons tinted from the theme, by file type and folder role.
     #[default]
     Tenmoku,
+    /// Material Icon Theme's coloured icons, by language, file name and
+    /// folder name.
+    Material,
     /// Plain line icons in the theme's colours.
     Minimal,
 }

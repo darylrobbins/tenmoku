@@ -169,6 +169,38 @@ tokens! {
         /// A folder row's icon.
         folder_icon,
     }
+    /// File and folder icons as the tinted icon set draws them: a file's
+    /// by its type, a folder's by its role. Each is `list.icon` unless a
+    /// theme sets it, so a theme that sets none draws them all alike.
+    file_icon: FileIcon {
+        /// Rust sources.
+        rust,
+        /// TOML files, `Cargo.toml` among them.
+        toml,
+        /// Markdown, READMEs included.
+        markdown,
+        /// Other configuration: YAML, INI, build files, Git's and
+        /// Docker's files, `.env`.
+        config,
+        /// Data: JSON, tables, databases and lock files.
+        data,
+        /// Shell scripts and the scripting languages: Python, Ruby, Lua.
+        script,
+        /// The web's languages: JavaScript, TypeScript, HTML, CSS.
+        web,
+        /// Images, video and sound.
+        image,
+        /// A file no type names, other languages' sources among them.
+        default,
+        /// A source folder: `src`, `lib`, `crates`.
+        folder_source,
+        /// A tests folder: `tests`, `spec`, `benches`.
+        folder_tests,
+        /// A documentation folder: `docs`.
+        folder_docs,
+        /// Any other folder.
+        folder,
+    }
     tab: Tab {
         active,
         active_text,
@@ -274,6 +306,19 @@ pub const RULES: &[(&str, Rule)] = &[
     ("list.chevron", Rule::Mix("text.primary", "text.muted", 0.5)),
     ("list.icon", Rule::Same("text.primary")),
     ("list.folder_icon", Rule::Same("accent.base")),
+    ("file_icon.rust", Rule::Same("list.icon")),
+    ("file_icon.toml", Rule::Same("list.icon")),
+    ("file_icon.markdown", Rule::Same("list.icon")),
+    ("file_icon.config", Rule::Same("list.icon")),
+    ("file_icon.data", Rule::Same("list.icon")),
+    ("file_icon.script", Rule::Same("list.icon")),
+    ("file_icon.web", Rule::Same("list.icon")),
+    ("file_icon.image", Rule::Same("list.icon")),
+    ("file_icon.default", Rule::Same("list.icon")),
+    ("file_icon.folder_source", Rule::Same("list.icon")),
+    ("file_icon.folder_tests", Rule::Same("list.icon")),
+    ("file_icon.folder_docs", Rule::Same("list.icon")),
+    ("file_icon.folder", Rule::Same("list.icon")),
     ("tab.active", Rule::Same("surface.background")),
     ("tab.inactive", Rule::Same("surface.panel")),
     ("scrollbar.thumb", Rule::Alpha("text.muted", 0x80)),

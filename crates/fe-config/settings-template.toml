@@ -265,9 +265,10 @@
 # italics, that the next one replaces. Editing it, double-clicking it or its
 # tab, or pinning it keeps it open.
 # preview_tabs = true
-# The file and folder icons: tenmoku draws them in colour, by language, file
-# name and folder name; minimal draws plain line icons in the theme's colours.
-# A project file can't set it.
+# The file and folder icons: tenmoku draws line icons tinted from the theme,
+# by file type and folder role; material draws Material Icon Theme's, in
+# colour, by language, file name and folder name; minimal draws plain line
+# icons in the theme's colours. A project file can't set it.
 # icon_theme = "tenmoku"
 # Show the Start page in a window's empty pane while no tabs are open: New
 # File, Open File, Open Folder, the recent folders and files, and the

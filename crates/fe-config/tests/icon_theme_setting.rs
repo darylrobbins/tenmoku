@@ -1,13 +1,15 @@
-//! `workbench.icon_theme`: the coloured set by default, and the user's, so a
-//! project file can't set it.
+//! `workbench.icon_theme`: the tinted line icons by default, Material's
+//! coloured set or plain line icons by choice, and the user's, so a project
+//! file can't set it; and the bundled themes' `file_icon` tints.
 
 use std::fs;
 
 use fe_config::{
     Settings, SettingsModel, SettingsStore, Severity, USER_SETTINGS_TEMPLATE,
     settings::{IconTheme, PROJECT_ICON_THEME},
-    settings_schema,
+    settings_schema, themes,
 };
+use kiln_core::theme::{TOKEN_KEYS, ThemeData};
 
 #[test]
 fn default_is_tenmoku_and_project_file_ignored() {
@@ -83,5 +85,88 @@ fn default_is_tenmoku_and_project_file_ignored() {
         .iter()
         .map(|value| value["const"].as_str().expect("a value"))
         .collect::<Vec<_>>();
-    assert_eq!(values, ["tenmoku", "minimal"]);
+    assert_eq!(values, ["tenmoku", "material", "minimal"]);
+}
+
+#[test]
+fn material_and_minimal_parse() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| {
+        let path = dir.path().join(name);
+        fs::write(&path, text).unwrap();
+        path
+    };
+    for (value, theme) in [
+        ("tenmoku", IconTheme::Tenmoku),
+        ("material", IconTheme::Material),
+        ("minimal", IconTheme::Minimal),
+    ] {
+        let user = format!("[workbench]\nicon_theme = \"{value}\"\n");
+        let store = SettingsStore::load(Some(write("user.toml", &user)), None);
+        assert_eq!(store.diagnostics(), [], "{value}");
+        assert_eq!(store.settings().workbench.icon_theme, theme, "{value}");
+
+        // A project's value is still dropped, with a warning.
+        let project = write("project.toml", &user);
+        let store = SettingsStore::load(None, Some(project));
+        assert_eq!(store.settings().workbench.icon_theme, IconTheme::Tenmoku);
+        let found: Vec<_> = (store.diagnostics().iter())
+            .map(|d| (d.severity, d.key.as_deref(), d.message.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                Severity::Warning,
+                Some("workbench.icon_theme"),
+                PROJECT_ICON_THEME
+            )],
+            "{value}"
+        );
+    }
+}
+
+/// Every `file_icon` token's colour in the bundled theme `id`.
+fn file_icon_tints(id: &str) -> Vec<(&'static str, String)> {
+    let theme = ThemeData::from_file(&themes::find(id).unwrap().file());
+    (TOKEN_KEYS.iter())
+        .filter(|key| key.starts_with("file_icon."))
+        .map(|&key| (key, theme.tokens.get(key).unwrap().to_string()))
+        .collect()
+}
+
+#[test]
+fn hakuji_folders_are_one_neutral_grey() {
+    let hakuji = file_icon_tints("hakuji");
+    let folders: Vec<&str> = (hakuji.iter())
+        .filter(|(key, _)| key.starts_with("file_icon.folder"))
+        .map(|(_, color)| color.as_str())
+        .collect();
+    assert_eq!(folders.len(), 4, "{hakuji:?}");
+    // One grey, Hakuji's muted text, as its list.folder_icon is.
+    assert!(
+        folders.iter().all(|color| *color == "#4b525b"),
+        "{hakuji:?}"
+    );
+    let theme = ThemeData::from_file(&themes::find("hakuji").unwrap().file());
+    assert_eq!(theme.tokens.list.folder_icon.to_string(), "#4b525b");
+    assert_eq!(theme.tokens.text.muted.to_string(), "#4b525b");
+
+    // Yohen's folders tint by role: source, tests and docs apart from the
+    // rest.
+    let yohen = file_icon_tints("yohen");
+    let tint = |key: &str| &yohen.iter().find(|(k, _)| *k == key).unwrap().1;
+    let roles = ["folder_source", "folder_tests", "folder_docs", "folder"]
+        .map(|role| tint(&format!("file_icon.{role}")).clone());
+    for (i, a) in roles.iter().enumerate() {
+        for b in &roles[i + 1..] {
+            assert_ne!(a, b, "{yohen:?}");
+        }
+    }
+    // The design's file types in both: Rust, TOML and Markdown apart, the
+    // Markdown icon in lapis.
+    for (theme, lapis) in [(yohen.clone(), "#8db1f2"), (hakuji.clone(), "#2457c5")] {
+        let tint = |key: &str| &theme.iter().find(|(k, _)| *k == key).unwrap().1;
+        assert_eq!(tint("file_icon.markdown"), lapis);
+        assert_ne!(tint("file_icon.rust"), tint("file_icon.toml"));
+    }
 }
