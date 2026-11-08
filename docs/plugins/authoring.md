@@ -133,12 +133,51 @@ The interfaces, by module:
 - `buffer`: read, edit and propose changes to buffers.
 - `decorations`: inline decorations and gutter entries.
 - `status`: status bar items; clicking one runs its command as your plugin.
-- `diagnostics`, `formatting`: in the WIT, not yet wired in the app.
+- `diagnostics`: problems on a buffer, shown as a language server's (see
+  [Diagnostics](#diagnostics)).
+- `formatting`: in the WIT, not yet wired in the app.
 - `fs`, `process`, `net`: files, programs and HTTP, each behind its capability.
 - `secrets`: per-plugin storage held by the host. It is not a capability and
   needs no grant; only your plugin can read what it stores.
 - `log`: `info!` and friends. Read a plugin's log with **Extensions: Show
   Plugin Log**.
+
+### Diagnostics
+
+A linter reports what it finds through `diagnostics`, under the `decorations`
+capability. Publish a named set on a buffer against the version you read; a
+set replaces the one of that name, and the editor moves it with later edits
+until you publish it again:
+
+```rust
+use tenmoku_plugin::{diagnostics, types::{Diagnostic, Range, Severity}};
+
+let items = vec![Diagnostic {
+    range: Range { start: 31, end: 32 },
+    severity: Severity::Error,
+    message: "cannot find `y`".into(),
+    source: None,
+    code: Some("E0425".into()),
+}];
+diagnostics::publish(buffer, version, "lint", &items)?;
+// …and when the problems are fixed:
+diagnostics::clear(buffer, "lint")?;
+```
+
+They show as a language server's do, beside any server's for the same buffer:
+squiggles, inline diagnostics, **Go to Next Problem** and **Go to Previous
+Problem**, and rows in the Problems panel under the file. A diagnostic without
+a `source` is labelled with your plugin's name. Your sets are merged: each
+set is yours to replace or clear, and clearing one leaves the rest.
+
+- Ranges are byte offsets into the text at `version`. One off a character
+  boundary or past the end fails with `invalid-argument`; a version the editor
+  can no longer map from fails with `conflict`, so read the buffer and publish
+  again against its version now.
+- At most 10,000 diagnostics per buffer, over all your sets.
+- Diagnostics are for open buffers only. Closing the buffer drops them;
+  unloading or reloading your plugin drops all of them, so publish again from
+  `init` or your next event.
 
 ## Installing from an archive
 

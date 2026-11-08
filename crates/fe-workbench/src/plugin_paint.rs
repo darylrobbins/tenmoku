@@ -49,7 +49,7 @@ use gpui::{
 };
 use kiln_shell::StatusSide;
 
-use crate::{Workbench, plugin_bridge, plugin_events, plugin_host};
+use crate::{Workbench, plugin_bridge, plugin_diagnostics, plugin_events, plugin_host};
 
 /// How many of a buffer's versions plugins were shown are kept to map a
 /// set made against one to the buffer now.
@@ -72,6 +72,7 @@ pub(crate) struct Paint {
     items: StatusItems,
     shown: Shown,
     repaint: async_channel::Sender<()>,
+    diagnostics: plugin_diagnostics::Diagnostics,
 }
 
 impl Paint {
@@ -83,11 +84,27 @@ impl Paint {
         grants: &fe_command::Grants,
         buffers: Box<dyn BufferAccess>,
     ) -> decorations::State {
-        let buffers = Buffers {
+        decorations::State::new(plugin, grants, &self.decorations, self.versions(buffers))
+    }
+
+    /// Plugin `plugin`'s `diagnostics` slice ([`crate::plugin_diagnostics`]),
+    /// as far as `grants` allow, mapping versions as its decorations do.
+    pub(crate) fn diagnostics(
+        &self,
+        plugin: &str,
+        grants: &fe_command::Grants,
+        buffers: Box<dyn BufferAccess>,
+    ) -> fe_plugin::diagnostics::State {
+        (self.diagnostics).state(plugin, grants, self.versions(buffers))
+    }
+
+    /// The buffers as a plugin's slice maps a version it names: now,
+    /// through `buffers`, and as plugins were shown them.
+    pub(crate) fn versions(&self, buffers: Box<dyn BufferAccess>) -> Box<dyn BufferVersions> {
+        Box::new(Buffers {
             buffers,
             shown: self.shown.clone(),
-        };
-        decorations::State::new(plugin, grants, &self.decorations, Box::new(buffers))
+        })
     }
 
     /// Plugin `plugin`'s `status` slice, as far as `grants` allow.
@@ -100,6 +117,7 @@ impl Paint {
     pub(crate) fn forget(&self, plugin: &str) {
         self.decorations.unload(plugin);
         self.items.unload(plugin);
+        self.diagnostics.forget(plugin);
         self.repaint();
     }
 
@@ -203,6 +221,7 @@ pub(crate) fn paint(cx: &mut App) -> Paint {
         items: StatusItems::new(),
         shown: Shown::default(),
         repaint,
+        diagnostics: plugin_diagnostics::diagnostics(cx),
     };
     let task = cx.spawn(async move |cx| {
         while asked.recv().await.is_ok() {
@@ -282,6 +301,7 @@ pub(crate) fn sync(cx: &mut App) {
         shown.forget(buffer);
     }
     sync_bars(cx);
+    plugin_diagnostics::sync(cx);
 }
 
 /// Gives `editor`, of buffer `buffer`, the store's provider for it, in

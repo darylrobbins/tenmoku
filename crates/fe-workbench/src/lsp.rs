@@ -58,12 +58,14 @@
 //!   item for the active editor's server.
 //! - **Diagnostics** (§4.1, "Delivery to the UI"). A `Diagnostics` event goes
 //!   to the [`fe_editor::diagnostics::DiagnosticSet`] of each open editor of
-//!   its buffer, keyed by server, applied only if its `(session,
+//!   its buffer, keyed by server (a [`DiagnosticOwner`], beside the
+//!   plugins' in [`crate::plugin_diagnostics`]), applied only if its `(session,
 //!   incarnation)` is [`LspManager::active_identity`] as it's delivered and
 //!   not one cleared there, and rebased from its buffer version. A
 //!   `DiagnosticsCleared` empties the server's diagnostics there if they
 //!   came from its identity, and has the set reject that identity from then
-//!   on. A new manager's ids start over, so its editors' sets are emptied.
+//!   on. A new manager's ids start over, so its editors' sets are emptied,
+//!   and the plugins' shown again.
 //! - **Commands.** `lsp.restart` and `lsp.show_log`, in the workbench's
 //!   context, act on the active editor's server. `lsp.rename`,
 //!   `lsp.code_actions`, `lsp.format_document` and `lsp.format_selection`,
@@ -134,6 +136,7 @@ use fe_lsp::{
 };
 use gpui::{App, AppContext as _, Context, Global, Subscription, Task, WeakEntity, Window};
 
+use crate::diagnostic_owner::{DiagnosticIdentity, DiagnosticOwner};
 use crate::lsp_consent::ConsentGate;
 use crate::open::settings_path;
 use crate::workbench::toast::{self, Toast};
@@ -996,6 +999,8 @@ impl Workbench {
                 cx.notify();
             });
         }
+        // The plugins' went with them: they're shown again.
+        crate::plugin_diagnostics::reshow(cx);
         let lsp = &mut self.lsp;
         lsp.documents.clear();
         lsp.owners.clear();
@@ -1850,15 +1855,16 @@ impl Workbench {
                 // Read as it's delivered: whatever's still queued behind a
                 // close and reopen, or a restart, is no longer active.
                 let active = (lsp.manager.as_ref())
-                    .and_then(|manager| lock(manager).active_identity(buffer, server));
+                    .and_then(|manager| lock(manager).active_identity(buffer, server))
+                    .map(|(session, incarnation)| DiagnosticIdentity::Lsp(session, incarnation));
                 let items: Vec<_> = items.into_iter().map(diagnostic).collect();
                 let mut applied = false;
                 for editor in self.editors_of(buffer, cx) {
                     applied |= editor.update(cx, |view, cx| {
-                        let identity = (session, incarnation);
+                        let identity = DiagnosticIdentity::Lsp(session, incarnation);
                         let model = view.model_mut();
                         let applied = model.apply_diagnostics(
-                            server,
+                            DiagnosticOwner::Server(server),
                             identity,
                             version,
                             items.clone(),
@@ -1885,9 +1891,10 @@ impl Workbench {
             } => {
                 for editor in self.editors_of(buffer, cx) {
                     editor.update(cx, |view, cx| {
+                        let identity = DiagnosticIdentity::Lsp(session, incarnation);
                         if view
                             .model_mut()
-                            .clear_diagnostics(server, (session, incarnation))
+                            .clear_diagnostics(DiagnosticOwner::Server(server), identity)
                         {
                             cx.notify();
                         }

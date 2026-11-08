@@ -25,7 +25,8 @@
 //!   they change), secrets in the platform's secret store and the network
 //!   through fe-net. Of the editor's slices, the buffers and the editor's
 //!   commands are reached through [`crate::plugin_bridge`], and the
-//!   decorations and status items drawn through [`crate::plugin_paint`];
+//!   decorations and status items drawn through [`crate::plugin_paint`],
+//!   and its diagnostics shown through [`crate::plugin_diagnostics`];
 //!   the rest answer `unimplemented` until their cards land.
 //! - **Reload.** A changed manifest or component reloads the plugin, its old
 //!   version shut down before the new one's `init`; with the same grants
@@ -117,6 +118,7 @@ pub use kiln_plugin::manifest::plugin_kind;
 use crate::{
     KEY_CONTEXT, PendingPluginGrant, PluginAnswer, PluginAsk, RootChanged, TrustChanged, Workbench,
     plugin_bridge::{Bridge, CallDeadline},
+    plugin_diagnostics,
     plugin_events::{self, Inbox},
     plugin_log::{self, PluginLogs},
     plugin_paint::{self, Paint},
@@ -917,6 +919,13 @@ fn host_mut(cx: &mut App) -> &mut PluginHost {
     cx.global_mut::<PluginHost>()
 }
 
+/// Plugin `id`'s name, as its manifest gives it, if it's found.
+pub(crate) fn plugin_name(id: &str, cx: &App) -> Option<String> {
+    let host = cx.try_global::<PluginHost>()?;
+    let found = host.found.iter().find(|found| found.id == id)?;
+    Some(found.name.clone())
+}
+
 /// The app's state and cache directories; none under test, where each sets
 /// its own.
 fn default_dirs() -> Option<Dirs> {
@@ -1317,6 +1326,7 @@ fn start_unload(id: &str, cx: &mut App) {
     };
     host.slots.get_mut(id).expect("withdrawn").busy = true;
     plugin_paint::unload(id, cx);
+    plugin_diagnostics::unload(id, cx);
     let shut_down = cx.background_spawn(async move { lock(&loaded.plugin).shutdown() });
     let id = id.to_owned();
     cx.spawn(async move |cx| {
@@ -1396,6 +1406,7 @@ fn start_load(id: &str, cx: &mut App) {
     };
     if old.is_some() {
         plugin_paint::unload(id, cx);
+        plugin_diagnostics::unload(id, cx);
     }
     let host = cx.global_mut::<PluginHost>();
     #[cfg(test)]
@@ -1608,6 +1619,7 @@ fn stopped_running(id: &str, load: u64, diagnostic: Diagnostic, cx: &mut App) {
     slot.state = PluginState::Stopped(diagnostic.clone());
     plugin_log::push(id, log::Level::Error, format!("stopped: {diagnostic}"), cx);
     plugin_paint::unload(id, cx);
+    plugin_diagnostics::unload(id, cx);
     cx.refresh_windows();
 }
 
@@ -1641,7 +1653,8 @@ struct LoadContext {
     store: Option<GrantStore>,
     workspace: Workspace,
     record: Record,
-    /// What its decorations and status items are drawn from.
+    /// What its decorations and status items are drawn from, and its
+    /// diagnostics shown from.
     paint: Paint,
     /// Starts what enforces the plugin's call deadline.
     ticker: fn(&PluginEngine) -> Result<(), String>,
@@ -1690,10 +1703,12 @@ impl LoadContext {
         let deadline = CallDeadline::new(kiln.program_runs.clone());
         let buffers = self.bridge.buffers(deadline.clone(), limits.call_deadline);
         let shown = self.bridge.buffers(deadline.clone(), limits.call_deadline);
+        let checked = self.bridge.buffers(deadline.clone(), limits.call_deadline);
         let host = fe_plugin::HostState {
             kiln,
             editor: fe_plugin::editor::State::new(id, grants, &limits, buffers),
             decorations: self.paint.decorations(id, grants, shown),
+            diagnostics: self.paint.diagnostics(id, grants, checked),
             status: self.paint.status(id, grants),
             ..fe_plugin::HostState::default()
         };
