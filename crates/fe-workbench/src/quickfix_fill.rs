@@ -454,19 +454,33 @@ fn smart_case(pattern: &str) -> bool {
     while let Some(ch) = chars.next() {
         match ch {
             '\\' => {
-                let skip = match chars.next() {
-                    Some('p' | 'P' | 'x' | 'u' | 'U') if chars.peek() == Some(&'{') => {
-                        while chars.next().is_some_and(|ch| ch != '}') {}
-                        0
+                let digits = match chars.next() {
+                    Some('p' | 'P') => {
+                        if chars.next_if_eq(&'{').is_some() {
+                            while chars.next().is_some_and(|ch| ch != '}') {}
+                        } else {
+                            chars.next();
+                        }
+                        continue;
                     }
-                    Some('p' | 'P') => 1,
                     Some('x') => 2,
                     Some('u') => 4,
                     Some('U') => 8,
-                    _ => 0,
+                    _ => continue,
                 };
-                for _ in 0..skip {
-                    chars.next();
+                // A hex escape is the literal it decodes to, which makes
+                // the search case sensitive if it's uppercase, as in rg.
+                let mut hex = String::new();
+                if chars.next_if_eq(&'{').is_some() {
+                    hex.extend(chars.by_ref().take_while(|&ch| ch != '}'));
+                } else {
+                    hex.extend(chars.by_ref().take(digits));
+                }
+                let decoded = u32::from_str_radix(hex.trim(), 16)
+                    .ok()
+                    .and_then(char::from_u32);
+                if decoded.is_some_and(char::is_uppercase) {
+                    return true;
                 }
             }
             '(' if chars.peek() == Some(&'?') => {
@@ -539,7 +553,10 @@ mod tests {
         assert!(!smart_case("foo"));
         assert!(smart_case("Foo"));
         assert!(!smart_case(r"\S+\W\D\B"));
-        assert!(!smart_case(r"\p{Lu}\pL\x4A\x{4A}\u00C9"));
+        assert!(!smart_case(r"\p{Lu}\pL\x6A\x{6a}\u00e9[[:upper:]]"));
+        assert!(smart_case(r"\x4A"));
+        assert!(smart_case(r"\x{4A}"));
+        assert!(smart_case(r"\u00C9"));
         assert!(!smart_case("(?P<Name>a)(?<Other>b)"));
         assert!(smart_case("(?P<n>A)"));
         assert!(smart_case("É"));
