@@ -229,7 +229,7 @@ ansi_15 = "#f8f2e8"  # ink, one step lighter
 # 6:1 on the cursor line.
 [syntax]
 "attribute" = "#8db1f2"
-"comment" = "#88a18b"
+"comment" = "#9e9b97"
 # TODO-style comment badges by meaning (docs/decisions/246q270zwp-*.md):
 # HACK and WARN kiseto, PERF keyword (jun). FIXME (shinsha) and NOTE and TODO
 # (ruri) are under 6:1 on the cursor line, so they take the nearest design

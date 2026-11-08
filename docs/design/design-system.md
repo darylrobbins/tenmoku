@@ -48,6 +48,9 @@ comment `#6a737d` → `#69727c` (4.5:1 on the cursor line), and Hakuji shinsha
 celadon, kiseto and hare's fur; kiseto can't darken in the sRGB gamut, so
 shinsha moved for both of its pairs).
 
+Yohen's comment moved from `#88a18b` to the neutral grey `#9e9b97`: chroma dropped
+and lightness stayed at the 6:1 floor on the cursor line.
+
 ### Signals
 
 | Role | Yohen | Hakuji | Means | Never |
@@ -78,7 +81,7 @@ for everyone.
 | Property | `#dccbb8` | `#3d444d` | Shino | |
 | Variable | `#ede4d6` | `#1f2328` | ink | |
 | Punctuation | `#a89a8c` | `#596069` | Iron | |
-| Comment | `#88a18b` | `#69727c` | Wood ash | Italic |
+| Comment | `#9e9b97` | `#69727c` | Wood ash | Italic |
 
 Brackets pair by depth in function, keyword and type colours. Mutable bindings
 get a quiet solid underline in their own colour; warnings and errors use wavy
