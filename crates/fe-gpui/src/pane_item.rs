@@ -1425,8 +1425,20 @@ fn import_undo_into(buffer: BufferId, path: &Path, record: UndoRecord, cx: &mut 
             && model.buffer().history_revision() == 0
             && model.path() == Some(path)
     };
+    if !fresh {
+        return;
+    }
     let window = buffer_window(buffer, cx);
-    if !fresh || undo_store_for(window, cx).is_none() {
+    // A window that began waiting for its settings after this read started
+    // reads again once they are in, with every check repeated.
+    let persist = cx.global_mut::<UndoPersist>();
+    if let Some(deferred) = window.and_then(|window| persist.waiting.get_mut(&window)) {
+        if !deferred.iter().any(|(b, p)| *b == buffer && p == path) {
+            deferred.push((buffer, path.to_owned()));
+        }
+        return;
+    }
+    if undo_store_for(window, cx).is_none() {
         return;
     }
     let states: Vec<_> = (editors.iter())

@@ -964,3 +964,100 @@ fn typing_before_the_read_lands_still_gets_no_history(cx: &mut TestAppContext) {
     assert_eq!(f.text(&first), "one two\n");
     drop(second);
 }
+
+/// Sweeps the executor-stepping interleavings of a read in flight when its
+/// window re-roots: for `k = 0, 1, …` makes the editors reading `a.txt`'s
+/// record in a fresh fixture, runs `k` single tasks, then calls `body` with
+/// whether the history was already imported. Stops once the executor ran
+/// dry before `k` tasks.
+fn sweep_re_root(
+    cx: &mut TestAppContext,
+    mut body: impl FnMut(&mut Fixture, &Entity<EditorView>, bool),
+) {
+    for k in 0..200 {
+        let mut f = fixture(cx);
+        let (first, second) = f.two_editors_reading(|_, _, _| {});
+        let mut dry = false;
+        for _ in 0..k {
+            if !f.cx.executor().tick() {
+                dry = true;
+                break;
+            }
+        }
+        let imported = f.has_history(&first);
+        body(&mut f, &first, imported);
+        drop((first, second));
+        draw(&mut f.cx);
+        if dry {
+            return;
+        }
+    }
+    panic!("the executor never ran dry in 200 steps");
+}
+
+/// A read started before the window re-roots and landing during the wait
+/// is imported once the new root's settings have it on.
+#[gpui::test]
+fn a_read_in_flight_when_the_window_re_roots_is_imported_once_its_settings_are_in(
+    cx: &mut TestAppContext,
+) {
+    sweep_re_root(cx, |f, first, _| {
+        f.wait_for_window_undo();
+        draw(&mut f.cx);
+        f.set_window_undo(true);
+        draw(&mut f.cx);
+        assert!(f.has_history(first), "history imported");
+        first.update(&mut f.cx, |editor, _| {
+            let mut buffer = editor.model_mut().buffer_mut();
+            assert!(buffer.undo(user).unwrap().is_some());
+        });
+        assert_eq!(f.text(first), "one\n");
+    });
+}
+
+/// The same read, with the new root having it off, imports nothing and
+/// leaves the record alone.
+#[gpui::test]
+fn a_read_in_flight_when_the_window_re_roots_onto_a_root_with_it_off_imports_nothing(
+    cx: &mut TestAppContext,
+) {
+    sweep_re_root(cx, |f, first, imported| {
+        let kept = fs::read(f.record_file()).unwrap();
+        f.wait_for_window_undo();
+        draw(&mut f.cx);
+        f.set_window_undo(false);
+        draw(&mut f.cx);
+        if !imported {
+            assert!(!f.has_history(first), "nothing imported");
+            assert_eq!(f.text(first), "one two\n");
+        }
+        assert_eq!(fs::read(f.record_file()).unwrap(), kept, "record as it was");
+    });
+}
+
+/// A buffer edited during the wait gets no history once the settings are
+/// in, and `u` undoes only that edit.
+#[gpui::test]
+fn a_buffer_edited_while_its_window_waits_gets_no_history(cx: &mut TestAppContext) {
+    sweep_re_root(cx, |f, first, imported| {
+        if imported {
+            return;
+        }
+        f.wait_for_window_undo();
+        draw(&mut f.cx);
+        first.update(&mut f.cx, |editor, _| {
+            editor
+                .model_mut()
+                .buffer_mut()
+                .edit([(0..0, "x")], Origin::User);
+        });
+        f.set_window_undo(true);
+        draw(&mut f.cx);
+        first.update(&mut f.cx, |editor, _| {
+            let mut buffer = editor.model_mut().buffer_mut();
+            assert!(buffer.undo(user).unwrap().is_some(), "the typed edit");
+            assert!(buffer.undo(user).unwrap().is_none(), "no imported history");
+        });
+        assert_eq!(f.text(first), "one two\n");
+    });
+}
