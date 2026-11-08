@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Grants};
@@ -100,6 +101,7 @@ fn stdout(state: &mut State, program: &str, arguments: &[&str]) -> String {
 
 #[test]
 fn a_granted_program_runs_by_its_recorded_path() {
+    let _serial = serially();
     let dir = temp_dir("recorded");
     let printf = copied(&dir, "printf");
     assert_eq!(printf.path, dir.join("printf"));
@@ -131,6 +133,7 @@ fn a_granted_program_runs_by_its_recorded_path() {
 
 #[test]
 fn an_ungranted_program_is_refused() {
+    let _serial = serially();
     let dir = temp_dir("ungranted");
     let printf = copied(&dir, "printf");
     let marker = dir.join("ran");
@@ -160,6 +163,7 @@ fn an_ungranted_program_is_refused() {
 
 #[test]
 fn a_changed_binary_suspends_the_grant_before_spawn() {
+    let _serial = serially();
     changed_binary_suspends("named", &["process.spawn:printf"]);
     // `process.spawn:*` still covers the name, but a suspended program asks again all the same.
     changed_binary_suspends("wildcard", &["process.spawn:*", "process.spawn:printf"]);
@@ -223,6 +227,7 @@ fn changed_binary_suspends(case: &str, granted: &[&str]) {
 
 #[test]
 fn a_removed_binary_is_suspended_as_missing() {
+    let _serial = serially();
     let dir = temp_dir("removed");
     let printf = copied(&dir, "printf");
     let mut state = State::new(
@@ -240,6 +245,7 @@ fn a_removed_binary_is_suspended_as_missing() {
 
 #[test]
 fn arguments_are_not_shell_parsed() {
+    let _serial = serially();
     let dir = temp_dir("arguments");
     let printf = copied(&dir, "printf");
     let mut state = State::new(
@@ -274,6 +280,7 @@ fn arguments_are_not_shell_parsed() {
 
 #[test]
 fn the_environment_is_minimal() {
+    let _serial = serially();
     let dir = temp_dir("environment");
     let env = copied(&dir, "env");
     let mut state = State::new(record(&["process.spawn:env"], &[&env]), &Limits::default());
@@ -305,6 +312,7 @@ fn the_environment_is_minimal() {
 
 #[test]
 fn the_minimal_environment_keeps_only_its_variables() {
+    let _serial = serially();
     let app = [
         ("PATH", "/home/me/bin:/usr/bin"),
         ("HOME", "/home/me"),
@@ -339,6 +347,7 @@ fn the_minimal_environment_keeps_only_its_variables() {
 
 #[test]
 fn output_over_the_cap_and_runs_over_the_deadline_are_killed() {
+    let _serial = serially();
     let dir = temp_dir("limits");
     let sleep = copied(&dir, "sleep");
     let printf = copied(&dir, "printf");
@@ -380,6 +389,7 @@ fn output_over_the_cap_and_runs_over_the_deadline_are_killed() {
 
 #[test]
 fn nothing_outlives_a_call_that_ends() {
+    let _serial = serially();
     let dir = temp_dir("outlives");
     let sleep = copied(&dir, "sleep");
     let printf = copied(&dir, "printf");
@@ -448,6 +458,14 @@ impl Drop for Reaper {
     }
 }
 
+/// One test at a time: `nothing_outlives_a_call_that_ends` counts this
+/// process's threads, which the others' calls would add to and take from
+/// meanwhile when `cargo test` runs them side by side.
+fn serially() -> MutexGuard<'static, ()> {
+    static SERIAL: Mutex<()> = Mutex::new(());
+    SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// How many threads this process has, where the system says.
 fn threads() -> Option<usize> {
     fs::read_dir("/proc/self/task").ok().map(Iterator::count)
@@ -455,6 +473,7 @@ fn threads() -> Option<usize> {
 
 #[test]
 fn a_suspension_holds_until_the_program_is_granted_again() {
+    let _serial = serially();
     let dir = temp_dir("suspension");
     let printf = copied(&dir, "printf");
     let store = GrantStore::new(dir.join("state/plugin-grants.toml"));
