@@ -202,3 +202,116 @@ fn a_restored_editor_refuses_a_file_changed_since(cx: &mut TestAppContext) {
     assert!(saved.is_err());
     assert_eq!(fs::read_to_string(&path).unwrap(), "theirs\n");
 }
+
+use std::{sync::Arc, thread, time::Duration};
+
+use fe_buffer::{Origin, UndoRecord, UndoStore};
+
+use crate::pane_item::{UndoPolicy, UndoWrites};
+
+fn undo_record(text: &str) -> UndoRecord {
+    let mut buffer = Buffer::new("");
+    buffer.edit([(0..0, text)], Origin::User);
+    buffer.export_undo().unwrap()
+}
+
+fn undo_policy(window: gpui::WindowId, on: bool) -> UndoPolicy {
+    UndoPolicy {
+        windows: [(window, on)].into_iter().collect(),
+        fallback: true,
+    }
+}
+
+/// Starts a writer for `path` and returns once it has copied its
+/// capture and is blocked on the policy lock, which the caller holds.
+fn start_writer(
+    writes: &Arc<UndoWrites>,
+    store: &Arc<UndoStore>,
+    path: &std::path::Path,
+) -> thread::JoinHandle<()> {
+    let writer = {
+        let (writes, store, path) = (writes.clone(), store.clone(), path.to_path_buf());
+        thread::spawn(move || writes.flush(&store, &path))
+    };
+    while writes.writing.try_lock().is_ok() && !writer.is_finished() {
+        thread::yield_now();
+    }
+    thread::sleep(Duration::from_millis(200));
+    writer
+}
+
+/// What `publish(off)` then `publish(on)` do, under the policy lock.
+fn off_then_on(writes: &UndoWrites, guard: &mut Option<UndoPolicy>, window: gpui::WindowId) {
+    let off = undo_policy(window, false);
+    *guard = Some(off.clone());
+    writes
+        .pending
+        .lock()
+        .unwrap()
+        .retain(|_, capture| off.allows(capture.window));
+    *guard = Some(undo_policy(window, true));
+}
+
+fn setup() -> (
+    tempfile::TempDir,
+    Arc<UndoStore>,
+    std::path::PathBuf,
+    Arc<UndoWrites>,
+    UndoRecord,
+    gpui::WindowId,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(UndoStore::new(dir.path().join("undo")));
+    let path = dir.path().join("a.txt");
+    let old = undo_record("old");
+    let _ = store.write(&path, &old);
+    (
+        dir,
+        store,
+        path,
+        Arc::new(UndoWrites::default()),
+        old,
+        gpui::WindowId::from(1u64),
+    )
+}
+
+#[test]
+fn a_writer_holding_a_capture_dropped_by_off_then_on_writes_nothing() {
+    let (_dir, store, path, writes, old, window) = setup();
+    writes.capture(path.clone(), Some(undo_record("new")), Some(window));
+    let mut in_flight = writes.policy.lock().unwrap();
+    let writer = start_writer(&writes, &store, &path);
+    off_then_on(&writes, &mut in_flight, window);
+    drop(in_flight);
+    writer.join().unwrap();
+    assert_eq!(store.read(&path).unwrap(), Some(old));
+    assert_eq!(writes.waiting(&path), None);
+}
+
+#[test]
+fn a_writer_holding_a_removal_dropped_by_off_then_on_removes_nothing() {
+    let (_dir, store, path, writes, old, window) = setup();
+    writes.capture(path.clone(), None, Some(window));
+    let mut in_flight = writes.policy.lock().unwrap();
+    let writer = start_writer(&writes, &store, &path);
+    off_then_on(&writes, &mut in_flight, window);
+    drop(in_flight);
+    writer.join().unwrap();
+    assert_eq!(store.read(&path).unwrap(), Some(old));
+    assert_eq!(writes.waiting(&path), None);
+}
+
+#[test]
+fn a_newer_capture_taken_while_a_writer_waits_is_still_written() {
+    let (_dir, store, path, writes, _old, window) = setup();
+    writes.capture(path.clone(), Some(undo_record("older")), Some(window));
+    let in_flight = writes.policy.lock().unwrap();
+    let writer = start_writer(&writes, &store, &path);
+    let newer = undo_record("newer");
+    writes.capture(path.clone(), Some(newer.clone()), Some(window));
+    drop(in_flight);
+    writer.join().unwrap();
+    writes.flush(&store, &path);
+    assert_eq!(store.read(&path).unwrap(), Some(newer));
+    assert_eq!(writes.waiting(&path), None);
+}

@@ -1115,14 +1115,13 @@ impl UndoWrites {
         // Held to the end of the write or removal, so a policy published
         // meanwhile waits for it, and none can land once publish returns.
         let policy = self.policy.lock().unwrap_or_else(PoisonError::into_inner);
+        // A publish while this writer waited may have dropped the capture
+        // (a window turned off, then on): don't bring it back from the copy.
+        if !self.is_pending(path, number) {
+            return;
+        }
         if !policy.as_ref().is_none_or(|policy| policy.allows(window)) {
-            let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
-            if pending
-                .get(path)
-                .is_some_and(|newest| newest.number == number)
-            {
-                pending.remove(path);
-            }
+            self.remove_if_pending(path, number);
             return;
         }
         let written = match &record {
@@ -1135,6 +1134,18 @@ impl UndoWrites {
             log::debug!("undo store: writing {}: {error}", path.display());
             return;
         }
+        self.remove_if_pending(path, number);
+    }
+
+    /// Whether `number` is still `path`'s pending capture.
+    fn is_pending(&self, path: &Path, number: u64) -> bool {
+        let pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        pending
+            .get(path)
+            .is_some_and(|newest| newest.number == number)
+    }
+
+    fn remove_if_pending(&self, path: &Path, number: u64) {
         let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
         if pending
             .get(path)
