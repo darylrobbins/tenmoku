@@ -27,6 +27,7 @@ mod menu_bar;
 mod nav;
 mod palette;
 mod prompt;
+mod roles;
 mod scroll_area;
 mod split_pane;
 mod status_bar;
@@ -57,6 +58,11 @@ pub use list::{List, ListDelegate, ListEvent, ListRow, RowState};
 pub use menu_bar::{MENU_BAR_HEIGHT, MenuEntry, MenuPanel, MenuStrip};
 pub use palette::{PALETTE_WIDTH, PaletteFrame};
 pub use prompt::{PROMPT_WIDTH, Prompt, prompt_renderer};
+pub use roles::{
+    BOTTOM_PANEL_DEFAULT, CODE, CODE_SMALL, FOCUS_RING, FamilySlot, FocusRing, FontFamilies,
+    PAGE_TITLE, SECTION_HEADING, SHADOW_FLOAT, Shadow, TextRole, UI_BODY, UI_HEADING, UI_LABEL,
+    UI_SMALL, height, radius, space, width,
+};
 pub use scroll_area::{SCROLLBAR_WIDTH, ScrollArea};
 pub use split_pane::{SplitPane, SplitPaneEvent};
 pub use status_bar::{

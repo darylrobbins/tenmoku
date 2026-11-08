@@ -11,6 +11,7 @@ mod file_icons;
 mod layout;
 mod list;
 mod prompt;
+mod roles;
 mod tabs;
 mod text_field;
 mod text_input;
