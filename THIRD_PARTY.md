@@ -254,6 +254,7 @@ licence. No module is committed.
 | nginx | `tree-sitter-nginx.wasm` | https://github.com/opa-oz/tree-sitter-nginx at `7cdf006ed1addef698fc680ae31721950f85e5e9` (`src`), package version 1.0.1; `highlights.scm` is upstream's `queries/highlights.scm` less the `@spell` capture; `injections.scm` is comment-only (upstream's injects a `comment` language we lack) | MIT |
 | scss | `tree-sitter-scss.wasm` | https://github.com/tree-sitter-grammars/tree-sitter-scss @ `5da5ba71a558b007b352c505bfcd9095ae337022` | MIT; `highlights.scm` is that grammar's query with tree-sitter-css 0.25.0's (MIT, another holder, text in `LICENSE-CSS`) inlined |
 | graphql | `tree-sitter-graphql.wasm` | https://github.com/bkegley/tree-sitter-graphql `5e66e961eee421786bdda8495ed1db045e06b5fe` | MIT; `highlights.scm` is the grammar's own `queries/graphql/highlights.scm`, adapted |
+| awk | `tree-sitter-awk.wasm` | [Beaglefoot/tree-sitter-awk](https://github.com/Beaglefoot/tree-sitter-awk) @ `34bbdc7cce8e803096f47b625979e34c1be38127` (`grammar-source.toml`); `highlights.scm` is upstream's `queries/highlights.scm`, adapted to fe-syntax's capture names | MIT |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

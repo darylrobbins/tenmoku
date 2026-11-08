@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_awk"
+name = "Awk syntax"
+version = "0.7.2"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "awk"
+wasm = "tree-sitter-awk.wasm"
+extensions = ["awk", "gawk"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
+line_comment = "#"
+shebangs = ["awk", "gawk", "mawk", "nawk"]
