@@ -1,0 +1,4 @@
+git = "https://github.com/stadelmanma/tree-sitter-fortran"
+rev = "72f8759dea28ff6671e0868a9ed5ad4a18413917"
+src = "src"
+grammar = "fortran"

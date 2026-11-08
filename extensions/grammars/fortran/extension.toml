@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_fortran"
+name = "Fortran syntax"
+version = "0.5.1"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "fortran"
+wasm = "tree-sitter-fortran.wasm"
+# Free form only: fixed-form .f and .for files read as errors here.
+extensions = ["f90", "f95", "f03", "f08"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "!"
