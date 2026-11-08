@@ -1,6 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
 // Its programs are shell scripts made executable by mode.
 #![cfg(unix)]
-// SPDX-License-Identifier: Apache-2.0
 
 //! Spawning programs for a plugin: only by a grant, only the file recorded for it, with
 //! arguments as given, a minimal environment, and output and time capped. The programs are real

@@ -15,11 +15,7 @@
 //! elsewhere, until it is written), and the setup, after which no child starts.
 
 use std::ffi::OsString;
-use std::io::{self, Read as _, Write as _};
-#[cfg(unix)]
-use std::os::fd::OwnedFd;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
+use std::io;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -28,6 +24,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Target};
+use kiln_core::platform::{OutputDrain, StdinFeed};
 
 use crate::bindings::kiln::extension::process::{Host, Output};
 use crate::bindings::{Error, HostState};
@@ -250,8 +247,7 @@ impl State {
             .envs(self.environment.iter().map(|(name, value)| (name, value)));
         // No console window for a program run from a GUI app
         // (`CREATE_NO_WINDOW`).
-        #[cfg(windows)]
-        std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+        kiln_core::platform::without_console_window(&mut command);
         // The check took its time from the share too: what is left is the run's.
         let now = Instant::now();
         let own_end = now + self.deadline;
@@ -438,7 +434,7 @@ fn run(
 ) -> Result<Output, Failure> {
     let mut feed = match stdin {
         Some(bytes) => {
-            let (feed, theirs) = Feed::pair(bytes)?;
+            let (feed, theirs) = StdinFeed::pair(bytes)?;
             command.stdin(theirs);
             Some(feed)
         }
@@ -447,23 +443,23 @@ fn run(
             None
         }
     };
-    let (stdout, theirs) = Drain::pair()?;
+    let (stdout, theirs) = OutputDrain::pair()?;
     command.stdout(theirs);
-    let (stderr, theirs) = Drain::pair()?;
+    let (stderr, theirs) = OutputDrain::pair()?;
     command.stderr(theirs);
-    #[cfg(all(test, unix))]
-    crate::prelaunch_tests::seams::during_setup();
+    #[cfg(test)]
+    crate::tests::seams::during_setup();
     if Instant::now() >= deadline {
         return Err(Failure::TimedOut);
     }
-    #[cfg(all(test, unix))]
-    crate::prelaunch_tests::seams::launching();
+    #[cfg(test)]
+    crate::tests::seams::launching();
     let mut child = command.spawn()?;
     // The command holds the program's ends: they must close here for its output to end.
     drop(command);
     let mut child = Running(&mut child);
-    let mut stdout = Drain::new(stdout)?;
-    let mut stderr = Drain::new(stderr)?;
+    let mut stdout = OutputDrain::new(stdout)?;
+    let mut stderr = OutputDrain::new(stderr)?;
     if let Some(feed) = &mut feed {
         feed.start()?;
     }
@@ -472,12 +468,12 @@ fn run(
         let mut moved = stdout.read(max_output)? | stderr.read(max_output)?;
         if let Some(fed) = &mut feed {
             match fed.write() {
-                Ok(written) => moved |= written,
+                Some(written) => moved |= written,
                 // The program closed its stdin, or it is all written: either way, done with it.
-                Err(()) => feed = None,
+                None => feed = None,
             }
         }
-        if stdout.over || stderr.over {
+        if stdout.over() || stderr.over() {
             child.kill();
             status = Some(None);
         }
@@ -491,8 +487,8 @@ fn run(
         {
             return Ok(Output {
                 status,
-                stdout: stdout.kept,
-                stderr: stderr.kept,
+                stdout: stdout.into_kept(),
+                stderr: stderr.into_kept(),
             });
         }
         let now = Instant::now();
@@ -522,243 +518,4 @@ impl Drop for Running<'_> {
             self.kill();
         }
     }
-}
-
-/// The plugin's stdin bytes, on their way into the program.
-#[cfg(unix)]
-struct Feed<'a> {
-    socket: UnixStream,
-    bytes: &'a [u8],
-}
-
-#[cfg(unix)]
-impl<'a> Feed<'a> {
-    /// A feed of `bytes`, and the program's end of it.
-    fn pair(bytes: &'a [u8]) -> io::Result<(Self, Stdio)> {
-        let (ours, theirs) = UnixStream::pair()?;
-        Ok((
-            Self {
-                socket: ours,
-                bytes,
-            },
-            OwnedFd::from(theirs).into(),
-        ))
-    }
-
-    /// Readies the feed once the program has started.
-    fn start(&mut self) -> io::Result<()> {
-        self.socket.set_nonblocking(true)
-    }
-
-    /// Writes what the socket takes: whether any went, or `Err` once there's nothing more to
-    /// write or the program won't read it.
-    fn write(&mut self) -> Result<bool, ()> {
-        if self.bytes.is_empty() {
-            return Err(());
-        }
-        match self.socket.write(self.bytes) {
-            Ok(written) => {
-                self.bytes = &self.bytes[written..];
-                Ok(written > 0)
-            }
-            Err(error) if retry(&error) => Ok(false),
-            Err(_) => Err(()),
-        }
-    }
-}
-
-/// One of the program's output streams, read as far as it goes without blocking.
-#[cfg(unix)]
-struct Drain {
-    /// None once it ended, or went past the cap.
-    socket: Option<UnixStream>,
-    kept: Vec<u8>,
-    over: bool,
-}
-
-#[cfg(unix)]
-impl Drain {
-    /// Our end of a new output stream, and the program's.
-    fn pair() -> io::Result<(UnixStream, Stdio)> {
-        let (ours, theirs) = UnixStream::pair()?;
-        Ok((ours, OwnedFd::from(theirs).into()))
-    }
-
-    fn new(socket: UnixStream) -> io::Result<Self> {
-        socket.set_nonblocking(true)?;
-        Ok(Self {
-            socket: Some(socket),
-            kept: Vec::new(),
-            over: false,
-        })
-    }
-
-    fn ended(&self) -> bool {
-        self.socket.is_none()
-    }
-
-    /// Reads what is there, keeping `cap` bytes; at the first byte past them it stops for
-    /// good. Whether anything was read.
-    fn read(&mut self, cap: usize) -> io::Result<bool> {
-        let Some(socket) = &mut self.socket else {
-            return Ok(false);
-        };
-        let mut chunk = [0; 16 << 10];
-        let mut moved = false;
-        loop {
-            match socket.read(&mut chunk) {
-                Ok(0) => {
-                    self.socket = None;
-                    return Ok(true);
-                }
-                Ok(read) => {
-                    moved = true;
-                    let room = cap - self.kept.len();
-                    self.kept.extend_from_slice(&chunk[..read.min(room)]);
-                    if read > room {
-                        self.over = true;
-                        self.socket = None;
-                        return Ok(true);
-                    }
-                }
-                Err(error) if retry(&error) => return Ok(moved),
-                Err(error) => return Err(error),
-            }
-        }
-    }
-}
-
-/// The plugin's stdin bytes, on their way into the program. Windows' anonymous pipes can't be
-/// made non-blocking, so a thread of its own writes them; it ends once all are written, or the
-/// program's end closes (it exited, or was killed).
-#[cfg(windows)]
-struct Feed<'a> {
-    pipe: Option<io::PipeWriter>,
-    bytes: &'a [u8],
-}
-
-#[cfg(windows)]
-impl<'a> Feed<'a> {
-    /// A feed of `bytes`, and the program's end of it.
-    fn pair(bytes: &'a [u8]) -> io::Result<(Self, Stdio)> {
-        let (theirs, ours) = io::pipe()?;
-        Ok((
-            Self {
-                pipe: Some(ours),
-                bytes,
-            },
-            theirs.into(),
-        ))
-    }
-
-    /// Starts the thread that writes the bytes, once the program has started.
-    fn start(&mut self) -> io::Result<()> {
-        let Some(mut pipe) = self.pipe.take() else {
-            return Ok(());
-        };
-        let bytes = self.bytes.to_vec();
-        self.bytes = &[];
-        thread::Builder::new()
-            .name("plugin-process-stdin".into())
-            .spawn(move || drop(pipe.write_all(&bytes)))?;
-        Ok(())
-    }
-
-    /// The thread writes everything: nothing is left to write here.
-    fn write(&mut self) -> Result<bool, ()> {
-        Err(())
-    }
-}
-
-/// One of the program's output streams. Windows' anonymous pipes can't be made non-blocking,
-/// so a thread of its own reads it into a channel, which is read as far as it goes without
-/// blocking. The thread ends at the stream's end: when the program, and anything it started
-/// that holds the stream, exits.
-#[cfg(windows)]
-struct Drain {
-    /// None once it ended, or went past the cap.
-    chunks: Option<std::sync::mpsc::Receiver<io::Result<Vec<u8>>>>,
-    kept: Vec<u8>,
-    over: bool,
-}
-
-#[cfg(windows)]
-impl Drain {
-    /// Our end of a new output stream, and the program's.
-    fn pair() -> io::Result<(io::PipeReader, Stdio)> {
-        let (ours, theirs) = io::pipe()?;
-        Ok((ours, theirs.into()))
-    }
-
-    fn new(mut pipe: io::PipeReader) -> io::Result<Self> {
-        let (send, chunks) = std::sync::mpsc::channel();
-        thread::Builder::new()
-            .name("plugin-process-output".into())
-            .spawn(move || {
-                let mut chunk = vec![0; 16 << 10];
-                loop {
-                    let sent = match pipe.read(&mut chunk) {
-                        Ok(0) => return,
-                        Ok(read) => send.send(Ok(chunk[..read].to_vec())),
-                        Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                        // A broken pipe is its end, as a socket's EOF is.
-                        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return,
-                        Err(error) => send.send(Err(error)),
-                    };
-                    // The run is over: nothing reads what follows.
-                    if sent.is_err() {
-                        return;
-                    }
-                }
-            })?;
-        Ok(Self {
-            chunks: Some(chunks),
-            kept: Vec::new(),
-            over: false,
-        })
-    }
-
-    fn ended(&self) -> bool {
-        self.chunks.is_none()
-    }
-
-    /// Takes what the thread has read, keeping `cap` bytes; at the first byte past them it stops
-    /// for good. Whether anything was read.
-    fn read(&mut self, cap: usize) -> io::Result<bool> {
-        use std::sync::mpsc::TryRecvError;
-
-        let Some(chunks) = &self.chunks else {
-            return Ok(false);
-        };
-        let mut moved = false;
-        loop {
-            match chunks.try_recv() {
-                Ok(Ok(chunk)) => {
-                    moved = true;
-                    let room = cap - self.kept.len();
-                    self.kept.extend_from_slice(&chunk[..chunk.len().min(room)]);
-                    if chunk.len() > room {
-                        self.over = true;
-                        self.chunks = None;
-                        return Ok(true);
-                    }
-                }
-                Ok(Err(error)) => return Err(error),
-                Err(TryRecvError::Empty) => return Ok(moved),
-                Err(TryRecvError::Disconnected) => {
-                    self.chunks = None;
-                    return Ok(true);
-                }
-            }
-        }
-    }
-}
-
-/// Whether `error` only says to try again later.
-#[cfg_attr(windows, allow(dead_code))]
-fn retry(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-    )
 }

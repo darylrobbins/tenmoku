@@ -9,9 +9,12 @@ pub(crate) mod fs;
 
 pub use fs::{
     canonicalize, create_private_dir, file_identity, is_executable, modified_parts,
-    open_for_reading, owned_and_unshared, path_identity, private, program_candidates,
+    open_for_reading, owned_and_unshared, path_identity, private, program_candidates, sync_dir,
 };
 pub(crate) mod keychain;
+pub(crate) mod stdio;
+
+pub use stdio::{OutputDrain, OutputSource, StdinFeed, without_console_window};
 
 use std::fmt;
 

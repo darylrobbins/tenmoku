@@ -395,41 +395,11 @@ fn hash_by(file: &mut File, by: Instant) -> io::Result<Option<String>> {
             Ok(read) => {
                 hasher.update(&chunk[..read]);
                 #[cfg(test)]
-                hash_probe::after_chunk();
+                crate::tests::hash_probe::after_chunk();
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) => return Err(error),
         }
-    }
-}
-
-/// Under test, slows a deadlined check's reads and counts the chunks it read, per thread.
-#[cfg(test)]
-pub(crate) mod hash_probe {
-    use std::cell::Cell;
-    use std::time::Duration;
-
-    thread_local! {
-        static DELAY: Cell<Duration> = const { Cell::new(Duration::ZERO) };
-        static CHUNKS: Cell<usize> = const { Cell::new(0) };
-    }
-
-    /// Each chunk read from here on takes `delay` more; none counted yet.
-    #[cfg(unix)]
-    pub(crate) fn slow_reads(delay: Duration) {
-        DELAY.set(delay);
-        CHUNKS.set(0);
-    }
-
-    /// The chunks read since [`slow_reads`].
-    #[cfg(unix)]
-    pub(crate) fn chunks() -> usize {
-        CHUNKS.get()
-    }
-
-    pub(super) fn after_chunk() {
-        CHUNKS.set(CHUNKS.get() + 1);
-        std::thread::sleep(DELAY.get());
     }
 }
 
@@ -501,8 +471,8 @@ fn check_with(
         return Err(CheckTimedOut);
     }
     let opened = open_executable(&identity.path);
-    #[cfg(all(test, unix))]
-    crate::prelaunch_tests::seams::after_open();
+    #[cfg(test)]
+    crate::tests::seams::after_open();
     // Past the end nothing the file turned out to be counts, an error from it included.
     if passed(by) {
         return Err(CheckTimedOut);
@@ -866,12 +836,10 @@ impl SuspensionWrite {
     /// under. If it doesn't, because the program was granted again since or the plugin forgotten,
     /// nothing changes: the finding was about a grant that has gone.
     fn write(&self) -> Result<(), GrantStoreError> {
-        #[cfg(all(test, unix))]
-        crate::prelaunch_tests::seams::store_io(self.store.path()).map_err(|source| {
-            GrantStoreError::Io {
-                path: self.store.path.clone(),
-                source,
-            }
+        #[cfg(test)]
+        crate::tests::seams::store_io(self.store.path()).map_err(|source| GrantStoreError::Io {
+            path: self.store.path.clone(),
+            source,
         })?;
         self.store.update(&self.plugin, |record| {
             Ok(record.map(|mut record| {
@@ -952,8 +920,8 @@ impl SuspensionWriter {
     }
 
     fn spawn(self: &Arc<Self>) -> io::Result<()> {
-        #[cfg(all(test, unix))]
-        crate::prelaunch_tests::seams::thread_start(&self.path)?;
+        #[cfg(test)]
+        crate::tests::seams::thread_start(&self.path)?;
         let writer = Arc::clone(self);
         std::thread::Builder::new()
             .name("plugin-grant-suspension".to_owned())
@@ -1005,8 +973,8 @@ impl SuspensionWriter {
     fn attempt(mut queued: Queued) -> Option<Queued> {
         match queued.write.write() {
             Ok(()) => {
-                #[cfg(all(test, unix))]
-                crate::prelaunch_tests::seams::written(queued.write.store.path());
+                #[cfg(test)]
+                crate::tests::seams::written(queued.write.store.path());
                 // Whoever was waiting may have stopped.
                 let _ = queued.written.send(());
                 None

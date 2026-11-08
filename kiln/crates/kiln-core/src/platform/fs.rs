@@ -38,6 +38,26 @@ pub fn private(options: &mut OpenOptions) -> &mut OpenOptions {
     options
 }
 
+/// Flushes `dir`'s entries, so a rename or a new file in it survives a crash. Nothing to do on
+/// Windows, where a folder doesn't open as a `File` and NTFS journals its entries itself. An
+/// empty `dir` is the working directory.
+pub fn sync_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let dir = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
+        };
+        File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
 /// Whether `metadata` is of something owned by the user `reference` is owned by (a file just
 /// created) that no one else can write. Never on Windows, which has no such modes to check.
 pub fn owned_and_unshared(metadata: &fs::Metadata, reference: &fs::Metadata) -> bool {

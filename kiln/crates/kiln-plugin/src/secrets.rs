@@ -241,20 +241,7 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
     if tests::take_fault(dir) {
         return Err(io::Error::other("injected sync failure"));
     }
-    #[cfg(unix)]
-    {
-        let dir = if dir.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            dir
-        };
-        File::open(dir)?.sync_all()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = dir;
-        Ok(())
-    }
+    kiln_core::platform::sync_dir(dir)
 }
 
 /// Creates `dir` and its missing ancestors, flushing each entry into its parent. Every ancestor

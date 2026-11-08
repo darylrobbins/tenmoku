@@ -1,13 +1,10 @@
-// Its programs are shell scripts made executable by mode.
-#![cfg(unix)]
 // SPDX-License-Identifier: Apache-2.0
 
 //! Everything a program run does before its launch stops at the end of the call's program share:
 //! the setup, the checks of the program and the taking of the store's lock. A suspension is held
 //! in memory at once and reaches the store later, however slow the store is, and is never lost.
 //!
-//! The seams the code under test calls live here, so this file compiles against a tree without
-//! them: there they never fire, so nothing is delayed, and a run that should be refused launches.
+//! The seams the code under test calls live in [`super::seams`].
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -19,117 +16,11 @@ use kiln_command::capability::{Capability, Grants};
 
 use crate::grants::{
     CheckTimedOut, GrantRecord, GrantStore, GrantStoreError, SuspendReason, check_program_by,
-    hash_probe, resolve_program,
+    resolve_program,
 };
 use crate::limits::Limits;
 use crate::process::{SpawnError, State};
-
-/// Controlled delays and failures in pre-launch work. Those on the plugin's thread are per
-/// thread; those on the store's writer, which runs on a thread of its own, are per store.
-pub(crate) mod seams {
-    use std::cell::Cell;
-    use std::collections::HashMap;
-    use std::io;
-    use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
-    use std::time::{Duration, Instant};
-
-    thread_local! {
-        static SETUP_UNTIL: Cell<Option<Instant>> = const { Cell::new(None) };
-        static OPEN_UNTIL: Cell<Option<Instant>> = const { Cell::new(None) };
-        static LAUNCHES: Cell<usize> = const { Cell::new(0) };
-    }
-
-    #[derive(Clone, Copy, Default)]
-    pub(crate) struct Store {
-        /// Writes wait until then.
-        pub(crate) held_until: Option<Instant>,
-        /// So many tries to write fail.
-        pub(crate) failing: usize,
-        /// The writer's thread can't start.
-        pub(crate) no_threads: bool,
-        /// The tries to write so far.
-        pub(crate) tries: usize,
-        /// The writes that finished, whether or not they changed anything.
-        pub(crate) written: usize,
-    }
-
-    static STORES: Mutex<Option<HashMap<PathBuf, Store>>> = Mutex::new(None);
-
-    /// Changes, then reads, what the seam holds for the store at `path`.
-    pub(crate) fn store(path: &Path, change: impl FnOnce(&mut Store)) -> Store {
-        let mut stores = STORES.lock().unwrap();
-        let store = stores
-            .get_or_insert_default()
-            .entry(path.to_owned())
-            .or_default();
-        change(store);
-        *store
-    }
-
-    fn wait_until(until: Option<Instant>) {
-        if let Some(until) = until {
-            std::thread::sleep(until.saturating_duration_since(Instant::now()));
-        }
-    }
-
-    /// This thread's next run setup takes until `until`.
-    pub(crate) fn delay_setup(until: Instant) {
-        SETUP_UNTIL.set(Some(until));
-    }
-
-    /// This thread's next opening of a program takes until `until`.
-    pub(crate) fn delay_open(until: Instant) {
-        OPEN_UNTIL.set(Some(until));
-    }
-
-    pub(crate) fn during_setup() {
-        wait_until(SETUP_UNTIL.take());
-    }
-
-    /// A child is about to start.
-    pub(crate) fn launching() {
-        LAUNCHES.set(LAUNCHES.get() + 1);
-    }
-
-    /// The children this thread has started, killed at once or not.
-    pub(crate) fn launches() -> usize {
-        LAUNCHES.get()
-    }
-
-    pub(crate) fn after_open() {
-        wait_until(OPEN_UNTIL.take());
-    }
-
-    pub(crate) fn thread_start(path: &Path) -> io::Result<()> {
-        if store(path, |_| {}).no_threads {
-            return Err(io::ErrorKind::WouldBlock.into());
-        }
-        Ok(())
-    }
-
-    pub(crate) fn store_io(path: &Path) -> io::Result<()> {
-        while let Some(until) = store(path, |_| {}).held_until
-            && Instant::now() < until
-        {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        let mut failing = false;
-        store(path, |store| {
-            store.tries += 1;
-            failing = store.failing > 0;
-            store.failing = store.failing.saturating_sub(1);
-        });
-        if failing {
-            return Err(io::ErrorKind::StorageFull.into());
-        }
-        Ok(())
-    }
-
-    pub(crate) fn written(path: &Path) {
-        store(path, |store| store.written += 1);
-    }
-}
+use crate::tests::{hash_probe, seams};
 
 const ID: &str = "acme.tool";
 

@@ -1,5 +1,3 @@
-// Its programs are shell scripts made executable by mode.
-#![cfg(unix)]
 // SPDX-License-Identifier: Apache-2.0
 
 //! A call's program runs share one budget: the second of two, past what the first left, is
@@ -201,7 +199,7 @@ fn a_share_that_ends_mid_check_refuses_without_suspending_the_grant() {
     let mut state = State::new(record, &Limits::default());
 
     let (delay, share) = (Duration::from_millis(40), Duration::from_millis(100));
-    crate::grants::hash_probe::slow_reads(delay);
+    crate::tests::hash_probe::slow_reads(delay);
     let started = Instant::now();
     let refused = state.spawn_within("big", &[], None, Some(share));
     let took = started.elapsed();
@@ -211,7 +209,7 @@ fn a_share_that_ends_mid_check_refuses_without_suspending_the_grant() {
     );
     // The hash was interrupted, not completed: fewer chunks were read than the file has, and the
     // check ended within the share plus one chunk's read (and some slack for a loaded machine).
-    let read = crate::grants::hash_probe::chunks();
+    let read = crate::tests::hash_probe::chunks();
     assert!(read > 0 && read < CHUNKS, "{read} of {CHUNKS} chunks");
     assert!(
         took <= share + delay + Duration::from_millis(600),
