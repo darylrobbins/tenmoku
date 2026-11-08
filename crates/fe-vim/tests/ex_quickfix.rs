@@ -135,7 +135,9 @@ fn fill_commands_carry_their_argument_text() {
     assert_eq!(quickfix("mak"), c(Make(String::new())));
     assert_eq!(quickfix("make -j4 "), c(Make("-j4".into())));
     assert_eq!(quickfix("lmak test"), l(Make("test".into())));
-    for line in ["grep", "lgrep ", "vimgrep", "lvimgrep"] {
+    assert_eq!(quickfix("grep"), c(Grep(String::new())));
+    assert_eq!(quickfix("lgrep "), l(Grep(String::new())));
+    for line in ["vimgrep", "lvimgrep"] {
         assert_eq!(
             error(line).as_deref(),
             Some("E471: Argument required"),

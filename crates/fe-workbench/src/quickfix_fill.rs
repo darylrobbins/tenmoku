@@ -29,7 +29,8 @@
 //!
 //! A search runs off the main thread with a cancel flag and the search
 //! panel's cap ([`SearchOptions::default`]'s matches); a new one in the
-//! window cancels the one running, and closing the window cancels it. When
+//! window cancels the one running, and so does closing the window or
+//! switching folders (its list is dropped). When
 //! it ends, its list goes on the stack after the list in use, and unless
 //! `j`, the first item is opened as `:cfirst` opens it; with `j` the status
 //! line gets the list's summary. Either way the message says when the cap
@@ -70,7 +71,7 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, WeakEntity, 
 use kiln_shell::ItemHandle as _;
 
 use crate::{
-    Workbench,
+    RootChanged, Workbench,
     quickfix::{QuickfixItem, QuickfixKind, QuickfixList},
     quickfix_commands::say,
     task_commands::{default_build, nothing_to_run, read_tasks},
@@ -130,12 +131,19 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let name = if location { "lgrep" } else { "grep" };
+        let pattern = match args.is_empty() {
+            false => args.to_owned(),
+            true => match fe_gpui::vim_registers(cx).and_then(|r| r.last_search()) {
+                Some((pattern, _)) => pattern.to_owned(),
+                None => return say(editor, ExError::NoPreviousSearch.to_string(), cx),
+            },
+        };
         let grep = Grep {
-            pattern: args.to_owned(),
+            title: format!(":{name} {pattern}"),
+            pattern,
             globs: Vec::new(),
             every: false,
             jump: true,
-            title: format!(":{name} {args}"),
         };
         self.run_grep(grep, location, editor, window, cx);
     }
@@ -229,6 +237,12 @@ impl Workbench {
         let id = cx.entity_id();
         if !cx.default_global::<Searches>().0.contains_key(&id) {
             cx.on_release(move |_, cx| {
+                cx.default_global::<Searches>().0.remove(&id);
+            })
+            .detach();
+            // A new folder is a new project: the old one's results aren't
+            // for this window any more.
+            cx.subscribe_self(move |_, _: &RootChanged, cx| {
                 cx.default_global::<Searches>().0.remove(&id);
             })
             .detach();

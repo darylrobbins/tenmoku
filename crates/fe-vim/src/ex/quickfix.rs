@@ -17,8 +17,9 @@
 //! - `:[N]col[der] [N]`, `:[N]cnew[er] [N]`, `:lol[der]` and `:lnew[er]`:
 //!   the list `N` older (newer) in the stack of lists.
 //! - `:cl[ist]` and `:lli[st]`: the items, in the status line.
-//! - `:gr[ep]`, `:lgr[ep]`, `:vim[grep]`, `:lv[imgrep]` (each needing an
-//!   argument, E471 without) and `:mak[e]`, `:lmak[e]`, with the rest of
+//! - `:gr[ep]`, `:lgr[ep]`, `:vim[grep]`, `:lv[imgrep]` (`:vimgrep` needing an
+//!   argument, E471 without; an empty `:grep` is the last search's, for the
+//!   host to resolve) and `:mak[e]`, `:lmak[e]`, with the rest of
 //!   the line as it was typed: the commands that fill a list. The host
 //!   splits `:vimgrep`'s with [`QuickfixAction::parse_vimgrep`].
 //!
@@ -175,7 +176,7 @@ pub(super) fn parse(
             }
             let args = after.trim_matches([' ', '\t']).to_string();
             match kind {
-                _ if args.is_empty() && kind != Kind::Make => {
+                _ if args.is_empty() && kind == Kind::VimGrep => {
                     return Err(ExError::ArgumentRequired);
                 }
                 Kind::Grep => QuickfixAction::Grep(args),
