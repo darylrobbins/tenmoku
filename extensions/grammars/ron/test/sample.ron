@@ -1,0 +1,42 @@
+// Game configuration, in Rusty Object Notation.
+GameConfig( // optional struct name
+    window_size: (800, 600),
+    window_title: "PAC-MAN",
+    fullscreen: false,
+
+    mouse_sensitivity: 1.4,
+    scale: -2.5e-3,
+    seed: 0xFF,
+    mask: 0b0110,
+    mode: 0o755,
+    key_bindings: {
+        "up": Up,
+        "down": Down,
+        "left": Left,
+        "right": Right,
+
+        // Uncomment to enable WASD controls
+        /*
+        "W": Up,
+        "A": Down,
+        */
+    },
+
+    difficulty_options: (
+        start_difficulty: Easy,
+        adaptive: false,
+    ),
+    greeting: "Hello, \"player\"\n\tready?\u{1F600}",
+    chars: ['e', '\n', '\''],
+    colour: Rgb(255, 128, 0),
+    tint: Some(Colour(r: 0.5, g: 0.25, b: 1.0)),
+    nothing: None,
+    unit: (),
+    levels: [
+        Level(name: "Maze", pieces: [Wall, Dot, Ghost(Blinky)]),
+        Level(name: "Tunnel", pieces: []),
+    ],
+    /* block comment
+       over two lines */
+    lives: 3, // trailing comment
+)

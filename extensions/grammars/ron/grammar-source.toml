@@ -1,0 +1,4 @@
+git = "https://github.com/tree-sitter-grammars/tree-sitter-ron"
+rev = "78938553b93075e638035f624973083451b29055"
+src = "src"
+grammar = "ron"

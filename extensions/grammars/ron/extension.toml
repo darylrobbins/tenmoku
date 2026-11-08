@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_ron"
+name = "RON syntax"
+version = "1.0.0"
+license = "MIT OR Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "ron"
+wasm = "tree-sitter-ron.wasm"
+extensions = ["ron"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "//"
+block_comment = ["/*", "*/"]
+license = "MIT OR Apache-2.0"
