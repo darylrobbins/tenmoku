@@ -197,7 +197,7 @@ fn a_reload_changing_the_shell_waits_for_the_next_session(cx: &mut TestAppContex
 fn unset_size_is_code_small_with_15px_rows(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     workbench.update(cx, |workbench, cx| {
-        workbench.set_terminal_settings(&sh("exec cat"), cx)
+        workbench.set_terminal_settings(&printing_shell(""), cx)
     });
     let view = start(&workbench, cx);
     let style = view.read_with(cx, |view, _| view.style().clone());
@@ -217,7 +217,7 @@ fn unset_size_is_code_small_with_15px_rows(cx: &mut TestAppContext) {
 fn a_palette_change_restyles_the_sessions(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     workbench.update(cx, |workbench, cx| {
-        workbench.set_terminal_settings(&sh("exec cat"), cx)
+        workbench.set_terminal_settings(&printing_shell(""), cx)
     });
     let view = start(&workbench, cx);
     let before = view.read_with(cx, |view, _| view.style().clone());

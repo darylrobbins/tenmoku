@@ -11,7 +11,7 @@
 use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, init};
-use gpui::{Bounds, EntityInputHandler as _, TestAppContext, TestDispatcher, font, px, size};
+use gpui::{Bounds, EntityInputHandler as _, TestAppContext, TestDispatcher, px, size};
 
 /// CoreText, which GPUI only builds with its Mac platform, and that only
 /// on the main thread: built before `main`, as `non_latin_text` does.
@@ -111,12 +111,12 @@ fn default_code_font_is_spline_sans_mono_with_20px_rows() {
 fn cjk_and_emoji_fall_back_from_spline_sans_mono() {
     with_app("cjk_and_emoji_fall_back", |cx| {
         cx.update(|cx| {
-            let code = cx.text_system().resolve_font(&font(fe_fonts::CODE));
+            let code = cx.text_system().resolve_font(&gpui::font(fe_fonts::CODE));
             let shaper = gpui::WindowTextSystem::new(cx.text_system().clone());
             for text in ["中文", "😀"] {
                 let run = gpui::TextRun {
                     len: text.len(),
-                    font: font(fe_fonts::CODE),
+                    font: gpui::font(fe_fonts::CODE),
                     color: gpui::black(),
                     background_color: None,
                     underline: None,

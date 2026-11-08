@@ -241,21 +241,21 @@ impl<'a> LineReader<'a> {
     /// The line at byte `offset`, without its line break: None if it can't
     /// be read, or is over [`MAX_LINE_BYTES`].
     fn line_at(&mut self, offset: u64) -> Option<Vec<u8>> {
-        use std::os::unix::fs::FileExt as _;
+        use std::io::{Read as _, Seek as _, SeekFrom};
         let path = self.path;
         let file = self.file.get_or_insert_with(|| {
             let file = std::fs::File::open(path).ok()?;
             let mut bom = [0; 2];
-            let utf16 = file.read_exact_at(&mut bom, 0).is_ok()
-                && matches!(bom, [0xFF, 0xFE] | [0xFE, 0xFF]);
+            let utf16 =
+                (&file).read_exact(&mut bom).is_ok() && matches!(bom, [0xFF, 0xFE] | [0xFE, 0xFF]);
             (!utf16).then_some(file)
         });
-        let file = file.as_ref()?;
+        let mut file = file.as_ref()?;
+        file.seek(SeekFrom::Start(offset)).ok()?;
         let mut line = Vec::new();
         let mut chunk = [0; 8192];
         loop {
-            let at = offset.checked_add(u64::try_from(line.len()).ok()?)?;
-            let read = file.read_at(&mut chunk, at).ok()?;
+            let read = file.read(&mut chunk).ok()?;
             let chunk = &chunk[..read];
             if let Some(end) = chunk.iter().position(|&byte| byte == b'\n') {
                 line.extend_from_slice(&chunk[..end]);
