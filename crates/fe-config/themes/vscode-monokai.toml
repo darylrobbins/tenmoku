@@ -39,7 +39,7 @@ primary = "#F8F8F2"
 muted = "#CCCCC7"
 disabled = "#75715E"
 accent = "#A6E22E"
-on_accent = "#272822"
+on_accent = "#F8F8F2"
 
 [border]
 default = "#414339"
