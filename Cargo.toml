@@ -24,6 +24,7 @@ kiln-macros = { path = "kiln/crates/kiln-macros" }
 kiln-platform = { path = "kiln/crates/kiln-platform" }
 kiln-shell = { path = "kiln/crates/kiln-shell" }
 kiln-ui = { path = "kiln/crates/kiln-ui" }
+kiln-l10n = { path = "kiln/crates/kiln-l10n" }
 # fastedit's names for the kiln crates that moved out of it.
 fe-command = { package = "kiln-command", path = "kiln/crates/kiln-command" }
 fe-ui = { package = "kiln-ui", path = "kiln/crates/kiln-ui" }
@@ -169,6 +170,17 @@ icu_collator = "2"
 icu_properties = "2"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+# The UI string catalogue (kiln-l10n; docs/decisions/xte5e7hqsw-i18n-design.md
+# § 2): Mozilla Fluent, Apache-2.0 OR MIT. unic-langid without its `macros`
+# feature. fluent-syntax is fluent-bundle's parser, for the catalogue lint.
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
+fluent-langneg = "0.13"
+unic-langid = { version = "0.9", default-features = false }
+# kiln-l10n's argument isolation (already in the lock through cosmic-text and usvg).
+unicode-bidi = "0.3"
+# GPUI's SharedString without GPUI (already in the lock through gpui).
+gpui-shared-string = { package = "gpui-pre-shared-string", version = "=0.3.9" }
 
 # The platform keychain behind kiln-core's KeychainStore (src/secrets.rs):
 # keyring-core and its per-platform stores, all MIT OR Apache-2.0. On Linux

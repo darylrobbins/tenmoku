@@ -1,0 +1,2 @@
+all = true
+migrated = ["src/a.rs"]

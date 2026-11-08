@@ -1,0 +1,6 @@
+all = true
+
+[[literal]]
+file = "src/b.rs"
+text = "Close File"
+reason = "  "

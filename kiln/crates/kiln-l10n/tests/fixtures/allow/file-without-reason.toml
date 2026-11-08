@@ -1,0 +1,4 @@
+all = true
+
+[[file]]
+path = "src/renamed.rs"

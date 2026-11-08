@@ -1,0 +1,36 @@
+[package]
+name = "kiln-l10n"
+description = "The UI string catalogue: Fluent messages each crate embeds with resources!, looked up by tr!/text! in the active locale with a per-message en-US fallback, and the lint that keeps text in it. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Set here, not inherited: kiln stands alone (docs/framework.md).
+license = "Apache-2.0"
+publish = false
+
+[features]
+# The catalogue checks (layers 2 and 3 of the design's section 8). A crate
+# takes this as a dev-dependency only, and calls them from its own tests.
+lint = ["dep:proc-macro2", "dep:quote", "dep:syn", "dep:serde", "dep:toml"]
+
+[dependencies]
+fluent-bundle.workspace = true
+fluent-langneg.workspace = true
+fluent-syntax.workspace = true
+gpui-shared-string.workspace = true
+inventory.workspace = true
+log.workspace = true
+unic-langid.workspace = true
+unicode-bidi.workspace = true
+
+proc-macro2 = { workspace = true, optional = true, features = ["span-locations"] }
+quote = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+syn = { workspace = true, optional = true, features = ["full", "visit", "visit-mut"] }
+toml = { workspace = true, optional = true }
+
+[dev-dependencies]
+kiln-l10n = { path = ".", features = ["lint"] }
+
+[lints]
+workspace = true

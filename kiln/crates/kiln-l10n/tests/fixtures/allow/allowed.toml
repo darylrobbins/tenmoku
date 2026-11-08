@@ -1,0 +1,10 @@
+all = true
+
+[[file]]
+path = "src/renamed.rs"
+reason = "Language display names, which stay in their own language"
+
+[[literal]]
+file = "src/b.rs"
+text = "Close File"
+reason = "A fixture's exception"

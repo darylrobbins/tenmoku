@@ -1,0 +1,2 @@
+app-own = Own
+broken = { $

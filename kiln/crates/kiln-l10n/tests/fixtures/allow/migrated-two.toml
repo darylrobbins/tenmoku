@@ -1,0 +1,5 @@
+# A second card appended its line.
+migrated = [
+    "src/a.rs",
+    "src/b/inner.rs",
+]

@@ -1,0 +1,6 @@
+all = true
+
+[[literal]]
+file = "src/a.rs"
+text = "Gone Now"
+reason = "It was moved to the catalogue"

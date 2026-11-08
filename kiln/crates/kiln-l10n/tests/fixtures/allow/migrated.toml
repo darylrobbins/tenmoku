@@ -1,0 +1,4 @@
+# Only src/a.rs has migrated: the lint checks it alone.
+migrated = [
+    "src/a.rs",
+]
