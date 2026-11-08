@@ -1061,3 +1061,102 @@ fn a_buffer_edited_while_its_window_waits_gets_no_history(cx: &mut TestAppContex
         assert_eq!(f.text(first), "one two\n");
     });
 }
+
+/// Kiln's config service on the user's settings file in `config`, as a host
+/// launched on no root starts it, with no watcher: the sender stands in
+/// for it. The fixture's window is on a root the service doesn't load.
+fn start_service(f: &mut Fixture, config: &Path) -> kiln::platform::config::BatchSender {
+    use kiln::platform::config::{self, ConfigService};
+    let user = config.join(fe_config::paths::SETTINGS_FILE);
+    let store = fe_config::SettingsStore::load(Some(user), None);
+    let (sender, batches) = config::batch_channel();
+    f.cx.update(|_, cx| {
+        cx.set_global(crate::open::ConfigDirOverride(Some(config.to_owned())));
+        ConfigService::new()
+            .settings(store.into_inner())
+            .start_with(batches, cx)
+            .detach();
+    });
+    sender
+}
+
+/// Writes `text` to `file` and has the service report it changed.
+fn edit_file(
+    f: &mut Fixture,
+    sender: &kiln::platform::config::BatchSender,
+    file: &Path,
+    text: &str,
+) {
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(file, text).unwrap();
+    sender.send(vec![file.to_owned()]);
+    draw(&mut f.cx);
+}
+
+const OFF: &str = "[editor]\npersistent_undo = false\n";
+const ON: &str = "[editor]\npersistent_undo = true\n";
+
+/// A non-launch root's project file turned off live stops that window's
+/// later reads and newly captured writes (T483 review F9).
+#[gpui::test]
+fn turning_it_off_in_a_project_file_stops_later_reads_and_writes(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    let config = tempfile::tempdir().unwrap();
+    let sender = start_service(&mut f, config.path());
+    f.edit_save_and_close();
+    let kept = fs::read(f.record_file()).unwrap();
+
+    let project = fe_config::project_settings_path(f._root.path());
+    edit_file(&mut f, &sender, &project, OFF);
+    let editor = f.open();
+    assert!(!f.has_history(&editor), "not read once off");
+    f.append(" three");
+    f.ex("w");
+    f.close_tab();
+    f.cx.quit();
+    assert_eq!(fs::read(f.record_file()).unwrap(), kept, "kept as it was");
+    assert_eq!(store_files(f.store.dir()), 1);
+}
+
+/// A user-settings change the root overrides leaves the window as the root
+/// says; lifting the override applies the user's value.
+#[gpui::test]
+fn a_masked_user_change_follows_the_root_that_applies(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    let config = tempfile::tempdir().unwrap();
+    let sender = start_service(&mut f, config.path());
+    let (window, user) = (
+        f.window,
+        config.path().join(fe_config::paths::SETTINGS_FILE),
+    );
+    let policy = |f: &mut Fixture| {
+        f.cx.update(|_, cx| fe_gpui::pane_item::window_persistent_undo(window, cx))
+    };
+    let project = fe_config::project_settings_path(f._root.path());
+    edit_file(&mut f, &sender, &project, OFF);
+    assert_eq!(policy(&mut f), Some(false));
+
+    edit_file(&mut f, &sender, &user, ON);
+    assert_eq!(policy(&mut f), Some(false), "the root's override stands");
+
+    edit_file(&mut f, &sender, &project, "");
+    assert_eq!(policy(&mut f), Some(true), "the user's value, unmasked");
+    edit_file(&mut f, &sender, &user, OFF);
+    assert_eq!(policy(&mut f), Some(false), "a later user change applies");
+}
+
+/// A project file that stops parsing keeps the value last accepted: off
+/// stays off (T512 review F2).
+#[gpui::test]
+fn a_malformed_edit_keeps_the_last_accepted_policy(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    let config = tempfile::tempdir().unwrap();
+    let sender = start_service(&mut f, config.path());
+    let window = f.window;
+    let project = fe_config::project_settings_path(f._root.path());
+    edit_file(&mut f, &sender, &project, OFF);
+    edit_file(&mut f, &sender, &project, "[editor\npersistent_undo = ");
+    let policy =
+        f.cx.update(|_, cx| fe_gpui::pane_item::window_persistent_undo(window, cx));
+    assert_eq!(policy, Some(false));
+}

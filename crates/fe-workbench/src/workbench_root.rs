@@ -43,6 +43,7 @@ impl Workbench {
         root: Option<&Path>,
         cx: &mut App,
     ) -> Option<kiln::platform::config::FileWatch> {
+        follow_undo_policy(cx);
         let file = fe_config::project_settings_path(root?);
         Some(kiln::platform::config::watch_files(cx, vec![file]))
     }
@@ -324,4 +325,62 @@ fn tree_changes(paths: &[(std::path::PathBuf, bool)]) -> Vec<fe_project::FsChang
     (paths.iter())
         .map(|(path, _)| fe_project::FsChange::Path(path.clone()))
         .collect()
+}
+
+/// The settings layers [`refresh_undo_policy`] keeps for each root.
+#[derive(Default)]
+struct UndoSettings(std::collections::HashMap<Option<PathBuf>, fe_config::SettingsStore>);
+
+impl gpui::Global for UndoSettings {}
+
+/// Marks that [`follow_undo_policy`] observes the config service.
+struct FollowsUndoPolicy;
+
+impl gpui::Global for FollowsUndoPolicy {}
+
+/// Has each window's `editor.persistent_undo` follow the settings files
+/// that apply to it, once per app: its root's project file and the user's,
+/// whichever the launch root's layer masks (`GlobalSettings` misses both).
+fn follow_undo_policy(cx: &mut App) {
+    if cx.has_global::<FollowsUndoPolicy>() {
+        return;
+    }
+    cx.set_global(FollowsUndoPolicy);
+    cx.observe_global::<kiln::platform::config::ChangedFiles>(|cx| {
+        for window in cx.windows() {
+            if let Some(window) = window.downcast::<Workbench>() {
+                refresh_undo_policy(window, cx);
+            }
+        }
+    })
+    .detach();
+}
+
+/// Gives `window` the `editor.persistent_undo` its root's settings say now,
+/// if the files just changed are its own. Read at once, so no later read is
+/// older than the policy it sets; a window still waiting for its root's
+/// settings is left to that load, which reads the files as they are.
+fn refresh_undo_policy(window: gpui::WindowHandle<Workbench>, cx: &mut App) {
+    let id = window.window_id();
+    if fe_gpui::pane_item::window_waits_for_persistent_undo(id, cx) {
+        return;
+    }
+    let Ok(root) = window.read_with(cx, |workbench, _| workbench.root().map(Path::to_owned)) else {
+        return;
+    };
+    let user = crate::open::settings_path(cx);
+    let project = root.as_deref().map(fe_config::project_settings_path);
+    let changed = kiln::platform::config::changed_files(cx);
+    if !(user.iter().chain(project.iter())).any(|file| changed.contains(file)) {
+        return;
+    }
+    // The layers kept per root, so a file that no longer parses keeps its
+    // last accepted values.
+    let files: Vec<PathBuf> = user.iter().chain(project.iter()).cloned().collect();
+    let stores = cx.default_global::<UndoSettings>();
+    let store = (stores.0.entry(root.clone()))
+        .or_insert_with(|| fe_config::SettingsStore::load(user, project));
+    store.reload(&files);
+    let on = store.settings().editor.persistent_undo;
+    fe_gpui::pane_item::set_window_persistent_undo(id, Some(on), cx);
 }

@@ -35,7 +35,7 @@ use std::{
     collections::HashMap,
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -136,9 +136,27 @@ struct WindowSettings {
     /// Each window's newest settings load, counting up: every `settle` (a
     /// re-root, a reload) starts one and outdates those before it.
     loads: HashMap<WindowId, u64>,
+    /// Each non-launch root's settings layers, kept across reads so a file
+    /// that no longer parses keeps its last accepted values, as the config
+    /// service's do for the launch root.
+    stores: Arc<Mutex<HashMap<PathBuf, SettingsStore>>>,
 }
 
 impl Global for WindowSettings {}
+
+/// `root`'s settings, its files read again into the layers kept for it.
+fn read_settings(stores: &Mutex<HashMap<PathBuf, SettingsStore>>, root: &Path) -> Arc<Settings> {
+    let mut stores = stores.lock().unwrap_or_else(|e| e.into_inner());
+    let store = stores
+        .entry(root.to_owned())
+        .or_insert_with(|| load_settings(Some(root)));
+    let files: Vec<PathBuf> = fe_config::user_settings_path()
+        .into_iter()
+        .chain([fe_config::project_settings_path(root)])
+        .collect();
+    store.reload(&files);
+    store.settings().clone()
+}
 
 /// The settings as the config service has them now.
 fn current_settings(cx: &App) -> Arc<Settings> {
@@ -202,6 +220,34 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
     })
     .detach();
+    // A settings file of a window's non-launch root, or the user's, changed:
+    // its settings are read again, which outdates a load already running
+    // (`GlobalSettings` doesn't notify for either).
+    cx.observe_global::<kiln::platform::config::ChangedFiles>(|cx| {
+        let user = fe_config::user_settings_path();
+        let launch = (cx.try_global::<WindowSettings>()).and_then(|s| s.launch_root.clone());
+        for window in cx.windows() {
+            let Some(window) = window.downcast::<Workbench>() else {
+                continue;
+            };
+            let Ok(root) = window.read_with(cx, |w, _| w.root().map(Path::to_owned)) else {
+                continue;
+            };
+            if root.is_none() || root == launch {
+                continue;
+            }
+            let project = root.as_deref().map(fe_config::project_settings_path);
+            let changed = kiln::platform::config::changed_files(cx);
+            if user
+                .iter()
+                .chain(project.iter())
+                .any(|f| changed.contains(f))
+            {
+                settle(window, Vec::new(), cx);
+            }
+        }
+    })
+    .detach();
 }
 
 /// Gives `window` the settings of its root: the config service's for the
@@ -220,9 +266,15 @@ fn settle(window: WindowHandle<Workbench>, diagnostics: Vec<Diagnostic>, cx: &mu
         let settings = current_settings(cx);
         return give(window, settings, diagnostics, cx);
     }
+    let stores = cx.default_global::<WindowSettings>().stores.clone();
     let read = cx.background_spawn({
         let root = root.clone();
-        async move { load_settings(root.as_deref()).settings().clone() }
+        async move {
+            match root.as_deref() {
+                Some(root) => read_settings(&stores, root),
+                None => load_settings(None).settings().clone(),
+            }
+        }
     });
     cx.spawn(async move |cx| {
         let settings = read.await;
@@ -1252,6 +1304,31 @@ mod tests {
             super::finish_load(window, older.0, older.1, undo_setting(true), Vec::new(), cx);
         });
         assert_eq!(given_undo(window, cx), Some(false), "the older is dropped");
+    }
+
+    /// A change to the window's root's project file outdates a load of its
+    /// settings already running, so the stale read, finishing later, gives
+    /// nothing (T512 review F1).
+    #[gpui::test]
+    fn a_project_file_change_outdates_a_load_in_flight(cx: &mut TestAppContext) {
+        let (dir, launch) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let launch = fs::canonicalize(launch.path()).unwrap();
+        let window = watched_window(cx, &root, &launch);
+        cx.update(|cx| super::follow_settings(Some(launch.clone()), cx));
+        let held = cx.update(|cx| super::begin_load(window, cx)).unwrap();
+        let project = fe_config::project_settings_path(&root);
+        cx.update(|cx| {
+            cx.set_global(kiln::platform::config::ChangedFiles(vec![project]));
+        });
+        cx.update(|cx| {
+            super::finish_load(window, held.0, held.1, undo_setting(false), Vec::new(), cx);
+        });
+        assert_ne!(
+            given_undo(window, cx),
+            Some(false),
+            "the held load is dropped"
+        );
     }
 
     fn enabled(level: Level, target: &str) -> bool {

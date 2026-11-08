@@ -1221,6 +1221,13 @@ pub fn wait_for_window_persistent_undo(window: WindowId, cx: &mut App) {
     publish_undo_policy(cx);
 }
 
+/// Whether `window` waits for [`set_window_persistent_undo`]'s first
+/// setting ([`wait_for_window_persistent_undo`]).
+pub fn window_waits_for_persistent_undo(window: WindowId, cx: &App) -> bool {
+    cx.try_global::<UndoPersist>()
+        .is_some_and(|persist| persist.waiting.contains_key(&window))
+}
+
 /// Tells the writers which windows keep history now, as [`undo_store_for`]
 /// would say; captures of the others are dropped.
 fn publish_undo_policy(cx: &App) {
