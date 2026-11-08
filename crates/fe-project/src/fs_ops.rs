@@ -1401,17 +1401,27 @@ fn copy_xattrs(_source: &File, _copy: &File, _name: &OsStr) {}
 /// kept, and so is a folder that keeps it. Each entry is renamed to a name
 /// of its own before it is checked, so what is checked is what is removed.
 /// A folder is made writable by its owner first, whatever permissions it was
-/// given, through the handle checked to be it. As far as it can: it fails
-/// silently.
+/// given, through the handle checked to be it. Where the platform refuses to
+/// rename it (`PermissionDenied`: a folder its owner can't write, on some
+/// macOS versions) it is checked and removed where it is, a folder only
+/// should it be empty; any other rename error removes nothing. As far as it
+/// can: it fails silently.
 fn discard(dir: &File, name: &OsStr, owned: &Owned) {
     if !listing::stat_at(dir, name).is_ok_and(|stat| owned.contains(&stat.id)) {
         return;
     }
-    // Where the file system can't rename without replacing, checked where
-    // it is.
+    // Where the file system can't rename without replacing, or the platform
+    // refuses to rename the entry, checked where it is.
     let staged = match rename_to_temp(dir, name, "discard") {
         Ok(staged) => staged,
-        Err(err) if err.kind() == io::ErrorKind::Unsupported => name.to_owned(),
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            name.to_owned()
+        }
         Err(_) => return,
     };
     let restore = || {

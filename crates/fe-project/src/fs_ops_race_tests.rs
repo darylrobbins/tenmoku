@@ -311,6 +311,22 @@ fn a_trash_rollback_keeps_a_trashinfo_swapped_in() {
 #[test]
 #[cfg(unix)]
 fn cleanup_leaves_a_folder_swapped_in_after_its_check_as_it_is() {
+    // Some platforms refuse to rename a folder its owner can't write, so the
+    // folder swapped in can't be put back.
+    let renames = {
+        let (_probe, probe) = temp();
+        let folder = probe.join("a");
+        fs::create_dir(&folder).unwrap();
+        set_mode(&folder, 0o500);
+        let result = fs::rename(&folder, probe.join("b"));
+        set_mode(&probe.join(if result.is_ok() { "b" } else { "a" }), 0o700);
+        match result {
+            Ok(()) => true,
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => false,
+            Err(err) => panic!("probe rename failed: {err}"),
+        }
+    };
+    eprintln!("platform renames a 0o500 folder: {renames}");
     let (_dir, root) = temp();
     fs::create_dir(root.join("src")).unwrap();
     for name in ["a.txt", "b.txt"] {
@@ -341,12 +357,27 @@ fn cleanup_leaves_a_folder_swapped_in_after_its_check_as_it_is() {
     let err = duplicate(&root, Path::new("src")).unwrap_err();
     assert!(reached());
     assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "{err}");
-    // The folder swapped in kept its permissions, and is put back.
-    assert_eq!(names(&root), ["ours", "src", "src copy"]);
-    assert_eq!(mode(&copy), 0o500);
-    assert!(names(&copy).is_empty());
     assert_eq!(names(&ours), ["a.txt", "b.txt"]);
-    set_mode(&copy, 0o700);
+    if renames {
+        // The folder swapped in kept its permissions, and is put back.
+        assert_eq!(names(&root), ["ours", "src", "src copy"]);
+        assert_eq!(mode(&copy), 0o500);
+        assert!(names(&copy).is_empty());
+        set_mode(&copy, 0o700);
+    } else {
+        // It can't be put back: it stays staged, its permissions untouched.
+        let all = names(&root);
+        assert_eq!(all.len(), 3, "{all:?}");
+        assert!(all.contains(&"ours".to_owned()) && all.contains(&"src".to_owned()));
+        let staged = root.join(
+            all.iter()
+                .find(|name| name.starts_with(".fastedit-discard-"))
+                .expect("the swapped-in folder stays staged"),
+        );
+        assert_eq!(mode(&staged), 0o500);
+        assert!(names(&staged).is_empty());
+        set_mode(&staged, 0o700);
+    }
 }
 
 #[test]
