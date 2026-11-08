@@ -322,6 +322,7 @@ impl Workbench {
     pub(crate) fn open_quickfix_row(
         &mut self,
         pane: Option<EntityId>,
+        revision: u64,
         ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -331,7 +332,11 @@ impl Workbench {
             Some(pane) => lists.location(&pane).ok(),
             None => Some(&mut lists.quickfix),
         };
-        let Some(list) = stack.and_then(|stack| stack.current_mut().ok()) else {
+        // A different list is shown than the one the row was in: nothing.
+        let Some(stack) = stack.filter(|stack| stack.revision() == revision) else {
+            return;
+        };
+        let Ok(list) = stack.current_mut() else {
             return;
         };
         let number = u32::try_from(ix.saturating_add(1)).unwrap_or(u32::MAX);
@@ -446,6 +451,20 @@ pub(crate) fn shown_list(
         None => &mut lists.quickfix,
     };
     stack.current()
+}
+
+/// [`QuickfixStack::revision`] of the stack whose list the panel shows.
+pub(crate) fn shown_revision(
+    workbench: EntityId,
+    pane: Option<EntityId>,
+    cx: &mut App,
+) -> Option<u64> {
+    let lists = cx.default_global::<Lists>().stacks.get_mut(&workbench)?;
+    let stack = match pane {
+        Some(pane) => lists.location(&pane).ok()?,
+        None => &mut lists.quickfix,
+    };
+    stack.current().map(|_| stack.revision())
 }
 
 /// Says `text` as `editor`'s vim message, or with no editor or vim off as

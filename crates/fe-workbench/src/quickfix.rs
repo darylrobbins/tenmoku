@@ -282,9 +282,18 @@ pub(crate) struct QuickfixStack {
     lists: VecDeque<QuickfixList>,
     /// The list in use, an index into `lists`; 0 with none.
     current: usize,
+    /// Changes whenever a different list comes into use: a push, `:colder`
+    /// or `:cnewer`; not as the list's current item moves.
+    revision: u64,
 }
 
 impl QuickfixStack {
+    /// Which list is in use, as a number that changes when another takes
+    /// its place (a push, `:colder`, `:cnewer`), not as its item moves.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// Puts `list` after the one in use, dropping those newer than it and,
     /// past [`STACK_DEPTH`], the oldest, and uses it.
     pub(crate) fn push(&mut self, list: QuickfixList) {
@@ -296,6 +305,7 @@ impl QuickfixStack {
         }
         self.lists.push_back(list);
         self.current = self.lists.len() - 1;
+        self.revision += 1;
     }
 
     /// How many lists it holds.
@@ -323,6 +333,7 @@ impl QuickfixStack {
             return Err(QuickfixError::AtBottom);
         }
         self.current = self.current.saturating_sub(count as usize);
+        self.revision += 1;
         Ok(self.summary())
     }
 
@@ -334,6 +345,7 @@ impl QuickfixStack {
         }
         let last = self.lists.len() - 1;
         self.current = self.current.saturating_add(count as usize).min(last);
+        self.revision += 1;
         Ok(self.summary())
     }
 

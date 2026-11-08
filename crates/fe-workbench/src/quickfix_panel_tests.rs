@@ -9,7 +9,11 @@ use std::path::{Path, PathBuf};
 
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, commands::RunCommand, set_vim_enabled};
-use gpui::{Entity, Focusable as _, SharedString, TestAppContext, VisualTestContext};
+use fe_ui::ROW_HEIGHT;
+use gpui::{
+    Entity, Focusable as _, Keystroke, Modifiers, MouseButton, Pixels, Point, SharedString,
+    TestAppContext, VisualTestContext, point, px,
+};
 
 use super::QuickfixPanel;
 use crate::{
@@ -474,4 +478,143 @@ fn lopen_shows_the_panes_location_list(cx: &mut TestAppContext) {
     ex("copen", cx);
     assert_eq!(shown(&workbench, cx).2, "Quickfix List");
     assert_eq!(rows(&workbench, cx).len(), 3);
+}
+
+/// A second list: three other items.
+fn other(root: &Path) -> QuickfixList {
+    QuickfixList::new(
+        ":make",
+        vec![
+            item(root, "c.txt", 1, 2, "other zero"),
+            item(root, "b.txt", 3, 1, "other one"),
+            item(root, "a.txt", 2, 3, "other two"),
+        ],
+    )
+}
+
+/// The middle of row `ix` of the panel's list.
+fn row_center(
+    workbench: &Entity<Workbench>,
+    ix: usize,
+    cx: &mut VisualTestContext,
+) -> Point<Pixels> {
+    let panel = panel(workbench, cx);
+    let list = panel.read_with(cx, |panel, _| panel.scroll.0.borrow().base_handle.bounds());
+    point(
+        list.left() + px(40.),
+        list.top() + ROW_HEIGHT * (ix as f32 + 0.5),
+    )
+}
+
+/// The cursor's row, and the current item of the shown quickfix list.
+fn selected(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
+    panel(workbench, cx).read_with(cx, |panel, _| panel.selected)
+}
+
+fn current(workbench: &Entity<Workbench>, location: bool, cx: &mut VisualTestContext) -> usize {
+    let source = location.then(|| workbench.read_with(cx, |w, _| w.pane().entity_id()));
+    let id = workbench.entity_id();
+    cx.update(|_, cx| crate::quickfix_commands::shown_list(id, source, cx).map(|list| list.current))
+        .expect("a list")
+}
+
+#[gpui::test]
+fn a_click_across_a_list_replacement_opens_nothing(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (workbench, mut vcx) = window(cx, root);
+    let cx = &mut vcx;
+    push(&workbench, false, three(root), cx);
+    ex("copen", cx);
+    let before = landed(&workbench, cx);
+    let none = Modifiers::none();
+
+    let at = row_center(&workbench, 1, cx);
+    cx.simulate_mouse_down(at, MouseButton::Left, none);
+    push(&workbench, false, other(root), cx);
+    cx.simulate_mouse_up(at, MouseButton::Left, none);
+    draw(cx);
+    assert_eq!(landed(&workbench, cx), before, "nothing opened");
+    assert_eq!(current(&workbench, false, cx), 0);
+
+    cx.simulate_click(at, none);
+    draw(cx);
+    assert_eq!(landed(&workbench, cx), (root.join("b.txt"), (3, 1)));
+    assert_eq!(current(&workbench, false, cx), 1);
+}
+
+#[gpui::test]
+fn a_row_opened_then_replaced_before_it_runs_opens_nothing(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (workbench, mut vcx) = window(cx, root);
+    let cx = &mut vcx;
+    for location in [false, true] {
+        focus_editor(&workbench, cx);
+        push(&workbench, location, three(root), cx);
+        ex(if location { "lopen" } else { "copen" }, cx);
+        assert!(panel_focused(&workbench, cx));
+        let before = landed(&workbench, cx);
+        cx.simulate_keystrokes("down");
+        draw(cx);
+        let wb = workbench.clone();
+        let list = other(root);
+        cx.update(|window, cx| {
+            window.dispatch_keystroke(Keystroke::parse("enter").unwrap(), cx);
+            wb.update(cx, |workbench, cx| {
+                workbench.push_quickfix_list(location, list, cx)
+            });
+        });
+        draw(cx);
+        assert_eq!(landed(&workbench, cx), before, "location: {location}");
+        assert_eq!(current(&workbench, location, cx), 0, "location: {location}");
+    }
+}
+
+#[gpui::test]
+fn a_click_across_cnext_still_opens_its_row(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (workbench, mut vcx) = window(cx, root);
+    let cx = &mut vcx;
+    push(&workbench, false, three(root), cx);
+    ex("copen", cx);
+    let none = Modifiers::none();
+    let at = row_center(&workbench, 2, cx);
+    cx.simulate_mouse_down(at, MouseButton::Left, none);
+    run("quickfix.next", cx);
+    assert_eq!(current(&workbench, false, cx), 1);
+    cx.simulate_mouse_up(at, MouseButton::Left, none);
+    draw(cx);
+    assert_eq!(landed(&workbench, cx), (root.join("c.txt"), (3, 1)));
+    assert_eq!(current(&workbench, false, cx), 2);
+}
+
+#[gpui::test]
+fn a_pending_g_does_not_survive_leaving_the_panel(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (workbench, mut vcx) = window(cx, root);
+    let cx = &mut vcx;
+    push(&workbench, false, three(root), cx);
+    ex("cc 2", cx);
+    ex("copen", cx);
+    assert!(panel_focused(&workbench, cx));
+    assert_eq!(selected(&workbench, cx), 1);
+
+    cx.simulate_keystrokes("g");
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(!panel_focused(&workbench, cx), "the editor has focus");
+
+    let focus = panel(&workbench, cx).read_with(cx, |panel, _| panel.focus.clone());
+    cx.update(|window, cx| window.focus(&focus, cx));
+    draw(cx);
+    assert!(panel_focused(&workbench, cx));
+    cx.simulate_keystrokes("g");
+    draw(cx);
+    assert_eq!(selected(&workbench, cx), 1);
+    cx.simulate_keystrokes("g");
+    draw(cx);
+    assert_eq!(selected(&workbench, cx), 0);
 }

@@ -34,7 +34,7 @@ use crate::{
     Workbench,
     dock::{DockOp, SidebarPanel},
     quickfix::{QuickfixItem, QuickfixKind, QuickfixList},
-    quickfix_commands::shown_list,
+    quickfix_commands::{shown_list, shown_revision},
 };
 
 /// The panel in the sidebar: on the rail once it has shown; focused when
@@ -70,6 +70,8 @@ pub(crate) struct QuickfixPanel {
     selected: usize,
     /// Vim's `g`, waiting for the second of `gg`.
     pending_g: bool,
+    /// Drops `pending_g` when focus leaves, however it does.
+    focus_out: Option<gpui::Subscription>,
     scroll: UniformListScrollHandle,
     /// Error, warning, then info and note.
     colors: [Hsla; 3],
@@ -114,6 +116,7 @@ impl QuickfixPanel {
             source: None,
             selected: 0,
             pending_g: false,
+            focus_out: None,
             scroll: UniformListScrollHandle::new(),
             colors,
             #[cfg(test)]
@@ -179,7 +182,12 @@ impl QuickfixPanel {
 
     /// Lands on row `ix`'s item, as `:cc N` does, in the pane whose list it
     /// is.
-    fn open(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Nothing if the list shown is no longer the one `revision` names,
+    /// when the row was activated or when the open runs.
+    fn open(&mut self, ix: usize, revision: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if shown_revision(self.workbench_id, self.source, cx) != Some(revision) {
+            return;
+        }
         self.selected = ix;
         let source = self.source;
         if let Some(workbench) = self.workbench.upgrade() {
@@ -187,9 +195,16 @@ impl QuickfixPanel {
             // update of it.
             window.defer(cx, move |window, cx| {
                 workbench.update(cx, |workbench, cx| {
-                    workbench.open_quickfix_row(source, ix, window, cx)
+                    workbench.open_quickfix_row(source, revision, ix, window, cx)
                 });
             });
+        }
+    }
+
+    /// Lands on the cursor's row.
+    fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(revision) = shown_revision(self.workbench_id, self.source, cx) {
+            self.open(self.selected, revision, window, cx);
         }
     }
 
@@ -219,10 +234,10 @@ impl QuickfixPanel {
         match keystroke.key.as_str() {
             "up" if !shifted => self.move_selection(-1, cx),
             "down" if !shifted => self.move_selection(1, cx),
-            "enter" if !shifted => self.open(self.selected, window, cx),
+            "enter" if !shifted => self.open_selected(window, cx),
             "k" if vim && !shifted => self.move_selection(-1, cx),
             "j" if vim && !shifted => self.move_selection(1, cx),
-            "o" if vim && !shifted => self.open(self.selected, window, cx),
+            "o" if vim && !shifted => self.open_selected(window, cx),
             "g" if vim && !shifted && pending_g => self.select(0, cx),
             "g" if vim && !shifted => self.pending_g = true,
             "g" if vim && shifted => self.select(usize::MAX, cx),
@@ -269,7 +284,14 @@ impl QuickfixPanel {
         } else {
             ui.row_selected_inactive
         };
-        let name = SharedString::from("quickfix-row");
+        // The shown list's identity is in each row's ID, so a press on one
+        // list's row and a release on the next's are not a click.
+        let revision = shown_revision(self.workbench_id, self.source, cx);
+        let name = SharedString::from(format!(
+            "quickfix-row-{:?}-{}",
+            self.source,
+            revision.unwrap_or(0)
+        ));
         (range.zip(texts))
             .map(|(ix, row)| {
                 #[cfg(test)]
@@ -299,7 +321,11 @@ impl QuickfixPanel {
                     })
                     .when(self.selected == ix && focused, |row| row.bg(cursor_bg))
                     .hover(move |row| row.bg(ui.row_hover))
-                    .on_click(cx.listener(move |panel, _, window, cx| panel.open(ix, window, cx)))
+                    .on_click(cx.listener(move |panel, _, window, cx| {
+                        if let Some(revision) = revision {
+                            panel.open(ix, revision, window, cx);
+                        }
+                    }))
                     .child(div().flex_none().text_color(ui.muted_text).child(row.place))
                     .child(
                         div()
@@ -373,7 +399,12 @@ impl Focusable for QuickfixPanel {
 }
 
 impl Render for QuickfixPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.focus_out.is_none() {
+            self.focus_out = Some(cx.on_focus_out(&self.focus, window, |panel, _, _, _| {
+                panel.pending_g = false;
+            }));
+        }
         #[cfg(test)]
         {
             self.test.rows.clear();
