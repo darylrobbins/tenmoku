@@ -1538,9 +1538,14 @@ const NAPPER_WAT: &str = r#"
 #[cfg(unix)]
 #[gpui::test]
 fn an_event_handler_edits_its_buffer_after_a_slow_process(cx: &mut TestAppContext) {
-    let plugins = start_with_call_deadline(cx, CALL_DEADLINE);
+    // The deadline only has to be shorter than the process. It also bounds
+    // the handler's own work (its buffer reads and edits wait on this
+    // thread), which at the default 100 ms overruns under load and stops the
+    // plugin.
+    let call_deadline = Duration::from_secs(2);
+    let plugins = start_with_call_deadline(cx, call_deadline);
     let bin = tempfile::tempdir().unwrap();
-    let nap = script(bin.path(), "nap", "sleep 0.3");
+    let nap = script(bin.path(), "nap", "sleep 2.5");
     let capabilities = ["process.spawn:nap", "buffer.read", "buffer.write"];
     plugins
         .store()
@@ -1562,8 +1567,9 @@ fn an_event_handler_edits_its_buffer_after_a_slow_process(cx: &mut TestAppContex
     while !logged(vcx).iter().any(|line| line.ends_with(": edited")) {
         assert!(
             Instant::now() < deadline,
-            "the handler didn't finish: {:#?}",
-            logged(vcx)
+            "the handler didn't finish: {:#?}\n{:#?}",
+            logged(vcx),
+            vcx.update(|_, cx| plugin_states(cx))
         );
         draw(vcx);
         std::thread::sleep(Duration::from_millis(5));
