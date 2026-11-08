@@ -144,7 +144,8 @@ pub use lsp_consent::{
     set_extension_consent_file, set_extension_servers,
 };
 pub use open::{
-    DocumentRoute, file_identity, open_documents, path_of_url, route_document, set_window_opener,
+    ConfigDirOverride, DocumentRoute, file_identity, open_documents, path_of_url, route_document,
+    set_window_opener,
 };
 pub use outline_panel::OutlinePanel;
 pub use pane::{Pane, PaneEvent, Tab};

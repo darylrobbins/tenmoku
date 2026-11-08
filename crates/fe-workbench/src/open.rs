@@ -315,16 +315,15 @@ pub(crate) fn any_reserved() -> bool {
 }
 
 /// Where the tests say the user's config directory is, instead of the
-/// environment's: `None` is an app with no config directory.
-#[cfg(test)]
-pub(crate) struct ConfigDirOverride(pub Option<PathBuf>);
+/// environment's: `None` is an app with no config directory. For tests of
+/// binaries that embed the workbench: set it as a global before opening
+/// windows so no user settings are read or watched.
+pub struct ConfigDirOverride(pub Option<PathBuf>);
 
-#[cfg(test)]
 impl Global for ConfigDirOverride {}
 
 /// The user's `settings.toml`, if there's a config directory.
 pub(crate) fn settings_path(cx: &App) -> Option<PathBuf> {
-    #[cfg(test)]
     if let Some(over) = cx.try_global::<ConfigDirOverride>() {
         return over
             .0
@@ -336,7 +335,6 @@ pub(crate) fn settings_path(cx: &App) -> Option<PathBuf> {
     return None;
     #[cfg(not(test))]
     {
-        let _ = cx;
         fe_config::user_settings_path()
     }
 }

@@ -1022,6 +1022,7 @@ mod tests {
         cx.update(|cx| {
             fe_gpui::init(cx);
             fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
         });
         WATCH.with(|w| w.set(Some(ticking)));
         let mut windows = Vec::new();
