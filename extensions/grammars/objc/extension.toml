@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_objc"
+name = "Objective-C syntax"
+version = "3.0.2"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "objc"
+wasm = "tree-sitter-objc.wasm"
+extensions = ["m"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "//"
+block_comment = ["/*", "*/"]
