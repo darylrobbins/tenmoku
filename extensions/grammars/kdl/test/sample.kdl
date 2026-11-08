@@ -1,0 +1,68 @@
+/- kdl-version 2
+// A package manifest in KDL.
+/* Block comments
+   /* nest */ in KDL. */
+
+package "tenmoku" version="1.4.2" {
+    description "A fast editor with \"curated\" defaults\n(see docs)"
+    authors "Daryl Robbins" "Ada Lovelace"
+    license "MIT"
+    edition 2024
+    published #true
+    private #false
+    parent #null
+}
+
+dependencies {
+    serde "1.0" optional=#true features="derive" "rc"
+    tokio version="1.38" {
+        features "full"
+    }
+    (git)fastedit "https://example.com/fastedit.git" rev="e8ff98a"
+}
+
+limits {
+    max-size 16.5
+    ratio 1.5e-3
+    timeout (duration)"30s"
+    mask 0xdeadbeef
+    perm 0o755
+    flags 0b1010_0101
+    huge 1_000_000
+    inf #inf
+    neg-inf #-inf
+    nan #nan
+    negative -42
+}
+
+(u8)small 255
+(uuid)id "123e4567-e89b-12d3-a456-426614174000"
+(date-time)created "2024-05-01T12:00:00Z"
+
+raw-paths {
+    windows #"C:\Users\daryl\code"#
+    regex ##"^\d+\s*"#"##
+}
+
+banner """
+    Welcome to Tenmoku!
+    Tab:\tNewline:\n
+    """
+
+multi-arg 1 2 3 \
+    4 5 6
+
+/-disabled-node "skipped" {
+    child
+}
+
+node-with-slashdash /-"dropped" kept /-key=1 other=2 {
+    /-removed-child
+    kept-child
+}
+
+"quoted node name" "quoted" key="value";
+inline { a; b; c }
+
+"quoted node" "arg" "quoted key"="value" "two words"=1
+("quoted type")"typed" 7

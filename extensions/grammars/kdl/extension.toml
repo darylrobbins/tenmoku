@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_kdl"
+name = "KDL syntax"
+version = "2.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "kdl"
+wasm = "tree-sitter-kdl.wasm"
+extensions = ["kdl"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+line_comment = "//"
+block_comment = ["/*", "*/"]

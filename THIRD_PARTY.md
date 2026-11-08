@@ -239,6 +239,7 @@ licence. No module is committed.
 | astro | `tree-sitter-astro.wasm` | https://github.com/virchau13/tree-sitter-astro @ `213f6e6973d9b456c6e50e86f19f66877e7ef0ee` | MIT; `highlights.scm` and `injections.scm` are adapted from the grammar's own `queries/` at that commit, and add tree-sitter-html 0.23.2's `"/>"` pattern and `<style>` → css injection, whose licence is MIT too; their headers say what changed |
 | twig | `tree-sitter-twig.wasm` | https://github.com/gbprod/tree-sitter-twig `2208d2a3c3ee7ef378e97df2e51c18feb7ee9dfc`; `highlights.scm` and `injections.scm` are its `queries/` (`@spell` dropped) | MIT |
 | properties | `tree-sitter-properties.wasm` | [tree-sitter-grammars/tree-sitter-properties](https://github.com/tree-sitter-grammars/tree-sitter-properties) @ `6310671b24d4e04b803577b1c675d765cbd5773b` (`src`), package version 0.3.0 | MIT; `highlights.scm` is upstream's (same licence), with the secret provider key as `@string.special` rather than `@function` |
+| kdl | `tree-sitter-kdl.wasm` | [tree-sitter-grammars/tree-sitter-kdl](https://github.com/tree-sitter-grammars/tree-sitter-kdl) @ `e8ff98a113e175b84b92ec2096820517c1e10a66` (`src`) | MIT; `highlights.scm` is upstream's (same licence), less the `#any-of?` pattern and `@spell`; `injections.scm` is comment-only |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub
