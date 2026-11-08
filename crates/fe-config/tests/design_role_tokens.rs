@@ -544,7 +544,7 @@ Monokai
     text.muted #ccccc7
     text.disabled #75715e
     text.accent #a6e22e
-    text.on_accent #272822
+    text.on_accent #f8f8f2
     border.default #414339
     border.subtle #34352f
     border.focused #99947c
