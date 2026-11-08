@@ -56,7 +56,7 @@ pub use settings_model::{
     ChoiceSource, EffectiveValue, EnumVariant, SettingEntry, SettingGroup, SettingKind,
     SettingsModel, ValueSource,
 };
-pub use theme::{Color, EditorColors, EditorPalette};
+pub use theme::{Color, EditorColors, EditorPalette, TerminalColors};
 pub use watch::ConfigWatcher;
 pub use write::{SettingValue, write_setting, write_setting_str, write_settings};
 

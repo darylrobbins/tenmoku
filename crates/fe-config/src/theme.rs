@@ -29,7 +29,7 @@ pub use kiln_core::theme::Color;
 
 /// The app tables a Tenmoku theme file has, beside kiln's own keys: for
 /// [`ThemeFile::load`] and [`ThemeFile::parse`], and kiln's user theme.
-pub const EXTENSIONS: &[&str] = &["editor", "syntax"];
+pub const EXTENSIONS: &[&str] = &["editor", "syntax", "terminal"];
 
 /// A table of named colours: the struct, and its keys for parsing.
 macro_rules! colors {
@@ -206,6 +206,66 @@ pub struct EditorPalette {
     /// prefix. The base's entries come first, then the theme's new ones in
     /// table order; no name appears twice.
     pub syntax: Vec<(String, Color)>,
+    /// The terminal's colours: a theme's `[terminal]` table.
+    pub terminal: TerminalColors,
+}
+
+/// The terminal's colours: a theme's `[terminal]` table, whose keys are
+/// `ansi_0` … `ansi_15`, `foreground`, `background` and `cursor`. A theme
+/// that leaves the ANSI colours out gets the bundled palette's (xterm's hues
+/// for its appearance); one that leaves out the other three draws them in the
+/// editor's.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TerminalColors {
+    /// ANSI colours 0–15.
+    pub ansi: [Color; 16],
+    pub foreground: Option<Color>,
+    pub background: Option<Color>,
+    pub cursor: Option<Color>,
+}
+
+impl TerminalColors {
+    /// Every key, in order.
+    pub const KEYS: &[&str] = &[
+        "ansi_0",
+        "ansi_1",
+        "ansi_2",
+        "ansi_3",
+        "ansi_4",
+        "ansi_5",
+        "ansi_6",
+        "ansi_7",
+        "ansi_8",
+        "ansi_9",
+        "ansi_10",
+        "ansi_11",
+        "ansi_12",
+        "ansi_13",
+        "ansi_14",
+        "ansi_15",
+        "foreground",
+        "background",
+        "cursor",
+    ];
+
+    fn set(&mut self, key: &str, color: Color) -> bool {
+        if let Some(index) = key.strip_prefix("ansi_") {
+            return match index.parse::<usize>() {
+                Ok(number) if number < 16 && number.to_string() == index => {
+                    self.ansi[number] = color;
+                    true
+                }
+                _ => false,
+            };
+        }
+        match key {
+            "foreground" => self.foreground = Some(color),
+            "background" => self.background = Some(color),
+            "cursor" => self.cursor = Some(color),
+            _ => return false,
+        }
+        true
+    }
 }
 
 static FASTEDIT_DARK: LazyLock<EditorPalette> = LazyLock::new(|| {
@@ -228,7 +288,11 @@ fn bundled(file_name: &str, source: &str) -> EditorPalette {
     debug_assert_eq!(diagnostics, [], "the bundled palette has problems");
     let file = file.unwrap_or_default();
     let mut palette = EditorPalette::default();
-    let warnings = palette.overlay(file.extensions.get("editor"), file.extensions.get("syntax"));
+    let warnings = palette.overlay(
+        file.extensions.get("editor"),
+        file.extensions.get("syntax"),
+        file.extensions.get("terminal"),
+    );
     debug_assert_eq!(
         warnings,
         [] as [String; 0],
@@ -263,7 +327,11 @@ impl EditorPalette {
     /// the warnings don't either.
     pub fn for_theme(theme: &ThemeData) -> (EditorPalette, Vec<String>) {
         let mut palette = Self::bundled(theme.appearance).clone();
-        let warnings = palette.overlay(theme.extension("editor"), theme.extension("syntax"));
+        let warnings = palette.overlay(
+            theme.extension("editor"),
+            theme.extension("syntax"),
+            theme.extension("terminal"),
+        );
         (palette, warnings)
     }
 
@@ -275,10 +343,26 @@ impl EditorPalette {
             .map(|&(_, color)| color)
     }
 
-    /// Lays `editor` and `syntax` tables over the palette, returning the
-    /// warnings.
-    fn overlay(&mut self, editor: Option<&Table>, syntax: Option<&Table>) -> Vec<String> {
+    /// Lays `editor`, `syntax` and `terminal` tables over the palette,
+    /// returning the warnings.
+    fn overlay(
+        &mut self,
+        editor: Option<&Table>,
+        syntax: Option<&Table>,
+        terminal: Option<&Table>,
+    ) -> Vec<String> {
         let mut warnings = Vec::new();
+        for (key, value) in terminal.into_iter().flatten() {
+            let dotted = format!("terminal.{key}");
+            match color(value) {
+                Err(message) => warnings.push(format!("{dotted}: {message}")),
+                Ok(color) => {
+                    if !self.terminal.set(key, color) {
+                        warnings.push(format!("{dotted}: unknown key"));
+                    }
+                }
+            }
+        }
         for (key, value) in editor.into_iter().flatten() {
             let dotted = format!("editor.{key}");
             match self.editor.get_mut(key) {

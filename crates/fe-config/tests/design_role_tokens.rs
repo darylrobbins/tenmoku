@@ -589,7 +589,7 @@ fn themes() -> Vec<ThemeData> {
     assert!(paths.len() >= 11, "the bundled themes: {paths:?}");
     let mut themes = vec![ThemeData::dark().clone(), ThemeData::light().clone()];
     for path in paths {
-        let (file, diagnostics) = ThemeFile::load(&path, &["editor", "syntax"]);
+        let (file, diagnostics) = ThemeFile::load(&path, fe_config::theme::EXTENSIONS);
         assert_eq!(diagnostics, [], "{}", path.display());
         // A theme may spell out a new token, as Ember, which sets every
         // root, does; the checks below hold it to today's colour all the same.

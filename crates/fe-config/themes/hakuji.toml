@@ -174,6 +174,25 @@ minimap_gutter_added = "#17773f"
 minimap_gutter_modified = "#1f68cf"
 minimap_gutter_deleted = "#a1100e"
 
+[terminal]
+# The same signals; the bright set one step lighter in hue but held to 4.5:1 on white.
+ansi_0 = "#1f2328"  # black
+ansi_1 = "#a1100e"  # shinsha
+ansi_2 = "#17773f"  # celadon
+ansi_3 = "#776a00"  # kiseto
+ansi_4 = "#1f68cf"  # ruri
+ansi_5 = "#7b36a8"  # jun
+ansi_6 = "#0d6e66"  # seiji
+ansi_7 = "#4b525b"  # ink
+ansi_8 = "#8a919a"  # bright black
+ansi_9 = "#b3201d"  # shinsha, one step lighter
+ansi_10 = "#1c8148"  # celadon, one step lighter
+ansi_11 = "#827614"  # kiseto, one step lighter
+ansi_12 = "#2f72d6"  # ruri, one step lighter
+ansi_13 = "#8a4ab8"  # jun, one step lighter
+ansi_14 = "#1a7b73"  # seiji, one step lighter
+ansi_15 = "#5f6670"  # ink, one step lighter
+
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".
 # A variable is the foreground, ink. The captures the design's table doesn't

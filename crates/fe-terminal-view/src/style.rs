@@ -1,4 +1,4 @@
-use gpui::{Font, FontFallbacks, Hsla, Pixels, SharedString, rgb};
+use gpui::{Font, FontFallbacks, Hsla, Pixels, SharedString, rgb, rgba};
 
 /// How a terminal looks: its font, and the colours its cells resolve to.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,6 +58,12 @@ impl TerminalStyle {
             0x5a5a5a, 0xd02020, 0x10a010, 0xa08a00, 0x3050e0, 0xc020c0, 0x0090a0, 0x606060,
         ]
         .map(|hex| rgb(hex).into())
+    }
+
+    /// The 16 ANSI colours from `0xrrggbbaa` values, as a theme's `[terminal]`
+    /// table gives them.
+    pub fn ansi_from_rgba(colors: [u32; 16]) -> [Hsla; 16] {
+        colors.map(|color| rgba(color).into())
     }
 
     /// [`TerminalStyle::ansi_light`] on a background lighter than 0.5,

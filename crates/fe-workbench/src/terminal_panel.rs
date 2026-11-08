@@ -196,7 +196,11 @@ impl TerminalPanel {
             tabs: ScrollHandle::new(),
             reveal: false,
             cwd,
-            style: style(theme, &TerminalSettings::default()),
+            style: style(
+                theme,
+                &fe_gpui::editor_palette(cx).terminal,
+                &TerminalSettings::default(),
+            ),
             theme: theme.clone(),
             settings: TerminalSettings::default(),
             find: None,
@@ -246,7 +250,11 @@ impl TerminalPanel {
     }
 
     fn restyle(&mut self, cx: &mut Context<Self>) {
-        self.style = style(&self.theme, &self.settings);
+        self.style = style(
+            &self.theme,
+            &fe_gpui::editor_palette(cx).terminal,
+            &self.settings,
+        );
         for session in &self.sessions {
             let style = self.style.clone();
             session
@@ -950,8 +958,15 @@ fn start_dir(cwd: &Path) -> PathBuf {
 }
 
 /// The terminal's style: the editor's colours and, unless `settings` set
-/// them, font and size, and ANSI colours that read on its background.
-fn style(theme: &EditorTheme, settings: &TerminalSettings) -> TerminalStyle {
+/// them, font and size, and ANSI colours from the theme's `[terminal]` table.
+fn style(
+    theme: &EditorTheme,
+    terminal: &fe_config::TerminalColors,
+    settings: &TerminalSettings,
+) -> TerminalStyle {
+    let or_editor = |color: Option<fe_config::Color>, editor: gpui::Hsla| {
+        color.map_or(editor, |color| gpui::rgba(color.to_rgba_u32()).into())
+    };
     TerminalStyle {
         font_family: settings.font_family.as_deref().map_or_else(
             || theme.font_family.clone(),
@@ -962,11 +977,11 @@ fn style(theme: &EditorTheme, settings: &TerminalSettings) -> TerminalStyle {
             .font_size
             .map_or(theme.font_size, |size| px(size as f32)),
         line_height: TerminalStyle::LINE_HEIGHT,
-        background: theme.background,
-        foreground: theme.foreground,
-        cursor: theme.cursor,
+        background: or_editor(terminal.background, theme.background),
+        foreground: or_editor(terminal.foreground, theme.foreground),
+        cursor: or_editor(terminal.cursor, theme.cursor),
         selection: theme.selection,
-        ansi: TerminalStyle::ansi_for(theme.background),
+        ansi: TerminalStyle::ansi_from_rgba(terminal.ansi.map(|color| color.to_rgba_u32())),
     }
 }
 
