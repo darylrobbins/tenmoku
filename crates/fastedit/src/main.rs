@@ -8,6 +8,8 @@ mod grammar_install;
 #[cfg(test)]
 mod grammar_install_tests;
 mod ipc;
+#[cfg(unix)]
+mod log_file;
 #[cfg(target_os = "macos")]
 mod mac_speller;
 mod perf;
@@ -510,11 +512,16 @@ fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App)
 fn main() {
     let mut startup = Startup::new();
     let started = Instant::now();
+    let mut how = ipc::How::current();
+    #[cfg(unix)]
+    log_file::install(
+        log_file::LaunchKind::of(how.launch_services, how.foreground, how.terminal),
+        log_file::display_count(),
+    );
     init_logging();
     // Before the command line is parsed: Velopack's `--veloapp-*` hook
     // launches would be unknown flags to it.
     velopack_update::startup();
-    let mut how = ipc::How::current();
     let mut cli = cli::parse(std::env::args_os().skip(1).collect()).unwrap_or_else(|error| {
         error.print();
         std::process::exit(error.exit_code())
