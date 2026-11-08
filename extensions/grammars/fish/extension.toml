@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_fish"
+name = "Fish syntax"
+version = "1.0.0"
+license = "Unlicense"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "fish"
+wasm = "tree-sitter-fish.wasm"
+extensions = ["fish"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
+line_comment = "#"
+shebangs = ["fish"]
+license = "Unlicense"
