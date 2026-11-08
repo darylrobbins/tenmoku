@@ -8,6 +8,7 @@ mod coloured_icons;
 mod controls;
 mod file_icon_set;
 mod file_icons;
+mod icon_stroke;
 mod layout;
 mod list;
 mod prompt;

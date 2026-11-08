@@ -2,8 +2,8 @@
 
 //! The bundled icon set and the file-name → icon mapping.
 //!
-//! Icons are Lucide's, unmodified (see `assets/icons/LICENSE` and
-//! THIRD_PARTY.md). They're monochrome strokes, so GPUI's `svg()` draws them as
+//! Icons are Lucide's, redrawn at the design's 1.75 stroke (Lucide ships 2;
+//! see `assets/icons/LICENSE` and THIRD_PARTY.md). They're monochrome strokes, so GPUI's `svg()` draws them as
 //! an alpha mask tinted with the element's text colour. A set may answer a
 //! multi-colour SVG instead ([`IconRef::Coloured`]), which
 //! [`IconRef::element`] draws as an image in its own colours.
@@ -164,6 +164,22 @@ icons! {
     TextWrap => "text-wrap",
     ToggleRight => "toggle-right",
     Undo => "undo",
+    // The design's B3 surfaces: the Runs, Terminal and Git Log views, the
+    // find bar's toggles, progress and signals; not mapped from names.
+    ListVideo => "list-video",
+    SquareTerminal => "square-terminal",
+    GitCommitVertical => "git-commit-vertical",
+    CaseSensitive => "case-sensitive",
+    WholeWord => "whole-word",
+    Regex => "regex",
+    // Find in selection. Lucide's `text-select` is a deprecated alias of it.
+    SquareDashedText => "square-dashed-text",
+    LoaderCircle => "loader-circle",
+    CircleCheck => "circle-check",
+    ChevronUp => "chevron-up",
+    SquarePlus => "square-plus",
+    SquareMinus => "square-minus",
+    Bell => "bell",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.
