@@ -537,8 +537,8 @@ fn a_buffer_a_diff_view_shows_keeps_its_id(cx: &mut TestAppContext) {
 #[test]
 fn a_hand_off_past_its_deadline_never_starts() {
     // The plugin waits until the deadline, then the job won't start.
-    let handoff = Handoff::<u32>::new(Instant::now() + Duration::from_millis(20));
     let waited = Instant::now();
+    let handoff = Handoff::<u32>::new(waited + Duration::from_millis(20));
     assert!(matches!(handoff.wait(), Err(Error::Failed(_))));
     assert!(waited.elapsed() >= Duration::from_millis(20));
     assert!(!handoff.start());
