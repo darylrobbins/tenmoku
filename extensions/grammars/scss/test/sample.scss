@@ -1,0 +1,95 @@
+// Theme variables and a mixin library.
+@use "sass:math";
+@use "config";
+@forward "src/list";
+
+$base-font: "Helvetica Neue", Arial, sans-serif;
+$base-size: 16px;
+$gap: 1.5rem;
+$breakpoints: 576px, 768px, 992px;
+$quote: "She said \"hi\"\a next line";
+
+/* A block comment
+   over several lines. */
+@function rem($px, $base: $base-size) {
+  @return math.div($px, $base) * 1rem;
+}
+
+@function compare($a, $b) {
+  @if $a == $b {
+    @return 0;
+  } @else if $a != 1 {
+    @return 1;
+  } @else if $a < $b {
+    @return 2;
+  } @else if $a > $b {
+    @return 3;
+  } @else if $a <= 4 {
+    @return 4;
+  } @else if $a >= 5 {
+    @return 5;
+  }
+  @return -1;
+}
+
+@mixin respond-to($name) {
+  @if map-has-key($breakpoints, $name) {
+    @media (min-width: map-get($breakpoints, $name)) {
+      @content;
+    }
+  } @else if $name == print {
+    @media print { @content; }
+  } @else {
+    @warn "Unknown breakpoint: #{$name}";
+  }
+}
+
+.base {
+  margin: 0 auto;
+}
+
+.card {
+  @extend .base;
+  font: $base-size $base-font;
+  padding: rem(24px) 0.5em;
+  color: #336699;
+  background: rgba(0, 0, 0, 0.75) url("img/bg.png") no-repeat;
+  --accent: #ff8800;
+
+  &:hover,
+  &.is-active {
+    transform: translateY(-2px) scale(1.05);
+  }
+
+  &__title {
+    font-weight: 700;
+    margin-bottom: $gap * 2;
+  }
+
+  a::after {
+    content: "\2192";
+  }
+
+  @include respond-to(medium);
+}
+
+@each $name in (home, user) {
+  .icon-#{$name}:before {
+    content: $name;
+  }
+}
+
+@for $i from 1 through 3 {
+  .col-#{$i} { width: percentage(math.div($i, 3)); }
+}
+
+$n: 3;
+@while $n > 0 {
+  .item-#{$n} { order: $n; }
+  $n: $n - 1;
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1 !important; }
+}

@@ -252,6 +252,7 @@ licence. No module is committed.
 | racket | `tree-sitter-racket.wasm` | https://github.com/6cdh/tree-sitter-racket @ `b3cbbde75ce2de3079e33c7fe90bd41b1d45be48` | MIT; `highlights.scm` is the grammar's own `queries/highlights.scm`, with a struct-name rule added |
 | vim | `tree-sitter-vim.wasm` | [tree-sitter-grammars/tree-sitter-vim](https://github.com/tree-sitter-grammars/tree-sitter-vim) @ `039c8d0aa1deae00ddeb0374dd70bcc0ec56938d` (`grammar-source.toml`); `highlights.scm` and `injections.scm` are upstream's, trimmed | MIT |
 | nginx | `tree-sitter-nginx.wasm` | https://github.com/opa-oz/tree-sitter-nginx at `7cdf006ed1addef698fc680ae31721950f85e5e9` (`src`), package version 1.0.1; `highlights.scm` is upstream's `queries/highlights.scm` less the `@spell` capture; `injections.scm` is comment-only (upstream's injects a `comment` language we lack) | MIT |
+| scss | `tree-sitter-scss.wasm` | https://github.com/tree-sitter-grammars/tree-sitter-scss @ `5da5ba71a558b007b352c505bfcd9095ae337022` | MIT; `highlights.scm` is that grammar's query with tree-sitter-css 0.25.0's (MIT, another holder, text in `LICENSE-CSS`) inlined |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub

@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_scss"
+name = "SCSS syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "scss"
+wasm = "tree-sitter-scss.wasm"
+extensions = ["scss"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+line_comment = "//"
+block_comment = ["/*", "*/"]
+earlier_patterns_win = false
