@@ -38,7 +38,7 @@ struct Dirs {
 impl Dirs {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let base = fs::canonicalize(temp.path()).unwrap();
+        let base = dunce::canonicalize(temp.path()).unwrap();
         Self {
             _temp: Some(temp),
             ..Self::at(&base)
@@ -645,21 +645,34 @@ fn write_error_toasts_and_keeps_value(cx: &mut TestAppContext) {
     assert_eq!(shown(&editor, key, cx), ("false".to_owned(), false));
 
     // A folder that can't be written to: the input shows the old value.
+    // Windows lets a read-only folder take new files, so there a folder
+    // where the file goes stops the write.
     fs::remove_file(dirs.workspace()).unwrap();
-    let folder = dirs.workspace().parent().unwrap().to_owned();
-    let mut permissions = fs::metadata(&folder).unwrap().permissions();
-    permissions.set_readonly(true);
-    fs::set_permissions(&folder, permissions.clone()).unwrap();
+    #[cfg(unix)]
+    let (folder, mut permissions) = {
+        let folder = dirs.workspace().parent().unwrap().to_owned();
+        let mut permissions = fs::metadata(&folder).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&folder, permissions.clone()).unwrap();
+        (folder, permissions)
+    };
+    #[cfg(windows)]
+    fs::create_dir(dirs.workspace()).unwrap();
     let tab_size = "editor.tab_size";
     search_for(&editor, tab_size, cx);
     type_into(&format!("setting-input-{tab_size}"), "2", cx);
     press("enter", cx);
-    #[expect(
-        clippy::permissions_set_readonly_false,
-        reason = "the test's own folder"
-    )]
-    permissions.set_readonly(false);
-    fs::set_permissions(&folder, permissions).unwrap();
+    #[cfg(unix)]
+    {
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "the test's own folder"
+        )]
+        permissions.set_readonly(false);
+        fs::set_permissions(&folder, permissions).unwrap();
+    }
+    #[cfg(windows)]
+    fs::remove_dir(dirs.workspace()).unwrap();
     assert!(!dirs.workspace().exists());
     let shown_toasts = toasts(&workbench, cx);
     assert_eq!(

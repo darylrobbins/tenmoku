@@ -973,7 +973,7 @@ fn relative(repo: &Repo, real: &Path) -> Result<PathBuf, Failed> {
 /// What `git args` prints in `repo`'s working tree, its pathspecs taken
 /// literally, or what it said as it failed. Blocks until `git` exits.
 fn git_output(repo: &Repo, args: &[&OsStr]) -> Result<Vec<u8>, Failed> {
-    let output = std::process::Command::new("git")
+    let output = crate::process_group::no_window(&mut std::process::Command::new("git"))
         .current_dir(repo.workdir())
         .arg("--literal-pathspecs")
         .args(args)

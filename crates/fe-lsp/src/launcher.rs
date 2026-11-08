@@ -4,18 +4,27 @@
 
 use std::ffi::{OsStr, OsString};
 use std::future::Future;
+#[cfg(unix)]
 use std::hash::{BuildHasher, RandomState};
 use std::io;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
+#[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::pin::{Pin, pin};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use futures::channel::oneshot;
 use futures::future::{FutureExt, Shared};
@@ -355,8 +364,12 @@ fn launch_local(
     command
         .args(&spec.args)
         .current_dir(root)
-        .envs(spec.env.iter().map(|(k, v)| (k, v)))
-        .process_group(0);
+        .envs(spec.env.iter().map(|(k, v)| (k, v)));
+    #[cfg(unix)]
+    command.process_group(0);
+    // No console window for the server; its children go in a job (below).
+    #[cfg(windows)]
+    command.creation_flags(job::CREATE_NO_WINDOW);
     let mut command = async_process::Command::from(command);
     command
         .stdin(Stdio::piped())
@@ -370,6 +383,17 @@ fn launch_local(
         ));
     }
     let mut child = command.spawn()?;
+    // What `process_group` does on Unix: the server and what it starts are
+    // killed together.
+    #[cfg(windows)]
+    let job = job::Job::for_process(child.id())
+        .inspect_err(|err| {
+            log::warn!(
+                "language server {} runs outside a job, so its children may outlive it: {err}",
+                spec.name
+            );
+        })
+        .ok();
     let (Some(input), Some(output), stderr) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {
@@ -379,7 +403,12 @@ fn launch_local(
         input: Box::pin(input),
         output: Box::pin(output),
         stderr: stderr.map(|s| Box::pin(s) as Pin<Box<dyn AsyncRead + Send>>),
-        process: Box::new(LocalProcess { child, exit: None }),
+        process: Box::new(LocalProcess {
+            child,
+            exit: None,
+            #[cfg(windows)]
+            job,
+        }),
     })
 }
 
@@ -388,9 +417,11 @@ pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What the login shell runs: `printf %s "$PATH"`, with a line break after
 /// it, appended to the file [`PATH_FILE_VAR`] names.
+#[cfg(unix)]
 const PRINT_PATH: &str = r#"printf "%s\n" "$PATH" >> "$FASTEDIT_LOGIN_PATH_FILE""#;
 
 /// Names the file the login shell writes its `PATH` to.
+#[cfg(unix)]
 const PATH_FILE_VAR: &str = "FASTEDIT_LOGIN_PATH_FILE";
 
 /// The `PATH` a login shell has, which bare commands are looked up on
@@ -414,9 +445,17 @@ pub struct LoginPath {
 }
 
 impl LoginPath {
-    /// The `PATH` the login shell `shell` prints, with `$HOME` as `~`.
+    /// The `PATH` the login shell `shell` prints, with `$HOME` as `~`
+    /// (`%USERPROFILE%` on Windows, where `HOME` is seldom set).
     pub fn new(shell: impl Into<PathBuf>) -> Self {
         let home = std::env::var_os("HOME")
+            .or_else(|| {
+                if cfg!(windows) {
+                    std::env::var_os("USERPROFILE")
+                } else {
+                    None
+                }
+            })
             .map(PathBuf::from)
             .filter(|home| home.is_absolute());
         Self::with_home(shell, home)
@@ -435,6 +474,11 @@ impl LoginPath {
     /// is logged; shared by every [`LocalLauncher`].
     pub fn system() -> &'static LoginPath {
         static SYSTEM: LazyLock<LoginPath> = LazyLock::new(|| {
+            // Windows has no login shell: commands are looked up on
+            // Tenmoku's own PATH, which a user's environment sets.
+            if cfg!(windows) {
+                return LoginPath::new(PathBuf::new());
+            }
             let shell = std::env::var_os("SHELL").filter(|shell| Path::new(shell).is_absolute());
             LoginPath::new(shell.unwrap_or_else(|| {
                 log::warn!(
@@ -447,8 +491,16 @@ impl LoginPath {
         &SYSTEM
     }
 
+    /// The login shell's `PATH`: on Windows, which has none, `None`.
+    #[cfg(windows)]
+    pub fn path(&self) -> Option<&OsStr> {
+        let _ = (&self.shell, &self.path);
+        None
+    }
+
     /// The login shell's `PATH`, running it the first time; `None` if it
     /// failed.
+    #[cfg(unix)]
     pub fn path(&self) -> Option<&OsStr> {
         self.path
             .get_or_init(|| match run_login_shell(&self.shell) {
@@ -488,7 +540,13 @@ impl LoginPath {
         cwd: &Path,
     ) -> Option<PathBuf> {
         if !is_bare(command) {
-            return Some(cwd.join(expand_home(command, self.home.as_deref())?));
+            let joined = cwd.join(expand_home(command, self.home.as_deref())?);
+            // On Windows `\tools\x.exe` is on the current drive, as a launch
+            // would find it.
+            if cfg!(windows) && joined.has_root() && !joined.is_absolute() {
+                return std::path::absolute(&joined).ok();
+            }
+            return Some(joined);
         }
         let process_path;
         let path = match spec_path.or_else(|| self.path()) {
@@ -505,7 +563,12 @@ impl LoginPath {
 /// A name with no `/`, such as `rust-analyzer`: one looked up on a `PATH`,
 /// as `execvp` would.
 fn is_bare(command: &Path) -> bool {
-    !command.as_os_str().as_encoded_bytes().contains(&b'/')
+    !command
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .any(|&byte| std::path::is_separator(char::from(byte)))
+        && !command.has_root()
 }
 
 /// `path` with a leading `~`, alone or before a `/`, made `home`; `None`
@@ -532,18 +595,65 @@ fn find_executable(name: &Path, path: &OsStr, home: Option<&Path>) -> Option<Pat
             let dir = expand_home(&dir, home)?;
             dir.is_absolute().then_some(dir)
         })
-        .map(|dir| dir.join(name))
+        .flat_map(|dir| candidates(&dir, name))
         .find(|candidate| is_runnable(candidate))
+}
+
+/// What `name` may be in `dir`: `dir/name`.
+#[cfg(unix)]
+fn candidates(dir: &Path, name: &Path) -> Vec<PathBuf> {
+    vec![dir.join(name)]
+}
+
+/// What `name` may be in `dir`: `dir\name`, then with each of `PATHEXT`'s
+/// extensions (`.exe`, `.cmd`, …), as `cmd` looks a command up.
+#[cfg(windows)]
+fn candidates(dir: &Path, name: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![dir.join(name)];
+    for extension in program_extensions() {
+        let mut with = dir.join(name).into_os_string();
+        with.push(&extension);
+        candidates.push(PathBuf::from(with));
+    }
+    candidates
+}
+
+/// `PATHEXT`'s extensions, each with its dot and in lower case as files
+/// are usually named (`.exe`, not `.EXE`), or Windows' default.
+#[cfg(windows)]
+fn program_extensions() -> Vec<String> {
+    std::env::var("PATHEXT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_owned())
+        .split(';')
+        .map(str::trim)
+        .filter(|ext| ext.starts_with('.') && ext.len() > 1)
+        .map(str::to_ascii_lowercase)
+        .collect()
 }
 
 /// A file the kernel lets this process execute, judged for its effective
 /// user and groups as `exec` judges it: an execute bit alone may be
 /// another user's, and an ACL may deny it. (rustix's `fs` is on through
 /// async-io and async-process.)
+#[cfg(unix)]
 fn is_runnable(file: &Path) -> bool {
     use rustix::fs::{Access, AtFlags, CWD};
     std::fs::metadata(file).is_ok_and(|meta| meta.is_file())
         && rustix::fs::accessat(CWD, file, Access::EXEC_OK, AtFlags::EACCESS).is_ok()
+}
+
+/// A file Windows runs as a program: one whose extension is `PATHEXT`'s.
+#[cfg(windows)]
+fn is_runnable(file: &Path) -> bool {
+    let Some(extension) = file.extension().and_then(OsStr::to_str) else {
+        return false;
+    };
+    std::fs::metadata(file).is_ok_and(|meta| meta.is_file())
+        && program_extensions()
+            .iter()
+            .any(|known| known[1..].eq_ignore_ascii_case(extension))
 }
 
 /// Runs `shell -l -c` [`PRINT_PATH`] in a process group of its own and
@@ -551,6 +661,7 @@ fn is_runnable(file: &Path) -> bool {
 /// It runs on a thread of its own, so nothing the shell does (an exec or a
 /// reap stuck on a hung file system, say) holds this up past the deadline;
 /// that thread kills the shell's group then, and is left to finish alone.
+#[cfg(unix)]
 fn run_login_shell(shell: &Path) -> Result<OsString, String> {
     let deadline = Instant::now() + LOGIN_SHELL_TIMEOUT;
     let (sender, written) = std::sync::mpsc::channel();
@@ -568,6 +679,7 @@ fn run_login_shell(shell: &Path) -> Result<OsString, String> {
     }
 }
 
+#[cfg(unix)]
 fn too_slow() -> String {
     format!(
         "took over {} s to print its PATH",
@@ -579,6 +691,7 @@ fn too_slow() -> String {
 /// shell wrote, what's in its file before the final line break. The group
 /// is killed if the shell takes longer. What it prints itself is
 /// discarded.
+#[cfg(unix)]
 fn capture_login_path(shell: &Path, deadline: Instant) -> Result<OsString, String> {
     let file = PathFile::create().map_err(|err| format!("had nowhere to write its PATH: {err}"))?;
     let mut child = std::process::Command::new(shell)
@@ -620,8 +733,10 @@ fn capture_login_path(shell: &Path, deadline: Instant) -> Result<OsString, Strin
 
 /// An empty file, new and only this user's, for the login shell to append
 /// its `PATH` to. Removed when dropped.
+#[cfg(unix)]
 struct PathFile(PathBuf);
 
+#[cfg(unix)]
 impl PathFile {
     /// In the temporary directory, or in `/tmp` if that one can't be used.
     fn create() -> io::Result<Self> {
@@ -665,6 +780,7 @@ impl PathFile {
     }
 }
 
+#[cfg(unix)]
 impl Drop for PathFile {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
@@ -672,6 +788,7 @@ impl Drop for PathFile {
 }
 
 /// Kills `child`'s process group, which it leads, and reaps it.
+#[cfg(unix)]
 fn kill_group(child: &mut std::process::Child) {
     if let Some(group) = i32::try_from(child.id())
         .ok()
@@ -686,6 +803,10 @@ fn kill_group(child: &mut std::process::Child) {
 struct LocalProcess {
     child: async_process::Child,
     exit: Option<ExitInfo>,
+    /// The job the server and its children run in, killed with it, and
+    /// when this drops.
+    #[cfg(windows)]
+    job: Option<job::Job>,
 }
 
 /// A process dropped without having been seen to exit (its thread
@@ -710,7 +831,10 @@ impl ServerProcess for LocalProcess {
             let exit = match self.child.status().await {
                 Ok(status) => ExitInfo {
                     code: status.code(),
+                    #[cfg(unix)]
                     signal: status.signal(),
+                    #[cfg(windows)]
+                    signal: None,
                 },
                 Err(err) => {
                     log::warn!("waiting for language server {}: {err}", self.child.id());
@@ -727,16 +851,99 @@ impl ServerProcess for LocalProcess {
         // its pid. ESRCH means the whole group has already gone. Signalled
         // even after the leader was reaped, so children it left behind go
         // too: a pid isn't reused while its group still has members.
-        let group = i32::try_from(self.child.id())
-            .ok()
-            .and_then(rustix::process::Pid::from_raw);
-        if let Some(group) = group
-            && let Err(err) =
-                rustix::process::kill_process_group(group, rustix::process::Signal::KILL)
-            && err != rustix::io::Errno::SRCH
+        #[cfg(unix)]
         {
-            log::warn!("killing language server group {}: {err}", self.child.id());
+            let group = i32::try_from(self.child.id())
+                .ok()
+                .and_then(rustix::process::Pid::from_raw);
+            if let Some(group) = group
+                && let Err(err) =
+                    rustix::process::kill_process_group(group, rustix::process::Signal::KILL)
+                && err != rustix::io::Errno::SRCH
+            {
+                log::warn!("killing language server group {}: {err}", self.child.id());
+            }
+        }
+        // The job holds the server and everything it started.
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            job.kill();
         }
         let _ = self.child.kill();
+    }
+}
+
+/// A Windows job object, which kills the processes in it together: what a
+/// process group is to a language server on Unix.
+#[cfg(windows)]
+mod job {
+    use std::io;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
+
+    pub(super) use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+    pub(super) struct Job(OwnedHandle);
+
+    impl Job {
+        /// A job holding process `pid`, which kills everything in it once
+        /// its last handle (this) closes. A process the server starts
+        /// before it is assigned stays outside it.
+        pub(super) fn for_process(pid: u32) -> io::Result<Job> {
+            // SAFETY: no name or security attributes.
+            let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if job.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: `job` is a new handle that nothing else owns.
+            let job = Job(unsafe { OwnedHandle::from_raw_handle(job) });
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // SAFETY: `limits` is valid for reads of its size.
+            let set = unsafe {
+                SetInformationJobObject(
+                    job.handle(),
+                    JobObjectExtendedLimitInformation,
+                    (&raw const limits).cast(),
+                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )
+            };
+            if set == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: always safe to call.
+            let process = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
+            if process.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: both handles are open.
+            let assigned = unsafe { AssignProcessToJobObject(job.handle(), process) };
+            let err = io::Error::last_os_error();
+            // SAFETY: `process` is ours and not used after this.
+            unsafe { CloseHandle(process) };
+            if assigned == 0 {
+                return Err(err);
+            }
+            Ok(job)
+        }
+
+        /// Kills every process in the job.
+        pub(super) fn kill(&self) {
+            // SAFETY: the job handle is open.
+            unsafe { TerminateJobObject(self.handle(), 1) };
+        }
+
+        fn handle(&self) -> HANDLE {
+            self.0.as_raw_handle() as HANDLE
+        }
     }
 }

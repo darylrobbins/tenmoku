@@ -39,7 +39,7 @@ fn project<'a>(
     &'a mut VisualTestContext,
 ) {
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     for (name, text) in files {
         std::fs::write(root.join(name), text).unwrap();
     }

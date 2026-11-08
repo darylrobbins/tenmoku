@@ -133,6 +133,7 @@ pub(super) fn message(
 }
 
 /// Forgets the vim message shown.
+#[cfg(unix)]
 fn message_clear(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
     let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
     if let Some(editor) = editor {
@@ -370,6 +371,7 @@ fn break_save(path: &Path) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn edit_follows_the_filesystem(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
@@ -387,7 +389,7 @@ fn edit_follows_the_filesystem(cx: &mut TestAppContext) {
     draw(cx);
     let editor = active(&workbench, cx);
     let opened = editor.read_with(cx, |editor, _| editor.model().path().map(Path::to_owned));
-    let outside = std::fs::canonicalize(&outside).unwrap();
+    let outside = dunce::canonicalize(&outside).unwrap();
     assert_eq!(opened, Some(outside.join("file.txt")));
     assert_eq!(
         editor.read_with(cx, |editor, _| editor.model().text().to_string()),
@@ -420,6 +422,7 @@ fn edit_follows_the_filesystem(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn edit_reuses_a_tab_through_a_symlinked_root(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let real = dir.path().join("real");

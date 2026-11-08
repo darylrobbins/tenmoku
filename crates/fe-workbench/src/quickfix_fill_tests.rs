@@ -125,7 +125,7 @@ fn items(
     (list.items.iter())
         .map(|item| {
             let rel = item.path.strip_prefix(root).expect("under the root");
-            let rel = rel.to_string_lossy().into_owned();
+            let rel = crate::tests::slashed(rel.to_string_lossy());
             (rel, item.row, item.col, item.text.clone())
         })
         .collect()

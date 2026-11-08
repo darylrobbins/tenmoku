@@ -25,6 +25,8 @@
 //!
 //! This crate must never depend on GPUI.
 
+#[cfg(windows)]
+pub mod beneath;
 mod docker_ignore;
 mod finder;
 #[doc(hidden)]
@@ -35,6 +37,8 @@ mod listing;
 mod search;
 mod tree;
 mod watcher;
+#[cfg(windows)]
+mod win;
 
 pub use finder::{FileSetDelta, FinderIndex, FinderMatch, FinderStats};
 pub use fs_ops::{

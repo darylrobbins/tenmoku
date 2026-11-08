@@ -11,17 +11,21 @@
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    ffi::{CStr, CString, OsStr, OsString, c_int},
+    ffi::{OsStr, OsString},
     fs::File,
     io::{self, BufRead, BufReader, Read},
-    os::{
-        fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd},
-        unix::{ffi::OsStrExt, fs::MetadataExt, io::AsRawFd},
-    },
     path::{Component, Path, PathBuf},
     sync::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering as AtomicOrdering},
+    },
+};
+#[cfg(unix)]
+use std::{
+    ffi::{CStr, CString, c_int},
+    os::{
+        fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd},
+        unix::{ffi::OsStrExt, fs::MetadataExt, io::AsRawFd},
     },
 };
 
@@ -386,7 +390,7 @@ pub(crate) fn walk_builder(
 ) -> WalkBuilder {
     // Rules are read and matched by canonical paths, as the tree's are,
     // whatever spelling of `dir` the walk reports entries under.
-    let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let canonical = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     let filter = WalkFilter {
         walked: dir.to_path_buf(),
         canonical,
@@ -510,8 +514,22 @@ fn first_line(file: File) -> Option<String> {
     Some(line.trim_end().to_owned())
 }
 
+/// Opens directory `path`, absolute or relative to `dir`, a component at a
+/// time without following symlinks; `..` is taken lexically, from `dir`'s
+/// path.
+#[cfg(windows)]
+fn open_path(dir: &File, path: &Path) -> io::Result<File> {
+    let path = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        crate::win::final_path(dir)?.join(path)
+    };
+    crate::win::open_path(&path, Access::Search)
+}
+
 /// Opens directory `path`, absolute (from `/`) or relative to `dir`, a
 /// component at a time (`..` included) without following symlinks.
+#[cfg(unix)]
 fn open_path(dir: &File, path: &Path) -> io::Result<File> {
     let mut at = if path.is_absolute() {
         open_raw(libc::AT_FDCWD, OsStr::new("/"), dir_flags(Access::Search))?
@@ -539,15 +557,55 @@ fn open_path(dir: &File, path: &Path) -> io::Result<File> {
 /// `None` if there is none (or it is something else, like a FIFO, which the
 /// non-blocking open doesn't wait on).
 fn open_file(dir: &File, name: &str) -> Option<File> {
-    let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
-    let file = open_raw(dir.as_raw_fd(), OsStr::new(name), flags).ok()?;
+    let file = open_file_nofollow(dir, OsStr::new(name)).ok()?;
     file.metadata()
         .is_ok_and(|metadata| metadata.is_file())
         .then_some(file)
 }
 
+/// Opens `name` in `dir` for reading, not through a symlink (which fails as
+/// [`is_symlink_error`] tells), and without waiting on a FIFO.
+#[cfg(unix)]
+fn open_file_nofollow(dir: &File, name: &OsStr) -> io::Result<File> {
+    let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+    open_raw(dir.as_raw_fd(), name, flags)
+}
+
+#[cfg(windows)]
+fn open_file_nofollow(dir: &File, name: &OsStr) -> io::Result<File> {
+    crate::win::open_in(dir, name, crate::win::Open::Read)
+}
+
+/// Whether an open without following a symlink failed for finding one.
+#[cfg(unix)]
+pub(crate) fn is_symlink_error(err: &io::Error) -> bool {
+    // `O_NOFOLLOW` fails on a symlink with `ELOOP`.
+    err.raw_os_error() == Some(libc::ELOOP)
+}
+
+#[cfg(windows)]
+pub(crate) use crate::win::is_symlink_error;
+
+/// Whether opening a directory failed for finding something else there (a
+/// symlink opened as a directory without following it fails so too).
+#[cfg(unix)]
+pub(crate) fn is_not_dir_error(err: &io::Error) -> bool {
+    err.raw_os_error() == Some(libc::ENOTDIR)
+}
+
+#[cfg(windows)]
+pub(crate) use crate::win::is_not_dir_error;
+
+/// The names in an open directory, with their kinds, read through the
+/// handle.
+#[cfg(windows)]
+pub(crate) fn read_dir(dir: &File) -> io::Result<Vec<(OsString, Option<EntryKind>)>> {
+    crate::win::read_dir(dir)
+}
+
 /// The names in an open directory, with their kinds where the file system
 /// reports them, read through the handle.
+#[cfg(unix)]
 pub(crate) fn read_dir(dir: &File) -> io::Result<Vec<(OsString, Option<EntryKind>)>> {
     /// Closes the stream when dropped.
     struct Stream(*mut libc::DIR);
@@ -612,7 +670,7 @@ fn errno() -> *mut c_int {
     unsafe { libc::__error() }
 }
 
-#[cfg(not(target_vendor = "apple"))]
+#[cfg(all(unix, not(target_vendor = "apple")))]
 fn errno() -> *mut c_int {
     // SAFETY: always safe to call.
     unsafe { libc::__errno_location() }
@@ -661,17 +719,15 @@ pub fn open_file_under(root: &Path, rel: &Path) -> io::Result<File> {
         dir = open_at(&dir, name, Access::Search).map_err(|err| {
             // A symlink opened as a directory without following it fails as
             // not a directory, like a file does.
-            if err.raw_os_error() == Some(libc::ENOTDIR) {
+            if is_not_dir_error(&err) {
                 not_found("a symlink or a file on the way")
             } else {
                 err
             }
         })?;
     }
-    let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
-    open_raw(dir.as_raw_fd(), last, flags).map_err(|err| {
-        // `O_NOFOLLOW` fails on a symlink with `ELOOP`.
-        if err.raw_os_error() == Some(libc::ELOOP) {
+    open_file_nofollow(&dir, last).map_err(|err| {
+        if is_symlink_error(&err) {
             not_found("a symlink")
         } else {
             err
@@ -699,6 +755,7 @@ pub(crate) enum Access {
     Search,
 }
 
+#[cfg(unix)]
 fn dir_flags(access: Access) -> c_int {
     #[cfg(target_os = "macos")]
     const SEARCH: c_int = libc::O_SEARCH;
@@ -714,6 +771,7 @@ fn dir_flags(access: Access) -> c_int {
 }
 
 /// Opens `name` in directory `dir` with `flags`.
+#[cfg(unix)]
 fn open_raw(dir: RawFd, name: &OsStr, flags: c_int) -> io::Result<File> {
     let c_name = CString::new(name.as_bytes())?;
     // SAFETY: `dir` is an open descriptor (or `AT_FDCWD`) and `c_name` is
@@ -728,7 +786,22 @@ fn open_raw(dir: RawFd, name: &OsStr, flags: c_int) -> io::Result<File> {
 
 /// Opens directory `name` in `dir` without following a symlink.
 pub(crate) fn open_at(dir: &File, name: &OsStr, access: Access) -> io::Result<File> {
-    open_raw(dir.as_raw_fd(), name, dir_flags(access))
+    #[cfg(unix)]
+    return open_raw(dir.as_raw_fd(), name, dir_flags(access));
+    #[cfg(windows)]
+    return crate::win::open_dir(dir, name, access);
+}
+
+/// Opens the file system's root directory of absolute `path`: `/`, or on
+/// Windows its volume's root (`C:\`).
+fn open_slash(path: &Path, access: Access) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        let _ = path;
+        open_raw(libc::AT_FDCWD, OsStr::new("/"), dir_flags(access))
+    }
+    #[cfg(windows)]
+    return crate::win::open_volume_root(path, access);
 }
 
 /// Why [`open_dirs`] failed.
@@ -748,7 +821,14 @@ pub(crate) fn open_dirs(path: &Path, last: Access) -> Result<Vec<File>, Unreache
         err: io::Error::new(io::ErrorKind::InvalidInput, what),
         itself: true,
     };
+    if !path.is_absolute() {
+        return Err(invalid("not an absolute path"));
+    }
     let mut components = path.components();
+    // A Windows path's volume (`C:`), before its root.
+    if let Some(Component::Prefix(_)) = components.clone().next() {
+        components.next();
+    }
     if components.next() != Some(Component::RootDir) {
         return Err(invalid("not an absolute path"));
     }
@@ -766,7 +846,7 @@ pub(crate) fn open_dirs(path: &Path, last: Access) -> Result<Vec<File>, Unreache
             itself: ix == depth,
         }
     };
-    let slash = open_raw(libc::AT_FDCWD, OsStr::new("/"), dir_flags(access(0)));
+    let slash = open_slash(path, access(0));
     let mut dirs = vec![slash.map_err(unreached(0))?];
     for (ix, name) in names.iter().enumerate() {
         let dir = open_at(&dirs[ix], name, access(ix + 1)).map_err(unreached(ix + 1))?;
@@ -784,17 +864,28 @@ pub(crate) fn ignores_case(dir: &File) -> bool {
 }
 
 /// Whether names on the volume of open directory `dir` match regardless of
-/// case. Assumed not, off macOS.
-#[cfg(not(target_os = "macos"))]
+/// case. Assumed not, off macOS and Windows.
+#[cfg(not(any(target_os = "macos", windows)))]
 pub(crate) fn ignores_case(_: &File) -> bool {
     false
 }
 
+/// Whether names on the volume of open directory `dir` match regardless of
+/// case: on Windows they do, as Win32 looks them up.
+#[cfg(windows)]
+pub(crate) fn ignores_case(_: &File) -> bool {
+    true
+}
+
 /// The identity of an open file.
+#[cfg(unix)]
 pub(crate) fn identity(file: &File) -> io::Result<Identity> {
     let metadata = file.metadata()?;
     Ok((metadata.dev(), metadata.ino()))
 }
+
+#[cfg(windows)]
+pub(crate) use crate::win::{identity, stat_at};
 
 /// What [`stat_at`] found.
 pub(crate) struct Stat {
@@ -870,7 +961,7 @@ pub(crate) fn stat_at(dir: &File, name: &OsStr) -> io::Result<Stat> {
 }
 
 /// The entry `name` in `dir`, without following a symlink.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[allow(clippy::unnecessary_cast)]
 pub(crate) fn stat_at(dir: &File, name: &OsStr) -> io::Result<Stat> {
     let c_name = CString::new(name.as_bytes())?;
@@ -908,7 +999,8 @@ pub(crate) fn is_absent(err: &io::Error) -> bool {
     matches!(
         err.kind(),
         io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-    ) || err.raw_os_error() == Some(libc::ELOOP)
+    ) || is_symlink_error(err)
+        || is_not_dir_error(err)
 }
 
 /// Display order: directories first, then by name ignoring case, with ties

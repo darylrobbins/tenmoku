@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The component cache compiles once per component, and trusts only entries that are ours.
+//!
+//! Unix only: on Windows nothing is trusted (`platform::owned_and_unshared`
+//! has no modes to check there), so every load compiles.
+#![cfg(unix)]
 
 use std::{
     fs::{self, File},

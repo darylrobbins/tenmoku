@@ -20,7 +20,7 @@ use crate::{
     ServerSpec, Severity, SystemClock,
 };
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 const ACTION: &str = "textDocument/codeAction";
 const RESOLVE: &str = "codeAction/resolve";
 const EXECUTE: &str = "workspace/executeCommand";

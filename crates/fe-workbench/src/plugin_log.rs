@@ -147,10 +147,15 @@ fn stamp(time: SystemTime) -> String {
     let seconds = libc::time_t::try_from(seconds).unwrap_or(libc::time_t::MAX);
     let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
     // SAFETY: `seconds` and `tm` are valid for the call.
-    if unsafe { libc::localtime_r(&seconds, tm.as_mut_ptr()) }.is_null() {
+    #[cfg(unix)]
+    let failed = unsafe { libc::localtime_r(&seconds, tm.as_mut_ptr()) }.is_null();
+    // SAFETY: as above; Windows' CRT has `localtime_s`, which returns 0 on success.
+    #[cfg(windows)]
+    let failed = unsafe { libc::localtime_s(tm.as_mut_ptr(), &seconds) } != 0;
+    if failed {
         return String::from("1970-01-01 00:00:00");
     }
-    // SAFETY: `localtime_r` succeeded, so it filled `tm`.
+    // SAFETY: the call succeeded, so it filled `tm`.
     let tm = unsafe { tm.assume_init() };
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",

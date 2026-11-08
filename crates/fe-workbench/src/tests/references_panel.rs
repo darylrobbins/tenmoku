@@ -30,7 +30,7 @@ use crate::{
 /// A project of `files`, and its root, resolved as the watcher reports it.
 pub(super) fn project(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     for (rel, text) in files {
         let path = root.join(rel);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -595,7 +595,7 @@ fn a_new_run_cancels_the_old(cx: &mut TestAppContext) {
 
     // Their paths are the old root's: a new root drops them.
     let other = tempfile::tempdir().unwrap();
-    let new_root = fs::canonicalize(other.path()).unwrap();
+    let new_root = dunce::canonicalize(other.path()).unwrap();
     workbench.update_in(cx, |workbench, window, cx| {
         workbench.set_root(new_root, window, cx)
     });

@@ -19,6 +19,7 @@ name = "mac_speller"
 harness = false
 
 [dependencies]
+dunce.workspace = true
 async-channel.workspace = true
 base64.workspace = true
 fe-buffer.workspace = true
@@ -50,6 +51,22 @@ velopack.workspace = true
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSImage", "NSResponder", "NSSpellChecker", "NSTextCheckingClient"] }
 objc2-foundation = { version = "0.2", features = ["NSArray", "NSBundle", "NSData", "NSDate", "NSDictionary", "NSUserDefaults", "NSValue", "NSObjCRuntime", "NSRange", "NSOrthography", "NSString", "NSTextCheckingResult", "NSThread"] }
+
+# `--perf`'s memory and CPU time (src/perf.rs), and the console a launch from a
+# terminal writes to (src/windows_console.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
+
+# The app icon, embedded in the Windows executable (build.rs; already in the
+# lock through GPUI).
+[build-dependencies]
+embed-resource = "3"
 
 [dev-dependencies]
 fe-command.workspace = true

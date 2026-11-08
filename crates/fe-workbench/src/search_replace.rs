@@ -105,7 +105,7 @@ impl Boundary {
     #[cfg(unix)]
     pub(crate) fn of(root: &Path) -> io::Result<Boundary> {
         use std::os::unix::fs::MetadataExt as _;
-        let resolved = std::fs::canonicalize(root)?;
+        let resolved = dunce::canonicalize(root)?;
         let metadata = std::fs::metadata(&resolved)?;
         Ok(Boundary {
             root: root.to_owned(),
@@ -114,7 +114,18 @@ impl Boundary {
         })
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    pub(crate) fn of(root: &Path) -> io::Result<Boundary> {
+        let resolved = dunce::canonicalize(root)?;
+        let folder = fe_project::beneath::open_folder(&resolved)?;
+        Ok(Boundary {
+            root: root.to_owned(),
+            id: fe_project::beneath::identity(&folder)?,
+            resolved,
+        })
+    }
+
+    #[cfg(not(any(unix, windows)))]
     pub(crate) fn of(_: &Path) -> io::Result<Boundary> {
         Err(io::ErrorKind::Unsupported.into())
     }
@@ -377,7 +388,38 @@ fn open_folder_beneath(boundary: &Boundary, rel: &Path) -> Result<File, String> 
     Ok(at)
 }
 
-#[cfg(not(unix))]
+/// [`open_folder_beneath`] on Windows: the folder from its volume's root a
+/// component at a time, then each folder on the way, following no symlink
+/// or junction (fe-project's `beneath`).
+#[cfg(windows)]
+fn open_folder_beneath(boundary: &Boundary, rel: &Path) -> Result<File, String> {
+    use fe_project::beneath;
+    use std::path::Component;
+
+    const MOVED: &str = "the project folder has moved";
+    let root = beneath::open_folder(&boundary.resolved).map_err(|_| MOVED.to_owned())?;
+    if beneath::identity(&root).ok() != Some(boundary.id) {
+        return Err(MOVED.into());
+    }
+    let mut at = root;
+    for name in rel.components() {
+        let Component::Normal(name) = name else {
+            return Err("it isn't in the project".into());
+        };
+        at = beneath::open_folder_in(&at, name).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                "it no longer exists".into()
+            } else if beneath::is_link_or_not_folder(&error) {
+                "it's no longer in the project".into()
+            } else {
+                format!("can't read it: {error}")
+            }
+        })?;
+    }
+    Ok(at)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn open_folder_beneath(_: &Boundary, _: &Path) -> Result<File, String> {
     Err("can't check it on this system".into())
 }
@@ -414,7 +456,26 @@ fn open_in(folder: &File, name: &OsStr) -> Result<File, String> {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn open_in(folder: &File, name: &OsStr) -> Result<File, String> {
+    use fe_project::beneath;
+    let file = beneath::open_file_in(folder, name).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            "it no longer exists".into()
+        } else if beneath::is_link_or_not_folder(&error) {
+            "it's no longer a regular file".into()
+        } else {
+            format!("can't read it: {error}")
+        }
+    })?;
+    match file.metadata() {
+        Ok(metadata) if metadata.is_file() => Ok(file),
+        Ok(_) => Err("it's no longer a regular file".into()),
+        Err(error) => Err(format!("can't read it: {error}")),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn open_in(_: &File, _: &OsStr) -> Result<File, String> {
     Err("can't check it on this system".into())
 }
@@ -575,7 +636,79 @@ fn write_beneath(
     Ok(written)
 }
 
-#[cfg(not(unix))]
+/// [`write_beneath`] on Windows, through fe-project's `beneath`: the same
+/// steps and checks, but the new file keeps no permissions of the old one
+/// (Windows has no mode to copy; a read-only file stays unwritten).
+#[cfg(windows)]
+fn write_beneath(
+    boundary: &Boundary,
+    rel: &Path,
+    snapshot: &SaveSnapshot,
+    read_stamp: DiskStamp,
+) -> Result<DiskStamp, String> {
+    use fe_project::beneath;
+    use std::{
+        ffi::OsString,
+        io::Write as _,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static TEMPS: AtomicU64 = AtomicU64::new(0);
+    let (folder_rel, name) = split(rel)?;
+    let folder = open_folder_beneath(boundary, folder_rel)?;
+    let as_read = |folder: &File| -> Result<(), String> {
+        let metadata = open_in(folder, name)?
+            .metadata()
+            .map_err(|error| format!("can't read it: {error}"))?;
+        match DiskStamp::from_metadata(&metadata) {
+            Ok(stamp) if stamp == read_stamp => Ok(()),
+            _ => Err("it changed on disk since it was read".into()),
+        }
+    };
+    as_read(&folder)?;
+
+    let mut temp_name = OsString::from(".");
+    temp_name.push(name);
+    temp_name.push(format!(
+        ".replace-{}-{}",
+        std::process::id(),
+        TEMPS.fetch_add(1, Ordering::Relaxed)
+    ));
+    let temp = beneath::create_new_in(&folder, &temp_name)
+        .map_err(|error| format!("not saved: {error}"))?;
+    let remove_temp = |why: String| {
+        beneath::remove_file_in(&folder, &temp_name).ok();
+        why
+    };
+    let written = (|| {
+        let mut out = io::BufWriter::new(&temp);
+        snapshot.write_to(&mut out)?;
+        out.flush()?;
+        drop(out);
+        temp.sync_all()?;
+        DiskStamp::from_metadata(&temp.metadata()?)
+    })()
+    .map_err(|error| remove_temp(format!("not saved: {error}")))?;
+    drop(temp);
+
+    #[cfg(test)]
+    tests::write_hook(tests::WriteStage::BeforeRename, rel);
+    // Right before the rename: still the folder beneath the project, and
+    // still the file read.
+    let again = open_folder_beneath(boundary, folder_rel).map_err(remove_temp)?;
+    let folder_id = beneath::identity(&folder).ok();
+    if folder_id.is_none() || folder_id != beneath::identity(&again).ok() {
+        return Err(remove_temp("it's no longer in the project".into()));
+    }
+    as_read(&folder).map_err(remove_temp)?;
+    beneath::rename_replacing_in(&folder, &temp_name, name)
+        .map_err(|error| remove_temp(format!("not saved: {error}")))?;
+    #[cfg(test)]
+    tests::write_hook(tests::WriteStage::AfterRename, rel);
+    Ok(written)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn write_beneath(
     _: &Boundary,
     _: &Path,

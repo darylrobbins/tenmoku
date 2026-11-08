@@ -651,8 +651,35 @@ fn print_memory(when: &str, file_bytes: usize) {
     );
 }
 
+/// On Windows, the working set and its peak.
+#[cfg(windows)]
+fn print_memory(when: &str, file_bytes: usize) {
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: the pseudo-handle is always valid and `counters` is valid for
+    // writes of the size given.
+    let ok = unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
+    if ok == 0 {
+        say!("memory {when}: unavailable");
+        return;
+    }
+    let mb = |bytes: u64| bytes as f64 / (1024. * 1024.);
+    say!(
+        "memory {when}: working set {:.0} MB, peak {:.0} MB; file {:.0} MB",
+        mb(counters.WorkingSetSize as u64),
+        mb(counters.PeakWorkingSetSize as u64),
+        mb(file_bytes as u64),
+    );
+}
+
 /// Elsewhere only the resident peak from `getrusage` is reported.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn print_memory(when: &str, file_bytes: usize) {
     // SAFETY: `getrusage` fills in the struct it's given.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
@@ -666,7 +693,26 @@ fn print_memory(when: &str, file_bytes: usize) {
     );
 }
 
+/// User plus kernel CPU time used by this process so far.
+#[cfg(windows)]
+fn cpu_time() -> Duration {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    let mut times = [FILETIME::default(); 4];
+    let [creation, exit, kernel, user] = &mut times;
+    // SAFETY: the pseudo-handle is always valid and each time is valid for
+    // writes.
+    if unsafe { GetProcessTimes(GetCurrentProcess(), creation, exit, kernel, user) } == 0 {
+        return Duration::ZERO;
+    }
+    // In 100 ns units.
+    let ticks =
+        |time: &FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+}
+
 /// User plus system CPU time used by this process so far.
+#[cfg(unix)]
 fn cpu_time() -> Duration {
     // SAFETY: `getrusage` fills in the struct it's given.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };

@@ -30,6 +30,7 @@ fn hold_save(rel: &str) -> async_channel::Sender<()> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WriteStage {
     /// The new file is written beside it, not yet renamed over it.
+    #[cfg_attr(not(unix), allow(dead_code))]
     BeforeRename,
     /// It's renamed over it, and its stamp taken.
     AfterRename,
@@ -50,6 +51,7 @@ fn on_write(hook: impl FnMut(WriteStage, &Path) + 'static) {
 }
 
 /// Runs the hook [`on_write`] set, if any.
+#[cfg(any(unix, windows))]
 pub(super) fn write_hook(stage: WriteStage, rel: &Path) {
     WRITE_HOOK.with(|slot| {
         if let Some(hook) = slot.borrow_mut().as_mut() {
@@ -416,6 +418,7 @@ fn per_file_and_dismiss(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn stale_and_errors(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -586,6 +589,7 @@ fn byte_regex_matches_inside_a_char(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn swapped_files_are_skipped(cx: &mut TestAppContext) {
     let dir = project(&[
         ("a.rs", b"foo a\n"),
@@ -895,6 +899,7 @@ fn an_opening_slower_than_five_seconds_is_waited_for(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_moved_project_folder_is_skipped(cx: &mut TestAppContext) {
     // The project folder's path is a symlink to another folder with the
     // same files since the search.
@@ -918,6 +923,7 @@ fn a_moved_project_folder_is_skipped(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn swaps_between_reading_and_saving_are_skipped(cx: &mut TestAppContext) {
     let dir = project(&[
         ("a.rs", b"foo a\n"),
@@ -973,6 +979,7 @@ fn seeding_runs_an_unsubmitted_query(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_folder_swapped_during_the_write_is_refused(cx: &mut TestAppContext) {
     // Once sub/c.rs is written beside itself and checked, sub moves out of
     // the project and a symlink to it takes its place: the rename into it
@@ -1133,6 +1140,7 @@ fn a_binary_editor_opened_during_the_save_is_named(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_folder_above_the_project_swapped_during_the_write_is_refused(cx: &mut TestAppContext) {
     // Once b.rs is written beside itself, the folder holding the project
     // moves out, and a symlink to it takes its place: the project's path
@@ -1175,6 +1183,7 @@ fn a_folder_above_the_project_swapped_during_the_write_is_refused(cx: &mut TestA
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_project_beneath_a_folder_that_can_only_be_searched(cx: &mut TestAppContext) {
     // A folder above the project can be passed through but not listed. On
     // macOS the search reaches the project through it (`O_SEARCH`), so the

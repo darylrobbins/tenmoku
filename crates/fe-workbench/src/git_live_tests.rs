@@ -3,6 +3,9 @@
 //! open editors' diff bases, on repositories built with the `git` CLI in
 //! temporary directories.
 
+// What only its Unix tests use goes unused elsewhere.
+#![cfg_attr(not(unix), allow(unused_imports))]
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -415,6 +418,7 @@ fn git_refresh_reloads_the_open_editors_bases(cx: &mut TestAppContext) {
 /// A repository whose `sub/c.rs` is modified and `sub/d.rs` deleted, and
 /// whose `a.rs` is modified and `b.rs` deleted, with `link` a symlink to
 /// `sub`.
+#[cfg(unix)]
 fn nested() -> tempfile::TempDir {
     let dir = repo(&["a.rs", "b.rs", "sub/c.rs", "sub/d.rs"]);
     std::os::unix::fs::symlink("sub", dir.path().join("link")).unwrap();
@@ -426,6 +430,7 @@ fn nested() -> tempfile::TempDir {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_root_through_dot_dot_lists_its_changes(cx: &mut TestAppContext) {
     let dir = nested();
     let root = dir.path().join("sub/..");
@@ -449,6 +454,7 @@ fn a_root_through_dot_dot_lists_its_changes(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_root_through_a_symlink_in_the_repository_lists_its_changes(cx: &mut TestAppContext) {
     let dir = nested();
     let root = dir.path().join("link");
@@ -470,6 +476,7 @@ fn a_root_through_a_symlink_in_the_repository_lists_its_changes(cx: &mut TestApp
 }
 
 /// A repository with `a.rs` modified, opened through a symlink to it.
+#[cfg(unix)]
 fn aliased() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let real = dir.path().join("real");
@@ -481,7 +488,7 @@ fn aliased() -> (tempfile::TempDir, PathBuf, PathBuf) {
     write(&real, "a.rs", "changed\n");
     let link = dir.path().join("link");
     std::os::unix::fs::symlink(&real, &link).unwrap();
-    (dir, real.canonicalize().unwrap(), link)
+    (dir, dunce::canonicalize(&real).unwrap(), link)
 }
 
 fn set_statuses(panel: &Entity<GitPanel>, statuses: Vec<FileStatus>, cx: &mut VisualTestContext) {
@@ -489,6 +496,7 @@ fn set_statuses(panel: &Entity<GitPanel>, statuses: Vec<FileStatus>, cx: &mut Vi
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn statuses_given_before_the_panel_shows_still_let_it_read(cx: &mut TestAppContext) {
     let (dir, real, link) = aliased();
     let added = FileStatus {
@@ -516,6 +524,7 @@ fn statuses_given_before_the_panel_shows_still_let_it_read(cx: &mut TestAppConte
 /// runs for it, the first its tree's opening starts, wait for
 /// [`GitPanel::release_runs`] once they've read the status; and that
 /// panel.
+#[cfg(unix)]
 fn open_held<'a>(
     cx: &'a mut TestAppContext,
     first: &Path,
@@ -543,6 +552,7 @@ fn open_held<'a>(
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn statuses_given_while_the_panel_first_reads_list_once_it_has(cx: &mut TestAppContext) {
     let (dir, real, link) = aliased();
     let (_workbench, cx, panel) = open_held(cx, dir.path(), &link, |_, _| {});
@@ -670,6 +680,7 @@ fn binary_new_files_have_no_base(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_file_in_a_deleted_directory_through_an_aliased_root_keeps_its_head_text(
     cx: &mut TestAppContext,
 ) {
@@ -747,6 +758,7 @@ fn a_file_ignored_since_the_last_refresh_has_no_base(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_file_through_a_symlink_whose_target_is_gone_keeps_its_head_text(cx: &mut TestAppContext) {
     let dir = repo(&["sub/deep/x.rs"]);
     std::os::unix::fs::symlink("sub", dir.path().join("link")).unwrap();

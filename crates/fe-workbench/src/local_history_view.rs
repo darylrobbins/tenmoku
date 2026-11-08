@@ -53,22 +53,52 @@ pub(super) fn stamp(time: SystemTime) -> String {
     let seconds = time
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
+    local_stamp(seconds).unwrap_or_else(|| String::from("1970-01-01 00:00"))
+}
+
+#[cfg(unix)]
+fn local_stamp(seconds: u64) -> Option<String> {
     let seconds = libc::time_t::try_from(seconds).unwrap_or(libc::time_t::MAX);
     let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
     // SAFETY: `seconds` and `tm` are valid for the call.
     if unsafe { libc::localtime_r(&seconds, tm.as_mut_ptr()) }.is_null() {
-        return String::from("1970-01-01 00:00");
+        return None;
     }
     // SAFETY: `localtime_r` succeeded, so it filled `tm`.
     let tm = unsafe { tm.assume_init() };
-    format!(
+    Some(format!(
         "{:04}-{:02}-{:02} {:02}:{:02}",
         i64::from(tm.tm_year) + 1900,
         tm.tm_mon + 1,
         tm.tm_mday,
         tm.tm_hour,
         tm.tm_min,
-    )
+    ))
+}
+
+/// The C runtime's `localtime_s`, Windows' `localtime_r`.
+#[cfg(windows)]
+fn local_stamp(seconds: u64) -> Option<String> {
+    let seconds = i64::try_from(seconds).unwrap_or(i64::MAX);
+    let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
+    unsafe extern "C" {
+        #[link_name = "_localtime64_s"]
+        fn localtime_s(tm: *mut libc::tm, time: *const i64) -> libc::c_int;
+    }
+    // SAFETY: `seconds` and `tm` are valid for the call.
+    if unsafe { localtime_s(tm.as_mut_ptr(), &seconds) } != 0 {
+        return None;
+    }
+    // SAFETY: `localtime_s` succeeded, so it filled `tm`.
+    let tm = unsafe { tm.assume_init() };
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        i64::from(tm.tm_year) + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+    ))
 }
 
 /// When `time` was, seen at `now`: how long ago under a day, else its

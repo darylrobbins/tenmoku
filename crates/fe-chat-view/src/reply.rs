@@ -728,8 +728,14 @@ fn link(dest: &str) -> Option<Link> {
                     .components()
                     .all(|part| matches!(part, Component::Normal(_))) =>
         {
+            // Joined with `/` as the reply wrote it, on Windows too.
+            let path = path
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             Some(Link::Path {
-                path: path.to_string_lossy().into_owned(),
+                path,
                 row: line.map(|line| line + 1),
             })
         }
@@ -880,7 +886,9 @@ mod tests {
         assert_eq!(link("src/lib.rs#L12C3"), path("src/lib.rs", Some(12)));
         assert_eq!(link("./src/a%20b.rs"), path("src/a b.rs", None));
         assert_eq!(link("src/../Cargo.toml"), path("Cargo.toml", None));
-        // A colon past the first path component isn't a scheme.
+        // A colon past the first path component isn't a scheme. (Windows
+        // names can't hold one.)
+        #[cfg(unix)]
         assert_eq!(link("src/a:b.rs"), path("src/a:b.rs", None));
         for nowhere in [
             "mailto:a@example.com",

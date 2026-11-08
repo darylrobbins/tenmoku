@@ -1,3 +1,5 @@
+// Its programs are shell scripts made executable by mode.
+#![cfg(unix)]
 // SPDX-License-Identifier: Apache-2.0
 
 //! Everything a program run does before its launch stops at the end of the call's program share:

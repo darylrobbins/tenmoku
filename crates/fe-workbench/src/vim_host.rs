@@ -43,7 +43,9 @@
 //! `:qa` closes; the app quits only when its last window has gone, as
 //! fastedit does when any last window closes.
 
+#[cfg(unix)]
 use std::ffi::OsStr;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 
@@ -740,6 +742,16 @@ pub(super) fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, Stri
         Ok(_) => Err(cant(&format!("{} is not a directory", at.display()))),
         Err(error) => Err(cant(&format!("{}: {error}", at.display()))),
     };
+    walk_segments(&joined, directory, |error| cant(&error))
+}
+
+/// [`resolve`]'s walk of `joined`, a segment at a time.
+#[cfg(unix)]
+fn walk_segments(
+    joined: &Path,
+    directory: impl Fn(&Path) -> Result<(), String>,
+    cant: impl Fn(std::io::Error) -> String,
+) -> Result<PathBuf, String> {
     let bytes = joined.as_os_str().as_bytes();
     let mut segments = bytes.split(|byte| *byte == b'/').peekable();
     let mut resolved = PathBuf::new();
@@ -758,7 +770,7 @@ pub(super) fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, Stri
             b"." => directory(&resolved)?,
             b".." => {
                 directory(&resolved)?;
-                let real = std::fs::canonicalize(&resolved).map_err(|e| cant(&e))?;
+                let real = dunce::canonicalize(&resolved).map_err(&cant)?;
                 resolved = real;
                 resolved.pop();
             }
@@ -768,13 +780,56 @@ pub(super) fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, Stri
     Ok(resolved)
 }
 
+/// [`resolve`]'s walk of `joined` on Windows, where `/` and `\` both
+/// separate and a path starts with its volume (`C:\`). `..` follows the
+/// filesystem as on Unix: the real path of what comes before it.
+#[cfg(windows)]
+fn walk_segments(
+    joined: &Path,
+    directory: impl Fn(&Path) -> Result<(), String>,
+    cant: impl Fn(std::io::Error) -> String,
+) -> Result<PathBuf, String> {
+    use std::path::Component;
+
+    let mut resolved = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => resolved.push(component.as_os_str()),
+            Component::CurDir => directory(&resolved)?,
+            Component::ParentDir => {
+                directory(&resolved)?;
+                let real = dunce::canonicalize(&resolved).map_err(&cant)?;
+                resolved = strip_verbatim(real);
+                resolved.pop();
+            }
+            Component::Normal(name) => resolved.push(name),
+        }
+    }
+    // A trailing separator: what it ends must be a folder.
+    let text = joined.as_os_str().to_string_lossy();
+    if (text.ends_with('/') || text.ends_with('\\')) && resolved.parent().is_some() {
+        directory(&resolved)?;
+    }
+    Ok(resolved)
+}
+
+/// `path` without the `\\?\` that `canonicalize` gives on Windows, where
+/// it's a plain drive path.
+#[cfg(windows)]
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
 /// Where `path` is, whatever its symlinks are spelled like: its real path,
 /// or its real folder's with its own name while the file is missing.
 pub(super) fn identity(path: &Path) -> Option<PathBuf> {
-    match std::fs::canonicalize(path) {
+    match dunce::canonicalize(path) {
         Ok(real) => Some(real),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(
-            std::fs::canonicalize(path.parent()?)
+            dunce::canonicalize(path.parent()?)
                 .ok()?
                 .join(path.file_name()?),
         ),

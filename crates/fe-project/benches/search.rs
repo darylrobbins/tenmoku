@@ -100,7 +100,7 @@ fn run(root: &Path, query: &SearchQuery) -> SearchSummary {
 
 fn benches(c: &mut Criterion) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     generate(&root);
 
     let rare = SearchQuery::literal("rare_needle_token");

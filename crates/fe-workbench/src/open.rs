@@ -113,7 +113,7 @@ pub enum DocumentRoute {
 /// `path` with symlinks resolved as far as it exists, so a missing file
 /// compares by its folder.
 fn resolved(path: &Path) -> PathBuf {
-    if let Ok(real) = fs::canonicalize(path) {
+    if let Ok(real) = dunce::canonicalize(path) {
         return real;
     }
     match (path.parent(), path.file_name()) {

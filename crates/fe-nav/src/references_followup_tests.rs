@@ -3,13 +3,9 @@
 //! cancel however long its word, and the search never reads through a
 //! directory swapped for a symlink.
 
-use std::{
-    cell::Cell,
-    fs,
-    path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Instant,
-};
+#[cfg(unix)]
+use std::sync::atomic::Ordering;
+use std::{cell::Cell, fs, path::PathBuf, sync::atomic::AtomicBool, time::Instant};
 
 use fe_buffer::Text;
 
@@ -190,9 +186,11 @@ fn a_cancel_among_overlapping_rejected_candidates_is_prompt() {
 /// preview comes from the outside files, whose lines say so. The directory
 /// holds many files, so swaps land while the search reads them.
 #[test]
+// Swaps a folder for a symlink, which Windows makes only with a privilege.
+#[cfg(unix)]
 fn no_preview_is_read_through_a_directory_being_swapped() {
     let dir = tempfile::tempdir().unwrap();
-    let dir = fs::canonicalize(dir.path()).unwrap();
+    let dir = dunce::canonicalize(dir.path()).unwrap();
     let (root, outside) = (dir.join("project"), dir.join("outside"));
     // In code inside, in a comment outside: a verified hit read from
     // outside would be dropped.

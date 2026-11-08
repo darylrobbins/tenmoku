@@ -4,12 +4,16 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 
 use fe_config::paths::{state_dir_from, trust_path};
-use fe_config::trust::{Trust, TrustStore, canonical};
+#[cfg(unix)]
+use fe_config::trust::canonical;
+use fe_config::trust::{Trust, TrustStore};
 
+#[cfg(unix)]
 fn mode(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
@@ -46,6 +50,7 @@ fn nearest_decision_wins() {
 }
 
 #[test]
+#[cfg(unix)]
 fn persists_across_loads() {
     let temp = tempfile::tempdir().unwrap();
     let base = canonical(temp.path());
@@ -104,10 +109,15 @@ fn bad_files_fail_closed() {
 
 #[test]
 fn state_dir_resolution() {
+    // `/state/fe` isn't absolute on Windows, which wants a drive.
+    let abs = |path: &str| match path.strip_prefix('/') {
+        Some(_) if cfg!(windows) => PathBuf::from(format!("C:{path}")),
+        _ => PathBuf::from(path),
+    };
     let resolve = |vars: &[(&str, &str)]| {
         let vars: HashMap<String, OsString> = vars
             .iter()
-            .map(|&(name, value)| (name.to_owned(), value.into()))
+            .map(|&(name, value)| (name.to_owned(), abs(value).into_os_string()))
             .collect();
         state_dir_from(|name| vars.get(name).cloned())
     };
@@ -116,26 +126,26 @@ fn state_dir_resolution() {
         ("XDG_STATE_HOME", "/xdg"),
         ("HOME", "/home/u"),
     ];
-    assert_eq!(resolve(&all), Some(PathBuf::from("/state/fe")));
-    assert_eq!(resolve(&all[1..]), Some(PathBuf::from("/xdg/tenmoku")));
+    assert_eq!(resolve(&all), Some(abs("/state/fe")));
+    assert_eq!(resolve(&all[1..]), Some(abs("/xdg/tenmoku")));
     assert_eq!(
         resolve(&all[2..]),
-        Some(PathBuf::from("/home/u/.local/state/tenmoku"))
+        Some(abs("/home/u/.local/state/tenmoku"))
     );
     assert_eq!(resolve(&[]), None);
 
     // Empty variables, and a relative XDG_STATE_HOME, count as unset.
     assert_eq!(
         resolve(&[("TENMOKU_STATE_DIR", ""), ("XDG_STATE_HOME", "/xdg")]),
-        Some(PathBuf::from("/xdg/tenmoku"))
+        Some(abs("/xdg/tenmoku"))
     );
     assert_eq!(
         resolve(&[("XDG_STATE_HOME", "relative"), ("HOME", "/home/u")]),
-        Some(PathBuf::from("/home/u/.local/state/tenmoku"))
+        Some(abs("/home/u/.local/state/tenmoku"))
     );
     assert_eq!(
         resolve(&[("XDG_STATE_HOME", ""), ("HOME", "/home/u")]),
-        Some(PathBuf::from("/home/u/.local/state/tenmoku"))
+        Some(abs("/home/u/.local/state/tenmoku"))
     );
     assert_eq!(resolve(&[("HOME", "")]), None);
 

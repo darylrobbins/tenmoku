@@ -34,7 +34,7 @@
 //!   goes back to the filtered settings, which are also the ones
 //!   workbenches opened later start with.
 //! - **Paths.** The root and each file go to the manager resolved
-//!   ([`fs::canonicalize`], off the main thread: a file fully, so its own
+//!   ([`dunce::canonicalize`], off the main thread: a file fully, so its own
 //!   symlink is followed; only a file that doesn't exist yet is resolved
 //!   by its folder, so a new file works too), so a launch through `..`,
 //!   which fe-lsp refuses, or a symlink still syncs, and a file is under
@@ -1034,7 +1034,7 @@ impl Workbench {
         // Resolved first, off this thread: the buffers wait for it.
         let generation = lsp.generation;
         let resolved = cx.background_spawn(async move {
-            let resolved = fs::canonicalize(&root);
+            let resolved = dunce::canonicalize(&root);
             (root, resolved)
         });
         lsp._root = Some(cx.spawn(async move |workbench, cx| {
@@ -1750,7 +1750,7 @@ impl Workbench {
         lsp.root_save_pending = false;
         let generation = lsp.generation;
         let path = root.clone();
-        let resolved = cx.background_spawn(async move { fs::canonicalize(&path) });
+        let resolved = cx.background_spawn(async move { dunce::canonicalize(&path) });
         lsp._root = Some(cx.spawn(async move |workbench, cx| {
             let resolved = resolved.await;
             workbench
@@ -2514,10 +2514,10 @@ fn diagnostic(item: fe_lsp::Diagnostic) -> (std::ops::Range<usize>, Diagnostic) 
 /// doesn't exist yet is resolved by its folder.
 pub(crate) fn resolve(path: &Path) -> Option<PathBuf> {
     match fs::symlink_metadata(path) {
-        Ok(_) => fs::canonicalize(path).ok(),
+        Ok(_) => dunce::canonicalize(path).ok(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let name = path.file_name()?;
-            let folder = fs::canonicalize(path.parent()?).ok()?;
+            let folder = dunce::canonicalize(path.parent()?).ok()?;
             Some(folder.join(name))
         }
         Err(_) => None,

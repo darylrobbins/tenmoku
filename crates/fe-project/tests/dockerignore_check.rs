@@ -113,8 +113,14 @@ fn container_files_share_the_rules() {
 
 #[test]
 fn double_star_without_a_slash_is_a_run_of_characters() {
-    let dir = project(&["top.log", "a/b/deep.log", "padded ", "x/barfoo"]);
-    let report = check(dir.path(), "**.log\n**foo\npadded[ ]\n");
+    // Windows drops a name's trailing space, so there the class pads its start.
+    let (padded, class) = if cfg!(windows) {
+        (" padded", "[ ]padded")
+    } else {
+        ("padded ", "padded[ ]")
+    };
+    let dir = project(&["top.log", "a/b/deep.log", padded, "x/barfoo"]);
+    let report = check(dir.path(), &format!("**.log\n**foo\n{class}\n"));
     assert_eq!(report.matches[0].total, 2);
     assert_eq!(report.matches[1].total, 1);
     assert_eq!(report.matches[2].total, 1);

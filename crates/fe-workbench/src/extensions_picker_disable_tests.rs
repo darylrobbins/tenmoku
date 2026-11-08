@@ -4,7 +4,9 @@
 //! which asks about each waiting or declined server in turn through the
 //! consent prompt, or shows a row's details.
 
-use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::{fs, path::Path};
 
 use fe_lsp::ServerSpec;
 use gpui::{Focusable as _, TestAppContext, VisualTestContext};
@@ -75,7 +77,7 @@ fn server(dir: &Path, name: &str, spec: ServerSpec) -> ExtensionServer {
         extension_name: name[..1].to_uppercase() + &name[1..],
         extension_version: "1.2.3".into(),
         extension_license: "MIT".into(),
-        extension_dir: dir.join("extensions").join(name).canonicalize().unwrap(),
+        extension_dir: dunce::canonicalize(dir.join("extensions").join(name)).unwrap(),
         spec: ServerSpec {
             languages: vec!["zig".into()],
             ..spec
@@ -293,6 +295,7 @@ fn a_picker_prompt_is_the_only_one_for_its_server(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn servers_show_by_extension_with_what_they_run(cx: &mut TestAppContext) {
     let (host, _sender) = host(cx, &["zls"], Some("zls"));
     let (workbench, mut cx) = workbench(&host, cx);
@@ -367,10 +370,21 @@ fn enter_on_any_other_row_shows_all_of_it(cx: &mut TestAppContext) {
     let lines: Vec<&str> = detail.lines().collect();
     assert!(lines.contains(&"State: Active"), "{detail}");
     assert!(lines.contains(&"Contributes: 2 lsp servers"), "{detail}");
-    let first = format!("  zls: /opt/zls/bin/zls {} (granted)", long.join(" "));
+    let shown = |command: &str| crate::tests::rooted(command).display().to_string();
+    let first = format!(
+        "  zls: {} {} (granted)",
+        shown("/opt/zls/bin/zls"),
+        long.join(" ")
+    );
     assert!(lines.contains(&first.as_str()), "{detail}");
     assert!(
-        lines.contains(&"  zls_two: /opt/zls_two/bin/zls_two --stdio (granted)"),
+        lines.contains(
+            &format!(
+                "  zls_two: {} --stdio (granted)",
+                shown("/opt/zls_two/bin/zls_two")
+            )
+            .as_str()
+        ),
         "{detail}"
     );
     answer(&mut cx, "OK");

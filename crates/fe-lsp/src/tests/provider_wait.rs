@@ -19,7 +19,7 @@ use crate::fake::{
 use crate::rename::RenameTarget;
 use crate::{LspError, LspEvent, LspManager, LspNavigation, ManualClock, ServerId, ServerSpec};
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 const TEXT: &str = "fn helper() {}\n";
 /// How long the fake holds `initialize`.
 const DELAY: Duration = Duration::from_secs(1);

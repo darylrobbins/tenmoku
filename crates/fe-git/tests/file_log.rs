@@ -65,7 +65,7 @@ mod file_log {
     /// a.rs (c1), edited (c2), c.rs, git mv'd to b.rs with an edit (c3), b.rs edited (c4).
     fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         git(&root, &["init", "-q"]);
         let c1 = commit(&root, "a.rs", BODY, "C1");
         let c2 = commit(&root, "a.rs", &format!("{BODY}iota\n"), "C2");
@@ -114,7 +114,7 @@ mod file_log {
         );
 
         let unborn = tempfile::tempdir().unwrap();
-        let unborn_root = unborn.path().canonicalize().unwrap();
+        let unborn_root = dunce::canonicalize(unborn.path()).unwrap();
         git(&unborn_root, &["init", "-q"]);
         let repo = Repo::discover(&unborn_root).unwrap().expect("a repository");
         assert!(
@@ -167,7 +167,7 @@ mod file_log {
     #[test]
     fn blame_follows_a_pure_rename() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         git(&root, &["init", "-q"]);
         let first = commit(&root, "a.rs", BODY, "First");
         git(&root, &["mv", "a.rs", "b.rs"]);
@@ -184,7 +184,7 @@ mod file_log {
     #[test]
     fn blame_normalizes_the_path() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         git(&root, &["init", "-q"]);
         fs::create_dir(root.join("dir")).unwrap();
         let id = commit(&root, "dir/a.rs", BODY, "First");

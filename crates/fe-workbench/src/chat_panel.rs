@@ -256,7 +256,7 @@ pub(crate) fn chats_dir(state_dir: &Path, root: Option<&Path>) -> PathBuf {
 
 /// `root` with its symlinks resolved, or as it is if that fails.
 fn canonical_root(root: &Path) -> PathBuf {
-    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned())
+    dunce::canonicalize(root).unwrap_or_else(|_| root.to_owned())
 }
 
 /// The chats directory of the folder at `canonical`, which is worked out
@@ -1927,14 +1927,7 @@ fn selection_or_row(root: Option<&Path>, model: &EditorModel) -> Option<ContextI
     if range.is_empty() || range.len() > MAX_FILE {
         return None;
     }
-    let path = match model.path() {
-        Some(path) => root
-            .and_then(|root| path.strip_prefix(root).ok())
-            .unwrap_or(path)
-            .display()
-            .to_string(),
-        None => "untitled".to_owned(),
-    };
+    let path = chat_context::shown_path(root, model.path());
     let rows = Rows {
         first: first + 1,
         last: last + 1,

@@ -101,6 +101,23 @@ pub struct AppPaths {
     cache: Option<PathBuf>,
 }
 
+/// Whether `path` is absolute on `os`, whatever this machine is: `/a` on
+/// macOS and Linux; `C:\a`, `C:/a` or `\\host\share` on Windows.
+fn is_absolute_on(os: Os, path: &Path) -> bool {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    let separator = |byte: Option<&u8>| matches!(byte, Some(b'/' | b'\\'));
+    match os {
+        Os::MacOs | Os::Linux => bytes.first() == Some(&b'/'),
+        Os::Windows => {
+            let drive = bytes.first().is_some_and(u8::is_ascii_alphabetic)
+                && bytes.get(1) == Some(&b':')
+                && separator(bytes.get(2));
+            let unc = separator(bytes.first()) && separator(bytes.get(1));
+            drive || unc
+        }
+    }
+}
+
 impl AppPaths {
     /// The directories from the process environment, on this platform.
     pub fn new(id: &AppId, style: PathStyle) -> Self {
@@ -126,10 +143,14 @@ impl AppPaths {
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
         };
-        let home = var("HOME");
+        // Windows seldom sets `HOME`: its home is `USERPROFILE`.
+        let home = var("HOME").or_else(|| match os {
+            Os::Windows => var("USERPROFILE"),
+            Os::MacOs | Os::Linux => None,
+        });
         let xdg = |name: &str, fallback: &[&str]| {
             var(name)
-                .filter(|dir| dir.is_absolute())
+                .filter(|dir| is_absolute_on(os, dir))
                 .or_else(|| {
                     home.as_ref().map(|home| {
                         fallback

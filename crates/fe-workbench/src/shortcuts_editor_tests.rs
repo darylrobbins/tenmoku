@@ -48,7 +48,7 @@ struct Dirs {
 impl Dirs {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let config = fs::canonicalize(temp.path()).unwrap().join("config");
+        let config = dunce::canonicalize(temp.path()).unwrap().join("config");
         fs::create_dir_all(&config).unwrap();
         Self {
             _temp: temp,

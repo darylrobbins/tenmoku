@@ -6,7 +6,9 @@
 
 #[cfg(target_os = "linux")]
 use std::cell::Cell;
-use std::{cell::RefCell, fs, os::unix::fs::PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::{cell::RefCell, fs};
 
 use tempfile::TempDir;
 
@@ -86,14 +88,20 @@ thread_local! {
 
 fn temp() -> (TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let path = fs::canonicalize(dir.path()).unwrap();
+    let path = dunce::canonicalize(dir.path()).unwrap();
     (dir, path)
 }
 
+/// Gives folder `path` permissions `mode`: nothing on Windows, whose folders
+/// have none.
 fn set_mode(path: &Path, mode: u32) {
+    #[cfg(windows)]
+    let _ = (path, mode);
+    #[cfg(unix)]
     fs::set_permissions(path, Permissions::from_mode(mode)).unwrap();
 }
 
+#[cfg(unix)]
 fn mode(path: &Path) -> u32 {
     fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
 }
@@ -120,6 +128,7 @@ fn source(root: &Path) {
 
 /// Replaces folder `path` with a private one holding a file of its own,
 /// moving it to `moved`.
+#[cfg(unix)]
 fn replace_with_private(path: &Path, moved: &Path) {
     fs::rename(path, moved).unwrap();
     fs::create_dir(path).unwrap();
@@ -130,6 +139,7 @@ fn replace_with_private(path: &Path, moved: &Path) {
 // C1 (F11): a copy's folders replaced before they get their permissions.
 
 #[test]
+#[cfg(unix)]
 fn a_copy_whose_top_folder_is_replaced_leaves_the_replacement_as_it_is() {
     let (_dir, root) = temp();
     source(&root);
@@ -155,6 +165,7 @@ fn a_copy_whose_top_folder_is_replaced_leaves_the_replacement_as_it_is() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_copy_whose_child_folder_is_replaced_leaves_the_replacement_as_it_is() {
     let (_dir, root) = temp();
     source(&root);
@@ -298,6 +309,7 @@ fn a_trash_rollback_keeps_a_trashinfo_swapped_in() {
 // be it (review round 1, F1).
 
 #[test]
+#[cfg(unix)]
 fn cleanup_leaves_a_folder_swapped_in_after_its_check_as_it_is() {
     let (_dir, root) = temp();
     fs::create_dir(root.join("src")).unwrap();
@@ -338,6 +350,7 @@ fn cleanup_leaves_a_folder_swapped_in_after_its_check_as_it_is() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_closed_folder_swapped_after_its_check_keeps_its_permissions() {
     // SAFETY: always safe to call.
     if unsafe { libc::geteuid() } == 0 {

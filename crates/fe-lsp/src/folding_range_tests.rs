@@ -30,7 +30,7 @@ fn answer<T>(reply: impl Future<Output = T>) -> T {
     })
 }
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 
 struct Started {
     fake: FakeServer,

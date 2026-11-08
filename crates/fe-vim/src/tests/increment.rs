@@ -135,9 +135,28 @@ fn replay_extents_are_checked() {
     }
 }
 
+/// This thread's CPU cycles, counted as nanoseconds: the tests compare only
+/// ratios of these, and `QueryThreadCycleTime` counts every cycle the thread
+/// runs, where `GetThreadTimes` moves in 15.6 ms clock ticks.
+#[cfg(windows)]
+fn thread_cpu_time() -> std::time::Duration {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentThread() -> isize;
+        fn QueryThreadCycleTime(thread: isize, cycles: *mut u64) -> i32;
+    }
+    let mut cycles = 0;
+    // SAFETY: the pseudo-handle names this thread, and `cycles` is a valid,
+    // writable u64 for the call to fill in.
+    let ok = unsafe { QueryThreadCycleTime(GetCurrentThread(), &mut cycles) };
+    assert_ne!(ok, 0, "QueryThreadCycleTime failed");
+    std::time::Duration::from_nanos(cycles)
+}
+
 /// CPU time this thread has used. Unlike wall clock it doesn't grow while the thread is
 /// descheduled, which is what heavy machine load does to a timing: the 10x longer run is
 /// descheduled far more often than the short one, so a wall-clock ratio drifts past any bound.
+#[cfg(unix)]
 fn thread_cpu_time() -> std::time::Duration {
     #[repr(C)]
     struct Timespec {

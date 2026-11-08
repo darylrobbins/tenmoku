@@ -19,7 +19,7 @@ use crate::fake::{
 };
 use crate::{LspEvent, LspManager, ManualClock, ServerSpec};
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 
 struct Started {
     fake: FakeServer,

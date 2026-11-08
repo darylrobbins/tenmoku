@@ -18,7 +18,7 @@ const OTHER: &str = "fn other() {}\n";
 
 fn project() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fs::create_dir_all(root.join("src")).unwrap();
     for (rel, text) in [
         ("main", MAIN),

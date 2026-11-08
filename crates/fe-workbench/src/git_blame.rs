@@ -1142,7 +1142,7 @@ fn rows(data: &[u8]) -> Rows<'_> {
 fn blame_row(workdir: &Path, real: &Path, row: u32) -> Result<Option<Origin>, String> {
     let relative = real.strip_prefix(workdir).unwrap_or(real);
     let lines = format!("{0},{0}", row + 1);
-    let output = std::process::Command::new("git")
+    let output = crate::process_group::no_window(&mut std::process::Command::new("git"))
         .current_dir(workdir)
         .args(["blame", "--porcelain", "-L", &lines, "HEAD", "--"])
         .arg(relative)

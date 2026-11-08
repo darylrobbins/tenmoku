@@ -77,7 +77,7 @@ fn consent_prompt_text_shows_the_effective_invocation() {
 fn extension(dir: &Path) -> std::path::PathBuf {
     let path = dir.join("zig");
     fs::create_dir_all(&path).unwrap();
-    path.canonicalize().unwrap()
+    dunce::canonicalize(&path).unwrap()
 }
 
 fn server(extension: &Path, args: &[&str]) -> ExtensionServer {

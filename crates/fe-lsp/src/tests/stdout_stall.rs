@@ -8,7 +8,13 @@
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::Shutdown;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
+
+/// A transport end: on Windows, which has no socket pairs in std, a loopback
+/// TCP connection's.
+#[cfg(windows)]
+type UnixStream = std::net::TcpStream;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -57,7 +63,7 @@ struct Coupled {
 
 impl ServerLauncher for Coupled {
     fn launch(&self, _: &ServerSpec, _: &Path, _: &LaunchCancel) -> io::Result<ServerIo> {
-        let (client, server) = UnixStream::pair()?;
+        let (client, server) = stream_pair()?;
         self.servers.lock().unwrap().push(server.try_clone()?);
         let (exit, exited) = oneshot::channel();
         let shut = server.try_clone()?;
@@ -246,4 +252,19 @@ fn an_output_backlog_past_its_bound_ends_the_session_while_a_write_waits() {
         "{logs:?}"
     );
     drop((flood, big));
+}
+
+/// A connected pair of transport ends.
+#[cfg(unix)]
+fn stream_pair() -> io::Result<(UnixStream, UnixStream)> {
+    UnixStream::pair()
+}
+
+/// A connected pair of transport ends: a loopback connection's.
+#[cfg(windows)]
+fn stream_pair() -> io::Result<(UnixStream, UnixStream)> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let near = UnixStream::connect(listener.local_addr()?)?;
+    let (far, _) = listener.accept()?;
+    Ok((near, far))
 }

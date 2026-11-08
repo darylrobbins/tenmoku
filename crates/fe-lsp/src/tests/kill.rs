@@ -216,8 +216,16 @@ fn a_launch_ignoring_cancel_is_killed_when_it_returns() {
 fn local_launcher_honours_a_cancel() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("ran");
+    #[cfg(unix)]
     let mut spec = ServerSpec::new("touch", "/usr/bin/touch");
-    spec.args = vec![marker.to_string_lossy().into_owned()];
+    #[cfg(windows)]
+    let mut spec = {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let mut spec = ServerSpec::new("mkdir", format!(r"{root}\System32\cmd.exe"));
+        spec.args = vec!["/c".into(), "mkdir".into()];
+        spec
+    };
+    spec.args.push(marker.to_string_lossy().into_owned());
     let cancel = LaunchCancel::new();
     assert!(cancel.cancelled().now_or_never().is_none());
     cancel.cancel();

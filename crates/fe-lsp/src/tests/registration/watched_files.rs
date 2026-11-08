@@ -29,7 +29,7 @@ fn path(name: &str) -> PathBuf {
 }
 
 fn uri(name: &str) -> String {
-    format!("file://{ROOT}/{name}")
+    crate::fake::fake_uri(name)
 }
 
 /// The watched-files notifications the fake has been sent, once a marker
@@ -59,7 +59,7 @@ fn registered_globs_get_matching_changes_only() {
     let s = Started::new(Script::default());
     let options = json!({ "watchers": [
         { "globPattern": "**/*.rs" },
-        { "globPattern": { "baseUri": format!("file://{ROOT}/cfg"), "pattern": "*.toml" } },
+        { "globPattern": { "baseUri": crate::fake::fake_uri("cfg"), "pattern": "*.toml" } },
     ] });
     assert_eq!(register(&s, "w", options), Ok(Value::Null));
     s.manager.files_changed(vec![

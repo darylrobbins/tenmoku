@@ -56,8 +56,8 @@ pub(crate) fn link(
         return Err(InstallError::Refused("Pick a folder".to_owned()));
     }
     fs::create_dir_all(extensions_dir)?;
-    let extensions_dir = fs::canonicalize(extensions_dir)?;
-    let folder = fs::canonicalize(folder)?;
+    let extensions_dir = kiln::core::platform::canonicalize(extensions_dir)?;
+    let folder = kiln::core::platform::canonicalize(folder)?;
     if extensions_dir.starts_with(&folder) || folder.starts_with(&extensions_dir) {
         let reason = "It's the folder the extensions are installed in, or in it, or holds it";
         return Err(InstallError::Refused(reason.to_owned()));
@@ -94,7 +94,7 @@ pub(crate) fn link(
 /// Whether `link` is a symlink leading to `folder`, a canonical path.
 fn links_to(link: &Path, folder: &Path) -> bool {
     let is_link = fs::symlink_metadata(link).is_ok_and(|meta| meta.file_type().is_symlink());
-    is_link && fs::canonicalize(link).is_ok_and(|target| target == folder)
+    is_link && kiln::core::platform::canonicalize(link).is_ok_and(|target| target == folder)
 }
 
 #[cfg(unix)]

@@ -2,9 +2,10 @@
 //! workspace activates, to its focus target, and a split doesn't copy a tab
 //! a loading file or a read error hides.
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
 };
 
@@ -13,15 +14,40 @@ use gpui::{Entity, Focusable as _, Modifiers, MouseButton, TestAppContext, Visua
 use super::open_root;
 use crate::{Pane, Workbench, pane_group::Direction};
 
-fn project() -> (tempfile::TempDir, PathBuf) {
+/// A test project: its folder, and on Windows the handle that locks
+/// `locked.txt`, closed first.
+struct Project {
+    #[cfg(windows)]
+    _lock: fs::File,
+    _dir: tempfile::TempDir,
+}
+
+fn project() -> (Project, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fs::write(root.join("a.txt"), "alpha\n").unwrap();
     fs::write(root.join("b.txt"), "beta\n").unwrap();
     // Unreadable: a read of it fails.
     fs::write(root.join("locked.txt"), "x\n").unwrap();
+    #[cfg(unix)]
     fs::set_permissions(root.join("locked.txt"), fs::Permissions::from_mode(0o000)).unwrap();
-    (dir, root)
+    // Windows has no mode for that, but a handle that shares nothing makes
+    // every other open of the file fail.
+    #[cfg(windows)]
+    let lock = {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(root.join("locked.txt"))
+            .unwrap()
+    };
+    let project = Project {
+        #[cfg(windows)]
+        _lock: lock,
+        _dir: dir,
+    };
+    (project, root)
 }
 
 fn settle(cx: &mut VisualTestContext) {

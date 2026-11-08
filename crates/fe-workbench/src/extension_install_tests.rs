@@ -19,8 +19,10 @@ use gpui::{Action as _, Entity, Focusable as _, TestAppContext, VisualTestContex
 use kiln::core::ExtensionSet;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
+#[cfg(unix)]
+use super::same_file;
 use super::{
-    InstallError, Installed, MAX_ENTRIES, MAX_UNPACKED, check_api, install_extension, same_file,
+    InstallError, Installed, MAX_ENTRIES, MAX_UNPACKED, check_api, install_extension,
     set_extensions_dir, stage,
 };
 use crate::{
@@ -314,7 +316,10 @@ fn refuses_entries_that_escape_or_link() {
     zip.start_file("extension.toml", SimpleFileOptions::default())
         .unwrap();
     zip.write_all(good).unwrap();
-    let fifo = SimpleFileOptions::default().external_attributes(0o010_644 << 16);
+    // Made on Unix, as the mode needs: written on Windows, an entry is DOS's.
+    let fifo = SimpleFileOptions::default()
+        .system(zip::System::Unix)
+        .external_attributes(0o010_644 << 16);
     zip.start_file("device/", fifo).unwrap();
     zip.finish().unwrap();
     // A symlink a later entry of its name would hide.

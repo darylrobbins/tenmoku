@@ -104,7 +104,9 @@ fn started(view: &Entity<TerminalView>, cx: &mut VisualTestContext) -> u32 {
 }
 
 fn type_line(view: &Entity<TerminalView>, line: &str, cx: &mut VisualTestContext) {
-    let bytes = format!("{line}\n").into_bytes();
+    // Enter is a CR, which Windows' console takes and no other end of line.
+    let end = if cfg!(windows) { "\r" } else { "\n" };
+    let bytes = format!("{line}{end}").into_bytes();
     view.read_with(cx, |view, _| view.terminal().unwrap().input(bytes));
 }
 
@@ -152,9 +154,10 @@ fn starts_in_the_project_root(cx: &mut TestAppContext) {
     };
     assert_eq!(started_count(cx), 1);
 
-    type_line(&view, "pwd", cx);
+    // cmd's `cd` prints where it is, as `pwd` does.
+    type_line(&view, if cfg!(windows) { "cd" } else { "pwd" }, cx);
     let root = dir.path().to_owned();
-    let canonical = root.canonicalize().unwrap();
+    let canonical = dunce::canonicalize(&root).unwrap();
     let in_root = |text: &str| {
         text.lines().any(|line| {
             Path::new(line.trim_end()) == root || Path::new(line.trim_end()) == canonical

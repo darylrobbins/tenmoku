@@ -362,6 +362,7 @@ fn confirm(workbench: &Entity<Workbench>, ix: usize, cx: &mut VisualTestContext)
 }
 
 /// Makes a FIFO at `path`.
+#[cfg(unix)]
 fn mkfifo(path: &Path) {
     let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
     // SAFETY: `name` is a NUL-terminated path.
@@ -369,6 +370,7 @@ fn mkfifo(path: &Path) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_file_that_cant_be_opened_says_why(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     // A FIFO would block the read, /dev/zero never end it, and a file over
@@ -523,6 +525,7 @@ fn a_row_replaced_mid_click_isnt_picked(cx: &mut TestAppContext) {
 /// Picks the only problem, at `path`, and lets `meanwhile` run before the
 /// pick's read does; then lets it land, and answers the warning it should
 /// show.
+#[cfg(unix)]
 fn pick_refused(
     path: &Path,
     meanwhile: impl FnOnce(),
@@ -542,6 +545,7 @@ fn pick_refused(
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn the_file_read_is_the_file_checked(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("settings.toml");

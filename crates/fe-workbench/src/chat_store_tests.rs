@@ -108,7 +108,7 @@ fn the_folders_last_chat_reopens(cx: &mut TestAppContext) {
     let mut app = cx.clone();
     let state = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();
-    let canonical = fs::canonicalize(root.path()).unwrap();
+    let canonical = dunce::canonicalize(root.path()).unwrap();
     let dir = state
         .path()
         .join("chats")
@@ -426,7 +426,7 @@ fn history_listed_right_after_a_save_includes_it(cx: &mut TestAppContext) {
 }
 
 fn target_of(state: &Path, root: &Path) -> super::super::chat_store_worker::Target {
-    let canonical = fs::canonicalize(root).unwrap();
+    let canonical = dunce::canonicalize(root).unwrap();
     super::super::chat_store_worker::Target {
         dir: chats_dir(state, Some(&canonical)),
         root: Some(canonical),
@@ -702,7 +702,7 @@ fn windows_chats_stay_listed_across_trust_transitions(cx: &mut TestAppContext) {
 fn an_ancestors_revocation_refuses_a_departed_folders_requests(cx: &mut TestAppContext) {
     let state = tempfile::tempdir().unwrap();
     let parent = tempfile::tempdir().unwrap();
-    let parent_path = fs::canonicalize(parent.path()).unwrap();
+    let parent_path = dunce::canonicalize(parent.path()).unwrap();
     let (a, b) = (parent_path.join("a"), tempfile::tempdir().unwrap());
     fs::create_dir(&a).unwrap();
     let (workbench, cx) = opened(cx, &a);

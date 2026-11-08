@@ -549,7 +549,7 @@ fn surfaces() -> Vec<Surface> {
 fn every_surface(sets: &[Set], check: impl Fn(&Surface, Set, &Painted, &Painted)) {
     register();
     let dir = fixture();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let state = tempfile::tempdir().unwrap();
     let recent_file = state.path().join("recent.toml");
     recent::record(&recent_file, Entry::Folder(&root.join("d/sub"))).unwrap();

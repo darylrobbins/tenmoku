@@ -166,6 +166,7 @@ fn make_executable(path: &Path) {
 fn make_executable(_: &Path) {}
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a bash release script, which runs on macOS")]
 fn the_script_records_each_files_size_and_hash() {
     let fixture = Fixture::new();
     fixture.release_all();
@@ -225,6 +226,7 @@ fn the_script_records_each_files_size_and_hash() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a bash release script, which runs on macOS")]
 fn the_script_can_move_to_another_release() {
     let fixture = Fixture::new();
     fixture.release_all();
@@ -241,6 +243,7 @@ fn the_script_can_move_to_another_release() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a bash release script, which runs on macOS")]
 fn the_script_leaves_the_manifest_alone_when_a_file_is_missing() {
     let fixture = Fixture::new();
     fixture.release_all();
@@ -257,6 +260,7 @@ fn the_script_leaves_the_manifest_alone_when_a_file_is_missing() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "runs a bash release script, which runs on macOS")]
 fn the_script_says_what_it_needs() {
     let fixture = Fixture::new();
     let empty = tempfile::tempdir().unwrap();

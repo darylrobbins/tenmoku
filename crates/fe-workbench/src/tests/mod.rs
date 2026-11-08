@@ -2,6 +2,56 @@
 //! the panel's rows and the pane's tabs, keys through the default keymap.
 //! Fixtures are `fe_project::fixture` trees in a temporary directory.
 
+/// What a rooted command such as `/usr/bin/node` runs as: itself, or on
+/// Windows that path on the current drive (see `fe_lsp::LoginPath::resolve`).
+pub(crate) fn rooted(command: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    let command = command.as_ref();
+    if cfg!(windows) {
+        std::path::absolute(command).unwrap()
+    } else {
+        command.to_owned()
+    }
+}
+
+/// Terminal settings for a shell that prints `word` (if any), then runs until
+/// [`SHELL_END`] is typed: `sh` running `cat`, or on Windows `cmd`.
+pub(crate) fn printing_shell(word: &str) -> fe_config::TerminalSettings {
+    let (shell, args) = if cfg!(windows) {
+        let mut args = vec!["/D".to_owned()];
+        if !word.is_empty() {
+            args.extend(["/K".to_owned(), format!("echo {word}")]);
+        }
+        ("cmd.exe", args)
+    } else {
+        let script = if word.is_empty() {
+            "exec cat".to_owned()
+        } else {
+            format!("printf {word}; exec cat")
+        };
+        ("/bin/sh", vec!["-c".to_owned(), script])
+    };
+    fe_config::TerminalSettings {
+        shell: shell.to_owned(),
+        shell_args: args,
+        ..fe_config::TerminalSettings::default()
+    }
+}
+
+/// What ends a [`printing_shell`]: an EOF for `cat`, `exit` for `cmd`.
+pub(crate) const SHELL_END: &[u8] = if cfg!(windows) { b"exit\r" } else { b"\x04" };
+
+/// A path as a panel shows it, with `/` for the platform's separator, so
+/// tests write it alike everywhere (`src/a.rs`, shown `src\a.rs` on
+/// Windows).
+pub(crate) fn slashed(shown: impl Into<String>) -> String {
+    let shown = shown.into();
+    if std::path::MAIN_SEPARATOR == '/' {
+        shown
+    } else {
+        shown.replace(std::path::MAIN_SEPARATOR, "/")
+    }
+}
+
 mod activity_rail;
 mod breadcrumb_symbol_icons;
 mod caret_keys_hosts;

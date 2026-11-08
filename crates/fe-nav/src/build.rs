@@ -16,7 +16,6 @@
 //! build always ends, and the walk's threads stop with it.
 
 use std::{
-    fs,
     num::NonZero,
     path::{Path, PathBuf},
     sync::{
@@ -172,7 +171,7 @@ where
     };
     // Resolved once, as the walk resolves it, so paths are read from the
     // directory that was walked.
-    if let Ok(root) = fs::canonicalize(root)
+    if let Ok(root) = dunce::canonicalize(root)
         && !cancelled(cancel)
     {
         let root = root.as_path();
@@ -441,7 +440,7 @@ mod tests {
     fn project(count: usize) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for n in 0..count {
-            fs::write(dir.path().join(format!("f{n:04}.rs")), "").unwrap();
+            std::fs::write(dir.path().join(format!("f{n:04}.rs")), "").unwrap();
         }
         dir
     }

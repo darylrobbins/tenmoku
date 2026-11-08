@@ -1,6 +1,9 @@
 //! External formatters over a fake [`Runner`]: only
 //! [`real_runner_runs_a_process`] starts a process.
 
+// What only its Unix tests use goes unused elsewhere.
+#![cfg_attr(not(unix), allow(unused_imports))]
+
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
 use std::fs;
@@ -206,6 +209,7 @@ async fn file_placeholder_is_replaced(cx: &mut TestAppContext) {
 
 #[cfg(unix)]
 #[gpui::test]
+#[cfg(unix)]
 async fn a_temporary_copy_is_private(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -230,6 +234,7 @@ async fn a_temporary_copy_is_private(cx: &mut TestAppContext) {
 
 #[cfg(unix)]
 #[gpui::test]
+#[cfg(unix)]
 async fn a_path_that_is_not_utf8_reaches_the_program_as_it_is(cx: &mut TestAppContext) {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt as _;
@@ -694,6 +699,7 @@ async fn a_thread_that_panics_is_an_error(cx: &mut TestAppContext) {
 /// it, so opening it as a file would block for good.
 #[cfg(unix)]
 #[gpui::test]
+#[cfg(unix)]
 async fn a_copy_replaced_by_a_fifo_is_failed_and_removed(cx: &mut TestAppContext) {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt as _;
@@ -727,6 +733,7 @@ async fn a_copy_replaced_by_a_fifo_is_failed_and_removed(cx: &mut TestAppContext
 /// None of these starts a shell: the `PATH` is given.
 #[cfg(unix)]
 #[test]
+#[cfg(unix)]
 fn a_program_that_exists_but_cannot_run_is_not_missing() {
     use std::os::unix::fs::PermissionsExt as _;
 

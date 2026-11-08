@@ -72,18 +72,15 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo nextest run --workspace --profile ci
+      # The Test step downloads only Linux's crates; `cargo metadata` in the
+      # check below needs every platform's, and runs offline.
+      - name: Fetch every platform's crates
+        run: cargo fetch --locked
       - name: Kiln builds and tests on its own
         # Outside this workspace, from kiln/ plus only the entries of our root
-        # manifest it uses; offline, since the Test step filled the registry
+        # manifest it uses; offline, since the steps above filled the registry
         # cache (scripts/check-framework-standalone.sh, TESTING.md).
         run: scripts/check-framework-standalone.sh
-      - name: Kiln's GPUI-free crates build for Windows
-        # Windows is an addition to kiln, not a redesign
-        # (docs/decisions/app-framework.md): its headless core cross-checks
-        # here until a Windows job builds the rest.
-        run: |
-          rustup target add x86_64-pc-windows-msvc
-          cargo check -p kiln-command -p kiln-core --target x86_64-pc-windows-msvc
       - name: The app launches and draws a frame
         # Under Xvfb, with Mesa's software Vulkan; see the run-fastedit-linux
         # skill. `start` fails if the window draws nothing within 30 s.
@@ -103,6 +100,31 @@ jobs:
             target/screenshots/
             /tmp/fastedit-run/app.log
           if-no-files-found: ignore
+
+  windows:
+    # The runner image has MSVC and CMake (for wasmtime's C API) on PATH.
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      # Formatting and the platform-independent scripts run on macOS only.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # Without the examples, which have no tests: four crates' `screenshots`
+      # examples link to the same target/debug/examples/screenshots.exe, and
+      # Windows' file locking turns that collision into a racy link failure.
+      # Clippy above still checks they compile.
+      - name: Test
+        env:
+          # Git for Windows' system config sets core.autocrlf; the tests'
+          # repositories expect git's defaults, as on the other runners.
+          GIT_CONFIG_NOSYSTEM: 1
+        run: cargo nextest run --workspace --profile ci --lib --bins --tests
 
   deny:
     runs-on: ubuntu-24.04

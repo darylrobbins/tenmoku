@@ -102,7 +102,11 @@ type Label = (Kind, String, String, String);
 
 fn rows(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Label> {
     let picker = picker(workbench, cx);
-    picker.read_with(cx, |picker, _| picker.delegate.labels())
+    let labels = picker.read_with(cx, |picker, _| picker.delegate.labels());
+    // Written with `/` here; the picker shows the system's separator.
+    (labels.into_iter())
+        .map(|(kind, keyword, text, at)| (kind, keyword, text, crate::tests::slashed(at)))
+        .collect()
 }
 
 fn label(kind: Kind, keyword: &str, text: &str, at: &str) -> Label {

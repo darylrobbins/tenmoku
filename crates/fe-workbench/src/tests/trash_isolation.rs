@@ -3,7 +3,7 @@
 //! trash of the process's own (`fe_project::fs_ops::testing`), as every
 //! fe-workbench test build has fe-project's `test-support` on.
 
-use std::{fs, os::unix::fs::MetadataExt as _};
+use std::fs;
 
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_gpui::commands::RunCommand;
@@ -18,13 +18,16 @@ fn project_panel_delete_goes_to_the_test_trash(cx: &mut TestAppContext) {
         .prefix("fe-workbench-isolation-")
         .tempdir()
         .unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     // A name of the test's own, to find it in the test trash by.
     let name = format!("{}.txt", root.file_name().unwrap().to_str().unwrap());
     let path = root.join(&name);
     fs::write(&path, "gone\n").unwrap();
     fs::write(root.join("kept.txt"), "").unwrap();
-    let ino = fs::metadata(&path).unwrap().ino();
+    // What the file is: its identity, as the platform tells it.
+    let identity =
+        |path: &std::path::Path| kiln::core::platform::path_identity(path, false).unwrap();
+    let ino = identity(&path);
     let (workbench, cx) = open_root(cx, &root);
     // The panel focused, with the file selected.
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
@@ -50,6 +53,6 @@ fn project_panel_delete_goes_to_the_test_trash(cx: &mut TestAppContext) {
     let found = testing::trashed(&name);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].starts_with(testing::trash_dir()), "{found:?}");
-    assert_eq!(fs::metadata(&found[0]).unwrap().ino(), ino);
+    assert_eq!(identity(&found[0]), ino);
     assert_eq!(fs::read_to_string(&found[0]).unwrap(), "gone\n");
 }

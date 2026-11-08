@@ -21,7 +21,12 @@ fn found(root: &str, filter: &PathFilter, threads: usize) -> Vec<String> {
         &options,
         filter,
         Arc::new(AtomicBool::new(false)),
-        |batch| rels.extend(batch.into_iter().map(|file| file.rel)),
+        // Spelled with `/` on every platform, as the expectations are.
+        |batch| {
+            rels.extend(
+                (batch.into_iter()).map(|file| file.rel.replace(std::path::MAIN_SEPARATOR, "/")),
+            );
+        },
     )
     .unwrap();
     rels.sort();

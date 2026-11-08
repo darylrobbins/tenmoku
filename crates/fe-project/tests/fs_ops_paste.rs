@@ -5,7 +5,6 @@
 use std::{
     fs,
     io::ErrorKind,
-    os::unix::fs::symlink,
     path::{Path, PathBuf},
 };
 
@@ -19,7 +18,7 @@ use tempfile::TempDir;
 /// `/private/var`, and the operations want a root reached without one).
 fn temp() -> (TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let path = fs::canonicalize(dir.path()).unwrap();
+    let path = dunce::canonicalize(dir.path()).unwrap();
     (dir, path)
 }
 
@@ -51,6 +50,32 @@ fn snapshot(root: &Path) -> Vec<String> {
     walk(root, root, &mut out);
     out.sort();
     out
+}
+
+/// Links folder `link` to folder `target`: a symlink on Unix, a junction
+/// (which needs no privilege) on Windows. Either is a link the operations
+/// must not follow.
+fn dir_link(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        // `mklink` takes plain paths, not `canonicalize`'s `\\?\` ones.
+        let plain = |path: &Path| {
+            let text = path.to_str().unwrap();
+            text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
+        };
+        let status = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(plain(link))
+            .arg(plain(target))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J failed");
+    }
 }
 
 fn write(root: &Path, rel: &str, contents: &str) {
@@ -171,7 +196,7 @@ fn pastes_through_a_symlink_or_out_of_the_root_are_refused() {
     let (_outside, outside) = temp();
     write(&root, "a.txt", "a");
     write(&outside, "secret.txt", "s");
-    symlink(&outside, root.join("link")).unwrap();
+    dir_link(&outside, &root.join("link"));
     let before = (snapshot(&root), snapshot(&outside));
 
     // Into a symlinked folder.
@@ -194,7 +219,11 @@ fn pastes_through_a_symlink_or_out_of_the_root_are_refused() {
     assert_eq!(moved.unwrap_err().kind(), ErrorKind::InvalidInput);
     assert_eq!((snapshot(&root), snapshot(&outside)), before);
 
-    // The link itself copies and moves as a link.
+    // The link itself copies and moves as a link. Windows copies no link
+    // (making one takes a privilege).
+    if cfg!(windows) {
+        return;
+    }
     fs::create_dir(root.join("out")).unwrap();
     copy_into(&root, &root.join("link"), &root.join("out")).unwrap();
     move_into(&root, &root.join("link"), &root.join("out"), "moved").unwrap();
@@ -243,6 +272,7 @@ fn another_spelling_of_the_folder_is_still_inside_it() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_name_that_isnt_utf8_is_moved_and_copied() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
@@ -277,7 +307,7 @@ fn exists_looks_under_the_root_without_following_links() {
     let (_outside, outside) = temp();
     write(&root, "a/b.txt", "");
     write(&outside, "c.txt", "");
-    symlink(&outside, root.join("link")).unwrap();
+    dir_link(&outside, &root.join("link"));
     assert!(exists(&root, &root.join("a/b.txt")).unwrap());
     assert!(
         exists(&root, &root.join("link")).unwrap(),

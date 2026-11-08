@@ -1,5 +1,9 @@
 //! Find in a terminal view: highlighted matches and stepping through them.
 
+// Unix only: the emulator is fed `/bin/sh` scripts. It is the same code on
+// Windows, where ConPTY re-renders the stream (see fe-terminal's conpty.rs).
+#![cfg(unix)]
+
 use fe_terminal_view::TerminalStyle;
 use fe_terminal_view::{PaintReport, QueryError, TerminalOptions, TerminalQuery, TerminalView};
 use gpui::{

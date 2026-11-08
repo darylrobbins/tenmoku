@@ -3,11 +3,12 @@
 //! symlinks or waiting on a FIFO, and directories are opened through their
 //! parent's handle, never through a symlink.
 
+use std::sync::{Arc, atomic::AtomicBool};
+#[cfg(unix)]
 use std::{
     os::unix::{ffi::OsStrExt, fs::symlink},
     sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -17,6 +18,7 @@ use std::{
 use super::*;
 
 /// How long a walk may take before it counts as blocked.
+#[cfg(unix)]
 const BLOCKED: Duration = Duration::from_secs(5);
 
 /// Walks `root` into a new index and finishes it.
@@ -36,13 +38,14 @@ fn all(index: &mut FinderIndex) -> Vec<String> {
     index
         .query("", usize::MAX)
         .into_iter()
-        .map(|found| found.path)
+        .map(|found| slashed(found.path))
         .collect()
 }
 
 /// Runs `f` on another thread and returns its result, failing the test
 /// (rather than hanging it) if it takes longer than [`BLOCKED`]. A blocked
 /// thread is left behind.
+#[cfg(unix)]
 fn bounded<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -54,6 +57,7 @@ fn bounded<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static
 
 /// Whether the tree, with every directory expanded, shows `path` as an
 /// unignored file.
+#[cfg(unix)]
 fn tree_shows(root: &Path, path: &str) -> bool {
     let mut tree = FileTree::open(root, TreeOptions::default()).unwrap();
     let rel = Path::new(path);
@@ -75,6 +79,7 @@ fn tree_shows(root: &Path, path: &str) -> bool {
 }
 
 #[test]
+#[cfg(unix)]
 fn walk_ignores_a_symlinked_gitignore() {
     let (_dir, root) = temp();
     make(
@@ -117,6 +122,7 @@ fn walk_ignores_a_symlinked_gitignore() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_fifo_ignore_file_does_not_block_a_cancelled_walk() {
     let (dir, root) = temp();
     make(&root, &["top.rs", "sub/a.rs", "sub/deep/b.rs"]);
@@ -183,8 +189,8 @@ fn walk_does_not_follow_a_directory_symlink() {
     let (_outside_dir, outside) = temp();
     make(&outside, &["secret.rs", "deep/secret.rs"]);
     make(&root, &["a.rs", "sub/b.rs"]);
-    symlink(&outside, root.join("link")).unwrap();
-    symlink(&outside, root.join("sub/link")).unwrap();
+    dir_link(&outside, &root.join("link"));
+    dir_link(&outside, &root.join("sub/link"));
     let expected = ["a.rs", "sub/b.rs"];
 
     let mut index = walked(&root);
@@ -195,7 +201,7 @@ fn walk_does_not_follow_a_directory_symlink() {
     // A new directory holding one, walked by `apply`, and the links
     // themselves reported.
     make(&root, &["fresh/c.rs"]);
-    symlink(&outside, root.join("fresh/link")).unwrap();
+    dir_link(&outside, &root.join("fresh/link"));
     index.apply(&changes(
         &root,
         &["fresh", "fresh/link", "link", "sub/link"],
@@ -205,7 +211,7 @@ fn walk_does_not_follow_a_directory_symlink() {
     // A walk of a root that is itself reached through a symlink indexes the
     // directory it leads to, as the tree shows it, and nothing outside.
     let (_links, links) = temp();
-    symlink(&root, links.join("project")).unwrap();
+    dir_link(&root, &links.join("project"));
     let mut index = walked(&links.join("project"));
     assert_eq!(all(&mut index), ["a.rs", "fresh/c.rs", "sub/b.rs"]);
 
@@ -225,6 +231,8 @@ fn walk_does_not_follow_a_directory_symlink() {
 }
 
 #[test]
+// Counts this process's open descriptors in /dev/fd.
+#[cfg(unix)]
 fn a_deep_tree_is_walked_without_a_handle_per_level() {
     // Levels of `d`, each with a file and empty sibling directories, which
     // keep their parent wanted while the walk goes deeper first.
@@ -272,6 +280,8 @@ fn a_deep_tree_is_walked_without_a_handle_per_level() {
 }
 
 #[test]
+// Windows won't rename a folder while a handle holds it (or what is in it), as this race must.
+#[cfg(unix)]
 fn a_directory_swapped_for_a_symlink_mid_walk_is_not_followed() {
     // `sub` is swapped for a symlink to a directory outside the project and
     // back, over and over, while the index walks: every walk, a rescan and
@@ -291,8 +301,8 @@ fn a_directory_swapped_for_a_symlink_mid_walk_is_not_followed() {
             let mut swaps = 0_u64;
             while !stop.load(Ordering::Relaxed) {
                 fs::rename(&sub, &aside).unwrap();
-                symlink(&target, &sub).unwrap();
-                fs::remove_file(&sub).unwrap();
+                dir_link(&target, &sub);
+                remove_link(&sub);
                 fs::rename(&aside, &sub).unwrap();
                 swaps += 1;
                 swap_count.store(swaps, Ordering::Relaxed);

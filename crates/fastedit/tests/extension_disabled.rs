@@ -185,7 +185,7 @@ fn the_setting_reaches_the_app(cx: &mut TestAppContext) {
     install(&state.path().join("extensions"));
     fs::write(state.path().join("settings.toml"), "").unwrap();
     let project = tempfile::tempdir().unwrap();
-    let root = project.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(project.path()).unwrap();
     for name in ["a.toml", "b.toml", "c.toml"] {
         fs::write(root.join(name), "a = 1\n").unwrap();
     }

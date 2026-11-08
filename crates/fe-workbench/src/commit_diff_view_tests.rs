@@ -92,7 +92,7 @@ const EDITED: [&str; 4] = ["d.rs", "e.rs", "f.rs", "g.rs"];
 /// two commits' ids.
 fn fixture() -> (tempfile::TempDir, [String; 2]) {
     let dir = tempfile::tempdir().unwrap();
-    let root = &dir.path().canonicalize().unwrap();
+    let root = &dunce::canonicalize(dir.path()).unwrap();
     git(root, &["init", "-q"]);
     let write = |file: &str, text: &str| fs::write(root.join(file), text).unwrap();
     write("a.rs", &a_rs(5, &[]));
@@ -122,7 +122,7 @@ fn graph(
     cx: &mut TestAppContext,
     dir: &tempfile::TempDir,
 ) -> (Entity<Workbench>, VisualTestContext) {
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     window(cx, &root)
 }
 
@@ -894,9 +894,9 @@ fn targets_hold_while_sections_land(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_commit_of_another_worktree_is_its_own_tab(cx: &mut TestAppContext) {
     let (dir, [_, change]) = fixture();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let other = tempfile::tempdir().unwrap();
-    let other = other.path().canonicalize().unwrap().join("other");
+    let other = dunce::canonicalize(other.path()).unwrap().join("other");
     git(
         &root,
         &["worktree", "add", "-q", other.to_str().unwrap(), "HEAD"],

@@ -1296,7 +1296,7 @@ mod focus_tests {
     #[gpui::test]
     fn a_large_launch_file_takes_the_keys(cx: &mut TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let big = root.join("big.log");
         let text: String = (0..100).map(|row| format!("line {row:02}\n")).collect();
         std::fs::write(&big, text).unwrap();

@@ -17,10 +17,16 @@
 
 use std::{
     collections::HashSet,
-    ffi::{CStr, CString, OsStr, OsString, c_int},
+    ffi::{OsStr, OsString},
     fmt,
-    fs::{File, Permissions},
+    fs::File,
     io,
+    path::{Component, Path, PathBuf},
+};
+#[cfg(unix)]
+use std::{
+    ffi::{CStr, CString, c_int},
+    fs::Permissions,
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::{
@@ -28,7 +34,6 @@ use std::{
             fs::{MetadataExt, PermissionsExt},
         },
     },
-    path::{Component, Path, PathBuf},
 };
 
 use crate::listing::{self, Access, EntryKind, Identity};
@@ -71,10 +76,17 @@ impl From<NameError> for io::Error {
     }
 }
 
+/// A separator in a typed name: `/`, and on Windows `\` too, which no
+/// Windows name can hold.
+fn is_separator(c: char) -> bool {
+    c == '/' || (cfg!(windows) && c == '\\')
+}
+
 /// Checks a name typed for a new entry. It may hold `/`s to name the folders
 /// to create above it, nvim-tree style (`a/b/c.rs`), and end with one `/` to
 /// name a folder. It is refused if it is empty or holds a NUL, or if a
-/// component between the `/`s is empty, `.` or `..`.
+/// component between the `/`s is empty, `.` or `..`. On Windows a `\`
+/// separates them too.
 pub fn validate_name(name: &str) -> Result<(), NameError> {
     if name.is_empty() {
         return Err(NameError::Empty);
@@ -82,8 +94,8 @@ pub fn validate_name(name: &str) -> Result<(), NameError> {
     if name.contains('\0') {
         return Err(NameError::Nul);
     }
-    let body = name.strip_suffix('/').unwrap_or(name);
-    for component in body.split('/') {
+    let body = name.strip_suffix(is_separator).unwrap_or(name);
+    for component in body.split(is_separator) {
         match component {
             "" => return Err(NameError::EmptyComponent),
             "." => return Err(NameError::Dot),
@@ -97,7 +109,7 @@ pub fn validate_name(name: &str) -> Result<(), NameError> {
 /// [`validate_name`] for a name that must be a single component.
 fn validate_component(name: &str) -> Result<(), NameError> {
     validate_name(name)?;
-    if name.contains('/') {
+    if name.contains(is_separator) {
         return Err(NameError::Separator);
     }
     Ok(())
@@ -112,7 +124,7 @@ fn validate_component(name: &str) -> Result<(), NameError> {
 /// created. Should creating fail midway, the folders made are removed again:
 /// those it made, not ones another process put in their place or in them.
 pub fn create_file(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
-    create(root, dir, name, name.ends_with('/'))
+    create(root, dir, name, name.ends_with(is_separator))
 }
 
 /// Creates folder `name` in folder `dir`, with any folders `name` names above
@@ -126,9 +138,9 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
     let root = Root::open(root)?;
     let dir_names = names_under(&root.path, dir)?;
     let names: Vec<&OsStr> = name
-        .strip_suffix('/')
+        .strip_suffix(is_separator)
         .unwrap_or(name)
-        .split('/')
+        .split(is_separator)
         .map(OsStr::new)
         .collect();
     let (last, above) = names.split_last().expect("a valid name has a component");
@@ -184,13 +196,7 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
         if folder {
             mkdir_at(&parent, last, 0o777)
         } else {
-            let flags = libc::O_WRONLY
-                | libc::O_CREAT
-                | libc::O_EXCL
-                | libc::O_NOFOLLOW
-                | libc::O_NONBLOCK
-                | libc::O_CLOEXEC;
-            open_in(&parent, last, flags, 0o666).map(drop)
+            create_new_file(&parent, last, 0o666).map(drop)
         }
     })();
     if result.is_err() {
@@ -220,13 +226,8 @@ pub fn open_truncated(root: &Path, path: &Path) -> io::Result<File> {
     let root = Root::open(root)?;
     let target = root.resolve(path)?;
     reach(Point::Truncating)?;
-    // Not `O_TRUNC`, which would empty something else found there before it
-    // is checked; non-blocking, so a FIFO doesn't wait for a reader.
-    let flags =
-        libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC;
-    let file = open_in(&target.parent, target.name, flags, 0).map_err(|err| {
-        // `O_NOFOLLOW` fails on a symlink with `ELOOP`.
-        if err.raw_os_error() == Some(libc::ELOOP) {
+    let file = open_for_writing(&target.parent, target.name).map_err(|err| {
+        if listing::is_symlink_error(&err) {
             invalid("a symlink, which could lead outside the project root")
         } else {
             err
@@ -499,7 +500,23 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
     freedesktop::move_into(&trash, target, &recorded)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Moves `target` to the Recycle Bin with the shell, which takes a path: the
+/// entry is checked through its folder's handle to be the one found, but the
+/// shell then finds it by path again. Where a drive has no Recycle Bin, the
+/// shell asks before deleting it for good.
+#[cfg(windows)]
+fn trash_target(target: &Target<'_>) -> io::Result<()> {
+    #[cfg(any(test, feature = "test-support"))]
+    if !test_trash::reaching_real() {
+        reach(Point::Checked)?;
+        return test_trash::move_into(target);
+    }
+    listing::stat_at(&target.parent, target.name)?;
+    reach(Point::Checked)?;
+    crate::win::recycle(&target.path)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn trash_target(_: &Target<'_>) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -1047,11 +1064,11 @@ fn validate_os_component(name: &OsStr) -> Result<(), NameError> {
     if let Some(name) = name.to_str() {
         return validate_component(name);
     }
-    let bytes = name.as_bytes();
+    let bytes = name.as_encoded_bytes();
     if bytes.contains(&0) {
         return Err(NameError::Nul);
     }
-    if bytes.contains(&b'/') {
+    if bytes.iter().any(|&b| is_separator(char::from(b))) {
         return Err(NameError::Separator);
     }
     Ok(())
@@ -1085,12 +1102,12 @@ fn copy_name(name: &OsStr, folder: bool, n: u32) -> OsString {
     }
     let split = match (folder, path.file_stem(), path.extension()) {
         (false, Some(stem), Some(ext)) => {
-            let stem = strip_copy_suffix(stem.as_bytes());
+            let stem = strip_copy_suffix(stem.as_encoded_bytes());
             // What is left for the stem beside the suffix, the dot and the
             // extension, if anything.
             NAME_MAX
                 .checked_sub(suffix.len() + 1 + ext.len())
-                .map(|room| (cut(stem, room), ext.as_bytes()))
+                .map(|room| (cut(stem, room), ext.as_encoded_bytes()))
                 .filter(|(stem, _)| !stem.is_empty())
         }
         _ => None,
@@ -1098,7 +1115,10 @@ fn copy_name(name: &OsStr, folder: bool, n: u32) -> OsString {
     let (stem, ext) = match split {
         Some((stem, ext)) => (stem, Some(ext)),
         None => (
-            cut(strip_copy_suffix(name.as_bytes()), NAME_MAX - suffix.len()),
+            cut(
+                strip_copy_suffix(name.as_encoded_bytes()),
+                NAME_MAX - suffix.len(),
+            ),
             None,
         ),
     };
@@ -1108,7 +1128,25 @@ fn copy_name(name: &OsStr, folder: bool, n: u32) -> OsString {
         copy.push(b'.');
         copy.extend_from_slice(ext);
     }
-    OsString::from_vec(copy)
+    os_string_from_bytes(copy)
+}
+
+/// A name from the bytes [`copy_name`] built.
+#[cfg(unix)]
+fn os_string_from_bytes(bytes: Vec<u8>) -> OsString {
+    OsString::from_vec(bytes)
+}
+
+/// A name from the bytes [`copy_name`] built from a name's encoded bytes,
+/// cut where they are UTF-8 at a character boundary. A name that isn't
+/// UTF-8 (one with an unpaired surrogate) may be cut inside its encoding,
+/// so it is read lossily.
+#[cfg(windows)]
+fn os_string_from_bytes(bytes: Vec<u8>) -> OsString {
+    match String::from_utf8(bytes) {
+        Ok(name) => name.into(),
+        Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned().into(),
+    }
 }
 
 /// `bytes` cut to at most `max`, at a character boundary where they are
@@ -1197,7 +1235,7 @@ fn set_modes(dir: &File, name: &OsStr, copying: &Copying) -> io::Result<()> {
         if listing::identity(&folder)? != *id {
             return Err(replaced());
         }
-        folder.set_permissions(Permissions::from_mode(*mode))?;
+        set_mode(&folder, *mode)?;
     }
     if listing::stat_at(dir, name)?.id != listing::identity(top)? {
         return Err(replaced());
@@ -1247,23 +1285,16 @@ fn copy_new(
         EntryKind::File => {
             // A FIFO, socket or device counts as a file in a listing. Look
             // before opening: a socket can't be opened at all.
-            if mode_at(from, name)? & libc::S_IFMT != libc::S_IFREG {
+            if !is_regular_at(from, name)? {
                 return skip();
             }
-            let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
-            let mut source = open_in(from, name, flags, 0)?;
+            let mut source = open_for_reading(from, name)?;
             let metadata = source.metadata()?;
             // Swapped since it was looked at.
             if !metadata.is_file() {
                 return skip();
             }
-            let flags = libc::O_WRONLY
-                | libc::O_CREAT
-                | libc::O_EXCL
-                | libc::O_NOFOLLOW
-                | libc::O_NONBLOCK
-                | libc::O_CLOEXEC;
-            let mut copy = match open_in(to, to_name, flags, 0o600) {
+            let mut copy = match create_new_file(to, to_name, 0o600) {
                 Ok(copy) => copy,
                 Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
                     return Ok(Copied::Taken);
@@ -1274,7 +1305,7 @@ fn copy_new(
                 copying.owned.insert(listing::identity(&copy)?);
                 io::copy(&mut source, &mut copy)?;
                 copy_xattrs(&source, &copy, name);
-                copy.set_permissions(Permissions::from_mode(metadata.mode() & 0o777))?;
+                set_mode(&copy, mode_of(&metadata))?;
                 copy.set_modified(metadata.modified()?)
             })();
             if result.is_err() {
@@ -1300,7 +1331,7 @@ fn copy_new(
                 reach(Point::Made)?;
                 let source = open_dir_at(from, name, Access::Read)?;
                 copy_xattrs(&source, &copy, name);
-                let mode = source.metadata()?.mode() & 0o777;
+                let mode = mode_of(&source.metadata()?);
                 let mut children = listing::read_dir(&source)?;
                 children.sort_by(|(a, _), (b, _)| a.cmp(b));
                 for (child, kind) in children {
@@ -1397,7 +1428,8 @@ fn discard(dir: &File, name: &OsStr, owned: &Owned) {
         return restore();
     }
     let _ = reach(Point::Discarding);
-    let flags = if stat.kind == EntryKind::Dir {
+    let is_dir = stat.kind == EntryKind::Dir;
+    if is_dir {
         match own_dir(dir, &staged, Some(stat.id)) {
             Ok(sub) => {
                 for (child, _) in listing::read_dir(&sub).unwrap_or_default() {
@@ -1411,11 +1443,8 @@ fn discard(dir: &File, name: &OsStr, owned: &Owned) {
             // empty.
             Err(_) => {}
         }
-        libc::AT_REMOVEDIR
-    } else {
-        0
-    };
-    if unlink_at(dir, &staged, flags).is_err() {
+    }
+    if remove_at(dir, &staged, is_dir).is_err() {
         restore();
     }
 }
@@ -1527,7 +1556,7 @@ fn open_dir_at(dir: &File, name: &OsStr, access: Access) -> io::Result<File> {
     listing::open_at(dir, name, access).map_err(|err| {
         // A symlink opened as a folder without following it fails as not a
         // folder (or, on some systems, as a loop), like a file does.
-        let not_dir = matches!(err.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP));
+        let not_dir = listing::is_not_dir_error(&err) || listing::is_symlink_error(&err);
         match listing::stat_at(dir, name) {
             Ok(stat) if not_dir && stat.kind == EntryKind::Symlink => {
                 invalid("a symlinked folder, which could lead outside the project root")
@@ -1541,11 +1570,152 @@ fn open_dir_at(dir: &File, name: &OsStr, access: Access) -> io::Result<File> {
     })
 }
 
+/// Creates file `name` in `dir`, failing if anything is there (a symlink
+/// included, which is never followed), and opens it for writing. `mode` is
+/// its permissions, less the umask, on Unix.
+#[cfg(unix)]
+fn create_new_file(dir: &File, name: &OsStr, mode: libc::mode_t) -> io::Result<File> {
+    let flags = libc::O_WRONLY
+        | libc::O_CREAT
+        | libc::O_EXCL
+        | libc::O_NOFOLLOW
+        | libc::O_NONBLOCK
+        | libc::O_CLOEXEC;
+    open_in(dir, name, flags, mode)
+}
+
+/// Opens file `name` in `dir` for writing, as it is: not through a symlink
+/// (which fails as [`listing::is_symlink_error`] tells), and without waiting
+/// on a FIFO.
+#[cfg(unix)]
+fn open_for_writing(dir: &File, name: &OsStr) -> io::Result<File> {
+    // Not `O_TRUNC`, which would empty something else found there before it
+    // is checked; non-blocking, so a FIFO doesn't wait for a reader.
+    let flags =
+        libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC;
+    open_in(dir, name, flags, 0)
+}
+
+/// Opens file `name` in `dir` for reading, not through a symlink, and
+/// without waiting on a FIFO.
+#[cfg(unix)]
+fn open_for_reading(dir: &File, name: &OsStr) -> io::Result<File> {
+    let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+    open_in(dir, name, flags, 0)
+}
+
+/// Whether entry `name` in `dir` is a regular file, not following a symlink:
+/// not a FIFO, socket or device, which count as files in a listing.
+#[cfg(unix)]
+fn is_regular_at(dir: &File, name: &OsStr) -> io::Result<bool> {
+    Ok(mode_at(dir, name)? & libc::S_IFMT == libc::S_IFREG)
+}
+
+/// Removes entry `name` from `dir`: an empty folder if `is_dir`, else a
+/// file or a symlink.
+#[cfg(unix)]
+fn remove_at(dir: &File, name: &OsStr, is_dir: bool) -> io::Result<()> {
+    unlink_at(dir, name, if is_dir { libc::AT_REMOVEDIR } else { 0 })
+}
+
+/// The permission bits of `metadata`.
+#[cfg(unix)]
+fn mode_of(metadata: &std::fs::Metadata) -> u32 {
+    metadata.mode() & 0o777
+}
+
+/// Gives open `file` the permission bits `mode`.
+#[cfg(unix)]
+fn set_mode(file: &File, mode: u32) -> io::Result<()> {
+    file.set_permissions(Permissions::from_mode(mode))
+}
+
+#[cfg(windows)]
+fn create_new_file(dir: &File, name: &OsStr, _mode: u32) -> io::Result<File> {
+    crate::win::open_in(dir, name, crate::win::Open::CreateNew)
+}
+
+#[cfg(windows)]
+fn open_for_writing(dir: &File, name: &OsStr) -> io::Result<File> {
+    crate::win::open_in(dir, name, crate::win::Open::Write)
+}
+
+#[cfg(windows)]
+fn open_for_reading(dir: &File, name: &OsStr) -> io::Result<File> {
+    crate::win::open_in(dir, name, crate::win::Open::Read)
+}
+
+/// Windows has no FIFOs, sockets or devices in a folder: a file is regular.
+#[cfg(windows)]
+fn is_regular_at(dir: &File, name: &OsStr) -> io::Result<bool> {
+    Ok(listing::stat_at(dir, name)?.kind == EntryKind::File)
+}
+
+#[cfg(windows)]
+fn remove_at(dir: &File, name: &OsStr, is_dir: bool) -> io::Result<()> {
+    crate::win::remove_at(dir, name, is_dir)
+}
+
+#[cfg(windows)]
+fn mkdir_at(dir: &File, name: &OsStr, _mode: u32) -> io::Result<()> {
+    crate::win::mkdir_at(dir, name)
+}
+
+#[cfg(windows)]
+fn rename_noreplace(from_dir: &File, from: &OsStr, to_dir: &File, to: &OsStr) -> io::Result<()> {
+    crate::win::rename_noreplace(from_dir, from, to_dir, to)
+}
+
+/// Copying a symlink isn't supported on Windows, where making one takes a
+/// privilege (or Developer Mode) most users don't have.
+#[cfg(windows)]
+fn symlink_at(_target: &OsStr, _dir: &File, _name: &OsStr) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "copying a symlink isn't supported on Windows",
+    ))
+}
+
+#[cfg(windows)]
+fn read_link_at(_dir: &File, _name: &OsStr) -> io::Result<OsString> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "copying a symlink isn't supported on Windows",
+    ))
+}
+
+/// Windows' only permission bit is a file's read-only attribute: `0o555`
+/// for a read-only file, else `0o777`.
+#[cfg(windows)]
+fn mode_of(metadata: &std::fs::Metadata) -> u32 {
+    if metadata.permissions().readonly() {
+        0o555
+    } else {
+        0o777
+    }
+}
+
+/// Makes open `file` read-only when `mode` lets no one write it. A folder's
+/// read-only attribute means something else to Windows (that it is
+/// customized), so folders are left as they are.
+#[cfg(windows)]
+fn set_mode(file: &File, mode: u32) -> io::Result<()> {
+    let metadata = file.metadata()?;
+    if metadata.is_dir() {
+        return Ok(());
+    }
+    let mut permissions = metadata.permissions();
+    permissions.set_readonly(mode & 0o222 == 0);
+    file.set_permissions(permissions)
+}
+
+#[cfg(unix)]
 fn c_name(name: &OsStr) -> io::Result<CString> {
     Ok(CString::new(name.as_bytes())?)
 }
 
 /// The mode of entry `name` in `dir`, not following a symlink.
+#[cfg(unix)]
 fn mode_at(dir: &File, name: &OsStr) -> io::Result<libc::mode_t> {
     let name = c_name(name)?;
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
@@ -1563,6 +1733,7 @@ fn mode_at(dir: &File, name: &OsStr) -> io::Result<libc::mode_t> {
     Ok(unsafe { stat.assume_init() }.st_mode)
 }
 
+#[cfg(unix)]
 fn check(result: c_int) -> io::Result<()> {
     if result < 0 {
         Err(io::Error::last_os_error())
@@ -1572,6 +1743,7 @@ fn check(result: c_int) -> io::Result<()> {
 }
 
 /// Opens `name` in `dir` with `flags`, and `mode` should it create it.
+#[cfg(unix)]
 fn open_in(dir: &File, name: &OsStr, flags: c_int, mode: libc::mode_t) -> io::Result<File> {
     let name = c_name(name)?;
     // SAFETY: `dir` is an open descriptor and `name` is NUL-terminated.
@@ -1588,6 +1760,7 @@ fn open_in(dir: &File, name: &OsStr, flags: c_int, mode: libc::mode_t) -> io::Re
     Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
 }
 
+#[cfg(unix)]
 fn mkdir_at(dir: &File, name: &OsStr, mode: libc::mode_t) -> io::Result<()> {
     let name = c_name(name)?;
     // SAFETY: `dir` is an open descriptor and `name` is NUL-terminated.
@@ -1609,7 +1782,7 @@ fn own_dir(dir: &File, name: &OsStr, expected: Option<Identity>) -> io::Result<F
     if expected.is_some_and(|id| listing::identity(&folder).ok() != Some(id)) {
         return Err(replaced());
     }
-    folder.set_permissions(Permissions::from_mode(0o700))?;
+    set_mode(&folder, 0o700)?;
     Ok(folder)
 }
 
@@ -1657,12 +1830,14 @@ fn own_closed_dir(_: &File, _: &OsStr, _: Option<Identity>) -> io::Result<File> 
     ))
 }
 
+#[cfg(unix)]
 fn unlink_at(dir: &File, name: &OsStr, flags: c_int) -> io::Result<()> {
     let name = c_name(name)?;
     // SAFETY: `dir` is an open descriptor and `name` is NUL-terminated.
     check(unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), flags) })
 }
 
+#[cfg(unix)]
 fn symlink_at(target: &OsStr, dir: &File, name: &OsStr) -> io::Result<()> {
     let target = c_name(target)?;
     let name = c_name(name)?;
@@ -1671,6 +1846,7 @@ fn symlink_at(target: &OsStr, dir: &File, name: &OsStr) -> io::Result<()> {
 }
 
 /// What symlink `name` in `dir` points to.
+#[cfg(unix)]
 fn read_link_at(dir: &File, name: &OsStr) -> io::Result<OsString> {
     let name = c_name(name)?;
     let mut buffer = vec![0u8; 1024];
@@ -1700,6 +1876,7 @@ fn read_link_at(dir: &File, name: &OsStr) -> io::Result<OsString> {
 /// with no such rename fails it with [`io::ErrorKind::Unsupported`]: there is
 /// no safe way round it, as a check then a rename could replace what appeared
 /// between, and a link then an unlink could remove what replaced the source.
+#[cfg(unix)]
 fn rename_noreplace(from_dir: &File, from: &OsStr, to_dir: &File, to: &OsStr) -> io::Result<()> {
     no_replace_result(rename_exclusive(
         from_dir,
@@ -1711,6 +1888,7 @@ fn rename_noreplace(from_dir: &File, from: &OsStr, to_dir: &File, to: &OsStr) ->
 
 /// What a rename that refuses to replace returned, its file system's want of
 /// support made [`io::ErrorKind::Unsupported`].
+#[cfg(unix)]
 fn no_replace_result(result: io::Result<()>) -> io::Result<()> {
     result.map_err(|err| {
         let errno = err.raw_os_error();
@@ -1758,7 +1936,7 @@ fn rename_exclusive(from_dir: &File, from: &CStr, to_dir: &File, to: &CStr) -> i
 }
 
 /// No rename that refuses to replace here.
-#[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+#[cfg(all(unix, not(any(target_os = "linux", target_vendor = "apple"))))]
 fn rename_exclusive(_: &File, _: &CStr, _: &File, _: &CStr) -> io::Result<()> {
     Err(io::Error::from_raw_os_error(libc::ENOSYS))
 }
@@ -1777,7 +1955,7 @@ mod paste_race_tests {
     /// A temporary directory and its canonical path.
     fn temp() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let path = fs::canonicalize(dir.path()).unwrap();
+        let path = dunce::canonicalize(dir.path()).unwrap();
         (dir, path)
     }
 
@@ -1841,15 +2019,39 @@ mod truncate_tests;
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, os::unix::fs::symlink};
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     use tempfile::TempDir;
 
     use super::*;
 
+    /// A link to folder `target` at `link`: on Windows a junction, which,
+    /// unlike a symlink, needs no privilege, and is a link all the same.
+    #[cfg(windows)]
+    fn symlink(target: &Path, link: &Path) -> io::Result<()> {
+        // `mklink` takes neither `\\?\` paths nor `/` separators.
+        let plain = |path: &Path| {
+            let text = path.to_str().unwrap();
+            text.strip_prefix(r"\\?\")
+                .unwrap_or(text)
+                .replace('/', r"\")
+        };
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", &plain(link), &plain(target)])
+            .stdout(std::process::Stdio::null())
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other("mklink /J failed"))
+        }
+    }
+
     fn temp() -> (TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let path = fs::canonicalize(dir.path()).unwrap();
+        let path = dunce::canonicalize(dir.path()).unwrap();
         (dir, path)
     }
 
@@ -1858,6 +2060,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_file_system_without_an_exclusive_rename_is_unsupported() {
         // What `renameat2` gives where the file system lacks
         // `RENAME_NOREPLACE`: refused, never a rename that could replace.
@@ -2036,6 +2239,7 @@ mod tests {
 
     /// A temporary folder the trash moves into the home trash, as
     /// `tests/fs_ops.rs` makes one; `None` (saying why) where there is none.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn trashable_temp() -> Option<(TempDir, PathBuf)> {
         #[cfg(target_os = "macos")]
         let base = std::env::temp_dir();
@@ -2055,7 +2259,7 @@ mod tests {
             .tempdir_in(&base)
         {
             Ok(dir) => {
-                let path = fs::canonicalize(dir.path()).unwrap();
+                let path = dunce::canonicalize(dir.path()).unwrap();
                 Some((dir, path))
             }
             Err(err) => {
@@ -2163,6 +2367,8 @@ mod tests {
         assert!(!moved_file.exists());
         let trashed = format!("{name}.txt");
         if test_trash::real_held() {
+            // Only the macOS and Linux tests reach the real trash.
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             purge(target.path.parent().unwrap(), &trashed);
         } else {
             let found = testing::trashed(&trashed);
@@ -2180,6 +2386,9 @@ mod tests {
     }
 
     #[test]
+    // Windows won't rename a folder while a handle holds it (or what is
+    // in it), as this race must.
+    #[cfg(unix)]
     fn trash_never_follows_a_root_swapped_for_a_symlink() {
         for when in [Swap::BeforeCheck, Swap::AfterCheck] {
             let (_dir, base) = temp();
@@ -2192,6 +2401,7 @@ mod tests {
     /// Access: run by hand with `--ignored`.
     #[test]
     #[ignore = "reaches the user's Trash"]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn the_system_trash_never_follows_a_parent_swapped_for_a_symlink() {
         let _real = testing::real_trash();
         for when in [Swap::BeforeCheck, Swap::AfterCheck] {
@@ -2206,6 +2416,7 @@ mod tests {
     /// system Trash: run by hand with `--ignored`.
     #[test]
     #[ignore = "reaches the user's Trash"]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn the_system_trash_never_follows_a_root_swapped_for_a_symlink() {
         let _real = testing::real_trash();
         for when in [Swap::BeforeCheck, Swap::AfterCheck] {

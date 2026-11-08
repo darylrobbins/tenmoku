@@ -91,7 +91,10 @@ fn diagnostics_and_completion_cover_dockerignore(cx: &mut TestAppContext) {
 
     // Completion in each container file: the context's children, with no
     // leading slash inserted, and boundary whitespace in a class.
-    write(&s, "padded ", "");
+    // Windows drops a name's trailing space: there, a leading one alone.
+    if cfg!(unix) {
+        write(&s, "padded ", "");
+    }
     write(&s, " lead", "");
     for name in [
         ".dockerignore",
@@ -105,6 +108,9 @@ fn diagnostics_and_completion_cover_dockerignore(cx: &mut TestAppContext) {
             ("padded ", "padded[ ]"),
             (" lead", "[ ]lead"),
         ] {
+            if want.0.ends_with(' ') && !cfg!(unix) {
+                continue;
+            }
             let want = (want.0.to_owned(), want.1.to_owned());
             assert!(items.contains(&want), "{name}: {want:?} in {items:?}");
         }

@@ -97,22 +97,37 @@ pub fn image_source(dest: &str, doc: &Path, root: Option<&Path>) -> ImageSource 
     }
 }
 
-/// The URL scheme `dest` starts with, lowercased.
+/// The URL scheme `dest` starts with, lowercased. On Windows a letter before
+/// `:\` or `:/` is a drive, as in `C:\a.png`, not a scheme.
 fn scheme(dest: &str) -> Option<String> {
-    let (scheme, _) = dest.split_once(':')?;
+    let (scheme, rest) = dest.split_once(':')?;
+    if cfg!(windows) && scheme.len() == 1 && rest.starts_with(['\\', '/']) {
+        return None;
+    }
     let mut chars = scheme.chars();
     let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
     valid.then(|| scheme.to_ascii_lowercase())
 }
 
-/// A `file:` URL's path, without its host: `file:///a/b` is `/a/b`.
+/// A `file:` URL's path, without its host: `file:///a/b` is `/a/b`. On
+/// Windows a drive's path loses the `/` before it: `file:///C:/a` is `C:/a`.
 fn file_url_path(url: &str) -> &str {
     let rest = &url["file:".len()..];
-    match rest.strip_prefix("//") {
+    let path = match rest.strip_prefix("//") {
         Some(authority) => authority.find('/').map_or("", |slash| &authority[slash..]),
         None => rest,
+    };
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':'
+        && bytes.get(3).is_none_or(|&byte| byte == b'/');
+    if cfg!(windows) && drive {
+        return &path[1..];
     }
+    path
 }
 
 /// Where a link's path points: a relative path or `file:` URL, without
@@ -154,7 +169,7 @@ fn canonical(path: &Path) -> Option<PathBuf> {
     let path = normalize(&std::path::absolute(path).ok()?);
     let mut existing = path.as_path();
     loop {
-        if let Ok(canonical) = existing.canonicalize() {
+        if let Ok(canonical) = dunce::canonicalize(existing) {
             let rest = path.strip_prefix(existing).expect("an ancestor");
             return Some(if rest.as_os_str().is_empty() {
                 canonical

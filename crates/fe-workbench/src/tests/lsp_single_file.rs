@@ -44,7 +44,7 @@ impl Folders {
         // Server threads wake the workbench's event loop.
         cx.executor().allow_parking();
         let dir = tempfile::tempdir().unwrap();
-        let t = fs::canonicalize(dir.path()).unwrap();
+        let t = dunce::canonicalize(dir.path()).unwrap();
         fs::create_dir_all(t.join("w")).unwrap();
         fs::write(t.join("w/notes.txt"), "notes\n").unwrap();
         fs::create_dir_all(t.join("other/src")).unwrap();
@@ -304,7 +304,7 @@ fn a_window_with_no_folder_gets_servers(cx: &mut TestAppContext) {
 
     // A project in an untrusted location: none.
     let elsewhere = tempfile::tempdir().unwrap();
-    let elsewhere_root = fs::canonicalize(elsewhere.path()).unwrap();
+    let elsewhere_root = dunce::canonicalize(elsewhere.path()).unwrap();
     fs::write(elsewhere_root.join("Cargo.toml"), "[package]\n").unwrap();
     fs::create_dir(elsewhere_root.join("src")).unwrap();
     fs::write(elsewhere_root.join("src/lib.rs"), "pub fn f() {}\n").unwrap();

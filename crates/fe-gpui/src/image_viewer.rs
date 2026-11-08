@@ -1122,7 +1122,7 @@ fn decode_svg(path: &Path, bytes: Vec<u8>, renderer: &SvgRenderer, root: Option<
     let folders: Vec<PathBuf> = [root, path.parent()]
         .into_iter()
         .flatten()
-        .filter_map(|folder| folder.canonicalize().ok())
+        .filter_map(|folder| dunce::canonicalize(folder).ok())
         .collect();
     match check_svg_links(&data, &folders) {
         Ok(true) => {}
@@ -1522,7 +1522,7 @@ fn check_svg_links(data: &[u8], folders: &[PathBuf]) -> Result<bool, &'static st
         .filter(|attr| attr.name() == "href");
     for href in hrefs {
         // A file that isn't there isn't read.
-        if let Ok(path) = Path::new(href.value()).canonicalize()
+        if let Ok(path) = dunce::canonicalize(Path::new(href.value()))
             && !folders.iter().any(|folder| path.starts_with(folder))
         {
             return Ok(false);

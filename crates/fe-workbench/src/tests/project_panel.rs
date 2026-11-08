@@ -175,6 +175,7 @@ fn listings_recover_after_the_root_was_unreachable(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn failed_listings_retry_once_anything_changes(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
 

@@ -136,7 +136,7 @@ fn check_svg_links(bytes: &[u8], folders: &[PathBuf]) -> Result<(), LoadError> {
         .filter(|attr| attr.name() == "href");
     for href in hrefs {
         // A file that isn't there isn't read.
-        if let Ok(path) = Path::new(href.value()).canonicalize()
+        if let Ok(path) = dunce::canonicalize(Path::new(href.value()))
             && !folders.iter().any(|folder| path.starts_with(folder))
         {
             return Err(LoadError::Blocked);
@@ -154,7 +154,7 @@ fn resolve(dest: &str, cx: &mut RenderCx) -> Resolved {
                 let folders = [root, doc_path.parent()]
                     .into_iter()
                     .flatten()
-                    .filter_map(|folder| folder.canonicalize().ok())
+                    .filter_map(|folder| dunce::canonicalize(folder).ok())
                     .collect();
                 Resolved::Local(LocalImage { path, folders })
             }

@@ -78,14 +78,20 @@ pub(crate) fn gather(
     items
 }
 
-/// `path` as the chat names it: from the root, whole if outside it, and
-/// `untitled` for a buffer with no file.
-fn shown_path(root: Option<&Path>, path: Option<&Path>) -> String {
+/// `path` as the chat names it: from the root with `/` (on Windows too, as
+/// the chat's links name files), whole if outside it, and `untitled` for a
+/// buffer with no file.
+pub(super) fn shown_path(root: Option<&Path>, path: Option<&Path>) -> String {
     let Some(path) = path else {
         return "untitled".to_owned();
     };
-    let relative = root.and_then(|root| path.strip_prefix(root).ok());
-    relative.unwrap_or(path).display().to_string()
+    match root.and_then(|root| path.strip_prefix(root).ok()) {
+        Some(relative) => (relative.components())
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+        None => path.display().to_string(),
+    }
 }
 
 /// The primary selection, if it isn't empty nor over [`MAX_FILE`], with
@@ -236,6 +242,7 @@ pub(crate) fn unattachable(start: &[u8], len: usize) -> Option<&'static str> {
 }
 
 /// What a [`walk`] ends at.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) enum Walked {
     /// A regular file, opened: what's read from it, or checked of it, is
     /// what the walk reached, whatever's at its path since.
@@ -302,6 +309,7 @@ fn text_of(walked: &Walked, stamp: Option<&DiskStamp>) -> Result<(), String> {
 }
 
 /// How many links [`walk`] follows before giving up, as Linux does.
+#[cfg(unix)]
 const MAX_LINKS: usize = 40;
 
 /// The absolute `path` walked from `/` a component at a time, each opened
@@ -426,7 +434,67 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
     Ok((resolved, end))
 }
 
-#[cfg(not(unix))]
+/// The absolute `path`'s real path, its links (symlinks and junctions)
+/// resolved by the system, and what's there: the file opened, and the real
+/// path the system reports for that open handle, so the path checked is the
+/// file read, whatever is swapped in at `path` meanwhile. Past a component
+/// that doesn't exist the rest is taken as written. Fails if it reaches
+/// something other than a folder or a regular file.
+#[cfg(windows)]
+pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
+    match open_following(path) {
+        Ok(opened) => {
+            let real = fe_project::beneath::opened_path(&opened)?;
+            let meta = opened.metadata()?;
+            if meta.is_dir() {
+                Ok((real, Walked::Folder))
+            } else if meta.is_file() {
+                Ok((real, Walked::File(opened)))
+            } else {
+                Err(io::Error::other("it isn't a regular file"))
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // The deepest folder that exists, resolved by its handle, and
+            // the rest as written. Nothing there is read.
+            let mut rest = Vec::new();
+            let mut at = path;
+            loop {
+                let Some(parent) = at.parent() else {
+                    return Err(error);
+                };
+                rest.push(at.file_name().unwrap_or_default().to_owned());
+                if let Ok(folder) = open_following(parent) {
+                    if !folder.metadata()?.is_dir() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::NotADirectory,
+                            "a file where a folder should be",
+                        ));
+                    }
+                    let mut resolved = fe_project::beneath::opened_path(&folder)?;
+                    resolved.extend(rest.iter().rev());
+                    return Ok((resolved, Walked::Missing));
+                }
+                at = parent;
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Opens `path`, a file or a folder, for reading, its links followed.
+#[cfg(windows)]
+fn open_following(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    // A folder opens only with backup semantics.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn walk(_: &Path) -> io::Result<(PathBuf, Walked)> {
     Err(io::Error::other("can't check it on this system"))
 }

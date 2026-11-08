@@ -21,7 +21,7 @@ use crate::workspace_edit::{EditTarget, FileEdits};
 use crate::{LspError, LspEvent, LspManager, ManualClock, ServerSpec, SystemClock};
 
 const WAIT: Duration = Duration::from_secs(10);
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 
 /// A UTF-16 server on the fake with `rename_provider`, and a buffer open
 /// on it as `a.rs`.

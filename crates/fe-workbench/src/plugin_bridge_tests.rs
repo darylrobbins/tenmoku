@@ -31,7 +31,9 @@ use kiln_plugin::{
     runner::{Call, Reply},
 };
 
-use super::{Bridge, CallDeadline, Handoff, buffer_id, serve, snapshot};
+#[cfg(unix)]
+use super::{Bridge, CallDeadline, serve};
+use super::{Handoff, buffer_id, snapshot};
 use crate::{
     Launch, Workbench,
     plugin_host::{
@@ -576,6 +578,8 @@ fn a_hand_off_running_past_its_deadline_stops_the_wait() {
 /// A program a plugin's call runs moves the call's deadline back on the
 /// buffers too: the call reads its buffer after a run that outlasted the
 /// deadline it started with.
+// Its program is a `/bin/sh` script.
+#[cfg(unix)]
 #[gpui::test]
 fn a_program_run_leaves_the_call_its_time_on_the_buffers(cx: &mut TestAppContext) {
     use kiln_plugin::bindings::kiln::extension::process::Host as _;

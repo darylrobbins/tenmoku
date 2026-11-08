@@ -3,9 +3,10 @@
 //! here, as a `ProjectWatcher` would send them, so nothing waits on file
 //! system events.
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
 };
@@ -16,7 +17,7 @@ use fe_project::FsChange;
 /// A temporary project and its canonical root, as watchers report it.
 fn project() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     (dir, root)
 }
 
@@ -151,6 +152,8 @@ fn unchanged_and_ignored_files_are_not_reextracted() {
     // once extracted.
     write(&root, "locked.rs", "fn locked() {}\nfn more() {}\n");
     let locked = root.join("locked.rs");
+    // Windows has no mode to lock it with: it stays readable.
+    #[cfg(unix)]
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
     // Unless permissions don't hold (as for root).
     let readable = fs::File::open(&locked).is_ok();
@@ -159,6 +162,7 @@ fn unchanged_and_ignored_files_are_not_reextracted() {
     assert_eq!(reindex.extract, paths(&["binary.rs", "locked.rs"]));
     assert_eq!(defined(&index, "binary"), paths(&["binary.rs"]));
     run(&mut index, &reindex);
+    #[cfg(unix)]
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
 
     assert!(defined(&index, "binary").is_empty());
@@ -297,6 +301,8 @@ fn a_file_added_and_removed_during_the_build_leaves_the_index() {
 }
 
 #[test]
+// Swaps a folder for a symlink, which Windows makes only with a privilege.
+#[cfg(unix)]
 fn a_root_swapped_for_a_symlink_is_not_followed() {
     let (_dir, tmp) = project();
     let root = tmp.join("project");

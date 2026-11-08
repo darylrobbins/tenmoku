@@ -11,10 +11,13 @@ publish.workspace = true
 alacritty_terminal.workspace = true
 async-channel.workspace = true
 polling.workspace = true
+
+# Windows' pty is ConPTY, which alacritty_terminal opens itself.
+[target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["fs"] }
 rustix-openpty.workspace = true
-
 [dev-dependencies]
+dunce.workspace = true
 libc.workspace = true
 tempfile.workspace = true
 

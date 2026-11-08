@@ -5,11 +5,10 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, HashSet},
     ffi::{OsStr, OsString},
-    fs::{self, File},
+    fs::File,
     io,
     num::NonZero,
     ops::Bound,
-    os::unix::ffi::OsStrExt,
     path::{Component, Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
@@ -107,12 +106,9 @@ struct Item {
 
 impl Item {
     fn new(rel: &Path) -> Item {
-        let lossy = rel.as_os_str().to_string_lossy();
-        let real = match lossy {
-            Cow::Borrowed(_) => None,
-            Cow::Owned(_) => Some(rel.into()),
-        };
-        let path = lossy.into_owned();
+        let rel: &Path = &native(rel);
+        let (path, differs) = spelled(rel);
+        let real = differs.then(|| rel.into());
         let name = path.rfind('/').map_or(0, |slash| slash + 1);
         Item {
             name: to_u32(name),
@@ -125,7 +121,7 @@ impl Item {
     /// The real relative path's bytes.
     fn real_bytes(&self) -> &[u8] {
         match &self.real {
-            Some(real) => real.as_os_str().as_bytes(),
+            Some(real) => real.as_os_str().as_encoded_bytes(),
             None => self.path.as_bytes(),
         }
     }
@@ -135,7 +131,9 @@ impl Item {
     fn order(&self) -> (&str, Option<&[u8]>) {
         (
             &self.path,
-            self.real.as_deref().map(|real| real.as_os_str().as_bytes()),
+            self.real
+                .as_deref()
+                .map(|real| real.as_os_str().as_encoded_bytes()),
         )
     }
 
@@ -150,7 +148,9 @@ impl Item {
 
     /// The real relative path.
     fn rel(&self) -> PathBuf {
-        PathBuf::from(OsStr::from_bytes(self.real_bytes()))
+        // SAFETY: the real bytes are a whole `OsStr`'s encoded bytes, or a
+        // `str`'s, as `real_bytes` takes them.
+        PathBuf::from(unsafe { OsStr::from_encoded_bytes_unchecked(self.real_bytes()) })
     }
 }
 
@@ -171,7 +171,7 @@ fn make_key(path: &str, real: Option<&[u8]>) -> Box<[u8]> {
     key.into()
 }
 
-/// `root` as [`fs::canonicalize`] resolves it, done once for
+/// `root` as [`dunce::canonicalize`] resolves it, done once for
 /// [`FinderIndex::new`]. A root that is missing, wholly or in part, still gets
 /// an absolute path, which later walks reach without following symlinks: its
 /// longest existing ancestor resolved, then the rest of it as given, where a
@@ -184,7 +184,7 @@ fn resolve_root(root: &Path) -> PathBuf {
     let mut missing = Vec::new();
     let mut at = absolute.as_path();
     let mut resolved = loop {
-        if let Ok(resolved) = fs::canonicalize(at) {
+        if let Ok(resolved) = dunce::canonicalize(at) {
             break resolved;
         }
         match (at.parent(), at.components().next_back()) {
@@ -204,19 +204,47 @@ fn resolve_root(root: &Path) -> PathBuf {
             Component::Normal(name) => resolved.push(name),
             Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
         }
-        if let Ok(found) = fs::canonicalize(&resolved) {
+        if let Ok(found) = dunce::canonicalize(&resolved) {
             resolved = found;
         }
     }
     resolved
 }
 
+/// Relative path `rel` as an [`Item`] spells it: lossily, with `/`
+/// separators; and whether that isn't `rel`'s own spelling, as for a lossy
+/// name, or on Windows for any path under a folder (`\`).
+fn spelled(rel: &Path) -> (String, bool) {
+    let lossy = rel.as_os_str().to_string_lossy();
+    let lossless = matches!(lossy, Cow::Borrowed(_));
+    let path = lossy.into_owned();
+    if cfg!(windows) && path.contains('\\') {
+        return (path.replace('\\', "/"), true);
+    }
+    (path, !lossless)
+}
+
+/// `rel` with the platform's separators: on Windows, `a/b` and `a\b` are one
+/// path, and must be one item with one key.
+fn native(rel: &Path) -> Cow<'_, Path> {
+    let bytes = rel.as_os_str().as_encoded_bytes();
+    if !cfg!(windows) || !bytes.contains(&b'/') {
+        return Cow::Borrowed(rel);
+    }
+    let swapped: Vec<u8> = (bytes.iter())
+        .map(|&byte| if byte == b'/' { b'\\' } else { byte })
+        .collect();
+    // SAFETY: an ASCII byte swapped for another keeps the encoding whole.
+    Cow::Owned(PathBuf::from(unsafe {
+        OsString::from_encoded_bytes_unchecked(swapped)
+    }))
+}
+
 /// The key of relative path `rel`.
 fn key_of(rel: &Path) -> Box<[u8]> {
-    match rel.as_os_str().to_string_lossy() {
-        Cow::Borrowed(path) => make_key(path, None),
-        Cow::Owned(path) => make_key(&path, Some(rel.as_os_str().as_bytes())),
-    }
+    let rel = &native(rel);
+    let (path, differs) = spelled(rel);
+    make_key(&path, differs.then(|| rel.as_os_str().as_encoded_bytes()))
 }
 
 /// The ascending indices of the chars of `path` that hold any of `bytes`.
@@ -965,11 +993,13 @@ impl FinderIndex {
     /// Removes every path under directory `rel`.
     fn remove_under(&mut self, rel: &Path) {
         // Lossy conversion keeps a `/` and what comes before it, so every
-        // path under `rel` reads `rel` lossily, then `/`. Other directories
-        // that read the same are told apart by the real bytes.
-        let mut real = rel.as_os_str().as_bytes().to_vec();
-        real.push(b'/');
-        let mut low = rel.as_os_str().to_string_lossy().into_owned().into_bytes();
+        // path under `rel` reads `rel` as spelled, then `/`. Other
+        // directories that read the same are told apart by the real bytes,
+        // which have the platform's separator (`\` on Windows).
+        let rel = &native(rel);
+        let mut real = rel.as_os_str().as_encoded_bytes().to_vec();
+        real.push(std::path::MAIN_SEPARATOR as u8);
+        let mut low = spelled(rel).0.into_bytes();
         low.push(b'/');
         let mut high = low.clone();
         *high.last_mut().unwrap() = b'/' + 1;
@@ -1036,7 +1066,7 @@ pub(crate) fn walk_root(
     }
     // Resolved once, here: rules are read and matched by canonical paths, as
     // the tree's are. A root that can't be reached has nothing to walk.
-    let Some(root) = fs::canonicalize(root).ok() else {
+    let Some(root) = dunce::canonicalize(root).ok() else {
         return true;
     };
     let Some(start) = Start::root(&root) else {

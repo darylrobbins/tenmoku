@@ -127,9 +127,9 @@ fn the_highlight_follows_toggle_and_exit(cx: &mut TestAppContext) {
         draw(cx);
         std::thread::sleep(Duration::from_millis(10));
     }
-    view.read_with(cx, |view, _| {
-        view.terminal().unwrap().input(b"exit\n".to_vec())
-    });
+    // Enter is a CR, which Windows' console takes and no other end of line.
+    let exit: &[u8] = if cfg!(windows) { b"exit\r" } else { b"exit\n" };
+    view.read_with(cx, |view, _| view.terminal().unwrap().input(exit.to_vec()));
     while dock_shown(&workbench, cx) {
         assert!(std::time::Instant::now() < deadline, "the shell to exit");
         draw(cx);

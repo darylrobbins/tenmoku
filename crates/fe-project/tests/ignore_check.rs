@@ -1,10 +1,10 @@
 //! `check_ignore_file` against small trees on disk.
 
+#[cfg(unix)]
+use std::{collections::BTreeSet, process::Command};
 use std::{
-    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::atomic::AtomicBool,
 };
 
@@ -347,6 +347,8 @@ fn dockerignore_is_checked_with_docker_rules() {
 }
 
 #[test]
+// Windows strips a trailing space from a file name, which these fixtures need.
+#[cfg(unix)]
 fn line_endings_comments_and_byte_order_marks_are_read_as_git_reads_them() {
     let dir = project(&["a.txt", "#b", "c ", "!d"]);
     let text = "\u{feff}missing  \r\n# comment\r\n\r\n   \n\\#b\n\\!d\nc\\ \na.txt\r\nnope";
@@ -386,6 +388,8 @@ fn matches_list_the_first_paths_and_count_them_all() {
 /// What git's own matcher takes each of a flat directory's files to match, one
 /// pattern at a time, for what the check's rewriting has to agree with.
 #[test]
+// Windows strips a trailing space from a file name, which these fixtures need.
+#[cfg(unix)]
 fn single_patterns_match_what_git_matches() {
     let files = [
         "a.txt",

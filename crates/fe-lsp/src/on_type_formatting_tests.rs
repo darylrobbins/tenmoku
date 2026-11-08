@@ -23,7 +23,7 @@ use crate::fake::{
 };
 use crate::{Clock, LspManager, ManualClock, ServerId, ServerSpec, SystemClock};
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 const ON_TYPE: &str = "textDocument/onTypeFormatting";
 
 fn answer<T>(reply: impl Future<Output = T>) -> T {

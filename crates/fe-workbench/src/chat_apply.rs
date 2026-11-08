@@ -426,7 +426,7 @@ fn locate(root: &Path, rel: &str, open: &[PathBuf]) -> Result<Located, &'static 
         return Err(OUTSIDE);
     }
     let full = root.join(rel);
-    let real_root = fs::canonicalize(root).map_err(|_| "the folder can't be read")?;
+    let real_root = dunce::canonicalize(root).map_err(|_| "the folder can't be read")?;
     let real = real_path(&full).ok_or("its path can't be resolved")?;
     if !real.starts_with(&real_root) {
         return Err(OUTSIDE);

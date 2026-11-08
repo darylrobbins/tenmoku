@@ -3,6 +3,9 @@
 //! the user's keys only, each one undo step; refused, failed, stopped or
 //! overtaken by an edit, the text as it was; `%` shell-escaped.
 
+// What only its Unix tests use goes unused elsewhere.
+#![cfg_attr(not(unix), allow(unused_imports, dead_code))]
+
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -22,12 +25,15 @@ use super::super::vim_host::vim_filter::{
 use super::{active, draw, ex, message, open, run, window};
 use crate::Workbench;
 
-/// The user's settings: `/bin/sh` as the shell, and `limit` ms to run.
+/// The user's settings: `/bin/sh` as the shell (`cmd.exe` on Windows), and
+/// `limit` ms to run.
 fn settings(limit: u64) -> String {
-    format!("[vim]\nshell = \"/bin/sh\"\nfilter_time_limit = {limit}\n")
+    let shell = if cfg!(windows) { "cmd.exe" } else { "/bin/sh" };
+    format!("[vim]\nshell = \"{shell}\"\nfilter_time_limit = {limit}\n")
 }
 
 /// A config service holding the user's settings file, and its sender.
+#[cfg_attr(not(unix), allow(dead_code))]
 struct Settings {
     path: std::path::PathBuf,
     sender: BatchSender,
@@ -53,6 +59,7 @@ impl Settings {
     }
 
     /// Sets `vim.filter_time_limit` to `limit`.
+    #[cfg(unix)]
     fn limit(&self, limit: u64, cx: &mut VisualTestContext) {
         std::fs::write(&self.path, settings(limit)).unwrap();
         self.sender.send(vec![self.path.clone()]);
@@ -84,13 +91,29 @@ fn until(
     what: &str,
     mut done: impl FnMut(&mut VisualTestContext) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    until_within(cx, what, Duration::from_secs(10), &mut done, |_| {
+        String::new()
+    });
+}
+
+/// As [`until`], waiting up to `limit`, and naming what `shown` says on
+/// timing out.
+fn until_within(
+    cx: &mut VisualTestContext,
+    what: &str,
+    limit: Duration,
+    mut done: impl FnMut(&mut VisualTestContext) -> bool,
+    shown: impl Fn(&mut VisualTestContext) -> String,
+) {
+    let deadline = Instant::now() + limit;
     loop {
         draw(cx);
         if done(cx) {
             return;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for {what}: {}", shown(cx));
+        }
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -138,6 +161,9 @@ fn row(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> u32 {
 }
 
 #[gpui::test]
+// POSIX shell scripts: Windows filters through cmd.exe (see
+// filter_runs_through_cmd).
+#[cfg(unix)]
 fn filter_runs_through_the_shell(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -198,6 +224,7 @@ fn filter_runs_through_the_shell(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -325,6 +352,9 @@ fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+// POSIX shell scripts: Windows filters through cmd.exe (see
+// filter_runs_through_cmd).
+#[cfg(unix)]
 fn file_names_are_shell_escaped(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -404,6 +434,50 @@ fn file_names_are_shell_escaped(cx: &mut TestAppContext) {
     let said: Option<SharedString> = message(&workbench, cx);
     assert_eq!(said.as_deref(), Some(E499));
     assert_eq!(text(&untitled, cx), "");
+}
+
+#[gpui::test]
+#[cfg(windows)]
+fn filter_runs_through_cmd(cx: &mut TestAppContext) {
+    // The command's thread wakes the task waiting for it.
+    cx.executor().allow_parking();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    // An odd number of bytes: sort.exe takes some even-length input with
+    // no BOM for UTF-16, as `IsTextUnicode` guesses.
+    std::fs::write(root.join("a.txt"), "c\na\nbb\n").unwrap();
+    let _settings = Settings::start(dir.path(), cx);
+    let (workbench, mut vcx) = window(cx, &root, &["a.txt"]);
+    let cx = &mut vcx;
+    trust(&workbench, cx);
+    let a = active(&workbench, cx);
+
+    // :%!sort sorts the buffer through Windows' own sort, one undo step,
+    // its CRLF rows read as the buffer's. Its first cmd.exe can take a
+    // while on a loaded CI runner.
+    ex("%!sort", cx);
+    let shown =
+        |cx: &mut VisualTestContext| format!("{:?}, {:?}", text(&a, cx), message(&workbench, cx));
+    let sorted = |cx: &mut VisualTestContext| text(&a, cx) == "a\nbb\nc\n";
+    until_within(cx, "sorted", Duration::from_secs(60), sorted, shown);
+    cx.simulate_keystrokes("u");
+    assert_eq!(text(&a, cx), "c\na\nbb\n");
+
+    // :r !cmd puts its rows below the caret's line.
+    ex("$r !echo z", cx);
+    until(cx, "read at the end", |cx| text(&a, cx) == "c\na\nbb\nz\n");
+    cx.simulate_keystrokes("u");
+    assert_eq!(text(&a, cx), "c\na\nbb\n");
+
+    // A file name isn't put in a cmd.exe command line.
+    ex(".!echo %", cx);
+    linger(cx);
+    assert_eq!(
+        message(&workbench, cx).as_deref(),
+        Some(NO_NAMES_ON_WINDOWS)
+    );
+    assert_eq!(text(&a, cx), "c\na\nbb\n");
 }
 
 #[test]
@@ -567,6 +641,7 @@ fn names_go_only_in_plain_commands() {
 }
 
 #[test]
+#[cfg(unix)]
 fn containment_follows_symlinks_dangling_or_not() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
@@ -643,6 +718,7 @@ fn quoted_names_come_back_from_the_shells() {
 }
 
 #[test]
+#[cfg(unix)]
 fn output_past_the_cap_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let run = |command: &str| {
@@ -687,6 +763,7 @@ fn output_past_the_cap_is_refused() {
 
 /// Whether process `pid` is still there, not counting a zombie its reaper
 /// hasn't come for.
+#[cfg(unix)]
 fn alive(pid: i32) -> bool {
     // SAFETY: signal 0 only asks.
     if unsafe { libc::kill(pid, 0) } != 0 {
@@ -701,6 +778,7 @@ fn alive(pid: i32) -> bool {
 }
 
 /// The pid the command wrote to `file`, once it has.
+#[cfg(unix)]
 fn pid_in(file: &Path) -> i32 {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -715,6 +793,7 @@ fn pid_in(file: &Path) -> i32 {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_stopped_commands_group_dies(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -747,6 +826,7 @@ fn a_stopped_commands_group_dies(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn closing_the_tab_or_the_window_cancels(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -801,6 +881,7 @@ fn closing_the_tab_or_the_window_cancels(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn quitting_stops_every_command(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -828,6 +909,9 @@ fn quitting_stops_every_command(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+// POSIX shell scripts: Windows filters through cmd.exe (see
+// filter_runs_through_cmd).
+#[cfg(unix)]
 fn toasts_show_in_the_commands_window(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -900,6 +984,7 @@ fn toasts_show_in_the_commands_window(cx: &mut TestAppContext) {
 }
 
 /// A workbench on a trusted root holding `a.txt`, through `/bin/sh`.
+#[cfg(unix)]
 fn trusted(
     dir: &Path,
     cx: &mut TestAppContext,
@@ -920,6 +1005,7 @@ fn trusted(
 
 /// Waits a little for `pid` to go, as only its reaper may lag once the
 /// app has quit.
+#[cfg(unix)]
 fn reaped(pid: i32) {
     let deadline = Instant::now() + Duration::from_millis(500);
     while alive(pid) {
@@ -929,9 +1015,11 @@ fn reaped(pid: i32) {
 }
 
 /// What ignores SIGTERM, with its streams elsewhere, writing its pid.
+#[cfg(unix)]
 const STUBBORN: &str = ".!trap '' TERM; sleep 30 </dev/null >/dev/null 2>&1 & echo $! >pid; wait";
 
 #[gpui::test]
+#[cfg(unix)]
 fn quitting_right_after_a_command_is_typed_stops_it(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();
@@ -950,6 +1038,7 @@ fn quitting_right_after_a_command_is_typed_stops_it(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn quitting_while_a_cancelled_command_stops_kills_it(cx: &mut TestAppContext) {
     // The command's thread wakes the task waiting for it.
     cx.executor().allow_parking();

@@ -40,6 +40,7 @@ fn selected_row(view: &Entity<TerminalView>, cx: &mut VisualTestContext) -> Opti
 }
 
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn keys_drive_the_row(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let dir = tempfile::tempdir().unwrap();

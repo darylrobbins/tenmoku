@@ -12,9 +12,34 @@ fn os(arg: &str) -> OsString {
 }
 
 /// What exec charges for one argument or environment entry: its bytes, a NUL
-/// and the pointer to it.
+/// and the pointer to it. On Windows, what it adds to the command line: its
+/// UTF-16 units, the quotes around it and a space.
 fn exec_cost(arg: &OsStr) -> usize {
-    arg.len() + 1 + std::mem::size_of::<usize>()
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        arg.encode_wide().count() + 3
+    }
+    #[cfg(not(windows))]
+    {
+        arg.len() + 1 + std::mem::size_of::<usize>()
+    }
+}
+
+/// The room for a command's arguments: Linux's smallest `ARG_MAX` of 128 KiB
+/// for arguments and environment; on Windows the 32,767 UTF-16 units of a
+/// command line, which holds no environment.
+const ARG_SPACE: usize = if cfg!(windows) { 32_767 } else { 128 * 1024 };
+
+/// What the inherited environment takes of [`ARG_SPACE`]: each entry's
+/// bytes, a `=`, a NUL and a pointer; nothing on Windows.
+fn environment_cost() -> usize {
+    if cfg!(windows) {
+        return 0;
+    }
+    std::env::vars_os()
+        .map(|(key, value)| key.len() + value.len() + 2 + std::mem::size_of::<usize>())
+        .sum()
 }
 
 const FROM_STDIN: &str = "--pathspec-from-file=-";
@@ -96,8 +121,8 @@ impl Repo {
         let mut restore = Vec::new();
         let mut delete = Vec::new();
         for (path, rela) in paths.iter().zip(relas) {
-            let name = gix::path::os_str_into_bstr(&rela).ok();
-            if name.is_some_and(|name| tracked.contains::<[u8]>(name.as_ref())) {
+            let name = crate::blame::git_path(Path::new(&rela));
+            if tracked.contains::<[u8]>(name.as_ref()) {
                 restore.push(rela);
             } else {
                 delete.push(path);
@@ -164,10 +189,9 @@ impl Repo {
     /// The names among `relas` that the index tracks at any stage, sparse
     /// directory entries expanded, asked of `ls-files` in batches that fit the
     /// argument space. Each path, fixed argument and inherited environment
-    /// entry is charged its bytes, a NUL and a pointer (see [`exec_cost`]),
+    /// entry is charged as [`exec_cost`] and [`environment_cost`] say,
     /// against half of [`ARG_SPACE`]; a batch takes at least one path.
     fn tracked_names(&self, relas: &[OsString]) -> Result<HashSet<Vec<u8>>, GitError> {
-        const ARG_SPACE: usize = 128 * 1024;
         let fixed = [
             os("git"),
             os("--literal-pathspecs"),
@@ -183,10 +207,7 @@ impl Repo {
             os("LC_ALL=C"),
             os("GIT_OPTIONAL_LOCKS=0"),
         ];
-        let inherited: usize = std::env::vars_os()
-            .map(|(key, value)| key.len() + value.len() + 2 + std::mem::size_of::<usize>())
-            .sum();
-        let overhead = inherited
+        let overhead = environment_cost()
             + fixed
                 .iter()
                 .chain(&added_env)
@@ -238,7 +259,7 @@ impl Repo {
                 path.display()
             )));
         }
-        let root = self.workdir.canonicalize().map_err(|_| outside())?;
+        let root = dunce::canonicalize(&self.workdir).map_err(|_| outside())?;
         let repo = self.repo.to_thread_local();
         let metadata: Vec<PathBuf> = [
             repo.git_dir(),
@@ -246,11 +267,11 @@ impl Repo {
             &self.workdir.join(".git"),
         ]
         .into_iter()
-        .filter_map(|dir| dir.canonicalize().ok())
+        .filter_map(|dir| dunce::canonicalize(dir).ok())
         .collect();
         let mut parent = path.parent();
         while let Some(dir) = parent {
-            if let Ok(real) = dir.canonicalize() {
+            if let Ok(real) = dunce::canonicalize(dir) {
                 let in_metadata = metadata.iter().any(|dir| real.starts_with(dir));
                 return if real.starts_with(&root) && !in_metadata {
                     Ok(())
@@ -266,13 +287,15 @@ impl Repo {
     /// The mode for `path`'s index entry: the entry's own, else by the file on disk.
     fn index_mode(&self, path: &Path, rela: &OsString) -> &'static str {
         use gix::index::entry::Mode;
-        let existing = gix::path::os_str_into_bstr(rela).ok().and_then(|name| {
+        // As the index names it: with `/`, on Windows too.
+        let name = crate::blame::git_path(Path::new(rela));
+        let existing = (|| {
             let repo = self.repo.to_thread_local();
             let index = repo.index_or_empty().ok()?;
-            let entry =
-                index.entry_by_path_and_stage(name, gix::index::entry::Stage::Unconflicted)?;
+            let entry = index
+                .entry_by_path_and_stage(name.as_ref(), gix::index::entry::Stage::Unconflicted)?;
             Some(entry.mode)
-        });
+        })();
         match existing {
             Some(Mode::FILE_EXECUTABLE) => "100755",
             Some(Mode::SYMLINK) => "120000",

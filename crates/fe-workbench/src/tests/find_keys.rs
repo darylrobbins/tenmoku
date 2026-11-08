@@ -253,6 +253,7 @@ fn replace_opens_from_a_panel(cx: &mut TestAppContext) {
 /// from the terminal's find input too: the row has no replace of its own,
 /// so it lets the command through to the workbench's fallback.
 #[gpui::test]
+#[cfg_attr(windows, ignore = "runs a /bin/sh script in the terminal")]
 fn replace_opens_from_the_terminal_find_input(cx: &mut TestAppContext) {
     use fe_buffer::Buffer;
     use fe_command::Invocation;
