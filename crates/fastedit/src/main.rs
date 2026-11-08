@@ -429,6 +429,22 @@ fn saved_bounds(entry: &Value) -> Option<WindowBounds> {
     kiln::shell::layout::restore_bounds(entry.get("bounds")?)
 }
 
+/// Starts kiln-shell's frame watchdog for `window` (T1609), which `Root`
+/// does for kiln's own windows. It is macOS's: elsewhere, and on GPUI's
+/// test platform, there is nothing to start. The watch ends when the window
+/// closes, so the task is detached.
+fn start_frame_watch(window: &mut Window, cx: &mut App) {
+    #[cfg(test)]
+    let watch = tests::WATCH
+        .with(|w| w.get())
+        .unwrap_or(kiln::shell::watch_frame_requests);
+    #[cfg(not(test))]
+    let watch = kiln::shell::watch_frame_requests;
+    if let Some(task) = watch(window, cx) {
+        task.detach();
+    }
+}
+
 /// A workbench for `launch`, in Tenmoku's chrome for this platform, with
 /// `settings`, saving its layout in `layout` and restoring `entry`.
 fn new_workbench(
@@ -442,6 +458,7 @@ fn new_workbench(
 ) -> Entity<Workbench> {
     // Tenmoku's windows aren't kiln `Root`s, which do this themselves.
     window.follow_system_appearance(cx);
+    start_frame_watch(window, cx);
     let capabilities = Capabilities::current();
     let editor_settings = settings.editor.clone();
     let status_bar = settings.status_bar.visible;
@@ -907,7 +924,80 @@ mod tests {
     use gpui::TestAppContext;
     use log::{Level, Log as _, Metadata};
 
+    use std::cell::Cell;
+
     use super::{EditorTheme, Launch, StderrLogger, Target, Workbench, files_left, open_files};
+
+    type Watch = fn(&mut gpui::Window, &mut gpui::App) -> Option<gpui::Task<()>>;
+
+    thread_local! {
+        /// The watchdog `new_workbench` starts, in place of kiln's, which
+        /// GPUI's test platform has no AppKit view for.
+        pub(super) static WATCH: Cell<Option<Watch>> = const { Cell::new(None) };
+        /// Ticks of each window's stand-in watchdog task.
+        static TICKS: std::cell::RefCell<std::collections::HashMap<gpui::WindowId, u32>> =
+            std::cell::RefCell::new(Default::default());
+    }
+
+    fn ticks(id: gpui::WindowId) -> u32 {
+        TICKS.with(|t| t.borrow().get(&id).copied().unwrap_or(0))
+    }
+
+    /// A watchdog that ticks every 10 ms while its task lives.
+    fn ticking(window: &mut gpui::Window, cx: &mut gpui::App) -> Option<gpui::Task<()>> {
+        let id = window.window_handle().window_id();
+        Some(cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(10))
+                    .await;
+                TICKS.with(|t| *t.borrow_mut().entry(id).or_default() += 1);
+            }
+        }))
+    }
+
+    /// Every window `new_workbench` makes gets the frame watchdog, and its
+    /// task stays alive after `new_workbench` returns (T1610).
+    #[gpui::test]
+    fn new_workbench_starts_the_frame_watchdog(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+        });
+        WATCH.with(|w| w.set(Some(ticking)));
+        let mut windows = Vec::new();
+        for _ in 0..2 {
+            let settings = super::Settings::default();
+            let window = cx
+                .update(|cx| {
+                    cx.open_window(gpui::WindowOptions::default(), |window, cx| {
+                        let theme = EditorTheme::default_dark(cx);
+                        let launch = Launch {
+                            root: None,
+                            file: None,
+                        };
+                        super::new_workbench(launch, &settings, theme, None, None, window, cx)
+                    })
+                })
+                .unwrap();
+            windows.push(window.window_id());
+        }
+        for id in &windows {
+            assert_eq!(ticks(*id), 0);
+        }
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+        let first: Vec<u32> = windows.iter().map(|id| ticks(*id)).collect();
+        assert!(first.iter().all(|n| *n > 0), "{first:?}");
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+        for (id, before) in windows.iter().zip(first) {
+            assert!(ticks(*id) > before, "a window's watchdog task stopped");
+        }
+        WATCH.with(|w| w.set(None));
+    }
 
     fn at(path: &str, line: Option<u32>) -> Target {
         Target {
