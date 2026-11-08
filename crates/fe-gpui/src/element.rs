@@ -41,6 +41,13 @@ use crate::{
 mod annotation_column;
 pub(crate) mod decorations;
 use decorations::{Decorations, Layer};
+
+pub(crate) fn decoration_tint_color(
+    theme: &EditorTheme,
+    tint: fe_editor::decorations::Tint,
+) -> Hsla {
+    decorations::tint_color(theme, tint)
+}
 mod ghost_text;
 mod host_blocks;
 mod indent_guides;
@@ -3316,10 +3323,22 @@ fn foreground_spans(
         }
         // A name the theme leaves to the foreground (`variable`) still
         // overrides the colour under it, as the string around `{error}`.
-        let Some(style) = fe_syntax::Highlight::from_capture(name)
-            .map(|highlight| theme.syntax_color(highlight).unwrap_or(theme.foreground))
-        else {
+        let Some(highlight) = fe_syntax::Highlight::from_capture(name) else {
             continue;
+        };
+        let style = theme.syntax_color(highlight);
+        // A coloured name the theme doesn't style itself (`comment.todo`
+        // under a theme with only `comment`) takes its parent's colour. For
+        // a decoration with a tint of its own, that is no colour: it falls
+        // back to the tint.
+        let unstyled = decoration.tint != fe_editor::decorations::Tint::Muted
+            && name.rsplit_once('.').is_some_and(|(parent, _)| {
+                fe_syntax::Highlight::from_capture(parent)
+                    .is_some_and(|parent| theme.syntax_color(parent) == style)
+            });
+        let style = match unstyled {
+            true => decorations::tint_color(theme, decoration.tint),
+            false => style.unwrap_or(theme.foreground),
         };
         let span = StyledSpan {
             style,

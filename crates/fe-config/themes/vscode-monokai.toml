@@ -172,6 +172,13 @@ minimap_gutter_deleted = "#F92672"
 [syntax]
 "attribute" = "#A6E22E"
 "comment" = "#88846F"
+# TODO-style comment badges: the keyword's text colour.
+"comment.fixme" = "#F92672"
+"comment.hack" = "#E2E22E"
+"comment.note" = "#66D9EF"
+"comment.perf" = "#AE81FF"
+"comment.todo" = "#819AFF"
+"comment.warn" = "#E2E22E"
 "constant" = "#AE81FF"
 "constant.builtin" = "#AE81FF"
 "constant.enum_member" = "#AE81FF"

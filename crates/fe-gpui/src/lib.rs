@@ -73,6 +73,11 @@ pub use signature_help::{
     SignatureHelpProvider, SignatureTrigger,
 };
 pub use theme::{ActivePalette, editor_palette, set_editor_palette};
+
+/// The colour a decoration `tint` resolves to in `theme`, before its kind's fade.
+pub fn decoration_tint_color(theme: &EditorTheme, tint: fe_editor::decorations::Tint) -> Hsla {
+    element::decoration_tint_color(theme, tint)
+}
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 pub use view::GhostTextEvent;

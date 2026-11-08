@@ -59,8 +59,19 @@ fn open(
         .expect("the file is shown")
 }
 
-/// `editor`'s keyword badges.
+/// `editor`'s keyword badges: the tinted backgrounds.
 fn badges(
+    workbench: &Entity<Workbench>,
+    editor: &Entity<EditorView>,
+    cx: &mut VisualTestContext,
+) -> Vec<Decoration> {
+    let mut found = all_badges(workbench, editor, cx);
+    found.retain(|it| it.kind == DecorationKind::Highlight);
+    found
+}
+
+/// Every decoration of `editor`'s badges: a background and a foreground each.
+fn all_badges(
     workbench: &Entity<Workbench>,
     editor: &Entity<EditorView>,
     cx: &mut VisualTestContext,
@@ -111,7 +122,7 @@ fn a_todo_comment_gets_a_decoration_after_the_rest_delay(cx: &mut TestAppContext
         let model = view.model();
         model.decorations(0..model.text().len()).len()
     });
-    assert_eq!(drawn, 2);
+    assert_eq!(drawn, 4, "a background and a foreground each");
 }
 
 #[gpui::test]
@@ -215,11 +226,11 @@ fn what_a_split_copied_goes_with_the_setting_off(cx: &mut TestAppContext) {
     assert_eq!(drawn(&copy, cx), 0);
     reload(&workbench, true, cx);
     settle(cx);
-    assert_eq!(drawn(&copy, cx), 1, "just the one, once it is back on");
+    assert_eq!(drawn(&copy, cx), 2, "just the one, once it is back on");
 }
 
 #[gpui::test]
-fn every_kind_is_a_tinted_background_on_its_tag(cx: &mut TestAppContext) {
+fn every_kind_is_a_tinted_background_and_a_foreground_on_its_tag(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let source =
         "// TODO: a\n// FIXME: b\n// HACK: c\n// WARN: d\n// PERF: e\n// NOTE: f\n// TEST: g\n";
@@ -227,15 +238,23 @@ fn every_kind_is_a_tinted_background_on_its_tag(cx: &mut TestAppContext) {
     let (workbench, cx) = workbench(cx);
     let editor = open(&workbench, &path, cx);
     settle(cx);
-    let found = badges(&workbench, &editor, cx);
-    let tags: Vec<_> = found.iter().map(|it| &source[it.range.clone()]).collect();
+    let found = all_badges(&workbench, &editor, cx);
+    let tags: Vec<_> = found
+        .iter()
+        .filter(|it| it.kind == DecorationKind::Highlight)
+        .map(|it| &source[it.range.clone()])
+        .collect();
     assert_eq!(
         tags,
         [
             "TODO:", "FIXME:", "HACK:", "WARN:", "PERF:", "NOTE:", "TEST:"
         ]
     );
-    let tints: Vec<_> = found.iter().map(|it| it.tint).collect();
+    let highlights: Vec<_> = found
+        .iter()
+        .filter(|it| it.kind == DecorationKind::Highlight)
+        .collect();
+    let tints: Vec<_> = highlights.iter().map(|it| it.tint).collect();
     assert_eq!(
         tints,
         [
@@ -243,12 +262,46 @@ fn every_kind_is_a_tinted_background_on_its_tag(cx: &mut TestAppContext) {
             Tint::Error,
             Tint::Warning,
             Tint::Warning,
-            Tint::Accent,
+            Tint::Perf,
             Tint::Hint,
             Tint::Hint,
         ]
     );
-    assert!(found.iter().all(|it| it.kind == DecorationKind::Highlight));
+    let names: Vec<_> = found
+        .iter()
+        .filter_map(|it| match &it.kind {
+            DecorationKind::Foreground(name) => Some(name.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "comment.todo",
+            "comment.fixme",
+            "comment.hack",
+            "comment.warn",
+            "comment.perf",
+            "comment.note",
+            "comment.note",
+        ]
+    );
+    assert_eq!(found.len(), 14, "a background and a foreground each");
+}
+
+#[gpui::test]
+fn the_perf_tint_differs_from_the_cursor_colour(cx: &mut TestAppContext) {
+    use fe_config::EditorPalette;
+    use kiln::core::theme::Appearance;
+    for appearance in [Appearance::Dark, Appearance::Light] {
+        let palette = EditorPalette::bundled(appearance);
+        let theme = cx.update(|cx| {
+            fe_gpui::EditorTheme::from_palette(palette, &EditorSettings::default(), cx)
+        });
+        let perf = fe_gpui::decoration_tint_color(&theme, Tint::Perf);
+        assert_ne!(perf, theme.cursor, "{appearance:?}");
+        assert_ne!(perf, fe_gpui::decoration_tint_color(&theme, Tint::Accent));
+    }
 }
 
 #[gpui::test]

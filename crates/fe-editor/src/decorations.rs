@@ -44,6 +44,9 @@ pub enum Tint {
     DiffRemoved,
     /// The flash over text a vim yank took, in a colour of its own.
     Yank,
+    /// A `PERF` comment badge: a colour of its own, not the cursor's like
+    /// [`Tint::Accent`].
+    Perf,
 }
 
 /// A mark in the gutter.

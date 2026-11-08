@@ -229,6 +229,19 @@ pub fn comment_ranges(
 const RETRIES: u32 = 8;
 
 impl Kind {
+    /// The highlight name whose theme colour the badge's text takes. A
+    /// theme without it leaves the text in the kind's [`tint`](Self::tint).
+    pub fn highlight_name(self) -> &'static str {
+        match self {
+            Kind::Todo => "comment.todo",
+            Kind::Fix => "comment.fixme",
+            Kind::Hack => "comment.hack",
+            Kind::Note | Kind::Test => "comment.note",
+            Kind::Perf => "comment.perf",
+            Kind::Warn => "comment.warn",
+        }
+    }
+
     /// The tint of a keyword's badge: from the theme's diagnostic palette.
     pub fn tint(self) -> Tint {
         match self {
@@ -236,7 +249,7 @@ impl Kind {
             Kind::Hack | Kind::Warn => Tint::Warning,
             Kind::Todo => Tint::Information,
             Kind::Note | Kind::Test => Tint::Hint,
-            Kind::Perf => Tint::Accent,
+            Kind::Perf => Tint::Perf,
         }
     }
 }
@@ -457,7 +470,17 @@ impl Workbench {
         comments.dedup();
         let items: Vec<_> = scan(text, &comments, &keywords)
             .into_iter()
-            .map(|hit| Decoration::new(hit.tag_range, DecorationKind::Highlight, hit.kind.tint()))
+            .flat_map(|hit| {
+                let tint = hit.kind.tint();
+                [
+                    Decoration::new(hit.tag_range.clone(), DecorationKind::Highlight, tint),
+                    Decoration::new(
+                        hit.tag_range,
+                        DecorationKind::Foreground(hit.kind.highlight_name().into()),
+                        tint,
+                    ),
+                ]
+            })
             .collect();
         slot.set
             .borrow_mut()

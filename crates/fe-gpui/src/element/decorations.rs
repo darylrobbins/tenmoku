@@ -72,6 +72,7 @@ pub(super) fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
         Tint::Hint => theme.hint,
         Tint::Accent => theme.cursor,
         Tint::Yank => theme.vim_yank_highlight,
+        Tint::Perf => theme.change_modified,
         Tint::Muted => theme.foreground,
     }
 }
