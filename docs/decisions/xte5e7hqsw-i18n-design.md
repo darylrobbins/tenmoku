@@ -4,7 +4,8 @@
 
 Status: **proposed**. Approver: the user (Daryl Robbins). Source card T1432,
 written 2026-11-07, after the UI polish audit (T1429,
-`docs/decisions/25w38k498b-ui-polish-audit.md`).
+`docs/decisions/25w38k498b-ui-polish-audit.md`). Amended by T1506 to close
+the three gaps T1432's review left open (section 11).
 
 This card is a design only:
 
@@ -398,6 +399,11 @@ kiln_l10n::resources! {
 - It holds one `fluent_bundle::concurrent::FluentBundle` per locale in the
   negotiated chain. `concurrent` is `Send + Sync`, so the background warm-up
   and lookups from any thread work.
+- **Each bundle holds its own locale's resources only**, from every crate.
+  en-US's resources are never added to another locale's bundle. Fluent
+  resolves a nested message, term or attribute reference only inside the
+  bundle that formats the message. So a translated message's references must
+  resolve in its own locale, and section 8 checks exactly that.
 - It sits behind a `RwLock<Arc<Catalogue>>`.
 - `inventory` records are per binary, so test binaries see only the crates
   they link. fe-vim's unit tests find fe-vim's strings without any host.
@@ -600,49 +606,138 @@ fn git_unstage_file(&mut self, cx: &mut Cx<Self>) {
 ("column_select_left", Direction::Left),
 ```
 
-**What changes in kiln-command: nothing in its struct.** `CommandMeta`
-(`kiln-command/src/registry.rs:70–82`) keeps `title: String` and
-`description: String`, and `register(id, title, …)` keeps its signature.
+**One command-label resolver, in kiln-command.** Four representations carry a
+command's English title today, and each keeps it as the fallback:
 
-- **Construction sites stay untouched.** `CommandMeta` is built by struct
-  literal in five places:
+- `CommandMeta` (`kiln-command/src/registry.rs:70–82`), the registry's;
+- `TypedCommand` (`kiln-platform/src/command_actions.rs:71–80`), from the
+  `#[kiln::command]` macro's `CommandRecord`s (`kiln/src/contributions.rs:295`)
+  and held in the `TypedCommands` global (`command_actions.rs:89, 128–140`).
+  Most of fe-workbench's commands are macro-declared, so this is most command
+  text;
+- `CommandSpec` (`kiln/src/contributions.rs:162`), kiln's contribution, which
+  feeds the menu items `#[kiln::command(menu = …)]` places;
+- fe-keymap's `CommandInfo` (`fe-keymap/src/shortcuts_model.rs:17`), the
+  shortcuts editor's row source.
+
+kiln-platform's own `CommandInfo` (`command_actions.rs:57`) is only what
+`register_command` takes; its `title` becomes the `TypedCommand`'s fallback.
+
+All of them resolve through one GPUI-free module, `kiln-command/src/l10n.rs`.
+It takes a plain `&str` id, so a type that holds its id as a `String`, as
+fe-keymap's `CommandInfo` does, uses it too:
+
+```rust
+// kiln/crates/kiln-command/src/l10n.rs
+/// `command-git-unstage_file` for `git.unstage_file`: the id's `.` as `-`.
+pub fn command_key(id: &str) -> String;
+/// The title to show for `id`, in the active locale, in this order:
+/// 1. the message `command-<id>`;
+/// 2. the label kiln derived for `id` (`derive_label`), resolved now;
+/// 3. `fallback`, the English title the command was registered with.
+/// A miss is silent, with no log: plugin commands have no key by design.
+pub fn command_label(id: &str, fallback: &str) -> SharedString;
+/// `command-<id>`'s `.description` attribute, else `fallback`.
+pub fn command_detail(id: &str, fallback: &str) -> SharedString;
+/// Labels `id`, a command whose title is built from other text, such as a
+/// panel's toggle, when it has no `command-<id>` of its own. Process-wide,
+/// behind a `RwLock`, as the catalogue is.
+pub fn derive_label(id: &str, label: Text);
+```
+
+`SharedString` is the type `tr!` returns. Each representation gets a
+`label()` method that calls it, so no reader formats a key itself:
+
+| Type | Method | Card |
+|---|---|---|
+| `CommandMeta` | `label()` = `command_label(id, &title)`; `detail()` = `command_detail(id, &description)` | I3 |
+| `TypedCommand` | `label()` = `command_label(id, &title)` | I3 |
+| `CommandSpec` | `label()` = `command_label(id, &title)` | I3 |
+| fe-keymap `CommandInfo` | none: the shortcuts editor builds it already resolved, `title: typed.label().into()`, so fe-keymap doesn't change | W1 |
+
+**No struct changes.** Every `title` field stays a `String` and stays the
+English fallback, and `register(id, title, …)`, `register_command` and the
+macro keep their signatures. So no construction site changes:
+
+- `CommandMeta` is built by struct literal in five places:
   - `registry.rs:238`;
   - `kiln-plugin/src/commands.rs:585`;
   - `fe-workbench/src/markdown_preview.rs:74`;
   - `kiln-shell/tests/command_palette.rs:108`;
   - `fe-gpui/src/vim/which_key_tests.rs:299` and
     `which_key_chord_tests.rs:63`.
-- **Two methods derive the localised text from the id:**
-  - `CommandMeta::label(&self) -> SharedString` looks up `command-<id>`;
-  - `CommandMeta::detail(&self)` looks up its `.description` attribute,
-    `command-<id>` followed by `.description = …`.
+- `CommandSpec` by struct literal at `contributions.rs:332` and `:1070`, and in
+  `kiln/tests/modules.rs:724` and `macro_command.rs:324, 328`.
 
-  A missing key falls back to `title` or `description` silently, with no log,
-  because plugin commands have no key by design.
-- **`CommandMeta` readers move to `label()` crate by crate.** There are three:
-  - `kiln/crates/kiln-shell/src/command_palette.rs:98`, in I3;
-  - `crates/fe-gpui/src/vim/which_key.rs:568–570`, in G1;
-  - `crates/fe-workbench/src/keymaps_picker.rs:93`, in W1.
+**Every consumer moves to `label()`,** each in the card that owns its file, and
+each resolves at the moment it shows the title:
 
-  A reader that hasn't moved yet shows the registered English title, which is
-  harmless while only en-US ships. Z1 checks that none is left. `title`
-  remains afterwards as the fallback text.
-- **This plan covers `CommandMeta` readers only.** The typed-command path is a
-  known gap, **G-1** in section 11, tracked by follow-up card T1506. It
-  includes:
-  - `TypedCommand` from the `#[kiln::command]` macro, which carries most of
-    fe-workbench's commands;
-  - kiln's `CommandSpec`;
-  - fe-keymap's `CommandInfo`;
-  - their consumers.
+| Consumer | Reads today | When it resolves | On a locale change | Card |
+|---|---|---|---|---|
+| The palette, `commands_in` (`kiln-shell/src/command_palette.rs:85–112`) | `typed.title` at `:93`, `meta.title` at `:98` | When it opens; it sorts and fuzzy-matches on the resolved text, so matching works in the user's language | The next open lists the new language; an open palette keeps its list, as an open toast does | I3 |
+| Menu items from a contributed menu table, `table_menu_bar` (`kiln/src/contributions.rs:1737`) | `typed.title` | When kiln builds the menu bar, in `shipped` (`:1378`) | kiln observes I2's `ActiveLocale` and calls `resolve_again` (`:1566`), the path an extension's menu change takes: it rebuilds the bar and `menus::install`s it | I3 |
+| Menu items `#[kiln::command(menu = …)]` places, `place_items` (`:1879`) | `CommandSpec.title` | The same | The same | I3 |
+| Which-key's `command_title` (`fe-gpui/src/vim/which_key.rs:564–583`) | `meta.title` at `:568–570`, `typed.title` at `:580` | At every popup render | Nothing to rebuild: the next render resolves again | G1; Z1 checks it |
+| The keymaps picker's `titles` (`fe-workbench/src/keymaps_picker.rs:81–98`) | `typed.title` at `:85`, `meta.title` at `:93` | When it opens (`show_keymaps`, `:408`) | The next open | W1 |
+| The shortcuts editor's `commands` (`fe-workbench/src/shortcuts_editor.rs:1269–1290`) | `typed.title` at `:1276`, `meta.title` at `:1288`, into fe-keymap's `CommandInfo` | When it builds its `ShortcutsModel` (`build_model`, `:1015`) | W1 adds an `ActiveLocale` observer beside its `ChangedFiles` one (`:195`) that rebuilds the model as `follow_keymap` does (`:228–236`), so an open editor follows | W1 |
 
-  Until T1506 lands, those titles stay English in every locale.
-- The palette resolves titles when it opens and sorts and matches on the
-  resolved text (`kiln-shell/src/command_palette.rs:85–112`). Fuzzy matching
-  then works in the user's language.
-- `format!("Toggle {}", spec.title)` (`contributions.rs:1072, 1507`) is to
-  become `kiln-command-toggle = Toggle { $title }`. It is a `CommandSpec`
-  title, so it lands with gap G-1 (section 11, T1506).
+A reader that hasn't moved yet shows the registered English title, which is
+harmless while only en-US ships. Z1 checks that none is left (section 9).
+
+**Toggle titles.** `format!("Toggle {}", …)` builds a panel toggle's title
+twice: as a `CommandSpec` for its View menu item (`contributions.rs:1072`) and
+as a registered `CommandMeta` (`:1507`). I3 makes it the message
+`kiln-command-toggle = Toggle { $title }`:
+
+- where kiln registers the toggle, it calls
+  `derive_label(id, text!("kiln-command-toggle", title = panel_title))`;
+- both stored titles become `tr!("kiln-command-toggle", title = panel_title)`,
+  a fallback `label()` doesn't reach while the derived label exists;
+- so the palette, the menu and which-key all show the toggle in the active
+  locale through `label()`, step 2 of `command_label`.
+
+The panel's own title is a verbatim argument until K2 keys the dock headers
+(P13).
+
+**I3's test** (`kiln/crates/kiln/tests/l10n_command_labels.rs`): one
+`#[kiln::command(menu = "File")]` command and one plugin-style registry command
+with no key. Under a fake locale (below), the macro command's key resolves in
+`commands_in` and in `cx.get_menus()`, first through `place_items`, then
+through a contributed menu table (`Contributions::set_menu_table`). The
+keyless one shows its registered title in both, with nothing logged.
+
+**The cross-surface test, in Z1.** Once every consumer has moved, one test
+follows one macro-declared command through all five surfaces:
+
+- **Where.** `crates/fe-workbench/tests/l10n_command_labels.rs`, the only test
+  in its binary. The catalogue's locale is process-wide (section 3), so no
+  other test may run beside it.
+- **The command.** The test file declares
+  `#[kiln::command(context = "workbench", menu = "File")]` on a probe type,
+  with one command, `/// Probe Labels`, `#[command(id = "workbench.probe_labels")]`.
+  The macro records it for that binary.
+- **The fake locale.** The test's own `kiln_l10n::resources!` lists
+  `tests/fixtures/l10n/en-US/probe.ftl` with
+  `command-workbench-probe_labels = Probe Labels`, and
+  `tests/fixtures/l10n/qps-ploc/probe.ftl` with
+  `command-workbench-probe_labels = ⟦Pröbe Läbels⟧`. These fixtures sit
+  outside `l10n/`, so the root catalogue tests don't read them.
+- **Set-up.** A workbench with the app's menus installed through kiln's app
+  builder, `<leader>p` mapped to the command, and the shortcuts editor open.
+- **Steps.**
+  1. In en-US every surface shows `Probe Labels`.
+  2. I2's `set_locale` switches to `qps-ploc`.
+  3. Each surface shows `⟦Pröbe Läbels⟧`:
+     - the palette, through `commands_in`, sorted by the marker;
+     - the File menu, through `cx.get_menus()`, after the update's
+       `resolve_again`;
+     - which-key, through `command_title`, which G1 re-exports from fe-gpui
+       for this;
+     - the keymaps picker, opened after the switch;
+     - the shortcuts editor, still open from before the switch, with no
+       reopen.
+  4. Switching back to en-US shows `Probe Labels` everywhere again, so no
+     surface kept a stale resolved title.
 
 **During the migration** a command whose key is missing falls back to its
 registered literal or doc title, so crates migrate one at a time. Once a crate
@@ -762,10 +857,57 @@ mapping to one key.
 - For en-US it returns the constant itself, byte for byte, so
   `template_is_all_defaults` and `commented_out_with_defaults`
   (`tests/template.rs`) are unchanged.
-- **Known gap G-2** (section 11, T1506). `persist.rs:65` hands its template to
+- **The toggle writer resolves its template when it creates the file.** Today
+  `persist.rs:65` hands `USER_SETTINGS_TEMPLATE` to
   `kiln_shell::persist::setting_writer` (`kiln-shell/src/persist.rs:170–178`),
-  which captures the `&'static str` in its writer closure. That writer then
-  keeps the startup locale's template after a live locale change.
+  which captures the `&'static str` in its writer closure at startup. Handing
+  it the rendered template the same way would keep the startup locale's
+  template after a live locale change. So C1 changes the writer to take a
+  host-owned provider instead of a string:
+
+  ```rust
+  // before: kiln/crates/kiln-shell/src/persist.rs:170–178
+  pub fn setting_writer(path: SettingsPath, template: &'static str, cx: &App)
+      -> Writer<SettingKey, bool>
+  // after
+  pub fn setting_writer(
+      path: SettingsPath,
+      template: impl Fn() -> &'static str + Send + Sync + 'static,
+      cx: &App,
+  ) -> Writer<SettingKey, bool> {
+      Writer::new(cx, move |key: &SettingKey, value| {
+          let path = path.get();
+          // Called per write, at write time, never at startup.
+          write_setting(&path, key, value, template());
+      })
+  }
+  ```
+
+  ```rust
+  // before: crates/fe-workbench/src/persist.rs:65
+  setting_writer(target.clone(), fe_config::USER_SETTINGS_TEMPLATE, cx)
+  // after
+  setting_writer(target.clone(), fe_config::user_settings_template, cx)
+  ```
+
+  - **When it resolves.** `setting_writer` never calls the provider. Each
+    write calls it on the background executor, just before
+    `kiln_core::write_setting`. That reads the template only when it creates
+    the file, because the file is missing or empty (`kiln-core/src/write.rs:162–181`).
+    So a created file gets the template of the locale active at that moment.
+    On a write that edits an existing file the call is a cache lookup whose
+    result goes unused.
+    A write that was queued before a locale change and runs after it gets
+    the new locale, which is the one the user now sees.
+  - **Why it is safe off the main thread.** `user_settings_template` reads
+    `kiln_l10n`'s process catalogue, a `RwLock` over `concurrent` bundles
+    (section 3), never a GPUI global. Its per-locale cache makes each call a
+    lookup.
+  - **Why a closure, not a key.** kiln-shell can't name fe-config, and kiln
+    must not know about the template's messages. The host owns the closure,
+    and kiln only calls it.
+  - The other four paths already call `user_settings_template()` at the
+    moment they write, so they need nothing more.
 - **All five paths call it** instead of `USER_SETTINGS_TEMPLATE`. The constant
   stays for tests.
 
@@ -786,7 +928,32 @@ mapping to one key.
   - the active defaults parse as before;
 - **creation through Open Settings (`open.rs`) and through `write_setting`
   under the fake locale** produces the rendered template, not the English
-  constant.
+  constant;
+- **a live locale change reaches the toggle writer**:
+  - **Where.** `crates/fe-workbench/tests/l10n_settings_writer.rs`, the only
+    test in its binary, because the catalogue's locale is process-wide. Its
+    fake locale is a `qps-ploc` fixture under `tests/fixtures/l10n/` with a
+    marker for `settings-template-intro`, as in the command-label test
+    (section 4).
+  - **Steps.**
+    1. Open a workbench in en-US and call `save_toggles_to` with a
+       `settings.toml` path that doesn't exist yet. This initialises the
+       writer.
+    2. Switch to `qps-ploc` with I2's `set_locale`.
+    3. Dispatch `view.toggle_status_bar`, then run until parked.
+  - **It checks** that the file was created and that:
+    - it starts with the `qps-ploc` intro marker, not the English intro;
+    - its commented-TOML lines are en-US's, byte for byte;
+    - it parses, and `status_bar.visible` reads back `false`.
+  - **Before this design** it would fail: the writer captured the English
+    template at step 1.
+- **kiln-shell's own test** (`kiln/crates/kiln-shell/tests/persist.rs`) pins
+  the timing without a locale. The provider returns whatever a `Mutex` holds:
+  - `setting_writer` doesn't call it;
+  - after the value changes, a write that creates the file uses the new
+    value;
+  - a write to an existing, non-empty file leaves its text untouched except
+    the key.
 
 **What stays English:** only the JSON schema, which is for taplo and other
 tooling.
@@ -1519,19 +1686,40 @@ for lack of a dependency edge.
   - every term;
   - every variant of every select expression, including nested ones.
 
-  Each `MessageReference`, `TermReference` and attribute accessor must name a
-  message, term or attribute that exists in the same locale or in en-US.
+  Each `MessageReference`, `TermReference` and attribute accessor must
+  resolve **inside the bundle that formats it**. That bundle is the
+  reference's own locale, all crates combined (section 3). en-US doesn't
+  count for another locale:
+  - a reference in a `de` resource must name a message or term that a `de`
+    resource defines;
+  - an attribute accessor, `{ msg.attr }` or a selector on `-term.attr`, must
+    name an attribute that the **`de`** definition of that entry has. An
+    en-US definition with the attribute doesn't count, because Fluent takes
+    the whole entry from the bundle it formats in.
 
-  **Known gap G-3** (section 11, T1506). This rule doesn't yet match the
-  runtime. Each locale has its own bundle (section 3), and Fluent resolves a
-  nested reference only inside the bundle that formats the message. So a
-  translated branch that references an en-US-only term passes this walk and
-  fails when selected.
+  This matches the runtime. The per-message fallback (section 3) moves a whole
+  missing message to en-US's bundle, where en-US's own references resolve. It
+  never mixes a `de` message with en-US terms. So a translator who adds a
+  message also adds, in the same locale, every term and message it references.
+  Terms are few: the brand and product names.
+
+  The error names:
+  - the locale;
+  - the file and the message;
+  - the variant path, such as `[few]` or `[file]`;
+  - the reference;
+  - "defined only in en-US" when en-US has it, which is the usual cause.
 
   Formatting alone would miss a bad reference in a plural or gender branch
-  that its dummy arguments don't select. I1's fixtures include one: an
-  undefined `{ -brand }` inside `[few]` of a plural, which formatting with
-  `$count = 1` would pass and the walk rejects.
+  that its dummy arguments don't select. **I1's fixtures** pin the rule:
+
+  | Fixture | Resources | Walk | Formatting |
+  |---|---|---|---|
+  | Undefined term in en-US | en-US `files-left` has an undefined `{ -brand }` inside `[few]` | rejects | `$count = 1` passes |
+  | **Term only in en-US, in an unselected branch** | en-US defines `-brand = Tenmoku`; `pl`'s `files-left = { $count -> [one] … [few] Zostały { $count } pliki { -brand } *[other] … }`, with no `pl` `-brand` | rejects `pl` `files-left` `[few]` `-brand`, "defined only in en-US" | `$count = 1` passes; through the catalogue in `pl`, `$count = 3` selects `[few]` and reports Fluent's unknown-term error, so the walk and the runtime agree |
+  | **Attribute only in en-US, in an unselected branch** | en-US `save = Save` with `.tooltip = Save the file`; `pl` `save = Zapisz` with no attribute, and `pl` `save-hint = { $kind -> [file] { save.tooltip } *[other] Zapisz wszystko }` | rejects `pl` `save-hint` `[file]` `save.tooltip`, "defined only in en-US" | the dummy `$kind` selects `*[other]` and passes; `$kind = "file"` in `pl` reports the unknown-attribute error |
+  | The same two, fixed | `pl` adds `-brand` and `save`'s `.tooltip` | accepts | formats in every branch |
+
 - **Every message formats.** After the walk, every message of every locale is
   formatted once with dummy arguments, as a smoke test for runtime errors
   such as cyclic references.
@@ -1586,8 +1774,8 @@ stage, and `regatta.toml` is a path that needs a human.
 3. **Key checks.** Per crate: used keys exist, and cross-crate keys are
    `## public`. At the app and kiln roots, read from disk: unused keys
    (including data files and FTL references); a static AST walk that every
-   reference resolves in every branch; formatting; duplicates; and stale
-   translations.
+   reference resolves in every branch, inside its own locale's bundle;
+   formatting; duplicates; and stale translations.
 
 All of it runs as tests in the existing `test` stage, so there is no new stage
 and no `regatta.toml` change. It is switched on crate by crate, and within
@@ -1677,18 +1865,18 @@ Each card's scope is its L(…) entries plus the files listed.
 
 | Card | Size | Scope globs | Depends on | Platform | Strings |
 |---|---|---|---|---|---:|
-| **I1** `kiln-l10n`: Fluent wrapper, a lazy `inventory` catalogue with per-message en-US fallback and log-once, `tr!`/`text!`/`Text` (with the transitional `From<&str>`/`From<String>`)/`verbatim!`/`tr_or`, formatter-based isolation and `strip_isolates`, the arg-less cache, negotiation, `resources!` with `## public` groups and dynamic prefixes, the `lint` feature (layers 2 and 3) and its fixtures (section 8), the isolation and selector tests (section 5) | m | `kiln/crates/kiln-l10n/**`, `Cargo.toml` (workspace member), `Cargo.lock` | this doc approved | Linux-OK | 0 |
+| **I1** `kiln-l10n`: Fluent wrapper, a lazy `inventory` catalogue with per-message en-US fallback and log-once, `tr!`/`text!`/`Text` (with the transitional `From<&str>`/`From<String>`)/`verbatim!`/`tr_or`, formatter-based isolation and `strip_isolates`, the arg-less cache, negotiation, `resources!` with `## public` groups and dynamic prefixes, one bundle per locale holding only that locale's resources (section 3), the `lint` feature (layers 2 and 3) and its fixtures (section 8), including the per-bundle reference walk's fixtures with a term and an attribute defined only in en-US in an unselected branch, the isolation and selector tests (section 5) | m | `kiln/crates/kiln-l10n/**`, `Cargo.toml` (workspace member), `Cargo.lock` | this doc approved | Linux-OK | 0 |
 | **I2** Locale selection: kiln-platform `locale.rs` (`sys-locale`), the `ActiveLocale` global, `set_locale` → bundles + `menus::refresh` + `refresh_windows`; `workbench.locale` (user-only, schema enum, template line, the unshipped-locale diagnostic and its three tests); `crates/fastedit` warms the catalogue on a thread at the top of `main`, applies the setting, adds the app root test `tests/l10n_catalogue.rs` and a `--perf` before/after; a Linux check that FSI/PDI draw nothing | m | L(`kiln/crates/kiln-platform`), L(`crates/fe-config`), L(`crates/fastedit`), `kiln/crates/kiln-platform/src/locale.rs`, `kiln/crates/kiln-platform/src/lib.rs`, `kiln/crates/kiln-platform/src/config.rs`, `crates/fe-config/src/settings.rs`, `crates/fe-config/src/tests/**`, `crates/fe-config/settings.schema.json`, `crates/fe-config/settings-template.toml`, `crates/fastedit/src/main.rs`, `crates/fastedit/src/config.rs` | I1 | Linux-OK (the macOS preference path is `sys-locale`'s, exercised by B1's human check) | 3 |
-| **I3** Command titles as keys, and the label constructors: `Picker::new`'s placeholder and `Button::new`'s label take `impl Into<Text>`, with the transitional `From` impls, so every later card can pass `text!`; and, with no struct change, `CommandMeta::label()`/`detail()` derive `command-<id>` and its `.description` attribute, falling back silently to `title`/`description`; the macro and `register` unchanged; the palette sorts and matches on `label()` when it opens; kiln's own registry command titles (`CommandSpec` titles and `Toggle {}` belong to gap G-1, T1506); the registry test (every command of a migrated crate has a key, every `command-*` key has a command); kiln's root test `tests/l10n_catalogue.rs` | m | L(`kiln/crates/kiln-command`), L(`kiln/crates/kiln-shell`), L(`kiln/crates/kiln-ui`), L(`kiln/crates/kiln`), `kiln/crates/kiln-shell/src/picker.rs`, `kiln/crates/kiln-ui/src/controls.rs`, `kiln/crates/kiln-command/src/**`, `kiln/crates/kiln-shell/src/command_palette.rs`, `kiln/crates/kiln/src/contributions.rs` | I1; not alongside P18 (same `command_palette.rs`) | Linux-OK | 25 |
+| **I3** Command titles as keys, and the label constructors: `Picker::new`'s placeholder and `Button::new`'s label take `impl Into<Text>`, with the transitional `From` impls, so every later card can pass `text!`; and, with no struct change, the command-label resolver `kiln-command/src/l10n.rs` (`command_key`, `command_label`, `command_detail`, `derive_label`; section 4) with `label()` on `CommandMeta` (and `detail()`), `TypedCommand` and `CommandSpec`, each falling back silently to its registered `title`/`description`; the macro, `register` and `register_command` unchanged; the palette (`command_palette.rs:93, 98`) sorts and matches on `label()` when it opens; the menu items at `contributions.rs:1737` and `:1879` read `label()`, and kiln re-resolves its menus (`resolve_again`) on an `ActiveLocale` change; the panel toggles as `kiln-command-toggle` through `derive_label` (`:1072, 1507`); the fake-locale test `kiln/crates/kiln/tests/l10n_command_labels.rs` (palette and both menu paths, and a keyless command's silent fallback); kiln's own registry command titles; the registry test (every command of a migrated crate has a key, every `command-*` key has a command); kiln's root test `tests/l10n_catalogue.rs` | m | L(`kiln/crates/kiln-command`), L(`kiln/crates/kiln-shell`), L(`kiln/crates/kiln-ui`), L(`kiln/crates/kiln`), `kiln/crates/kiln-shell/src/picker.rs`, `kiln/crates/kiln-ui/src/controls.rs`, `kiln/crates/kiln-command/src/**`, `kiln/crates/kiln-shell/src/command_palette.rs`, `kiln/crates/kiln/src/contributions.rs`, `kiln/crates/kiln-platform/src/command_actions.rs` (`TypedCommand::label()`; kiln-platform already depends on kiln-command) | I1, I2 (`ActiveLocale` and `set_locale`, which the menu re-resolve and the test use); not alongside P18 (same `command_palette.rs`) | Linux-OK | 25 |
 | **K1** kiln-core and kiln menus: `CommandItem` and `SystemItem` get `title_key` and `label()` (Services becomes `kiln-core-menu-services`), menu `id`; `{app}` as `$app`; Linux key-name labels; extension, paths, settings and secrets messages; kiln's `menus.toml`; `menus::refresh` (including `os_submenu` at `menus.rs:145`) and the drawn bar read `label()`; a fake-locale test of the bundled Services item and a keyed command item; lint on for kiln-core | m | L(`kiln/crates/kiln-core`), `kiln/crates/kiln-core/src/**` (including the struct literals at `menu.rs:600` and `:635`), `kiln/crates/kiln/src/contributions.rs` (its literals at 1739 and 1877), `kiln/crates/kiln/src/setup/menus.toml`, `kiln/crates/kiln/src/setup/defaults.rs`, `kiln/crates/kiln-platform/src/menus.rs`, `kiln/crates/kiln-shell/src/menu_bar.rs` | I2 (kiln-platform's dependency), I3 (kiln-shell's and kiln's), P4, P5 | Linux-OK (data-level tests; the Mac bar's look was P4's human check) | 51 |
 | **K2** kiln-shell, kiln-platform, kiln-ui, kiln-plugin and kiln: picker actions, trust, close and pane prompts, fonts, platform commands, dialogs, plugin messages; lint on for those five crates | m | L(`kiln/crates/kiln-shell`), L(`kiln/crates/kiln-platform`), L(`kiln/crates/kiln-ui`), L(`kiln/crates/kiln-plugin`), L(`kiln/crates/kiln`), `kiln/crates/kiln-shell/src/**`, `kiln/crates/kiln-platform/src/**`, `kiln/crates/kiln-ui/src/**`, `kiln/crates/kiln-plugin/src/**`, `kiln/crates/kiln/src/**` | K1, P2, P7, P13, P18 | Linux-OK | 61 |
 | **E1** fe-editor: command titles and descriptions (`commands.rs` 50, fold levels, multi-cursor, column select, row edits, sort, indent) | m | L(`crates/fe-editor`), `crates/fe-editor/src/**` | I1, I3 | Linux-OK | 107 |
 | **V1** fe-vim messages: `ExError`'s 30 variants with `E…:` codes kept, other messages and summaries as plurals with en-US equal to nvim's English, exported as `fe_vim::messages::*`; the E-messages formatted in `fe-workbench/src/git_commands.rs:260–264` and `fe-gpui/src/vim.rs:3061` call those (both crates already depend on fe-vim, and neither has its lint on yet, by the ordering above) | m | L(`crates/fe-vim`), `crates/fe-vim/src/**` (not `which_key.rs`), `crates/fe-gpui/src/vim.rs`, `crates/fe-workbench/src/git_commands.rs` | I1 | Linux-OK | 143 |
 | **V2** Which-key: `BUILTIN_KEYS` as keys, `WhichKeyLabel::Builtin` resolved by fe-vim; the bundled LazyVim preset's group names by slug; user groups unchanged | s | `crates/fe-vim/src/which_key.rs`, `crates/fe-vim/src/remap.rs`, `crates/fe-vim/src/l10n.rs`, `crates/fe-vim/l10n/**`, `crates/fe-vim/l10n-allow.toml`, `crates/fe-vim/tests/**`, `crates/fastedit/src/vim_remaps.rs`, `crates/fe-gpui/src/vim/which_key.rs` | V1, T1396 | Linux-OK | 92 |
-| **C1** fe-config: `setting_key`; generated, golden-checked `settings.ftl` (from the schema) and `settings-template.ftl` (blocks keyed by TOML context, commented TOML kept verbatim); `user_settings_template()` renders per locale (en-US byte for byte); all five template-writing paths call it (`persist.rs`, `open.rs`, `settings_edit.rs`, `write.rs`); the fake-locale tests, including creation through Open Settings and `write_setting`; the settings UI looks up descriptions and group titles by key; config-problem messages | m | L(`crates/fe-config`), `crates/fe-config/src/**`, `crates/fe-config/settings-template.toml`, `crates/fe-workbench/src/persist.rs`, `crates/fe-workbench/src/persist_tests.rs`, `crates/fe-workbench/src/open.rs`, `crates/fe-workbench/src/open*_tests.rs`, `crates/fe-workbench/tests/**` | I2 (fe-config's dependency and `settings.rs`) | Linux-OK | 270 descriptions (249 generated) + about 125 template blocks (generated: 104 settings, 12 tables, 6 commented example tables, the intro) |
-| **G1** fe-gpui: status bar cursor and selection messages as whole messages with plurals, diff view, image and file viewer, proposals, command titles, the which-key reader moved to `label()`; lint on for all of fe-gpui, with nothing `pending` | m | L(`crates/fe-gpui`), `crates/fe-gpui/src/**` | I1, I3, V1, V2, P21, T1396 | Linux-OK | 100 |
+| **C1** fe-config: `setting_key`; generated, golden-checked `settings.ftl` (from the schema) and `settings-template.ftl` (blocks keyed by TOML context, commented TOML kept verbatim); `user_settings_template()` renders per locale (en-US byte for byte); all five template-writing paths call it (`persist.rs`, `open.rs`, `settings_edit.rs`, `write.rs`); kiln-shell's `persist::setting_writer` takes a template provider and calls it at write time, never at startup, and `persist.rs:65` passes `fe_config::user_settings_template` (section 4); the fake-locale tests, including creation through Open Settings and `write_setting`, the live-locale toggle test `crates/fe-workbench/tests/l10n_settings_writer.rs` (writer initialised, locale changed, file created by a toggle) and kiln-shell's provider-timing test; the settings UI looks up descriptions and group titles by key; config-problem messages | m | L(`crates/fe-config`), `crates/fe-config/src/**`, `crates/fe-config/settings-template.toml`, `crates/fe-workbench/src/persist.rs`, `crates/fe-workbench/src/persist_tests.rs`, `crates/fe-workbench/src/open.rs`, `crates/fe-workbench/src/open*_tests.rs`, `crates/fe-workbench/tests/**`, `kiln/crates/kiln-shell/src/persist.rs`, `kiln/crates/kiln-shell/tests/persist.rs` | I2 (fe-config's dependency and `settings.rs`, and `set_locale` for the toggle test); not alongside K2 (same kiln-shell `persist.rs`) | Linux-OK | 270 descriptions (249 generated) + about 125 template blocks (generated: 104 settings, 12 tables, 6 commented example tables, the intro) |
+| **G1** fe-gpui: status bar cursor and selection messages as whole messages with plurals, diff view, image and file viewer, proposals, command titles, which-key's `command_title` (`which_key.rs:564–583`) reading `label()` for every registry, the typed one at `:580` included, and re-exported from fe-gpui for Z1's test; lint on for all of fe-gpui, with nothing `pending` | m | L(`crates/fe-gpui`), `crates/fe-gpui/src/**` | I1, I3, V1, V2, P21, T1396 | Linux-OK | 100 |
 | **KM1** fe-keymap bundled menus: `fastedit.toml`'s titles as `title_key`; the per-platform copies `build.rs` writes; a test that every bundled title resolves to the same English as before | m | L(`crates/fe-keymap`), `crates/fe-keymap/menus/fastedit.toml`, `crates/fe-keymap/build.rs`, `crates/fe-keymap/src/**` | K1, P4, P5 | Linux-OK | 131 |
-| **W1** fe-workbench commands: the doc titles in `workbench_commands.rs`, plus `find_commands`, `spell_commands`, `task_commands` and `git_commands` (`GitCommand::title()` reads the same key, which removes the duplicate); `keymaps_picker.rs` reads `label()`; fe-workbench's lint on, with every other file `pending` | m | L(`crates/fe-workbench`), `crates/fe-workbench/src/{workbench,find,spell,task,git}_commands.rs`, `crates/fe-workbench/src/keymaps_picker.rs` | I3, V1 (`git_commands.rs`) | Linux-OK | 314 |
+| **W1** fe-workbench commands: the doc titles in `workbench_commands.rs`, plus `find_commands`, `spell_commands`, `task_commands` and `git_commands` (`GitCommand::title()` reads the same key, which removes the duplicate); `keymaps_picker.rs` reads `label()` (`:85` typed, `:93` registry); the shortcuts editor's `commands` fills fe-keymap's `CommandInfo` from `label()` (`shortcuts_editor.rs:1276` typed, `:1288` registry) and rebuilds its model on an `ActiveLocale` change; fe-workbench's lint on, with every other file `pending` | m | L(`crates/fe-workbench`), `crates/fe-workbench/src/{workbench,find,spell,task,git}_commands.rs`, `crates/fe-workbench/src/keymaps_picker.rs`, `crates/fe-workbench/src/shortcuts_editor.rs` (its `commands` and the observer only; its strings stay `pending` for W4, which lands after W1) | I3 (and through it I2's `ActiveLocale`), V1 (`git_commands.rs`) | Linux-OK | 314 |
 | **W2** fe-workbench Git: `git_*.rs` except `git_commands.rs`, plus `commit_diff_view.rs` | m | `crates/fe-workbench/src/git_*.rs`, `crates/fe-workbench/src/commit_diff_view.rs`, `crates/fe-workbench/src/*git*_tests.rs`, `crates/fe-workbench/src/l10n.rs`, `crates/fe-workbench/l10n/en-US/git.ftl`, `crates/fe-workbench/l10n-allow.toml`, `crates/fe-workbench/tests/**` | W1, P7, P10, P19, P20 | Linux-OK | 169 |
 | **W3** fe-workbench navigation, search and project: `project_*`, `search_*`, `find_bar`, `nav`, `outline_*`, `symbol_picker`, `go_to_line`, `quick_open`, `harpoon`, `local_history_view`, `workbench_files`, `ignore_assist` | m | those `crates/fe-workbench/src/*.rs` and their `*_tests.rs`, `crates/fe-workbench/src/l10n.rs`, `crates/fe-workbench/l10n/en-US/navigation.ftl`, `crates/fe-workbench/l10n-allow.toml`, `crates/fe-workbench/tests/**` | W1, P6, P7, P13 | Linux-OK | 170 |
 | **W4** fe-workbench setup, start, settings and shortcuts: `setup_wizard*` (including the a11y labels), `start_page*`, `settings_editor*`, `shortcuts_editor`, `encoding_picker`, `toolbar_picker`, `config_*` | m | those `crates/fe-workbench/src/*.rs` and their `*_tests.rs`, `crates/fe-workbench/src/l10n.rs`, `crates/fe-workbench/l10n/en-US/setup.ftl`, `crates/fe-workbench/l10n-allow.toml`, `crates/fe-workbench/tests/**` | W1, C1, P8, P11, P17, P25 | Linux-OK (en-US text unchanged, so the setup wizard goldens don't move) | 190 |
@@ -1699,7 +1887,7 @@ Each card's scope is its L(…) entries plus the files listed.
 | **CV1** fe-chat-view | s | L(`crates/fe-chat-view`), `crates/fe-chat-view/src/**` | I1, I3 | Linux-OK | 28 |
 | **F1** crates/fastedit: CLI usage and errors (isolation off, system locale), Sparkle and speller messages, theme and grammar install messages; lint on for all of crates/fastedit | s | L(`crates/fastedit`), `crates/fastedit/src/**` | I2, I3, V2 (`vim_remaps.rs`) | Linux-OK (the macOS-only sources are linted from source on any OS) | 40 |
 | **X1** The remaining crates: lint on for fe-lsp, fe-markdown-view, fe-chat, fe-chat-anthropic, fe-net, fe-nav, fe-syntax, fe-git, fe-project, fe-fileview, fe-buffer and fe-text. User-facing text moves; language and file names and git stderr matchers go on the allow-list | s | L(`crates/fe-{lsp,markdown-view,chat,chat-anthropic,net,nav,syntax,git,project,fileview,buffer,text}`), `crates/fe-{lsp,markdown-view,chat,chat-anthropic,net,nav,syntax,git,project,fileview,buffer,text}/src/**` | I1, I3 | Linux-OK | 20 |
-| **Z1** Finish the switch: check that no `CommandMeta.title` reader is left (I3, G1 and W1 move the three; see section 4); remove `Text`'s transitional `From` impls, including `From<SharedString>`, turning every remaining argument of `Picker::new` and `Button::new` into `text!` or `Text::verbatim`: each `tr!` passed to them becomes `text!` with the same key and arguments, and string literals in tests and examples become `Text::verbatim`. The typed-command path is T1506's (gap G-1), not Z1's | m | `kiln/crates/kiln-l10n/src/**`, `crates/*/src/**`, `crates/*/tests/**`, `crates/*/examples/**`, `kiln/crates/*/src/**`, `kiln/crates/*/tests/**`, `kiln/crates/*/examples/**` | every card above except B1 | Linux-OK | 0 |
+| **Z1** Finish the switch: check that no reader of `title` on `CommandMeta`, `TypedCommand`, `CommandSpec` or fe-keymap's `CommandInfo` is left outside `label()` and the resolver (section 4): the palette at `command_palette.rs:93, 98` and the menus at `contributions.rs:1737` and `:1879` (moved by I3), which-key at `which_key.rs:568–580` (G1), the keymaps picker at `keymaps_picker.rs:85, 93` and the shortcuts editor at `shortcuts_editor.rs:1276, 1288` (W1), moving any it finds; add the cross-surface fake-locale test `crates/fe-workbench/tests/l10n_command_labels.rs`, one macro-declared command through all five surfaces (section 4); remove `Text`'s transitional `From` impls, including `From<SharedString>`, turning every remaining argument of `Picker::new` and `Button::new` into `text!` or `Text::verbatim`: each `tr!` passed to them becomes `text!` with the same key and arguments, and string literals in tests and examples become `Text::verbatim` | m | `kiln/crates/kiln-l10n/src/**`, `crates/*/src/**`, `crates/*/tests/**`, `crates/*/examples/**`, `kiln/crates/*/src/**`, `kiln/crates/*/tests/**`, `kiln/crates/*/examples/**` | every card above except B1 | Linux-OK | 0 |
 | **B1** Bundle localisations (only once the user picks a second locale): `bundle-macos.sh` writes `CFBundleLocalizations` and `<name>.lproj/InfoPlist.strings` per shipped locale; a human checks AppKit's inserted menu items, the open panel and Sparkle's alert on a system set to that language | s | `scripts/bundle-macos.sh`, `crates/fastedit/macos/Info.plist`, `crates/fastedit/macos/l10n/**` | I2, the user's launch-locale choice (Q1) | Mac-only | 2 a locale |
 
 **Total:** 24 cards (7 s, 17 m). They move about 2,280 messages, 249 of them
@@ -1718,7 +1906,7 @@ generated settings descriptions, plus about 125 generated template blocks.
 - fe-keymap's menus (KM1) and the smaller crates (X1) are added, because they
   carry text the spec's list doesn't name.
 - **What can start at once.** I1 can start as soon as the doc is approved,
-  and I2 and I3 once I1 lands. E1, V1, CV1 and X1 need only I1 and I3. C1
+  I2 once I1 lands, and I3 once I2 does. E1, V1, CV1 and X1 need only I1 and I3. C1
   needs I2. V2 and G1 need T1396, and F1 needs I2, I3 and V2. The rest wait
   on the P-cards named above.
 - **No card passes `text!` to `Picker::new` or `Button::new` before I3**
@@ -1803,52 +1991,26 @@ after approval.
   an RTL launch locale first, and the editor's own RTL gaps are G1–G3 of the
   non-Latin audit.
 
-**Known gaps, tracked by follow-up card T1506.** This design leaves three
-problems open. The review of this card found them. Each makes some text stay
-English, or fail, once a second locale ships. None of them affects en-US, so
-none blocks the migration cards above. T1506 decides and fixes them before the
-first translation ships.
+**Gaps the review found, now closed (T1506).** T1432's review left three
+gaps, each of which would have kept some text English, or failed, once a second
+locale shipped. T1506 amended this design to close them, and none changes
+en-US:
 
-- **G-1: the typed-command path.** The plan covers `CommandMeta` readers only
-  (section 4).
-  - **What isn't covered.** Three other representations carry their own
-    English titles and have their own consumers:
-    - **`TypedCommand`**, from the `#[kiln::command]` macro's `CommandRecord`s
-      (`kiln/src/contributions.rs:295`), held in kiln-platform's
-      `TypedCommands` global (`command_actions.rs:71, 128–140`);
-    - **`CommandSpec`**, kiln's contribution titles (`contributions.rs:162`,
-      `Toggle {}` at `:1072`), which feed menu items at `:1737` and `:1879`;
-    - **fe-keymap's `CommandInfo`** (`shortcuts_model.rs:17, 153`), built by
-      `shortcuts_editor.rs:1270–1276`.
-  - **Where English leaks.** Their titles reach the palette
-    (`command_palette.rs:93`), menus, which-key (`which_key.rs:580`), the
-    keymaps picker (`keymaps_picker.rs:85`) and the shortcuts editor. Most of
-    fe-workbench's commands are macro-declared, so this is most command text.
-  - **The direction the review pointed to.** Use one GPUI-free resolver in
-    kiln-command, from a command id and fallback to a localised title, applied
-    where each representation is stored. Rebuild each store on a locale change.
-    Add a fake-locale test of a macro-declared command across palette, menu,
-    which-key, keymaps picker and shortcuts editor.
-- **G-2: the live-locale settings-template writer.**
-  `kiln_shell::persist::setting_writer` (`kiln-shell/src/persist.rs:170–178`)
-  captures its template when the writer is created, at `persist.rs:65`.
-  - **The effect.** After a live locale change, a settings file it recreates
-    on a toggle uses the startup language.
-  - **The fix to decide.** Resolve the template when the file is created, for
-    example with a provider callback. Test it by creating the writer, changing
-    the locale, then creating the file through a toggle.
-- **G-3: the per-locale-bundle reference check.**
-  - **The mismatch.** Section 3 builds one bundle per locale, and Fluent
-    resolves nested message, term and attribute references only within the
-    bundle that formats the message. The static walk in section 8 accepts a
-    reference that exists only in en-US.
-  - **The effect.** A translated branch referencing an en-US-only term passes
-    the check and fails at runtime when that branch is selected.
-  - **The fix to decide.** Either make each locale's bundle complete, by adding
-    en-US's resources after the locale's own (`add_resource` skips ids already
-    present), and validate against that, or require references to resolve
-    inside the locale's own resources. Add a negative fixture with the bad
-    reference in an unselected branch.
+- **G-1, the typed-command path.** `TypedCommand`, `CommandSpec` and
+  fe-keymap's `CommandInfo` carried English titles that bypassed
+  `CommandMeta::label()`. Section 4 now resolves all four representations
+  through one kiln-command resolver, and moves every consumer to it. I3, G1
+  and W1 move the consumers, and Z1 checks that none is left and adds the
+  cross-surface fake-locale test.
+- **G-2, the live-locale settings-template writer.**
+  `kiln_shell::persist::setting_writer` captured its template at startup
+  (`persist.rs:65`). Section 4 makes it call a host-owned provider at write
+  time, and C1 tests a toggle that creates the file after a locale change.
+- **G-3, the per-locale-bundle reference check.** The static walk accepted a
+  reference that existed only in en-US, which Fluent can't resolve in another
+  locale's bundle. Sections 3 and 8 now keep each bundle to its own locale and
+  require every reference to resolve inside it. I1's fixtures put a term and
+  an attribute that only en-US defines into an unselected branch.
 
 **Open questions for the user:**
 
