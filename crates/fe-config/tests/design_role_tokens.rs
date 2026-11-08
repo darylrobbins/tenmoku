@@ -1,7 +1,7 @@
 //! The design's new roles (T1509) are plumbing: each new token follows its
 //! rule, or is the base's colour, and every token that was there before
 //! resolves as it did, in Kiln Dark, Kiln Light and every theme Tenmoku
-//! bundles. So nothing drawn changes until a theme sets them.
+//! bundled then. So nothing drawn changes until a theme sets them.
 
 use std::{fs, path::Path};
 
@@ -634,11 +634,13 @@ fn new_roles_resolve_to_todays_colours() {
         assert_eq!(rule(key), expected, "{key}'s rule");
     }
 
+    // Every theme of the snapshot is still there, as it was; themes bundled
+    // since (Yohen and Hakuji, T1512) set the new roles themselves.
     let themes = themes();
-    let names: Vec<&str> = themes.iter().map(|theme| theme.name.as_str()).collect();
-    let before_names: Vec<&str> = before.iter().map(|&(name, _)| name).collect();
-    assert_eq!(names, before_names, "the themes");
-    for (theme, (name, tokens)) in themes.iter().zip(&before) {
+    for (name, tokens) in &before {
+        let theme = (themes.iter())
+            .find(|theme| theme.name == *name)
+            .unwrap_or_else(|| panic!("{name} is still bundled"));
         assert_eq!(tokens.len(), old.len(), "{name}: every old token");
         for &(key, color) in tokens {
             let now = theme.tokens.get(key).map(Color::to_string);

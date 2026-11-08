@@ -273,6 +273,8 @@ fn choosing_a_bundled_theme_applies_and_keeps_it(cx: &mut TestAppContext) {
             row("Tenmoku Dark", Appearance::Dark, false),
             row("Tenmoku Light", Appearance::Light, false),
             row("Tenmoku Ember", Appearance::Dark, true),
+            row("Yohen", Appearance::Dark, false),
+            row("Hakuji", Appearance::Light, false),
             row("Acme Midnight", Appearance::Dark, false),
             row("Acme Noon", Appearance::Light, false),
         ]

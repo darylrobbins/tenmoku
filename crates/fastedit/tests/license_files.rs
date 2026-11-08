@@ -34,6 +34,10 @@ fn notice_reserves_nothing() {
     assert!(!notice.contains("All rights reserved"));
 }
 
+/// Bundled theme files written for Tenmoku without a `tenmoku-` name, so
+/// nothing to credit.
+const FIRST_PARTY: &[&str] = &["yohen.toml", "hakuji.toml"];
+
 #[test]
 fn third_party_themes_are_credited() {
     let (notice, third_party) = (read("NOTICE"), read("THIRD_PARTY.md"));
@@ -41,6 +45,9 @@ fn third_party_themes_are_credited() {
     for entry in fs::read_dir(dir).unwrap() {
         let name = entry.unwrap().file_name().into_string().unwrap();
         if name.starts_with("tenmoku-") {
+            continue;
+        }
+        if FIRST_PARTY.contains(&name.as_str()) {
             continue;
         }
         assert!(notice.contains(&name), "{name} is not in NOTICE");

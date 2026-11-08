@@ -1,6 +1,7 @@
 //! The minimap's colours: every bundled theme sets the eleven `minimap_*`
 //! keys with VS Code's values for its appearance (the vscode-* themes with
-//! their own), and a user theme's `[editor]` can set them.
+//! their own, Yohen and Hakuji with their roles'), and a user theme's
+//! `[editor]` can set them.
 
 use std::path::Path;
 
@@ -34,7 +35,7 @@ fn every_bundled_theme_sets_every_minimap_key() {
     }
     // Appended at the end of the table.
     assert_eq!(EditorColors::KEYS[EditorColors::KEYS.len() - 11..], KEYS);
-    assert_eq!(bundled_themes().len(), 11);
+    assert_eq!(bundled_themes().len(), 13);
     for theme in bundled_themes() {
         let file = theme.file();
         let editor = &file.extensions["editor"];
@@ -60,8 +61,13 @@ fn minimap_colours_are_vscode_s() {
             "{id}"
         );
         assert_eq!(colors.minimap_gutter_deleted, colors.change_deleted, "{id}");
-        assert_eq!(colors.minimap_error, Color::rgba(0xFF1212B3), "{id}");
-        assert_eq!(colors.minimap_find_match, Color::rgb(0xD18616), "{id}");
+        let (error, find_match) = match id {
+            // Yohen and Hakuji mark errors in shinsha, matches in kiseto.
+            "yohen" | "hakuji" => (colors.error, colors.warning),
+            _ => (Color::rgba(0xFF1212B3), Color::rgb(0xD18616)),
+        };
+        assert_eq!(colors.minimap_error, error, "{id}");
+        assert_eq!(colors.minimap_find_match, find_match, "{id}");
 
         let slider = [
             colors.minimap_slider,
@@ -81,6 +87,9 @@ fn minimap_colours_are_vscode_s() {
             ("catppuccin-mocha", _) => [0xCBA6F733, 0xCBA6F766, 0xCBA6F799, 0x585B70BF],
             // Monokai sets minimap.selectionHighlight but no minimapSlider.*.
             ("vscode-monokai", _) => [0x79797933, 0x64646459, 0xBFBFBF33, 0x878B9180],
+            // Faint text at rising strength, and the focused selection.
+            ("yohen", _) => [0xA0908033, 0xA0908059, 0xA0908080, 0x3E2717FF],
+            ("hakuji", _) => [0x5F667033, 0x5F667059, 0x5F667080, 0xFBE7DAFF],
             // scrollbarSlider.* at half alpha, editor.selectionBackground.
             (_, Appearance::Dark) => [0x79797933, 0x64646459, 0xBFBFBF33, 0x264F78FF],
             (_, Appearance::Light) => [0x64646433, 0x64646459, 0x0000004D, 0xADD6FFFF],

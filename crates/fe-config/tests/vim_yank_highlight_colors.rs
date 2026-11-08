@@ -17,6 +17,8 @@ const BUNDLED: &[&str] = &[
     include_str!("../themes/vscode-2026-light.toml"),
     include_str!("../themes/vscode-dark-modern.toml"),
     include_str!("../themes/vscode-monokai.toml"),
+    include_str!("../themes/yohen.toml"),
+    include_str!("../themes/hakuji.toml"),
 ];
 
 fn parse(source: &str) -> ThemeData {

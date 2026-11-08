@@ -1,7 +1,8 @@
 //! Sticky scroll's colours: every bundled theme sets the four
 //! `sticky_scroll_*` keys with VS Code's values (editorStickyScroll.* and
-//! editorStickyScrollHover.background), and a user theme without them gets
-//! the bundled palette's for its appearance.
+//! editorStickyScrollHover.background), or Yohen's and Hakuji's from their
+//! surfaces, and a user theme without them gets the bundled palette's for its
+//! appearance.
 
 use std::path::Path;
 
@@ -37,7 +38,7 @@ fn every_bundled_theme_sets_vscode_s_sticky_scroll_colours() {
         .position(|&key| key == "indent_guide_active")
         .unwrap();
     assert_eq!(EditorColors::KEYS[at + 1..at + 5], KEYS);
-    let want: [(&str, [u32; 4]); 11] = [
+    let want: [(&str, [u32; 4]); 13] = [
         ("vscode-2026-dark", [0x121314FF, 0, 0x191B1D4D, 0x2A2D2EFF]),
         (
             "vscode-dark-modern",
@@ -55,6 +56,10 @@ fn every_bundled_theme_sets_vscode_s_sticky_scroll_colours() {
         ("tenmoku-dark", [0x16181DFF, 0, 0x000000FF, 0x2A2D2EFF]),
         ("tenmoku-ember", [0x1C1814FF, 0, 0x000000FF, 0x2A2D2EFF]),
         ("tenmoku-light", [0xFFFFFFFF, 0, 0xDDDDDDFF, 0xF0F0F0FF]),
+        // Yohen and Hakuji: the hover surface under the pointer, and a
+        // shadow of black, or of Hakuji's line.
+        ("yohen", [0x1C1613FF, 0, 0x000000FF, 0x2B221DFF]),
+        ("hakuji", [0xFFFFFFFF, 0, 0xE1E3E7FF, 0xEBECEFFF]),
     ];
     assert_eq!(bundled_themes().len(), want.len());
     for (id, want) in want {

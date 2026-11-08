@@ -152,7 +152,7 @@ fn steps_in_order() {
     // shows while its slot is unset.
     assert_eq!(
         labels(&choices, ControlId::LightTheme),
-        ["Light 2026", "Catppuccin Latte", "Tenmoku Light"]
+        ["Light 2026", "Catppuccin Latte", "Tenmoku Light", "Hakuji"]
     );
     assert_eq!(shown(&choices, ControlId::LightTheme), "Tenmoku Light");
     assert_eq!(shown(&choices, ControlId::DarkTheme), "Tenmoku Dark");

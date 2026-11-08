@@ -1,0 +1,225 @@
+# Hakuji: Tenmoku's light theme, white porcelain and cool greys, with rust
+# kept as the one brand thread. Every role's colour is the design's
+# (docs/design/design-system.md, Colour: Signals, Syntax, Surfaces and the
+# three text steps). Where the design gives no value, the colour comes from
+# the nearest role, and a comment says which.
+#
+# Soft grounds: the design gives celadon-soft (#e3f3e8). The others keep its
+# OKLab lightness and its share of the signal's chroma, in their own
+# signal's hue.
+#
+# Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
+
+kiln_theme = 1
+name = "Hakuji"
+appearance = "light"
+
+[surface]
+# Editor.
+background = "#ffffff"
+# Tool window: sidebars and bottom panels.
+panel = "#f7f7f9"
+# Chrome: title bar, rail, tab strip and status bar.
+chrome = "#f2f2f4"
+# Overlay: popups, hover cards, menus and toasts (with a shadow).
+raised = "#ffffff"
+# The modal scrim, Kiln Light's.
+overlay = "#0000004d"
+
+[text]
+# Ink, muted and faint.
+primary = "#1f2328"
+muted = "#4b525b"
+faint = "#5f6670"
+# On the hare's fur accent.
+on_accent = "#ffffff"
+
+[border]
+# Line: hairlines between regions.
+default = "#e1e3e7"
+# Control border: inputs and secondary buttons.
+control = "#c6cad0"
+
+[accent]
+# Hare's fur.
+base = "#a84a16"
+
+[state]
+# Hover: rows and ghost buttons.
+hover = "#ebecef"
+# Selected: a row without focus, and a pressed segment.
+selected_inactive = "#e8eaee"
+pressed = "#e8eaee"
+# Focused selection: a row with focus (rust tint).
+selected = "#fbe7da"
+# The focus ring is 2 px rust.
+focus_ring = "#a84a16"
+
+[status]
+# Shinsha, kiseto and celadon.
+error = "#a1100e"
+warning = "#776a00"
+success = "#17773f"
+# Ruri: modified files and lines.
+modified = "#1f68cf"
+# The design names no information role: ruri, the blue.
+info = "#1f68cf"
+success_soft = "#e3f3e8"
+error_soft = "#ffe7e2"
+warning_soft = "#f1efe0"
+modified_soft = "#e1efff"
+
+[list]
+# The tree's indent guides: the line.
+indent_guide = "#e1e3e7"
+chevron = "#4b525b"
+# Folders go neutral grey in Hakuji.
+folder_icon = "#4b525b"
+
+[tab]
+active_text = "#1f2328"
+# The tab strip is chrome.
+inactive = "#f2f2f4"
+
+# Oil spot: agents, never the accent.
+[agent]
+base = "#3a5f81"
+soft = "#e8eff7"
+
+[editor]
+background = "#ffffff"
+# Variable: ink.
+foreground = "#1f2328"
+gutter_foreground = "#5f6670"
+gutter_active_foreground = "#1f2328"
+# Cursor line.
+active_line = "#f6f7f9"
+# Hare's fur at a fifth, as a selection's tint.
+selection = "#a84a1633"
+cursor = "#a84a16"
+error = "#a1100e"
+warning = "#776a00"
+information = "#1f68cf"
+hint = "#5f6670"
+# Overlay, edged by the line (its shadow is the window's).
+popover_background = "#ffffff"
+popover_border = "#e1e3e7"
+# Jump labels: jun live, kiseto for the preview, white glyphs.
+jump_label = "#7b36a8"
+jump_label_preview = "#776a00"
+jump_label_foreground = "#ffffff"
+# Hare's fur, faint.
+vim_yank_highlight = "#a84a1638"
+# Quick-scope: celadon, then ruri.
+quick_scope_primary = "#17773f"
+quick_scope_secondary = "#1f68cf"
+# The change bar: added celadon, modified ruri, deleted shinsha.
+change_added = "#17773f"
+change_modified = "#1f68cf"
+change_deleted = "#a1100e"
+# A diff's rows on the soft grounds (celadon-soft, shinsha-soft), and its
+# changed words in the signal at a fifth over them.
+diff_added_row = "#e3f3e8"
+diff_removed_row = "#ffe7e2"
+diff_added_word = "#17773f33"
+diff_removed_word = "#a1100e33"
+diff_filler = "#1f23281f"
+# Indent guides are the design's; the caret's block is one step darker,
+# halfway to the control border.
+indent_guide = "#eceef1"
+indent_guide_active = "#d9dce0"
+# Whitespace marks: faint text, quiet. Rulers: the line.
+whitespace = "#5f667059"
+ruler = "#e1e3e7"
+# Sticky scroll: the editor's ground, no line, the line's grey as its
+# shadow, and the hover surface under the pointer.
+sticky_scroll_background = "#ffffff"
+sticky_scroll_border = "#00000000"
+sticky_scroll_shadow = "#e1e3e7"
+sticky_scroll_hover = "#ebecef"
+# The vim mode's segment: NORMAL hare's fur, INSERT celadon, VISUAL jun,
+# REPLACE shinsha, COMMAND kiseto.
+vim_mode_normal = "#a84a16"
+vim_mode_insert = "#17773f"
+vim_mode_visual = "#7b36a8"
+vim_mode_replace = "#a1100e"
+vim_mode_command = "#776a00"
+vim_mode_foreground = "#ffffff"
+# Brackets by depth: function, keyword and type colours.
+bracket_1 = "#925a00"
+bracket_2 = "#7b36a8"
+bracket_3 = "#0d6e66"
+# The design's find-match is Yohen's alone: the current match here is
+# Yohen's kiseto at 40% over white. The other matches and the identifier's
+# uses are kiseto-soft (ochre-soft); a hovered fold's tile is the hover
+# surface; an agent's lane is oil spot.
+find_match = "#f6e1b3"
+find_match_other = "#f1efe0"
+identifier_highlight = "#f1efe0"
+agent_lane = "#3a5f81"
+fold_hover = "#ebecef"
+# The minimap: the editor's ground; the slider in faint text at rising
+# strength; the selection the focused selection's rust tint; marks in the
+# signals (find matches kiseto, errors shinsha, warnings kiseto) and the
+# change bar's colours.
+minimap_background = "#ffffff"
+minimap_slider = "#5f667033"
+minimap_slider_hover = "#5f667059"
+minimap_slider_active = "#5f667080"
+minimap_selection = "#fbe7da"
+minimap_find_match = "#776a00"
+minimap_error = "#a1100e"
+minimap_warning = "#776a00"
+minimap_gutter_added = "#17773f"
+minimap_gutter_modified = "#1f68cf"
+minimap_gutter_deleted = "#a1100e"
+
+# Highlight captures by dotted name. A capture without its own colour takes
+# the colour of its longest listed prefix: "function.method" uses "function".
+# A variable is the foreground, ink. The captures the design's table doesn't
+# name take the nearest token's colour: constructors, modules and type
+# parameters the type's; escapes, placeholders and enum members the
+# constant's; labels and links the macro's; operators the punctuation's;
+# builtin variables, tags and special punctuation the keyword's. Markup
+# insertions and deletions are celadon and shinsha.
+[syntax]
+"attribute" = "#2457c5"
+"comment" = "#69727c"
+# TODO-style comment badges by meaning (docs/decisions/246q270zwp-*.md):
+# FIXME shinsha, HACK and WARN kiseto, NOTE and TODO ruri, PERF keyword (jun).
+"comment.fixme" = "#a1100e"
+"comment.hack" = "#776a00"
+"comment.note" = "#1f68cf"
+"comment.perf" = "#7b36a8"
+"comment.todo" = "#1f68cf"
+"comment.warn" = "#776a00"
+"comment.documentation.code" = "#1f2328"
+"constant" = "#a32f6b"
+"constant.enum_member" = "#a32f6b"
+"constructor" = "#0d6e66"
+"escape" = "#a32f6b"
+"function" = "#925a00"
+"function.macro" = "#2457c5"
+"keyword" = "#7b36a8"
+"label" = "#2457c5"
+"markup.deleted" = "#a1100e"
+"markup.heading" = "#925a00"
+"markup.inserted" = "#17773f"
+"markup.link" = "#2457c5"
+"markup.link.url" = "#0d6e66"
+"markup.raw" = "#2f6f1f"
+"module" = "#0d6e66"
+"number" = "#a32f6b"
+"operator" = "#596069"
+"property" = "#3d444d"
+"punctuation" = "#596069"
+"punctuation.special" = "#7b36a8"
+"string" = "#2f6f1f"
+"string.placeholder" = "#a32f6b"
+"string.special" = "#0d6e66"
+"string.special.key" = "#3d444d"
+"tag" = "#7b36a8"
+"type" = "#0d6e66"
+"type.parameter" = "#0d6e66"
+"variable.builtin" = "#7b36a8"
+"variable.parameter" = "#1f2328"

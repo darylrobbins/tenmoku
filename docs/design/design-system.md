@@ -40,14 +40,22 @@ every text colour clears 4.5:1 on every surface it sits on, and code text
 clears 6:1 in the dark theme. The rust accent keeps the name hare's fur, after
 the glaze it comes from.
 
+T1512 (rev 2) moved five values by OKLab lightness only, keeping hue and
+chroma, so the rules above hold: Yohen faint `#978777` → `#a09080` and comment
+`#839c86` → `#88a18b` (4.5:1 on selected rows, 6:1 on the cursor line), Hakuji
+comment `#6a737d` → `#69727c` (4.5:1 on the cursor line), and Hakuji shinsha
+`#c0362c` → `#a1100e` and oil spot `#3f6587` → `#3a5f81` (0.05 OKLab L from
+celadon, kiseto and hare's fur; kiseto can't darken in the sRGB gamut, so
+shinsha moved for both of its pairs).
+
 ### Signals
 
 | Role | Yohen | Hakuji | Means | Never |
 | --- | --- | --- | --- | --- |
 | Hare's fur (accent) | `#e0874c` | `#a84a16` | You: caret, focus ring, NORMAL mode, active tab, selected row, primary button | Decoration, a second accent |
-| Oil spot | `#b4c2cc` | `#3f6587` | Agents: their lines, chips, terminals, toasts, review | Anything a person did |
+| Oil spot | `#b4c2cc` | `#3a5f81` | Agents: their lines, chips, terminals, toasts, review | Anything a person did |
 | Celadon | `#6fd49a` | `#17773f` | Added, passed, INSERT mode | Modified |
-| Shinsha | `#f2716f` | `#c0362c` | Removed, failed, errors | Warnings |
+| Shinsha | `#f2716f` | `#a1100e` | Removed, failed, errors | Warnings |
 | Kiseto | `#e8b440` | `#776a00` | Warnings, flaky tests | Modified |
 | Ruri | `#4f95f5` | `#1f68cf` | Modified files and lines | Agent work |
 | Jun | `#c7a5e6` | `#7b36a8` | VISUAL mode (shares the keyword hue) | Status |
@@ -70,7 +78,7 @@ for everyone.
 | Property | `#dccbb8` | `#3d444d` | Shino | |
 | Variable | `#ede4d6` | `#1f2328` | ink | |
 | Punctuation | `#a89a8c` | `#596069` | Iron | |
-| Comment | `#839c86` | `#6a737d` | Wood ash | Italic |
+| Comment | `#88a18b` | `#69727c` | Wood ash | Italic |
 
 Brackets pair by depth in function, keyword and type colours. Mutable bindings
 get a quiet solid underline in their own colour; warnings and errors use wavy
@@ -92,7 +100,7 @@ underlines in ochre and red.
 | Control border | `#4a3a2e` | `#c6cad0` | Inputs, secondary buttons |
 
 Text is three steps on every surface: ink `#ede4d6` / `#1f2328`, muted
-`#b8a99a` / `#4b525b`, faint `#978777` / `#5f6670`.
+`#b8a99a` / `#4b525b`, faint `#a09080` / `#5f6670`.
 
 ## Type, spacing and sizes
 

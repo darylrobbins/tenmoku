@@ -59,6 +59,8 @@ const BUNDLED: &[BundledTheme] = &[
     bundled!("Tenmoku Dark", "tenmoku-dark", Dark),
     bundled!("Tenmoku Light", "tenmoku-light", Light),
     bundled!("Tenmoku Ember", "tenmoku-ember", Dark),
+    bundled!("Yohen", "yohen", Dark),
+    bundled!("Hakuji", "hakuji", Light),
 ];
 
 /// Every bundled theme, in the order a list of them shows.
