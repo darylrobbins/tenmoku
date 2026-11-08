@@ -86,11 +86,18 @@ Copyright (c) 2021 Munif Tanjim. The crate ships no LICENSE file; the line is
 from the repository's LICENSE.md at v0.5.0.
 Licensed under the MIT License.
 
-Lucide icons (unmodified, in kiln/crates/kiln-ui/assets/icons)
+Lucide icons (lucide-icons/lucide 1.52.0, in kiln/crates/kiln-ui/assets/icons;
+stroke width set to 1.75)
 Copyright (c) 2026 Lucide Icons and Contributors.
 Licensed under the ISC License.
 Icons derived from Feather: Copyright (c) 2013-present Cole Bemis.
 Licensed under the MIT License.
+
+Tabler Icons (tabler/tabler-icons v3.50.0, in kiln/crates/kiln-ui/assets/tabler-icons;
+stroke width set to 1.75)
+Copyright (c) 2020-2026 Paweł Kuna.
+Licensed under the MIT License.
+The logos among them are their owners' marks, used only to identify file types.
 
 Material Icon Theme icons (material-extensions/vscode-material-icon-theme 5.40.0,
 unmodified, in kiln/crates/kiln-ui/assets/file-icons)
@@ -115,7 +122,8 @@ Licensed under the SIL Open Font License, Version 1.1.
 
 License texts: LICENSES/Apache-2.0.txt and LICENSES/MIT.txt (the MIT text is
 the template; the holders are named above). The ISC text is Lucide's own
-kiln/crates/kiln-ui/assets/icons/LICENSE. Material Icon Theme's MIT text is
-its own kiln/crates/kiln-ui/assets/file-icons/LICENSE.
+kiln/crates/kiln-ui/assets/icons/LICENSE. Tabler Icons' MIT text is its own
+kiln/crates/kiln-ui/assets/tabler-icons/LICENSE. Material Icon Theme's MIT text
+is its own kiln/crates/kiln-ui/assets/file-icons/LICENSE.
 Each font's OFL-1.1 text is its own OFL.txt, beside its files under
 crates/fe-fonts/fonts/.

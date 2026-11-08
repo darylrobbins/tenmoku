@@ -132,18 +132,19 @@ File and folder icons as the tinted set draws them (`TintedIcons`, Tenmoku's
 `workbench.icon_theme = "tenmoku"`): a file's by its type, a folder's by its role.
 `kiln/crates/kiln-core/src/theme/tokens.rs:FileIcon`. Every one is `list.icon` if left
 out, so a theme that sets none draws them in one colour. Yohen and Hakuji set them all
-(Rust in muted kaki, TOML grey, Markdown lapis); Hakuji's folders are all its muted
-grey.
+(Rust in muted kaki, the compiled languages jun, TOML grey, Markdown lapis); Hakuji's
+folders are all its muted grey.
 
 | Token | For | If left out |
 | --- | --- | --- |
 | `file_icon.rust` | Rust sources | Same as `list.icon` |
+| `file_icon.code` | The compiled and systems languages: C, C++, C#, F#, Go, Java, Kotlin, Scala, Groovy, Swift, Dart, Zig, Haskell, OCaml, Elm, Gleam, Erlang, Elixir, Racket, Solidity | Same as `list.icon` |
 | `file_icon.toml` | TOML files, `Cargo.toml` among them | Same as `list.icon` |
-| `file_icon.markdown` | Markdown and READMEs | Same as `list.icon` |
-| `file_icon.config` | YAML, INI, build files, Git's and Docker's files, `.env` | Same as `list.icon` |
-| `file_icon.data` | JSON, tables, databases, lock files | Same as `list.icon` |
-| `file_icon.script` | Shell scripts, Python, Ruby, Lua | Same as `list.icon` |
-| `file_icon.web` | JavaScript, TypeScript, HTML, CSS | Same as `list.icon` |
+| `file_icon.markdown` | Markdown and READMEs, LaTeX | Same as `list.icon` |
+| `file_icon.config` | YAML, INI and properties, `.editorconfig`, Dockerfiles, Make, just, CMake, Nginx, Nix, HCL and Terraform, Starlark, KDL, Git's files, `.env` | Same as `list.icon` |
+| `file_icon.data` | JSON, XML, CSV and TSV, SQL and databases, Protocol Buffers, diffs and patches, lock files | Same as `list.icon` |
+| `file_icon.script` | Shell scripts and shell startup files, Python, Ruby, Lua, Perl, PHP, R, Julia, PowerShell, Vim script | Same as `list.icon` |
+| `file_icon.web` | JavaScript, TypeScript, JSX and TSX, HTML, CSS, SCSS and Sass, Vue, Svelte, Astro, Twig | Same as `list.icon` |
 | `file_icon.image` | Images, video and sound | Same as `list.icon` |
 | `file_icon.default` | Any other file | Same as `list.icon` |
 | `file_icon.folder_source` | `src`, `lib`, `crates`, … | Same as `list.icon` |
@@ -420,12 +421,15 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
 
 ## Icons
 
-- **Set:** Lucide, redrawn at the design's 1.75 stroke, 96 SVGs in `kiln/crates/kiln-ui/assets/icons/`, named
-  by `kiln/crates/kiln-ui/src/file_icons.rs:Icon`. `FILE_NAMES` and `EXTENSIONS` map a
+- **Set:** Lucide, redrawn at the design's 1.75 stroke, 120 SVGs in `kiln/crates/kiln-ui/assets/icons/`,
+  and 32 of Tabler Icons' language marks at the same stroke in
+  `kiln/crates/kiln-ui/assets/tabler-icons/`, all named by
+  `kiln/crates/kiln-ui/src/file_icons.rs:Icon` and served under `kiln-ui/icons/`. `FILE_NAMES` and `EXTENSIONS` map a
   file to its icon. An app can swap the set with `set_icon_set`
   (`kiln/crates/kiln-ui/src/file_icons.rs:IconSet`, default `LucideIcons`).
 - **Licence:** ISC, with Feather's MIT for the icons derived from it:
-  `kiln/crates/kiln-ui/assets/icons/LICENSE`, `THIRD_PARTY.md`, `NOTICE`.
+  `kiln/crates/kiln-ui/assets/icons/LICENSE`; Tabler's MIT:
+  `kiln/crates/kiln-ui/assets/tabler-icons/LICENSE`; `THIRD_PARTY.md`, `NOTICE`.
 - **Drawing:** monochrome strokes, which GPUI's `svg()` draws as an alpha mask in the
   element's text colour (`kiln/crates/kiln-ui/src/file_icons.rs`). So a Lucide icon's
   colour is always a `text_color` call, and it has no colours of its own.
@@ -436,10 +440,13 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
   (`information`, `warning`, `error`, `hint`, and `change_added` for success) by a fixed
   table per icon (`ICON_COLOURS`): no colours of its own. A group's title shares its
   icon's colour.
-- **Tinted, for files and folders:** Lucide's icons, each in a `file_icon` token's
-  colour by file type and folder role
+- **Tinted, for files and folders:** a glyph per language, Lucide's or, where Lucide
+  has none, Tabler's brand mark or letter monogram (`ICON_NAMES`, `ICON_EXTENSIONS`
+  over Lucide's tables; a `README` takes the Markdown icon; every other extension the
+  Material set knows a Lucide kind icon, never the blank file), each in a `file_icon`
+  token's colour by file family and folder role
   (`kiln/crates/kiln-ui/src/file_icons_tinted.rs:TintedIcons`, `FILE_NAMES`,
-  `EXTENSIONS`, `FOLDER_NAMES`; a `README` takes the Markdown icon). They're
+  `EXTENSIONS`, `FOLDER_NAMES`). They're
   `IconRef::Tinted`, drawn in the token's colour whatever tint the surface draws with;
   an ignored row fades them as it does a coloured icon. Tenmoku installs it by default
   (`workbench.icon_theme = "tenmoku"`); `"minimal"` is plain Lucide.

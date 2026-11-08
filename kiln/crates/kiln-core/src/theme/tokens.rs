@@ -175,22 +175,28 @@ tokens! {
     file_icon: FileIcon {
         /// Rust sources.
         rust,
+        /// The compiled and systems languages: C, C++, C#, Go, Java,
+        /// Kotlin, Swift, Haskell, Elixir and the like.
+        code,
         /// TOML files, `Cargo.toml` among them.
         toml,
         /// Markdown, READMEs included.
         markdown,
-        /// Other configuration: YAML, INI, build files, Git's and
-        /// Docker's files, `.env`.
+        /// Other configuration: YAML, INI, build files (Make, just, CMake,
+        /// Starlark), Nix, Terraform, Git's and Docker's files, `.env`.
         config,
-        /// Data: JSON, tables, databases and lock files.
+        /// Data: JSON, XML, tables, SQL, Protocol Buffers, diffs and lock
+        /// files.
         data,
-        /// Shell scripts and the scripting languages: Python, Ruby, Lua.
+        /// Shell scripts and the scripting languages: Python, Ruby, Lua,
+        /// Perl, PHP, R, Julia, PowerShell, Vim script.
         script,
-        /// The web's languages: JavaScript, TypeScript, HTML, CSS.
+        /// The web's languages: JavaScript, TypeScript, JSX, HTML, CSS,
+        /// Sass, Vue, Svelte, Astro, Twig.
         web,
         /// Images, video and sound.
         image,
-        /// A file no type names, other languages' sources among them.
+        /// A file no type names.
         default,
         /// A source folder: `src`, `lib`, `crates`.
         folder_source,
@@ -307,6 +313,7 @@ pub const RULES: &[(&str, Rule)] = &[
     ("list.icon", Rule::Same("text.primary")),
     ("list.folder_icon", Rule::Same("accent.base")),
     ("file_icon.rust", Rule::Same("list.icon")),
+    ("file_icon.code", Rule::Same("list.icon")),
     ("file_icon.toml", Rule::Same("list.icon")),
     ("file_icon.markdown", Rule::Same("list.icon")),
     ("file_icon.config", Rule::Same("list.icon")),

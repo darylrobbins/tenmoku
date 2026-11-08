@@ -21,6 +21,7 @@ mod text_input;
 mod text_input_ime;
 mod theme_tokens;
 mod tinted_icon_set;
+mod tinted_language_icons;
 mod tree;
 mod tree_row;
 mod tree_row_status;

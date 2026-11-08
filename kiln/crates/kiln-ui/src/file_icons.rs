@@ -2,8 +2,10 @@
 
 //! The bundled icon set and the file-name → icon mapping.
 //!
-//! Icons are Lucide's, redrawn at the design's 1.75 stroke (Lucide ships 2;
-//! see `assets/icons/LICENSE` and THIRD_PARTY.md). They're monochrome strokes, so GPUI's `svg()` draws them as
+//! Icons are Lucide's, with Tabler's language marks for
+//! [`TintedIcons`](crate::TintedIcons), redrawn at the design's 1.75 stroke
+//! (both ship 2; see `assets/icons/LICENSE`, `assets/tabler-icons/LICENSE`
+//! and THIRD_PARTY.md). They're monochrome strokes, so GPUI's `svg()` draws them as
 //! an alpha mask tinted with the element's text colour. A set may answer a
 //! multi-colour SVG instead ([`IconRef::Coloured`]), which
 //! [`IconRef::element`] draws as an image in its own colours, or a bundled
@@ -30,36 +32,47 @@ use gpui::{
 use crate::{Assets, theme::active_color};
 
 macro_rules! icons {
-    ($($variant:ident => $name:literal,)*) => {
+    ($($dir:literal { $($variant:ident => $name:literal,)* })*) => {
         /// An icon bundled with kiln-ui; draw it with `svg().path(icon.path())`
         /// once the app's asset source serves [`crate::Assets`].
         #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
         pub enum Icon {
-            $($variant,)*
+            $($($variant,)*)*
         }
 
         impl Icon {
             /// Every bundled icon.
-            pub const ALL: &[Icon] = &[$(Icon::$variant,)*];
+            pub const ALL: &[Icon] = &[$($(Icon::$variant,)*)*];
 
-            /// Lucide's name for the icon, e.g. `"file-code"`.
+            /// Its upstream name, Lucide's or Tabler's, e.g. `"file-code"`.
+            /// Every icon is served under `kiln-ui/icons/`, whichever set
+            /// it's from, so no name repeats across them.
             pub fn name(self) -> &'static str {
                 match self {
-                    $(Icon::$variant => $name,)*
+                    $($(Icon::$variant => $name,)*)*
                 }
             }
 
             /// The asset path, e.g. `"kiln-ui/icons/file-code.svg"`.
             pub fn path(self) -> &'static str {
                 match self {
-                    $(Icon::$variant => concat!("kiln-ui/icons/", $name, ".svg"),)*
+                    $($(Icon::$variant => concat!("kiln-ui/icons/", $name, ".svg"),)*)*
+                }
+            }
+
+            /// The directory under `assets/` its file is in: `icons` for
+            /// Lucide's, `tabler-icons` for Tabler's.
+            #[cfg(test)]
+            pub(crate) fn dir(self) -> &'static str {
+                match self {
+                    $($(Icon::$variant => $dir,)*)*
                 }
             }
 
             /// The SVG file, compiled in.
             pub(crate) fn svg(self) -> &'static [u8] {
                 match self {
-                    $(Icon::$variant => include_bytes!(concat!("../assets/icons/", $name, ".svg")),)*
+                    $($(Icon::$variant => include_bytes!(concat!("../assets/", $dir, "/", $name, ".svg")),)*)*
                 }
             }
         }
@@ -67,121 +80,185 @@ macro_rules! icons {
 }
 
 icons! {
-    ChevronRight => "chevron-right",
-    Folder => "folder",
-    FolderOpen => "folder-open",
-    File => "file",
-    FileCode => "file-code",
-    FileBraces => "file-braces",
-    FileText => "file-text",
-    FileCog => "file-cog",
-    Package => "package",
-    FileLock => "file-lock",
-    GitBranch => "git-branch",
-    GitGraph => "git-graph",
-    Container => "container",
-    FileTerminal => "file-terminal",
-    FileKey => "file-key",
-    FileImage => "file-image",
-    FileArchive => "file-archive",
-    FileSpreadsheet => "file-spreadsheet",
-    Database => "database",
-    FileDiff => "file-diff",
-    FileVideoCamera => "file-video-camera",
-    FileMusic => "file-music",
-    Scale => "scale",
-    FileSymlink => "file-symlink",
-    // The activity rail's; not mapped from names.
-    Files => "files",
-    Search => "search",
-    ListTree => "list-tree",
-    // The pane toolbar's; not mapped from names.
-    ArrowLeft => "arrow-left",
-    ArrowRight => "arrow-right",
-    Columns2 => "columns-2",
-    Rows2 => "rows-2",
-    Ellipsis => "ellipsis",
-    // The tab bar's Markdown preview buttons; not mapped from names.
-    Eye => "eye",
-    Code => "code",
-    PanelRightOpen => "panel-right-open",
-    // A pinned tab's glyph; not mapped from names.
-    Pin => "pin",
-    // The window buttons drawn under client-side decorations; not mapped
-    // from names.
-    Minus => "minus",
-    Square => "square",
-    Copy => "copy",
-    X => "x",
-    // The checkbox's mark.
-    Check => "check",
-    // The status bar's; not mapped from names.
-    CircleX => "circle-x",
-    TriangleAlert => "triangle-alert",
-    Server => "server",
-    Lock => "lock",
-    // The outline's symbol kinds; not mapped from names.
-    Box => "box",
-    Component => "component",
-    Braces => "braces",
-    List => "list",
-    Plug => "plug",
-    Link => "link",
-    Type => "type",
-    SquareFunction => "square-function",
-    Hash => "hash",
-    Asterisk => "asterisk",
-    Table => "table",
-    Heading => "heading",
-    CircleDot => "circle-dot",
-    Diamond => "diamond",
-    Variable => "variable",
-    // The AI chat panel's; not mapped from names.
-    MessageSquare => "message-square",
-    // The search view's results toolbar and file groups; not mapped from
-    // names.
-    ChevronDown => "chevron-down",
-    RefreshCw => "refresh-cw",
-    ListX => "list-x",
-    FoldVertical => "fold-vertical",
-    UnfoldVertical => "unfold-vertical",
-    // The Settings tab's Reset to Default; not mapped from names.
-    RotateCcw => "rotate-ccw",
-    // The Git Log's ref pills: a remote branch and a tag.
-    Cloud => "cloud",
-    Tag => "tag",
-    // The which-key popup's row icons, by command or group; not mapped
-    // from names.
-    AppWindow => "app-window",
-    Bot => "bot",
-    Bug => "bug",
-    FlaskConical => "flask-conical",
-    LogOut => "log-out",
-    PanelsTopLeft => "panels-top-left",
-    Play => "play",
-    Redo => "redo",
-    Save => "save",
-    Settings => "settings",
-    Terminal => "terminal",
-    TextWrap => "text-wrap",
-    ToggleRight => "toggle-right",
-    Undo => "undo",
-    // The design's B3 surfaces: the Runs, Terminal and Git Log views, the
-    // find bar's toggles, progress and signals; not mapped from names.
-    ListVideo => "list-video",
-    SquareTerminal => "square-terminal",
-    GitCommitVertical => "git-commit-vertical",
-    CaseSensitive => "case-sensitive",
-    WholeWord => "whole-word",
-    Regex => "regex",
-    // Find in selection. Lucide's `text-select` is a deprecated alias of it.
-    SquareDashedText => "square-dashed-text",
-    LoaderCircle => "loader-circle",
-    CircleCheck => "circle-check",
-    ChevronUp => "chevron-up",
-    SquarePlus => "square-plus",
-    SquareMinus => "square-minus",
-    Bell => "bell",
+    // Lucide 1.52.0.
+    "icons" {
+        ChevronRight => "chevron-right",
+        Folder => "folder",
+        FolderOpen => "folder-open",
+        File => "file",
+        FileCode => "file-code",
+        FileBraces => "file-braces",
+        FileText => "file-text",
+        FileCog => "file-cog",
+        Package => "package",
+        FileLock => "file-lock",
+        GitBranch => "git-branch",
+        GitGraph => "git-graph",
+        Container => "container",
+        FileTerminal => "file-terminal",
+        FileKey => "file-key",
+        FileImage => "file-image",
+        FileArchive => "file-archive",
+        FileSpreadsheet => "file-spreadsheet",
+        Database => "database",
+        FileDiff => "file-diff",
+        FileVideoCamera => "file-video-camera",
+        FileMusic => "file-music",
+        Scale => "scale",
+        FileSymlink => "file-symlink",
+        // The activity rail's; not mapped from names.
+        Files => "files",
+        Search => "search",
+        ListTree => "list-tree",
+        // The pane toolbar's; not mapped from names.
+        ArrowLeft => "arrow-left",
+        ArrowRight => "arrow-right",
+        Columns2 => "columns-2",
+        Rows2 => "rows-2",
+        Ellipsis => "ellipsis",
+        // The tab bar's Markdown preview buttons; not mapped from names.
+        Eye => "eye",
+        Code => "code",
+        PanelRightOpen => "panel-right-open",
+        // A pinned tab's glyph; not mapped from names.
+        Pin => "pin",
+        // The window buttons drawn under client-side decorations; not mapped
+        // from names.
+        Minus => "minus",
+        Square => "square",
+        Copy => "copy",
+        X => "x",
+        // The checkbox's mark.
+        Check => "check",
+        // The status bar's; not mapped from names.
+        CircleX => "circle-x",
+        TriangleAlert => "triangle-alert",
+        Server => "server",
+        Lock => "lock",
+        // The outline's symbol kinds; not mapped from names.
+        Box => "box",
+        Component => "component",
+        Braces => "braces",
+        List => "list",
+        Plug => "plug",
+        Link => "link",
+        Type => "type",
+        SquareFunction => "square-function",
+        Hash => "hash",
+        Asterisk => "asterisk",
+        Table => "table",
+        Heading => "heading",
+        CircleDot => "circle-dot",
+        Diamond => "diamond",
+        Variable => "variable",
+        // The AI chat panel's; not mapped from names.
+        MessageSquare => "message-square",
+        // The search view's results toolbar and file groups; not mapped from
+        // names.
+        ChevronDown => "chevron-down",
+        RefreshCw => "refresh-cw",
+        ListX => "list-x",
+        FoldVertical => "fold-vertical",
+        UnfoldVertical => "unfold-vertical",
+        // The Settings tab's Reset to Default; not mapped from names.
+        RotateCcw => "rotate-ccw",
+        // The Git Log's ref pills: a remote branch and a tag.
+        Cloud => "cloud",
+        Tag => "tag",
+        // The which-key popup's row icons, by command or group; not mapped
+        // from names.
+        AppWindow => "app-window",
+        Bot => "bot",
+        Bug => "bug",
+        FlaskConical => "flask-conical",
+        LogOut => "log-out",
+        PanelsTopLeft => "panels-top-left",
+        Play => "play",
+        Redo => "redo",
+        Save => "save",
+        Settings => "settings",
+        Terminal => "terminal",
+        TextWrap => "text-wrap",
+        ToggleRight => "toggle-right",
+        Undo => "undo",
+        // The design's B3 surfaces: the Runs, Terminal and Git Log views, the
+        // find bar's toggles, progress and signals; not mapped from names.
+        ListVideo => "list-video",
+        SquareTerminal => "square-terminal",
+        GitCommitVertical => "git-commit-vertical",
+        CaseSensitive => "case-sensitive",
+        WholeWord => "whole-word",
+        Regex => "regex",
+        // Find in selection. Lucide's `text-select` is a deprecated alias of it.
+        SquareDashedText => "square-dashed-text",
+        LoaderCircle => "loader-circle",
+        CircleCheck => "circle-check",
+        ChevronUp => "chevron-up",
+        SquarePlus => "square-plus",
+        SquareMinus => "square-minus",
+        Bell => "bell",
+        // TintedIcons' language glyphs; LucideIcons maps none of them.
+        Coffee => "coffee",
+        Layers => "layers",
+        Target => "target",
+        Zap => "zap",
+        Lambda => "lambda",
+        TreeDeciduous => "tree-deciduous",
+        Sparkle => "sparkle",
+        Droplet => "droplet",
+        Parentheses => "parentheses",
+        Gem => "gem",
+        Moon => "moon",
+        Sprout => "sprout",
+        Sigma => "sigma",
+        FileSliders => "file-sliders",
+        SlidersHorizontal => "sliders-horizontal",
+        Hammer => "hammer",
+        ListChecks => "list-checks",
+        Triangle => "triangle",
+        Snowflake => "snowflake",
+        Star => "star",
+        CodeXml => "code-xml",
+        FileBox => "file-box",
+        FileType => "file-type",
+        ScrollText => "scroll-text",
+    }
+    // Tabler Icons 3.50.0: TintedIcons' marks for the languages Lucide has
+    // none for, brands and monograms.
+    "tabler-icons" {
+        BrandRust => "brand-rust",
+        BrandCpp => "brand-cpp",
+        BrandCSharp => "brand-c-sharp",
+        BrandGolang => "brand-golang",
+        BrandKotlin => "brand-kotlin",
+        BrandSwift => "brand-swift",
+        BrandPython => "brand-python",
+        BrandPhp => "brand-php",
+        BrandPowershell => "brand-powershell",
+        BrandJavascript => "brand-javascript",
+        BrandTypescript => "brand-typescript",
+        BrandReact => "brand-react",
+        BrandHtml5 => "brand-html5",
+        BrandCss3 => "brand-css3",
+        BrandSass => "brand-sass",
+        BrandVue => "brand-vue",
+        BrandSvelte => "brand-svelte",
+        BrandAstro => "brand-astro",
+        BrandDocker => "brand-docker",
+        BrandTerraform => "brand-terraform",
+        BrandGit => "brand-git",
+        Markdown => "markdown",
+        LetterC => "letter-c",
+        LetterE => "letter-e",
+        LetterF => "letter-f",
+        LetterG => "letter-g",
+        LetterJ => "letter-j",
+        LetterK => "letter-k",
+        LetterO => "letter-o",
+        LetterP => "letter-p",
+        LetterR => "letter-r",
+        LetterV => "letter-v",
+    }
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.

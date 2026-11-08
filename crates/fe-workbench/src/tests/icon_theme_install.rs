@@ -1,7 +1,8 @@
 //! `workbench.icon_theme` chooses the installed icon set: a window opened on
-//! the default settings draws a `.rs` file's tree row as Lucide's `svg()` in
-//! the theme's `file_icon.rust`, a reload to `minimal` in `list.icon`, one to
-//! `material` as a coloured image, and one back as the tinted line again.
+//! the default settings draws a `.rs` file's tree row as the tinted set's
+//! line `svg()` in the theme's `file_icon.rust`, a reload to `minimal` as
+//! Lucide's in `list.icon`, one to `material` as a coloured image, and one
+//! back as the tinted line again.
 //! Only the app's settings choose it, never a window's settings event
 //! (T1362 F1). Read off the sprites a recording renderer is handed each
 //! frame.
@@ -21,7 +22,7 @@ use std::{
 
 use fe_config::{SettingsStore, settings::IconTheme};
 use fe_gpui::{EditorSettings, EditorTheme};
-use fe_ui::{Assets, IconSet as _, LucideIcons, Theme, ThemeData};
+use fe_ui::{Assets, IconSet as _, LucideIcons, Theme, ThemeData, TintedIcons};
 use gpui::{
     AnyWindowHandle, AppContext as _, AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile,
     Bounds, DevicePixels, HeadlessAppContext, Hsla, NoopTextSystem, PlatformAtlas,
@@ -211,23 +212,28 @@ fn reload_switches_set() {
     let window = open(&mut cx, &root).into();
 
     let file_code = LucideIcons.file("main.rs").path();
+    let tinted = TintedIcons.file("main.rs").path();
+    assert_ne!(tinted, file_code, "the tinted set has Rust's own glyph");
     let rust = theme.colors.file_icon.rust;
     let plain = theme.colors.list.icon;
     assert_ne!(rust, plain, "Yohen tints Rust");
 
     let by_default = paint(&mut cx, window, &painted);
     assert_eq!(by_default.images, 0, "{by_default:?}");
-    assert_eq!(svgs_of(&by_default, &file_code), [rust], "{by_default:?}");
+    assert_eq!(svgs_of(&by_default, &tinted), [rust], "{by_default:?}");
+    assert_eq!(svgs_of(&by_default, &file_code), [], "{by_default:?}");
 
     edit_user(&user, &setting("minimal"), &sender, &mut cx);
     let minimal = paint(&mut cx, window, &painted);
     assert_eq!(minimal.images, 0, "{minimal:?}");
     assert_eq!(svgs_of(&minimal, &file_code), [plain], "{minimal:?}");
+    assert_eq!(svgs_of(&minimal, &tinted), [], "{minimal:?}");
 
     edit_user(&user, &setting("material"), &sender, &mut cx);
     let material = paint(&mut cx, window, &painted);
     assert!(material.images > 0, "{material:?}");
     assert_eq!(svgs_of(&material, &file_code), [], "{material:?}");
+    assert_eq!(svgs_of(&material, &tinted), [], "{material:?}");
 
     edit_user(&user, &setting("tenmoku"), &sender, &mut cx);
     assert_eq!(paint(&mut cx, window, &painted), by_default);
@@ -248,12 +254,17 @@ fn window_settings_leave_the_users_choice() {
     let two = open(&mut cx, &second);
 
     let file_code = LucideIcons.file("main.rs").path();
+    let tinted = TintedIcons.file("main.rs").path();
     let (rust, plain) = (theme.colors.file_icon.rust, theme.colors.list.icon);
+    // The `main.rs` row's colours: minimal's Lucide icon, then the tinted
+    // set's glyph.
     let drawn = |window: WindowHandle<Workbench>, cx: &mut HeadlessAppContext| {
-        svgs_of(&paint(cx, window.into(), &painted), &file_code)
+        let painted = paint(cx, window.into(), &painted);
+        (svgs_of(&painted, &file_code), svgs_of(&painted, &tinted))
     };
-    assert_eq!(drawn(one, &mut cx), [plain]);
-    assert_eq!(drawn(two, &mut cx), [plain]);
+    let (minimal, tenmoku) = ((vec![plain], vec![]), (vec![], vec![rust]));
+    assert_eq!(drawn(one, &mut cx), minimal);
+    assert_eq!(drawn(two, &mut cx), minimal);
 
     // The user's file stops parsing: the service keeps minimal.
     let broken = "[workbench\nicon_theme = \"minimal\"\n";
@@ -275,13 +286,13 @@ fn window_settings_leave_the_users_choice() {
         workbench.reload_settings(&stale, cx)
     }))
     .unwrap();
-    assert_eq!(drawn(one, &mut cx), [plain], "the user's choice stays");
-    assert_eq!(drawn(two, &mut cx), [plain], "the user's choice stays");
+    assert_eq!(drawn(one, &mut cx), minimal, "the user's choice stays");
+    assert_eq!(drawn(two, &mut cx), minimal, "the user's choice stays");
 
     // Fixed, the user's file's choice is every window's.
     edit_user(&user, &setting("tenmoku"), &sender, &mut cx);
-    assert_eq!(drawn(one, &mut cx), [rust]);
-    assert_eq!(drawn(two, &mut cx), [rust]);
+    assert_eq!(drawn(one, &mut cx), tenmoku);
+    assert_eq!(drawn(two, &mut cx), tenmoku);
 }
 
 /// `workbench.icon_theme = theme` as a settings file.

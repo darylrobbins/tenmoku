@@ -81,6 +81,8 @@ folder_icon = "#b8a99a"
 [file_icon]
 # Muted kaki: hare's fur 40% of the way to the muted text.
 rust = "#d0956b"
+# Jun, the keyword glaze, for the compiled languages.
+code = "#c7a5e6"
 # Grey: the faint text.
 toml = "#a09080"
 # Lapis.

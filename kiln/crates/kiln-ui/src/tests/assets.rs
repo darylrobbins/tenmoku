@@ -20,6 +20,17 @@ fn every_icon_is_bundled_and_parses() {
     }
     assert!(matches!(Assets.load("kiln-ui/icons/nope.svg"), Ok(None)));
     assert!(matches!(Assets.load("icons/file.svg"), Ok(None)));
+    // Tabler's are served beside Lucide's, never under their own directory.
+    assert!(
+        Assets
+            .load("kiln-ui/icons/brand-rust.svg")
+            .expect("load")
+            .is_some()
+    );
+    assert!(matches!(
+        Assets.load("kiln-ui/tabler-icons/brand-rust.svg"),
+        Ok(None)
+    ));
 
     let listed: BTreeSet<String> = Assets
         .list("kiln-ui/icons/")
@@ -39,30 +50,39 @@ fn every_icon_is_bundled_and_parses() {
 #[test]
 fn bundled_files_match_the_enum() {
     // At run time, not `env!`: a shared target can keep another checkout's path.
-    let dir = std::env::var_os("CARGO_MANIFEST_DIR")
+    let assets = std::env::var_os("CARGO_MANIFEST_DIR")
         .map_or_else(|| env!("CARGO_MANIFEST_DIR").into(), PathBuf::from)
-        .join("assets/icons");
-    let mut on_disk = BTreeSet::new();
-    for entry in std::fs::read_dir(&dir).expect("assets/icons") {
-        let path = entry.expect("entry").path();
-        if path.extension().is_some_and(|e| e == "svg") {
-            on_disk.insert(path);
+        .join("assets");
+    // Lucide's icons, then Tabler's, each set with its LICENSE beside it.
+    for (dir, licence, holder) in [
+        ("icons", "ISC License", "Cole Bemis"),
+        ("tabler-icons", "MIT License", "Paweł Kuna"),
+    ] {
+        let dir_path = assets.join(dir);
+        let mut names = BTreeSet::new();
+        for entry in std::fs::read_dir(&dir_path).expect(dir) {
+            let path = entry.expect("entry").path();
+            if path.extension().is_some_and(|e| e == "svg") {
+                let stem = path.file_stem().expect("stem").to_string_lossy();
+                names.insert(stem.into_owned());
+            }
         }
+        let expected: BTreeSet<String> = (Icon::ALL.iter())
+            .filter(|i| i.dir() == dir)
+            .map(|i| i.name().to_owned())
+            .collect();
+        assert!(!expected.is_empty(), "{dir}");
+        assert_eq!(names, expected, "{dir}");
+
+        let license = std::fs::read_to_string(dir_path.join("LICENSE")).expect("LICENSE");
+        assert!(license.contains(licence), "{dir}");
+        assert!(license.contains(holder), "{dir}");
     }
-    let names: BTreeSet<String> = on_disk
-        .iter()
-        .map(|p| p.file_stem().expect("stem").to_string_lossy().into_owned())
-        .collect();
-    let expected: BTreeSet<String> = Icon::ALL.iter().map(|i| i.name().to_owned()).collect();
-    assert_eq!(names, expected);
 
     for icon in Icon::ALL {
-        let file = std::fs::read(dir.join(format!("{}.svg", icon.name()))).expect("read");
+        let file = assets.join(icon.dir()).join(format!("{}.svg", icon.name()));
+        let file = std::fs::read(file).expect("read");
         let served = Assets.load(icon.path()).expect("load").expect("bundled");
         assert_eq!(file, *served, "{icon:?} differs from its file");
     }
-
-    let license = std::fs::read_to_string(dir.join("LICENSE")).expect("LICENSE");
-    assert!(license.contains("ISC License"));
-    assert!(license.contains("Cole Bemis"));
 }

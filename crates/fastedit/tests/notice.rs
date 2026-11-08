@@ -19,6 +19,8 @@ struct Pair<'a> {
 
 /// Lucide's license, beside the icons, for the Icons table's rows.
 const ISC_TEXT: &str = "kiln/crates/kiln-ui/assets/icons/LICENSE";
+/// Tabler Icons' license, beside its icons.
+const TABLER_TEXT: &str = "kiln/crates/kiln-ui/assets/tabler-icons/LICENSE";
 /// Material Icon Theme's license, beside its icons.
 const MATERIAL_TEXT: &str = "kiln/crates/kiln-ui/assets/file-icons/LICENSE";
 
@@ -134,7 +136,7 @@ fn check_pair(files: &Files, pair: &Pair) -> Vec<String> {
         }
         for id in license_ids(&row.license) {
             // An icon set's LICENSE beside it carries its notices: Lucide's
-            // ISC and Feather's MIT, Material Icon Theme's MIT.
+            // ISC and Feather's MIT, Tabler's MIT, Material Icon Theme's MIT.
             let text = if row.table == "Icons" && id != "Apache-2.0" {
                 format!("{}{}LICENSE", pair.prefix, row.path)
             } else if row.table == "Fonts" && id == "OFL-1.1" {
@@ -175,6 +177,7 @@ fn repo_files() -> Files {
         "LICENSES/MIT.txt",
         "kiln/LICENSES/Apache-2.0.txt",
         ISC_TEXT,
+        TABLER_TEXT,
         MATERIAL_TEXT,
     ] {
         match std::fs::read_to_string(root.join(p)) {
@@ -363,4 +366,33 @@ fn repository_fonts_table_is_checked() {
             "{text}: not read, or not the OFL"
         );
     }
+}
+
+#[test]
+fn repository_icons_table_is_checked() {
+    // Both copies of the Icons table carry Lucide's, Tabler's and Material
+    // Icon Theme's rows, each with its own LICENSE beside the icons.
+    let files = repo_files();
+    for prefix in ["", "kiln/"] {
+        let icons: Vec<Row> = rows(&files[&format!("{prefix}THIRD_PARTY.md")])
+            .into_iter()
+            .filter(|row| row.table == "Icons")
+            .collect();
+        let sources: Vec<String> = icons.iter().map(|r| source_name(&r.source)).collect();
+        assert_eq!(
+            sources,
+            [
+                "lucide-icons/lucide",
+                "tabler/tabler-icons",
+                "material-extensions/vscode-material-icon-theme"
+            ],
+            "{prefix}THIRD_PARTY.md"
+        );
+    }
+    assert!(
+        files
+            .get(TABLER_TEXT)
+            .is_some_and(|t| t.contains("MIT License") && t.contains("Paweł Kuna")),
+        "{TABLER_TEXT}: not read, or not Tabler's MIT"
+    );
 }

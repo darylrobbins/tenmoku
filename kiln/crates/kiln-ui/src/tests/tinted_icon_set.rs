@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`TintedIcons`]: Lucide's icons, each in its file type's or folder role's
-//! `file_icon` token, which follows `list.icon` under a theme that sets none.
+//! [`TintedIcons`]: line icons, a glyph per language, each in its file
+//! type's or folder role's `file_icon` token, which follows `list.icon` under
+//! a theme that sets none.
 
 use std::{collections::BTreeSet, path::Path, sync::Arc};
 
@@ -40,22 +41,26 @@ fn file_icon_keys() -> Vec<&'static str> {
 #[gpui::test]
 fn types_and_folder_roles_take_their_tint(cx: &mut TestAppContext) {
     let set = TintedIcons;
-    // Each file takes Lucide's icon, in its type's token.
+    // Each file takes its language's glyph, or Lucide's icon where it has
+    // none, in its type's token.
+    for (name, icon, tint) in [
+        ("main.rs", Icon::BrandRust, RUST),
+        ("main.go", Icon::BrandGolang, CODE),
+        ("notes.md", Icon::Markdown, MARKDOWN),
+        ("settings.yaml", Icon::FileSliders, CONFIG),
+        ("Makefile", Icon::Hammer, CONFIG),
+        ("build.sh", Icon::FileTerminal, SCRIPT),
+        ("app.tsx", Icon::BrandReact, WEB),
+    ] {
+        assert_eq!(set.file(name), IconRef::Tinted(icon, tint), "{name}");
+    }
     for (name, tint) in [
-        ("main.rs", RUST),
         ("Cargo.toml", TOML),
         ("config.toml", TOML),
-        ("notes.md", MARKDOWN),
-        ("README.md", MARKDOWN),
-        ("settings.yaml", CONFIG),
-        ("Makefile", CONFIG),
         (".env.local", CONFIG),
         ("package.json", DATA),
         ("Cargo.lock", DATA),
-        ("build.sh", SCRIPT),
-        ("app.tsx", WEB),
         ("logo.png", IMAGE),
-        ("main.go", DEFAULT),
         ("unknown", DEFAULT),
     ] {
         let icon = LucideIcons.file(name).bundled().unwrap();
@@ -65,7 +70,7 @@ fn types_and_folder_roles_take_their_tint(cx: &mut TestAppContext) {
     for name in ["README", "readme.txt", "README.md"] {
         assert_eq!(
             set.file(name),
-            IconRef::Tinted(Icon::FileText, MARKDOWN),
+            IconRef::Tinted(Icon::Markdown, MARKDOWN),
             "{name}"
         );
     }
@@ -93,7 +98,7 @@ fn types_and_folder_roles_take_their_tint(cx: &mut TestAppContext) {
     cx.update(|cx| set_icon_set(Arc::new(TintedIcons), cx));
     assert_eq!(
         file_icon_ref("lib.rs"),
-        IconRef::Tinted(Icon::FileCode, RUST)
+        IconRef::Tinted(Icon::BrandRust, RUST)
     );
     assert_eq!(
         folder_icon_ref_named("docs", false),
@@ -155,10 +160,17 @@ fn tables_name_file_icon_tokens() {
     );
     // Lowercase keys, each once, so a lookup can find them.
     for table in [FILE_NAMES, EXTENSIONS, FOLDER_NAMES] {
-        let mut seen = BTreeSet::new();
-        for &(key, _) in table {
-            assert_eq!(key, key.to_ascii_lowercase(), "{key}");
-            assert!(seen.insert(key), "{key} twice");
-        }
+        lowercase_and_once(table.iter().map(|&(key, _)| key));
+    }
+    for table in [ICON_NAMES, ICON_EXTENSIONS] {
+        lowercase_and_once(table.iter().map(|&(key, _)| key));
+    }
+}
+
+fn lowercase_and_once<'a>(keys: impl Iterator<Item = &'a str>) {
+    let mut seen = BTreeSet::new();
+    for key in keys {
+        assert_eq!(key, key.to_ascii_lowercase(), "{key}");
+        assert!(seen.insert(key), "{key} twice");
     }
 }

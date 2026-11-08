@@ -162,8 +162,9 @@ split right ⌃w v, split down ⌃w s, maximize ⌃w z, move to new window, move
 the other split ⌃w x, pin tab, close other tabs ␣b o, reopen closed tab ␣b u.
 
 **Icons.** 16 px line icons on a 24 grid, 1.7–1.8 stroke, in the text colour of
-their state. File-type icons sit in the palette (Rust in muted kaki, TOML grey,
-Markdown lapis); folders tint by role (source, tests, docs) and go neutral grey
+their state. Each language has its own glyph (Lucide's, with Tabler's marks
+where Lucide has none), tinted by family: file-type icons sit in the palette
+(Rust in muted kaki, the compiled languages jun, TOML grey, Markdown lapis); folders tint by role (source, tests, docs) and go neutral grey
 in Hakuji. Agents use a small robot head; Runs a play triangle with list lines;
 Changes a page with +/−.
 
