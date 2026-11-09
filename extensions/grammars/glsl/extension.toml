@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_glsl"
+name = "GLSL syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "glsl"
+wasm = "tree-sitter-glsl.wasm"
+extensions = ["glsl", "vert", "frag", "geom", "comp", "tesc", "tese"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
+line_comment = "//"
+block_comment = ["/*", "*/"]
+license = "MIT"
