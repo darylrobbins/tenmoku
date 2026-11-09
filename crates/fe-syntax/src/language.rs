@@ -723,6 +723,8 @@ const DEFS: &[Def] = &[
         name: "bash",
         extensions: &["sh", "bash", "zsh", "ksh"],
         file_names: &[
+            "gradlew",
+            "mvnw",
             ".bashrc",
             ".bash_profile",
             ".zshrc",
