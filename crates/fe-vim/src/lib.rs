@@ -878,7 +878,10 @@ pub use substitute::{
     SubstitutePreview,
 };
 pub use vimrc::{Vimrc, VimrcIssue, parse_vimrc, parse_vimrc_with_leader};
-pub use which_key::{BUILTIN_KEYS, BuiltinKeys, WhichKey, WhichKeyEntry, WhichKeyLabel};
+pub use which_key::{
+    BUILTIN_KEYS, BuiltinKeys, WhichKey, WhichKeyEntry, WhichKeyLabel, builtin_title,
+    preset_group_name,
+};
 
 /// Every frame [`VimState::stamp`] can make of `frame`, an editor's frame
 /// with none of vim's keys: one for each mode and what can be pending in it

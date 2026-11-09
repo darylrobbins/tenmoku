@@ -225,7 +225,7 @@ fn which_key_lists_remap_continuations() {
     assert_eq!(entry(&which, "j").label, down);
     assert_eq!(
         entry(&which, "g").label,
-        WhichKeyLabel::Builtin("first line")
+        WhichKeyLabel::Builtin("vim-key-g-g")
     );
     assert_eq!(listed(&which).iter().filter(|key| **key == "j").count(), 1);
 

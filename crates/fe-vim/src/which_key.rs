@@ -61,7 +61,8 @@ pub struct WhichKeyEntry {
 /// What to call a key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WhichKeyLabel {
-    /// A built-in key's title (`gg`: "first line").
+    /// A built-in key's title: the catalogue key (`vim-key-g-g`), which
+    /// [`builtin_title`] resolves when the popup draws.
     Builtin(&'static str),
     /// A map running the fastedit command of this id, alone
     /// (`<Cmd>fe:{id}<CR>`): the host's catalog has its title.
@@ -84,6 +85,33 @@ pub struct BuiltinKeys {
     pub keys: &'static [(VimKey, &'static str)],
 }
 
+/// The title a built-in key's message key stands for, in the active
+/// language (`vim-key-g-g`: "first line").
+pub fn builtin_title(key: &str) -> kiln_l10n::SharedString {
+    kiln_l10n::message(key)
+}
+
+/// A bundled preset's `fegroup` name in the active language: its
+/// `vim-group-<slug>` message, or `name` as written if it has none. User
+/// groups never go through this.
+pub fn preset_group_name(name: &str) -> String {
+    let mut key = String::from("vim-group-");
+    let mut dash = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if dash {
+                key.push('-');
+                dash = false;
+            }
+            key.push(ch.to_ascii_lowercase());
+        } else if !key.ends_with('-') {
+            dash = key != "vim-group-";
+        }
+    }
+    kiln_l10n::try_format(&key, &kiln_l10n::Args::new())
+        .map_or_else(|| name.to_owned(), |formatted| formatted.text.to_string())
+}
+
 const fn ch(ch: char) -> VimKey {
     VimKey::Char(ch)
 }
@@ -95,106 +123,106 @@ pub const BUILTIN_KEYS: &[BuiltinKeys] = &[
     BuiltinKeys {
         prefix: 'g',
         keys: &[
-            (ch('#'), "partial word backward"),
-            (ch('$'), "end of screen line"),
-            (ch('%'), "match backward"),
-            (ch('&'), "repeat :s on all lines"),
-            (ch('*'), "partial word forward"),
-            (ch('+'), "newer text state"),
-            (ch(','), "newer change"),
-            (ch('-'), "older text state"),
-            (ch(';'), "older change"),
-            (ch('?'), "rot13"),
-            (ch('_'), "last non-blank"),
-            (ch('~'), "toggle case"),
-            (ch('c'), "comment"),
-            (ch('e'), "end of previous word"),
-            (ch('E'), "end of previous WORD"),
-            (ch('g'), "first line"),
-            (ch('i'), "insert where insert stopped"),
-            (ch('j'), "down a display line"),
-            (ch('J'), "join without spaces"),
-            (ch('k'), "up a display line"),
-            (ch('m'), "middle of screen line"),
-            (ch('p'), "put after, cursor after it"),
-            (ch('P'), "put before, cursor after it"),
-            (ch('q'), "format"),
-            (ch('r'), "replace with register"),
-            (ch('R'), "virtual replace mode"),
-            (ch('s'), "jump forward"),
-            (ch('S'), "jump backward"),
-            (ch('u'), "lowercase"),
-            (ch('U'), "uppercase"),
-            (ch('v'), "reselect"),
-            (ch('w'), "format, keep cursor"),
-            (VimKey::Ctrl('a'), "increment progressively"),
-            (VimKey::Ctrl('x'), "decrement progressively"),
+            (ch('#'), "vim-key-g-hash"),
+            (ch('$'), "vim-key-g-dollar"),
+            (ch('%'), "vim-key-g-percent"),
+            (ch('&'), "vim-key-g-amp"),
+            (ch('*'), "vim-key-g-star"),
+            (ch('+'), "vim-key-g-plus"),
+            (ch(','), "vim-key-g-comma"),
+            (ch('-'), "vim-key-g-minus"),
+            (ch(';'), "vim-key-g-semicolon"),
+            (ch('?'), "vim-key-g-question"),
+            (ch('_'), "vim-key-g-underscore"),
+            (ch('~'), "vim-key-g-tilde"),
+            (ch('c'), "vim-key-g-c"),
+            (ch('e'), "vim-key-g-e"),
+            (ch('E'), "vim-key-g-upper-e"),
+            (ch('g'), "vim-key-g-g"),
+            (ch('i'), "vim-key-g-i"),
+            (ch('j'), "vim-key-g-j"),
+            (ch('J'), "vim-key-g-upper-j"),
+            (ch('k'), "vim-key-g-k"),
+            (ch('m'), "vim-key-g-m"),
+            (ch('p'), "vim-key-g-p"),
+            (ch('P'), "vim-key-g-upper-p"),
+            (ch('q'), "vim-key-g-q"),
+            (ch('r'), "vim-key-g-r"),
+            (ch('R'), "vim-key-g-upper-r"),
+            (ch('s'), "vim-key-g-s"),
+            (ch('S'), "vim-key-g-upper-s"),
+            (ch('u'), "vim-key-g-u"),
+            (ch('U'), "vim-key-g-upper-u"),
+            (ch('v'), "vim-key-g-v"),
+            (ch('w'), "vim-key-g-w"),
+            (VimKey::Ctrl('a'), "vim-key-g-ctrl-a"),
+            (VimKey::Ctrl('x'), "vim-key-g-ctrl-x"),
         ],
     },
     BuiltinKeys {
         prefix: 'z',
         keys: &[
-            (VimKey::Enter, "scroll top, first non-blank"),
-            (ch('-'), "scroll bottom, first non-blank"),
-            (ch('.'), "scroll center, first non-blank"),
-            (ch('a'), "toggle fold"),
-            (ch('A'), "toggle folds recursively"),
-            (ch('b'), "scroll bottom"),
-            (ch('c'), "close fold"),
-            (ch('C'), "close folds recursively"),
-            (ch('d'), "delete fold"),
-            (ch('D'), "delete folds recursively"),
-            (ch('E'), "delete all folds"),
-            (ch('f'), "create fold"),
-            (ch('F'), "create fold of lines"),
-            (ch('j'), "next fold start"),
-            (ch('k'), "previous fold end"),
-            (ch('M'), "close all folds"),
-            (ch('o'), "open fold"),
-            (ch('O'), "open folds recursively"),
-            (ch('R'), "open all folds"),
-            (ch('t'), "scroll top"),
-            (ch('v'), "open folds at cursor"),
-            (ch('z'), "scroll center"),
+            (VimKey::Enter, "vim-key-z-enter"),
+            (ch('-'), "vim-key-z-minus"),
+            (ch('.'), "vim-key-z-dot"),
+            (ch('a'), "vim-key-z-a"),
+            (ch('A'), "vim-key-z-upper-a"),
+            (ch('b'), "vim-key-z-b"),
+            (ch('c'), "vim-key-z-c"),
+            (ch('C'), "vim-key-z-upper-c"),
+            (ch('d'), "vim-key-z-d"),
+            (ch('D'), "vim-key-z-upper-d"),
+            (ch('E'), "vim-key-z-upper-e"),
+            (ch('f'), "vim-key-z-f"),
+            (ch('F'), "vim-key-z-upper-f"),
+            (ch('j'), "vim-key-z-j"),
+            (ch('k'), "vim-key-z-k"),
+            (ch('M'), "vim-key-z-upper-m"),
+            (ch('o'), "vim-key-z-o"),
+            (ch('O'), "vim-key-z-upper-o"),
+            (ch('R'), "vim-key-z-upper-r"),
+            (ch('t'), "vim-key-z-t"),
+            (ch('v'), "vim-key-z-v"),
+            (ch('z'), "vim-key-z-z"),
         ],
     },
     BuiltinKeys {
         prefix: 'Z',
         keys: &[
-            (ch('Q'), "quit without writing"),
-            (ch('Z'), "write and quit"),
+            (ch('Q'), "vim-key-upper-z-upper-q"),
+            (ch('Z'), "vim-key-upper-z-upper-z"),
         ],
     },
     BuiltinKeys {
         prefix: '[',
         keys: &[
-            (ch('('), "previous unmatched ("),
-            (ch('{'), "previous unmatched {"),
-            (ch('['), "previous section start"),
-            (ch(']'), "previous section end"),
-            (ch('m'), "previous function start"),
-            (ch('M'), "previous function end"),
-            (ch('c'), "previous change"),
-            (ch('p'), "put before, indented"),
-            (ch('P'), "put before, indented"),
-            (ch(' '), "blank line above"),
-            (ch('e'), "move line up"),
+            (ch('('), "vim-key-prev-lparen"),
+            (ch('{'), "vim-key-prev-lbrace"),
+            (ch('['), "vim-key-prev-lbracket"),
+            (ch(']'), "vim-key-prev-rbracket"),
+            (ch('m'), "vim-key-prev-m"),
+            (ch('M'), "vim-key-prev-upper-m"),
+            (ch('c'), "vim-key-prev-c"),
+            (ch('p'), "vim-key-prev-p"),
+            (ch('P'), "vim-key-prev-upper-p"),
+            (ch(' '), "vim-key-prev-space"),
+            (ch('e'), "vim-key-prev-e"),
         ],
     },
     BuiltinKeys {
         prefix: ']',
         keys: &[
-            (ch(')'), "next unmatched )"),
-            (ch('}'), "next unmatched }"),
-            (ch(']'), "next section start"),
-            (ch('['), "next section end"),
-            (ch('m'), "next function start"),
-            (ch('M'), "next function end"),
-            (ch('c'), "next change"),
-            (ch('p'), "put after, indented"),
-            (ch('P'), "put before, indented"),
-            (ch(' '), "blank line below"),
-            (ch('e'), "move line down"),
+            (ch(')'), "vim-key-next-rparen"),
+            (ch('}'), "vim-key-next-rbrace"),
+            (ch(']'), "vim-key-next-rbracket"),
+            (ch('['), "vim-key-next-lbracket"),
+            (ch('m'), "vim-key-next-m"),
+            (ch('M'), "vim-key-next-upper-m"),
+            (ch('c'), "vim-key-next-c"),
+            (ch('p'), "vim-key-next-p"),
+            (ch('P'), "vim-key-next-upper-p"),
+            (ch(' '), "vim-key-next-space"),
+            (ch('e'), "vim-key-next-e"),
         ],
     },
 ];

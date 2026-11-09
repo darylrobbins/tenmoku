@@ -213,6 +213,13 @@ impl VimRemaps {
                 self.preset_remaps = parsed.remaps;
                 self.preset_lines = parsed.lines;
                 self.preset_groups = parsed.groups;
+                // Only the bundled preset's names are keys: a test's own
+                // preset, like a user's groups, stays as written.
+                if std::ptr::fn_addr_eq(self.presets, bundled as fn(VimPreset) -> Option<Preset>) {
+                    for group in &mut self.preset_groups {
+                        group.name = fe_vim::preset_group_name(&group.name);
+                    }
+                }
             }
             None => {
                 self.preset_remaps.clear();

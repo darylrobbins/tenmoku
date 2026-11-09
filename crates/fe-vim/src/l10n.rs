@@ -2,6 +2,7 @@
 //! Other crates don't use these keys: they call [`crate::messages`].
 
 kiln_l10n::resources! {
+    dynamic_prefixes = ["vim-group-"];
     "en-US" => ["../l10n/en-US/vim.ftl", "../l10n/en-US/commands.ftl"],
 }
 

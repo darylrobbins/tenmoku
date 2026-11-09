@@ -547,7 +547,7 @@ pub fn set_host_commands(commands: Vec<CommandMeta>) {
 /// maps `+{name}` with a name for it, `+N` without.
 pub(crate) fn title(entry: &WhichKeyEntry, cx: &App) -> String {
     match &entry.label {
-        WhichKeyLabel::Builtin(title) => (*title).to_owned(),
+        WhichKeyLabel::Builtin(key) => fe_vim::builtin_title(key).to_string(),
         WhichKeyLabel::Command(id) => command_title(id, cx),
         WhichKeyLabel::Keys(keys) => keys.clone(),
         WhichKeyLabel::Group {

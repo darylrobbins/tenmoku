@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::key::{VimKey, parse_keys};
 use crate::macros::REPLAY_CAP;
 use crate::{Mode, Pending, PendingKind, Step, VimState, VimTarget};
+use kiln_l10n::tr;
 
 /// nvim's `n`, `x`, `o`, `i` and `c` map modes. `Insert` serves Replace
 /// mode too, as nvim's `i` does.
@@ -91,18 +92,16 @@ impl WhichKeyGroupName {
         if let Some(icon) = icon
             && !is_icon_name(icon)
         {
-            return Err(format!(
-                "{icon:?} isn't an icon's name: lowercase letters and digits joined by -"
-            ));
+            return Err(tr!("vim-remap-icon-name", icon = format!("{icon:?}")).to_string());
         }
         let leader = parse_keys(leader).map_err(|e| e.to_string())?;
         let keys = side(keys, &leader, true)?;
         if keys.is_empty() {
-            return Err("a group needs keys".to_string());
+            return Err(tr!("vim-remap-group-keys").to_string());
         }
         let name = name.trim();
         if name.is_empty() {
-            return Err("a group needs a name".to_string());
+            return Err(tr!("vim-remap-group-name").to_string());
         }
         Ok((modes.iter())
             .map(|&mode| WhichKeyGroupName {
@@ -371,7 +370,7 @@ fn load(remap: &Remap, leader: &str) -> Result<(Vec<VimKey>, RightSide), String>
     let leader_keys = parse_keys(leader).map_err(|e| e.to_string())?;
     let from = side(&remap.from, &leader_keys, true)?;
     if from.is_empty() {
-        return Err("empty left side".to_string());
+        return Err(tr!("vim-remap-empty-left").to_string());
     }
     let to = if remap.to.eq_ignore_ascii_case("<nop>") {
         (Vec::new(), Vec::new())
@@ -391,13 +390,13 @@ fn right_side(text: &str, leader: &[VimKey]) -> Result<RightSide, String> {
     for part in parts {
         let read = side(part, leader, false)?;
         let Some(end) = read.iter().position(|&key| key == VimKey::Enter) else {
-            return Err("<Cmd> without a <CR> to end it".to_string());
+            return Err(tr!("vim-remap-cmd-no-cr").to_string());
         };
         let line = read[..end]
             .iter()
             .map(|&key| match key {
                 VimKey::Char(ch) => Ok(ch),
-                _ => Err("<Cmd> holds a key that isn't text before its <CR>".to_string()),
+                _ => Err(tr!("vim-remap-cmd-not-text").to_string()),
             })
             .collect::<Result<String, String>>()?;
         cmds.push((keys.len(), Arc::new(cmd(line)?)));
@@ -409,9 +408,14 @@ fn right_side(text: &str, leader: &[VimKey]) -> Result<RightSide, String> {
 /// A `<Cmd>`'s text: `fe:{command id}`, or an ex line.
 fn cmd(line: String) -> Result<Cmd, String> {
     match line.strip_prefix("fe:") {
-        Some(id) => CommandId::parse(id.trim())
-            .map(Cmd::Fe)
-            .map_err(|error| format!("<Cmd>{line}<CR>: {error}")),
+        Some(id) => CommandId::parse(id.trim()).map(Cmd::Fe).map_err(|error| {
+            tr!(
+                "vim-remap-cmd-error",
+                line = line.as_str(),
+                error = error.to_string()
+            )
+            .to_string()
+        }),
         None => Ok(Cmd::Ex(line)),
     }
 }
@@ -427,9 +431,11 @@ fn side(text: &str, leader: &[VimKey], is_from: bool) -> Result<Vec<VimKey>, Str
         }
         for name in names(piece) {
             match name.to_ascii_lowercase().as_str() {
-                "nop" if is_from => return Err("<Nop> can't be a left side".to_string()),
-                "cmd" if is_from => return Err("<Cmd> in a left side is not supported".to_string()),
-                other if unsupported(other) => return Err(format!("<{name}> is not supported")),
+                "nop" if is_from => return Err(tr!("vim-remap-nop-left").to_string()),
+                "cmd" if is_from => return Err(tr!("vim-remap-cmd-left").to_string()),
+                other if unsupported(other) => {
+                    return Err(tr!("vim-remap-unsupported", name = name).to_string());
+                }
                 _ => {}
             }
         }
@@ -766,9 +772,7 @@ pub(crate) fn insert(state: &mut VimState, key: VimKey) -> RemapInsert {
     state.provenance.read_from(origin);
     if taken.is_some() && state.remap.over_cap() {
         state.pending = Pending::new();
-        state.fail(format!(
-            "macro stopped: it would replay more than {REPLAY_CAP} keys"
-        ));
+        state.fail(tr!("vim-remap-macro-cap", cap = REPLAY_CAP).to_string());
         return RemapInsert::Wait;
     }
     let remap = tag.remap && !state.remap.off;
@@ -898,7 +902,7 @@ fn run(state: &mut VimState, mode: RemapMode, from: &[(VimKey, Origin)]) -> Step
         state.remap.queued.clear();
         state.remap.depth = 0;
         state.pending = Pending::new();
-        state.fail("E223: recursive mapping");
+        state.fail(crate::messages::coded("E223", tr!("vim-e223")));
         return Step::Cancel;
     }
     state.remap.depth += 1;

@@ -43,3 +43,50 @@ fn every_command_has_its_key() {
         }
     }
 }
+
+/// Every `fegroup` of the bundled LazyVim preset has its `vim-group-<slug>`
+/// message, equal to the name as written (en-US is unchanged), and a user's
+/// own group name isn't looked up.
+#[test]
+fn every_bundled_fegroup_has_its_key() {
+    let preset = include_str!("../../fastedit/presets/lazyvim.vimrc");
+    let parsed = fe_vim::parse_vimrc_with_leader(preset, &[fe_vim::VimKey::Char(' ')]);
+    assert!(!parsed.groups.is_empty());
+    for group in &parsed.groups {
+        let resolved = fe_vim::preset_group_name(&group.name);
+        assert_eq!(resolved, group.name);
+        let key = format!("vim-group-{}", group.name.replace('/', "-"));
+        assert!(
+            kiln_l10n::try_format(&key, &kiln_l10n::Args::new()).is_some(),
+            "{} has no {key}",
+            group.name
+        );
+    }
+    let source = include_str!("../l10n/en-US/vim.ftl");
+    let keys = source
+        .lines()
+        .filter(|l| l.starts_with("vim-group-"))
+        .count();
+    assert_eq!(
+        keys,
+        parsed
+            .groups
+            .iter()
+            .map(|g| &g.name)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    );
+}
+
+/// Every built-in which-key title is a message.
+#[test]
+fn every_builtin_key_has_its_message() {
+    for table in fe_vim::BUILTIN_KEYS {
+        for (_, key) in table.keys {
+            assert!(
+                kiln_l10n::try_format(key, &kiln_l10n::Args::new()).is_some(),
+                "{key}"
+            );
+        }
+    }
+}
