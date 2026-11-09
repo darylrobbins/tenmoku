@@ -68,8 +68,15 @@ settings-template-editor-links =
     while cmd (ctrl off macOS) is held, and open them on cmd-click.
 
 settings-template-editor-color_decorators =
-    Draw a small square in the colour before each colour a language server finds
-    in the text (CSS, SCSS, Tailwind…).
+    Draw a small square in the colour before each colour in the text (CSS, SCSS,
+    Tailwind…), from a language server or found by Tenmoku, as
+    default_color_decorators says. Off, there are none of either.
+
+settings-template-editor-default_color_decorators =
+    Where colour squares come from: "auto" finds colours itself (CSS colours, and
+    #rrggbb in other languages' strings) unless the language server finds some,
+    "always" finds them itself and never asks the server, "never" shows only the
+    server's.
 
 settings-template-editor-linked_editing =
     Rename an HTML tag's pair as you type in the open or close tag, and other

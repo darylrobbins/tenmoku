@@ -84,8 +84,9 @@ settings-editor-code_actions_on_save =
 settings-editor-code_lens = Show language servers' code lenses ("3 references", "Run") above rows.
 
 settings-editor-color_decorators =
-    Draw a small square in the colour before each colour a language
-    server finds in the text (CSS, SCSS, Tailwind…).
+    Draw a small square in the colour before each colour in the text
+    (CSS, SCSS, Tailwind…), from a language server or found by Tenmoku,
+    as `default_color_decorators` says. Off, there are none of either.
 
 settings-editor-cursor_line =
     Fill the caret's row with the theme's active-line colour, as VS
@@ -98,6 +99,17 @@ settings-editor-cursor_surrounding_lines =
     edge, as VS Code's `editor.cursorSurroundingLines` and vim's
     'scrolloff'. A value past half the window's rows centres the caret.
     `:set scrolloff` changes one editor's.
+
+settings-editor-default_color_decorators =
+    Where colour squares come from: `"auto"` finds colours itself (CSS
+    colours, and `#rrggbb` in other languages' strings) unless the
+    language server finds some, `"always"` finds them itself and never
+    asks the server, `"never"` shows only the server's.
+    .auto =
+        Tenmoku's own squares, unless the language server finds colours:
+        then the server's in their place.
+    .always = Tenmoku's own squares only; the server isn't asked for colours.
+    .never = The language server's squares only.
 
 settings-editor-font_family =
     The font family. Unset, Spline Sans Mono, which Tenmoku bundles, or
@@ -314,8 +326,8 @@ settings-lsp-max_file_bytes =
 
 settings-lsp-servers =
     Servers by name: changes to the built-in rust-analyzer, pyright,
-    typescript-language-server, typescript-go and gopls, or servers of
-    your own, which need a `command`.
+    typescript-language-server, typescript-go, gopls and
+    vscode-css-language-server, or servers of your own, which need a `command`.
 
 settings-lsp-timeouts = How long requests may take, in milliseconds, by method.
 
