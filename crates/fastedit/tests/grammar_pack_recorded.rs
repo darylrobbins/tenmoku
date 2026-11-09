@@ -4,7 +4,32 @@
 use std::{fs, path::Path};
 
 /// Directories with no recorded entry yet, each with why.
-const NOT_RELEASED: &[(&str, &str)] = &[];
+const NOT_RELEASED: &[(&str, &str)] = &[
+    (
+        "gotmpl",
+        "added on helium; recorded by the Mac's next grammar release",
+    ),
+    (
+        "handlebars",
+        "added on helium; recorded by the Mac's next grammar release",
+    ),
+    (
+        "heex",
+        "added on helium; recorded by the Mac's next grammar release",
+    ),
+    (
+        "jinja",
+        "added on helium; recorded by the Mac's next grammar release",
+    ),
+    (
+        "liquid",
+        "added on helium; recorded by the Mac's next grammar release",
+    ),
+    (
+        "razor",
+        "added on helium; recorded by the Mac's next grammar release",
+    ),
+];
 
 fn table(path: &Path) -> toml::Table {
     let text = fs::read_to_string(path).unwrap_or_else(|error| panic!("{path:?}: {error}"));
