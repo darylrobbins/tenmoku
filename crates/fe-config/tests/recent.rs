@@ -200,6 +200,33 @@ fn concurrent_saves_never_expose_partial_contents() {
     assert_eq!(leftovers, 1, "temp files left behind");
 }
 
+#[test]
+fn loads_during_concurrent_saves_never_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("recent.toml");
+    let mut list = RecentList::default();
+    for i in 0..MAX_FILES {
+        list.record_file(&p(&format!("/some/long/path/{i}")));
+    }
+    list.save(&path).unwrap();
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let (path, list) = (path.clone(), list.clone());
+            std::thread::spawn(move || {
+                for _ in 0..500 {
+                    list.save(&path).unwrap();
+                    let (read, err) = RecentList::load(&path);
+                    assert!(err.is_none(), "load failed: {err:?}");
+                    assert_eq!(read, list);
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn save_does_not_follow_a_planted_symlink() {

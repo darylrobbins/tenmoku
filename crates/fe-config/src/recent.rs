@@ -37,6 +37,36 @@ pub fn recent_path() -> Option<PathBuf> {
     crate::paths::state_dir().map(|dir| dir.join("recent.toml"))
 }
 
+/// Runs `op`, retrying it on Windows while it fails with `PermissionDenied` or
+/// a sharing violation (raw error 32). Opening or renaming over a file that
+/// another thread or process is replacing or reading can be refused for a
+/// moment there, where Unix opens the old or the new file. Up to 10 tries,
+/// 10 ms apart, then the last error is returned. Other errors return at once.
+#[cfg(windows)]
+fn retry_transient<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    const TRIES: u32 = 10;
+    let mut tries = 1;
+    loop {
+        match op() {
+            Err(e)
+                if tries < TRIES
+                    && (e.kind() == io::ErrorKind::PermissionDenied
+                        || e.raw_os_error() == Some(32)) =>
+            {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Runs `op` once: only Windows refuses a file that is being replaced.
+#[cfg(not(windows))]
+fn retry_transient<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    op()
+}
+
 fn push_front(list: &mut Vec<PathBuf>, path: &Path, cap: usize) {
     list.retain(|p| p != path);
     list.insert(0, path.to_owned());
@@ -48,7 +78,7 @@ impl RecentList {
     /// unreadable or invalid one is an empty list with the error beside it,
     /// for the caller to log.
     pub fn load(path: &Path) -> (RecentList, Option<io::Error>) {
-        let text = match fs::read_to_string(path) {
+        let text = match retry_transient(|| fs::read_to_string(path)) {
             Ok(text) => text,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return (RecentList::default(), None),
             Err(e) => return (RecentList::default(), Some(e)),
@@ -96,7 +126,7 @@ impl RecentList {
             file.write_all(text.as_bytes())?;
             file.sync_all()?;
             drop(file);
-            fs::rename(&tmp, path)
+            retry_transient(|| fs::rename(&tmp, path))
         })();
         if written.is_err() {
             let _ = fs::remove_file(&tmp);
