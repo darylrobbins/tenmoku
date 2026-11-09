@@ -1145,7 +1145,13 @@ impl EditorView {
         }
         if self.toggle_fold_at(event.position, cx) {
             self.drag = None;
-            self.changed(cx);
+            // Not `changed`: it autoscrolls to the caret, and a fold click
+            // only moves the caret onto the header already on screen, so the
+            // view and the header stay where they were.
+            self.band_spares_caret = false;
+            self.sticky_reveal = None;
+            self.blurred_ghost_text = None;
+            cx.notify();
             return;
         }
         if self.click_change_bar(event.position, cx) {

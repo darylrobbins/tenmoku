@@ -18,6 +18,7 @@ use gpui::{
 
 use crate::*;
 
+mod fold_chevron_scroll;
 mod vim_visual_keys;
 
 fn parse(marked: &str) -> (String, Vec<ResolvedSelection>) {
