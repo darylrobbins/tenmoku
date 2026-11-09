@@ -322,11 +322,15 @@ fn a_closed_fold_in_the_band_rows_isnt_read_for_indentation(cx: &mut gpui::TestA
     assert_eq!(asked(), Some(Model::Indentation(4)));
     assert_eq!(asked_rows(), [1..2, b..b + 6]);
     assert_eq!(rows(&view, cx), [0]);
-    // Scrolled a pixel, a's scope ends with its folded row.
+    // Scrolled a pixel, outer is found open past the fold too: both headers
+    // pin, outer at the top and b a line below.
     let line_height = line_height(&view, cx);
     super::tests::scroll_to(&view, line_height + 1., cx);
     assert_eq!(asked_rows(), [1..2, b..b + 6]);
-    assert_eq!(rows(&view, cx), [0]);
+    let band = pinned(&view, cx);
+    assert_eq!(band.iter().map(|(row, _)| *row).collect::<Vec<_>>(), [0, b]);
+    assert_eq!(band[0].1, px(0.));
+    assert_eq!(band[1].1, px(line_height));
 }
 
 #[gpui::test]

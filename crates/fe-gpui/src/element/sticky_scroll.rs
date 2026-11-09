@@ -177,7 +177,32 @@ pub(crate) fn scopes(
     // Counted once the model has answered: a tree still being parsed gives
     // None and is asked again, when a background parse lands depends on timing.
     let mut scopes = Vec::new();
+    // Indentation: the scopes still open at the end of the last run, with
+    // their headers' indents, which the next run may find open past a fold.
+    let mut carried: Vec<(u32, usize)> = Vec::new();
     for rows in key.2.iter().cloned() {
+        if let Model::Indentation(tab_size) = model {
+            let text = view.model.text();
+            let found = fe_display::indent_scopes(text, rows.clone(), tab_size);
+            let mut open = Vec::new();
+            for (header, indent) in std::mem::take(&mut carried) {
+                if let (Some(end), still_open) = continue_scope(text, indent, &rows, tab_size) {
+                    scopes.push(header..=end);
+                    if still_open {
+                        open.push((header, indent));
+                    }
+                }
+            }
+            for scope in &found {
+                if *scope.end() == rows.end && !open.iter().any(|(h, _)| h == scope.start()) {
+                    let indent = row_indent(text, *scope.start(), tab_size);
+                    open.push((*scope.start(), indent));
+                }
+            }
+            scopes.extend(found);
+            carried = open;
+            continue;
+        }
         scopes.extend(match (model, syntax) {
             (Model::Outline, Some(syntax)) => match fe_syntax::outline_scopes(syntax, rows) {
                 Ok(scopes) => scopes,
@@ -208,6 +233,51 @@ pub(crate) fn scopes(
         scopes: scopes.clone(),
     });
     Some(scopes)
+}
+
+/// The column `row`'s text starts at, tabs advancing to the next multiple
+/// of `tab_size`; a blank row's is `usize::MAX`.
+fn row_indent(text: &fe_text::Text, row: u32, tab_size: usize) -> usize {
+    let tab_size = tab_size.max(1);
+    let end = match row + 1 < text.row_count() {
+        true => text.row_start(row + 1),
+        false => text.len(),
+    };
+    let mut column = 0;
+    for chunk in text.chunks_in_range(text.row_start(row)..end) {
+        for ch in chunk.chars() {
+            match ch {
+                '\n' => return usize::MAX,
+                ' ' => column += 1,
+                '\t' => column += tab_size - column % tab_size,
+                ch if ch.is_whitespace() => {}
+                _ => return column,
+            }
+        }
+    }
+    usize::MAX
+}
+
+/// How far a block headed at `indent`, open at the start of `rows`, goes
+/// through them, and whether it's still open at their end: it ends with the
+/// last text row before one indented no deeper, else is open to `rows.end`.
+/// A block closed before its first text row there gets no end (`None`):
+/// it ended where the last run did.
+fn continue_scope(
+    text: &fe_text::Text,
+    indent: usize,
+    rows: &Range<u32>,
+    tab_size: usize,
+) -> (Option<u32>, bool) {
+    let mut last = None;
+    for row in rows.clone() {
+        match row_indent(text, row, tab_size) {
+            usize::MAX => {}
+            level if level <= indent => return (last, false),
+            _ => last = Some(row),
+        }
+    }
+    (Some(rows.end), true)
 }
 
 /// The rows the band pins from `scopes` over a view scrolled to `scroll_y`,
