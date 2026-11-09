@@ -185,7 +185,9 @@ pub(crate) struct ExtensionGrammar {
     /// The module, named `tree-sitter-<grammar>.wasm` as the tree-sitter CLI
     /// names it.
     wasm: String,
-    /// File extensions, without the dot, it's chosen for.
+    /// File extensions, without the dot, it's chosen for. One may be
+    /// compound, such as `blade.php` for `x.blade.php`, and wins over
+    /// another language's plain `php`.
     #[serde(default)]
     extensions: Vec<String>,
     /// Whole file names it's chosen for.

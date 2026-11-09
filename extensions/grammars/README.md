@@ -129,7 +129,9 @@ may also have `file_names` (whole names, such as `Gemfile`),
 `earlier_patterns_win` and `license`, as any extension's may
 (`crates/fastedit/src/config.rs`'s `ExtensionGrammar`); any other key fails
 `grammar_install_tests::every_first_party_manifest_parses`. No extension or
-file name may be a built-in language's or another directory's.
+file name may be a built-in language's or another directory's. An extension
+may be compound, such as `blade.php` for `x.blade.php`: it's a claim of its
+own, and wins over any language's plain `php`.
 
 ### The queries
 

@@ -84,7 +84,9 @@ pub struct GrammarSpec {
     /// or `<grammar>.wasm`, a `-` in `<grammar>` standing for `_`.
     pub wasm: PathBuf,
     /// File extensions, without the dot, and whole file names it's chosen
-    /// for, ignoring case.
+    /// for, ignoring case. An extension may be compound, such as `blade.php`
+    /// for `x.blade.php`: it wins over any language's plain `php`, and the
+    /// longest compound one wins; see [`Language::file_has_extension`].
     pub extensions: Vec<String>,
     pub file_names: Vec<String>,
     /// The highlight query; without one the language parses (for folding
@@ -558,6 +560,23 @@ pub(crate) fn name_for_file(file_name: &str, extension: Option<&str>) -> Option<
         });
         (named || extended).then_some(entry.name)
     })
+}
+
+/// Each registered language claiming a compound extension of a file called
+/// `file_name`, with the longest such claim's length, in registration order.
+pub(crate) fn compound_owners(file_name: &str) -> Vec<(&'static str, usize)> {
+    registry()
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .filter_map(|entry| {
+            let extensions = entry.extensions.iter().map(String::as_str);
+            Some((
+                entry.name,
+                language::longest_compound(file_name, extensions)?,
+            ))
+        })
+        .collect()
 }
 
 /// The language an injection names, lowercase: by name, else by extension.

@@ -32,7 +32,10 @@ use std::{
 };
 
 use fe_buffer::Buffer;
-use fe_syntax::{GrammarSpec, Highlight, Language, Syntax, register_language, unregister_language};
+use fe_syntax::{
+    Clash, GrammarError, GrammarSpec, Highlight, Language, Syntax, register_language,
+    unregister_language,
+};
 
 const SCRIPT: &str = "scripts/build-grammar-wasm.sh";
 
@@ -807,7 +810,12 @@ fn problems(root: &Path) -> Vec<String> {
         let another = |built_in: &str| !(native && built_in == language.as_str());
         for extension in &claims.extensions {
             let path = format!("sample.{extension}");
-            if let Some(built_in) = fe_syntax::language_name_for_path(Path::new(&path))
+            let built_in = if extension.contains('.') {
+                built_in_claiming(extension)
+            } else {
+                fe_syntax::language_name_for_path(Path::new(&path))
+            };
+            if let Some(built_in) = built_in
                 && another(built_in)
             {
                 say(format!(
@@ -898,6 +906,28 @@ fn problems(root: &Path) -> Vec<String> {
         }
     }
     problems
+}
+
+/// The built-in language claiming `extension` as a whole, as
+/// `register_language`'s clash check compares claims: `php`'s is no claim to
+/// `blade.php`, which a file's path would give it with no Blade registered.
+fn built_in_claiming(extension: &str) -> Option<&'static str> {
+    // The check comes before the module is read, so nothing registers.
+    let probe = GrammarSpec {
+        language: "wasm-parity extension probe".into(),
+        wasm: PathBuf::from("/nonexistent/tree-sitter-probe.wasm"),
+        extensions: vec![extension.to_owned()],
+        ..GrammarSpec::default()
+    };
+    match register_language(&probe) {
+        Err(GrammarError::Clash {
+            built_in,
+            clash: Clash::Extension(_),
+            ..
+        }) => Some(built_in),
+        Err(GrammarError::Read { .. }) => None,
+        other => panic!("probing {extension:?}: {other:?}"),
+    }
 }
 
 #[test]
@@ -1120,6 +1150,28 @@ fn another_directorys_file_name_is_a_problem() {
     )
     .unwrap();
     root.assert_problem("yylang and zzlang are each for buildfile");
+}
+
+/// A compound extension is a claim of its own: `blade.rs` isn't the built-in
+/// rust's `rs`, nor `yy.zzlang` another directory's `zzlang`, though two
+/// directories claiming the same compound one clash.
+#[test]
+fn a_compound_extension_is_a_claim_of_its_own() {
+    let root = Root::new("compound");
+    let zz = root.add("zzlang", GIT_SOURCE);
+    let dir = root.add("yylang", CRATES_IO_SOURCE);
+    edit(
+        &dir.join("extension.toml"),
+        "[\"yylang\"]",
+        "[\"yylang\", \"blade.RS\", \"yy.zzlang\"]",
+    );
+    assert_eq!(root.problems(), Vec::<String>::new());
+    edit(
+        &zz.join("extension.toml"),
+        "[\"zzlang\"]",
+        "[\"zzlang\", \"Blade.rs\"]",
+    );
+    root.assert_problem("yylang and zzlang are each for *.blade.rs");
 }
 
 #[test]

@@ -203,6 +203,66 @@ fn runtime_languages_are_found_after_built_ins() {
     assert!(std::ptr::eq(register_language(&again).unwrap(), wasm));
 }
 
+/// The JSON fixture registered as `name`, for files with `extensions`.
+fn json_fixture_as(name: &str, extensions: &[&str]) {
+    short_deadlines();
+    register_language(&GrammarSpec {
+        language: name.into(),
+        wasm: fixture(),
+        extensions: extensions
+            .iter()
+            .map(|&extension| extension.into())
+            .collect(),
+        ..GrammarSpec::default()
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_compound_extension_wins_over_a_plain_one() {
+    json_wasm();
+    // Neither clashes with the built-in json: claims compare whole.
+    json_fixture_as("zz_blade", &["blade.json", "Blade.JSONW"]);
+    json_fixture_as("zz_long_blade", &["long.blade.json"]);
+    let name = |path: &str| language_name_for_path(Path::new(path));
+
+    // Over a built-in's plain extension and a registered one's, ignoring case.
+    assert_eq!(name("views/x.blade.json"), Some("zz_blade"));
+    assert_eq!(name("views/X.BLADE.Json"), Some("zz_blade"));
+    assert_eq!(name("views/x.blade.jsonw"), Some("zz_blade"));
+    // The longest compound one wins.
+    assert_eq!(name("views/x.long.blade.json"), Some("zz_long_blade"));
+    assert_eq!(name("views/long.blade.json"), Some("zz_blade"));
+    // A file named just the compound extension, or a dot and it, hasn't got it.
+    assert_eq!(name("views/blade.json"), Some("json"));
+    assert_eq!(name("views/.blade.json"), Some("json"));
+    assert_eq!(name("views/blade.jsonw"), Some("json_wasm"));
+    // Plain extensions are as before.
+    assert_eq!(name("views/x.json"), Some("json"));
+    assert_eq!(name("views/x.jsonw"), Some("json_wasm"));
+    assert_eq!(name("views/x.blade"), None);
+
+    // Who a claim made now would take files from.
+    let would_take =
+        |path: &str, extension| Language::extension_would_take(Path::new(path), extension);
+    assert!(would_take("x.new.blade.json", "new.blade.json"));
+    assert!(would_take("x.y.jsonw", "Y.jsonw"));
+    assert!(!would_take("x.blade.json", "BLADE.json"));
+    assert!(!would_take("x.long.blade.json", "blade.json"));
+    assert!(!would_take("x.json", "json"));
+    assert!(!would_take("x.jsonw", "jsonw"));
+    assert!(would_take("x.jsonz", "jsonz"));
+    assert!(!would_take("blade.jsonz", "blade.jsonz"));
+
+    assert!(Language::file_has_extension("x.blade.php", "blade.php"));
+    assert!(Language::file_has_extension("x.blade.php", "php"));
+    assert!(!Language::file_has_extension("x.blade.php", "x.blade.php"));
+    assert!(!Language::file_has_extension("x.blade.php", "lade.php"));
+    assert!(!Language::file_has_extension("x.blade.php", ".php"));
+    assert!(Language::file_has_extension("é.blade.php", "BLADE.php"));
+    assert!(!Language::file_has_extension("é.php", "x.php"));
+}
+
 #[test]
 fn bad_grammars_are_errors() {
     short_deadlines();

@@ -626,6 +626,91 @@ fn no_offer_when_it_would_not_help(cx: &mut TestAppContext) {
     assert_eq!(messages(&workbench, cx), ["Installed Kotlin syntax"]);
 }
 
+/// The offer opening a file called `name` shows, as its message and its
+/// Never button, answered Not now.
+fn offered_for(
+    setup: &Setup,
+    workbench: &Entity<Workbench>,
+    name: &str,
+    cx: &mut VisualTestContext,
+) -> Option<(String, String)> {
+    open(workbench, &setup.file(name), cx);
+    let toasts = shown(workbench, cx);
+    let toast = toasts.first()?;
+    let never = toast.choices.as_ref().unwrap().titles()[NEVER].to_string();
+    let offered = (toast.message.clone(), never);
+    answer(workbench, NOT_NOW, cx);
+    Some(offered)
+}
+
+/// A compound extension's grammar is offered for its files, whichever's first
+/// in the catalog, over a built-in or registered language claiming the plain
+/// extension or a shorter compound one, as it would take them once installed;
+/// not over an equal compound claim, nor for a file named just the extension.
+#[gpui::test]
+fn a_compound_extension_offers_its_owner(cx: &mut TestAppContext) {
+    let setup = setup();
+    // Registered: a plain claim of ktfix, and a compound one of b.ktfix.
+    fe_syntax::register_language(&fixture_spec()).unwrap();
+    fe_syntax::register_language(&GrammarSpec {
+        language: "short_b".into(),
+        extensions: vec!["b.ktfix".into()],
+        ..fixture_spec()
+    })
+    .unwrap();
+    let offer = |language: &str, name: &str, extension: &str| GrammarOffer {
+        language: language.into(),
+        name: name.into(),
+        extensions: vec![extension.into()],
+        ..kotlin()
+    };
+    setup.give(
+        vec![
+            kotlin(),
+            offer("blade_kt", "Blade", "blade.kt"),
+            offer("blade_rs", "Blade RS", "blade.rs"),
+            offer("blade_fix", "Blade Fix", "blade.ktfix"),
+            offer("long_b", "Long B", "long.b.ktfix"),
+            offer("same_b", "Same B", "B.KTFIX"),
+        ],
+        registered,
+        Fake::NeverRegisters,
+        cx,
+    );
+    let (workbench, cx) = workbench(cx);
+    let expect = |language: &str, extension: &str| {
+        Some((
+            format!("Syntax highlighting for {language} isn't installed"),
+            format!("Never for .{extension}"),
+        ))
+    };
+
+    // Over a catalog language claiming the plain extension.
+    assert_eq!(
+        offered_for(&setup, &workbench, "x.Blade.KT", cx),
+        expect("Blade", "blade.kt")
+    );
+    assert_eq!(
+        offered_for(&setup, &workbench, "blade.kt", cx),
+        expect("Kotlin", "kt")
+    );
+    // Over the built-in Rust, and the registered plain and shorter claims.
+    assert_eq!(
+        offered_for(&setup, &workbench, "x.blade.rs", cx),
+        expect("Blade RS", "blade.rs")
+    );
+    assert_eq!(
+        offered_for(&setup, &workbench, "x.blade.ktfix", cx),
+        expect("Blade Fix", "blade.ktfix")
+    );
+    assert_eq!(
+        offered_for(&setup, &workbench, "x.long.b.ktfix", cx),
+        expect("Long B", "long.b.ktfix")
+    );
+    // The registered b.ktfix keeps its files from another claim of it.
+    assert_eq!(offered_for(&setup, &workbench, "x.b.ktfix", cx), None);
+}
+
 #[gpui::test]
 fn a_registered_or_built_in_language_is_not_offered(cx: &mut TestAppContext) {
     let setup = setup();

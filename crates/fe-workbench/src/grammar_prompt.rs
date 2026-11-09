@@ -253,19 +253,30 @@ fn sweep(workbench: &Workbench, seen: &Seen, cx: &mut Context<Workbench>) {
 /// lower case, going by what the app knows of the language. What's been
 /// answered is [`ask`]'s to check.
 ///
+/// The entry is the one with the file's longest extension, as fe-syntax picks
+/// a language: `blade.php`'s over `php`'s for `x.blade.php`
+/// ([`fe_syntax::Language::file_has_extension`]).
+///
 /// `installed` alone speaks for the entry's own language. fe-syntax says only
-/// whether another language has claimed the file, as an extension's might.
+/// whether another language would keep the file once it's installed, as an
+/// extension's might: not a plain `php` when the entry's is `blade.php`
+/// ([`fe_syntax::Language::extension_would_take`]).
 fn offer_for<'a>(path: &Path, offers: &'a GrammarOffers) -> Option<(&'a GrammarOffer, String)> {
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-    let offer = offers.catalog.iter().find(|offer| {
-        !offer.sha256.is_empty()
-            && (offer.extensions.iter()).any(|known| known.eq_ignore_ascii_case(&extension))
-    })?;
+    let file_name = path.file_name()?.to_str()?;
+    let (offer, extension) = (offers.catalog.iter())
+        .filter(|offer| !offer.sha256.is_empty())
+        .flat_map(|offer| (offer.extensions.iter()).map(move |extension| (offer, extension)))
+        .filter(|(_, extension)| fe_syntax::Language::file_has_extension(file_name, extension))
+        // The first of the longest.
+        .min_by_key(|(_, extension)| std::cmp::Reverse(extension.len()))?;
+    let extension = extension.to_ascii_lowercase();
     if (offers.installed)(&offer.language) {
         return None;
     }
     let claimed = fe_syntax::language_name_for_path(path);
-    if claimed.is_some_and(|name| name != offer.language) {
+    if claimed.is_some_and(|name| name != offer.language)
+        && !fe_syntax::Language::extension_would_take(path, &extension)
+    {
         return None;
     }
     Some((offer, extension))

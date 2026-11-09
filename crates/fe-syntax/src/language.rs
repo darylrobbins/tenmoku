@@ -44,6 +44,36 @@ impl Language {
         def.extensions.first().copied()
     }
 
+    /// Whether a file called `file_name` has `extension`, a claim without the
+    /// dot, ignoring ASCII case. A plain one (`php`) is the name's last
+    /// extension. A compound one (`blade.php`: dots only between characters) is
+    /// the end of a name with more before it: `x.blade.php` has it, as well as
+    /// `php`, but `blade.php` has neither. Where several match, the longest is
+    /// the file's; see [`language_name_for_path`].
+    pub fn file_has_extension(file_name: &str, extension: &str) -> bool {
+        if !is_compound(extension) {
+            return Path::new(file_name)
+                .extension()
+                .is_some_and(|own| own.eq_ignore_ascii_case(extension));
+        }
+        let (name, extension) = (file_name.as_bytes(), extension.as_bytes());
+        let Some(dot) = name.len().checked_sub(extension.len() + 1) else {
+            return false;
+        };
+        dot > 0 && name[dot] == b'.' && name[dot + 1..].eq_ignore_ascii_case(extension)
+    }
+
+    /// Whether a language claiming `extension`, were it
+    /// [registered](crate::register_language) now, would be given the file at
+    /// `path` over those there are, as [`language_name_for_path`] chooses: by
+    /// its extension, which nothing claiming the path's tail or the file's
+    /// name, an earlier claim of the same plain extension, nor an equal or
+    /// longer compound one takes first. `blade.php` would take `x.blade.php`
+    /// from a built-in or registered `php`.
+    pub fn extension_would_take(path: &Path, extension: &str) -> bool {
+        matches!(owner_for_path(path, Some(extension)), Some(Owner::Newcomer))
+    }
+
     fn compile(def: &Def) -> Self {
         let source = (def.highlights)().concat();
         Self::new(
@@ -145,16 +175,48 @@ fn path_ends_with(path: &Path, tail: &str) -> bool {
 /// The name of the language for a file, chosen by the end of its path, its
 /// extension or its name: a built-in language's, else a
 /// [registered](crate::register_language) one's, else by how its name starts.
+/// A compound extension (`blade.php`) wins over a plain one (`php`), and the
+/// longest compound one wins; see [`Language::file_has_extension`].
 pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
+    match owner_for_path(path, None)? {
+        Owner::Known(name) => Some(name),
+        Owner::Newcomer => None,
+    }
+}
+
+/// Whom [`owner_for_path`] gives a file.
+enum Owner {
+    Known(&'static str),
+    /// The language it was asked about, registered after the rest.
+    Newcomer,
+}
+
+/// Who the file at `path` is for, were a language claiming `newcomer`, an
+/// extension, [registered](crate::register_language) after the rest.
+fn owner_for_path(path: &Path, newcomer: Option<&str>) -> Option<Owner> {
     let by_tail = PATH_SUFFIXES
         .iter()
         .filter(|(tail, _)| path_ends_with(path, tail))
         .find_map(|(_, language)| listed().find(|def| def.name == *language));
     if let Some(def) = by_tail {
-        return Some(def.name);
+        return Some(Owner::Known(def.name));
     }
     let file_name = path.file_name()?.to_str()?;
-    let extension = path.extension().and_then(|ext| ext.to_str());
+    // A compound extension's language takes the file from any claiming its
+    // last extension alone, though not from one claiming its whole name. The
+    // newcomer, registered last, loses a tie.
+    let newcomer_compound = newcomer
+        .and_then(|extension| longest_compound(file_name, [extension]))
+        .unwrap_or(0);
+    let compound = match compound_owner(file_name) {
+        Some((name, len)) if len >= newcomer_compound => Some(Owner::Known(name)),
+        _ => (newcomer_compound > 0).then_some(Owner::Newcomer),
+    };
+    let extension = (path.extension().and_then(|ext| ext.to_str())).filter(|_| compound.is_none());
+    let newcomer_plain = extension.is_some()
+        && newcomer.is_some_and(|newcomer| {
+            !is_compound(newcomer) && Language::file_has_extension(file_name, newcomer)
+        });
     listed()
         .find(|def| {
             def.file_names
@@ -168,7 +230,46 @@ pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
         })
         .map(|def| def.name)
         .or_else(|| runtime::name_for_file(file_name, extension))
-        .or_else(|| language_by_file_name_prefix(file_name))
+        .map(Owner::Known)
+        .or_else(|| newcomer_plain.then_some(Owner::Newcomer))
+        .or(compound)
+        .or_else(|| language_by_file_name_prefix(file_name).map(Owner::Known))
+}
+
+/// Whether `extension` is compound: of several parts, none of them empty.
+fn is_compound(extension: &str) -> bool {
+    extension.contains('.') && extension.split('.').all(|part| !part.is_empty())
+}
+
+/// The longest of `extensions` that's compound and a file called `file_name`
+/// has, with its length.
+pub(crate) fn longest_compound<'a>(
+    file_name: &str,
+    extensions: impl IntoIterator<Item = &'a str>,
+) -> Option<usize> {
+    extensions
+        .into_iter()
+        .filter(|extension| {
+            is_compound(extension) && Language::file_has_extension(file_name, extension)
+        })
+        .map(str::len)
+        .max()
+}
+
+/// The language claiming the longest compound extension of a file called
+/// `file_name`, and that claim's length: of those tied, a built-in one, else
+/// the first registered.
+fn compound_owner(file_name: &str) -> Option<(&'static str, usize)> {
+    let built_in = listed().filter_map(|def| {
+        let len = longest_compound(file_name, def.extensions.iter().copied())?;
+        Some((def.name, len))
+    });
+    built_in
+        .chain(runtime::compound_owners(file_name))
+        .fold(None, |best, (name, len)| match best {
+            Some((_, best_len)) if best_len >= len => best,
+            _ => Some((name, len)),
+        })
 }
 
 /// The built-in language [`FILE_NAME_PREFIXES`] gives a file name.
