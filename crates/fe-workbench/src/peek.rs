@@ -665,7 +665,14 @@ pub(crate) struct PeekView {
     /// target waits for its file's to show ([`PeekView::place`]).
     reading: Vec<PathBuf>,
     waiting: bool,
+    /// Streamed targets' files waiting for a read, and whether one is
+    /// running ([`PeekView::read_streamed`]).
+    queued: Vec<PathBuf>,
+    fetching: bool,
+    /// Files asked for that got no baseline: not asked for again.
+    skipped: Vec<PathBuf>,
     _baselines: Task<()>,
+    _streamed: Option<Task<()>>,
     _observe: Subscription,
     _references: Vec<Subscription>,
 }
@@ -727,6 +734,7 @@ impl Workbench {
         on_disk.sort();
         on_disk.dedup();
         let reading = on_disk.clone();
+        let requested = on_disk.clone();
         let source = (targets.first()).and_then(|first| self.peek_source(&first.location, cx));
         if source.is_none() && references.is_none() {
             return;
@@ -765,8 +773,10 @@ impl Workbench {
                 let read = cx
                     .background_spawn(async move { baselines(on_disk, BASELINE_BUDGET) })
                     .await;
-                view.update_in(cx, |view, window, cx| view.baselines_read(read, window, cx))
-                    .ok();
+                view.update_in(cx, |view, window, cx| {
+                    view.baselines_read(requested, read, window, cx)
+                })
+                .ok();
             });
             let mut view = PeekView {
                 workbench,
@@ -791,7 +801,11 @@ impl Workbench {
                 baselines: HashMap::new(),
                 reading,
                 waiting: false,
+                queued: Vec::new(),
+                fetching: false,
+                skipped: Vec::new(),
                 _baselines: baselines,
+                _streamed: None,
                 _observe: observe,
                 _references: followed,
             };
@@ -1064,18 +1078,81 @@ impl PeekView {
     }
 
     /// The baselines are `read`: a target waiting for its file's shows
-    /// now ([`PeekView::place`]).
+    /// now ([`PeekView::place`]). `requested` are the files asked for, read
+    /// or skipped.
     fn baselines_read(
         &mut self,
+        requested: Vec<PathBuf>,
         read: Vec<(PathBuf, Arc<str>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.baselines.extend(read);
-        self.reading.clear();
+        self.reading.retain(|path| !requested.contains(path));
         if std::mem::take(&mut self.waiting) {
             self.reselect(self.selected, window, cx);
         }
+    }
+
+    /// Notes the `requested` files `read` has none of.
+    fn skip_unread(&mut self, requested: &[PathBuf], read: &[(PathBuf, Arc<str>)]) {
+        let unread = requested
+            .iter()
+            .filter(|path| !read.iter().any(|(p, _)| p == *path));
+        self.skipped.extend(unread.cloned());
+    }
+
+    /// Reads baselines for the files of `targets` that came in since the
+    /// peek opened, each file once, within the budget the files read so far
+    /// leave.
+    fn read_streamed(&mut self, targets: &[Target], window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workbench) = self.workbench.upgrade() else {
+            return;
+        };
+        let workbench = workbench.read(cx);
+        for target in targets.iter().filter(|t| t.location.snapshot.is_none()) {
+            let Some((path, _)) = workbench.target_of(&target.location, cx) else {
+                continue;
+            };
+            let known = self.baselines.contains_key(&path)
+                || self.reading.contains(&path)
+                || self.skipped.contains(&path);
+            if !known {
+                self.reading.push(path.clone());
+                self.queued.push(path);
+            }
+        }
+        if self.fetching || self.queued.is_empty() {
+            return;
+        }
+        self.fetching = true;
+        self._streamed = Some(cx.spawn_in(window, async move |view, cx| {
+            loop {
+                let next = view.update(cx, |view, _| {
+                    if view.queued.is_empty() {
+                        view.fetching = false;
+                        return None;
+                    }
+                    let spent = (view.baselines.values()).map(|text| text.len() as u64);
+                    let left = BASELINE_BUDGET.saturating_sub(spent.sum());
+                    Some((std::mem::take(&mut view.queued), left))
+                });
+                let Ok(Some((paths, left))) = next else {
+                    return;
+                };
+                let requested = paths.clone();
+                let read = cx
+                    .background_spawn(async move { baselines(paths, left) })
+                    .await;
+                let done = view.update_in(cx, |view, window, cx| {
+                    view.skip_unread(&requested, &read);
+                    view.baselines_read(requested, read, window, cx)
+                });
+                if done.is_err() {
+                    return;
+                }
+            }
+        }));
     }
 
     /// The view shows `shown` rows now: the block fits them again, the

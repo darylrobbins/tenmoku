@@ -152,6 +152,8 @@ impl Workbench {
                 window.focus(&self.focus_handle(cx), cx);
             }
         }
+        // Their searches and locations are the old root's.
+        self.close_reference_peeks(window, cx);
         let panel_focused = self.panel.focus_handle(cx).contains_focused(window, cx);
         let changes_focused =
             (self.dock.read(cx).changes().focus_handle(cx)).contains_focused(window, cx);

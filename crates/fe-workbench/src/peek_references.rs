@@ -15,7 +15,7 @@
 //! says that. In a diff's side, which the pane doesn't draw a peek over, it
 //! finds all references in the panel instead.
 
-use gpui::{AppContext as _, Context, Entity, Subscription, Window};
+use gpui::{AppContext as _, Context, Entity, Focusable as _, Subscription, Window};
 
 use super::{PeekView, Target, close};
 use crate::{
@@ -23,6 +23,13 @@ use crate::{
     references_panel::{OpenPeeked, word_at},
     workbench::toast,
 };
+
+#[cfg(test)]
+thread_local! {
+    /// The next peek's search holds its batches on this, in tests.
+    pub(crate) static HOLD_REFERENCES: std::cell::RefCell<Option<async_channel::Receiver<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 impl Workbench {
     /// `editor.peek_references`: see the [module docs](self).
@@ -51,11 +58,39 @@ impl Workbench {
         };
         let workbench = cx.entity().downgrade();
         let panel = cx.new(|cx| ReferencesPanel::peeked(workbench, cx));
+        #[cfg(test)]
+        if let Some(hold) = HOLD_REFERENCES.with(|hold| hold.borrow_mut().take()) {
+            panel.update(cx, |panel, _| panel.test.hold = Some(hold));
+        }
         self.open_peek_on(&editor, Vec::new(), Some(panel.clone()), window, cx);
         let navigation = self.navigation().clone();
         panel.update(cx, |panel, cx| {
             panel.run(request, word, ready, navigation, cx)
         });
+    }
+}
+
+impl Workbench {
+    /// Closes the peeks showing references, cancelling their searches: the
+    /// workspace root changed, and their locations are relative to the old
+    /// one.
+    pub(crate) fn close_reference_peeks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for pane in self.panes(cx) {
+            let peek = pane.read(cx).peek.as_ref().map(|peek| peek.view.clone());
+            let Some(view) = peek else {
+                continue;
+            };
+            let Some(list) = view.read(cx).references.clone() else {
+                continue;
+            };
+            let focused = view.update(cx, |view, cx| {
+                view.closed = true;
+                view.focus.contains_focused(window, cx)
+                    || list.focus_handle(cx).contains_focused(window, cx)
+            });
+            list.update(cx, |list, cx| list.clear(cx));
+            close(&pane, focused, window, cx);
+        }
     }
 }
 
@@ -96,6 +131,7 @@ impl PeekView {
             .map(|location| Target::at(location.clone()))
             .collect::<Vec<_>>();
         let selected = list.selected_reference();
+        self.read_streamed(&found, window, cx);
         self.targets.extend(found);
         if let Some(ix) = selected
             && (ix != self.selected || self.path.is_none())

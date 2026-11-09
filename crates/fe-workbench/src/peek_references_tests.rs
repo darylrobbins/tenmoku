@@ -338,3 +338,144 @@ fn find_all_still_fills_panel(cx: &mut TestAppContext) {
     let focused = cx.update(|window, cx| panel.focus_handle(cx).is_focused(window));
     assert!(focused, "the panel has focus");
 }
+
+/// Moves the workbench to a new root, as opening another folder does.
+fn reroot(workbench: &Entity<Workbench>, root: PathBuf, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        workbench.update(cx, |workbench, cx| workbench.set_root(root, window, cx));
+    });
+    settle(cx);
+}
+
+#[gpui::test]
+fn a_root_change_closes_reference_peeks(cx: &mut TestAppContext) {
+    let (_dir, _root, workbench, cx) = opened(cx);
+    let other = tempfile::tempdir().unwrap();
+    let other_root = dunce::canonicalize(other.path()).unwrap();
+    fs::create_dir_all(other_root.join("src")).unwrap();
+    fs::write(other_root.join("src/main.rs"), "// unrelated\n").unwrap();
+    fs::write(other_root.join("src/util.rs"), "// unrelated\n").unwrap();
+
+    cx.simulate_keystrokes("shift-f12");
+    settle(cx);
+    let peek = peek(&workbench, cx).expect("a peek opened");
+    let list = list(&peek, cx);
+    let cancel = list.read_with(cx, |list, _| list.cancel_flag());
+    assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
+
+    reroot(&workbench, other_root, cx);
+    assert!(self::peek(&workbench, cx).is_none(), "closed");
+    assert!(
+        cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "cancelled"
+    );
+    assert_eq!(list.read_with(cx, |list, _| list.found().count()), 0);
+    let editor = editor(&workbench, cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.blocks().len()), 0);
+}
+
+/// A root change while the search is streaming: the batch held back never
+/// lands, and nothing opens in the new root.
+#[gpui::test]
+fn a_root_change_during_streaming_drops_late_results(cx: &mut TestAppContext) {
+    let (_dir, _root, workbench, cx) = opened(cx);
+    let other = tempfile::tempdir().unwrap();
+    let other_root = dunce::canonicalize(other.path()).unwrap();
+    fs::create_dir_all(other_root.join("src")).unwrap();
+    fs::write(other_root.join("src/main.rs"), "// unrelated\n").unwrap();
+    fs::write(other_root.join("src/util.rs"), "// unrelated\n").unwrap();
+    let tabs = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, cx| workbench.pane().read(cx).tabs().len())
+    };
+    let open = tabs(cx);
+
+    // One batch lands; the second and the summary wait.
+    let (release, hold) = async_channel::bounded::<()>(1);
+    super::HOLD_REFERENCES.with(|held| *held.borrow_mut() = Some(hold));
+    release.try_send(()).unwrap();
+    cx.simulate_keystrokes("shift-f12");
+    settle(cx);
+    let peek = peek(&workbench, cx).expect("a peek opened");
+    let list = list(&peek, cx);
+    assert_eq!(list.read_with(cx, |list, _| list.found().count()), 1);
+    let cancel = list.read_with(cx, |list, _| list.cancel_flag());
+
+    reroot(&workbench, other_root, cx);
+    assert!(self::peek(&workbench, cx).is_none(), "closed");
+    assert!(
+        cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "cancelled"
+    );
+    drop(release);
+    settle(cx);
+    assert!(self::peek(&workbench, cx).is_none(), "not reopened");
+    assert_eq!(list.read_with(cx, |list, _| list.found().count()), 0);
+    assert_eq!(tabs(cx), open, "nothing opened in the new root");
+    let editor = editor(&workbench, cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.blocks().len()), 0);
+}
+
+#[gpui::test]
+fn streamed_targets_get_baselines(cx: &mut TestAppContext) {
+    let (_dir, root, workbench, cx) = opened(cx);
+    cx.simulate_keystrokes("shift-f12");
+    settle(cx);
+    let peek = peek(&workbench, cx).expect("a peek opened");
+    let list = list(&peek, cx);
+    // Both files, each once, though `main.rs` has two uses.
+    let mut keys = peek.read_with(cx, |peek, _| {
+        let mut keys: Vec<_> = peek.baselines.keys().cloned().collect();
+        keys.sort();
+        assert!(peek.reading.is_empty() && peek.queued.is_empty());
+        keys
+    });
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec![root.join("src/main.rs"), root.join("src/util.rs")]
+    );
+
+    // `util.rs` opened and edited in another tab before its row is picked:
+    // the excerpt shows the use where it is now.
+    let util_editor = {
+        cx.update(|window, cx| {
+            let pane = workbench.read(cx).pane().clone();
+            pane.update(cx, |pane, cx| {
+                pane.open(root.join("src/util.rs"), window, cx)
+            });
+        });
+        settle(cx);
+        self::editor(&workbench, cx)
+    };
+    let added = "// new\n// rows\n";
+    util_editor.update(cx, |editor, cx| {
+        (editor.model_mut().buffer_mut()).edit([(0..0, added)], fe_buffer::Origin::User);
+        cx.notify();
+    });
+    settle(cx);
+    // Back in `main.rs`, whose peek it is.
+    cx.update(|window, cx| {
+        let pane = workbench.read(cx).pane().clone();
+        pane.update(cx, |pane, cx| {
+            pane.open(root.join("src/main.rs"), window, cx)
+        });
+    });
+    settle(cx);
+    assert!(self::peek(&workbench, cx).is_some(), "still open");
+    cx.update(|window, cx| window.focus(&list.focus_handle(cx), cx));
+    cx.simulate_keystrokes("down up");
+    settle(cx);
+    let now = format!("{added}{}", util());
+    let start = now.find("helper").unwrap();
+    let (text, selection, _) = excerpt(&peek, cx);
+    assert_eq!(text, now);
+    assert_eq!(selection, start..start + "helper".len());
+
+    // Released with the peek.
+    let weak = peek.downgrade();
+    cx.simulate_keystrokes("escape");
+    settle(cx);
+    drop(peek);
+    settle(cx);
+    assert!(weak.upgrade().is_none(), "the peek is gone");
+}
