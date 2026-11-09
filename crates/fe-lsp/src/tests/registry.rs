@@ -36,6 +36,7 @@ use crate::{
 #[cfg(unix)]
 use crate::{LocalLauncher, LoginPath};
 
+mod css;
 mod gopls;
 mod language_ids;
 mod outside_root;
@@ -158,6 +159,14 @@ fn builtin_specs() {
                 ReadinessMode::Progress,
                 vec![],
             ),
+            (
+                "vscode-css-language-server",
+                "vscode-css-language-server",
+                strings(&["--stdio"]),
+                strings(&["css", "scss", "less"]),
+                ReadinessMode::Progress,
+                vec![],
+            ),
         ]
     );
 
@@ -170,7 +179,13 @@ fn builtin_specs() {
             .iter()
             .map(|spec| spec.name.as_str())
             .collect::<Vec<_>>(),
-        ["rust-analyzer", "pyright", "typescript-go", "gopls"]
+        [
+            "rust-analyzer",
+            "pyright",
+            "typescript-go",
+            "gopls",
+            "vscode-css-language-server"
+        ]
     );
     let chosen =
         |specs: &[ServerSpec], language| server_for(specs, language).map(|s| s.name.clone());

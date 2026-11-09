@@ -63,6 +63,21 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: markers(&["go.work", "go.mod"]),
             ..spec("gopls", "gopls", &[], &["go"])
         },
+        // "less" has no grammar yet; listing it gives one the server. The
+        // server offers formatting only when provideFormatter is true, and
+        // asks workspace/configuration per languageId (css, scss, less): the
+        // empty settings answer null, so its defaults apply. package.json
+        // roots a stylesheet where node_modules `~` imports resolve.
+        ServerSpec {
+            root_markers: markers(&["package.json"]),
+            initialization_options: Some(serde_json::json!({ "provideFormatter": true })),
+            ..spec(
+                "vscode-css-language-server",
+                "vscode-css-language-server",
+                &["--stdio"],
+                &["css", "scss", "less"],
+            )
+        },
     ]
 }
 
