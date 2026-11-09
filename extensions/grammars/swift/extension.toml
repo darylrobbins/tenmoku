@@ -12,4 +12,5 @@ wasm = "tree-sitter-swift.wasm"
 extensions = ["swift"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["mobile"]
 earlier_patterns_win = false

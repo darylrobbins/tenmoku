@@ -12,5 +12,6 @@ wasm = "tree-sitter-kotlin.wasm"
 extensions = ["kt", "kts"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["jvm", "mobile"]
 earlier_patterns_win = false
 license = "MIT"

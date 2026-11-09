@@ -303,6 +303,14 @@ pub(crate) struct ExtensionGrammar {
     #[serde(default)]
     #[schemars(inner(length(min = 1), regex(pattern = r"^[^\s/]+$")))]
     shebangs: Vec<String>,
+    /// The grammar registry's packs it's offered in, the first its main
+    /// one, as `["jvm", "mobile"]` (`extensions/grammars/registry.toml`
+    /// defines them). Only the registry's generator, crates/fe-registry,
+    /// reads them.
+    #[serde(default)]
+    #[schemars(inner(length(min = 1)))]
+    #[allow(dead_code, reason = "only the registry's generator reads them")]
+    packs: Vec<String>,
     /// The grammar's SPDX licence, when it isn't the extension's.
     license: Option<String>,
 }

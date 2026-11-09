@@ -12,4 +12,5 @@ wasm = "tree-sitter-php.wasm"
 extensions = ["php"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["web"]
 earlier_patterns_win = false

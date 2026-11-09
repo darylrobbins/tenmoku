@@ -27,6 +27,8 @@
 #   wasi-sdk for the host (macOS arm64 or x86_64, Linux x86_64 or arm64) there.
 # - Directories whose grammar export is the same (ERB and EJS) share one module,
 #   built once per run.
+# - Beside each module, `<wasm>.abi` holds parser.c's LANGUAGE_VERSION, one
+#   line: the ABI the module reports (scripts/build-grammar-registry.sh).
 # - At most GRAMMAR_JOBS clang processes run at once (default half the cores).
 # - The test is given GRAMMAR_LANGUAGES, the languages named, and checks only
 #   those.
@@ -231,24 +233,35 @@ source_dir() {
   fi
 }
 
-# Compiles one language from `dir`, writing the module only once it's whole.
+# Compiles one language from `dir`, writing the module only once it's whole,
+# and beside it `<wasm>.abi`: parser.c's LANGUAGE_VERSION, the tree-sitter ABI
+# the module reports, which scripts/build-grammar-registry.sh puts in the index.
 build() {
-  local language=$1 dir=$2 from=$3 grammar wasm temp
+  local language=$1 dir=$2 from=$3 grammar wasm temp abi
   grammar=$(field "$grammars/$language/grammar-source.toml" grammar)
   [ -f "$dir/parser.c" ] || die "$language: no parser.c in $dir"
   [ ! -f "$dir/scanner.cc" ] || die "$language: $dir has a C++ scanner.cc, which isn't supported"
+  abi=$(sed -n 's/^#define[[:space:]]\{1,\}LANGUAGE_VERSION[[:space:]]\{1,\}\([0-9]\{1,\}\)[[:space:]]*$/\1/p' \
+    "$dir/parser.c" | head -n 1)
+  [ -n "$abi" ] || die "$language: $dir/parser.c has no #define LANGUAGE_VERSION <n>"
 
   local sources=(parser.c)
   [ -f "$dir/scanner.c" ] && sources+=(scanner.c)
 
   wasm=$PWD/$out/tree-sitter-${grammar//_/-}.wasm
-  temp=$(mktemp "$wasm.XXXXXX")
+  # The linker writes the output's file name into the module, so it's built
+  # under its own name, in a temporary directory: the same source gives the
+  # same bytes.
+  temp=$(mktemp -d "$PWD/$out/.$(basename "$wasm").XXXXXX")
   (cd "$dir" && "$wasi_sdk/bin/clang" --target=wasm32-wasip1 \
-    --sysroot="$wasi_sdk/share/wasi-sysroot" -o "$temp" -fPIC -shared \
+    --sysroot="$wasi_sdk/share/wasi-sysroot" -o "$temp/$(basename "$wasm")" -fPIC -shared \
     --no-wasm-opt -Os "-Wl,--export=tree_sitter_$grammar" \
     -Wl,--allow-undefined -Wl,--no-entry -nostdlib -fno-exceptions \
-    -fvisibility=hidden -I . "${sources[@]}") || { rm -f "$temp"; return 1; }
-  mv "$temp" "$wasm"
+    -fvisibility=hidden -I . "${sources[@]}") || { rm -rf "$temp"; return 1; }
+  echo "$abi" >"$temp/abi"
+  mv "$temp/abi" "$wasm.abi"
+  mv "$temp/$(basename "$wasm")" "$wasm"
+  rm -rf "$temp"
   echo "built $out/$(basename "$wasm") ($from)"
 }
 

@@ -12,4 +12,5 @@ wasm = "tree-sitter-sql.wasm"
 extensions = ["sql"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["data"]
 earlier_patterns_win = false

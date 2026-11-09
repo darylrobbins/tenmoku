@@ -77,6 +77,28 @@ fn wasm_name(language: &str) -> String {
         .to_owned()
 }
 
+/// The files besides the wasm that the pack has of `language`, as its
+/// directory has them: extension.toml, the queries, LICENSE, any LICENSE-*
+/// and any NOTICE.
+fn text_files(language: &str) -> Vec<String> {
+    let dir = root().join(format!("extensions/grammars/{language}"));
+    let mut files: Vec<String> = [
+        "extension.toml",
+        "highlights.scm",
+        "injections.scm",
+        "LICENSE",
+    ]
+    .map(str::to_owned)
+    .into();
+    for entry in fs::read_dir(dir).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        if name.starts_with("LICENSE-") || name == "NOTICE" {
+            files.push(name);
+        }
+    }
+    files
+}
+
 /// A fake module, keyed by its file name: languages sharing a grammar (ERB and
 /// EJS) share one module, so a stub per language would overwrite the other.
 fn stub(wasm: &str) -> Vec<u8> {
@@ -161,7 +183,7 @@ fn pack_has_every_languages_loadable_extension() {
     let languages = languages();
     let wasm_names: Vec<String> = languages.iter().map(|l| wasm_name(l)).collect();
     for (language, wasm) in languages.iter().zip(&wasm_names) {
-        for file in ["extension.toml", "highlights.scm", "injections.scm", wasm] {
+        for file in text_files(language).iter().chain([wasm]) {
             expected.insert(format!("tenmoku.grammar_{language}/{file}"));
         }
     }
@@ -189,11 +211,13 @@ fn pack_matches_the_installer_layout() {
     succeeded(&run);
     let unpacked = unpack(&run);
     // grammar_install writes the wasm under the name the extension's manifest
-    // gives, and the other three files as they are in extensions/grammars/.
+    // gives, and the other three files as they are in extensions/grammars/;
+    // the pack has the licence files too, as the registry's artifact does.
     for language in languages() {
         let dir = unpacked.path().join(format!("tenmoku.grammar_{language}"));
         let source = root().join(format!("extensions/grammars/{language}"));
-        for file in ["extension.toml", "highlights.scm", "injections.scm"] {
+        let text_files = text_files(&language);
+        for file in &text_files {
             assert_eq!(
                 fs::read(dir.join(file)).unwrap(),
                 fs::read(source.join(file)).unwrap(),
@@ -206,7 +230,7 @@ fn pack_matches_the_installer_layout() {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
-        assert_eq!(names.len(), 4, "{names:?}");
+        assert_eq!(names.len(), text_files.len() + 1, "{names:?}");
     }
 }
 

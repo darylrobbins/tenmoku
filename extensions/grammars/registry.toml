@@ -1,0 +1,72 @@
+# The grammar registry: where its index and artifacts are published, and the
+# packs. crates/fe-registry reads this (fe_registry::grammars::Registry), and
+# scripts/build-grammar-registry.sh builds the index from it and each
+# language's directory beside it.
+#
+# A pack is metadata only: a named list of languages, offered together, with
+# an offline tarball. Which packs a language is in is its extension.toml's
+# [[contributes.grammars]] packs, never this file; the first it lists is its
+# main pack. A pack no language lists isn't in the index.
+#
+# url_template is a file's URL, {tag} being the language's content-addressed
+# tag and {file} the file's name (docs/decisions/xb65tqark9-grammar-registry-index.md).
+
+schema = 1
+url_template = "https://github.com/tenmoku-editor/registry/releases/download/{tag}/{file}"
+index_url = "https://github.com/tenmoku-editor/registry/releases/download/index/index.json"
+
+[packs.shells]
+name = "Shells"
+description = "Shell languages and their scripts, such as PowerShell"
+
+[packs.web]
+name = "Web"
+description = "PHP, Ruby and other languages of web servers and templates"
+
+[packs.infra]
+name = "Infrastructure"
+description = "Infrastructure as code, build files and deployment"
+
+[packs.functional]
+name = "Functional"
+description = "Haskell, OCaml, Scala, Elixir and other functional languages"
+
+[packs.jvm]
+name = "JVM"
+description = "Kotlin, Scala, Groovy and friends"
+
+[packs.dotnet]
+name = ".NET"
+description = "C#, F# and other .NET languages"
+
+[packs.systems]
+name = "Systems"
+description = "C++, Zig and other systems languages"
+
+[packs.mobile]
+name = "Mobile"
+description = "Kotlin, Swift, Dart and other languages of phone apps"
+
+[packs.data]
+name = "Data"
+description = "SQL, R and other languages for data"
+
+[packs.docs]
+name = "Docs"
+description = "Markup and documentation formats"
+
+[packs.shaders]
+name = "Shaders"
+description = "GPU shader languages"
+
+[packs.hardware]
+name = "Hardware"
+description = "Hardware description languages"
+
+[packs.config]
+name = "Config"
+description = "Configuration file formats"
+
+[packs.scripting]
+name = "Scripting"
+description = "Ruby, Perl, Lua and other scripting languages"

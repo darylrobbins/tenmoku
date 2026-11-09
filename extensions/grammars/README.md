@@ -15,6 +15,10 @@ directory is all a language takes: nothing lists the languages.
 - `scripts/package-language-pack.sh` packs each into the language pack, and
   `scripts/record-grammar-hashes.sh` records each in `pack.toml` after a
   release.
+- `scripts/build-grammar-registry.sh`, after the wasm build, writes each
+  language's registry artifact, the registry's `index.json` and each pack's
+  tarball into `target/registry/` (`crates/fe-registry`, `registry.toml`
+  below).
 
 `pack.toml` holds the release's URL and the entries that script recorded. A
 language with no entry isn't released yet: it's offered, and every install of
@@ -149,7 +153,8 @@ injections = "injections.scm"
 `id` and `language` are the directory's name, and `highlights` and
 `injections` are those file names, which the installer writes. The grammar
 may also have `file_names` (whole names, such as `Gemfile`),
-`earlier_patterns_win` and `license`, as any extension's may
+`earlier_patterns_win` and `license`, as any extension's may, and `packs`
+(below)
 (`crates/fastedit/src/config.rs`'s `ExtensionGrammar`); any other key fails
 `grammar_install_tests::every_first_party_manifest_parses`. A grammar may
 claim only `file_names` (`gomod`'s `go.mod`): it's offered when a file of that
@@ -157,6 +162,41 @@ name opens. No extension or file name may be a built-in language's or another
 directory's. An extension
 may be compound, such as `blade.php` for `x.blade.php`: it's a claim of its
 own, and wins over any language's plain `php`.
+
+### packs
+
+A grammar's `packs`, as `packs = ["jvm", "mobile"]`, are the registry packs
+it's offered in: named lists of languages, offered together, each with an
+offline tarball. A pack is metadata only; the download is still one
+language. The first pack listed is the language's main pack, the one the
+app offers with it. A language may be in several packs, or in none (it's
+then only in the tarball with every language, and the registry's generator
+warns).
+
+`registry.toml` defines the packs, by name and description; a pack it
+doesn't define fails `crates/fe-registry`'s `every_first_party_pack_is_defined`
+and the generator. Membership is only ever in the languages' `extension.toml`.
+The packs:
+
+| Pack | For |
+|---|---|
+| `shells` | Shell languages |
+| `web` | Languages of web servers and templates (PHP, Ruby) |
+| `infra` | Infrastructure as code, build files and deployment |
+| `functional` | Functional languages (Scala) |
+| `jvm` | JVM languages (Kotlin, Scala) |
+| `dotnet` | .NET languages (C#) |
+| `systems` | Systems languages (C++) |
+| `mobile` | Languages of phone apps (Kotlin, Swift) |
+| `data` | Languages for data (SQL) |
+| `docs` | Markup and documentation formats |
+| `shaders` | GPU shader languages |
+| `hardware` | Hardware description languages |
+| `config` | Configuration file formats |
+| `scripting` | Scripting languages (Ruby) |
+
+A pack no language lists isn't in the index. Adding a pack is adding its
+`[packs.<name>]` to `registry.toml`: lowercase letters, digits and `-`.
 
 ### The queries
 

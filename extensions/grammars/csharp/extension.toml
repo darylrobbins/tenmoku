@@ -12,4 +12,5 @@ wasm = "tree-sitter-c-sharp.wasm"
 extensions = ["cs"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["dotnet"]
 earlier_patterns_win = false

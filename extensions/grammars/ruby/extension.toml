@@ -13,4 +13,5 @@ extensions = ["rb", "gemspec", "rake", "ru", "podspec"]
 file_names = ["Gemfile", "Rakefile", "Podfile", "Vagrantfile", "Brewfile", "Guardfile", "Capfile", "Fastfile"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["web", "scripting"]
 earlier_patterns_win = false

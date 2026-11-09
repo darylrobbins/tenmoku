@@ -12,4 +12,5 @@ wasm = "tree-sitter-cpp.wasm"
 extensions = ["cc", "cpp", "cxx", "c++", "hh", "hpp", "hxx", "h++"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["systems"]
 earlier_patterns_win = false

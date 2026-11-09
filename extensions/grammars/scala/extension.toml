@@ -12,4 +12,5 @@ wasm = "tree-sitter-scala.wasm"
 extensions = ["scala", "sc"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["jvm", "functional"]
 earlier_patterns_win = false
