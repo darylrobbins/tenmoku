@@ -16,6 +16,7 @@ use kiln_core::theme::Appearance;
 use serde_json::{Map, Value};
 use toml::Table;
 
+use crate::l10n::{KeyKind, setting_key, variant_attribute};
 use crate::settings_schema;
 
 /// One setting: a leaf of the schema.
@@ -148,24 +149,36 @@ impl SettingsModel {
     /// to [`errors`](Self::errors) and sets nothing.
     pub fn new(user: Option<&str>, project: Option<&str>) -> Self {
         let mut errors = Vec::new();
-        let mut parse = |name: &str, text: Option<&str>| match text.map(str::parse::<Table>) {
+        let mut parse = |user: bool, text: Option<&str>| match text.map(str::parse::<Table>) {
             None => Table::new(),
             Some(Ok(table)) => table,
             Some(Err(error)) => {
-                errors.push(format!("{name} settings: {error}"));
+                let error = error.to_string();
+                errors.push(
+                    match user {
+                        true => kiln_l10n::tr!("config-settings-user-unparsed", error = error),
+                        false => {
+                            kiln_l10n::tr!("config-settings-workspace-unparsed", error = error)
+                        }
+                    }
+                    .to_string(),
+                );
                 Table::new()
             }
         };
-        let user = parse("user", user);
-        let project = parse("workspace", project);
+        let user = parse(true, user);
+        let project = parse(false, project);
         let applied = applied_project(&project);
         let schema = settings_schema();
+        let mut walk = rows(&schema);
+        localize(&mut walk);
         let Walk {
             defs,
             entries,
             schemas,
             groups,
-        } = rows(&schema);
+            ..
+        } = walk;
         Self {
             entries,
             schemas,
@@ -426,13 +439,51 @@ fn applied_project(project: &Table) -> Table {
     table
 }
 
-/// The rows and groups of `schema`, in its order.
-fn rows(schema: &Value) -> Walk {
+/// The descriptions of `walk`'s rows, of their values and of its groups in
+/// the active locale, by their keys ([`setting_key`]): a value's is its
+/// row's message's attribute ([`variant_attribute`]). The schema's, the
+/// en-US text, is the fallback.
+fn localize(walk: &mut Walk) {
+    let args = kiln_l10n::Args::new();
+    for entry in &mut walk.entries {
+        let key = setting_key(KeyKind::Description, &entry.key_path());
+        entry.description = localized(&key, &entry.description);
+        if let SettingKind::Enum(variants) = &mut entry.kind {
+            for variant in variants.iter_mut() {
+                if variant.description.is_empty() {
+                    continue;
+                }
+                let name = variant_attribute(&variant.value);
+                if let Some(text) = kiln_l10n::attribute(&key, &name, &args) {
+                    variant.description = text.to_string();
+                }
+            }
+        }
+    }
+    for group in &mut walk.groups {
+        let key = setting_key(KeyKind::Description, &group.key.join("."));
+        group.description = localized(&key, &group.description);
+    }
+}
+
+/// `key`'s message, or `fallback` without one; none for no `fallback`.
+fn localized(key: &str, fallback: &str) -> String {
+    if fallback.is_empty() {
+        return String::new();
+    }
+    kiln_l10n::tr_or(key, fallback).to_string()
+}
+
+/// The rows and groups of `schema`, in its order, with the schema's
+/// descriptions.
+pub(crate) fn rows(schema: &Value) -> Walk {
     let mut walk = Walk {
         defs: schema.get("$defs").cloned().unwrap_or(Value::Null),
         entries: Vec::new(),
         schemas: Vec::new(),
         groups: Vec::new(),
+        #[cfg(test)]
+        order: Vec::new(),
     };
     walk.table(schema, &[], &Value::Null);
     for group in &mut walk.groups {
@@ -445,12 +496,23 @@ fn rows(schema: &Value) -> Walk {
     walk
 }
 
-struct Walk {
+pub(crate) struct Walk {
     defs: Value,
-    entries: Vec<SettingEntry>,
+    pub(crate) entries: Vec<SettingEntry>,
     /// Each entry's schema, `$ref` followed.
     schemas: Vec<Value>,
-    groups: Vec<SettingGroup>,
+    pub(crate) groups: Vec<SettingGroup>,
+    /// The groups and entries, in the order the walk met them.
+    #[cfg(test)]
+    pub(crate) order: Vec<Row>,
+}
+
+/// One of a [`Walk`]'s groups or entries, by its index.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Row {
+    Group(usize),
+    Entry(usize),
 }
 
 impl Walk {
@@ -481,6 +543,8 @@ impl Walk {
                 .cloned()
                 .unwrap_or(Value::Null);
             if resolved.get("properties").is_some_and(Value::is_object) {
+                #[cfg(test)]
+                self.order.push(Row::Group(self.groups.len()));
                 self.groups.push(SettingGroup {
                     title: group_title(&key),
                     key: key.clone(),
@@ -496,6 +560,8 @@ impl Walk {
                     Some(source) => SettingKind::Choice(source),
                     None => self.kind(&resolved),
                 };
+                #[cfg(test)]
+                self.order.push(Row::Entry(self.entries.len()));
                 self.entries.push(SettingEntry {
                     key,
                     group: group.clone(),
@@ -614,16 +680,18 @@ fn as_i64(value: &Value) -> Option<i64> {
         .or_else(|| value.as_f64().map(|value| value as i64))
 }
 
-/// The title of the group at `key`, as in `Editor > Minimap`.
+/// The title of the group at `key`, as in `Editor > Minimap`, in the
+/// active locale: each table's name by its key, `settings-group-<name>`.
 fn group_title(key: &[String]) -> String {
     key.iter()
-        .map(|name| title(name))
+        .map(|name| kiln_l10n::tr_or(&setting_key(KeyKind::Group, name), &title(name)).to_string())
         .collect::<Vec<_>>()
         .join(" > ")
 }
 
-/// `name` as a title: `status_bar` is `Status Bar`, and `lsp` is `LSP`.
-fn title(name: &str) -> String {
+/// `name` as a title in en-US: `status_bar` is `Status Bar`, and `lsp` is
+/// `LSP`.
+pub(crate) fn title(name: &str) -> String {
     name.split(['_', '-'])
         .filter(|word| !word.is_empty())
         .map(|word| match word {

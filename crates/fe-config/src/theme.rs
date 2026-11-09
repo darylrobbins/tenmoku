@@ -345,23 +345,23 @@ impl EditorPalette {
     ) -> Vec<String> {
         let mut warnings = Vec::new();
         for (key, value) in terminal.into_iter().flatten() {
-            let dotted = format!("terminal.{key}");
+            let dotted = ["terminal", key].join(".");
             match color(value) {
-                Err(message) => warnings.push(format!("{dotted}: {message}")),
+                Err(message) => warnings.push(key_problem(&dotted, message)),
                 Ok(color) => {
                     if !self.terminal.set(key, color) {
-                        warnings.push(format!("{dotted}: unknown key"));
+                        warnings.push(unknown_key(dotted));
                     }
                 }
             }
         }
         for (key, value) in editor.into_iter().flatten() {
-            let dotted = format!("editor.{key}");
+            let dotted = ["editor", key].join(".");
             match self.editor.get_mut(key) {
-                None => warnings.push(format!("{dotted}: unknown key")),
+                None => warnings.push(unknown_key(dotted)),
                 Some(slot) => match color(value) {
                     Ok(color) => *slot = color,
-                    Err(message) => warnings.push(format!("{dotted}: {message}")),
+                    Err(message) => warnings.push(key_problem(&dotted, message)),
                 },
             }
         }
@@ -379,10 +379,9 @@ impl EditorPalette {
             path.push(key.clone());
             let name = path.join(".");
             if !is_capture_name(&name) {
-                warnings.push(format!(
-                    "syntax.{name}: not a capture name: expected dot-separated words of a-z, \
-                     0-9 and _"
-                ));
+                let name = name.clone();
+                warnings
+                    .push(kiln_l10n::tr!("config-theme-not-capture-name", name = name).to_string());
             } else if let Value::Table(table) = value {
                 self.syntax_colors(table, path, warnings);
             } else {
@@ -392,12 +391,24 @@ impl EditorPalette {
                         Some((_, slot)) => *slot = color,
                         None => self.syntax.push((name, color)),
                     },
-                    Err(message) => warnings.push(format!("syntax.{name}: {message}")),
+                    Err(message) => {
+                        warnings.push(key_problem(&["syntax", name.as_str()].join("."), message))
+                    }
                 }
             }
             path.pop();
         }
     }
+}
+
+/// `key`'s `problem`, as a warning.
+fn key_problem(key: &str, problem: String) -> String {
+    kiln_l10n::tr!("config-theme-key-problem", key = key, problem = problem).to_string()
+}
+
+/// The warning for `key`, which no colour has.
+fn unknown_key(key: String) -> String {
+    kiln_l10n::tr!("config-theme-unknown-key", key = key).to_string()
 }
 
 /// Dot-separated non-empty segments of `[a-z0-9_]`.
@@ -413,9 +424,6 @@ fn is_capture_name(name: &str) -> bool {
 fn color(value: &Value) -> Result<Color, String> {
     match value {
         Value::String(text) => text.parse(),
-        _ => Err(format!(
-            "expected a colour string, found {}",
-            value.type_str()
-        )),
+        _ => Err(kiln_l10n::tr!("config-theme-not-colour", found = value.type_str()).to_string()),
     }
 }

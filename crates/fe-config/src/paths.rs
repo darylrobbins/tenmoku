@@ -18,7 +18,7 @@ pub const THEME_FILE: &str = "theme.toml";
 pub const VIMRC_FILE: &str = "vimrc";
 
 /// The name people see: the app menu, window titles and prompts.
-pub const APP_NAME: &str = "Tenmoku";
+pub const APP_NAME: &str = kiln_l10n::verbatim!("Tenmoku");
 
 /// Tenmoku, as kiln knows it. Its reverse DNS and short name key the
 /// config and state directories as `tenmoku`.

@@ -19,7 +19,7 @@ use std::{cell::Cell, path::PathBuf, rc::Rc};
 
 use fe_gpui::{commands::RunCommand, menu::MenuCommand};
 use gpui::{App, Global};
-use kiln_shell::persist::{SettingKey, SettingsPath, Writer, setting_writer};
+use kiln_shell::persist::{SettingKey, SettingsPath, Writer};
 
 /// The setting View > Toggle Vim Mode saves.
 const VIM: SettingKey = &["vim", "enabled"];
@@ -48,7 +48,8 @@ type Writes = Writer<SettingKey, bool>;
 
 /// From now on, saves each toggle of vim mode and of the status bar to the
 /// settings file at `path`, editing it in place, or creating it from the
-/// settings template. Called again, later writes go to the new `path`.
+/// settings template in the locale active when it's created. Called again,
+/// later writes go to the new `path`.
 ///
 /// Call after [`fe_gpui::init`]. Observers of a `vim.toggle` don't get the
 /// app, so app listeners for the actions that run it (`RunCommand`, and
@@ -62,7 +63,7 @@ pub fn save_toggles_to(cx: &mut App, path: PathBuf) {
         return;
     }
     let target = SettingsPath::new(path);
-    let writes = setting_writer(target.clone(), fe_config::USER_SETTINGS_TEMPLATE, cx);
+    let writes = setting_writer(target.clone(), cx);
     cx.set_global(Saver(writes.clone()));
     cx.set_global(SaveTarget(target));
     let vim = Rc::new(VimToggle::default());
@@ -107,6 +108,24 @@ pub fn save_toggles_to(cx: &mut App, path: PathBuf) {
             }
         }
     });
+}
+
+/// A writer of boolean settings into the file at `path`, as kiln-shell's
+/// `setting_writer` is, but resolving the template at each write, on the
+/// background executor, so a file created after a locale change gets that
+/// locale's ([`fe_config::user_settings_template`]), not the one at startup.
+/// A failed write is logged, naming the setting and the file.
+fn setting_writer(path: SettingsPath, cx: &App) -> Writes {
+    Writer::new(cx, move |key: &SettingKey, value| {
+        let path = path.get();
+        if let Err(error) = fe_config::write_setting(&path, key, value) {
+            log::error!(
+                "can't save {} to {}: {error}",
+                key.join("."),
+                path.display()
+            );
+        }
+    })
 }
 
 /// What the action listeners know of a `vim.toggle` being dispatched.

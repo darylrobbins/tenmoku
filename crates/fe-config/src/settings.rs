@@ -445,7 +445,9 @@ fn normal_mode() -> VimRemapModes {
 fn not_blank<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let text = String::deserialize(deserializer)?;
     if text.trim().is_empty() {
-        return Err(serde::de::Error::custom("can't be empty"));
+        return Err(serde::de::Error::custom(kiln_l10n::tr!(
+            "config-value-empty"
+        )));
     }
     Ok(text)
 }
@@ -768,7 +770,7 @@ impl JsonSchema for LocaleSetting {
     }
 
     fn schema_name() -> std::borrow::Cow<'static, str> {
-        "LocaleSetting".into()
+        kiln_l10n::verbatim!("LocaleSetting").into()
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -1556,7 +1558,7 @@ fn schema_for(table: &Table) -> Arc<serde_json::Value> {
         .into_iter()
         .map(|name| (name.clone(), server.clone()))
         .collect();
-    schema["$defs"]["LspSettings"]["properties"]["servers"]["properties"] =
+    schema["$defs"][kiln_l10n::verbatim!("LspSettings")]["properties"]["servers"]["properties"] =
         serde_json::Value::Object(properties);
     Arc::new(schema)
 }
@@ -1705,7 +1707,9 @@ fn schema_errors(table: &Table) -> String {
         .join("; ")
 }
 
-/// The warning for each `lsp` key a project file sets that it may not.
+/// The warning for each `lsp` key a project file sets that it may not, in
+/// en-US: the diagnostic is `config-project-lsp-untrusted` in the active
+/// locale.
 pub const UNTRUSTED_LSP: &str = "LSP settings in project files apply only in trusted folders";
 
 /// Drops every `lsp` key of a project layer's table except
@@ -1766,13 +1770,36 @@ fn narrow_lsp(layer: &mut Layer) {
             .chain(path.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(".");
-        let warning =
-            layer.diagnostic_at(Severity::Warning, Some(key), offset, UNTRUSTED_LSP.into());
+        let warning = layer.diagnostic_at(
+            Severity::Warning,
+            Some(key),
+            offset,
+            project_warning(UNTRUSTED_LSP),
+        );
         layer.diagnostics.push(warning);
     }
 }
 
-/// The warning for each `theme` key a project file sets.
+/// A project file's warning in the active locale, by its en-US text, one
+/// of the `PROJECT_*` constants or [`UNTRUSTED_LSP`], which tests compare
+/// with.
+pub(crate) fn project_warning(en_us: &str) -> String {
+    use kiln_l10n::tr;
+    match en_us {
+        UNTRUSTED_LSP => tr!("config-project-lsp-untrusted"),
+        PROJECT_THEME => tr!("config-project-theme-ignored"),
+        PROJECT_FORMATTERS => tr!("config-project-formatters-ignored"),
+        PROJECT_EXTENSIONS => tr!("config-project-extensions-ignored"),
+        PROJECT_CHAT => tr!("config-project-chat-ignored"),
+        PROJECT_TERMINAL_SHELL => tr!("config-project-terminal-shell-ignored"),
+        PROJECT_VIM_USER_ONLY => tr!("config-project-vim-user-only"),
+        PROJECT_ICON_THEME => tr!("config-project-icon-theme-ignored"),
+        _ => return en_us.to_owned(),
+    }
+    .to_string()
+}
+
+/// The warning for each `theme` key a project file sets, in en-US.
 pub const PROJECT_THEME: &str =
     "theme settings in project files are ignored: the theme is the same in every window";
 
@@ -1799,12 +1826,17 @@ fn drop_table(layer: &mut Layer, name: &str, message: &str) {
             .chain(path.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(".");
-        let warning = layer.diagnostic_at(Severity::Warning, Some(key), offset, message.into());
+        let warning = layer.diagnostic_at(
+            Severity::Warning,
+            Some(key),
+            offset,
+            project_warning(message),
+        );
         layer.diagnostics.push(warning);
     }
 }
 
-/// The warning for each `formatters` entry a project file sets.
+/// The warning for each `formatters` entry a project file sets, in en-US.
 pub const PROJECT_FORMATTERS: &str = "formatters in project files are ignored: a folder can't choose the program that formats its files";
 
 /// Drops a project layer's `formatters` table, with a [`PROJECT_FORMATTERS`]
@@ -1813,33 +1845,52 @@ fn drop_formatters(layer: &mut Layer) {
     drop_table(layer, "formatters", PROJECT_FORMATTERS);
 }
 
-/// What is wrong with one `[formatters.<language>]` value, or `None`.
-fn formatter_problem(entry: &toml::Value) -> Option<(&'static str, String)> {
+/// What is wrong with one `[formatters.<language>]` value, or `None`: the
+/// key that is wrong (none for the entry) and the warning, for `language`.
+fn formatter_problem(language: &str, entry: &toml::Value) -> Option<(&'static str, String)> {
+    use kiln_l10n::tr;
     let toml::Value::Table(entry) = entry else {
-        return Some(("", "must be a table".into()));
+        return Some((
+            "",
+            tr!("config-formatter-not-table", language = language).to_string(),
+        ));
     };
     match entry.get("command") {
         Some(toml::Value::Array(words))
             if !words.is_empty() && words.iter().all(toml::Value::is_str) => {}
         Some(toml::Value::Array(words)) if words.is_empty() => {
-            return Some((".command", "must not be empty".into()));
+            return Some((
+                "command",
+                tr!("config-formatter-command-empty", language = language).to_string(),
+            ));
         }
         Some(_) => {
             return Some((
-                ".command",
-                "must be an array of strings: the program, then its arguments".into(),
+                "command",
+                tr!("config-formatter-command-not-strings", language = language).to_string(),
             ));
         }
-        None => return Some((".command", "is required".into())),
+        None => {
+            return Some((
+                "command",
+                tr!("config-formatter-command-missing", language = language).to_string(),
+            ));
+        }
     }
     if entry.get("stdin").is_some_and(|stdin| !stdin.is_bool()) {
-        return Some((".stdin", "must be true or false".into()));
+        return Some((
+            "stdin",
+            tr!("config-formatter-stdin-not-bool", language = language).to_string(),
+        ));
     }
     if entry
         .get("prefer")
         .is_some_and(|prefer| !matches!(prefer.as_str(), Some("external" | "lsp")))
     {
-        return Some((".prefer", "must be \"external\" or \"lsp\"".into()));
+        return Some((
+            "prefer",
+            tr!("config-formatter-prefer-unknown", language = language).to_string(),
+        ));
     }
     if entry.get("timeout_ms").is_some_and(|timeout| {
         !timeout
@@ -1847,8 +1898,8 @@ fn formatter_problem(entry: &toml::Value) -> Option<(&'static str, String)> {
             .is_some_and(|ms| (1..=60000).contains(&ms))
     }) {
         return Some((
-            ".timeout_ms",
-            "must be a whole number from 1 to 60000".into(),
+            "timeout_ms",
+            tr!("config-formatter-timeout-out-of-range", language = language).to_string(),
         ));
     }
     None
@@ -1861,21 +1912,24 @@ fn drop_bad_formatters(layer: &mut Layer) {
     match layer.table.get_mut("formatters") {
         None => return,
         Some(toml::Value::Table(formatters)) => {
-            formatters.retain(|language, entry| match formatter_problem(entry) {
+            formatters.retain(|language, entry| match formatter_problem(language, entry) {
                 None => true,
                 Some((field, message)) => {
                     let mut path: Vec<String> = vec![language.to_string()];
                     if !field.is_empty() {
-                        path.push(field[1..].to_owned());
+                        path.push(field.to_owned());
                     }
-                    problems.push((path, format!("{language}{field} {message}; entry ignored")));
+                    problems.push((path, message));
                     false
                 }
             });
         }
         Some(_) => {
             layer.table.remove("formatters");
-            problems.push((Vec::new(), "must be a table of languages; ignored".into()));
+            problems.push((
+                Vec::new(),
+                kiln_l10n::tr!("config-formatters-not-table").to_string(),
+            ));
         }
     }
     let document = DeTable::parse(&layer.source).ok();
@@ -1900,9 +1954,7 @@ fn spell_scope_problem(scope: &toml::Value) -> Option<String> {
     if matches!(scope.as_str(), Some("comments" | "strings" | "text")) {
         return None;
     }
-    Some(format!(
-        "{scope} isn't a spell check scope: use \"comments\", \"strings\" or \"text\"; ignored"
-    ))
+    Some(kiln_l10n::tr!("config-spell-scope-unknown", scope = scope.to_string()).to_string())
 }
 
 /// Drops each `editor.spell_check_scopes` entry that isn't a scope, with a
@@ -1930,7 +1982,7 @@ fn drop_bad_spell_scopes(layer: &mut Layer) {
             editor.remove("spell_check_scopes");
             problems.push((
                 None,
-                "must be a list of \"comments\", \"strings\" and \"text\"; ignored".into(),
+                kiln_l10n::tr!("config-spell-scopes-not-list").to_string(),
             ));
         }
     }
@@ -1971,7 +2023,7 @@ fn spell_scope_offset(document: &DeTable<'_>, index: Option<usize>) -> usize {
     }
 }
 
-/// The warning for each `extensions` key a project file sets.
+/// The warning for each `extensions` key a project file sets, in en-US.
 pub const PROJECT_EXTENSIONS: &str =
     "extensions settings in project files are ignored: they're your own, in every window";
 
@@ -1981,7 +2033,7 @@ fn drop_extensions(layer: &mut Layer) {
     drop_table(layer, "extensions", PROJECT_EXTENSIONS);
 }
 
-/// The warning for a project file's `[chat]` table.
+/// The warning for a project file's `[chat]` table, in en-US.
 pub const PROJECT_CHAT: &str =
     "A project's settings can't set `chat`; set it in your own settings.toml";
 
@@ -1998,13 +2050,13 @@ fn drop_chat(layer: &mut Layer) {
         Severity::Warning,
         Some("chat".into()),
         offset,
-        PROJECT_CHAT.into(),
+        project_warning(PROJECT_CHAT),
     );
     layer.diagnostics.push(warning);
 }
 
 /// The warning for each `terminal.shell` and `terminal.shell_args` a project
-/// file sets.
+/// file sets, in en-US.
 pub const PROJECT_TERMINAL_SHELL: &str = "terminal.shell and terminal.shell_args in project files are ignored: a folder can't choose the program its terminal runs";
 
 /// Drops a project layer's `terminal.shell` and `terminal.shell_args`, with a
@@ -2024,15 +2076,16 @@ fn drop_terminal_shell(layer: &mut Layer) {
         });
         let warning = layer.diagnostic_at(
             Severity::Warning,
-            Some(format!("terminal.{key}")),
+            Some(["terminal", key].join(".")),
             offset,
-            PROJECT_TERMINAL_SHELL.into(),
+            project_warning(PROJECT_TERMINAL_SHELL),
         );
         layer.diagnostics.push(warning);
     }
 }
 
-/// The warning for each `vim.shell` and `vim.remap` a project file sets.
+/// The warning for each `vim.shell` and `vim.remap` a project file sets, in
+/// en-US.
 pub const PROJECT_VIM_USER_ONLY: &str = "vim.shell and vim.remap in project files are ignored: a folder can't choose the program ! runs or type keys as you";
 
 /// Drops a project layer's `vim.shell` and `vim.remap`, with a
@@ -2052,15 +2105,15 @@ fn drop_vim_user_only(layer: &mut Layer) {
         });
         let warning = layer.diagnostic_at(
             Severity::Warning,
-            Some(format!("vim.{key}")),
+            Some(["vim", key].join(".")),
             offset,
-            PROJECT_VIM_USER_ONLY.into(),
+            project_warning(PROJECT_VIM_USER_ONLY),
         );
         layer.diagnostics.push(warning);
     }
 }
 
-/// The warning for a `workbench.icon_theme` a project file sets.
+/// The warning for a `workbench.icon_theme` a project file sets, in en-US.
 pub const PROJECT_ICON_THEME: &str =
     "workbench.icon_theme in project files is ignored: the icons are the same in every window";
 
@@ -2089,12 +2142,12 @@ fn drop_workbench_user_only(layer: &mut Layer) {
             key_offset(document.get_ref(), "workbench", &[key.to_owned()])
         });
         let message = match key {
-            "icon_theme" => PROJECT_ICON_THEME.to_owned(),
+            "icon_theme" => project_warning(PROJECT_ICON_THEME),
             _ => project_locale_warning(),
         };
         let warning = layer.diagnostic_at(
             Severity::Warning,
-            Some(format!("workbench.{key}")),
+            Some(["workbench", key].join(".")),
             offset,
             message,
         );

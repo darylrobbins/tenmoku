@@ -210,6 +210,11 @@ fn schema_matches_golden() {
         "settings.schema.json is out of date: rerun with UPDATE_GOLDEN=1 and review the diff"
     );
     assert_eq!(golden, pretty, "settings.schema.json is pretty-printed");
+    // The Settings editor's text, which the schema's descriptions are the
+    // en-US source of, regenerates with it.
+    let ftl = crate::l10n::generate::settings_ftl(&schema)
+        .unwrap_or_else(|errors| panic!("{}", errors.join("\n")));
+    super::l10n::golden("l10n/en-US/settings.ftl", &ftl);
 
     // Each setting has its type, default and bounds.
     let editor = &schema["$defs"]["EditorSettings"]["properties"];

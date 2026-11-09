@@ -22,11 +22,13 @@
 //! were read, so a host re-reads them, without a restart, when they have.
 
 use std::{
+    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
+use kiln_l10n::{tr, verbatim};
 use serde_json::{Map, Value};
 
 use crate::{Diagnostic, Severity};
@@ -87,9 +89,74 @@ pub fn snippets_dir(config_dir: &Path) -> PathBuf {
     config_dir.join(SNIPPETS_DIR)
 }
 
-/// The file of `language`'s snippets in `dir`: `<dir>/<language>.json`.
+/// The file of `language`'s snippets in `dir`: `<dir>/<language>.json`,
+/// always a file of `dir` itself. A language's name is any string (an
+/// extension's languages name themselves), so what a file name can't
+/// hold, or would read as another directory or a hidden file, is written
+/// as `%XX`: a separator, `%`, a control character, one of `<>:"|?*`, and
+/// a first `.`. [`file_language`] reads it back.
 pub fn language_file(dir: &Path, language: &str) -> PathBuf {
-    dir.join(format!("{language}.{LANGUAGE_EXTENSION}"))
+    let mut name = String::with_capacity(language.len() + 5);
+    for (at, c) in language.char_indices() {
+        let escaped = match c {
+            '.' => at == 0,
+            '/' | '\\' | '%' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => true,
+            c => c.is_control(),
+        };
+        if escaped {
+            let mut bytes = [0; 4];
+            for byte in c.encode_utf8(&mut bytes).bytes() {
+                name.push('%');
+                name.push_str(&hex(byte));
+            }
+        } else {
+            name.push(c);
+        }
+    }
+    if name.is_empty() {
+        // An empty name can't be told from `.json`, a hidden file.
+        name.push_str("%00");
+    }
+    name.push('.');
+    name.push_str(LANGUAGE_EXTENSION);
+    dir.join(name)
+}
+
+/// `byte` as two uppercase hex digits.
+fn hex(byte: u8) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    [
+        DIGITS[usize::from(byte >> 4)],
+        DIGITS[usize::from(byte & 15)],
+    ]
+    .iter()
+    .map(|&digit| char::from(digit))
+    .collect()
+}
+
+/// `stem` with each `%XX` [`language_file`] writes decoded; `None` if that
+/// isn't UTF-8.
+fn unescape(stem: &str) -> Option<String> {
+    let bytes = stem.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let digits = bytes.get(at + 1..at + 3).and_then(|digits| {
+            let digits = std::str::from_utf8(digits).ok()?;
+            u8::from_str_radix(digits, 16).ok()
+        });
+        match (bytes[at], digits) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                at += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// What kind of snippet file `path` is, by its name: `Some(Some(language))`
@@ -104,7 +171,10 @@ pub fn file_language(path: &Path) -> Option<Option<String>> {
         return None;
     }
     let stem = path.file_stem()?.to_str()?;
-    (!stem.is_empty() && !stem.starts_with('.')).then(|| Some(stem.to_owned()))
+    if stem.is_empty() || stem.starts_with('.') {
+        return None;
+    }
+    Some(Some(unescape(stem)?))
 }
 
 /// The snippets in `text`, the file at `path`, scoped by its name
@@ -132,7 +202,7 @@ pub fn parse_snippet_file(
                 key: None,
                 line: 1,
                 column: 1,
-                message: "a snippet file is a JSON object of snippets by name".to_owned(),
+                message: tr!("config-snippets-not-object").to_string(),
             });
             return out;
         }
@@ -143,34 +213,54 @@ pub fn parse_snippet_file(
                 key: None,
                 line: error.line().max(1),
                 column: error.column().max(1),
-                message: format!("not valid JSON: {error}"),
+                message: tr!("config-snippets-not-json", error = error.to_string()).to_string(),
             });
             return out;
         }
     };
+    // Where each key is first written, which orders the snippets as the
+    // file does (the map may not), and last, which is the entry that
+    // counts, as JSON's last duplicate wins.
+    let mut written: HashMap<&str, (usize, usize)> = HashMap::new();
     let keys = top_level_keys(&json);
-    let mut names: Vec<&String> = top.keys().collect();
-    // In the file's order, which the map may not keep.
-    names.sort_by_key(|name| keys.iter().position(|(key, _)| key == *name));
-    for name in names {
+    for (index, (key, at)) in keys.iter().enumerate() {
+        let (_, last) = written.entry(key.as_str()).or_insert((index, *at));
+        *last = *at;
+    }
+    let mut names: Vec<(&String, Option<(usize, usize)>)> = (top.keys())
+        .map(|name| (name, written.get(name.as_str()).copied()))
+        .collect();
+    names.sort_by_key(|(_, written)| written.map(|(index, _)| index));
+    let mut dropped: Vec<(usize, Diagnostic)> = Vec::new();
+    for (name, written) in names {
         let entry = &top[name];
-        let at = (keys.iter().rev())
-            .find(|(key, _)| key == name)
-            .map_or(0, |&(_, at)| at);
         match snippet(name, entry, file_language.as_deref(), path, body_error) {
             Ok(snippet) => out.snippets.push(snippet),
-            Err(message) => {
-                let (line, column) = line_column(&json, at);
-                out.diagnostics.push(Diagnostic {
-                    severity: Severity::Warning,
-                    file: path.to_owned(),
-                    key: Some(name.clone()),
-                    line,
-                    column,
-                    message: format!("snippet {name:?} is dropped: {message}"),
-                });
+            Err(problem) => {
+                let quoted = format!("{name:?}");
+                let message = tr!("config-snippet-dropped", name = quoted, problem = problem);
+                let at = written.map_or(0, |(_, at)| at);
+                dropped.push((
+                    at,
+                    Diagnostic {
+                        severity: Severity::Warning,
+                        file: path.to_owned(),
+                        key: Some(name.clone()),
+                        line: 1,
+                        column: 1,
+                        message: message.to_string(),
+                    },
+                ));
             }
         }
+    }
+    let offsets: Vec<usize> = dropped.iter().map(|(at, _)| *at).collect();
+    for ((_, mut diagnostic), (line, column)) in
+        dropped.into_iter().zip(line_columns(&json, &offsets))
+    {
+        diagnostic.line = line;
+        diagnostic.column = column;
+        out.diagnostics.push(diagnostic);
     }
     out
 }
@@ -185,36 +275,38 @@ fn snippet(
     body_error: &dyn Fn(&str) -> Option<String>,
 ) -> Result<UserSnippet, String> {
     let Value::Object(entry) = entry else {
-        return Err("it isn't an object".to_owned());
+        return Err(tr!("config-snippet-not-object").to_string());
     };
     let prefixes = match entry.get("prefix") {
         None | Some(Value::Null) => Vec::new(),
-        Some(prefix) => lines(prefix).ok_or("its prefix isn't a string or a list of strings")?,
+        Some(prefix) => {
+            lines(prefix).ok_or_else(|| tr!("config-snippet-prefix-not-text").to_string())?
+        }
     };
     let prefixes: Vec<String> = (prefixes.into_iter())
         .filter(|prefix| !prefix.trim().is_empty())
         .collect();
     if prefixes.is_empty() {
-        return Err("it has no prefix".to_owned());
+        return Err(tr!("config-snippet-no-prefix").to_string());
     }
     let body = match entry.get("body") {
-        None | Some(Value::Null) => return Err("it has no body".to_owned()),
+        None | Some(Value::Null) => return Err(tr!("config-snippet-no-body").to_string()),
         Some(body) => lines(body)
-            .ok_or("its body isn't a string or a list of strings")?
+            .ok_or_else(|| tr!("config-snippet-body-not-text").to_string())?
             .join("\n"),
     };
     if body.is_empty() {
-        return Err("it has no body".to_owned());
+        return Err(tr!("config-snippet-no-body").to_string());
     }
     if let Some(error) = body_error(&body) {
-        return Err(format!("its body doesn't parse: {error}"));
+        return Err(tr!("config-snippet-body-unparsed", error = error).to_string());
     }
     let description = match entry.get("description") {
         None | Some(Value::Null) => None,
         Some(Value::String(description)) => {
             Some(description.clone()).filter(|description| !description.is_empty())
         }
-        Some(_) => return Err("its description isn't a string".to_owned()),
+        Some(_) => return Err(tr!("config-snippet-description-not-text").to_string()),
     };
     let languages = match file_language {
         Some(language) => vec![language.to_owned()],
@@ -225,7 +317,7 @@ fn snippet(
                 .filter(|language| !language.is_empty())
                 .map(str::to_owned)
                 .collect(),
-            Some(_) => return Err("its scope isn't a string of languages".to_owned()),
+            Some(_) => return Err(tr!("config-snippet-scope-not-text").to_string()),
         },
     };
     Ok(UserSnippet {
@@ -268,7 +360,11 @@ pub fn load_snippets(dir: &Path, body_error: &dyn Fn(&str) -> Option<String>) ->
                 key: None,
                 line: 1,
                 column: 1,
-                message: format!("skipped: larger than {MAX_FILE_LEN} bytes"),
+                message: tr!(
+                    "config-snippets-too-large",
+                    limit = MAX_FILE_LEN.to_string()
+                )
+                .to_string(),
             });
             continue;
         }
@@ -282,7 +378,7 @@ pub fn load_snippets(dir: &Path, body_error: &dyn Fn(&str) -> Option<String>) ->
                         key: None,
                         line: 1,
                         column: 1,
-                        message: "skipped: not UTF-8".to_owned(),
+                        message: tr!("config-snippets-not-utf8").to_string(),
                     });
                     continue;
                 }
@@ -308,7 +404,7 @@ fn io_error(path: &Path, error: &io::Error) -> Diagnostic {
         key: None,
         line: 1,
         column: 1,
-        message: format!("can't read it: {error}"),
+        message: tr!("config-snippets-unreadable", error = error.to_string()).to_string(),
     }
 }
 
@@ -385,37 +481,34 @@ impl DirStamp {
 /// object with a commented example, for `language`'s file, or with `None`
 /// the global one, whose example names its languages.
 pub fn example_file(language: Option<&str>) -> String {
-    let mut lines = vec![match language {
-        Some(language) => format!("Snippets for {language}. Each has a name, and:"),
-        None => "Snippets for any language. Each has a name, and:".to_owned(),
-    }];
-    lines.extend(
-        [
-            "- prefix: what's typed to offer it in completions (one, or a list);",
-            "- body: the text it inserts (one string, or a list of lines), where",
-            "  $1, $2... are tab stops, $0 the final caret, ${1:label} a",
-            "  placeholder and ${1|one,two|} a choice;",
-            "- description: what the completion menu and Insert Snippet say.",
-        ]
-        .map(str::to_owned),
-    );
-    if language.is_none() {
-        lines.push(
-            "- scope: the languages it's offered in, by comma; every one if none.".to_owned(),
-        );
+    let mut prose = match language {
+        Some(language) => tr!("config-snippets-example-language", language = language),
+        None => tr!("config-snippets-example-global"),
     }
-    lines.extend(["For example:", "", "\"Print to console\": {"].map(str::to_owned));
+    .to_string();
+    prose.push('\n');
+    prose.push_str(&tr!("config-snippets-example-fields"));
     if language.is_none() {
-        lines.push("\t\"scope\": \"javascript,typescript\",".to_owned());
+        prose.push('\n');
+        prose.push_str(&tr!("config-snippets-example-scope"));
+    }
+    prose.push('\n');
+    prose.push_str(&tr!("config-snippets-example-intro"));
+    let prose = kiln_l10n::strip_isolates(&prose).into_owned();
+    let mut lines: Vec<String> = prose.split('\n').map(str::to_owned).collect();
+    // The example is code, as a snippet file holds it.
+    lines.extend(["", verbatim!("\"Print to console\": {")].map(str::to_owned));
+    if language.is_none() {
+        lines.push(verbatim!("\t\"scope\": \"javascript,typescript\",").to_owned());
     }
     lines.extend(
         [
-            "\t\"prefix\": \"log\",",
-            "\t\"body\": [",
-            "\t\t\"console.log('$1');\",",
+            verbatim!("\t\"prefix\": \"log\","),
+            verbatim!("\t\"body\": ["),
+            verbatim!("\t\t\"console.log('$1');\","),
             "\t\t\"$2\"",
             "\t],",
-            "\t\"description\": \"Log output to console\"",
+            verbatim!("\t\"description\": \"Log output to console\""),
             "}",
         ]
         .map(str::to_owned),
@@ -561,16 +654,31 @@ fn top_level_keys(json: &str) -> Vec<(String, usize)> {
     keys
 }
 
-/// The 1-based line and column, in chars, of byte `at` of `text`.
-fn line_column(text: &str, at: usize) -> (usize, usize) {
-    let at = (0..=at.min(text.len()))
-        .rev()
-        .find(|&ix| text.is_char_boundary(ix))
-        .unwrap_or(0);
-    let before = &text[..at];
-    let line = before.matches('\n').count() + 1;
-    let line_start = before.rfind('\n').map_or(0, |ix| ix + 1);
-    (line, before[line_start..].chars().count() + 1)
+/// The 1-based line and column, in chars, of each byte of `offsets` in
+/// `text`, in one pass over it however many there are.
+fn line_columns(text: &str, offsets: &[usize]) -> Vec<(usize, usize)> {
+    let mut order: Vec<usize> = (0..offsets.len()).collect();
+    order.sort_by_key(|&index| offsets[index]);
+    let mut out = vec![(1, 1); offsets.len()];
+    let (mut line, mut column) = (1, 1);
+    let mut chars = text.char_indices().peekable();
+    for index in order {
+        let at = offsets[index].min(text.len());
+        while let Some(&(ix, c)) = chars.peek() {
+            if ix >= at {
+                break;
+            }
+            if c == '\n' {
+                line += 1;
+                column = 1;
+            } else {
+                column += 1;
+            }
+            chars.next();
+        }
+        out[index] = (line, column);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -594,6 +702,101 @@ mod tests {
         let keys = top_level_keys(json);
         let names: Vec<_> = keys.iter().map(|(key, _)| key.as_str()).collect();
         assert_eq!(names, ["one", "t\"wo"]);
-        assert_eq!(line_column(json, keys[1].1), (3, 3));
+        assert_eq!(line_columns(json, &[keys[1].1, 0]), [(3, 3), (1, 1)]);
+    }
+
+    #[test]
+    fn a_large_file_keeps_its_order_and_locations() {
+        // Tens of thousands of snippets, one invalid in every ten, on one
+        // line and on a line each: linear, where scanning the keys for each
+        // name and the text for each problem was quadratic.
+        let count = 40_000;
+        let entry = |i: usize| match i % 10 {
+            0 => format!("\"s{i}\": {{\"prefix\": \"p{i}\"}}"),
+            _ => format!("\"s{i}\": {{\"prefix\": \"p{i}\", \"body\": \"b\"}}"),
+        };
+        let entries: Vec<String> = (0..count).rev().map(entry).collect();
+        for separator in [", ", ",\n"] {
+            let text = format!("{{{}}}", entries.join(separator));
+            let parsed = parse_snippet_file(Path::new("big.code-snippets"), &text, &|_| None);
+            assert_eq!(parsed.snippets.len(), count - count / 10);
+            assert_eq!(parsed.diagnostics.len(), count / 10);
+            let names: Vec<&str> = parsed.snippets.iter().map(|s| s.name.as_str()).collect();
+            let expected: Vec<String> = (0..count)
+                .rev()
+                .filter(|i| i % 10 != 0)
+                .map(|i| format!("s{i}"))
+                .collect();
+            assert!(names.iter().eq(expected.iter()), "in the file's order");
+            // Checking every location would scan the text for each.
+            for diagnostic in parsed.diagnostics.iter().step_by(199) {
+                let name = diagnostic.key.as_deref().unwrap();
+                let at = text.find(&format!("\"{name}\"")).unwrap();
+                let before = &text[..at];
+                let line = before.matches('\n').count() + 1;
+                let column = before.len() - before.rfind('\n').map_or(0, |ix| ix + 1) + 1;
+                assert_eq!(
+                    (diagnostic.line, diagnostic.column),
+                    (line, column),
+                    "{name}"
+                );
+            }
+            let first: Vec<&str> = (parsed.diagnostics.iter().take(2))
+                .map(|d| d.key.as_deref().unwrap())
+                .collect();
+            assert_eq!(
+                first,
+                [format!("s{}", count - 10), format!("s{}", count - 20)]
+            );
+        }
+    }
+
+    #[test]
+    fn a_duplicate_key_is_located_at_the_entry_that_counts() {
+        let text = "{\n\"a\": {\"prefix\": \"x\", \"body\": \"y\"},\n\"a\": {}\n}";
+        let parsed = parse_snippet_file(Path::new("d.code-snippets"), text, &|_| None);
+        assert_eq!(parsed.diagnostics.len(), 1);
+        assert_eq!(
+            (parsed.diagnostics[0].line, parsed.diagnostics[0].column),
+            (3, 1)
+        );
+    }
+
+    #[test]
+    fn language_files_stay_in_the_directory() {
+        let dir = Path::new("/config/snippets");
+        for language in [
+            "../outside",
+            "/etc/passwd",
+            "..",
+            ".",
+            ".hidden",
+            "a/b",
+            "a\\b",
+            "c:d",
+            "100%",
+            "%2E%2E",
+            "tab\there",
+        ] {
+            let file = language_file(dir, language);
+            assert_eq!(file.parent(), Some(dir), "{language:?}: {}", file.display());
+            let name = file.file_name().unwrap().to_str().unwrap();
+            assert!(!name.starts_with('.'), "{language:?}: {name}");
+            assert!(!name.contains(['/', '\\']), "{language:?}: {name}");
+            assert_eq!(
+                file_language(&file),
+                Some(Some(language.to_owned())),
+                "{language:?} reads back from {name}"
+            );
+        }
+        // An empty name is a file of its own, never `.json`.
+        let empty = language_file(dir, "");
+        assert_eq!(empty.parent(), Some(dir));
+        assert_ne!(empty.file_name().unwrap(), ".json");
+        for plain in ["rust", "c++", "objective-c", "F#", "Déjà vu"] {
+            let file = language_file(dir, plain);
+            assert_eq!(file, dir.join(format!("{plain}.json")));
+            assert_eq!(file_language(&file), Some(Some(plain.to_owned())));
+        }
     }
 }

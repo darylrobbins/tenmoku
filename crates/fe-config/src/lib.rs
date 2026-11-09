@@ -38,6 +38,7 @@ pub use kiln_core::{diagnostic, layers, trust, watch};
 pub use diagnostic::{Diagnostic, Severity};
 pub use editorconfig::{EditorConfig, EndOfLine, IndentKind, IndentSize, editorconfig_for};
 pub use harpoon::MarkList;
+pub use l10n::{KeyKind, setting_key, template::user_settings_template};
 pub use layers::{Layer, load_layer, merge, parse_layer};
 pub use paths::{
     APP_NAME, config_dir, config_dir_from, project_settings_path, user_settings_path,
@@ -61,8 +62,9 @@ pub use theme::{Color, EditorColors, EditorPalette, TerminalColors};
 pub use watch::ConfigWatcher;
 pub use write::{SettingValue, write_setting, write_setting_str, write_settings};
 
-/// The `settings.toml` a new user starts from: every key commented out at its
-/// default, so it changes nothing until edited.
+/// The `settings.toml` a new user starts from, in en-US: every key commented
+/// out at its default, so it changes nothing until edited. Files are
+/// created from [`user_settings_template`], this in the active locale.
 pub const USER_SETTINGS_TEMPLATE: &str = include_str!("../settings-template.toml");
 
 #[cfg(test)]

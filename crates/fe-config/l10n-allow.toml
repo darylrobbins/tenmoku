@@ -1,0 +1,86 @@
+# fe-config's exceptions to the literal lint (kiln_l10n::lint::literals).
+all = true
+
+[[file]]
+path = "src/themes.rs"
+reason = "The bundled themes' names, which are proper nouns and their IDs, and their file names"
+
+[[literal]]
+file = "src/first_run.rs"
+text = "outcome = \"{}\"\nversion = \"{}\"\n"
+reason = "The first-run marker file's TOML, which only the app reads"
+
+[[literal]]
+file = "src/first_run.rs"
+text = "{MARKER_FILE}.{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/harpoon.rs"
+text = ".{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/harpoon.rs"
+text = "{}.toml"
+reason = "A marks file's name"
+
+[[literal]]
+file = "src/recent.rs"
+text = ".{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/theme.rs"
+text = " Every key, in declaration order."
+reason = "A doc comment on the items the colors! macro generates"
+
+[[literal]]
+file = "src/theme.rs"
+text = " The colour at `key`, if there's such a key."
+reason = "A doc comment on the items the colors! macro generates"
+
+# The en-US text of each project-file warning stays a public constant, which
+# tests compare diagnostics with; the warnings themselves are config.ftl's
+# config-project-* messages (settings.rs `message`), and a unit test checks
+# that each constant is its message's en-US text.
+
+[[literal]]
+file = "src/settings.rs"
+text = "LSP settings in project files apply only in trusted folders"
+reason = "UNTRUSTED_LSP, the en-US text of config-project-lsp-untrusted"
+
+[[literal]]
+file = "src/settings.rs"
+text = "theme settings in project files are ignored: the theme is the same in every window"
+reason = "PROJECT_THEME, the en-US text of config-project-theme-ignored"
+
+[[literal]]
+file = "src/settings.rs"
+text = "formatters in project files are ignored: a folder can't choose the program that formats its files"
+reason = "PROJECT_FORMATTERS, the en-US text of config-project-formatters-ignored"
+
+[[literal]]
+file = "src/settings.rs"
+text = "extensions settings in project files are ignored: they're your own, in every window"
+reason = "PROJECT_EXTENSIONS, the en-US text of config-project-extensions-ignored"
+
+[[literal]]
+file = "src/settings.rs"
+text = "A project's settings can't set `chat`; set it in your own settings.toml"
+reason = "PROJECT_CHAT, the en-US text of config-project-chat-ignored"
+
+[[literal]]
+file = "src/settings.rs"
+text = "terminal.shell and terminal.shell_args in project files are ignored: a folder can't choose the program its terminal runs"
+reason = "PROJECT_TERMINAL_SHELL, the en-US text of config-project-terminal-shell-ignored"
+
+[[literal]]
+file = "src/settings.rs"
+text = "vim.shell and vim.remap in project files are ignored: a folder can't choose the program ! runs or type keys as you"
+reason = "PROJECT_VIM_USER_ONLY, the en-US text of config-project-vim-user-only"
+
+[[literal]]
+file = "src/settings.rs"
+text = "workbench.icon_theme in project files is ignored: the icons are the same in every window"
+reason = "PROJECT_ICON_THEME, the en-US text of config-project-icon-theme-ignored"

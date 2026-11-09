@@ -1,4 +1,5 @@
 mod bracket_pair_colors_default;
+mod l10n;
 mod layers;
 mod locale;
 mod lsp;

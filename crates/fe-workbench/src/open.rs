@@ -434,7 +434,7 @@ fn initialize(path: &Path) -> io::Result<()> {
         let mut file = file;
         #[cfg(test)]
         hook(path, Stage::Write)?;
-        file.write_all(fe_config::USER_SETTINGS_TEMPLATE.as_bytes())?;
+        file.write_all(fe_config::user_settings_template().as_bytes())?;
         file.sync_all()
     })();
     // Linking fails if `path` has appeared meanwhile, which stays as is.

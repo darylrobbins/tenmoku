@@ -14,8 +14,8 @@ use kiln_core::write::{reset_settings, write_settings};
 use toml::Table;
 
 use crate::{
-    SettingEntry, SettingKind, SettingValue, Settings, SettingsModel, USER_SETTINGS_TEMPLATE,
-    layers::Layer, project_settings_path, settings_schema, user_settings_path,
+    SettingEntry, SettingKind, SettingValue, Settings, SettingsModel, layers::Layer,
+    project_settings_path, settings_schema, user_settings_path, user_settings_template,
 };
 
 /// Which settings file a change goes to.
@@ -42,7 +42,7 @@ impl fmt::Display for SettingEditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotAllowedInWorkspace => {
-                f.write_str("a project's settings can't set this; set it in your own settings.toml")
+                f.write_str(&kiln_l10n::tr!("config-edit-workspace-not-allowed"))
             }
             Self::Invalid(message) => f.write_str(message),
             Self::Io(error) => error.fmt(f),
@@ -67,7 +67,7 @@ impl From<io::Error> for SettingEditError {
 
 /// Sets `key` (`["editor", "font_size"]`) to `value` in `scope`'s settings
 /// file: the user's ([`user_settings_path`]), created from
-/// [`USER_SETTINGS_TEMPLATE`] if it's missing, or `root`'s project file
+/// [`user_settings_template`] if it's missing, or `root`'s project file
 /// ([`project_settings_path`]), created empty. Nothing is written for a
 /// value the setting doesn't take, or a key a project can't set.
 pub fn set_setting(
@@ -101,10 +101,9 @@ pub fn reset_setting(
     let (path, template) = file(scope, root)?;
     reset_settings(&path, &[key], template).map_err(|error| match error.kind() {
         // A dotted key in braces with a comment beside it, say.
-        io::ErrorKind::Unsupported => SettingEditError::Invalid(format!(
-            "{}: can't be removed without losing a comment; edit settings.toml by hand",
-            key.join(".")
-        )),
+        io::ErrorKind::Unsupported => SettingEditError::Invalid(
+            kiln_l10n::tr!("config-edit-reset-keeps-comment", key = key.join(".")).to_string(),
+        ),
         _ => SettingEditError::Io(error),
     })
 }
@@ -113,8 +112,11 @@ pub fn reset_setting(
 fn file(scope: SettingScope, root: &Path) -> io::Result<(std::path::PathBuf, &'static str)> {
     match scope {
         SettingScope::User => user_settings_path()
-            .map(|path| (path, USER_SETTINGS_TEMPLATE))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "there's no config directory")),
+            .map(|path| (path, user_settings_template()))
+            .ok_or_else(|| {
+                let message = kiln_l10n::tr!("config-edit-no-config-dir").to_string();
+                io::Error::new(io::ErrorKind::NotFound, message)
+            }),
         SettingScope::Workspace => Ok((project_settings_path(root), "")),
     }
 }
@@ -150,17 +152,22 @@ fn validate(
     value: SettingValue<'_>,
 ) -> Result<(), SettingEditError> {
     let invalid = |message: String| {
-        Err(SettingEditError::Invalid(format!(
-            "{}: {message}",
-            key.join(".")
-        )))
+        Err(SettingEditError::Invalid(
+            kiln_l10n::tr!(
+                "config-edit-invalid",
+                key = key.join("."),
+                problem = message
+            )
+            .to_string(),
+        ))
     };
     let toml_value = match value {
         SettingValue::Bool(value) => toml::Value::Boolean(value),
         SettingValue::Str(text) => toml::Value::String(text.to_owned()),
         SettingValue::Int(value) => toml::Value::Integer(value),
         SettingValue::Float(value) if !value.is_finite() => {
-            return invalid(format!("{value} isn't a number"));
+            let value = value.to_string();
+            return invalid(kiln_l10n::tr!("config-edit-not-a-number", value = value).to_string());
         }
         SettingValue::Float(value) => toml::Value::Float(value),
         SettingValue::StrList(items) => toml::Value::Array(
@@ -199,7 +206,8 @@ fn validate(
             .iter()
             .map(|variant| format!("\"{}\"", variant.value))
             .collect();
-        return invalid(format!("must be one of {}", names.join(", ")));
+        let values = names.join(", ");
+        return invalid(kiln_l10n::tr!("config-edit-not-one-of", values = values).to_string());
     }
     Ok(())
 }
