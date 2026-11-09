@@ -136,9 +136,10 @@ proptest! {
     }
 
     /// Down then Up returns to the start when the row below is long enough
-    /// to keep the column. (Tab alignment is covered by unit tests.)
+    /// to keep the column. (Tab alignment is covered by unit tests, and wide
+    /// chars and clusters, which snap, by `up_down_visible_columns`.)
     #[test]
-    fn vertical_round_trip(rows in proptest::collection::vec("[a-z é😀中]{0,12}", 2..6), row in 0usize..6, column in 0usize..14) {
+    fn vertical_round_trip(rows in proptest::collection::vec("[a-z é]{0,12}", 2..6), row in 0usize..6, column in 0usize..14) {
         let text = rows.join("\n");
         let row = row.min(rows.len() - 2);
         let width = |row: &str| row.chars().count();

@@ -1181,7 +1181,7 @@ impl EditorModel {
         let column = *goal.get_or_insert_with(|| {
             let range = display.row(row).range;
             let expanded = self.expanded_range(range.clone());
-            expanded.char_column(expanded.to_display(offset.saturating_sub(range.start)))
+            expanded.visible_column(expanded.to_display(offset.saturating_sub(range.start)))
         });
         let target = row as i64 + delta;
         if target < 0 {
@@ -1192,7 +1192,8 @@ impl EditorModel {
         }
         let target = display.row(target as u32);
         let expanded = self.expanded_range(target.range.clone());
-        let column = expanded.to_buffer(expanded.display_col_for_char_column(column), Bias::Left);
+        let column =
+            expanded.to_buffer(expanded.display_col_for_visible_column(column), Bias::Left);
         let offset = target.range.start + column;
         if !target.last && offset >= target.range.end {
             // The end of a soft-wrapped row is the start of the next one.

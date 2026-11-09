@@ -281,7 +281,7 @@ pub fn row_runs<C: Copy + PartialEq>(
             continue;
         }
         tab_column += 1;
-        let width = if is_wide(ch) { 2 } else { 1 };
+        let width = if crate::is_wide(ch) { 2 } else { 1 };
         let start = column;
         column = column.saturating_add(width);
         if ch.is_whitespace() {
@@ -306,16 +306,6 @@ pub fn row_runs<C: Copy + PartialEq>(
         }
     }
     runs
-}
-
-/// Whether VS Code's minimap draws `ch` two columns wide: its
-/// `isFullWidthCharacter` ranges (CJK, Hangul, fullwidth ASCII and
-/// symbols), or an astral char, two UTF-16 units.
-fn is_wide(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x2E80..=0xD7AF | 0xF900..=0xFAFF | 0xFF01..=0xFF5E | 0xFFE0..=0xFFE6 | 0x10000..
-    )
 }
 
 /// A display row's runs as [`RowRunsCache`] holds them.

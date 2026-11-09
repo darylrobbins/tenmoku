@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc d378fa1139fabe4c576d71bc9f6895a1a9f058f8d3a9e1de64fcb30407114fd4 # shrinks to text = "", seed = 2321261088046237626
+cc 4faf05d929d2dd105f9d9c1bce4e86091a09e10cb4b656b7715296349769c636 # shrinks to rows = ["aa é", "😀"], row = 0, column = 1

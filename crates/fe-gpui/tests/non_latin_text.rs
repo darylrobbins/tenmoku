@@ -517,16 +517,16 @@ fn cjk_soft_wrap_at_a_column_counts_the_shaped_width() {
     });
 }
 
-/// Limitation G5: Down and Up keep the caret's char column, not its x or
-/// visible column. From column 6 of an ASCII row, Down lands after the
-/// sixth CJK char, drawn about 1.67 times as far right; VS Code lands
-/// after the third (visible column 6). Down again is back at column 6.
+/// Down and Up keep the caret's visible column, a wide char counting two.
+/// From column 6 of an ASCII row, Down lands after the third CJK char
+/// (visible column 6, byte 20), as in VS Code; Down again is back at column
+/// 6 of the last row, and Up Up returns to the start.
 #[gpui::test]
-fn cjk_up_down_keep_the_char_column_not_the_x(cx: &mut TestAppContext) {
+fn cjk_up_down_keep_the_visible_column(cx: &mut TestAppContext) {
     let text = "abcdefghij\n一二三四五六七八\nabcdefghij";
     let (view, cx) = editor(text, &[6], false, cx);
     keys("down", cx);
-    assert_eq!(head(&view, cx), 11 + 6 * 3);
+    assert_eq!(head(&view, cx), 11 + 3 * 3);
     keys("down", cx);
     assert_eq!(head(&view, cx), 36 + 6);
     keys("up up", cx);
@@ -751,19 +751,19 @@ fn grapheme_vim_keys_act_on_whole_clusters(cx: &mut TestAppContext) {
     assert_eq!(text(&view, cx), "ae\u{301}bc🇨🇦d");
 }
 
-/// Limitation G6: Down keeps a char column, which can fall inside a
-/// cluster. From column 1 of `abcdef`, Down lands between `e` and its
-/// combining acute (byte 8); from column 3, two Downs land after the
-/// family's man, ZWJ and woman (byte 25). Typing there splits the cluster.
+/// Down lands only on grapheme boundaries. From column 1 of `abcdef`, Down
+/// lands after `e` and its combining acute (byte 10); from column 3, two
+/// Downs land at byte 12 and then after the family (byte 33, one cluster
+/// two columns wide), never inside a cluster.
 #[gpui::test]
-fn grapheme_up_down_can_land_inside_a_cluster(cx: &mut TestAppContext) {
+fn grapheme_up_down_land_on_cluster_boundaries(cx: &mut TestAppContext) {
     let text = "abcdef\ne\u{301}xyz\n👨\u{200d}👩\u{200d}👧xyz";
     let (view, cx) = editor(text, &[1], false, cx);
     keys("down", cx);
-    assert_eq!(head(&view, cx), 8);
+    assert_eq!(head(&view, cx), 10);
     set_caret(&view, 3, cx);
     keys("down down", cx);
-    assert_eq!(head(&view, cx), 25);
+    assert_eq!(head(&view, cx), 33);
 }
 
 // Input methods: what ime_tests.rs and the vim tests leave.

@@ -8,7 +8,7 @@
 use std::{collections::HashSet, fmt, ops::Range, sync::Arc, sync::OnceLock};
 
 use fe_buffer::{Bias, ResolvedSelection};
-use fe_display::DisplayMap;
+use fe_display::{DisplayMap, ExpandedRow};
 use fe_text::TextSource;
 use serde::Deserialize;
 use serde_json::Value;
@@ -285,14 +285,15 @@ impl ViewerModel {
         offset - scan.len
     }
 
-    /// Moves `delta` display rows, keeping the goal column. A read-only map
-    /// never soft wraps, so every display row ends its row.
+    /// Moves `delta` display rows, keeping the goal visible column. A
+    /// read-only map never soft wraps, so every display row ends its row.
     fn vertical(&self, offset: usize, delta: i64, goal: &mut Option<usize>) -> usize {
         let display = &self.display;
         let row = display.row_for_offset(offset);
         let column = *goal.get_or_insert_with(|| {
-            let start = display.row(row).range.start;
-            self.char_column(start..offset)
+            let range = display.row(row).range;
+            let expanded = self.expanded_range(range.clone());
+            expanded.visible_column(expanded.to_display(offset.saturating_sub(range.start)))
         });
         let target = row as i64 + delta;
         if target < 0 {
@@ -301,44 +302,14 @@ impl ViewerModel {
         if target >= display.row_count() as i64 {
             return self.text().len();
         }
-        self.offset_at_char_column(display.row(target as u32).range, column)
+        let range = display.row(target as u32).range;
+        let expanded = self.expanded_range(range.clone());
+        let col = expanded.to_buffer(expanded.display_col_for_visible_column(column), Bias::Left);
+        range.start + col
     }
 
-    /// The char column `range`, from a row's start, reaches: chars count one
-    /// column and tabs reach the next tab stop, as in
-    /// [`fe_display::ExpandedRow::char_column`].
-    fn char_column(&self, range: Range<usize>) -> usize {
-        let mut column = 0;
-        for chunk in self.text().chunks_in_range(range) {
-            for ch in chunk.chars() {
-                column += self.width(ch, column);
-            }
-        }
-        column
-    }
-
-    /// The offset in `row` at char `column`, before a tab the column falls
-    /// inside, or the row's end if it's shorter.
-    fn offset_at_char_column(&self, row: Range<usize>, column: usize) -> usize {
-        let (mut at, mut reached) = (row.start, 0);
-        for chunk in self.text().chunks_in_range(row.clone()) {
-            for ch in chunk.chars() {
-                reached += self.width(ch, reached);
-                if column < reached {
-                    return at;
-                }
-                at += ch.len_utf8();
-            }
-        }
-        row.end
-    }
-
-    fn width(&self, ch: char, column: usize) -> usize {
-        if ch == '\t' {
-            self.tab_size - column % self.tab_size
-        } else {
-            1
-        }
+    fn expanded_range(&self, range: Range<usize>) -> ExpandedRow {
+        ExpandedRow::new(&self.text().slice_to_string(range), self.tab_size)
     }
 }
 

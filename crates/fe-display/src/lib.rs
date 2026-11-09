@@ -18,6 +18,8 @@ pub mod minimap;
 pub mod sticky;
 mod wrap_map;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 pub use block_map::{Block, BlockMap, ScreenRow};
 pub use display_map::{
     DEFAULT_SCROLL_OFF, DisplayMap, DisplayRow, LineNumbers, WRAP_SLICE_BYTES, scroll_margin,
@@ -49,6 +51,27 @@ pub struct Monospace;
 impl CharWidth for Monospace {
     fn char_width(&mut self, _: char) -> f32 {
         1.
+    }
+}
+
+/// Whether VS Code's minimap draws `ch` two columns wide: its
+/// `isFullWidthCharacter` ranges (CJK, Hangul, fullwidth ASCII and
+/// symbols), or an astral char, two UTF-16 units. Up/down movement counts
+/// the same width.
+pub(crate) fn is_wide(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x2E80..=0xD7AF | 0xF900..=0xFAFF | 0xFF01..=0xFF5E | 0xFFE0..=0xFFE6 | 0x10000..
+    )
+}
+
+/// The visible columns a grapheme cluster takes: two if its first char is
+/// wide, else one.
+fn cluster_columns(cluster: &str) -> usize {
+    if cluster.chars().next().is_some_and(is_wide) {
+        2
+    } else {
+        1
     }
 }
 
@@ -260,6 +283,37 @@ impl ExpandedRow {
             .nth(column)
             .map_or(self.text.len(), |(ix, _)| ix)
     }
+
+    /// The visible column of a display byte offset: each grapheme cluster
+    /// before it counts two columns if its first char is wide, else one, and
+    /// an expanded tab counts its spaces. Up/down movement keeps this column.
+    pub fn visible_column(&self, display_col: usize) -> usize {
+        self.text
+            .grapheme_indices(true)
+            .take_while(|&(ix, _)| ix < display_col)
+            .map(|(_, cluster)| cluster_columns(cluster))
+            .sum()
+    }
+
+    /// The display byte offset of a visible column, always a grapheme
+    /// boundary, clamped to the row's end. A column inside a cluster snaps to
+    /// the nearer boundary, a tie to the one before.
+    pub fn display_col_for_visible_column(&self, column: usize) -> usize {
+        let mut reached = 0;
+        for (ix, cluster) in self.text.grapheme_indices(true) {
+            let width = cluster_columns(cluster);
+            if column < reached + width {
+                let after = ix + cluster.len();
+                return if column - reached <= reached + width - column {
+                    ix
+                } else {
+                    after
+                };
+            }
+            reached += width;
+        }
+        self.text.len()
+    }
 }
 
 #[cfg(test)]
@@ -288,6 +342,49 @@ mod tests {
         assert_eq!(row.char_column(row.to_display(3)), 4);
         assert_eq!(row.display_col_for_char_column(4), 5);
         assert_eq!(row.display_col_for_char_column(99), 6);
+    }
+
+    #[test]
+    fn visible_columns_count_wide_chars_two() {
+        let row = ExpandedRow::new("一二三a", 4);
+        assert_eq!(row.visible_column(6), 4);
+        assert_eq!(row.visible_column(9), 6);
+        assert_eq!(row.display_col_for_visible_column(6), 9);
+        assert_eq!(row.display_col_for_visible_column(7), 10);
+        assert_eq!(row.display_col_for_visible_column(99), row.text().len());
+    }
+
+    #[test]
+    fn visible_columns_snap_to_the_nearer_boundary_a_tie_to_the_one_before() {
+        let row = ExpandedRow::new("一二", 4);
+        // Column 1 is inside 一, equally near both sides: the one before.
+        assert_eq!(row.display_col_for_visible_column(1), 0);
+        assert_eq!(row.display_col_for_visible_column(2), 3);
+        assert_eq!(row.display_col_for_visible_column(3), 3);
+    }
+
+    #[test]
+    fn visible_columns_land_on_grapheme_boundaries() {
+        let row = ExpandedRow::new("ae\u{301}x", 4);
+        assert_eq!(row.display_col_for_visible_column(2), 4);
+        assert_eq!(row.visible_column(4), 2);
+        let row = ExpandedRow::new("a👨\u{200d}👩\u{200d}👧x", 4);
+        let family_end = 1 + "👨\u{200d}👩\u{200d}👧".len();
+        assert_eq!(row.visible_column(family_end), 3);
+        assert_eq!(row.display_col_for_visible_column(2), 1);
+        assert_eq!(row.display_col_for_visible_column(3), family_end);
+        assert_eq!(row.display_col_for_visible_column(4), family_end + 1);
+    }
+
+    #[test]
+    fn visible_columns_expand_tabs_before_a_wide_char() {
+        let row = ExpandedRow::new("a\t一b", 4);
+        assert_eq!(row.visible_column(row.to_display(2)), 4);
+        assert_eq!(row.visible_column(row.to_display(3)), 6);
+        assert_eq!(row.display_col_for_visible_column(4), row.to_display(2));
+        // Inside the tab: the tab's start.
+        let inside = row.display_col_for_visible_column(2);
+        assert_eq!(row.to_buffer(inside, Bias::Left), 1);
     }
 
     #[test]
