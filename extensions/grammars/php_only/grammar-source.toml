@@ -1,0 +1,19 @@
+# Where this extension's WebAssembly grammar comes from: the tree-sitter-php
+# crate from crates.io, at the version php/ pins, which
+# scripts/build-grammar-wasm.sh downloads, checks and compiles. Its php_only
+# grammar is PHP with no <?php tag, the code Blade's {{ }}, @php and directive
+# parameters hold; fe-syntax builds in only the php grammar, so this isn't
+# Cargo.lock's form.
+registry = "crates.io"
+crate = "tree-sitter-php"
+version = "0.24.2"
+# The .crate's SHA-256, crates.io's checksum (and Cargo.lock's).
+sha256 = "0d8c17c3ab69052c5eeaa7ff5cd972dd1bc25d1b97ee779fec391ad3b5df5592"
+# The directory holding parser.c and scanner.c, relative to the crate's root.
+src = "php_only/src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "php_only"
+# The other first-party languages the sample injects, which the parity test
+# registers under their names: the heredoc <<<SQL is sql.
+parity_needs = ["sql"]

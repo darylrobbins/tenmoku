@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_blade"
+name = "Blade syntax"
+version = "0.12.2"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "blade"
+wasm = "tree-sitter-blade.wasm"
+extensions = ["blade.php"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+block_comment = ["{{--", "--}}"]
+earlier_patterns_win = true

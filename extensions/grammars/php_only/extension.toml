@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_php_only"
+name = "PHP (untagged) syntax"
+version = "0.24.2"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+# Injection-only: PHP with no <?php tag, which Blade injects. It claims no
+# file; installing Blade installs it.
+[[contributes.grammars]]
+language = "php_only"
+wasm = "tree-sitter-php-only.wasm"
+extensions = []
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
