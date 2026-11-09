@@ -234,3 +234,6 @@ mod format_specifier;
 
 #[path = "lsp_semantic_mutable_underline.rs"]
 mod mutable_underline;
+
+#[path = "lsp_semantic_keys.rs"]
+mod keys;

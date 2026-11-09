@@ -322,7 +322,7 @@
 69:7-14 variable "buckets"
 69:15-16 operator "="
 69:17-18 constructor "{"
-70:3-6 property "api"
+70:3-6 string.special.key "api"
 70:7-8 operator "="
 70:9-15 variable "Bucket"
 70:15-16 punctuation.delimiter "."

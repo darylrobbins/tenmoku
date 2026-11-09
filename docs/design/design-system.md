@@ -79,10 +79,13 @@ for everyone.
 | Number, constant | `#f0a3c2` | `#a32f6b` | Peach bloom | |
 | Macro, attribute | `#8db1f2` | `#2457c5` | Lapis | |
 | Property | `#dccbb8` | `#3d444d` | Shino | |
-| Data-file key | `#8db1f2` | `#2457c5` | Lapis | |
+| Key | `#8db1f2` | `#2457c5` | Lapis | |
 | Variable | `#ede4d6` | `#1f2328` | ink | |
 | Punctuation | `#a89a8c` | `#596069` | Iron | |
 | Comment | `#9e9b97` | `#69727c` | Wood ash | Italic |
+
+Keys in data files and the keys written in object, struct and table literals
+are Lapis, while member access and field declarations stay Property.
 
 Brackets pair by depth in function, keyword and type colours. Mutable bindings
 get a quiet solid underline in their own colour; warnings and errors use wavy

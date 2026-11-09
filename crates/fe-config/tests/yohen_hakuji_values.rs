@@ -61,7 +61,7 @@ const ROLES: &[(&str, &[&str])] = &[
         &["syntax.function.macro", "syntax.attribute"],
     ),
     ("Property", &["syntax.property"]),
-    ("Data-file key", &["syntax.string.special.key"]),
+    ("Key", &["syntax.string.special.key"]),
     ("Variable", &["editor.foreground"]),
     ("Punctuation", &["syntax.punctuation"]),
     ("Comment", &["syntax.comment"]),

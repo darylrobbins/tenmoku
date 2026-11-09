@@ -483,7 +483,12 @@ const DEFS: &[Def] = &[
         extensions: &["rs"],
         file_names: &[],
         grammar: || tree_sitter_rust::LANGUAGE.into(),
-        highlights: || &[tree_sitter_rust::HIGHLIGHTS_QUERY],
+        highlights: || {
+            &[
+                tree_sitter_rust::HIGHLIGHTS_QUERY,
+                include_str!("../queries/rust.scm"),
+            ]
+        },
         earlier_patterns_win: false,
         injections: Some(include_str!("../queries/rust-injections.scm")),
         hidden: false,
@@ -514,6 +519,7 @@ const DEFS: &[Def] = &[
             &[
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
                 tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
+                include_str!("../queries/javascript.scm"),
             ]
         },
         earlier_patterns_win: false,
@@ -530,6 +536,7 @@ const DEFS: &[Def] = &[
             &[
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
                 tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                include_str!("../queries/javascript.scm"),
             ]
         },
         earlier_patterns_win: false,
@@ -548,6 +555,7 @@ const DEFS: &[Def] = &[
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
                 tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
                 tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                include_str!("../queries/javascript.scm"),
             ]
         },
         earlier_patterns_win: false,
@@ -617,7 +625,13 @@ const DEFS: &[Def] = &[
         extensions: &["go"],
         file_names: &[],
         grammar: || tree_sitter_go::LANGUAGE.into(),
-        highlights: || &[tree_sitter_go::HIGHLIGHTS_QUERY],
+        // Earlier patterns win here, so ours goes first.
+        highlights: || {
+            &[
+                include_str!("../queries/go.scm"),
+                tree_sitter_go::HIGHLIGHTS_QUERY,
+            ]
+        },
         earlier_patterns_win: true,
         injections: Some(include_str!("../queries/go-injections.scm")),
         hidden: false,
@@ -677,7 +691,12 @@ const DEFS: &[Def] = &[
         extensions: &["c", "h"],
         file_names: &[],
         grammar: || tree_sitter_c::LANGUAGE.into(),
-        highlights: || &[tree_sitter_c::HIGHLIGHT_QUERY],
+        highlights: || {
+            &[
+                tree_sitter_c::HIGHLIGHT_QUERY,
+                include_str!("../queries/c.scm"),
+            ]
+        },
         earlier_patterns_win: false,
         injections: Some(include_str!("../queries/c-injections.scm")),
         hidden: false,
@@ -866,7 +885,12 @@ const DEFS: &[Def] = &[
         extensions: &["lua"],
         file_names: &[],
         grammar: || tree_sitter_lua::LANGUAGE.into(),
-        highlights: || &[tree_sitter_lua::HIGHLIGHTS_QUERY],
+        highlights: || {
+            &[
+                tree_sitter_lua::HIGHLIGHTS_QUERY,
+                include_str!("../queries/lua.scm"),
+            ]
+        },
         earlier_patterns_win: false,
         injections: Some(tree_sitter_lua::INJECTIONS_QUERY),
         hidden: false,

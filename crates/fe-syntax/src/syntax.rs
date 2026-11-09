@@ -13,7 +13,7 @@ use tree_sitter::{
 };
 
 use crate::{
-    HighlightSpan, Language,
+    Highlight, HighlightSpan, Language,
     brackets::Paired,
     highlight::{Capture, Highlights, Painted, flatten, highlighted},
     injection::{self, Layers},
@@ -542,6 +542,61 @@ impl Syntax {
         }
     }
 
+    /// Whether the host language's grammar highlights exactly `range` as a
+    /// key, `string.special.key`: a key in a data file, or one written in an
+    /// object, struct or table literal. So a language server's `property`
+    /// token over it can leave the grammar's colour.
+    ///
+    /// Queries only `range`, every call, without the range cache of
+    /// [`Syntax::highlights`]: a call per token would push the visible rows
+    /// out of it. False without a full tree parsed at the current version,
+    /// and for text in an injected layer, as only the host is queried.
+    pub fn is_key(&self, range: Range<usize>) -> bool {
+        if self.failed.get() || range.is_empty() || self.parsed != Some(self.version()) {
+            return false;
+        }
+        let Some(tree) = &self.tree else {
+            return false;
+        };
+        let text = self.snapshot.text();
+        if range.end > text.len() {
+            return false;
+        }
+        let language = self.language;
+        let query = || {
+            let deadline = Instant::now().checked_add(QUERY_BUDGET);
+            let split = language.local_patterns;
+            query_captures(language, text, tree, &range, split, deadline)
+        };
+        let Ok((captures, finished)) = catch_unwind(AssertUnwindSafe(query)) else {
+            return false;
+        };
+        let is_key = |highlight: Option<Highlight>| {
+            highlight.is_some_and(|highlight| highlight.name() == "string.special.key")
+        };
+        // The winner of each byte, as `flatten` picks it: the capture starting
+        // last, then the shortest, then the highest precedence, then the
+        // first found. It must be a key capture of exactly `range` throughout.
+        let winner = |byte: usize| {
+            captures
+                .iter()
+                .enumerate()
+                .filter(|(_, capture)| capture.range.contains(&byte))
+                .max_by(|(a_ix, a), (b_ix, b)| {
+                    (a.range.start.cmp(&b.range.start))
+                        .then(b.range.end.cmp(&a.range.end))
+                        .then(a.precedence.cmp(&b.precedence))
+                        .then(b_ix.cmp(a_ix))
+                })
+                .map(|(_, capture)| capture)
+        };
+        finished
+            && range.clone().all(|byte| {
+                winner(byte)
+                    .is_some_and(|capture| capture.range == range && is_key(capture.highlight))
+            })
+    }
+
     /// Takes the injected languages that [`Syntax::highlights`] has found
     /// uncompiled since the last call, so their code showed plain. Compile
     /// each with [`crate::language_by_name`] off the UI thread, as that takes
@@ -641,13 +696,27 @@ pub(crate) fn highlight_query_finished(
     split: bool,
     deadline: Option<Instant>,
 ) -> (Vec<Painted>, bool) {
+    let (captures, finished) = query_captures(language, text, tree, &range, split, deadline);
+    (flatten(captures, range), finished)
+}
+
+/// The captures of [`highlight_query_finished`], each with its node's whole
+/// range, before they're flattened and clipped to `range`.
+fn query_captures(
+    language: &Language,
+    text: &Text,
+    tree: &Tree,
+    range: &Range<usize>,
+    split: bool,
+    deadline: Option<Instant>,
+) -> (Vec<Capture>, bool) {
     fault_point("query");
     let mut captures = Vec::new();
     // Set once the deadline passes. As in finding injections, a split tree
     // can have a root per short statement, each queried too briefly for the
     // progress callback to check the deadline, so it's checked at each root.
     let mut stopped = false;
-    for_each_query_root(tree, &range, split, |cursor, node| {
+    for_each_query_root(tree, range, split, |cursor, node| {
         if stopped || out_of_time(deadline) {
             stopped = true;
             return;
@@ -683,7 +752,7 @@ pub(crate) fn highlight_query_finished(
             language.name()
         );
     }
-    (flatten(captures, range), !stopped)
+    (captures, !stopped)
 }
 
 /// [`highlight_query_finished`]'s highlights, for tests that don't need to

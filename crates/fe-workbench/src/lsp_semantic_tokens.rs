@@ -15,7 +15,7 @@ use fe_buffer::{BufferId, Version};
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, ProviderId, Tint};
 use fe_gpui::EditorView;
 use fe_lsp::{LspError, SemanticTokens, ServerId};
-use gpui::{Context, Entity, EntityId, Task};
+use gpui::{App, Context, Entity, EntityId, Task};
 
 use crate::Workbench;
 
@@ -92,6 +92,11 @@ struct Slot {
     seen: Option<Version>,
     /// The latest answer, for a delta.
     previous: Option<SemanticTokens>,
+    /// Tokens shown with their `property` tokens unchecked for keys, as no
+    /// editor's grammar had parsed their version yet, and that version.
+    /// Shown again once one has. Kept apart from `previous`, which a retry
+    /// clears.
+    keys_unchecked: Option<(Version, SemanticTokens)>,
     task: Option<Task<()>>,
 }
 
@@ -156,6 +161,7 @@ impl Workbench {
                     server,
                     seen: None,
                     previous: None,
+                    keys_unchecked: None,
                     task: None,
                 });
             let ids: Vec<EntityId> = editors.iter().map(|e| e.entity_id()).collect();
@@ -177,6 +183,7 @@ impl Workbench {
                 slot.editors
                     .insert(editor.entity_id(), (editor.clone(), id));
             }
+            Self::check_keys(slot, cx);
             let version = editors[0].read(cx).model().snapshot().version();
             if slot.seen == Some(version) {
                 continue;
@@ -279,37 +286,96 @@ impl Workbench {
         let Some((editor, _)) = slot.editors.values().next().cloned() else {
             return;
         };
-        let mut items: Vec<Decoration> = Vec::new();
-        for token in &tokens.tokens {
-            let name = highlight_name(&token.token_type, &token.modifiers);
-            if let Some(name) = name {
-                items.push(Decoration::new(
-                    token.range.clone(),
-                    DecorationKind::Foreground(Arc::from(name)),
-                    Tint::Muted,
-                ));
-            }
-            // As VS Code underlines what rust-analyzer marks `mutable`.
-            if token.modifiers.iter().any(|m| m.as_ref() == "mutable") {
-                items.push(Decoration::new(
-                    token.range.clone(),
-                    // In the token's own colour; none maps to foreground.
-                    DecorationKind::SyntaxUnderline(Arc::from(name.unwrap_or(""))),
-                    Tint::Muted,
-                ));
-            }
-        }
-        slot.previous = Some(tokens);
         let snapshot = editor.read(cx).model().snapshot().clone();
         // An answer for an older version is dropped.
         if snapshot.version() != version {
+            slot.previous = Some(tokens);
             return;
         }
+        let (items, checked) = decorations(&tokens, &slot.editors, version, cx);
+        slot.keys_unchecked = (!checked).then(|| (version, tokens.clone()));
+        slot.previous = Some(tokens);
         slot.set.borrow_mut().apply(&snapshot, version, items);
         for (editor, _) in slot.editors.values() {
             editor.update(cx, |_, cx| cx.notify());
         }
     }
+
+    /// Shows `slot`'s tokens again if they landed before the grammar had
+    /// parsed their version and it now has, so keys leave `property`. An
+    /// edit since drops them: the answer for the new version checks keys.
+    fn check_keys(slot: &mut Slot, cx: &mut Context<Self>) {
+        let Some((version, tokens)) = &slot.keys_unchecked else {
+            return;
+        };
+        let version = *version;
+        let Some((editor, _)) = slot.editors.values().next() else {
+            return;
+        };
+        let snapshot = editor.read(cx).model().snapshot().clone();
+        if snapshot.version() != version {
+            slot.keys_unchecked = None;
+            return;
+        }
+        let (items, checked) = decorations(tokens, &slot.editors, version, cx);
+        if !checked {
+            return;
+        }
+        slot.keys_unchecked = None;
+        slot.set.borrow_mut().apply(&snapshot, version, items);
+        for (editor, _) in slot.editors.values() {
+            editor.update(cx, |_, cx| cx.notify());
+        }
+    }
+}
+
+/// The decorations of `tokens`, landed for `version` of the buffer of
+/// `editors`, and whether its `property` tokens could be checked for keys:
+/// false while no editor's grammar has parsed `version` (one behind another
+/// tab isn't drawn, so it doesn't catch up) or the language loads.
+///
+/// A server's `property` over a name the grammar paints as a key
+/// (`Book { title: … }`) leaves the key's colour; access stays `property`.
+fn decorations(
+    tokens: &SemanticTokens,
+    editors: &HashMap<EntityId, (Entity<EditorView>, ProviderId)>,
+    version: Version,
+    cx: &App,
+) -> (Vec<Decoration>, bool) {
+    let views = || editors.values().map(|(editor, _)| editor.read(cx));
+    // A file too big to parse whole, or one whose parse failed, has nothing
+    // to wait for: it has no keys.
+    let syntax = views()
+        .filter_map(EditorView::syntax)
+        .find(|syntax| syntax.version() == version && !syntax.needs_parse());
+    let plain = views().all(|view| view.syntax().is_none() && !view.is_loading_language());
+    let ready = syntax.is_some() || plain;
+    let mut checked = true;
+    let mut items: Vec<Decoration> = Vec::new();
+    for token in &tokens.tokens {
+        let name = highlight_name(&token.token_type, &token.modifiers);
+        let property = name == Some("property");
+        checked &= !property || ready;
+        let key =
+            property && ready && syntax.is_some_and(|syntax| syntax.is_key(token.range.clone()));
+        if let Some(name) = name.filter(|_| !key) {
+            items.push(Decoration::new(
+                token.range.clone(),
+                DecorationKind::Foreground(Arc::from(name)),
+                Tint::Muted,
+            ));
+        }
+        // As VS Code underlines what rust-analyzer marks `mutable`.
+        if token.modifiers.iter().any(|m| m.as_ref() == "mutable") {
+            items.push(Decoration::new(
+                token.range.clone(),
+                // In the token's own colour; none maps to foreground.
+                DecorationKind::SyntaxUnderline(Arc::from(name.unwrap_or(""))),
+                Tint::Muted,
+            ));
+        }
+    }
+    (items, checked)
 }
 
 #[cfg(test)]
