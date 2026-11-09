@@ -84,6 +84,12 @@ impl CatalogueCheck {
         self
     }
 
+    /// A path as a message shows it: `/` separators on every OS.
+    #[doc(hidden)]
+    pub fn slash_path(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
+    }
+
     /// One crate: its resources, `l10n/<locale>/*.ftl`; its non-test source,
     /// whose string literals count as uses; and the dynamic prefixes its
     /// `resources!` declares.
@@ -103,7 +109,7 @@ impl CatalogueCheck {
             match std::fs::read_to_string(&path) {
                 Ok(text) => self.sources.push(Source {
                     locale,
-                    name: format!("{crate_name}/l10n/{}", rel.display()),
+                    name: format!("{crate_name}/l10n/{}", Self::slash_path(rel)),
                     text,
                 }),
                 Err(error) => self.errors.push(format!("{}: {error}", path.display())),

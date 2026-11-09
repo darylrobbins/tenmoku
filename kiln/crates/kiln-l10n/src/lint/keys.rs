@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use fluent_syntax::ast::Entry;
 
+use super::catalogue::CatalogueCheck;
 use super::source::{crate_sources, ftl_files, key_literals};
 use crate::{FALLBACK_LOCALE, Resources, public_keys};
 
@@ -108,11 +109,8 @@ impl Keys {
         for found in ftl_files(&self.dir.join("l10n")) {
             let canonical = found.canonicalize().unwrap_or(found.clone());
             if !listed.contains(&canonical) {
-                let rel = found
-                    .strip_prefix(&self.dir)
-                    .unwrap_or(&found)
-                    .display()
-                    .to_string();
+                let rel =
+                    CatalogueCheck::slash_path(found.strip_prefix(&self.dir).unwrap_or(&found));
                 errors.push(format!("{rel} isn't listed in the crate's resources!"));
             }
         }
