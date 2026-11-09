@@ -180,13 +180,18 @@ fn a_dismissed_list_picker_does_not_open_its_row(cx: &mut TestAppContext) {
             assert_eq!(expected, before, "escape returns focus");
         }
 
+        let pre_picker = focus(cx);
         run("workbench.harpoon_toggle_list", cx);
         // Not simulate_keystrokes, which parks: the read must stay pending.
         press("enter", cx);
         dismiss(how, cx);
         draw(cx);
         assert_eq!(tabs(&workbench, cx), (vec![], None), "{how}");
-        assert_eq!(focus(cx), expected, "{how}: focus did not move");
+        assert_eq!(
+            focus(cx),
+            pre_picker,
+            "{how}: focus is the pre-picker focus"
+        );
         // Back to the start for the next case.
         cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
         draw(cx);
