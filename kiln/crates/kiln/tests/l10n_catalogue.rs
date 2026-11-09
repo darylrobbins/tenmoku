@@ -7,10 +7,13 @@
 //! keys match, Hide's title taking the app's name; and menu items show each command's label in the active
 //! locale, both where `#[kiln::command(menu = ..)]` places them and from a
 //! menu table, a command with no key showing its title. The process
-//! catalogue is global: each test here that switches it is its own process
-//! under nextest, and switches back.
+//! catalogue is global: each test here that reads or switches it holds one
+//! lock, and switches back when done.
 
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::{Mutex, MutexGuard},
+};
 
 use gpui::{
     AnyView, App, AppContext as _, Context, IntoElement, Render, TestAppContext, Window, div,
@@ -73,6 +76,7 @@ fn kiln_commands_and_command_keys_match(cx: &mut TestAppContext) {
 /// palette and in a menu table that names `kiln::app::Hide`.
 #[gpui::test]
 fn hide_is_titled_for_the_app(cx: &mut TestAppContext) {
+    let _locale = locale_guard();
     let table = kiln::menus! { "File" => [kiln::app::Hide, ProbeLabels] };
     let mut app = TestApp::open(builder().menu_bar(table), cx);
     assert_eq!(file_menu(&mut app), ["Hide L10n Catalogue", "Probe Labels"]);
@@ -128,6 +132,29 @@ fn builder() -> kiln::AppBuilder {
         .root(|_, cx: &mut App| AnyView::from(cx.new(|_| Empty)))
 }
 
+/// The process catalogue is global and `cargo test` runs these tests as
+/// threads of one process, so each one that reads or sets the locale holds
+/// this for its whole body.
+static LOCALE: Mutex<()> = Mutex::new(());
+
+/// Holds `LOCALE`, and puts the default locale back on drop, even when an
+/// assertion has failed.
+struct LocaleGuard(#[expect(dead_code, reason = "held for its drop")] MutexGuard<'static, ()>);
+
+fn locale_guard() -> LocaleGuard {
+    LocaleGuard(
+        LOCALE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    )
+}
+
+impl Drop for LocaleGuard {
+    fn drop(&mut self) {
+        set_locales(&[]);
+    }
+}
+
 fn fake_locale() {
     let fake: Vec<LanguageIdentifier> = vec!["qps-ploc".parse().unwrap()];
     set_locales(&fake);
@@ -146,10 +173,10 @@ fn file_menu(app: &mut TestApp) -> Vec<String> {
 
 #[gpui::test]
 fn placed_menu_items_show_labels(cx: &mut TestAppContext) {
+    let _locale = locale_guard();
     fake_locale();
     let mut app = TestApp::open(builder(), cx);
     let items = file_menu(&mut app);
-    set_locales(&[]);
     assert!(
         items.iter().any(|item| item == "⟦Pröbé Läbéls⟧"),
         "{items:?}"
@@ -163,10 +190,10 @@ fn placed_menu_items_show_labels(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn menu_table_items_show_labels(cx: &mut TestAppContext) {
+    let _locale = locale_guard();
     fake_locale();
     let table = kiln::menus! { "File" => [ProbeLabels, PlainProbe, kiln::window::Close] };
     let mut app = TestApp::open(builder().menu_bar(table), cx);
     let items = file_menu(&mut app);
-    set_locales(&[]);
     assert_eq!(items, ["⟦Pröbé Läbéls⟧", "Plain Probe", "⟦Clösé Wïndöw⟧"]);
 }
