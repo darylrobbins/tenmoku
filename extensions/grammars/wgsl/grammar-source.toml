@@ -1,0 +1,6 @@
+# Where this extension's WebAssembly grammar comes from: a commit of its
+# GitHub repository, which scripts/build-grammar-wasm.sh fetches and compiles.
+git = "https://github.com/szebniok/tree-sitter-wgsl"
+rev = "40259f3c77ea856841a4e0c4c807705f3e4a2b65"
+src = "src"
+grammar = "wgsl"

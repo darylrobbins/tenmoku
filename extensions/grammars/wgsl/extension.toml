@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_wgsl"
+name = "WGSL syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "wgsl"
+wasm = "tree-sitter-wgsl.wasm"
+extensions = ["wgsl"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
