@@ -1,0 +1,9 @@
+# Where this extension's WebAssembly grammar comes from: that commit of the
+# repository, fetched whole by scripts/build-grammar-wasm.sh.
+git = "https://github.com/ngalaiko/tree-sitter-go-template"
+rev = "06b2fd2ac32a7be71cdcf925eeeb868a68e2acde"
+# The directory holding parser.c.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm.
+grammar = "gotmpl"

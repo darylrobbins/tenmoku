@@ -1,0 +1,47 @@
+{{/* A page template: shows actions, pipelines and the builtins. */}}
+{{- define "header" -}}
+<header class="{{ .Class | printf "%q" }}">
+  <h1>{{ .Title | html }}</h1>
+  {{- /* trim markers */ -}}
+</header>
+{{- end -}}
+
+{{ template "header" . }}
+
+{{ $total := 0 }}
+{{ $name := "Gopher \"the\" \t Go" }}
+{{ $raw := `raw string` }}
+{{ $rune := 'x' }}
+
+{{ if and .Admin (not .Disabled) }}
+  <p>Welcome back, {{ .User.Name }}!</p>
+{{ else if eq .Role "guest" }}
+  <p>Hello, guest.</p>
+{{ else }}
+  <p>Please sign in.</p>
+{{ end }}
+
+<ul>
+{{ range $i, $item := .Items }}
+  <li class="{{ if eq $i 0 }}first{{ end }}">
+    {{ $item.Name }}: {{ printf "%.2f" $item.Price }}
+    {{ len $item.Tags }} tags, {{ index $item.Tags 0 }}
+  </li>
+{{ else }}
+  <li>No items</li>
+{{ end }}
+</ul>
+
+{{ with .Config }}
+  Debug: {{ .Debug }}, retries: {{ .Retries }}, ratio: {{ 1.5 }}, big: {{ 1e3 }}
+{{ end }}
+
+{{ block "footer" . }}
+  <footer>{{ .Year | printf "%d" }} {{ .Owner }}</footer>
+{{ end }}
+
+{{ if or .Flag true false nil }}{{ .Value.Method "arg" 42 }}{{ end }}
+{{ .Name | urlquery | js | len }}
+{{ call .Callback (index .Map "key") }}
+{{ if ne (len .Items) 0 }}{{ slice .Text 1 3 }}{{ end }}
+{{ if lt .A .B }}{{ println .A }}{{ else if ge .A .B }}{{ print .B }}{{ end }}

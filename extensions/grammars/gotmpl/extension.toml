@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_gotmpl"
+name = "Go template syntax"
+version = "0.19.5"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "gotmpl"
+wasm = "tree-sitter-gotmpl.wasm"
+extensions = ["gotmpl", "tmpl"]
+block_comment = ["{{/*", "*/}}"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
