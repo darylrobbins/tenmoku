@@ -17,8 +17,9 @@ use kiln::{Config, platform::config::batch_channel, ui::ThemeMode};
 
 use crate::grammar_install::{
     ExtensionFiles, GRANTED_HOSTS, Grammar, InstallError, Pack, fetch_from_release,
-    first_party_languages, grants, install_fetched, install_first_party, install_from_pack_dir,
-    publish, stage_extension,
+    first_party_languages, grants, injected_languages, install_fetched, install_first_party,
+    install_first_party_with, install_from_pack_dir, offers_with, publish, stage_extension,
+    write_set,
 };
 
 /// The tiny JSON grammar fe-syntax's runtime grammar tests load.
@@ -76,6 +77,34 @@ injections = \"injections.scm\"
 
 fn grammar() -> Grammar {
     fixture("jsoni", FIXTURE_TOML)
+}
+
+/// A pack of `first_party`, whose release has the fixture wasm, recorded as
+/// `size` bytes, for each of `released`.
+fn fixture_pack(
+    first_party: Vec<(&'static str, ExtensionFiles)>,
+    released: &[&str],
+    size: u64,
+) -> Pack {
+    let mut text =
+        "base_url = \"https://github.com/acme/grammars/releases/download/g1\"\n".to_owned();
+    for language in released {
+        text.push_str(&format!(
+            "[languages.{language}]\nfile = \"tree-sitter-json.wasm\"\nsize = {size}\n\
+             sha256 = \"{}\"\n",
+            sha256_hex(WASM)
+        ));
+    }
+    Pack::parse(&text)
+        .unwrap()
+        .with_first_party(first_party.leak())
+}
+
+/// The pack with just the fixture grammar, released as `size` bytes or not.
+fn jsoni_pack(released: bool, size: u64) -> Pack {
+    let files = grammar().files;
+    let released: &[&str] = if released { &["jsoni"] } else { &[] };
+    fixture_pack(vec![("jsoni", files)], released, size)
 }
 
 /// `dir`'s entries, by name; none if it's missing.
@@ -370,7 +399,8 @@ fn offline_fallback_reads_a_pack_dir() {
     fs::write(unpacked.join("tree-sitter-json.wasm"), WASM).unwrap();
 
     let extensions = state.path().join("extensions");
-    let dir = install_from_pack_dir(&grammar, &pack, &extensions).unwrap();
+    let manifest = jsoni_pack(true, WASM.len() as u64);
+    let dir = install_from_pack_dir(&manifest, "jsoni", &pack, &extensions).unwrap();
     assert_eq!(dir, extensions.join("tenmoku.grammar_jsoni"));
     assert_eq!(fs::read(dir.join("tree-sitter-json.wasm")).unwrap(), WASM);
     assert_eq!(
@@ -381,7 +411,7 @@ fn offline_fallback_reads_a_pack_dir() {
     // A wasm whose hash differs from the manifest's is refused.
     let extensions = state.path().join("elsewhere");
     fs::write(unpacked.join("tree-sitter-json.wasm"), b"another wasm").unwrap();
-    let error = install_from_pack_dir(&grammar, &pack, &extensions).unwrap_err();
+    let error = install_from_pack_dir(&manifest, "jsoni", &pack, &extensions).unwrap_err();
     assert!(matches!(
         error,
         InstallError::Fetch(GrammarFetchError::HashMismatch { expected, actual })
@@ -390,9 +420,8 @@ fn offline_fallback_reads_a_pack_dir() {
     assert_eq!(entries(&extensions), Vec::<String>::new());
 
     // One too big to be it isn't even read whole.
-    let mut oversized = grammar.clone();
-    oversized.size = 4;
-    let error = install_from_pack_dir(&oversized, &pack, &extensions).unwrap_err();
+    let oversized = jsoni_pack(true, 4);
+    let error = install_from_pack_dir(&oversized, "jsoni", &pack, &extensions).unwrap_err();
     assert!(matches!(
         error,
         InstallError::Fetch(GrammarFetchError::TooLarge { max_bytes: 4 })
@@ -402,7 +431,7 @@ fn offline_fallback_reads_a_pack_dir() {
     // Nor is a language the pack doesn't have an install.
     fs::remove_file(unpacked.join("tree-sitter-json.wasm")).unwrap();
     assert!(matches!(
-        install_from_pack_dir(&grammar, &pack, &extensions),
+        install_from_pack_dir(&manifest, "jsoni", &pack, &extensions),
         Err(InstallError::Io { .. })
     ));
     assert_eq!(entries(&extensions), Vec::<String>::new());
@@ -427,7 +456,8 @@ fn an_unreleased_grammar_is_refused_everywhere() {
     ));
     assert!(!fetched, "the fetcher isn't called");
 
-    let error = install_from_pack_dir(&grammar, state.path(), &extensions).unwrap_err();
+    let unreleased = jsoni_pack(false, 0);
+    let error = install_from_pack_dir(&unreleased, "jsoni", state.path(), &extensions).unwrap_err();
     assert!(matches!(
         error,
         InstallError::Fetch(GrammarFetchError::NotReleased)
@@ -587,7 +617,7 @@ fn a_language_with_no_entry_is_not_released() {
             format!("https://github.com/a/b/releases/download/t/{file}")
         );
         assert_eq!((grammar.size, grammar.sha256.as_str()), (0, ""));
-        let offer = (pack.catalog().into_iter())
+        let offer = (pack.catalog(&|_| false).into_iter())
             .find(|offer| offer.language == language)
             .expect("it's offered");
         assert_eq!((offer.size, offer.sha256.as_str()), (0, ""));
@@ -671,4 +701,755 @@ fn the_real_install_refuses_while_nothing_is_released() {
         block_on(fetch_from_release(&client, &unreleased)),
         Err(GrammarFetchError::NotReleased)
     );
+}
+
+/// Injection-only languages: a fixture catalog where `hostq`, which has an
+/// extension, injects `onlyq`, which has none and injects `deepq`, which has
+/// none either; `hostq` also injects `pendingq`, which has none and isn't
+/// released, and `jsoni`, which has an extension.
+mod injection_only {
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
+    };
+
+    use std::time::Instant;
+
+    use fe_workbench::GrammarOffers;
+    use gpui::VisualTestContext;
+
+    use super::*;
+    use crate::grammar_install::{Download, OfferHooks};
+
+    /// A manifest for `language`, the fixture wasm, claiming `extensions`.
+    fn manifest(language: &str, extensions: &str) -> &'static str {
+        format!(
+            "id = \"tenmoku.grammar_{language}\"\nname = \"{language} syntax\"\n\
+             version = \"1.0.0\"\nlicense = \"MIT\"\n\n[engine]\ntenmoku = \"1.0\"\n\n\
+             [[contributes.grammars]]\nlanguage = \"{language}\"\n\
+             wasm = \"tree-sitter-json.wasm\"\nextensions = {extensions}\n\
+             highlights = \"highlights.scm\"\ninjections = \"injections.scm\"\n"
+        )
+        .leak()
+    }
+
+    fn files(language: &str, extensions: &str, injections: &'static str) -> ExtensionFiles {
+        ExtensionFiles {
+            extension_toml: manifest(language, extensions),
+            highlights: "(string) @string\n",
+            injections,
+        }
+    }
+
+    const HOST_INJECTIONS: &str = "\
+; Not this one: (#set! injection.language \"jsonc\")
+((comment) @injection.content
+  (#set! injection.language \"onlyq\"))
+((string) @injection.content
+  (#set! \"injection.language\"
+    \"pendingq\"))
+((pair) @x (#set! @x injection.language \"jsoni\"))
+((pair) @x (#set! injection.language @x \"betweenq\"))
+((pair) @injection.content (#is? injection.language \"notq\"))
+((pair) @injection.content (#set! injection.language \"a\" \"b\"))
+((array) @injection.language @injection.content)
+";
+
+    /// The fixture catalog, released but for `pendingq` and whatever
+    /// `unreleased` names.
+    fn pack_without(unreleased: &[&str]) -> Pack {
+        let first_party = vec![
+            ("deepq", files("deepq", "[]", "; none\n")),
+            ("hostq", files("hostq", "[\"hostq\"]", HOST_INJECTIONS)),
+            (
+                "hostr",
+                files(
+                    "hostr",
+                    "[\"hostr\"]",
+                    "((string) @injection.content (#set! injection.language \"onlyq\" @injection.content))\n",
+                ),
+            ),
+            ("jsoni", grammar().files),
+            (
+                "onlyq",
+                files(
+                    "onlyq",
+                    "[]",
+                    "((string) @injection.content (#set! injection.language \"deepq\"))\n",
+                ),
+            ),
+            ("pendingq", files("pendingq", "[]", "; none\n")),
+        ];
+        let released: Vec<&str> = ["deepq", "hostq", "hostr", "jsoni", "onlyq"]
+            .into_iter()
+            .filter(|language| !unreleased.contains(language))
+            .collect();
+        fixture_pack(first_party, &released, WASM.len() as u64)
+    }
+
+    fn pack() -> Pack {
+        pack_without(&[])
+    }
+
+    const ALL_THREE: [&str; 3] = [
+        "tenmoku.grammar_deepq",
+        "tenmoku.grammar_hostq",
+        "tenmoku.grammar_onlyq",
+    ];
+
+    fn languages(set: &[Grammar]) -> Vec<&str> {
+        set.iter()
+            .map(|grammar| grammar.language.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_query_names_the_languages_it_sets() {
+        assert_eq!(
+            injected_languages(HOST_INJECTIONS),
+            ["onlyq", "pendingq", "jsoni", "betweenq"]
+        );
+        assert_eq!(injected_languages("; none\n"), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_language_brings_the_released_injection_only_languages_it_injects() {
+        let pack = pack();
+        let none = |_: &str| false;
+        assert_eq!(
+            languages(&pack.with_injected("hostq", &none).unwrap()),
+            ["hostq", "onlyq", "deepq"]
+        );
+        // An installed one isn't brought, but what it injects still is.
+        let onlyq = |language: &str| language == "onlyq";
+        assert_eq!(
+            languages(&pack.with_injected("hostq", &onlyq).unwrap()),
+            ["hostq", "deepq"]
+        );
+        assert_eq!(
+            languages(&pack.with_injected("jsoni", &none).unwrap()),
+            ["jsoni"]
+        );
+        // hostr names onlyq with its capture last.
+        assert_eq!(
+            languages(&pack.with_injected("hostr", &none).unwrap()),
+            ["hostr", "onlyq", "deepq"]
+        );
+    }
+
+    #[test]
+    fn an_injection_only_language_is_not_offered_and_its_size_is_its_injectors() {
+        let pack = pack();
+        let size = WASM.len() as u64;
+        let catalog = pack.catalog(&|_| false);
+        let offered: Vec<(&str, u64)> = (catalog.iter())
+            .map(|offer| (offer.language.as_str(), offer.size))
+            .collect();
+        assert_eq!(
+            offered,
+            [("hostq", 3 * size), ("hostr", 3 * size), ("jsoni", size)]
+        );
+
+        let catalog = pack.catalog(&|language| language == "deepq");
+        assert_eq!(catalog[0].size, 2 * size);
+    }
+
+    /// What a fixture fetch gives.
+    type Fetched = std::future::Ready<Result<Vec<u8>, GrammarFetchError>>;
+
+    /// The languages a fetcher was asked for.
+    type Asked = std::rc::Rc<RefCell<Vec<String>>>;
+
+    /// A fetcher of the fixture wasm, but `wrong` for `bad`, keeping the
+    /// languages it was asked for.
+    fn fetcher(
+        bad: &'static str,
+        wrong: Result<Vec<u8>, GrammarFetchError>,
+    ) -> (impl Fn(&Grammar) -> Fetched, Asked) {
+        let asked = std::rc::Rc::new(RefCell::new(Vec::new()));
+        let log = asked.clone();
+        let fetch = move |grammar: &Grammar| {
+            log.borrow_mut().push(grammar.language.clone());
+            ready(if grammar.language == bad {
+                wrong.clone()
+            } else {
+                Ok(WASM.to_vec())
+            })
+        };
+        (fetch, asked)
+    }
+
+    #[test]
+    fn install_first_party_installs_what_the_language_brings() {
+        let pack = pack();
+        let state = tempfile::tempdir().unwrap();
+        let extensions = state.path().join("extensions");
+        let (fetch, asked) = fetcher("", Ok(Vec::new()));
+
+        let dir = block_on(install_first_party_with(
+            &pack,
+            "hostq",
+            &extensions,
+            &fetch,
+        ))
+        .unwrap();
+        assert_eq!(dir, extensions.join("tenmoku.grammar_hostq"));
+        assert_eq!(entries(&extensions), ALL_THREE);
+        assert_eq!(*asked.borrow(), ["hostq", "onlyq", "deepq"]);
+        let onlyq = extensions.join("tenmoku.grammar_onlyq");
+        assert_eq!(fs::read(onlyq.join("tree-sitter-json.wasm")).unwrap(), WASM);
+        assert_eq!(
+            fs::read_to_string(onlyq.join("extension.toml")).unwrap(),
+            manifest("onlyq", "[]")
+        );
+
+        // Installed, they aren't fetched again.
+        asked.borrow_mut().clear();
+        block_on(install_first_party_with(
+            &pack,
+            "hostq",
+            &extensions,
+            &fetch,
+        ))
+        .unwrap();
+        assert_eq!(*asked.borrow(), ["hostq"]);
+        assert_eq!(entries(&extensions), ALL_THREE);
+    }
+
+    #[test]
+    fn an_unreleased_injection_only_language_is_left_out() {
+        let pack = pack_without(&["deepq"]);
+        let state = tempfile::tempdir().unwrap();
+        let (fetch, asked) = fetcher("", Ok(Vec::new()));
+        block_on(install_first_party_with(
+            &pack,
+            "hostq",
+            state.path(),
+            &fetch,
+        ))
+        .unwrap();
+        assert_eq!(*asked.borrow(), ["hostq", "onlyq"]);
+        assert_eq!(
+            entries(state.path()),
+            ["tenmoku.grammar_hostq", "tenmoku.grammar_onlyq"]
+        );
+    }
+
+    #[test]
+    fn a_failing_injection_only_language_fails_the_install_with_nothing_written() {
+        let pack = pack();
+        let state = tempfile::tempdir().unwrap();
+        let extensions = state.path().join("extensions");
+        let (fetch, _) = fetcher("deepq", Err(GrammarFetchError::Status(404)));
+        let error = block_on(install_first_party_with(
+            &pack,
+            "hostq",
+            &extensions,
+            &fetch,
+        ))
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            InstallError::Fetch(GrammarFetchError::Status(404))
+        ));
+        assert_eq!(entries(&extensions), Vec::<String>::new());
+
+        let (fetch, _) = fetcher("onlyq", Ok(b"not the wasm".to_vec()));
+        let error = block_on(install_first_party_with(
+            &pack,
+            "hostq",
+            &extensions,
+            &fetch,
+        ))
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            InstallError::Fetch(GrammarFetchError::HashMismatch { actual, .. })
+                if actual == sha256_hex(b"not the wasm")
+        ));
+        assert_eq!(entries(&extensions), Vec::<String>::new());
+
+        // The language's own extension can't go in after theirs did: they come
+        // out again.
+        let set = pack.with_injected("hostq", &|_| false).unwrap();
+        let injected: Vec<(Grammar, Vec<u8>)> = (set[1..].iter())
+            .map(|g| (g.clone(), WASM.to_vec()))
+            .collect();
+        let rename = |from: &Path, to: &Path| {
+            if to.ends_with("tenmoku.grammar_hostq") {
+                return Err(std::io::Error::other("the disk is full"));
+            }
+            fs::rename(from, to)
+        };
+        let needed = languages(&set[1..])
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let error = write_set(&set[0], WASM, &injected, &needed, &extensions, &rename).unwrap_err();
+        assert!(matches!(error, InstallError::Io { .. }), "{error}");
+        assert_eq!(entries(&extensions), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_language_pack_installs_what_the_language_brings() {
+        let pack = pack();
+        let state = tempfile::tempdir().unwrap();
+        let unpacked = state.path().join("pack");
+        for language in ["hostq", "onlyq", "deepq"] {
+            let dir = unpacked.join(format!("tenmoku.grammar_{language}"));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("tree-sitter-json.wasm"), WASM).unwrap();
+        }
+
+        // One missing from the pack fails the install.
+        let extensions = state.path().join("elsewhere");
+        let deepq = unpacked.join("tenmoku.grammar_deepq/tree-sitter-json.wasm");
+        fs::rename(&deepq, state.path().join("aside.wasm")).unwrap();
+        assert!(matches!(
+            install_from_pack_dir(&pack, "hostq", &unpacked, &extensions),
+            Err(InstallError::Io { path, .. }) if path == deepq
+        ));
+        assert_eq!(entries(&extensions), Vec::<String>::new());
+        fs::rename(state.path().join("aside.wasm"), &deepq).unwrap();
+
+        let extensions = state.path().join("extensions");
+        install_from_pack_dir(&pack, "hostq", &unpacked, &extensions).unwrap();
+        assert_eq!(entries(&extensions), ALL_THREE);
+    }
+
+    /// Hooks fetching with `fetch`, with the languages registered once
+    /// `registered` holds, keeping the offers each install republishes.
+    fn hooks(
+        fetch: impl Fn(&Grammar) -> Result<Vec<u8>, GrammarFetchError> + Send + Sync + 'static,
+        registered: Arc<AtomicBool>,
+    ) -> (OfferHooks, Rc<RefCell<Vec<GrammarOffers>>>) {
+        let republished = Rc::new(RefCell::new(Vec::new()));
+        let kept = republished.clone();
+        let hooks = OfferHooks {
+            fetch: Arc::new(move |grammar: &Grammar| -> Download {
+                Box::pin(ready(fetch(grammar)))
+            }),
+            registered: Rc::new(move |_: &str, _: &gpui::App| registered.load(Ordering::SeqCst)),
+            republish: Rc::new(move |offers: GrammarOffers, _: &mut gpui::App| {
+                kept.borrow_mut().push(offers);
+            }),
+        };
+        (hooks, republished)
+    }
+
+    fn fs_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+        fs::rename(from, to)
+    }
+
+    fn size_of(offers: &GrammarOffers, language: &str) -> u64 {
+        (offers.catalog.iter())
+            .find(|offer| offer.language == language)
+            .unwrap()
+            .size
+    }
+
+    #[gpui::test]
+    fn the_prompts_install_installs_what_the_language_brings(cx: &mut TestAppContext) {
+        let state = tempfile::tempdir().unwrap();
+        let extensions = state.path().join("extensions");
+        let size = WASM.len() as u64;
+        let registered = Arc::new(AtomicBool::new(true));
+        let (failing, _) = hooks(
+            |grammar| match grammar.language.as_str() {
+                "deepq" => Err(GrammarFetchError::Status(404)),
+                _ => Ok(WASM.to_vec()),
+            },
+            registered.clone(),
+        );
+        let failing = offers_with(Arc::new(pack()), failing, extensions.clone(), None);
+        let host = (failing.catalog.iter())
+            .find(|offer| offer.language == "hostq")
+            .unwrap();
+        assert_eq!(host.size, 3 * size);
+        let fetching = cx.update(|cx| (failing.fetch)(host, cx));
+        let failure = cx.foreground_executor().block_test(fetching).unwrap_err();
+        assert!(failure.reason.contains("404"), "{failure:?}");
+        assert_eq!(entries(&extensions), Vec::<String>::new());
+
+        let (hooks, republished) = hooks(|_| Ok(WASM.to_vec()), registered);
+        let offers = offers_with(Arc::new(pack()), hooks, extensions.clone(), None);
+        let host = (offers.catalog.iter())
+            .find(|offer| offer.language == "hostq")
+            .unwrap();
+        let fetching = cx.update(|cx| (offers.fetch)(host, cx));
+        let bundled = cx.foreground_executor().block_test(fetching).unwrap();
+        assert_eq!(
+            entries(&extensions),
+            Vec::<String>::new(),
+            "fetching writes nothing"
+        );
+        let writing = cx.update(|cx| (offers.install)(host, bundled, cx));
+        cx.foreground_executor().block_test(writing).unwrap();
+        assert_eq!(entries(&extensions), ALL_THREE);
+        assert!((offers.installed)("onlyq"));
+
+        // hostr injects onlyq too: the offers the install put in place of
+        // these no longer count it, nor what it injects.
+        assert_eq!(size_of(&offers, "hostr"), 3 * size);
+        let republished = republished.borrow();
+        assert_eq!(republished.len(), 1);
+        assert_eq!(size_of(&republished[0], "hostr"), size);
+    }
+
+    /// The loader registers each extension on its own, perhaps the language
+    /// before what it injects: the install isn't done, and the workbench
+    /// doesn't highlight its tabs, until all it injects has registered, that
+    /// it found installed too.
+    #[gpui::test]
+    fn the_prompts_install_waits_for_what_it_injects_to_register(cx: &mut TestAppContext) {
+        let state = tempfile::tempdir().unwrap();
+        let extensions = state.path().join("extensions");
+        let registered = Arc::new(AtomicBool::new(false));
+        let (hooks, _) = hooks(|_| Ok(WASM.to_vec()), registered.clone());
+        let offers = offers_with(Arc::new(pack()), hooks, extensions.clone(), None);
+        let installs = install_both(cx, &offers);
+        let mut installs = installs.into_iter().map(Box::pin).collect::<Vec<_>>();
+        // hostr's found onlyq and deepq there, written by hostq's.
+        assert_eq!(
+            entries(&extensions),
+            [
+                "tenmoku.grammar_deepq",
+                "tenmoku.grammar_hostq",
+                "tenmoku.grammar_hostr",
+                "tenmoku.grammar_onlyq"
+            ]
+        );
+        cx.executor().advance_clock(Duration::from_secs(50));
+        cx.run_until_parked();
+        for install in &mut installs {
+            assert!(install.as_mut().now_or_never().is_none(), "still waiting");
+        }
+
+        registered.store(true, Ordering::SeqCst);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        for install in &mut installs {
+            let done = install.as_mut().now_or_never().expect("done");
+            assert!(done.is_ok(), "{done:?}");
+        }
+    }
+
+    /// Installs hostq, then hostr, through the prompt's steps: their install
+    /// tasks, once each has written.
+    fn install_both(
+        cx: &mut TestAppContext,
+        offers: &GrammarOffers,
+    ) -> Vec<gpui::Task<Result<(), fe_workbench::GrammarInstallError>>> {
+        install_each(cx, offers, &["hostq", "hostr"])
+    }
+
+    /// Installs each of `languages` in turn through the prompt's steps: their
+    /// install tasks, once each has written.
+    fn install_each(
+        cx: &mut TestAppContext,
+        offers: &GrammarOffers,
+        languages: &[&str],
+    ) -> Vec<gpui::Task<Result<(), fe_workbench::GrammarInstallError>>> {
+        let mut installs = Vec::new();
+        for language in languages {
+            let host = (offers.catalog.iter())
+                .find(|offer| offer.language == *language)
+                .unwrap()
+                .clone();
+            let fetching = cx.update(|cx| (offers.fetch)(&host, cx));
+            let bundled = cx.foreground_executor().block_test(fetching).unwrap();
+            installs.push(cx.update(|cx| (offers.install)(&host, bundled, cx)));
+            cx.run_until_parked();
+        }
+        installs
+    }
+
+    /// A workbench over `root`, in a window of its own.
+    fn window(
+        cx: &mut TestAppContext,
+        root: &Path,
+    ) -> (gpui::Entity<fe_workbench::Workbench>, VisualTestContext) {
+        let launch = fe_workbench::Launch {
+            root: Some(root.to_owned()),
+            file: None,
+        };
+        let window = cx.add_window(move |window, cx| {
+            let theme = fe_gpui::EditorTheme::default_dark(cx);
+            let settings = fe_gpui::EditorSettings::default();
+            fe_workbench::Workbench::new(launch, theme, settings, window, cx)
+        });
+        let workbench = window.root(cx).unwrap();
+        (workbench, VisualTestContext::from_window(*window, cx))
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        for _ in 0..2 {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+    }
+
+    /// The editor of `path`, opened in `workbench`, once its language has
+    /// loaded, with that language's name.
+    fn open(
+        workbench: &gpui::Entity<fe_workbench::Workbench>,
+        path: &Path,
+        cx: &mut VisualTestContext,
+    ) -> (gpui::Entity<fe_gpui::EditorView>, Option<&'static str>) {
+        let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+        let path = path.to_owned();
+        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            draw(cx);
+            let editor = pane.read_with(cx, |pane, _| pane.active_editor().cloned());
+            if let Some(editor) = editor
+                && !editor.read_with(cx, |editor, _| editor.is_loading_language())
+            {
+                let language = editor.read_with(cx, |editor, _| {
+                    editor.syntax().map(|syntax| syntax.language().name())
+                });
+                return (editor, language);
+            }
+            assert!(Instant::now() < deadline, "the file didn't open");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// `["[1]"]`: the string's text is JSON too, its number at 3..4.
+    const INJECTING: &str = "[\"[1]\"]\n";
+
+    /// Whether `editor` highlights the number in [`INJECTING`]'s string,
+    /// which only the language it injects does.
+    fn highlights_injected(
+        editor: &gpui::Entity<fe_gpui::EditorView>,
+        cx: &mut VisualTestContext,
+    ) -> bool {
+        editor.read_with(cx, |editor, _| {
+            (editor.syntax()).is_some_and(|syntax| {
+                (syntax.highlights(0..INJECTING.len()).iter()).any(|span| span.range == (3..4))
+            })
+        })
+    }
+
+    /// Two languages injecting one that registers only after the deadline:
+    /// each install warns and goes on waiting, then finishes, and the tabs of
+    /// both, which opened while it hadn't registered, highlight what they
+    /// inject.
+    #[gpui::test]
+    fn tabs_highlight_what_they_inject_once_it_registers_after_the_deadline(
+        cx: &mut TestAppContext,
+    ) {
+        // The project's watcher thread wakes the event loop.
+        cx.executor().allow_parking();
+        let state = tempfile::tempdir().unwrap();
+        let extensions = state.path().join("extensions");
+        // The app, its extension loader on a directory of its own: the test
+        // registers what's installed, when it chooses, as the loader would.
+        let user = state.path().join("settings.toml");
+        fs::write(&user, "").unwrap();
+        let (_sender, batches) = batch_channel();
+        let config = Config::new("dev.fastedit.test", "fastedit")
+            .commands(crate::config::register_commands)
+            .settings_store(SettingsStore::load(Some(user), None).into_inner())
+            .theme_mode(ThemeMode::Dark)
+            .watch_with(batches);
+        let config = crate::config::with_extensions(config, state.path().join("loaded"));
+        cx.update(|cx| kiln::init(cx, config));
+        cx.run_until_parked();
+
+        let host = |language: &'static str| ExtensionFiles {
+            extension_toml: manifest(language, &format!("[\"{language}\"]")),
+            highlights: "(number) @number\n",
+            injections: "((string_content) @injection.content \
+                         (#set! injection.language \"onlya\"))\n",
+        };
+        let first_party = vec![
+            ("hosta", host("hosta")),
+            ("hostb", host("hostb")),
+            (
+                "onlya",
+                ExtensionFiles {
+                    extension_toml: manifest("onlya", "[]"),
+                    highlights: "(number) @number\n",
+                    injections: "; none\n",
+                },
+            ),
+        ];
+        let released = ["hosta", "hostb", "onlya"];
+        let pack = fixture_pack(first_party, &released, WASM.len() as u64);
+        let hooks = OfferHooks {
+            fetch: Arc::new(|_: &Grammar| -> Download { Box::pin(ready(Ok(WASM.to_vec()))) }),
+            registered: Rc::new(|language: &str, _: &gpui::App| {
+                fe_syntax::language_names().any(|name| name == language)
+            }),
+            republish: Rc::new(|_: GrammarOffers, _: &mut gpui::App| {}),
+        };
+        let offers = offers_with(Arc::new(pack), hooks, extensions.clone(), None);
+        let installs = install_each(cx, &offers, &["hosta", "hostb"]);
+        let mut installs: Vec<_> = installs.into_iter().map(Box::pin).collect();
+        let register = |language: &str, claims: Vec<String>| {
+            let dir = extensions.join(format!("tenmoku.grammar_{language}"));
+            let spec = fe_syntax::GrammarSpec {
+                language: language.to_owned(),
+                wasm: dir.join("tree-sitter-json.wasm"),
+                extensions: claims,
+                highlights: Some(dir.join("highlights.scm")),
+                injections: Some(dir.join("injections.scm")),
+                ..fe_syntax::GrammarSpec::default()
+            };
+            fe_syntax::register_language(&spec).unwrap();
+        };
+        // The loader registers the two first.
+        register("hosta", vec!["hosta".into()]);
+        register("hostb", vec!["hostb".into()]);
+
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let files = [("a.hosta", "hosta"), ("b.hostb", "hostb")];
+        for (file, _) in files {
+            fs::write(root.join(file), INJECTING).unwrap();
+        }
+        let (workbench, mut window_cx) = window(cx, &root);
+        let vcx = &mut window_cx;
+        let editors = files.map(|(file, language)| {
+            let (editor, opened) = open(&workbench, &root.join(file), vcx);
+            assert_eq!(opened, Some(language));
+            editor
+        });
+        for editor in &editors {
+            assert!(!highlights_injected(editor, vcx), "onlya isn't registered");
+        }
+
+        // Past the deadline, they go on waiting.
+        vcx.executor().advance_clock(Duration::from_secs(90));
+        draw(vcx);
+        for install in &mut installs {
+            assert!(install.as_mut().now_or_never().is_none(), "still waiting");
+        }
+
+        register("onlya", Vec::new());
+        vcx.executor().advance_clock(Duration::from_secs(2));
+        draw(vcx);
+        for install in &mut installs {
+            let done = install.as_mut().now_or_never().expect("done");
+            assert!(done.is_ok(), "{done:?}");
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        for ((file, _), editor) in files.iter().zip(&editors) {
+            // A tab parses once it's shown.
+            let (shown, _) = open(&workbench, &root.join(file), vcx);
+            assert_eq!(&shown, editor);
+            while !highlights_injected(editor, vcx) {
+                assert!(
+                    Instant::now() < deadline,
+                    "{file}: the injection never highlighted"
+                );
+                draw(vcx);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+
+    /// Two installs of languages injecting the same one: what the second
+    /// found installed, the first may have taken out again by the time it
+    /// writes, though the loader registered it meanwhile; it waits for the
+    /// first, finds that, and fails.
+    #[test]
+    fn an_install_never_relies_on_what_another_takes_back() {
+        let pack = pack();
+        let state = tempfile::tempdir().unwrap();
+        let extensions = state.path().join("extensions");
+        let set = pack.with_injected("hostq", &|_| false).unwrap();
+        let needed: Vec<String> = languages(&set[1..])
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let injected: Vec<(Grammar, Vec<u8>)> = (set[1..].iter())
+            .map(|g| (g.clone(), WASM.to_vec()))
+            .collect();
+        let hostr = pack.grammar("hostr").unwrap();
+
+        // On its own: what it needs has gone, and it didn't download it.
+        let error = write_set(&hostr, WASM, &[], &needed, &extensions, &fs_rename).unwrap_err();
+        assert!(
+            matches!(&error, InstallError::Removed(l) if l == "onlyq"),
+            "{error}"
+        );
+        assert_eq!(entries(&extensions), Vec::<String>::new());
+
+        // hostq's install has put onlyq and deepq in, and fails to put itself
+        // in, just as hostr's, which found them installed, writes.
+        let other = std::cell::RefCell::new(None);
+        let (sender, results) = mpsc::channel();
+        let failing = |from: &Path, to: &Path| {
+            if !to.ends_with("tenmoku.grammar_hostq") {
+                return fs::rename(from, to);
+            }
+            assert_eq!(
+                entries(&extensions).len(),
+                2 + 1,
+                "onlyq, deepq and staging"
+            );
+            // The loader may register onlyq now: it doesn't make onlyq stay.
+            let spec = fe_syntax::GrammarSpec {
+                language: "onlyq".into(),
+                wasm: extensions.join("tenmoku.grammar_onlyq/tree-sitter-json.wasm"),
+                ..fe_syntax::GrammarSpec::default()
+            };
+            fe_syntax::register_language(&spec).unwrap();
+            assert!(fe_syntax::language_names().any(|name| name == "onlyq"));
+            let (hostr, needed, extensions) = (hostr.clone(), needed.clone(), extensions.clone());
+            let sender = sender.clone();
+            *other.borrow_mut() = Some(std::thread::spawn(move || {
+                let written = write_set(&hostr, WASM, &[], &needed, &extensions, &fs_rename);
+                sender.send(written).unwrap();
+            }));
+            assert!(
+                results.recv_timeout(Duration::from_millis(100)).is_err(),
+                "hostr's waits for hostq's"
+            );
+            Err(std::io::Error::other("the disk is full"))
+        };
+        let error =
+            write_set(&set[0], WASM, &injected, &needed, &extensions, &failing).unwrap_err();
+        assert!(matches!(error, InstallError::Io { .. }), "{error}");
+        other.borrow_mut().take().unwrap().join().unwrap();
+        let error = results.recv().unwrap().unwrap_err();
+        assert!(
+            matches!(&error, InstallError::Removed(l) if l == "onlyq"),
+            "{error}"
+        );
+        assert_eq!(entries(&extensions), Vec::<String>::new());
+        fe_syntax::unregister_language("onlyq");
+    }
+
+    /// A link to nothing isn't installed: it's downloaded and replaced.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_is_replaced() {
+        let pack = pack();
+        let state = tempfile::tempdir().unwrap();
+        let extensions = state.path().join("extensions");
+        fs::create_dir_all(&extensions).unwrap();
+        let link = extensions.join("tenmoku.grammar_onlyq");
+        std::os::unix::fs::symlink(state.path().join("gone"), &link).unwrap();
+        let (fetch, asked) = fetcher("", Ok(Vec::new()));
+        block_on(install_first_party_with(
+            &pack,
+            "hostq",
+            &extensions,
+            &fetch,
+        ))
+        .unwrap();
+        assert_eq!(*asked.borrow(), ["hostq", "onlyq", "deepq"]);
+        assert_eq!(entries(&extensions), ALL_THREE);
+        assert!(!link.symlink_metadata().unwrap().is_symlink());
+        assert_eq!(fs::read(link.join("tree-sitter-json.wasm")).unwrap(), WASM);
+    }
 }

@@ -49,6 +49,29 @@ queries and sample. They share one module, which the build script builds once.
 tree-sitter-embedded-template is the example: ERB and EJS are two directories
 with `grammar = "embedded_template"`, differing in their injections.
 
+### Injection-only languages
+
+A language may exist only to be injected: tree-sitter-php's `php_only`, PHP
+with no `<?php` tag, which Blade injects for `{{ $x }}`. Its directory is a
+normal one, with `extensions = []` and no `file_names`, and its sample is
+named for what it is (`test/sample.php`). `wasm_parity.rs` allows that only
+when another directory's `injections.scm` sets it as `injection.language`
+with `#set!` (`(#set! injection.language "php_only")`; the key may be quoted,
+and a capture may come anywhere among its arguments), not by a capture's text, which isn't known
+until a file is parsed; otherwise nothing would ever install it.
+
+It's never offered on its own. Installing a first-party language, by the
+prompt, `install_first_party` or the language pack, also installs each
+injection-only first-party language its `injections.scm` names (and theirs in
+turn) that's released and not yet installed, under the same consent; the
+offer's size counts those still to install. If one fails, the install fails
+with its error and writes nothing. The prompt's install finishes once every
+one the language needs has registered, so its tabs highlight with them; past
+a minute it warns and keeps waiting, and once they've all registered it
+highlights the language's open tabs again. An injection-only
+language counts as installed by its directory, not by having registered. Uninstalling the language leaves them installed. A language
+injected but not installed stays plain, as any other.
+
 ### grammar-source.toml
 
 One key per line, each value a plain string (or a one-line list) with

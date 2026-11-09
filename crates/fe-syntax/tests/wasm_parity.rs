@@ -510,6 +510,95 @@ fn captures(query: &str) -> BTreeSet<&str> {
     captures
 }
 
+/// A query's tokens, for [`injected_languages`].
+#[derive(Clone, Copy, PartialEq)]
+enum Token<'a> {
+    Open,
+    Close,
+    /// A string's text, between its quotes.
+    Str(&'a str),
+    /// Anything else, such as `#set!`, `@capture` or `[`.
+    Atom(&'a str),
+}
+
+/// `query`'s tokens, outside its comments.
+fn tokens(query: &str) -> Vec<Token<'_>> {
+    let bytes = query.as_bytes();
+    let mut tokens = Vec::new();
+    let mut ix = 0;
+    while ix < bytes.len() {
+        match bytes[ix] {
+            b';' => {
+                while ix < bytes.len() && bytes[ix] != b'\n' {
+                    ix += 1;
+                }
+                continue;
+            }
+            b'(' => tokens.push(Token::Open),
+            b')' => tokens.push(Token::Close),
+            b'"' => {
+                let start = ix + 1;
+                ix = start;
+                while ix < bytes.len() && bytes[ix] != b'"' {
+                    ix += if bytes[ix] == b'\\' { 2 } else { 1 };
+                }
+                tokens.push(Token::Str(&query[start..ix.min(bytes.len())]));
+            }
+            byte if byte.is_ascii_whitespace() => {}
+            _ => {
+                let start = ix;
+                ix += 1;
+                while ix < bytes.len()
+                    && !bytes[ix].is_ascii_whitespace()
+                    && !b"();\"".contains(&bytes[ix])
+                {
+                    ix += 1;
+                }
+                tokens.push(Token::Atom(&query[start..ix]));
+                continue;
+            }
+        }
+        ix += 1;
+    }
+    tokens
+}
+
+/// The languages a query injects whatever the text, as the installer reads
+/// them (`crates/fastedit/src/grammar_install.rs`): each
+/// `(#set! injection.language "…")`, its key quoted or not, perhaps scoped to a
+/// capture named anywhere among its arguments, outside its comments. A
+/// predicate such as `#is?` sets nothing, and a language taken from a capture (`@injection.language`) isn't known until a
+/// file is parsed.
+fn injected_languages(query: &str) -> BTreeSet<&str> {
+    const KEY: &str = "injection.language";
+    let tokens = tokens(query);
+    let mut found = BTreeSet::new();
+    for (ix, token) in tokens.iter().enumerate() {
+        if *token != Token::Open {
+            continue;
+        }
+        let mut rest = tokens[ix + 1..].iter().copied();
+        if rest.next() != Some(Token::Atom("#set!")) {
+            continue;
+        }
+        // Its arguments to its `)`, but a capture, which may come anywhere.
+        let mut arguments = Vec::new();
+        let closed = loop {
+            match rest.next() {
+                Some(Token::Close) => break true,
+                Some(Token::Open) | None => break false,
+                Some(Token::Atom(capture)) if capture.starts_with('@') => {}
+                Some(argument) => arguments.push(argument),
+            }
+        };
+        if closed && let [Token::Atom(KEY) | Token::Str(KEY), Token::Str(language)] = arguments[..]
+        {
+            found.insert(language);
+        }
+    }
+    found
+}
+
 /// The files a directory has: what [`REQUIRED`] names, a licence's other
 /// texts, and its samples with their golden files; never a module.
 fn check_files(dir: &Path, native: bool, say: &mut dyn FnMut(String)) {
@@ -697,10 +786,14 @@ struct Claims {
 
 /// `extension.toml` is this directory's, with one grammar: its language, its
 /// module named after the export, and the query files the installer writes.
+/// It claims extensions, which the install offer is for, unless it claims no
+/// file at all and is `injected`, by another directory's `injections.scm`:
+/// installing that one installs it.
 fn check_manifest(
     dir: &Path,
     language: &str,
     grammar: Option<&str>,
+    injected: bool,
     say: &mut dyn FnMut(String),
 ) -> Claims {
     let mut claims = Claims::default();
@@ -760,8 +853,16 @@ fn check_manifest(
             Some(Some(list)) => into.extend(list.into_iter().map(str::to_owned)),
         }
     }
-    if claims.extensions.is_empty() {
-        say("extension.toml: its grammar has no extensions, which the install offer is for".into());
+    if claims.extensions.is_empty() && !(injected && claims.file_names.is_empty()) {
+        let mut problem =
+            "extension.toml: its grammar has no extensions, which the install offer is for"
+                .to_owned();
+        if claims.file_names.is_empty() {
+            problem.push_str(
+                ", and no other directory's injections.scm injects it, which would install it",
+            );
+        }
+        say(problem);
     }
     claims
 }
@@ -774,7 +875,9 @@ fn check_manifest(
 /// its golden file. Its `grammar-source.toml` is one form, Cargo.lock's
 /// crate, a GitHub commit or a crates.io archive, with valid values, and
 /// its `parity_needs` are other directories. Its `extension.toml` is its
-/// directory's language, with the module named after its export. No two
+/// directory's language, with the module named after its export, claiming
+/// extensions unless it claims no file and another directory's
+/// `injections.scm` sets it as `injection.language`. No two
 /// directories, nor a directory and a built-in language other than its own,
 /// are for the same file: by extension, by name, or a name with the other's
 /// extension, ignoring case. A language with no built-in has no capture in
@@ -788,6 +891,18 @@ fn problems(root: &Path) -> Vec<String> {
     let mut all_claims: Vec<(&String, Claims)> = Vec::new();
     // Each grammar export to the directories for it, with their sources.
     let mut exports: BTreeMap<String, Vec<(&String, String)>> = BTreeMap::new();
+    // Each directory's injections.scm.
+    let injections: Vec<(&String, String)> = (languages.iter())
+        .map(|language| {
+            let query = fs::read_to_string(root.join(language).join("injections.scm"));
+            (language, query.unwrap_or_default())
+        })
+        .collect();
+    let injected_by_another = |language: &str| {
+        (injections.iter()).any(|(other, query)| {
+            other.as_str() != language && injected_languages(query).contains(language)
+        })
+    };
     for language in &languages {
         let dir = root.join(language);
         let native = native_sample(language).is_some();
@@ -797,7 +912,8 @@ fn problems(root: &Path) -> Vec<String> {
         check_files(&dir, native, &mut say);
         let found = check_source(&dir, language, &languages, &mut say);
         let grammar = found.as_ref().map(|(grammar, _)| grammar.as_str());
-        let claims = check_manifest(&dir, language, grammar, &mut say);
+        let injected = injected_by_another(language);
+        let claims = check_manifest(&dir, language, grammar, injected, &mut say);
         if let Some((grammar, source)) = found {
             exports.entry(grammar).or_default().push((language, source));
         }
@@ -1150,6 +1266,68 @@ fn another_directorys_file_name_is_a_problem() {
     )
     .unwrap();
     root.assert_problem("yylang and zzlang are each for buildfile");
+}
+
+/// A directory claiming no file is one another directory's injections.scm
+/// injects, which installing that one installs; else it's never installed.
+#[test]
+fn only_an_injected_language_may_claim_no_extension() {
+    let root = Root::new("injected");
+    let zz = root.add("zzlang", GIT_SOURCE);
+    let yy = root.add("yylang", CRATES_IO_SOURCE);
+    edit(
+        &yy.join("extension.toml"),
+        "extensions = [\"yylang\"]",
+        "extensions = []",
+    );
+    let not_injected = "has no extensions, which the install offer is for, and no other \
+                        directory's injections.scm injects it";
+    root.assert_problem(not_injected);
+
+    // Its own injections don't count, nor a capture's, nor a comment.
+    fs::write(
+        yy.join("injections.scm"),
+        "((string) @injection.content (#set! injection.language \"yylang\"))\n",
+    )
+    .unwrap();
+    fs::write(
+        zz.join("injections.scm"),
+        "; (#set! injection.language \"yylang\")\n\
+         ((string) @injection.language @injection.content)\n\
+         ((string) @injection.content (#is? injection.language \"yylang\"))\n\
+         ((string) @injection.content (#set! injection.language \"yylang\" \"x\"))\n",
+    )
+    .unwrap();
+    root.assert_problem(not_injected);
+
+    for set in [
+        "(#set! injection.language\n    \"yylang\")",
+        "(#set! \"injection.language\" \"yylang\")",
+        "(#set! @injection.content injection.language \"yylang\")",
+        "(#set! injection.language @injection.content \"yylang\")",
+        "(#set! injection.language \"yylang\" @injection.content)",
+    ] {
+        fs::write(
+            zz.join("injections.scm"),
+            format!("((string) @injection.content\n  {set})\n"),
+        )
+        .unwrap();
+        assert_eq!(root.problems(), Vec::<String>::new(), "{set}");
+    }
+
+    // Injected, it may still not claim a file name without an extension.
+    edit(
+        &yy.join("extension.toml"),
+        "extensions = []",
+        "extensions = []\nfile_names = [\"Yyfile\"]",
+    );
+    assert_eq!(
+        root.problems(),
+        [
+            "extensions/grammars/yylang: extension.toml: its grammar has no extensions, \
+          which the install offer is for"
+        ]
+    );
 }
 
 /// A compound extension is a claim of its own: `blade.rs` isn't the built-in
