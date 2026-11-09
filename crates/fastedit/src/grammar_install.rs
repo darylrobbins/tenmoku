@@ -14,12 +14,12 @@
 //! ([`install_first_party_with`]) or a language pack ([`install_from_pack_dir`]),
 //! and is checked against the manifest before anything is written.
 //!
-//! A first-party language with no extensions is injection-only: another
-//! language's `injections.scm` names it (Blade's PHP expressions are
-//! `php_only`). It's never offered on its own; installing a language that
-//! injects it, by any route, installs it too, under the same consent, if it's
-//! released and not installed yet ([`Pack::with_injected`]). The two are
-//! written together or not at all.
+//! A first-party language claiming no extension or file name is
+//! injection-only: another language's `injections.scm` names it (Blade's PHP
+//! expressions are `php_only`). It's never offered on its own; installing a
+//! language that injects it, by any route, installs it too, under the same
+//! consent, if it's released and not installed yet ([`Pack::with_injected`]).
+//! The two are written together or not at all.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -125,11 +125,12 @@ impl Pack {
         self.languages.keys().map(String::as_str)
     }
 
-    /// Each first-party language with extensions, with its size, hash, name
-    /// and extensions. Its size counts the injection-only languages installing
-    /// it would bring, those for which `installed` is false. An injection-only
-    /// language is left out, as is one whose extension manifest doesn't say,
-    /// which a test rules out.
+    /// Each first-party language claiming extensions or file names, with its
+    /// size, hash, name, extensions and file names. Its size counts the
+    /// injection-only languages installing it would bring, those for which
+    /// `installed` is false. An injection-only language, claiming neither, is
+    /// left out, as is one whose extension manifest doesn't say, which a test
+    /// rules out.
     pub(crate) fn catalog(&self, installed: &dyn Fn(&str) -> bool) -> Vec<GrammarOffer> {
         (self.first_party.iter())
             .filter_map(|(language, files)| {
@@ -146,7 +147,7 @@ impl Pack {
                         return None;
                     }
                 };
-                if grammar.extensions.is_empty() {
+                if grammar.is_injection_only() {
                     return None;
                 }
                 let entry = self.languages.get(*language).cloned().unwrap_or_default();
@@ -154,6 +155,7 @@ impl Pack {
                     language: (*language).to_owned(),
                     name: grammar.name,
                     extensions: grammar.extensions,
+                    file_names: grammar.file_names,
                     size: entry.size + brought[1..].iter().map(|g| g.size).sum::<u64>(),
                     sha256: entry.sha256,
                 })
@@ -182,7 +184,7 @@ impl Pack {
                     continue;
                 };
                 let offered = offer_grammar(injected, &files).map_err(InstallError::Manifest)?;
-                if !offered.extensions.is_empty() {
+                if !offered.is_injection_only() {
                     continue;
                 }
                 // An installed one may still inject one that isn't.
@@ -245,6 +247,8 @@ struct OfferGrammar {
     wasm: String,
     #[serde(default)]
     extensions: Vec<String>,
+    #[serde(default)]
+    file_names: Vec<String>,
 }
 
 /// `language`'s grammar in its extension's manifest, `files`', with the
@@ -253,6 +257,15 @@ struct Offered {
     name: String,
     wasm: String,
     extensions: Vec<String>,
+    file_names: Vec<String>,
+}
+
+impl Offered {
+    /// Whether it claims no file, by extension or by name, so that only
+    /// another language injecting it installs it.
+    fn is_injection_only(&self) -> bool {
+        self.extensions.is_empty() && self.file_names.is_empty()
+    }
 }
 
 fn offer_grammar(language: &str, files: &ExtensionFiles) -> Result<Offered, String> {
@@ -273,6 +286,7 @@ fn offer_grammar(language: &str, files: &ExtensionFiles) -> Result<Offered, Stri
             .to_owned(),
         wasm: grammar.wasm,
         extensions: grammar.extensions,
+        file_names: grammar.file_names,
     })
 }
 
@@ -1088,7 +1102,7 @@ mod offers_tests {
     use super::*;
 
     #[test]
-    fn the_catalog_lists_each_language_with_its_extensions() {
+    fn the_catalog_lists_each_language_with_its_extensions_and_file_names() {
         let catalog = Pack::embedded().unwrap().catalog(&|_| false);
         let languages: Vec<&str> = catalog
             .iter()
@@ -1096,21 +1110,21 @@ mod offers_tests {
             .collect();
         // Every directory, released or not, but the injection-only ones.
         let pack = Pack::embedded().unwrap();
-        let with_extensions = first_party_languages().filter(|language| {
+        let claiming_files = first_party_languages().filter(|language| {
             let files = pack.first_party_files(language).unwrap();
-            !offer_grammar(language, &files)
-                .unwrap()
-                .extensions
-                .is_empty()
+            !offer_grammar(language, &files).unwrap().is_injection_only()
         });
-        assert_eq!(languages, with_extensions.collect::<Vec<_>>());
+        assert_eq!(languages, claiming_files.collect::<Vec<_>>());
         let of = |language: &str| catalog.iter().find(|o| o.language == language).unwrap();
         assert_eq!(of("kotlin").name, "Kotlin");
         assert_eq!(of("kotlin").extensions, ["kt", "kts"]);
         assert_eq!(of("csharp").name, "C#");
         assert_eq!(of("cpp").name, "C++");
         assert_eq!(of("sql").name, "SQL");
-        assert!(catalog.iter().all(|offer| !offer.extensions.is_empty()));
+        assert!(
+            (catalog.iter())
+                .all(|offer| !offer.extensions.is_empty() || !offer.file_names.is_empty())
+        );
     }
 
     #[test]

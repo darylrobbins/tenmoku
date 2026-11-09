@@ -39,6 +39,7 @@ fn kotlin() -> GrammarOffer {
         language: "kotlin".into(),
         name: "Kotlin".into(),
         extensions: vec!["kt".into(), "kts".into()],
+        file_names: Vec::new(),
         size: 2_800_000,
         sha256: "ab".repeat(32),
     }
@@ -58,6 +59,7 @@ fn swift() -> GrammarOffer {
         language: "swift".into(),
         name: "Swift".into(),
         extensions: vec!["swift".into()],
+        file_names: Vec::new(),
         size: 3_500_000,
         sha256: "cd".repeat(32),
     }
@@ -709,6 +711,111 @@ fn a_compound_extension_offers_its_owner(cx: &mut TestAppContext) {
     );
     // The registered b.ktfix keeps its files from another claim of it.
     assert_eq!(offered_for(&setup, &workbench, "x.b.ktfix", cx), None);
+}
+
+/// A grammar claiming go.mod by name, and no extension.
+fn gomod() -> GrammarOffer {
+    GrammarOffer {
+        language: "gomod".into(),
+        name: "Go module".into(),
+        extensions: Vec::new(),
+        file_names: vec!["go.mod".into()],
+        ..kotlin()
+    }
+}
+
+/// A file called `name` in a directory of its own under the fixture's, so that
+/// `GO.MOD` and `go.mod` are two files on a case-insensitive disk too.
+fn file_in(setup: &Setup, dir: &str, name: &str) -> PathBuf {
+    let dir = setup.dir.path().join(dir);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    fs::write(&path, "module example.com/m\n").unwrap();
+    path
+}
+
+/// A grammar claiming only a file name is offered for a file of that whole
+/// name, ignoring case, and not for another with its extension. Never is for
+/// that name, written in lower case, and holds in the next launch.
+#[gpui::test]
+fn a_file_name_offers_its_language_and_never_is_for_the_name(
+    cx: &mut TestAppContext,
+    next_launch: &mut TestAppContext,
+) {
+    let setup = setup();
+    setup.give(vec![gomod()], nothing_installed, Fake::NeverRegisters, cx);
+    let (first, cx) = workbench(cx);
+
+    for name in ["x.mod", "mod", "go.mod.bak", "xgo.mod"] {
+        open(&first, &file_in(&setup, "others", name), cx);
+        assert_eq!(messages(&first, cx), Vec::<String>::new(), "{name}");
+    }
+
+    open(&first, &file_in(&setup, "upper", "GO.MOD"), cx);
+    let toasts = shown(&first, cx);
+    assert_eq!(toasts.len(), 1, "{toasts:?}");
+    assert_eq!(
+        toasts[0].message,
+        "Syntax highlighting for Go module isn't installed"
+    );
+    assert_eq!(
+        toasts[0].choices.as_ref().unwrap().titles(),
+        ["Install (2.8 MB)", "Not now", "Never for go.mod"]
+    );
+    answer(&first, NEVER, cx);
+
+    open(&first, &file_in(&setup, "lower", "go.mod"), cx);
+    assert_eq!(messages(&first, cx), Vec::<String>::new());
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(setup.never_file()).unwrap()).unwrap();
+    assert_eq!(written, serde_json::json!({ "never": ["go.mod"] }));
+
+    // A new launch, with only the file to go by.
+    setup.give(
+        vec![gomod()],
+        nothing_installed,
+        Fake::NeverRegisters,
+        next_launch,
+    );
+    let (fresh, next_launch) = workbench(next_launch);
+    open(&fresh, &file_in(&setup, "again", "go.mod"), next_launch);
+    assert_eq!(messages(&fresh, next_launch), Vec::<String>::new());
+}
+
+/// A whole-name claim wins over another grammar's claim of the file's
+/// extension, whichever's first in the catalog, and that one is still offered
+/// for its other files as before.
+#[gpui::test]
+fn a_file_name_claim_beats_an_extension_claim(cx: &mut TestAppContext) {
+    let setup = setup();
+    let modula = GrammarOffer {
+        language: "modula".into(),
+        name: "Modula".into(),
+        extensions: vec!["mod".into()],
+        ..kotlin()
+    };
+    setup.give(
+        vec![modula, gomod()],
+        nothing_installed,
+        Fake::NeverRegisters,
+        cx,
+    );
+    let (workbench, cx) = workbench(cx);
+    let expect = |name: &str, never: &str| {
+        Some((
+            format!("Syntax highlighting for {name} isn't installed"),
+            never.to_owned(),
+        ))
+    };
+
+    assert_eq!(
+        offered_for(&setup, &workbench, "go.mod", cx),
+        expect("Go module", "Never for go.mod")
+    );
+    assert_eq!(
+        offered_for(&setup, &workbench, "x.mod", cx),
+        expect("Modula", "Never for .mod")
+    );
 }
 
 #[gpui::test]

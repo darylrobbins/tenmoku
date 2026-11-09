@@ -1,7 +1,9 @@
 //! Offers to install syntax highlighting when a file opens in a language with
 //! a first-party grammar that isn't installed: a toast with Install (size),
-//! Not now and Never for .ext. The decision record is
-//! `docs/decisions/pp118n3cn5-grammar-prompt.md`.
+//! Not now and Never for .ext (or Never for go.mod, for a grammar claiming the
+//! file by its whole name). The decision records are
+//! `docs/decisions/pp118n3cn5-grammar-prompt.md` and, for file names,
+//! `docs/decisions/qjkd44dekm-go-module-grammars.md`.
 //!
 //! The app supplies the [`GrammarOffers`] ([`set_grammar_offers`]): what can be
 //! installed and how, so this crate has no network code and no installer.
@@ -11,7 +13,8 @@
 //!   and then [`GrammarOffers::install`]. Closing the toast, or losing it any
 //!   other way, counts as Not now.
 //! - **Not now** silences a language in every window until the next launch.
-//!   **Never** is per extension, in [`PROMPT_FILE`] in the state directory,
+//!   **Never** is per extension, or per file name for a file the language
+//!   claims by its whole name, in [`PROMPT_FILE`] in the state directory,
 //!   which is read again before each offer so that another window or process's
 //!   answer counts.
 //! - **One at a time.** A language being asked about or installed isn't offered
@@ -53,7 +56,8 @@ use crate::{
     workbench::toast::{self, Toast, ToastId, ToastLayer},
 };
 
-/// The file in the state directory that holds the extensions never to offer for.
+/// The file in the state directory that holds the extensions, and file names,
+/// never to offer for.
 pub const PROMPT_FILE: &str = "grammar_prompt.json";
 
 /// The indexes of the offer's answers, Not now being the one between.
@@ -80,6 +84,9 @@ pub struct GrammarOffer {
     pub name: String,
     /// The extensions of its files, without the dot.
     pub extensions: Vec<String>,
+    /// The whole names of its files, such as `go.mod`, as its manifest gives
+    /// them: matched ignoring ASCII case, and before any extension.
+    pub file_names: Vec<String>,
     /// Its download's size in bytes.
     pub size: u64,
     /// Its download's SHA-256: empty until it's released, and never offered
@@ -135,8 +142,8 @@ struct Prompts {
     busy: HashMap<String, Busy>,
     /// The languages answered Not now, until the next launch.
     silenced: HashSet<String>,
-    /// The extensions answered Never in this session, whether or not the file
-    /// could be written.
+    /// The extensions and file names answered Never in this session, whether
+    /// or not the file could be written.
     never: HashSet<String>,
     /// Every workbench by its window, for the tabs to highlight after an
     /// install.
@@ -249,41 +256,70 @@ fn sweep(workbench: &Workbench, seen: &Seen, cx: &mut Context<Workbench>) {
     }
 }
 
-/// The catalog entry to offer for the file at `path`, and its extension in
-/// lower case, going by what the app knows of the language. What's been
-/// answered is [`ask`]'s to check.
+/// The catalog entry to offer for the file at `path`, and its key in lower
+/// case: its whole name if the entry claims that, else its extension. That
+/// key is what [`ask`], its pending list and Never go by. What the app knows
+/// of the language decides; what's been answered is [`ask`]'s to check.
 ///
-/// The entry is the one with the file's longest extension, as fe-syntax picks
-/// a language: `blade.php`'s over `php`'s for `x.blade.php`
-/// ([`fe_syntax::Language::file_has_extension`]).
+/// A file whose whole name an entry claims, ignoring ASCII case, gets that
+/// entry, as fe-syntax gives a file to a language claiming its name before
+/// one claiming its extension. Otherwise the entry is the one with the file's
+/// longest extension, as fe-syntax picks a language: `blade.php`'s over
+/// `php`'s for `x.blade.php` ([`fe_syntax::Language::file_has_extension`]).
 ///
 /// `installed` alone speaks for the entry's own language. fe-syntax says only
 /// whether another language would keep the file once it's installed, as an
 /// extension's might: not a plain `php` when the entry's is `blade.php`
-/// ([`fe_syntax::Language::extension_would_take`]).
+/// ([`fe_syntax::Language::extension_would_take`]). A file claimed by name is
+/// offered only if no language has it.
 fn offer_for<'a>(path: &Path, offers: &'a GrammarOffers) -> Option<(&'a GrammarOffer, String)> {
     let file_name = path.file_name()?.to_str()?;
-    let (offer, extension) = (offers.catalog.iter())
-        .filter(|offer| !offer.sha256.is_empty())
-        .flat_map(|offer| (offer.extensions.iter()).map(move |extension| (offer, extension)))
-        .filter(|(_, extension)| fe_syntax::Language::file_has_extension(file_name, extension))
-        // The first of the longest.
-        .min_by_key(|(_, extension)| std::cmp::Reverse(extension.len()))?;
-    let extension = extension.to_ascii_lowercase();
+    let released = || (offers.catalog.iter()).filter(|offer| !offer.sha256.is_empty());
+    let by_name = released().find(|offer| claims_file_name(offer, file_name));
+    let (offer, key) = match by_name {
+        Some(offer) => (offer, file_name.to_ascii_lowercase()),
+        None => {
+            let (offer, extension) = released()
+                .flat_map(|offer| {
+                    (offer.extensions.iter()).map(move |extension| (offer, extension))
+                })
+                .filter(|(_, extension)| {
+                    fe_syntax::Language::file_has_extension(file_name, extension)
+                })
+                // The first of the longest.
+                .min_by_key(|(_, extension)| std::cmp::Reverse(extension.len()))?;
+            (offer, extension.to_ascii_lowercase())
+        }
+    };
     if (offers.installed)(&offer.language) {
         return None;
     }
     let claimed = fe_syntax::language_name_for_path(path);
     if claimed.is_some_and(|name| name != offer.language)
-        && !fe_syntax::Language::extension_would_take(path, &extension)
+        && (by_name.is_some() || !fe_syntax::Language::extension_would_take(path, &key))
     {
         return None;
     }
-    Some((offer, extension))
+    Some((offer, key))
 }
 
-/// Starts the prompt for `offer`, as the file with `extension` opened, unless
-/// it's answered already. One under way keeps the extension for later.
+/// Whether `offer` claims files called `file_name`, ignoring ASCII case.
+fn claims_file_name(offer: &GrammarOffer, file_name: &str) -> bool {
+    (offer.file_names.iter()).any(|name| name.eq_ignore_ascii_case(file_name))
+}
+
+/// The Never choice for `offer`'s `key`: `Never for go.mod` for a file name it
+/// claims, else `Never for .kt`.
+fn never_label(offer: &GrammarOffer, key: &str) -> String {
+    match claims_file_name(offer, key) {
+        true => format!("Never for {key}"),
+        false => format!("Never for .{key}"),
+    }
+}
+
+/// Starts the prompt for `offer`, as the file with `extension` opened (its
+/// key, from [`offer_for`]: a file name the offer claims, or an extension),
+/// unless it's answered already. One under way keeps the key for later.
 fn ask(
     offer: GrammarOffer,
     extension: String,
@@ -398,7 +434,7 @@ async fn ask_toast(
         vec![
             format!("Install ({})", size_label(offer.size)),
             "Not now".to_owned(),
-            format!("Never for .{extension}"),
+            never_label(offer, extension),
         ],
         move |choice| {
             if choice == Some(NEVER)
@@ -593,7 +629,8 @@ fn size_label(bytes: u64) -> String {
 /// [`PROMPT_FILE`]'s contents.
 #[derive(Default, Deserialize, Serialize)]
 struct NeverFile {
-    /// The extensions never to offer for, in lower case and without the dot.
+    /// The extensions never to offer for, in lower case and without the dot,
+    /// and the file names, in lower case.
     #[serde(default)]
     never: BTreeSet<String>,
 }

@@ -1,0 +1,17 @@
+// The workspace for the editor and its tools.
+go 1.23.4
+
+use ./tenmoku
+
+use (
+	./tools/gen
+	./tools/lint // linters, built apart
+	"../shared"
+)
+
+replace example.com/local => ../local
+
+replace (
+	github.com/upstream/lib v1.2.0 => example.com/fork v1.2.3
+	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 => ./exp
+)

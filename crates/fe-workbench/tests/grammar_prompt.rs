@@ -44,6 +44,7 @@ fn kotlin() -> GrammarOffer {
         language: "kotlin".into(),
         name: "Kotlin".into(),
         extensions: vec!["kt".into()],
+        file_names: Vec::new(),
         size: 2_800_000,
         sha256: "ab".repeat(32),
     }

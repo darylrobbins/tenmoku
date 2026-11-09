@@ -786,9 +786,9 @@ struct Claims {
 
 /// `extension.toml` is this directory's, with one grammar: its language, its
 /// module named after the export, and the query files the installer writes.
-/// It claims extensions, which the install offer is for, unless it claims no
-/// file at all and is `injected`, by another directory's `injections.scm`:
-/// installing that one installs it.
+/// It claims extensions or file names, which the install offer is for, unless
+/// it's `injected`, by another directory's `injections.scm`: installing that
+/// one installs it.
 fn check_manifest(
     dir: &Path,
     language: &str,
@@ -853,16 +853,13 @@ fn check_manifest(
             Some(Some(list)) => into.extend(list.into_iter().map(str::to_owned)),
         }
     }
-    if claims.extensions.is_empty() && !(injected && claims.file_names.is_empty()) {
-        let mut problem =
-            "extension.toml: its grammar has no extensions, which the install offer is for"
-                .to_owned();
-        if claims.file_names.is_empty() {
-            problem.push_str(
-                ", and no other directory's injections.scm injects it, which would install it",
-            );
-        }
-        say(problem);
+    if claims.extensions.is_empty() && claims.file_names.is_empty() && !injected {
+        say(
+            "extension.toml: its grammar has no extensions or file names, which the install \
+             offer is for, and no other directory's injections.scm injects it, which would \
+             install it"
+                .to_owned(),
+        );
     }
     claims
 }
@@ -876,8 +873,8 @@ fn check_manifest(
 /// crate, a GitHub commit or a crates.io archive, with valid values, and
 /// its `parity_needs` are other directories. Its `extension.toml` is its
 /// directory's language, with the module named after its export, claiming
-/// extensions unless it claims no file and another directory's
-/// `injections.scm` sets it as `injection.language`. No two
+/// extensions or file names unless another directory's `injections.scm`
+/// sets it as `injection.language`. No two
 /// directories, nor a directory and a built-in language other than its own,
 /// are for the same file: by extension, by name, or a name with the other's
 /// extension, ignoring case. A language with no built-in has no capture in
@@ -1280,8 +1277,8 @@ fn only_an_injected_language_may_claim_no_extension() {
         "extensions = [\"yylang\"]",
         "extensions = []",
     );
-    let not_injected = "has no extensions, which the install offer is for, and no other \
-                        directory's injections.scm injects it";
+    let not_injected = "has no extensions or file names, which the install offer is for, \
+                        and no other directory's injections.scm injects it";
     root.assert_problem(not_injected);
 
     // Its own injections don't count, nor a capture's, nor a comment.
@@ -1315,18 +1312,38 @@ fn only_an_injected_language_may_claim_no_extension() {
         assert_eq!(root.problems(), Vec::<String>::new(), "{set}");
     }
 
-    // Injected, it may still not claim a file name without an extension.
+    // Injected, it may claim a file name too.
     edit(
         &yy.join("extension.toml"),
         "extensions = []",
         "extensions = []\nfile_names = [\"Yyfile\"]",
     );
-    assert_eq!(
-        root.problems(),
-        [
-            "extensions/grammars/yylang: extension.toml: its grammar has no extensions, \
-          which the install offer is for"
-        ]
+    assert_eq!(root.problems(), Vec::<String>::new());
+}
+
+/// A directory claiming file names and no extension, go.mod's, is offered
+/// when a file of that name opens, injected or not.
+#[test]
+fn a_language_may_claim_only_file_names() {
+    let root = Root::new("file-names-only");
+    root.add("zzlang", GIT_SOURCE);
+    let yy = root.add("yylang", CRATES_IO_SOURCE);
+    edit(
+        &yy.join("extension.toml"),
+        "extensions = [\"yylang\"]",
+        "file_names = [\"yy.mod\", \"yy.work.mod\"]",
+    );
+    assert_eq!(root.problems(), Vec::<String>::new());
+
+    // Claiming neither, it's never installed.
+    edit(
+        &yy.join("extension.toml"),
+        "file_names = [\"yy.mod\", \"yy.work.mod\"]",
+        "file_names = []",
+    );
+    root.assert_problem(
+        "yylang: extension.toml: its grammar has no extensions or file names, which the \
+         install offer is for, and no other directory's injections.scm injects it",
     );
 }
 

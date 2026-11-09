@@ -576,6 +576,20 @@ fn every_first_party_manifest_parses() {
     assert_eq!(manifest_problems(FIXTURE_TOML), Vec::<String>::new());
 }
 
+/// A language claiming files by name only is offered with those names, as
+/// go.mod's is: only one claiming neither is left out, as injection-only.
+#[test]
+fn the_catalog_offers_a_file_name_only_language_with_its_names() {
+    let catalog = Pack::embedded().unwrap().catalog(&|_| false);
+    let of = |language: &str| (catalog.iter()).find(|offer| offer.language == language);
+    let gomod = of("gomod").expect("gomod is offered");
+    assert_eq!(gomod.name, "Go module");
+    assert_eq!(gomod.file_names, ["go.mod"]);
+    assert_eq!(gomod.extensions, Vec::<String>::new());
+    assert_eq!(of("gosum").unwrap().file_names, ["go.sum", "go.work.sum"]);
+    assert_eq!(of("gowork").unwrap().file_names, ["go.work"]);
+}
+
 #[test]
 fn an_unknown_manifest_key_is_a_problem() {
     let in_grammar = FIXTURE_TOML.replace(

@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_gomod"
+name = "Go module syntax"
+version = "0.5.8"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "gomod"
+wasm = "tree-sitter-gomod-orchard.wasm"
+file_names = ["go.mod"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
+line_comment = "//"

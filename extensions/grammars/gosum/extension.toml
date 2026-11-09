@@ -1,0 +1,15 @@
+id = "tenmoku.grammar_gosum"
+name = "Go checksum syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "gosum"
+wasm = "tree-sitter-gosum.wasm"
+file_names = ["go.sum", "go.work.sum"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true

@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_gowork"
+name = "Go workspace syntax"
+version = "0.1.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "gowork"
+wasm = "tree-sitter-gowork.wasm"
+file_names = ["go.work"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
+line_comment = "//"
