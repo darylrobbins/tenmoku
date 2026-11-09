@@ -2,9 +2,9 @@
 //! `editor.render_whitespace` mode marks, where, and only on the rows the
 //! frame shows.
 
-use fe_buffer::Buffer;
+use fe_buffer::{Buffer, ResolvedSelection};
 use fe_editor::EditorModel;
-use gpui::{Entity, TestAppContext, VisualTestContext};
+use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use super::*;
 use crate::{EditorSettings, EditorTheme, EditorView, init};
@@ -211,4 +211,116 @@ fn wrap_and_fold(cx: &mut TestAppContext) {
     assert!(frame_end < text.len() - 100, "rows run past the frame");
     // The header row of the fold keeps its own.
     assert!(marks.iter().any(|mark| mark.offset == words.len() + 3));
+}
+
+#[test]
+fn indexes_skip_spans_anchored_at_or_before_the_char() {
+    // `a`, a tab to column 4, a space; spans (anchor in tab-expanded text,
+    // len) of 2 at the tab (col 1) and 3 at the space (col 4).
+    let found = [(1, Kind::Tab), (2, Kind::Space)];
+    let spans = [(1, 2), (4, 3)];
+    let got = display_indexes("a\t b", &found, 0, 0, 4, &spans);
+    // The tab starts past its own span; the space past both.
+    assert_eq!(got, vec![3, 6, 4 + 5, 4 + 5 + 1]);
+    // No spans: the plain expanded columns, with a start column shifting
+    // the tab stop.
+    assert_eq!(
+        display_indexes("a\t b", &found, 0, 2, 4, &[]),
+        vec![1, 2, 2, 3]
+    );
+}
+
+#[test]
+fn tab_heavy_rows_are_linear() {
+    // Two rows of tabs at the shaping limit would take 2 x 67M tab visits
+    // with a per-mark conversion.
+    let tabs = "\t".repeat(MAX_SHAPED_ROW_BYTES);
+    let found: Vec<_> = (0..tabs.len()).map(|at| (at, Kind::Tab)).collect();
+    let started = std::time::Instant::now();
+    for _ in 0..4 {
+        let got = display_indexes(&tabs, &found, 0, 0, 4, &[]);
+        assert_eq!(got.len(), found.len() * 2);
+        assert_eq!(got[got.len() - 1], tabs.len() * 4);
+    }
+    assert!(started.elapsed().as_secs() < 2, "{:?}", started.elapsed());
+}
+
+#[gpui::test]
+fn many_offscreen_selections(cx: &mut TestAppContext) {
+    // Thousands of selections above the view, the last of which ends before
+    // it; one selection holds a space in view.
+    let head: String = (0..3000).map(|n| format!("w{n} x y\n")).collect();
+    let tail = "a b c\n".repeat(60);
+    let text = format!("{head}{tail}");
+    let held = head.len() + 1;
+    let (view, cx) = editor(
+        &text,
+        move |model| {
+            let mut selections: Vec<_> = (model.text().to_string().match_indices(" x"))
+                .map(|(at, _)| ResolvedSelection {
+                    range: at..at + 2,
+                    reversed: false,
+                })
+                .collect();
+            selections.push(ResolvedSelection {
+                range: held - 1..held + 1,
+                reversed: false,
+            });
+            model.set_selections(selections);
+        },
+        cx,
+    );
+    view.update(cx, |view, cx| view.scroll_to_buffer_line(3000., cx));
+    set(RenderWhitespace::Selection, &view, cx);
+    set(RenderWhitespace::Selection, &view, cx);
+    let marks = marks(&view, cx);
+    let first_in_view = view.read_with(cx, |view, _| {
+        view.layout.as_ref().unwrap().frame.rows[0].start
+    });
+    assert!(first_in_view >= head.len() - 8, "scrolled to the tail");
+    assert_eq!(offsets(&marks), vec![held]);
+}
+
+/// With ghost text at the caret just before a space and before a tab, the
+/// marks start where the inlay ends and span only the char.
+#[gpui::test]
+fn ghost_text_before_a_mark(cx: &mut TestAppContext) {
+    use fe_buffer::Origin;
+    use fe_editor::ghost_text::GhostText;
+
+    for (text, kind, columns) in [("a b", Kind::Space, 1.), ("a\tb", Kind::Tab, 3.)] {
+        let (view, cx) = editor(
+            text,
+            |model| {
+                model.set_tab_size(4);
+                model.set_cursor(1);
+            },
+            cx,
+        );
+        cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+        view.update(cx, |view, cx| {
+            let origin = Origin::Ai {
+                agent: "agent".into(),
+                session: "session".into(),
+            };
+            let ghost = GhostText::new(view.model().snapshot(), 1, "xyz", origin);
+            view.set_ghost_text(Some(ghost), cx);
+        });
+        cx.run_until_parked();
+        draw(cx);
+        set(RenderWhitespace::All, &view, cx);
+        let marks = marks(&view, cx);
+        assert_eq!(offsets(&marks), vec![1], "{text:?}");
+        let (inlay, space) = view.update(cx, |view, _| {
+            let layout = view.layout.as_mut().unwrap();
+            let inlay = layout.bounds(layout.frame.inlay.expect("ghost text shown"));
+            (inlay, f32::from(layout.space_width()))
+        });
+        let mark = &marks[0];
+        assert_eq!(mark.kind, kind);
+        let (inlay_end, start) = (inlay.right(), mark.bounds.left());
+        assert!((f32::from(start - inlay_end)).abs() < 0.01, "{text:?}");
+        let width = f32::from(mark.bounds.size.width);
+        assert!((width - columns * space).abs() < 0.01, "{text:?}: {width}");
+    }
 }

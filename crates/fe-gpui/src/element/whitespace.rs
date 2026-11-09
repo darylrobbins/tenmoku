@@ -55,8 +55,12 @@ pub(super) fn layout(layout: &FrameLayout, view: &EditorView) -> Vec<Mark> {
         selected.sort_by_key(|range| range.start);
     }
     let is_selected = |offset: usize| {
+        // The selections are sorted and don't overlap: only the last one
+        // starting at or before `offset` can hold it.
         let after = selected.partition_point(|range| range.start <= offset);
-        selected[..after].iter().any(|range| offset < range.end)
+        after
+            .checked_sub(1)
+            .is_some_and(|last| offset < selected[last].end)
     };
     let text = model.text();
     let text_bounds = frame.text_bounds();
@@ -117,15 +121,20 @@ pub(super) fn layout(layout: &FrameLayout, view: &EditorView) -> Vec<Mark> {
         if found.is_empty() {
             continue;
         }
-        // Where each char starts, past any hint before it, and ends.
-        let indexes = (found.iter()).flat_map(|&(offset, _)| {
-            let col = offset - shown.start;
-            [
-                row.expanded.to_display_after_hints(col),
-                row.expanded.to_display(col + 1),
-            ]
-        });
-        let xs = xs_for_indexes(&row.line.layout, indexes);
+        // Where each char starts, past every inline span anchored at or
+        // before it, and ends.
+        let tab_size = view.model.tab_size().max(1);
+        let start_column = row.slice.as_ref().map_or(0, |slice| slice.start_column);
+        let spans = spans_before(&row.expanded);
+        let indexes = display_indexes(
+            &line[shown.start - row_start..],
+            &found,
+            shown.start,
+            start_column,
+            tab_size,
+            &spans,
+        );
+        let xs = xs_for_indexes(&row.line.layout, indexes.into_iter());
         let top = frame.row_top(row.row);
         for (&(offset, kind), x) in found.iter().zip(xs.as_chunks::<2>().0) {
             let start = frame.view_x(row.start_x() + f64::from(x[0]));
@@ -147,6 +156,77 @@ pub(super) fn layout(layout: &FrameLayout, view: &EditorView) -> Vec<Mark> {
         }
     }
     marks
+}
+
+/// The inline spans (hints and the inlay) of `expanded`, in display order, as
+/// the column of the tab-expanded text each is anchored at, and its length.
+fn spans_before(expanded: &fe_display::ExpandedRow) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<Range<usize>> = expanded.hint_ranges().collect();
+    ranges.extend(expanded.inlay_range());
+    ranges.sort_by_key(|range| range.start);
+    let mut before = 0;
+    (ranges.into_iter())
+        .map(|range| {
+            let anchor = range.start - before;
+            before += range.len();
+            (anchor, range.len())
+        })
+        .collect()
+}
+
+/// For each of `found`, the display byte indexes where its char starts and
+/// ends, in one walk over `shown`, the shaped text from its first byte, with
+/// `shown_start` its buffer offset. A mark starts past every span in `spans`
+/// (see [`spans_before`]) anchored at or before the char, the ghost text and
+/// composition among them, and is the char's own advance wide.
+fn display_indexes(
+    shown: &str,
+    found: &[(usize, Kind)],
+    shown_start: usize,
+    start_column: usize,
+    tab_size: usize,
+    spans: &[(usize, usize)],
+) -> Vec<usize> {
+    let mut chars = shown.char_indices();
+    // The char column, and the byte offset in the tab-expanded text, of
+    // the char `chars` yields next.
+    let (mut column, mut expanded) = (start_column, 0);
+    let (mut span, mut shift) = (0, 0);
+    let mut indexes = Vec::with_capacity(found.len() * 2);
+    for &(offset, _) in found {
+        let at = offset - shown_start;
+        for (byte, ch) in chars.by_ref() {
+            if byte == at {
+                let width = match ch {
+                    '\t' => tab_size - column % tab_size,
+                    _ => 1,
+                };
+                while let Some(&(anchor, len)) = spans.get(span)
+                    && anchor <= expanded
+                {
+                    shift += len;
+                    span += 1;
+                }
+                indexes.push(expanded + shift);
+                indexes.push(expanded + shift + width);
+                column += width;
+                expanded += width;
+                break;
+            }
+            match ch {
+                '\t' => {
+                    let width = tab_size - column % tab_size;
+                    column += width;
+                    expanded += width;
+                }
+                _ => {
+                    column += 1;
+                    expanded += ch.len_utf8();
+                }
+            }
+        }
+    }
+    indexes
 }
 
 /// The x of the boundary before each of `indexes`, which never decrease,
