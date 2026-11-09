@@ -123,9 +123,17 @@ fn a_linked_folder_installs_as_a_link() {
     assert_eq!(fs::read_dir(&extensions).unwrap().count(), 0);
 }
 
-/// Waits up to 1.5 s for a batch from `batches` naming `root`.
+/// How long [`reported`] waits. FSEvents can be late, or drop events, under
+/// load; the watcher's 3 s re-stat is the fallback the wait relies on, so the
+/// bound must outlast it with room to spare (kiln-core's tree-watcher tests
+/// wait 60 s too). A batch ends the wait at once, so a passing test is no
+/// slower.
+const REPORTED_WITHIN: Duration = Duration::from_secs(60);
+
+/// Waits up to [`REPORTED_WITHIN`] for a batch from `batches` naming `root`;
+/// false if none comes.
 fn reported(batches: &mpsc::Receiver<Vec<PathBuf>>, root: &Path) -> bool {
-    let deadline = Instant::now() + Duration::from_millis(1500);
+    let deadline = Instant::now() + REPORTED_WITHIN;
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
         match batches.recv_timeout(left) {
             Ok(batch) if batch.iter().any(|path| path == root) => return true,
