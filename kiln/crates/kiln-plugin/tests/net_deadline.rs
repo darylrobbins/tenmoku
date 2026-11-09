@@ -68,9 +68,11 @@ fn a_fetch_slower_than_the_call_deadline_is_charged_to_the_program_share_not_the
 #[test]
 fn a_fetch_is_capped_by_what_is_left_of_the_program_share() {
     let (mut host, sent) = host(Duration::ZERO);
-    host.program_runs.arm(Duration::from_millis(50));
+    let share = Duration::from_secs(2);
+    host.program_runs.arm(share);
     assert!(host.fetch(request(Some(5000))).is_ok());
-    assert!(sent.lock().unwrap()[0].timeout <= Duration::from_millis(50));
+    let timeout = sent.lock().unwrap()[0].timeout;
+    assert!(timeout > Duration::ZERO && timeout <= share);
 
     let (mut host, sent) = host_unarmed();
     let set = Instant::now() + Duration::from_millis(100);
