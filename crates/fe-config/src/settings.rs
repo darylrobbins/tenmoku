@@ -719,9 +719,15 @@ pub struct EditorSettings {
     /// pointer while cmd (ctrl off macOS) is held, and open them on
     /// cmd-click.
     pub links: bool,
-    /// Draw a small square in the colour before each colour a language
-    /// server finds in the text (CSS, SCSS, Tailwind…).
+    /// Draw a small square in the colour before each colour in the text
+    /// (CSS, SCSS, Tailwind…), from a language server or found by Tenmoku,
+    /// as `default_color_decorators` says. Off, there are none of either.
     pub color_decorators: bool,
+    /// Where colour squares come from: `"auto"` finds colours itself (CSS
+    /// colours, and `#rrggbb` in other languages' strings) unless the
+    /// language server finds some, `"always"` finds them itself and never
+    /// asks the server, `"never"` shows only the server's.
+    pub default_color_decorators: DefaultColorDecorators,
     /// Rename an HTML tag's pair as you type in the open or close tag, and
     /// other ranges a language server links (`textDocument/linkedEditingRange`).
     pub linked_editing: bool,
@@ -830,6 +836,21 @@ pub enum InlineDiagnostics {
     Warning,
     /// Every diagnostic's message, information and hints too.
     All,
+}
+
+/// `editor.default_color_decorators`, as VS Code's
+/// `editor.defaultColorDecorators`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultColorDecorators {
+    /// Tenmoku's own squares, unless the language server finds colours:
+    /// then the server's in their place.
+    #[default]
+    Auto,
+    /// Tenmoku's own squares only; the server isn't asked for colours.
+    Always,
+    /// The language server's squares only.
+    Never,
 }
 
 /// `editor.wrap_column`: 0, or 20 to 500.
@@ -1056,6 +1077,7 @@ impl Default for EditorSettings {
             code_lens: true,
             links: true,
             color_decorators: true,
+            default_color_decorators: DefaultColorDecorators::default(),
             linked_editing: false,
             code_actions_on_save: Vec::new(),
             auto_close_pairs: true,

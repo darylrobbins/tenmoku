@@ -18,6 +18,7 @@ mod ai_changes_panel;
 mod auto_save;
 mod chat_panel;
 mod closed_editors;
+mod color_literals;
 mod config_problems;
 mod diagnostic_owner;
 mod disk_sync;

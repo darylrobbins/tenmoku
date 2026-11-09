@@ -296,6 +296,7 @@ impl Workbench {
         self.lsp.code_lens_on.set(event.settings.editor.code_lens);
         self.lsp.links_on.set(event.settings.editor.links);
         (self.lsp.color_decorators_on).set(event.settings.editor.color_decorators);
+        self.set_default_color_decorators(event.settings.editor.default_color_decorators, cx);
         self.lsp.lightbulb_on.set(event.settings.editor.lightbulb);
         self.lsp
             .linked_editing_on

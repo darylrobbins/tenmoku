@@ -103,6 +103,26 @@
       },
       "type": "object"
     },
+    "DefaultColorDecorators": {
+      "description": "`editor.default_color_decorators`, as VS Code's\n`editor.defaultColorDecorators`.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Tenmoku's own squares, unless the language server finds colours:\nthen the server's in their place.",
+          "type": "string"
+        },
+        {
+          "const": "always",
+          "description": "Tenmoku's own squares only; the server isn't asked for colours.",
+          "type": "string"
+        },
+        {
+          "const": "never",
+          "description": "The language server's squares only.",
+          "type": "string"
+        }
+      ]
+    },
     "EditorSettings": {
       "description": "Settings for the text editor.",
       "properties": {
@@ -144,7 +164,7 @@
         },
         "color_decorators": {
           "default": true,
-          "description": "Draw a small square in the colour before each colour a language\nserver finds in the text (CSS, SCSS, Tailwind…).",
+          "description": "Draw a small square in the colour before each colour in the text\n(CSS, SCSS, Tailwind…), from a language server or found by Tenmoku,\nas `default_color_decorators` says. Off, there are none of either.",
           "type": "boolean"
         },
         "cursor_line": {
@@ -159,6 +179,11 @@
           "maximum": 100,
           "minimum": 0,
           "type": "integer"
+        },
+        "default_color_decorators": {
+          "$ref": "#/$defs/DefaultColorDecorators",
+          "default": "auto",
+          "description": "Where colour squares come from: `\"auto\"` finds colours itself (CSS\ncolours, and `#rrggbb` in other languages' strings) unless the\nlanguage server finds some, `\"always\"` finds them itself and never\nasks the server, `\"never\"` shows only the server's."
         },
         "font_family": {
           "description": "The font family. Unset, Spline Sans Mono, which Tenmoku bundles, or\nelse the first installed of JetBrains Mono, SF Mono, Menlo, DejaVu Sans\nMono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
@@ -1460,6 +1485,7 @@
         "color_decorators": true,
         "cursor_line": true,
         "cursor_surrounding_lines": 3,
+        "default_color_decorators": "auto",
         "font_ligatures": false,
         "font_size": 13.0,
         "format_on_paste": false,

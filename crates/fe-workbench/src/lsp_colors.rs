@@ -9,15 +9,23 @@
 //! swatches stay, following the edits. An empty answer, an error, or a
 //! server without colours clears them; `editor.color_decorators` off
 //! clears them and asks for nothing.
+//!
+//! Without a server's colours, Tenmoku finds its own ([`default_colors`]),
+//! as `editor.default_color_decorators` says; which an editor shows is
+//! [`Workbench::show_color_swatches`]'s to say.
 
 use std::{collections::HashMap, time::Duration};
 
 use fe_buffer::{BufferId, Version};
+use fe_config::settings::DefaultColorDecorators;
 use fe_gpui::{ColorSwatch, EditorView};
 use fe_lsp::{ColorInformation, IncarnationId, LspError, ServerId, SessionId};
 use gpui::{Context, Entity, EntityId, Task};
 
 use crate::Workbench;
+
+#[path = "default_colors.rs"]
+mod default_colors;
 
 /// How long a buffer holds still before its colours are asked for again,
 /// and how long a server that asks for a retry waits.
@@ -46,6 +54,9 @@ struct Slot {
     asked: Option<Version>,
     /// The server that said it has no provider.
     no_provider: Option<ServerId>,
+    /// The colours of the latest answer shown, at the version asked, when
+    /// it had some.
+    answered: Option<(Version, Vec<ColorSwatch>)>,
     /// The wait, then the request.
     task: Option<Task<()>>,
 }
@@ -59,6 +70,7 @@ impl Slot {
             key: None,
             asked: None,
             no_provider: None,
+            answered: None,
             task: None,
         }
     }
@@ -68,13 +80,17 @@ impl Slot {
 #[derive(Default)]
 pub(super) struct Colors {
     slots: HashMap<BufferId, Slot>,
+    /// The colours Tenmoku finds itself.
+    defaults: default_colors::Defaults,
 }
 
 impl Workbench {
     /// Brings each buffer's swatches up to date with its text and server:
     /// run by [`Self::sync_lsp`] after each draw.
     pub(super) fn sync_colors(&mut self, cx: &mut Context<Self>) {
-        let on = self.lsp.color_decorators_on.get();
+        // With `always`, as if the server had no colours.
+        let on = self.lsp.color_decorators_on.get()
+            && self.lsp.colors.defaults.mode != DefaultColorDecorators::Always;
         let mut wanted: HashMap<BufferId, (Version, Vec<Entity<EditorView>>)> = HashMap::new();
         for editor in self.open_editors(cx) {
             let model = editor.read(cx).model();
@@ -91,6 +107,8 @@ impl Workbench {
         for buffer in gone {
             self.drop_colors(buffer, cx);
         }
+        // The editors whose swatches may change.
+        let mut changed = Vec::new();
         for (buffer, (version, editors)) in wanted {
             let server = (self.lsp.manager.as_ref())
                 .and_then(|manager| super::lock(manager).server_of(buffer))
@@ -123,25 +141,20 @@ impl Workbench {
                 if moved {
                     slot.asked = None;
                     slot.task = None;
-                    for editor in slot.editors.values() {
-                        give_swatches(editor, Vec::new(), cx);
-                    }
+                    slot.answered = None;
+                    changed.extend(slot.editors.values().cloned());
                 }
             }
             // Editors closed are forgotten; new ones get the swatches the
             // others have.
             slot.editors
                 .retain(|id, _| editors.iter().any(|editor| editor.entity_id() == *id));
-            let joining: Vec<_> = (editors.iter())
-                .filter(|editor| !slot.editors.contains_key(&editor.entity_id()))
-                .collect();
-            if !joining.is_empty() {
-                let shown = (slot.editors.values().next())
-                    .map(|editor| editor.read(cx).color_swatches())
-                    .unwrap_or_default();
-                for editor in joining {
-                    slot.editors.insert(editor.entity_id(), editor.clone());
-                    give_swatches(editor, shown.clone(), cx);
+            for editor in editors {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    slot.editors.entry(editor.entity_id())
+                {
+                    entry.insert(editor.clone());
+                    changed.push(editor);
                 }
             }
             if slot.no_provider == Some(server) || slot.key == Some(version) {
@@ -154,15 +167,20 @@ impl Workbench {
             let delay = if first { Duration::ZERO } else { REST };
             self.ask_colors_in(buffer, delay, 0, cx);
         }
+        for editor in changed {
+            self.show_color_swatches(&editor, cx);
+        }
+        self.sync_default_colors(cx);
     }
 
-    /// Forgets `buffer`'s colours and takes the swatches from its editors.
+    /// Forgets `buffer`'s colours and takes the server's swatches from its
+    /// editors.
     fn drop_colors(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
         let Some(slot) = self.lsp.colors.slots.remove(&buffer) else {
             return;
         };
         for editor in slot.editors.values() {
-            give_swatches(editor, Vec::new(), cx);
+            self.show_color_swatches(editor, cx);
         }
     }
 
@@ -270,8 +288,10 @@ impl Workbench {
                 rgba: info.color,
             })
             .collect();
-        for editor in slot.editors.values() {
-            give_swatches(editor, swatches.clone(), cx);
+        slot.answered = (!swatches.is_empty()).then_some((version, swatches));
+        let editors: Vec<_> = slot.editors.values().cloned().collect();
+        for editor in editors {
+            self.show_color_swatches(&editor, cx);
         }
     }
 }

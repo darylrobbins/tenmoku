@@ -391,6 +391,7 @@ impl Workbench {
         let code_lens = settings.code_lens;
         let links = settings.links;
         let color_decorators = settings.color_decorators;
+        let default_color_decorators = settings.default_color_decorators;
         let lightbulb = settings.lightbulb;
         let linked_editing = settings.linked_editing;
         let (format_on_type, format_on_paste) = (settings.format_on_type, settings.format_on_paste);
@@ -736,6 +737,7 @@ impl Workbench {
         workbench.lsp.code_lens_on.set(code_lens);
         workbench.lsp.links_on.set(links);
         workbench.lsp.color_decorators_on.set(color_decorators);
+        workbench.set_default_color_decorators(default_color_decorators, cx);
         workbench.lsp.lightbulb_on.set(lightbulb);
         workbench.lsp.linked_editing_on.set(linked_editing);
         workbench.lsp.format_on_type_on.set(format_on_type);
