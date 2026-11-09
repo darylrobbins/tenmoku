@@ -1167,14 +1167,22 @@ mod offers_tests {
     #[gpui::test]
     fn the_apps_fetch_refuses_an_unreleased_grammar(cx: &mut TestAppContext) {
         let extensions = tempfile::tempdir().unwrap();
-        let offers = offers(extensions.path().to_owned(), None);
+        // A pack that records no language, as before a grammar release.
+        let pack = Pack::parse(
+            "base_url = \"https://github.com/darylrobbins/tenmoku/releases/download/none\"",
+        )
+        .unwrap();
+        let hooks = OfferHooks {
+            fetch: Arc::new(|_: &Grammar| -> Download {
+                panic!("an unreleased grammar is refused")
+            }),
+            registered: Rc::new(|_: &str, _: &gpui::App| true),
+            republish: Rc::new(|_: GrammarOffers, _: &mut gpui::App| {}),
+        };
+        let offers = offers_with(Arc::new(pack), hooks, extensions.path().to_owned(), None);
         let kotlin = (offers.catalog.iter())
             .find(|offer| offer.language == "kotlin")
             .unwrap();
-        assert!(
-            kotlin.sha256.is_empty(),
-            "this test is for a grammar with no hash"
-        );
 
         let fetching = cx.update(|cx| (offers.fetch)(kotlin, cx));
         let failure = cx.foreground_executor().block_test(fetching).unwrap_err();

@@ -1,3 +1,4 @@
+# Recorded release: grammars-2. These entries are interim; T1486 (the registry) retires them.
 # Where the first-party WebAssembly grammars the app can fetch are, and what
 # each must hash to. crates/fastedit/src/grammar_install.rs compiles this in,
 # so a download is checked against what the app was built with.
@@ -13,4 +14,284 @@
 # release, scripts/record-grammar-hashes.sh writes an entry for every
 # directory; don't edit them by hand.
 
-base_url = "https://github.com/darylrobbins/tenmoku/releases/download/grammars-1"
+base_url = "https://github.com/darylrobbins/tenmoku/releases/download/grammars-2"
+
+[languages.astro]
+file = "tree-sitter-astro.wasm"
+size = 29970
+sha256 = "21cfe9b4572011842c2e862a676171817128ed117bb57bc0e34bba42cf42e59b"
+
+[languages.awk]
+file = "tree-sitter-awk.wasm"
+size = 717850
+sha256 = "120fe011d4b25762f83d669119164984869a1d0b0b8819c719260a2cc5c97747"
+
+[languages.blade]
+file = "tree-sitter-blade.wasm"
+size = 3295689
+sha256 = "96647e0e4a7f0fa3f53fc0841b70be243fd2a3e3d12bdf07ceba61a5a9bea3cb"
+
+[languages.clojure]
+file = "tree-sitter-clojure.wasm"
+size = 100840
+sha256 = "74fae838f703523a6fb92b3465584fbd27cd1859cb3a1b639b8d90cd58154f4d"
+
+[languages.cmake]
+file = "tree-sitter-cmake.wasm"
+size = 77667
+sha256 = "5152b17cb6edee952ba7c676cd254c3aea927e74205034574682d275ab30e1bd"
+
+[languages.cpp]
+file = "tree-sitter-cpp.wasm"
+size = 3470369
+sha256 = "c3a1ddcc0e1ff87e6911b3cc6a2c8424b45d0d9ef39ca7a2cc9e59536e294a00"
+
+[languages.csharp]
+file = "tree-sitter-c-sharp.wasm"
+size = 5350403
+sha256 = "740339732ee23fa1cd081420b28d54cb08819c8a4740c29c5add009e2c8c4f10"
+
+[languages.d]
+file = "tree-sitter-d.wasm"
+size = 3780318
+sha256 = "a74938040b07c6dbe4bc64f910106afd159a6997dc3a263dfb325540a80faf0b"
+
+[languages.dart]
+file = "tree-sitter-dart.wasm"
+size = 1202646
+sha256 = "83704454b8f12ba3ba79a16c3fadb3ca5ac7d3f1cd83c9be0d1ac00dd3355317"
+
+[languages.ejs]
+file = "tree-sitter-embedded-template.wasm"
+size = 6651
+sha256 = "4e0de7cf19bf7705743149cf31d61a46a4cb1a5b3dcb00677995cccfc699aac7"
+
+[languages.elixir]
+file = "tree-sitter-elixir.wasm"
+size = 1436425
+sha256 = "6d3efd721347456462740935acae9bdd9779b9601e6aad16ea300f3e7ab67c91"
+
+[languages.elm]
+file = "tree-sitter-elm.wasm"
+size = 185181
+sha256 = "f982209c6acfe5167bcdf82fb3361ecd2370adc9cef3d6c3d910fc0e38c9eaca"
+
+[languages.erb]
+file = "tree-sitter-embedded-template.wasm"
+size = 6651
+sha256 = "4e0de7cf19bf7705743149cf31d61a46a4cb1a5b3dcb00677995cccfc699aac7"
+
+[languages.erlang]
+file = "tree-sitter-erlang.wasm"
+size = 452362
+sha256 = "3bffc30c0e7881f37db21b1a4d528c91742b3ea86cad2b7c28a2463267d36f0e"
+
+[languages.fish]
+file = "tree-sitter-fish.wasm"
+size = 83541
+sha256 = "d65e243f9c9d17d8fd58a957d416642bee8b3eacf8e94ffe8be9ca7a5806ed62"
+
+[languages.fortran]
+file = "tree-sitter-fortran.wasm"
+size = 6834774
+sha256 = "e88c772886ec86daaa551cc486f1e9f2eedcd56472486954bab6b2b29d50bab0"
+
+[languages.fsharp]
+file = "tree-sitter-fsharp.wasm"
+size = 11473949
+sha256 = "d83bbbae10f941fe2e763c1eed8da8fe53cb516787d46e26e54349b341e9b704"
+
+[languages.gleam]
+file = "tree-sitter-gleam.wasm"
+size = 439697
+sha256 = "1875673147d00cfa467339ad119a1b164a56a49d272c17fb90c545812a41065d"
+
+[languages.gomod]
+file = "tree-sitter-gomod-orchard.wasm"
+size = 25340
+sha256 = "1e0831e2d0319cedb06b5db955729a4bf85d5b5e64973ec45356cd31ea78de49"
+
+[languages.gosum]
+file = "tree-sitter-gosum.wasm"
+size = 7835
+sha256 = "f9c6afe9ade29080256c8c3d3717d6c3ff7691e8b06ce7b540811ce93312d6c6"
+
+[languages.gowork]
+file = "tree-sitter-gowork.wasm"
+size = 12332
+sha256 = "9fd796ac636ee5ff0632ab98ee013651a84edf461bd8d0e840a7b7cfbb8e2755"
+
+[languages.graphql]
+file = "tree-sitter-graphql.wasm"
+size = 63405
+sha256 = "8f8c545bdb87d3c51d3559b413cd66342fd835ef8ddf88270844f18ba21e96aa"
+
+[languages.groovy]
+file = "tree-sitter-groovy.wasm"
+size = 874702
+sha256 = "774861f36f9974201b81e4569e58629f84abe8d5597dc3fdf4d862aacb2d9504"
+
+[languages.haskell]
+file = "tree-sitter-haskell.wasm"
+size = 3846530
+sha256 = "e0b5f1f1f699bb2bd165040b869e1e15d737436f322c320cf838a01c66cefe2f"
+
+[languages.hcl]
+file = "tree-sitter-hcl.wasm"
+size = 96353
+sha256 = "27a523f1be386cb6c4ba0ff53a707eb789a6fa769696d78837ef167a66e0e77d"
+
+[languages.hlsl]
+file = "tree-sitter-hlsl.wasm"
+size = 4261763
+sha256 = "028bee53188e26a3037a1f64565905b8de557b93e883d9e4134dd9dc99137fbd"
+
+[languages.julia]
+file = "tree-sitter-julia.wasm"
+size = 2668138
+sha256 = "c97c75755b4af7888778915f43cd827895cc84100c34807acafe0abbea8d5a6e"
+
+[languages.kdl]
+file = "tree-sitter-kdl.wasm"
+size = 73965
+sha256 = "2df06eeb7716f8050850645f57a489ef7ab2157faf7afbd84af97375ed81cc63"
+
+[languages.kotlin]
+file = "tree-sitter-kotlin.wasm"
+size = 5812702
+sha256 = "0f4f1f04c87394232e89666f0f8e357d7288feba654d3bd7aef57054c7fc7313"
+
+[languages.latex]
+file = "tree-sitter-latex.wasm"
+size = 2523535
+sha256 = "2997976650160626297e4d51c5c418f240dd27639a61a4060801a0aee3bc4cc0"
+
+[languages.nginx]
+file = "tree-sitter-nginx.wasm"
+size = 116036
+sha256 = "b0d9e737430d4d66c9d7fe40245337f54218e36096637d093fa8d46b65eac9fb"
+
+[languages.nix]
+file = "tree-sitter-nix.wasm"
+size = 83520
+sha256 = "4b5eab7f8341b969d85a0a244c00501195ae8c587b646bebf258743382a4cb9c"
+
+[languages.objc]
+file = "tree-sitter-objc.wasm"
+size = 5360020
+sha256 = "037affb7ae804ed99c061c4fcbb7554952e1dce6a4f2f17db75bf3368ffa2b93"
+
+[languages.ocaml]
+file = "tree-sitter-ocaml.wasm"
+size = 4833490
+sha256 = "32edc480d9921ef15d45c909847b4c947a0025d86fe45a160188b1c28007e0ef"
+
+[languages.perl]
+file = "tree-sitter-perl.wasm"
+size = 4771068
+sha256 = "7c3685b5b7d73741555988f24fa8d905e6d409afe627490539fe288e6090568c"
+
+[languages.php_only]
+file = "tree-sitter-php-only.wasm"
+size = 1010613
+sha256 = "0077aecb15511e64141c4b90694039ebc62150979a6bf1fd4095fe0f4bd062fd"
+
+[languages.php]
+file = "tree-sitter-php.wasm"
+size = 1066010
+sha256 = "697f5574f371b1fe0b59815f4c489483178ea9dc6af542c5d5760745b6b6380e"
+
+[languages.powershell]
+file = "tree-sitter-powershell.wasm"
+size = 1111115
+sha256 = "9f0b06f42914d2a4a82da7e25ebac17013ffc11b8e20ebd2947d17798b1aca0e"
+
+[languages.properties]
+file = "tree-sitter-properties.wasm"
+size = 11239
+sha256 = "aff71d04c7dd56e5b1922f0e0d0772e564540015545e9d3eb587bc84319d826d"
+
+[languages.proto]
+file = "tree-sitter-proto.wasm"
+size = 95753
+sha256 = "2b0ef0b790d66339038a940f43d030794b5d0ea221f4ac8dc7f919c8a5de96e1"
+
+[languages.r]
+file = "tree-sitter-r.wasm"
+size = 487074
+sha256 = "d13a76042b7ef48d373743d655b4e2ba173337fb88a2ae16158daedcade320c0"
+
+[languages.racket]
+file = "tree-sitter-racket.wasm"
+size = 125583
+sha256 = "74bf61ab20480715ffda289937001e54af88136338a883cf287c0924009bf291"
+
+[languages.ron]
+file = "tree-sitter-ron.wasm"
+size = 27779
+sha256 = "3afb54afcc6a24ad1becfec2effd7b3d3366ef26be62c20b2a4019e4e9fcfdeb"
+
+[languages.ruby]
+file = "tree-sitter-ruby.wasm"
+size = 2125974
+sha256 = "0f6f8cf7abb9a05bec649fabb8b8bc75f0bf1f04f8995543e668dd738fa5412d"
+
+[languages.scala]
+file = "tree-sitter-scala.wasm"
+size = 3971258
+sha256 = "767bf840e6b8c7676386ec50023f4812687a5354636c0366f41e99ecd5a120da"
+
+[languages.scss]
+file = "tree-sitter-scss.wasm"
+size = 180244
+sha256 = "29e8b8773e613d54f433da5a656c51939c0f82d13b46fae1c32dcaff40c00a32"
+
+[languages.solidity]
+file = "tree-sitter-solidity.wasm"
+size = 513347
+sha256 = "964210aadc7428c0bfd5ac0074eb757b78705025efe654f85cfcc6ab858b66e1"
+
+[languages.sql]
+file = "tree-sitter-sql.wasm"
+size = 2440525
+sha256 = "a8c34f1ea050e4b02af09c7ee5aa875cafd89c58a6b5d66bd0dcbdd3e610d5f5"
+
+[languages.starlark]
+file = "tree-sitter-starlark.wasm"
+size = 330681
+sha256 = "e4df57e191674498ec20e0937d7e0d4ce222b91212e8ac6c6df3f0efbd80a092"
+
+[languages.svelte]
+file = "tree-sitter-svelte.wasm"
+size = 47880
+sha256 = "3b6c6ceaba3ac98a9e4ee400cff8203bde94328ba9ddc60c91dd1ed85f3a6c55"
+
+[languages.swift]
+file = "tree-sitter-swift.wasm"
+size = 3824663
+sha256 = "6699020ff84afcb5085ed09e8f93ba91ae4864c2a650c8c67624a81ba050b706"
+
+[languages.terraform]
+file = "tree-sitter-terraform.wasm"
+size = 96417
+sha256 = "2f4d9f16c340defe9862b228ba5f1584f943b751ba4cfbf8ebd2f16a28ab613c"
+
+[languages.twig]
+file = "tree-sitter-twig.wasm"
+size = 120288
+sha256 = "305985cf7d0652dfefc4bf22fd43654869209c7d3338c99ac1804636a7e9db45"
+
+[languages.vim]
+file = "tree-sitter-vim.wasm"
+size = 1454865
+sha256 = "3cc338d8447c2746f8aad8d65654ce73c4c8ffcc54570cf0c4952cc2e4ac5854"
+
+[languages.vue]
+file = "tree-sitter-vue.wasm"
+size = 30723
+sha256 = "d0449717d929e7992637522437f07d472c6bbd02e53376b8653574a9fbbbce43"
+
+[languages.zig]
+file = "tree-sitter-zig.wasm"
+size = 693882
+sha256 = "0c59407e8ce0607b10264d0d25b7d3b39a57a07b977c6a1b9e52c3d444fc24e0"
