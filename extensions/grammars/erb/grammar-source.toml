@@ -1,0 +1,14 @@
+# Where this extension's WebAssembly grammar comes from: that commit of the
+# repository, fetched whole by scripts/build-grammar-wasm.sh. ERB and EJS
+# share this grammar and its module; wasm_parity.rs checks both directories
+# pin the same source.
+git = "https://github.com/tree-sitter/tree-sitter-embedded-template"
+rev = "3499d85f0a0d937c507a4a65368f2f63772786e1"
+# The directory holding parser.c.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "embedded_template"
+# The other first-party languages the sample injects, which the parity test
+# registers under their names: the code inside <% %> is ruby.
+parity_needs = ["ruby"]

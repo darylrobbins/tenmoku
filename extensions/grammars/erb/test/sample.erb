@@ -1,0 +1,73 @@
+<%# app/views/orders/show.html.erb: one order, its items and a total. %>
+<%
+  # Work out the totals once, before any markup.
+  TAX_RATE = 0.13
+  subtotal = @order.items.sum { |item| item.price * item.quantity }
+  total = (subtotal * (1 + TAX_RATE)).round(2)
+  status = @order.shipped? ? :shipped : :pending
+  greeting = "Thanks, #{@order.customer.first_name}!\n"
+%>
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title><%= @order.reference %> &middot; Orders</title>
+    <%= stylesheet_link_tag "orders", media: "all" %>
+  </head>
+  <body class="order <%= status %>" data-order-id="<%= @order.id %>">
+    <!-- The header is the same on every order page. -->
+    <header>
+      <h1><%= greeting.strip %></h1>
+      <p>Order <strong><%= @order.reference %></strong>, placed
+        <%= @order.created_at.strftime("%-d %B %Y") %>.</p>
+    </header>
+
+    <%- if @order.items.empty? -%>
+      <p class="empty">This order has no items.</p>
+    <%- else -%>
+      <table class="items">
+        <thead>
+          <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
+        </thead>
+        <tbody>
+          <% @order.items.each_with_index do |item, index| %>
+            <tr class="<%= index.even? ? 'even' : 'odd' %>">
+              <td><%= link_to item.name, product_path(item.product_id) %></td>
+              <td><%= item.quantity %></td>
+              <td><%= number_to_currency(item.price, unit: "$") %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    <%- end -%>
+
+    <%# Totals: tax is added here, not stored on the order. %>
+    <dl class="totals">
+      <dt>Subtotal</dt>
+      <dd><%= number_to_currency(subtotal) %></dd>
+      <dt>Tax (<%= (TAX_RATE * 100).to_i %>%)</dt>
+      <dd><%= number_to_currency(total - subtotal) %></dd>
+      <dt>Total</dt>
+      <dd><%= number_to_currency(total, precision: 2) %></dd>
+    </dl>
+
+    <% unless @order.notes.nil? || @order.notes.blank? %>
+      <blockquote><%= simple_format(h(@order.notes)) %></blockquote>
+    <% end %>
+
+    <%= form_with model: @order, method: :patch do |form| %>
+      <%= form.label :notes, "Notes" %>
+      <%= form.text_area :notes, rows: 4, placeholder: 'Anything we should know?' %>
+      <%= form.submit "Save", class: "button primary" %>
+    <% end %>
+
+    <p class="literal">Write <%% to show a literal tag.</p>
+
+    <script>
+      const orderId = <%= @order.id.to_json %>;
+      document.querySelector("form").addEventListener("submit", (event) => {
+        console.log(`saving order ${orderId}`, 0x1F);
+      });
+    </script>
+  </body>
+</html>

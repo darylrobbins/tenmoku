@@ -77,8 +77,10 @@ fn wasm_name(language: &str) -> String {
         .to_owned()
 }
 
-fn stub(language: &str) -> Vec<u8> {
-    format!("\0asm stub for {language}").into_bytes()
+/// A fake module, keyed by its file name: languages sharing a grammar (ERB and
+/// EJS) share one module, so a stub per language would overwrite the other.
+fn stub(wasm: &str) -> Vec<u8> {
+    format!("\0asm stub for {wasm}").into_bytes()
 }
 
 struct Run {
@@ -96,7 +98,8 @@ fn package(without: Option<&str>) -> Run {
     fs::create_dir(&wasm).unwrap();
     for language in languages() {
         if Some(language.as_str()) != without {
-            fs::write(wasm.join(wasm_name(&language)), stub(&language)).unwrap();
+            let name = wasm_name(&language);
+            fs::write(wasm.join(&name), stub(&name)).unwrap();
         }
     }
     let output = Command::new(root().join("scripts/package-language-pack.sh"))
@@ -198,11 +201,7 @@ fn pack_matches_the_installer_layout() {
             );
         }
         let wasm = wasm_name(&language);
-        assert_eq!(
-            fs::read(dir.join(&wasm)).unwrap(),
-            stub(&language),
-            "{wasm}"
-        );
+        assert_eq!(fs::read(dir.join(&wasm)).unwrap(), stub(&wasm), "{wasm}");
         let names: BTreeSet<String> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())

@@ -1,0 +1,74 @@
+<%# views/orders/show.ejs: one order, its items and a total. %>
+<%
+  // Work out the totals once, before any markup.
+  const TAX_RATE = 0.13;
+  const subtotal = order.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const total = Math.round(subtotal * (1 + TAX_RATE) * 100) / 100;
+  const status = order.shipped ? "shipped" : "pending";
+  const greeting = `Thanks, ${order.customer.firstName}!\n`;
+%>
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title><%= order.reference %> &middot; Orders</title>
+    <link rel="stylesheet" href="/css/orders.css" media="all">
+  </head>
+  <body class="order <%= status %>" data-order-id="<%= order.id %>">
+    <!-- The header is the same on every order page. -->
+    <%- include("partials/header", { user: order.customer }) %>
+    <header>
+      <h1><%= greeting.trim() %></h1>
+      <p>Order <strong><%= order.reference %></strong>, placed
+        <%= new Date(order.createdAt).toLocaleDateString("en-GB") %>.</p>
+    </header>
+
+    <% if (order.items.length === 0) { -%>
+      <p class="empty">This order has no items.</p>
+    <% } else { -%>
+      <table class="items">
+        <thead>
+          <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
+        </thead>
+        <tbody>
+          <%_ order.items.forEach(function (item, index) { _%>
+            <tr class="<%= index % 2 === 0 ? 'even' : 'odd' %>">
+              <td><a href="/products/<%= item.productId %>"><%= item.name %></a></td>
+              <td><%= item.quantity %></td>
+              <td><%= formatCurrency(item.price, { unit: "$" }) %></td>
+            </tr>
+          <%_ }); _%>
+        </tbody>
+      </table>
+    <% } -%>
+
+    <%# Totals: tax is added here, not stored on the order. %>
+    <dl class="totals">
+      <dt>Subtotal</dt>
+      <dd><%= formatCurrency(subtotal) %></dd>
+      <dt>Tax (<%= Math.trunc(TAX_RATE * 100) %>%)</dt>
+      <dd><%= formatCurrency(total - subtotal) %></dd>
+      <dt>Total</dt>
+      <dd><%= formatCurrency(total, { precision: 2 }) %></dd>
+    </dl>
+
+    <% if (order.notes != null && order.notes.trim() !== "") { %>
+      <blockquote><%= order.notes %></blockquote>
+    <% } %>
+
+    <form action="/orders/<%= order.id %>" method="post">
+      <label for="notes">Notes</label>
+      <textarea id="notes" name="notes" rows="4" placeholder="Anything we should know?"></textarea>
+      <button type="submit" class="button primary">Save</button>
+    </form>
+
+    <p class="literal">Write <%% to show a literal tag.</p>
+
+    <script>
+      const orderId = <%- JSON.stringify(order.id) %>;
+      document.querySelector("form").addEventListener("submit", (event) => {
+        console.log(`saving order ${orderId}`, 0x1F);
+      });
+    </script>
+  </body>
+</html>

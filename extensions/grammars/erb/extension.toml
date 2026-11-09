@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_erb"
+name = "ERB syntax"
+version = "0.25.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "erb"
+wasm = "tree-sitter-embedded-template.wasm"
+extensions = ["erb"]
+block_comment = ["<%#", "%>"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
