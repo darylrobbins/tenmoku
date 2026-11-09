@@ -61,6 +61,7 @@ fn kiln_keys_used_here_exist() {
 /// `kiln-command-toggle`.
 #[gpui::test]
 fn kiln_commands_and_command_keys_match(cx: &mut TestAppContext) {
+    let _locale = locale_guard();
     let typed = cx.update(|cx| {
         kiln::app::register(cx);
         kiln::window::register(cx);
