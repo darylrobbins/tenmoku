@@ -76,3 +76,73 @@ fn box_ends_on_edits_and_other_selection_paths() {
     model.column_select(Direction::Down);
     assert_eq!(render(&model), "a|bcdef\na|bcdef\nabcdef");
 }
+
+/// A box of two carets on rows 1 and 2, column 3, of five rows.
+fn boxed() -> EditorModel {
+    let mut model = parse("abcdef\nabc|def\nabcdef\nabcdef\nabcdef");
+    model.column_select(Direction::Down);
+    assert_eq!(render(&model), "abcdef\nabc|def\nabc|def\nabcdef\nabcdef");
+    model
+}
+
+#[test]
+fn undo_directly_before_a_column_command_starts_a_fresh_box() {
+    let mut model = boxed();
+    model.insert("X");
+    model.undo().unwrap();
+    assert_eq!(render(&model), "abcdef\nabc|def\nabc|def\nabcdef\nabcdef");
+    // A box that came back would go on from row 1, ending on row 3.
+    model.column_select(Direction::Down);
+    assert_eq!(render(&model), "abcdef\nabcdef\nabc|def\nabc|def\nabcdef");
+}
+
+#[test]
+fn redo_directly_before_a_column_command_starts_a_fresh_box() {
+    let mut model = boxed();
+    model.insert("X");
+    model.undo().unwrap();
+    model.redo().unwrap();
+    assert_eq!(render(&model), "abcdef\nabcX|def\nabcX|def\nabcdef\nabcdef");
+    model.column_select(Direction::Down);
+    assert_eq!(render(&model), "abcdef\nabcXdef\nabcX|def\nabcd|ef\nabcdef");
+}
+
+#[test]
+fn deletion_directly_before_a_column_command_starts_a_fresh_box() {
+    let mut model = boxed();
+    model.backspace();
+    assert_eq!(render(&model), "abcdef\nab|def\nab|def\nabcdef\nabcdef");
+    model.column_select(Direction::Down);
+    assert_eq!(render(&model), "abcdef\nabdef\nab|def\nab|cdef\nabcdef");
+}
+
+#[test]
+fn a_row_edit_directly_before_a_column_command_starts_a_fresh_box() {
+    let mut model = boxed();
+    model.insert_row_above();
+    assert_eq!(
+        render(&model),
+        "abcdef\n|\nabcdef\n|\nabcdef\nabcdef\nabcdef"
+    );
+    // A box that came back would be at column 3, from row 1.
+    model.column_select(Direction::Down);
+    assert_eq!(
+        render(&model),
+        "abcdef\n\nabcdef\n|\n|abcdef\nabcdef\nabcdef"
+    );
+}
+
+#[test]
+fn an_edit_through_a_shared_buffer_starts_a_fresh_box() {
+    let mut a = boxed();
+    let mut b = a.split();
+    // A row below the box: the box's selections resolve to the same offsets,
+    // so only the buffer version tells that the text changed.
+    let len = b.text().len();
+    b.set_cursor(len);
+    b.insert("Z");
+    a.sync_display();
+    assert_eq!(render(&a), "abcdef\nabc|def\nabc|def\nabcdef\nabcdefZ");
+    a.column_select(Direction::Down);
+    assert_eq!(render(&a), "abcdef\nabcdef\nabc|def\nabc|def\nabcdefZ");
+}
