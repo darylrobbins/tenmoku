@@ -63,6 +63,7 @@ mod path_commands;
 mod peek;
 mod persist;
 mod picker;
+mod plugin_access;
 mod plugin_bridge;
 mod plugin_dev;
 mod plugin_diagnostics;

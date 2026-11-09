@@ -1,14 +1,26 @@
 //! The editor commands a plugin may invoke, and what each needs of it
-//! beyond `commands`. Every other editor command, `editor.save`, the
-//! clipboard's and undo's included, refuses plugins.
+//! beyond `commands`. Every other editor command, the clipboard's and
+//! undo's included, refuses plugins.
+//!
+//! `editor.save` writes the buffer to its own file, so it needs
+//! `fs.write:workspace` as well as `buffer.write`: a host refuses it for an
+//! untitled buffer or a file outside the workspace roots, which this
+//! registry can't tell.
 
-use fe_command::{Capability, PluginAccess, Registry};
+use fe_command::{Capability, FsScope, PluginAccess, Registry};
 
 use crate::commands::Editor;
 
 /// The editor commands open to plugins, with the capabilities they need.
-const PLUGIN_CALLABLE: [(&str, &[Capability]); 10] = [
+const PLUGIN_CALLABLE: [(&str, &[Capability]); 11] = [
     ("editor.insert", &[Capability::BufferWrite]),
+    (
+        "editor.save",
+        &[
+            Capability::BufferWrite,
+            Capability::FsWrite(FsScope::Workspace),
+        ],
+    ),
     ("editor.newline", &[Capability::BufferWrite]),
     ("editor.move", &[]),
     ("editor.move_line_start", &[]),

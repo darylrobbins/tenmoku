@@ -1616,6 +1616,35 @@ impl Workbench {
         self.open_command(OpenOp::File, cx);
     }
 
+    /// Open Path
+    ///
+    /// Opens the file at args `path`, an absolute path, with the caret on
+    /// its 0-based `row` and `column` if given
+    /// ([`crate::plugin_access::OpenPathArgs`]): what a plugin's
+    /// `workbench.open_path` runs once its grants are checked. It needs
+    /// args, so the palette leaves it out.
+    #[command(id = "workbench.open_path", palette = false)]
+    fn open_path(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let Some(invocation) = kiln::current_invocation(cx.cx) else {
+            return;
+        };
+        let args =
+            serde_json::from_value::<crate::plugin_access::OpenPathArgs>(invocation.args.clone());
+        let args = match args {
+            Ok(args) if std::path::Path::new(&args.path).is_absolute() => args,
+            Ok(args) => {
+                return log::warn!("{}: {:?} isn't absolute", invocation.command, args.path);
+            }
+            Err(error) => return log::warn!("{}: {error}", invocation.command),
+        };
+        let line = args.row.map(|row| row.saturating_add(1));
+        let col = args.column.map(|column| column.saturating_add(1));
+        let path = args.path.into();
+        self.open_document_at(path, line, col, cx.window, cx.cx)
+            .detach();
+    }
+
     /// Open Settings (JSON)
     #[command(id = "workbench.open_settings")]
     fn open_settings_command(&mut self, cx: &mut Cx<Self>) {

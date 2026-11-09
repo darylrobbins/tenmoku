@@ -143,6 +143,40 @@ The interfaces, by module:
 - `log`: `info!` and friends. Read a plugin's log with **Extensions: Show
   Plugin Log**.
 
+### Commands you can invoke
+
+`commands.invoke` runs a command as your plugin, with `commands` granted. Only
+the commands below are open to plugins; each needs the capabilities after it as
+well, and is refused (`denied`, naming what is missing) without them. Every
+other command is refused, and so is a plugin's command, another plugin's or
+your own: one plugin's grants can't be used through another's.
+
+- `editor.insert` (`text`), `editor.newline`: `buffer.write`
+- `editor.move` (`motion`), `editor.move_line_start`, `editor.move_line_end`,
+  `editor.move_document_start`, `editor.move_document_end`, `editor.select_all`,
+  `editor.fold`, `editor.unfold`: nothing more
+- `editor.save`: `buffer.write` and `fs.write:workspace`
+- `workbench.open_path` (`path`, optional `row` and `column`): `fs.read:workspace`
+- `nav.back`, `nav.forward`, `diagnostics.next`, `diagnostics.previous`,
+  `project_panel.reveal_active`, `problems.show`: nothing more
+
+The editor commands act on the active editor of the active window.
+
+- `editor.save` saves the active buffer to its own file as it is: format on
+  save and code actions on save don't run for a plugin's save, so the file
+  written is the one checked. It is refused for an untitled buffer, for a file
+  outside the workspace's folders (where it leads, symlinks followed, one to a
+  file not there yet included), and while a save of the buffer is under way.
+- `workbench.open_path` opens a file with the caret at its 0-based `row` and
+  `column` (in characters, clamped to the text), or where it was without a
+  `row`. `path` must be absolute and inside a workspace folder once symlinks
+  and `..` are followed: a path outside, a `..` escape or a symlink out is
+  refused.
+- `nav.back` and `nav.forward` move through the places the user went;
+  `diagnostics.next` and `diagnostics.previous` move the caret to the next or
+  previous problem; `project_panel.reveal_active` shows the active file in the
+  project tree; `problems.show` opens the Problems panel.
+
 ### Diagnostics
 
 A linter reports what it finds through `diagnostics`, under the `decorations`

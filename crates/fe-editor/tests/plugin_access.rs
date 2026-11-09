@@ -15,8 +15,9 @@ use serde_json::json;
 const PLUGIN: &str = "acme.tool";
 
 /// The spec's allowlist: these, and no other editor command.
-const PLUGIN_CALLABLE: [&str; 10] = [
+const PLUGIN_CALLABLE: [&str; 11] = [
     "editor.insert",
+    "editor.save",
     "editor.newline",
     "editor.move",
     "editor.move_line_start",
@@ -80,7 +81,7 @@ fn only_the_allowlisted_commands_are_plugin_callable() {
         .map(|meta| meta.id.clone())
         .filter(|id| !PLUGIN_CALLABLE.contains(&id.as_str()))
         .collect();
-    for id in ["editor.save", "editor.undo", "editor.redo", "editor.paste"] {
+    for id in ["editor.undo", "editor.redo", "editor.paste"] {
         assert!(closed.iter().any(|closed| closed.as_str() == id), "{id}");
     }
     for id in closed {

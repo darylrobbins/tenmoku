@@ -21,34 +21,52 @@
 //!   proposal is shown in an editor of the buffer, the active window's if
 //!   one, for the user to accept or reject.
 //! - **Commands.** A plugin's invocation (actor `Host("<id>")`, source
-//!   `Script`) runs on the active editor of the active window as a
-//!   [`RunCommand`]. The editor's registry authorizes it against the
-//!   [`CommandHost`] as its `PluginPolicy`
+//!   `Script`) of an editor command runs on the active editor of the
+//!   active window as a [`RunCommand`]. The editor's registry authorizes it
+//!   against the [`CommandHost`] as its `PluginPolicy`
 //!   ([`fe_gpui::commands::set_plugin_policy`]); the refusal a plugin hears
 //!   is the same registry's, checked first, naming what it lacks.
+//!   `editor.save`, though granted, is refused for an untitled buffer, for
+//!   a file outside the workspace roots (where it leads, symlinks
+//!   followed, dangling ones included) and while a save of the buffer is
+//!   under way; it runs without the save hook (format on save), so that
+//!   the file it writes is the one checked. One of the workbench
+//!   commands open to plugins ([`crate::plugin_access`]) is authorized by
+//!   that module's registry and runs as its typed command in the active
+//!   window. Any other workbench command, and any plugin's own command, is
+//!   refused.
 
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, VecDeque},
     ops::Range,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     time::{Duration, Instant},
 };
 
 use fe_buffer::{BufferId, Origin, Version};
-use fe_command::{Actor, CommandError, DispatchError, Invocation, Registry};
+use fe_command::{
+    Actor, CommandError, DispatchError, Invocation, PluginDenied, PluginPolicy, Registry,
+};
 use fe_editor::commands::Editor;
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_plugin::editor::{BufferAccess, BufferText, Proposal};
-use gpui::{App, Entity, Focusable as _, Global};
+use gpui::{AnyWindowHandle, App, Entity, Focusable as _, Global};
 use kiln_plugin::{
     bindings::Error,
     commands::{CommandHost, Dispatcher, Request},
     process::ProgramBudget,
 };
 
-use crate::Workbench;
+use crate::{
+    Workbench,
+    plugin_access::{self, Forward, WorkbenchCommands},
+};
+
+/// The editor command a plugin runs only on a file inside the workspace.
+const SAVE: &str = "editor.save";
 
 /// Work a plugin's thread hands the main thread.
 type Job = Box<dyn FnOnce(&Served, &mut App) + Send>;
@@ -222,17 +240,7 @@ impl CallDeadline {
 /// invocations against `policy`, which the editor's registry checks them
 /// against too from now on.
 pub(crate) fn serve(jobs: Jobs, policy: &CommandHost, cx: &mut App) {
-    fe_gpui::commands::set_plugin_policy(Arc::new(policy.clone()));
-    let mut registry = fe_editor::commands::registry();
-    registry.set_plugin_policy(Arc::new(policy.clone()));
-    let ran = Rc::new(Cell::new(false));
-    let heard = Rc::clone(&ran);
-    fe_gpui::commands::observe_invocations(cx, move |invocation| {
-        if matches!(invocation.actor, Actor::Host(_)) {
-            heard.set(true);
-        }
-    });
-    let served = Served { registry, ran };
+    let served = Served::new(Arc::new(policy.clone()), cx);
     cx.spawn(async move |cx| {
         while let Ok(job) = jobs.0.recv().await {
             cx.update(|cx| job(&served, cx));
@@ -243,41 +251,207 @@ pub(crate) fn serve(jobs: Jobs, policy: &CommandHost, cx: &mut App) {
 
 /// What the main thread runs plugins' jobs with.
 pub(crate) struct Served {
+    /// What plugins may do: their grants and the workspace.
+    policy: Arc<dyn PluginPolicy>,
     /// The editor's commands, to check a plugin's invocation against before
     /// it runs.
     registry: Registry<Editor>,
+    /// The workbench's commands open to plugins, which check a plugin's
+    /// invocation and run it.
+    workbench: Registry<WorkbenchCommands>,
     /// Whether an invocation of a plugin's ran since it was last cleared.
     ran: Rc<Cell<bool>>,
 }
 
 impl Served {
-    /// Runs `invocation` on the active editor of the active window, if the
-    /// editor's registry lets the plugin run it there.
-    fn run(&self, invocation: &Invocation, cx: &mut App) -> Result<(), DispatchError> {
-        let invocation = invocation.clone().context(fe_editor::commands::context());
-        self.registry.validate(&invocation)?;
+    /// Checks plugins' invocations against `policy`, which the editor's
+    /// registry checks them against too from now on.
+    pub(crate) fn new(policy: Arc<dyn PluginPolicy>, cx: &mut App) -> Self {
+        fe_gpui::commands::set_plugin_policy(Arc::clone(&policy));
+        let mut registry = fe_editor::commands::registry();
+        registry.set_plugin_policy(Arc::clone(&policy));
+        let mut workbench = plugin_access::registry();
+        workbench.set_plugin_policy(Arc::clone(&policy));
+        let ran = Rc::new(Cell::new(false));
+        let heard = Rc::clone(&ran);
+        fe_gpui::commands::observe_invocations(cx, move |invocation| {
+            if matches!(invocation.actor, Actor::Host(_)) {
+                heard.set(true);
+            }
+        });
+        Self {
+            policy,
+            registry,
+            workbench,
+            ran,
+        }
+    }
+
+    /// Runs `invocation`: a workbench command open to plugins in the active
+    /// window, an editor command on the active editor of the active window,
+    /// if the registry it's in lets the plugin run it there.
+    pub(crate) fn run(&self, invocation: &Invocation, cx: &mut App) -> Result<(), DispatchError> {
+        let command = &invocation.command;
         let failed = |message: &str| DispatchError::Failed {
-            command: invocation.command.clone(),
+            command: command.clone(),
             error: CommandError(message.to_owned()),
         };
+        if self.workbench.get(command).is_some() {
+            let window = (cx.active_window())
+                .and_then(|window| window.downcast::<Workbench>())
+                .ok_or_else(|| failed("no window is active"))?;
+            return AnyWindowHandle::from(window)
+                .update(cx, |_, window, cx| {
+                    let mut forward = Forward {
+                        invocation: invocation.clone(),
+                        window,
+                        cx,
+                    };
+                    self.workbench.dispatch(&mut forward, invocation).map(drop)
+                })
+                .map_err(|_| failed("the window closed"))?;
+        }
+        if self.registry.get(command).is_none()
+            && let Actor::Host(plugin) = &invocation.actor
+        {
+            // Another workbench command, or a plugin's.
+            let typed = kiln::platform::command_actions::typed_command(command, cx).is_some();
+            if typed || plugin_access::is_plugin_command(&*self.policy, command) {
+                return Err(plugin_access::undeclared(plugin, command).into());
+            }
+        }
+        let invocation = invocation.clone().context(fe_editor::commands::context());
+        self.registry.validate(&invocation)?;
         let window = (cx.active_window())
             .and_then(|window| window.downcast::<Workbench>())
             .ok_or_else(|| failed("no window is active"))?;
         let editor = (window.read(cx).ok())
             .and_then(|workbench| workbench.active_editor(cx).cloned())
             .ok_or_else(|| failed("no editor is active"))?;
+        // A plugin's save is checked against the file it writes: none queued
+        // before it, which would write wherever the buffer's path is by
+        // then, and no save hook, so that the save takes its path now.
+        let saves = command.as_str() == SAVE;
+        let mut hook = None;
+        if saves {
+            let view = editor.read(cx);
+            if view.is_saving() {
+                return Err(failed("a save of the buffer is under way"));
+            }
+            let path = view.model().path().map(Path::to_owned);
+            self.may_save(&invocation, path.as_deref())?;
+            hook = editor.update(cx, |view, _| {
+                let hook = view.save_hook().cloned();
+                view.set_save_hook(None);
+                hook
+            });
+        }
         self.ran.set(false);
         let run = RunCommand(invocation.clone());
-        window
-            .update(cx, |_, window, cx| {
-                editor.focus_handle(cx).dispatch_action(&run, window, cx);
-            })
-            .map_err(|_| failed("the window closed"))?;
+        let dispatched = window.update(cx, |_, window, cx| {
+            editor.focus_handle(cx).dispatch_action(&run, window, cx);
+        });
+        if hook.is_some() {
+            // Put back, unless the host set another meanwhile.
+            editor.update(cx, |view, _| {
+                if view.save_hook().is_none() {
+                    view.set_save_hook(hook);
+                }
+            });
+        }
+        dispatched.map_err(|_| failed("the window closed"))?;
         match self.ran.take() {
             true => Ok(()),
             false => Err(failed("the active editor didn't run it")),
         }
     }
+
+    /// Refuses a plugin's [`SAVE`] of the buffer at `path` unless it's a
+    /// file inside a workspace root: not an untitled buffer, which saving
+    /// would ask the user where to put, nor a file the plugin's
+    /// `fs.write:workspace` doesn't reach.
+    fn may_save(&self, invocation: &Invocation, path: Option<&Path>) -> Result<(), PluginDenied> {
+        let Actor::Host(plugin) = &invocation.actor else {
+            return Ok(());
+        };
+        let Some(path) = path else {
+            return Err(PluginDenied::MissingPath {
+                plugin: plugin.clone(),
+                command: invocation.command.clone(),
+                arg: "the buffer's file",
+            });
+        };
+        let roots: Vec<PathBuf> = (self.policy.workspace_roots().iter())
+            .filter_map(|root| resolved(root))
+            .collect();
+        let inside =
+            resolved(path).is_some_and(|path| roots.iter().any(|root| path.starts_with(root)));
+        if inside {
+            return Ok(());
+        }
+        Err(PluginDenied::OutsideWorkspace {
+            plugin: plugin.clone(),
+            command: invocation.command.clone(),
+            arg: "the buffer's file",
+            path: path.display().to_string(),
+        })
+    }
+}
+
+/// The most symlinks [`resolved`] follows in one path, as Linux's
+/// `MAXSYMLINKS`: more is a loop, or as good as one.
+const MAX_SYMLINKS: u32 = 40;
+
+/// Where `path` leads, as a write to it would: symlinks followed one
+/// component at a time as the OS follows them, so `..` after a symlink
+/// leaves where it leads, and a symlink whose target doesn't exist yet,
+/// which a save would create, counts as its target. A component that
+/// doesn't exist is taken as named. `None` for a relative path, a symlink
+/// loop and anything that can't be read, so that a file that can't be
+/// checked isn't saved. As kiln's check of plugins' path args resolves
+/// them.
+fn resolved(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    if !path.is_absolute() {
+        return None;
+    }
+    let owned = |component: Component<'_>| PathBuf::from(component.as_os_str());
+    let mut rest: VecDeque<PathBuf> = path.components().map(owned).collect();
+    let mut resolved = PathBuf::new();
+    let mut symlinks = 0;
+    while let Some(component) = rest.pop_front() {
+        match component.components().next() {
+            None | Some(Component::CurDir) => {}
+            Some(Component::ParentDir) => {
+                resolved.pop();
+            }
+            // An absolute symlink target starts over from its root.
+            Some(Component::RootDir | Component::Prefix(_)) => resolved.push(&component),
+            Some(Component::Normal(_)) => {
+                let next = resolved.join(&component);
+                match std::fs::symlink_metadata(&next) {
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        symlinks += 1;
+                        if symlinks > MAX_SYMLINKS {
+                            return None;
+                        }
+                        // Its target's components come next, from the
+                        // symlink's folder.
+                        let target = std::fs::read_link(&next).ok()?;
+                        for component in target.components().rev() {
+                            rest.push_front(owned(component));
+                        }
+                    }
+                    Ok(_) => resolved = next,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        resolved = next;
+                    }
+                    Err(_) => return None,
+                }
+            }
+        }
+    }
+    Some(resolved)
 }
 
 /// Runs plugins' invocations on the main thread.
