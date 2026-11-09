@@ -1,0 +1,19 @@
+id = "tenmoku.grammar_d"
+name = "D syntax"
+version = "0.9.1"
+license = "MIT AND Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "d"
+wasm = "tree-sitter-d.wasm"
+extensions = ["d", "di"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+license = "MIT"
+line_comment = "//"
+block_comment = ["/*", "*/"]
+shebangs = ["rdmd"]
