@@ -23,8 +23,9 @@ fn draw(cx: &mut VisualTestContext) {
 fn window(
     cx: &mut TestAppContext,
     root: &std::path::Path,
+    state: &std::path::Path,
 ) -> (Entity<Workbench>, VisualTestContext) {
-    let state = std::env::temp_dir().join(format!("palette_recent_{}", std::process::id()));
+    let state = state.to_owned();
     cx.update(|cx| {
         fe_gpui::init(cx);
         crate::init(cx);
@@ -74,7 +75,8 @@ fn palette_titles(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> 
 #[gpui::test]
 fn the_palette_over_a_picker_leaves_out_open_recent_in_new_window(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let (workbench, mut cx) = window(cx, dir.path());
+    let state = tempfile::tempdir().unwrap();
+    let (workbench, mut cx) = window(cx, dir.path(), state.path());
     let cx = &mut cx;
 
     run("workbench.open_recent", cx);

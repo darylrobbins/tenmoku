@@ -9,7 +9,12 @@
 //! parse; error recovery still parses. The module patched is
 //! `tree-sitter-json.wasm`; see `fixtures/tree-sitter-json.wasm.md`.
 
-use std::{fs, path::Path, sync::Once, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Once,
+    time::Duration,
+};
 
 use fe_buffer::Buffer;
 use fe_syntax::{GrammarDeadlines, GrammarSpec, Syntax, register_language, set_grammar_deadlines};
@@ -142,6 +147,15 @@ impl Module {
 
 /// A parse of `text` in the JSON grammar patched by `patch` finishes: whether
 /// it failed.
+/// Removes its folder when the parse is done.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 fn parse(case: &str, patch: impl FnOnce(&mut Module), text: &'static str) -> bool {
     static SET: Once = Once::new();
     SET.call_once(|| {
@@ -152,8 +166,11 @@ fn parse(case: &str, patch: impl FnOnce(&mut Module), text: &'static str) -> boo
     });
     let mut module = Module::load();
     patch(&mut module);
-    let dir = std::env::temp_dir().join(format!("fe-syntax-accepted-stack-{}", std::process::id()));
-    let dir = dir.join(case);
+    let dir = std::env::temp_dir().join(format!(
+        "fe-syntax-accepted-stack-{}-{case}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(dir.clone());
     fs::create_dir_all(&dir).unwrap();
     let wasm = dir.join("tree-sitter-json.wasm");
     fs::write(&wasm, &module.bytes).unwrap();

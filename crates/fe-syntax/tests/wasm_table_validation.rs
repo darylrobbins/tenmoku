@@ -11,7 +11,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Once, OnceLock},
+    sync::Once,
     time::Duration,
 };
 
@@ -394,31 +394,35 @@ fn short_deadlines() {
     });
 }
 
-fn scratch() -> &'static Path {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        let dir =
-            std::env::temp_dir().join(format!("fe-syntax-table-validation-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    })
+/// A folder for one case's module, removed when the case is done.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 /// Writes `grammar` patched by `patch` for a grammar called `case`.
-fn spec(case: &str, grammar: &str, patch: impl FnOnce(&mut Module)) -> GrammarSpec {
+fn spec(case: &str, grammar: &str, patch: impl FnOnce(&mut Module)) -> (Scratch, GrammarSpec) {
     short_deadlines();
     let mut module = Module::load(grammar);
     patch(&mut module);
-    let dir = scratch().join(case);
+    let dir = std::env::temp_dir().join(format!(
+        "fe-syntax-table-validation-{}-{case}",
+        std::process::id()
+    ));
+    let scratch = Scratch(dir.clone());
     fs::create_dir_all(&dir).unwrap();
     let wasm = dir.join(format!("tree-sitter-{grammar}.wasm"));
     fs::write(&wasm, &module.bytes).unwrap();
-    GrammarSpec {
+    let spec = GrammarSpec {
         language: case.into(),
         wasm,
         extensions: vec![case.into()],
         ..GrammarSpec::default()
-    }
+    };
+    (scratch, spec)
 }
 
 /// Loads `grammar` patched by `patch` as a grammar called `case`.
@@ -427,7 +431,7 @@ fn load(
     grammar: &str,
     patch: impl FnOnce(&mut Module),
 ) -> (PathBuf, Result<(), GrammarError>) {
-    let spec = spec(case, grammar, patch);
+    let (_scratch, spec) = spec(case, grammar, patch);
     let result = register_language(&spec).map(|_| ());
     (spec.wasm, result)
 }
@@ -1127,7 +1131,7 @@ fn external_tokens_and_reserved_words_name_terminals() {
 
 /// A parse of `text` in the patched JSON grammar finishes: whether it failed.
 fn parse(case: &str, patch: impl FnOnce(&mut Module), text: &'static str) -> bool {
-    let spec = spec(case, "json", patch);
+    let (_scratch, spec) = spec(case, "json", patch);
     let language = register_language(&spec).unwrap();
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || {

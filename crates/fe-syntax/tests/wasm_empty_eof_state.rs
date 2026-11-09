@@ -105,6 +105,15 @@ impl Module {
     }
 }
 
+/// Removes its folder when the test ends.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn a_state_with_no_lex_state_and_an_empty_eof_entry_is_an_error() {
     set_grammar_deadlines(GrammarDeadlines {
@@ -122,6 +131,7 @@ fn a_state_with_no_lex_state_and_an_empty_eof_entry_is_an_error() {
 
     let dir: PathBuf =
         std::env::temp_dir().join(format!("fe-syntax-empty-eof-{}", std::process::id()));
+    let _scratch = Scratch(dir.clone());
     fs::create_dir_all(&dir).unwrap();
     let wasm = dir.join("tree-sitter-json.wasm");
     fs::write(&wasm, &m.bytes).unwrap();

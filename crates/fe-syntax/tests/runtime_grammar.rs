@@ -9,7 +9,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Once, OnceLock, mpsc},
+    sync::{Mutex, Once, OnceLock, mpsc},
     time::{Duration, Instant},
 };
 
@@ -56,19 +56,40 @@ fn bounded<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
         .expect("stopped by its deadline")
 }
 
-/// This process's directory for the queries and bad modules.
-fn scratch() -> &'static Path {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        let name = format!("fe-syntax-runtime-grammar-{}", std::process::id());
-        let dir = std::env::temp_dir().join(name);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    })
+/// This process's directory for the queries and bad modules, removed when
+/// the last test holding it finishes.
+struct Scratch(PathBuf);
+
+static HELD: Mutex<usize> = Mutex::new(0);
+
+fn scratch() -> Scratch {
+    let mut held = HELD.lock().unwrap();
+    let dir =
+        std::env::temp_dir().join(format!("fe-syntax-runtime-grammar-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    *held += 1;
+    Scratch(dir)
 }
 
-fn write(name: &str, contents: impl AsRef<[u8]>) -> PathBuf {
-    let path = scratch().join(name);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let mut held = HELD.lock().unwrap();
+        *held -= 1;
+        if *held == 0 {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+fn write(scratch: &Scratch, name: &str, contents: impl AsRef<[u8]>) -> PathBuf {
+    let path = scratch.join(name);
     fs::write(&path, contents).unwrap();
     path
 }
@@ -77,11 +98,16 @@ fn json_wasm() -> &'static Language {
     static LANGUAGE: OnceLock<&'static Language> = OnceLock::new();
     short_deadlines();
     LANGUAGE.get_or_init(|| {
+        let scratch = scratch();
         register_language(&GrammarSpec {
             language: "json_wasm".into(),
             wasm: fixture(),
             extensions: vec!["jsonw".into()],
-            highlights: Some(write("highlights.scm", tree_sitter_json::HIGHLIGHTS_QUERY)),
+            highlights: Some(write(
+                &scratch,
+                "highlights.scm",
+                tree_sitter_json::HIGHLIGHTS_QUERY,
+            )),
             earlier_patterns_win: true,
             ..GrammarSpec::default()
         })
@@ -192,11 +218,16 @@ fn runtime_languages_are_found_after_built_ins() {
     assert_eq!(language_name_for_path(Path::new("dir/x.jsonv")), None);
 
     // The same files again are the language already loaded.
+    let scratch = scratch();
     let again = GrammarSpec {
         language: "json_wasm".into(),
         wasm: fixture(),
         extensions: vec!["jsonw".into()],
-        highlights: Some(scratch().join("highlights.scm")),
+        highlights: Some(write(
+            &scratch,
+            "highlights.scm",
+            tree_sitter_json::HIGHLIGHTS_QUERY,
+        )),
         earlier_patterns_win: true,
         ..GrammarSpec::default()
     };
@@ -273,7 +304,12 @@ fn bad_grammars_are_errors() {
         ..GrammarSpec::default()
     };
 
-    let garbage = write("tree-sitter-json-garbage.wasm", b"\0asm not really");
+    let scratch = scratch();
+    let garbage = write(
+        &scratch,
+        "tree-sitter-json-garbage.wasm",
+        b"\0asm not really",
+    );
     match register_language(&spec("garbage", garbage.clone())) {
         Err(error @ GrammarError::Module { .. }) => {
             assert_eq!(error.file(), Some(garbage.as_path()));
@@ -286,7 +322,7 @@ fn bad_grammars_are_errors() {
         other => panic!("{other:?}"),
     }
 
-    let huge = scratch().join("tree-sitter-huge.wasm");
+    let huge = scratch.join("tree-sitter-huge.wasm");
     fs::File::create(&huge)
         .unwrap()
         .set_len(MAX_GRAMMAR_BYTES + 1)
@@ -302,6 +338,7 @@ fn bad_grammars_are_errors() {
     }
 
     let query = write(
+        &scratch,
         "bad-highlights.scm",
         "(string) @string\n\n  (pair key: (no_such_node)) @keyword\n",
     );
@@ -315,7 +352,7 @@ fn bad_grammars_are_errors() {
         other => panic!("{other:?}"),
     }
 
-    let missing = scratch().join("tree-sitter-missing.wasm");
+    let missing = scratch.join("tree-sitter-missing.wasm");
     match register_language(&spec("missing", missing.clone())) {
         Err(error @ GrammarError::Read { .. }) => assert_eq!(error.file(), Some(missing.as_path())),
         other => panic!("{other:?}"),
@@ -477,10 +514,11 @@ fn a_bad_export_is_an_error_not_an_abort() {
         .position(|window| window == name)
         .expect("the fixture exports tree_sitter_json")
         + name.len();
+    let scratch = scratch();
     let load = |dir: &str, module: Vec<u8>| {
         // The file's name says the grammar is `json`.
-        fs::create_dir_all(scratch().join(dir)).unwrap();
-        let wasm = write(&format!("{dir}/tree-sitter-json.wasm"), module);
+        fs::create_dir_all(scratch.join(dir)).unwrap();
+        let wasm = write(&scratch, &format!("{dir}/tree-sitter-json.wasm"), module);
         let spec = GrammarSpec {
             language: format!("json_{dir}"),
             wasm: wasm.clone(),
