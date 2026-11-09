@@ -663,7 +663,12 @@ const DEFS: &[Def] = &[
         extensions: &["yaml", "yml"],
         file_names: &[],
         grammar: || tree_sitter_yaml::LANGUAGE.into(),
-        highlights: || &[tree_sitter_yaml::HIGHLIGHTS_QUERY],
+        highlights: || {
+            &[
+                tree_sitter_yaml::HIGHLIGHTS_QUERY,
+                include_str!("../queries/yaml.scm"),
+            ]
+        },
         earlier_patterns_win: false,
         injections: None,
         hidden: false,

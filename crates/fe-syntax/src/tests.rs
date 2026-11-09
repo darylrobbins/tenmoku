@@ -102,7 +102,7 @@ fn each_language_highlights_a_snippet() {
             "[package]\nname = \"x\" # c\n",
             &[
                 ("package", "type"),
-                ("name", "property"),
+                ("name", "string.special.key"),
                 ("\"x\"", "string"),
                 ("# c", "comment"),
             ],
@@ -212,7 +212,7 @@ fn each_language_highlights_a_snippet() {
             &[
                 ("; c\n", "comment"),
                 ("sec", "type"),
-                ("key", "property"),
+                ("key", "string.special.key"),
                 ("=", "operator"),
                 (" some value", "string"),
             ],
@@ -276,7 +276,11 @@ fn each_language_highlights_a_snippet() {
         (
             "x.yaml",
             "key: 1 # c",
-            &[("key", "property"), ("1", "number"), ("# c", "comment")],
+            &[
+                ("key", "string.special.key"),
+                ("1", "number"),
+                ("# c", "comment"),
+            ],
         ),
         (
             "README.md",

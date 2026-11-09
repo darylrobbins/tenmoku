@@ -79,6 +79,7 @@ for everyone.
 | Number, constant | `#f0a3c2` | `#a32f6b` | Peach bloom | |
 | Macro, attribute | `#8db1f2` | `#2457c5` | Lapis | |
 | Property | `#dccbb8` | `#3d444d` | Shino | |
+| Data-file key | `#8db1f2` | `#2457c5` | Lapis | |
 | Variable | `#ede4d6` | `#1f2328` | ink | |
 | Punctuation | `#a89a8c` | `#596069` | Iron | |
 | Comment | `#9e9b97` | `#69727c` | Wood ash | Italic |

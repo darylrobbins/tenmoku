@@ -209,11 +209,11 @@ fn php_heredocs_keep_lines_for_yaml() {
     assert_includes(
         &found,
         &[
-            ("a", "property"),
+            ("a", "string.special.key"),
             ("1", "number"),
-            ("b", "property"),
+            ("b", "string.special.key"),
             ("x", "variable"),
-            ("c", "property"),
+            ("c", "string.special.key"),
             ("true", "constant.builtin"),
         ],
     );

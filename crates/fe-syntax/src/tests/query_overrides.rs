@@ -22,13 +22,13 @@ pub(super) fn has(spans: &[(String, &'static str)], text: &str, highlight: &str)
 }
 
 #[test]
-fn toml_keys_are_properties() {
+fn toml_keys_are_data_file_keys() {
     let text = "[a.b]\nname = 1\ndotted.key = \"v\"\n[[bin]]\n";
     let spans = highlighted("toml", text);
     for (text, highlight) in [
-        ("name", "property"),
-        ("dotted", "property"),
-        ("key", "property"),
+        ("name", "string.special.key"),
+        ("dotted", "string.special.key"),
+        ("key", "string.special.key"),
         ("a", "type"),
         ("b", "type"),
         ("bin", "type"),
@@ -53,13 +53,13 @@ fn toml_deep_and_quoted_keys() {
         ("e", "type"),
         ("\"f\"", "type"),
         ("'g'", "type"),
-        ("x", "property"),
-        ("y", "property"),
-        ("z", "property"),
-        ("\"q\"", "property"),
-        ("'r'", "property"),
-        ("s", "property"),
-        ("\"k\"", "property"),
+        ("x", "string.special.key"),
+        ("y", "string.special.key"),
+        ("z", "string.special.key"),
+        ("\"q\"", "string.special.key"),
+        ("'r'", "string.special.key"),
+        ("s", "string.special.key"),
+        ("\"k\"", "string.special.key"),
         ("\"v\"", "string"),
     ] {
         assert!(has(&spans, text, highlight), "{text}: {spans:?}");
@@ -76,23 +76,23 @@ fn key(n: usize, quote: &str) -> String {
 
 /// The three places a key can appear, with the highlight a covered component
 /// gets there and the one a component beyond the depth limit falls back to,
-/// by quoting: bare keys fall back to `property`, quoted ones to `string`.
+/// by quoting: bare keys fall back to `string.special.key`, quoted ones to `string`.
 fn key_forms(key: &str) -> [(String, &'static str, [&'static str; 3]); 3] {
     [
         (
             format!("[{key}]\n"),
             "type",
-            ["property", "string", "string"],
+            ["string.special.key", "string", "string"],
         ),
         (
             format!("[[{key}]]\n"),
             "type",
-            ["property", "string", "string"],
+            ["string.special.key", "string", "string"],
         ),
         (
             format!("{key} = 1\n"),
-            "property",
-            ["property", "string", "string"],
+            "string.special.key",
+            ["string.special.key", "string", "string"],
         ),
     ]
 }
@@ -125,6 +125,6 @@ fn json_and_yaml_keys_differ_from_values() {
     assert!(has(&json, "\"k\"", "string.special.key"), "{json:?}");
     assert!(has(&json, "\"v\"", "string"), "{json:?}");
     let yaml = highlighted("yaml", "k: v\n");
-    assert!(has(&yaml, "k", "property"), "{yaml:?}");
-    assert!(!has(&yaml, "v", "property"), "{yaml:?}");
+    assert!(has(&yaml, "k", "string.special.key"), "{yaml:?}");
+    assert!(!has(&yaml, "v", "string.special.key"), "{yaml:?}");
 }

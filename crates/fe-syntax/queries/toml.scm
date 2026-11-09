@@ -12,7 +12,7 @@
 ; each pair gets a stray span, and appended patterns can't cancel it.
 ; Later patterns win over earlier ones on the same node.
 
-(bare_key) @property
+(bare_key) @string.special.key
 
 [
   (string)
@@ -53,47 +53,39 @@
   "}"
 ] @punctuation.bracket
 
-; Every component of a key, quoted or not, is a property in a pair and a type
+; Every component of a key, quoted or not, is a data-file key (`string.special.key`) in a pair and a type
 ; in a table header. Dotted keys nest to the left (`a.b.c` is
 ; `(dotted_key (dotted_key a b) c)`), so each pattern names a component's
 ; depth under the pair or header, up to 10 nested dotted_keys, so a key of up
 ; to 11 components is covered. This is a limit of the query language, which
 ; can't recurse. In a longer key the leftmost components, which sit deeper,
-; keep the plain `property` or `string` above, even in a header. Headers come
+; keep the plain `string.special.key` or `string` above, even in a header. Headers come
 ; last so they win.
 
 (pair
-  (bare_key) @property)
+  (bare_key) @string.special.key)
 
 (pair
   (dotted_key
-    (bare_key) @property))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (bare_key) @property)))
+    (bare_key) @string.special.key))
 
 (pair
   (dotted_key
     (dotted_key
-      (dotted_key
-        (bare_key) @property))))
+      (bare_key) @string.special.key)))
 
 (pair
   (dotted_key
     (dotted_key
       (dotted_key
-        (dotted_key
-          (bare_key) @property)))))
+        (bare_key) @string.special.key))))
 
 (pair
   (dotted_key
     (dotted_key
       (dotted_key
         (dotted_key
-          (dotted_key
-            (bare_key) @property))))))
+          (bare_key) @string.special.key)))))
 
 (pair
   (dotted_key
@@ -101,8 +93,7 @@
       (dotted_key
         (dotted_key
           (dotted_key
-            (dotted_key
-              (bare_key) @property)))))))
+            (bare_key) @string.special.key))))))
 
 (pair
   (dotted_key
@@ -111,8 +102,7 @@
         (dotted_key
           (dotted_key
             (dotted_key
-              (dotted_key
-                (bare_key) @property))))))))
+              (bare_key) @string.special.key)))))))
 
 (pair
   (dotted_key
@@ -122,8 +112,7 @@
           (dotted_key
             (dotted_key
               (dotted_key
-                (dotted_key
-                  (bare_key) @property)))))))))
+                (bare_key) @string.special.key))))))))
 
 (pair
   (dotted_key
@@ -134,8 +123,7 @@
             (dotted_key
               (dotted_key
                 (dotted_key
-                  (dotted_key
-                    (bare_key) @property))))))))))
+                  (bare_key) @string.special.key)))))))))
 
 (pair
   (dotted_key
@@ -147,83 +135,7 @@
               (dotted_key
                 (dotted_key
                   (dotted_key
-                    (dotted_key
-                      (bare_key) @property)))))))))))
-
-(pair
-  (quoted_key) @property)
-
-(pair
-  (dotted_key
-    (quoted_key) @property))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (quoted_key) @property)))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (dotted_key
-        (quoted_key) @property))))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (dotted_key
-        (dotted_key
-          (quoted_key) @property)))))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (dotted_key
-        (dotted_key
-          (dotted_key
-            (quoted_key) @property))))))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (dotted_key
-        (dotted_key
-          (dotted_key
-            (dotted_key
-              (quoted_key) @property)))))))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (dotted_key
-        (dotted_key
-          (dotted_key
-            (dotted_key
-              (dotted_key
-                (quoted_key) @property))))))))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (dotted_key
-        (dotted_key
-          (dotted_key
-            (dotted_key
-              (dotted_key
-                (dotted_key
-                  (quoted_key) @property)))))))))
-
-(pair
-  (dotted_key
-    (dotted_key
-      (dotted_key
-        (dotted_key
-          (dotted_key
-            (dotted_key
-              (dotted_key
-                (dotted_key
-                  (dotted_key
-                    (quoted_key) @property))))))))))
+                    (bare_key) @string.special.key))))))))))
 
 (pair
   (dotted_key
@@ -236,7 +148,95 @@
                 (dotted_key
                   (dotted_key
                     (dotted_key
-                      (quoted_key) @property)))))))))))
+                      (bare_key) @string.special.key)))))))))))
+
+(pair
+  (quoted_key) @string.special.key)
+
+(pair
+  (dotted_key
+    (quoted_key) @string.special.key))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (quoted_key) @string.special.key)))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (dotted_key
+        (quoted_key) @string.special.key))))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (dotted_key
+        (dotted_key
+          (quoted_key) @string.special.key)))))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (dotted_key
+        (dotted_key
+          (dotted_key
+            (quoted_key) @string.special.key))))))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (dotted_key
+        (dotted_key
+          (dotted_key
+            (dotted_key
+              (quoted_key) @string.special.key)))))))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (dotted_key
+        (dotted_key
+          (dotted_key
+            (dotted_key
+              (dotted_key
+                (quoted_key) @string.special.key))))))))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (dotted_key
+        (dotted_key
+          (dotted_key
+            (dotted_key
+              (dotted_key
+                (dotted_key
+                  (quoted_key) @string.special.key)))))))))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (dotted_key
+        (dotted_key
+          (dotted_key
+            (dotted_key
+              (dotted_key
+                (dotted_key
+                  (dotted_key
+                    (quoted_key) @string.special.key))))))))))
+
+(pair
+  (dotted_key
+    (dotted_key
+      (dotted_key
+        (dotted_key
+          (dotted_key
+            (dotted_key
+              (dotted_key
+                (dotted_key
+                  (dotted_key
+                    (dotted_key
+                      (quoted_key) @string.special.key)))))))))))
 
 (table
   (bare_key) @type)
