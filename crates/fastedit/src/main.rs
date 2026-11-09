@@ -650,6 +650,12 @@ fn main() {
         log_file::display_count(),
     );
     init_logging();
+    // The string catalogue, built for the system's languages on a thread of
+    // its own, so that neither the first frame nor applying the settings'
+    // `workbench.locale` parses it here.
+    let warm = Instant::now();
+    kiln_platform::locale::warm();
+    startup.l10n_warm = Some(warm.elapsed());
     // Before the command line is parsed: Velopack's `--veloapp-*` hook
     // launches would be unknown flags to it.
     velopack_update::startup();

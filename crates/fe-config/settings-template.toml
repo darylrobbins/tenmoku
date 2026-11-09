@@ -283,6 +283,13 @@
 # settings, with LazyVim's dashboard keys while vim is on. Off, the pane says
 # "No open files".
 # start_page = true
+# The language of Tenmoku's own text: auto follows the system's preferred
+# languages; a tag such as "de" or "pt-BR" picks a shipped one. Menus and
+# panels change at once; macOS's own panels and the updater follow the
+# system (System Settings > Language & Region > Applications). A language
+# Tenmoku doesn't ship is skipped, with a warning naming the one used. A
+# project file can't set it.
+# locale = "auto"
 
 [workbench.zen_mode]
 # What Zen Mode (cmd-k z, ctrl-k z off macOS, again to leave it) hides

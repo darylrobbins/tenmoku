@@ -12,8 +12,12 @@ publish = false
 gpui.workspace = true
 kiln-command.workspace = true
 kiln-core.workspace = true
+kiln-l10n.workspace = true
 log.workspace = true
 serde_json.workspace = true
+# The user's preferred languages (src/locale.rs): MIT OR Apache-2.0, already
+# in the lock through cosmic-text on Linux.
+sys-locale = "0.3.2"
 # The screenshot harness (`test-support`): this platform's real renderer
 # off screen, and PNGs for the goldens.
 gpui_platform = { workspace = true, optional = true }
@@ -33,6 +37,12 @@ test-support = ["dep:gpui_platform", "dep:image", "gpui/test-support", "gpui/lea
 schemars.workspace = true
 serde.workspace = true
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
+
+# tests/l10n.rs: the platform's real text system, to check what bidi
+# isolates draw; on Linux the windowing backends select it, as `kiln` has
+# them.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+gpui_platform = { workspace = true, features = ["wayland", "x11"] }
 
 [lints]
 workspace = true

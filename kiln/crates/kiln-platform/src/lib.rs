@@ -14,7 +14,9 @@
 //! button's, as its command, and [`focus`] keeps keys working when the
 //! focused element stops being drawn. [`config`] watches the app's config
 //! files (settings, keymap, theme) and applies each change to every
-//! window. [`Capabilities`] says what a
+//! window. [`locale`] is the language of the app's own text: the system's
+//! preferred languages, and the [`locale::ActiveLocale`] the string
+//! catalogue follows. [`Capabilities`] says what a
 //! platform does natively, and [`window_options`], [`fonts`] and
 //! [`dialogs`] act on it. With the `test-support` feature, `screenshots`
 //! is the golden-screenshot harness for an app's examples.
@@ -29,6 +31,7 @@ pub mod focus;
 pub mod fonts;
 pub mod frame_watch;
 pub mod keys;
+pub mod locale;
 pub mod menus;
 #[cfg(feature = "test-support")]
 pub mod screenshots;

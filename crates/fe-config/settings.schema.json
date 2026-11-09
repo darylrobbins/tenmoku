@@ -1394,6 +1394,15 @@
           "default": "tenmoku",
           "description": "The file and folder icons: `tenmoku` draws line icons tinted from the\ntheme, by file type and folder role; `material` draws Material Icon\nTheme's, in colour, by language, file name and folder name; `minimal`\ndraws plain line icons in the theme's colours. A project file can't\nset it."
         },
+        "locale": {
+          "default": "auto",
+          "description": "The language of Tenmoku's own text: `auto` follows the system's\npreferred languages; a tag such as `de` or `pt-BR` picks a shipped\none. Menus and panels change at once; macOS's own panels and the\nupdater follow the system (System Settings › Language & Region ›\nApplications). A language Tenmoku doesn't ship is skipped, with a\nwarning naming the one used. A project file can't set it.",
+          "enum": [
+            "auto",
+            "en-US"
+          ],
+          "type": "string"
+        },
         "preview_tabs": {
           "default": true,
           "description": "Whether a file single-clicked in the project tree opens in a preview\ntab, in italics, that the next one replaces. Editing it,\ndouble-clicking it or its tab, or pinning it keeps it open.",
@@ -1640,6 +1649,7 @@
       "$ref": "#/$defs/WorkbenchSettings",
       "default": {
         "icon_theme": "tenmoku",
+        "locale": "auto",
         "preview_tabs": true,
         "start_page": true,
         "zen_mode": {

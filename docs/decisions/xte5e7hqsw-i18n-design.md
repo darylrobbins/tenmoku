@@ -1366,6 +1366,53 @@ It applies live to Tenmoku's text; AppKit-owned text follows the system at
 launch. Linux key-name labels are translated; macOS symbols, keymap syntax,
 numbers, dates and vim keys are unchanged.
 
+**I2's measurement (T531, 2026-11-08, Linux).** `tenmoku --perf` on a
+26 KB file, release builds of the base (fe61cc26) and of T531, launched in
+turn under Xvfb with Mesa's software Vulkan on helium (24 cores, shared
+with other lanes' builds). Times are from the top of `main`:
+
+| Runs (base, T531), load | Milestone | Base, median (min) | T531, median (min) |
+|---|---|---:|---:|
+| 15, 15; 25–48 | app callback | 22.8 ms (19.0) | 20.3 ms (16.9) |
+| | window open, first frame drawn | 235.6 ms (209.6) | 243.5 ms (217.8) |
+| | first frame presented | 292.1 ms (240.3) | 306.3 ms (250.8) |
+| 25, 24; 75–94 | window open, first frame drawn | 579.9 ms (315.1) | 618.6 ms (329.4) |
+| | first frame presented | 783.6 ms (398.4) | 767.0 ms (412.9) |
+| 30, 30; 101–126 | window open, first frame drawn | 975.9 ms (520.1) | 984.2 ms (482.1) |
+| | first frame presented | 1170.0 ms (683.9) | 1233.9 ms (667.1) |
+
+The runs spread over hundreds of milliseconds on a machine shared with
+other lanes, so the end-to-end numbers can't resolve a millisecond either
+way: one batch has T531 faster to the presented frame, the others slower,
+by more than locale selection could cost.
+
+What locale selection adds before the first frame is two calls on the main
+thread; the warm-up's own work runs on a thread of its own. `--perf` times
+both in the release app, as it starts (`open: l10n on the main thread`):
+the call to `kiln_platform::locale::warm()` at the top of `main`, which
+spawns the thread, and the config service's first application of
+`workbench.locale` (`preferred()`, `LocaleSetting::choose`, `set_locale`),
+including any wait on the warm-up's lock. In the last batch's 30 T531
+launches:
+
+| Main-thread work | Median | p90 | Max |
+|---|---:|---:|---:|
+| `warm()`, spawning the thread | 67 µs | 90 µs | 1193 µs |
+| applying `workbench.locale` | 29 µs | 41 µs | 49 µs |
+| both | 99 µs | 123 µs | 1220 µs |
+
+The one launch over a millisecond was a thread spawn that waited at a load
+of about 120 on 24 cores; the other 29 took at most 0.2 ms in all.
+Applying the setting, wait included, never took more than 49 µs: the
+warm-up had finished by then, so `set_locale` found its chain and rebuilt
+nothing. So the main thread does about 0.1 ms more before the first
+frame, well under the 1 ms budget.
+
+What this doesn't bound is the warm-up's thread competing with the main
+thread for a core while it builds the catalogue: on helium's load that
+effect drowns in the noise above. The end-to-end before/after on a quiet
+machine, resolving 1 ms, is T533's.
+
 ## 7. Bundle
 
 **Info.plist today** (`crates/fastedit/macos/Info.plist`):

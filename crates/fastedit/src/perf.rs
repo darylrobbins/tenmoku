@@ -70,6 +70,9 @@ pub(crate) struct Startup {
     /// When `open_window` returned: the first frame is drawn, not yet
     /// presented.
     pub(crate) window: Option<Instant>,
+    /// How long `main` spent starting the string catalogue's warm-up
+    /// thread ([`kiln_platform::locale::warm`]).
+    pub(crate) l10n_warm: Option<Duration>,
 }
 
 impl Startup {
@@ -83,6 +86,7 @@ impl Startup {
             app: None,
             view: None,
             window: None,
+            l10n_warm: None,
         }
     }
 
@@ -259,6 +263,18 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
             window.is_window_active()
         );
         say!("open: file shown {:.0?} after launch", shown - launched);
+        // What locale selection adds to the main thread before the first
+        // frame (i18n design § 6): too little for the phases above to show.
+        let micros = |time: Option<Duration>| {
+            time.map_or("-".to_owned(), |time| {
+                format!("{:.0}", time.as_secs_f64() * 1e6)
+            })
+        };
+        say!(
+            "open: l10n on the main thread: warm-up started in {} µs, workbench.locale applied in {} µs",
+            micros(state.startup.l10n_warm),
+            micros(crate::config::locale_first_applied()),
+        );
         print_memory("at file shown", state.file_bytes);
     }
 
@@ -769,6 +785,7 @@ mod tests {
             app: None,
             view: None,
             window: None,
+            l10n_warm: None,
         };
         let phases = startup_phases(&startup, at(t, 112), at(t, 115), false, editor, at(t, 115));
         let (name, prepaint) = &phases[1];

@@ -31,6 +31,7 @@ fe-syntax.workspace = true
 fe-vim.workspace = true
 fe-workbench.workspace = true
 kiln.workspace = true
+kiln-l10n.workspace = true
 kiln-platform.workspace = true
 gpui.workspace = true
 libc.workspace = true
@@ -75,6 +76,7 @@ fe-project = { workspace = true, features = ["test-support"] }
 fe-lsp = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 kiln = { workspace = true, features = ["test-support"] }
+kiln-l10n = { workspace = true, features = ["lint"] }
 futures.workspace = true
 
 [lints]

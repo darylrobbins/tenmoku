@@ -256,7 +256,7 @@ impl SettingsModel {
                 | ["theme", ..]
                 | ["terminal", "shell" | "shell_args"]
                 | ["vim", "shell" | "remap"]
-                | ["workbench", "icon_theme"]
+                | ["workbench", "icon_theme" | "locale"]
         ) && match key.as_slice() {
             ["lsp", rest @ ..] => matches!(rest, ["enabled"] | ["servers", ..]),
             _ => true,
@@ -390,7 +390,7 @@ fn applied_project(project: &Table) -> Table {
     for (name, keys) in [
         ("terminal", &["shell", "shell_args"][..]),
         ("vim", &["shell", "remap"]),
-        ("workbench", &["icon_theme"]),
+        ("workbench", &["icon_theme", "locale"]),
     ] {
         if let Some(toml::Value::Table(inner)) = table.get_mut(name) {
             for key in keys {

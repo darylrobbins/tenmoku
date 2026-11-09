@@ -1,5 +1,6 @@
 mod bracket_pair_colors_default;
 mod layers;
+mod locale;
 mod lsp;
 mod settings;
 mod template_theme_names;

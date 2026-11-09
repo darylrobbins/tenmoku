@@ -2077,6 +2077,7 @@ dependencies = [
  "gpui-pre",
  "kiln",
  "kiln-command",
+ "kiln-l10n",
  "kiln-platform",
  "libc",
  "log",
@@ -2200,7 +2201,9 @@ dependencies = [
  "dunce",
  "ec4rs",
  "fe-syntax",
+ "fluent-langneg",
  "kiln-core",
+ "kiln-l10n",
  "libc",
  "log",
  "notify",
@@ -5389,12 +5392,14 @@ dependencies = [
  "image",
  "kiln-command",
  "kiln-core",
+ "kiln-l10n",
  "log",
  "objc2 0.6.4",
  "raw-window-handle",
  "schemars",
  "serde",
  "serde_json",
+ "sys-locale",
 ]
 
 [[package]]

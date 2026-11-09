@@ -39,6 +39,7 @@ pub(crate) fn register_commands(cx: &mut App) {
 pub(crate) fn shipped(settings: SettingsStore) -> Config {
     let app = fe_config::paths::app_id();
     let mode = theme::mode(settings.settings().theme.mode);
+    let locale = Locale::new(settings.user_path().map(Path::to_owned));
     Config::new(app.reverse_dns, app.display)
         .log_target("fastedit")
         .commands(register_commands)
@@ -50,6 +51,97 @@ pub(crate) fn shipped(settings: SettingsStore) -> Config {
         .settings_store(settings.into_inner())
         .theme_mode(mode)
         .theme_extensions(fe_config::theme::EXTENSIONS)
+        .source(locale)
+}
+
+/// Applies the settings' `workbench.locale` before the system's preferred
+/// languages ([`kiln::platform::locale::set_locale`]), from the config
+/// service's start and whenever a reload changes it: menus and windows
+/// follow at once. A tag no translation ships is skipped, with a warning
+/// in the config problems naming the language used instead
+/// ([`fe_config::LocaleSetting::choose`]).
+struct Locale {
+    /// The user's settings file, which the warning points into.
+    user: Option<PathBuf>,
+    /// The setting last applied, and the user file's text it was read
+    /// from, which places the warning.
+    applied: Option<(fe_config::LocaleSetting, String)>,
+    diagnostic: Option<fe_config::Diagnostic>,
+}
+
+impl Locale {
+    fn new(user: Option<PathBuf>) -> Self {
+        Self {
+            user,
+            applied: None,
+            diagnostic: None,
+        }
+    }
+
+    fn apply(&mut self, cx: &mut App) {
+        let setting = kiln::platform::config::settings::<Settings>(cx)
+            .workbench
+            .locale
+            .clone();
+        // A project can't set it, so a tag comes from the user's file, the
+        // first accepted.
+        let text = (self.user.is_some())
+            .then(|| kiln::platform::config::accepted_sources::<Settings>(cx))
+            .and_then(|sources| sources.into_iter().next())
+            .unwrap_or_default();
+        let changed = self
+            .applied
+            .as_ref()
+            .is_none_or(|(applied, _)| *applied != setting);
+        if !changed
+            && self
+                .applied
+                .as_ref()
+                .is_some_and(|(_, before)| *before == text)
+        {
+            return;
+        }
+        let system = kiln::platform::locale::preferred();
+        let choice = setting.choose(&system, &kiln_l10n::shipped_locales());
+        if changed {
+            kiln::platform::locale::set_locale(cx, &choice.requested);
+        }
+        self.diagnostic = (self.user.as_deref())
+            .and_then(|user| fe_config::LocaleSetting::diagnostic(&choice, user, &text));
+        self.applied = Some((setting, text));
+    }
+}
+
+/// How long the config service's start took to apply `workbench.locale`
+/// ([`Locale`]'s install), waiting on the catalogue's warm-up included: for
+/// `--perf`.
+static LOCALE_FIRST_APPLIED: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+
+/// See [`LOCALE_FIRST_APPLIED`]: `None` before the config service starts.
+pub(crate) fn locale_first_applied() -> Option<std::time::Duration> {
+    LOCALE_FIRST_APPLIED.get().copied()
+}
+
+impl kiln::platform::config::ConfigSource for Locale {
+    fn paths(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    fn install(&mut self, cx: &mut App) {
+        let started = std::time::Instant::now();
+        self.apply(cx);
+        LOCALE_FIRST_APPLIED.get_or_init(|| started.elapsed());
+    }
+
+    /// After the settings' own source, as kiln's sources come before the
+    /// app's, so the settings are this batch's.
+    fn reload(&mut self, _: &[PathBuf], cx: &mut App) {
+        self.apply(cx);
+    }
+
+    fn diagnostics(&self) -> Vec<fe_config::Diagnostic> {
+        self.diagnostic.iter().cloned().collect()
+    }
 }
 
 /// [`shipped`] with the user's `theme.toml` and `keymap.toml` (in the XDG

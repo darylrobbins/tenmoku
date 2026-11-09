@@ -6,11 +6,12 @@
 
 use std::{
     collections::BTreeMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
 
 use kiln_core::{ProjectFilter, SettingsOptions};
+use kiln_l10n::LanguageIdentifier;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use toml::{
@@ -608,6 +609,13 @@ pub struct WorkbenchSettings {
     /// and the settings, with LazyVim's dashboard keys while vim is on.
     /// Off, the pane says "No open files".
     pub start_page: bool,
+    /// The language of Tenmoku's own text: `auto` follows the system's
+    /// preferred languages; a tag such as `de` or `pt-BR` picks a shipped
+    /// one. Menus and panels change at once; macOS's own panels and the
+    /// updater follow the system (System Settings › Language & Region ›
+    /// Applications). A language Tenmoku doesn't ship is skipped, with a
+    /// warning naming the one used. A project file can't set it.
+    pub locale: LocaleSetting,
 }
 
 /// `workbench.icon_theme`.
@@ -624,6 +632,159 @@ pub enum IconTheme {
     Minimal,
 }
 
+/// `workbench.locale`: `auto`, or a BCP 47 language tag such as `de` or
+/// `pt-BR`. Any string is accepted; [`LocaleSetting::choose`] skips a tag
+/// nothing ships, or that isn't a language tag, with a diagnostic.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum LocaleSetting {
+    /// The system's preferred languages.
+    #[default]
+    Auto,
+    /// A language tag, as written, before the system's languages.
+    Tag(String),
+}
+
+impl LocaleSetting {
+    /// The setting's value as written: `auto`, or the tag.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Auto => "auto",
+            Self::Tag(tag) => tag,
+        }
+    }
+
+    /// The tag, unless it's `auto`.
+    pub fn tag(&self) -> Option<&str> {
+        match self {
+            Self::Auto => None,
+            Self::Tag(tag) => Some(tag),
+        }
+    }
+
+    /// What the setting chooses for a system whose preferred languages are
+    /// `system`, best first, among the `shipped` locales: the tag, if it
+    /// parses, before the system's languages, negotiated as the catalogue
+    /// negotiates them (`kiln_l10n::negotiate`), ending in `en-US`.
+    ///
+    /// A tag that ships no translation is dropped, so negotiation goes on
+    /// with the system's languages, and [`LocaleChoice::problem`] names the
+    /// language chosen instead: `xx` on a German system with `de` shipped
+    /// chooses `de`; on a French system with no `fr`, `en-US`.
+    pub fn choose(
+        &self,
+        system: &[LanguageIdentifier],
+        shipped: &[LanguageIdentifier],
+    ) -> LocaleChoice {
+        let tag = self.tag();
+        let parsed = tag.and_then(|tag| tag.parse::<LanguageIdentifier>().ok());
+        let mut requested: Vec<LanguageIdentifier> = parsed.iter().cloned().collect();
+        for language in system {
+            if !requested.contains(language) {
+                requested.push(language.clone());
+            }
+        }
+        let chain = kiln_l10n::negotiate(&requested, shipped);
+        // The tag on its own, so a system language can't stand in for it:
+        // `zh-Hant` isn't used because the system's `zh-Hans` ships. The
+        // negotiation still takes a region loosely (`de-AT` for `de`).
+        let used = parsed.as_ref().is_some_and(|parsed| {
+            !fluent_langneg::negotiate_languages(
+                std::slice::from_ref(parsed),
+                shipped,
+                None,
+                fluent_langneg::NegotiationStrategy::Filtering,
+            )
+            .is_empty()
+        });
+        let problem = tag.filter(|_| !used).map(|tag| {
+            kiln_l10n::tr!(
+                "config-locale-unshipped",
+                requested = tag,
+                chosen = chain[0].to_string()
+            )
+            .to_string()
+        });
+        LocaleChoice {
+            requested,
+            chain,
+            problem,
+        }
+    }
+
+    /// [`LocaleSetting::choose`]'s problem, if any, as a warning at
+    /// `workbench.locale` in the user's settings file `path`, whose text is
+    /// `source`.
+    pub fn diagnostic(choice: &LocaleChoice, path: &Path, source: &str) -> Option<Diagnostic> {
+        let problem = choice.problem.clone()?;
+        let layer = crate::layers::parse_layer(path, source.to_owned());
+        let offset = DeTable::parse(source).ok().map_or(0, |document| {
+            key_offset(document.get_ref(), "workbench", &["locale".to_owned()])
+        });
+        Some(layer.diagnostic_at(
+            Severity::Warning,
+            Some("workbench.locale".to_owned()),
+            offset,
+            problem,
+        ))
+    }
+}
+
+/// What a [`LocaleSetting`] chooses: see [`LocaleSetting::choose`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocaleChoice {
+    /// The languages to ask the catalogue for, best first: the setting's
+    /// tag, if it parses, then the system's.
+    pub requested: Vec<LanguageIdentifier>,
+    /// What they negotiate: the shipped locales lookups walk, ending in
+    /// `en-US`.
+    pub chain: Vec<LanguageIdentifier>,
+    /// Why the setting's tag isn't used, naming the language that is: for a
+    /// tag nothing ships, or that isn't a language tag.
+    pub problem: Option<String>,
+}
+
+impl Serialize for LocaleSetting {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for LocaleSetting {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "auto" => Self::Auto,
+            _ => Self::Tag(value),
+        })
+    }
+}
+
+/// A string, completed from `auto` and the locales the linked crates ship
+/// (`kiln_l10n::shipped_locales`), so the list grows as translations ship.
+/// The settings store doesn't check `enum`s, so any tag still loads.
+impl JsonSchema for LocaleSetting {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "LocaleSetting".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let mut values = vec![serde_json::Value::from("auto")];
+        values.extend(
+            kiln_l10n::shipped_locales()
+                .iter()
+                .map(|locale| serde_json::Value::from(locale.to_string())),
+        );
+        schemars::json_schema!({
+            "type": "string",
+            "enum": values,
+        })
+    }
+}
+
 impl Default for WorkbenchSettings {
     fn default() -> Self {
         Self {
@@ -631,6 +792,7 @@ impl Default for WorkbenchSettings {
             zen_mode: ZenModeSettings::default(),
             icon_theme: IconTheme::default(),
             start_page: true,
+            locale: LocaleSetting::default(),
         }
     }
 }
@@ -1338,6 +1500,11 @@ impl SettingsStore {
         self.0.paths()
     }
 
+    /// The user's settings file, if it was given.
+    pub fn user_path(&self) -> Option<&Path> {
+        self.0.user_path()
+    }
+
     /// Re-reads the layers whose files are in `changed`. Returns what changed
     /// if the effective settings or the diagnostics did, and `None` if
     /// neither did.
@@ -1369,7 +1536,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("vim", drop_vim_user_only))
         .project_filter(ProjectFilter::new("chat", drop_chat))
         .project_filter(ProjectFilter::new("extensions", drop_extensions))
-        .project_filter(ProjectFilter::new("workbench", drop_icon_theme))
+        .project_filter(ProjectFilter::new("workbench", drop_workbench_user_only))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
@@ -1897,25 +2064,42 @@ fn drop_vim_user_only(layer: &mut Layer) {
 pub const PROJECT_ICON_THEME: &str =
     "workbench.icon_theme in project files is ignored: the icons are the same in every window";
 
-/// Drops a project layer's `workbench.icon_theme`, with a
-/// [`PROJECT_ICON_THEME`] warning; its other `workbench` keys stay.
-fn drop_icon_theme(layer: &mut Layer) {
+/// The warning for a `workbench.locale` a project file sets.
+pub fn project_locale_warning() -> String {
+    kiln_l10n::tr!("config-project-locale-ignored").to_string()
+}
+
+/// Drops a project layer's `workbench.icon_theme` and `workbench.locale`,
+/// each with its warning ([`PROJECT_ICON_THEME`],
+/// [`project_locale_warning`]); its other `workbench` keys stay.
+fn drop_workbench_user_only(layer: &mut Layer) {
     let Some(toml::Value::Table(workbench)) = layer.table.get_mut("workbench") else {
         return;
     };
-    if workbench.remove("icon_theme").is_none() {
+    let dropped: Vec<&str> = ["icon_theme", "locale"]
+        .into_iter()
+        .filter(|key| workbench.remove(*key).is_some())
+        .collect();
+    if dropped.is_empty() {
         return;
     }
-    let offset = DeTable::parse(&layer.source).ok().map_or(0, |document| {
-        key_offset(document.get_ref(), "workbench", &["icon_theme".to_owned()])
-    });
-    let warning = layer.diagnostic_at(
-        Severity::Warning,
-        Some("workbench.icon_theme".to_owned()),
-        offset,
-        PROJECT_ICON_THEME.into(),
-    );
-    layer.diagnostics.push(warning);
+    let document = DeTable::parse(&layer.source).ok();
+    for key in dropped {
+        let offset = document.as_ref().map_or(0, |document| {
+            key_offset(document.get_ref(), "workbench", &[key.to_owned()])
+        });
+        let message = match key {
+            "icon_theme" => PROJECT_ICON_THEME.to_owned(),
+            _ => project_locale_warning(),
+        };
+        let warning = layer.diagnostic_at(
+            Severity::Warning,
+            Some(format!("workbench.{key}")),
+            offset,
+            message,
+        );
+        layer.diagnostics.push(warning);
+    }
 }
 
 /// Where the key at `first` then `rest` is in the source, or where the

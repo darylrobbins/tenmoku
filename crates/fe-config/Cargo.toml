@@ -10,7 +10,10 @@ publish.workspace = true
 [dependencies]
 dunce.workspace = true
 ec4rs.workspace = true
+# What `workbench.locale` alone negotiates (src/settings.rs), as kiln-l10n does.
+fluent-langneg.workspace = true
 kiln-core.workspace = true
+kiln-l10n.workspace = true
 libc.workspace = true
 log.workspace = true
 notify.workspace = true
@@ -21,6 +24,7 @@ toml.workspace = true
 toml_edit.workspace = true
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 fe-syntax.workspace = true
 tempfile.workspace = true
 
