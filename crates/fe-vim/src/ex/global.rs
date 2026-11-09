@@ -27,6 +27,8 @@ use fe_command::{Actor, Dispatched, Effect};
 use fe_editor::commands::origin;
 use fe_text::Text;
 
+use kiln_l10n::tr;
+
 use super::{
     Ex, ExCommand, ExError, Handled, LineSearch, execute, first_non_blank, split, to_row_start,
 };
@@ -203,8 +205,8 @@ pub(super) fn run(
     if marked.is_empty() {
         // As in nvim, a message but no error.
         target.state.message = Some(match invert {
-            false => format!("Pattern not found: {pattern}"),
-            true => format!("Pattern found in every line: {pattern}"),
+            false => tr!("vim-global-not-found", pattern = pattern).to_string(),
+            true => tr!("vim-global-every-line", pattern = pattern).to_string(),
         });
         return Ok(Ok(Dispatched::new(Effect::Notify)));
     }

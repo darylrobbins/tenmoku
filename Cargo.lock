@@ -2571,6 +2571,7 @@ dependencies = [
  "fe-editor",
  "fe-text",
  "kiln-command",
+ "kiln-l10n",
  "regex",
  "regex-automata",
  "regex-syntax",

@@ -70,34 +70,30 @@ fn key(pending: &Pending, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.jump_older",
-            "Vim Jump Older",
+            &crate::l10n::command_title("vim.jump_older"),
             |target: &mut VimTarget<'_>, _: &Actor, args: JumpArgs| {
                 Ok::<_, CommandError>(run(target, args, true))
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Goes `count` entries back through the jumplist, as vim's ctrl-o does, to the entry's exact position. The first after a jump adds where it goes from and sets the jump mark there, so vim.jump_newer comes back. Past the oldest entry it fails with nothing changed.",
-        )
+        .description(&crate::l10n::command_description("vim.jump_older"))
         .context(normal.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.jump_newer",
-            "Vim Jump Newer",
+            &crate::l10n::command_title("vim.jump_newer"),
             |target: &mut VimTarget<'_>, _: &Actor, args: JumpArgs| {
                 Ok::<_, CommandError>(run(target, args, false))
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Goes `count` entries forward through the jumplist, as vim's ctrl-i and tab do, to the entry's exact position. Past the newest entry it fails with nothing changed.",
-        )
+        .description(&crate::l10n::command_description("vim.jump_newer"))
         .context(normal)
         .mutates_buffer(false);
 }
@@ -111,7 +107,11 @@ fn run(target: &mut VimTarget<'_>, args: JumpArgs, back: bool) -> Dispatched<Tra
     let count = args.count.unwrap_or(1);
     let (row, column) = match target.state.marks.travel(&snapshot, from, back, count) {
         Some(Some(found)) => found,
-        Some(None) => return target.state.fail(marks::INVALID_ROW),
+        Some(None) => {
+            return target
+                .state
+                .fail(crate::messages::mark_has_invalid_line_number());
+        }
         None => {
             // nvim beeps, with no message.
             target.state.failed = true;

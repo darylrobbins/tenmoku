@@ -26,6 +26,8 @@
 //! one, which would run in the tab left, as the host runs the command
 //! once the line has: the line is refused before any of it runs.
 
+use kiln_l10n::tr;
+
 use super::{
     Address, Base, ExCommand, ExError, HostCommand, trim_unescaped_end, uncommented, unescape,
 };
@@ -93,7 +95,9 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
     let args = uncommented(args).trim_start_matches([' ', '\t']);
     let args = trim_unescaped_end(args);
     if args.contains('|') {
-        return Err(ExError::Unsupported("| after a tab command".into()));
+        return Err(ExError::Unsupported(
+            tr!("vim-unsupported-bar-after-tab-command").into(),
+        ));
     }
     let command = match kind {
         Kind::Next | Kind::Previous => {
@@ -108,17 +112,23 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
                 _ => TabCommand::Previous(count.unwrap_or(1)),
             }
         }
-        _ if !range.is_empty() => return Err(ExError::Unsupported("a tab number".into())),
+        _ if !range.is_empty() => {
+            return Err(ExError::Unsupported(
+                tr!("vim-unsupported-tab-number").into(),
+            ));
+        }
         Kind::New => {
             if args.starts_with('+') {
-                return Err(ExError::Unsupported("+cmd and ++opt".into()));
+                return Err(ExError::Unsupported(
+                    tr!("vim-unsupported-cmd-and-opt").into(),
+                ));
             }
             let file = (!args.is_empty()).then(|| unescape(args));
             TabCommand::New { file }
         }
         _ if !args.is_empty() => {
             return Err(match args.bytes().all(|byte| byte.is_ascii_digit()) {
-                true => ExError::Unsupported("a tab number".into()),
+                true => ExError::Unsupported(tr!("vim-unsupported-tab-number").into()),
                 false => ExError::Trailing(args.to_string()),
             });
         }
@@ -149,7 +159,9 @@ fn range_count(range: &[Address]) -> Result<u32, ExError> {
         return Err(ExError::ZeroCount);
     };
     if !address.parts.is_empty() {
-        return Err(ExError::Unsupported("an offset in a tab number".into()));
+        return Err(ExError::Unsupported(
+            tr!("vim-unsupported-tab-offset").into(),
+        ));
     }
     match address.base {
         Base::Line(line) => u32::try_from(line)
@@ -157,7 +169,7 @@ fn range_count(range: &[Address]) -> Result<u32, ExError> {
             .filter(|n| *n > 0)
             .ok_or(ExError::ZeroCount),
         _ => Err(ExError::Unsupported(
-            "a tab number other than a number".into(),
+            tr!("vim-unsupported-tab-non-number").into(),
         )),
     }
 }

@@ -7,6 +7,8 @@
 //! never run. See `docs/decisions/vim-remaps.md` §1(c); nothing here does
 //! I/O.
 
+use kiln_l10n::{SharedString, tr};
+
 use crate::key::{VimKey, parse_keys};
 use crate::remap::{Remap, RemapMode, RemapSet, WhichKeyGroupName};
 
@@ -38,9 +40,17 @@ const C: RemapMode = RemapMode::CmdLine;
 const NXO: &[RemapMode] = &[N, X, O];
 const IC: &[RemapMode] = &[I, C];
 
-const SELECT: &str = "Select mode isn't in Tenmoku";
-const LANGUAGE: &str = "language remaps aren't supported";
-const TERMINAL: &str = "terminal remaps aren't supported";
+fn select() -> SharedString {
+    tr!("vim-vimrc-select-mode")
+}
+
+fn language() -> SharedString {
+    tr!("vim-vimrc-language-remaps")
+}
+
+fn terminal() -> SharedString {
+    tr!("vim-vimrc-terminal-remaps")
+}
 
 #[derive(Copy, Clone)]
 enum Command {
@@ -50,7 +60,7 @@ enum Command {
     /// `vmap` and `vnoremap`: Visual only, with a note.
     VisualSelect(bool),
     /// A mode Tenmoku has no remaps for, with why.
-    Unsupported(&'static str),
+    Unsupported(fn() -> SharedString),
 }
 
 /// Each command's full name, the shortest abbreviation nvim accepts, and
@@ -84,18 +94,18 @@ const COMMANDS: &[(&str, usize, Command)] = &[
     ("cnoremap", 3, Command::Map(&[C], false)),
     ("cunmap", 2, Command::Unmap(&[C])),
     ("cmapclear", 5, Command::Mapclear(&[C])),
-    ("smap", 4, Command::Unsupported(SELECT)),
-    ("snoremap", 4, Command::Unsupported(SELECT)),
-    ("sunmap", 4, Command::Unsupported(SELECT)),
-    ("smapclear", 5, Command::Unsupported(SELECT)),
-    ("lmap", 2, Command::Unsupported(LANGUAGE)),
-    ("lnoremap", 2, Command::Unsupported(LANGUAGE)),
-    ("lunmap", 2, Command::Unsupported(LANGUAGE)),
-    ("lmapclear", 5, Command::Unsupported(LANGUAGE)),
-    ("tmap", 3, Command::Unsupported(TERMINAL)),
-    ("tnoremap", 3, Command::Unsupported(TERMINAL)),
-    ("tunmap", 5, Command::Unsupported(TERMINAL)),
-    ("tmapclear", 5, Command::Unsupported(TERMINAL)),
+    ("smap", 4, Command::Unsupported(select)),
+    ("snoremap", 4, Command::Unsupported(select)),
+    ("sunmap", 4, Command::Unsupported(select)),
+    ("smapclear", 5, Command::Unsupported(select)),
+    ("lmap", 2, Command::Unsupported(language)),
+    ("lnoremap", 2, Command::Unsupported(language)),
+    ("lunmap", 2, Command::Unsupported(language)),
+    ("lmapclear", 5, Command::Unsupported(language)),
+    ("tmap", 3, Command::Unsupported(terminal)),
+    ("tnoremap", 3, Command::Unsupported(terminal)),
+    ("tunmap", 5, Command::Unsupported(terminal)),
+    ("tmapclear", 5, Command::Unsupported(terminal)),
 ];
 
 /// Reads `text` line by line. Each record is checked as `RemapSet::new`
@@ -127,7 +137,7 @@ struct Parser {
 impl Parser {
     fn line(&mut self, line: usize, text: &str) {
         if text.trim_start_matches([' ', '\t']).starts_with('\\') {
-            self.issue(line, "line continuation isn't supported");
+            self.issue(line, tr!("vim-vimrc-line-continuation"));
             return;
         }
         let mut rest = Some(text);
@@ -156,7 +166,7 @@ impl Parser {
         }
         if name.eq_ignore_ascii_case("fegroup") {
             match bang {
-                true => self.issue(line, "not supported: fegroup!"),
+                true => self.issue(line, tr!("vim-vimrc-fegroup-bang")),
                 false => self.group(line, after),
             }
             return None;
@@ -166,7 +176,7 @@ impl Parser {
             .find(|(full, min, _)| name.len() >= *min && full.starts_with(name));
         let Some(&(full, _, command)) = found else {
             let word = text.split([' ', '\t', '|']).next().unwrap_or(text);
-            self.issue(line, format!("not supported: {word}"));
+            self.issue(line, tr!("vim-vimrc-not-supported", command = word));
             return None;
         };
         // The mapclear family takes a trailing `"` comment; the map and
@@ -176,7 +186,7 @@ impl Parser {
             match bang_command(command) {
                 Some(command) => command,
                 None => {
-                    self.issue(line, format!("not supported: {full}!"));
+                    self.issue(line, tr!("vim-vimrc-bang-not-supported", command = full));
                     return None;
                 }
             }
@@ -192,13 +202,10 @@ impl Parser {
             Command::Mapclear(modes) => self.mapclear(line, modes, &args),
             Command::VisualSelect(recursive) => {
                 if self.map(line, &[X], recursive, &args) {
-                    self.issue(
-                        line,
-                        format!("{full} applies to Visual mode only: {SELECT}"),
-                    );
+                    self.issue(line, tr!("vim-vimrc-visual-only", command = full));
                 }
             }
-            Command::Unsupported(why) => self.issue(line, why),
+            Command::Unsupported(why) => self.issue(line, why()),
         }
         rest
     }
@@ -211,7 +218,7 @@ impl Parser {
         let from_len = args.find([' ', '\t']).unwrap_or(args.len());
         let to = args[from_len..].trim_start_matches([' ', '\t']);
         if to.is_empty() {
-            self.issue(line, "listing maps isn't supported");
+            self.issue(line, tr!("vim-vimrc-listing-maps"));
             return false;
         }
         let remap = Remap {
@@ -239,13 +246,13 @@ impl Parser {
         let keys_len = args.find([' ', '\t']).unwrap_or(args.len());
         let (keys, rest) = args.split_at(keys_len);
         if keys.is_empty() {
-            return self.issue(line, "fegroup needs keys and a name");
+            return self.issue(line, tr!("vim-vimrc-fegroup-needs-keys"));
         }
         let (name, icon) = group_icon(rest);
         let keys = with_leader(keys, &self.leader);
         match WhichKeyGroupName::parse_with_icon(&[N], &keys, name, icon, "\\") {
             Ok(groups) => self.vimrc.groups.extend(groups),
-            Err(message) => self.issue(line, format!("fegroup: {message}")),
+            Err(message) => self.issue(line, tr!("vim-vimrc-fegroup", message = message)),
         }
     }
 
@@ -257,7 +264,7 @@ impl Parser {
         };
         let from = args.trim_end_matches([' ', '\t']);
         if from.is_empty() {
-            self.issue(line, "unmap needs a left side");
+            self.issue(line, tr!("vim-vimrc-unmap-needs-keys"));
             return;
         }
         let from = match parse_keys(&with_leader(from, &self.leader)) {
@@ -274,8 +281,10 @@ impl Parser {
     fn mapclear(&mut self, line: usize, modes: &[RemapMode], args: &str) {
         match args.trim_matches([' ', '\t']) {
             "" => {}
-            "<buffer>" => return self.issue(line, "<buffer> isn't supported"),
-            other => return self.issue(line, format!("trailing characters: {other}")),
+            "<buffer>" => return self.issue(line, tr!("vim-vimrc-buffer-not-supported")),
+            other => {
+                return self.issue(line, tr!("vim-vimrc-trailing", characters = other));
+            }
         }
         self.retain_remaps(|remap| remap.modes.retain(|mode| !modes.contains(mode)));
     }
@@ -309,7 +318,10 @@ impl Parser {
             match name {
                 "silent" | "nowait" => {}
                 "buffer" | "expr" | "script" | "unique" | "special" => {
-                    self.issue(line, format!("<{name}> isn't supported"));
+                    self.issue(
+                        line,
+                        tr!("vim-vimrc-argument-not-supported", argument = name),
+                    );
                     return None;
                 }
                 _ => return Some(args),
@@ -330,7 +342,7 @@ impl Parser {
             .strip_prefix('=')
             .map(|value| value.trim_start_matches([' ', '\t']));
         let (Some(value), "mapleader" | "g:mapleader") = (value, name) else {
-            self.issue(line, format!("not supported: let {name}"));
+            self.issue(line, tr!("vim-vimrc-let-not-supported", name = name));
             return None;
         };
         let (leader, after) = match string(value) {
@@ -340,7 +352,7 @@ impl Parser {
                 return None;
             }
             None => {
-                self.issue(line, "mapleader must be a quoted string");
+                self.issue(line, tr!("vim-vimrc-mapleader-unquoted"));
                 return None;
             }
         };
@@ -349,7 +361,7 @@ impl Parser {
             None | Some('"') => None,
             Some('|') => Some(&after[1..]),
             Some(_) => {
-                self.issue(line, format!("trailing characters: {after}"));
+                self.issue(line, tr!("vim-vimrc-trailing", characters = after));
                 return None;
             }
         };
@@ -516,12 +528,18 @@ fn string(text: &str) -> Option<Result<(Vec<VimKey>, &str), String>> {
                                 Special::Char(ch) => value.push_char(ch),
                                 Special::Key(key) => value.push_key(key),
                                 Special::Unsupported(name) if !value.ended && problem.is_none() => {
-                                    problem = Some(format!("mapleader: <{name}> isn't supported"));
+                                    problem = Some(
+                                        tr!("vim-vimrc-mapleader-key-not-supported", key = name)
+                                            .to_string(),
+                                    );
                                 }
                                 Special::Unsupported(_) => {}
                                 Special::Invalid(name) => {
                                     if problem.is_none() {
-                                        problem = Some(format!("mapleader: <{name}> is invalid"));
+                                        problem = Some(
+                                            tr!("vim-vimrc-mapleader-key-invalid", key = name)
+                                                .to_string(),
+                                        );
                                     }
                                 }
                             }
@@ -613,7 +631,7 @@ impl Value {
     fn keys(mut self) -> Result<Vec<VimKey>, String> {
         self.flush();
         if self.invalid {
-            return Err("mapleader isn't valid UTF-8".to_string());
+            return Err(tr!("vim-vimrc-mapleader-not-utf8").to_string());
         }
         Ok(self.keys)
     }

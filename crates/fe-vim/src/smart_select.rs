@@ -12,10 +12,12 @@ use crate::{VimCommands, VimTarget, visual};
 pub(crate) fn register(registry: &mut Registry<VimCommands>, context: ContextPredicate) {
     registry
         .register(
-            "vim.expand_selection",
-            "Vim Expand Selection",
+            kiln_l10n::verbatim!("vim.expand_selection"),
+            &crate::l10n::command_title("vim.expand_selection"),
             |target: &mut VimTarget<'_>, _: &Actor| {
-                let VimTarget { model, host, state, .. } = target;
+                let VimTarget {
+                    model, host, state, ..
+                } = target;
                 state.sync_visual(model);
                 Ok(Dispatched::new(if model.expand_selection(&**host) {
                     visual::adopt(model, state, model.primary_selection());
@@ -26,15 +28,13 @@ pub(crate) fn register(registry: &mut Registry<VimCommands>, context: ContextPre
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Grows the selection to the syntax node enclosing it and enters charwise visual mode over it; from a caret, the node at the caret. Does nothing if no larger node is known.",
-        )
+        .description(&crate::l10n::command_description("vim.expand_selection"))
         .context(context.clone())
         .mutates_buffer(false);
     registry
         .register(
-            "vim.shrink_selection",
-            "Vim Shrink Selection",
+            kiln_l10n::verbatim!("vim.shrink_selection"),
+            &crate::l10n::command_title("vim.shrink_selection"),
             |target: &mut VimTarget<'_>, _: &Actor| {
                 let VimTarget { model, state, .. } = target;
                 state.sync_visual(model);
@@ -47,9 +47,7 @@ pub(crate) fn register(registry: &mut Registry<VimCommands>, context: ContextPre
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Steps back to the selection before the last expand, if nothing has changed since; the caret the first expand started from is normal mode again.",
-        )
+        .description(&crate::l10n::command_description("vim.shrink_selection"))
         .context(context)
         .mutates_buffer(false);
 }

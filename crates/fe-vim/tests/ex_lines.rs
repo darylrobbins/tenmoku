@@ -286,8 +286,8 @@ fn ex_parses_sort() {
     );
     for flag in ["x", "o", "b", "f", "l"] {
         assert_eq!(
-            error(&format!("sort {flag}")),
-            ExError::Unsupported(format!(":sort {flag}"))
+            error(&format!("sort {flag}")).to_string(),
+            format!(":sort {flag}: not supported yet")
         );
     }
 }

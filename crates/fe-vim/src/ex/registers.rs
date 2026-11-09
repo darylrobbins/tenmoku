@@ -8,6 +8,7 @@
 //! `"xp` does.
 
 use fe_command::{Actor, Dispatched, Effect};
+use kiln_l10n::tr;
 
 use super::super::pick::printable;
 use super::super::{Address, ExError, Handled, HostCommand, Pick, PickRow, PickThen};
@@ -76,8 +77,8 @@ fn run(
         rows.extend(row);
     }
     target.state.host_command = Some(HostCommand::Pick(Pick {
-        title: "Registers",
-        header: "Type Name Content",
+        title: tr!("vim-registers-title").to_string(),
+        header: tr!("vim-registers-header").to_string(),
         rows,
     }));
     Ok(Ok(Dispatched::new(Effect::Notify)))

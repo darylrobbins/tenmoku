@@ -79,46 +79,33 @@ fn bracket(pending: &Pending, forward: bool, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
-    let normal_or_visual = ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
-        .expect("vim's context predicate parses");
+    let normal_or_visual = ContextPredicate::parse(kiln_l10n::verbatim!(
+        "editor && (vim.mode == normal || vim.visual)"
+    ))
+    .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.change",
-            "Vim Change",
+            &crate::l10n::command_title("vim.change"),
             |target: &mut VimTarget<'_>, _: &Actor, args: ChangeArgs| {
                 Ok::<_, CommandError>(run(target, args))
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Goes to column 0 of the first row of the `count`th next (`forward`) or previous changed row against the editor's diff base, as vim's ]c and [c do. Fewer changes than `count` go as far as there are; none that way fails with nothing changed. A jump, setting the jump mark. In a visual mode it extends the selection.",
-        )
+        .description(&crate::l10n::command_description("vim.change"))
         .context(normal_or_visual)
         .mutates_buffer(false);
-    for (id, name, line, description) in [
-        (
-            "vim.diff_get",
-            "Vim Diff Get",
-            "diffget",
-            "Runs `:diffget` for the cursor's row, as `do` does: the host gets the change.",
-        ),
-        (
-            "vim.diff_put",
-            "Vim Diff Put",
-            "diffput",
-            "Runs `:diffput` for the cursor's row, as `dp` does: the host puts the change.",
-        ),
-    ] {
+    for (id, line) in [("vim.diff_get", "diffget"), ("vim.diff_put", "diffput")] {
         registry
             .register(
                 id,
-                name,
+                &crate::l10n::command_title(id),
                 move |target: &mut VimTarget<'_>, actor: &Actor| ex::run(target, actor, line),
             )
             .expect("vim command IDs are valid and distinct")
-            .description(description)
+            .description(&crate::l10n::command_description(id))
             .context(normal.clone())
             .mutates_buffer(false);
     }

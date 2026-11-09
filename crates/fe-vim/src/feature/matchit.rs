@@ -54,6 +54,8 @@ use std::ops::Range;
 
 use fe_text::Text;
 
+use kiln_l10n::verbatim;
+
 use crate::{
     Pending, Step, VimKey,
     args::Motion,
@@ -163,10 +165,10 @@ const MAKE: Table = Table {
             place: Place::RowStart,
             open: &["ifeq", "ifneq", "ifdef", "ifndef"],
             middle: &[
-                "else ifeq",
-                "else ifneq",
-                "else ifdef",
-                "else ifndef",
+                verbatim!("else ifeq"),
+                verbatim!("else ifneq"),
+                verbatim!("else ifdef"),
+                verbatim!("else ifndef"),
                 "else",
             ],
             close: &["endif"],

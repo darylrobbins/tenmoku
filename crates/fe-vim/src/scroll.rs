@@ -141,18 +141,18 @@ fn register(registry: &mut Registry<VimCommands>) {
     registry
         .register_with_args(
             "vim.scroll",
-            "Vim Scroll",
+            &crate::l10n::command_title("vim.scroll"),
             |target: &mut VimTarget<'_>, _: &Actor, args: ScrollArgs| {
                 Ok::<_, CommandError>(run(target, args))
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Scrolls the view as vim's ctrl-d, ctrl-u, ctrl-e, ctrl-y, ctrl-f, ctrl-b, zt, zz, zb, z<CR>, z. and z- do, moving the cursor as they do (in a visual mode, the vim cursor). A count sets 'scroll' for ctrl-d and ctrl-u, is rows or pages for the others, and the row to scroll to for the z keys.",
-        )
+        .description(&crate::l10n::command_description("vim.scroll"))
         .context(
-            ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
-                .expect("vim's context predicate parses"),
+            ContextPredicate::parse(kiln_l10n::verbatim!(
+                "editor && (vim.mode == normal || vim.visual)"
+            ))
+            .expect("vim's context predicate parses"),
         )
         .mutates_buffer(false);
 }

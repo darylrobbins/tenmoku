@@ -27,6 +27,8 @@ use fe_editor::commands::origin;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use kiln_l10n::tr;
+
 use crate::{
     Change, Mode, Pending, Step, VimCommands, VimKey, VimTarget, VisualKind, commands::follow,
     feature::Feature, history, insert, motion::Cursor, operator, reducer::invocation, visual,
@@ -88,7 +90,7 @@ impl Extent {
     fn visual(self) -> Result<visual::Extent, CommandError> {
         let Self { kind, rows, cols } = self;
         if rows == 0 || cols == Some(0) {
-            return Err(CommandError::new("an increment's extent is empty"));
+            return Err(CommandError::new(tr!("vim-increment-empty-extent")));
         }
         let cols = cols.map(|cols| cols.min(MAX_COLS));
         Ok(match kind {
@@ -140,12 +142,14 @@ fn command(pending: &Pending, delta: i32, progressive: bool) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let context = ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
-        .expect("vim's context predicate parses");
+    let context = ContextPredicate::parse(kiln_l10n::verbatim!(
+        "editor && (vim.mode == normal || vim.visual)"
+    ))
+    .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.increment",
-            "Vim Increment",
+            &crate::l10n::command_title("vim.increment"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: IncrementArgs| {
                 follow(target);
                 insert::adopt_closing(target.state);
@@ -153,9 +157,7 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Adds `count` to (or with a negative `delta` takes it from) the first number at or after each caret on its row, or in a visual mode on each selected row, as nvim's CTRL-A and CTRL-X do.",
-        )
+        .description(&crate::l10n::command_description("vim.increment"))
         .context(context)
         .mutates_buffer(true);
 }

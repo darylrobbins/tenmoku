@@ -7,11 +7,12 @@
 //! command.
 
 use fe_command::{Actor, Dispatched, Effect};
+use kiln_l10n::tr;
 
 use super::super::pick::printable;
 use super::super::{Address, ExError, Handled, HostCommand, Pick, PickRow, PickThen, uncommented};
 use super::{Check, Entry};
-use crate::VimTarget;
+use crate::{VimTarget, messages::coded};
 
 pub(super) const COMMAND: Entry = Entry {
     name: "marks",
@@ -70,12 +71,12 @@ fn run(
         });
     }
     if rows.is_empty() && !args.is_empty() {
-        let message = format!("E283: No marks matching \"{args}\"");
+        let message = coded("E283", tr!("vim-e283", marks = args));
         return Ok(Ok(target.state.fail(message)));
     }
     target.state.host_command = Some(HostCommand::Pick(Pick {
-        title: "Marks",
-        header: "mark line  col file/text",
+        title: tr!("vim-marks-title").to_string(),
+        header: tr!("vim-marks-header").to_string(),
         rows,
     }));
     Ok(Ok(Dispatched::new(Effect::Notify)))

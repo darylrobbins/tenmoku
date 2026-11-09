@@ -117,23 +117,27 @@ impl CommandTarget for VimCommands {
 /// `vim.command_line_cancel`, and a map's `<Cmd>` ex line's `vim.ex_line`.
 /// Feature modules add their commands after these (see [`crate::feature`]).
 pub fn registry() -> Registry<VimCommands> {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
-    let visual_mode =
-        ContextPredicate::parse("editor && vim.visual").expect("vim's context predicate parses");
-    let normal_or_visual = ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
+    let visual_mode = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.visual"))
         .expect("vim's context predicate parses");
-    let insert_mode = ContextPredicate::parse("editor && vim.mode == insert")
+    let normal_or_visual = ContextPredicate::parse(kiln_l10n::verbatim!(
+        "editor && (vim.mode == normal || vim.visual)"
+    ))
+    .expect("vim's context predicate parses");
+    let insert_mode = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == insert"))
         .expect("vim's context predicate parses");
-    let replace_mode = ContextPredicate::parse("editor && vim.mode == replace")
-        .expect("vim's context predicate parses");
-    let cmdline_mode = ContextPredicate::parse("editor && vim.mode == cmdline")
-        .expect("vim's context predicate parses");
+    let replace_mode =
+        ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == replace"))
+            .expect("vim's context predicate parses");
+    let cmdline_mode =
+        ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == cmdline"))
+            .expect("vim's context predicate parses");
     let mut registry = Registry::new();
     registry
         .register_with_args(
             "vim.move",
-            "Vim Move",
+            &crate::l10n::command_title("vim.move"),
             |target: &mut VimTarget<'_>, _: &Actor, args: MoveArgs| {
                 let motion = line_motions::moved(&args);
                 line_motions::with_view(target, motion, |target| {
@@ -142,101 +146,83 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Moves every caret by a vim motion, `count` times or to row `count`; the count is bounded by the text. In a visual mode it moves the vim cursor, keeping the anchor. A search motion's pattern becomes the last search; one that fails moves nothing and leaves a message, as does a mark motion whose mark isn't set. A jump sets the jump mark (`''`) to where it left from.",
-        )
+        .description(&crate::l10n::command_description("vim.move"))
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.operate",
-            "Vim Operate",
+            &crate::l10n::command_title("vim.operate"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: OperateArgs| {
                 let motion = line_motions::operated(&args);
-                line_motions::with_view(target, motion, |target| {
-                    run_operate(target, actor, args)
-                })
+                line_motions::with_view(target, motion, |target| run_operate(target, actor, args))
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Applies a vim operator (delete, yank, change, indent, outdent) to a motion or text object at every caret, filling the registers as vim does; one transaction for all carets. Change then starts an insert session in the same transaction. In a visual mode it acts on the selection, as do toggle_case, lowercase, uppercase, join and replace.",
-        )
+        .description(&crate::l10n::command_description("vim.operate"))
         .context(normal_or_visual.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.put",
-            "Vim Put",
+            &crate::l10n::command_title("vim.put"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: PutArgs| {
-                {
-                    follow(target);
-                    insert::adopt_closing(target.state);
-                    operator::put(target, actor, args)
-                }
+                follow(target);
+                insert::adopt_closing(target.state);
+                operator::put(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Puts a register after (or before) every caret, `count` times: whole lines below or above the caret's row, a block from the primary caret's column. At most 64 MiB at once.",
-        )
+        .description(&crate::l10n::command_description("vim.put"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.insert",
-            "Vim Insert",
+            &crate::l10n::command_title("vim.insert"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: InsertArgs| {
-                {
-                    follow(target);
-                    insert::adopt_closing(target.state);
-                    insert::insert(target, actor, args)
-                }
+                follow(target);
+                insert::adopt_closing(target.state);
+                insert::insert(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Enters insert mode before or after the caret, at the row's first non-blank or end, or on a new row below or above: one transaction until normal mode, typed text going in `count` times.",
-        )
+        .description(&crate::l10n::command_description("vim.insert"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register(
-            "vim.normal_mode",
-            "Vim Normal Mode",
+            kiln_l10n::verbatim!("vim.normal_mode"),
+            &crate::l10n::command_title("vim.normal_mode"),
             |target: &mut VimTarget<'_>, _: &Actor| {
                 follow(target);
                 insert::normal_mode(target)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Leaves insert mode: repeats the typed text for the count, ends the session's transaction and steps the caret back one grapheme.",
-        )
+        .description(&crate::l10n::command_description("vim.normal_mode"))
         .context(insert_mode)
         .mutates_buffer(true);
     registry
         .register(
-            "vim.resume_insert",
-            "Vim Resume Insert",
+            kiln_l10n::verbatim!("vim.resume_insert"),
+            &crate::l10n::command_title("vim.resume_insert"),
             |target: &mut VimTarget<'_>, _: &Actor| {
                 insert::finish_one_command(target);
                 Ok(Dispatched::new(Effect::Changed))
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Ends the normal-mode command insert mode's ctrl-o runs, resuming the insert or replace session it left at the carets: what `<Esc>`, or a key that fails, commits once nothing is pending.",
-        )
+        .description(&crate::l10n::command_description("vim.resume_insert"))
         .context(
-            ContextPredicate::parse("editor && vim.insert_pending")
+            ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.insert_pending"))
                 .expect("vim's context predicate parses"),
         )
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.replace_mode",
-            "Vim Replace Mode",
+            &crate::l10n::command_title("vim.replace_mode"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 follow(target);
                 insert::adopt_closing(target.state);
@@ -244,15 +230,13 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Enters replace mode at the caret: typed text overwrites the row and goes on past its end, backspace puts back what it overwrote; one transaction until normal mode, typed text going in `count` times.",
-        )
+        .description(&crate::l10n::command_description("vim.replace_mode"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.virtual_replace_mode",
-            "Vim Virtual Replace Mode",
+            &crate::l10n::command_title("vim.virtual_replace_mode"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 follow(target);
                 insert::adopt_closing(target.state);
@@ -260,48 +244,42 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Enters virtual replace mode (`gR`) at the caret: like replace mode, but each typed character replaces the screen columns it takes, a tab as the spaces to its next stop; typed text overwrites the row and goes on past its end, backspace puts back what it overwrote; one transaction until normal mode, typed text going in `count` times.",
-        )
+        .description(&crate::l10n::command_description(
+            "vim.virtual_replace_mode",
+        ))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register(
-            "vim.replace_normal_mode",
-            "Vim Normal Mode from Replace",
+            kiln_l10n::verbatim!("vim.replace_normal_mode"),
+            &crate::l10n::command_title("vim.replace_normal_mode"),
             |target: &mut VimTarget<'_>, _: &Actor| {
                 follow(target);
                 insert::normal_mode(target)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Leaves replace mode: overwrites with the typed text again for the count, ends the session's transaction and steps the caret back one grapheme.",
-        )
+        .description(&crate::l10n::command_description("vim.replace_normal_mode"))
         .context(replace_mode)
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.join",
-            "Vim Join Lines",
+            &crate::l10n::command_title("vim.join"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
-                {
-                    follow(target);
-                    insert::adopt_closing(target.state);
-                    edit::join(target, actor, args)
-                }
+                follow(target);
+                insert::adopt_closing(target.state);
+                edit::join(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Joins `count` rows (at least two) from each caret's, dropping indentation and putting in one space where vim does.",
-        )
+        .description(&crate::l10n::command_description("vim.join"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.insert_last",
-            "Vim Insert At Last Insert",
+            &crate::l10n::command_title("vim.insert_last"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 follow(target);
                 insert::adopt_closing(target.state);
@@ -309,81 +287,67 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Enters insert mode where insert mode was last left (the `^` mark), as `gi` does; at the caret if there is none.",
-        )
+        .description(&crate::l10n::command_description("vim.insert_last"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.replace_char",
-            "Vim Replace Character",
+            &crate::l10n::command_title("vim.replace_char"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: ReplaceCharArgs| {
-                {
-                    follow(target);
-                    insert::adopt_closing(target.state);
-                    edit::replace_char(target, actor, args)
-                }
+                follow(target);
+                insert::adopt_closing(target.state);
+                edit::replace_char(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Replaces `count` graphemes from each caret with a character, if that many remain on the row.",
-        )
+        .description(&crate::l10n::command_description("vim.replace_char"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.toggle_case",
-            "Vim Toggle Case",
+            &crate::l10n::command_title("vim.toggle_case"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
-                {
-                    follow(target);
-                    insert::adopt_closing(target.state);
-                    edit::toggle_case(target, actor, args)
-                }
+                follow(target);
+                insert::adopt_closing(target.state);
+                edit::toggle_case(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Toggles the case of `count` graphemes from each caret, as nvim's `~` does, and moves past them.",
-        )
+        .description(&crate::l10n::command_description("vim.toggle_case"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.undo",
-            "Vim Undo",
+            &crate::l10n::command_title("vim.undo"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 follow(target);
                 history::undo(target, actor, args, false)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Undoes `count` changes, putting the carets back where they were before the last one undone.",
-        )
+        .description(&crate::l10n::command_description("vim.undo"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.redo",
-            "Vim Redo",
+            &crate::l10n::command_title("vim.redo"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 follow(target);
                 history::undo(target, actor, args, true)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Redoes `count` undone changes, putting the carets back where they were before the last one.",
-        )
+        .description(&crate::l10n::command_description("vim.redo"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.repeat",
-            "Vim Repeat",
+            &crate::l10n::command_title("vim.repeat"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 let motion = line_motions::repeated(target.state, args);
                 line_motions::with_view(target, motion, |target| {
@@ -395,15 +359,13 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Repeats the last change and the text its insert session typed, as one transaction; a count replaces the change's own.",
-        )
+        .description(&crate::l10n::command_description("vim.repeat"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.repeat_substitute",
-            "Vim Repeat Substitute",
+            &crate::l10n::command_title("vim.repeat_substitute"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 follow(target);
                 let repeated = substitute::repeat(target, actor, args.count);
@@ -412,15 +374,13 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Repeats the last substitute with its flags on the cursor's line, or `count` lines from it (`&`, as nvim's `:&&`): one transaction, which `.` doesn't repeat.",
-        )
+        .description(&crate::l10n::command_description("vim.repeat_substitute"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.substitute_answer",
-            "Vim Substitute Answer",
+            &crate::l10n::command_title("vim.substitute_answer"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: substitute::AnswerArgs| {
                 follow(target);
                 let answered = substitute::answer(target, actor, args);
@@ -429,15 +389,13 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Answers the `:s` with the `c` flag asking about a match, as nvim's prompt takes `answer`: `y` replaces it and asks about the next, `n` skips it, `a` replaces it and every one after it, `l` replaces it and ends, `q` ends. Every replacement is one undo step; once it ends the message is nvim's report. Fails if no `:s` is asking.",
-        )
+        .description(&crate::l10n::command_description("vim.substitute_answer"))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register(
-            "vim.substitute_all_lines",
-            "Vim Substitute All Lines",
+            kiln_l10n::verbatim!("vim.substitute_all_lines"),
+            &crate::l10n::command_title("vim.substitute_all_lines"),
             |target: &mut VimTarget<'_>, actor: &Actor| {
                 follow(target);
                 let ran = crate::ex::run(target, actor, "%s//~/&");
@@ -446,99 +404,89 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Repeats the last substitute with its flags on every line, with the last search pattern (`g&`, as nvim's `:%s//~/&`): one transaction, which `.` doesn't repeat.",
-        )
+        .description(&crate::l10n::command_description(
+            "vim.substitute_all_lines",
+        ))
         .context(normal.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.record",
-            "Vim Record Macro",
+            &crate::l10n::command_title("vim.record"),
             |target: &mut VimTarget<'_>, _: &Actor, args: RecordArgs| {
                 macros::record(target.state, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Starts recording the keys typed, in every mode, into register `register` (`a` to `z`; `A` to `Z` append), until `q`: `vim.recording` is the register meanwhile.",
-        )
+        .description(&crate::l10n::command_description("vim.record"))
         .context(normal.clone())
         .mutates_buffer(false);
     registry
         .register(
-            "vim.record_stop",
-            "Vim Stop Recording",
+            kiln_l10n::verbatim!("vim.record_stop"),
+            &crate::l10n::command_title("vim.record_stop"),
             |target: &mut VimTarget<'_>, _: &Actor| macros::stop(target),
         )
         .expect("vim command IDs are valid and distinct")
-        .description("Ends the recording, leaving the keys typed as the register's text, charwise.")
+        .description(&crate::l10n::command_description("vim.record_stop"))
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.play",
-            "Vim Play Macro",
+            &crate::l10n::command_title("vim.play"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: PlayArgs| {
                 macros::play(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Plays register `register` (`a` to `z`, `@` for the last one played, or `Q` for the last one recorded) `count` times: its text, as keys, is left for the host to feed (`VimState::take_replay`). `:` runs the last ex line submitted (E30 if none) `count` times instead, stopping at the first failure. A replay stops at the first key that fails, or before it would feed more than 1,000,000 keys.",
-        )
+        .description(&crate::l10n::command_description("vim.play"))
         .context(normal)
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.set_mark",
-            "Vim Set Mark",
+            &crate::l10n::command_title("vim.set_mark"),
             |target: &mut VimTarget<'_>, _: &Actor, args: MarkArgs| marks::set(target, args),
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Sets mark `name` (`a` to `z`, or `'` or `` ` `` for the jump mark) at the primary caret, or at the vim cursor in a visual mode.",
-        )
+        .description(&crate::l10n::command_description("vim.set_mark"))
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.visual",
-            "Vim Visual Mode",
+            &crate::l10n::command_title("vim.visual"),
             |target: &mut VimTarget<'_>, _: &Actor, args: VisualArgs| visual::visual(target, args),
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Enters charwise, linewise or blockwise visual mode at the primary caret, switches to that kind from another, or leaves it if it's the current one.",
-        )
+        .description(&crate::l10n::command_description("vim.visual"))
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register(
-            "vim.visual_exit",
-            "Vim Leave Visual Mode",
+            kiln_l10n::verbatim!("vim.visual_exit"),
+            &crate::l10n::command_title("vim.visual_exit"),
             |target: &mut VimTarget<'_>, _: &Actor| visual::exit(target),
         )
         .expect("vim command IDs are valid and distinct")
-        .description("Leaves visual mode, keeping its extent for `gv`, `'<` and `'>`.")
+        .description(&crate::l10n::command_description("vim.visual_exit"))
         .context(visual_mode.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.visual_swap",
-            "Vim Swap Selection Ends",
+            &crate::l10n::command_title("vim.visual_swap"),
             |target: &mut VimTarget<'_>, _: &Actor, args: SwapArgs| visual::swap(target, args),
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Moves the visual cursor to the other end of the selection; in a block with `same_row`, to the other corner on its row.",
-        )
+        .description(&crate::l10n::command_description("vim.visual_swap"))
         .context(visual_mode.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.visual_put",
-            "Vim Put Over Selection",
+            &crate::l10n::command_title("vim.visual_put"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: PutArgs| {
                 {
                     follow(target);
@@ -551,7 +499,10 @@ pub fn registry() -> Registry<VimCommands> {
                             target.state.marks.cutting(target.model.snapshot(), range);
                         }
                         Some(visual::Replaced::Rows(first, last)) => {
-                            target.state.marks.deleting(target.model.snapshot(), first, last);
+                            target
+                                .state
+                                .marks
+                                .deleting(target.model.snapshot(), first, last);
                         }
                         None => {}
                     }
@@ -564,27 +515,23 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Replaces the visual selection with a register, `count` times: `p` (`before` unset) leaves what it replaced in the registers, `P` leaves them as they were.",
-        )
+        .description(&crate::l10n::command_description("vim.visual_put"))
         .context(visual_mode.clone())
         .mutates_buffer(true);
     registry
         .register(
-            "vim.reselect",
-            "Vim Reselect",
+            kiln_l10n::verbatim!("vim.reselect"),
+            &crate::l10n::command_title("vim.reselect"),
             |target: &mut VimTarget<'_>, _: &Actor| visual::reselect(target),
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Selects the last visual extent again, in its kind; in visual mode the current extent becomes the last.",
-        )
+        .description(&crate::l10n::command_description("vim.reselect"))
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.select",
-            "Vim Select Text Object",
+            &crate::l10n::command_title("vim.select"),
             |target: &mut VimTarget<'_>, _: &Actor, args: SelectArgs| {
                 let object = line_motions::selected(&args);
                 line_motions::with_view(target, object, |target| {
@@ -593,29 +540,25 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Selects a text object in visual mode, or extends the selection by `count` more of it.",
-        )
+        .description(&crate::l10n::command_description("vim.select"))
         .context(visual_mode)
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.command_line",
-            "Vim Command Line",
+            &crate::l10n::command_title("vim.command_line"),
             |target: &mut VimTarget<'_>, _: &Actor, args: CommandLineArgs| {
                 cmdline::open(target, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Opens a command line of `kind` (`search_forward` for `/`, `search_backward` for `?`, `ex` for `:`): `vim.mode` becomes `cmdline` until the host submits or cancels the line it owns. A search line carries the pending count, register and operator to the submit. An ex line leaves a visual mode (setting `'<` and `'>`) and starts with `'<,'>` from one, or `.,.+{count-1}` after a count: `VimState::command_line_prefill`.",
-        )
+        .description(&crate::l10n::command_description("vim.command_line"))
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.command_line_submit",
-            "Vim Submit Command Line",
+            &crate::l10n::command_title("vim.command_line_submit"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: SubmitArgs| {
                 follow(target);
                 let submitted = cmdline::submit(target, actor, args);
@@ -624,27 +567,23 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Ends the command line with its `text`, back in the mode it came from, and runs it: a search moves to the `count`th match of the pattern (an empty one is the last search's), or applies the pending operator up to it; an ex line runs its command over its range (`:{range}`, `:d`, `:noh`, `:s`, `:&`). A line that fails leaves a message and changes nothing else.",
-        )
+        .description(&crate::l10n::command_description("vim.command_line_submit"))
         .context(cmdline_mode.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.command_line_cancel",
-            "Vim Cancel Command Line",
+            &crate::l10n::command_title("vim.command_line_cancel"),
             |target: &mut VimTarget<'_>, _: &Actor, args: CancelArgs| cmdline::cancel(target, args),
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Ends the command line without running it, back in the mode it came from (a visual selection as it was), dropping a pending operator. Its `text`, if any, goes into the history, as nvim keeps a cancelled line.",
-        )
+        .description(&crate::l10n::command_description("vim.command_line_cancel"))
         .context(cmdline_mode)
         .mutates_buffer(false);
     registry
         .register_with_args(
             remap::EX_LINE,
-            "Vim Run Ex Line",
+            &crate::l10n::command_title(remap::EX_LINE),
             |target: &mut VimTarget<'_>, actor: &Actor, args: remap::ExLineArgs| {
                 follow(target);
                 let ran = remap::ex_line(target, actor, args);
@@ -653,15 +592,16 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Runs `text` as an ex line, as a remap's `<Cmd>…<CR>` does: no command line opens or closes, and none goes into the history, so the mode and a visual selection stay as they are unless the command changes them. A line that fails leaves a message.",
+        .description(&crate::l10n::command_description(remap::EX_LINE))
+        .context(
+            ContextPredicate::parse(kiln_l10n::verbatim!("editor"))
+                .expect("vim's context predicate parses"),
         )
-        .context(ContextPredicate::parse("editor").expect("vim's context predicate parses"))
         .mutates_buffer(true);
     registry
         .register(
             crate::ex::normal::RESUME,
-            "Vim Resume Normal",
+            &crate::l10n::command_title(crate::ex::normal::RESUME),
             |target: &mut VimTarget<'_>, _: &Actor| {
                 follow(target);
                 let ran = crate::ex::normal::resume(target);
@@ -670,10 +610,11 @@ pub fn registry() -> Registry<VimCommands> {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Resumes the `:normal` that stopped at a map's `<Cmd>fe:…<CR>` command, now run: its remaining keys, then its remaining range rows. Does nothing if none waits.",
+        .description(&crate::l10n::command_description(crate::ex::normal::RESUME))
+        .context(
+            ContextPredicate::parse(kiln_l10n::verbatim!("editor"))
+                .expect("vim's context predicate parses"),
         )
-        .context(ContextPredicate::parse("editor").expect("vim's context predicate parses"))
         .mutates_buffer(true);
     smart_select::register(&mut registry, normal_or_visual);
     feature::register(&mut registry);

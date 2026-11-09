@@ -1,0 +1,240 @@
+# fe-vim migrates in two cards (i18n design, section 9): V1 every file but
+# the which-key ones, which V2 adds before replacing this list with `all = true`.
+migrated = [
+    "src/args.rs",
+    "src/changes.rs",
+    "src/cmdline/offset.rs",
+    "src/cmdline.rs",
+    "src/commands.rs",
+    "src/delimiters.rs",
+    "src/edit.rs",
+    "src/ex/buffers.rs",
+    "src/ex/clearjumps.rs",
+    "src/ex/complete.rs",
+    "src/ex/delmarks.rs",
+    "src/ex/earlier.rs",
+    "src/ex/filter.rs",
+    "src/ex/global.rs",
+    "src/ex/jumps.rs",
+    "src/ex/lines.rs",
+    "src/ex/marks.rs",
+    "src/ex/normal.rs",
+    "src/ex/pick.rs",
+    "src/ex/put.rs",
+    "src/ex/quickfix.rs",
+    "src/ex/registers.rs",
+    "src/ex.rs",
+    "src/ex/set.rs",
+    "src/ex/table.rs",
+    "src/ex/tabs.rs",
+    "src/ex/undo.rs",
+    "src/ex/windows.rs",
+    "src/feature/abolish.rs",
+    "src/feature/argument.rs",
+    "src/feature/changelist.rs",
+    "src/feature/comment.rs",
+    "src/feature/definition_motions.rs",
+    "src/feature/definition.rs",
+    "src/feature/exchange.rs",
+    "src/feature/filter.rs",
+    "src/feature/line_edits.rs",
+    "src/feature/line_undo.rs",
+    "src/feature/matchit.rs",
+    "src/feature/matchit/tags.rs",
+    "src/feature/objects.rs",
+    "src/feature/reindent.rs",
+    "src/feature/replace_register.rs",
+    "src/feature.rs",
+    "src/feature/sections.rs",
+    "src/feature/seek.rs",
+    "src/feature/subword.rs",
+    "src/feature/surround.rs",
+    "src/folds.rs",
+    "src/g_operators.rs",
+    "src/headless.rs",
+    "src/history.rs",
+    "src/history/undo_marks.rs",
+    "src/increment.rs",
+    "src/insert/block_rows.rs",
+    "src/insert/complete.rs",
+    "src/insert/keys.rs",
+    "src/insert.rs",
+    "src/jump/label.rs",
+    "src/jumplist.rs",
+    "src/jump.rs",
+    "src/key.rs",
+    "src/l10n.rs",
+    "src/lib.rs",
+    "src/line_motions.rs",
+    "src/macros.rs",
+    "src/marks.rs",
+    "src/messages.rs",
+    "src/motion.rs",
+    "src/operator.rs",
+    "src/partial_word.rs",
+    "src/prose.rs",
+    "src/put_keys.rs",
+    "src/quick_scope.rs",
+    "src/quit_keys.rs",
+    "src/reducer.rs",
+    "src/register.rs",
+    "src/repeat.rs",
+    "src/replace.rs",
+    "src/scroll.rs",
+    "src/search/backtrack.rs",
+    "src/search/replace.rs",
+    "src/search.rs",
+    "src/smart_select.rs",
+    "src/state.rs",
+    "src/substitute.rs",
+    "src/text_object.rs",
+    "src/unmatched.rs",
+    "src/vimrc.rs",
+    "src/visual/block.rs",
+    "src/visual/object.rs",
+    "src/visual/operate.rs",
+    "src/visual/put.rs",
+    "src/visual/quote.rs",
+    "src/visual.rs",
+]
+
+# Text that goes into the buffer, not the UI: format strings that only join
+# rows, indentation and register text with line breaks.
+
+[[literal]]
+file = "src/ex/put.rs"
+text = "{payload}\n"
+reason = "Buffer text: the put rows and a line break"
+
+[[literal]]
+file = "src/ex/put.rs"
+text = "\n{payload}"
+reason = "Buffer text: a line break and the put rows"
+
+[[literal]]
+file = "src/visual/put.rs"
+text = "{payload}\n"
+reason = "Buffer text: the put rows and a line break"
+
+[[literal]]
+file = "src/visual/put.rs"
+text = "\n{repeated}"
+reason = "Buffer text: a line break and the repeated rows"
+
+[[literal]]
+file = "src/visual/put.rs"
+text = "\n{body}"
+reason = "Buffer text: a line break and the put rows"
+
+[[literal]]
+file = "src/feature/surround.rs"
+text = "{own_open}\n{indent}{unit}"
+reason = "Buffer text: a surrounding pair's opening on a row of its own"
+
+[[literal]]
+file = "src/feature/surround.rs"
+text = "\n{indent}{own_close}"
+reason = "Buffer text: a surrounding pair's closing on a row of its own"
+
+[[literal]]
+file = "src/feature/surround.rs"
+text = "{indent}{own_open}\n"
+reason = "Buffer text: a surrounding pair's opening on a row of its own"
+
+[[literal]]
+file = "src/g_operators.rs"
+text = "\n{indent}"
+reason = "Buffer text: a line break and the row's indentation"
+
+[[literal]]
+file = "src/replace.rs"
+text = "\n{indent}"
+reason = "Buffer text: a line break and the row's indentation"
+
+[[literal]]
+file = "src/insert/keys.rs"
+text = "{first}\n{}"
+reason = "Buffer text: two rows joined by a line break"
+
+# `:set`'s report of an option: its name and value, which nvim prints the
+# same in every language.
+
+[[literal]]
+file = "src/ex/set.rs"
+text = "  {full}"
+reason = "An option's name, as `:set {option}?` prints it"
+
+[[literal]]
+file = "src/ex/set.rs"
+text = "no{full}"
+reason = "An option's name, as `:set {option}?` prints it when off"
+
+[[literal]]
+file = "src/ex/set.rs"
+text = "  scrolloff={}"
+reason = "An option's name and value, as `:set {option}?` prints them"
+
+[[literal]]
+file = "src/ex/set.rs"
+text = "  tabstop={}"
+reason = "An option's name and value, as `:set {option}?` prints them"
+
+[[literal]]
+file = "src/ex/set.rs"
+text = "  shiftwidth={}"
+reason = "An option's name and value, as `:set {option}?` prints them"
+
+[[literal]]
+file = "src/ex/set.rs"
+text = "  clipboard=unnamedplus"
+reason = "An option's name and value, as `:set {option}?` prints them"
+
+[[literal]]
+file = "src/ex/set.rs"
+text = "  clipboard="
+reason = "An option's name and value, as `:set {option}?` prints them"
+
+# An E-code before its message: the code is an id, kept outside the catalogue
+# as nvim keeps it in every language (i18n design, section 5).
+
+[[literal]]
+file = "src/messages.rs"
+text = "{code}: {text}"
+reason = "An E-code (an id, `E492`) before its catalogued message, as nvim prints it in every locale"
+
+# Vim syntax, as typed, and the regex fe-vim translates a pattern to.
+
+[[literal]]
+file = "src/ex/lines.rs"
+text = ":sort {ch}"
+reason = "The `:sort` flag fe-vim doesn't take, as typed"
+
+[[literal]]
+file = "src/search.rs"
+text = "* after \\%("
+reason = "The pattern atom fe-vim doesn't translate, as typed"
+
+[[literal]]
+file = "src/search.rs"
+text = "[\\t ]"
+reason = "A regex class `\\s` translates to"
+
+[[literal]]
+file = "src/search.rs"
+text = "[^\\t ]"
+reason = "A regex class `\\S` translates to"
+
+[[literal]]
+file = "src/search.rs"
+text = "(?P<vimgroup{number}>{})"
+reason = "A regex capture group a pattern's `\\(` translates to"
+
+[[literal]]
+file = "src/search.rs"
+text = "{source}\u0000{ignore_case}\u0000backtrack\u0000{word:?}{rows_key}"
+reason = "A compiled pattern's cache key"
+
+[[literal]]
+file = "src/headless.rs"
+text = "{0:?} isn't vim's: it was forwarded"
+reason = "HeadlessVim's error for tests and tools that feed keys; no host shows it"

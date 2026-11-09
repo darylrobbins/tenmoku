@@ -614,10 +614,10 @@ const CLASS_MARGIN: usize = 3;
 const BLANK_REACH: usize = 8 * CARET_WINDOW;
 
 thread_local! {
-    /// The bytes copied out of rows on this thread: [`Line`]s' rows, the
-    /// windows they are cut from (and discarded ones), and the buffers the
-    /// bracket and comment scans read. Scans over the text's chunks without
-    /// a copy (a huge row's search for a double quote) are not counted.
+    // The bytes copied out of rows on this thread: [`Line`]s' rows, the
+    // windows they are cut from (and discarded ones), and the buffers the
+    // bracket and comment scans read. Scans over the text's chunks without
+    // a copy (a huge row's search for a double quote) are not counted.
     static ROW_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 

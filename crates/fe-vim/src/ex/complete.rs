@@ -7,8 +7,8 @@ use super::{Ex, split, table};
 /// added from [`table::COMMANDS`]).
 /// Each must parse as a command; a test holds the list to that.
 const NAMES: &[&str] = &[
-    "Explore",
-    "Replace",
+    kiln_l10n::verbatim!("Explore"),
+    kiln_l10n::verbatim!("Replace"),
     "bNext",
     "bdelete",
     "bfirst",

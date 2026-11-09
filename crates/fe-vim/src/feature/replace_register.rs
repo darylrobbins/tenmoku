@@ -44,6 +44,8 @@
 use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 
+use kiln_l10n::tr;
+
 use crate::{
     Change, Motion, OperateArgs, Operator, Pending, PutArgs, Register, Step, Target, VimKey,
     VimTarget, VisualKind, cmdline,
@@ -207,7 +209,7 @@ fn before_caret(
         registers,
     } = target;
     if register == Some('/') && registers.last_search().is_none() {
-        return Ok(state.fail("E35: No previous regular expression"));
+        return Ok(state.fail(crate::messages::no_previous_regular_expression()));
     }
     registers.adopt_inserted(state);
     let value = registers
@@ -272,10 +274,11 @@ fn corrected(
                         .try_fold(0usize, |size, line| size.checked_add(line.len() + 1))
                         .and_then(|size| size.checked_mul(rows as usize));
                     if size.is_none_or(|size| size > operator::MAX_PUT) {
-                        return Err(CommandError::new(format!(
-                            "repeating {} bytes on {rows} rows would insert more than {} bytes",
-                            text.len(),
-                            operator::MAX_PUT
+                        return Err(CommandError::new(tr!(
+                            "vim-replace-register-too-large",
+                            bytes = text.len(),
+                            rows = rows,
+                            limit = operator::MAX_PUT
                         )));
                     }
                     let width = lines

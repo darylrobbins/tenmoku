@@ -1,3 +1,5 @@
+use kiln_l10n::tr;
+
 use super::*;
 
 /// A block: display columns `left` to `right` (`None` after `$`: to each
@@ -148,10 +150,10 @@ impl Block {
             size.checked_add(cut.taken)?.checked_add(1)
         });
         if size.is_none_or(|size| size > operator::MAX_PUT) {
-            return Err(CommandError::new(format!(
-                "a block of {} rows would take more than {} bytes",
-                cuts.len(),
-                operator::MAX_PUT
+            return Err(CommandError::new(tr!(
+                "vim-block-too-large",
+                rows = cuts.len(),
+                limit = operator::MAX_PUT
             )));
         }
         let rows: Vec<String> = (self.first..)

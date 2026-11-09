@@ -1,3 +1,5 @@
+use kiln_l10n::tr;
+
 use super::*;
 
 /// An upper bound on what [`put_block`] inserts for `payload`'s rows,
@@ -318,10 +320,11 @@ fn put_over(
         tab,
     );
     if size.is_none_or(|size| size > operator::MAX_PUT) {
-        return Err(CommandError::new(format!(
-            "putting {count} copies of {} bytes would insert more than {} bytes",
-            payload.len(),
-            operator::MAX_PUT
+        return Err(CommandError::new(tr!(
+            "vim-put-too-large",
+            count = count,
+            bytes = payload.len(),
+            limit = operator::MAX_PUT
         )));
     }
     // What's replaced, as a delete takes it (for `p`, which keeps it), where

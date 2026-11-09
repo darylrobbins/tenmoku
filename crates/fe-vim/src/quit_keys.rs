@@ -25,30 +25,17 @@ fn big_z(_: &Pending, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
-    for (id, name, line, description) in [
-        (
-            "vim.write_quit",
-            "Vim Write Quit",
-            "x",
-            "Runs `:x`, as ZZ does: the host saves a modified buffer and closes the window.",
-        ),
-        (
-            "vim.quit_discard",
-            "Vim Quit Discard",
-            "q!",
-            "Runs `:q!`, as ZQ does: the host closes the window, discarding changes.",
-        ),
-    ] {
+    for (id, line) in [("vim.write_quit", "x"), ("vim.quit_discard", "q!")] {
         registry
             .register(
                 id,
-                name,
+                &crate::l10n::command_title(id),
                 move |target: &mut VimTarget<'_>, actor: &Actor| ex::run(target, actor, line),
             )
             .expect("vim command IDs are valid and distinct")
-            .description(description)
+            .description(&crate::l10n::command_description(id))
             .context(normal.clone())
             .mutates_buffer(false);
     }

@@ -63,6 +63,8 @@ use fe_editor::EditorModel;
 use fe_text::Text;
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete, UnicodeSegmentation as _};
 
+use kiln_l10n::tr;
+
 use crate::{
     Mode, VimKey, VimState,
     motion::{Class, class},
@@ -207,7 +209,7 @@ impl VimState {
         }
         match stepped {
             Ok(()) if completion.found.is_empty() => {
-                self.message = Some("Pattern not found".into());
+                self.message = Some(tr!("vim-completion-not-found").into());
             }
             Ok(()) => {
                 self.retext(model, &completion, from);

@@ -257,10 +257,10 @@ pub(crate) fn ex_command(
         .filter(|(names, ..)| names.contains(&name))
         .collect();
     if forms.is_empty() {
-        return Err(format!("E492: Not an editor command: {line}"));
+        return Err(fe_vim::messages::not_an_editor_command(line));
     }
     if range && name != GITSIGNS && name != GCLOG {
-        return Err("E481: No range allowed".to_owned());
+        return Err(fe_vim::messages::no_range_allowed());
     }
     let unsupported = || format!("Not supported: :{line}");
     if bang {

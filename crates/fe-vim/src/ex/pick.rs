@@ -2,6 +2,7 @@
 //! `:marks` and `:registers` leave, and the commands that list things after it.
 
 use fe_command::{CommandId, Invocation};
+use kiln_l10n::tr;
 
 use crate::{MarkMotion, Motion};
 
@@ -9,9 +10,9 @@ use crate::{MarkMotion, Motion};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pick {
     /// What the picker is called (its placeholder).
-    pub title: &'static str,
+    pub title: String,
     /// The column heads, as the command prints them.
-    pub header: &'static str,
+    pub header: String,
     pub rows: Vec<PickRow>,
 }
 
@@ -114,7 +115,7 @@ impl Pick {
                 buffer.number.to_string(),
                 flags,
                 buffer.name,
-                format!("line {}", buffer.line),
+                tr!("vim-ls-line", line = buffer.line).to_string(),
             ];
             PickRow {
                 cells,
@@ -122,8 +123,8 @@ impl Pick {
             }
         });
         Self {
-            title: "Buffers",
-            header: "nr  flags name  line",
+            title: tr!("vim-ls-title").to_string(),
+            header: tr!("vim-ls-header").to_string(),
             rows: rows.collect(),
         }
     }

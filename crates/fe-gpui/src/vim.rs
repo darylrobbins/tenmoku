@@ -3058,7 +3058,7 @@ impl EditorView {
         let id = invocation.command.clone();
         let meta = editor_command(&id);
         let message = if !known_command(&id, cx) {
-            format!("E492: Not an editor command: fe:{id}")
+            fe_vim::messages::not_an_editor_command(&format!("fe:{id}"))
         } else if let Some(message) = needs_args(&id, cx) {
             format!("fe:{id}: {message}")
         } else if (meta.as_ref().and_then(|meta| meta.context.as_ref()))

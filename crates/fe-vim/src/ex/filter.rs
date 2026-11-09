@@ -27,8 +27,9 @@
 //! (`Host(..)`, a plugin's; `Ai {..}`; `Lsp`; `Format`), or one a `:g` or a
 //! `:normal` runs (`global.rs`, `normal.rs`), or a map's command the host
 //! runs while a `:normal` waits suspended on it, whoever asked for that,
-//! gets [`REFUSED`] and no host command; so does anything a macro's replay
-//! runs, its own keys or those of the maps they run, a map's
+//! gets [`crate::messages::shell_refused`] and no host command; so does
+//! anything a macro's replay runs, its own keys or those of the maps they
+//! run, a map's
 //! `<Cmd>fe:…<CR>` among them, which the host runs later, and `@:`'s line.
 //! Where it came from goes with each invocation, through all it runs
 //! (`remap::Provenances`), not with the last key read. The host command
@@ -41,15 +42,12 @@ use std::ops::Range;
 use fe_buffer::{BufferSnapshot, TransactionId};
 use fe_command::Actor;
 use fe_editor::{EditorModel, commands::origin};
+use kiln_l10n::tr;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::super::{Address, ExCommand, ExError, HostCommand, first_non_blank, global};
 use crate::{VimState, feature::line_undo, history, insert, marks, operator, remap::Provenance};
-
-/// What a shell command asked for by anyone but the user, or run by `:g`
-/// or `:normal`, says.
-pub const REFUSED: &str = "Shell commands run only from your own keys";
 
 /// The words nvim expands in a shell command, which fe-vim refuses.
 const SPECIAL: &[&str] = &[
@@ -100,7 +98,7 @@ impl ShellCommand {
                 },
                 '%' | '#' => {
                     if let Some(refused) = modified(ch, &text[at + 1..]) {
-                        return Err(ExError::Unsupported(refused));
+                        return Err(ExError::unsupported(&refused));
                     }
                     if !literal.is_empty() {
                         parts.push(ShellPart::Text(std::mem::take(&mut literal)));
@@ -113,7 +111,7 @@ impl ShellCommand {
                 '<' if let Some(word) =
                     SPECIAL.iter().find(|word| text[at..].starts_with(*word)) =>
                 {
-                    return Err(ExError::Unsupported((*word).to_string()));
+                    return Err(ExError::unsupported(word));
                 }
                 _ => literal.push(ch),
             }
@@ -177,7 +175,7 @@ pub(in crate::ex) fn parse_read(text: &str) -> Result<ExCommand, ExError> {
     }))
 }
 
-/// [`REFUSED`] for a shell command `actor` asks for: anyone but the user,
+/// [`ExError::ShellRefused`] for a shell command `actor` asks for: anyone but the user,
 /// or anyone while a `:g` or `:normal` runs, or a `:normal` waits
 /// suspended for the host to run a map's command (which may be this), or
 /// for what runs from a macro's replay or a `:normal`, through its maps, a
@@ -375,7 +373,7 @@ impl VimState {
         let row = first.min(text.row_count() - 1);
         operator::land(model, &snapshot, [first_non_blank(text, row)]);
         self.goals = None;
-        self.message = (old > 2).then(|| format!("{old} lines filtered"));
+        self.message = (old > 2).then(|| tr!("vim-lines-filtered", count = old).to_string());
     }
 
     /// Puts the rows of `output`, what [`HostCommand::ReadCommand`]'s

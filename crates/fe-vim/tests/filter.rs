@@ -8,8 +8,8 @@
 use fe_command::{Actor, Invocation, Source};
 use fe_editor::commands::HeadlessHost;
 use fe_vim::{
-    HeadlessVim, HostCommand, Register, Remap, RemapCommand, RemapMode, RemapSet, SHELL_REFUSED,
-    ShellCommand, ShellPart, Write,
+    HeadlessVim, HostCommand, Register, Remap, RemapCommand, RemapMode, RemapSet, ShellCommand,
+    ShellPart, Write,
 };
 
 /// Eight rows: two paragraphs.
@@ -563,8 +563,11 @@ fn shell_command_parts() {
 
 #[test]
 fn filters_run_only_for_the_user() {
-    let refused = Some(SHELL_REFUSED.to_string());
-    assert_eq!(SHELL_REFUSED, "Shell commands run only from your own keys");
+    let refused = Some(fe_vim::messages::shell_refused());
+    assert_eq!(
+        fe_vim::messages::shell_refused(),
+        "Shell commands run only from your own keys"
+    );
     let ai = || Actor::Ai {
         agent: "agent".into(),
         session: "s1".into(),
@@ -713,7 +716,7 @@ fn run_remap_command(vim: &mut HeadlessVim) {
 
 #[test]
 fn macros_never_reach_the_shell_through_remaps() {
-    let refused = Some(SHELL_REFUSED.to_string());
+    let refused = Some(fe_vim::messages::shell_refused());
     let maps = [
         ("R", "."),
         ("F", ":.!sort<CR>"),
@@ -829,7 +832,7 @@ fn run_taken(vim: &mut HeadlessVim) {
 /// a suspended `:normal` left); the user's own keys still do.
 #[test]
 fn shell_commands_carry_their_provenance() {
-    let refused = Some(SHELL_REFUSED.to_string());
+    let refused = Some(fe_vim::messages::shell_refused());
     let host_and_message = |vim: &mut HeadlessVim| {
         let message = vim.state().message().map(String::from);
         (vim.state_mut().take_host_command(), message)

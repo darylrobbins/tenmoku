@@ -28,6 +28,8 @@ use fe_buffer::TransactionId;
 use fe_command::{CommandError, Dispatched, Effect};
 use fe_text::Text;
 
+use kiln_l10n::tr;
+
 use crate::{
     Mode, Pending, SelectArgs, TextObject, VimTarget, VisualKind, feature::Feature, motion::Cursor,
     operator::Span, search::Deadline,
@@ -308,7 +310,7 @@ pub(crate) fn select_visual(
         state.visual_anchor(model),
         state.visual_cursor(model),
     ) else {
-        return Err(CommandError::new("no visual selection"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection")));
     };
     let text = model.text().clone();
     let deadline = Deadline::new();

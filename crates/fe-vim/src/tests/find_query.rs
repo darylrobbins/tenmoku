@@ -37,7 +37,7 @@ fn literal_regex_and_case() {
     assert_eq!(all(&query("foo", false, true, false), "foo FOO"), [0..3]);
     assert_eq!(
         Pattern::from_query(&FindQuery::default()).unwrap_err(),
-        PatternError::Invalid("empty pattern")
+        PatternError::Invalid("invalid pattern: empty pattern".into())
     );
     assert!(matches!(
         Pattern::from_query(&query("(", true, false, false)),

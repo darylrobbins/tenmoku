@@ -25,6 +25,8 @@ use std::{collections::HashMap, sync::Arc};
 use fe_buffer::Origin;
 use fe_editor::{EditorModel, IndentStyle, commands::EditorHost};
 
+use kiln_l10n::tr;
+
 use super::{Ended, Indent, MAX_PUT, Session, place, type_at_carets};
 use crate::{
     LastChange, Mode, Register, Registers, VimKey, VimState, VimTarget,
@@ -983,7 +985,7 @@ impl VimState {
         registers.adopt_inserted(self);
         if name == '/' && registers.last_search().is_none() {
             self.failed = true;
-            self.message = Some("E35: No previous regular expression".to_string());
+            self.message = Some(crate::messages::no_previous_regular_expression());
             return;
         }
         let Ok(Some(value)) = registers.read(Some(name), host) else {
@@ -1039,7 +1041,7 @@ impl VimState {
             Some(value) => self.insert_value(model, host, value, None),
             None => {
                 self.failed = true;
-                self.message = Some("E29: No inserted text yet".to_string());
+                self.message = Some(crate::messages::coded("E29", tr!("vim-e29")));
             }
         }
     }
@@ -1150,10 +1152,13 @@ fn prepared(model: &mut EditorModel, value: &Register) -> Result<String, String>
         return Ok(text);
     }
     if text.len().saturating_mul(carets) > MAX_PUT {
-        return Err(format!(
-            "inserting {} bytes at {carets} carets would pass {MAX_PUT} bytes",
-            text.len()
-        ));
+        return Err(tr!(
+            "vim-insert-too-large",
+            bytes = text.len(),
+            carets = carets,
+            limit = MAX_PUT
+        )
+        .to_string());
     }
     model.sync_display();
     Ok(text)

@@ -22,12 +22,13 @@ use std::{ops::Range, time::Duration};
 use fe_buffer::TransactionId;
 use fe_command::{CommandError, Dispatched, Effect, Invocation, Source};
 use fe_editor::EditorModel;
+use kiln_l10n::tr;
 
 use crate::{
     CancelArgs, CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Pending,
     Registers, SearchOffset, Step, SubmitArgs, Target, VimKey, VimState, VimTarget,
     args::{Search, SearchPattern},
-    ex, insert, motion, operator,
+    ex, insert, messages, motion, operator,
     search::{self, Deadline, Pattern},
     visual,
 };
@@ -38,8 +39,8 @@ use crate::{
 pub const SEARCH_PREVIEW_LIMIT: Duration = Duration::from_millis(100);
 
 thread_local! {
-    /// What [`set_search_preview_limit`] set on this thread, or `None` for
-    /// [`SEARCH_PREVIEW_LIMIT`].
+    // What [`set_search_preview_limit`] set on this thread, or `None` for
+    // [`SEARCH_PREVIEW_LIMIT`].
     static PREVIEW_LIMIT_OVERRIDE: std::cell::Cell<Option<Duration>> =
         const { std::cell::Cell::new(None) };
 }
@@ -215,9 +216,7 @@ pub(crate) fn open(target: &mut VimTarget<'_>, args: CommandLineArgs) -> Handled
     let mut prefill = String::new();
     if args.kind == CommandLineKind::Ex {
         if args.operator.is_some() || args.register.is_some() {
-            return Err(CommandError::new(
-                "an ex command line takes no operator or register",
-            ));
+            return Err(CommandError::new(tr!("vim-ex-line-takes-no-operator")));
         }
         if visual::leave_for_ex(target) {
             prefill.push_str("'<,'>");
@@ -248,7 +247,7 @@ fn close(state: &mut VimState) -> Result<CommandLine, CommandError> {
     let line = state
         .cmdline
         .take()
-        .ok_or_else(|| CommandError::new("no command line is open"))?;
+        .ok_or_else(|| CommandError::new(tr!("vim-no-command-line")))?;
     state.mode = line.from;
     Ok(line)
 }
@@ -316,7 +315,7 @@ fn search(
             let text = offset_text.unwrap_or_default();
             return failed(
                 target.state,
-                format!("search offsets not supported: {text}"),
+                tr!("vim-search-offset-not-supported", offset = text),
             );
         }
     };
@@ -325,7 +324,7 @@ fn search(
     let (pattern, word) = match (pattern.is_empty(), target.registers.last_search()) {
         (false, _) => (pattern, false),
         (true, Some((last, _))) => (last.to_string(), target.registers.last_search_word()),
-        (true, None) => return failed(target.state, "E35: No previous regular expression"),
+        (true, None) => return failed(target.state, messages::no_previous_regular_expression()),
     };
     let motion = Motion::Search(Search {
         pattern: SearchPattern::new(&pattern),
@@ -397,7 +396,7 @@ pub(crate) fn check_search(
     match parsed.find_across(text, from, search.forward, &Deadline::new()) {
         Ok(Some(_)) => Ok(()),
         Err(interrupted) => Err(interrupted.to_string()),
-        Ok(None) => Err(format!("E486: Pattern not found: {pattern}")),
+        Ok(None) => Err(messages::pattern_not_found(pattern)),
     }
 }
 
@@ -465,7 +464,7 @@ fn resolve_search(target: &mut VimTarget<'_>, motion: Motion) -> Result<(Motion,
     let forward = match motion {
         Motion::SearchNext | Motion::SearchPrevious => {
             let Some((last, was_forward)) = target.registers.last_search() else {
-                return Err("E35: No previous regular expression".to_string());
+                return Err(messages::no_previous_regular_expression());
             };
             let forward = was_forward == (motion == Motion::SearchNext);
             let search = Search {
@@ -484,7 +483,7 @@ fn resolve_search(target: &mut VimTarget<'_>, motion: Motion) -> Result<(Motion,
     };
     let at = caret(target);
     let Some((_, pattern)) = search::word_at(target.model.text(), at, forward) else {
-        return Err("E348: No string under cursor".to_string());
+        return Err(messages::coded("E348", tr!("vim-e348")));
     };
     let pattern = if matches!(
         motion,

@@ -53,6 +53,8 @@ use fe_command::{Actor, CommandError, ContextPredicate, Dispatched, Effect, Regi
 use fe_editor::{EditorModel, commands::origin};
 use fe_text::Bias;
 
+use kiln_l10n::tr;
+
 use crate::{
     Change, Mode, Motion, MoveArgs, OperateArgs, Operator, Pending, Step, Target, VimCommands,
     VimKey, VimState, VimTarget, VisualKind, cmdline,
@@ -72,9 +74,6 @@ pub(crate) const FEATURE: Feature = Feature {
 };
 
 const OPERATOR: Operator = Operator::Exchange;
-
-/// What `cx` reports when the regions overlap.
-const OVERLAPPING: &str = "Exchange aborted: overlapping text";
 
 /// What the first `cx` marked, in its buffer: characters, anchored, or
 /// rows, anchored too, with their first and last kept as places
@@ -457,12 +456,12 @@ fn key(pending: &Pending, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
     registry
         .register(
-            "vim.exchange_clear",
-            "Vim Exchange Clear",
+            kiln_l10n::verbatim!("vim.exchange_clear"),
+            &crate::l10n::command_title("vim.exchange_clear"),
             |target: &mut VimTarget<'_>, _: &Actor| {
                 let had = target.state.exchange.take().is_some();
                 target.state.marks.exchange = None;
@@ -473,9 +472,7 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Clears the region the exchange operator (cx) marked, as vim-exchange's cxc does, so the next cx marks anew.",
-        )
+        .description(&crate::l10n::command_description("vim.exchange_clear"))
         .context(normal)
         .mutates_buffer(false);
 }
@@ -612,7 +609,7 @@ fn exchange(
         return Ok(mark(target, &snapshot, region, &span, head, reached));
     };
     if first.overlaps(&region) && !first.contains(&region) && !region.contains(&first) {
-        return Ok(target.state.fail(OVERLAPPING));
+        return Ok(target.state.fail(overlapping()));
     }
     swap(target, actor, args, &snapshot, (first, region))
 }
@@ -700,7 +697,7 @@ fn swap(
         edits
     });
     let Some((second, filled, begin)) = placed else {
-        return Ok(state.fail(OVERLAPPING));
+        return Ok(state.fail(overlapping()));
     };
     let after = snapshot.text();
     let filled = filled.min(after.len());
@@ -749,4 +746,9 @@ fn reindented(moved: &str, replaced: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// What `cx` reports when the regions overlap.
+fn overlapping() -> String {
+    tr!("vim-exchange-overlapping").to_string()
 }

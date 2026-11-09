@@ -261,7 +261,7 @@ fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
     linger(cx);
     assert_eq!(
         message(&workbench, cx).as_deref(),
-        Some(fe_vim::SHELL_REFUSED)
+        Some(fe_vim::messages::shell_refused().as_str())
     );
     assert!(!root.join("ran").exists());
 

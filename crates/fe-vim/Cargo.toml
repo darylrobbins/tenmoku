@@ -12,6 +12,7 @@ fe-buffer.workspace = true
 fe-command.workspace = true
 fe-editor.workspace = true
 fe-text.workspace = true
+kiln-l10n.workspace = true
 regex.workspace = true
 regex-automata = "0.4"
 regex-syntax = "0.8"
@@ -22,6 +23,7 @@ thiserror.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 serde_json.workspace = true
 toml.workspace = true
 

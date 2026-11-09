@@ -128,7 +128,7 @@ impl PickerDelegate for VimPicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        Some(self.pick.header.into())
+        Some(self.pick.header.clone().into())
     }
 }
 
@@ -143,9 +143,9 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         self.dismiss_palette(window, cx);
-        let title = pick.title;
+        let title = pick.title.clone();
         let delegate = VimPicker::new(pick, editor.downgrade());
-        let picker = cx.new(|cx| Picker::new(delegate, title, fe_ui::ui_theme(cx), cx));
+        let picker = cx.new(|cx| Picker::new(delegate, &title, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));
         self.modals.update(cx, |layer, cx| {
             layer.show_modal(VIM_PICK, picker, window, cx)

@@ -66,34 +66,32 @@ fn g(pending: &Pending, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let context = ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
-        .expect("vim's context predicate parses");
+    let context = ContextPredicate::parse(kiln_l10n::verbatim!(
+        "editor && (vim.mode == normal || vim.visual)"
+    ))
+    .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.change_older",
-            "Vim Change Older",
+            &crate::l10n::command_title("vim.change_older"),
             |target: &mut VimTarget<'_>, _: &Actor, args: ChangeArgs| {
                 Ok::<_, CommandError>(run(target, args, true))
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Goes `count` entries back through the changelist, as vim's g; does, to the entry's exact position; a count past the oldest goes to the oldest. At the oldest, with no change made, or in a visual mode it fails with nothing changed.",
-        )
+        .description(&crate::l10n::command_description("vim.change_older"))
         .context(context.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.change_newer",
-            "Vim Change Newer",
+            &crate::l10n::command_title("vim.change_newer"),
             |target: &mut VimTarget<'_>, _: &Actor, args: ChangeArgs| {
                 Ok::<_, CommandError>(run(target, args, false))
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Goes `count` entries forward through the changelist, as vim's g, does, to the entry's exact position; a count past the newest goes to the newest. At the newest, with no change made, or in a visual mode it fails with nothing changed.",
-        )
+        .description(&crate::l10n::command_description("vim.change_newer"))
         .context(context)
         .mutates_buffer(false);
 }
@@ -112,7 +110,11 @@ fn run(target: &mut VimTarget<'_>, args: ChangeArgs, older: bool) -> Dispatched<
     let count = args.count.unwrap_or(1);
     let (row, column) = match target.state.marks.go_change(&snapshot, older, count) {
         Ok(Some(found)) => found,
-        Ok(None) => return target.state.fail(marks::INVALID_ROW),
+        Ok(None) => {
+            return target
+                .state
+                .fail(crate::messages::mark_has_invalid_line_number());
+        }
         Err(message) => return target.state.fail(message),
     };
     let text = snapshot.text();

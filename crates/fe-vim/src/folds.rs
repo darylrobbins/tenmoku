@@ -59,6 +59,8 @@ use fe_text::Text;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use kiln_l10n::tr;
+
 use crate::{
     Motion, MoveArgs, Operator, Pending, Step, Target, VimCommands, VimKey, VimTarget,
     feature::Feature, motion::Cursor, operator, reducer::invocation, visual,
@@ -148,12 +150,12 @@ fn z(pending: &Pending, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.fold",
-            "Vim Fold",
+            &crate::l10n::command_title("vim.fold"),
             |target: &mut VimTarget<'_>, _: &Actor, args: FoldArgs| {
                 let changed = fold(target, args);
                 Ok::<_, CommandError>(Dispatched::new(match changed {
@@ -163,9 +165,7 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Opens or closes the editor's folds at the primary caret's row (`zo zc za zO zC zA`), every fold (`zR zM`) or those hiding the caret (`zv`), or deletes the fold at the caret (`zd`), every fold nested there (`zD`) or every fold (`zE`), which in Tenmoku opens them; `count` is the levels `zo`, `zc` and `za` act on. Candidates are the host's fold ranges, or indented blocks. Changes no text.",
-        )
+        .description(&crate::l10n::command_description("vim.fold"))
         .context(normal)
         .mutates_buffer(false);
 }
@@ -394,10 +394,10 @@ pub(crate) fn fold_selection(
 ) -> Result<Dispatched<fe_buffer::TransactionId>, CommandError> {
     target.model.sync_display();
     let Some(area) = visual::live_area(target.model, target.state) else {
-        return Err(CommandError::new("no visual selection to fold"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection-to-fold")));
     };
     let (Some(first), Some(last)) = (area.rows.first(), area.rows.last()) else {
-        return Err(CommandError::new("no visual selection to fold"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection-to-fold")));
     };
     let rows = first.0..=last.0;
     visual::exit(target)?;

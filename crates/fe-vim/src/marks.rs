@@ -41,25 +41,13 @@ use crate::{
     visual::Pos,
 };
 use fe_editor::EditorModel;
+use kiln_l10n::tr;
 
-/// What jumping to a mark that isn't set (or whose row was deleted) says.
-pub(crate) const NOT_SET: &str = "E20: Mark not set";
-
-/// What going to a jumplist entry past the last row says.
-pub(crate) const INVALID_ROW: &str = "E19: Mark has invalid line number";
+use crate::messages::{self, coded};
 
 /// How many entries the jumplist keeps, as nvim's: the oldest go. The
 /// changelist keeps as many.
 const JUMPS: usize = 100;
-
-/// What going older than the changelist's oldest entry says.
-const AT_START: &str = "E662: At start of changelist";
-
-/// What going newer than the changelist's newest entry says.
-const AT_END: &str = "E663: At end of changelist";
-
-/// What going through the changelist with no change made says.
-const NO_CHANGES: &str = "E664: Changelist is empty";
 
 /// How many columns from the changelist's newest entry a change on its row
 /// may be and still take its place rather than add one: nvim's, with
@@ -1689,17 +1677,18 @@ impl Marks {
         snapshot: &BufferSnapshot,
         older: bool,
         count: u32,
-    ) -> Result<Option<(u32, usize)>, &'static str> {
+    ) -> Result<Option<(u32, usize)>, String> {
         let changes = &mut self.changes;
         let len = changes.list.len();
         if len == 0 {
-            return Err(NO_CHANGES);
+            // What going through the changelist with no change made says.
+            return Err(coded("E664", tr!("vim-e664")));
         }
         let (at, count) = (changes.at, count.max(1) as usize);
         changes.at = match older {
-            true if at == 0 => return Err(AT_START),
+            true if at == 0 => return Err(coded("E662", tr!("vim-e662"))),
             true => at.saturating_sub(count),
-            false if at == len - 1 => return Err(AT_END),
+            false if at == len - 1 => return Err(coded("E663", tr!("vim-e663"))),
             false => (at + count).min(len - 1),
         };
         Ok(changes.list[changes.at].entry(snapshot))
@@ -2147,7 +2136,10 @@ pub(crate) fn set(
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     let name = args.name;
     if !settable(name) {
-        return Err(CommandError::new(format!("m doesn't set mark {name:?}")));
+        return Err(CommandError::new(tr!(
+            "vim-mark-not-settable",
+            name = format!("{name:?}")
+        )));
     }
     let at = cursor(target);
     target.state.marks.watch(target.model);
@@ -2200,7 +2192,7 @@ pub(crate) fn resolve(target: &mut VimTarget<'_>, motion: Motion) -> Result<Moti
         let text = target.model.snapshot().text();
         // A list's entry on a row since taken out, as `<C-o>` finds it.
         if row >= text.row_count() {
-            return Err(INVALID_ROW.to_string());
+            return Err(messages::mark_has_invalid_line_number());
         }
         let offset = text.row_start(row) + (column as usize).min(text.row_len(row) as usize);
         return Ok(Motion::MarkAt {
@@ -2216,8 +2208,8 @@ pub(crate) fn resolve(target: &mut VimTarget<'_>, motion: Motion) -> Result<Moti
     let found = target.state.mark(name).map(|mark| mark.find(snapshot));
     let (row, column) = match found {
         Some(Found::At(at)) => at,
-        Some(Found::Past) => return Err(INVALID_ROW.to_string()),
-        _ => return Err(NOT_SET.to_string()),
+        Some(Found::Past) => return Err(messages::mark_has_invalid_line_number()),
+        _ => return Err(messages::mark_not_set()),
     };
     let text = snapshot.text();
     // `'<` and `'>` may stay past the end, on rows a change took.

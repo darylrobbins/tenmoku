@@ -9,9 +9,10 @@
 //! from the Dock finds the same tools a terminal does.
 //!
 //! Each of these is refused before anything runs, with a vim message: a
-//! command anyone but the user asked for ([`fe_vim::SHELL_REFUSED`]); one
-//! in a window whose root isn't trusted, or for a file whose real path
-//! (symlinks followed) isn't under the root's ([`UNTRUSTED`]); one in a
+//! command anyone but the user asked for
+//! ([`fe_vim::messages::shell_refused`]); one in a window whose root isn't
+//! trusted, or for a file whose real path (symlinks followed) isn't under
+//! the root's ([`UNTRUSTED`]); one in a
 //! read-only editor (`E21`); and one while another runs in the same editor
 //! ([`BUSY`]).
 //!
@@ -76,7 +77,7 @@ use std::time::{Duration, Instant};
 use fe_buffer::Version;
 use fe_command::Actor;
 use fe_gpui::EditorView;
-use fe_vim::{HostCommand, SHELL_REFUSED, ShellCommand, ShellPart};
+use fe_vim::{HostCommand, ShellCommand, ShellPart};
 use gpui::{
     App, AsyncApp, Context, Entity, EntityId, Focusable as _, Global, Subscription, WeakEntity,
     Window, WindowId,
@@ -714,7 +715,7 @@ impl Workbench {
             _ => return,
         };
         if actor != Actor::User {
-            return message(editor, SHELL_REFUSED, cx);
+            return message(editor, fe_vim::messages::shell_refused(), cx);
         }
         let path = editor.path(cx).map(|path| path.to_path_buf());
         let root = match &self.root {

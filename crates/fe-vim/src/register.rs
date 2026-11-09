@@ -5,6 +5,8 @@ use std::{borrow::Cow, collections::VecDeque};
 
 use fe_editor::commands::EditorHost;
 
+use kiln_l10n::tr;
+
 use crate::{CommandLineKind, SearchOffset, substitute::LastSubstitute};
 
 /// How many lines each command-line history keeps: nvim's 'history'
@@ -56,9 +58,17 @@ pub enum Write {
 }
 
 /// A name that isn't a register.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0:?} isn't a register")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisterError(pub char);
+
+impl std::error::Error for RegisterError {}
+
+impl std::fmt::Display for RegisterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = format!("{:?}", self.0);
+        f.write_str(&tr!("vim-not-a-register", register = name))
+    }
+}
 
 /// `" 0 1-9 - a-z`, plus `_` (which discards) and `+ *` (one slot: the host's
 /// clipboard). `A-Z` append to `a-z`. The read-only `/` holds the last

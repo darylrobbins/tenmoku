@@ -9,6 +9,7 @@
 //! moves. Neither takes a range, a `!` or arguments.
 
 use fe_command::{Actor, Dispatched, Effect};
+use kiln_l10n::tr;
 
 use super::super::pick::printable;
 use super::super::{Address, ExError, Handled, HostCommand, Pick, PickRow, PickThen, uncommented};
@@ -136,12 +137,12 @@ fn show(target: &mut VimTarget<'_>, range: &[Address], jumps: bool) -> Result<Ha
         });
     }
     let (title, header) = match jumps {
-        true => ("Jumps", "jump line  col file/text"),
-        false => ("Changes", "change line  col text"),
+        true => (tr!("vim-jumps-title"), tr!("vim-jumps-header")),
+        false => (tr!("vim-changes-title"), tr!("vim-changes-header")),
     };
     target.state.host_command = Some(HostCommand::Pick(Pick {
-        title,
-        header,
+        title: title.to_string(),
+        header: header.to_string(),
         rows,
     }));
     Ok(Ok(Dispatched::new(Effect::Notify)))

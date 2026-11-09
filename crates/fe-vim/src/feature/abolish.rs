@@ -46,6 +46,8 @@ use fe_command::{Actor, CommandError, Dispatched, Effect};
 use fe_editor::commands::origin;
 use fe_text::{Bias, Text};
 
+use kiln_l10n::tr;
+
 use crate::{
     Change, OperateArgs, Operator, Pending, Step, Target, TextObject, VimKey, VimTarget, edit,
     feature::{Feature, FeaturePrefix},
@@ -228,14 +230,12 @@ pub(crate) fn operate(
         unreachable!("only the coerce operator gets here");
     };
     if coerce(to, "").is_none() {
-        return Err(CommandError::new(format!("cr{to} names no coercion")));
+        return Err(CommandError::new(tr!("vim-coerce-unknown", key = to)));
     }
     let object = match args.target {
         Target::TextObject(object) => object,
         _ => {
-            return Err(CommandError::new(
-                "the coerce operator acts only on a text object",
-            ));
+            return Err(CommandError::new(tr!("vim-coerce-text-object-only")));
         }
     };
     let VimTarget { model, state, .. } = target;

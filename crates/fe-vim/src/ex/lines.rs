@@ -127,7 +127,7 @@ fn sort_args(after: &str) -> Result<ExCommand, ExError> {
             '"' => break,
             // Hexadecimal, octal, binary, float and locale orders.
             'x' | 'o' | 'b' | 'f' | 'l' => {
-                return Err(ExError::Unsupported(format!(":sort {ch}")));
+                return Err(ExError::unsupported(&format!(":sort {ch}")));
             }
             _ if ch.is_ascii_alphabetic() => {
                 return Err(ExError::InvalidArgument(args.to_string()));

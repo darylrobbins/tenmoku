@@ -11,7 +11,6 @@ use fe_editor::{
 
 use crate::ex::HostCommand;
 use crate::feature::replace_register;
-use crate::macros::REPLAY_CAP;
 use crate::remap::{
     Origin, Provenance, Provenances, RemapCommand, RemapSet, RemapState, Staged, TYPED,
 };
@@ -578,9 +577,7 @@ impl VimState {
         self.provenance.read_from(origin);
         if taken.is_some() && self.remap.over_cap() {
             self.pending = Pending::new();
-            self.fail(format!(
-                "macro stopped: it would replay more than {REPLAY_CAP} keys"
-            ));
+            self.fail(crate::macros::replay_capped());
             return Step::Cancel;
         }
         if !cmd && let Some(step) = self.unrecorded(origin, |state| jump::label_key(state, key)) {

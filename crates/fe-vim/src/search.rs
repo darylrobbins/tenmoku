@@ -14,6 +14,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use fe_text::{Bias, Text};
+use kiln_l10n::tr;
 use regex::{CaptureLocations, Regex, RegexBuilder};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -35,10 +36,10 @@ pub const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(2);
 static TIME_LIMIT: AtomicU64 = AtomicU64::new(DEFAULT_TIME_LIMIT.as_nanos() as u64);
 
 thread_local! {
-    /// How many regex calls [`RowMatches`] has made on this thread.
+    // How many regex calls [`RowMatches`] has made on this thread.
     static REGEX_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 
-    /// The regex-call budget for [`set_call_limit`]; `u64::MAX` for none.
+    // The regex-call budget for [`set_call_limit`]; `u64::MAX` for none.
     static CALL_LIMIT: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
 }
 
@@ -92,7 +93,7 @@ pub struct Interrupted;
 
 impl std::fmt::Display for Interrupted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Interrupted")
+        f.write_str(&tr!("vim-interrupted"))
     }
 }
 
@@ -336,22 +337,39 @@ pub struct FindQuery {
     pub whole_word: bool,
 }
 
-/// Why [`Pattern::parse`] refused a pattern.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+/// Why [`Pattern::parse`] refused a pattern. Each holds its whole message,
+/// in the active locale.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PatternError {
-    /// An atom of Vim's that fe-vim doesn't translate, as written.
-    #[error("pattern not supported: {0}")]
+    /// An atom of Vim's that fe-vim doesn't translate
+    /// ([`PatternError::unsupported`]), or what it doesn't do.
     Unsupported(String),
     /// A pattern Vim rejects too.
-    #[error("invalid pattern: {0}")]
-    Invalid(&'static str),
-    /// A [`FindQuery`]'s regex that doesn't compile: the first line of
+    Invalid(String),
+    /// A [`FindQuery`]'s regex that doesn't compile, with the first line of
     /// `regex`'s message.
-    #[error("invalid regex: {0}")]
     Regex(String),
     /// Past `regex`'s size limit, or nested too deeply.
-    #[error("pattern too large: {0}")]
     TooLarge(String),
+}
+
+impl PatternError {
+    /// [`PatternError::Unsupported`] for `atom`, as typed.
+    pub fn unsupported(atom: &str) -> Self {
+        Self::Unsupported(tr!("vim-pattern-not-supported", atom = atom).into())
+    }
+}
+
+impl std::error::Error for PatternError {}
+
+impl std::fmt::Display for PatternError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (Self::Unsupported(message)
+        | Self::Invalid(message)
+        | Self::Regex(message)
+        | Self::TooLarge(message)) = self;
+        f.write_str(message)
+    }
 }
 
 impl Pattern {
@@ -390,7 +408,7 @@ impl Pattern {
 
     fn compile(pattern: &str, ignore_case: bool, across: bool) -> Result<Self, PatternError> {
         if pattern.is_empty() {
-            return Err(PatternError::Invalid("empty pattern"));
+            return Err(PatternError::Invalid(tr!("vim-pattern-empty").into()));
         }
         let (mut tokens, case, rows) = Lexer::new(pattern, across).run()?;
         let ignore_case = case.unwrap_or(ignore_case);
@@ -431,13 +449,11 @@ impl Pattern {
         let regex = build(builder, |error| {
             // Past the nesting limit: its message's last line says so.
             PatternError::TooLarge(
-                error
-                    .to_string()
-                    .lines()
-                    .last()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string(),
+                tr!(
+                    "vim-pattern-too-large-regex",
+                    message = error.to_string().lines().last().unwrap_or_default().trim()
+                )
+                .into(),
             )
         })?;
         let mut slots = vec![vec![1]];
@@ -478,7 +494,7 @@ impl Pattern {
     /// characters that aren't word characters (Unicode `\w`).
     pub fn from_query(query: &FindQuery) -> Result<Self, PatternError> {
         if query.text.is_empty() {
-            return Err(PatternError::Invalid("empty pattern"));
+            return Err(PatternError::Invalid(tr!("vim-pattern-empty").into()));
         }
         let source = if query.regex {
             query.text.clone()
@@ -489,7 +505,13 @@ impl Pattern {
         builder.case_insensitive(!query.match_case);
         let regex = build(builder, |error| {
             let message = error.to_string();
-            PatternError::Regex(message.lines().next().unwrap_or_default().to_string())
+            PatternError::Regex(
+                tr!(
+                    "vim-pattern-invalid-regex",
+                    message = message.lines().next().unwrap_or_default()
+                )
+                .into(),
+            )
         })?;
         let slots = (0..regex.captures_len()).map(|at| vec![at]).collect();
         Ok(Self {
@@ -2161,7 +2183,7 @@ fn build(
 ) -> Result<Regex, PatternError> {
     builder.build().map_err(|error| match error {
         regex::Error::CompiledTooBig(limit) => {
-            PatternError::TooLarge(format!("over {limit} bytes compiled"))
+            PatternError::TooLarge(tr!("vim-pattern-compiled-over", limit = limit).into())
         }
         error => other(error),
     })
@@ -2481,11 +2503,11 @@ impl<'a> Lexer<'a> {
                     value = value * u64::from(radix) + u64::from(digit);
                     taken += 1;
                     if value > i32::MAX as u64 {
-                        return Err(PatternError::Invalid(CODE_ATOM_INVALID));
+                        return Err(PatternError::Invalid(tr!("vim-pattern-code-atom").into()));
                     }
                 }
                 if taken == 0 {
-                    return Err(PatternError::Invalid(CODE_ATOM_INVALID));
+                    return Err(PatternError::Invalid(tr!("vim-pattern-code-atom").into()));
                 }
                 // nvim matches a NUL for 0 and 10, an artefact of its line
                 // storage; rows here have no newline. A non-`char` matches nothing.
@@ -2554,7 +2576,11 @@ impl<'a> Lexer<'a> {
                             self.at = end;
                             Token::OrNewline(Box::new(Token::Set(set)))
                         }
-                        None => return Err(PatternError::Invalid("missing ] after \\_[")),
+                        None => {
+                            return Err(PatternError::Invalid(
+                                tr!("vim-pattern-missing-bracket").into(),
+                            ));
+                        }
                     },
                     Some(letter) => match class(letter) {
                         Some(class) => Token::OrNewline(Box::new(Token::Class(class))),
@@ -2597,7 +2623,9 @@ impl<'a> Lexer<'a> {
             self.bump();
         }
         if self.bump() != Some('}') {
-            return Err(PatternError::Invalid("syntax error in \\{...}"));
+            return Err(PatternError::Invalid(
+                tr!("vim-pattern-brace-syntax").into(),
+            ));
         }
         let min_count = min.unwrap_or(0);
         Ok(Multi::Brace {
@@ -2619,7 +2647,7 @@ impl<'a> Lexer<'a> {
         digits
             .parse()
             .map(Some)
-            .map_err(|_| PatternError::TooLarge(format!("count {digits}")))
+            .map_err(|_| PatternError::TooLarge(tr!("vim-pattern-count", digits = digits).into()))
     }
 
     fn skip_while(&mut self, most: usize, keep: impl Fn(char) -> bool) {
@@ -2635,7 +2663,7 @@ impl<'a> Lexer<'a> {
 
     /// The error naming the atom from `start` to here.
     fn unsupported(&self, start: usize) -> PatternError {
-        PatternError::Unsupported(self.pattern[start..self.at].to_string())
+        PatternError::unsupported(&self.pattern[start..self.at])
     }
 }
 
@@ -2765,7 +2793,7 @@ fn collection(
             match name.split_once(":]") {
                 // A class can't start a range.
                 Some((name, after)) if after.starts_with('-') && !after.starts_with("-]") => {
-                    return Err(PatternError::Unsupported(format!("[:{name}:]-")));
+                    return Err(PatternError::unsupported(&format!("[:{name}:]-")));
                 }
                 Some((name @ ("upper" | "lower"), after)) => {
                     shape = None;
@@ -2779,18 +2807,18 @@ fn collection(
                     rest = after;
                 }
                 Some((name, after)) => {
-                    error.get_or_insert(PatternError::Unsupported(format!("[:{name}:]")));
+                    error.get_or_insert(PatternError::unsupported(&format!("[:{name}:]")));
                     rest = after;
                 }
                 None => {
-                    error.get_or_insert(PatternError::Unsupported("[:".into()));
+                    error.get_or_insert(PatternError::unsupported("[:"));
                     rest = name;
                 }
             }
             continue;
         }
         if rest.starts_with("[=") || rest.starts_with("[.") {
-            error.get_or_insert(PatternError::Unsupported(rest[..2].to_string()));
+            error.get_or_insert(PatternError::unsupported(&rest[..2]));
             rest = &rest[2..];
             continue;
         }
@@ -2824,7 +2852,7 @@ fn collection(
                     .any(|end| after.starts_with(end)) =>
             {
                 let end = if after.starts_with('-') { 1 } else { 2 };
-                return Err(PatternError::Unsupported(format!(
+                return Err(PatternError::unsupported(&format!(
                     "{low}-{}",
                     &after[..end]
                 )));
@@ -2842,7 +2870,9 @@ fn collection(
             _ => low,
         };
         if low > high {
-            error.get_or_insert(PatternError::Invalid("reverse range in a collection"));
+            error.get_or_insert(PatternError::Invalid(
+                tr!("vim-pattern-reverse-range").into(),
+            ));
         } else {
             set.folded.push((low, high));
             let written = &item_start[..item_start.len() - rest.len()];
@@ -3014,9 +3044,6 @@ fn folds() -> &'static Folds {
     })
 }
 
-/// The error for a `\%d`, `\%o`, `\%x`, `\%u` or `\%U` with no digit or too big a value.
-const CODE_ATOM_INVALID: &str = "invalid character after \\%[dxouU]";
-
 /// One character of a collection, taking it off `rest`: itself, or a
 /// backslash code (`\e \t \r \b`, `\d123 \o40 \x20 € \U1234abcd`,
 /// `\\ \] \^ \-`, and if `across` `\n`, a range's end: 0x0a). A
@@ -3043,7 +3070,7 @@ fn member(rest: &mut &str, across: bool) -> Result<char, PatternError> {
         'n' if across => Some('\n'),
         'n' => {
             *rest = &after[1..];
-            return Err(PatternError::Unsupported("\\n".into()));
+            return Err(PatternError::unsupported("\\n"));
         }
         _ => None,
     };
@@ -3075,7 +3102,7 @@ fn member(rest: &mut &str, across: bool) -> Result<char, PatternError> {
                 break;
             }
             *rest = &digits[taken + 1..];
-            return Err(PatternError::Unsupported(format!(
+            return Err(PatternError::unsupported(&format!(
                 "\\{code}{}",
                 &digits[..=taken]
             )));
@@ -3090,7 +3117,7 @@ fn member(rest: &mut &str, across: bool) -> Result<char, PatternError> {
     }
     *rest = &digits[taken..];
     char::from_u32(value as u32)
-        .ok_or_else(|| PatternError::Unsupported(format!("\\{code}{}", &digits[..taken])))
+        .ok_or_else(|| PatternError::unsupported(&format!("\\{code}{}", &digits[..taken])))
 }
 
 /// What comes before a branch, which decides what a `*` starting it means.
@@ -3167,9 +3194,9 @@ fn carrying(marks: &[char]) -> Result<String, PatternError> {
         }
     }
     if distinct.len() > MAX_ORDERED_MARKS {
-        return Err(PatternError::Unsupported(format!(
-            "more than {MAX_ORDERED_MARKS} different composing characters on one character"
-        )));
+        return Err(PatternError::Unsupported(
+            tr!("vim-pattern-composing-marks", limit = MAX_ORDERED_MARKS).into(),
+        ));
     }
     let each = |mark: &char| format!(r"\p{{M}}*?\x{{{:x}}}", *mark as u32);
     let mut order: Vec<usize> = (0..distinct.len()).collect();
@@ -3275,11 +3302,19 @@ impl Translator<'_> {
                     paths.extend(self.branch(Opened::Alt, bare)?);
                 }
                 Some(Token::Close) if opened != Opened::Pattern => return Ok(paths),
-                Some(Token::Close) => return Err(PatternError::Invalid("unmatched \\)")),
+                Some(Token::Close) => {
+                    return Err(PatternError::Invalid(
+                        tr!("vim-pattern-unmatched-close").into(),
+                    ));
+                }
                 None => {
                     return match opened {
-                        Opened::Capture => Err(PatternError::Invalid("unmatched \\(")),
-                        Opened::Group => Err(PatternError::Invalid("unmatched \\%(")),
+                        Opened::Capture => Err(PatternError::Invalid(
+                            tr!("vim-pattern-unmatched-open").into(),
+                        )),
+                        Opened::Group => Err(PatternError::Invalid(
+                            tr!("vim-pattern-unmatched-group").into(),
+                        )),
                         Opened::Pattern | Opened::Alt => Ok(paths),
                     };
                 }
@@ -3360,7 +3395,7 @@ impl Translator<'_> {
             paths = join_paths(after, true);
             if paths.len() > MAX_PATHS {
                 return Err(PatternError::TooLarge(
-                    "alternatives that end in different ways".into(),
+                    tr!("vim-pattern-alternatives").into(),
                 ));
             }
             if let [path] = &mut paths[..] {
@@ -3385,7 +3420,7 @@ impl Translator<'_> {
         self.budget += 1;
         if self.budget > MAX_PIECES {
             return Err(PatternError::TooLarge(
-                "alternatives that end in different ways".into(),
+                tr!("vim-pattern-alternatives").into(),
             ));
         }
         let atom_at = (self.next, self.groups);
@@ -3413,7 +3448,9 @@ impl Translator<'_> {
         };
         self.next += 1;
         if matches!(self.peek(), Some(Token::Multi { .. })) {
-            return Err(PatternError::Invalid("a multi can't follow a multi"));
+            return Err(PatternError::Invalid(
+                tr!("vim-pattern-multi-after-multi").into(),
+            ));
         }
         let paths = self.repeat(atom, atom_at, (opened, first), multi, bare)?;
         Ok(Piece {
@@ -3487,7 +3524,7 @@ impl Translator<'_> {
                 [path] if path.bare == once.bare => path.text.clone(),
                 _ => {
                     return Err(PatternError::Unsupported(
-                        "a multi after an atom that ends differently each time".into(),
+                        tr!("vim-pattern-multi-after-varying-atom").into(),
                     ));
                 }
             }
@@ -3555,13 +3592,17 @@ impl Translator<'_> {
                 multi: Multi::Star,
                 bare: true,
             } if first && opened == Opened::Group => {
-                return Err(PatternError::Unsupported("* after \\%(".into()));
+                return Err(PatternError::unsupported("* after \\%("));
             }
             Token::Multi {
                 multi: Multi::Star,
                 bare: true,
             } if first || star_here => regex::escape("*"),
-            Token::Multi { .. } => return Err(PatternError::Invalid("misplaced multi")),
+            Token::Multi { .. } => {
+                return Err(PatternError::Invalid(
+                    tr!("vim-pattern-misplaced-multi").into(),
+                ));
+            }
             // A mark here follows no atom that takes characters, and one
             // that starts a branch is the same: any character carrying it.
             Token::Char(mark) if is_mark(mark) => {
@@ -3677,13 +3718,17 @@ impl Translator<'_> {
         if capture {
             self.groups += 1;
             if self.groups > MAX_GROUPS {
-                return Err(PatternError::Invalid("too many \\("));
+                return Err(PatternError::Invalid(
+                    tr!("vim-pattern-too-many-groups").into(),
+                ));
             }
         }
         let number = self.groups;
         self.depth += 1;
         if self.depth > MAX_DEPTH {
-            return Err(PatternError::TooLarge("groups nested too deeply".into()));
+            return Err(PatternError::TooLarge(
+                tr!("vim-pattern-nested-too-deeply").into(),
+            ));
         }
         let inner = self.alternation(
             if capture {
@@ -3914,12 +3959,12 @@ mod tests {
         }
         assert_eq!(
             Pattern::parse_across(r"a\_[b", false).unwrap_err(),
-            PatternError::Invalid("missing ] after \\_[")
+            PatternError::Invalid(tr!("vim-pattern-missing-bracket").into())
         );
         for (pattern, atom) in [(r"a\_y", r"\_y"), (r"a\_", r"\_")] {
             assert_eq!(
                 Pattern::parse_across(pattern, false).unwrap_err(),
-                PatternError::Unsupported(atom.into())
+                PatternError::unsupported(atom)
             );
         }
     }

@@ -50,7 +50,10 @@
 //! (`ex/buffers.rs`). A filling command's argument is the rest of the line,
 //! `|` and all.
 
+use kiln_l10n::tr;
+
 use super::{Address, Base, ExCommand, ExError, HostCommand, uncommented};
+use crate::messages::coded;
 
 /// A quickfix or location list command, for the host to run over its
 /// lists.
@@ -190,7 +193,9 @@ pub(super) fn parse(
             // The host lands once the line has run, so a command after one
             // would run in the file it leaves: refused before any runs.
             if args.contains('|') {
-                return Err(ExError::Unsupported("| after a quickfix command".into()));
+                return Err(ExError::Unsupported(
+                    tr!("vim-unsupported-bar-after-quickfix-command").into(),
+                ));
             }
             navigation(kind, range, args)?
         }
@@ -218,7 +223,9 @@ fn navigation(kind: Kind, range: &[Address], args: &str) -> Result<QuickfixActio
             return Err(ExError::NoRange);
         }
         if !args.is_empty() {
-            return Err(ExError::Unsupported(":clist's range".into()));
+            return Err(ExError::Unsupported(
+                tr!("vim-unsupported-clist-range").into(),
+            ));
         }
         return Ok(QuickfixAction::List);
     }
@@ -316,16 +323,17 @@ impl QuickfixAction {
             (&args[..end], "", &args[end..])
         } else {
             let body = &args[delimiter.len_utf8()..];
-            let end = pattern_end(body, delimiter).ok_or_else(|| {
-                ExError::Pattern("E682: Invalid search pattern or delimiter".into())
-            })?;
+            let end = pattern_end(body, delimiter)
+                .ok_or_else(|| ExError::Pattern(coded("E682", tr!("vim-e682"))))?;
             let after = &body[end + delimiter.len_utf8()..];
             let flags_end = after
                 .find(|ch: char| !matches!(ch, 'g' | 'j' | 'f'))
                 .unwrap_or(after.len());
             let flags = &after[..flags_end];
             if flags.contains('f') {
-                return Err(ExError::Unsupported(":vimgrep's f flag".into()));
+                return Err(ExError::Unsupported(
+                    tr!("vim-unsupported-vimgrep-f").into(),
+                ));
             }
             (&body[..end], flags, &after[flags_end..])
         };

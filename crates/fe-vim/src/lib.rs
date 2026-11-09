@@ -405,7 +405,7 @@
 //!   [`VimState::apply_read_command`], and `!{motion}`, `{count}!!` and
 //!   visual `!` open the filter's line on their rows. Only the user's own
 //!   keys run one: any other actor, and a `:g` or `:normal`, gets
-//!   [`SHELL_REFUSED`]. `:!{cmd}` with no range is refused
+//!   [`messages::shell_refused`]. `:!{cmd}` with no range is refused
 //!   (`ex/filter.rs`, `feature/filter.rs`).
 //!
 //! What can't run changes nothing (but where a `;` moved the cursor) and
@@ -810,9 +810,11 @@ mod insert;
 pub mod jump;
 pub mod jumplist;
 mod key;
+pub mod l10n;
 mod line_motions;
 mod macros;
 mod marks;
+pub mod messages;
 mod motion;
 mod operator;
 mod partial_word;
@@ -850,8 +852,8 @@ pub use cmdline::set_search_preview_limit;
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{
     Address, Base, BufferAddress, BufferCommand, BufferRow, BufferTarget, Ex, ExCommand, ExError,
-    HostCommand, LineSearch, Part, Pick, PickRow, PickThen, SHELL_REFUSED, ShellCommand, ShellPart,
-    TabCommand, WindowCommand,
+    HostCommand, LineSearch, Part, Pick, PickRow, PickThen, ShellCommand, ShellPart, TabCommand,
+    WindowCommand,
 };
 pub use ex::{QuickfixAction, QuickfixCommand};
 pub use feature::filter::FilterArgs;

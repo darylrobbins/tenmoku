@@ -83,6 +83,8 @@ use fe_text::Text;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use kiln_l10n::tr;
+
 use crate::{
     Mode, MoveArgs, OperateArgs, Operator, Pending, PendingKind, Step, Target, VimCommands, VimKey,
     VimState, VimTarget,
@@ -257,16 +259,16 @@ fn register(registry: &mut Registry<VimCommands>) {
     registry
         .register_with_args(
             "vim.jump",
-            "Vim Jump",
+            &crate::l10n::command_title("vim.jump"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: JumpArgs| run(target, actor, args),
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Jumps to a match of two chars in the view, forward or backward, as gs and gS do without a count: straight to it if it's the only one, or to the nearest with safe labels on the rest (not after an operator), otherwise labelling them all and waiting for a label. One char is the flash style's: straight to its only match, otherwise labels on them all (with both, before and after the caret). With a count it's the counted jump over the whole text. With an operator it acts on the text up to the target.",
-        )
+        .description(&crate::l10n::command_description("vim.jump"))
         .context(
-            ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
-                .expect("vim's context predicate parses"),
+            ContextPredicate::parse(kiln_l10n::verbatim!(
+                "editor && (vim.mode == normal || vim.visual)"
+            ))
+            .expect("vim's context predicate parses"),
         )
         .mutates_buffer(true);
 }
@@ -704,7 +706,7 @@ pub(crate) fn check_pick(target: &mut VimTarget<'_>) -> Option<Dispatched<Transa
             Some((_, first, jump)) => target.state.macros.jump_landed(Some(*first), *jump),
             None => target.state.macros.jump_cancelled(),
         }
-        return Some(target.state.fail("jump: the labels are stale"));
+        return Some(target.state.fail(tr!("vim-jump-labels-stale")));
     }
     target
         .state

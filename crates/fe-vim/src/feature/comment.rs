@@ -82,6 +82,8 @@ use fe_editor::{
 };
 use fe_text::{Bias, Text};
 
+use kiln_l10n::tr;
+
 use crate::{
     Change, Motion, OperateArgs, Operator, Pending, Step, Target, TextObject, VimKey, VimTarget,
     feature::Feature,
@@ -194,10 +196,10 @@ pub(crate) fn selection(
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     target.model.sync_display();
     let Some(area) = visual::live_area(target.model, target.state) else {
-        return Err(CommandError::new("no visual selection to comment"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection-to-comment")));
     };
     let (Some(first), Some(last)) = (area.rows.first(), area.rows.last()) else {
-        return Err(CommandError::new("no visual selection to comment"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection-to-comment")));
     };
     let shifted: Vec<u32> = (first.0..=last.0).collect();
     let marked = visual::operator_ends(target.model, target.state);

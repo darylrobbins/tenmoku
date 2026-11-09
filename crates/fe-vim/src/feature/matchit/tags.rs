@@ -84,9 +84,9 @@ pub const TAG_BUDGET: usize = 1 << 24;
 const LOOK_EVERY: usize = 1 << 12;
 
 thread_local! {
-    /// A test's budget in place of [`TAG_BUDGET`].
+    // A test's budget in place of [`TAG_BUDGET`].
     static BUDGET: Cell<Option<usize>> = const { Cell::new(None) };
-    /// The steps taken on this thread since [`take_tag_work`].
+    // The steps taken on this thread since [`take_tag_work`].
     static WORK: Cell<usize> = const { Cell::new(0) };
 }
 

@@ -66,6 +66,8 @@ use fe_text::Text;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use kiln_l10n::tr;
+
 use crate::{
     Change, Mode, Motion, Operator, Pending, Step, Target, TextObject, VimCommands, VimKey,
     VimTarget, VisualKind, cmdline, commands,
@@ -233,12 +235,12 @@ fn on_pair(pending: &Pending, old: char, new: Option<String>) -> Step {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.surround",
-            "Vim Surround",
+            &crate::l10n::command_title("vim.surround"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: SurroundArgs| {
                 commands::follow(target);
                 insert::adopt_closing(target.state);
@@ -246,17 +248,17 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Deletes the brackets, quotes or HTML tag around each caret, or with `new` replaces them, as vim-surround's ds and cs do; one transaction for all carets. Fails with nothing changed when no caret has such a pair around it.",
-        )
+        .description(&crate::l10n::command_description("vim.surround"))
         .context(normal)
         .mutates_buffer(true);
-    let normal_or_visual = ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
-        .expect("vim's context predicate parses");
+    let normal_or_visual = ContextPredicate::parse(kiln_l10n::verbatim!(
+        "editor && (vim.mode == normal || vim.visual)"
+    ))
+    .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.surround_add",
-            "Vim Surround Add",
+            &crate::l10n::command_title("vim.surround_add"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: SurroundAddArgs| {
                 commands::follow(target);
                 insert::adopt_closing(target.state);
@@ -264,9 +266,7 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Puts a pair of brackets or quotes, or an HTML tag, around what a motion or text object covers from each caret, or around the visual selection, as vim-surround's ys, yS and visual S do; one transaction for all carets. Fails with nothing changed when the target covers nothing.",
-        )
+        .description(&crate::l10n::command_description("vim.surround_add"))
         .context(normal_or_visual)
         .mutates_buffer(true);
 }
@@ -397,11 +397,19 @@ pub(crate) fn surround(
     actor: &Actor,
     args: SurroundArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
-    let pair = Pair::of(args.old)
-        .ok_or_else(|| CommandError::new(format!("no pair is named {:?}", args.old)))?;
+    let pair = Pair::of(args.old).ok_or_else(|| {
+        CommandError::new(tr!(
+            "vim-surround-no-pair",
+            name = format!("{:?}", args.old)
+        ))
+    })?;
     let (open, close) = match &args.new {
-        Some(new) => sides(new)
-            .ok_or_else(|| CommandError::new(format!("no replacement is named {new:?}")))?,
+        Some(new) => sides(new).ok_or_else(|| {
+            CommandError::new(tr!(
+                "vim-surround-no-replacement",
+                name = format!("{new:?}")
+            ))
+        })?,
         None => Default::default(),
     };
     target.model.sync_display();
@@ -520,8 +528,12 @@ pub(crate) fn surround_add(
     actor: &Actor,
     args: SurroundAddArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
-    let (open, close) = sides(&args.pair)
-        .ok_or_else(|| CommandError::new(format!("no pair is named {:?}", args.pair)))?;
+    let (open, close) = sides(&args.pair).ok_or_else(|| {
+        CommandError::new(tr!(
+            "vim-surround-no-pair",
+            name = format!("{:?}", args.pair)
+        ))
+    })?;
     let selected = args.target.is_selection();
     // Each caret's wraps: a block's are its rows'.
     let wraps: Vec<Vec<Wrap>> = match selected {
@@ -808,11 +820,13 @@ fn without_trailing_blanks(text: &Text, range: Range<usize>) -> Range<usize> {
 /// rows' parts.
 fn selection(target: &mut VimTarget<'_>) -> Result<Vec<Wrap>, CommandError> {
     let Mode::Visual(kind) = target.state.mode else {
-        return Err(CommandError::new("no visual selection to surround"));
+        return Err(CommandError::new(tr!(
+            "vim-no-visual-selection-to-surround"
+        )));
     };
     target.model.sync_display();
     let area = visual::live_area(target.model, target.state)
-        .ok_or_else(|| CommandError::new("no visual selection to surround"))?;
+        .ok_or_else(|| CommandError::new(tr!("vim-no-visual-selection-to-surround")))?;
     visual::exit(target)?;
     let (Some((first, from)), Some((last, to))) = (area.rows.first(), area.rows.last()) else {
         return Ok(Vec::new());

@@ -14,6 +14,10 @@
 use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 
+use kiln_l10n::tr;
+
+use crate::messages::coded;
+
 use crate::{JumpMotion, PlayArgs, RecordArgs, VimKey, VimState, VimTarget};
 
 /// The most keys one replay feeds, `@` inside it included: nvim plays until
@@ -238,13 +242,13 @@ impl Macros {
 /// `vim.record`: starts recording the keys typed into `register`.
 pub(crate) fn record(state: &mut VimState, args: RecordArgs) -> Handled {
     if !args.register.is_ascii_alphabetic() {
-        return Err(CommandError::new(format!(
-            "{:?} can't hold a recording",
-            args.register
+        return Err(CommandError::new(tr!(
+            "vim-macro-register-cant-record",
+            register = format!("{:?}", args.register)
         )));
     }
     if state.macros.recording.is_some() {
-        return Err(CommandError::new("already recording"));
+        return Err(CommandError::new(tr!("vim-macro-already-recording")));
     }
     state.macros.recording = Some(Recording {
         register: args.register,
@@ -259,7 +263,7 @@ pub(crate) fn record(state: &mut VimState, args: RecordArgs) -> Handled {
 /// (appending to it for `q{A-Z}`). `"` still reads what it read.
 pub(crate) fn stop(target: &mut VimTarget<'_>) -> Handled {
     let Some(recording) = target.state.macros.recording.take() else {
-        return Err(CommandError::new("not recording"));
+        return Err(CommandError::new(tr!("vim-macro-not-recording")));
     };
     target.state.macros.last_recorded = Some(recording.register.to_ascii_lowercase());
     target.registers.record(recording.register, recording.text);
@@ -290,9 +294,14 @@ pub(crate) fn play(target: &mut VimTarget<'_>, actor: &Actor, args: PlayArgs) ->
             }
         },
         ('@', Some(last)) => last,
-        ('@', None) => return Ok(target.state.fail("E748: No previously used register")),
+        ('@', None) => return Ok(target.state.fail(coded("E748", tr!("vim-e748")))),
         (name, _) if name.is_ascii_lowercase() => name,
-        (name, _) => return Err(CommandError::new(format!("{name:?} can't be played"))),
+        (name, _) => {
+            return Err(CommandError::new(tr!(
+                "vim-macro-register-cant-play",
+                register = format!("{name:?}")
+            )));
+        }
     };
     macros.last_played = Some(name);
     // A typed `@` drops keys a host never took.
@@ -303,9 +312,7 @@ pub(crate) fn play(target: &mut VimTarget<'_>, actor: &Actor, args: PlayArgs) ->
     let count = args.count.unwrap_or(1).max(1) as usize;
     // Decoded only as far as the replay may still go.
     let Some(keys) = decode(text, (REPLAY_CAP - macros.played) / count) else {
-        return Ok(target.state.fail(format!(
-            "macro stopped: it would replay more than {REPLAY_CAP} keys"
-        )));
+        return Ok(target.state.fail(replay_capped()));
     };
     if keys.is_empty() {
         target.state.failed = true;
@@ -326,7 +333,7 @@ pub(crate) fn play(target: &mut VimTarget<'_>, actor: &Actor, args: PlayArgs) ->
 fn repeat_line(target: &mut VimTarget<'_>, actor: &Actor, count: Option<u32>) -> Handled {
     target.state.macros.last_played = Some(':');
     let Some(line) = target.state.macros.last_command_line.clone() else {
-        return Ok(target.state.fail("E30: No previous command line"));
+        return Ok(target.state.fail(coded("E30", tr!("vim-e30"))));
     };
     let before = std::mem::take(&mut target.state.failed);
     let mut dispatched = Dispatched::new(Effect::Notify);
@@ -404,4 +411,9 @@ pub(crate) fn decode(text: &str, most: usize) -> Option<Vec<VimKey>> {
         rest = &rest[ch.len_utf8()..];
     }
     Some(keys)
+}
+
+/// What a replay that would feed more than [`REPLAY_CAP`] keys says.
+pub(crate) fn replay_capped() -> String {
+    tr!("vim-macro-replay-capped", limit = REPLAY_CAP).to_string()
 }

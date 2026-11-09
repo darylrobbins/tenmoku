@@ -23,10 +23,11 @@
 
 use fe_command::{Actor, Dispatched, Effect};
 use fe_editor::IndentStyle;
+use kiln_l10n::tr;
 
 use super::super::{Address, ExError, Handled, uncommented};
 use super::{Check, Entry};
-use crate::VimTarget;
+use crate::{VimTarget, messages::coded};
 
 pub(super) const COMMAND: Entry = Entry {
     name: "set",
@@ -92,9 +93,9 @@ fn run(
         return Err(ExError::NoRange);
     }
     if args.is_empty() || args == "all" {
-        return Err(ExError::Pattern(format!(
-            ":set {args}: not supported, name the options"
-        )));
+        return Err(ExError::Pattern(
+            tr!("vim-set-needs-options", arguments = args).into(),
+        ));
     }
     let mut report = Vec::new();
     let done = args
@@ -124,7 +125,7 @@ fn apply(target: &mut VimTarget<'_>, arg: &str, report: &mut Vec<String>) -> Res
                 .find_map(|prefix| Some((option(name.strip_prefix(prefix)?)?, prefix)));
             match prefixed {
                 Some((found, prefix)) => (found, prefix),
-                None => return Err(ExError::Unsupported(name.to_string())),
+                None => return Err(ExError::unsupported(name)),
             }
         }
     };
@@ -138,7 +139,9 @@ fn apply(target: &mut VimTarget<'_>, arg: &str, report: &mut Vec<String>) -> Res
         || tail.starts_with("-=")
         || tail.starts_with("^=")
     {
-        return Err(ExError::Pattern(format!("{arg}: not supported")));
+        return Err(ExError::Pattern(
+            tr!("vim-set-not-supported", argument = arg).into(),
+        ));
     }
     match tail {
         "?" => {
@@ -256,9 +259,7 @@ fn set_bool(target: &mut VimTarget<'_>, which: Opt, on: bool) -> Result<(), ExEr
             match (on, target.model.indent_style()) {
                 (true, Some(IndentStyle::Tabs)) => target.model.set_indent_style(None),
                 (false, Some(IndentStyle::Spaces(n))) if usize::from(n) != tab => {
-                    return Err(ExError::Pattern(
-                        "noexpandtab: not supported unless shiftwidth is tabstop".into(),
-                    ));
+                    return Err(ExError::Pattern(tr!("vim-set-noexpandtab").into()));
                 }
                 (false, _) => target.model.set_indent_style(Some(IndentStyle::Tabs)),
                 _ => {}
@@ -277,7 +278,9 @@ fn set_clipboard(target: &mut VimTarget<'_>, arg: &str, value: &str) -> Result<(
         "" => target.registers.set_clipboard_unnamed(false),
         "unnamedplus" => target.registers.set_clipboard_unnamed(true),
         "unnamed" | "unnamed,unnamedplus" | "unnamedplus,unnamed" => {
-            return Err(ExError::Pattern(format!("{arg}: not supported")));
+            return Err(ExError::Pattern(
+                tr!("vim-set-not-supported", argument = arg).into(),
+            ));
         }
         _ => return Err(ExError::InvalidArgument(arg.to_string())),
     }
@@ -317,13 +320,15 @@ fn set_number(
     value: &str,
 ) -> Result<(), ExError> {
     let Some((negative, number)) = parse_number(value) else {
-        return Err(ExError::Pattern(format!(
-            "E521: Number required after =: {arg}"
+        return Err(ExError::Pattern(coded(
+            "E521",
+            tr!("vim-e521", argument = arg),
         )));
     };
     if negative && number != 0 {
-        return Err(ExError::Pattern(format!(
-            "E487: Argument must be positive: {arg}"
+        return Err(ExError::Pattern(coded(
+            "E487",
+            tr!("vim-e487", argument = arg),
         )));
     }
     let tab = target.model.tab_size();
@@ -336,8 +341,9 @@ fn set_number(
         }
         Opt::Tabstop => {
             if number == 0 {
-                return Err(ExError::Pattern(format!(
-                    "E487: Argument must be positive: {arg}"
+                return Err(ExError::Pattern(coded(
+                    "E487",
+                    tr!("vim-e487", argument = arg),
                 )));
             }
             if number > MAX_TABSTOP {
@@ -346,9 +352,9 @@ fn set_number(
             // Tabs mean shiftwidth == tabstop: a new tabstop would leave a
             // shiftwidth fastedit can't tell from one set to the old value.
             if target.model.indent_style() == Some(IndentStyle::Tabs) && number != tab {
-                return Err(ExError::Pattern(format!(
-                    "{arg}: not supported under noexpandtab, set expandtab first"
-                )));
+                return Err(ExError::Pattern(
+                    tr!("vim-set-tabstop-under-noexpandtab", argument = arg).into(),
+                ));
             }
             target.model.set_tab_size(number);
         }
@@ -365,9 +371,9 @@ fn set_number(
             }
             match target.model.indent_style() {
                 Some(IndentStyle::Tabs) if number != tab => {
-                    return Err(ExError::Pattern(format!(
-                        "{arg}: not supported under noexpandtab unless it is tabstop"
-                    )));
+                    return Err(ExError::Pattern(
+                        tr!("vim-set-shiftwidth-under-noexpandtab", argument = arg).into(),
+                    ));
                 }
                 Some(IndentStyle::Tabs) => {}
                 _ => target

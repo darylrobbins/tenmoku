@@ -75,6 +75,8 @@ use fe_editor::{EditorModel, commands::origin};
 use fe_text::{Bias, Text};
 use unicode_segmentation::UnicodeSegmentation;
 
+use kiln_l10n::tr;
+
 use crate::{
     Change, CountArgs, JoinArgs, Motion, MoveArgs, OperateArgs, Operator, Pending, RangeClass,
     Step, Target, VimCommands, VimKey, VimState, VimTarget, cmdline,
@@ -166,37 +168,24 @@ fn g(pending: &Pending, key: VimKey) -> Option<Step> {
 
 /// `vim.join_raw`, `vim.earlier` and `vim.later`.
 fn register(registry: &mut Registry<VimCommands>) {
-    let context = ContextPredicate::parse("editor && vim.mode == normal")
+    let context = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
-    for (id, title, later, description) in [
-        (
-            "vim.earlier",
-            "Vim Earlier Text State",
-            false,
-            "Goes back `count` text states, as `g-` does: in the linear undo history, `count` undos, stopping at the oldest without failing.",
-        ),
-        (
-            "vim.later",
-            "Vim Later Text State",
-            true,
-            "Goes forward `count` text states, as `g+` does: in the linear undo history, `count` redos, stopping at the newest without failing.",
-        ),
-    ] {
+    for (id, later) in [("vim.earlier", false), ("vim.later", true)] {
         let run = move |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
             let count = args.count.unwrap_or(1);
             history::step_quietly(target, actor, count, later)
         };
         registry
-            .register_with_args(id, title, run)
+            .register_with_args(id, &crate::l10n::command_title(id), run)
             .expect("vim command IDs are valid and distinct")
-            .description(description)
+            .description(&crate::l10n::command_description(id))
             .context(context.clone())
             .mutates_buffer(true);
     }
     registry
         .register_with_args(
             "vim.join_raw",
-            "Vim Join Lines Without Spaces",
+            &crate::l10n::command_title("vim.join_raw"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: JoinArgs| {
                 follow(target);
                 insert::adopt_closing(target.state);
@@ -204,9 +193,7 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Joins `count` rows (at least two) from each caret's as `gJ` does: keeping their indentation, putting in no space and taking none out.",
-        )
+        .description(&crate::l10n::command_description("vim.join_raw"))
         .context(context)
         .mutates_buffer(true);
 }
@@ -256,9 +243,9 @@ pub(crate) fn operate(
             | Operator::Format
             | Operator::FormatKeep
     ) {
-        return Err(CommandError::new(format!(
-            "{:?} acts only on a visual selection",
-            args.operator
+        return Err(CommandError::new(tr!(
+            "vim-operator-visual-only",
+            operator = format!("{:?}", args.operator)
         )));
     }
     // The target as it's measured: `n N * #` as the search they are, and a
@@ -422,10 +409,10 @@ pub(crate) fn format_selection(
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     target.model.sync_display();
     let Some(area) = visual::live_area(target.model, target.state) else {
-        return Err(CommandError::new("no visual selection to format"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection-to-format")));
     };
     let (Some(first), Some(last)) = (area.rows.first(), area.rows.last()) else {
-        return Err(CommandError::new("no visual selection to format"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection-to-format")));
     };
     let rows = first.0..=last.0;
     // The vim cursor, which `gw` keeps; `.` lays the selection from where

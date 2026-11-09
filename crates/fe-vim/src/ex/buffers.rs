@@ -38,6 +38,8 @@
 //! reason one run by `:g` or `:normal` is refused as it runs, which stops
 //! them there.
 
+use kiln_l10n::tr;
+
 use super::{Address, Base, ExCommand, ExError, HostCommand, uncommented};
 
 /// A buffer command, for the host to run over its buffers.
@@ -148,10 +150,12 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
     // The host switches buffers once the line has run, so a command after
     // one would run in the buffer it leaves: refused before any runs.
     if args.contains('|') {
-        return Err(ExError::Unsupported("| after a buffer command".into()));
+        return Err(ExError::Unsupported(
+            tr!("vim-unsupported-bar-after-buffer-command").into(),
+        ));
     }
     if args.starts_with('+') {
-        return Err(ExError::Unsupported("+cmd".into()));
+        return Err(ExError::unsupported(kiln_l10n::verbatim!("+cmd")));
     }
     let command = match kind {
         Kind::List => {
@@ -161,7 +165,7 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
             // Flags (`:ls u`) filter nvim's list; the picker lists every
             // open file, as `:ls!` does.
             if !args.is_empty() {
-                return Err(ExError::Unsupported(":ls flags".into()));
+                return Err(ExError::Unsupported(tr!("vim-unsupported-ls-flags").into()));
             }
             BufferCommand::List
         }
@@ -232,7 +236,7 @@ fn target(args: &str, delete: bool) -> Result<BufferTarget, ExError> {
         "%" => return Ok(BufferTarget::Current),
         _ => {}
     }
-    let several = || ExError::Unsupported(":bd of several buffers".into());
+    let several = || ExError::Unsupported(tr!("vim-unsupported-bd-several").into());
     let digits = args
         .find(|ch: char| !ch.is_ascii_digit())
         .unwrap_or(args.len());
@@ -296,7 +300,9 @@ fn range_count(range: &[Address]) -> Result<u32, ExError> {
     };
     match address.base {
         Base::Line(line) => Ok(u32::try_from(line).unwrap_or(0).max(1)),
-        _ => Err(ExError::Unsupported("a count other than a number".into())),
+        _ => Err(ExError::Unsupported(
+            tr!("vim-unsupported-buffer-count").into(),
+        )),
     }
 }
 
@@ -407,10 +413,12 @@ fn address(address: &Address) -> Result<BufferAddress, ExError> {
         Base::Line(line) => Ok(BufferAddress::Number(line as u32)),
         Base::Current => Ok(BufferAddress::Current),
         Base::Last | Base::All => Ok(BufferAddress::Last),
-        Base::Mark(_) => Err(ExError::Unsupported("a mark as a buffer number".into())),
+        Base::Mark(_) => Err(ExError::Unsupported(
+            tr!("vim-unsupported-buffer-mark").into(),
+        )),
     }
 }
 
 fn offsets() -> ExError {
-    ExError::Unsupported("an offset in a buffer range".into())
+    ExError::Unsupported(tr!("vim-unsupported-buffer-offset").into())
 }

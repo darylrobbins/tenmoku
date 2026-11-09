@@ -107,18 +107,16 @@ fn key(pending: &Pending, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
     registry
         .register(
-            "vim.line_undo",
-            "Vim Line Undo",
+            kiln_l10n::verbatim!("vim.line_undo"),
+            &crate::l10n::command_title("vim.line_undo"),
             |target: &mut VimTarget<'_>, actor: &Actor| run(target, actor),
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Undoes every latest change on the last changed line, as vim's U does; U again puts them back. Fails with nothing changed when there's no such line.",
-        )
+        .description(&crate::l10n::command_description("vim.line_undo"))
         .context(normal)
         .mutates_buffer(true);
 }

@@ -8,6 +8,7 @@ use std::{cell::Cell, collections::VecDeque, ops::Range};
 use fe_buffer::{Anchor, ResolvedSelection, TransactionId, Version};
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 use fe_editor::{EditorModel, commands::origin};
+use kiln_l10n::tr;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -110,7 +111,7 @@ impl Substitute {
                 return Self::last_pattern(&args[1..]);
             }
             if matches!(delimiter, '"' | '|') {
-                return Err(ExError::Unsupported(format!(":s{delimiter}")));
+                return Err(ExError::unsupported(&format!(":s{delimiter}")));
             }
             return Self::repeat(args, false);
         }
@@ -300,7 +301,9 @@ impl Replacement {
     /// (a NUL in Vim) and `\=` (an expression) are refused.
     pub(crate) fn compile(raw: &str) -> Result<Self, ExError> {
         if raw.starts_with("\\=") {
-            return Err(ExError::Unsupported("\\= in a replacement".into()));
+            return Err(ExError::Unsupported(
+                tr!("vim-unsupported-expression-replacement").into(),
+            ));
         }
         let mut pieces = Vec::new();
         let mut text = String::new();
@@ -518,7 +521,7 @@ fn resolve(
     // A preview's: `~` expanded no further than `limit`, before it's built.
     if limit.is_some_and(|limit| tilde_len(&raw, &last.tilde) > limit) {
         return Err(ExError::Unsupported(
-            "a replacement past the preview's size".into(),
+            tr!("vim-unsupported-replacement-past-preview").into(),
         ));
     }
     let replacement = expand_tilde(&raw, &last.tilde);
@@ -575,7 +578,9 @@ pub(crate) fn run(
     // `n` counts without asking, as in nvim.
     let confirm = flags.confirm && !flags.count_only;
     if confirm && UNASKED.get() {
-        return Err(ExError::Unsupported("the c flag (confirm) under :g".into()));
+        return Err(ExError::Unsupported(
+            tr!("vim-unsupported-confirm-under-global").into(),
+        ));
     }
     let Resolved {
         pattern,
@@ -801,16 +806,16 @@ fn joins(text: &fe_text::Text, rows: Range<u32>) -> SubstitutePreview {
 /// nvim's report of `matches` (with `n`, `count_only`) or substitutions on
 /// `lines` lines: `n`'s count always, substitutions past two.
 fn report(matches: usize, lines: usize, count_only: bool) -> Option<String> {
-    let counted = |n: usize, one: &str, many: &str| match n {
-        1 => format!("1 {one}"),
-        n => format!("{n} {many}"),
-    };
-    let what = match count_only {
-        true => counted(matches, "match", "matches"),
-        false if matches > 2 => counted(matches, "substitution", "substitutions"),
+    let report = match count_only {
+        true => tr!("vim-substitute-matches", matches = matches, lines = lines),
+        false if matches > 2 => tr!(
+            "vim-substitute-substitutions",
+            substitutions = matches,
+            lines = lines
+        ),
         false => return None,
     };
-    Some(format!("{what} on {}", counted(lines, "line", "lines")))
+    Some(report.to_string())
 }
 
 /// The first non-blank on `row`, as an offset.
@@ -1281,8 +1286,8 @@ mod preview_tests {
 }
 
 thread_local! {
-    /// Set while a `:g` runs: a `:s` with `c` it runs is refused, since `:g`
-    /// can't wait for the answers.
+    // Set while a `:g` runs: a `:s` with `c` it runs is refused, since `:g`
+    // can't wait for the answers.
     static UNASKED: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -1426,10 +1431,7 @@ fn ask(
     let mut confirm = Box::new(Confirm {
         pattern: asked.pattern,
         replacement: asked.replacement,
-        prompt: format!(
-            "replace with {}? (y)es/(n)o/(a)ll/(q)uit/(l)ast/scroll up(^E)/down(^Y)",
-            asked.shown
-        ),
+        prompt: tr!("vim-substitute-prompt", replacement = &asked.shown).to_string(),
         global: asked.flags.global,
         first: rows.start,
         row_end: None,
@@ -1649,7 +1651,7 @@ impl Confirm {
 /// edited the text since the last answer. With no `:s` asking, it fails.
 pub(crate) fn answer(target: &mut VimTarget<'_>, actor: &Actor, args: AnswerArgs) -> Handled {
     let Some(mut confirm) = target.state.confirm.take() else {
-        return Err(CommandError::new("no :s is asking"));
+        return Err(CommandError::new(tr!("vim-substitute-not-asking")));
     };
     operator::sync(target.model);
     if target.model.snapshot().version() != confirm.version {

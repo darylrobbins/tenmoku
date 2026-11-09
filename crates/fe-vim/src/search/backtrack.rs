@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 
+use kiln_l10n::tr;
 use regex_automata::{Input, meta::Regex};
 
 use super::{
@@ -173,7 +174,7 @@ struct Builder<'a> {
 }
 
 fn too_large() -> PatternError {
-    PatternError::TooLarge("a repeat of alternatives that end in different ways".into())
+    PatternError::TooLarge(tr!("vim-pattern-repeated-alternatives").into())
 }
 
 impl Builder<'_> {
@@ -233,7 +234,9 @@ impl Builder<'_> {
         };
         self.tr.next += 1;
         if matches!(self.tr.peek(), Some(Token::Multi { .. })) {
-            return Err(PatternError::Invalid("a multi can't follow a multi"));
+            return Err(PatternError::Invalid(
+                tr!("vim-pattern-multi-after-multi").into(),
+            ));
         }
         let (min, max, lazy) = match multi {
             super::Multi::Star => (0, None, false),
@@ -336,14 +339,18 @@ impl Builder<'_> {
             .configure(config)
             .build(&format!("^(?:{})", unique_names(text)))
             .map_err(|error| match error.size_limit() {
-                Some(limit) => PatternError::TooLarge(format!("over {limit} bytes compiled")),
-                None => PatternError::TooLarge(error.to_string()),
+                Some(limit) => {
+                    PatternError::TooLarge(tr!("vim-pattern-compiled-over", limit = limit).into())
+                }
+                None => PatternError::TooLarge(
+                    tr!("vim-pattern-too-large-regex", message = error.to_string()).into(),
+                ),
             })?;
         self.compiled += regex.memory_usage();
         if self.compiled > MAX_PROGRAM_COMPILED {
-            return Err(PatternError::TooLarge(format!(
-                "over {MAX_PROGRAM_COMPILED} bytes compiled"
-            )));
+            return Err(PatternError::TooLarge(
+                tr!("vim-pattern-compiled-over", limit = MAX_PROGRAM_COMPILED).into(),
+            ));
         }
         self.regexes.push(regex);
         self.known.insert(text.to_string(), self.regexes.len() - 1);

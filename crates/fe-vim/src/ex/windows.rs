@@ -24,6 +24,8 @@
 //! runs. One before (`:2 | sp`) runs first, as in nvim. For the same
 //! reason one run by `:g` or `:normal` is refused as it runs.
 
+use kiln_l10n::tr;
+
 use super::{Address, ExCommand, ExError, HostCommand, trim_unescaped_end, uncommented, unescape};
 
 /// A window command, for the host to run over its windows.
@@ -83,9 +85,11 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
     // The host runs the command once the line has, so one after it would
     // run in the window it was typed in.
     if args.contains('|') {
-        return Err(ExError::Unsupported("| after a window command".into()));
+        return Err(ExError::Unsupported(
+            tr!("vim-unsupported-bar-after-window-command").into(),
+        ));
     }
-    let numbered = || ExError::Unsupported("a window number".into());
+    let numbered = || ExError::Unsupported(tr!("vim-unsupported-window-number").into());
     let command = match kind {
         Kind::Only | Kind::Close if !range.is_empty() => return Err(numbered()),
         Kind::Only | Kind::Close if args.bytes().all(|byte| byte.is_ascii_digit()) => {
@@ -99,7 +103,11 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
         }
         Kind::Only | Kind::Close => return Err(ExError::Trailing(args.to_string())),
         // The range, the new window's size, is ignored: panes take none.
-        _ if args.starts_with('+') => return Err(ExError::Unsupported("+cmd and ++opt".into())),
+        _ if args.starts_with('+') => {
+            return Err(ExError::Unsupported(
+                tr!("vim-unsupported-cmd-and-opt").into(),
+            ));
+        }
         _ => {
             let vertical = matches!(kind, Kind::VerticalSplit | Kind::VerticalNew);
             match (kind, args) {

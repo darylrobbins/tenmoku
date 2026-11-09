@@ -105,12 +105,12 @@ fn key(pending: &Pending, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.filter",
-            "Vim Filter",
+            &crate::l10n::command_title("vim.filter"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: FilterArgs| {
                 commands::follow(target);
                 insert::adopt_closing(target.state);
@@ -118,9 +118,7 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Asks the host to run `command` (a shell command, in parts; none for the last one, E34 with none) over the rows `target` covers at the caret with `count`, as `.` repeats `!{motion}`: leaves `HostCommand::Filter`, whose output `VimState::apply_filter` puts in their place. Only for the user's own keys: any other actor, or a `:g` or `:normal` running it, gets `Shell commands run only from your own keys` and no host command.",
-        )
+        .description(&crate::l10n::command_description("vim.filter"))
         .context(normal)
         .mutates_buffer(true);
 }

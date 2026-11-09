@@ -10,6 +10,8 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use kiln_l10n::tr;
+
 use crate::{feature::definition_motions, line_motions, motion::Granularity, prose};
 
 /// `d y c > < =`, and over a visual selection only, `~ u U J r{char}`, and
@@ -294,8 +296,9 @@ impl<'de> Deserialize<'de> for JumpChars {
         match (chars.next(), chars.next(), chars.next()) {
             (Some(c1), Some(c2), None) => Ok(Self::pair(c1, c2)),
             (Some(c1), None, None) => Ok(Self::one(c1)),
-            _ => Err(serde::de::Error::custom(format!(
-                "a jump takes one or two chars, not {text:?}"
+            _ => Err(serde::de::Error::custom(tr!(
+                "vim-jump-chars",
+                chars = format!("{text:?}")
             ))),
         }
     }

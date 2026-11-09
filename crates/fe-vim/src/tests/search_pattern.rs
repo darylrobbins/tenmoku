@@ -133,7 +133,7 @@ fn translates_or_fails() {
         ("[!--]", "!--"),
     ] {
         let error = Pattern::parse(pattern).unwrap_err();
-        assert_eq!(error, PatternError::Unsupported(atom.into()), "{pattern}");
+        assert_eq!(error, PatternError::unsupported(atom), "{pattern}");
         assert_eq!(error.to_string(), format!("pattern not supported: {atom}"));
     }
 

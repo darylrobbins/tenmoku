@@ -84,6 +84,7 @@ use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 
 use fe_editor::EditorModel;
+use kiln_l10n::tr;
 
 use crate::{
     KeyError, Mode, Motion, MoveArgs, OperateArgs, Operator, Registers, SearchOffset, Target,
@@ -111,7 +112,7 @@ mod tabs;
 pub use tabs::TabCommand;
 mod windows;
 pub(crate) use table::filter::refusal as shell_refusal;
-pub use table::filter::{REFUSED as SHELL_REFUSED, ShellCommand, ShellPart};
+pub use table::filter::{ShellCommand, ShellPart};
 pub use windows::WindowCommand;
 
 /// A parsed ex line.
@@ -387,92 +388,122 @@ impl crate::VimState {
 }
 
 /// Why an ex line didn't run, as nvim says it.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExError {
     /// The line, from its command (or range), isn't a command fe-vim knows.
-    #[error("E492: Not an editor command: {0}")]
     NotACommand(String),
-    #[error("E477: No ! allowed")]
     NoBang,
-    #[error("E481: No range allowed")]
     NoRange,
-    #[error("E488: Trailing characters: {0}")]
     Trailing(String),
-    #[error("E939: Positive count required")]
     ZeroCount,
     /// `:m` to a line within the lines it moves.
-    #[error("E134: Cannot move a range of lines into itself")]
     IntoItself,
     /// A letter `:sort` doesn't take, or its second pattern, and what
     /// follows it.
-    #[error("E475: Invalid argument: {0}")]
     InvalidArgument(String),
     /// `:sort`'s second number kind (`n` twice).
-    #[error("E474: Invalid argument")]
     TwoNumberKinds,
     /// `:sort`'s pattern with no closing delimiter: what follows the
     /// opening one.
-    #[error("E654: Missing delimiter after search pattern: {0}")]
     MissingDelimiter(String),
     /// A line before the first, or (but for [`ExCommand::Goto`], which
     /// stops at the last line) past the last.
-    #[error("E16: Invalid range")]
     InvalidRange,
     /// An offset taking a line past 32 bits.
-    #[error("E1247: Line number out of range")]
     OutOfRange,
     /// The range's first line is after its last. nvim asks whether to swap
     /// them, and headless nvim's answer is no.
-    #[error("E493: Backwards range given")]
     Backwards,
-    #[error("E20: Mark not set")]
     MarkNotSet,
-    #[error("E35: No previous regular expression")]
     NoPreviousSearch,
-    #[error("E33: No previous substitute regular expression")]
     NoPreviousSubstitute,
-    #[error("E486: Pattern not found: {0}")]
     NotFound(String),
     /// A count of 2147483647 or more, as typed.
-    #[error("E1510: Value too large: {0}")]
     ValueTooLarge(String),
-    #[error("E146: Regular expressions can't be delimited by letters")]
     LetterDelimiter,
     /// `:g` with a backslash before anything but `/`, `?` or `&`.
-    #[error("E10: \\ should be followed by /, ? or &")]
     BackslashDelimiter,
-    #[error("E148: Regular expression missing from global")]
     NoGlobalPattern,
     /// A `:g` inside a `:g`.
-    #[error("E147: Cannot do :global recursive with a range")]
     Recursive,
-    #[error("E471: Argument required")]
     ArgumentRequired,
     /// `:normal`s running inside each other past a limit.
-    #[error("E192: Recursive use of :normal too deep")]
     NormalTooDeep,
     /// `:normal`'s keys name a key there isn't.
-    #[error(transparent)]
-    Keys(#[from] KeyError),
+    Keys(KeyError),
     /// `\n` in a replacement, which in Vim puts in a NUL.
-    #[error("\\n in a replacement (a NUL): not supported")]
     NulInReplacement,
-    /// `:w {path}`.
-    #[error("{0}: not supported yet")]
+    /// What fe-vim doesn't do yet, as a whole message in the active
+    /// locale ([`ExError::unsupported`] for a command or option as typed).
     Unsupported(String),
     /// A pattern fe-vim can't search, or Vim rejects.
-    #[error("{0}")]
     Pattern(String),
     /// A shell command asked for by anyone but the user, or run by `:g` or
     /// `:normal` (`ex/filter.rs`).
-    #[error("Shell commands run only from your own keys")]
     ShellRefused,
     /// `:{range}!` repeating the last shell command, with none.
-    #[error("E34: No previous command")]
     NoPreviousCommand,
     /// `:!{cmd}` with no range, whose output has nowhere to go here.
-    #[error(":!{{cmd}} without a range isn't run here: use the terminal panel")]
     NoRangeShell,
+}
+
+impl std::error::Error for ExError {}
+
+impl From<KeyError> for ExError {
+    fn from(error: KeyError) -> Self {
+        Self::Keys(error)
+    }
+}
+
+impl ExError {
+    /// [`ExError::Unsupported`] for `what`, a command, flag or option as
+    /// typed: "{what}: not supported yet".
+    pub(crate) fn unsupported(what: &str) -> Self {
+        Self::Unsupported(tr!("vim-not-supported-yet", what = what).into())
+    }
+}
+
+/// nvim's English, from `vim.ftl`, with the E-code kept outside the
+/// catalogue as nvim keeps it in every language.
+impl std::fmt::Display for ExError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::messages::coded;
+        let text = match self {
+            Self::NotACommand(line) => coded("E492", tr!("vim-e492", command = line)),
+            Self::NoBang => coded("E477", tr!("vim-e477")),
+            Self::NoRange => coded("E481", tr!("vim-e481")),
+            Self::Trailing(rest) => coded("E488", tr!("vim-e488", characters = rest)),
+            Self::ZeroCount => coded("E939", tr!("vim-e939")),
+            Self::IntoItself => coded("E134", tr!("vim-e134")),
+            Self::InvalidArgument(argument) => {
+                coded("E475", tr!("vim-e475-argument", argument = argument))
+            }
+            Self::TwoNumberKinds => coded("E474", tr!("vim-e474")),
+            Self::MissingDelimiter(pattern) => coded("E654", tr!("vim-e654", pattern = pattern)),
+            Self::InvalidRange => coded("E16", tr!("vim-e16")),
+            Self::OutOfRange => coded("E1247", tr!("vim-e1247")),
+            Self::Backwards => coded("E493", tr!("vim-e493")),
+            Self::MarkNotSet => coded("E20", tr!("vim-e20")),
+            Self::NoPreviousSearch => coded("E35", tr!("vim-e35")),
+            Self::NoPreviousSubstitute => coded("E33", tr!("vim-e33")),
+            Self::NotFound(pattern) => coded("E486", tr!("vim-e486", pattern = pattern)),
+            Self::ValueTooLarge(value) => coded("E1510", tr!("vim-e1510", value = value)),
+            Self::LetterDelimiter => coded("E146", tr!("vim-e146")),
+            Self::BackslashDelimiter => coded("E10", tr!("vim-e10")),
+            Self::NoGlobalPattern => coded("E148", tr!("vim-e148")),
+            Self::Recursive => coded("E147", tr!("vim-e147")),
+            Self::ArgumentRequired => coded("E471", tr!("vim-e471")),
+            Self::NormalTooDeep => coded("E192", tr!("vim-e192")),
+            Self::Keys(error) => return error.fmt(f),
+            Self::NulInReplacement => tr!("vim-nul-in-replacement").to_string(),
+            Self::Unsupported(message) => message.clone(),
+            Self::Pattern(message) => return f.write_str(message),
+            Self::ShellRefused => tr!("vim-shell-refused").to_string(),
+            Self::NoPreviousCommand => coded("E34", tr!("vim-e34")),
+            Self::NoRangeShell => tr!("vim-shell-without-range").to_string(),
+        };
+        f.write_str(&text)
+    }
 }
 
 /// `:d[elete]` and the abbreviations `:help :d` lists (the `l` and `p`
@@ -885,7 +916,7 @@ fn host(name: &str) -> Option<Build> {
         },
         _ if is("qall", 2) || is("quitall", 5) => |force, _| HostCommand::QuitAll { force },
         _ if is("wall", 2) => |_, _| HostCommand::WriteAll,
-        _ if is("Explore", 2) => |_, _| HostCommand::Explore,
+        _ if is(kiln_l10n::verbatim!("Explore"), 2) => |_, _| HostCommand::Explore,
         _ if is("oldfiles", 2) => |_, _| HostCommand::OldFiles,
         _ => return None,
     })
@@ -1227,8 +1258,8 @@ pub(crate) fn run(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Hand
 }
 
 thread_local! {
-    /// How many `:g` are running: their commands' `:s` finding nothing
-    /// doesn't stop the commands after it.
+    // How many `:g` are running: their commands' `:s` finding nothing
+    // doesn't stop the commands after it.
     static IN_GLOBAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
@@ -1354,7 +1385,7 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
             // As a buffer command: the rest would run in the file left
             // (`ex/quickfix.rs`).
             return Err(ExError::Unsupported(
-                "a quickfix command in :g or :normal".into(),
+                tr!("vim-unsupported-quickfix-in-global").into(),
             ));
         }
         ExCommand::Host(HostCommand::Buffer(_))
@@ -1363,7 +1394,7 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
             // The host switches once the keys have run, so the rest would
             // run in the buffer left (`ex/buffers.rs`).
             return Err(ExError::Unsupported(
-                "a buffer command in :g or :normal".into(),
+                tr!("vim-unsupported-buffer-in-global").into(),
             ));
         }
         ExCommand::Host(HostCommand::Window(_) | HostCommand::Tab(_))
@@ -1372,7 +1403,7 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
             // As a buffer command: the rest would run in the window left
             // (`ex/windows.rs`).
             return Err(ExError::Unsupported(
-                "a window command in :g or :normal".into(),
+                tr!("vim-unsupported-window-in-global").into(),
             ));
         }
         ExCommand::Host(mut command) => {

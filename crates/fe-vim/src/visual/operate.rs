@@ -1,3 +1,5 @@
+use kiln_l10n::tr;
+
 use super::*;
 
 /// What a change over `ends` took, for `.`.
@@ -268,7 +270,7 @@ fn operate_as_wide(
     }
     target.model.sync_display();
     let Some(ends) = ends(target.model, target.state) else {
-        return Err(CommandError::new("no visual selection to operate on"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection-to-operate")));
     };
     // `I` and `A` act only over a block.
     if matches!(args.operator, Operator::Insert | Operator::Append)
@@ -288,11 +290,11 @@ fn operate_as_wide(
             .checked_mul(args.count.unwrap_or(1) as usize);
         let size = by.and_then(|by| by.checked_mul((last - first + 1) as usize));
         if size.is_none_or(|size| size > operator::MAX_PUT) {
-            return Err(CommandError::new(format!(
-                "shifting {} rows {} times would insert more than {} bytes",
-                last - first + 1,
-                args.count.unwrap_or(1),
-                operator::MAX_PUT
+            return Err(CommandError::new(tr!(
+                "vim-shift-too-large",
+                rows = last - first + 1,
+                count = args.count.unwrap_or(1),
+                limit = operator::MAX_PUT
             )));
         }
     }

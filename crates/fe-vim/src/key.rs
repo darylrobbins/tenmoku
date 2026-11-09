@@ -1,3 +1,4 @@
+use kiln_l10n::tr;
 /// A key as the reducer reads it. Unlike `fe_keymap::Keystroke`, it keeps
 /// what was typed: `Char('A')`, `Char('$')` and `Char('é')` are distinct.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -16,9 +17,16 @@ pub enum VimKey {
 }
 
 /// A `<name>` that names no key.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("unknown key <{0}>")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyError(pub String);
+
+impl std::error::Error for KeyError {}
+
+impl std::fmt::Display for KeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&tr!("vim-unknown-key", key = &self.0))
+    }
+}
 
 /// Reads vim key notation: plain characters, plus `<Esc>`, `<CR>`, `<BS>`,
 /// `<Tab>`, `<C-x>`, `<lt>`, `<Space>`, `<Bar>`, `<Bslash>` and the arrows `<Left>` `<Right>` `<Up>`

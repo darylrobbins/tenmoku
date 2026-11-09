@@ -33,6 +33,8 @@ use fe_command::{CommandError, Dispatched, Effect};
 use fe_editor::commands::SyntaxObject;
 use fe_text::Text;
 
+use kiln_l10n::tr;
+
 use crate::{
     Mode, Pending, SelectArgs, TextObject, VimTarget, VisualKind, feature::Feature, line_motions,
     motion::Cursor, operator::Span,
@@ -159,7 +161,7 @@ pub(crate) fn select_visual(
         state.visual_anchor(model),
         state.visual_cursor(model),
     ) else {
-        return Err(CommandError::new("no visual selection"));
+        return Err(CommandError::new(tr!("vim-no-visual-selection")));
     };
     let text = model.text().clone();
     let count = args.count.unwrap_or(1).max(1) as usize;

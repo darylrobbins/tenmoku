@@ -336,7 +336,7 @@ fn filters_do_not_run_from_remapped_macro_keys(cx: &mut TestAppContext) {
         })
     };
     let shell = |command: Option<fe_vim::HostCommand>| command.is_some_and(|c| c.runs_shell());
-    let refused = Some(fe_vim::SHELL_REFUSED.to_string());
+    let refused = Some(fe_vim::messages::shell_refused());
 
     cx.simulate_keystrokes("! j");
     submit_line(&view, ".,.+1!sort", cx);

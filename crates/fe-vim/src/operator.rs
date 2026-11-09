@@ -16,6 +16,8 @@ use fe_command::{Actor, CommandError, Dispatched, Effect};
 use fe_editor::{EditorModel, IndentStyle, commands::origin};
 use fe_text::{Bias, Text};
 
+use kiln_l10n::tr;
+
 use crate::state::PutLanded;
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
@@ -672,9 +674,7 @@ fn operate_over(
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     // `ys` waits for its pair in the reducer: `vim.surround_add` runs it.
     if let Operator::Surround { .. } = args.operator {
-        return Err(CommandError::new(
-            "the surround operator acts through vim.surround_add",
-        ));
+        return Err(CommandError::new(tr!("vim-surround-through-surround-add")));
     }
     // `n N * #` are the search they run, which `.` finds again when it
     // repeats the operator: the args keep them. A search target is checked
@@ -702,7 +702,9 @@ fn operate_over(
                 true => visual::exit(target)?.effect,
                 false => Effect::Nothing,
             };
-            target.state.fail(format!("register {name} is read-only"));
+            target
+                .state
+                .fail(tr!("vim-register-read-only", register = name));
             return Ok(Dispatched::new(match exited {
                 Effect::Nothing => Effect::Notify,
                 exited => exited,
@@ -1534,7 +1536,7 @@ fn put_unless_failing(
         registers,
     } = target;
     if args.register == Some('/') && registers.last_search().is_none() {
-        return Ok(state.fail("E35: No previous regular expression"));
+        return Ok(state.fail(crate::messages::no_previous_regular_expression()));
     }
     registers.adopt_inserted(state);
     let value = registers
@@ -1575,9 +1577,11 @@ pub(crate) fn put_value(
         .checked_mul(count)
         .and_then(|size| size.checked_mul(before.len()));
     if size.is_none_or(|size| size > MAX_PUT) {
-        return Err(CommandError::new(format!(
-            "putting {count} copies of {} bytes would insert more than {MAX_PUT} bytes",
-            payload.len()
+        return Err(CommandError::new(tr!(
+            "vim-put-too-large",
+            count = count,
+            bytes = payload.len(),
+            limit = MAX_PUT
         )));
     }
     if let Some(width) = value.block_width {
@@ -1594,8 +1598,11 @@ pub(crate) fn put_value(
         };
         if visual::put_size(&payload, (width, count), column, tab).is_none_or(|size| size > MAX_PUT)
         {
-            return Err(CommandError::new(format!(
-                "putting {count} copies of a {width} column block would insert more than {MAX_PUT} bytes"
+            return Err(CommandError::new(tr!(
+                "vim-put-block-too-large",
+                count = count,
+                width = width,
+                limit = MAX_PUT
             )));
         }
         let rows: Vec<&str> = payload.split('\n').collect();
@@ -1645,9 +1652,11 @@ pub(crate) fn put_value(
                 &model.indent_unit(),
                 room,
             ) else {
-                return Err(CommandError::new(format!(
-                    "putting {count} copies of {} bytes, indented, would insert more than {MAX_PUT} bytes",
-                    payload.len()
+                return Err(CommandError::new(tr!(
+                    "vim-put-indented-too-large",
+                    count = count,
+                    bytes = payload.len(),
+                    limit = MAX_PUT
                 )));
             };
             fixed = done;

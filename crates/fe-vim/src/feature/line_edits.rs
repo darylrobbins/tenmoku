@@ -45,6 +45,8 @@ use fe_editor::commands::origin;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use kiln_l10n::tr;
+
 use crate::{
     Change, Mode, Pending, Step, VimCommands, VimKey, VimTarget,
     feature::Feature,
@@ -143,14 +145,16 @@ fn bracket(pending: &Pending, forward: bool, key: VimKey) -> Option<Step> {
 }
 
 fn register(registry: &mut Registry<VimCommands>) {
-    let normal = ContextPredicate::parse("editor && vim.mode == normal")
+    let normal = ContextPredicate::parse(kiln_l10n::verbatim!("editor && vim.mode == normal"))
         .expect("vim's context predicate parses");
-    let normal_or_visual = ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
-        .expect("vim's context predicate parses");
+    let normal_or_visual = ContextPredicate::parse(kiln_l10n::verbatim!(
+        "editor && (vim.mode == normal || vim.visual)"
+    ))
+    .expect("vim's context predicate parses");
     registry
         .register_with_args(
             "vim.blank_lines",
-            "Vim Blank Lines",
+            &crate::l10n::command_title("vim.blank_lines"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: BlankLinesArgs| {
                 crate::commands::follow(target);
                 insert::adopt_closing(target.state);
@@ -158,15 +162,13 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Puts `count` empty rows below each caret's row, or `above` it, as nvim's ]<Space> and [<Space> do, in one undo step; the caret stays on its text.",
-        )
+        .description(&crate::l10n::command_description("vim.blank_lines"))
         .context(normal)
         .mutates_buffer(true);
     registry
         .register_with_args(
             "vim.move_rows",
-            "Vim Move Rows",
+            &crate::l10n::command_title("vim.move_rows"),
             |target: &mut VimTarget<'_>, actor: &Actor, args: MoveRowsArgs| {
                 crate::commands::follow(target);
                 insert::adopt_closing(target.state);
@@ -174,9 +176,7 @@ fn register(registry: &mut Registry<VimCommands>) {
             },
         )
         .expect("vim command IDs are valid and distinct")
-        .description(
-            "Moves each caret's row (in a visual mode, the selection's rows) `count` rows down, or `up`, as vim-unimpaired's ]e and [e do, the carets, the selection and the rows' marks going with them; as far as they can go near the buffer's edge, failing with nothing changed when they can't move at all. One undo step.",
-        )
+        .description(&crate::l10n::command_description("vim.move_rows"))
         .context(normal_or_visual)
         .mutates_buffer(true);
 }
@@ -198,8 +198,10 @@ pub(crate) fn blank_lines(
         .checked_mul(rows.len())
         .is_none_or(|size| size > MAX_PUT)
     {
-        return target.state.fail(format!(
-            "putting {count} blank rows would insert more than {MAX_PUT} bytes"
+        return target.state.fail(tr!(
+            "vim-blank-rows-too-large",
+            count = count,
+            limit = MAX_PUT
         ));
     }
     let breaks = "\n".repeat(count);

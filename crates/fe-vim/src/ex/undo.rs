@@ -9,6 +9,8 @@
 
 use fe_command::Actor;
 
+use kiln_l10n::tr;
+
 use super::super::{Address, ExError, Handled, uncommented};
 use super::{Check, Entry};
 use crate::{CountArgs, VimTarget, history};
@@ -80,7 +82,9 @@ fn run_undo(
             target.state.failed = failed;
             done
         }
-        number => Err(ExError::Pattern(format!(":undo {number}: not supported"))),
+        number => Err(ExError::Pattern(
+            tr!("vim-undo-number-not-supported", number = number.to_string()).into(),
+        )),
     }
 }
 

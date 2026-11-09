@@ -9,8 +9,11 @@
 use fe_command::{Actor, Dispatched, Effect};
 use fe_editor::commands::origin;
 
+use kiln_l10n::tr;
+
 use super::super::{Address, ExError, Handled, first_non_blank, uncommented};
 use super::{Check, Entry};
+use crate::messages::coded;
 use crate::{
     VimTarget, insert,
     motion::{self, Cursor},
@@ -41,7 +44,7 @@ fn parse(after: &str, check: &mut Check<'_>) -> Result<String, ExError> {
             || matches!(ch, '"' | '-' | '_' | '+' | '*' | '/' | '=' | '.' | ':')
     });
     let name = match name {
-        Some('=') => return Err(ExError::Pattern("the = register: not supported".into())),
+        Some('=') => return Err(ExError::Pattern(tr!("vim-put-expression-register").into())),
         Some(name) => name,
         None => {
             return match uncommented(rest).trim_start_matches([' ', '\t']) {
@@ -94,8 +97,9 @@ fn run(
     let Some(value) = value.filter(|value| !value.text.is_empty() || value.block_width.is_some())
     else {
         let shown = name.unwrap_or('"');
-        return Err(ExError::Pattern(format!(
-            "E353: Nothing in register {shown}"
+        return Err(ExError::Pattern(coded(
+            "E353",
+            tr!("vim-e353", register = shown),
         )));
     };
     let payload = value.text.replace("\r\n", "\n").replace('\r', "\n");

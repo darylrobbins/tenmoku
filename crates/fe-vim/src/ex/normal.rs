@@ -25,7 +25,7 @@
 //! (`ex/filter.rs`); `:normal` itself never fails, but for a map's `<Cmd>fe:{command id}<CR>`
 //! among its keys: there it stops, the command not run and nothing after it
 //! (the rest of the line's keys, the lines after it) either, with
-//! [`FE_REFUSED`] as its error, as fastedit commands run only from the
+//! `vim-normal-fe-refused` as its error, as fastedit commands run only from the
 //! host's replay; a `:normal` it runs in stops the same way. A host that
 //! resumes ([`crate::VimState::set_normal_resumes`]) has the outermost
 //! `:normal` suspend there instead, its remaining keys and range rows kept
@@ -45,6 +45,8 @@ use fe_command::{
 };
 use fe_editor::commands::origin;
 
+use kiln_l10n::tr;
+
 use super::{
     ExCommand, ExError, Handled,
     global::{self, Depth, Group},
@@ -57,11 +59,8 @@ use crate::{
     registry,
 };
 
-/// What a `:normal` that reached a map's `<Cmd>fe:…<CR>` says.
-pub(crate) const FE_REFUSED: &str = "fe: commands don't run inside :normal";
-
 thread_local! {
-    /// Vim's registry, which `:normal`'s keys run through, built once.
+    // Vim's registry, which `:normal`'s keys run through, built once.
     static REGISTRY: Registry<VimCommands> = registry();
 }
 
@@ -118,7 +117,7 @@ pub(crate) struct Suspended {
 }
 
 /// `vim.normal_resume`'s id.
-pub(crate) const RESUME: &str = "vim.normal_resume";
+pub(crate) const RESUME: &str = kiln_l10n::verbatim!("vim.normal_resume");
 
 #[cfg(test)]
 #[path = "normal_resume_tests.rs"]
@@ -234,7 +233,8 @@ fn drive(target: &mut VimTarget<'_>, mut job: Suspended) -> Result<Handled, ExEr
         // For a `:normal` this one ran in, which stops at the key that ran it.
         target.state.normal_refused = runner.refused;
         if runner.refused {
-            target.state.fail(FE_REFUSED);
+            // What a `:normal` that reached a map's `<Cmd>fe:…<CR>` says.
+            target.state.fail(tr!("vim-normal-fe-refused"));
         }
     }
     target.state.provenance.leave(provenance);
@@ -249,7 +249,7 @@ struct Runner {
     /// The command line's text, in `cmdline` mode.
     line: String,
     /// A key left a fastedit command, or ran a `:normal` that stopped at one
-    /// ([`FE_REFUSED`]): this one stops.
+    /// (`vim-normal-fe-refused`): this one stops.
     refused: bool,
     /// A fastedit command may suspend the run instead of stopping it.
     suspendable: bool,
