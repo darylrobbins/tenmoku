@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use fe_buffer::{BufferId, Version};
 use futures::channel::oneshot;
+use kiln_l10n::tr;
 
 use crate::diagnostics::{Diagnostic, FileDiagnostic};
 use crate::encoding::PositionEncoding;
@@ -194,43 +195,67 @@ pub enum ServerStatus {
 }
 
 /// Why a request got no answer.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LspError {
     /// The server isn't running, stopped, or went away before answering.
-    #[error("the language server isn't running")]
     ServerDown,
     /// The request was cancelled (`RequestCancelled`).
-    #[error("the request was cancelled")]
     Cancelled,
-    #[error("the request timed out")]
     Timeout,
     /// The server can't answer this; something else should.
-    #[error("{0}")]
     Unavailable(String),
     /// The server says its answer would be stale (`ContentModified`,
     /// `ServerCancelled`): ask again.
-    #[error("the server asked for the request to be retried")]
     Retry,
     /// The server answered with an error.
-    #[error("{message} ({code})")]
-    Server { code: i32, message: String },
+    Server {
+        code: i32,
+        message: String,
+    },
     /// The reply couldn't be read.
-    #[error("bad reply: {0}")]
     Protocol(String),
     /// A workspace edit that can't be applied as the server meant it, and
     /// why (crate::workspace_edit).
-    #[error("the edit can't be applied: {0}")]
     RefusedEdit(String),
 }
 
+impl std::fmt::Display for LspError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ServerDown => f.write_str(&tr!("lsp-error-server-down")),
+            Self::Cancelled => f.write_str(&tr!("lsp-error-cancelled")),
+            Self::Timeout => f.write_str(&tr!("lsp-error-timeout")),
+            Self::Unavailable(why) => f.write_str(why),
+            Self::Retry => f.write_str(&tr!("lsp-error-retry")),
+            Self::Server { code, message } => f.write_str(&tr!(
+                "lsp-error-server",
+                message = message.as_str(),
+                code = *code
+            )),
+            Self::Protocol(why) => f.write_str(&tr!("lsp-error-protocol", why = why.as_str())),
+            Self::RefusedEdit(why) => {
+                f.write_str(&tr!("lsp-error-refused-edit", why = why.as_str()))
+            }
+        }
+    }
+}
+
+impl std::error::Error for LspError {}
+
 /// [`LspError::Unavailable`]'s reasons for a request on a document (§4.1).
 /// The buffer moved on from the version the request was computed on.
-pub(crate) const BUFFER_CHANGED: &str = "buffer changed";
+pub(crate) fn buffer_changed() -> String {
+    tr!("lsp-unavailable-buffer-changed").to_string()
+}
 /// The document is over the size limit, so the server doesn't have it.
-pub(crate) const TOO_LARGE: &str = "too large for the language server";
+pub(crate) fn too_large() -> String {
+    tr!("lsp-unavailable-too-large").to_string()
+}
 /// The document isn't open on a language server.
-pub(crate) const NOT_OPEN: &str = "not open on a language server";
+pub(crate) fn not_open() -> String {
+    tr!("lsp-unavailable-not-open").to_string()
+}
 
 impl LspError {
     pub(crate) fn from_lsp(err: async_lsp::Error) -> Self {

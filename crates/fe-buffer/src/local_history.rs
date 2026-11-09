@@ -238,10 +238,11 @@ impl LocalHistory {
         let Some(slot) = self.find_slot(&path)? else {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!(
-                    "no local history for {path:?}",
-                    path = String::from_utf8_lossy(&path)
-                ),
+                kiln_l10n::tr!(
+                    "buffer-local-history-none",
+                    path = format!("{:?}", String::from_utf8_lossy(&path))
+                )
+                .to_string(),
             ));
         };
         fs::read(slot.join(id.file_name()))

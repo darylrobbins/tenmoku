@@ -26,6 +26,7 @@ pub mod conflict_markers;
 mod files;
 pub mod graph;
 mod index;
+pub mod l10n;
 mod log;
 mod refs;
 mod remote;
@@ -57,22 +58,22 @@ const BINARY_PROBE_LEN: usize = 8000;
 /// A failure reading the repository. gix's errors are kept as text.
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
-    #[error("git: {0}")]
+    #[error("{}", kiln_l10n::tr!("git-error", message = .0.as_str()))]
     Gix(String),
     /// No `git` executable on `PATH`.
-    #[error("git executable not found on PATH")]
+    #[error("{}", kiln_l10n::tr!("git-missing"))]
     GitMissing,
     /// `git` ran and exited non-zero (`code` is `None` when a signal killed it).
-    #[error("git {} failed ({code:?}): {stderr}", args.join(" "))]
+    #[error("{}", kiln_l10n::tr!("git-command-failed", args = args.join(" "), code = format!("{code:?}"), stderr = stderr.as_str()))]
     Command {
         args: Vec<String>,
         code: Option<i32>,
         stderr: String,
     },
     /// A path that isn't inside the working tree.
-    #[error("{} is outside the working tree", .0.display())]
+    #[error("{}", kiln_l10n::tr!("git-outside-worktree", path = .0.display().to_string()))]
     OutsideWorktree(PathBuf),
-    #[error("git: {0}")]
+    #[error("{}", kiln_l10n::tr!("git-error", message = .0.as_str()))]
     Io(String),
 }
 

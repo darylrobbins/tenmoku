@@ -5,6 +5,7 @@
 //! write beneath a project folder or nowhere (fe-workbench's replace in
 //! files).
 
+use kiln_l10n::tr;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io;
@@ -25,7 +26,7 @@ pub fn open_folder(path: &Path) -> io::Result<File> {
             Component::CurDir | Component::ParentDir => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "not a resolved path",
+                    tr!("project-io-not-resolved-path").to_string(),
                 ));
             }
         }

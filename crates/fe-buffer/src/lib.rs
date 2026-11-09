@@ -41,6 +41,7 @@
 mod backup;
 mod buffer;
 mod edit;
+pub mod l10n;
 pub mod local_history;
 mod log;
 mod marker;

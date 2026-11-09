@@ -37,6 +37,7 @@ use std::{
 };
 
 use crate::listing::{self, Access, EntryKind, Identity};
+use kiln_l10n::tr;
 
 /// Why a name typed for a new or renamed entry is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,13 +58,13 @@ pub enum NameError {
 
 impl fmt::Display for NameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Empty => "a name is required",
-            Self::Dot => "`.` is not a name",
-            Self::DotDot => "`..` is not a name",
-            Self::Nul => "a name can't hold a NUL",
-            Self::EmptyComponent => "a name can't have an empty part between `/`s",
-            Self::Separator => "a name can't hold a `/` here",
+        f.write_str(&match self {
+            Self::Empty => kiln_l10n::tr!("project-name-empty"),
+            Self::Dot => kiln_l10n::tr!("project-name-dot"),
+            Self::DotDot => kiln_l10n::tr!("project-name-dot-dot"),
+            Self::Nul => kiln_l10n::tr!("project-name-nul"),
+            Self::EmptyComponent => kiln_l10n::tr!("project-name-empty-component"),
+            Self::Separator => kiln_l10n::tr!("project-name-separator"),
         })
     }
 }
@@ -162,7 +163,7 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
     if existing == above.len() && listing::stat_at(&parent, last).is_ok() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "something by that name already exists",
+            tr!("project-io-name-exists").to_string(),
         ));
     }
 
@@ -228,13 +229,13 @@ pub fn open_truncated(root: &Path, path: &Path) -> io::Result<File> {
     reach(Point::Truncating)?;
     let file = open_for_writing(&target.parent, target.name).map_err(|err| {
         if listing::is_symlink_error(&err) {
-            invalid("a symlink, which could lead outside the project root")
+            invalid(tr!("project-io-symlink-outside-root").to_string())
         } else {
             err
         }
     })?;
     if !file.metadata()?.is_file() {
-        return Err(invalid("not a regular file"));
+        return Err(invalid(tr!("project-io-not-regular-file").to_string()));
     }
     file.set_len(0)?;
     Ok(file)
@@ -298,7 +299,7 @@ fn rename_to_temp(dir: &File, old: &OsStr, what: &str) -> io::Result<OsString> {
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
-        "no free temporary name to rename through",
+        tr!("project-io-no-temp-name").to_string(),
     ))
 }
 
@@ -402,16 +403,21 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
     let path = target
         .path
         .to_str()
-        .ok_or_else(|| invalid("a path that isn't UTF-8"))?;
+        .ok_or_else(|| invalid(tr!("project-io-path-not-utf8").to_string()))?;
     let folder_path = target
         .path
         .parent()
         .and_then(Path::to_str)
-        .ok_or_else(|| invalid("a path that isn't UTF-8"))?;
+        .ok_or_else(|| invalid(tr!("project-io-path-not-utf8").to_string()))?;
     let reference_url = |path: &str| {
         NSURL::fileURLWithPath(&NSString::from_str(path))
             .fileReferenceURL()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no file reference"))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    tr!("project-io-no-file-reference").to_string(),
+                )
+            })
     };
     let reference = reference_url(path)?;
     let folder = reference_url(folder_path)?;
@@ -427,9 +433,7 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
         .zip(seen(&folder, folder_stat))
         .is_some_and(|(entry, folder)| names_the_entry(entry, folder));
     if !named {
-        return Err(invalid(
-            "the path no longer leads to the entry found under the project root",
-        ));
+        return Err(invalid(tr!("project-io-path-no-longer-leads").to_string()));
     }
     reach(Point::Checked)?;
     #[cfg(any(test, feature = "test-support"))]
@@ -520,7 +524,7 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
 fn trash_target(_: &Target<'_>) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "no Trash on this system",
+        tr!("project-io-no-trash").to_string(),
     ))
 }
 
@@ -545,6 +549,7 @@ mod freedesktop {
         rename_noreplace,
     };
     use crate::listing::{self, Access};
+    use kiln_l10n::tr;
 
     /// Where an entry can be renamed to: the same device, and the same mount
     /// (a rename between two mounts fails, even of one file system).
@@ -570,7 +575,7 @@ mod freedesktop {
                 None => fdinfo_mount(file, metadata.ino()).map_err(|err| {
                     io::Error::new(
                         io::ErrorKind::Unsupported,
-                        format!("can't tell which mount the entry is on: {err}"),
+                        tr!("project-io-mount-unknown", detail = err.to_string()).to_string(),
                     )
                 })?,
             };
@@ -636,7 +641,7 @@ mod freedesktop {
         if stat.f_type as i64 != libc::PROC_SUPER_MAGIC as i64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "/proc is not a procfs",
+                tr!("project-io-mount-not-procfs").to_string(),
             ));
         }
         let mut text = String::new();
@@ -652,15 +657,17 @@ mod freedesktop {
                 (name == key).then(|| value.trim().parse::<u64>().ok())
             })
         };
-        let bad = |what| io::Error::new(io::ErrorKind::InvalidData, what);
+        let bad = |what: kiln_l10n::SharedString| {
+            io::Error::new(io::ErrorKind::InvalidData, what.to_string())
+        };
         match field("ino") {
             Some(Some(found)) if found == ino => {}
             None => {}
-            Some(_) => return Err(bad("fdinfo for another file")),
+            Some(_) => return Err(bad(tr!("project-io-mount-fdinfo-other-file"))),
         }
         field("mnt_id")
             .flatten()
-            .ok_or_else(|| bad("no mount id in fdinfo"))
+            .ok_or_else(|| bad(tr!("project-io-mount-no-mount-id")))
     }
 
     /// The home trash: where it is, and the volume it is (or would be) on.
@@ -696,13 +703,23 @@ mod freedesktop {
                     .filter(|home| !home.is_empty())
                     .map(|home| Path::new(&home).join(".local/share"))
             })
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no home folder"))?;
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    tr!("project-io-no-home").to_string(),
+                )
+            })?;
         let path = data.join("Trash");
         // The volume of the nearest folder there is, should it not exist yet.
         let nearest = path
             .ancestors()
             .find_map(|dir| open_path(dir).ok())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no home folder"))?;
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    tr!("project-io-no-home").to_string(),
+                )
+            })?;
         let volume = Volume::of(&nearest)?;
         Ok(HomeTrash { path, volume })
     }
@@ -746,7 +763,7 @@ mod freedesktop {
         if !owned(&own) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "the volume's trash belongs to someone else",
+                tr!("project-io-trash-not-yours").to_string(),
             ));
         }
         Ok((own, climbed))
@@ -809,7 +826,7 @@ mod freedesktop {
         }
         Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "no free name in the trash",
+            tr!("project-io-no-trash-name").to_string(),
         ))
     }
 
@@ -895,7 +912,7 @@ pub fn copy_into(root: &Path, path: &Path, dir: &Path) -> io::Result<PathBuf> {
     let dir_names = names_under(&root.path, dir)?;
     let to = root.open_dir(&dir_names)?;
     if source.kind == EntryKind::Dir && within(&to, source.id, &root)? {
-        return Err(invalid("a folder can't be copied into itself"));
+        return Err(invalid(tr!("project-io-copy-into-itself").to_string()));
     }
     reach(Point::Pasting)?;
     let name = copy_first_free(&target, source.kind, &to, 0)?;
@@ -937,7 +954,7 @@ fn copy_first_free(
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
-        "no free name for a copy",
+        tr!("project-io-no-copy-name").to_string(),
     ))
 }
 
@@ -984,7 +1001,7 @@ pub fn paste_name(root: &Path, path: &Path, dir: &Path) -> io::Result<OsString> 
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
-        "no free name for a copy",
+        tr!("project-io-no-copy-name").to_string(),
     ))
 }
 
@@ -1015,7 +1032,7 @@ pub fn move_into(
     let dir_names = names_under(&root.path, dir)?;
     let to_dir = root.open_dir(&dir_names)?;
     if source.kind == EntryKind::Dir && within(&to_dir, source.id, &root)? {
-        return Err(invalid("a folder can't be moved into itself"));
+        return Err(invalid(tr!("project-io-move-into-itself").to_string()));
     }
     let mut to = root.path.clone();
     to.extend(&dir_names);
@@ -1028,7 +1045,7 @@ pub fn move_into(
     if let Err(err) = rename_noreplace(&target.parent, target.name, &to_dir, name) {
         // The system's refusal of a folder moved inside itself since.
         if source.kind == EntryKind::Dir && within(&to_dir, source.id, &root).unwrap_or(false) {
-            return Err(invalid("a folder can't be moved into itself"));
+            return Err(invalid(tr!("project-io-move-into-itself").to_string()));
         }
         return Err(err);
     }
@@ -1224,7 +1241,7 @@ fn set_modes(dir: &File, name: &OsStr, copying: &Copying) -> io::Result<()> {
     let replaced = || {
         io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "a folder of the copy was replaced while it was made",
+            tr!("project-io-copy-folder-replaced").to_string(),
         )
     };
     for (path, id, mode) in &copying.folders {
@@ -1261,7 +1278,7 @@ fn copy_new(
         if top {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "only files, folders and symlinks can be duplicated",
+                tr!("project-io-duplicate-kind").to_string(),
             ));
         }
         log::warn!("duplicate: left out {name:?}, neither a file, folder nor symlink");
@@ -1355,7 +1372,7 @@ fn copy_new(
                     if let Copied::Taken = copied? {
                         return Err(io::Error::new(
                             io::ErrorKind::AlreadyExists,
-                            "an entry appeared in a new copy",
+                            tr!("project-io-entry-in-new-copy").to_string(),
                         ));
                     }
                 }
@@ -1517,7 +1534,7 @@ impl Root {
     fn resolve<'p>(&self, path: &'p Path) -> io::Result<Target<'p>> {
         let names = names_under(&self.path, path)?;
         let Some((name, above)) = names.split_last() else {
-            return Err(invalid("the project root itself"));
+            return Err(invalid(tr!("project-io-project-root-itself").to_string()));
         };
         let mut full = self.path.clone();
         full.extend(&names);
@@ -1534,7 +1551,7 @@ impl Root {
 fn names_under<'p>(root: &Path, path: &'p Path) -> io::Result<Vec<&'p OsStr>> {
     let rel = if path.is_absolute() {
         path.strip_prefix(root)
-            .map_err(|_| invalid("a path outside the project root"))?
+            .map_err(|_| invalid(tr!("project-io-path-outside-root").to_string()))?
     } else {
         path
     };
@@ -1542,15 +1559,17 @@ fn names_under<'p>(root: &Path, path: &'p Path) -> io::Result<Vec<&'p OsStr>> {
         .filter_map(|component| match component {
             Component::Normal(name) => Some(Ok(name)),
             Component::CurDir => None,
-            Component::ParentDir => Some(Err(invalid("`..` in a path under the project root"))),
-            Component::RootDir | Component::Prefix(_) => {
-                Some(Err(invalid("a path outside the project root")))
-            }
+            Component::ParentDir => Some(Err(invalid(
+                tr!("project-io-dotdot-in-root-path").to_string(),
+            ))),
+            Component::RootDir | Component::Prefix(_) => Some(Err(invalid(
+                tr!("project-io-path-outside-root").to_string(),
+            ))),
         })
         .collect()
 }
 
-fn invalid(what: &'static str) -> io::Error {
+fn invalid(what: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, what)
 }
 
@@ -1569,11 +1588,11 @@ fn open_dir_at(dir: &File, name: &OsStr, access: Access) -> io::Result<File> {
         let not_dir = listing::is_not_dir_error(&err) || listing::is_symlink_error(&err);
         match listing::stat_at(dir, name) {
             Ok(stat) if not_dir && stat.kind == EntryKind::Symlink => {
-                invalid("a symlinked folder, which could lead outside the project root")
+                invalid(tr!("project-io-symlinked-folder-outside-root").to_string())
             }
             Ok(stat) if not_dir && stat.kind == EntryKind::File => io::Error::new(
                 io::ErrorKind::NotADirectory,
-                "a file where a folder should be",
+                tr!("project-io-file-for-folder").to_string(),
             ),
             _ => err,
         }
@@ -1682,7 +1701,7 @@ fn rename_noreplace(from_dir: &File, from: &OsStr, to_dir: &File, to: &OsStr) ->
 fn symlink_at(_target: &OsStr, _dir: &File, _name: &OsStr) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "copying a symlink isn't supported on Windows",
+        tr!("project-io-symlink-copy-windows").to_string(),
     ))
 }
 
@@ -1690,7 +1709,7 @@ fn symlink_at(_target: &OsStr, _dir: &File, _name: &OsStr) -> io::Result<()> {
 fn read_link_at(_dir: &File, _name: &OsStr) -> io::Result<OsString> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "copying a symlink isn't supported on Windows",
+        tr!("project-io-symlink-copy-windows").to_string(),
     ))
 }
 
@@ -1799,7 +1818,7 @@ fn own_dir(dir: &File, name: &OsStr, expected: Option<Identity>) -> io::Result<F
 fn replaced() -> io::Error {
     io::Error::new(
         io::ErrorKind::AlreadyExists,
-        "a folder was replaced while it was worked on",
+        tr!("project-io-folder-replaced").to_string(),
     )
 }
 
@@ -1836,7 +1855,7 @@ fn own_closed_dir(dir: &File, name: &OsStr, expected: Option<Identity>) -> io::R
 fn own_closed_dir(_: &File, _: &OsStr, _: Option<Identity>) -> io::Result<File> {
     Err(io::Error::new(
         io::ErrorKind::PermissionDenied,
-        "a folder its owner can't read, which can't be opened to change that",
+        tr!("project-io-folder-unreadable").to_string(),
     ))
 }
 
@@ -1907,7 +1926,7 @@ fn no_replace_result(result: io::Result<()>) -> io::Result<()> {
         if unsupported {
             io::Error::new(
                 io::ErrorKind::Unsupported,
-                "this file system can't rename without the risk of replacing",
+                tr!("project-io-rename-may-replace").to_string(),
             )
         } else {
             err

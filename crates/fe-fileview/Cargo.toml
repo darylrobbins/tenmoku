@@ -9,9 +9,11 @@ publish.workspace = true
 
 [dependencies]
 fe-text.workspace = true
+kiln-l10n.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 rand.workspace = true
 tempfile.workspace = true
 

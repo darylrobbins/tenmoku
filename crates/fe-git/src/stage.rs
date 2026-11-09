@@ -50,13 +50,23 @@ const NUL: &str = "--pathspec-file-nul";
 fn nul_joined(names: &[OsString]) -> Result<Vec<u8>, GitError> {
     let mut out = Vec::new();
     for name in names {
-        let bytes = gix::path::os_str_into_bstr(name)
-            .map_err(|_| GitError::Io(format!("{} is not a valid path", name.to_string_lossy())))?;
+        let bytes = gix::path::os_str_into_bstr(name).map_err(|_| {
+            GitError::Io(
+                kiln_l10n::tr!(
+                    "git-invalid-path",
+                    path = name.to_string_lossy().into_owned()
+                )
+                .to_string(),
+            )
+        })?;
         if bytes.contains(&0) {
-            return Err(GitError::Io(format!(
-                "{} is not a valid path",
-                name.to_string_lossy()
-            )));
+            return Err(GitError::Io(
+                kiln_l10n::tr!(
+                    "git-invalid-path",
+                    path = name.to_string_lossy().into_owned()
+                )
+                .to_string(),
+            ));
         }
         out.extend_from_slice(bytes.as_ref());
         out.push(0);
@@ -254,10 +264,9 @@ impl Repo {
     fn check_deletable(&self, path: &Path) -> Result<(), GitError> {
         let outside = || GitError::OutsideWorktree(path.to_path_buf());
         if path.symlink_metadata().is_ok_and(|meta| meta.is_dir()) {
-            return Err(GitError::Io(format!(
-                "{} is a directory; discard its files",
-                path.display()
-            )));
+            return Err(GitError::Io(
+                kiln_l10n::tr!("git-is-directory", path = path.display().to_string()).to_string(),
+            ));
         }
         let root = dunce::canonicalize(&self.workdir).map_err(|_| outside())?;
         let repo = self.repo.to_thread_local();

@@ -1,0 +1,15 @@
+all = true
+
+[[file]]
+path = "src/language.rs"
+reason = "The language table: file names such as Makefile and Dockerfile, and tree-sitter query source, none of it UI text"
+
+[[literal]]
+file = "src/fold.rs"
+text = "Comment"
+reason = "A tree-sitter node kind name in the xml grammar"
+
+[[literal]]
+file = "src/outline.rs"
+text = "contained outline"
+reason = "A label for a compiled query in developer diagnostics"

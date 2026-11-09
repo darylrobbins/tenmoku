@@ -4,6 +4,7 @@
 //! there's no path, or `<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE`
 //! sections, each marker exactly so on a line of its own.
 
+use kiln_l10n::tr;
 use std::{fmt, path::Component};
 
 /// The line opening a section's search text.
@@ -45,12 +46,9 @@ impl fmt::Display for EditBlockError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EditBlockError::Malformed { line } => {
-                write!(
-                    f,
-                    "its SEARCH/REPLACE markers don't match up at line {line}"
-                )
+                f.write_str(&tr!("chat-edit-markers-malformed", line = line.to_string()))
             }
-            EditBlockError::Path(path) => write!(f, "{path} is outside the folder"),
+            EditBlockError::Path(path) => f.write_str(&tr!("chat-edit-path-outside", path = path)),
         }
     }
 }

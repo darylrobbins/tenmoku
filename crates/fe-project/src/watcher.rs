@@ -17,6 +17,8 @@ use std::{
 
 #[cfg(target_os = "linux")]
 use ignore::gitignore::Gitignore;
+#[cfg(target_os = "linux")]
+use kiln_l10n::tr;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 #[cfg(target_os = "linux")]
@@ -377,9 +379,8 @@ impl Dirs {
                 match self.watch(&path, id) {
                     Ok(true) => {}
                     Ok(false) if path == dir => {
-                        return Err(
-                            notify::Error::generic("replaced while being watched").add_path(path)
-                        );
+                        return Err(notify::Error::generic(&tr!("project-io-watched-replaced"))
+                            .add_path(path));
                     }
                     Ok(false) => continue,
                     Err(err) if matches!(err.kind, notify::ErrorKind::MaxFilesWatch) => {

@@ -30,6 +30,7 @@ mod conversation;
 mod edits;
 mod fake;
 mod inline;
+pub mod l10n;
 mod provider;
 mod request;
 mod store;

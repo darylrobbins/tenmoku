@@ -2459,7 +2459,7 @@ fn completion_item(item: fe_lsp::CompletionItem) -> CompletionItem {
     CompletionItem {
         label: item.label.clone(),
         label_detail,
-        kind: item.kind.map(|kind| fe_lsp::kind_name(kind).to_owned()),
+        kind: item.kind.map(|kind| fe_lsp::kind_label(kind).to_string()),
         detail: item.detail.clone(),
         documentation: item.documentation.clone(),
         filter_text: item.filter_text.clone(),

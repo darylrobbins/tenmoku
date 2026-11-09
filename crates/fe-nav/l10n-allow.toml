@@ -1,0 +1,11 @@
+all = true
+
+[[literal]]
+file = "src/search.rs"
+text = "fe-nav symbols"
+reason = "An OS thread name, shown only in debuggers"
+
+[[literal]]
+file = "src/search.rs"
+text = "fe-nav fallback"
+reason = "An OS thread name, shown only in debuggers"

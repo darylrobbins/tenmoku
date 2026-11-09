@@ -9,11 +9,13 @@ publish.workspace = true
 
 [dependencies]
 dunce.workspace = true
+kiln-l10n.workspace = true
 gix.workspace = true
 imara-diff.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 tempfile.workspace = true
 
 [lints]

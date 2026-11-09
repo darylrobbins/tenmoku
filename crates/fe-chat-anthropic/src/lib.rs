@@ -14,6 +14,7 @@
 
 mod error;
 mod events;
+pub mod l10n;
 mod net;
 mod provider;
 mod sse;

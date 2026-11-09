@@ -1,0 +1,116 @@
+all = true
+
+[[literal]]
+file = "src/branch.rs"
+text = "refs/remotes/{remote}/{branch}"
+reason = "A git ref name passed to git"
+
+[[literal]]
+file = "src/branch.rs"
+text = "refs/heads/{name}"
+reason = "A git ref name passed to git"
+
+[[literal]]
+file = "src/branch.rs"
+text = "refs/heads/{local}"
+reason = "A git ref name passed to git"
+
+[[literal]]
+file = "src/branch.rs"
+text = "refs/remotes/{name}"
+reason = "A git ref name passed to git"
+
+[[literal]]
+file = "src/branch.rs"
+text = "tenmoku: before switching to {name}"
+reason = "A stash message written into the user's repository, in the same English as git's own stash messages"
+
+[[literal]]
+file = "src/commit.rs"
+text = "fe-git-trace-{}-{nanos:x}-{}"
+reason = "A scratch directory name"
+
+[[literal]]
+file = "src/commit_log.rs"
+text = "--skip={skip}"
+reason = "A git argument"
+
+[[literal]]
+file = "src/commit_log.rs"
+text = "--max-count={limit}"
+reason = "A git argument"
+
+[[literal]]
+file = "src/log.rs"
+text = "--max-count={limit}"
+reason = "A git argument"
+
+[[literal]]
+file = "src/refs.rs"
+text = "--format=%(refname) %(upstream) %(upstream:track,nobracket)"
+reason = "A git argument"
+
+[[literal]]
+file = "src/remote.rs"
+text = "Authentication failed"
+reason = "Matches git's English stderr (LC_ALL=C is set for every git run)"
+
+[[literal]]
+file = "src/remote.rs"
+text = "could not read Username"
+reason = "Matches git's English stderr (LC_ALL=C)"
+
+[[literal]]
+file = "src/remote.rs"
+text = "could not read Password"
+reason = "Matches git's English stderr (LC_ALL=C)"
+
+[[literal]]
+file = "src/remote.rs"
+text = "Permission denied ("
+reason = "Matches ssh's English stderr (LC_ALL=C)"
+
+[[literal]]
+file = "src/remote.rs"
+text = "HEAD:{merge}"
+reason = "A git refspec"
+
+[[literal]]
+file = "src/remote.rs"
+text = "branch.{branch}.mergeOptions"
+reason = "A git config key"
+
+[[literal]]
+file = "src/remote.rs"
+text = "branch.{branch}.remote"
+reason = "A git config key"
+
+[[literal]]
+file = "src/remote.rs"
+text = "branch.{branch}.merge"
+reason = "A git config key"
+
+[[literal]]
+file = "src/remote.rs"
+text = "ssh -o BatchMode=yes"
+reason = "A command line handed to git as core.sshCommand"
+
+[[literal]]
+file = "src/remote_link.rs"
+text = "https://github.com/{}/commit/{id}"
+reason = "A URL"
+
+[[literal]]
+file = "src/stash.rs"
+text = "No local changes to save"
+reason = "Matches git stash's English stdout (LC_ALL=C); the error shown to users is the git-stash-nothing message"
+
+[[literal]]
+file = "src/stash.rs"
+text = "--format=%H %gs"
+reason = "A git argument"
+
+[[literal]]
+file = "src/stash.rs"
+text = "stash@{{{index}}}"
+reason = "A git stash ref"

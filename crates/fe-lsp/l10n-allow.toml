@@ -1,0 +1,166 @@
+all = true
+
+[[file]]
+path = "src/hover.rs"
+reason = "Markdown fence template, not prose"
+
+[[file]]
+path = "src/registry.rs"
+reason = "File names (Cargo.lock, Cargo.toml)"
+
+[[file]]
+path = "src/tests/fake.rs"
+reason = "Test-support fake server text"
+
+[[file]]
+path = "src/tsserver.rs"
+reason = "Describes the tsserver protocol reply that failed; goes to the diagnostics log, never a UI"
+
+[[file]]
+path = "src/semantic_tokens.rs"
+reason = "Log text"
+
+[[file]]
+path = "src/pull.rs"
+reason = "Why a pulled diagnostics reply is dropped; only ever logged (log::debug! in document.rs)"
+
+[[file]]
+path = "src/registration.rs"
+reason = "Refusal text sent back to the language server in a ResponseError (protocol, read by the server's author), not shown to the user"
+
+[[file]]
+path = "src/glob.rs"
+reason = "Pattern errors become registration refusals sent back to the server (protocol text)"
+
+[[file]]
+path = "src/identity.rs"
+reason = "Test-hook panic descriptions (wait helper), never shown"
+
+[[file]]
+path = "src/notify.rs"
+reason = "A doc comment inside a macro and a log::warn! line"
+
+[[literal]]
+file = "src/completion.rs"
+text = "enum member"
+reason = "kind_name is the stable English kind id that callers match on; menus use kind_label (lsp-kind-* keys)"
+
+[[literal]]
+file = "src/completion.rs"
+text = "type parameter"
+reason = "kind_name is the stable English kind id that callers match on; menus use kind_label (lsp-kind-* keys)"
+
+[[literal]]
+file = "src/navigation.rs"
+text = "language server"
+reason = "NavigationProvider::NAME, a provider id hosts compare, public const"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "printf \"%s\\n\" \"$PATH\" >> \"$FASTEDIT_LOGIN_PATH_FILE\""
+reason = "Shell script run by the login shell"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "fe-lsp login shell"
+reason = "Thread name"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "fastedit-login-path-{}-{random:016x}"
+reason = "Temp file name"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "couldn't be run: {err}"
+reason = "Login-shell PATH capture failure; only logged (log::warn! in LoginShell)"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "stopped without an answer"
+reason = "Login-shell PATH capture failure; only logged"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "took over {} s to print its PATH"
+reason = "Login-shell PATH capture failure; only logged"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "had nowhere to write its PATH: {err}"
+reason = "Login-shell PATH capture failure; only logged"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "didn't start: {err}"
+reason = "Login-shell PATH capture failure; only logged"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "couldn't be waited for: {err}"
+reason = "Login-shell PATH capture failure; only logged"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "failed: {status}"
+reason = "Login-shell PATH capture failure; only logged"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "wrote a PATH that couldn't be read back: {err}"
+reason = "Login-shell PATH capture failure; only logged"
+
+[[literal]]
+file = "src/launcher.rs"
+text = "ended without writing its PATH"
+reason = "Login-shell PATH capture failure; only logged"
+
+[[literal]]
+file = "src/server.rs"
+text = "fe-lsp {}"
+reason = "Thread name"
+
+[[literal]]
+file = "src/server.rs"
+text = "the server's session ended"
+reason = "failureReason sent back to the server in a workspace/applyEdit reply (protocol text)"
+
+[[literal]]
+file = "src/server.rs"
+text = "{}: shutdown: {err}"
+reason = "log::info! text inside select_biased!, which the lint can't see into"
+
+[[literal]]
+file = "src/server.rs"
+text = "{}: no answer to shutdown within {} s"
+reason = "log::info! text inside select_biased!"
+
+[[literal]]
+file = "src/server.rs"
+text = "{}: killed before it exited"
+reason = "log::info! text inside select_biased!"
+
+[[literal]]
+file = "src/server.rs"
+text = "{} exited: {exit:?}"
+reason = "log::info! text inside select_biased!"
+
+[[literal]]
+file = "src/server.rs"
+text = "{} still running {} s after exit; killing it"
+reason = "log::info! text inside select_biased!"
+
+[[literal]]
+file = "src/server.rs"
+text = "Tenmoku"
+reason = "The client name sent in initialize clientInfo (protocol, a product name)"
+
+[[literal]]
+file = "src/workspace_edit.rs"
+text = "not answered"
+reason = "failureReason sent back to the server in a workspace/applyEdit reply (protocol text)"
+
+[[literal]]
+file = "src/workspace_edit.rs"
+text = "not answered in time"
+reason = "failureReason sent back to the server in a workspace/applyEdit reply (protocol text)"

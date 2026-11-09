@@ -16,14 +16,15 @@ http.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 kiln-command.workspace = true
+kiln-l10n.workspace = true
 log.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
 sha2.workspace = true
 smol-hyper.workspace = true
-thiserror.workspace = true
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 async-io.workspace = true
 
 [lints]

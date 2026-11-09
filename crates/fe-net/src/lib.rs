@@ -31,6 +31,7 @@
 mod body;
 mod error;
 pub mod grammar_fetch;
+pub mod l10n;
 mod stream;
 mod target;
 

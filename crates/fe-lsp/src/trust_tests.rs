@@ -11,7 +11,7 @@ use fe_config::settings::{LspServerSettings, LspSettings};
 use lsp_types::Url;
 use serde_json::json;
 
-use crate::event::NOT_OPEN;
+use crate::event::not_open;
 use crate::fake::{Echo, FakeServer, Record, Script, Writes};
 use crate::{LspError, LspEvent, LspManager, ManualClock, ServerId, ServerSpec, ServerStatus};
 
@@ -123,7 +123,7 @@ fn untrusted_roots_start_nothing() {
     let request = manager.document_request::<Echo>(rs.id(), rs.version(), |_| json!({}));
     assert!(matches!(
         async_io::block_on(request),
-        Err(LspError::Unavailable(why)) if why == NOT_OPEN
+        Err(LspError::Unavailable(why)) if why == not_open()
     ));
 
     rs.edit([(0..0, "// edited\n")], Origin::User).unwrap();

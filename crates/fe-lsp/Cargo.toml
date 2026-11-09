@@ -15,6 +15,7 @@ test-support = []
 async-io.workspace = true
 async-lsp.workspace = true
 async-process.workspace = true
+kiln-l10n.workspace = true
 futures.workspace = true
 globset.workspace = true
 log.workspace = true
@@ -45,6 +46,7 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 dunce.workspace = true
 tempfile.workspace = true
 

@@ -2136,6 +2136,7 @@ dependencies = [
  "fe-text",
  "gpui-pre-sum-tree",
  "imara-diff",
+ "kiln-l10n",
  "proptest",
  "rand 0.9.5",
  "tempfile",
@@ -2148,6 +2149,7 @@ version = "0.1.1"
 dependencies = [
  "fe-buffer",
  "futures",
+ "kiln-l10n",
  "serde",
  "serde_json",
 ]
@@ -2161,6 +2163,7 @@ dependencies = [
  "futures",
  "http",
  "kiln-command",
+ "kiln-l10n",
  "log",
  "serde",
  "serde_json",
@@ -2249,6 +2252,7 @@ name = "fe-fileview"
 version = "0.1.1"
 dependencies = [
  "fe-text",
+ "kiln-l10n",
  "libc",
  "rand 0.9.5",
  "tempfile",
@@ -2269,6 +2273,7 @@ dependencies = [
  "dunce",
  "gix",
  "imara-diff",
+ "kiln-l10n",
  "tempfile",
  "thiserror 2.0.21",
 ]
@@ -2346,6 +2351,7 @@ dependencies = [
  "fe-text",
  "futures",
  "globset",
+ "kiln-l10n",
  "log",
  "lsp-types",
  "rustix",
@@ -2381,6 +2387,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "image",
+ "kiln-l10n",
  "kiln-platform",
  "kiln-ui",
  "tempfile",
@@ -2398,6 +2405,7 @@ dependencies = [
  "fe-syntax",
  "fe-text",
  "frizbee",
+ "kiln-l10n",
  "libc",
  "protobuf",
  "scip",
@@ -2416,12 +2424,12 @@ dependencies = [
  "http-body-util",
  "hyper",
  "kiln-command",
+ "kiln-l10n",
  "log",
  "rustls",
  "rustls-platform-verifier",
  "sha2 0.10.9",
  "smol-hyper",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2453,6 +2461,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "kiln-l10n",
  "libc",
  "log",
  "notify",
@@ -2471,6 +2480,7 @@ dependencies = [
  "fe-buffer",
  "fe-grammar-csv",
  "fe-syntax",
+ "kiln-l10n",
  "log",
  "proptest",
  "rand 0.9.5",
@@ -2545,6 +2555,7 @@ dependencies = [
  "chardetng",
  "criterion",
  "encoding_rs",
+ "kiln-l10n",
  "proptest",
  "rand 0.9.5",
  "ropey",

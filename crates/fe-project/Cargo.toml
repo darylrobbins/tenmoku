@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+kiln-l10n.workspace = true
 dunce.workspace = true
 frizbee.workspace = true
 grep-matcher.workspace = true
@@ -53,6 +54,7 @@ windows-sys = { workspace = true, features = [
 test-support = []
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 criterion.workspace = true
 # This crate's own integration tests trash into the test trash too.
 fe-project = { path = ".", features = ["test-support"] }

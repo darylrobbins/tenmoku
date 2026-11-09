@@ -37,6 +37,7 @@
 mod build;
 mod extract;
 mod index;
+pub mod l10n;
 mod provider;
 mod references;
 mod scip;

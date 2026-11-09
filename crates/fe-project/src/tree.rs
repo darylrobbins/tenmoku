@@ -1,6 +1,7 @@
 //! The lazy file tree: an arena of nodes, loaded a directory at a time, with a
 //! cached flattened view for a virtual list.
 
+use kiln_l10n::tr;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
@@ -201,7 +202,11 @@ impl FileTree {
         if !fs::metadata(&root)?.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::NotADirectory,
-                format!("{} is not a directory", root.display()),
+                tr!(
+                    "project-io-not-directory",
+                    path = root.display().to_string()
+                )
+                .to_string(),
             ));
         }
         let name = root

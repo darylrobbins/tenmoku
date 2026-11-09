@@ -1,32 +1,44 @@
 //! [`NetError`]: why a request failed.
 
+use kiln_l10n::tr;
+
 /// Why a request failed, or its body stopped.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NetError {
     /// The URL's host is outside the grants. Returned before any DNS lookup
     /// or socket.
-    #[error("{0} is not a host this client may reach")]
     HostNotAllowed(String),
     /// The URL isn't `https`, or `http` to `127.0.0.1` or `[::1]`.
-    #[error("only https URLs are allowed (http only to 127.0.0.1 or [::1])")]
     Scheme,
     /// The host couldn't be resolved or connected to.
-    #[error("couldn't connect: {0}")]
     Connect(String),
     /// The TLS handshake failed, as when the certificate isn't trusted.
-    #[error("TLS failed: {0}")]
     Tls(String),
     /// The connection broke after it was made.
-    #[error("the connection broke: {0}")]
     Io(String),
     /// The request couldn't be made, or the server's reply isn't HTTP/1.1.
-    #[error("HTTP error: {0}")]
     Http(String),
     /// Connecting took longer than the connect timeout, or the server sent
     /// nothing for the idle timeout.
-    #[error("timed out")]
     Timeout,
 }
+
+impl std::fmt::Display for NetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            NetError::HostNotAllowed(host) => tr!("net-host-not-allowed", host = host),
+            NetError::Scheme => tr!("net-scheme"),
+            NetError::Connect(detail) => tr!("net-connect", detail = detail),
+            NetError::Tls(detail) => tr!("net-tls", detail = detail),
+            NetError::Io(detail) => tr!("net-io", detail = detail),
+            NetError::Http(detail) => tr!("net-http", detail = detail),
+            NetError::Timeout => tr!("net-timeout"),
+        };
+        f.write_str(&text)
+    }
+}
+
+impl std::error::Error for NetError {}
 
 impl NetError {
     /// The error a hyper error stands for: [`NetError::Io`] when the

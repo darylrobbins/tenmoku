@@ -10,8 +10,12 @@ publish.workspace = true
 [dependencies]
 fe-buffer.workspace = true
 futures.workspace = true
+kiln-l10n.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 
 [lints]
 workspace = true

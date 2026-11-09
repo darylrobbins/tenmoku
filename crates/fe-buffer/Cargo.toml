@@ -11,9 +11,11 @@ publish.workspace = true
 fe-text.workspace = true
 imara-diff.workspace = true
 sum-tree.workspace = true
+kiln-l10n.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 criterion.workspace = true
 proptest.workspace = true
 rand.workspace = true

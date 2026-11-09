@@ -32,6 +32,7 @@ use stamp::Stamp;
 
 mod find;
 mod index;
+pub mod l10n;
 mod source;
 mod stamp;
 
@@ -50,7 +51,7 @@ pub enum ReadError {
     /// The file no longer holds what was recorded at open: a read came back
     /// short of the recorded length, or hit end of file inside it. Reopen the
     /// file to see its current contents.
-    #[error("the file changed on disk since it was opened")]
+    #[error("{}", kiln_l10n::tr!("fileview-changed"))]
     Changed,
     /// Any other I/O failure.
     #[error(transparent)]
@@ -110,7 +111,7 @@ impl FileView {
         if file.metadata()?.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::IsADirectory,
-                "a directory has no text to view",
+                kiln_l10n::tr!("fileview-directory").to_string(),
             ));
         }
         let stamp = Stamp::of_file(&file)?;

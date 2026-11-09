@@ -4,6 +4,7 @@
 //! 1 s then 2 s apart plus up to 250 ms of jitter. Nothing is retried once
 //! an event has arrived, and 400, 401, 402, 403, 404 and 413 never are.
 
+use kiln_l10n::tr;
 use std::collections::VecDeque;
 use std::collections::hash_map::RandomState;
 use std::fmt;
@@ -239,11 +240,12 @@ impl Run {
                             }
                             continue;
                         }
-                        Some(Err(error)) => format!("the connection broke: {error}"),
-                        None if *started => {
-                            "the connection closed before the reply ended".to_owned()
+                        Some(Err(error)) => {
+                            tr!("chat-anthropic-connection-broke", error = error.to_string())
+                                .to_string()
                         }
-                        None => "the connection closed before the reply started".to_owned(),
+                        None if *started => tr!("chat-anthropic-closed-before-end").to_string(),
+                        None => tr!("chat-anthropic-closed-before-start").to_string(),
                     };
                     if *started {
                         self.phase = Phase::Done;

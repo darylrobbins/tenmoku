@@ -6,6 +6,7 @@
 //! serde_json's `preserve_order`. Message content is sent as it was kept.
 
 use fe_chat::{ApiMessage, ChatRequest, Effort, ErrorKind, ProviderError, Role, SystemBlock};
+use kiln_l10n::tr;
 use serde_json::{Map, Value};
 
 /// The `anthropic-version` header's value.
@@ -27,7 +28,7 @@ pub fn request_body(request: &ChatRequest, fallbacks: bool) -> Result<Vec<u8>, P
         _ => {
             return Err(ProviderError::new(
                 ErrorKind::InvalidRequest,
-                "a request must end with the user's message",
+                tr!("chat-anthropic-request-must-end-with-user").to_string(),
             ));
         }
     }

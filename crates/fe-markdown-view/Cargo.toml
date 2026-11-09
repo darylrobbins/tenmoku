@@ -15,10 +15,12 @@ fe-syntax.workspace = true
 gpui.workspace = true
 # Telling a raster image from an SVG by its bytes, as GPUI does.
 image.workspace = true
+kiln-l10n.workspace = true
 kiln-ui.workspace = true
 usvg.workspace = true
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 # The bundled fonts, which the screenshots example (and fe-gpui's font tests)
 # register and pin, as Tenmoku does.
 fe-fonts = { path = "../fe-fonts" }

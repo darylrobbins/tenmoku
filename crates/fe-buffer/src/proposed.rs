@@ -51,20 +51,29 @@ pub struct HunkView {
     pub status: HunkStatus,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProposalError {
     /// The text the hunk replaces has changed since the proposal was made.
-    #[error("the text under the hunk has changed since it was proposed")]
     Stale,
     /// The hunk was already accepted or rejected, or isn't in this proposal.
-    #[error("the hunk isn't pending")]
     NotPending,
     /// The hunk changes nothing (an empty range replaced by empty text, as a
     /// rebuilt proposal can keep), so there is no transaction to return. The
     /// hunk is accepted all the same and the buffer is unchanged.
-    #[error("the hunk changes nothing")]
     NoChange,
 }
+
+impl std::fmt::Display for ProposalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::Stale => kiln_l10n::tr!("buffer-proposal-stale"),
+            Self::NotPending => kiln_l10n::tr!("buffer-proposal-not-pending"),
+            Self::NoChange => kiln_l10n::tr!("buffer-proposal-no-change"),
+        })
+    }
+}
+
+impl std::error::Error for ProposalError {}
 
 /// Edits against a snapshot of one buffer, as hunks that follow the text.
 ///

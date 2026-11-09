@@ -18,6 +18,7 @@
 //!   command `rust-analyzer.showReferences`, is the host's to run and is
 //!   never sent.
 
+use kiln_l10n::tr;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -222,8 +223,13 @@ impl LspManager {
                 .is_some_and(|provider| provider.commands.contains(&command.command))
         });
         if !listed {
-            let err =
-                LspError::Unavailable(format!("{}: not a command of the server", command.command));
+            let err = LspError::Unavailable(
+                tr!(
+                    "lsp-not-a-server-command",
+                    command = command.command.as_str()
+                )
+                .to_string(),
+            );
             return async move { Err(err) }.boxed();
         }
         self.execute_command(lens.server, command, lens.from)

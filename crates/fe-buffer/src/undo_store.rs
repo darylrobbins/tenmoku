@@ -132,19 +132,28 @@ impl UndoEntry {
 
 /// Why [`Buffer::import_undo`](crate::Buffer::import_undo) left a buffer as
 /// it was.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UndoImportError {
     /// The buffer's text isn't the one the history ends at: the file changed
     /// since the record was written.
-    #[error("the text isn't the one the undo history ends at")]
     Stale,
     /// The buffer already has undo history of its own.
-    #[error("the buffer already has undo history")]
     Edited,
     /// The record's edits don't apply to its own text.
-    #[error("the undo history doesn't apply to its text")]
     Invalid,
 }
+
+impl std::fmt::Display for UndoImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::Stale => kiln_l10n::tr!("buffer-undo-import-stale"),
+            Self::Edited => kiln_l10n::tr!("buffer-undo-import-edited"),
+            Self::Invalid => kiln_l10n::tr!("buffer-undo-import-invalid"),
+        })
+    }
+}
+
+impl std::error::Error for UndoImportError {}
 
 /// A 64-bit hash of `text`'s bytes, written here so it stays the same across
 /// Rust versions and builds: FNV-1a's multiply over eight bytes at a time,

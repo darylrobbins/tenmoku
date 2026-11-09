@@ -12,19 +12,28 @@ use crate::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MarkerId(u64);
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MarkerError {
     /// The snapshot's edit log was compacted past the set's version, so the
     /// edits since can't be replayed; rebuild the set from the snapshot.
-    #[error("the edit log was compacted past the marker set's version")]
     Compacted,
     /// The snapshot is of another buffer.
-    #[error("the snapshot is of another buffer")]
     OtherBuffer,
     /// The snapshot is older than the set's version.
-    #[error("the snapshot is older than the marker set")]
     Older,
 }
+
+impl std::fmt::Display for MarkerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::Compacted => kiln_l10n::tr!("buffer-marker-compacted"),
+            Self::OtherBuffer => kiln_l10n::tr!("buffer-marker-other-buffer"),
+            Self::Older => kiln_l10n::tr!("buffer-marker-older"),
+        })
+    }
+}
+
+impl std::error::Error for MarkerError {}
 
 /// Ranges of one buffer's text, each with a value, that follow its edits.
 ///

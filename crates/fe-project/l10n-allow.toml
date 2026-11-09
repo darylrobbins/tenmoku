@@ -1,0 +1,54 @@
+all = true
+
+[[file]]
+path = "src/fixture.rs"
+reason = "Test fixture file names"
+
+[[file]]
+path = "src/fs_ops_test_trash.rs"
+reason = "Test-support module: panic text and doc comments; compiled only for tests"
+
+[[literal]]
+file = "src/fs_ops.rs"
+text = ".fastedit-{what}-{}-{attempt}"
+reason = "A temporary file name pattern, never shown"
+
+[[literal]]
+file = "src/fs_ops.rs"
+text = "no fdinfo"
+reason = "Test-only fault injection (cfg(test)): the error never occurs in production"
+
+[[literal]]
+file = "src/fs_ops.rs"
+text = "/proc/self/fdinfo/{}"
+reason = "A /proc path"
+
+[[literal]]
+file = "src/fs_ops.rs"
+text = "Trash"
+reason = "The freedesktop Trash directory name, a path component"
+
+[[literal]]
+file = "src/fs_ops.rs"
+text = ".Trash-{uid}"
+reason = "The freedesktop per-volume trash directory name"
+
+[[literal]]
+file = "src/fs_ops.rs"
+text = "[Trash Info]\nPath={}\nDeletionDate={}\n"
+reason = "The freedesktop .trashinfo file format"
+
+[[literal]]
+file = "src/fs_ops.rs"
+text = " {n}"
+reason = "The numeric suffix of a copy's file name, appended to the user's own name"
+
+[[literal]]
+file = "src/fs_ops.rs"
+text = "/proc/self/fd/{}"
+reason = "A /proc path"
+
+[[literal]]
+file = "src/listing.rs"
+text = "bad getattrlist name"
+reason = "OS-call diagnostic on a macOS getattrlist name that can't occur from a user path"

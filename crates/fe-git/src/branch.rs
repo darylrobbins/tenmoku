@@ -13,16 +13,16 @@ use crate::{GitError, Repo};
 pub enum SwitchError {
     /// Local changes to these paths (absolute; files, or directories holding
     /// untracked files) differ on the target, so switching would lose them. Nothing was changed.
-    #[error("local changes would be overwritten by switching branches ({} files)", paths.len())]
+    #[error("{}", kiln_l10n::tr!("git-switch-would-overwrite", count = paths.len()))]
     WouldOverwrite { paths: Vec<PathBuf> },
     /// Not a valid branch name.
-    #[error("invalid branch name")]
+    #[error("{}", kiln_l10n::tr!("git-switch-invalid-name"))]
     InvalidName,
     /// No local or remote-tracking branch of that name.
-    #[error("no such branch")]
+    #[error("{}", kiln_l10n::tr!("git-switch-not-found"))]
     NotFound,
     /// Git failed for another reason; `output` is all it printed.
-    #[error("git failed:\n{output}")]
+    #[error("{}", kiln_l10n::tr!("git-switch-failed", output = output.as_str()))]
     Failed { output: String },
     #[error(transparent)]
     Git(#[from] GitError),

@@ -1,0 +1,52 @@
+all = true
+
+[[file]]
+path = "src/blocks.rs"
+reason = "Only debug selectors (ids for tests), never shown"
+
+[[file]]
+path = "src/compact.rs"
+reason = "Only debug selectors (ids for tests), never shown"
+
+[[file]]
+path = "src/view.rs"
+reason = "Only debug selectors (ids for tests), never shown"
+
+[[file]]
+path = "src/inlines.rs"
+reason = "Only debug selectors (ids for tests), never shown"
+
+[[literal]]
+file = "src/image.rs"
+text = "can't decompress the SVG"
+reason = "A cache error that is logged by GPUI; the image shows its alt text"
+
+[[literal]]
+file = "src/image.rs"
+text = "the SVG isn't UTF-8"
+reason = "A cache error that is logged by GPUI; the image shows its alt text"
+
+[[literal]]
+file = "src/image.rs"
+text = "can't parse the SVG"
+reason = "A cache error that is logged by GPUI; the image shows its alt text"
+
+[[literal]]
+file = "src/image.rs"
+text = "md-image-blocked-{n}-alt"
+reason = "A debug selector"
+
+[[literal]]
+file = "src/image.rs"
+text = "md-image-blocked-{n}"
+reason = "A debug selector"
+
+[[literal]]
+file = "src/image.rs"
+text = "md-image-{n}-{state}"
+reason = "A debug selector"
+
+[[literal]]
+file = "src/image.rs"
+text = "md-image-{n}"
+reason = "A debug selector"

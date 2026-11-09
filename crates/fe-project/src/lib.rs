@@ -33,6 +33,7 @@ mod finder;
 pub mod fixture;
 pub mod fs_ops;
 mod ignore_check;
+pub mod l10n;
 mod listing;
 mod search;
 mod tree;

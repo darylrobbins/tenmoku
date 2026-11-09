@@ -45,7 +45,7 @@ impl FileEncoding {
     /// [`FileEncoding::name`].
     pub fn label(self) -> String {
         if self.encoding == UTF_8 && self.bom {
-            "UTF-8 with BOM".to_owned()
+            kiln_l10n::tr!("text-encoding-utf8-bom").to_string()
         } else {
             self.name().to_owned()
         }
@@ -84,11 +84,12 @@ pub enum EncodeError {
 impl std::fmt::Display for EncodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EncodeError::Unmappable { ch, offset } => write!(
-                f,
-                "{ch:?} (U+{:04X}) at byte {offset} can't be represented in the encoding",
-                u32::from(*ch)
-            ),
+            EncodeError::Unmappable { ch, offset } => f.write_str(&kiln_l10n::tr!(
+                "text-encode-unmappable",
+                ch = format!("{ch:?}"),
+                code = format!("{:04X}", u32::from(*ch)),
+                offset = *offset as u64
+            )),
             EncodeError::Io(error) => write!(f, "{error}"),
         }
     }

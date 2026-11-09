@@ -19,6 +19,7 @@ use std::{
 };
 
 use ignore::WalkBuilder;
+use kiln_l10n::tr;
 
 use crate::{
     ignore_check::{
@@ -92,7 +93,7 @@ impl Pattern {
             None => (false, line),
         };
         if negated && body.is_empty() {
-            return Err("illegal exclusion pattern".to_string());
+            return Err(tr!("project-docker-illegal-exclusion").to_string());
         }
         let cleaned = clean(body);
         let key = if negated {
@@ -100,7 +101,8 @@ impl Pattern {
         } else {
             cleaned.clone()
         };
-        let tokens = compile(&cleaned).map_err(|()| "syntax error in pattern".to_string())?;
+        let tokens =
+            compile(&cleaned).map_err(|()| tr!("project-docker-pattern-syntax").to_string())?;
         let suffix = cleaned
             .strip_prefix("**")
             .filter(|rest| {

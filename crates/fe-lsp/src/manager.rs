@@ -19,6 +19,7 @@
 //! server for its language does. [`LspManager::start`] and
 //! [`LspManager::open_on`] aren't gated: there the host names the server.
 
+use kiln_l10n::tr;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io;
@@ -37,7 +38,7 @@ use lsp_types::{ServerCapabilities, Url};
 use crate::clock::{Clock, SystemClock};
 use crate::document::{Admitted, Attached, Opened, Opening, Subscribed, language_id};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
+use crate::event::{LspError, LspEvent, ServerId, ServerStatus, SharedLog, not_open};
 use crate::identity::{Identities, IncarnationId, SessionId};
 use crate::launcher::{Flag, LaunchCancel, ServerLauncher, ServerSpec};
 use crate::registry::{Registry, needs_restart, server_for, server_root};
@@ -807,7 +808,7 @@ impl LspManager {
                 },
             ),
             None => {
-                admit(Err(LspError::Unavailable(NOT_OPEN.into())));
+                admit(Err(LspError::Unavailable(not_open())));
             }
         }
     }
@@ -980,7 +981,9 @@ impl LspManager {
         language: &str,
     ) -> Result<Option<ServerId>, LspError> {
         let uri = Url::from_file_path(path).map_err(|()| {
-            LspError::Unavailable(format!("{} isn't an absolute path", path.display()))
+            LspError::Unavailable(
+                tr!("lsp-not-absolute", path = path.display().to_string()).to_string(),
+            )
         })?;
         self.close(buffer);
         let window = root;
@@ -1290,7 +1293,9 @@ impl LspManager {
         language: &str,
     ) -> Result<(), LspError> {
         let uri = Url::from_file_path(path).map_err(|()| {
-            LspError::Unavailable(format!("{} isn't an absolute path", path.display()))
+            LspError::Unavailable(
+                tr!("lsp-not-absolute", path = path.display().to_string()).to_string(),
+            )
         })?;
         if !self.servers.contains_key(&server) {
             return Err(LspError::ServerDown);
@@ -1555,7 +1560,7 @@ impl LspManager {
         let mut waiting = None;
         let mut refused = None;
         match target {
-            None => refused = Some(LspError::Unavailable(NOT_OPEN.into())),
+            None => refused = Some(LspError::Unavailable(not_open())),
             Some((session, commands)) => match known(&session) {
                 Some(capabilities) => {
                     if let Err(err) = send.take().unwrap()(commands, &capabilities) {

@@ -47,6 +47,7 @@
 //!   its timers on the actor's clock, and every change of what it shows is
 //!   a status event.
 
+use kiln_l10n::tr;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -95,7 +96,7 @@ use crate::clock::Clock;
 use crate::diagnostics::{FileDiagnostic, Inbox};
 use crate::document::{Admitted, Document, Link, Note, Opened, Opening, SentDocument, SyncPolicy};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
+use crate::event::{LspError, LspEvent, ServerId, ServerStatus, SharedLog, not_open};
 use crate::identity::{EndSession, Identities, SessionId};
 use crate::launcher::{
     ExitInfo, Flag, LaunchCancel, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
@@ -385,7 +386,7 @@ impl Server {
         };
         if catch_unwind(AssertUnwindSafe(|| self.serve())).is_err() {
             status.send(ServerStatus::Stopped(Some(
-                "fe-lsp's server thread panicked".into(),
+                tr!("lsp-server-thread-panicked").to_string(),
             )));
         }
     }
@@ -732,7 +733,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// there's nothing to run (Q2 (a)), else the launcher's error.
 fn launch_error(spec: &ServerSpec, err: &io::Error) -> String {
     if err.kind() == io::ErrorKind::NotFound {
-        format!("{} not found", spec.name)
+        tr!("lsp-server-not-found", name = spec.name.as_str()).to_string()
     } else {
         err.to_string()
     }
@@ -978,11 +979,14 @@ impl Actor {
                 Step::Settled(Settled::Abandoned { id, orphan }) => {
                     self.cancel(id);
                     if !self.orphans.adopt(orphan) {
-                        return End::Recycle(format!(
-                            "{} left more than {} cancelled requests unanswered",
-                            self.spec.name,
-                            crate::requests::ORPHANS_MAX,
-                        ));
+                        return End::Recycle(
+                            tr!(
+                                "lsp-server-orphans",
+                                name = self.spec.name.as_str(),
+                                count = crate::requests::ORPHANS_MAX,
+                            )
+                            .to_string(),
+                        );
                     }
                 }
                 Step::Readiness => self.readiness_changed(),
@@ -1003,10 +1007,17 @@ impl Actor {
                     self.readiness_changed();
                 }
                 Step::LoopEnded(ended) => {
-                    return End::Crash(format!("{} stopped: {}", self.spec.name, loop_end(ended)));
+                    return End::Crash(
+                        tr!(
+                            "lsp-server-stopped",
+                            name = self.spec.name.as_str(),
+                            why = loop_end(ended),
+                        )
+                        .to_string(),
+                    );
                 }
                 Step::Exited(exit) => {
-                    return End::Crash(format!("{} {}", self.spec.name, describe(exit)));
+                    return End::Crash(exit_text("lsp-server-crashed", &self.spec.name, exit));
                 }
             }
             #[cfg(test)]
@@ -1435,7 +1446,7 @@ impl Actor {
         let document = self
             .documents
             .get(&buffer)
-            .ok_or_else(|| LspError::Unavailable(NOT_OPEN.into()))?;
+            .ok_or_else(|| LspError::Unavailable(not_open()))?;
         let admitted = document.admit(version)?;
         let others = self
             .documents
@@ -1509,25 +1520,27 @@ impl Actor {
                 () = &mut self.carry.kill => return Started::Stopped,
                 _ = &mut self.carry.stop => return Started::Stopped,
                 ended = &mut *loop_done => {
-                    return Started::Crashed(format!(
-                        "{} stopped before answering initialize: {}",
-                        self.spec.name,
-                        loop_end(ended),
-                    ));
+                    return Started::Crashed(tr!(
+                        "lsp-server-stopped-before-initialize",
+                        name = self.spec.name.as_str(),
+                        why = loop_end(ended),
+                    )
+                    .to_string());
                 }
                 exit = &mut *exited => {
-                    return Started::Crashed(format!(
-                        "{} {} before answering initialize",
-                        self.spec.name,
-                        describe(exit),
+                    return Started::Crashed(exit_text(
+                        "lsp-server-exited-before-initialize",
+                        &self.spec.name,
+                        exit,
                     ));
                 }
                 () = timeout => {
-                    return Started::Crashed(format!(
-                        "{} didn't answer initialize within {} s",
-                        self.spec.name,
-                        INITIALIZE_TIMEOUT.as_secs(),
-                    ));
+                    return Started::Crashed(tr!(
+                        "lsp-server-initialize-timeout",
+                        name = self.spec.name.as_str(),
+                        seconds = INITIALIZE_TIMEOUT.as_secs(),
+                    )
+                    .to_string());
                 }
                 command = self.carry.commands.next() => match command {
                     // So a configuration request during the start gets
@@ -1547,14 +1560,24 @@ impl Actor {
             // The loop has gone, taking the reply's channel with it: report
             // why it went.
             Err(async_lsp::Error::ServiceStopped) => {
-                return Started::Crashed(format!(
-                    "{} stopped before answering initialize: {}",
-                    self.spec.name,
-                    loop_end(loop_done.await),
-                ));
+                return Started::Crashed(
+                    tr!(
+                        "lsp-server-stopped-before-initialize",
+                        name = self.spec.name.as_str(),
+                        why = loop_end(loop_done.await),
+                    )
+                    .to_string(),
+                );
             }
             Err(err) => {
-                return Started::Crashed(format!("{}: initialize failed: {err}", self.spec.name));
+                return Started::Crashed(
+                    tr!(
+                        "lsp-server-initialize-failed",
+                        name = self.spec.name.as_str(),
+                        why = err.to_string(),
+                    )
+                    .to_string(),
+                );
             }
         };
         self.record(result.0);
@@ -1563,11 +1586,14 @@ impl Actor {
             .notify::<Initialized>(InitializedParams {})
             .is_err()
         {
-            return Started::Crashed(format!(
-                "{} stopped after answering initialize: {}",
-                self.spec.name,
-                loop_end(loop_done.await),
-            ));
+            return Started::Crashed(
+                tr!(
+                    "lsp-server-stopped-after-initialize",
+                    name = self.spec.name.as_str(),
+                    why = loop_end(loop_done.await),
+                )
+                .to_string(),
+            );
         }
         lock(&self.readiness).initialized(self.clock.now());
         self.readiness_changed();
@@ -1688,18 +1714,29 @@ impl Actor {
     }
 }
 
-/// How a process went, for a crash's message.
-fn describe(exit: ExitInfo) -> String {
-    match exit {
+/// A crash's message `key`, whole, with how the process went as raw
+/// arguments (`kind` is `code`, `signal` or `plain`) so the message picks
+/// its own wording.
+pub(crate) fn exit_text(key: &str, name: &str, exit: ExitInfo) -> String {
+    let (kind, code, signal) = match exit {
         ExitInfo {
             code: Some(code), ..
-        } => format!("exited with code {code}"),
+        } => ("code", code, 0),
         ExitInfo {
             signal: Some(signal),
             ..
-        } => format!("was killed by signal {signal}"),
-        ExitInfo { .. } => "exited".into(),
-    }
+        } => ("signal", 0, signal),
+        ExitInfo { .. } => ("plain", 0, 0),
+    };
+    kiln_l10n::format(
+        key,
+        &kiln_l10n::Args::new()
+            .with("name", name)
+            .with("kind", kind)
+            .with("code", code)
+            .with("signal", signal),
+    )
+    .to_string()
 }
 
 /// Kills `process` and waits until it has gone, so the instance replacing
@@ -1762,10 +1799,10 @@ pub(crate) fn send_request<R: Request>(
 
 fn loop_end(ended: Result<async_lsp::Result<()>, oneshot::Canceled>) -> String {
     match ended {
-        Ok(Ok(())) => "the connection closed".into(),
-        Ok(Err(async_lsp::Error::Eof)) => "the server closed its output (EOF)".into(),
+        Ok(Ok(())) => tr!("lsp-loop-closed").to_string(),
+        Ok(Err(async_lsp::Error::Eof)) => tr!("lsp-loop-eof").to_string(),
         Ok(Err(err)) => err.to_string(),
-        Err(oneshot::Canceled) => "the connection stopped".into(),
+        Err(oneshot::Canceled) => tr!("lsp-loop-stopped").to_string(),
     }
 }
 
@@ -2138,12 +2175,11 @@ impl Backlog {
 
 /// The error a [`Backlog`] past `max` ends the loop with.
 fn overflow(max: usize) -> io::Error {
-    let over = if max >= 1 << 20 {
-        format!("{} MiB", max >> 20)
+    io::Error::other(if max >= 1 << 20 {
+        tr!("lsp-backlog-over-mib", count = max >> 20).to_string()
     } else {
-        format!("{max} bytes")
-    };
-    io::Error::other(format!("server output backlog over {over}"))
+        tr!("lsp-backlog-over-bytes", count = max).to_string()
+    })
 }
 
 /// Says when a [`Backlog`] has gone past its bound, whether or not the
@@ -2204,7 +2240,7 @@ impl Drop for Drained {
 
 fn workspace_folder(root: &Path) -> Result<WorkspaceFolder, String> {
     let uri = Url::from_file_path(root)
-        .map_err(|()| format!("{} isn't an absolute path", root.display()))?;
+        .map_err(|()| tr!("lsp-not-absolute", path = root.display().to_string()).to_string())?;
     let name = root.file_name().map_or_else(
         || root.display().to_string(),
         |name| name.to_string_lossy().into_owned(),

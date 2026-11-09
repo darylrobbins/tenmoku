@@ -55,7 +55,7 @@ use lsp_types::{
 };
 
 use crate::encoding::{PositionEncoding, from_lsp, to_lsp};
-use crate::event::{BUFFER_CHANGED, LspError, LspEvent, NOT_OPEN, ServerId, TOO_LARGE};
+use crate::event::{LspError, LspEvent, ServerId, buffer_changed, not_open, too_large};
 use crate::identity::{Generation, Identities, IncarnationId, Point, SessionId};
 use crate::pull::{Lists, Pulled, Puller, Source, full_items};
 use crate::server::{Outgoing, Sink};
@@ -957,10 +957,10 @@ impl Document {
     /// (§4.1): the version the server has, if that's `version`.
     pub(crate) fn admit(&self, version: Version) -> Result<SentDocument, LspError> {
         if self.oversized() {
-            return Err(LspError::Unavailable(TOO_LARGE.into()));
+            return Err(LspError::Unavailable(too_large()));
         }
         let Some(synced) = &self.synced else {
-            return Err(LspError::Unavailable(NOT_OPEN.into()));
+            return Err(LspError::Unavailable(not_open()));
         };
         let sent = synced.newest();
         if sent.version == version {
@@ -981,7 +981,7 @@ impl Document {
                     sent.version
                 );
             }
-            Err(LspError::Unavailable(BUFFER_CHANGED.into()))
+            Err(LspError::Unavailable(buffer_changed()))
         }
     }
 

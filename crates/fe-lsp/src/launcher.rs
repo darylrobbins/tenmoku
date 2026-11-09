@@ -2,6 +2,7 @@
 //! a process itself. It asks a [`ServerLauncher`] for a server's byte
 //! streams, on the server's own thread.
 
+use kiln_l10n::tr;
 use std::ffi::{OsStr, OsString};
 use std::future::Future;
 #[cfg(unix)]
@@ -350,7 +351,11 @@ fn launch_local(
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("{} not found", spec.command.display()),
+                tr!(
+                    "lsp-server-not-found",
+                    name = spec.command.display().to_string()
+                )
+                .to_string(),
             )
         })?;
     let mut command = std::process::Command::new(program);
@@ -379,7 +384,7 @@ fn launch_local(
     if cancel.is_cancelled() {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
-            format!("{}'s launch was cancelled", spec.name),
+            tr!("lsp-launch-cancelled", name = spec.name.as_str()).to_string(),
         ));
     }
     let mut child = command.spawn()?;
@@ -397,7 +402,7 @@ fn launch_local(
     let (Some(input), Some(output), stderr) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {
-        return Err(io::Error::other("the child's stdio wasn't piped"));
+        return Err(io::Error::other(tr!("lsp-launch-stdio").to_string()));
     };
     Ok(ServerIo {
         input: Box::pin(input),

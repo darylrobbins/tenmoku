@@ -3,6 +3,7 @@
 
 mod admission;
 mod cancel;
+mod catalogue;
 mod completion;
 mod decode_cost;
 mod diagnostics;

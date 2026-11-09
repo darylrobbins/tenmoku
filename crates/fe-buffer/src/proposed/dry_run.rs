@@ -21,8 +21,8 @@ pub enum Conflict {
 impl fmt::Display for Conflict {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Changed { .. } => f.write_str("the text under this change was edited"),
-            Self::WasStale => f.write_str("this change went stale earlier"),
+            Self::Changed { .. } => f.write_str(&kiln_l10n::tr!("buffer-conflict-changed")),
+            Self::WasStale => f.write_str(&kiln_l10n::tr!("buffer-conflict-was-stale")),
         }
     }
 }

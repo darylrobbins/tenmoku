@@ -1,0 +1,15 @@
+all = true
+
+[[file]]
+path = "src/backup.rs"
+reason = "The backup meta file's keys and its parse diagnostics: an on-disk format and developer-facing errors, never shown as UI text"
+
+[[literal]]
+file = "src/local_history.rs"
+text = ".{name}.tmp"
+reason = "A temporary file name"
+
+[[literal]]
+file = "src/undo_store.rs"
+text = ".{key}.{EXTENSION}.{}-{}.tmp"
+reason = "A temporary file name"

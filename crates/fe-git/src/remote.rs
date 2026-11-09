@@ -41,33 +41,33 @@ pub enum PullMode {
 #[derive(Debug, thiserror::Error)]
 pub enum RemoteError {
     /// HEAD's branch has no upstream remote and there is no `origin`.
-    #[error("no remote to fetch from")]
+    #[error("{}", kiln_l10n::tr!("git-remote-none"))]
     NoRemote,
     /// HEAD's branch has no upstream to pull from or push to.
-    #[error("the current branch has no upstream branch")]
+    #[error("{}", kiln_l10n::tr!("git-remote-no-upstream"))]
     NoUpstream,
     /// HEAD isn't on a branch.
-    #[error("HEAD is detached")]
+    #[error("{}", kiln_l10n::tr!("git-remote-detached"))]
     Detached,
     /// The pull stopped on conflicts in these files (absolute paths); the merge
     /// or rebase is left in progress for the user to resolve.
-    #[error("conflicts in {} files", paths.len())]
+    #[error("{}", kiln_l10n::tr!("git-remote-conflicts", count = paths.len()))]
     Conflicts { paths: Vec<PathBuf> },
     /// A fast-forward-only pull found local commits the upstream doesn't have.
     /// Nothing was changed.
-    #[error("not possible to fast-forward")]
+    #[error("{}", kiln_l10n::tr!("git-remote-not-fast-forward"))]
     NotFastForward,
     /// The remote refused the push: it has commits the local branch doesn't
     /// (or a lease went stale). `output` is all git printed.
-    #[error("push rejected:\n{output}")]
+    #[error("{}", kiln_l10n::tr!("git-remote-rejected", output = output.as_str()))]
     Rejected { output: String },
     /// The remote wanted credentials git couldn't get without a prompt, or
     /// refused them. `output` is all git printed.
-    #[error("authentication failed:\n{output}")]
+    #[error("{}", kiln_l10n::tr!("git-remote-auth", output = output.as_str()))]
     Auth { output: String },
     /// Git failed for another reason, and `output` is all it printed; or it
     /// wasn't run because it would have signed, and `output` says so.
-    #[error("git failed:\n{output}")]
+    #[error("{}", kiln_l10n::tr!("git-remote-failed", output = output.as_str()))]
     Failed { output: String },
     #[error(transparent)]
     Git(#[from] GitError),
@@ -81,10 +81,6 @@ const AUTH_MARKERS: &[&str] = &[
     "could not read Password",
     "Permission denied (",
 ];
-
-/// Why a pull or push that would sign wasn't run.
-const SIGNING_REFUSED: &str = "signing is on and could ask for a passphrase, so this wasn't done; \
-run it from a terminal";
 
 impl Repo {
     /// Fetches HEAD's upstream remote, or `origin` when HEAD's branch has none
@@ -158,7 +154,7 @@ impl Repo {
         {
             if signs {
                 return Err(RemoteError::Failed {
-                    output: format!("commit signing: {SIGNING_REFUSED}"),
+                    output: kiln_l10n::tr!("git-signing-commit").to_string(),
                 });
             }
             if mode == PullMode::FastForwardOnly {
@@ -258,7 +254,7 @@ impl Repo {
         };
         if signs {
             return Err(RemoteError::Failed {
-                output: format!("push.gpgSign: {SIGNING_REFUSED}"),
+                output: kiln_l10n::tr!("git-signing-push").to_string(),
             });
         }
         let recurse = if self.push_checks_submodules()? {

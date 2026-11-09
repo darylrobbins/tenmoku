@@ -12,6 +12,7 @@
 //! thread advances while any deadline is running; code still running when it
 //! passes stops (the vendored tree-sitter's patch, `vendor/tree-sitter`).
 
+use kiln_l10n::tr;
 use std::{
     cell::Cell,
     collections::BTreeSet,
@@ -160,31 +161,50 @@ impl GrammarError {
 impl fmt::Display for GrammarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Read { file, error } => write!(f, "{}: {error}", file.display()),
-            Self::TooLarge { file, bytes } => write!(
-                f,
-                "{}: {bytes} bytes; a grammar's files may have at most {MAX_GRAMMAR_BYTES}",
-                file.display()
-            ),
-            Self::Module { file, message } => write!(f, "{}: {message}", file.display()),
-            Self::Query { file, error } => write!(f, "{}: {error}", file.display()),
-            Self::Deadline { file, deadline } => write!(
-                f,
-                "{}: still running at its {deadline:?} deadline, so stopped",
-                file.display()
-            ),
+            Self::Read { file, error } => f.write_str(&tr!(
+                "syntax-grammar-file-error",
+                file = file.display().to_string(),
+                error = error.to_string()
+            )),
+            Self::TooLarge { file, bytes } => f.write_str(&tr!(
+                "syntax-grammar-too-large",
+                file = file.display().to_string(),
+                bytes = *bytes,
+                max = MAX_GRAMMAR_BYTES
+            )),
+            Self::Module { file, message } => f.write_str(&tr!(
+                "syntax-grammar-file-error",
+                file = file.display().to_string(),
+                error = message.as_str()
+            )),
+            Self::Query { file, error } => f.write_str(&tr!(
+                "syntax-grammar-file-error",
+                file = file.display().to_string(),
+                error = error.to_string()
+            )),
+            Self::Deadline { file, deadline } => f.write_str(&tr!(
+                "syntax-grammar-deadline",
+                file = file.display().to_string(),
+                deadline = format!("{deadline:?}")
+            )),
             Self::Clash {
                 language,
                 built_in,
                 clash,
             } => {
-                let what = match clash {
-                    Clash::Name => "its name".to_owned(),
-                    Clash::Extension(extension) => format!("the extension {extension:?}"),
-                    Clash::FileName(name) => format!("the file name {name:?}"),
-                    Clash::Interpreter(name) => format!("the interpreter {name:?}"),
+                let (kind, value) = match clash {
+                    Clash::Name => ("name", String::new()),
+                    Clash::Extension(extension) => ("extension", format!("{extension:?}")),
+                    Clash::FileName(name) => ("file-name", format!("{name:?}")),
+                    Clash::Interpreter(name) => ("interpreter", format!("{name:?}")),
                 };
-                write!(f, "{language}: {what} is the built-in {built_in}'s")
+                f.write_str(&tr!(
+                    "syntax-grammar-clash",
+                    language = language.as_str(),
+                    kind = kind,
+                    value = value,
+                    built_in = *built_in
+                ))
             }
         }
     }
@@ -335,9 +355,15 @@ fn load(
     })?;
     let abi = grammar.abi_version();
     if !(MIN_COMPATIBLE_LANGUAGE_VERSION..=LANGUAGE_VERSION).contains(&abi) {
-        return Err(module(format!(
-            "ABI version {abi}; this build loads {MIN_COMPATIBLE_LANGUAGE_VERSION} to {LANGUAGE_VERSION}"
-        )));
+        return Err(module(
+            tr!(
+                "syntax-grammar-abi",
+                abi = abi.to_string(),
+                min = MIN_COMPATIBLE_LANGUAGE_VERSION.to_string(),
+                max = LANGUAGE_VERSION.to_string()
+            )
+            .to_string(),
+        ));
     }
     Ok(grammar)
 }
@@ -399,7 +425,7 @@ fn new_engine(start_ticker: impl FnOnce(Engine) -> io::Result<()>) -> Result<Eng
     config.epoch_interruption(true);
     let engine = Engine::new(&config).map_err(|error| error.to_string())?;
     start_ticker(engine.clone())
-        .map_err(|error| format!("no thread to enforce grammars' deadlines: {error}"))?;
+        .map_err(|error| tr!("syntax-grammar-no-ticker", error = error.to_string()).to_string())?;
     Ok(engine)
 }
 

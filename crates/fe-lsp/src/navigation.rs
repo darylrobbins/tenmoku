@@ -22,6 +22,7 @@
 //!   that buffer version as [`Location::snapshot`]. An unopened file is
 //!   read as the editor's loader reads it, once per answer.
 
+use kiln_l10n::tr;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -71,7 +72,9 @@ const PREVIEW_BYTES: usize = 512;
 const NAME_BYTES: usize = 256;
 
 /// Why an empty answer gives way to search (§3.4).
-const NOT_FINAL: &str = "empty answer from a server without a completion signal";
+fn not_final() -> String {
+    tr!("lsp-nav-not-final").to_string()
+}
 
 /// Answers navigation requests from the language servers of an
 /// [`LspManager`], for its workspace at one root.
@@ -139,7 +142,7 @@ impl LspNavigation {
         })?;
         let targets = targets(reply.result);
         if targets.is_empty() && !reply.empty_is_final {
-            return Err(NavError::Unavailable(NOT_FINAL.into()));
+            return Err(NavError::Unavailable(not_final()));
         }
         let word = req.word();
         let mut decoder = Decoder::new(&self.root, admitted.encoding, max_bytes, cancel)
@@ -347,7 +350,7 @@ impl NavigationProvider for LspNavigation {
         let found = reply.result.unwrap_or_default();
         let word = req.word();
         if found.is_empty() && !reply.empty_is_final {
-            return Err(NavError::Unavailable(NOT_FINAL.into()));
+            return Err(NavError::Unavailable(not_final()));
         }
         let definitions = match (found.is_empty(), defined) {
             (true, _) => None,
@@ -430,7 +433,7 @@ impl NavigationProvider for LspNavigation {
         });
         let (replies, max_bytes) = sent.ok_or_else(gone)?;
         if replies.is_empty() {
-            return Err(NavError::Unavailable("no language server is ready".into()));
+            return Err(NavError::Unavailable(tr!("lsp-nav-none-ready").to_string()));
         }
         let answers = wait(
             async move { Ok::<_, LspError>(future::join_all(replies).await) },
@@ -478,7 +481,7 @@ impl NavigationProvider for LspNavigation {
                 return Err(unavailable(err));
             }
             if !empty_is_final {
-                return Err(NavError::Unavailable(NOT_FINAL.into()));
+                return Err(NavError::Unavailable(not_final()));
             }
         }
         Ok(WorkspaceSymbol::rank(query, symbols, limit))
@@ -503,7 +506,7 @@ fn request_buffer(req: &NavRequest) -> Result<(BufferId, Version), NavError> {
         return Err(NavError::Unsupported);
     }
     req.buffer
-        .ok_or_else(|| NavError::Unavailable("the request names no buffer".into()))
+        .ok_or_else(|| NavError::Unavailable(tr!("lsp-nav-no-buffer").to_string()))
 }
 
 fn check(cancel: &AtomicBool) -> Result<(), NavError> {
@@ -514,7 +517,7 @@ fn check(cancel: &AtomicBool) -> Result<(), NavError> {
 }
 
 fn gone() -> NavError {
-    NavError::Unavailable("the language servers have gone".into())
+    NavError::Unavailable(tr!("lsp-nav-gone").to_string())
 }
 
 fn unavailable(err: LspError) -> NavError {
@@ -774,7 +777,7 @@ impl<'a> Decoder<'a> {
 
     fn dropped_why(&self) -> String {
         let (uri, why) = &self.dropped[0];
-        format!("{uri}: {why}")
+        tr!("lsp-nav-dropped", uri = uri.to_string(), why = why.as_str()).to_string()
     }
 
     /// `range` in the file at `uri`, or `None` (recorded in `dropped`) if
@@ -797,7 +800,8 @@ impl<'a> Decoder<'a> {
                 let path = match decoded.clone() {
                     Ok(path) => path,
                     Err(_) => {
-                        self.dropped.push((uri.clone(), "not a file".into()));
+                        self.dropped
+                            .push((uri.clone(), tr!("lsp-nav-not-a-file").to_string()));
                         return None;
                     }
                 };
@@ -823,7 +827,8 @@ impl<'a> Decoder<'a> {
                             .entry(path)
                             .or_insert_with_key(|path| load(path, max_bytes));
                         let Some(text) = read.clone() else {
-                            self.dropped.push((uri.clone(), "couldn't be read".into()));
+                            self.dropped
+                                .push((uri.clone(), tr!("lsp-nav-unreadable").to_string()));
                             return None;
                         };
                         (rel, text, None, Tier::Project)

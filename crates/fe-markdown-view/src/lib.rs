@@ -38,6 +38,7 @@ mod blocks;
 mod compact;
 mod image;
 mod inlines;
+pub mod l10n;
 mod style;
 mod table;
 mod view;

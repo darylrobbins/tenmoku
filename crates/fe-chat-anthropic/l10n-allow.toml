@@ -1,0 +1,11 @@
+all = true
+
+[[literal]]
+file = "src/provider.rs"
+text = "{}/v1/messages"
+reason = "An API URL"
+
+[[literal]]
+file = "src/wire.rs"
+text = "tenmoku/{}"
+reason = "The User-Agent header sent on the wire"

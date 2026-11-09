@@ -14,6 +14,7 @@ use std::ops::Range;
 use ropey::LineType;
 
 mod encoding;
+pub mod l10n;
 mod source;
 
 pub use encoding::{DecodedFile, EncodeError, FileEncoding};

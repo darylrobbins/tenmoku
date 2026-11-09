@@ -61,6 +61,7 @@ use windows_sys::{
 };
 
 use crate::listing::{Access, EntryKind, Identity, Stat};
+use kiln_l10n::tr;
 
 /// `STATUS_FILE_IS_A_DIRECTORY`, which Win32 reports only as access denied.
 const STATUS_FILE_IS_A_DIRECTORY: i32 = 0xC000_00BA_u32 as i32;
@@ -131,7 +132,10 @@ impl Open {
 fn wide_name(name: &OsStr) -> io::Result<Vec<u16>> {
     let wide: Vec<u16> = name.encode_wide().collect();
     if wide.is_empty() || wide.contains(&0) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a name"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            tr!("project-io-not-a-name").to_string(),
+        ));
     }
     if wide
         .iter()
@@ -139,13 +143,13 @@ fn wide_name(name: &OsStr) -> io::Result<Vec<u16>> {
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "a separator in a name",
+            tr!("project-io-separator-in-name").to_string(),
         ));
     }
     if wide.len() * 2 > usize::from(u16::MAX) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "a name too long",
+            tr!("project-io-name-too-long").to_string(),
         ));
     }
     Ok(wide)
@@ -220,7 +224,10 @@ fn nt_open_as(
 
 fn nt_error(status: i32) -> io::Error {
     if status == STATUS_FILE_IS_A_DIRECTORY {
-        return io::Error::new(io::ErrorKind::IsADirectory, "a directory");
+        return io::Error::new(
+            io::ErrorKind::IsADirectory,
+            tr!("project-io-directory").to_string(),
+        );
     }
     // Something deleted while a handle still holds it, as a folder another
     // process removed under one of ours: gone, as Unix sees it, not the
@@ -340,7 +347,7 @@ pub(crate) fn open_volume_root(path: &Path, access: Access) -> io::Result<File> 
     if !root.has_root() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "not an absolute path",
+            tr!("project-io-not-absolute").to_string(),
         ));
     }
     let wide: Vec<u16> = root.as_os_str().encode_wide().chain([0]).collect();
@@ -636,7 +643,7 @@ fn rename(
     {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "the name is another link to the same file",
+            tr!("project-io-same-file-link").to_string(),
         ));
     }
     let name = wide_name(to)?;
@@ -714,15 +721,19 @@ pub(crate) fn recycle(path: &Path) -> io::Result<()> {
     // SAFETY: `operation` is valid and `from` is double-NUL-terminated.
     let result = unsafe { SHFileOperationW(&mut operation) };
     if result != 0 {
-        return Err(io::Error::other(format!(
-            "couldn't move {} to the Recycle Bin (error {result:#x})",
-            path.display()
-        )));
+        return Err(io::Error::other(
+            tr!(
+                "project-io-recycle-failed",
+                path = path.display().to_string(),
+                code = format!("{result:#x}")
+            )
+            .to_string(),
+        ));
     }
     if operation.fAnyOperationsAborted != 0 {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
-            "moving to the Recycle Bin was cancelled",
+            tr!("project-io-recycle-cancelled").to_string(),
         ));
     }
     Ok(())

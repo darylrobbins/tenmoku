@@ -12,16 +12,16 @@ use crate::{GitError, Repo};
 #[derive(Debug, thiserror::Error)]
 pub enum CommitError {
     /// The message has nothing but whitespace and comment lines.
-    #[error("empty commit message")]
+    #[error("{}", kiln_l10n::tr!("git-commit-empty-message"))]
     EmptyMessage,
     /// Nothing is staged and the commit isn't an amend.
-    #[error("nothing staged to commit")]
+    #[error("{}", kiln_l10n::tr!("git-commit-nothing-staged"))]
     NothingStaged,
     /// A hook exited non-zero; `output` is what it printed, as git relayed it.
-    #[error("{hook} hook failed:\n{output}")]
+    #[error("{}", kiln_l10n::tr!("git-commit-hook-failed", hook = hook.as_str(), output = output.as_str()))]
     HookFailed { hook: String, output: String },
     /// Git failed for another reason; `output` is all it printed.
-    #[error("git commit failed ({code:?}):\n{output}")]
+    #[error("{}", kiln_l10n::tr!("git-commit-failed", code = format!("{code:?}"), output = output.as_str()))]
     Failed { code: Option<i32>, output: String },
     #[error(transparent)]
     Git(#[from] GitError),
@@ -135,9 +135,9 @@ impl Repo {
         let output = output?;
 
         if output.status.success() {
-            return self
-                .head_id()
-                .ok_or_else(|| GitError::Io("HEAD unreadable after commit".into()).into());
+            return self.head_id().ok_or_else(|| {
+                GitError::Io(kiln_l10n::tr!("git-head-unreadable").to_string()).into()
+            });
         }
         let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
         text.push_str(&String::from_utf8_lossy(&output.stderr));
@@ -207,7 +207,9 @@ impl TraceDir {
                 Err(err) => return Err(GitError::Io(err.to_string())),
             }
         }
-        Err(GitError::Io("no unused trace directory name".into()))
+        Err(GitError::Io(
+            kiln_l10n::tr!("git-no-trace-name").to_string(),
+        ))
     }
 
     fn file(&self) -> PathBuf {

@@ -1,6 +1,7 @@
 //! Where a request goes, checked against the grants before anything is
 //! looked up or opened.
 
+use kiln_l10n::tr;
 use std::collections::BTreeSet;
 
 use http::Uri;
@@ -50,16 +51,23 @@ pub(crate) struct Target {
 impl Target {
     /// Parses `url` and checks its scheme, then its host against `allowlist`.
     pub(crate) fn parse(url: &str, allowlist: &Allowlist) -> Result<Target, NetError> {
-        let uri: Uri = url
-            .parse()
-            .map_err(|error| NetError::Http(format!("invalid URL {url:?}: {error}")))?;
-        let authority = uri
-            .authority()
-            .ok_or_else(|| NetError::Http(format!("the URL {url:?} has no host")))?;
+        let uri: Uri = url.parse().map_err(|error: http::uri::InvalidUri| {
+            NetError::Http(
+                tr!(
+                    "net-invalid-url",
+                    url = format!("{url:?}"),
+                    error = error.to_string()
+                )
+                .to_string(),
+            )
+        })?;
+        let authority = uri.authority().ok_or_else(|| {
+            NetError::Http(tr!("net-url-no-host", url = format!("{url:?}")).to_string())
+        })?;
         if authority.as_str().contains('@') {
-            return Err(NetError::Http(format!(
-                "the URL {url:?} has a user name, which isn't sent"
-            )));
+            return Err(NetError::Http(
+                tr!("net-url-user-name", url = format!("{url:?}")).to_string(),
+            ));
         }
         // http::Uri takes `host:abc` and `host:65536`, giving no port for
         // them: they are refused rather than sent to the default port.
@@ -70,7 +78,9 @@ impl Target {
                     .and_then(|port| port.parse::<u16>().ok())
                     .filter(|&port| port != 0)
                     .ok_or_else(|| {
-                        NetError::Http(format!("the URL {url:?} has an invalid port"))
+                        NetError::Http(
+                            tr!("net-url-invalid-port", url = format!("{url:?}")).to_string(),
+                        )
                     })?,
             ),
         };

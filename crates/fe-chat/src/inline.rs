@@ -11,6 +11,7 @@
 //! The proposal is made when the stream finishes, with live text only for a
 //! preview line: a live-applied edit would make rejecting an undo.
 
+use kiln_l10n::tr;
 use std::ops::Range;
 
 use fe_buffer::{BufferSnapshot, Origin, ProposedChange};
@@ -210,7 +211,8 @@ impl InlineEditSession {
     /// The stream ended: a reply that never finished failed.
     pub fn end_of_stream(&mut self) {
         if self.state == InlineEditState::Streaming {
-            let error = ProviderError::new(ErrorKind::Stream, "the reply ended early");
+            let error =
+                ProviderError::new(ErrorKind::Stream, tr!("chat-reply-ended-early").to_string());
             self.state = InlineEditState::Failed(error);
         }
     }

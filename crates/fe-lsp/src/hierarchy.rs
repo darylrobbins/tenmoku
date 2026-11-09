@@ -32,7 +32,7 @@ use serde_json::Value;
 
 use crate::document_symbol::outline_kind;
 use crate::encoding::{PositionEncoding, from_lsp};
-use crate::event::{LspError, NOT_OPEN};
+use crate::event::{LspError, not_open};
 use crate::identity::{IncarnationId, SessionId};
 use crate::manager::LspManager;
 
@@ -337,7 +337,7 @@ impl LspManager {
         item: &HierarchyItem,
     ) -> futures::future::BoxFuture<'static, Result<Vec<Value>, LspError>> {
         let Some(server) = self.server_of(server_of) else {
-            return async { Err(LspError::Unavailable(NOT_OPEN.into())) }.boxed();
+            return async { Err(LspError::Unavailable(not_open())) }.boxed();
         };
         let from = item.from;
         let params = serde_json::json!({ "item": item.raw });

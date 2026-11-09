@@ -234,7 +234,11 @@ pub struct GlobError {
 
 impl fmt::Display for GlobError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid glob `{}`: {}", self.glob, self.message)
+        f.write_str(&kiln_l10n::tr!(
+            "project-search-invalid-glob",
+            glob = self.glob.as_str(),
+            message = self.message.as_str()
+        ))
     }
 }
 
@@ -298,7 +302,7 @@ fn build_globs(globs: &[&str]) -> Result<Option<Arc<Gitignore>>, GlobError> {
         if let Some(message) = unclosed_class(glob) {
             return Err(GlobError {
                 glob: (*glob).to_string(),
-                message: message.to_string(),
+                message,
             });
         }
         builder.add_line(None, glob).map_err(|err| GlobError {
@@ -315,7 +319,7 @@ fn build_globs(globs: &[&str]) -> Result<Option<Arc<Gitignore>>, GlobError> {
 
 /// Why `glob` has a `[` that never closes, which the glob parser would take
 /// as a literal.
-fn unclosed_class(glob: &str) -> Option<&'static str> {
+fn unclosed_class(glob: &str) -> Option<String> {
     let mut chars = glob.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
@@ -334,7 +338,11 @@ fn unclosed_class(glob: &str) -> Option<&'static str> {
                     match chars.next() {
                         Some(']') => break,
                         Some(_) => {}
-                        None => return Some("unclosed character class"),
+                        None => {
+                            return Some(
+                                kiln_l10n::tr!("project-search-unclosed-class").to_string(),
+                            );
+                        }
                     }
                 }
             }
@@ -431,7 +439,10 @@ pub enum SearchError {
 impl fmt::Display for SearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SearchError::InvalidPattern(message) => write!(f, "invalid pattern: {message}"),
+            SearchError::InvalidPattern(message) => f.write_str(&kiln_l10n::tr!(
+                "project-search-invalid-pattern",
+                message = message.as_str()
+            )),
         }
     }
 }

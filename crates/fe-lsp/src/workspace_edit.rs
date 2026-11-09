@@ -57,6 +57,7 @@
 //!   wait in the outbox. An applyEdit that timed out before the actor got
 //!   to it is dropped.
 
+use kiln_l10n::tr;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
@@ -183,14 +184,18 @@ pub fn decode_closed(
 fn sorted(mut edits: Vec<TextEdit>) -> Result<Vec<TextEdit>, String> {
     if let Some(edit) = edits.iter().find(|edit| edit.range.end < edit.range.start) {
         let (start, end) = (edit.range.start, edit.range.end);
-        return Err(format!(
-            "an edit ends ({}:{}) before it starts ({}:{})",
-            end.line, end.character, start.line, start.character
-        ));
+        return Err(tr!(
+            "lsp-edit-ends-before-start",
+            end_line = end.line,
+            end_column = end.character,
+            start_line = start.line,
+            start_column = start.character,
+        )
+        .to_string());
     }
     edits.sort_by_key(|edit| (edit.range.start, edit.range.end));
     if (edits.windows(2)).any(|w| w[1].range.start < w[0].range.end) {
-        return Err("its edits overlap".into());
+        return Err(tr!("lsp-edit-overlap").to_string());
     }
     Ok(edits)
 }
@@ -452,7 +457,13 @@ impl Reader {
         match effect {
             Effect::Removed { how, kept } => {
                 let display = path.display();
-                let gone = Holds::Gone(format!("it edits {display}, which it {how} earlier"));
+                let gone = Holds::Gone(
+                    match *how {
+                        "renamed" => tr!("lsp-edit-after-renamed", path = display.to_string()),
+                        _ => tr!("lsp-edit-after-deleted", path = display.to_string()),
+                    }
+                    .to_string(),
+                );
                 kept_or(kept, Ok(gone), at)
             }
             Effect::Created { kept } => kept_or(kept, Ok(Holds::Empty), at),
@@ -651,10 +662,12 @@ fn decode_file(
     encoding: PositionEncoding,
 ) -> Result<FileEdits, String> {
     if let Some(version) = file.versions.first().filter(|_| file.fresh) {
-        return Err(format!(
-            "{} is made by the edit, which can't know its version {version}",
-            file.path.display()
-        ));
+        return Err(tr!(
+            "lsp-edit-made-by-edit",
+            path = file.path.display().to_string(),
+            version = version.to_string(),
+        )
+        .to_string());
     }
     let target = Arc::unwrap_or_clone(decode_holds(&file, documents, operations, graph, encoding))?;
     Ok(FileEdits {
@@ -706,7 +719,10 @@ fn decode_holds(
                     Arc::new(
                         sorted(file.edits.clone())
                             .map(|edits| EditTarget::Closed { edits, encoding })
-                            .map_err(|why| format!("{display}: {why}")),
+                            .map_err(|why| {
+                                tr!("lsp-edit-in-file", path = display.to_string(), why = why)
+                                    .to_string()
+                            }),
                     )
                 })
                 .clone()
@@ -737,15 +753,22 @@ fn decode_holds(
                         || file_path(&document.uri).is_ok_and(|path| path == *origin)
                 });
                 match (matching.next(), matching.next()) {
-                    (Some(_), Some(_)) => Arc::new(Err(format!("{display} is open twice"))),
+                    (Some(_), Some(_)) => {
+                        Arc::new(Err(
+                            tr!("lsp-edit-open-twice", path = display.to_string()).to_string()
+                        ))
+                    }
                     (Some((at, document)), None) => open
                         .entry(at)
                         .or_insert_with(|| Arc::new(decode_open(file, document, encoding)))
                         .clone(),
                     (None, _) => match file.versions.first() {
-                        Some(version) => {
-                            Arc::new(Err(format!("{display} isn't open at version {version}")))
-                        }
+                        Some(version) => Arc::new(Err(tr!(
+                            "lsp-edit-not-open-at-version",
+                            path = display.to_string(),
+                            version = version.to_string(),
+                        )
+                        .to_string())),
                         None => closed(),
                     },
                 }
@@ -768,14 +791,17 @@ fn decode_open(
     let sent = &document.sent;
     // Every one named, whatever the rest are.
     if let Some(version) = (file.versions.iter()).find(|&&v| v != sent.lsp_version) {
-        return Err(format!(
-            "{display} has changed: the edit is for version {version}, \
-             the server has {}",
-            sent.lsp_version
-        ));
+        return Err(tr!(
+            "lsp-edit-changed",
+            path = display.to_string(),
+            version = version.to_string(),
+            server = sent.lsp_version.to_string(),
+        )
+        .to_string());
     }
-    let edits = decode_closed(&sent.text, &file.edits, encoding)
-        .map_err(|why| format!("{display}: {why}"))?;
+    let edits = decode_closed(&sent.text, &file.edits, encoding).map_err(|why| {
+        tr!("lsp-edit-in-file", path = display.to_string(), why = why).to_string()
+    })?;
     Ok(EditTarget::Open {
         buffer: document.buffer,
         version: sent.version,
@@ -793,10 +819,10 @@ fn text_edit(edit: OneOf<TextEdit, lsp_types::AnnotatedTextEdit>) -> TextEdit {
 /// The local path `uri` names, or why it names none.
 pub(crate) fn file_path(uri: &Url) -> Result<PathBuf, String> {
     if uri.scheme() != "file" {
-        return Err(format!("{uri} isn't a file"));
+        return Err(tr!("lsp-not-a-file", uri = uri.to_string()).to_string());
     }
     uri.to_file_path()
-        .map_err(|()| format!("{uri} isn't a local file"))
+        .map_err(|()| tr!("lsp-not-a-local-file", uri = uri.to_string()).to_string())
 }
 
 /// Where a `workspace/applyEdit`'s answer goes: taken by the first answer,

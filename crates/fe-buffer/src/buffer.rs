@@ -69,27 +69,53 @@ pub enum BufferEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditError {
-    #[error(
-        "the snapshot belongs to a different buffer, a newer version, or one below the edit log's floor"
-    )]
     ForeignSnapshot,
     /// The text an edit was meant to replace has changed since the snapshot.
-    #[error("edit {index} conflicts with changes made since the snapshot")]
-    Conflict { index: usize },
+    Conflict {
+        index: usize,
+    },
     /// [`Buffer::edit_in`] named a transaction that can't take more edits.
-    #[error("the transaction was undone, or is no longer in the history")]
     NoSuchTransaction(TransactionId),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+impl std::fmt::Display for EditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ForeignSnapshot => f.write_str(&kiln_l10n::tr!("buffer-edit-foreign-snapshot")),
+            Self::Conflict { index } => f.write_str(&kiln_l10n::tr!(
+                "buffer-edit-conflict",
+                index = *index as u64
+            )),
+            Self::NoSuchTransaction(_) => {
+                f.write_str(&kiln_l10n::tr!("buffer-edit-no-such-transaction"))
+            }
+        }
+    }
+}
+
+impl std::error::Error for EditError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UndoError {
     /// Text the transaction wrote has been changed by a later edit, so undoing
     /// (or redoing) it would clobber that edit.
-    #[error("transaction {0:?} was changed by later edits")]
     Conflict(TransactionId),
 }
+
+impl std::fmt::Display for UndoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Conflict(id) => f.write_str(&kiln_l10n::tr!(
+                "buffer-undo-conflict",
+                transaction = format!("{id:?}")
+            )),
+        }
+    }
+}
+
+impl std::error::Error for UndoError {}
 
 /// Receives the buffer's events. Drop it to unsubscribe.
 pub struct Subscription(Arc<Mutex<Vec<BufferEvent>>>);
@@ -190,11 +216,8 @@ impl SaveSnapshot {
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "the file had bytes that aren't valid {}, shown as U+FFFD; \
-                     saving would replace them",
-                    read_in.label()
-                ),
+                kiln_l10n::tr!("buffer-save-replaced-on-read", encoding = read_in.label())
+                    .to_string(),
             ));
         }
         text.write_encoded(self.line_ending, self.encoding, out)
@@ -205,12 +228,15 @@ impl SaveSnapshot {
                     let column = text.offset_to_char(offset) - text.offset_to_char(row_start) + 1;
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        format!(
-                            "{ch:?} (U+{:04X}) on line {}, column {column} can't be saved in {}",
-                            u32::from(ch),
-                            point.row + 1,
-                            self.encoding.label()
-                        ),
+                        kiln_l10n::tr!(
+                            "buffer-save-unmappable",
+                            ch = format!("{ch:?}"),
+                            code = format!("{:04X}", u32::from(ch)),
+                            line = (point.row + 1) as u64,
+                            column = column as u64,
+                            encoding = self.encoding.label()
+                        )
+                        .to_string(),
                     )
                 }
                 EncodeError::Io(error) => error,
@@ -1671,6 +1697,11 @@ impl Buffer {
             .map_err(|()| UndoError::Conflict(entry.id))?
             .into_iter()
             .unzip();
+        if let Some((_, after)) = entry.line_ending
+            && self.line_ending != after
+        {
+            return Err(UndoError::Conflict(entry.id));
+        }
         self.snapshot = state;
         self.provenance.set_settled(runs);
         self.undo_clock += 1;
@@ -1722,6 +1753,11 @@ impl Buffer {
             .map_err(|()| UndoError::Conflict(entry.id))?
             .into_iter()
             .unzip();
+        if let Some((before, _)) = entry.line_ending
+            && self.line_ending != before
+        {
+            return Err(UndoError::Conflict(entry.id));
+        }
         self.snapshot = state;
         self.provenance.set_settled(runs);
         let entry = &mut self.history[ix];

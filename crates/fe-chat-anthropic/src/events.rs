@@ -2,6 +2,7 @@
 //! Each content block is rebuilt from its start and deltas into the block
 //! the API would give back unstreamed, which the conversation then echoes.
 
+use kiln_l10n::tr;
 use std::collections::BTreeMap;
 
 use fe_chat::{BlockKind, ChatEvent, ErrorKind, ProviderError, StopReason, Usage};
@@ -84,10 +85,12 @@ impl EventDecoder {
             }
             Err(error) => {
                 self.ended = true;
-                let message = format!(
-                    "the stream sent an unreadable `{}` event: {error}",
-                    event.event
-                );
+                let message = tr!(
+                    "chat-anthropic-event-unreadable",
+                    event = event.event.as_str(),
+                    error = error.to_string()
+                )
+                .to_string();
                 return vec![ChatEvent::Failed(ProviderError::new(
                     ErrorKind::Stream,
                     message,
@@ -122,7 +125,7 @@ impl EventDecoder {
                 let message = match (error["type"].as_str(), error["message"].as_str()) {
                     (_, Some(message)) => message.to_owned(),
                     (Some(error_type), None) => error_type.to_owned(),
-                    (None, None) => "the stream sent an error".to_owned(),
+                    (None, None) => tr!("chat-anthropic-stream-error").to_string(),
                 };
                 vec![ChatEvent::Failed(ProviderError::new(
                     ErrorKind::Stream,

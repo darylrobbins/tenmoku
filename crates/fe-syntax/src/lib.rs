@@ -39,6 +39,7 @@ mod highlight;
 mod imports;
 mod indent;
 mod injection;
+pub mod l10n;
 mod language;
 mod outline;
 mod parse_limit;

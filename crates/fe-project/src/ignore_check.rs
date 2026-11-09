@@ -319,12 +319,13 @@ impl<'a> Rule<'a> {
             .as_ref()
             .or(path_blocked.filter(|_| walked_all));
         if let Some(blocked) = blocked {
-            let message = format!(
-                "cannot re-include `{}`: its parent directory `{}` is excluded by line {}",
-                self.pattern.strip_prefix('!').unwrap_or(self.pattern),
-                blocked.dir.display(),
-                blocked.by_line,
-            );
+            let message = kiln_l10n::tr!(
+                "project-ignore-cannot-reinclude",
+                pattern = self.pattern.strip_prefix('!').unwrap_or(self.pattern),
+                dir = blocked.dir.display().to_string(),
+                line = blocked.by_line.to_string(),
+            )
+            .to_string();
             return Some((IgnoreFindingKind::Invalid(message), IgnoreSeverity::Warning));
         }
         if let Some(first_line) = duplicate_of {
@@ -434,8 +435,9 @@ fn bracket_expression(rest: &str) -> Result<Option<(String, &str)>, String> {
                     .and_then(|after| Some(after.split_at(after.find(":]")?)));
                 match named {
                     Some((name, after)) => {
-                        let members = posix_class(name)
-                            .ok_or_else(|| format!("unknown character class `[:{name}:]`"))?;
+                        let members = posix_class(name).ok_or_else(|| {
+                            kiln_l10n::tr!("project-ignore-unknown-class", name = name).to_string()
+                        })?;
                         body.push_str(members);
                         chars = after[":]".len()..].chars();
                     }

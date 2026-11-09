@@ -1,0 +1,54 @@
+all = true
+
+[[literal]]
+file = "src/context.rs"
+text = "[truncated: {more} more rows]"
+reason = "Sent to the model as part of its context, not shown to the user"
+
+[[literal]]
+file = "src/edits.rs"
+text = "<<<<<<< SEARCH"
+reason = "The SEARCH/REPLACE marker of the edit protocol, matched in the model's reply"
+
+[[literal]]
+file = "src/edits.rs"
+text = ">>>>>>> REPLACE"
+reason = "The SEARCH/REPLACE marker of the edit protocol, matched in the model's reply"
+
+[[literal]]
+file = "src/fake.rs"
+text = "the scripted provider has no reply left"
+reason = "Test double's error, never shown in the app"
+
+[[file]]
+path = "src/inline.rs"
+reason = "The inline editor's system prompt and request framing are sent to the model, not shown to the user"
+
+[[file]]
+path = "src/request.rs"
+reason = "The assistant's system prompt and context tags are sent to the model, not shown to the user"
+
+[[literal]]
+file = "src/store.rs"
+text = "{}: {error}"
+reason = "A path beside the OS's own error text"
+
+[[literal]]
+file = "src/store.rs"
+text = "{id}.json"
+reason = "A file name"
+
+[[literal]]
+file = "src/store.rs"
+text = "json.{}-{unique}.tmp"
+reason = "A temporary file's extension"
+
+[[literal]]
+file = "src/store.rs"
+text = "chat: skipping {}: {error}"
+reason = "A developer log line on stderr, logged once per unreadable file"
+
+[[literal]]
+file = "src/provider.rs"
+text = "SystemBlock"
+reason = "A serde struct name, not user-facing"

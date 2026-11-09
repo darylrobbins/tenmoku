@@ -4,6 +4,7 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use http::header::{HeaderName, HeaderValue};
 use http::{HeaderMap, Method};
+use kiln_l10n::tr;
 
 use crate::transport::{Response, Transport, TransportError};
 
@@ -33,11 +34,27 @@ impl Transport for fe_net::Client {
 fn header_map(headers: Vec<(String, String)>) -> Result<HeaderMap, TransportError> {
     let mut map = HeaderMap::with_capacity(headers.len());
     for (name, value) in headers {
-        let name = HeaderName::try_from(name.as_str())
-            .map_err(|error| TransportError::new(format!("header {name:?}: {error}")))?;
+        let name = HeaderName::try_from(name.as_str()).map_err(|error| {
+            TransportError::new(
+                tr!(
+                    "chat-anthropic-header-name",
+                    name = format!("{name:?}"),
+                    error = error.to_string()
+                )
+                .to_string(),
+            )
+        })?;
         // The value may be the API key: it isn't put in the error.
-        let value = HeaderValue::try_from(value)
-            .map_err(|error| TransportError::new(format!("header {name}'s value: {error}")))?;
+        let value = HeaderValue::try_from(value).map_err(|error| {
+            TransportError::new(
+                tr!(
+                    "chat-anthropic-header-value",
+                    name = name.to_string(),
+                    error = error.to_string()
+                )
+                .to_string(),
+            )
+        })?;
         map.append(name, value);
     }
     Ok(map)

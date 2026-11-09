@@ -98,6 +98,7 @@ pub mod hierarchy;
 mod hover;
 mod identity;
 mod inlay_hint;
+pub mod l10n;
 mod launcher;
 pub mod linked_editing;
 mod manager;
@@ -130,7 +131,9 @@ pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
 pub use code_action::{CodeAction, Payload};
 pub use code_lens::CodeLens;
-pub use completion::{CompletionEdit, CompletionItem, CompletionTrigger, Completions, kind_name};
+pub use completion::{
+    CompletionEdit, CompletionItem, CompletionTrigger, Completions, kind_label, kind_name,
+};
 pub use diagnostics::{
     Diagnostic, DiagnosticTag, FileDiagnostic, Related, Severity, decode_file_diagnostics,
 };

@@ -352,8 +352,16 @@ impl Repo {
             .map_err(GitError::from_gix)?
         {
             Some(Ok(id)) => id,
-            Some(Err(())) => return Err(GitError::Gix(format!("commit {commit} is ambiguous"))),
-            None => return Err(GitError::Gix(format!("no commit {commit}"))),
+            Some(Err(())) => {
+                return Err(GitError::Gix(
+                    kiln_l10n::tr!("git-commit-ambiguous", commit = commit.to_string()).to_string(),
+                ));
+            }
+            None => {
+                return Err(GitError::Gix(
+                    kiln_l10n::tr!("git-commit-missing", commit = commit.to_string()).to_string(),
+                ));
+            }
         };
         let commit = repo.find_commit(id).map_err(GitError::from_gix)?;
         let mut args: Vec<OsString> = [

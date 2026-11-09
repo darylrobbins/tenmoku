@@ -12,6 +12,8 @@ use http::header::{CONTENT_LENGTH, LOCATION, USER_AGENT};
 use http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use sha2::{Digest as _, Sha256};
 
+use kiln_l10n::tr;
+
 use crate::stream::ReadLimit;
 use crate::{Client, NetError, Response};
 
@@ -19,37 +21,68 @@ use crate::{Client, NetError, Response};
 pub const MAX_REDIRECTS: usize = 3;
 
 /// Why a grammar wasn't returned.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GrammarFetchError {
     /// No hash is recorded for it: it isn't released yet. Nothing was sent.
-    #[error("this grammar isn't released yet")]
     NotReleased,
     /// The recorded hash isn't 64 lowercase hex digits. Nothing was sent.
-    #[error("the recorded hash {0:?} isn't a SHA-256")]
     InvalidHash(String),
     /// The bytes hash to something other than what's recorded.
-    #[error("the download's SHA-256 is {actual}, not the recorded {expected}")]
     HashMismatch { expected: String, actual: String },
     /// The body is longer than the caller allows.
-    #[error("the download is over the limit of {max_bytes} bytes")]
     TooLarge { max_bytes: u64 },
     /// A redirect, or the URL itself, names a host outside the grants. Nothing
     /// was sent to it.
-    #[error("{0} is not a host this download may reach")]
     HostNotAllowed(String),
     /// More than [`MAX_REDIRECTS`] redirects.
-    #[error("the download redirected more than {MAX_REDIRECTS} times")]
     TooManyRedirects,
     /// A redirect without a `Location` this follows.
-    #[error("the download redirected to {0:?}, which can't be followed")]
     BadRedirect(String),
     /// A final status other than 200.
-    #[error("the server answered {0}")]
     Status(u16),
     /// The request failed, or its body stopped.
-    #[error(transparent)]
     Net(NetError),
 }
+
+impl std::fmt::Display for GrammarFetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            GrammarFetchError::NotReleased => tr!("net-grammar-not-released"),
+            GrammarFetchError::InvalidHash(hash) => {
+                tr!("net-grammar-invalid-hash", hash = format!("{hash:?}"))
+            }
+            GrammarFetchError::HashMismatch { expected, actual } => {
+                tr!(
+                    "net-grammar-hash-mismatch",
+                    actual = actual,
+                    expected = expected
+                )
+            }
+            GrammarFetchError::TooLarge { max_bytes } => {
+                tr!("net-grammar-too-large", max_bytes = max_bytes)
+            }
+            GrammarFetchError::HostNotAllowed(host) => {
+                tr!("net-grammar-host-not-allowed", host = host)
+            }
+            GrammarFetchError::TooManyRedirects => {
+                tr!("net-grammar-too-many-redirects", max = MAX_REDIRECTS)
+            }
+            GrammarFetchError::BadRedirect(location) => {
+                tr!(
+                    "net-grammar-bad-redirect",
+                    location = format!("{location:?}")
+                )
+            }
+            GrammarFetchError::Status(status) => {
+                tr!("net-grammar-status", status = status.to_string())
+            }
+            GrammarFetchError::Net(error) => return error.fmt(f),
+        };
+        f.write_str(&text)
+    }
+}
+
+impl std::error::Error for GrammarFetchError {}
 
 impl From<NetError> for GrammarFetchError {
     fn from(error: NetError) -> GrammarFetchError {

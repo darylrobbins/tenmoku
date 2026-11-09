@@ -95,7 +95,8 @@ impl ScipNavigation {
     /// request's text are the word at the caret, and that word is the
     /// symbol's name or an alias of it the index records there.
     fn occurrence(&self, req: &NavRequest) -> Result<(ScipOccurrence, String, String), NavError> {
-        let unindexed = || NavError::Unavailable("not in the SCIP index".to_owned());
+        let unindexed =
+            || NavError::Unavailable(kiln_l10n::tr!("nav-scip-not-indexed").to_string());
         let word = req.word().ok_or_else(unindexed)?;
         let mut occurrence = (self.index)
             .occurrence_at(&req.rel, &req.text, req.offset)
@@ -299,7 +300,7 @@ impl NavigationProvider for ScipNavigation {
         check(cancel)?;
         if items.is_empty() {
             return Err(NavError::Unavailable(
-                "no definition in the SCIP index matches its file".to_owned(),
+                kiln_l10n::tr!("nav-scip-no-definition").to_string(),
             ));
         }
         // The request's own file first; otherwise in the index's order.

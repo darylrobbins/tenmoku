@@ -34,8 +34,12 @@ pub enum ScipError {
 impl fmt::Display for ScipError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ScipError::Io(kind) => write!(f, "reading the SCIP index: {kind}"),
-            ScipError::Decode(why) => write!(f, "decoding the SCIP index: {why}"),
+            ScipError::Io(kind) => {
+                f.write_str(&kiln_l10n::tr!("nav-scip-io", kind = kind.to_string()))
+            }
+            ScipError::Decode(why) => {
+                f.write_str(&kiln_l10n::tr!("nav-scip-decode", why = why.as_str()))
+            }
         }
     }
 }
@@ -507,7 +511,7 @@ fn check_framing(mut bytes: &[u8]) -> Result<(), String> {
                 0
             }
             5 => 4,
-            _ => return Err(format!("bad field tag {tag}")),
+            _ => return Err(kiln_l10n::tr!("nav-scip-bad-tag", tag = tag.to_string()).to_string()),
         };
         let len = usize::try_from(len).map_err(|_| truncated())?;
         bytes = bytes.get(len..).ok_or_else(truncated)?;

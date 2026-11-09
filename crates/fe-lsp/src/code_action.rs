@@ -281,10 +281,11 @@ impl LspManager {
         action: &CodeAction,
     ) -> impl Future<Output = Result<(), LspError>> + Send + 'static + use<> {
         let server = action.payload.server;
-        let refused = action
-            .disabled
-            .as_ref()
-            .map(|why| LspError::Unavailable(format!("disabled: {why}")));
+        let refused = action.disabled.as_ref().map(|why| {
+            LspError::Unavailable(
+                kiln_l10n::tr!("lsp-action-disabled", why = why.as_str()).to_string(),
+            )
+        });
         let reply = match (&refused, &action.payload.raw.command) {
             (None, Some(command)) => {
                 Some(self.execute_command(server, command, action.payload.from))
@@ -326,7 +327,7 @@ impl LspManager {
             match reply.await? {
                 Some(_) => Ok(()),
                 None => Err(LspError::Unavailable(
-                    "the action is from an earlier session or opening".into(),
+                    kiln_l10n::tr!("lsp-action-stale").to_string(),
                 )),
             }
         }

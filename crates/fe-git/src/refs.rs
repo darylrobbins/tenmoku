@@ -114,7 +114,11 @@ impl Repo {
             (Some(name), Some(_)) => Head::Branch(name),
             (Some(name), None) => Head::Unborn(name),
             (None, Some(id)) => Head::Detached(id.to_hex_with_len(7).to_string()),
-            (None, None) => return Err(GitError::Gix("HEAD points nowhere".into())),
+            (None, None) => {
+                return Err(GitError::Gix(
+                    kiln_l10n::tr!("git-head-nowhere").to_string(),
+                ));
+            }
         })
     }
 
@@ -258,7 +262,9 @@ impl Repo {
         let mut numbers = text.split_whitespace().map(|n| n.parse::<u32>());
         match (numbers.next(), numbers.next()) {
             (Some(Ok(ahead)), Some(Ok(behind))) => Ok(Some((ahead, behind))),
-            _ => Err(GitError::Gix(format!("unexpected rev-list output: {text}"))),
+            _ => Err(GitError::Gix(
+                kiln_l10n::tr!("git-rev-list-unexpected", text = &*text).to_string(),
+            )),
         }
     }
 

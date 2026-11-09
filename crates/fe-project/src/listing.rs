@@ -8,6 +8,7 @@
 //! listing or [`crate::FileTree::apply`] outside the project, whenever the
 //! swap happens.
 
+use kiln_l10n::tr;
 use std::{
     cmp::Ordering,
     collections::HashMap,
@@ -279,11 +280,14 @@ impl Listing {
     /// Records why the path doesn't lead to the directory.
     fn lost(&self, lost: &mut Option<Lost>, why: Lost) -> io::Error {
         *lost = Some(why);
-        let what = match why {
-            Lost::Itself => "was replaced",
-            Lost::Above | Lost::Root => "couldn't be reached",
-        };
-        io::Error::other(format!("{} {what} while listing", self.dir().display()))
+        let path = self.dir().display().to_string();
+        io::Error::other(
+            match why {
+                Lost::Itself => tr!("project-io-listing-replaced", path = path),
+                Lost::Above | Lost::Root => tr!("project-io-listing-unreachable", path = path),
+            }
+            .to_string(),
+        )
     }
 }
 
@@ -544,7 +548,7 @@ fn open_path(dir: &File, path: &Path) -> io::Result<File> {
             Component::Prefix(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "not a plain path",
+                    tr!("project-io-not-plain-path").to_string(),
                 ));
             }
         };
@@ -701,14 +705,16 @@ pub fn open_file_under(root: &Path, rel: &Path) -> io::Result<File> {
         match component {
             Component::Normal(name) => names.push(name),
             Component::CurDir => {}
-            Component::ParentDir => return Err(invalid("`..` in a path under a root")),
+            Component::ParentDir => {
+                return Err(invalid(tr!("project-io-dotdot-under-root").to_string()));
+            }
             Component::RootDir | Component::Prefix(_) => {
-                return Err(invalid("an absolute path under a root"));
+                return Err(invalid(tr!("project-io-absolute-under-root").to_string()));
             }
         }
     }
     let Some((last, above)) = names.split_last() else {
-        return Err(invalid("no file named under a root"));
+        return Err(invalid(tr!("project-io-no-name-under-root").to_string()));
     };
     let root = std::path::absolute(root)?;
     let mut dir = match open_dirs(&root, Access::Search) {
@@ -720,7 +726,7 @@ pub fn open_file_under(root: &Path, rel: &Path) -> io::Result<File> {
             // A symlink opened as a directory without following it fails as
             // not a directory, like a file does.
             if is_not_dir_error(&err) {
-                not_found("a symlink or a file on the way")
+                not_found(tr!("project-io-symlink-or-file-on-way").to_string())
             } else {
                 err
             }
@@ -728,14 +734,14 @@ pub fn open_file_under(root: &Path, rel: &Path) -> io::Result<File> {
     }
     open_file_nofollow(&dir, last).map_err(|err| {
         if is_symlink_error(&err) {
-            not_found("a symlink")
+            not_found(tr!("project-io-symlink").to_string())
         } else {
             err
         }
     })
 }
 
-fn not_found(what: &str) -> io::Error {
+fn not_found(what: String) -> io::Error {
     io::Error::new(io::ErrorKind::NotFound, what)
 }
 
@@ -822,7 +828,7 @@ pub(crate) fn open_dirs(path: &Path, last: Access) -> Result<Vec<File>, Unreache
         itself: true,
     };
     if !path.is_absolute() {
-        return Err(invalid("not an absolute path"));
+        return Err(invalid(tr!("project-io-not-absolute").to_string()));
     }
     let mut components = path.components();
     // A Windows path's volume (`C:`), before its root.
@@ -830,12 +836,12 @@ pub(crate) fn open_dirs(path: &Path, last: Access) -> Result<Vec<File>, Unreache
         components.next();
     }
     if components.next() != Some(Component::RootDir) {
-        return Err(invalid("not an absolute path"));
+        return Err(invalid(tr!("project-io-not-absolute").to_string()));
     }
     let names = components
         .map(|component| match component {
             Component::Normal(name) => Ok(name),
-            _ => Err(invalid("not a plain path")),
+            _ => Err(invalid(tr!("project-io-not-plain-path").to_string())),
         })
         .collect::<Result<Vec<_>, _>>()?;
     let depth = names.len();

@@ -1,5 +1,6 @@
 //! The connection under HTTP: TCP, then TLS for `https`.
 
+use kiln_l10n::tr;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -152,7 +153,7 @@ impl AsyncRead for Watched {
                         this.timer = None;
                         Poll::Ready(Err(io::Error::new(
                             io::ErrorKind::TimedOut,
-                            format!("nothing was received for {idle:?}"),
+                            tr!("net-idle", idle = format!("{idle:?}")).to_string(),
                         )))
                     }
                     Poll::Pending => Poll::Pending,

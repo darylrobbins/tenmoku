@@ -1,6 +1,7 @@
 //! A folder's chats on disk (the record's § 11): one `<id>.json` each,
 //! written atomically, kept until deleted.
 
+use kiln_l10n::tr;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write as _};
@@ -49,18 +50,16 @@ impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StoreError::Io { path, error } => write!(f, "{}: {error}", path.display()),
-            StoreError::Diverged { path, current } => write!(
-                f,
-                "{} was changed elsewhere (revision {current})",
-                path.display()
-            ),
-            StoreError::Unreadable { path, reason } => {
-                write!(
-                    f,
-                    "{} isn't a chat this version reads: {reason}",
-                    path.display()
-                )
-            }
+            StoreError::Diverged { path, current } => f.write_str(&tr!(
+                "chat-store-diverged",
+                path = path.display().to_string(),
+                current = current.to_string()
+            )),
+            StoreError::Unreadable { path, reason } => f.write_str(&tr!(
+                "chat-store-unreadable",
+                path = path.display().to_string(),
+                reason = reason
+            )),
         }
     }
 }
@@ -257,7 +256,9 @@ fn parse(path: &Path, bytes: &[u8]) -> Result<(Conversation, u64), StoreError> {
     let Versioned { version } =
         serde_json::from_slice(bytes).map_err(|error| unreadable(error.to_string()))?;
     if version != VERSION {
-        return Err(unreadable(format!("version {version}")));
+        return Err(unreadable(
+            tr!("chat-store-version", version = version.to_string()).to_string(),
+        ));
     }
     let loaded: Loaded =
         serde_json::from_slice(bytes).map_err(|error| unreadable(error.to_string()))?;

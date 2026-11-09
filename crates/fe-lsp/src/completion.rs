@@ -30,6 +30,7 @@
 //!   client command `editor.action.triggerParameterHints`, is the
 //!   editor's to run and is never sent.
 
+use kiln_l10n::{SharedString, tr};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -283,8 +284,13 @@ impl LspManager {
                 .is_some_and(|provider| provider.commands.contains(&command.command))
         });
         if !listed {
-            let err =
-                LspError::Unavailable(format!("{}: not a command of the server", command.command));
+            let err = LspError::Unavailable(
+                tr!(
+                    "lsp-not-a-server-command",
+                    command = command.command.as_str()
+                )
+                .to_string(),
+            );
             return async move { Err(err) }.boxed();
         }
         self.execute_command(item.server, command, item.from)
@@ -393,7 +399,17 @@ fn documentation_text(documentation: Documentation) -> String {
     }
 }
 
-/// A short name for `kind`, as a menu shows it.
+/// `kind` as a menu shows it, in the active locale ([`kind_name`] is the
+/// stable English name, which callers match and index on).
+pub fn kind_label(kind: CompletionItemKind) -> SharedString {
+    let name = kind_name(kind);
+    match name.is_empty() {
+        true => SharedString::default(),
+        false => tr!(&format!("lsp-kind-{}", name.replace(' ', "-"))),
+    }
+}
+
+/// A stable English name for `kind`, as a menu shows it in en-US.
 pub fn kind_name(kind: CompletionItemKind) -> &'static str {
     const NAMES: [&str; 25] = [
         "text",

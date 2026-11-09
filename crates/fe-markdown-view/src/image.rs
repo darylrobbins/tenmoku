@@ -12,6 +12,7 @@ use gpui::{
     IntoElement, ObjectFit, ParentElement as _, RenderImage, SMOOTH_SVG_SCALE_FACTOR, SharedString,
     Styled as _, StyledImage as _, Window, div, img, prelude::FluentBuilder as _, px,
 };
+use kiln_l10n::tr;
 use usvg::roxmltree;
 
 use crate::view::RenderCx;
@@ -169,14 +170,12 @@ fn blocked_why(
     resolved: &Resolved,
     window: &mut Window,
     cx: &mut App,
-) -> Result<LocalImage, &'static str> {
+) -> Result<LocalImage, SharedString> {
     match resolved {
-        Resolved::Blocked(BlockReason::Remote) => Err("Remote image blocked"),
-        Resolved::Blocked(BlockReason::Outside) => Err("Image outside the workspace blocked"),
+        Resolved::Blocked(BlockReason::Remote) => Err(tr!("markdown-view-image-remote-blocked")),
+        Resolved::Blocked(BlockReason::Outside) => Err(tr!("markdown-view-image-outside-blocked")),
         Resolved::Local(local) => match window.use_asset::<LocalImageLoader>(local, cx) {
-            Some(Err(LoadError::Blocked)) => {
-                Err("Image linking files outside the workspace blocked")
-            }
+            Some(Err(LoadError::Blocked)) => Err(tr!("markdown-view-image-svg-links-blocked")),
             _ => Ok(local.clone()),
         },
     }
@@ -271,7 +270,7 @@ pub(crate) fn width(dest: &str, alt: &str, cx: &mut RenderCx) -> f32 {
         Err(why) => {
             // A pixel more than its widest text: drawn, a text wraps when
             // its glyphs' widths add up to a hair more than its box's.
-            let text = cx.text_width(alt).max(cx.text_width(why)) + 1.;
+            let text = cx.text_width(alt).max(cx.text_width(&why)) + 1.;
             text + 2. * (BLOCKED_PAD_X_PX + BLOCKED_BORDER_PX)
         }
     }

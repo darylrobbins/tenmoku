@@ -1,5 +1,6 @@
 //! A failed response as a [`ProviderError`] (the record's § 2 and § 14).
 
+use kiln_l10n::tr;
 use std::time::Duration;
 
 use fe_chat::{ErrorKind, ProviderError};
@@ -20,9 +21,14 @@ pub fn error_from_response(status: u16, headers: &HeaderMap, body: &[u8]) -> Pro
             let text = String::from_utf8_lossy(body);
             let text = text.trim();
             if text.is_empty() {
-                format!("HTTP {status}")
+                tr!("chat-anthropic-http", status = status.to_string()).to_string()
             } else {
-                format!("HTTP {status}: {}", truncate(text, 200))
+                tr!(
+                    "chat-anthropic-http-body",
+                    status = status.to_string(),
+                    body = truncate(text, 200)
+                )
+                .to_string()
             }
         });
     let retry_after = headers

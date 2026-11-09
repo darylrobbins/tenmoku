@@ -2,6 +2,7 @@
 //! [`ChatEvent`]s, and the API history the next request is built from. The
 //! record's § 4.
 
+use kiln_l10n::tr;
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
@@ -85,7 +86,7 @@ pub struct ParseChatIdError;
 
 impl fmt::Display for ParseChatIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a chat id is 26 Crockford base32 chars")
+        f.write_str(&tr!("chat-id-invalid"))
     }
 }
 

@@ -18,16 +18,16 @@ const NOTHING_TO_SAVE: &str = "No local changes to save";
 pub enum StashError {
     /// The working tree and index match HEAD (and, unless untracked files
     /// were included, there's nothing else): no entry was made.
-    #[error("No local changes to save")]
+    #[error("{}", kiln_l10n::tr!("git-stash-nothing"))]
     NothingToStash,
     /// The entry was applied, but clashed with the working tree: the files
     /// hold conflict markers, and the entry is kept, popped or not.
     /// `conflicts` are git's `CONFLICT (…)` lines, naming each file.
-    #[error("conflicts applying the stash; the stash entry is kept:\n{}", conflicts.join("\n"))]
+    #[error("{}", kiln_l10n::tr!("git-stash-conflict", conflicts = conflicts.join("\n")))]
     Conflict { conflicts: Vec<String> },
     /// Git failed for another reason, changing nothing; `output` is all it
     /// printed.
-    #[error("git stash failed:\n{output}")]
+    #[error("{}", kiln_l10n::tr!("git-stash-failed", output = output.as_str()))]
     Failed { output: String },
     #[error(transparent)]
     Git(#[from] GitError),

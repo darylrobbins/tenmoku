@@ -17,16 +17,25 @@ use std::{ops::Range, sync::Arc};
 
 use crate::{Anchor, Buffer, BufferId, BufferSnapshot, EditError, Origin, TransactionId, Version};
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamError {
     /// The target text changed before the first chunk landed; nothing was
     /// applied.
-    #[error("the target text changed before the first chunk landed")]
     Conflict,
     /// The stream's transaction was undone, or is no longer in the history.
-    #[error("the stream's transaction was undone, or is no longer in the history")]
     Undone,
 }
+
+impl std::fmt::Display for StreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::Conflict => kiln_l10n::tr!("buffer-stream-conflict"),
+            Self::Undone => kiln_l10n::tr!("buffer-stream-undone"),
+        })
+    }
+}
+
+impl std::error::Error for StreamError {}
 
 /// An AI's edit of one range, written as it arrives; see the module docs.
 ///

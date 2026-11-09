@@ -276,9 +276,11 @@ pub enum NavError {
 impl fmt::Display for NavError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NavError::Unavailable(why) => write!(f, "unavailable: {why}"),
-            NavError::Cancelled => f.write_str("cancelled"),
-            NavError::Unsupported => f.write_str("unsupported"),
+            NavError::Unavailable(why) => {
+                f.write_str(&kiln_l10n::tr!("nav-unavailable", why = why.as_str()))
+            }
+            NavError::Cancelled => f.write_str(&kiln_l10n::tr!("nav-cancelled")),
+            NavError::Unsupported => f.write_str(&kiln_l10n::tr!("nav-unsupported")),
         }
     }
 }

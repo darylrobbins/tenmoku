@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 dunce.workspace = true
+kiln-l10n.workspace = true
 fe-buffer.workspace = true
 fe-project.workspace = true
 fe-syntax.workspace = true
@@ -27,6 +28,7 @@ cpp = ["fe-syntax/cpp"]
 sql = ["fe-syntax/sql"]
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 criterion.workspace = true
 tempfile.workspace = true
 

@@ -1,0 +1,31 @@
+all = true
+
+[[literal]]
+file = "src/lib.rs"
+text = "{}: {error}"
+reason = "Detail of a NetError payload: a header or host name beside hyper's English error; the message around it is a catalogue key"
+
+[[literal]]
+file = "src/error.rs"
+text = "{error}: {io}"
+reason = "Detail of a NetError payload: hyper's error beside its cause, both library text"
+
+[[literal]]
+file = "src/error.rs"
+text = "{error}: {cause}"
+reason = "Detail of a NetError payload: hyper's error beside its cause, both library text"
+
+[[literal]]
+file = "src/stream.rs"
+text = "{}:{}: {error}"
+reason = "Detail of a NetError payload: host and port beside the OS error"
+
+[[literal]]
+file = "src/stream.rs"
+text = "{}: {error}"
+reason = "Detail of a NetError payload: host beside the TLS library's error"
+
+[[literal]]
+file = "src/grammar_fetch.rs"
+text = "Tenmoku"
+reason = "The User-Agent product name, a proper noun sent on the wire"
