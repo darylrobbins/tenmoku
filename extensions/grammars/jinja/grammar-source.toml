@@ -1,0 +1,10 @@
+# Where this extension's WebAssembly grammar comes from: that commit of the
+# repository (release 0.13.1, master's head; archived, read-only), fetched
+# whole by scripts/build-grammar-wasm.sh.
+git = "https://github.com/cathaysia/tree-sitter-jinja"
+rev = "f46e979278123e3b6949381896f3917f378af068"
+# The directory holding parser.c.
+src = "tree-sitter-jinja/src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm.
+grammar = "jinja"

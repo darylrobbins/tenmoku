@@ -1,0 +1,73 @@
+{# A product page: extends a base layout, imports helpers, and fills blocks. #}
+{% extends "layouts/base.html" %}
+{% from "macros/forms.html" import field, button as btn with context %}
+{% from "macros/util.html" import table %}
+
+{% macro price(amount, currency="EUR", digits=2) -%}
+  <span class="price" data-currency="{{ currency | upper }}">
+    {{- "%.*f" | format(digits, amount) }} {{ currency }}
+  </span>
+{%- endmacro %}
+
+{% block title %}{{ product.name | title }} - {{ site.name }}{% endblock %}
+
+{% block content %}
+<article id="product-{{ product.id }}" class="product">
+  <h1>{{ product.name | e }}</h1>
+  {% set discount = product.discount | default(0) %}
+  {% set tags = ["new", 'sale', "say \"hi\""] %}
+  {% set limits = {"min": 1, "max": 99, "ratio": 0.75, "mask": 0xff, "nil": none} %}
+
+  {% if product.stock > 0 and not product.hidden %}
+    <p class="stock">In stock: {{ product.stock }}</p>
+  {% elif product.preorder is defined %}
+    <p class="stock">Pre-order until {{ product.preorder.until | date("%d %b") }}</p>
+  {% else %}
+    <p class="stock out">Sold out</p>
+  {% endif %}
+
+  {{ price(product.price * (1 - discount / 100), currency=site.currency) }}
+
+  <ul class="tags">
+  {% for tag in tags | sort if tag is string %}
+    <li class="{{ loop.cycle('odd', 'even') }}">{{ loop.index }}. {{ tag }}</li>
+  {% else %}
+    <li>No tags</li>
+  {% endfor %}
+  </ul>
+
+  {% with total = product.reviews | length, shown = 3 %}
+    {% for review in product.reviews if review.score >= 4 %}
+      {% if loop.index is divisibleby 2 %}{% continue %}{% endif %}
+      <blockquote>{{ review.text | truncate(120, true) ~ "..." }}</blockquote>
+    {% endfor %}
+    <p>{{ total }} reviews, {{ shown }} shown</p>
+  {% endwith %}
+
+  {% filter upper %}
+    shipping is free over {{ limits.max }} items
+  {% endfilter %}
+  {% filter trim | striptags | upper %}<em> {{ site.tagline }} </em>{% endfilter %}
+
+  {% call(row) table(product.variants, columns=["size", "colour"]) %}
+    <td>{{ row.size }}</td><td>{{ row.colour | default(none) }}</td>
+  {% endcall %}
+
+  {% set notes %}
+    Ships in {{ product.lead_time or 2 }} days.
+  {% endset %}
+  {{ notes | safe }}
+
+  {% autoescape false %}{{ product.description_html }}{% endautoescape %}
+  {% include "partials/share.html" ignore missing %}
+  {{ _("Back to the shop") }}
+
+  {% raw %}
+    <p>{{ this is not rendered }}</p>
+  {% endraw %}
+
+  {%- if product.related is iterable and product.related | length > 0 +%}
+    {{ btn("See related", kind="link", disabled=false) }}
+  {%- endif %}
+</article>
+{% endblock %}

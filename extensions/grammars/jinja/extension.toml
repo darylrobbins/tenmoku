@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_jinja"
+name = "Jinja syntax"
+version = "0.13.1"
+license = "Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "jinja"
+wasm = "tree-sitter-jinja.wasm"
+extensions = ["jinja", "jinja2", "j2", "njk"]
+block_comment = ["{#", "#}"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
