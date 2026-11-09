@@ -66,7 +66,10 @@ impl FromStr for Color {
     type Err = String;
 
     fn from_str(text: &str) -> Result<Self, String> {
-        let invalid = || format!("{text:?} isn't a colour: expected \"#rrggbb\" or \"#rrggbbaa\"");
+        let invalid = || {
+            let text = format!("{text:?}");
+            kiln_l10n::tr!("kiln-core-theme-colour-invalid", text = text).to_string()
+        };
         let digits = text.strip_prefix('#').ok_or_else(invalid)?;
         if !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(invalid());

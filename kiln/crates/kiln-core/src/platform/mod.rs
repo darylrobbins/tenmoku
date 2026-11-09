@@ -88,7 +88,8 @@ impl PlatformFilter {
                 None => (part, &mut filter.include),
             };
             let os = Os::from_name(name).ok_or_else(|| {
-                format!("unknown platform {name:?}: expected macos, linux or windows")
+                let name = format!("{name:?}");
+                kiln_l10n::tr!("kiln-core-platform-unknown", name = name).to_string()
             })?;
             list.push(os);
         }

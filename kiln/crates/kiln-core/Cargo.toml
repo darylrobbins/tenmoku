@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 kiln-command.workspace = true
 keyring-core.workspace = true
+kiln-l10n.workspace = true
 log.workspace = true
 notify.workspace = true
 serde.workspace = true
@@ -40,6 +41,7 @@ secret-service.workspace = true
 zbus-secret-service-keyring-store.workspace = true
 
 [dev-dependencies]
+kiln-l10n = { workspace = true, features = ["lint"] }
 proptest.workspace = true
 schemars.workspace = true
 tempfile.workspace = true

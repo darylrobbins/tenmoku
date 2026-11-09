@@ -32,6 +32,7 @@ pub mod diagnostic;
 pub mod extension;
 mod keymap;
 mod keystroke;
+pub mod l10n;
 mod label;
 pub mod layers;
 pub mod layout;

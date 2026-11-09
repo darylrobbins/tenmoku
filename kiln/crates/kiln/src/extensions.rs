@@ -1217,7 +1217,7 @@ pub(crate) fn extend_menus(
             continue;
         };
         for menu in &mut layer.menus {
-            let own = bar.menu(&menu.name);
+            let own = bar.menu(&menu.id);
             menu.items.retain(|item| {
                 let message = match (&item.kind, item.id()) {
                     (ItemKind::Remove(id), _) => format!(
@@ -1234,7 +1234,8 @@ pub(crate) fn extend_menus(
                 };
                 if let Some(text) = current {
                     let id = item.id().unwrap_or_default();
-                    let (key, offset) = item_at(text, &menu.name, id).unzip();
+                    let named = (menu.name.as_str(), menu.title_key.as_deref());
+                    let (key, offset) = item_at(text, named, id).unzip();
                     let (line, column) = line_column(text, offset.unwrap_or_default());
                     diagnostics.push(Diagnostic {
                         severity: Severity::Warning,
@@ -1255,8 +1256,11 @@ pub(crate) fn extend_menus(
 
 /// The key ([`MenuBar::parse`]'s, as in `menus[0].items[2]`) and offset in
 /// a menu file's `source` of the first item in `menu` with `id` (its own,
-/// else its command's or system menu's), or naming it to remove.
-fn item_at(source: &str, menu: &str, id: &str) -> Option<(String, usize)> {
+/// else its command's or system menu's), or naming it to remove. The menu
+/// is the table that names it as written: by its `title_key` if `menu`
+/// (its name and key) has one, else by its `name`.
+fn item_at(source: &str, menu: (&str, Option<&str>), id: &str) -> Option<(String, usize)> {
+    let (name, title_key) = menu;
     let document = DeTable::parse(source).ok()?;
     let field = |table: &DeTable<'_>, name: &str| match table.get(name).map(|value| value.get_ref())
     {
@@ -1270,7 +1274,11 @@ fn item_at(source: &str, menu: &str, id: &str) -> Option<(String, usize)> {
         let DeValue::Table(table) = value.get_ref() else {
             continue;
         };
-        if field(table, "name").as_deref() != Some(menu) {
+        let names_it = match title_key {
+            Some(key) => field(table, "title_key").as_deref() == Some(key),
+            None => field(table, "name").as_deref() == Some(name),
+        };
+        if !names_it {
             continue;
         }
         let Some(DeValue::Array(items)) = table.get("items").map(|items| items.get_ref()) else {

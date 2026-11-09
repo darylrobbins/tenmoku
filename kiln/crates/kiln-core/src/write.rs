@@ -11,6 +11,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use kiln_l10n::tr;
 use toml_edit::{Document, InlineTable, Item, Table, TableLike, Value};
 
 /// A value [`write_settings`] sets.
@@ -167,7 +168,12 @@ fn write(path: &Path, changes: &[(&[&str], Change<'_>)], template: &str) -> io::
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("{}: {value} isn't a number TOML can hold", key.join(".")),
+                tr!(
+                    "kiln-core-write-number-unrepresentable",
+                    key = key.join("."),
+                    value = value.to_string()
+                )
+                .to_string(),
             ));
         }
     }
@@ -184,7 +190,12 @@ fn write(path: &Path, changes: &[(&[&str], Change<'_>)], template: &str) -> io::
                 EditError::Invalid(_) => io::ErrorKind::InvalidData,
                 EditError::DropsComment(_) => io::ErrorKind::Unsupported,
             };
-            io::Error::new(kind, format!("{}: {error}", target.display()))
+            let message = tr!(
+                "kiln-core-write-failed",
+                path = target.display().to_string(),
+                reason = error.to_string()
+            );
+            io::Error::new(kind, message.to_string())
         })?;
         // Nothing changed, a missing file's template included: nothing to
         // write.
@@ -201,10 +212,13 @@ fn write(path: &Path, changes: &[(&[&str], Change<'_>)], template: &str) -> io::
             return Ok(());
         }
     }
-    Err(io::Error::other(format!(
-        "{} keeps changing",
-        path.display()
-    )))
+    Err(io::Error::other(
+        tr!(
+            "kiln-core-write-keeps-changing",
+            path = path.display().to_string()
+        )
+        .to_string(),
+    ))
 }
 
 /// `source`, or `template` if it's empty, with `changes` made.
@@ -229,9 +243,19 @@ fn edit(
     Ok(format!("{mark}{text}"))
 }
 
+/// Why `source` can't be edited: it isn't TOML.
+fn invalid_toml(error: impl std::fmt::Display) -> String {
+    tr!("kiln-core-write-invalid-toml", reason = error.to_string()).to_string()
+}
+
+/// Why a setting can't be set or removed: `key` on its path isn't a table.
+fn not_a_table(key: &str) -> String {
+    tr!("kiln-core-write-not-a-table", key = key).to_string()
+}
+
 /// `source` with `key` set to `value`, TOML text.
 fn set(source: &str, key: &[&str], value: &str) -> Result<String, String> {
-    let parsed = Document::parse(source).map_err(|error| format!("isn't valid TOML: {error}"))?;
+    let parsed = Document::parse(source).map_err(invalid_toml)?;
     if let Some(span) = existing(parsed.as_table(), key)? {
         let (before, after) = (&source[..span.start], &source[span.end..]);
         return Ok(format!("{before}{value}{after}"));
@@ -244,20 +268,18 @@ fn set(source: &str, key: &[&str], value: &str) -> Result<String, String> {
 /// `source` without `key`, or as it is if it has none: without the line
 /// it's on, if that's all it takes, else as `toml_edit` removes it.
 fn remove(source: &str, key: &[&str]) -> Result<String, EditError> {
-    let parsed = Document::parse(source).map_err(|error| format!("isn't valid TOML: {error}"))?;
+    let parsed = Document::parse(source).map_err(invalid_toml)?;
     let Some((found, value)) = lookup(parsed.as_table(), key)? else {
         return Ok(source.to_owned());
     };
-    let mut document: toml_edit::DocumentMut = source
-        .parse()
-        .map_err(|error| format!("isn't valid TOML: {error}"))?;
+    let mut document: toml_edit::DocumentMut = source.parse().map_err(invalid_toml)?;
     let (name, tables) = key.split_last().expect("a setting has a name");
     let mut table: &mut dyn TableLike = document.as_table_mut();
     for part in tables {
         table = table
             .get_mut(part)
             .and_then(Item::as_table_like_mut)
-            .ok_or_else(|| format!("{} isn't a table", tables.join(".")))?;
+            .ok_or_else(|| not_a_table(&tables.join(".")))?;
     }
     table.remove(name);
     // A dotted table it empties is no more; as text, it isn't there.
@@ -313,10 +335,9 @@ fn remove(source: &str, key: &[&str]) -> Result<String, EditError> {
     // toml_edit takes the comments before a key it removes: one in
     // braces, say, that neither cut can take.
     if comments(&removed).len() < comments(source).len() {
-        return Err(EditError::DropsComment(format!(
-            "removing {} would drop a comment beside it; edit the file by hand",
-            key.join(".")
-        )));
+        return Err(EditError::DropsComment(
+            tr!("kiln-core-write-drops-comment", key = key.join(".")).to_string(),
+        ));
     }
     Ok(removed)
 }
@@ -533,7 +554,7 @@ fn reset(source: &str, key: &[&str]) -> Result<String, EditError> {
 /// implicit or dotted one gone with its last key; `None` if the table
 /// stays.
 fn prune(source: &str, key: &[&str]) -> Result<Option<String>, EditError> {
-    let parsed = Document::parse(source).map_err(|error| format!("isn't valid TOML: {error}"))?;
+    let parsed = Document::parse(source).map_err(invalid_toml)?;
     let (name, tables) = key.split_last().expect("a table has a name");
     let mut table: &dyn TableLike = parsed.as_table();
     for (depth, part) in tables.iter().enumerate() {
@@ -542,14 +563,14 @@ fn prune(source: &str, key: &[&str]) -> Result<Option<String>, EditError> {
         };
         table = item
             .as_table_like()
-            .ok_or_else(|| format!("{} isn't a table", tables[..=depth].join(".")))?;
+            .ok_or_else(|| not_a_table(&tables[..=depth].join(".")))?;
     }
     let Some(item) = table.get(name) else {
         return Ok(Some(source.to_owned()));
     };
     let inner = item
         .as_table_like()
-        .ok_or_else(|| format!("{} isn't a table", key.join(".")))?;
+        .ok_or_else(|| not_a_table(&key.join(".")))?;
     if inner.iter().next().is_some() {
         return Ok(None);
     }
@@ -671,12 +692,12 @@ fn lookup<'a>(
         };
         table = item
             .as_table_like()
-            .ok_or_else(|| format!("{} isn't a table", tables[..=depth].join(".")))?;
+            .ok_or_else(|| not_a_table(&tables[..=depth].join(".")))?;
     }
     match table.get_key_value(name) {
         Some((found, Item::Value(value))) => Ok(Some((found, value))),
         Some((_, Item::None)) | None => Ok(None),
-        Some(_) => Err(format!("{} is a table", key.join("."))),
+        Some(_) => Err(tr!("kiln-core-write-is-a-table", key = key.join(".")).to_string()),
     }
 }
 
@@ -699,10 +720,13 @@ fn resolve(path: &Path) -> io::Result<PathBuf> {
             Err(error) => return Err(error),
         }
     }
-    Err(io::Error::other(format!(
-        "too many levels of symbolic links at {}",
-        path.display()
-    )))
+    Err(io::Error::other(
+        tr!(
+            "kiln-core-write-symlink-loop",
+            path = path.display().to_string()
+        )
+        .to_string(),
+    ))
 }
 
 /// What the table holding a setting is, in the text it was parsed from.
@@ -752,7 +776,7 @@ fn insertion(
         present = depth + 1;
         table = item
             .as_table_like()
-            .ok_or_else(|| format!("{} isn't a table", tables[..=depth].join(".")))?;
+            .ok_or_else(|| not_a_table(&tables[..=depth].join(".")))?;
         kind = match item {
             Item::Table(inner) if inner.is_dotted() => {
                 if !matches!(kind, Kind::Dotted(_)) {
@@ -771,7 +795,7 @@ fn insertion(
                     braces, relative, ..
                 } = kind
                 else {
-                    return Err("dotted keys outside of any table".into());
+                    return Err(tr!("kiln-core-write-dotted-outside-table").into());
                 };
                 Kind::Inline {
                     table,
@@ -782,7 +806,9 @@ fn insertion(
             }
             _ => Kind::Inline {
                 table,
-                braces: item.span().ok_or("a table without a place")?,
+                braces: item
+                    .span()
+                    .ok_or_else(|| tr!("kiln-core-write-table-unplaced").to_string())?,
                 relative: depth + 1,
                 dotted: false,
             },
@@ -817,7 +843,8 @@ fn insertion(
             })
         }
         Kind::Dotted(inner) => {
-            let end = last_end(inner).ok_or("a dotted table without keys")?;
+            let end = last_end(inner)
+                .ok_or_else(|| tr!("kiln-core-write-dotted-without-keys").to_string())?;
             let path = tables[relative..].iter().chain([name]);
             let path = path.map(|part| quoted(part)).collect::<Vec<_>>().join(".");
             Ok(line(end, &format!("{path} = {value}")))
@@ -827,7 +854,9 @@ fn insertion(
             None => (0..0, format!("{setting}{eol}")),
         }),
         Kind::Header(inner) if !missing => {
-            let header = inner.span().ok_or("a header without a place")?;
+            let header = inner
+                .span()
+                .ok_or_else(|| tr!("kiln-core-write-header-unplaced").to_string())?;
             let end = last_end(inner);
             if end.is_none()
                 && let Some(found) = commented(source, root, inner, name, value)

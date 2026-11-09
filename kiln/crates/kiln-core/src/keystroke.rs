@@ -5,6 +5,7 @@
 
 use std::{fmt, str::FromStr};
 
+use kiln_l10n::tr;
 use serde::{Deserialize, Serialize};
 
 use crate::Os;
@@ -204,28 +205,33 @@ impl Keystroke {
                 let flag = match parsed.flag(modifier) {
                     Some(flag) => flag,
                     None if name.is_empty() => {
-                        return Err(error(offset, "expected a modifier".into()));
+                        let message = tr!("kiln-core-keystroke-modifier-expected");
+                        return Err(error(offset, message.into()));
                     }
                     None => {
-                        let message = format!(
-                            "unknown modifier {name:?}: expected cmd, ctrl, alt, shift, fn \
-                             or secondary"
-                        );
-                        return Err(error(offset, message));
+                        let name = format!("{name:?}");
+                        let message = tr!("kiln-core-keystroke-modifier-unknown", name = name);
+                        return Err(error(offset, message.into()));
                     }
                 };
                 if *flag {
-                    return Err(error(offset, format!("{name:?} is repeated")));
+                    let name = format!("{name:?}");
+                    let message = tr!("kiln-core-keystroke-modifier-repeated", name = name);
+                    return Err(error(offset, message.into()));
                 }
                 *flag = true;
                 offset += name.len() + 1;
             }
         }
         if key.is_empty() {
-            return Err(error(key_offset, "expected a key".into()));
+            let message = tr!("kiln-core-keystroke-key-expected");
+            return Err(error(key_offset, message.into()));
         }
-        let key =
-            Key::parse(key).ok_or_else(|| error(key_offset, format!("unknown key {key:?}")))?;
+        let key = Key::parse(key).ok_or_else(|| {
+            let key = format!("{key:?}");
+            let message = tr!("kiln-core-keystroke-key-unknown", key = key);
+            error(key_offset, message.into())
+        })?;
         Ok(Self {
             modifiers: parsed,
             key,
@@ -302,7 +308,7 @@ impl KeySequence {
         if keystrokes.is_empty() {
             return Err(KeystrokeError {
                 offset: 0,
-                message: "expected a keystroke".into(),
+                message: tr!("kiln-core-keystroke-expected").into(),
             });
         }
         Ok(Self(keystrokes))

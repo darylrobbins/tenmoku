@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use kiln_l10n::tr;
 use serde::Deserialize as _;
 use serde_json::Value as Json;
 use toml::{
@@ -53,7 +54,7 @@ pub fn load_layer(path: &Path) -> Layer {
         Ok(Some(source)) => parse_layer(path, source),
         Ok(None) => layer,
         Err(error) => {
-            let message = format!("cannot read the file: {error}");
+            let message = tr!("kiln-core-config-unreadable", reason = error.to_string()).into();
             layer
                 .diagnostics
                 .push(layer.diagnostic_at(Severity::Error, None, 0, message));
@@ -108,15 +109,17 @@ fn read(path: &Path) -> io::Result<Option<String>> {
         Err(error) => return Err(error),
     };
     if !file.metadata()?.is_file() {
-        return Err(io::Error::other("not a regular file"));
+        return Err(io::Error::other(
+            tr!("kiln-core-config-not-a-file").to_string(),
+        ));
     }
     let mut source = String::new();
     file.take(MAX_BYTES + 1).read_to_string(&mut source)?;
     if source.len() as u64 > MAX_BYTES {
-        return Err(io::Error::other(format!(
-            "bigger than {} KiB",
-            MAX_BYTES / 1024
-        )));
+        let kib = MAX_BYTES / 1024;
+        return Err(io::Error::other(
+            tr!("kiln-core-config-too-big", kib = kib).to_string(),
+        ));
     }
     Ok(Some(source))
 }
@@ -292,7 +295,7 @@ impl Layer {
                         Severity::Warning,
                         Some(path.join(".")),
                         offset,
-                        "unknown key, ignored".into(),
+                        tr!("kiln-core-config-unknown-key").into(),
                     ));
                 }
             }
@@ -332,23 +335,27 @@ fn wrong_type(value: &toml::Value, schema: &Json) -> Option<String> {
     if types.iter().any(|name| fits(name)) {
         return None;
     }
-    let expected: Vec<&str> = types
+    let expected = types
         .iter()
         .filter_map(|name| match *name {
-            "object" => Some("a table"),
-            "array" => Some("an array"),
-            "string" => Some("a string"),
-            "integer" => Some("an integer"),
-            "number" => Some("a number"),
-            "boolean" => Some("a boolean"),
+            "object" => Some(tr!("kiln-core-config-type-table")),
+            "array" => Some(tr!("kiln-core-config-type-array")),
+            "string" => Some(tr!("kiln-core-config-type-string")),
+            "integer" => Some(tr!("kiln-core-config-type-integer")),
+            "number" => Some(tr!("kiln-core-config-type-number")),
+            "boolean" => Some(tr!("kiln-core-config-type-boolean")),
             _ => None,
         })
-        .collect();
-    Some(format!(
-        "expected {}, found {}",
-        expected.join(" or "),
-        value.type_str()
-    ))
+        .reduce(|first, second| tr!("kiln-core-config-either", first = first, second = second))
+        .unwrap_or_default();
+    Some(
+        tr!(
+            "kiln-core-config-type-mismatch",
+            expected = expected,
+            found = value.type_str()
+        )
+        .into(),
+    )
 }
 
 /// Why `value` breaks `schema`'s bounds, if it does.
@@ -363,24 +370,35 @@ fn out_of_range(value: &toml::Value, schema: &Json) -> Option<String> {
             // Written so NaN is out of every range.
             let fits = min.is_none_or(|min| number >= min) && max.is_none_or(|max| number <= max);
             let show = |name: &str| schema[name].to_string();
-            (!fits).then(|| match (min, max) {
-                (Some(_), Some(_)) => format!(
-                    "{value} is out of range: must be from {} to {}",
-                    show("minimum"),
-                    show("maximum")
-                ),
-                (Some(_), None) => {
-                    format!("{value} is too small: must be at least {}", show("minimum"))
+            let value = value.to_string();
+            (!fits).then(|| {
+                match (min, max) {
+                    (Some(_), Some(_)) => tr!(
+                        "kiln-core-config-out-of-range",
+                        value = value,
+                        min = show("minimum"),
+                        max = show("maximum")
+                    ),
+                    (Some(_), None) => tr!(
+                        "kiln-core-config-too-small",
+                        value = value,
+                        min = show("minimum")
+                    ),
+                    _ => tr!(
+                        "kiln-core-config-too-large",
+                        value = value,
+                        max = show("maximum")
+                    ),
                 }
-                _ => format!("{value} is too large: must be at most {}", show("maximum")),
+                .into()
             })
         }
         toml::Value::String(string) => {
             let min = bound("minLength")?;
             match string.chars().count() as f64 >= min {
                 true => None,
-                false if min <= 1.0 => Some("must not be empty".into()),
-                false => Some(format!("must be at least {min} characters long")),
+                false if min <= 1.0 => Some(tr!("kiln-core-config-empty").into()),
+                false => Some(tr!("kiln-core-config-too-short", min = min).into()),
             }
         }
         _ => None,

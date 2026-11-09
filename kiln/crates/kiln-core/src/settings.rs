@@ -506,7 +506,8 @@ impl<'de, S: DeserializeOwned> Visitor<'de> for SectionSeed<'_, S> {
     type Value = ();
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "a settings file with a table `{}`", self.name)
+        let expected = kiln_l10n::tr!("kiln-core-settings-expected-table", name = self.name);
+        f.write_str(&expected)
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {

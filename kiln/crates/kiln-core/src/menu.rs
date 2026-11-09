@@ -26,15 +26,31 @@
 //! by default, unique within its menu) and `shortcut_context` (the frame
 //! names its shortcut is resolved in, the app's by default: see
 //! [`MenuBar::parse_in`]).
+//!
+//! A table that ships with an app names a catalogue key (kiln-l10n) instead
+//! of literal text: `title_key` in place of an item's `title` or a menu's
+//! `name`, as in `title_key = "notes-menu-archive"`. Its `title` (or `name`)
+//! is then the key's en-US text, and [`CommandItem::label`],
+//! [`SystemItem::label`] and [`Menu::label`] give the key, to show in the
+//! active locale. Each title takes the arguments [`set_label_arg`] set,
+//! such as `$app`. A menu's [`Menu::id`], which lookups, layers and
+//! extensions find it by, is its en-US name, so it is the same in every
+//! locale. A system item with no title is `kiln-core-menu-services`.
 //! A host's extension layer (see [`MenuBar::extend`]) may set `before` or
 //! `after` to an item's `id`, or `remove = true`. Unknown fields are errors.
 
-use std::{collections::HashSet, ops::Range, path::Path, sync::Arc};
+use std::{
+    collections::HashSet,
+    ops::Range,
+    path::Path,
+    sync::{Arc, LazyLock, PoisonError, RwLock},
+};
 
 use crate::{Diagnostic, Key, Layer, Os, Severity, platform::PlatformFilter};
 use kiln_command::{
     CommandId, ContextFrame, ContextPredicate, ContextStack, Invocation, Source, Value,
 };
+use kiln_l10n::{Args, Catalogue, Resources, SharedString, Text, tr};
 use toml::de::{DeTable, DeValue};
 
 use crate::{
@@ -54,7 +70,15 @@ pub struct MenuBar {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Menu {
+    /// What [`MenuBar::menu`], a layer, an extension and a chosen item
+    /// find the menu by: its en-US `name`, the same in every locale. kiln
+    /// gives the native macOS Window menu its role by it (`Window`).
+    pub id: String,
+    /// The menu's title in en-US: the table's `name`, or its `title_key`'s
+    /// en-US text.
     pub name: String,
+    /// The catalogue key of a bundled menu's title.
+    pub title_key: Option<String>,
     pub items: Vec<MenuItem>,
 }
 
@@ -88,7 +112,11 @@ pub enum Place {
 pub struct CommandItem {
     /// Unique within its menu.
     pub id: String,
+    /// The title in en-US: the table's `title`, or its `title_key`'s en-US
+    /// text.
     pub title: String,
+    /// The catalogue key of a bundled item's title.
+    pub title_key: Option<String>,
     pub command: CommandId,
     /// `Null` when it has none.
     pub args: Value,
@@ -113,7 +141,11 @@ pub struct Alternative {
 pub struct SystemItem {
     /// The system menu's name (`services`) unless set.
     pub id: String,
+    /// The title in en-US, as [`CommandItem::title`].
     pub title: String,
+    /// The catalogue key of its title: `kiln-core-menu-services` for a
+    /// Services item the table gives no title.
+    pub title_key: Option<String>,
     pub menu: SystemMenu,
 }
 
@@ -208,11 +240,12 @@ impl MenuBar {
         (ok.then_some(bar), parser.diagnostics)
     }
 
-    pub fn menu(&self, name: &str) -> Option<&Menu> {
-        self.menus.iter().find(|menu| menu.name == name)
+    /// The menu with `id`, its en-US name.
+    pub fn menu(&self, id: &str) -> Option<&Menu> {
+        self.menus.iter().find(|menu| menu.id == id)
     }
 
-    /// Merges a host's `layer` in. A layer menu named like one of these
+    /// Merges a host's `layer` in. A layer menu with the ID of one of these
     /// merges into it: an item placed `before` or `after` an ID goes there,
     /// a `remove` item removes the item with its ID, an item whose ID is
     /// taken replaces that item (in its place, unless placed), and the rest
@@ -221,16 +254,18 @@ impl MenuBar {
     /// trailing and doubled separators are dropped, and menus left empty.
     pub fn extend(&mut self, layer: MenuBar) {
         for menu in layer.menus {
-            match self.menus.iter_mut().find(|own| own.name == menu.name) {
+            match self.menus.iter_mut().find(|own| own.id == menu.id) {
                 Some(own) => own.merge(menu.items),
                 None => {
                     let at = self
                         .menus
                         .iter()
-                        .position(|own| own.name == "Window")
+                        .position(|own| own.id == "Window")
                         .unwrap_or(self.menus.len());
                     let mut new = Menu {
+                        id: menu.id,
                         name: menu.name,
+                        title_key: menu.title_key,
                         items: Vec::new(),
                     };
                     new.merge(menu.items);
@@ -250,6 +285,12 @@ impl MenuBar {
 }
 
 impl Menu {
+    /// The menu's title, to resolve in the active locale: its key for a
+    /// bundled menu, else its name as written.
+    pub fn label(&self) -> Text {
+        label(self.title_key.as_deref(), &self.name)
+    }
+
     /// The item with `id`.
     pub fn item(&self, id: &str) -> Option<&MenuItem> {
         self.items.iter().find(|item| item.defines(id))
@@ -335,6 +376,13 @@ impl MenuItem {
 }
 
 impl CommandItem {
+    /// The item's title, to resolve in the active locale: its key, with the
+    /// arguments [`set_label_arg`] set, for a bundled item; else its title
+    /// as written, verbatim.
+    pub fn label(&self) -> Text {
+        label(self.title_key.as_deref(), &self.title)
+    }
+
     /// The first single-keystroke entry of [`shortcuts`] in the item's
     /// `shortcut_context` that isn't a mouse click: the key a menu shows,
     /// which can't be a chord or a click.
@@ -360,6 +408,54 @@ impl CommandItem {
             .source(Source::Menu)
             .context(stack.clone())
     }
+}
+
+impl SystemItem {
+    /// The item's title, to resolve in the active locale, as
+    /// [`CommandItem::label`].
+    pub fn label(&self) -> Text {
+        label(self.title_key.as_deref(), &self.title)
+    }
+}
+
+/// The key of a Services item's title when its table gives none.
+pub const SERVICES_KEY: &str = "kiln-core-menu-services";
+
+/// Process-wide, as the catalogue is: what [`set_label_arg`] set.
+static LABEL_ARGS: LazyLock<RwLock<Args>> = LazyLock::new(RwLock::default);
+
+/// Gives every keyed menu title the argument `name`: kiln sets `app` to the
+/// app's name before it parses its menus, for titles such as
+/// `Hide { $app }`. A second call for the same `name` replaces the first.
+pub fn set_label_arg(name: &'static str, value: impl Into<SharedString>) {
+    LABEL_ARGS
+        .write()
+        .unwrap_or_else(PoisonError::into_inner)
+        .set(name, value.into());
+}
+
+fn label_args() -> Args {
+    LABEL_ARGS
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+}
+
+fn label(key: Option<&str>, title: &str) -> Text {
+    match key {
+        Some(key) => Text::keyed(key.to_owned(), label_args()),
+        None => Text::verbatim(title.to_owned()),
+    }
+}
+
+/// `key`'s en-US text with the arguments [`set_label_arg`] set, whatever
+/// the active locale, from every crate's catalogue linked in; `None` if
+/// en-US has no such message.
+fn en_us(key: &str) -> Option<String> {
+    static EN_US: LazyLock<Catalogue> =
+        LazyLock::new(|| Catalogue::new(&Resources::registered(), &[]));
+    let found = EN_US.try_format(key, &label_args())?;
+    Some(found.text.to_string())
 }
 
 /// Every key sequence that, pressed in `stack`, runs `command` with `args`,
@@ -475,8 +571,9 @@ impl Parser<'_> {
         let mut bar = MenuBar::default();
         for fields in menus {
             if let Some(menu) = self.menu(&fields) {
-                if !names.insert(menu.name.clone()) {
-                    let message = format!("menu {:?} is repeated", menu.name);
+                if !names.insert(menu.id.clone()) {
+                    let id = format!("{:?}", menu.id);
+                    let message = tr!("kiln-core-menu-repeated", menu = id).into();
                     self.error(Some(&fields.key), fields.span.start, message);
                 }
                 bar.menus.push(menu);
@@ -486,10 +583,12 @@ impl Parser<'_> {
     }
 
     fn menu(&mut self, fields: &Fields<'_, '_>) -> Option<Menu> {
-        self.unknown_fields(fields, &["name", "items", "platform"]);
+        self.unknown_fields(fields, &["name", "title_key", "items", "platform"]);
         let included = self.platform(fields);
-        let name = self.string(fields, "name", true)?;
+        let (name, title_key) = self.title(fields, "name", true)?;
+        let id = name.clone();
         let key = fields.key("items");
+        let menu_id = &id;
         let mut items = Vec::new();
         let mut ids = HashSet::new();
         let mut dropped = false;
@@ -500,7 +599,12 @@ impl Parser<'_> {
                         && !matches!(parsed.kind, ItemKind::Remove(_))
                         && !ids.insert(id.to_owned())
                     {
-                        let message = format!("id {id:?} is repeated in menu {name:?}");
+                        let message = tr!(
+                            "kiln-core-menu-id-repeated",
+                            id = format!("{id:?}"),
+                            menu = format!("{menu_id:?}")
+                        )
+                        .into();
                         self.error(Some(&item.key), item.span.start, message);
                     }
                     items.push(parsed);
@@ -512,7 +616,12 @@ impl Parser<'_> {
         if !included {
             return None;
         }
-        let mut menu = Menu { name, items };
+        let mut menu = Menu {
+            id,
+            name,
+            title_key,
+            items,
+        };
         // Dropping items leaves no stray separators, nor an empty menu.
         if dropped {
             menu.tidy();
@@ -529,6 +638,7 @@ impl Parser<'_> {
             fields,
             &[
                 "title",
+                "title_key",
                 "command",
                 "args",
                 "id",
@@ -553,7 +663,7 @@ impl Parser<'_> {
                 self.error(
                     Some(&fields.key),
                     fields.span.start,
-                    "set `before` or `after`, not both".into(),
+                    tr!("kiln-core-menu-before-and-after").into(),
                 );
                 None
             }
@@ -571,9 +681,7 @@ impl Parser<'_> {
             command.is_some() && !remove,
         ];
         if kinds.iter().filter(|&&kind| kind).count() != 1 {
-            let message = "expected one of `command`, `separator = true`, `system` \
-                           or `remove = true`"
-                .to_owned();
+            let message = tr!("kiln-core-menu-item-kind").into();
             self.error(Some(&fields.key), fields.span.start, message);
             return Err(());
         }
@@ -582,37 +690,43 @@ impl Parser<'_> {
         } else if remove {
             let id = id.or_else(|| command.map(|command| command.as_str().to_owned()));
             let Some(id) = id else {
-                let message = "`remove` needs the `id` to remove".to_owned();
+                let message = tr!("kiln-core-menu-remove-needs-id").into();
                 self.error(Some(&fields.key), fields.span.start, message);
                 return Err(());
             };
             ItemKind::Remove(id)
         } else if let Some(system) = system {
             if system != "services" {
-                let message = format!("unknown system menu {system:?}: expected services");
+                let quoted = format!("{system:?}");
+                let message = tr!("kiln-core-menu-system-unknown", name = quoted).into();
                 self.error(
                     Some(&fields.key("system")),
                     fields.span("system").start,
                     message,
                 );
             }
-            let title = self.string(fields, "title", false);
+            let (title, title_key) = match self.title(fields, "title", false) {
+                Some(title) => title,
+                None => (
+                    en_us(SERVICES_KEY).unwrap_or_else(|| SERVICES_KEY.to_owned()),
+                    Some(SERVICES_KEY.to_owned()),
+                ),
+            };
             ItemKind::System(SystemItem {
-                title: title.unwrap_or_else(|| "Services".into()),
+                title,
+                title_key,
                 id: id.unwrap_or(system),
                 menu: SystemMenu::Services,
             })
         } else {
             let command = command.expect("one kind is set");
-            let title = self.string(fields, "title", true);
+            let title = self.title(fields, "title", true);
             let args = self.args(fields);
             let os_action = self.string(fields, "os_action", false).and_then(|name| {
                 let found = OS_ACTIONS.iter().find(|(known, _)| *known == name);
                 if found.is_none() {
-                    let message = format!(
-                        "unknown os_action {name:?}: expected cut, copy, paste, \
-                         select_all, undo or redo"
-                    );
+                    let quoted = format!("{name:?}");
+                    let message = tr!("kiln-core-menu-os-action-unknown", name = quoted).into();
                     self.error(
                         Some(&fields.key("os_action")),
                         fields.span("os_action").start,
@@ -632,9 +746,11 @@ impl Parser<'_> {
             if !included || !self.known(fields, "command", &command, &args) {
                 return Ok(None);
             }
+            let (title, title_key) = title.expect("checked for errors");
             ItemKind::Command(CommandItem {
                 id: id.unwrap_or_else(|| command.as_str().to_owned()),
-                title: title.expect("checked for errors"),
+                title,
+                title_key,
                 command,
                 args,
                 os_action,
@@ -715,7 +831,7 @@ impl Parser<'_> {
                 self.error(
                     Some(&fields.key("shortcut_context")),
                     fields.span("shortcut_context").start,
-                    "expected an array of frame names".into(),
+                    tr!("kiln-core-menu-expected-frames").into(),
                 );
                 Vec::new()
             }
@@ -737,12 +853,17 @@ impl Parser<'_> {
         };
         let message = match catalog.check(command, args) {
             Ok(()) => return true,
-            Err(CatalogError::UnknownCommand) => {
-                format!("unknown command {command}; the item is ignored")
-            }
-            Err(CatalogError::BadArgs(message)) => {
-                format!("bad args for {command}: {message}; the item is ignored")
-            }
+            Err(CatalogError::UnknownCommand) => tr!(
+                "kiln-core-menu-unknown-command",
+                command = command.to_string()
+            )
+            .into(),
+            Err(CatalogError::BadArgs(message)) => tr!(
+                "kiln-core-menu-bad-args",
+                command = command.to_string(),
+                reason = message
+            )
+            .into(),
         };
         let key = fields.key(name);
         self.push(
@@ -766,10 +887,11 @@ impl Parser<'_> {
             return Vec::new();
         };
         let (DeValue::Array(items), toml::Value::Array(values)) = (spanned.get_ref(), value) else {
-            let message = format!(
-                "expected an array of tables, found {}",
-                spanned.get_ref().type_str()
-            );
+            let message = tr!(
+                "kiln-core-config-expected-tables",
+                found = spanned.get_ref().type_str()
+            )
+            .into();
             self.error(Some(key), spanned.span().start, message);
             return Vec::new();
         };
@@ -784,7 +906,11 @@ impl Parser<'_> {
                     key,
                 }),
                 _ => {
-                    let message = format!("expected a table, found {}", item.get_ref().type_str());
+                    let message = tr!(
+                        "kiln-core-config-expected-table",
+                        found = item.get_ref().type_str()
+                    )
+                    .into();
                     self.error(Some(&key), item.span().start, message);
                 }
             }
@@ -799,17 +925,53 @@ impl Parser<'_> {
             Some(toml::Value::String(text)) => Some(text.clone()),
             None => {
                 if required {
-                    let message = format!("missing `{name}`");
+                    let message = tr!("kiln-core-config-missing", name = name).into();
                     self.error(Some(&fields.key), fields.span.start, message);
                 }
                 None
             }
             Some(value) => {
-                let message = format!("expected a string, found {}", value.type_str());
+                let message =
+                    tr!("kiln-core-config-expected-string", found = value.type_str()).into();
                 self.error(Some(&fields.key(name)), fields.span(name).start, message);
                 None
             }
         }
+    }
+
+    /// A title: the literal string `name` (an item's `title`, a menu's
+    /// `name`), or the en-US text of the catalogue key `title_key`, with the
+    /// key. Both set is an error, and neither is if `required`; a key en-US
+    /// has no message for is a warning, and titles it as the key.
+    fn title(
+        &mut self,
+        fields: &Fields<'_, '_>,
+        name: &str,
+        required: bool,
+    ) -> Option<(String, Option<String>)> {
+        let key = self.string(fields, "title_key", false);
+        let Some(key) = key else {
+            return self
+                .string(fields, name, required)
+                .map(|title| (title, None));
+        };
+        if fields.values.contains_key(name) {
+            let message = tr!("kiln-core-menu-title-and-key", name = name).into();
+            self.error(Some(&fields.key), fields.span.start, message);
+            return None;
+        }
+        let title = en_us(&key).unwrap_or_else(|| {
+            let message = tr!("kiln-core-menu-title-key-unknown", key = format!("{key:?}")).into();
+            let span = fields.span("title_key");
+            self.push(
+                Severity::Warning,
+                Some(&fields.key("title_key")),
+                span.start,
+                message,
+            );
+            key.clone()
+        });
+        Some((title, Some(key)))
     }
 
     /// The boolean `name`, false if missing.
@@ -818,7 +980,11 @@ impl Parser<'_> {
             None => false,
             Some(toml::Value::Boolean(value)) => *value,
             Some(value) => {
-                let message = format!("expected a boolean, found {}", value.type_str());
+                let message = tr!(
+                    "kiln-core-config-expected-boolean",
+                    found = value.type_str()
+                )
+                .into();
                 self.error(Some(&fields.key(name)), fields.span(name).start, message);
                 false
             }
@@ -848,7 +1014,7 @@ impl Parser<'_> {
                 Ok(args) => return Some(args),
                 Err(error) => error.to_string(),
             },
-            value => format!("expected a table, found {}", value.type_str()),
+            value => tr!("kiln-core-config-expected-table", found = value.type_str()).into(),
         };
         self.error(Some(&fields.key("args")), fields.span("args").start, error);
         None
@@ -868,7 +1034,11 @@ impl Parser<'_> {
                 "" => name,
                 prefix => format!("{prefix}.{name}"),
             };
-            self.error(Some(&key), offset, "unknown field".into());
+            self.error(
+                Some(&key),
+                offset,
+                tr!("kiln-core-config-unknown-field").into(),
+            );
         }
     }
 

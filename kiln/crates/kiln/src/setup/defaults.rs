@@ -6,7 +6,7 @@
 
 use std::{borrow::Cow, fmt::Write as _, path::Path};
 
-use kiln_core::{CommandCatalog, Diagnostic, ItemKind, KeymapLayer, MenuBar, MenuItem, Os};
+use kiln_core::{CommandCatalog, Diagnostic, ItemKind, KeymapLayer, Menu, MenuBar, MenuItem, Os};
 
 use super::Config;
 
@@ -18,8 +18,8 @@ const MENUS_PATH: &str = "<kiln menus>";
 
 const KEYMAP: &str = include_str!("keymap.toml");
 
-/// `{app}` in its titles is the app's name; its first menu, the app
-/// menu, is named for the app by [`name_app_menu`].
+/// Its titles are keys in kiln's catalogue, `$app` in them the app's name;
+/// its first menu, the app menu, is named for the app by [`name_app_menu`].
 const MENUS: &str = include_str!("menus.toml");
 
 impl Config {
@@ -87,20 +87,26 @@ impl Config {
         (layers, diagnostics)
     }
 
+    /// Gives keyed menu titles the app's name as `$app`
+    /// ([`kiln_core::menu::set_label_arg`]): before any menu file is parsed,
+    /// the app's, kiln's bundled one or an extension's, so the en-US titles
+    /// it fills in, and every label shown later, name the app. Every path
+    /// to the menus calls it first: [`Config::menu_source`], and the shipped
+    /// menus' whatever their table.
+    pub(crate) fn name_the_app_in_menus(&self) {
+        kiln_core::menu::set_label_arg("app", self.app_name.clone());
+    }
+
     /// The menu table the app shows and the path its diagnostics name: the
     /// app's, or else kiln's bundled one if [`Config::default_menus`] is
-    /// on, its titles naming the app. The bundled bar, once parsed, is
-    /// then [`name_app_menu`]'s to finish.
+    /// on. The bundled bar, once parsed, is then [`name_app_menu`]'s to
+    /// finish. Names the app in menu titles first
+    /// ([`Config::name_the_app_in_menus`]), as the table is parsed next.
     pub(super) fn menu_source(&self) -> Option<(&Path, Cow<'_, str>)> {
+        self.name_the_app_in_menus();
         match &self.menus {
             Some(source) => Some((&source.path, Cow::Borrowed(&*source.text))),
-            None if self.default_menus => {
-                let name = toml_escape(&self.app_name);
-                Some((
-                    Path::new(MENUS_PATH),
-                    Cow::Owned(MENUS.replace("{app}", &name)),
-                ))
-            }
+            None if self.default_menus => Some((Path::new(MENUS_PATH), Cow::Borrowed(MENUS))),
             None => None,
         }
     }
@@ -125,19 +131,20 @@ impl Config {
 }
 
 /// Names the bundled bar's app menu, the one `menus.toml` calls `App`, for
-/// the app. Menus are known by their names, so a bundled menu the app shares
-/// its name with, as an app called `Window` does, is folded into the app
+/// the app, in every locale: its ID and title become the app's name. Menus
+/// are known by their IDs, each its en-US name, so a bundled menu the app
+/// shares its name with, as an app called `Window` does, is folded into the app
 /// menu after a separator rather than shown twice. A catalog that knows none
 /// of the app menu's commands drops it; the bar is then left as parsed, so
 /// no other menu is renamed or folded.
 pub(super) fn name_app_menu(bar: &mut MenuBar, app_name: &str) {
-    let Some(app_ix) = bar.menus.iter().position(|menu| menu.name == "App") else {
+    let Some(app_ix) = bar.menus.iter().position(|menu| menu.id == "App") else {
         return;
     };
     if let Some(ix) = bar
         .menus
         .iter()
-        .position(|menu| menu.name == app_name)
+        .position(|menu| menu.id == app_name)
         .filter(|&ix| ix != app_ix)
     {
         let same = bar.menus.remove(ix);
@@ -148,10 +155,16 @@ pub(super) fn name_app_menu(bar: &mut MenuBar, app_name: &str) {
             place: None,
         });
         app.items.extend(same.items);
-        app_name.clone_into(&mut app.name);
+        name_for_app(app, app_name);
     } else {
-        app_name.clone_into(&mut bar.menus[app_ix].name);
+        name_for_app(&mut bar.menus[app_ix], app_name);
     }
+}
+
+fn name_for_app(menu: &mut Menu, app_name: &str) {
+    app_name.clone_into(&mut menu.id);
+    app_name.clone_into(&mut menu.name);
+    menu.title_key = None;
 }
 
 /// `text` as the inside of a TOML basic string: `"` and `\` escaped, and
@@ -173,7 +186,40 @@ pub(crate) fn toml_escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::toml_escape;
+    use std::path::Path;
+
+    use kiln_core::{ItemKind, MenuBar, Os};
+
+    use super::{MENUS, toml_escape};
+
+    /// The bundled menus are all keyed, their keys in en-US: every item's
+    /// title and every menu's but the app menu's, whose name is replaced by
+    /// the app's. Parsed with no warning, as an unknown key would give.
+    #[test]
+    fn the_bundled_menus_are_keyed() {
+        kiln_core::menu::set_label_arg("app", "Notes");
+        for os in [Os::MacOs, Os::Linux, Os::Windows] {
+            let (bar, diagnostics) = MenuBar::parse_for(Path::new("menus.toml"), MENUS, None, os);
+            assert_eq!(diagnostics, [], "on {os:?}");
+            let bar = bar.unwrap();
+            assert_eq!(bar.menus[0].name, "App");
+            for menu in &bar.menus[1..] {
+                assert!(menu.title_key.is_some(), "{} on {os:?}", menu.name);
+            }
+            for item in bar.menus.iter().flat_map(|menu| &menu.items) {
+                match &item.kind {
+                    ItemKind::Command(command) => {
+                        assert!(command.title_key.is_some(), "{} on {os:?}", command.title);
+                    }
+                    ItemKind::Separator => {}
+                    kind => panic!("{kind:?} on {os:?}"),
+                }
+            }
+        }
+        for line in MENUS.lines() {
+            assert!(!line.trim_start().starts_with("title "), "{line}");
+        }
+    }
 
     #[test]
     fn app_names_are_escaped_for_toml() {

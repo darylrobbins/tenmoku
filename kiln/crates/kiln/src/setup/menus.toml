@@ -1,6 +1,9 @@
 # kiln's own menus, installed when `Config::default_menus` is on and the
 # app gives no menu table: one table for every platform, naming only
-# kiln's commands. `{app}` is the app's name, put in before it's parsed.
+# kiln's commands. Each title is a key in kiln-core's catalogue
+# (`title_key`), shown in the active locale; `$app` in one is the app's
+# name. A literal `title` (or menu `name`) has no place here: only the app
+# menu has a name, which is replaced by the app's.
 # The first menu is the app menu on macOS: it's named for the app once
 # parsed, as an app may share its name with another of these menus.
 
@@ -8,17 +11,17 @@
 name = "App"
 
 [[menus.items]]
-title = "Hide {app}"
+title_key = "kiln-core-menu-hide-app"
 command = "app.hide"
 platform = "macos"
 
 [[menus.items]]
-title = "Hide Others"
+title_key = "kiln-core-menu-hide-others"
 command = "app.hide_others"
 platform = "macos"
 
 [[menus.items]]
-title = "Show All"
+title_key = "kiln-core-menu-show-all"
 command = "app.show_all"
 platform = "macos"
 
@@ -26,34 +29,34 @@ platform = "macos"
 separator = true
 
 [[menus.items]]
-title = "Quit {app}"
+title_key = "kiln-core-menu-quit-app"
 command = "app.quit"
 
 [[menus]]
-name = "View"
+title_key = "kiln-core-menu-view"
 
 [[menus.items]]
-title = "Command Palette"
+title_key = "kiln-core-menu-command-palette"
 command = "command_palette.toggle"
 
 [[menus.items]]
-title = "Toggle Full Screen"
+title_key = "kiln-core-menu-toggle-full-screen"
 command = "window.toggle_fullscreen"
 
 [[menus]]
-name = "Window"
+title_key = "kiln-core-menu-window"
 
 [[menus.items]]
-title = "Minimize"
+title_key = "kiln-core-menu-minimize"
 command = "window.minimize"
 
 [[menus.items]]
-title = "Zoom"
+title_key = "kiln-core-menu-zoom"
 command = "window.zoom"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Close Window"
+title_key = "kiln-core-menu-close-window"
 command = "window.close"

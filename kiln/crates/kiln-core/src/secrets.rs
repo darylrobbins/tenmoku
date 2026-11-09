@@ -26,6 +26,7 @@ use std::{
 };
 
 use keyring_core::{CredentialStore, Entry};
+use kiln_l10n::tr;
 
 use crate::platform::keychain as platform;
 
@@ -56,18 +57,30 @@ impl fmt::Debug for Secret {
 }
 
 /// Why a store couldn't do what was asked. No variant carries a secret.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SecretError {
     /// The platform has no store (no Secret Service on a headless Linux
     /// box), or it refused (locked, or no session to ask in).
-    #[error("no keychain is available: {0}")]
     Unavailable(String),
     /// The user declined access when the platform asked.
-    #[error("access to the keychain was declined")]
     Denied,
-    #[error("keychain error: {0}")]
     Other(String),
 }
+
+/// In the active locale.
+impl fmt::Display for SecretError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self {
+            SecretError::Unavailable(reason) => {
+                tr!("kiln-core-secrets-unavailable", reason = reason)
+            }
+            SecretError::Denied => tr!("kiln-core-secrets-denied"),
+            SecretError::Other(reason) => tr!("kiln-core-secrets-other", reason = reason),
+        })
+    }
+}
+
+impl std::error::Error for SecretError {}
 
 /// Where secrets are kept, by service and account (see the module doc for
 /// the names to use).

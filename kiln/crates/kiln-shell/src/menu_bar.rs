@@ -17,11 +17,11 @@
 
 use gpui::{
     App, Context, DispatchPhase, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
-    KeyDownEvent, MouseDownEvent, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, canvas, div,
+    KeyDownEvent, MouseDownEvent, ParentElement as _, Render, Styled as _, Subscription, Window,
+    canvas, div,
 };
 use kiln_command::{CommandId, Value};
-use kiln_core::{CatalogError, CommandCatalog, ItemKind, MenuBar, shortcut_label};
+use kiln_core::{CatalogError, CommandCatalog, ItemKind, Keymap, Menu, MenuBar, shortcut_label};
 use kiln_platform::{keys, menus};
 use kiln_ui::{MenuEntry, MenuPanel, MenuStrip, ui_theme};
 
@@ -58,12 +58,12 @@ impl CommandCatalog for Catalog {
 }
 
 /// The open menu, and the item highlighted in it. The indices are where
-/// they were last found; the name and command are what they are found by
-/// when the installed menus change.
+/// they were last found; the menu's ID and the command are what they are
+/// found by when the installed menus change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OpenMenu {
     menu: usize,
-    name: String,
+    id: String,
     /// An index into the menu's items; never a separator's.
     item: Option<usize>,
     /// The command at `item`.
@@ -74,23 +74,22 @@ impl OpenMenu {
     /// Menu `menu` of `bar` open, with its item `item` highlighted if that
     /// is a command.
     fn at(bar: &MenuBar, menu: usize, item: Option<usize>) -> Option<Self> {
-        let name = bar.menus.get(menu)?.name.clone();
+        let id = bar.menus.get(menu)?.id.clone();
         let command = item.and_then(|item| command_at(bar, menu, item));
         let item = item.filter(|_| command.is_some());
         Some(Self {
             menu,
-            name,
+            id,
             item,
             command,
         })
     }
 
-    /// This, found again in `bar` by its menu's name and its item's
-    /// command: the first menu of that name, and the first command item in
-    /// it of that ID. `None` if the menu is gone; no highlight if the
-    /// command is.
+    /// This, found again in `bar` by its menu's ID and its item's command:
+    /// the first menu of that ID, and the first command item in it of that
+    /// ID. `None` if the menu is gone; no highlight if the command is.
     fn locate(&self, bar: &MenuBar) -> Option<Self> {
-        let menu = bar.menus.iter().position(|menu| menu.name == self.name)?;
+        let menu = bar.menus.iter().position(|menu| menu.id == self.id)?;
         let item = self.command.as_ref().and_then(|id| {
             bar.menus[menu]
                 .items
@@ -99,7 +98,7 @@ impl OpenMenu {
         });
         Some(Self {
             menu,
-            name: self.name.clone(),
+            id: self.id.clone(),
             item,
             command: item.and(self.command.clone()),
         })
@@ -188,21 +187,21 @@ impl MenuBarView {
         let Some(bar) = Self::bar(cx) else {
             return;
         };
-        let Some((name, id)) = bar.menus.get(menu).and_then(|m| {
+        let Some((menu, id)) = bar.menus.get(menu).and_then(|m| {
             let id = m.items.get(item)?.command()?.id.clone();
-            Some((m.name.clone(), id))
+            Some((m.id.clone(), id))
         }) else {
             return;
         };
         self.close(window, cx);
         window.defer(cx, move |window, cx| {
-            menus::run(&name, &id, window, cx);
+            menus::run(&menu, &id, window, cx);
         });
     }
 
     /// The open menu, reconciled with `bar`, which may have changed since
     /// it opened (as when a command is contributed): found again by its
-    /// menu's name and its highlight's command, closed, giving focus back,
+    /// menu's ID and its highlight's command, closed, giving focus back,
     /// if `bar` has no such menu; its highlight dropped if the menu has no
     /// such command.
     fn reconcile(
@@ -256,6 +255,30 @@ impl MenuBarView {
     }
 }
 
+/// What the panel of `menu` draws, an entry for each item, so the panel's
+/// indices are the menu's: each title in the active locale, a command's
+/// with its shortcut in `keymap`. A system item, which only macOS fills,
+/// shows its title and runs nothing; it is never highlighted.
+fn entries(menu: &Menu, keymap: &Keymap) -> Vec<MenuEntry> {
+    menu.items
+        .iter()
+        .map(|item| match &item.kind {
+            ItemKind::Command(command) => MenuEntry::Item {
+                title: command.label().resolve(),
+                shortcut: command
+                    .shortcut(keymap)
+                    .map(|keys| shortcut_label(&keys).into()),
+            },
+            ItemKind::System(system) => MenuEntry::Item {
+                title: system.label().resolve(),
+                shortcut: None,
+            },
+            // A `remove` is only for extending a bar.
+            ItemKind::Separator | ItemKind::Remove(_) => MenuEntry::Separator,
+        })
+        .collect()
+}
+
 /// The command item `step` (1 or -1) from `from` in menu `menu`, wrapping
 /// and skipping separators; from `None`, the first (or last) one.
 fn next_item(bar: &MenuBar, menu: usize, from: Option<usize>, step: isize) -> Option<usize> {
@@ -279,10 +302,7 @@ impl Render for MenuBarView {
         // colours, which they ignore.
         let ui = ui_theme(cx);
         let bar = Self::bar(cx).unwrap_or_default();
-        let names = bar
-            .menus
-            .iter()
-            .map(|menu| SharedString::from(menu.name.clone()));
+        let names = bar.menus.iter().map(|menu| menu.label().resolve());
         let entity = cx.entity();
         let mut strip = MenuStrip::new(names, &ui)
             .on_click({
@@ -321,19 +341,7 @@ impl Render for MenuBarView {
         {
             let highlighted = open.item;
             let keymap = keys::current_keymap(cx);
-            let entries = menu
-                .items
-                .iter()
-                .map(|item| match &item.kind {
-                    ItemKind::Command(command) => MenuEntry::Item {
-                        title: command.title.clone().into(),
-                        shortcut: command
-                            .shortcut(&keymap)
-                            .map(|keys| shortcut_label(&keys).into()),
-                    },
-                    _ => MenuEntry::Separator,
-                })
-                .collect();
+            let entries = entries(menu, &keymap);
             let menu_ix = open.menu;
             let panel = MenuPanel::new(entries, &ui)
                 .highlighted(highlighted)
@@ -388,5 +396,153 @@ impl Render for MenuBarView {
             .h_full()
             .children(closer)
             .child(strip)
+    }
+}
+
+/// Menu titles in the active locale, in the GPUI menus kiln-platform
+/// builds and in the bar drawn here: the bundled title of a Services item
+/// (kiln-core's `kiln-core-menu-services`), a command item a table keys
+/// with `title_key`, and a menu named in the table, which stays as
+/// written. The process catalogue is global: this test switches it, and is
+/// its own process under nextest.
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use gpui::{OwnedMenuItem, TestAppContext, VisualTestContext};
+    use kiln_core::{ItemKind, Keymap, MenuBar};
+    use kiln_l10n::{LanguageIdentifier, Registered, ResourceFile, Resources};
+    use kiln_platform::{commands, keys, locale::set_locale, menus};
+
+    use super::MenuBarView;
+
+    /// A fake locale, `qps-ploc`, for this binary: kiln-core's Services
+    /// title and kiln-shell's `menu_bar.open` title.
+    static FAKE_LOCALE: Resources = Resources {
+        crate_name: "kiln-shell-menu-fake-locale",
+        manifest_dir: env!("CARGO_MANIFEST_DIR"),
+        declared_in: file!(),
+        files: &[ResourceFile {
+            locale: "qps-ploc",
+            path: "qps-ploc/menus.ftl",
+            source: "kiln-core-menu-services = ⟦Sérvícés⟧\n\
+                     command-menu_bar-open = ⟦Ópén Ménú Bár⟧\n",
+        }],
+        dynamic_prefixes: &[],
+    };
+
+    inventory::submit! { Registered(&FAKE_LOCALE) }
+
+    /// A bundled table: one keyed item, and a Services item with no title.
+    const MENUS: &str = r#"
+[[menus]]
+name = "Probe"
+
+[[menus.items]]
+title_key = "command-menu_bar-open"
+command = "menu_bar.open"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+system = "services"
+"#;
+
+    /// The installed GPUI menus' titles: each menu's, then its items'.
+    fn gpui_titles(cx: &mut VisualTestContext) -> Vec<(String, Vec<String>)> {
+        let menus = cx.update(|_, cx| cx.get_menus()).expect("menus are set");
+        (menus.into_iter())
+            .map(|menu| {
+                let items = (menu.items.into_iter())
+                    .filter_map(|item| match item {
+                        OwnedMenuItem::Action { name, .. } => Some(name.to_string()),
+                        OwnedMenuItem::SystemMenu(system) => Some(system.name.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                (menu.name.to_string(), items)
+            })
+            .collect()
+    }
+
+    /// Whether the drawn bar shows `selector` (`menu:<title>` or
+    /// `menu-item:<title>`).
+    fn drawn(selector: &str, cx: &mut VisualTestContext) -> bool {
+        cx.debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))
+            .is_some()
+    }
+
+    #[gpui::test]
+    fn bundled_titles_follow_the_locale(cx: &mut TestAppContext) {
+        let (bar, diagnostics) = MenuBar::parse(Path::new("menus.toml"), MENUS, None);
+        assert_eq!(diagnostics, []);
+        let bar = bar.unwrap();
+        // Parsed in en-US: each keyed title is its en-US text.
+        let items = &bar.menus[0].items;
+        let ItemKind::Command(open) = &items[0].kind else {
+            panic!("{items:?}")
+        };
+        assert_eq!(
+            (open.title.as_str(), open.title_key.as_deref()),
+            ("Open Menu Bar", Some("command-menu_bar-open"))
+        );
+        let ItemKind::System(services) = &items[2].kind else {
+            panic!("{items:?}")
+        };
+        assert_eq!(
+            (services.title.as_str(), services.title_key.as_deref()),
+            ("Services", Some("kiln-core-menu-services"))
+        );
+
+        cx.update(|cx| {
+            commands::init(cx, "Probe");
+            keys::init(cx, Keymap::default());
+            menus::install(cx, bar);
+        });
+        let (view, cx) = cx.add_window_view(|_, cx| MenuBarView::new(cx));
+        view.update_in(cx, |view, window, cx| view.open(0, false, window, cx));
+        cx.run_until_parked();
+        let en_us = (
+            "Probe".to_owned(),
+            vec!["Open Menu Bar".to_owned(), "Services".to_owned()],
+        );
+        assert_eq!(gpui_titles(cx), std::slice::from_ref(&en_us));
+        assert!(drawn("menu-item:Open Menu Bar", cx));
+        assert!(drawn("menu-item:Services", cx));
+
+        // The fake locale: GPUI's menus are built again, and the bar draws
+        // the new titles; the table's own menu name stays as written.
+        let fake: Vec<LanguageIdentifier> = vec!["qps-ploc".parse().unwrap()];
+        cx.update(|_, cx| set_locale(cx, &fake));
+        cx.run_until_parked();
+        let titles = gpui_titles(cx);
+        let drawn_fake = [
+            drawn("menu:Probe", cx),
+            drawn("menu-item:⟦Ópén Ménú Bár⟧", cx),
+            drawn("menu-item:⟦Sérvícés⟧", cx),
+            drawn("menu-item:Open Menu Bar", cx),
+            drawn("menu-item:Services", cx),
+        ];
+
+        // Back to en-US: nothing kept a stale title.
+        cx.update(|_, cx| set_locale(cx, &[]));
+        cx.run_until_parked();
+        let titles_after = gpui_titles(cx);
+        let drawn_after = [
+            drawn("menu-item:Open Menu Bar", cx),
+            drawn("menu-item:Services", cx),
+        ];
+
+        assert_eq!(
+            titles,
+            [(
+                "Probe".to_owned(),
+                vec!["⟦Ópén Ménú Bár⟧".to_owned(), "⟦Sérvícés⟧".to_owned()]
+            )]
+        );
+        assert_eq!(drawn_fake, [true, true, true, false, false]);
+        assert_eq!(titles_after, [en_us]);
+        assert_eq!(drawn_after, [true, true]);
     }
 }

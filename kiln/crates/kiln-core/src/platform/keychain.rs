@@ -66,7 +66,7 @@ mod imp {
 
     pub(crate) fn store() -> keyring_core::Result<Arc<CredentialStore>> {
         Err(keyring_core::Error::NotSupportedByStore(
-            "this platform has no keychain".to_string(),
+            kiln_l10n::tr!("kiln-core-secrets-no-keychain").to_string(),
         ))
     }
 

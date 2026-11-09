@@ -24,6 +24,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use kiln_l10n::tr;
 use toml::{Table, Value};
 
 use super::{Appearance, Color, TOKEN_GROUPS, TOKEN_KEYS};
@@ -98,7 +99,8 @@ impl ThemeFile {
         let layer = load_layer(path);
         // A missing file loads as an empty layer, like an empty file.
         if layer.source.is_empty() && layer.diagnostics.is_empty() && !path.exists() {
-            let error = layer.diagnostic_at(Severity::Error, None, 0, "no such file".into());
+            let message = tr!("kiln-core-theme-missing").into();
+            let error = layer.diagnostic_at(Severity::Error, None, 0, message);
             return (None, vec![error]);
         }
         Self::from_layer(&layer, extensions)
@@ -153,12 +155,12 @@ impl Reader<'_> {
                 "kiln_theme" => self.version(value),
                 "name" => match value.as_str() {
                     Some(name) if !name.trim().is_empty() => file.name = Some(name.to_owned()),
-                    _ => self.warn_value("expected a name: a string that isn't empty"),
+                    _ => self.warn_value(&tr!("kiln-core-theme-expected-name")),
                 },
                 "appearance" => match value.as_str() {
                     Some("dark") => file.appearance = Some(Appearance::Dark),
                     Some("light") => file.appearance = Some(Appearance::Light),
-                    _ => self.warn_value("expected \"dark\" or \"light\""),
+                    _ => self.warn_value(&tr!("kiln-core-theme-expected-appearance")),
                 },
                 ALIAS_TABLE => self.colors(value, &mut aliased, |key| {
                     ALIASES
@@ -178,7 +180,7 @@ impl Reader<'_> {
                     Value::Table(table) => {
                         file.extensions.insert(name.to_owned(), table.clone());
                     }
-                    _ => self.wrong_type("a table", value),
+                    _ => self.wrong_type(&tr!("kiln-core-config-type-table"), value),
                 },
                 _ => self.unknown(),
             }
@@ -194,17 +196,22 @@ impl Reader<'_> {
         match value.as_integer() {
             Some(THEME_VERSION) => {}
             Some(version) if version > THEME_VERSION => {
-                let message = format!(
-                    "written for version {version}, but this reads version {THEME_VERSION}: \
-                     keys it doesn't know are ignored"
-                );
+                let message = tr!(
+                    "kiln-core-theme-newer-version",
+                    version = version.to_string(),
+                    known = THEME_VERSION.to_string()
+                )
+                .into();
                 self.diagnostics.push(self.layer.value_diagnostic(
                     Severity::Warning,
                     &self.path,
                     message,
                 ));
             }
-            _ => self.warn_value(&format!("expected {THEME_VERSION}")),
+            _ => self.warn_value(&tr!(
+                "kiln-core-theme-expected-version",
+                known = THEME_VERSION.to_string()
+            )),
         }
     }
 
@@ -217,7 +224,7 @@ impl Reader<'_> {
         token: impl Fn(&str) -> Option<&'static str>,
     ) {
         let Value::Table(table) = value else {
-            self.wrong_type("a table", value);
+            self.wrong_type(&tr!("kiln-core-config-type-table"), value);
             return;
         };
         for (key, value) in table {
@@ -231,15 +238,17 @@ impl Reader<'_> {
                         }
                         Err(message) => self.warn_value(&message),
                     },
-                    _ => self.wrong_type("a colour string", value),
+                    _ => self.wrong_type(&tr!("kiln-core-theme-type-colour"), value),
                 },
             }
             self.path.pop();
         }
     }
 
-    fn warn_value(&mut self, message: &str) {
-        let message = format!("{message}, ignored");
+    /// Warns that the value at the path, which has the `problem`, is
+    /// ignored.
+    fn warn_value(&mut self, problem: &str) {
+        let message = tr!("kiln-core-theme-value-ignored", problem = problem).into();
         let diagnostic = self
             .layer
             .value_diagnostic(Severity::Warning, &self.path, message);
@@ -247,13 +256,19 @@ impl Reader<'_> {
     }
 
     fn wrong_type(&mut self, expected: &str, value: &Value) {
-        self.warn_value(&format!("expected {expected}, found {}", value.type_str()));
+        self.warn_value(&tr!(
+            "kiln-core-config-type-mismatch",
+            expected = expected,
+            found = value.type_str()
+        ));
     }
 
     fn unknown(&mut self) {
-        let diagnostic =
-            self.layer
-                .key_diagnostic(Severity::Warning, &self.path, "unknown key, ignored".into());
+        let diagnostic = self.layer.key_diagnostic(
+            Severity::Warning,
+            &self.path,
+            tr!("kiln-core-config-unknown-key").into(),
+        );
         self.diagnostics.push(diagnostic);
     }
 }

@@ -3,6 +3,8 @@
 //! Key sequences as menus and tooltips print them: in macOS symbols, such
 //! as `⇧⌘F`, or spelled out elsewhere, such as `Ctrl+Shift+F`.
 
+use kiln_l10n::tr;
+
 use crate::{Key, KeySequence, Keystroke};
 
 /// `keys` in macOS symbols: each keystroke's modifiers in the order ⌃⌥⇧⌘,
@@ -43,8 +45,14 @@ fn keystroke_label(keystroke: &Keystroke) -> String {
         Key::Backspace => "⌫",
         Key::Delete => "⌦",
         Key::Tab => "⇥",
-        Key::Space => "Space",
-        Key::Click => "Click",
+        Key::Space => {
+            label.push_str(&tr!("kiln-core-key-space"));
+            return label;
+        }
+        Key::Click => {
+            label.push_str(&tr!("kiln-core-key-click"));
+            return label;
+        }
         Key::PageUp => "⇞",
         Key::PageDown => "⇟",
         Key::Home => "↖",
@@ -78,31 +86,35 @@ fn pc_keystroke_label(keystroke: &Keystroke) -> String {
     let key = match keystroke.key {
         Key::Char(ch) => ch.to_uppercase().collect(),
         Key::F(n) => format!("F{n}"),
-        Key::Left => "Left".into(),
-        Key::Right => "Right".into(),
-        Key::Up => "Up".into(),
-        Key::Down => "Down".into(),
-        Key::Enter => "Enter".into(),
-        Key::Escape => "Esc".into(),
-        Key::Backspace => "Backspace".into(),
-        Key::Delete => "Delete".into(),
-        Key::Tab => "Tab".into(),
-        Key::Space => "Space".into(),
-        Key::Click => "Click".into(),
-        Key::PageUp => "PageUp".into(),
-        Key::PageDown => "PageDown".into(),
-        Key::Home => "Home".into(),
-        Key::End => "End".into(),
+        Key::Left => tr!("kiln-core-key-left").to_string(),
+        Key::Right => tr!("kiln-core-key-right").to_string(),
+        Key::Up => tr!("kiln-core-key-up").to_string(),
+        Key::Down => tr!("kiln-core-key-down").to_string(),
+        Key::Enter => tr!("kiln-core-key-enter").to_string(),
+        Key::Escape => tr!("kiln-core-key-escape").to_string(),
+        Key::Backspace => tr!("kiln-core-key-backspace").to_string(),
+        Key::Delete => tr!("kiln-core-key-delete").to_string(),
+        Key::Tab => tr!("kiln-core-key-tab").to_string(),
+        Key::Space => tr!("kiln-core-key-space").to_string(),
+        Key::Click => tr!("kiln-core-key-click").to_string(),
+        Key::PageUp => tr!("kiln-core-key-page-up").to_string(),
+        Key::PageDown => tr!("kiln-core-key-page-down").to_string(),
+        Key::Home => tr!("kiln-core-key-home").to_string(),
+        Key::End => tr!("kiln-core-key-end").to_string(),
     };
-    [
-        ("Ctrl", modifiers.ctrl),
-        ("Alt", modifiers.alt),
-        ("Shift", modifiers.shift),
-        ("Super", modifiers.cmd),
-    ]
-    .into_iter()
-    .filter_map(|(name, held)| held.then_some(name.to_owned()))
-    .chain(std::iter::once(key))
-    .collect::<Vec<_>>()
-    .join("+")
+    let mut parts = Vec::new();
+    if modifiers.ctrl {
+        parts.push(tr!("kiln-core-key-ctrl").to_string());
+    }
+    if modifiers.alt {
+        parts.push(tr!("kiln-core-key-alt").to_string());
+    }
+    if modifiers.shift {
+        parts.push(tr!("kiln-core-key-shift").to_string());
+    }
+    if modifiers.cmd {
+        parts.push(tr!("kiln-core-key-super").to_string());
+    }
+    parts.push(key);
+    parts.join("+")
 }

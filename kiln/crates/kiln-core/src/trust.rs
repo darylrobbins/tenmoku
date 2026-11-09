@@ -17,6 +17,8 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use kiln_l10n::{tr, verbatim};
+
 use crate::platform::fs::{create_private_dir, private};
 
 /// Whether a folder is trusted to start language servers in.
@@ -27,14 +29,6 @@ pub enum Trust {
     /// Neither it nor an ancestor has a decision.
     Undecided,
 }
-
-/// The first lines of the file, above its `[folders]` table.
-const HEADER: &str = "\
-# This file records the folders you trusted (true) or didn't (false) to
-# run their code. Subfolders follow the nearest folder listed. The app's
-# Trust This Folder and Untrust This Folder commands change one.
-
-";
 
 /// The trust decisions, by canonical folder, and the file they're kept in.
 #[derive(Clone, Debug, Default)]
@@ -143,7 +137,11 @@ impl TrustStore {
         if self.path.is_some() && folder.to_str().is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("{} isn't UTF-8, so it can't be saved", folder.display()),
+                tr!(
+                    "kiln-core-trust-not-utf8",
+                    folder = folder.display().to_string()
+                )
+                .to_string(),
             ));
         }
         self.save()
@@ -159,16 +157,20 @@ impl TrustStore {
             return Ok(());
         };
         if self.bad {
-            return Err(io::Error::other(format!(
-                "{} isn't a trust file, so it's left as it is",
-                path.display()
-            )));
+            return Err(io::Error::other(
+                tr!(
+                    "kiln-core-trust-bad-file",
+                    path = path.display().to_string()
+                )
+                .to_string(),
+            ));
         }
         write(path, self.text().as_bytes())
     }
 
-    /// The file's text: the header, then each decision whose folder is
-    /// UTF-8.
+    /// The file's text: the header (`kiln-core-trust-file-header`, comment
+    /// lines above the `[folders]` table) and a blank line, then each
+    /// decision whose folder is UTF-8.
     fn text(&self) -> String {
         let folders: toml::Table = self
             .folders
@@ -179,8 +181,9 @@ impl TrustStore {
             .collect();
         let mut table = toml::Table::new();
         table.insert("folders".into(), toml::Value::Table(folders));
-        let body = toml::to_string(&table).unwrap_or_else(|_| "[folders]\n".into());
-        format!("{HEADER}{body}")
+        let body = toml::to_string(&table).unwrap_or_else(|_| verbatim!("[folders]\n").into());
+        let header = tr!("kiln-core-trust-file-header");
+        format!("{header}\n\n{body}")
     }
 }
 

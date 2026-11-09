@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+use kiln_l10n::tr;
+
 use kiln_command::{ContextFrame, ContextStack};
 
 use crate::keymap::{Binding, Keymap};
@@ -33,40 +35,41 @@ pub enum KeymapIssue {
 impl fmt::Display for KeymapIssue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            KeymapIssue::Overridden { winner, loser } => write!(
-                f,
-                "{}: `{}` for {} overrides {} at {}",
-                winner.location, winner.keys, winner.command, loser.command, loser.location
-            ),
+            KeymapIssue::Overridden { winner, loser } => f.write_str(&tr!(
+                "kiln-core-keymap-overrides",
+                location = winner.location.to_string(),
+                keys = winner.keys.to_string(),
+                command = winner.command.to_string(),
+                other = loser.command.to_string(),
+                other_location = loser.location.to_string(),
+            )),
             KeymapIssue::Shadowed {
                 winner,
                 loser,
                 context,
-            } => write!(
-                f,
-                "{}: `{}` for {} shadows {} at {} in {}",
-                winner.location,
-                winner.keys,
-                winner.command,
-                loser.command,
-                loser.location,
-                Frames(context)
-            ),
+            } => f.write_str(&tr!(
+                "kiln-core-keymap-shadows",
+                location = winner.location.to_string(),
+                keys = winner.keys.to_string(),
+                command = winner.command.to_string(),
+                other = loser.command.to_string(),
+                other_location = loser.location.to_string(),
+                context = Frames(context).to_string(),
+            )),
             KeymapIssue::PrefixDelay {
                 prefix,
                 longer,
                 context,
-            } => write!(
-                f,
-                "{}: `{}` for {} waits for the chord timeout in {}, as `{}` for {} at {} starts with it",
-                prefix.location,
-                prefix.keys,
-                prefix.command,
-                Frames(context),
-                longer.keys,
-                longer.command,
-                longer.location
-            ),
+            } => f.write_str(&tr!(
+                "kiln-core-keymap-prefix-delay",
+                location = prefix.location.to_string(),
+                keys = prefix.keys.to_string(),
+                command = prefix.command.to_string(),
+                context = Frames(context).to_string(),
+                longer = longer.keys.to_string(),
+                other = longer.command.to_string(),
+                other_location = longer.location.to_string(),
+            )),
         }
     }
 }

@@ -31,6 +31,7 @@ use kiln_command::{
     CommandId, CommandTarget, ContextPredicate, ContextStack, DispatchError, Invocation, Registry,
     Value,
 };
+use kiln_l10n::tr;
 use toml::de::{DeTable, DeValue};
 
 use crate::keystroke::{Key, KeySequence, Keystroke};
@@ -446,10 +447,11 @@ impl EntryParser<'_> {
         let (DeValue::Array(items), Some(toml::Value::Array(item_values))) =
             (bindings.get_ref(), values.get("bindings"))
         else {
-            let message = format!(
-                "expected an array of tables, found {}",
-                bindings.get_ref().type_str()
-            );
+            let message = tr!(
+                "kiln-core-config-expected-tables",
+                found = bindings.get_ref().type_str()
+            )
+            .into();
             self.error(Some("bindings"), bindings.span().start, message);
             return Vec::new();
         };
@@ -466,7 +468,11 @@ impl EntryParser<'_> {
                     entries.extend(self.entry(&key, &fields));
                 }
                 _ => {
-                    let message = format!("expected a table, found {}", item.get_ref().type_str());
+                    let message = tr!(
+                        "kiln-core-config-expected-table",
+                        found = item.get_ref().type_str()
+                    )
+                    .into();
                     self.error(Some(&key), item.span().start, message);
                 }
             }
@@ -523,7 +529,8 @@ impl EntryParser<'_> {
                     }
                 },
                 value => {
-                    let message = format!("expected a table, found {}", value.type_str());
+                    let message =
+                        tr!("kiln-core-config-expected-table", found = value.type_str()).into();
                     self.error(Some(&format!("{key}.args")), spanned.span().start, message);
                     None
                 }
@@ -543,10 +550,7 @@ impl EntryParser<'_> {
                 .table
                 .get("keys")
                 .map_or(fields.span.start, |value| value.span().start);
-            let message = format!(
-                "`{keys}`: a click binds only alone, with a modifier, as in `cmd-click`; \
-                 the binding is ignored"
-            );
+            let message = tr!("kiln-core-keymap-click-alone", keys = keys.to_string()).into();
             self.push(
                 Severity::Warning,
                 Some(&format!("{key}.keys")),
@@ -565,7 +569,11 @@ impl EntryParser<'_> {
                 Ok(()) => {}
                 Err(CatalogError::UnknownCommand) => {
                     let offset = command_span.map_or(fields.span.start, |span| span.start);
-                    let message = format!("unknown command {command}; the binding is ignored");
+                    let message = tr!(
+                        "kiln-core-keymap-unknown-command",
+                        command = command.to_string()
+                    )
+                    .into();
                     self.push(
                         Severity::Warning,
                         Some(&format!("{key}.command")),
@@ -580,7 +588,12 @@ impl EntryParser<'_> {
                         None => ("command", command_span),
                     };
                     let offset = span.map_or(fields.span.start, |span| span.start);
-                    let message = format!("bad args for {command}: {message}");
+                    let message = tr!(
+                        "kiln-core-keymap-bad-args",
+                        command = command.to_string(),
+                        reason = message
+                    )
+                    .into();
                     self.error(Some(&format!("{key}.{field}")), offset, message);
                     return None;
                 }
@@ -616,7 +629,8 @@ impl EntryParser<'_> {
         let field = format!("{key}.keys");
         let (Some(spanned), Some(value)) = (fields.table.get("keys"), fields.values.get("keys"))
         else {
-            self.error(Some(key), fields.span.start, "missing `keys`".into());
+            let message = tr!("kiln-core-config-missing", name = "keys").into();
+            self.error(Some(key), fields.span.start, message);
             return None;
         };
         // Each platform's keys, parsed as on that platform.
@@ -631,9 +645,9 @@ impl EntryParser<'_> {
                         .get(name.as_str())
                         .map_or(spanned.span(), |value| value.span());
                     if name != "default" && Os::from_name(name).is_none() {
-                        let message = format!(
-                            "unknown platform {name:?}: expected macos, linux, windows or default"
-                        );
+                        let quoted = format!("{name:?}");
+                        let message =
+                            tr!("kiln-core-keymap-platform-unknown", name = quoted).into();
                         self.error(Some(&format!("{field}.{name}")), span.start, message);
                         continue;
                     }
@@ -642,7 +656,9 @@ impl EntryParser<'_> {
                             variants.push((name.clone(), text.clone(), span));
                         }
                         value => {
-                            let message = format!("expected a string, found {}", value.type_str());
+                            let message =
+                                tr!("kiln-core-config-expected-string", found = value.type_str())
+                                    .into();
                             self.error(Some(&format!("{field}.{name}")), span.start, message);
                         }
                     }
@@ -650,10 +666,8 @@ impl EntryParser<'_> {
                 variants
             }
             (_, value) => {
-                let message = format!(
-                    "expected a string or a table of keys by platform, found {}",
-                    value.type_str()
-                );
+                let message =
+                    tr!("kiln-core-keymap-expected-keys", found = value.type_str()).into();
                 self.error(Some(&field), spanned.span().start, message);
                 return None;
             }
@@ -690,15 +704,19 @@ impl EntryParser<'_> {
     ) -> Option<(String, Range<usize>)> {
         let Some(spanned) = fields.table.get(name) else {
             if required {
-                self.error(Some(key), fields.span.start, format!("missing `{name}`"));
+                let message = tr!("kiln-core-config-missing", name = name).into();
+                self.error(Some(key), fields.span.start, message);
             }
             return None;
         };
         match fields.values.get(name) {
             Some(toml::Value::String(text)) => Some((text.clone(), spanned.span())),
             value => {
-                let found = value.map_or("nothing", toml::Value::type_str);
-                let message = format!("expected a string, found {found}");
+                let found = value.map_or_else(
+                    || tr!("kiln-core-config-found-nothing"),
+                    |value| value.type_str().into(),
+                );
+                let message = tr!("kiln-core-config-expected-string", found = found).into();
                 self.error(
                     Some(&format!("{key}.{name}")),
                     spanned.span().start,
@@ -726,7 +744,7 @@ impl EntryParser<'_> {
                 Severity::Warning,
                 Some(&key),
                 offset,
-                "unknown key, ignored".into(),
+                tr!("kiln-core-config-unknown-key").into(),
             );
         }
     }

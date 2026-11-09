@@ -26,6 +26,7 @@ use std::{
 };
 
 use kiln_command::CommandId;
+use kiln_l10n::tr;
 use serde_json::{Value as Json, json};
 use toml::{
     Value,
@@ -169,7 +170,7 @@ pub fn load_manifest(dir: &Path, api: &ExtensionApi) -> (Option<Manifest>, Vec<D
         return (None, layer.diagnostics);
     }
     if layer.source.is_empty() && !path.try_exists().unwrap_or(true) {
-        let message = format!("no {MANIFEST_FILE} in the extension's directory");
+        let message = tr!("kiln-core-extension-no-manifest", file = MANIFEST_FILE).into();
         let diagnostic = layer.diagnostic_at(Severity::Error, None, 0, message);
         return (None, vec![diagnostic]);
     }
@@ -272,7 +273,7 @@ impl<'a> Check<'a> {
         if table.contains_key("plugin") {
             self.at_key(
                 &["plugin"],
-                "code plugins aren't supported by this app".into(),
+                tr!("kiln-core-extension-plugins-unsupported").into(),
             );
         }
         let id = self.required_str("id").and_then(|id| self.id(id, api));
@@ -282,9 +283,11 @@ impl<'a> Check<'a> {
             if parsed.is_none() {
                 self.at_value(
                     &["version"],
-                    format!(
-                        "{version:?} isn't a version: expected MAJOR.MINOR.PATCH, such as 1.0.0"
-                    ),
+                    tr!(
+                        "kiln-core-extension-version-invalid",
+                        version = format!("{version:?}")
+                    )
+                    .into(),
                 );
             }
             parsed
@@ -333,7 +336,7 @@ impl<'a> Check<'a> {
         let layer = self.layer;
         match layer.table.get(key) {
             None => {
-                self.at_key(&[key], format!("missing `{key}`"));
+                self.at_key(&[key], tr!("kiln-core-config-missing", name = key).into());
                 None
             }
             Some(value) => value.as_str(),
@@ -346,11 +349,16 @@ impl<'a> Check<'a> {
             Err(error) => {
                 let reason = match error.reason {
                     "needs a namespace, as in `editor.move_left`" => {
-                        "needs two or more segments, as in `acme.solarized`"
+                        tr!("kiln-core-extension-id-needs-segments")
                     }
-                    reason => reason,
+                    reason => reason.into(),
                 };
-                self.at_value(&["id"], format!("{id:?} isn't an extension ID: {reason}"));
+                let message = tr!(
+                    "kiln-core-extension-id-invalid",
+                    id = format!("{id:?}"),
+                    reason = reason
+                );
+                self.at_value(&["id"], message.into());
                 return None;
             }
         };
@@ -358,9 +366,12 @@ impl<'a> Check<'a> {
         if api.reserved.iter().any(|reserved| reserved == namespace) {
             self.at_value(
                 &["id"],
-                format!(
-                    "{id:?} starts with `{namespace}`, which is reserved for the app's own commands"
-                ),
+                tr!(
+                    "kiln-core-extension-id-reserved",
+                    id = format!("{id:?}"),
+                    namespace = namespace
+                )
+                .into(),
             );
             return None;
         }
@@ -373,7 +384,12 @@ impl<'a> Check<'a> {
             Err(reason) => {
                 self.at_value(
                     &["license"],
-                    format!("{expr:?} isn't an SPDX licence expression: {reason}"),
+                    tr!(
+                        "kiln-core-extension-license-invalid",
+                        expr = format!("{expr:?}"),
+                        reason = reason
+                    )
+                    .into(),
                 );
                 return None;
             }
@@ -384,10 +400,18 @@ impl<'a> Check<'a> {
             let id = id.or_else(|| self.layer.table.get("id")?.as_str());
             self.at_value(
                 &["license"],
-                format!(
-                    "{}: licence {expr} isn't in extensions.allowed_licenses",
-                    id.unwrap_or("this extension")
-                ),
+                match id {
+                    Some(id) => tr!(
+                        "kiln-core-extension-license-not-allowed",
+                        id = id,
+                        expr = expr
+                    ),
+                    None => tr!(
+                        "kiln-core-extension-license-not-allowed-unnamed",
+                        expr = expr
+                    ),
+                }
+                .into(),
             );
             return None;
         }
@@ -396,12 +420,17 @@ impl<'a> Check<'a> {
 
     fn engine(&mut self, api: &ExtensionApi) -> Option<ApiVersion> {
         let layer = self.layer;
-        let example = format!("as in `[engine] {} = \"{}\"`", api.app, api.version);
+        let (app, version) = (api.app.as_str(), api.version.to_string());
         let engine = match layer.table.get("engine") {
             None => {
                 self.at_key(
                     &["engine"],
-                    format!("missing [engine]: the app and extension API version this extension needs, {example}"),
+                    tr!(
+                        "kiln-core-extension-engine-missing",
+                        app = app,
+                        version = &version
+                    )
+                    .into(),
                 );
                 return None;
             }
@@ -413,9 +442,22 @@ impl<'a> Check<'a> {
             match engine.keys().next() {
                 Some(other) => self.at_key(
                     &["engine", other],
-                    format!("this extension is for {other}, not this app ({})", api.app),
+                    tr!(
+                        "kiln-core-extension-engine-other-app",
+                        other = other.as_str(),
+                        app = app
+                    )
+                    .into(),
                 ),
-                None => self.at_key(&["engine"], format!("[engine] names no app, {example}")),
+                None => self.at_key(
+                    &["engine"],
+                    tr!(
+                        "kiln-core-extension-engine-no-app",
+                        app = app,
+                        version = &version
+                    )
+                    .into(),
+                ),
             }
             return None;
         };
@@ -423,21 +465,24 @@ impl<'a> Check<'a> {
         let Some(written) = value.as_str() else {
             self.at_value(
                 &key,
-                format!(
-                    "expected a string, such as \"{}\", found {}",
-                    api.version,
-                    value.type_str()
-                ),
+                tr!(
+                    "kiln-core-extension-engine-expected-string",
+                    version = api.version.to_string(),
+                    found = value.type_str()
+                )
+                .into(),
             );
             return None;
         };
         let Some([major, minor]) = parse_numbers::<2>(written) else {
             self.at_value(
                 &key,
-                format!(
-                    "{written:?} isn't an API version: expected MAJOR.MINOR, such as {}",
-                    api.version
-                ),
+                tr!(
+                    "kiln-core-extension-api-version-invalid",
+                    written = format!("{written:?}"),
+                    version = api.version.to_string()
+                )
+                .into(),
             );
             return None;
         };
@@ -445,7 +490,12 @@ impl<'a> Check<'a> {
         if needed.major != api.version.major || needed.minor > api.version.minor {
             self.at_value(
                 &key,
-                format!("needs extension API {needed}; this app has {}", api.version),
+                tr!(
+                    "kiln-core-extension-api-version-unmet",
+                    needed = needed.to_string(),
+                    version = api.version.to_string()
+                )
+                .into(),
             );
             return None;
         }
@@ -464,9 +514,7 @@ impl<'a> Check<'a> {
             .chain(api.kinds.iter().map(|kind| kind.name));
         for kind in known.filter(|kind| contributes.contains_key(*kind) && !api.allows(kind)) {
             let path = owned(&["contributes", kind]);
-            let message = format!(
-                "workspace extensions can't contribute {kind}, so `contributes.{kind}` is ignored"
-            );
+            let message = tr!("kiln-core-extension-workspace-contributes", kind = kind).into();
             self.diagnostics
                 .push(self.layer.key_diagnostic(Severity::Warning, &path, message));
         }
@@ -503,7 +551,12 @@ impl<'a> Check<'a> {
         if count > MAX_CONTRIBUTED_FILES {
             self.at_key(
                 &["contributes"],
-                format!("contributes {count} files; an extension may contribute at most {MAX_CONTRIBUTED_FILES}"),
+                tr!(
+                    "kiln-core-extension-too-many-files",
+                    count = count,
+                    max = MAX_CONTRIBUTED_FILES
+                )
+                .into(),
             );
             return files;
         }
@@ -514,7 +567,11 @@ impl<'a> Check<'a> {
             for (index, entry) in entries.into_iter().flatten().enumerate() {
                 let resolved = match entry.as_str() {
                     Some(entry) => contributed_file(dir, canonical_dir.as_deref(), entry),
-                    None => Err(format!("expected a path, found {}", entry.type_str())),
+                    None => Err(tr!(
+                        "kiln-core-extension-expected-path",
+                        found = entry.type_str()
+                    )
+                    .into()),
                 };
                 match resolved {
                     Ok(path) => {
@@ -586,12 +643,14 @@ fn contributed_file(
 ) -> Result<PathBuf, String> {
     let relative = Path::new(entry);
     if entry.is_empty() {
-        return Err("the path is empty".into());
+        return Err(tr!("kiln-core-extension-path-empty").into());
     }
     if relative.has_root() || relative.is_absolute() {
-        return Err(format!(
-            "{entry:?} must be relative to the extension's directory"
-        ));
+        return Err(tr!(
+            "kiln-core-extension-path-absolute",
+            entry = format!("{entry:?}")
+        )
+        .into());
     }
     // Written to climb out, whatever the links inside lead to.
     let mut depth = 0usize;
@@ -600,7 +659,10 @@ fn contributed_file(
             Component::Normal(_) => depth += 1,
             Component::CurDir => {}
             Component::ParentDir if depth > 0 => depth -= 1,
-            _ => return Err(format!("{entry:?} is outside the extension's directory")),
+            _ => {
+                let entry = format!("{entry:?}");
+                return Err(tr!("kiln-core-extension-path-outside", entry = entry).into());
+            }
         }
     }
     // Resolved as written: `link/..` is the link's parent, not `dir`.
@@ -609,16 +671,17 @@ fn contributed_file(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return missing_file(dir, canonical_dir, relative, entry);
         }
-        Err(error) => return Err(format!("{entry:?} can't be read: {error}")),
+        Err(error) => return Err(unreadable_entry(entry, &error)),
     };
     let Some(inside) = canonical_dir.and_then(|root| canonical.strip_prefix(root).ok()) else {
-        return Err(format!(
-            "{entry:?} leads to {}, outside the extension's directory",
-            canonical.display()
-        ));
+        return Err(leads_outside(entry, &canonical));
     };
     if !canonical.is_file() {
-        return Err(format!("{entry:?} isn't a file"));
+        return Err(tr!(
+            "kiln-core-extension-path-not-a-file",
+            entry = format!("{entry:?}")
+        )
+        .into());
     }
     Ok(dir.join(inside))
 }
@@ -635,7 +698,7 @@ fn missing_file(
         .components()
         .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
     if !plain {
-        return Err(format!("{entry:?} doesn't exist"));
+        return Err(missing_entry(entry));
     }
     let path: PathBuf = dir.join(relative.components().collect::<PathBuf>());
     let mut ancestor = path.parent();
@@ -645,18 +708,43 @@ fn missing_file(
                 if canonical_dir.is_some_and(|root| canonical.starts_with(root)) {
                     return Ok(path);
                 }
-                return Err(format!(
-                    "{entry:?} leads to {}, outside the extension's directory",
-                    canonical
-                        .join(path.strip_prefix(dir).unwrap_or(&path))
-                        .display()
-                ));
+                let target = canonical.join(path.strip_prefix(dir).unwrap_or(&path));
+                return Err(leads_outside(entry, &target));
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => ancestor = dir.parent(),
-            Err(error) => return Err(format!("{entry:?} can't be read: {error}")),
+            Err(error) => return Err(unreadable_entry(entry, &error)),
         }
     }
-    Err(format!("{entry:?} doesn't exist"))
+    Err(missing_entry(entry))
+}
+
+fn missing_entry(entry: &str) -> String {
+    tr!(
+        "kiln-core-extension-path-missing",
+        entry = format!("{entry:?}")
+    )
+    .into()
+}
+
+fn unreadable_entry(entry: &str, error: &io::Error) -> String {
+    let entry = format!("{entry:?}");
+    tr!(
+        "kiln-core-extension-path-unreadable",
+        entry = entry,
+        reason = error.to_string()
+    )
+    .into()
+}
+
+fn leads_outside(entry: &str, target: &Path) -> String {
+    let entry = format!("{entry:?}");
+    let target = target.display().to_string();
+    tr!(
+        "kiln-core-extension-path-leads-outside",
+        entry = entry,
+        target = target
+    )
+    .into()
 }
 
 /// Where each entry of the `contributes` file arrays is in the source,
@@ -725,11 +813,11 @@ pub enum ExtensionSource {
 }
 
 impl ExtensionSource {
-    /// "the user's", "the workspace's".
+    /// The source as a message's selector argument: `user`, `workspace`.
     fn owner(self) -> &'static str {
         match self {
-            Self::User => "the user's",
-            Self::Workspace => "the workspace's",
+            Self::User => "user",
+            Self::Workspace => "workspace",
         }
     }
 }
@@ -788,14 +876,15 @@ impl ExtensionSet {
                 joined.sources.push(source);
                 continue;
             };
-            let message = format!(
-                "{} {} in {} isn't loaded: {} copy in {} loads instead",
-                source.owner(),
-                manifest.id,
-                manifest.dir.display(),
-                self.sources[own].owner(),
-                self.extensions[own].dir.display()
-            );
+            let message = tr!(
+                "kiln-core-extension-shadowed",
+                owner = source.owner(),
+                id = manifest.id.as_str(),
+                dir = manifest.dir.display().to_string(),
+                winner = self.sources[own].owner(),
+                winner_dir = self.extensions[own].dir.display().to_string()
+            )
+            .into();
             let layer = load_layer(&manifest.dir.join(MANIFEST_FILE));
             let path = owned(&["id"]);
             (joined.diagnostics).push(layer.value_diagnostic(Severity::Warning, &path, message));
@@ -850,7 +939,11 @@ impl ExtensionSet {
                     key: None,
                     line: 1,
                     column: 1,
-                    message: format!("can't read the extensions directory: {error}"),
+                    message: tr!(
+                        "kiln-core-extension-dir-unreadable",
+                        reason = error.to_string()
+                    )
+                    .into(),
                 });
                 let changed = diagnostics != self.diagnostics;
                 self.diagnostics = diagnostics;
@@ -874,11 +967,12 @@ impl ExtensionSet {
                 None => continue,
             };
             if let Some(first) = extensions.iter().find(|first| first.id == manifest.id) {
-                let message = format!(
-                    "`{}` is also the ID of the extension in {}, which loads instead",
-                    manifest.id,
-                    first.dir.display()
-                );
+                let message = tr!(
+                    "kiln-core-extension-id-taken",
+                    id = manifest.id.as_str(),
+                    dir = first.dir.display().to_string()
+                )
+                .into();
                 let layer = load_layer(&dir.join(MANIFEST_FILE));
                 let path = owned(&["id"]);
                 diagnostics.push(layer.value_diagnostic(Severity::Error, &path, message));
@@ -948,7 +1042,8 @@ impl ExtensionSet {
                 .collect();
             if !notices.is_empty() {
                 let entries: Value = acknowledged.into_iter().collect::<Vec<_>>().into();
-                let text = format!("{ACKNOWLEDGED_HEADER}acknowledged = {entries}\n");
+                let header = tr!("kiln-core-extension-acknowledged-header");
+                let text = format!("{header}\n\nacknowledged = {entries}\n");
                 if let Err(error) = crate::trust::write(&path, text.as_bytes()) {
                     log::warn!("can't write {}: {error}", path.display());
                 }
@@ -1027,12 +1122,6 @@ fn extension_dirs(root: &Path) -> io::Result<Vec<PathBuf>> {
 /// `id@version`.
 pub const ACKNOWLEDGED_FILE: &str = "extensions-acknowledged.toml";
 
-const ACKNOWLEDGED_HEADER: &str = "\
-# The extensions you installed, as id@version, whose licence you've been
-# told of. Remove an entry to be told again.
-
-";
-
 /// The `id@version` entries in `path`; none if it's missing or unreadable.
 fn read_acknowledged(path: &Path) -> std::collections::BTreeSet<String> {
     let text = match std::fs::read_to_string(path) {
@@ -1067,10 +1156,14 @@ impl LicenseNotice {
     /// (acme.solarized) is licensed GPL-3.0-only. Notes doesn't ship it;
     /// you installed it."
     pub fn message(&self, app: &str) -> String {
-        format!(
-            "{} ({}) is licensed {}. {app} doesn't ship it; you installed it.",
-            self.name, self.id, self.license.expr
+        tr!(
+            "kiln-core-extension-license-notice",
+            name = self.name.as_str(),
+            id = self.id.as_str(),
+            license = self.license.expr.as_str(),
+            app = app
         )
+        .into()
     }
 
     /// Its entry in [`ACKNOWLEDGED_FILE`]: `id@version`.
@@ -1084,6 +1177,8 @@ impl LicenseNotice {
 /// annex D. Expressions are short: their length and nesting are capped, and
 /// `AND` and `OR` chains are flat, so nothing recurses deeply.
 mod spdx {
+    use kiln_l10n::tr;
+
     use super::LicenseClass;
 
     /// The longest expression read, in bytes.
@@ -1204,7 +1299,7 @@ mod spdx {
             let (token, len) = match ch {
                 '(' => (Token::Open, 1),
                 ')' => (Token::Close, 1),
-                '+' => return Err("`+` must follow a licence ID directly".into()),
+                '+' => return Err(tr!("kiln-core-spdx-plus-alone").into()),
                 ch if is_word_char(ch) => {
                     let len = rest.find(|ch| !is_word_char(ch)).unwrap_or(rest.len());
                     let plus = rest[len..].starts_with('+');
@@ -1212,14 +1307,15 @@ mod spdx {
                     // `GPL-2.0+OR MIT`: what follows is set apart from the
                     // `+` as from an ID, by a space or a parenthesis.
                     if plus && rest[end..].starts_with(|ch| is_word_char(ch) || ch == '+') {
-                        return Err(format!(
-                            "`{}` must be followed by a space, a parenthesis or the end",
-                            &rest[..end]
-                        ));
+                        let word = &rest[..end];
+                        return Err(tr!("kiln-core-spdx-plus-run-on", word = word).into());
                     }
                     (Token::Word(&rest[..len], plus), end)
                 }
-                ch => return Err(format!("{ch:?} can't be in a licence expression")),
+                ch => {
+                    let ch = format!("{ch:?}");
+                    return Err(tr!("kiln-core-spdx-character", ch = ch).into());
+                }
             };
             tokens.push(token);
             rest = &rest[len..];
@@ -1254,10 +1350,10 @@ mod spdx {
             None => is_idstring(word),
         };
         if !valid {
-            return Some(format!("`{word}` isn't a licence ID"));
+            return Some(tr!("kiln-core-spdx-not-an-id", word = word).into());
         }
         let is_reference = word.contains(':') || starts_with_ignoring_case(word, "LicenseRef-");
-        (plus && is_reference).then(|| format!("`{word}+`: a licence reference takes no `+`"))
+        (plus && is_reference).then(|| tr!("kiln-core-spdx-reference-plus", word = word).into())
     }
 
     struct Parser<'a> {
@@ -1268,7 +1364,7 @@ mod spdx {
 
     pub(super) fn parse(text: &str) -> Result<Expr, String> {
         if text.len() > MAX_LEN {
-            return Err(format!("it's longer than {MAX_LEN} bytes"));
+            return Err(tr!("kiln-core-spdx-too-long", max = MAX_LEN).into());
         }
         let mut parser = Parser {
             tokens: tokens(text)?,
@@ -1276,18 +1372,18 @@ mod spdx {
             depth: 0,
         };
         if parser.tokens.is_empty() {
-            return Err("it's empty".into());
+            return Err(tr!("kiln-core-spdx-empty").into());
         }
         let expr = parser.or()?;
         match parser.next() {
             None => Ok(expr),
-            token => Err(format!("unexpected {}", describe(token))),
+            token => Err(tr!("kiln-core-spdx-unexpected", token = describe(token)).into()),
         }
     }
 
     fn describe(token: Option<Token<'_>>) -> String {
         match token {
-            None => "end".into(),
+            None => tr!("kiln-core-spdx-end").into(),
             Some(Token::Open) => "`(`".into(),
             Some(Token::Close) => "`)`".into(),
             Some(Token::Word(word, false)) => format!("`{word}`"),
@@ -1338,13 +1434,15 @@ mod spdx {
                 Some(Token::Open) => {
                     self.depth += 1;
                     if self.depth > MAX_DEPTH {
-                        return Err(format!("parentheses nest more than {MAX_DEPTH} deep"));
+                        return Err(tr!("kiln-core-spdx-too-deep", max = MAX_DEPTH).into());
                     }
                     let expr = self.or()?;
                     self.depth -= 1;
                     match self.next() {
                         Some(Token::Close) => Ok(expr),
-                        token => Err(format!("expected `)`, found {}", describe(token))),
+                        token => Err(
+                            tr!("kiln-core-spdx-expected-close", token = describe(token)).into(),
+                        ),
                     }
                 }
                 Some(Token::Word(word, plus)) if !OPERATORS.contains(&word) => {
@@ -1359,10 +1457,12 @@ mod spdx {
                                 Some(word.to_owned())
                             }
                             token => {
-                                return Err(format!(
-                                    "expected an exception ID after WITH, found {}",
-                                    describe(token)
-                                ));
+                                let token = describe(token);
+                                return Err(tr!(
+                                    "kiln-core-spdx-expected-exception",
+                                    token = token
+                                )
+                                .into());
                             }
                         }
                     } else {
@@ -1374,7 +1474,7 @@ mod spdx {
                         exception,
                     })
                 }
-                token => Err(format!("expected a licence ID, found {}", describe(token))),
+                token => Err(tr!("kiln-core-spdx-expected-id", token = describe(token)).into()),
             }
         }
     }

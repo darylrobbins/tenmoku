@@ -1,0 +1,170 @@
+# kiln-core's exceptions to the literal lint (kiln_l10n::lint::literals).
+all = true
+
+[[file]]
+path = "src/theme/tokens.rs"
+reason = "Doc comments on the items the tokens! macro generates, which reach it as string tokens"
+
+[[file]]
+path = "src/paths.rs"
+reason = "The platforms' own directory names (Library, Application Support, Caches, State), path components"
+
+[[file]]
+path = "src/layout.rs"
+reason = "The layout files' names"
+
+[[literal]]
+file = "src/diagnostic.rs"
+text = "{}:{}:{}: {severity}: "
+reason = "A diagnostic's `file:line:column: error:` prefix, as compilers print it for terminals and logs; its message is the catalogue's"
+
+[[literal]]
+file = "src/load.rs"
+text = "<default keymap>"
+reason = "DEFAULT_KEYMAP_PATH, the path the built-in keymap's diagnostics and bindings name, which hosts compare with"
+
+[[literal]]
+file = "src/menu.rs"
+text = "<default menus>"
+reason = "DEFAULT_MENUS_PATH, the path the built-in menus' diagnostics name, which hosts compare with"
+
+# Key paths in a keymap file, as diagnostics name the key they're about.
+
+[[literal]]
+file = "src/keymap.rs"
+text = "bindings[{ix}]"
+reason = "A key path in the keymap file"
+
+[[literal]]
+file = "src/keymap.rs"
+text = "{key}.command"
+reason = "A key path in the keymap file"
+
+[[literal]]
+file = "src/keymap.rs"
+text = "{key}.context"
+reason = "A key path in the keymap file"
+
+[[literal]]
+file = "src/keymap.rs"
+text = "{key}.args"
+reason = "A key path in the keymap file"
+
+[[literal]]
+file = "src/keymap.rs"
+text = "{key}.keys"
+reason = "A key path in the keymap file"
+
+[[literal]]
+file = "src/keymap.rs"
+text = "{key}.platform"
+reason = "A key path in the keymap file"
+
+[[literal]]
+file = "src/extension.rs"
+text = "contributes.{kind}"
+reason = "A key path in the extension manifest"
+
+[[literal]]
+file = "src/extension.rs"
+text = "#/$defs/{prefix}{name}"
+reason = "A JSON Schema reference"
+
+# SPDX licence IDs and expression syntax.
+
+[[literal]]
+file = "src/extension.rs"
+text = "Apache-2.0"
+reason = "An SPDX licence ID"
+
+[[literal]]
+file = "src/extension.rs"
+text = "Zlib"
+reason = "An SPDX licence ID"
+
+[[literal]]
+file = "src/extension.rs"
+text = "Unlicense"
+reason = "An SPDX licence ID"
+
+[[literal]]
+file = "src/extension.rs"
+text = "Unicode-3.0"
+reason = "An SPDX licence ID"
+
+[[literal]]
+file = "src/extension.rs"
+text = "LicenseRef-"
+reason = "SPDX's prefix for a licence reference"
+
+[[literal]]
+file = "src/extension.rs"
+text = "DocumentRef-"
+reason = "SPDX's prefix for a document reference"
+
+[[literal]]
+file = "src/extension.rs"
+text = "{id}{plus} WITH {exception}"
+reason = "An SPDX expression, compared with an allowed one"
+
+# TOML the writers put in files, around the catalogue's header comments.
+
+[[literal]]
+file = "src/extension.rs"
+text = "{header}\n\nacknowledged = {entries}\n"
+reason = "The acknowledged-licences file's TOML, below its header (kiln-core-extension-acknowledged-header)"
+
+[[literal]]
+file = "src/trust.rs"
+text = "{header}\n\n{body}"
+reason = "The trust file's TOML, below its header (kiln-core-trust-file-header)"
+
+[[literal]]
+file = "src/trust.rs"
+text = ".{name}.{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/write.rs"
+text = ".{name}.{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/write.rs"
+text = "{indent}{text}\n"
+reason = "A comment line of the file being edited, moved"
+
+[[literal]]
+file = "src/write.rs"
+text = "{} = {value}"
+reason = "A TOML key-value line written into a settings file"
+
+[[literal]]
+file = "src/write.rs"
+text = "{path} = {value}"
+reason = "A TOML key-value line written into a settings file"
+
+[[literal]]
+file = "src/write.rs"
+text = "{name} = {value}"
+reason = "A TOML key-value line written into a settings file"
+
+[[literal]]
+file = "src/write.rs"
+text = "{} = {{ {inside} }}"
+reason = "A TOML inline table written into a settings file"
+
+[[literal]]
+file = "src/write.rs"
+text = ", {nested}"
+reason = "A TOML inline table's next entry"
+
+[[literal]]
+file = "src/write.rs"
+text = " {nested} "
+reason = "A TOML inline table's only entry"
+
+[[literal]]
+file = "src/write.rs"
+text = "x = "
+reason = "A TOML key, to parse a value alone"

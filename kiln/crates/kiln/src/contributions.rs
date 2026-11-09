@@ -1396,6 +1396,9 @@ pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx:
     if let Some(app) = cx.try_global::<crate::AppInfo>() {
         set_label_arg("app", app.name.clone());
     }
+    // And in menu titles (`kiln-core-menu-quit-app`), before any table is
+    // parsed: the app's, kiln's, or an extension's over a contributed one.
+    config.name_the_app_in_menus();
     let commands = Contributions::commands(cx);
     let this = cx.try_global::<Contributions>();
     let (layers, keymap_diagnostics, mut extension_diagnostics) =
@@ -1795,6 +1798,7 @@ fn table_menu_bar(
                 kind: ItemKind::Command(CommandItem {
                     id: command.to_string(),
                     title,
+                    title_key: None,
                     command: command.clone(),
                     args: Value::Null,
                     os_action: None,
@@ -1808,7 +1812,9 @@ fn table_menu_bar(
             });
         }
         bar.menus.push(Menu {
+            id: menu.name.to_owned(),
             name: menu.name.to_owned(),
+            title_key: None,
             items,
         });
     }
@@ -1904,11 +1910,13 @@ fn place_items(
     let rank = |spec: &MenuSpec| names.iter().position(|name| *name == spec.menu);
     placed.sort_by_key(|(_, spec)| (rank(spec), spec.order, spec.declared));
     for (command, spec) in placed {
-        let menu = match bar.menus.iter().position(|menu| menu.name == spec.menu) {
+        let menu = match bar.menus.iter().position(|menu| menu.id == spec.menu) {
             Some(ix) => &mut bar.menus[ix],
             None => {
                 bar.menus.push(Menu {
+                    id: spec.menu.to_string(),
                     name: spec.menu.to_string(),
+                    title_key: None,
                     items: Vec::new(),
                 });
                 bar.menus.last_mut().expect("just pushed")
@@ -1933,6 +1941,7 @@ fn place_items(
             kind: ItemKind::Command(CommandItem {
                 id: id.clone(),
                 title: command.label().to_string(),
+                title_key: None,
                 command: command.id.clone(),
                 args: Value::Null,
                 os_action: None,

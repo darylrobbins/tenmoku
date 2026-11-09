@@ -529,3 +529,104 @@ fn a_keymap_file_leading_outside_is_not_read(cx: &mut TestAppContext) {
         "{errors:?}"
     );
 }
+
+/// A menu is known by its en-US name, its ID, however its file names it: an
+/// extension's menu that names the app's Window menu by its catalogue key
+/// still can't replace the app's items there, and the warning points at
+/// the item. A file can't give a menu an ID of its own.
+#[gpui::test]
+fn a_keyed_extension_menu_cannot_replace_the_apps_items(cx: &mut TestAppContext) {
+    let menus = r#"
+[[menus]]
+title_key = "kiln-core-menu-window"
+
+[[menus.items]]
+title = "Show Everything"
+command = "notes.show_all"
+
+[[menus.items]]
+title = "Tidy"
+command = "notes.tidy"
+"#;
+    let state = tempfile::tempdir().unwrap();
+    let (setup, diagnostics) = init(state.path(), EXTENSION_KEYMAP, menus, cx);
+    let menus_file = setup.extension.join("menus.toml");
+    let found: Vec<_> = (diagnostics.iter())
+        .map(|d| (d.file.clone(), d.line, d.key.clone(), d.message.clone()))
+        .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].0, menus_file);
+    assert_eq!(
+        (found[0].1, found[0].2.as_deref()),
+        (5, Some("menus[0].items[0]"))
+    );
+    assert!(found[0].3.contains("already has an item"), "{found:#?}");
+    cx.update(|cx| {
+        assert_eq!(
+            installed(cx)[2],
+            (
+                "Window".into(),
+                vec!["notes.show_all".into(), "notes.tidy".into()]
+            )
+        );
+        let bar = menus::installed(cx).unwrap();
+        let show_all = bar.menu("Window").unwrap().item("notes.show_all").unwrap();
+        assert_eq!(show_all.command().unwrap().title, "Show All");
+    });
+
+    // An ID of its own, to merge into a menu it isn't named for, is an
+    // unknown field: the file doesn't load.
+    let renamed = r#"
+[[menus]]
+id = "Window"
+name = "Other"
+
+[[menus.items]]
+title = "Show Everything"
+command = "notes.show_all"
+"#;
+    setup.save("menus.toml", renamed, cx);
+    let published = published(&menus_file, cx);
+    assert!(
+        published
+            .iter()
+            .any(|(severity, message)| *severity == Severity::Error && message == "unknown field"),
+        "{published:?}"
+    );
+    cx.update(|cx| {
+        let bar = menus::installed(cx).unwrap();
+        let show_all = bar.menu("Window").unwrap().item("notes.show_all").unwrap();
+        assert_eq!(show_all.command().unwrap().title, "Show All");
+        assert!(bar.menu("Other").is_none());
+    });
+}
+
+/// `$app` in a keyed menu title names the app when the app's menus are a
+/// contributed table, which isn't a menu file: an extension's item titled
+/// `kiln-core-menu-quit-app` over it.
+#[gpui::test]
+fn an_extension_item_over_a_menu_table_names_the_app(cx: &mut TestAppContext) {
+    let menus = r#"
+[[menus]]
+name = "File"
+
+[[menus.items]]
+title_key = "kiln-core-menu-quit-app"
+command = "notes.tidy"
+"#;
+    let state = tempfile::tempdir().unwrap();
+    let (_setup, config) = Setup::new(state.path(), EXTENSION_KEYMAP, menus);
+    cx.update(|cx| {
+        kiln::Contributions::set_menu_table(cx, kiln::menus! { "File" => [notes::NewNote] });
+    });
+    let diagnostics = cx.update(|cx| kiln::init(cx, config));
+    cx.run_until_parked();
+    assert_eq!(diagnostics, []);
+    cx.update(|cx| {
+        let bar = menus::installed(cx).unwrap();
+        let tidy = bar.menu("File").unwrap().item("notes.tidy").unwrap();
+        let tidy = tidy.command().unwrap();
+        assert_eq!(tidy.title, "Quit Notes");
+        assert_eq!(tidy.label().resolve(), "Quit Notes");
+    });
+}
