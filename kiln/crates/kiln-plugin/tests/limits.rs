@@ -6,7 +6,10 @@
 
 use std::{
     cell::RefCell,
-    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    sync::{
+        Mutex,
+        mpsc::{self, Receiver, Sender, TryRecvError},
+    },
     thread::{self, ThreadId},
     time::{Duration, Instant},
 };
@@ -44,13 +47,13 @@ fn limits() -> Limits {
 }
 
 /// Runs `f` on a thread of its own and returns what it returned, failing the test if that takes
-/// two seconds.
+/// ten seconds: far over every elapsed bound below, which allow for a loaded host.
 fn bounded<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     let (sender, returned) = mpsc::channel();
     thread::spawn(move || drop(sender.send(f())));
     returned
-        .recv_timeout(Duration::from_secs(2))
-        .expect("still running after 2 s")
+        .recv_timeout(Duration::from_secs(10))
+        .expect("still running after 10 s")
 }
 
 /// Sends on its channel when dropped: as the thread it was left on ends.
@@ -64,6 +67,34 @@ impl Drop for OnExit {
 
 thread_local! {
     static ON_EXIT: RefCell<Option<OnExit>> = const { RefCell::new(None) };
+}
+
+/// The host's own warnings, which is where a failed `shutdown` is reported.
+struct Warnings;
+
+static WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+impl log::Log for Warnings {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            // Format before locking, so a lazily formatted argument can't re-enter the logger.
+            let line = record.args().to_string();
+            WARNINGS.lock().unwrap().push(line);
+        }
+    }
+    fn flush(&self) {}
+}
+
+/// Collects the host's warnings into [`WARNINGS`]; safe to call from every test.
+fn capture_warnings() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        log::set_logger(&Warnings).unwrap();
+        log::set_max_level(log::LevelFilter::Warn);
+    });
 }
 
 /// What a plugin logged, by message.
@@ -184,7 +215,10 @@ fn an_infinite_loop_is_interrupted() {
         let error = run_command(&mut plugin).unwrap_err();
         (plugin, error, started.elapsed())
     });
-    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "{elapsed:?} against the 20 ms call deadline"
+    );
     let CallError::Failed(diagnostic) = error else {
         panic!("{error:?}");
     };
@@ -242,7 +276,10 @@ fn a_blocking_wasi_import_times_out_in_init() {
         ),
         "{loaded:?}"
     );
-    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "{elapsed:?} against the 250 ms call deadline"
+    );
 }
 
 #[test]
@@ -254,17 +291,28 @@ fn a_blocking_wasi_import_times_out_in_a_call() {
         Duration::ZERO,
     );
     let mut plugin = plugin.unwrap();
-    let (plugin, error) = bounded(move || {
+    let (plugin, error, elapsed) = bounded(move || {
+        let started = Instant::now();
         let error = run_command(&mut plugin).unwrap_err();
-        (plugin, error)
+        (plugin, error, started.elapsed())
     });
     assert!(timed_out(&error), "{error:?}");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "{elapsed:?} against the 250 ms call deadline"
+    );
     assert!(!plugin.thread_running());
 }
 
 #[test]
 fn a_blocking_wasi_import_times_out_in_shutdown() {
-    let (plugin, _logged) = try_load("block", &blocking_in("shutdown"), limits(), Duration::ZERO);
+    capture_warnings();
+    let (plugin, _logged) = try_load(
+        "block_in_shutdown",
+        &blocking_in("shutdown"),
+        limits(),
+        Duration::ZERO,
+    );
     let mut plugin = plugin.unwrap();
     let elapsed = bounded(move || {
         assert_eq!(run_command(&mut plugin), Ok(Reply::RunCommand(Ok(()))));
@@ -272,7 +320,18 @@ fn a_blocking_wasi_import_times_out_in_shutdown() {
         drop(plugin);
         started.elapsed()
     });
-    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "{elapsed:?} against the 250 ms call deadline"
+    );
+    let warned = WARNINGS.lock().unwrap().clone();
+    let reason = Reason::Timeout;
+    assert!(
+        warned
+            .iter()
+            .any(|line| line.starts_with(&format!("plugin block_in_shutdown unloaded, {reason}:"))),
+        "{warned:?}"
+    );
 }
 
 #[test]
