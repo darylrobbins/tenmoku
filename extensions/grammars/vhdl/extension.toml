@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_vhdl"
+name = "VHDL syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "vhdl"
+wasm = "tree-sitter-vhdl.wasm"
+extensions = ["vhd", "vhdl"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+line_comment = "--"
+block_comment = ["/*", "*/"]
+earlier_patterns_win = false
