@@ -1,0 +1,66 @@
+---
+layout: default
+title: "Product page"
+tags: [shop, sale]
+---
+{% comment %}
+  Renders one product card with its price and a sale badge.
+{% endcomment %}
+{%- assign product = collections.featured.products.first -%}
+{% assign discount = 15 | times: 1.5 %}
+{% capture badge %}Save {{ discount }}%{% endcapture %}
+
+<div class="card {% if product.available %}in-stock{% else %}sold-out{% endif %}">
+  <h2 id="title">{{ product.title | escape | upcase }}</h2>
+  <p>{{ product.description | truncate: 120, "..." | strip_html }}</p>
+  {% if product.compare_at_price > product.price and discount >= 10 %}
+    <span class="badge">{{ badge }}</span>
+  {% elsif product.tags contains "new" %}
+    <span class="badge">New</span>
+  {% else %}
+    <span>{{ 'products.regular' | t }}</span>
+  {% endif %}
+
+  {% unless product.available == false %}
+    <button type="submit" disabled="{{ cart.empty? }}">Add</button>
+  {% endunless %}
+
+  <ul>
+    {% for variant in product.variants limit: 5 %}
+      {% if forloop.first %}{% continue %}{% endif %}
+      <li>{{ variant.title }}: {{ variant.price | money }}</li>
+      {% break %}
+    {% endfor %}
+  </ul>
+
+  {% case product.type %}
+    {% when "shirt" %}Shirt
+    {% when "hat", "cap" %}Headwear
+    {% else %}Other
+  {% endcase %}
+
+  {% render 'icon', name: "cart", size: 24 %}
+  {% include "footer-note" %}
+  {% raw %}{{ not rendered }}{% endraw %}
+  {{ "He said hi" | append: 'it is' }}
+</div>
+
+{% stylesheet %}
+  .card { color: #333; padding: 1rem; }
+  .badge { background: red; }
+{% endstylesheet %}
+
+{% javascript %}
+  document.querySelector(".card").addEventListener("click", () => {
+    console.log("clicked", 42);
+  });
+{% endjavascript %}
+
+{% schema %}
+{
+  "name": "Product card",
+  "settings": [
+    { "type": "checkbox", "id": "show_badge", "default": true }
+  ]
+}
+{% endschema %}

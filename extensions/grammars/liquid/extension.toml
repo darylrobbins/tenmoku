@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_liquid"
+name = "Liquid syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "liquid"
+wasm = "tree-sitter-liquid.wasm"
+extensions = ["liquid"]
+block_comment = ["{% comment %}", "{% endcomment %}"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
