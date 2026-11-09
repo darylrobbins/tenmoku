@@ -2,7 +2,7 @@
 //!
 //! The commands grow a box from the primary selection's head one column or
 //! row at a time. The box is kept as an anchor and a head, each a row and a
-//! char column of the expanded row; the head's column may lie past a row's
+//! visible column of the expanded row; the head's column may lie past a row's
 //! end, as VS Code's virtual space does for the box's width. Any other
 //! selection change ends the box (see [`EditorModel::set_selections`]).
 
@@ -14,7 +14,7 @@ use crate::{
     commands::{Editor, add},
 };
 
-/// A box selection under way: both corners as (row, char column), with
+/// A box selection under way: both corners as (row, visible column), with
 /// the buffer version and selections it made. It only stands while the
 /// model still has exactly those, whichever way they were replaced.
 #[derive(Clone, Debug)]
@@ -77,7 +77,7 @@ impl EditorModel {
             let row = text.offset_to_point(head).row;
             let expanded = self.expanded_row(row);
             let display = expanded.to_display(head - text.row_start(row));
-            let point = (row, expanded.char_column(display));
+            let point = (row, expanded.visible_column(display));
             ColumnBox {
                 anchor: point,
                 head: point,
@@ -86,12 +86,32 @@ impl EditorModel {
             }
         });
         let last_row = self.text().row_count() - 1;
-        let (row, column) = &mut column_box.head;
+        let (row, column) = column_box.head;
+        let expanded = self.expanded_row(row);
+        let width = expanded.visible_column(expanded.text().len());
+        // The visible column of the grapheme boundary `to` snaps to.
+        let boundary =
+            |to: usize| expanded.visible_column(expanded.display_col_for_visible_column(to));
+        let head = &mut column_box.head;
         match direction {
-            Direction::Left => *column = column.saturating_sub(1),
-            Direction::Right => *column += 1,
-            Direction::Up => *row = row.saturating_sub(1),
-            Direction::Down => *row = (*row + 1).min(last_row),
+            Direction::Left if column > width => head.1 = column - 1,
+            Direction::Left => {
+                let mut to = column.saturating_sub(1);
+                while to > 0 && boundary(to) >= column {
+                    to -= 1;
+                }
+                head.1 = boundary(to);
+            }
+            Direction::Right if column >= width => head.1 = column + 1,
+            Direction::Right => {
+                let mut to = column + 1;
+                while to < width && boundary(to) <= column {
+                    to += 1;
+                }
+                head.1 = boundary(to);
+            }
+            Direction::Up => head.0 = row.saturating_sub(1),
+            Direction::Down => head.0 = (row + 1).min(last_row),
         }
         self.select_box(column_box.anchor, column_box.head);
         column_box.selections = self.selections();

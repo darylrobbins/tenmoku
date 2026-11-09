@@ -533,13 +533,12 @@ fn cjk_up_down_keep_the_visible_column(cx: &mut TestAppContext) {
     assert_eq!(head(&view, cx), 6);
 }
 
-/// Limitation G7: keyboard column select counts chars, not visible
-/// columns: two columns right of `a` on `ab一二cd` take `b一`, and the row
-/// below takes `bc`, a narrower box; VS Code takes `bcd` there (a wide
-/// char is two visible columns). The keys are bound on macOS only.
+/// Keyboard column select counts visible columns: two columns right of
+/// `a` on `ab一二cd` take `b一`, and the row below takes `bcd`, the same
+/// visible columns. The keys are bound on macOS only.
 #[cfg(target_os = "macos")]
 #[gpui::test]
-fn cjk_keyboard_column_select_counts_chars(cx: &mut TestAppContext) {
+fn cjk_keyboard_column_select_counts_visible_columns(cx: &mut TestAppContext) {
     let text = "ab一二cd\nabcdefgh";
     let (view, cx) = editor(text, &[1], false, cx);
     keys(
@@ -547,48 +546,51 @@ fn cjk_keyboard_column_select_counts_chars(cx: &mut TestAppContext) {
         cx,
     );
     let below = text.find('\n').unwrap() + 1;
-    assert_eq!(selections(&view, cx), [1..5, below + 1..below + 3]);
+    assert_eq!(selections(&view, cx), [1..5, below + 1..below + 4]);
 }
 
-/// Limitation G7: an alt-shift-drag box is chars wide on every row, so
-/// over a row with wide chars it isn't a rectangle on screen. Dragged
-/// from column 1 of `abcdefgh` down to the x of its column 5, the head's
-/// column is read on `ab一二cd` as char column 4: the box takes `bcd` above
-/// and `b一二` below, whose right edges are a third of a column apart.
+/// An alt-shift-drag box is visible columns wide on every row, so over a
+/// row with wide chars it is still a rectangle on screen. Dragged from
+/// column 1 of `abcdefgh` down to the x of the boundary after `一` on
+/// `ab一二cd` (visible column 4), the box takes `bcd` above and `b一` below:
+/// both span visible columns 1 to 3. (Glyph widths aren't exact multiples of
+/// a space while G8 stands, so the drag aims at the shaped row's boundary
+/// and the test compares columns, not pixels.)
 #[cfg(target_os = "macos")]
 #[test]
-fn cjk_alt_shift_drag_selects_a_box_of_chars() {
-    shaped::with_app("cjk_alt_shift_drag_selects_a_box_of_chars", |cx| {
-        let text = "abcdefgh\nab一二cd";
-        let below = text.find('\n').unwrap() + 1;
-        let (view, cx) = editor(text, &[0], false, cx);
-        let from = on_row(&view, 0, caret_x(&view, 1, cx), cx);
-        let to = on_row(&view, below, caret_x(&view, 5, cx), cx);
-        let box_keys = Modifiers {
-            alt: true,
-            shift: true,
-            ..Modifiers::default()
-        };
-        cx.simulate_event(MouseDownEvent {
-            position: from,
-            button: MouseButton::Left,
-            modifiers: box_keys,
-            click_count: 1,
-            first_mouse: false,
-        });
-        cx.simulate_mouse_move(to, Some(MouseButton::Left), box_keys);
-        cx.simulate_event(MouseUpEvent {
-            position: to,
-            button: MouseButton::Left,
-            modifiers: box_keys,
-            click_count: 1,
-        });
-        cx.run_until_parked();
-        draw(cx);
-        assert_eq!(selections(&view, cx), [1..4, below + 1..below + 8]);
-        let (above, under) = (caret_x(&view, 4, cx), caret_x(&view, below + 8, cx));
-        assert!(under - above > 2., "{above} {under}");
-    });
+fn cjk_alt_shift_drag_selects_a_box_of_visible_columns() {
+    shaped::with_app(
+        "cjk_alt_shift_drag_selects_a_box_of_visible_columns",
+        |cx| {
+            let text = "abcdefgh\nab一二cd";
+            let below = text.find('\n').unwrap() + 1;
+            let (view, cx) = editor(text, &[0], false, cx);
+            let from = on_row(&view, 0, caret_x(&view, 1, cx), cx);
+            let to = on_row(&view, below, caret_x(&view, below + 5, cx), cx);
+            let box_keys = Modifiers {
+                alt: true,
+                shift: true,
+                ..Modifiers::default()
+            };
+            cx.simulate_event(MouseDownEvent {
+                position: from,
+                button: MouseButton::Left,
+                modifiers: box_keys,
+                click_count: 1,
+                first_mouse: false,
+            });
+            cx.simulate_mouse_move(to, Some(MouseButton::Left), box_keys);
+            cx.simulate_event(MouseUpEvent {
+                position: to,
+                button: MouseButton::Left,
+                modifiers: box_keys,
+                click_count: 1,
+            });
+            cx.run_until_parked();
+            draw(cx);
+            assert_eq!(selections(&view, cx), [1..4, below + 1..below + 5]);
+        },
+    );
 }
 
 /// Vim's `gj` and `gk` move by display row over a soft-wrapped row of

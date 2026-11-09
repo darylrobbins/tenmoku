@@ -1589,7 +1589,7 @@ impl EditorView {
         self.changed(cx);
     }
 
-    /// The buffer row and display column (in chars) under a window position,
+    /// The buffer row and visible column under a window position,
     /// in the last frame, for a box selection. Past a row's end the column
     /// goes on, a space's width at a time, so a box can be wider than the
     /// row.
@@ -1603,7 +1603,7 @@ impl EditorView {
         let (row, column) = direct.unwrap_or_else(|| {
             let row = text.offset_to_point(offset).row;
             let expanded = self.model.expanded_row(row);
-            let column = expanded.char_column(expanded.to_display(offset - text.row_start(row)));
+            let column = expanded.visible_column(expanded.to_display(offset - text.row_start(row)));
             (row, column)
         });
         let past =

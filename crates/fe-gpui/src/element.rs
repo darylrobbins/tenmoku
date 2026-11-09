@@ -203,7 +203,7 @@ impl FrameLayout {
         Some(grapheme_start(text, offset, row.start))
     }
 
-    /// The buffer row and display column (in chars) nearest a window
+    /// The buffer row and visible column nearest a window
     /// position, read from the shaped row, so a position inside an expanded
     /// tab keeps its column. `None` where the row's text isn't all shaped
     /// from its start, as with a hint or inlay, a long row's slice or a soft
@@ -225,7 +225,7 @@ impl FrameLayout {
             return None;
         }
         let index = row.line.x_to_boundary(line_x);
-        Some((row.buffer_row, row.expanded.char_column(index)))
+        Some((row.buffer_row, row.expanded.visible_column(index)))
     }
 
     /// The offset a buffer row ends at, if a window position is just past

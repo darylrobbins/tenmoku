@@ -425,7 +425,7 @@ impl EditorModel {
     }
 
     /// Selects a box: on each buffer row from `anchor`'s to `head`'s (each
-    /// a row and a display column), from the anchor's column to the head's,
+    /// a row and a visible column), from the anchor's column to the head's,
     /// clamped to the row's end. Rows ending before the box's left column
     /// get none; if every row does, a caret at the head.
     pub fn select_box(&mut self, anchor: (u32, usize), head: (u32, usize)) {
@@ -438,12 +438,13 @@ impl EditorModel {
         let mut selections = Vec::new();
         for row in anchor_row.min(head_row)..=anchor_row.max(head_row) {
             let expanded = self.expanded_row(row);
-            if expanded.text().chars().count() < left {
+            if expanded.visible_column(expanded.text().len()) < left {
                 continue;
             }
             let row_start = text.row_start(row);
             let at = |column: usize, bias: Bias| {
-                row_start + expanded.to_buffer(expanded.display_col_for_char_column(column), bias)
+                row_start
+                    + expanded.to_buffer(expanded.display_col_for_visible_column(column), bias)
             };
             let start = at(left, Bias::Left);
             let end = if right > left {
@@ -458,7 +459,7 @@ impl EditorModel {
         }
         if selections.is_empty() {
             let expanded = self.expanded_row(head_row);
-            let column = expanded.display_col_for_char_column(head.1);
+            let column = expanded.display_col_for_visible_column(head.1);
             let offset = text.row_start(head_row) + expanded.to_buffer(column, Bias::Left);
             selections.push(caret(offset));
         }
