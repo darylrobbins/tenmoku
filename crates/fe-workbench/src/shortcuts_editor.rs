@@ -66,7 +66,10 @@ use gpui::{
 };
 use kiln::{
     core::Os,
-    platform::config::{self, ChangedFiles},
+    platform::{
+        config::{self, ChangedFiles},
+        locale::ActiveLocale,
+    },
 };
 use kiln_shell::{PaneItem, PaneView as _};
 
@@ -198,6 +201,9 @@ impl ShortcutsEditor {
                     this.read_user_keymap(cx);
                 }
             }),
+            // The rows' titles are resolved as the model is built: an open
+            // tab follows a change of language at once.
+            cx.observe_global::<ActiveLocale>(|this, cx| this.follow_locale(cx)),
         ];
         let keymap = fe_gpui::current_keymap(cx);
         let mut this = Self {
@@ -234,6 +240,14 @@ impl ShortcutsEditor {
         self.keymap = live;
         self.refilter(cx);
         self.read_user_keymap(cx);
+    }
+
+    /// Rebuilds the rows from the keymap they show, their commands titled
+    /// in the locale just set.
+    fn follow_locale(&mut self, cx: &mut Context<Self>) {
+        self.model = build_model(&self.keymap, cx);
+        self.refilter(cx);
+        cx.notify();
     }
 
     /// Reads the user's `keymap.toml` off the main thread, for a reset to
@@ -1265,7 +1279,8 @@ fn witness(term: &[Literal], is_editor: impl Fn(&str) -> bool) -> Option<Context
 
 /// The commands the palette lists, with the typed ones it leaves out that
 /// `keymap` binds, each once: the typed commands, the app registry's and
-/// the workbench's [`ListedCommands`].
+/// the workbench's [`ListedCommands`]. Each is titled in the active locale,
+/// resolved now (its `label()`).
 fn commands(keymap: &Keymap, cx: &App) -> Vec<CommandInfo> {
     let bound = |id: &fe_command::CommandId| (keymap.bindings().iter()).any(|b| b.command == *id);
     let typed = kiln::platform::command_actions::typed_commands(cx)
@@ -1273,7 +1288,7 @@ fn commands(keymap: &Keymap, cx: &App) -> Vec<CommandInfo> {
         .filter(|typed| !typed.unlisted || bound(&typed.id))
         .map(|typed| CommandInfo {
             id: typed.id.as_str().to_owned(),
-            title: typed.title,
+            title: typed.label().into(),
             context: typed.context.map(|context| context.to_string()),
         });
     let listed = cx
@@ -1285,7 +1300,7 @@ fn commands(keymap: &Keymap, cx: &App) -> Vec<CommandInfo> {
         .chain(listed.iter().cloned())
         .map(|meta| CommandInfo {
             id: meta.id.as_str().to_owned(),
-            title: meta.title,
+            title: meta.label().into(),
             context: meta.context.map(|context| context.to_string()),
         });
     // The model keeps the first of an ID.
@@ -1692,6 +1707,23 @@ impl Workbench {
             pane.insert_item(Box::new(editor), None, window, cx);
             cx.notify();
         });
+    }
+
+    /// The rows an open Keyboard Shortcuts tab lists for its search, each
+    /// command's ID and title, as its lines show them; `None` if none is
+    /// open. For tests outside this crate that follow a command's title,
+    /// as one in a fake locale.
+    #[doc(hidden)]
+    pub fn shortcuts_editor_rows(&self, cx: &App) -> Option<Vec<(String, String)>> {
+        self.panes(cx).iter().find_map(|pane| {
+            (pane.read(cx).tabs().iter()).find_map(|tab| {
+                let editor = tab.item().downcast_ref::<ShortcutsEditor>()?;
+                let rows = (editor.read(cx).found.iter())
+                    .map(|row| (row.command.clone(), row.title.clone()))
+                    .collect();
+                Some(rows)
+            })
+        })
     }
 }
 

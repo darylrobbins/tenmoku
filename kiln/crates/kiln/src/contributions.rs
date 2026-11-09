@@ -75,6 +75,7 @@ use kiln_platform::{
     },
     commands::{notify_observers, register_app_commands},
     config::SharedKeymap,
+    locale::ActiveLocale,
     menus,
 };
 use kiln_shell::{
@@ -822,6 +823,8 @@ pub struct Contributions {
     /// The app's typed menu bar, in place of the table and contributed
     /// items.
     menu_table: Option<MenuTable>,
+    /// Whether [`start`] has it follow [`ActiveLocale`] yet.
+    follows_locale: bool,
 }
 
 impl Global for Contributions {}
@@ -1385,6 +1388,9 @@ pub(crate) fn shipped_catalog(config: &Config, cx: &App) -> Rc<dyn CommandCatalo
 /// `catalog`, then the extensions' keymap and menu layers over it
 /// ([`crate::extensions`]).
 pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx: &App) -> Shipped {
+    // Before any label resolves: a switch while they do leaves this behind
+    // the catalogue's, so they're resolved again.
+    LABELLED.set(Some(kiln_l10n::generation()));
     // `$app` in command titles, such as `command-app-hide`, before any is
     // resolved for a menu.
     if let Some(app) = cx.try_global::<crate::AppInfo>() {
@@ -1493,8 +1499,16 @@ pub(crate) fn start(
         menu_diagnostics,
     });
     this.scheduled = false;
-    if std::mem::take(&mut this.stale) {
+    let follows = std::mem::replace(&mut this.follows_locale, true);
+    // The extensions' files changed, or a locale was set, such as the
+    // app's saved one by a config source's install, since `init` resolved
+    // the menus.
+    let stale = std::mem::take(&mut this.stale);
+    if stale || LABELLED.get() != Some(kiln_l10n::generation()) {
         schedule(cx);
+    }
+    if !follows {
+        cx.observe_global::<ActiveLocale>(follow_locale).detach();
     }
     // One at a time, so one that contributes another runs it now.
     loop {
@@ -1591,6 +1605,25 @@ pub(crate) fn resolve_again(cx: &mut App) {
     } else {
         this.stale = true;
     }
+}
+
+/// Resolves the menus again once a locale is set ([`ActiveLocale`]) whose
+/// text isn't the one their labels were resolved in, as an extension's
+/// menu change does: each item's label is its command's in the new
+/// locale. A set that changes nothing, as the app's first for the
+/// languages the catalogue was warmed up in, resolves nothing.
+fn follow_locale(cx: &mut App) {
+    let generation = cx.global::<ActiveLocale>().generation();
+    if LABELLED.get() != Some(generation) {
+        resolve_again(cx);
+    }
+}
+
+thread_local! {
+    /// The catalogue's generation ([`kiln_l10n::generation`]) when
+    /// [`shipped`] last resolved the menus' labels, the app's thread's:
+    /// a locale set at another ([`ActiveLocale`]) resolves them again.
+    static LABELLED: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
 /// Resolves the keymap and menus again, with every command registered and
@@ -2244,5 +2277,147 @@ mod tests {
             store.update(cx, |store| store.set_defaults(Vec::new(), Vec::new(), None));
             assert!(store.platform_defaults().is_none());
         });
+    }
+
+    /// A fake locale, `qps-ploc`, for kiln's unit tests: kiln-command's
+    /// toggle title. No other test here switches to it.
+    static FAKE_TOGGLE: kiln_l10n::Resources = kiln_l10n::Resources {
+        crate_name: "kiln-toggle-fake-locale",
+        manifest_dir: env!("CARGO_MANIFEST_DIR"),
+        declared_in: file!(),
+        files: &[kiln_l10n::ResourceFile {
+            locale: "qps-ploc",
+            path: "qps-ploc/toggle.ftl",
+            source: "kiln-command-toggle = ⟦Töggléd { $title }⟧\n\
+                     command-app-quit = ⟦Qüït⟧\n",
+        }],
+        dynamic_prefixes: &[],
+    };
+
+    inventory::submit! { kiln_l10n::Registered(&FAKE_TOGGLE) }
+
+    /// A panel's toggle is `kiln-command-toggle` with the panel's title,
+    /// in the active locale: its View menu item and its label in the app's
+    /// registry, which the palette and which-key show, follow a locale set
+    /// after `init` ([`ActiveLocale`]), and back; the registered title,
+    /// the fallback, stays the English one it was registered in.
+    #[gpui::test]
+    fn a_panel_toggle_is_titled_in_the_locale_set(cx: &mut gpui::TestAppContext) {
+        let (_sender, batches) = kiln_platform::config::batch_channel();
+        let config = Config::new("com.example.Notes", "Notes").watch_with(batches);
+        cx.update(|cx| {
+            Contributions::add_panel(
+                cx,
+                PanelSpec {
+                    id: PanelId("outline"),
+                    title: "Outline".into(),
+                    icon: Icon::Files,
+                    position: DockPosition::Left,
+                    order: 10,
+                    toggle_key: Keys::None,
+                    make: |_, _| unreachable!("no window opens"),
+                },
+            );
+            crate::init(cx, config);
+        });
+        cx.run_until_parked();
+        let titles = |cx: &mut gpui::TestAppContext| {
+            cx.read(|cx| {
+                let bar = kiln_platform::menus::installed(cx).expect("menus installed");
+                let view = bar.menu("View").expect("a View menu");
+                let item = (view.items.iter())
+                    .filter_map(|item| item.command())
+                    .find(|command| command.id.as_str() == "outline.toggle")
+                    .map(|command| command.title.clone());
+                let meta = kiln_platform::commands::app_command_list(cx)
+                    .into_iter()
+                    .find(|meta| meta.id.as_str() == "outline.toggle")
+                    .expect("the toggle registered");
+                (item, meta.label().to_string(), meta.title)
+            })
+        };
+        let english = || {
+            (
+                Some("Toggle Outline".to_owned()),
+                "Toggle Outline".to_owned(),
+                "Toggle Outline".to_owned(),
+            )
+        };
+        assert_eq!(titles(cx), english());
+
+        let set = |tag: &str, cx: &mut gpui::TestAppContext| {
+            let tag: kiln_l10n::LanguageIdentifier = tag.parse().unwrap();
+            cx.update(|cx| kiln_platform::locale::set_locale(cx, &[tag]));
+            cx.run_until_parked();
+        };
+        set("qps-ploc", cx);
+        let fake = "⟦Töggléd Outline⟧".to_owned();
+        assert_eq!(
+            titles(cx),
+            (Some(fake.clone()), fake, "Toggle Outline".to_owned())
+        );
+
+        set("en-US", cx);
+        assert_eq!(titles(cx), english());
+    }
+
+    /// A config source that sets a locale as it's installed, as an app's
+    /// saved `locale` setting does: after `init` built the menus, before
+    /// [`start`].
+    struct LocaleAtInstall(&'static str);
+
+    impl kiln_platform::config::ConfigSource for LocaleAtInstall {
+        fn paths(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+
+        fn install(&mut self, cx: &mut App) {
+            let tag: kiln_l10n::LanguageIdentifier = self.0.parse().unwrap();
+            kiln_platform::locale::set_locale(cx, &[tag]);
+        }
+
+        fn reload(&mut self, _: &[PathBuf], _: &mut App) {}
+    }
+
+    /// A locale set while `init` installs the config sources, after it
+    /// built the menus: once started, the menus are resolved again in it,
+    /// a contributed command's item (as `#[kiln::command(menu = ..)]`
+    /// places it) and a panel's toggle alike.
+    #[gpui::test]
+    fn a_locale_set_during_init_titles_the_menus(cx: &mut gpui::TestAppContext) {
+        let english: kiln_l10n::LanguageIdentifier = "en-US".parse().unwrap();
+        cx.update(|cx| kiln_platform::locale::set_locale(cx, &[english]));
+        let (_sender, batches) = kiln_platform::config::batch_channel();
+        let config = Config::new("com.example.Notes", "Notes")
+            .source(LocaleAtInstall("qps-ploc"))
+            .watch_with(batches);
+        cx.update(|cx| {
+            Contributions::add_panel(
+                cx,
+                PanelSpec {
+                    id: PanelId("outline"),
+                    title: "Outline".into(),
+                    icon: Icon::Files,
+                    position: DockPosition::Left,
+                    order: 10,
+                    toggle_key: Keys::None,
+                    make: |_, _| unreachable!("no window opens"),
+                },
+            );
+            let quit = CommandSpec::new::<crate::app::Quit>("Quit").menu("View", 50);
+            Contributions::add_command(cx, quit);
+            crate::init(cx, config);
+        });
+        cx.run_until_parked();
+        let items = cx.read(|cx| {
+            let bar = kiln_platform::menus::installed(cx).expect("menus installed");
+            let view = bar.menu("View").expect("a View menu");
+            (view.items.iter())
+                .filter_map(|item| item.command())
+                .filter(|command| ["outline.toggle", "app.quit"].contains(&command.id.as_str()))
+                .map(|command| command.title.clone())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(items, ["⟦Töggléd Outline⟧", "⟦Qüït⟧"]);
     }
 }

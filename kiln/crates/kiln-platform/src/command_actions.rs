@@ -500,9 +500,13 @@ mod label_tests {
 
     static RECORDER: Recorder = Recorder(Mutex::new(Vec::new()));
 
-    /// The only test here that switches the process catalogue's locale.
+    /// Held by each test here that switches the process catalogue's
+    /// locale, for a runner that runs them in one process.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     #[test]
     fn label_resolves_in_the_active_locale_and_falls_back_silently() {
+        let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
         log::set_logger(&RECORDER).unwrap();
         log::set_max_level(log::LevelFilter::Trace);
         let keyed = typed("probe.typed", "Registered Title");
@@ -523,5 +527,62 @@ mod label_tests {
             !logged.iter().any(|line| line.contains("probe-plain")),
             "{logged:?}"
         );
+    }
+
+    #[allow(unreachable_pub)]
+    mod probe {
+        crate::commands!(
+            probe,
+            [
+                /// Registered Title
+                Typed,
+                /// Plain Title
+                Plain,
+            ]
+        );
+    }
+
+    /// Each registered command's title and label, by ID.
+    fn titles(cx: &gpui::TestAppContext) -> Vec<(String, String)> {
+        cx.read(|cx| {
+            (typed_commands(cx).into_iter())
+                .map(|typed| (typed.title.clone(), typed.label().to_string()))
+                .collect()
+        })
+    }
+
+    fn set_locale(tag: &str, cx: &mut gpui::TestAppContext) {
+        let tag: LanguageIdentifier = tag.parse().unwrap();
+        cx.update(|cx| crate::locale::set_locale(cx, &[tag]));
+    }
+
+    /// A stored command's title stays the English one it was registered
+    /// with, its fallback, across locale switches; its `label()` follows
+    /// each locale set, and so does a command registered after one.
+    #[gpui::test]
+    fn the_store_keeps_the_fallback_and_label_follows_the_locale(cx: &mut gpui::TestAppContext) {
+        let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+        let row = |title: &str, label: &str| (title.to_owned(), label.to_owned());
+        let plain = row("Plain Title", "Plain Title");
+        set_locale("en-US", cx);
+        cx.update(probe::register);
+        assert_eq!(
+            titles(cx),
+            [plain.clone(), row("Registered Title", "Typed Label")]
+        );
+
+        set_locale("qps-ploc", cx);
+        assert_eq!(
+            titles(cx),
+            [plain.clone(), row("Registered Title", "⟦Týpéd Läbél⟧")]
+        );
+        cx.update(probe::register);
+        assert_eq!(
+            titles(cx),
+            [plain.clone(), row("Registered Title", "⟦Týpéd Läbél⟧")]
+        );
+
+        set_locale("en-US", cx);
+        assert_eq!(titles(cx), [plain, row("Registered Title", "Typed Label")]);
     }
 }

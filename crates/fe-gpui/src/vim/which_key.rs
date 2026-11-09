@@ -139,6 +139,18 @@ impl EditorView {
         self.which_key.shown.as_ref()
     }
 
+    /// The rows the popup shows, if one does: each key, and its title as
+    /// the popup draws it now ([`title`]). For tests outside this crate
+    /// that follow a command's title, as one in a fake locale.
+    #[doc(hidden)]
+    pub fn which_key_rows(&self, cx: &App) -> Option<Vec<(String, String)>> {
+        let shown = self.which_key.shown.as_ref()?;
+        let rows = (shown.entries.iter())
+            .map(|entry| (entry.key.clone(), title(entry, cx)))
+            .collect();
+        Some(rows)
+    }
+
     /// What waits now, with the mode it waits in: in normal or a visual
     /// mode only. Insert, replace and the command line hold their maps'
     /// keys too, but a popup there would stop the map timing out, holding
@@ -557,27 +569,25 @@ pub(crate) fn title(entry: &WhichKeyEntry, cx: &App) -> String {
     }
 }
 
-/// The title of the command `id`, from whichever registry has it: vim's,
-/// the proposals', the diff view's, the editor's, the host's
-/// ([`set_host_commands`]), the typed commands or the app's. Its ID if none
-/// does.
+/// The title of the command `id` in the active locale, resolved now (its
+/// `label()`), from whichever registry has it: vim's, the proposals', the
+/// diff view's, the editor's, the host's ([`set_host_commands`]), the
+/// typed commands or the app's. Its ID if none does.
 pub(crate) fn command_title(id: &str, cx: &App) -> String {
     let Ok(command) = CommandId::parse(id) else {
         return id.to_owned();
     };
-    let registered = (registry().get(&command).map(|meta| meta.title.clone()))
-        .or_else(|| (crate::view::proposal_registry().get(&command)).map(|meta| meta.title.clone()))
-        .or_else(|| (crate::diff_view::registry().get(&command)).map(|meta| meta.title.clone()));
-    let listed = |list: Vec<CommandMeta>| {
-        (list.into_iter())
-            .find(|meta| meta.id == command)
-            .map(|meta| meta.title)
-    };
+    let label = |meta: &CommandMeta| meta.label().to_string();
+    let registered = (registry().get(&command).map(label))
+        .or_else(|| (crate::view::proposal_registry().get(&command)).map(label))
+        .or_else(|| (crate::diff_view::registry().get(&command)).map(label));
+    let listed = |list: Vec<CommandMeta>| (list.iter()).find(|meta| meta.id == command).map(label);
     registered
         .or_else(|| listed(crate::commands::command_list()))
         .or_else(|| listed(HOST_COMMANDS.with_borrow(Clone::clone)))
         .or_else(|| {
-            kiln_platform::command_actions::typed_command(&command, cx).map(|typed| typed.title)
+            kiln_platform::command_actions::typed_command(&command, cx)
+                .map(|typed| typed.label().to_string())
         })
         .or_else(|| listed(kiln_platform::commands::app_command_list(cx)))
         .unwrap_or_else(|| id.to_owned())

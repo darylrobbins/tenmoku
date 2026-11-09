@@ -76,13 +76,14 @@ impl Row {
     }
 }
 
-/// Every command's title the palette knows: the typed commands', the app
-/// registry's and the workbench's [`ListedCommands`]', the first of an ID.
+/// Every command's title the palette knows, in the active locale, resolved
+/// now (its `label()`): the typed commands', the app registry's and the
+/// workbench's [`ListedCommands`]', the first of an ID.
 fn titles(cx: &App) -> HashMap<String, String> {
     let mut titles = HashMap::new();
     let typed = kiln::platform::command_actions::typed_commands(cx)
         .into_iter()
-        .map(|typed| (typed.id.as_str().to_owned(), typed.title));
+        .map(|typed| (typed.id.as_str().to_owned(), typed.label().into()));
     let listed = cx
         .try_global::<ListedCommands>()
         .map(|listed| &listed.0[..])
@@ -90,7 +91,7 @@ fn titles(cx: &App) -> HashMap<String, String> {
     let metas = kiln::platform::commands::app_command_list(cx)
         .into_iter()
         .chain(listed.iter().cloned())
-        .map(|meta| (meta.id.as_str().to_owned(), meta.title));
+        .map(|meta| (meta.id.as_str().to_owned(), meta.label().into()));
     for (id, title) in typed.chain(metas) {
         titles.entry(id).or_insert(title);
     }
