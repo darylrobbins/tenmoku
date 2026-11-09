@@ -54,6 +54,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      # The workspace's debug test build plus kiln's stand-alone build overflow
+      # the runner's disk. Remove preinstalled SDKs this job never uses (several
+      # GB each); df before and after shows the margin gained.
+      - name: Free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+            /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
       - name: Install GPUI's libraries, and Xvfb and xdotool for the launch
         run: |
           sudo apt-get update
@@ -80,7 +91,14 @@ jobs:
         # Outside this workspace, from kiln/ plus only the entries of our root
         # manifest it uses; offline, since the steps above filled the registry
         # cache (scripts/check-framework-standalone.sh, TESTING.md).
-        run: scripts/check-framework-standalone.sh
+        # df around it, so the next disk shortfall shows in the log; the status
+        # is kept so the after-df prints on failure too.
+        run: |
+          df -h /
+          status=0
+          scripts/check-framework-standalone.sh || status=$?
+          df -h /
+          exit "$status"
       - name: The app launches and draws a frame
         # Under Xvfb, with Mesa's software Vulkan; see the run-fastedit-linux
         # skill. `start` fails if the window draws nothing within 30 s.
