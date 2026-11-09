@@ -25,6 +25,8 @@
 #   with wasi-sdk's clang: WASI_SDK, else ~/.cache/tree-sitter/wasi-sdk, where
 #   the tree-sitter CLI keeps it. With neither, this downloads the pinned
 #   wasi-sdk for the host (macOS arm64 or x86_64, Linux x86_64 or arm64) there.
+# - Directories whose grammar export is the same (ERB and EJS) share one module,
+#   built once per run.
 # - At most GRAMMAR_JOBS clang processes run at once (default half the cores).
 # - The test is given GRAMMAR_LANGUAGES, the languages named, and checks only
 #   those.
@@ -240,7 +242,7 @@ build() {
   [ -f "$dir/scanner.c" ] && sources+=(scanner.c)
 
   wasm=$PWD/$out/tree-sitter-${grammar//_/-}.wasm
-  temp=$wasm.$$.tmp
+  temp=$(mktemp "$wasm.XXXXXX")
   (cd "$dir" && "$wasi_sdk/bin/clang" --target=wasm32-wasip1 \
     --sysroot="$wasi_sdk/share/wasi-sysroot" -o "$temp" -fPIC -shared \
     --no-wasm-opt -Os "-Wl,--export=tree_sitter_$grammar" \
@@ -302,9 +304,15 @@ for language in "${built[@]}"; do
   froms+=("$(sed -n 2p <<<"$found")")
 done
 
-# Then at most $max_jobs at once: each is one slow clang process.
+# Then at most $max_jobs at once: each is one slow clang process. Languages
+# sharing a grammar export (ERB and EJS) share a module and a pinned source
+# (wasm_parity.rs checks), so the first of them builds it.
 pids=()
+modules=" "
 for i in "${!built[@]}"; do
+  grammar=$(field "$grammars/${built[$i]}/grammar-source.toml" grammar)
+  [[ $modules == *" $grammar "* ]] && continue
+  modules+="$grammar "
   while [ "$(jobs -pr | wc -l)" -ge "$max_jobs" ]; do
     sleep 0.2
   done

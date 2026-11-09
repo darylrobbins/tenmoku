@@ -571,13 +571,14 @@ fn check_test_dir(test: &Path, say: &mut dyn FnMut(String)) {
 }
 
 /// `grammar-source.toml` is exactly one of its forms, its values valid; its
-/// `grammar`, if it has one.
+/// `grammar`, if it has one, and its source: the form's keys but `grammar`,
+/// as `key=value` lines.
 fn check_source(
     dir: &Path,
     language: &str,
     languages: &[String],
     say: &mut dyn FnMut(String),
-) -> Option<String> {
+) -> Option<(String, String)> {
     let text = fs::read_to_string(dir.join("grammar-source.toml")).ok()?;
     let mut values = BTreeMap::new();
     match keys(&text) {
@@ -674,9 +675,14 @@ fn check_source(
             }
         }
     }
+    let source = (strings_of.iter())
+        .filter(|(key, _)| **key != "grammar")
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(" ");
     strings_of
         .get("grammar")
-        .map(|grammar| (*grammar).to_owned())
+        .map(|grammar| ((*grammar).to_owned(), source))
 }
 
 /// The file extensions and names a directory's grammar is chosen for.
@@ -777,6 +783,8 @@ fn problems(root: &Path) -> Vec<String> {
     let mut problems = Vec::new();
     // Each directory's language, with what it's for.
     let mut all_claims: Vec<(&String, Claims)> = Vec::new();
+    // Each grammar export to the directories for it, with their sources.
+    let mut exports: BTreeMap<String, Vec<(&String, String)>> = BTreeMap::new();
     for language in &languages {
         let dir = root.join(language);
         let native = native_sample(language).is_some();
@@ -784,8 +792,12 @@ fn problems(root: &Path) -> Vec<String> {
             problems.push(format!("extensions/grammars/{language}: {problem}"));
         };
         check_files(&dir, native, &mut say);
-        let grammar = check_source(&dir, language, &languages, &mut say);
-        let claims = check_manifest(&dir, language, grammar.as_deref(), &mut say);
+        let found = check_source(&dir, language, &languages, &mut say);
+        let grammar = found.as_ref().map(|(grammar, _)| grammar.as_str());
+        let claims = check_manifest(&dir, language, grammar, &mut say);
+        if let Some((grammar, source)) = found {
+            exports.entry(grammar).or_default().push((language, source));
+        }
         if !native && (fe_syntax::language_names()).any(|name| name.eq_ignore_ascii_case(language))
         {
             say(format!("{language} is a built-in language's name"));
@@ -824,6 +836,21 @@ fn problems(root: &Path) -> Vec<String> {
             }
         }
         all_claims.push((language, claims));
+    }
+
+    // Directories sharing an export share its module, so one source.
+    for (grammar, sharers) in &exports {
+        for pair in sharers.windows(2) {
+            let ((first, first_source), (second, second_source)) = (&pair[0], &pair[1]);
+            if first_source != second_source {
+                problems.push(format!(
+                    "extensions/grammars: {first} and {second} both export \
+                     tree_sitter_{grammar} but pin different sources \
+                     ({first_source:?} and {second_source:?}): one grammar is built \
+                     from one source"
+                ));
+            }
+        }
     }
 
     // Each extension and file name, lowercased, to the directories for it.
@@ -1566,4 +1593,31 @@ esac
         assert!(!stage.publish("grammars", &[("GITHUB_EVENT_NAME", "workflow_dispatch")]));
         assert_eq!(stage.log(), "grammars view\n");
     }
+}
+
+/// Adds `language` as a directory for the export `grammar`, which `source`
+/// (with no `<grammar>` in it) names.
+fn add_sharing(root: &Root, language: &str, grammar: &str, source: &str) -> PathBuf {
+    let dir = root.add(language, source);
+    edit(
+        &dir.join("extension.toml"),
+        &format!("tree-sitter-{language}.wasm"),
+        &format!("tree-sitter-{grammar}.wasm"),
+    );
+    dir
+}
+
+#[test]
+fn directories_sharing_an_export_must_share_a_source() {
+    let root = Root::new("shared-export");
+    let source = GIT_SOURCE.replace("<grammar>", "zzshared");
+    add_sharing(&root, "zzone", "zzshared", &source);
+    let two = add_sharing(&root, "zztwo", "zzshared", &source);
+    assert_eq!(root.problems(), Vec::<String>::new());
+    edit(
+        &two.join("grammar-source.toml"),
+        "0123456789abcdef0123456789abcdef01234567",
+        "1123456789abcdef0123456789abcdef01234567",
+    );
+    root.assert_problem("zzone and zztwo both export tree_sitter_zzshared");
 }

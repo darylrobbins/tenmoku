@@ -43,6 +43,12 @@ append the language's row to `THIRD_PARTY.md`'s "Grammars shipped as
 WebAssembly", giving the source as `grammar-source.toml` does and the licence.
 That's all: no script, test, workflow, Rust table or `pack.toml` changes.
 
+One grammar may back several languages: each gets its own directory, with the
+same `grammar-source.toml` source (`wasm_parity.rs` requires it) and its own
+queries and sample. They share one module, which the build script builds once.
+tree-sitter-embedded-template is the example: ERB and EJS are two directories
+with `grammar = "embedded_template"`, differing in their injections.
+
 ### grammar-source.toml
 
 One key per line, each value a plain string (or a one-line list) with
