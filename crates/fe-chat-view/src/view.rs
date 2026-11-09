@@ -21,6 +21,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, relative,
 };
 use kiln::{Cx, ViewCommands};
+use kiln_l10n::{Text, text, tr};
 use kiln_ui::{Button, ScrollArea, UiTheme, h_flex, ui_theme, v_flex};
 use serde_json::Value;
 
@@ -30,6 +31,10 @@ use crate::{
 };
 
 /// The context window the meter measures against.
+/// The message a stream that ends without saying how is stored as: the
+/// catalogue key, resolved when the banner is drawn.
+const REPLY_ENDED_EARLY: &str = "chat-view-reply-ended-early";
+
 const CONTEXT_WINDOW: u64 = 1_000_000;
 
 /// How many rows the composer grows to before it scrolls.
@@ -125,13 +130,13 @@ pub enum BannerAction {
 }
 
 impl BannerAction {
-    fn label(self) -> &'static str {
+    fn label(self) -> Text {
         match self {
-            BannerAction::SetKey => "Set API Key",
-            BannerAction::OpenSettings => "Open Settings",
-            BannerAction::Retry => "Retry",
-            BannerAction::Edit => "Edit",
-            BannerAction::RemoveAttachments => "Remove Attachments",
+            BannerAction::SetKey => text!("chat-view-action-set-key"),
+            BannerAction::OpenSettings => text!("chat-view-action-open-settings"),
+            BannerAction::Retry => text!("chat-view-action-retry"),
+            BannerAction::Edit => text!("chat-view-action-edit"),
+            BannerAction::RemoveAttachments => text!("chat-view-action-remove-attachments"),
         }
     }
 }
@@ -741,11 +746,13 @@ impl ChatView {
             .rev()
             .find_map(|turn| turn.usage)?;
         let total = usage.total_input();
-        let mut meter = format!("{}k of 1M tokens", total.div_ceil(1000));
-        if total * 5 >= CONTEXT_WINDOW * 4 {
-            meter.push_str(" · Long chat: start a new one for better answers");
-        }
-        Some(meter)
+        let thousands = total.div_ceil(1000);
+        let meter = if total * 5 >= CONTEXT_WINDOW * 4 {
+            tr!("chat-view-meter-long", thousands = thousands)
+        } else {
+            tr!("chat-view-meter", thousands = thousands)
+        };
+        Some(meter.to_string())
     }
 
     /// The record's § 14 banner for turn `index`. Retry and Edit are offered
@@ -761,7 +768,7 @@ impl ChatView {
         match &turn.state {
             TurnState::Streaming | TurnState::Stopped => None,
             TurnState::Done if turn.cut_off() => Some(banner(
-                "Reply cut off at the token limit".to_owned(),
+                tr!("chat-view-banner-cut-off").to_string(),
                 None,
                 false,
             )),
@@ -771,8 +778,10 @@ impl ChatView {
                     .and_then(|details| details.get("category"))
                     .and_then(|category| category.as_str());
                 let text = match category {
-                    Some(category) => format!("Claude declined this request ({category})"),
-                    None => "Claude declined this request".to_owned(),
+                    Some(category) => {
+                        tr!("chat-view-banner-declined-category", category = category).to_string()
+                    }
+                    None => tr!("chat-view-banner-declined").to_string(),
                 };
                 Some(banner(text, only_last(BannerAction::Edit), false))
             }
@@ -791,19 +800,20 @@ impl ChatView {
         let message = error.message.clone();
         match error.kind {
             ErrorKind::Auth => (
-                "Your API key was rejected".to_owned(),
+                tr!("chat-view-banner-auth").to_string(),
                 Some(BannerAction::SetKey),
             ),
             ErrorKind::Billing | ErrorKind::Permission => (message, None),
             ErrorKind::NotFound => (
-                format!(
-                    "Model `{}` isn't available to this key",
-                    self.conversation.model
-                ),
+                tr!(
+                    "chat-view-banner-not-found",
+                    model = self.conversation.model.as_str()
+                )
+                .to_string(),
                 Some(BannerAction::OpenSettings),
             ),
             ErrorKind::TooLarge => (
-                "Too much context".to_owned(),
+                tr!("chat-view-banner-too-large").to_string(),
                 Some(BannerAction::RemoveAttachments),
             ),
             ErrorKind::InvalidRequest => (message, Some(BannerAction::Edit)),
@@ -811,7 +821,19 @@ impl ChatView {
             | ErrorKind::RateLimited
             | ErrorKind::Overloaded
             | ErrorKind::Server => (message, Some(BannerAction::Retry)),
-            ErrorKind::Stream => (format!("Interrupted: {message}"), Some(BannerAction::Retry)),
+            ErrorKind::Stream => (
+                // The early end is stored as its key, so it resolves now.
+                if message == REPLY_ENDED_EARLY {
+                    tr!(
+                        "chat-view-banner-interrupted",
+                        message = tr!(REPLY_ENDED_EARLY)
+                    )
+                } else {
+                    tr!("chat-view-banner-interrupted", message = message)
+                }
+                .to_string(),
+                Some(BannerAction::Retry),
+            ),
         }
     }
 
@@ -868,7 +890,7 @@ impl ChatView {
             drop(pump);
             this.update(cx, |this, cx| {
                 // A stream that ends without saying how was cut off.
-                let error = ProviderError::new(ErrorKind::Stream, "the reply ended early");
+                let error = ProviderError::new(ErrorKind::Stream, REPLY_ENDED_EARLY.to_owned());
                 this.conversation.apply(ChatEvent::Failed(error));
                 this.stream = None;
                 this.end_turn(cx);
@@ -974,7 +996,11 @@ impl ChatView {
                         .debug_selector(move || format!("chat-thinking-{index}"))
                         .cursor_pointer()
                         .text_color(ui.muted_text)
-                        .child(if open { "▾ Thinking" } else { "▸ Thinking" })
+                        .child(if open {
+                            tr!("chat-view-thinking-open")
+                        } else {
+                            tr!("chat-view-thinking-closed")
+                        })
                         .on_click(toggle),
                 )
                 .children(document.map(|document| {
@@ -1009,7 +1035,7 @@ impl ChatView {
             div()
                 .debug_selector(move || format!("chat-answered-by-{index}"))
                 .text_color(ui.muted_text)
-                .child(format!("Answered by {model}"))
+                .child(tr!("chat-view-answered-by", model = model.as_str()))
         });
         let banner = shown
             .banner
@@ -1027,7 +1053,7 @@ impl ChatView {
                 h_flex().child(
                     Button::new(
                         ("chat-review-changes", index),
-                        format!("Review {files} changes"),
+                        text!("chat-view-review-changes", files = files),
                     )
                     .small()
                     .debug_selector(move || format!("chat-review-changes-{index}"))
@@ -1136,7 +1162,7 @@ impl ChatView {
             let stop = cx.listener(|this, _, window, cx| {
                 kiln::with_cx(window, cx, |cx| this.stop_reply(cx));
             });
-            Button::new("chat-stop", "Stop")
+            Button::new("chat-stop", text!("chat-view-stop"))
                 .small()
                 .debug_selector(|| "chat-stop".into())
                 .on_click(stop)
@@ -1144,7 +1170,7 @@ impl ChatView {
             let send = cx.listener(|this, _, window, cx| {
                 kiln::with_cx(window, cx, |cx| this.send_message(cx));
             });
-            Button::new("chat-send", "Send")
+            Button::new("chat-send", text!("chat-view-send"))
                 .small()
                 .primary()
                 .disabled(no_key || empty || self.reading())
@@ -1202,7 +1228,7 @@ impl ChatView {
                 .border_1()
                 .border_color(ui.border)
                 .text_color(ui.muted_text)
-                .child(format!("{label} · reading…"))
+                .child(tr!("chat-view-chip-reading", label = label.as_str()))
                 .child(
                     div()
                         .id(("chat-chip-reading-remove", index))
@@ -1258,24 +1284,11 @@ impl ChatView {
             cx.emit(ChatViewEvent::NoticeDismissed);
             cx.notify();
         });
-        let mut lines = vec![
-            "What you send goes to Anthropic (api.anthropic.com) under your API key: your \
-             messages, what you attach to them, the chat's earlier turns and its instructions. \
-             Nothing is sent until you press Send."
-                .to_owned(),
-        ];
+        let mut lines = vec![tr!("chat-view-notice-privacy")];
         if self.options.fallbacks {
-            lines.push(
-                "When the model asked for is unavailable, another Claude model may answer; the \
-                 reply says which."
-                    .to_owned(),
-            );
+            lines.push(tr!("chat-view-notice-fallback"));
         }
-        lines.push(
-            "Chats are kept on this computer, per folder, until you delete them; in a folder \
-             you haven't trusted, only until the window closes."
-                .to_owned(),
-        );
+        lines.push(tr!("chat-view-notice-storage"));
         v_flex()
             .debug_selector(|| "chat-notice".into())
             .gap_2()
@@ -1286,7 +1299,7 @@ impl ChatView {
             .children(lines.into_iter().map(|line| div().child(line)))
             .child(
                 h_flex().justify_end().child(
-                    Button::new("chat-notice-dismiss", "Got It")
+                    Button::new("chat-notice-dismiss", text!("chat-view-notice-dismiss"))
                         .small()
                         .debug_selector(|| "chat-notice-dismiss".into())
                         .on_click(dismiss),
@@ -1303,9 +1316,9 @@ impl ChatView {
             .p_3()
             .items_center()
             .text_color(ui.text)
-            .child("Add your Anthropic API key")
+            .child(tr!("chat-view-no-key"))
             .child(
-                Button::new("chat-set-key", "Set API Key")
+                Button::new("chat-set-key", text!("chat-view-action-set-key"))
                     .small()
                     .primary()
                     .debug_selector(|| "chat-set-key".into())
@@ -1563,13 +1576,20 @@ fn covers(mine: &ContextItem, host: &ContextItem) -> bool {
 /// What a chip says: its label, the whole item's estimate, and whether
 /// the budget cut it or left it out.
 fn chip_text(chip: &Budgeted) -> String {
-    let mut text = format!("{} · {}", chip.item.label, tokens(chip.estimate));
+    let label = chip.item.label.as_str();
+    let estimate = tokens(chip.estimate);
     match chip.fit {
-        Fit::Whole => {}
-        Fit::Truncated { .. } => text.push_str(" · truncated"),
-        Fit::Dropped => text.push_str(" · won't fit"),
+        Fit::Whole => tr!("chat-view-chip", label = label, estimate = estimate),
+        Fit::Truncated { .. } => {
+            tr!(
+                "chat-view-chip-truncated",
+                label = label,
+                estimate = estimate
+            )
+        }
+        Fit::Dropped => tr!("chat-view-chip-dropped", label = label, estimate = estimate),
     }
-    text
+    .to_string()
 }
 
 /// An estimate as a chip shows it: `~850`, `~1.2k`, `~32k`.

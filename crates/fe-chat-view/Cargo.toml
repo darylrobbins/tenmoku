@@ -19,11 +19,14 @@ fe-markdown-view.workspace = true
 futures.workspace = true
 gpui.workspace = true
 kiln.workspace = true
+kiln-l10n.workspace = true
 kiln-ui.workspace = true
 log.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+kiln-command = { workspace = true, features = ["lint"] }
+kiln-l10n = { workspace = true, features = ["lint"] }
 # The bundled fonts, which the screenshots example (and fe-gpui's font tests)
 # register and pin, as Tenmoku does.
 fe-fonts = { path = "../fe-fonts" }

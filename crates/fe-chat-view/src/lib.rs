@@ -19,6 +19,7 @@
 
 use gpui::App;
 
+pub mod l10n;
 mod reply;
 mod view;
 

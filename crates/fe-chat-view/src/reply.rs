@@ -23,6 +23,7 @@ use gpui::{
     ParentElement as _, Pixels, ScrollHandle, SharedString, Styled, StyledText, WeakEntity, Window,
     div, px,
 };
+use kiln_l10n::{text, tr};
 use kiln_ui::{Button, UiTheme, h_flex};
 
 use crate::{ChatView, ChatViewEvent};
@@ -70,13 +71,24 @@ impl BlockState {
     /// The header's label for it.
     pub fn label(&self) -> String {
         match *self {
-            BlockState::Proposed { pending, hunks } if pending >= hunks => "Proposed".to_owned(),
-            BlockState::Proposed { pending, .. } => format!("Proposed · {pending} left"),
-            BlockState::Decided { accepted, hunks } if accepted >= hunks => "Accepted".to_owned(),
-            BlockState::Decided { accepted: 0, .. } => "Rejected".to_owned(),
-            BlockState::Decided { accepted, hunks } => format!("Accepted {accepted} of {hunks}"),
-            BlockState::NoChange => "No changes".to_owned(),
-            BlockState::Failed(_) => "Not applied".to_owned(),
+            BlockState::Proposed { pending, hunks } if pending >= hunks => {
+                tr!("chat-view-block-proposed").to_string()
+            }
+            BlockState::Proposed { pending, .. } => {
+                tr!("chat-view-block-proposed-pending", pending = pending).to_string()
+            }
+            BlockState::Decided { accepted, hunks } if accepted >= hunks => {
+                tr!("chat-view-block-accepted").to_string()
+            }
+            BlockState::Decided { accepted: 0, .. } => tr!("chat-view-block-rejected").to_string(),
+            BlockState::Decided { accepted, hunks } => tr!(
+                "chat-view-block-accepted-some",
+                accepted = accepted,
+                hunks = hunks
+            )
+            .to_string(),
+            BlockState::NoChange => tr!("chat-view-block-no-changes").to_string(),
+            BlockState::Failed(_) => tr!("chat-view-block-not-applied").to_string(),
         }
     }
 }
@@ -642,13 +654,13 @@ pub(crate) fn code_header(
         .child(div().flex_1())
         .children(label)
         .child(
-            Button::new(copy_id.clone(), "Copy")
+            Button::new(copy_id.clone(), text!("chat-view-block-copy"))
                 .small()
                 .debug_selector(move || copy_id.to_string())
                 .on_click(copy),
         )
         .child(
-            Button::new(apply_id.clone(), "Apply")
+            Button::new(apply_id.clone(), text!("chat-view-block-apply"))
                 .small()
                 .disabled(streaming)
                 .debug_selector(move || apply_id.to_string())

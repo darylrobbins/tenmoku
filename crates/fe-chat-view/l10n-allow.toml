@@ -1,0 +1,111 @@
+all = true
+
+[[literal]]
+file = "src/reply.rs"
+text = "chat-diff-{turn}-{index}-{name}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/reply.rs"
+text = "chat-diff-{turn}-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/reply.rs"
+text = "chat-block-error-{turn}-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-thinking-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-thinking-text-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-answered-by-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-review-changes"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-review-changes-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-turn-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-reply-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-banner-action"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-banner-action-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-banner-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-stop"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-send"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-attach"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-chip-reading-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-chip-reading-remove-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-chip-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-chip-remove-{index}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-notice-dismiss"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/view.rs"
+text = "chat-set-key"
+reason = "An element id or debug selector, never shown"

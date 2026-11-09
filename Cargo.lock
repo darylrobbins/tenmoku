@@ -2185,6 +2185,8 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "kiln",
+ "kiln-command",
+ "kiln-l10n",
  "kiln-platform",
  "kiln-ui",
  "log",
