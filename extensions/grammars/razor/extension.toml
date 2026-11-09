@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_razor"
+name = "Razor syntax"
+version = "0.1.1"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "razor"
+wasm = "tree-sitter-razor.wasm"
+extensions = ["cshtml", "razor"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+block_comment = ["@*", "*@"]
+earlier_patterns_win = false

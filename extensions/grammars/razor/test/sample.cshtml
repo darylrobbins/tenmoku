@@ -1,0 +1,70 @@
+@page "/orders/{id:int}"
+@model Shop.Pages.OrderModel
+@using System.Globalization
+@using Shop.Services
+@inject IPriceService Prices
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Order @Model.Number</title>
+    <link rel="stylesheet" href="~/css/site.css" />
+</head>
+<body>
+    <h1 class="title">Order for @Model.Customer.Name</h1>
+    <p>Placed on @Model.Placed.ToString("d", CultureInfo.InvariantCulture)</p>
+    <p>Items: @(Model.Lines.Count + Model.Extras)</p>
+
+    @if (Model.Lines.Count == 0)
+    {
+        <p class="empty">Nothing ordered yet.</p>
+    }
+    else
+    {
+        <table class="lines">
+            <tr>
+                <th>Product</th>
+                <th>Quantity</th>
+                <th>Price</th>
+            </tr>
+            @foreach (var line in Model.Lines)
+            {
+                <tr>
+                    <td>@line.Product</td>
+                    <td>@line.Quantity</td>
+                    <td>@Prices.Format(line.Total)</td>
+                </tr>
+            }
+        </table>
+    }
+
+    <form method="post">
+        <label asp-for="Note">Note</label>
+        <input asp-for="Note" class="note" />
+        <button type="submit" disabled>Save</button>
+    </form>
+
+    <footer>Shop, @@shop on the web</footer>
+</body>
+</html>
+
+@* The page's helpers: a summary line and the empty check. *@
+@code {
+    // Discounts above this many items, in percent.
+    private const int BulkThreshold = 10;
+    private static readonly decimal BulkRate = 0.15m;
+
+    /* The label shown under the table. */
+    private string Summary(int count, decimal total)
+    {
+        var tab = "\t";
+        if (count >= BulkThreshold && total > 100.0m)
+        {
+            return $"Bulk order:{tab}{count} items, {BulkRate * 100}% off\n";
+        }
+        return count == 1 ? "One item" : $"{count} items";
+    }
+
+    private bool IsEmpty => Model.Lines is null || Model.Lines.Count == 0;
+}
