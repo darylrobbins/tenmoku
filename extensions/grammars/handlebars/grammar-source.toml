@@ -1,0 +1,9 @@
+# Where this extension's WebAssembly grammar comes from: that commit of the
+# repository, fetched whole by scripts/build-grammar-wasm.sh.
+git = "https://github.com/bennypowers/tree-sitter-handlebars"
+rev = "6cf6821144efca0ba9327497f0523f5ebc04abef"
+# The directory holding parser.c.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm.
+grammar = "handlebars"

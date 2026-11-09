@@ -1,0 +1,67 @@
+{{!-- A page layout: block comment --}}
+{{! a short comment }}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{title}} | {{site.name}}</title>
+  <style>
+    .card { color: #333; }
+  </style>
+</head>
+<body class="{{bodyClass}}">
+  {{> header user=currentUser}}
+
+  <h1 id="top">Hello, {{user.firstName}} {{this.lastName}}!</h1>
+  {{{rawHtml}}}
+  {{greet "say \"hi\"" 'it\'s'}}
+  {{&ampersand}}
+
+  {{#if items}}
+    <ul class="list">
+      {{#each items as |item index|}}
+        <li data-index="{{index}}" class="{{if item.active "on" 'off'}}">
+          {{item.name}} costs {{formatPrice item.price 2 currency="USD"}}
+          {{#if (gt item.stock 0)}}
+            <span>In stock</span>
+          {{else if item.preorder}}
+            <span>Pre-order</span>
+          {{else}}
+            <span>Sold out</span>
+          {{/if}}
+        </li>
+      {{else}}
+        <li>Nothing here</li>
+      {{/each}}
+    </ul>
+  {{else}}
+    <p>No items</p>
+  {{/if}}
+
+  {{#unless hidden}}
+    <p>{{lookup names 0}} {{flags true false null 42 -3.5}}</p>
+  {{/unless}}
+
+  {{#with person}}
+    {{~name~}}
+    {{../parent.title}}
+    {{array.[property-name]}}
+  {{/with}}
+
+  {{#> layout title="Main"}}
+    <div>Block partial content</div>
+  {{/layout}}
+
+  {{#*inline "row"}}
+    <tr><td>{{cell}}</td></tr>
+  {{/inline}}
+
+  {{{{raw}}}}
+    {{not parsed}}
+  {{{{/raw}}}}
+
+  <script>
+    const n = 1 + 2;
+  </script>
+</body>
+</html>

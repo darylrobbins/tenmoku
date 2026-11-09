@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_handlebars"
+name = "Handlebars syntax"
+version = "1.0.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "handlebars"
+wasm = "tree-sitter-handlebars.wasm"
+extensions = ["hbs", "handlebars", "mustache"]
+block_comment = ["{{!--", "--}}"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
