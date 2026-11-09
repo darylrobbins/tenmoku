@@ -13,6 +13,16 @@ use serde_json::Value;
 use crate::launcher::{PullDiagnostics, ReadinessMode, ServerSpec, UnversionedDiagnostics};
 
 /// The built-in servers, in the order a language's server is chosen.
+/// Root markers for the JVM servers; kotlin-lsp skips the leading pom.xml.
+const GRADLE_MAVEN_MARKERS: [&str; 6] = [
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    ".git",
+];
+
 pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
     let ts_markers = ["tsconfig.json", "jsconfig.json", "package.json"];
     let typescript = ["javascript", "typescript", "tsx"];
@@ -77,6 +87,22 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
                 &["--stdio"],
                 &["css", "scss", "less"],
             )
+        },
+        // The Homebrew/Mason wrapper script; it speaks LSP on stdio with no
+        // args (a non-default `-data <dir>` only moves the workspace cache).
+        // The first marker with a match anywhere above the file wins, nearest
+        // folder first, so a multi-module repo roots at the module's build
+        // file, not the parent's: no outermost-ancestor mechanism exists.
+        ServerSpec {
+            root_markers: markers(&GRADLE_MAVEN_MARKERS),
+            ..spec("jdtls", "jdtls", &[], &["java"])
+        },
+        // JetBrains' kotlin-lsp, the maintained server; fwcd's
+        // kotlin-language-server is a manual `[lsp.servers.<name>]` override
+        // (docs/decisions/cydayg0n57-java-kotlin-servers.md).
+        ServerSpec {
+            root_markers: markers(&GRADLE_MAVEN_MARKERS[1..]),
+            ..spec("kotlin-lsp", "kotlin-lsp", &["--stdio"], &["kotlin"])
         },
     ]
 }

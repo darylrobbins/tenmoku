@@ -38,6 +38,7 @@ use crate::{LocalLauncher, LoginPath};
 
 mod css;
 mod gopls;
+mod java;
 mod language_ids;
 mod outside_root;
 mod root_markers;
@@ -167,6 +168,22 @@ fn builtin_specs() {
                 ReadinessMode::Progress,
                 vec![],
             ),
+            (
+                "jdtls",
+                "jdtls",
+                vec![],
+                strings(&["java"]),
+                ReadinessMode::Progress,
+                vec![],
+            ),
+            (
+                "kotlin-lsp",
+                "kotlin-lsp",
+                strings(&["--stdio"]),
+                strings(&["kotlin"]),
+                ReadinessMode::Progress,
+                vec![],
+            ),
         ]
     );
 
@@ -184,7 +201,9 @@ fn builtin_specs() {
             "pyright",
             "typescript-go",
             "gopls",
-            "vscode-css-language-server"
+            "vscode-css-language-server",
+            "jdtls",
+            "kotlin-lsp"
         ]
     );
     let chosen =
