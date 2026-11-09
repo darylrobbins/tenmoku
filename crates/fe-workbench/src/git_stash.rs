@@ -54,6 +54,23 @@ use crate::{
     picker::{Picker, PickerDelegate},
 };
 
+/// The latest listing each workbench started, by workbench: a listing
+/// that isn't it when it lands is superseded.
+#[derive(Default)]
+struct Listings(std::collections::HashMap<EntityId, u64>);
+
+/// Listings held back in tests, each released by its sender.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct ListingHolds {
+    pub(crate) holding: bool,
+    pub(crate) held: Vec<futures::channel::oneshot::Sender<()>>,
+}
+
+impl gpui::Global for Listings {}
+#[cfg(test)]
+impl gpui::Global for ListingHolds {}
+
 /// The pickers' id in the modal layer.
 pub(crate) const STASH_PICKER: ModalId = ModalId("git_stash");
 
@@ -192,8 +209,8 @@ impl Workbench {
     }
 
     /// Lists the stashes in the background, then shows them to `verb`
-    /// one. Shows nothing if the root's changed by then, or any modal has
-    /// shown meanwhile.
+    /// one. Shows nothing if the root's changed by then, any modal has
+    /// shown meanwhile, or a later listing has started.
     fn list_stashes(
         &mut self,
         origin: Origin,
@@ -205,6 +222,22 @@ impl Workbench {
         // Superseded once any modal shows: another listing's picker, a
         // palette.
         let superseded = Rc::new(Cell::new(false));
+        let id = cx.entity_id();
+        let listing = {
+            let latest = cx.default_global::<Listings>().0.entry(id).or_insert(0);
+            *latest += 1;
+            *latest
+        };
+        #[cfg(test)]
+        let gate = {
+            let (release, gate) = futures::channel::oneshot::channel();
+            let holds = cx.default_global::<ListingHolds>();
+            match holds.holding {
+                true => holds.held.push(release),
+                false => drop(release.send(())),
+            }
+            gate
+        };
         let watch = cx.subscribe(&self.modals, {
             let superseded = superseded.clone();
             move |_, _, event: &ModalEvent, _| {
@@ -222,10 +255,13 @@ impl Workbench {
         });
         cx.spawn_in(window, async move |workbench, cx| {
             let entries = load.await;
+            #[cfg(test)]
+            gate.await.ok();
             drop(watch);
             workbench
                 .update_in(cx, |workbench, window, cx| {
-                    if superseded.get() || !workbench.is_stash_origin(&origin) {
+                    let latest = cx.default_global::<Listings>().0.get(&id) == Some(&listing);
+                    if superseded.get() || !latest || !workbench.is_stash_origin(&origin) {
                         return;
                     }
                     workbench.stashes_listed(origin, op, verb, entries, window, cx)
@@ -553,6 +589,10 @@ impl StashPicker {
 
 #[cfg(test)]
 impl StashPicker {
+    pub(crate) fn verb_is_apply(&self) -> bool {
+        self.verb == Verb::Apply
+    }
+
     /// Each row's label.
     pub(crate) fn labels(&self) -> Vec<String> {
         (0..self.match_count())
@@ -578,10 +618,11 @@ impl PickerDelegate for StashPicker {
         self.matches.len()
     }
 
-    /// The entry's commit.
+    /// The entry's place and commit: a commit can be stored twice.
     fn match_id(&self, ix: usize) -> SharedString {
-        self.entry(ix)
-            .map_or_else(SharedString::default, |entry| entry.id.clone().into())
+        self.entry(ix).map_or_else(SharedString::default, |entry| {
+            format!("{}:{}", entry.index, entry.id).into()
+        })
     }
 
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {

@@ -369,3 +369,81 @@ fn outside_a_repository(cx: &mut TestAppContext) {
         assert_eq!(messages, ["Not in a git repository"], "{command:?}");
     }
 }
+
+/// Runs `command` without drawing, so a listing can stay pending.
+fn start(workbench: &Entity<Workbench>, command: GitCommand, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        workbench.update(cx, |workbench, cx| {
+            workbench.run_git_command(command, window, cx)
+        })
+    });
+}
+
+/// Pop then Apply listed at once: only the latest, Apply's, shows, in
+/// whichever order the listings finish.
+#[gpui::test]
+fn overlapping_listings(cx: &mut TestAppContext) {
+    for release_first_started in [true, false] {
+        let dir = fixture();
+        let root = dunce::canonicalize(dir.path()).unwrap();
+        git(&root, &["stash", "push", "-q", "-m", "wip"]);
+        let (workbench, mut cx) = window(cx, &root);
+        let cx = &mut cx;
+
+        cx.update(|_, cx| cx.default_global::<super::ListingHolds>().holding = true);
+        start(&workbench, GitCommand::StashPop, cx);
+        start(&workbench, GitCommand::StashApply, cx);
+        cx.run_until_parked();
+        assert!(modal::<StashPicker>(&workbench, cx).is_none());
+        let mut held =
+            cx.update(|_, cx| std::mem::take(&mut cx.global_mut::<super::ListingHolds>().held));
+        assert_eq!(held.len(), 2);
+        cx.update(|_, cx| cx.global_mut::<super::ListingHolds>().holding = false);
+        if !release_first_started {
+            held.reverse();
+        }
+        for release in held {
+            release.send(()).ok();
+            cx.run_until_parked();
+        }
+        draw(cx);
+        let picker = modal::<StashPicker>(&workbench, cx).expect("a picker shows");
+        assert!(picker.read_with(cx, |picker, _| picker.delegate.verb_is_apply()));
+        cx.simulate_keystrokes("enter");
+        draw(cx);
+        // Applied, not popped: the entry is kept.
+        assert_eq!(stashes(&root), ["stash@{0}: On main: wip"]);
+    }
+}
+
+/// A commit stored twice is two rows, each picked on its own.
+#[gpui::test]
+fn duplicate_commits(cx: &mut TestAppContext) {
+    let dir = fixture();
+    let root = dunce::canonicalize(dir.path()).unwrap();
+    git(&root, &["stash", "push", "-q", "-m", "wip"]);
+    let id = git(&root, &["rev-parse", "stash@{0}"]);
+    fs::write(root.join("a.txt"), "three\n").unwrap();
+    git(&root, &["stash", "push", "-q", "-m", "other"]);
+    git(&root, &["stash", "store", "-m", "again", &id]);
+    let (workbench, mut cx) = window(cx, &root);
+    let cx = &mut cx;
+
+    run(&workbench, GitCommand::StashPop, cx);
+    let picker = modal::<StashPicker>(&workbench, cx).expect("the stash picker shows");
+    let ids = picker.read_with(cx, |picker, _| {
+        use crate::PickerDelegate as _;
+        (0..picker.delegate.match_count())
+            .map(|ix| picker.delegate.match_id(ix))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(ids.len(), 3);
+    assert_ne!(ids[0], ids[2]);
+    // Picking the older duplicate pops stash@{2}, not the first match.
+    picker.update_in(cx, |picker, window, cx| picker.confirm(2, window, cx));
+    draw(cx);
+    assert_eq!(
+        stashes(&root),
+        ["stash@{0}: again", "stash@{1}: On main: other"]
+    );
+}
