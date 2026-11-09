@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<%!-- The posts index: a LiveView template, rendered on the server. --%>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{assigns[:page_title] || "Posts"} &middot; Blog</title>
+    <link phx-track-static rel="stylesheet" href={~p"/assets/app.css"} />
+    <style>
+      @import url("/assets/print.css") print;
+      @layer reset, base, components;
+    </style>
+    <script defer phx-track-static type="text/javascript">
+      // Show the progress bar while a page loads, after 300 ms.
+      const delayMs = 300;
+      window.topbar.config(delayMs, "#29d");
+    </script>
+  </head>
+  <body class="antialiased" style="margin: 0 auto; max-width: 64rem;">
+    <!-- The header, with the user's name when signed in. -->
+    <Layouts.app flash={@flash} current_scope={@current_scope}>
+      <.header>
+        Listing posts
+        <:subtitle :if={@count > 0}>
+          {ngettext("one post", "%{count} posts", @count)} &amp; drafts
+        </:subtitle>
+        <:actions>
+          <.button variant="primary" navigate={~p"/posts/new"}>
+            <.icon name="hero-plus" /> New post
+          </.button>
+        </:actions>
+      </.header>
+
+      <.table
+        id="posts"
+        rows={@streams.posts}
+        row_click={fn {_id, post} -> JS.navigate(~p"/posts/#{post}") end}
+      >
+        <:col :let={{_id, post}} label="Title">{post.title}</:col>
+        <:col :let={{_id, post}} label="Words">{String.length(post.body)}</:col>
+        <:action :let={{id, post}}>
+          <.link
+            phx-click={JS.push("delete", value: %{id: post.id}) |> hide("##{id}")}
+            data-confirm="Are you sure?\nThis can't be undone."
+          >
+            Delete
+          </.link>
+        </:action>
+      </.table>
+
+      <ul id="tags" phx-update="stream">
+        <li :for={tag <- @tags} :key={tag.id} class={["tag", tag.pinned && "pinned"]}>
+          {tag.name}
+        </li>
+      </ul>
+
+      <%# Legacy EEx tags still work alongside curly braces. %>
+      <%= if @page > 1 do %>
+        <a href="#" onclick="history.back(); return false">Previous</a>
+      <% else %>
+        <span class="muted">First page</span>
+      <% end %>
+
+      <%= for {post, index} <- Enum.with_index(@pinned, 1) do %>
+        <p>{index}. {post.title}</p>
+      <% end %>
+
+      <p>
+        Showing <%= @per_page * 2 %> of {@total} posts,
+        updated <%= Calendar.strftime(@updated_at, "%Y-%m-%d") %>.
+      </p>
+
+      <.form :let={f} for={@form} phx-change="validate" phx-submit="save">
+        <.input field={f[:title]} type="text" label="Title" />
+        <.input field={f[:status]} type="select" options={[:draft, :published]} />
+        <.live_component module={BlogWeb.TagPicker} id="tag-picker" max={0x10} />
+        <footer>
+          <.button phx-disable-with="Saving..." disabled={not @form.source.valid?}>
+            Save
+          </.button>
+        </footer>
+      </.form>
+
+      <MyAppWeb.Components.footer year={2026} ratio={0.75} />
+    </Layouts.app>
+  </body>
+</html>

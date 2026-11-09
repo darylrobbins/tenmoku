@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_heex"
+name = "HEEx syntax"
+version = "0.9.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "heex"
+wasm = "tree-sitter-heex.wasm"
+extensions = ["heex"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+block_comment = ["<%!--", "--%>"]
+earlier_patterns_win = true
