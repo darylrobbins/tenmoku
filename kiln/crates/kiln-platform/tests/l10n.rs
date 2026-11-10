@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The app's language (`locale`): the system's preferred languages, the
-//! [`ActiveLocale`] global [`set_locale`] keeps, and the warm-up; then, on
-//! Linux, what the string catalogue's bidi isolates draw (i18n design § 5).
+//! kiln-platform's catalogue: the literal lint (kiln-l10n), no hard-coded
+//! user-facing text in this crate's non-test source outside
+//! `l10n-allow.toml`, and every key it uses exists. Then the app's language
+//! (`locale`): the system's preferred languages, the [`ActiveLocale`]
+//! global [`set_locale`] keeps, and the warm-up; then, on Linux, what the
+//! string catalogue's bidi isolates draw (i18n design § 5).
 //!
 //! The string catalogue is the process's, so every test that switches its
 //! locale does so in `set_locale_follows_the_requested_languages` alone.
@@ -38,6 +41,18 @@ static PROBE: Resources = Resources {
 
 kiln_l10n::__private::inventory::submit! {
     kiln_l10n::Registered(&PROBE)
+}
+
+#[test]
+fn ui_text_is_in_the_catalogue() {
+    kiln_l10n::lint::literals(env!("CARGO_MANIFEST_DIR"))
+        .allow_list("l10n-allow.toml")
+        .check();
+}
+
+#[test]
+fn keys_used_here_exist() {
+    kiln_l10n::lint::keys(env!("CARGO_MANIFEST_DIR"), &kiln_platform::l10n::RESOURCES).check();
 }
 
 fn ids(tags: &[&str]) -> Vec<LanguageIdentifier> {

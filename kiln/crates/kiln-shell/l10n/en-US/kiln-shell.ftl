@@ -21,3 +21,14 @@ command-text_input-move_word_left = Move Word Left
 command-text_input-move_word_right = Move Word Right
 command-text_input-move_home = Move to Start
 command-text_input-move_end = Move to End
+
+## The command palette.
+
+kiln-shell-palette-placeholder = Run a command…
+# Under the query, when no command matches it.
+kiln-shell-palette-no-matches = No matching commands
+
+## The prompt asking whether to trust a folder's code: its two buttons.
+
+kiln-shell-trust-folder = Trust Folder
+kiln-shell-trust-dont = Don't Trust

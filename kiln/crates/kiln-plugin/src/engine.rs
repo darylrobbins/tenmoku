@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+use kiln_l10n::tr;
 use wasmtime::{Config, Engine};
 
 /// How often the epoch advances while a call runs, so how often running guest code checks
@@ -29,8 +30,14 @@ pub struct PluginEngine {
 
 /// Why there is no [`PluginEngine`].
 #[derive(Clone, Debug, thiserror::Error)]
-#[error("no plugin engine: {0}")]
 pub struct EngineError(String);
+
+/// In the active locale.
+impl std::fmt::Display for EngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&tr!("kiln-plugin-no-engine", reason = &self.0))
+    }
+}
 
 impl PluginEngine {
     /// The process-wide engine, its ticker started on first use. Without a ticker, an error:
@@ -52,7 +59,9 @@ impl PluginEngine {
             .name("wasm-plugin-epoch".into())
             .spawn(move || tick(&ticking))
             .map_err(|error| {
-                EngineError(format!("no thread to enforce plugins' deadlines: {error}"))
+                EngineError(
+                    tr!("kiln-plugin-no-deadline-thread", reason = error.to_string()).to_string(),
+                )
             })?;
         Ok(Self { engine })
     }

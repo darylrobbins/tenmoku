@@ -16,6 +16,7 @@
 use std::fmt;
 
 use kiln_command::capability::{Capability, Grants, Target};
+use kiln_l10n::tr;
 
 /// Programs that run whatever code or program they're given, so granting
 /// one is nearly `process.spawn:*`: shells, language runtimes and
@@ -82,33 +83,23 @@ impl Warning {
     }
 }
 
+/// In the active locale.
 impl fmt::Display for Warning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
+        f.write_str(&match self {
             Self::SendsCode { hosts } => {
-                write!(
-                    f,
-                    "It can read your code and send it to {}.",
-                    and_list(hosts)
-                )
+                tr!("kiln-plugin-warning-sends-code", hosts = and_list(hosts))
             }
-            Self::SendsAnywhere => f.write_str(
-                "Extreme: with net:* it can send your code anywhere, to any host on the internet.",
+            Self::SendsAnywhere => tr!("kiln-plugin-warning-sends-anywhere"),
+            Self::OutsideSandbox { programs } => tr!(
+                "kiln-plugin-warning-outside-sandbox",
+                programs = and_list(programs)
             ),
-            Self::OutsideSandbox { programs } => write!(
-                f,
-                "It runs {} outside the sandbox, with your permissions.",
-                and_list(programs)
-            ),
-            Self::NearWildcard { program } => write!(
-                f,
-                "{program} is near-wildcard: it can run any code, so granting it is almost \
-                 process.spawn:*."
-            ),
-            Self::RunsAnyProgram => f.write_str(
-                "Extreme: with process.spawn:* it can run any program as you, outside the sandbox.",
-            ),
-        }
+            Self::NearWildcard { program } => {
+                tr!("kiln-plugin-warning-near-wildcard", program = program)
+            }
+            Self::RunsAnyProgram => tr!("kiln-plugin-warning-runs-any-program"),
+        })
     }
 }
 
@@ -174,30 +165,38 @@ pub fn is_interpreter(program: &str) -> bool {
     INTERPRETERS.contains(&name.as_str()) || INTERPRETERS.contains(&unversioned)
 }
 
-/// What `capability` lets a plugin do, in plain words.
+/// What `capability` lets a plugin do, in plain words, in the active
+/// locale.
 pub fn describe(capability: &Capability) -> String {
     match capability {
-        Capability::BufferRead => "read the text of your open files".to_owned(),
-        Capability::BufferWrite => "edit your open files".to_owned(),
-        Capability::Commands => "add commands, and run other commands".to_owned(),
-        Capability::Decorations => "mark up text and the gutter in your files".to_owned(),
-        Capability::Status => "show items in the status bar".to_owned(),
-        Capability::FsRead(scope) => format!("read any file in your {scope} folders"),
-        Capability::FsWrite(scope) => format!("write any file in your {scope} folders"),
-        Capability::ProcessSpawn(Target::Named(program)) => {
-            format!("run the program {program}, outside the sandbox")
+        Capability::BufferRead => tr!("kiln-plugin-capability-buffer-read"),
+        Capability::BufferWrite => tr!("kiln-plugin-capability-buffer-write"),
+        Capability::Commands => tr!("kiln-plugin-capability-commands"),
+        Capability::Decorations => tr!("kiln-plugin-capability-decorations"),
+        Capability::Status => tr!("kiln-plugin-capability-status"),
+        Capability::FsRead(scope) => {
+            tr!("kiln-plugin-capability-fs-read", scope = scope.to_string())
         }
-        Capability::ProcessSpawn(Target::Any) => "run any program, outside the sandbox".to_owned(),
-        Capability::Net(Target::Named(host)) => format!("connect to {host}"),
-        Capability::Net(Target::Any) => "connect to any host on the internet".to_owned(),
+        Capability::FsWrite(scope) => {
+            tr!("kiln-plugin-capability-fs-write", scope = scope.to_string())
+        }
+        Capability::ProcessSpawn(Target::Named(program)) => {
+            tr!("kiln-plugin-capability-spawn", program = program)
+        }
+        Capability::ProcessSpawn(Target::Any) => tr!("kiln-plugin-capability-spawn-any"),
+        Capability::Net(Target::Named(host)) => tr!("kiln-plugin-capability-net", host = host),
+        Capability::Net(Target::Any) => tr!("kiln-plugin-capability-net-any"),
     }
+    .to_string()
 }
 
-/// `items` as "a", "a and b" or "a, b and c".
+/// `items` as "a", "a and b" or "a, b and c", in the active locale.
 fn and_list(items: &[String]) -> String {
     match items {
         [] => String::new(),
         [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [rest @ .., last] => {
+            tr!("kiln-plugin-and-list", items = rest.join(", "), last = last).to_string()
+        }
     }
 }

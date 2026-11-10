@@ -23,6 +23,7 @@ mod file_icons_coloured;
 mod file_icons_tinted;
 mod highlighted_label;
 mod icon_button;
+pub mod l10n;
 mod layout;
 mod list;
 mod menu_bar;

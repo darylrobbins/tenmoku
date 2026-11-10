@@ -32,6 +32,7 @@ use kiln_command::{
     Actor, Capability, CommandError, CommandId, CommandMeta, ContextPredicate, DispatchError,
     Effect, Grants, Invocation, PluginPolicy, Source,
 };
+use kiln_l10n::tr;
 use serde_json::Value;
 
 use crate::bindings::kiln::extension::commands::{Command, Host};
@@ -109,10 +110,13 @@ impl Request {
 
 impl Drop for Request {
     fn drop(&mut self) {
-        self.reply(Err(Error::Failed(format!(
-            "{} was not run",
-            self.invocation.command
-        ))));
+        self.reply(Err(Error::Failed(
+            tr!(
+                "kiln-plugin-command-not-run",
+                command = self.invocation.command.as_str()
+            )
+            .to_string(),
+        )));
         self.attachment.requests.fetch_sub(1, Ordering::AcqRel);
     }
 }
@@ -185,11 +189,21 @@ struct Attachment {
 /// Why [`State::new`] could not attach a plugin to the host.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AttachError {
-    #[error("plugin {0} is already loaded")]
     AlreadyLoaded(String),
     /// An unloaded load of it has a request the app has not let go of yet.
-    #[error("plugin {0} was unloaded with an invocation still out")]
     RequestsOut(String),
+}
+
+/// In the active locale.
+impl std::fmt::Display for AttachError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::AlreadyLoaded(plugin) => tr!("kiln-plugin-already-loaded", plugin = plugin),
+            Self::RequestsOut(plugin) => {
+                tr!("kiln-plugin-unloaded-with-requests", plugin = plugin)
+            }
+        })
+    }
 }
 
 impl CommandHost {
@@ -306,7 +320,9 @@ impl CommandHost {
         current(&shared, plugin, attachment)?;
         let id = &command.id;
         if shared.builtin.contains(id) {
-            return Err(Error::Denied(format!("{id} is a built-in command")));
+            return Err(Error::Denied(
+                tr!("kiln-plugin-command-builtin", id = id.as_str()).to_string(),
+            ));
         }
         if let Some((owner, _)) = shared.plugins.iter().find(|(_, loaded)| {
             loaded
@@ -314,15 +330,15 @@ impl CommandHost {
                 .iter()
                 .any(|registered| registered.id == *id)
         }) {
-            return Err(Error::Denied(format!(
-                "{id} is already registered by plugin {owner}"
-            )));
+            return Err(Error::Denied(
+                tr!("kiln-plugin-command-taken", id = id.as_str(), owner = owner).to_string(),
+            ));
         }
         let namespace = id.namespace();
         if shared.reserved.contains(namespace) {
-            return Err(Error::Denied(format!(
-                "the {namespace} namespace is reserved"
-            )));
+            return Err(Error::Denied(
+                tr!("kiln-plugin-namespace-reserved", namespace = namespace).to_string(),
+            ));
         }
         if let Some(loaded) = shared.plugins.get_mut(plugin) {
             loaded.commands.push(command);
@@ -372,7 +388,9 @@ impl Shared {
 fn current(shared: &Shared, plugin: &str, attachment: &Arc<Attachment>) -> Result<(), Error> {
     match shared.plugins.get(plugin) {
         Some(loaded) if Arc::ptr_eq(&loaded.attachment, attachment) => Ok(()),
-        _ => Err(Error::Denied(format!("plugin {plugin} was unloaded"))),
+        _ => Err(Error::Denied(
+            tr!("kiln-plugin-was-unloaded", plugin = plugin).to_string(),
+        )),
     }
 }
 
@@ -426,14 +444,24 @@ impl PluginCommand {
         let id = &self.meta.id;
         let plugin = &self.plugin;
         if self.attachment.revoked.load(Ordering::Acquire) {
-            return Err(CommandError::new(format!(
-                "{id}: plugin {plugin} was unloaded"
-            )));
+            return Err(CommandError::new(
+                tr!(
+                    "kiln-plugin-command-plugin-unloaded",
+                    id = id.as_str(),
+                    plugin = plugin
+                )
+                .to_string(),
+            ));
         }
         if self.attachment.invoking.load(Ordering::Acquire) {
-            return Err(CommandError::new(format!(
-                "{id}: plugin {plugin} is waiting on a command it invoked"
-            )));
+            return Err(CommandError::new(
+                tr!(
+                    "kiln-plugin-command-plugin-invoking",
+                    id = id.as_str(),
+                    plugin = plugin
+                )
+                .to_string(),
+            ));
         }
         let args = if args.is_null() {
             "{}".to_owned()
@@ -448,13 +476,32 @@ impl PluginCommand {
         match replied {
             Ok(Reply::RunCommand(Ok(()))) if self.meta.mutates_buffer => Ok(Effect::Changed),
             Ok(Reply::RunCommand(Ok(()))) => Ok(Effect::Notify),
-            Ok(Reply::RunCommand(Err(error))) => Err(CommandError::new(format!(
-                "{id}: plugin {plugin} returned {error:?}"
-            ))),
-            Ok(reply) => Err(CommandError::new(format!(
-                "{id}: plugin {plugin} answered {reply:?}"
-            ))),
-            Err(error) => Err(CommandError::new(format!("{id}: {error}"))),
+            Ok(Reply::RunCommand(Err(error))) => Err(CommandError::new(
+                tr!(
+                    "kiln-plugin-command-returned",
+                    id = id.as_str(),
+                    plugin = plugin,
+                    error = format!("{error:?}")
+                )
+                .to_string(),
+            )),
+            Ok(reply) => Err(CommandError::new(
+                tr!(
+                    "kiln-plugin-command-answered",
+                    id = id.as_str(),
+                    plugin = plugin,
+                    reply = format!("{reply:?}")
+                )
+                .to_string(),
+            )),
+            Err(error) => Err(CommandError::new(
+                tr!(
+                    "kiln-plugin-command-failed",
+                    id = id.as_str(),
+                    reason = error.to_string()
+                )
+                .to_string(),
+            )),
         }
     }
 }
@@ -538,25 +585,30 @@ impl Drop for State {
 }
 
 impl Attached {
-    /// Refuses `what` unless the plugin holds `commands` and is still loaded.
-    fn granted(&self, what: &str) -> Result<(), Error> {
+    /// Refuses `action` (`register` or `invoke` commands) unless the plugin holds `commands`
+    /// and is still loaded.
+    fn granted(&self, action: &'static str) -> Result<(), Error> {
         if !self.grants.allows(&Capability::Commands) {
-            return Err(Error::Denied(format!(
-                "plugin {} needs the {} capability to {what}",
-                self.plugin,
-                Capability::Commands
-            )));
+            return Err(Error::Denied(
+                tr!(
+                    "kiln-plugin-needs-capability",
+                    plugin = self.plugin.as_str(),
+                    capability = Capability::Commands.to_string(),
+                    action = action
+                )
+                .to_string(),
+            ));
         }
         self.host.current(&self.plugin, &self.attachment)
     }
 
     fn register(&self, command: Command) -> Result<(), Error> {
-        self.granted("register commands")?;
+        self.granted("register")?;
         let plugin = &self.plugin;
         if self.phase != Phase::Initializing {
-            return Err(Error::Denied(format!(
-                "plugin {plugin} registers commands only during init"
-            )));
+            return Err(Error::Denied(
+                tr!("kiln-plugin-register-after-init", plugin = plugin.as_str()).to_string(),
+            ));
         }
         let id = CommandId::parse(&command.id)
             .map_err(|error| Error::InvalidArgument(error.to_string()))?;
@@ -565,20 +617,43 @@ impl Attached {
             .strip_prefix(plugin.as_str())
             .and_then(|rest| rest.strip_prefix('.'));
         if name.is_none() {
-            return Err(Error::Denied(format!(
-                "{id} is outside plugin {plugin}'s namespace: its commands are {plugin}.<name>"
-            )));
+            return Err(Error::Denied(
+                tr!(
+                    "kiln-plugin-command-outside-namespace",
+                    id = id.as_str(),
+                    plugin = plugin.as_str()
+                )
+                .to_string(),
+            ));
         }
         let args_schema = command
             .args_schema
             .map(|schema| serde_json::from_str::<Value>(&schema))
             .transpose()
-            .map_err(|error| Error::InvalidArgument(format!("{id}: args-schema: {error}")))?;
+            .map_err(|error| {
+                Error::InvalidArgument(
+                    tr!(
+                        "kiln-plugin-command-args-schema",
+                        id = id.as_str(),
+                        reason = error.to_string()
+                    )
+                    .to_string(),
+                )
+            })?;
         let context = command
             .when
             .map(|when| ContextPredicate::parse(&when))
             .transpose()
-            .map_err(|error| Error::InvalidArgument(format!("{id}: when: {error}")))?;
+            .map_err(|error| {
+                Error::InvalidArgument(
+                    tr!(
+                        "kiln-plugin-command-when",
+                        id = id.as_str(),
+                        reason = error.to_string()
+                    )
+                    .to_string(),
+                )
+            })?;
         self.host.register(
             plugin,
             &self.attachment,
@@ -595,13 +670,21 @@ impl Attached {
 
     /// Sends the invocation to the app and waits for its answer, until `deadline` if any.
     fn invoke(&self, id: &str, args: &str, deadline: Option<Instant>) -> Result<(), Error> {
-        self.granted("invoke commands")?;
+        self.granted("invoke")?;
         let id = CommandId::parse(id).map_err(|error| Error::InvalidArgument(error.to_string()))?;
         let args = if args.trim().is_empty() {
             Value::Null
         } else {
-            serde_json::from_str(args)
-                .map_err(|error| Error::InvalidArgument(format!("{id}: args: {error}")))?
+            serde_json::from_str(args).map_err(|error| {
+                Error::InvalidArgument(
+                    tr!(
+                        "kiln-plugin-command-args",
+                        id = id.as_str(),
+                        reason = error.to_string()
+                    )
+                    .to_string(),
+                )
+            })?
         };
         let invocation = Invocation::new(id.clone())
             .args(args)
@@ -626,9 +709,9 @@ impl Attached {
                     let left = deadline.saturating_duration_since(Instant::now());
                     if left.is_zero() {
                         waiting.abandoned.store(true, Ordering::Release);
-                        return Err(Error::Failed(format!(
-                            "{id} was not answered before the call's deadline"
-                        )));
+                        return Err(Error::Failed(
+                            tr!("kiln-plugin-command-deadline", id = id.as_str()).to_string(),
+                        ));
                     }
                     waiting
                         .answered

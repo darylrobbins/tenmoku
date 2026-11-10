@@ -24,7 +24,7 @@ use kiln_platform::{
     keys,
 };
 use kiln_shell::{
-    Picker, Shell,
+    Picker, PickerDelegate as _, Shell,
     command_palette::{self, COMMAND_PALETTE, CommandPalette},
 };
 
@@ -359,9 +359,20 @@ fn kiln_shell_commands_and_command_keys_match(cx: &mut TestAppContext) {
     assert!(errors.is_empty(), "{}", errors.join("\n"));
 }
 
-/// kiln-shell's catalogue parses and is all listed, and every key its
-/// source uses exists.
-#[test]
-fn kiln_shell_keys_used_here_exist() {
-    kiln_l10n::lint::keys(env!("CARGO_MANIFEST_DIR"), &kiln_shell::l10n::RESOURCES).check();
+/// In en-US, the palette says what it did before its text was in the
+/// catalogue when nothing matches.
+#[gpui::test]
+fn en_us_no_match_status_is_unchanged(cx: &mut TestAppContext) {
+    let (_, shell, cx) = open(cx);
+    press(cx, "f2");
+    let picker = palette(&shell, cx).expect("it shows");
+    picker.read_with(cx, |picker, _| assert_eq!(picker.delegate.status(), None));
+    cx.simulate_input("qqqqzzzz");
+    cx.run_until_parked();
+    picker.read_with(cx, |picker, _| {
+        assert_eq!(
+            picker.delegate.status().as_deref(),
+            Some("No matching commands")
+        )
+    });
 }

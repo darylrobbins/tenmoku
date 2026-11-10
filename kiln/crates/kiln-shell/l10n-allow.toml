@@ -1,0 +1,19 @@
+# kiln-shell's exceptions to the literal lint (kiln_l10n::lint::literals).
+all = true
+
+# Element IDs and selectors, never shown.
+
+[[literal]]
+file = "src/pane_group.rs"
+text = "axis-{at:?}"
+reason = "A split's element ID"
+
+[[literal]]
+file = "src/pane_group.rs"
+text = "divider-{:?}-{}"
+reason = "A divider's element ID"
+
+[[literal]]
+file = "src/window_frame.rs"
+text = "window-resize-{edge:?}"
+reason = "A resize edge's selector, for tests"

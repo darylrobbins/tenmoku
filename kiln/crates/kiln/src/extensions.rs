@@ -89,6 +89,7 @@ use kiln_core::{
     theme::{Appearance, ThemeData, ThemeFile},
     trust::canonical,
 };
+use kiln_l10n::tr;
 use kiln_platform::config::{
     ConfigDiagnostics, ConfigSource, batch_channel, log_diagnostics_as, log_target,
 };
@@ -534,10 +535,12 @@ impl ExtensionSource {
                         key: None,
                         line: 1,
                         column: 1,
-                        message: format!(
-                            "`{id}` is the ID of another of {}'s themes, which loads instead",
-                            manifest.id
-                        ),
+                        message: tr!(
+                            "kiln-extension-theme-id-taken",
+                            id = id.as_str(),
+                            extension = manifest.id.as_str()
+                        )
+                        .to_string(),
                     });
                     continue;
                 }
@@ -679,9 +682,10 @@ impl ExtensionSource {
         let Some(state_dir) = self.set.root().parent() else {
             return;
         };
-        let app = cx
-            .try_global::<crate::AppInfo>()
-            .map_or_else(|| "The app".into(), |info| info.name.to_string());
+        let app = cx.try_global::<crate::AppInfo>().map_or_else(
+            || tr!("kiln-extension-notice-unnamed-app").to_string(),
+            |info| info.name.to_string(),
+        );
         if self.on_notice.is_empty() {
             for notice in self.set.pending_license_notices(state_dir) {
                 if self.logged.insert(notice.clone()) {
@@ -798,7 +802,11 @@ impl ExtensionSource {
                     log::info!(target: log_target(cx), "loading {}'s extensions", root.display());
                     workspace.set = Some(set);
                 } else {
-                    let reason = format!("{} isn't trusted", root.display());
+                    let reason = tr!(
+                        "kiln-extension-workspace-untrusted",
+                        root = root.display().to_string()
+                    )
+                    .to_string();
                     skipped = (set.extensions().iter())
                         .map(|manifest| Skipped {
                             manifest: manifest.clone(),
@@ -1051,23 +1059,35 @@ fn read_contained(manifest: &Manifest, path: &Path) -> Result<String, Unread> {
     let canonical = match kiln_core::platform::canonicalize(path) {
         Ok(canonical) => canonical,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Err(unread(false, "no such file".into()));
+            return Err(unread(
+                false,
+                tr!("kiln-extension-file-missing").to_string(),
+            ));
         }
-        Err(error) => return Err(unread(true, format!("can't be read: {error}"))),
+        Err(error) => {
+            return Err(unread(
+                true,
+                tr!("kiln-extension-file-unreadable", reason = error.to_string()).to_string(),
+            ));
+        }
     };
     let inside = (kiln_core::platform::canonicalize(&manifest.dir))
         .is_ok_and(|dir| canonical.starts_with(dir));
     if !inside {
-        let message = format!(
-            "leads to {}, outside {}'s directory, so it isn't read",
-            canonical.display(),
-            manifest.id
-        );
+        let message = tr!(
+            "kiln-extension-file-leads-outside",
+            target = canonical.display().to_string(),
+            extension = manifest.id.as_str()
+        )
+        .to_string();
         return Err(unread(true, message));
     }
     std::fs::read_to_string(&canonical).map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound => unread(false, "no such file".into()),
-        _ => unread(true, format!("can't be read: {error}")),
+        io::ErrorKind::NotFound => unread(false, tr!("kiln-extension-file-missing").to_string()),
+        _ => unread(
+            true,
+            tr!("kiln-extension-file-unreadable", reason = error.to_string()).to_string(),
+        ),
     })
 }
 
@@ -1174,10 +1194,8 @@ pub(crate) fn keymap_layers(
                     key: None,
                     line: entry.location.line,
                     column: entry.location.column,
-                    message: format!(
-                        "an extension can't unbind keys: `command = \"\"` for {} is ignored",
-                        entry.keys
-                    ),
+                    message: tr!("kiln-extension-cant-unbind", keys = entry.keys.to_string())
+                        .to_string(),
                 });
             }
             false
@@ -1220,16 +1238,18 @@ pub(crate) fn extend_menus(
             let own = bar.menu(&menu.id);
             menu.items.retain(|item| {
                 let message = match (&item.kind, item.id()) {
-                    (ItemKind::Remove(id), _) => format!(
-                        "an extension can't remove menu items: the removal of {id:?} \
-                         from {:?} is ignored",
-                        menu.name
-                    ),
-                    (_, Some(id)) if own.is_some_and(|own| own.item(id).is_some()) => format!(
-                        "{:?} already has an item {id:?}; an extension can't replace it, \
-                         so this one is ignored",
-                        menu.name
-                    ),
+                    (ItemKind::Remove(id), _) => tr!(
+                        "kiln-extension-cant-remove-item",
+                        id = format!("{id:?}"),
+                        menu = format!("{:?}", menu.name)
+                    )
+                    .to_string(),
+                    (_, Some(id)) if own.is_some_and(|own| own.item(id).is_some()) => tr!(
+                        "kiln-extension-cant-replace-item",
+                        id = format!("{id:?}"),
+                        menu = format!("{:?}", menu.name)
+                    )
+                    .to_string(),
                     _ => return true,
                 };
                 if let Some(text) = current {

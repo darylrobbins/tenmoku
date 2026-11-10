@@ -7,6 +7,8 @@ use gpui::{
     Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 
+use kiln_l10n::tr;
+
 use crate::ActiveTheme as _;
 
 /// The prompt box's width, or the window's less a margin if that's
@@ -18,8 +20,10 @@ pub const PROMPT_WIDTH: gpui::Pixels = px(420.);
 /// a host passes it to `App::set_prompt_builder`. Its keys follow macOS's
 /// alerts as GPUI draws them: Enter answers with the default button, the
 /// first that isn't a cancel button; Escape with the cancel button, or
-/// without one a button titled "Cancel", as AppKit gives that title Escape.
-/// So `[ok("Cancel"), new("Discard")]` makes Cancel the default for both.
+/// without one a button titled "Cancel", as AppKit gives that title Escape,
+/// or titled `kiln-ui-cancel` in the active locale. So
+/// `[ok(tr!("kiln-ui-cancel")), new("Discard")]` makes Cancel the default
+/// for both, in any locale.
 pub fn prompt_renderer(
     level: PromptLevel,
     message: &str,
@@ -55,12 +59,18 @@ impl Prompt {
     }
 
     /// The button Escape presses: the cancel button, or without one a button
-    /// titled "Cancel".
+    /// titled "Cancel", or `kiln-ui-cancel` in the active locale.
     pub fn cancel_button(buttons: &[PromptButton]) -> Option<usize> {
         buttons
             .iter()
             .position(PromptButton::is_cancel)
-            .or_else(|| buttons.iter().position(|button| button.label() == "Cancel"))
+            .or_else(|| {
+                let cancel = tr!("kiln-ui-cancel");
+                (buttons.iter()).position(|button| {
+                    let label = button.label();
+                    label == "Cancel" || *label == *cancel
+                })
+            })
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {

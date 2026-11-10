@@ -7,6 +7,8 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
+use kiln_l10n::tr;
+
 use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, Tooltip, UiTheme};
 
 pub const TAB_HEIGHT: gpui::Pixels = px(30.);
@@ -234,7 +236,11 @@ impl Tab {
     /// if it has one. `None` for a tab that isn't pinned, whose label shows.
     pub fn tooltip_text(&self) -> Option<SharedString> {
         self.pinned.then(|| match &self.description {
-            Some(description) => format!("{} — {description}", self.label).into(),
+            Some(description) => tr!(
+                "kiln-ui-tab-pinned-tooltip",
+                label = &self.label,
+                description = description
+            ),
             None => self.label.clone(),
         })
     }

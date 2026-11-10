@@ -1,0 +1,77 @@
+# kiln-platform's exceptions to the literal lint (kiln_l10n::lint::literals).
+all = true
+
+[[file]]
+path = "src/fonts.rs"
+reason = "Font family names, proper nouns the text system looks up"
+
+# The golden-screenshot harness (`test-support`): developer tooling, whose
+# output is for the app's developer at a terminal.
+
+[[file]]
+path = "src/screenshots/goldens.rs"
+reason = "Developer tooling: the golden-screenshot harness's report and file names"
+
+[[file]]
+path = "src/screenshots/compare.rs"
+reason = "Developer tooling: the golden-screenshot harness's mismatches and file names"
+
+[[file]]
+path = "src/screenshots/capture.rs"
+reason = "Developer tooling: the golden-screenshot harness's capture errors"
+
+[[file]]
+path = "src/screenshots/mod.rs"
+reason = "Developer tooling: the golden-screenshot harness's exit message"
+
+# The app commands' registered titles: the English fallback `label()`
+# shows when no catalogue has the command's `command-<id>` title. kiln,
+# which types these IDs (kiln::app, kiln::window), has their titles.
+
+[[literal]]
+file = "src/commands.rs"
+text = "Hide {app_name}"
+reason = "app.hide's registered title, the fallback for kiln's command-app-hide"
+
+[[literal]]
+file = "src/commands.rs"
+text = "Quit"
+reason = "app.quit's registered title, the fallback for kiln's command-app-quit"
+
+[[literal]]
+file = "src/commands.rs"
+text = "Hide Others"
+reason = "app.hide_others's registered title, the fallback for kiln's command-app-hide_others"
+
+[[literal]]
+file = "src/commands.rs"
+text = "Show All"
+reason = "app.show_all's registered title, the fallback for kiln's command-app-show_all"
+
+[[literal]]
+file = "src/commands.rs"
+text = "Minimize"
+reason = "window.minimize's registered title, the fallback for kiln's command-window-minimize"
+
+[[literal]]
+file = "src/commands.rs"
+text = "Zoom"
+reason = "window.zoom's registered title, the fallback for kiln's command-window-zoom"
+
+[[literal]]
+file = "src/commands.rs"
+text = "Toggle Full Screen"
+reason = "window.toggle_fullscreen's registered title, the fallback for kiln's command-window-toggle_fullscreen"
+
+[[literal]]
+file = "src/commands.rs"
+text = "Close Window"
+reason = "window.close's registered title, the fallback for kiln's command-window-close"
+
+# Doc comments on items the commands! macro generates, which reach it as
+# string tokens.
+
+[[literal]]
+file = "src/command_actions.rs"
+text = " Records this module's commands' titles and contexts."
+reason = "A doc comment inside the commands! macro, never shown"

@@ -48,13 +48,6 @@ fn kiln_catalogue_is_whole() {
         .check();
 }
 
-/// kiln's catalogue parses and is all listed, and every key its source
-/// uses exists, other crates' public.
-#[test]
-fn kiln_keys_used_here_exist() {
-    kiln_l10n::lint::keys(env!("CARGO_MANIFEST_DIR"), &kiln::l10n::RESOURCES).check();
-}
-
 /// Every typed command kiln declares (`kiln::app`, `kiln::window`) has a
 /// `command-<id>` title in kiln's catalogue, and every `command-*` key there
 /// names one. Panel toggles have none of their own: their label is derived,

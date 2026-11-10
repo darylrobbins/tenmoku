@@ -29,19 +29,12 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use kiln_command::capability::{Capability, Grants, Target};
+use kiln_l10n::tr;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// The file in the state directory the grants are kept in.
 pub const GRANTS_FILE: &str = "plugin-grants.toml";
-
-/// The first lines of the file, above its `[plugins]` table.
-const HEADER: &str = "\
-# The capabilities you granted each plugin, and the programs its
-# process.spawn grants were bound to. Remove a plugin's table to be asked
-# again when it next loads.
-
-";
 
 /// A plugin version, as its manifest gives it.
 pub type Version = (u32, u32, u32);
@@ -311,16 +304,34 @@ mod decimal {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
-    #[error("{name:?} is not a program name: it can't be empty, `.`, `..` or hold a `/`")]
-    NotAProgramName { name: String },
-    #[error("{name} isn't an executable file in any absolute PATH directory")]
-    NotFound { name: String },
-    #[error("can't read {}: {source}", path.display())]
+    NotAProgramName {
+        name: String,
+    },
+    NotFound {
+        name: String,
+    },
     Io {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
+}
+
+/// In the active locale.
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::NotAProgramName { name } => {
+                tr!("kiln-plugin-program-not-a-name", name = format!("{name:?}"))
+            }
+            Self::NotFound { name } => tr!("kiln-plugin-program-not-found", name = name),
+            Self::Io { path, source } => tr!(
+                "kiln-plugin-program-unreadable",
+                path = path.display().to_string(),
+                reason = source.to_string()
+            ),
+        })
+    }
 }
 
 /// The first executable file named `name` in an absolute directory of
@@ -370,7 +381,9 @@ fn open_executable(path: &Path) -> io::Result<(File, fs::Metadata)> {
     let file = kiln_core::platform::open_for_reading(path)?;
     let meta = file.metadata()?;
     if !kiln_core::platform::is_executable(path, &meta) {
-        return Err(io::Error::other("not an executable file"));
+        return Err(io::Error::other(
+            tr!("kiln-plugin-program-not-executable").to_string(),
+        ));
     }
     Ok((file, meta))
 }
@@ -409,14 +422,29 @@ const HASH_CHUNK: usize = 64 << 10;
 /// A check by a deadline that the deadline ended before it finished: the program isn't known to
 /// have changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("checking the program ran past its deadline")]
 pub struct CheckTimedOut;
+
+/// In the active locale.
+impl std::fmt::Display for CheckTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&tr!("kiln-plugin-program-check-timed-out"))
+    }
+}
 
 /// That a program's file is no longer the one granted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("the program's grant is suspended: {reason}")]
 pub struct Suspended {
     pub reason: SuspendReason,
+}
+
+/// In the active locale.
+impl std::fmt::Display for Suspended {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&tr!(
+            "kiln-plugin-program-suspended",
+            reason = self.reason.to_string()
+        ))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -428,11 +456,12 @@ pub enum SuspendReason {
     Missing,
 }
 
+/// In the active locale.
 impl std::fmt::Display for SuspendReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Changed => "the program changed",
-            Self::Missing => "the program is gone",
+        f.write_str(&match self {
+            Self::Changed => tr!("kiln-plugin-program-changed"),
+            Self::Missing => tr!("kiln-plugin-program-gone"),
         })
     }
 }
@@ -513,35 +542,62 @@ fn passed(by: Option<Instant>) -> bool {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GrantStoreError {
-    #[error("{}: {source}", path.display())]
     Io {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
     /// The file isn't one this store writes; it's left as it is.
-    #[error("{} isn't a grants file this app understands: {source}", path.display())]
     Unreadable {
         path: PathBuf,
         #[source]
         source: toml::de::Error,
     },
-    #[error("granting {0:?} needs its own acceptance of the wildcard")]
     WildcardsNotAccepted(Grants),
-    #[error("process.spawn:{0} has no program resolved for it")]
     ProgramNotResolved(String),
     /// A request would bind a program whose grant is suspended without a
     /// prompt re-recording it: nothing changes.
-    #[error("process.spawn:{0} is suspended until it is granted again")]
     Suspended(String),
     /// A request narrowing `process.spawn:*` names a program that can't be
     /// bound: it doesn't load, and the record is left as it was.
-    #[error("process.spawn:{program} can't be bound to a program: {source}")]
     Unresolved {
         program: String,
         #[source]
         source: ResolveError,
     },
+}
+
+/// In the active locale.
+impl std::fmt::Display for GrantStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::Io { path, source } => tr!(
+                "kiln-plugin-grants-io",
+                path = path.display().to_string(),
+                reason = source.to_string()
+            ),
+            Self::Unreadable { path, source } => tr!(
+                "kiln-plugin-grants-unreadable",
+                path = path.display().to_string(),
+                reason = source.to_string()
+            ),
+            Self::WildcardsNotAccepted(grants) => tr!(
+                "kiln-plugin-grants-wildcard-not-accepted",
+                grants = format!("{grants:?}")
+            ),
+            Self::ProgramNotResolved(program) => {
+                tr!("kiln-plugin-grants-program-not-resolved", program = program)
+            }
+            Self::Suspended(program) => {
+                tr!("kiln-plugin-grants-program-suspended", program = program)
+            }
+            Self::Unresolved { program, source } => tr!(
+                "kiln-plugin-grants-program-unbound",
+                program = program,
+                reason = source.to_string()
+            ),
+        })
+    }
 }
 
 /// The file the records are written in.
@@ -787,7 +843,8 @@ impl GrantStore {
             if passed(by) {
                 return Err(io_error(io::ErrorKind::TimedOut.into()));
             }
-            write(&self.path, format!("{HEADER}{body}").as_bytes()).map_err(io_error)
+            let header = tr!("kiln-plugin-grants-file-header");
+            write(&self.path, format!("{header}\n\n{body}").as_bytes()).map_err(io_error)
         })
         .map_err(io_error)?
     }

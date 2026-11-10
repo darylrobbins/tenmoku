@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 
 use kiln_command::{Capability, CapabilityError, Grants};
 use kiln_core::{AppKind, extension::Manifest};
+use kiln_l10n::tr;
 use serde_json::json;
 use toml::Value;
 
@@ -46,28 +47,86 @@ pub enum ExtensionOrigin {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PluginManifestError {
-    #[error("a workspace extension cannot install a plugin ({id})")]
-    WorkspaceCannotInstallPlugins { id: String },
-    #[error("{id}: [contributes.plugin] must be a single table")]
-    MoreThanOnePlugin { id: String },
-    #[error("{id}: [contributes.plugin] needs a `wasm` string")]
-    MissingWasm { id: String },
-    #[error("{id}: `capabilities` must be an array of strings")]
-    CapabilitiesNotStrings { id: String },
-    #[error("{id}: `signature` must be a string")]
-    SignatureNotString { id: String },
-    #[error("{id}: {source}")]
+    WorkspaceCannotInstallPlugins {
+        id: String,
+    },
+    MoreThanOnePlugin {
+        id: String,
+    },
+    MissingWasm {
+        id: String,
+    },
+    CapabilitiesNotStrings {
+        id: String,
+    },
+    SignatureNotString {
+        id: String,
+    },
     Capability {
         id: String,
         #[source]
         source: CapabilityError,
     },
-    #[error("{id}: wasm path {path:?}: {reason}")]
     WasmPath {
         id: String,
         path: String,
-        reason: &'static str,
+        reason: WasmPathError,
     },
+}
+
+/// In the active locale.
+impl std::fmt::Display for PluginManifestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::WorkspaceCannotInstallPlugins { id } => {
+                tr!("kiln-plugin-manifest-workspace", id = id)
+            }
+            Self::MoreThanOnePlugin { id } => tr!("kiln-plugin-manifest-more-than-one", id = id),
+            Self::MissingWasm { id } => tr!("kiln-plugin-manifest-missing-wasm", id = id),
+            Self::CapabilitiesNotStrings { id } => {
+                tr!("kiln-plugin-manifest-capabilities-not-strings", id = id)
+            }
+            Self::SignatureNotString { id } => {
+                tr!("kiln-plugin-manifest-signature-not-string", id = id)
+            }
+            Self::Capability { id, source } => tr!(
+                "kiln-plugin-manifest-capability",
+                id = id,
+                reason = source.to_string()
+            ),
+            Self::WasmPath { id, path, reason } => tr!(
+                "kiln-plugin-manifest-wasm-path",
+                id = id,
+                path = format!("{path:?}"),
+                reason = reason.to_string()
+            ),
+        })
+    }
+}
+
+/// Why a plugin's `wasm` path isn't a file inside its extension's directory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WasmPathError {
+    Empty,
+    Absolute,
+    Outside,
+    DirUnreadable,
+    Missing,
+    NotAFile,
+}
+
+/// In the active locale.
+impl std::fmt::Display for WasmPathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&tr!(match self {
+            Self::Empty => "kiln-plugin-wasm-path-empty",
+            Self::Absolute => "kiln-plugin-wasm-path-absolute",
+            Self::Outside => "kiln-plugin-wasm-path-outside",
+            Self::DirUnreadable => "kiln-plugin-wasm-path-dir-unreadable",
+            Self::Missing => "kiln-plugin-wasm-path-missing",
+            Self::NotAFile => "kiln-plugin-wasm-path-not-a-file",
+        }))
+    }
 }
 
 /// A plugin's checked manifest entry.
@@ -157,13 +216,13 @@ impl PluginManifest {
 }
 
 /// `entry` as a file inside `dir`, symlinks followed.
-fn wasm_file(dir: &Path, entry: &str) -> Result<PathBuf, &'static str> {
+fn wasm_file(dir: &Path, entry: &str) -> Result<PathBuf, WasmPathError> {
     let relative = Path::new(entry);
     if entry.is_empty() {
-        return Err("the path is empty");
+        return Err(WasmPathError::Empty);
     }
     if relative.has_root() || relative.is_absolute() {
-        return Err("must be relative to the extension's directory");
+        return Err(WasmPathError::Absolute);
     }
     // Written to climb out, whatever the links inside lead to.
     let mut depth = 0usize;
@@ -172,19 +231,19 @@ fn wasm_file(dir: &Path, entry: &str) -> Result<PathBuf, &'static str> {
             Component::Normal(_) => depth += 1,
             Component::CurDir => {}
             Component::ParentDir if depth > 0 => depth -= 1,
-            _ => return Err("is outside the extension's directory"),
+            _ => return Err(WasmPathError::Outside),
         }
     }
     // Without Windows' `\\?\`, as paths are shown and compared elsewhere.
-    let canonical_dir = kiln_core::platform::canonicalize(dir)
-        .map_err(|_| "the extension's directory is unreadable")?;
-    let canonical =
-        kiln_core::platform::canonicalize(&dir.join(relative)).map_err(|_| "no such file")?;
+    let canonical_dir =
+        kiln_core::platform::canonicalize(dir).map_err(|_| WasmPathError::DirUnreadable)?;
+    let canonical = kiln_core::platform::canonicalize(&dir.join(relative))
+        .map_err(|_| WasmPathError::Missing)?;
     if !canonical.starts_with(&canonical_dir) {
-        return Err("is outside the extension's directory");
+        return Err(WasmPathError::Outside);
     }
     if !canonical.is_file() {
-        return Err("is not a file");
+        return Err(WasmPathError::NotAFile);
     }
     Ok(canonical)
 }

@@ -682,7 +682,9 @@ impl CommandCatalog for RecordedCatalog {
         }
         match args {
             Value::Null => Ok(()),
-            _ => Err(CatalogError::BadArgs(format!("{command} takes no args"))),
+            _ => Err(CatalogError::BadArgs(
+                tr!("kiln-command-takes-no-args", command = command.as_str()).to_string(),
+            )),
         }
     }
 }
@@ -1085,7 +1087,7 @@ impl Contributions {
                 context: None,
                 keys: spec.toggle_key.clone(),
                 menu: Some(MenuSpec {
-                    menu: Cow::Borrowed("View"),
+                    menu: Cow::Borrowed(kiln_l10n::verbatim!("View")),
                     order: spec.order,
                     declared,
                 }),
@@ -1721,10 +1723,13 @@ pub(crate) fn keymap_layer(
                     key: Some(format!("{}.keys", command.command)),
                     line,
                     column: 1,
-                    message: format!(
-                        "{} is bound to both {other} and {}",
-                        entry.keys, command.command
-                    ),
+                    message: tr!(
+                        "kiln-keys-bound-twice",
+                        keys = entry.keys.to_string(),
+                        other = other.as_str(),
+                        command = command.command.as_str()
+                    )
+                    .to_string(),
                 });
             }
             entry.location = Location {
@@ -1771,12 +1776,17 @@ fn table_menu_bar(
             };
             let message = match catalog.check(command, &Value::Null) {
                 Ok(()) => None,
-                Err(CatalogError::UnknownCommand) => {
-                    Some(format!("unknown command {command}; the item is left out"))
-                }
-                Err(CatalogError::BadArgs(message)) => Some(format!(
-                    "bad args for {command}: {message}; the item is left out"
-                )),
+                Err(CatalogError::UnknownCommand) => Some(
+                    tr!("kiln-menu-item-unknown-command", command = command.as_str()).to_string(),
+                ),
+                Err(CatalogError::BadArgs(message)) => Some(
+                    tr!(
+                        "kiln-menu-item-bad-args",
+                        command = command.as_str(),
+                        reason = message
+                    )
+                    .to_string(),
+                ),
             };
             if let Some(message) = message {
                 diagnostics.push(Diagnostic {
@@ -1837,7 +1847,7 @@ fn repeats(table: &MenuTable) -> Vec<Diagnostic> {
     let mut names = HashSet::new();
     for (menu_ix, menu) in table.menus().iter().enumerate() {
         if !names.insert(menu.name) {
-            let message = format!("menu {:?} is repeated", menu.name);
+            let message = tr!("kiln-menu-repeated", menu = format!("{:?}", menu.name)).to_string();
             diagnostics.push(error(menu.name.to_owned(), menu_ix + 1, message));
         }
         let mut ids = HashSet::new();
@@ -1845,11 +1855,12 @@ fn repeats(table: &MenuTable) -> Vec<Diagnostic> {
             if let TableItem::Command { command, .. } = item
                 && !ids.insert(command)
             {
-                let message = format!(
-                    "id {:?} is repeated in menu {:?}",
-                    command.as_str(),
-                    menu.name
-                );
+                let message = tr!(
+                    "kiln-menu-id-repeated",
+                    id = format!("{:?}", command.as_str()),
+                    menu = format!("{:?}", menu.name)
+                )
+                .to_string();
                 diagnostics.push(error(format!("{}.items[{ix}]", menu.name), ix + 1, message));
             }
         }
@@ -1880,15 +1891,17 @@ fn place_items(
                 placed.push((command, spec));
                 continue;
             }
-            Err(CatalogError::UnknownCommand) => {
-                format!("unknown command {}; the item is left out", command.id)
-            }
-            Err(CatalogError::BadArgs(message)) => {
-                format!(
-                    "bad args for {}: {message}; the item is left out",
-                    command.id
-                )
-            }
+            Err(CatalogError::UnknownCommand) => tr!(
+                "kiln-menu-item-unknown-command",
+                command = command.id.as_str()
+            )
+            .to_string(),
+            Err(CatalogError::BadArgs(message)) => tr!(
+                "kiln-menu-item-bad-args",
+                command = command.id.as_str(),
+                reason = message
+            )
+            .to_string(),
         };
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,

@@ -31,6 +31,7 @@ pub mod focus;
 pub mod fonts;
 pub mod frame_watch;
 pub mod keys;
+pub mod l10n;
 pub mod locale;
 pub mod menus;
 #[cfg(feature = "test-support")]

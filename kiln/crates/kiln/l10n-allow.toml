@@ -1,0 +1,114 @@
+# kiln's exceptions to the literal lint (kiln_l10n::lint::literals).
+all = true
+
+[[file]]
+path = "src/testing.rs"
+reason = "Test support: the test app's name and the assertion's listing, for the app's developer"
+
+# The paths the contributed and bundled keymaps' and menus' diagnostics
+# name, which hosts compare with.
+
+[[literal]]
+file = "src/contributions.rs"
+text = "<contributed keys>"
+reason = "CONTRIBUTED_KEYS_PATH, the path the contributed keys' diagnostics name"
+
+[[literal]]
+file = "src/contributions.rs"
+text = "<contributed menus>"
+reason = "CONTRIBUTED_MENUS_PATH, the path the contributed menu items' diagnostics name"
+
+[[literal]]
+file = "src/setup/defaults.rs"
+text = "<kiln keymap>"
+reason = "The path the bundled keymap's diagnostics name"
+
+[[literal]]
+file = "src/setup/defaults.rs"
+text = "<kiln menus>"
+reason = "The path the bundled menus' diagnostics name"
+
+# For the app's developer: a warning kiln logs, and the panic `fail_fast`
+# raises.
+
+[[literal]]
+file = "src/contributions.rs"
+text = "the crate {krate}'s {} ({}) are left out: no kiln::module! claimed them. Add `kiln::module!(pub fn module);` to {krate} and pass `.module({krate}::module)` to kiln::app"
+reason = "A warning for the app's developer that a crate's records aren't claimed, which kiln logs"
+
+[[literal]]
+file = "src/contributions.rs"
+text = " and "
+reason = "Joins the left-out record kinds in the developer warning above"
+
+[[literal]]
+file = "src/setup/defaults.rs"
+text = "{} has {} problem(s) in the keymap and menus it ships (`kiln::Config::fail_fast` is on):"
+reason = "The panic `Config::fail_fast` raises, for the app's developer"
+
+[[literal]]
+file = "src/setup/defaults.rs"
+text = "\n  {diagnostic}"
+reason = "A diagnostic's line in the fail_fast panic"
+
+# IDs, key paths and file names.
+
+[[literal]]
+file = "src/contributions.rs"
+text = "{}.toggle"
+reason = "A panel's toggle command's ID"
+
+[[literal]]
+file = "src/contributions.rs"
+text = "{}.keys"
+reason = "A key path in a diagnostic: a contributed command's keys"
+
+[[literal]]
+file = "src/contributions.rs"
+text = "{}.items[{ix}]"
+reason = "A key path in a diagnostic: a menu table's item"
+
+[[literal]]
+file = "src/contributions.rs"
+text = "{}.menu"
+reason = "A key path in a diagnostic: a contributed command's menu"
+
+[[literal]]
+file = "src/extensions.rs"
+text = "menus[{menu_ix}].items[{item_ix}]"
+reason = "A key path in an extension's menus file"
+
+[[literal]]
+file = "src/model/persist.rs"
+text = "{file}.json"
+reason = "A model's state file's name"
+
+# TOML kiln writes for a contributed binding, to parse it as a keymap file.
+
+[[literal]]
+file = "src/contributions.rs"
+text = "[[bindings]]\ncommand = \"{}\"\nkeys = {keys}\n"
+reason = "A contributed binding as keymap TOML, parsed and never shown"
+
+[[literal]]
+file = "src/contributions.rs"
+text = "context = \"{}\"\n"
+reason = "A contributed binding's context as keymap TOML, parsed and never shown"
+
+# Doc comments on items inside thread_local!, which the lint reads as
+# string literals.
+
+[[literal]]
+file = "src/contributions.rs"
+text = " The catalogue's generation ([`kiln_l10n::generation`]) when"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/contributions.rs"
+text = " [`shipped`] last resolved the menus' labels, the app's thread's:"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/contributions.rs"
+text = " a locale set at another ([`ActiveLocale`]) resolves them again."
+reason = "A doc comment inside thread_local!, never shown"

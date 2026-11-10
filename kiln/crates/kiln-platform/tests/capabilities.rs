@@ -70,8 +70,11 @@ fn mono_family_falls_back() {
 fn dialog_errors_say_what_is_missing() {
     let (title, detail) = open_panel_failed("Portal request failed", Os::Linux);
     assert_eq!(title, "The open panel isn't available");
-    assert!(detail.starts_with("Portal request failed"));
-    assert!(detail.contains("xdg-desktop-portal-gtk"));
+    assert_eq!(
+        detail,
+        "Portal request failed\n\nThe open panel comes from xdg-desktop-portal: install it \
+         with a backend for your desktop, such as xdg-desktop-portal-gtk."
+    );
     let (_, detail) = open_panel_failed("Portal request failed", Os::MacOs);
     assert_eq!(detail, "Portal request failed");
 }

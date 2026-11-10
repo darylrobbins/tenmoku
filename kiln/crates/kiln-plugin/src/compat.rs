@@ -8,6 +8,7 @@
 //! minor the host still supports. A major is dropped only after a deprecation window.
 
 use kiln_core::ApiVersion;
+use kiln_l10n::tr;
 use wasmtime::component::Linker;
 
 /// The plugin API version this host implements.
@@ -20,16 +21,31 @@ pub const DEPRECATED: &[(u32, ApiVersion)] = &[];
 /// Why a plugin cannot load on this host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Incompatible {
-    #[error("plugin needs API {needed}, but this host only provides {host}")]
     NeedsNewerHost {
         needed: ApiVersion,
         host: ApiVersion,
     },
-    #[error("plugin needs API {needed}, but this host ({host}) does not support that major")]
     UnsupportedMajor {
         needed: ApiVersion,
         host: ApiVersion,
     },
+}
+
+/// In the active locale.
+impl std::fmt::Display for Incompatible {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (key, needed, host) = match self {
+            Self::NeedsNewerHost { needed, host } => ("kiln-plugin-needs-newer-host", needed, host),
+            Self::UnsupportedMajor { needed, host } => {
+                ("kiln-plugin-unsupported-major", needed, host)
+            }
+        };
+        f.write_str(&tr!(
+            key,
+            needed = needed.to_string(),
+            host = host.to_string()
+        ))
+    }
 }
 
 /// A host's API version and its deprecation table.

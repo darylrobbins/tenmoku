@@ -151,7 +151,7 @@ fn switch(
 /// nothing.
 pub fn warm() {
     let spawned = std::thread::Builder::new()
-        .name("l10n warm-up".into())
+        .name(kiln_l10n::verbatim!("l10n warm-up").into())
         .spawn(|| {
             let system = preferred();
             let mut applied = APPLIED.lock().unwrap_or_else(PoisonError::into_inner);

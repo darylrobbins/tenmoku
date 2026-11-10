@@ -29,6 +29,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Grants, Target};
+use kiln_l10n::tr;
 use url::{Host as UrlHost, Url};
 
 use crate::bindings::kiln::extension::net::{Host, Method, Request, Response};
@@ -142,7 +143,7 @@ impl State {
         let deadline = Instant::now() + timeout;
         let (mut url, host) = check(&self.grants, &request.url)?;
         let Some(backend) = &mut self.backend else {
-            return Err(Error::Failed("the host has no network".into()));
+            return Err(Error::Failed(tr!("kiln-plugin-net-none").to_string()));
         };
         let mut outgoing = Outgoing {
             method: request.method,
@@ -157,23 +158,36 @@ impl State {
         loop {
             outgoing.timeout = deadline.saturating_duration_since(Instant::now());
             if outgoing.timeout.is_zero() {
-                return Err(Error::Failed(format!("{} timed out", request.url)));
+                return Err(Error::Failed(
+                    tr!("kiln-plugin-net-timed-out", url = &request.url).to_string(),
+                ));
             }
             let received = backend.send(&outgoing)?;
             if Instant::now() > deadline {
-                return Err(Error::Failed(format!("{} timed out", request.url)));
+                return Err(Error::Failed(
+                    tr!("kiln-plugin-net-timed-out", url = &request.url).to_string(),
+                ));
             }
             if received.peer != outgoing.host {
-                return Err(Error::Denied(format!(
-                    "{} connected to {}, not {}",
-                    outgoing.url, received.peer, outgoing.host
-                )));
+                return Err(Error::Denied(
+                    tr!(
+                        "kiln-plugin-net-wrong-peer",
+                        url = &outgoing.url,
+                        peer = &received.peer,
+                        host = &outgoing.host
+                    )
+                    .to_string(),
+                ));
             }
             if received.body.len() > self.max_body_bytes {
-                return Err(Error::Failed(format!(
-                    "{}'s response is over {} bytes",
-                    outgoing.url, self.max_body_bytes
-                )));
+                return Err(Error::Failed(
+                    tr!(
+                        "kiln-plugin-net-too-large",
+                        url = &outgoing.url,
+                        limit = self.max_body_bytes
+                    )
+                    .to_string(),
+                ));
             }
             let Some(location) = redirect_location(&received)? else {
                 return Ok(Response {
@@ -183,19 +197,28 @@ impl State {
                 });
             };
             if redirects == MAX_REDIRECTS {
-                return Err(Error::Failed(format!(
-                    "{} redirected more than {MAX_REDIRECTS} times",
-                    request.url
-                )));
+                return Err(Error::Failed(
+                    tr!(
+                        "kiln-plugin-net-too-many-redirects",
+                        url = &request.url,
+                        limit = MAX_REDIRECTS
+                    )
+                    .to_string(),
+                ));
             }
             redirects += 1;
             let next = url
                 .join(location)
                 .map_err(|error| redirect_error(&url, location, &error.to_string()))?;
             if url.scheme() == "https" && next.scheme() != "https" {
-                return Err(Error::Denied(format!(
-                    "{url} redirected to {next}, which isn't https"
-                )));
+                return Err(Error::Denied(
+                    tr!(
+                        "kiln-plugin-net-redirect-not-https",
+                        url = url.to_string(),
+                        next = next.to_string()
+                    )
+                    .to_string(),
+                ));
             }
             let (next, host) = check(&self.grants, next.as_str()).map_err(|error| match error {
                 Error::InvalidArgument(why) => redirect_error(&url, location, &why),
@@ -244,44 +267,71 @@ impl Host for HostState {
 
 /// Parses `url` and checks it: the URL in normal form and its host, or why it is refused.
 fn check(grants: &Grants, url: &str) -> Result<(Url, String), Error> {
-    let mut parsed =
-        Url::parse(url).map_err(|error| invalid(url, &format!("isn't a URL: {error}")))?;
+    let mut parsed = Url::parse(url).map_err(|error| {
+        invalid(
+            tr!(
+                "kiln-plugin-net-not-a-url",
+                url = quoted(url),
+                reason = error.to_string()
+            )
+            .to_string(),
+        )
+    })?;
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(invalid(url, "has a user name, which isn't sent"));
+        return Err(invalid(
+            tr!("kiln-plugin-net-user-name", url = quoted(url)).to_string(),
+        ));
     }
     parsed.set_fragment(None);
     let (host, dotted) = match parsed.host() {
         Some(UrlHost::Domain(domain)) => {
             let host = domain.strip_suffix('.').unwrap_or(domain);
             if host.split('.').any(str::is_empty) {
-                return Err(invalid(url, "has an empty label in its host"));
+                return Err(invalid(
+                    tr!("kiln-plugin-net-empty-label", url = quoted(url)).to_string(),
+                ));
             }
             (host.to_owned(), host.len() != domain.len())
         }
         Some(UrlHost::Ipv4(address)) => (address.to_string(), false),
         Some(UrlHost::Ipv6(address)) => (address.to_string(), false),
-        None => return Err(invalid(url, "has no host")),
+        None => {
+            return Err(invalid(
+                tr!("kiln-plugin-net-no-host", url = quoted(url)).to_string(),
+            ));
+        }
     };
     if dotted {
         // The URL sent names the host checked.
-        parsed
-            .set_host(Some(&host))
-            .map_err(|error| invalid(url, &error.to_string()))?;
+        parsed.set_host(Some(&host)).map_err(|error| {
+            invalid(
+                tr!(
+                    "kiln-plugin-net-bad-host",
+                    url = quoted(url),
+                    reason = error.to_string()
+                )
+                .to_string(),
+            )
+        })?;
     }
     match parsed.scheme() {
         "https" => {}
         "http" if is_loopback(&host) => {}
         _ => {
             return Err(invalid(
-                url,
-                "isn't https (http only to 127.0.0.1 or [::1])",
+                tr!("kiln-plugin-net-not-https", url = quoted(url)).to_string(),
             ));
         }
     }
     if !grants.allows(&Capability::Net(Target::Named(host.clone()))) {
-        return Err(Error::Denied(format!(
-            "{url}: no net:{host} grant reaches its host"
-        )));
+        return Err(Error::Denied(
+            tr!(
+                "kiln-plugin-net-not-granted",
+                url = url,
+                host = host.as_str()
+            )
+            .to_string(),
+        ));
     }
     Ok((parsed, host))
 }
@@ -299,22 +349,36 @@ fn redirect_location(received: &Received) -> Result<Option<&str>, Error> {
         .map(|(_, value)| value.as_str());
     let location = locations.next();
     if locations.next().is_some() {
-        return Err(Error::Failed(format!(
-            "a {} response has more than one Location",
-            received.status
-        )));
+        return Err(Error::Failed(
+            tr!("kiln-plugin-net-locations", status = received.status).to_string(),
+        ));
     }
     Ok(location)
 }
 
-/// The plugin's URL is malformed or not one the host sends.
-fn invalid(url: &str, why: &str) -> Error {
-    Error::InvalidArgument(format!("{url:?} {why}"))
+/// The plugin's URL is malformed or not one the host sends: `message` says
+/// which URL, and why.
+fn invalid(message: String) -> Error {
+    Error::InvalidArgument(message)
+}
+
+/// `url`, quoted as written, as the messages about a refused URL name it.
+fn quoted(url: &str) -> String {
+    format!("{url:?}")
 }
 
 /// The server's redirect is malformed: the plugin's request was fine.
+/// `why` is [`check`]'s message about the location.
 fn redirect_error(from: &Url, location: &str, why: &str) -> Error {
-    Error::Failed(format!("{from} redirected to {location:?}: {why}"))
+    Error::Failed(
+        tr!(
+            "kiln-plugin-net-bad-redirect",
+            url = from.to_string(),
+            location = format!("{location:?}"),
+            reason = why
+        )
+        .to_string(),
+    )
 }
 
 /// The loopback addresses plain `http` may reach, for tests.

@@ -32,10 +32,11 @@ use std::{
 };
 
 use gpui::{
-    App, AppContext as _, Context, EventEmitter, Global, PromptButton, PromptLevel, SharedString,
-    Subscription, Task, Window,
+    App, AppContext as _, Context, EventEmitter, Global, PromptButton, PromptLevel, Subscription,
+    Task, Window,
 };
 use kiln_core::trust::{Trust, TrustStore, canonical};
+use kiln_l10n::{Text, text};
 
 /// The host's root became trusted (`true`) or stopped being trusted
 /// (`false`): see [`RootTrust::trusted`].
@@ -43,26 +44,24 @@ use kiln_core::trust::{Trust, TrustStore, canonical};
 pub struct TrustChanged(pub bool);
 
 /// What the trust prompt says: the question, the detail under it for the
-/// folder asked about, and its two buttons.
+/// folder asked about, and its two buttons. Each is resolved in the active
+/// locale when the prompt shows, so a host builds this once.
 pub struct TrustPrompt {
-    pub question: SharedString,
+    pub question: Text,
     pub detail: Box<dyn Fn(&Path) -> String>,
-    pub trust: SharedString,
-    pub dont_trust: SharedString,
+    pub trust: Text,
+    pub dont_trust: Text,
 }
 
 impl TrustPrompt {
     /// A prompt asking `question`, with `detail` for a folder under it,
     /// and "Trust Folder" and "Don't Trust" buttons.
-    pub fn new(
-        question: impl Into<SharedString>,
-        detail: impl Fn(&Path) -> String + 'static,
-    ) -> Self {
+    pub fn new(question: impl Into<Text>, detail: impl Fn(&Path) -> String + 'static) -> Self {
         Self {
             question: question.into(),
             detail: Box::new(detail),
-            trust: "Trust Folder".into(),
-            dont_trust: "Don't Trust".into(),
+            trust: text!("kiln-shell-trust-folder"),
+            dont_trust: text!("kiln-shell-trust-dont"),
         }
     }
 }
@@ -411,12 +410,12 @@ impl RootTrust {
         let prompt = trust.prompt.clone();
         let detail = (prompt.detail)(&folder);
         let buttons = [
-            PromptButton::ok(prompt.trust.clone()),
-            PromptButton::cancel(prompt.dont_trust.clone()),
+            PromptButton::ok(prompt.trust.resolve()),
+            PromptButton::cancel(prompt.dont_trust.resolve()),
         ];
         let answer = window.prompt(
             PromptLevel::Warning,
-            &prompt.question,
+            &prompt.question.resolve(),
             Some(&detail),
             &buttons,
             cx,

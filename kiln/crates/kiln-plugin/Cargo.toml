@@ -11,6 +11,8 @@ publish = false
 [dependencies]
 kiln-command.workspace = true
 kiln-core.workspace = true
+# The catalogue (src/l10n.rs): GPUI-free, as this crate must be.
+kiln-l10n.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,6 +24,8 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 
 [dev-dependencies]
+# The catalogue checks (tests/l10n.rs).
+kiln-l10n = { workspace = true, features = ["lint"] }
 wasmtime = { workspace = true, features = ["wat"] }
 
 [lints]

@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Target};
 use kiln_core::platform::{OutputDrain, StdinFeed};
+use kiln_l10n::tr;
 
 use crate::bindings::kiln::extension::process::{Host, Output};
 use crate::bindings::{Error, HostState};
@@ -371,10 +372,8 @@ impl Host for HostState {
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
     /// No grant names the program, or none bound it to a file.
-    #[error("process.spawn:{program} is not granted")]
     NotGranted { program: String },
     /// The program changed or went since it was granted; nothing ran.
-    #[error("process.spawn:{program}: {suspended}")]
     Suspended {
         program: String,
         #[source]
@@ -382,14 +381,36 @@ pub enum SpawnError {
     },
     /// It ran past its deadline and was killed, or the call's share of program time ended
     /// before it started: then nothing ran.
-    #[error("{program} ran past its {deadline:?} deadline and was killed")]
     TimedOut { program: String, deadline: Duration },
-    #[error("can't run {}: {source}", path.display())]
     Io {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
+}
+
+/// In the active locale.
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::NotGranted { program } => tr!("kiln-plugin-spawn-not-granted", program = program),
+            Self::Suspended { program, suspended } => tr!(
+                "kiln-plugin-spawn-suspended",
+                program = program,
+                reason = suspended.to_string()
+            ),
+            Self::TimedOut { program, deadline } => tr!(
+                "kiln-plugin-spawn-timed-out",
+                program = program,
+                deadline = format!("{deadline:?}")
+            ),
+            Self::Io { path, source } => tr!(
+                "kiln-plugin-spawn-failed",
+                path = path.display().to_string(),
+                reason = source.to_string()
+            ),
+        })
+    }
 }
 
 /// The environment a spawned program gets out of the app's `environment`: `PATH` set to

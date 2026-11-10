@@ -5,6 +5,8 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
+use kiln_l10n::tr;
+
 use crate::{ActiveTheme as _, UiTheme};
 
 /// A small label shown on hover, and a muted shortcut after it if there is
@@ -32,7 +34,12 @@ impl Tooltip {
     /// The label, then the shortcut after a space if there is one.
     pub fn text(&self) -> String {
         match &self.shortcut {
-            Some(shortcut) => format!("{} {shortcut}", self.label),
+            Some(shortcut) => tr!(
+                "kiln-ui-tooltip-with-shortcut",
+                label = &self.label,
+                shortcut = shortcut
+            )
+            .to_string(),
             None => self.label.to_string(),
         }
     }

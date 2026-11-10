@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use kiln_core::secrets::{Secret, SecretError, SecretStore};
+use kiln_l10n::tr;
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::kiln::extension::secrets::Host;
@@ -271,9 +272,9 @@ fn check_name(name: &str) -> Result<(), Error> {
     if valid {
         Ok(())
     } else {
-        Err(Error::InvalidArgument(format!(
-            "a secret's name is 1 to {MAX_NAME_LEN} characters of a-z, 0-9, _ and -"
-        )))
+        Err(Error::InvalidArgument(
+            tr!("kiln-plugin-secret-name", max = MAX_NAME_LEN).to_string(),
+        ))
     }
 }
 
@@ -284,11 +285,17 @@ fn store_error(error: SecretError) -> Error {
     }
 }
 
-fn index_error(action: &str, path: &Path, error: &dyn fmt::Display) -> Error {
-    Error::Failed(format!(
-        "couldn't {action} the secrets index {}: {error}",
-        path.display()
-    ))
+/// `action` is what failed: `lock`, `parse`, `read`, `serialize` or `write`.
+fn index_error(action: &'static str, path: &Path, error: &dyn fmt::Display) -> Error {
+    Error::Failed(
+        tr!(
+            "kiln-plugin-secrets-index",
+            action = action,
+            path = path.display().to_string(),
+            reason = error.to_string()
+        )
+        .to_string(),
+    )
 }
 
 impl State {

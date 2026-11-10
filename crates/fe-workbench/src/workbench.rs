@@ -1206,7 +1206,7 @@ fn active_diff_view(pane: &Pane) -> Option<&Entity<DiffView>> {
 
 /// The prompt shown when the open panel fails with `error`: see
 /// [`kiln_platform::dialogs::open_panel_failed`].
-pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
+pub(crate) fn open_panel_failed(error: &str) -> (String, String) {
     kiln_platform::dialogs::open_panel_failed(error, kiln_platform::Os::current())
 }
 

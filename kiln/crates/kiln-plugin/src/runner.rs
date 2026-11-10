@@ -24,6 +24,7 @@ use std::{
 };
 
 use kiln_command::Grants;
+use kiln_l10n::tr;
 use wasmtime::{
     Store, Trap, UpdateDeadline,
     component::{Component, Instance, InstancePre, Linker, ResourceTable, TypedFunc},
@@ -52,25 +53,45 @@ pub enum Reason {
     Protocol,
 }
 
-impl fmt::Display for Reason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Trap => "trapped",
-            Self::Timeout => "timed out",
-            Self::Memory => "out of memory",
-            Self::Protocol => "protocol error",
-        })
+impl Reason {
+    /// Its name, as the catalogue's messages select on it.
+    fn selector(self) -> &'static str {
+        match self {
+            Self::Trap => "trap",
+            Self::Timeout => "timeout",
+            Self::Memory => "memory",
+            Self::Protocol => "protocol",
+        }
     }
 }
 
-/// What unloaded a plugin, for the user.
+/// In the active locale.
+impl fmt::Display for Reason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&tr!("kiln-plugin-unload-reason", reason = self.selector()))
+    }
+}
+
+/// What unloaded a plugin, for the user: its message is in the active
+/// locale when it was unloaded.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("plugin {plugin} unloaded, {reason}: {message}")]
 pub struct Diagnostic {
     /// The plugin's id.
     pub plugin: String,
     pub reason: Reason,
     pub message: String,
+}
+
+/// In the active locale.
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&tr!(
+            "kiln-plugin-unloaded",
+            plugin = &self.plugin,
+            reason = self.reason.selector(),
+            message = &self.message
+        ))
+    }
 }
 
 /// Whether a plugin still runs.
@@ -83,33 +104,77 @@ pub enum PluginState {
 /// Why [`Plugin::load`] failed.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
-    #[error("plugin {plugin}: the component is {bytes} bytes, over the {limit}-byte limit")]
     TooLarge {
         plugin: String,
         bytes: usize,
         limit: usize,
     },
-    #[error("plugin {plugin}: not a component this host runs: {message}")]
-    Invalid { plugin: String, message: String },
-    #[error("plugin {plugin}: no thread to run it on: {error}")]
-    Thread { plugin: String, error: io::Error },
+    Invalid {
+        plugin: String,
+        message: String,
+    },
+    Thread {
+        plugin: String,
+        error: io::Error,
+    },
     /// Its `init` returned an error.
-    #[error("plugin {plugin}: init failed: {error:?}")]
-    Init { plugin: String, error: Error },
+    Init {
+        plugin: String,
+        error: Error,
+    },
     /// Instantiating it or its `init` trapped, overran or broke protocol.
-    #[error(transparent)]
     Unloaded(Diagnostic),
+}
+
+/// In the active locale.
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self {
+            Self::TooLarge {
+                plugin,
+                bytes,
+                limit,
+            } => tr!(
+                "kiln-plugin-too-large",
+                plugin = plugin,
+                bytes = *bytes,
+                limit = *limit
+            ),
+            Self::Invalid { plugin, message } => {
+                tr!("kiln-plugin-invalid", plugin = plugin, reason = message)
+            }
+            Self::Thread { plugin, error } => tr!(
+                "kiln-plugin-no-thread",
+                plugin = plugin,
+                reason = error.to_string()
+            ),
+            Self::Init { plugin, error } => tr!(
+                "kiln-plugin-init-failed",
+                plugin = plugin,
+                reason = format!("{error:?}")
+            ),
+            Self::Unloaded(diagnostic) => return diagnostic.fmt(f),
+        })
+    }
 }
 
 /// Why [`Plugin::call`] failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CallError {
     /// This call unloaded the plugin.
-    #[error(transparent)]
     Failed(Diagnostic),
     /// The plugin was unloaded before; nothing ran.
-    #[error("the plugin is unloaded")]
     Unloaded,
+}
+
+/// In the active locale.
+impl fmt::Display for CallError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Failed(diagnostic) => diagnostic.fmt(f),
+            Self::Unloaded => f.write_str(&tr!("kiln-plugin-call-unloaded")),
+        }
+    }
 }
 
 /// A call into a plugin's exports.
@@ -264,7 +329,7 @@ impl Plugin {
             Err(LoadError::Unloaded(Diagnostic {
                 plugin: id.to_owned(),
                 reason: Reason::Trap,
-                message: "its thread stopped while loading it".into(),
+                message: tr!("kiln-plugin-thread-stopped-loading").to_string(),
             }))
         });
         if let Err(error) = started {
@@ -309,7 +374,7 @@ impl Plugin {
             Err(Diagnostic {
                 plugin: self.id.clone(),
                 reason: Reason::Trap,
-                message: "its thread stopped".into(),
+                message: tr!("kiln-plugin-thread-stopped").to_string(),
             })
         });
         replied.map_err(|diagnostic| {
@@ -409,7 +474,10 @@ impl Exports {
                 .and_then(|interface| {
                     instance.get_export_index(&mut *store, Some(&interface), name)
                 })
-                .ok_or_else(|| wasmtime::format_err!("no export {interface}#{name}"))
+                .ok_or_else(|| {
+                    let export = format!("{interface}#{name}");
+                    wasmtime::format_err!("{}", tr!("kiln-plugin-no-export", export = export))
+                })
         };
         let run_command = export("kiln:extension/command-handler@1.0.0", "run-command")?;
         let handle_events = export("kiln:extension/event-handler@1.0.0", "handle-events")?;
@@ -556,7 +624,11 @@ impl Guest {
                 let deadline = self.limits.call_deadline;
                 Err(self.diagnosis(
                     Reason::Timeout,
-                    format!("a call ran past its {deadline:?} deadline"),
+                    tr!(
+                        "kiln-plugin-call-deadline",
+                        deadline = format!("{deadline:?}")
+                    )
+                    .to_string(),
                 ))
             }
         }

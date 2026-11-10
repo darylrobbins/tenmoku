@@ -15,6 +15,7 @@ use kiln_core::{
     Diagnostic, Severity,
     theme::{Appearance, ThemeData, ThemeFile},
 };
+use kiln_l10n::tr;
 use kiln_platform::config::{ConfigDiagnostics, ConfigSource, log_diagnostics_as, log_target};
 use kiln_ui::{GlobalTheme, Theme, ThemeMode, set_themes};
 
@@ -168,12 +169,14 @@ impl ThemeLayers {
             let found = self.installed.get(id).or_else(|| self.builtin.get(id));
             let message = match found {
                 Some(theme) if theme.appearance == appearance => return Some(&theme.data),
-                Some(theme) => format!(
-                    "theme {id} is {}, so it can't be the {} theme",
-                    name(theme.appearance),
-                    name(appearance)
-                ),
-                None => format!("theme {id} isn't installed"),
+                Some(theme) => tr!(
+                    "kiln-theme-wrong-appearance",
+                    id = id,
+                    appearance = name(theme.appearance),
+                    slot = name(appearance)
+                )
+                .to_string(),
+                None => tr!("kiln-theme-not-installed", id = id).to_string(),
             };
             self.diagnostics.push(Diagnostic {
                 severity: Severity::Warning,

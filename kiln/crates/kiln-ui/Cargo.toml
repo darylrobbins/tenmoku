@@ -22,6 +22,9 @@ unicode-segmentation.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
+# The catalogue checks, and a fake locale (tests/l10n.rs).
+inventory.workspace = true
+kiln-l10n = { workspace = true, features = ["lint"] }
 # The scene recorder's image type, in the coloured icon tests.
 image.workspace = true
 

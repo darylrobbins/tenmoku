@@ -1,0 +1,47 @@
+# kiln-plugin's exceptions to the literal lint (kiln_l10n::lint::literals).
+all = true
+
+[[literal]]
+file = "src/cache.rs"
+text = "directory not writable"
+reason = "Why a compiled component isn't cached, which is logged at debug for the app's developer"
+
+[[literal]]
+file = "src/cache.rs"
+text = "directory is writable by others"
+reason = "Why a compiled component isn't cached, which is logged at debug for the app's developer"
+
+[[literal]]
+file = "src/limits.rs"
+text = "memory growth exceeds memory type's limits"
+reason = "Matches wasmtime's own error text, which it reports without asking the limiter"
+
+[[literal]]
+file = "src/grants.rs"
+text = "{header}\n\n{body}"
+reason = "The grants file's TOML, below its header (kiln-plugin-grants-file-header)"
+
+[[literal]]
+file = "src/grants.rs"
+text = ".{name}.{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/secrets.rs"
+text = ".{name}.{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/secrets.rs"
+text = "ext.{}.{name}"
+reason = "A secret's account in the platform's store"
+
+[[literal]]
+file = "src/secrets.rs"
+text = "injected sync failure"
+reason = "A fault the crate's unit tests inject, under a #[cfg(test)] statement the lint doesn't strip"
+
+[[literal]]
+file = "src/runner.rs"
+text = "plugin {id}"
+reason = "A plugin's thread's name, shown only in debuggers"

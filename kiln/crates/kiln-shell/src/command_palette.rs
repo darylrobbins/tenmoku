@@ -23,6 +23,7 @@ use gpui::{
 };
 use kiln_command::{CommandId, CommandMeta, ContextStack, Invocation, Source, Value};
 use kiln_core::{CatalogError, CommandCatalog, shortcut_label, shortcuts};
+use kiln_l10n::{text, tr};
 use kiln_platform::{
     command_actions::{Command as _, TypedCommand, dispatch_invocation, typed_commands},
     keys,
@@ -283,7 +284,7 @@ impl PickerDelegate for CommandPalette {
     }
 
     fn status(&self) -> Option<SharedString> {
-        (self.matches.is_empty()).then(|| "No matching commands".into())
+        (self.matches.is_empty()).then(|| tr!("kiln-shell-palette-no-matches"))
     }
 }
 
@@ -299,7 +300,7 @@ pub(crate) fn toggle(
     }
     let ui = ui_theme(cx);
     let palette = CommandPalette::new(ui, window, cx);
-    let picker = cx.new(|cx| Picker::new(palette, "Run a command…", ui, cx));
+    let picker = cx.new(|cx| Picker::new(palette, text!("kiln-shell-palette-placeholder"), ui, cx));
     picker.update(cx, |picker, cx| picker.show(window, cx));
     shell.show_modal(COMMAND_PALETTE, picker, window, cx);
 }

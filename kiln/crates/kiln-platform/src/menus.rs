@@ -172,7 +172,7 @@ pub fn refresh(cx: &mut App) {
 
 /// The ID of the menu macOS keeps the window list in: kiln's bundled
 /// Window menu's, its en-US name, whatever its title in the active locale.
-pub const WINDOW_MENU_ID: &str = "Window";
+pub const WINDOW_MENU_ID: &str = kiln_l10n::verbatim!("Window");
 
 /// The index of the menu GPUI's macOS backend doesn't make the app's
 /// Windows menu itself: the one whose ID is [`WINDOW_MENU_ID`], when its

@@ -1,0 +1,279 @@
+# kiln-ui's exceptions to the literal lint (kiln_l10n::lint::literals).
+all = true
+
+# Doc comments on the items the icons! and files! macros generate, which
+# reach them as string tokens.
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " An icon bundled with kiln-ui; draw it with `svg().path(icon.path())`"
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " once the app's asset source serves [`crate::Assets`]."
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " Every bundled icon."
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " Its upstream name, Lucide's or Tabler's, e.g. `\"file-code\"`."
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " Every icon is served under `kiln-ui/icons/`, whichever set"
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " it's from, so no name repeats across them."
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " The asset path, e.g. `\"kiln-ui/icons/file-code.svg\"`."
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " The directory under `assets/` its file is in: `icons` for"
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " Lucide's, `tabler-icons` for Tabler's."
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " The SVG file, compiled in."
+reason = "A doc comment inside the icons! macro, never shown"
+
+[[literal]]
+file = "src/file_icons_coloured.rs"
+text = " Every bundled file: its stem, asset path and SVG."
+reason = "A doc comment inside the files! macro, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " The installed set. Per thread, as an app's globals are per app: an"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " app and every window it draws live on its UI thread, and each test's"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " app on its own. Free functions read it so callers without an `App`"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = " (a `PaneItem::tab_icon`, the gallery) can too."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/file_icons.rs"
+text = "coloured icon not found: {path}"
+reason = "An image cache error, which GPUI logs for the app's developer when an asset is missing"
+
+# Doc comments on items inside thread_local!, which the lint reads as
+# string literals.
+
+[[literal]]
+file = "src/theme.rs"
+text = " The active theme's appearance, for what answers without an `App`,"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/theme.rs"
+text = " as an icon set does. Per thread, as the icon set is"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/theme.rs"
+text = " (`file_icons::ICON_SET`)."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/theme.rs"
+text = " The active theme's colours, for what's drawn without an `App`, as a"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/theme.rs"
+text = " tinted icon is ([`IconRef::Tinted`](crate::IconRef::Tinted)). `None`"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/theme.rs"
+text = " until a theme is set, for the bundled dark base's."
+reason = "A doc comment inside thread_local!, never shown"
+
+# Constructor names in a debug assertion's message, for the app's developer.
+
+[[literal]]
+file = "src/controls.rs"
+text = "Button::icon_only"
+reason = "A constructor's name in assert_named's debug assertion"
+
+[[literal]]
+file = "src/icon_button.rs"
+text = "IconButton::new"
+reason = "A constructor's name in assert_named's debug assertion"
+
+# Element IDs and debug selectors, never shown.
+
+[[literal]]
+file = "src/breadcrumbs.rs"
+text = "crumb:{ix}:{label}"
+reason = "A crumb's debug selector"
+
+[[literal]]
+file = "src/breadcrumbs.rs"
+text = "crumb-icon:{}:{}"
+reason = "A crumb icon's debug selector"
+
+[[literal]]
+file = "src/icon_button.rs"
+text = "icon-button:{id}"
+reason = "An icon button's debug selector"
+
+[[literal]]
+file = "src/icon_button.rs"
+text = "icon-button-icon:{id}:{}"
+reason = "An icon button's icon's debug selector"
+
+[[literal]]
+file = "src/menu_bar.rs"
+text = "menu:{name}"
+reason = "A menu's debug selector"
+
+[[literal]]
+file = "src/menu_bar.rs"
+text = "menu-item:{title}"
+reason = "A menu item's debug selector"
+
+[[literal]]
+file = "src/segmented.rs"
+text = "segment:{label}"
+reason = "A segment's debug selector"
+
+[[literal]]
+file = "src/segmented.rs"
+text = "segmented:{id}"
+reason = "A segmented control's debug selector"
+
+[[literal]]
+file = "src/status_bar.rs"
+text = "status-item:{id}"
+reason = "A status item's debug selector"
+
+[[literal]]
+file = "src/status_bar.rs"
+text = "status-icon:{id}"
+reason = "A status icon's debug selector"
+
+[[literal]]
+file = "src/status_bar.rs"
+text = "status-tooltip:{}:{}"
+reason = "A status tooltip's debug selector"
+
+[[literal]]
+file = "src/tab_bar.rs"
+text = "tab-dirty:{label}"
+reason = "A tab's dirty dot's debug selector"
+
+[[literal]]
+file = "src/tab_bar.rs"
+text = "tab-close:{label}"
+reason = "A tab's close button's debug selector"
+
+[[literal]]
+file = "src/tab_bar.rs"
+text = "tab-icon:{}:{}"
+reason = "A tab icon's debug selector"
+
+[[literal]]
+file = "src/tab_bar.rs"
+text = "tab-pin:{label}"
+reason = "A tab's pin's debug selector"
+
+[[literal]]
+file = "src/tab_bar.rs"
+text = "tab-tooltip:{text}"
+reason = "A tab tooltip's debug selector"
+
+[[literal]]
+file = "src/tree_row.rs"
+text = "tree-row-edge:{label}"
+reason = "A tree row's debug selector"
+
+[[literal]]
+file = "src/tree_row.rs"
+text = "tree-guide:{label}:{level}"
+reason = "A tree guide's debug selector"
+
+[[literal]]
+file = "src/tree_row.rs"
+text = "tree-chevron:{label}:{state}"
+reason = "A tree chevron's debug selector"
+
+[[literal]]
+file = "src/tree_row.rs"
+text = "tree-icon:{label}:{}"
+reason = "A tree icon's debug selector"
+
+[[literal]]
+file = "src/tree_row.rs"
+text = "tree-detail:{label}"
+reason = "A tree row detail's debug selector"
+
+[[literal]]
+file = "src/tree_row.rs"
+text = "tree-badge:{label}"
+reason = "A tree badge's debug selector"
+
+[[literal]]
+file = "src/tree_row.rs"
+text = "tree-label:{label}"
+reason = "A tree label's debug selector"
+
+# Key names, as keymaps write them.
+
+[[literal]]
+file = "src/text_field.rs"
+text = "{word}-left"
+reason = "A key binding's keys, as a keymap writes them"
+
+[[literal]]
+file = "src/text_field.rs"
+text = "{word}-right"
+reason = "A key binding's keys, as a keymap writes them"
+
+[[literal]]
+file = "src/text_field.rs"
+text = "{word}-shift-left"
+reason = "A key binding's keys, as a keymap writes them"
+
+[[literal]]
+file = "src/text_field.rs"
+text = "{word}-shift-right"
+reason = "A key binding's keys, as a keymap writes them"
+
+[[literal]]
+file = "src/text_field.rs"
+text = "{word}-backspace"
+reason = "A key binding's keys, as a keymap writes them"
+
+[[literal]]
+file = "src/text_field.rs"
+text = "{word}-delete"
+reason = "A key binding's keys, as a keymap writes them"
