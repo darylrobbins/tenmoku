@@ -76,6 +76,159 @@ mod shaped {
     }
 }
 
+/// A text system that lays a line out as CoreText would, on every
+/// platform, for rows of left-to-right text with right-to-left runs:
+/// Hebrew and Arabic letters, and the neutrals between two of them, are
+/// painted right to left, in a left-to-right paragraph, each char one em
+/// wide (GPUI's no-op text system's em). Enough for [`RUST_RTL`].
+mod reordered {
+    use std::{borrow::Cow, sync::Arc};
+
+    use gpui::{
+        Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
+        NoopTextSystem, Pixels, PlatformTextSystem, RenderGlyphParams, ShapedGlyph, ShapedRun,
+        Size, TestAppContext, TestDispatcher, TextRenderingMode, point, px,
+    };
+
+    struct Reordering(NoopTextSystem);
+
+    fn rtl(ch: char) -> bool {
+        ('\u{590}'..='\u{8ff}').contains(&ch)
+    }
+
+    /// The byte index of each char of `text`, in paint order.
+    fn visual(text: &str) -> Vec<usize> {
+        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        let strong = |ch: char| rtl(ch) || ch.is_alphanumeric();
+        let mut order = Vec::new();
+        let mut at = 0;
+        while at < chars.len() {
+            if !rtl(chars[at].1) {
+                order.push(chars[at].0);
+                at += 1;
+                continue;
+            }
+            // A run to the last right-to-left letter before a
+            // left-to-right one, neutrals and all.
+            let mut end = at + 1;
+            let mut last = at;
+            while end < chars.len() && !(strong(chars[end].1) && !rtl(chars[end].1)) {
+                if rtl(chars[end].1) {
+                    last = end;
+                }
+                end += 1;
+            }
+            order.extend(chars[at..=last].iter().rev().map(|&(ix, _)| ix));
+            at = last + 1;
+        }
+        order
+    }
+
+    impl PlatformTextSystem for Reordering {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> gpui::Result<()> {
+            self.0.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.0.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> gpui::Result<FontId> {
+            self.0.font_id(descriptor)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.0.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> gpui::Result<Bounds<f32>> {
+            self.0.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> gpui::Result<Size<f32>> {
+            self.0.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            self.0.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            params: &RenderGlyphParams,
+        ) -> gpui::Result<Bounds<DevicePixels>> {
+            self.0.glyph_raster_bounds(params)
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> gpui::Result<(Size<DevicePixels>, Vec<u8>)> {
+            self.0.rasterize_glyph(params, raster_bounds)
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            let noop = self.0.layout_line(text, font_size, runs);
+            let em = font_size * 0.6;
+            let glyphs: Vec<ShapedGlyph> = (visual(text).into_iter().enumerate())
+                .map(|(ix, index)| ShapedGlyph {
+                    id: GlyphId(1),
+                    position: point(em * ix as f32, px(0.)),
+                    index,
+                    is_emoji: false,
+                })
+                .collect();
+            LineLayout {
+                width: em * glyphs.len() as f32,
+                runs: match glyphs.is_empty() {
+                    true => Vec::new(),
+                    false => vec![ShapedRun {
+                        font_id: FontId(0),
+                        glyphs,
+                    }],
+                },
+                ..noop
+            }
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> TextRenderingMode {
+            self.0.recommended_rendering_mode(font_id, font_size)
+        }
+    }
+
+    /// Runs `test` in an app laying text out reordered, and shuts it down.
+    pub(super) fn with_app(name: &'static str, test: impl FnOnce(&mut TestAppContext)) {
+        let text_system = Arc::new(Reordering(NoopTextSystem::new()));
+        let mut cx =
+            TestAppContext::build_with_text_system(TestDispatcher::new(0), Some(name), text_system);
+        test(&mut cx);
+        cx.run_until_parked();
+        cx.update(|cx| {
+            cx.background_executor().forbid_parking();
+            cx.quit();
+        });
+        cx.run_until_parked();
+    }
+
+    #[test]
+    fn rust_rtl_is_painted_as_coretext_paints_it() {
+        let order = visual(super::RUST_RTL);
+        let mut want: Vec<usize> = (0..9).collect();
+        want.extend([31, 29, 27, 25, 23, 22, 21, 20, 19, 18, 17, 15, 13, 11, 9]);
+        assert_eq!(order, want);
+        assert_eq!(visual("ab \u{5e9}\u{5dc} c"), [0, 1, 2, 5, 3, 7, 8]);
+    }
+}
+
 /// A focused editor 800 by 400 showing `text`, with carets at `carets`
 /// (the last is the primary one) and vim on or off, drawn once.
 fn editor<'a>(
@@ -235,7 +388,24 @@ fn click(at: Point<Pixels>, count: usize, modifiers: Modifiers, cx: &mut VisualT
 /// x from the line's start and font, in the order they're painted.
 #[cfg(target_os = "macos")]
 fn glyphs(text: &str, cx: &mut VisualTestContext) -> Vec<(usize, f32, gpui::FontId)> {
-    let line = cx.update(|window, cx| {
+    let line = shape(text, cx);
+    (line.runs.iter())
+        .flat_map(|run| {
+            (run.glyphs.iter()).map(|glyph| (glyph.index, glyph.position.x.into(), run.font_id))
+        })
+        .collect()
+}
+
+/// How wide `text` is shaped in the editor's font as one run.
+#[cfg(target_os = "macos")]
+fn line_width(text: &str, cx: &mut VisualTestContext) -> f32 {
+    shape(text, cx).width.into()
+}
+
+/// `text` shaped in the editor's font as one run.
+#[cfg(target_os = "macos")]
+fn shape(text: &str, cx: &mut VisualTestContext) -> std::sync::Arc<gpui::LineLayout> {
+    cx.update(|window, cx| {
         let theme = EditorTheme::default_dark(cx);
         let run = gpui::TextRun {
             len: text.len(),
@@ -248,12 +418,7 @@ fn glyphs(text: &str, cx: &mut VisualTestContext) -> Vec<(usize, f32, gpui::Font
         window
             .text_system()
             .layout_line(text, theme.font_size, &[run], None)
-    });
-    (line.runs.iter())
-        .flat_map(|run| {
-            (run.glyphs.iter()).map(|glyph| (glyph.index, glyph.position.x.into(), run.font_id))
-        })
-        .collect()
+    })
 }
 
 /// Where the glyph for byte `index` comes in paint order.
@@ -341,26 +506,34 @@ fn rtl_shaper_paints_rtl_runs_right_to_left() {
     });
 }
 
-/// Limitation G1: every caret position inside a right-to-left span gets
-/// the same x, the span's left edge, because GPUI's
-/// `LineLayout::x_for_index` takes the first glyph in paint order whose
-/// byte index is at or past the caret's. So the caret doesn't move on
-/// screen while Right steps through the Hebrew and Arabic, and the block
-/// caret, selection rects and input method window all sit there too.
+/// Right steps logically through the Hebrew string, then the Arabic
+/// comment (one right-to-left run with the neutrals between them), and
+/// the caret moves one letter leftwards each time, on the letter's logical
+/// edge, as VS Code's does (G1). After the opening quote it's on the run's
+/// left edge, still with the quote; after ש, the run's rightmost letter, on
+/// ש's left edge.
 #[cfg(target_os = "macos")]
 #[test]
-fn rtl_carets_inside_an_rtl_span_share_one_x() {
-    shaped::with_app("rtl_carets_inside_an_rtl_span_share_one_x", |cx| {
-        let (view, cx) = editor(RUST_RTL, &[0], false, cx);
-        let inside: Vec<f32> = (RUST_RTL.char_indices())
-            .map(|(at, _)| at)
-            .filter(|at| (HEBREW[0]..=ARABIC[4]).contains(at))
-            .map(|at| caret_x(&view, at, cx))
-            .collect();
-        assert!(inside.iter().all(|&x| x == inside[0]), "{inside:?}");
-        assert!(caret_x(&view, HEBREW[0] - 1, cx) < inside[0]);
-        assert!(caret_x(&view, RUST_RTL.len(), cx) > inside[0]);
-    });
+fn rtl_caret_x_moves_right_to_left_through_an_rtl_span() {
+    shaped::with_app(
+        "rtl_caret_x_moves_right_to_left_through_an_rtl_span",
+        |cx| {
+            let (view, cx) = editor(RUST_RTL, &[0], false, cx);
+            let hebrew: Vec<f32> = (HEBREW.into_iter().chain([17]))
+                .map(|offset| caret_x(&view, offset, cx))
+                .collect();
+            assert!(hebrew[1] > hebrew[0]);
+            assert!(hebrew[1] > hebrew[2]);
+            assert!(hebrew[2] > hebrew[3]);
+            assert!(hebrew[3] > hebrew[4]);
+            let arabic: Vec<f32> = (ARABIC.into_iter().chain([RUST_RTL.len()]))
+                .map(|offset| caret_x(&view, offset, cx))
+                .collect();
+            for pair in arabic.windows(2) {
+                assert!(pair[0] > pair[1], "{arabic:?}");
+            }
+        },
+    );
 }
 
 /// Hit-testing a mixed-direction row never panics and always gives a char
@@ -397,22 +570,92 @@ fn rtl_hit_testing_a_mixed_row_lands_on_char_boundaries() {
     );
 }
 
-/// Limitation G2: hit-testing reads glyphs as if they ran left to right.
-/// A click on the rightmost glyph of a row that ends in right-to-left
-/// text (the Hebrew string's first letter, painted last) lands at the
-/// row's end, not beside that letter (9 or 11).
+/// A click on a right-to-left glyph lands on its nearer logical edge, as
+/// VS Code's does (G2): on a row ending in Hebrew, the right half of ש,
+/// the string's first letter and the row's rightmost glyph, gives 9, its
+/// start, and the left half 11, its end.
 #[cfg(target_os = "macos")]
 #[test]
-fn rtl_click_on_the_last_painted_rtl_glyph_lands_at_the_row_end() {
+fn rtl_click_on_an_rtl_glyph_lands_on_its_nearer_logical_edge() {
     shaped::with_app(
-        "rtl_click_on_the_last_painted_rtl_glyph_lands_at_the_row_end",
+        "rtl_click_on_an_rtl_glyph_lands_on_its_nearer_logical_edge",
         |cx| {
             // Without the comment, the Hebrew is the row's last text.
             let row = "let s = \"שלום";
             let (view, cx) = editor(row, &[0], false, cx);
-            let x = glyph_x(&view, row, HEBREW[0], cx) + 4.;
-            click(on_row(&view, 0, x, cx), 1, Modifiers::none(), cx);
-            assert_eq!(head(&view, cx), row.len());
+            let left = glyph_x(&view, row, HEBREW[0], cx);
+            let right = caret_x(&view, 0, cx) + line_width(row, cx);
+            let at = |part: f32| left + (right - left) * part;
+            click(on_row(&view, 0, at(0.75), cx), 1, Modifiers::none(), cx);
+            assert_eq!(head(&view, cx), HEBREW[0]);
+            click(on_row(&view, 0, at(0.25), cx), 1, Modifiers::none(), cx);
+            assert_eq!(head(&view, cx), HEBREW[1]);
+        },
+    );
+}
+
+/// [`rtl_caret_x_moves_right_to_left_through_an_rtl_span`] on every
+/// platform, with the row laid out [`reordered`]: the caret after ש is on
+/// its left edge, near the row's right end, and the carets after each
+/// letter after it step leftwards (G1).
+#[test]
+fn rtl_reordered_caret_x_moves_right_to_left_through_an_rtl_span() {
+    reordered::with_app(
+        "rtl_reordered_caret_x_moves_right_to_left_through_an_rtl_span",
+        |cx| {
+            let (view, cx) = editor(RUST_RTL, &[0], false, cx);
+            let hebrew: Vec<f32> = (HEBREW.into_iter().chain([17]))
+                .map(|offset| caret_x(&view, offset, cx))
+                .collect();
+            assert!(hebrew[1] > hebrew[0]);
+            assert!(hebrew[1] > hebrew[2]);
+            assert!(hebrew[2] > hebrew[3]);
+            assert!(hebrew[3] > hebrew[4]);
+            let arabic: Vec<f32> = (ARABIC.into_iter().chain([RUST_RTL.len()]))
+                .map(|offset| caret_x(&view, offset, cx))
+                .collect();
+            for pair in arabic.windows(2) {
+                assert!(pair[0] > pair[1], "{arabic:?}");
+            }
+            // ש is the row's 24th and last glyph, a char an em wide.
+            let origin = caret_x(&view, 0, cx);
+            let em = caret_x(&view, 1, cx) - origin;
+            assert!((hebrew[1] - (origin + 23. * em)).abs() < 0.01, "{hebrew:?}");
+        },
+    );
+}
+
+/// [`rtl_click_on_an_rtl_glyph_lands_on_its_nearer_logical_edge`] on every
+/// platform, with the row laid out [`reordered`] (G2).
+#[test]
+fn rtl_reordered_click_on_an_rtl_glyph_lands_on_its_nearer_logical_edge() {
+    reordered::with_app(
+        "rtl_reordered_click_on_an_rtl_glyph_lands_on_its_nearer_logical_edge",
+        |cx| {
+            let row = "let s = \"שלום";
+            let (view, cx) = editor(row, &[0], false, cx);
+            // Nine LTR chars, then ם ו ל ש: ש is the 13th glyph.
+            let origin = caret_x(&view, 0, cx);
+            let em = caret_x(&view, 1, cx) - origin;
+            let left = origin + 12. * em;
+            click(
+                on_row(&view, 0, left + em * 0.75, cx),
+                1,
+                Modifiers::none(),
+                cx,
+            );
+            assert_eq!(head(&view, cx), HEBREW[0]);
+            click(
+                on_row(&view, 0, left + em * 0.25, cx),
+                1,
+                Modifiers::none(),
+                cx,
+            );
+            assert_eq!(head(&view, cx), HEBREW[1]);
+            assert_eq!(
+                hit(&view, on_row(&view, 0, left + em * 0.75, cx), cx),
+                HEBREW[0]
+            );
         },
     );
 }

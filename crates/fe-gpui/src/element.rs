@@ -39,6 +39,7 @@ use crate::{
 };
 
 mod annotation_column;
+mod bidi;
 pub(crate) mod decorations;
 use decorations::{Decorations, Layer};
 
@@ -198,7 +199,7 @@ impl FrameLayout {
         }
         // The glyph with the last start at or before x: a combining mark
         // drawn over its base is such a glyph.
-        let index = row.line.layout.index_for_x(px(line_x))?;
+        let index = row.line.char_index_at(line_x)?;
         let offset = row.shown().start + row.expanded.to_buffer(index, fe_buffer::Bias::Left);
         Some(grapheme_start(text, offset, row.start))
     }
@@ -387,9 +388,26 @@ fn inlay_x(frame: &Frame<Line>, index: usize) -> Option<f32> {
 pub(crate) struct Line {
     layout: Arc<LineLayout>,
     decorations: Vec<DecorationRun>,
+    /// Of a row with right-to-left text, its graphemes' directions and
+    /// places, which carets and hit-testing go by instead of GPUI's maths
+    /// ([`bidi`]).
+    bidi: Option<Arc<bidi::Bidi>>,
 }
 
 impl Line {
+    /// `text` as GPUI shaped it, coloured by `decorations`.
+    pub(crate) fn new(
+        text: &str,
+        layout: Arc<LineLayout>,
+        decorations: Vec<DecorationRun>,
+    ) -> Self {
+        Self {
+            bidi: bidi::Bidi::new(text, &layout).map(Arc::new),
+            layout,
+            decorations,
+        }
+    }
+
     /// The colour of the byte at `index` of the shaped text.
     pub(crate) fn color_at(&self, index: usize) -> Option<Hsla> {
         let mut end = 0;
@@ -442,15 +460,17 @@ impl Line {
                     .collect(),
             })
             .collect();
+        let layout = Arc::new(LineLayout {
+            font_size: layout.font_size,
+            width: px(width),
+            ascent: layout.ascent,
+            descent: layout.descent,
+            runs,
+            len: layout.len,
+        });
         Self {
-            layout: Arc::new(LineLayout {
-                font_size: layout.font_size,
-                width: px(width),
-                ascent: layout.ascent,
-                descent: layout.descent,
-                runs,
-                len: layout.len,
-            }),
+            bidi: (self.bidi.as_ref()).map(|bidi| Arc::new(bidi.placed(&layout))),
+            layout,
             decorations: self.decorations.clone(),
         }
     }
@@ -468,6 +488,15 @@ impl Line {
     fn x_to_boundary(&self, x: f32) -> usize {
         MeasuredLine::index_for_x(self, x)
     }
+
+    /// The byte index where the glyph under `x` starts, from the line's
+    /// start; `None` at or past its width.
+    fn char_index_at(&self, x: f32) -> Option<usize> {
+        match &self.bidi {
+            Some(bidi) => bidi.char_at(x),
+            None => self.layout.index_for_x(px(x)),
+        }
+    }
 }
 
 impl MeasuredLine for Line {
@@ -476,11 +505,27 @@ impl MeasuredLine for Line {
     }
 
     fn x_for_index(&self, index: usize) -> f32 {
-        self.layout.x_for_index(index).into()
+        match &self.bidi {
+            Some(bidi) => bidi.x_for_index(index),
+            None => self.layout.x_for_index(index).into(),
+        }
     }
 
     fn index_for_x(&self, x: f32) -> usize {
-        self.layout.closest_index_for_x(px(x))
+        match &self.bidi {
+            Some(bidi) => bidi.index_for_x(x),
+            None => self.layout.closest_index_for_x(px(x)),
+        }
+    }
+
+    fn visual_ranges(&self, range: Range<usize>) -> Vec<Range<f32>> {
+        match &self.bidi {
+            Some(bidi) => bidi.visual_ranges(range),
+            None => {
+                let (start, end) = (self.x_for_index(range.start), self.x_for_index(range.end));
+                vec![start.min(end)..start.max(end)]
+            }
+        }
     }
 }
 
@@ -537,12 +582,12 @@ impl TextMeasure for Shaper {
             underline: None,
             strikethrough: None,
         }];
-        Line {
-            layout: self
-                .text_system
+        Line::new(
+            text,
+            self.text_system
                 .layout_line(text, self.font_size, &whole, None),
-            decorations: decoration_runs(runs),
-        }
+            decoration_runs(runs),
+        )
     }
 }
 
@@ -2551,9 +2596,23 @@ fn block_rect(layout: &mut FrameLayout, text: &Text, head: usize) -> Option<Rect
         true => row.ghost_width(),
         false => 0.,
     };
+    let next = next_grapheme(text, head, row.end.min(line_end));
+    // In right-to-left text a grapheme's edges aren't the carets at its
+    // ends: the block covers where it's painted.
+    if inlay == 0.
+        && let Some(painted) = next.and_then(|next| painted_extent(row, head..next))
+        && painted.end > painted.start
+    {
+        let x = frame.view_x(painted.start);
+        return Some(Rect {
+            x,
+            width: frame.view_x(painted.end) - x,
+            ..bar
+        });
+    }
     // Past the hints at `head`: the block is on the character, not them.
     let start = frame.view_x(row.x_after_hints(head, long_rows, glyph_widths));
-    let end = next_grapheme(text, head, row.end.min(line_end))
+    let end = next
         .map(|next| frame.view_x(row.x_for_offset(next, long_rows, glyph_widths) - inlay))
         .filter(|&end| end > start);
     let width = end.map_or_else(|| glyph_widths.char_width(' '), |end| end - start);
@@ -2562,6 +2621,24 @@ fn block_rect(layout: &mut FrameLayout, text: &Text, head: usize) -> Option<Rect
         width,
         ..bar
     })
+}
+
+/// Of a row with right-to-left text that shows the buffer bytes `range`,
+/// where they're painted, from column 0: from the left of their leftmost
+/// glyph to the right of their rightmost, past any hint before them.
+fn painted_extent(row: &layout::RowLayout<Line>, range: Range<usize>) -> Option<Range<f64>> {
+    row.line.bidi.as_ref()?;
+    let shown = row.shown();
+    if range.start < shown.start || range.end > shown.end {
+        return None;
+    }
+    let from = row
+        .expanded
+        .to_display_after_hints(range.start - shown.start);
+    let to = row.expanded.to_display(range.end - shown.start);
+    let pieces = row.line.visual_ranges(from..to);
+    let x = |x: f32| row.start_x() + f64::from(x);
+    Some(x(pieces.first()?.start)..x(pieces.last()?.end))
 }
 
 /// The block over the grapheme after the caret of `composing`, drawn at

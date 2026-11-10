@@ -121,6 +121,14 @@ pub trait MeasuredLine {
     fn x_for_index(&self, index: usize) -> f32;
     /// The boundary closest to `x`.
     fn index_for_x(&self, x: f32) -> usize;
+    /// Where `range` is drawn, as x ranges from the line's start, left to
+    /// right: one per visual piece, as a range crossing a change of text
+    /// direction is drawn in several. By default one, between the x of its
+    /// two ends.
+    fn visual_ranges(&self, range: Range<usize>) -> Vec<Range<f32>> {
+        let (start, end) = (self.x_for_index(range.start), self.x_for_index(range.end));
+        vec![start.min(end)..start.max(end)]
+    }
 }
 
 /// Styles that aren't syntax highlights.
@@ -1524,7 +1532,9 @@ fn lay_out_frame<M: TextMeasure>(
             if from > to || from == to && !line_break {
                 continue;
             }
-            let mut right = x_at(row, to);
+            // In right-to-left text the end can be left of the start.
+            let (start, end) = (x_at(row, from), x_at(row, to));
+            let (left, mut right) = (start.min(end), start.max(end));
             if line_break {
                 right += em * 0.6;
             }
@@ -1533,7 +1543,7 @@ fn lay_out_frame<M: TextMeasure>(
             // With no text area, both edges are at its left.
             let clamp = |x: f32| x.clamp(text_left - em, (width + em).max(text_left - em));
             selection_rects.push(Rect::from_corners(
-                clamp(x_at(row, from)),
+                clamp(left),
                 row_top(row.row),
                 clamp(right),
                 row_top(row.row) + line_height,

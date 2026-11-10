@@ -382,16 +382,17 @@ impl Decorations {
                             .text_system()
                             .layout_line(&label, theme.font_size, &[run], None);
                     let width: f32 = shaped.width.into();
-                    let line = Line {
-                        layout: shaped,
-                        decorations: vec![DecorationRun {
+                    let line = Line::new(
+                        &label,
+                        shaped,
+                        vec![DecorationRun {
                             len: label.len() as u32,
                             color,
                             background_color: None,
                             underline: None,
                             strikethrough: None,
                         }],
-                    };
+                    );
                     place(whole_row(row.row, *x, width), color, Some(line));
                     *x += width + em;
                 }

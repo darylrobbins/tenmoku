@@ -35,6 +35,8 @@ log.workspace = true
 # An SVG's size and links are read as GPUI's renderer reads them (image_viewer.rs).
 usvg.workspace = true
 unicode-segmentation.workspace = true
+# Each glyph's direction in rows with right-to-left text (element/bidi.rs).
+unicode-bidi.workspace = true
 
 [dev-dependencies]
 # The literal and key checks, and the command keys' (tests/l10n.rs).
