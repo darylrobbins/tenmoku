@@ -1,17 +1,35 @@
 name: Grammars
 
-# Builds the first-party WebAssembly grammars (extensions/grammars/) from the
-# Cargo.lock-pinned crate sources, checks each highlights as the built-in
-# language does (scripts/build-grammar-wasm.sh), and attaches the modules to
-# the tag's GitHub Release with the language pack (scripts/package-language-pack.sh), which release.yml creates. A manual run from a tag
-# does the same; from a branch, which has no release, it uploads them as a
-# workflow artifact. See docs/decisions/jd5c0dwjt7-grammar-wasm.md and
-# docs/decisions/vkgx7c7far-grammar-wasm.md.
+# Builds the first-party WebAssembly grammars (extensions/grammars/) and the
+# grammar registry: each language's artifact, the index and the pack
+# tarballs (scripts/build-grammar-wasm.sh, scripts/build-grammar-registry.sh).
+# On main, signs the index and publishes it all to the GitHub releases of
+# tenmoku-editor/registry (scripts/publish-grammar-registry.sh), so a new
+# grammar reaches users with no app release. docs/release/grammar-registry.md
+# documents the registry, and
+# docs/decisions/yw5ahyq2bj-grammar-registry-publish.md this workflow.
+#
+# The build job compiles third-party grammar C, so it never sees a secret.
+# Only the publish job, in the registry environment (its secrets, and only
+# main may deploy to it), can sign or write to the registry.
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths:
+      - extensions/grammars/**
+      - scripts/build-grammar-*.sh
+      - scripts/package-language-pack.sh
+      - scripts/publish-grammar-registry.sh
+      - crates/fe-registry/**
+      - .github/workflows/grammars.yml
   workflow_dispatch:
+
+# One publish at a time, none cut short: a cancelled publish could leave
+# the index release half uploaded.
+concurrency:
+  group: grammar-registry
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -22,15 +40,16 @@ env:
   WASI_SDK_SHA256: 9c59398106b417f8f14913380fdf0097a8cc0ff4af9eb3ce0065a859e88d49e9
 
 jobs:
-  grammars:
+  build:
     # Apple Silicon, for the wasi-sdk archive below.
     runs-on: macos-15
-    # 45 for the build, 120 for the wait for the release below.
-    timeout-minutes: 165
+    timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -48,37 +67,60 @@ jobs:
           echo "WASI_SDK=$RUNNER_TEMP/$name" >>"$GITHUB_ENV"
       - name: Build the grammars and check them against the golden files
         run: scripts/build-grammar-wasm.sh
-      - name: Package the language pack
-        run: scripts/package-language-pack.sh
-      - name: Attach them to the GitHub Release
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # release.yml, on the same tag, is the only creator of the release, so
-        # that its `gh release view` then `create` can't lose to this: wait for
-        # it. Its manual run publishes nothing, so a manual run here doesn't
-        # wait. crates/fe-syntax/tests/wasm_parity.rs runs this and release.yml's
-        # publishing in each order.
-        run: |
-          tries=240
-          [ "$GITHUB_EVENT_NAME" = push ] || tries=1
-          until gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; do
-            tries=$((tries - 1))
-            if [ "$tries" -eq 0 ]; then
-              echo "no release $GITHUB_REF_NAME: release.yml creates it; rerun this job once it has" >&2
-              exit 1
-            fi
-            sleep 30
-          done
-          gh release upload "$GITHUB_REF_NAME" target/grammar-wasm/*.wasm \
-            dist/Tenmoku-language-pack.tar.gz dist/Tenmoku-language-pack.tar.gz.sha256 --clobber
-      - name: Upload them as a workflow artifact
-        if: github.ref_type != 'tag'
+      - name: Build the registry
+        # The serial is HEAD's committer time, so a later commit's index
+        # supersedes an earlier one's.
+        run: REGISTRY_SERIAL="$(git log -1 --format=%ct)" scripts/build-grammar-registry.sh
+      - name: Upload the registry as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: grammar-wasm
-          path: |
-            target/grammar-wasm/*.wasm
-            dist/Tenmoku-language-pack.tar.gz
-            dist/Tenmoku-language-pack.tar.gz.sha256
+          name: grammar-registry
+          path: target/registry
           if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    # Holds TENMOKU_REGISTRY_PRIVATE_KEY and TENMOKU_REGISTRY_APP_KEY, and
+    # allows only main.
+    environment: registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      # No build cache here: this job holds the secrets, and a cache is
+      # writable from any job.
+      - name: Build grammar-registry
+        run: cargo build --locked -p fe-registry --bin grammar-registry
+      - uses: actions/download-artifact@v8
+        with:
+          name: grammar-registry
+          path: target/registry
+      - name: Sign the index
+        # The key goes to stdin, never argv or a log, and only the built
+        # binary runs with it in its environment, not cargo or a build script.
+        env:
+          TENMOKU_REGISTRY_PRIVATE_KEY: ${{ secrets.TENMOKU_REGISTRY_PRIVATE_KEY }}
+        run: |
+          printenv TENMOKU_REGISTRY_PRIVATE_KEY |
+            target/debug/grammar-registry sign --index target/registry/index.json
+      - name: Mint a token for tenmoku-editor/registry
+        id: token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.TENMOKU_REGISTRY_APP_ID }}
+          private-key: ${{ secrets.TENMOKU_REGISTRY_APP_KEY }}
+          owner: tenmoku-editor
+          repositories: registry
+          permission-contents: write
+      - name: Publish to tenmoku-editor/registry
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GRAMMAR_REGISTRY: target/debug/grammar-registry
+        run: scripts/publish-grammar-registry.sh --dist target/registry --repo tenmoku-editor/registry

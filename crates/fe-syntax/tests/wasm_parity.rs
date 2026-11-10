@@ -1672,173 +1672,120 @@ fn ruby_extension_is_as_built_in() {
     );
 }
 
-/// `release.yml` and `grammars.yml` publish to one release from the same tag.
-/// These run both workflows' real publishing scripts against a fake `gh`, whose
-/// `release create` fails if the release exists, as GitHub's does.
-#[cfg(unix)]
+/// `grammars.yml` publishes to the registry repository, never the app's
+/// releases, and only its main-only `publish` job can sign or write
+/// (docs/decisions/yw5ahyq2bj-grammar-registry-publish.md).
 mod publishing {
-    use std::{os::unix::fs::PermissionsExt, process::Command};
-
     use super::*;
 
-    const APP: &str = "Publish the GitHub Release";
-    const GRAMMARS: &str = "Attach them to the GitHub Release";
-
-    const FAKE_GH: &str = r#"#!/bin/sh
-echo "$PUBLISHER $2" >>log
-case $2 in
-view)
-  [ -e release ] && exit 0
-  # WINDOW: the grammars publisher runs after the app's view, before its create.
-  if [ "$PUBLISHER" = app ] && [ -n "$WINDOW" ]; then
-    PUBLISHER=grammars WINDOW= AT_SLEEP=stop bash -e grammars.sh
-  fi
-  exit 1
-  ;;
-create) [ ! -e release ] && touch release ;;
-upload) [ -e release ] ;;
-esac
-"#;
-
-    /// What the grammars publisher's wait lets happen: the app publisher runs,
-    /// or the wait is cut short.
-    const FAKE_SLEEP: &str = r#"#!/bin/sh
-echo "$PUBLISHER sleep" >>log
-case $AT_SLEEP in
-app) PUBLISHER=app bash -e app.sh ;;
-stop) exit 1 ;;
-esac
-"#;
-
-    /// The `run: |` script of the step `name` in a workflow.
-    fn step_script(workflow: &str, name: &str) -> String {
-        let text = read(&repository().join(".github/workflows").join(workflow));
-        let indent = |line: &str| line.len() - line.trim_start().len();
-        let mut lines = text
-            .lines()
-            .skip_while(|line| line.trim() != format!("- name: {name}"))
-            .skip_while(|line| line.trim() != "run: |");
-        let run = lines
-            .next()
-            .unwrap_or_else(|| panic!("{workflow} has no step {name} with a run: | script"));
-        lines
-            .take_while(|line| line.trim().is_empty() || indent(line) > indent(run))
-            .map(|line| line.get(indent(run) + 2..).unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n")
+    fn workflow() -> String {
+        read(&repository().join(".github/workflows/grammars.yml"))
     }
 
-    /// A directory holding both publishers' scripts and the fake commands.
-    struct Stage(PathBuf);
-
-    impl Stage {
-        fn new(name: &str) -> Self {
-            let dir =
-                std::env::temp_dir().join(format!("publishing-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("bin")).unwrap();
-            for (command, script) in [("gh", FAKE_GH), ("sleep", FAKE_SLEEP)] {
-                let file = dir.join("bin").join(command);
-                fs::write(&file, script).unwrap();
-                fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+    /// Each job under `jobs:`, by name, with its lines; and the text before
+    /// `jobs:`.
+    fn jobs(workflow: &str) -> (String, BTreeMap<String, String>) {
+        let (top, rest) = workflow
+            .split_once("\njobs:\n")
+            .expect("grammars.yml has jobs");
+        let mut jobs: BTreeMap<String, String> = BTreeMap::new();
+        let mut current = None;
+        for line in rest.lines() {
+            let indent = line.len() - line.trim_start().len();
+            if indent == 2 && line.trim_end().ends_with(':') && !line.trim().starts_with('#') {
+                let name = line.trim().trim_end_matches(':').to_owned();
+                jobs.insert(name.clone(), String::new());
+                current = Some(name);
+            } else if let Some(job) = &current {
+                let text = jobs.get_mut(job).unwrap();
+                text.push_str(line);
+                text.push('\n');
             }
-            fs::write(dir.join("app.sh"), step_script("release.yml", APP)).unwrap();
-            fs::write(
-                dir.join("grammars.sh"),
-                step_script("grammars.yml", GRAMMARS),
-            )
-            .unwrap();
-            fs::write(dir.join("log"), "").unwrap();
-            Self(dir)
         }
+        (top.to_owned(), jobs)
+    }
 
-        /// Runs a publisher as Actions does, with `env` added; true if it succeeds.
-        fn publish(&self, who: &str, env: &[(&str, &str)]) -> bool {
-            let path = format!(
-                "{}:{}",
-                self.0.join("bin").display(),
-                std::env::var("PATH").unwrap()
+    #[test]
+    fn grammars_workflow_has_no_app_release_step() {
+        let workflow = workflow();
+        let (top, _) = jobs(&workflow);
+        // Triggered by main and by hand, never by an app tag.
+        assert!(top.contains("  push:\n    branches: [main]\n"), "{top}");
+        assert!(top.contains("  workflow_dispatch:"), "{top}");
+        for tag_trigger in ["tags:", "'v*'", "\"v*\""] {
+            assert!(
+                !top.contains(tag_trigger),
+                "grammars.yml triggers on {tag_trigger}"
             );
-            Command::new("bash")
-                .args(["-e", &format!("{who}.sh")])
-                .current_dir(&self.0)
-                .env("PATH", path)
-                .env("PUBLISHER", who)
-                .env("GITHUB_REF_NAME", "v1.0.0")
-                .env("GITHUB_EVENT_NAME", "push")
-                .envs(env.iter().copied())
-                .status()
-                .unwrap()
-                .success()
         }
-
-        fn log(&self) -> String {
-            read(&self.0.join("log"))
+        // Nothing reaches the app's release: no gh release here (the publish
+        // script does it, against the registry), no tag ref, no write to
+        // this repository.
+        for app_release in [
+            "Attach them to the GitHub Release",
+            "gh release",
+            "GITHUB_REF_NAME",
+            "github.ref_type",
+            "github.token",
+        ] {
+            assert!(
+                !workflow.contains(app_release),
+                "grammars.yml has {app_release:?}: grammars no longer ride on app releases"
+            );
         }
-
-        fn count(&self, entry: &str) -> usize {
-            self.log().lines().filter(|line| *line == entry).count()
-        }
-
-        /// The app created the release, the only creator, and the grammars
-        /// were uploaded to it.
-        fn assert_both_published(&self) {
-            let log = self.log();
-            assert_eq!(self.count("app create"), 1, "{log}");
-            assert_eq!(self.count("grammars create"), 0, "{log}");
-            assert_eq!(self.count("grammars upload"), 1, "{log}");
-        }
-    }
-
-    impl Drop for Stage {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn the_app_publishes_first() {
-        let stage = Stage::new("app-first");
-        assert!(stage.publish("app", &[]));
-        assert!(stage.publish("grammars", &[]));
-        stage.assert_both_published();
-    }
-
-    #[test]
-    fn the_grammars_wait_for_the_app_to_publish() {
-        let stage = Stage::new("grammars-first");
-        assert!(stage.publish("grammars", &[("AT_SLEEP", "app")]));
-        stage.assert_both_published();
-    }
-
-    #[test]
-    fn the_grammars_run_between_the_apps_view_and_create() {
-        let stage = Stage::new("window");
-        assert!(stage.publish("app", &[("WINDOW", "1")]));
-        assert_eq!(stage.count("grammars view"), 1, "{}", stage.log());
-        assert!(stage.publish("grammars", &[]));
-        stage.assert_both_published();
-    }
-
-    #[test]
-    fn a_release_that_never_comes_fails_the_grammars_without_creating_it() {
-        let stage = Stage::new("never");
-        assert!(!stage.publish("grammars", &[]));
-        let log = stage.log();
+        // The app token minted for the registry may write; this
+        // repository's token may not.
         assert!(
-            stage.count("grammars sleep") > 100,
-            "waits on a tag push: {log}"
+            !(workflow.lines()).any(|line| line.trim() == "contents: write"),
+            "grammars.yml's token can write to the app's repository"
         );
-        assert_eq!(stage.count("grammars create"), 0, "{log}");
-        assert_eq!(stage.count("grammars upload"), 0, "{log}");
+        assert!(
+            workflow.contains(
+                "scripts/publish-grammar-registry.sh --dist target/registry --repo \
+                 tenmoku-editor/registry"
+            ),
+            "the publish step names the registry repository"
+        );
     }
 
     #[test]
-    fn a_manual_run_does_not_wait_for_a_release() {
-        // release.yml's manual run publishes nothing, so nothing is coming.
-        let stage = Stage::new("manual");
-        assert!(!stage.publish("grammars", &[("GITHUB_EVENT_NAME", "workflow_dispatch")]));
-        assert_eq!(stage.log(), "grammars view\n");
+    fn only_the_publish_job_names_the_secrets() {
+        let workflow = workflow();
+        let (top, jobs) = jobs(&workflow);
+        assert_eq!(
+            jobs.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["build", "publish"]
+        );
+        for (name, text) in [("the top level", &top), ("the build job", &jobs["build"])] {
+            for secret in ["secrets.", "TENMOKU_REGISTRY", "environment:", "GH_TOKEN"] {
+                assert!(!text.contains(secret), "{name} names {secret:?}");
+            }
+        }
+        assert!(jobs["build"].contains("    permissions:\n      contents: read\n"));
+
+        let publish = &jobs["publish"];
+        for line in [
+            "    needs: build\n",
+            "    if: github.ref == 'refs/heads/main'\n",
+            "    environment: registry\n",
+        ] {
+            assert!(publish.contains(line), "the publish job has no {line:?}");
+        }
+        let secrets: BTreeSet<&str> = (publish.split("secrets.").skip(1))
+            .map(|rest| {
+                rest.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .next()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            secrets,
+            BTreeSet::from(["TENMOKU_REGISTRY_APP_KEY", "TENMOKU_REGISTRY_PRIVATE_KEY"])
+        );
+        // The signing key reaches the signer on stdin only.
+        assert!(publish.contains("printenv TENMOKU_REGISTRY_PRIVATE_KEY |"));
+        assert!(!publish.contains("echo"), "the publish job echoes");
+        assert!(!publish.contains("--key"), "a key on the command line");
     }
 }
 

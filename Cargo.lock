@@ -2484,6 +2484,8 @@ dependencies = [
 name = "fe-registry"
 version = "0.1.3"
 dependencies = [
+ "base64 0.22.1",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.10.9",

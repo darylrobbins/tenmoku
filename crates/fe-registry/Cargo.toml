@@ -1,6 +1,6 @@
 [package]
 name = "fe-registry"
-description = "The extension registry's index: generates and parses it. Must not depend on GPUI."
+description = "The extension registry's index: generates, parses, signs and verifies it. Must not depend on GPUI."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,10 @@ name = "grammar-registry"
 path = "src/bin/grammar-registry.rs"
 
 [dependencies]
+# The index's signature, with crates/fastedit/src/update_signature.rs (T1427),
+# which src/lib.rs includes by #[path].
+base64.workspace = true
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

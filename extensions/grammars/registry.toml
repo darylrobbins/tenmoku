@@ -14,6 +14,13 @@
 schema = 1
 url_template = "https://github.com/tenmoku-editor/registry/releases/download/{tag}/{file}"
 index_url = "https://github.com/tenmoku-editor/registry/releases/download/index/index.json"
+# The base64 of the Ed25519 public key index.json.sig is checked with: the
+# repository variable TENMOKU_REGISTRY_PUBLIC_KEY, whose private half is the
+# registry environment's secret TENMOKU_REGISTRY_PRIVATE_KEY. Not a secret,
+# and not the update feed's key. `grammar-registry sign` refuses a private key
+# that isn't this one's, and changing it needs an app release first
+# (docs/release/grammar-registry.md, "Key rotation").
+public_key = "LCH1AxJ47pBJJzrmMAr44WRCVP0cl0qVNrGc/imuwfg="
 
 [packs.shells]
 name = "Shells"

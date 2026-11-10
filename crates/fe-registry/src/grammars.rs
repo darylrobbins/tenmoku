@@ -259,6 +259,12 @@ pub struct Registry {
     pub schema: u32,
     pub url_template: String,
     pub index_url: String,
+    /// The base64 of the 32-byte Ed25519 key `index.json.sig` is checked
+    /// with ([`crate::signing`]). Optional here so a fixture that only
+    /// generates needs none; signing and verifying refuse a registry without
+    /// one, and the committed file has it.
+    #[serde(default)]
+    pub public_key: Option<String>,
     pub packs: BTreeMap<String, PackDefinition>,
 }
 
@@ -292,9 +298,13 @@ impl Registry {
 
     /// Reads `<grammars>/registry.toml`.
     pub fn read(grammars: &Path) -> Result<Registry, Error> {
-        let path = grammars.join(REGISTRY_FILE);
-        let text = fs::read_to_string(&path).map_err(io_error(&path))?;
-        Registry::parse(&path, &text)
+        Registry::read_file(&grammars.join(REGISTRY_FILE))
+    }
+
+    /// Reads a `registry.toml` at `path`, whatever its name.
+    pub fn read_file(path: &Path) -> Result<Registry, Error> {
+        let text = fs::read_to_string(path).map_err(io_error(path))?;
+        Registry::parse(path, &text)
     }
 }
 
