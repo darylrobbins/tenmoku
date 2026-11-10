@@ -27,6 +27,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _,
     IntoElement as _, ParentElement as _, SharedString, Styled as _, WeakEntity, Window, div, px,
 };
+use kiln_l10n::{text, tr};
 use kiln_shell::PaneView as _;
 
 use crate::{
@@ -305,9 +306,9 @@ impl PickerDelegate for BufferPicker {
 
     fn status(&self) -> Option<SharedString> {
         if self.rows.is_empty() {
-            Some("No open buffers".into())
+            Some(tr!("workbench-navigation-buffers-none"))
         } else if self.matches.is_empty() {
-            Some("No matching buffers".into())
+            Some(tr!("workbench-navigation-buffers-no-matches"))
         } else {
             None
         }
@@ -328,7 +329,8 @@ impl Workbench {
         let previous = window.focused(cx);
         let rows = rows(self, cx);
         let delegate = BufferPicker::new(cx.entity().downgrade(), rows, previous);
-        let picker = cx.new(|cx| Picker::new(delegate, "Buffers…", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-navigation-buffers-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));
         self.show_palette(Palette::Buffers, picker, window, cx);
     }

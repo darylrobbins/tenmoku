@@ -53,6 +53,7 @@ use crate::{
     Workbench,
     ignore_diagnostics::{is_container_ignore, is_ignore_file},
 };
+use kiln_l10n::tr;
 
 /// The most entries a completion list holds.
 pub(crate) const MAX_ENTRIES: usize = 200;
@@ -324,25 +325,44 @@ fn shown_paths(base: &Path, paths: &[PathBuf]) -> Vec<String> {
 /// A hover's text: how many paths matched and those `shown`. `truncated` says
 /// the walk didn't see the whole project, so `total` is a lower bound.
 fn describe(total: usize, shown: &[String], truncated: bool) -> String {
-    let count = match (total, truncated) {
-        (0, false) => return "This pattern matches no files".to_owned(),
-        (0, true) => return "This pattern matches no files in the part of the project read".into(),
-        (1, false) => "This pattern matches 1 file".to_owned(),
-        (_, false) => format!("This pattern matches {total} files"),
-        (1, true) => "This pattern matches at least 1 file".to_owned(),
-        (_, true) => format!("This pattern matches at least {total} files"),
-    };
+    match (total, truncated) {
+        (0, false) => return tr!("workbench-navigation-ignore-matches-none").into(),
+        (0, true) => return tr!("workbench-navigation-ignore-matches-none-read").into(),
+        _ => {}
+    }
     // Longer than any run of backticks in the paths.
     let longest = (shown.iter().flat_map(|path| path.split(|c| c != '`')))
         .map(str::len)
         .max()
         .unwrap_or(0);
     let fence = "`".repeat((longest + 1).max(3));
-    let mut text = format!("{count}:\n\n{fence}\n{}\n{fence}", shown.join("\n"));
-    if total > shown.len() {
-        text.push_str(&format!("\n\nand {} more", total - shown.len()));
-    }
-    text
+    let paths = [fence.as_str(), &shown.join("\n"), &fence].join("\n");
+    let more = total.saturating_sub(shown.len());
+    let text = match (truncated, more) {
+        (false, 0) => tr!(
+            "workbench-navigation-ignore-matches",
+            count = total,
+            paths = paths
+        ),
+        (true, 0) => tr!(
+            "workbench-navigation-ignore-matches-at-least",
+            count = total,
+            paths = paths
+        ),
+        (false, more) => tr!(
+            "workbench-navigation-ignore-matches-more",
+            count = total,
+            paths = paths,
+            more = more
+        ),
+        (true, more) => tr!(
+            "workbench-navigation-ignore-matches-at-least-more",
+            count = total,
+            paths = paths,
+            more = more
+        ),
+    };
+    text.into()
 }
 
 /// The path being typed on a line.

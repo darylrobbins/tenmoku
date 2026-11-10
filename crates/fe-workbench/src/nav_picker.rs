@@ -18,9 +18,11 @@ use gpui::{
     SharedString, Styled as _, Task, WeakEntity, Window, div,
 };
 
+use kiln_l10n::{Text, tr};
+
 use crate::{
     Picker, PickerDelegate, Workbench,
-    nav::{by, show_source},
+    nav::{show_source, source},
 };
 
 /// The most symbols a query shows.
@@ -31,7 +33,8 @@ pub(crate) const LIMIT: usize = 50;
 pub(crate) struct DefinitionsPicker {
     workbench: WeakEntity<Workbench>,
     items: Vec<Definition>,
-    status: SharedString,
+    /// Resolved as it's drawn.
+    status: Text,
     /// Focused before the picker opened, and again once it's dismissed.
     previous_focus: Option<FocusHandle>,
 }
@@ -41,7 +44,7 @@ impl DefinitionsPicker {
         Self {
             workbench,
             items: Vec::new(),
-            status: SharedString::default(),
+            status: Text::verbatim(""),
             previous_focus: None,
         }
     }
@@ -49,11 +52,11 @@ impl DefinitionsPicker {
     pub(crate) fn open(
         &mut self,
         items: Vec<Definition>,
-        status: String,
+        status: Text,
         previous_focus: Option<FocusHandle>,
     ) {
         self.items = items;
-        self.status = status.into();
+        self.status = status;
         // Shown again while it shows, it keeps what it restores.
         self.previous_focus = previous_focus.or(self.previous_focus.take());
     }
@@ -103,7 +106,7 @@ impl PickerDelegate for DefinitionsPicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        Some(self.status.clone())
+        Some(self.status.resolve())
     }
 }
 
@@ -123,8 +126,9 @@ pub(crate) struct SymbolsPicker {
     /// What `matches` are for.
     shown: Option<String>,
     matches: Vec<WorkspaceSymbol>,
-    /// How the shown matches were found, or why they weren't.
-    answer: Result<(String, Precision), String>,
+    /// How the shown matches were found, or why they weren't: the
+    /// search's error, or none before a query lands.
+    answer: Result<(String, Precision), Option<String>>,
     /// The query to run once the running one is done.
     pending: Option<String>,
     querying: Option<Task<()>>,
@@ -151,7 +155,7 @@ impl SymbolsPicker {
             query: String::new(),
             shown: None,
             matches: Vec::new(),
-            answer: Err(String::new()),
+            answer: Err(None),
             pending: None,
             querying: None,
             opening: 0,
@@ -183,7 +187,7 @@ impl SymbolsPicker {
         self.pending = None;
         self.shown = None;
         self.matches.clear();
-        self.answer = Err(String::new());
+        self.answer = Err(None);
     }
 
     pub(crate) fn indexing(&mut self, indexed: Option<usize>) {
@@ -264,7 +268,7 @@ impl SymbolsPicker {
                             }
                             Err(error) => {
                                 this.matches.clear();
-                                this.answer = Err(format!("Symbol search failed: {error}"));
+                                this.answer = Err(Some(error.to_string()));
                             }
                         }
                         picker.matches_updated(new_query, cx);
@@ -305,7 +309,7 @@ impl PickerDelegate for SymbolsPicker {
         };
         row(
             label,
-            kind_word(found.kind).into(),
+            kind_word(found.kind).to_string(),
             place(&found.location),
             &fe_ui::ui_theme(cx),
         )
@@ -328,14 +332,21 @@ impl PickerDelegate for SymbolsPicker {
 
     fn status(&self) -> Option<SharedString> {
         Some(match (&self.ready, self.indexing, &self.answer) {
-            (None, ..) => "No folder open".into(),
-            (_, Some(indexed), _) => format!("Indexing… {indexed} files").into(),
-            (_, None, Err(error)) => error.clone().into(),
-            (_, None, Ok((provider, precision))) => {
-                let count = self.matches.len();
-                let results = if count == 1 { "result" } else { "results" };
-                format!("{count} {results}{}", by(provider, *precision)).into()
+            (None, ..) => tr!("workbench-navigation-no-folder"),
+            (_, Some(indexed), _) => tr!("workbench-navigation-indexing", count = indexed),
+            (_, None, Err(None)) => SharedString::default(),
+            (_, None, Err(Some(error))) => {
+                tr!(
+                    "workbench-navigation-symbols-failed",
+                    error = error.as_str()
+                )
             }
+            (_, None, Ok((provider, precision))) => tr!(
+                "workbench-navigation-results",
+                count = self.matches.len(),
+                source = source(*precision),
+                provider = provider.as_str()
+            ),
         })
     }
 }
@@ -388,8 +399,10 @@ fn row_id(location: &Location) -> SharedString {
     id.into()
 }
 
-fn kind_word(kind: OutlineKind) -> &'static str {
-    match kind {
+/// A symbol's kind, as a row shows it.
+fn kind_word(kind: OutlineKind) -> SharedString {
+    // The message's `kind` argument.
+    let kind = match kind {
         OutlineKind::Module => "module",
         OutlineKind::Class => "class",
         OutlineKind::Struct => "struct",
@@ -408,5 +421,6 @@ fn kind_word(kind: OutlineKind) -> &'static str {
         OutlineKind::Variant => "variant",
         OutlineKind::Variable => "variable",
         _ => "symbol",
-    }
+    };
+    tr!("workbench-navigation-symbol-kind", kind = kind)
 }

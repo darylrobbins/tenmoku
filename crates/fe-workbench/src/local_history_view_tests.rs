@@ -3,6 +3,7 @@
 //! buffer's text as one undoable edit.
 
 use std::{
+    collections::VecDeque,
     fs,
     path::PathBuf,
     time::{Duration, SystemTime},
@@ -18,7 +19,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use kiln::platform::command_actions::typed_command;
 use kiln_shell::{Picker, command_palette::CommandPalette};
 
-use super::local_history_view::{restore_edits, stamp};
+use super::local_history_view::{ListingHolds, restore_edits, stamp};
 use crate::{
     Workbench,
     tests::find_bar::{draw, editor, editor_focused, opened, pane, run},
@@ -373,6 +374,61 @@ fn no_entries_shows_a_toast(cx: &mut TestAppContext) {
     assert_eq!(f.listed(), None);
     assert_eq!(f.toasts().last().unwrap(), "E32: No file name");
     assert_eq!(f.titles().len(), 2);
+}
+
+/// Holds the next listings' landing, in order, until each sender drops.
+fn hold_listings(n: usize, cx: &mut VisualTestContext) -> Vec<async_channel::Sender<()>> {
+    let (senders, receivers): (Vec<_>, VecDeque<_>) =
+        (0..n).map(|_| async_channel::bounded(1)).unzip();
+    cx.update(|_, cx| cx.set_global(ListingHolds(receivers)));
+    senders
+}
+
+/// A listing landing after quick open opened over the editor shows no
+/// picker: it would close quick open and take its focus.
+#[gpui::test]
+fn a_listing_landing_under_a_newer_modal_shows_nothing(cx: &mut TestAppContext) {
+    let mut f = fixture(cx, "now\n");
+    f.record("then\n", Reason::Saved, HOUR);
+    let mut held = hold_listings(1, f.cx);
+    run(SHOW, f.cx);
+    assert_eq!(f.listed(), None);
+    run("quick_open.toggle", f.cx);
+    let quick_open = f.workbench.read_with(f.cx, |workbench, cx| {
+        workbench.shell().read(cx).modals().read(cx).modal()
+    });
+    assert!(quick_open.is_some());
+
+    drop(held.pop());
+    draw(f.cx);
+    assert_eq!(f.listed(), None);
+    let shown = f.workbench.read_with(f.cx, |workbench, cx| {
+        workbench.shell().read(cx).modals().read(cx).modal()
+    });
+    assert_eq!(shown, quick_open);
+    assert!(!editor_focused(&f.tab, f.cx));
+}
+
+/// Of two listings, the older landing last doesn't replace the newer's.
+#[gpui::test]
+fn an_older_listing_landing_late_is_dropped(cx: &mut TestAppContext) {
+    let mut f = fixture(cx, "now\n");
+    f.record("then\n", Reason::Saved, HOUR);
+    let mut held = hold_listings(2, f.cx);
+    run(SHOW, f.cx);
+    f.record("newer\n", Reason::External, 5 * MINUTE);
+    run(SHOW, f.cx);
+    assert_eq!(f.listed(), None);
+
+    // The newer lands first, with both entries.
+    drop(held.pop());
+    draw(f.cx);
+    assert_eq!(f.listed().expect("the newer picker shows").len(), 2);
+
+    // The older, with one, is dropped.
+    drop(held.pop());
+    draw(f.cx);
+    assert_eq!(f.listed().expect("the newer picker still shows").len(), 2);
 }
 
 /// A version deleted while the picker was open answers, opening no tab.

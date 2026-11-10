@@ -34,6 +34,7 @@ use gpui::{
     InteractiveElement as _, IntoElement as _, Keystroke, ParentElement as _, SharedString,
     Styled as _, Task, WeakEntity, Window, div, px,
 };
+use kiln_l10n::tr;
 
 use crate::{
     Workbench, open,
@@ -382,10 +383,10 @@ impl PickerDelegate for RecentPicker {
             let picker = self.picker.clone();
             let id = SharedString::from(format!("recent-new-window-{ix}"));
             let button = IconButton::new(id, Icon::Copy, &ui)
-                .name("Open in New Window")
+                .name(tr!("workbench-navigation-recent-open-in-new-window"))
                 .tooltip(move |_, cx| {
                     let tooltip = Tooltip::new(
-                        "Open in New Window",
+                        tr!("workbench-navigation-recent-open-in-new-window"),
                         None::<SharedString>,
                         &fe_ui::ui_theme(cx),
                     );
@@ -446,7 +447,7 @@ impl PickerDelegate for RecentPicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        (self.loaded && self.rows.is_empty()).then(|| "No recently opened folders or files".into())
+        (self.loaded && self.rows.is_empty()).then(|| tr!("workbench-navigation-recent-none"))
     }
 }
 

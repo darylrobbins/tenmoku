@@ -28,6 +28,7 @@ use gpui::{
     InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString, Styled as _,
     Subscription, WeakEntity, Window, div, px, svg,
 };
+use kiln_l10n::{text, tr};
 
 use crate::{
     OutlinePanel, Workbench,
@@ -395,13 +396,16 @@ impl PickerDelegate for SymbolPicker {
 
     fn status(&self) -> Option<SharedString> {
         if self.parsing {
-            Some("Parsing…".into())
+            Some(tr!("workbench-navigation-symbols-parsing"))
         } else if self.items.is_empty() {
-            Some("No symbols".into())
+            Some(tr!("workbench-navigation-symbols-none"))
         } else if self.matches.is_empty() && !self.query.is_empty() {
-            Some("No matching symbols".into())
+            Some(tr!("workbench-navigation-symbols-no-matches"))
         } else if self.truncated {
-            Some(format!("The first {MAX_OUTLINE_ITEMS} symbols").into())
+            Some(tr!(
+                "workbench-navigation-symbols-truncated",
+                count = MAX_OUTLINE_ITEMS
+            ))
         } else {
             None
         }
@@ -442,7 +446,8 @@ impl Workbench {
             editor,
             previous,
         );
-        let picker = cx.new(|cx| Picker::new(delegate, "Go to symbol…", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-navigation-file-symbols-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| {
             picker.delegate.follow(&outline, cx);
             picker.show(window, cx);

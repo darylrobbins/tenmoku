@@ -13,6 +13,7 @@
 //! Neither has a default keybinding, as JetBrains' have none.
 
 use std::{
+    collections::HashMap,
     ops::Range,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -24,10 +25,11 @@ use fe_buffer::{
 };
 use fe_gpui::{EditorView, pane_item::file_name};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
-    ParentElement as _, SharedString, WeakEntity, Window, div,
+    AnyElement, App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable as _,
+    IntoElement as _, ParentElement as _, SharedString, WeakEntity, Window, div,
 };
 use imara_diff::{Algorithm, Diff, InternedInput};
+use kiln_l10n::{Text, text, tr};
 use kiln_shell::ModalId;
 
 use super::Workbench;
@@ -38,12 +40,6 @@ use crate::{
 
 /// The modal layer's id for the picker.
 const LOCAL_HISTORY_PICKER: ModalId = ModalId("local_history");
-
-/// What a command for the active file answers when it has none.
-const NO_FILE: &str = "E32: No file name";
-
-/// What `history.restore_local` answers outside an entry's diff.
-const NOT_A_HISTORY_DIFF: &str = "Open a Local History version to restore it";
 
 /// An entry newer than this many seconds shows how long ago it was.
 const RELATIVE_UNDER: u64 = 24 * 60 * 60;
@@ -101,37 +97,49 @@ fn local_stamp(seconds: u64) -> Option<String> {
     ))
 }
 
-/// When `time` was, seen at `now`: how long ago under a day, else its
-/// [`stamp`], as for one from the future, the clock having moved back.
-fn when(time: SystemTime, now: SystemTime) -> String {
+/// When `time` was, seen at `now`, as the row message's `ago` and `count`
+/// arguments: how long ago under a day (`now`, or a count of `minutes` or
+/// `hours`), else `stamp`, its [`stamp`] shown, as for one from the
+/// future, the clock having moved back.
+fn when(time: SystemTime, now: SystemTime) -> (&'static str, u64) {
     let Some(seconds) = (now.duration_since(time).ok())
         .map(|ago| ago.as_secs())
         .filter(|seconds| *seconds < RELATIVE_UNDER)
     else {
-        return stamp(time);
+        return ("stamp", 0);
     };
-    let (count, unit) = match seconds {
-        ..60 => return "just now".to_owned(),
-        60..3600 => (seconds / 60, "minute"),
-        _ => (seconds / 3600, "hour"),
-    };
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {unit}{plural} ago")
+    match seconds {
+        ..60 => ("now", 0),
+        60..3600 => ("minutes", seconds / 60),
+        _ => ("hours", seconds / 3600),
+    }
 }
 
 /// The row an entry shows as, seen at `now`.
-fn row_label(entry: &Entry, now: SystemTime) -> String {
+fn row_label(entry: &Entry, now: SystemTime) -> Text {
+    let (ago, count) = when(entry.time, now);
     let reason = match entry.reason {
-        Reason::Saved => "Saved",
-        Reason::External => "Changed on disk",
+        Reason::Saved => "saved",
+        Reason::External => "external",
     };
-    let size = fe_gpui::size_text(entry.len);
-    format!("{} · {reason} · {size}", when(entry.time, now))
+    text!(
+        "workbench-navigation-local-history-row",
+        ago = ago,
+        count = count,
+        stamp = stamp(entry.time),
+        reason = reason,
+        size = fe_gpui::size_text(entry.len)
+    )
 }
 
 /// The left side's title in an entry's diff.
 fn diff_label(entry: &Entry) -> String {
-    format!("Local History {}", stamp(entry.time))
+    let stamp = stamp(entry.time);
+    tr!(
+        "workbench-navigation-local-history-diff-title",
+        stamp = stamp
+    )
+    .into()
 }
 
 /// The replacements turning `old` into `new`, ascending and disjoint, as a
@@ -196,10 +204,11 @@ fn trimmed<'a>(
     )
 }
 
-/// One row: an entry and what it shows as.
+/// One row: an entry and what it shows as, resolved as it's drawn and
+/// matched.
 struct Row {
     entry: Entry,
-    label: String,
+    label: Text,
 }
 
 pub(crate) struct LocalHistoryPicker {
@@ -226,7 +235,7 @@ impl LocalHistoryPicker {
     /// The matches' labels.
     pub(super) fn labels(&self) -> Vec<String> {
         (self.matches.iter())
-            .map(|&row| self.rows[row].label.clone())
+            .map(|&row| self.rows[row].label.resolve().to_string())
             .collect()
     }
 }
@@ -236,7 +245,7 @@ impl PickerDelegate for LocalHistoryPicker {
     fn update_matches(&mut self, query: String, cx: &mut Context<Picker<Self>>) {
         let query = query.to_lowercase();
         self.matches = (0..self.rows.len())
-            .filter(|&row| self.rows[row].label.to_lowercase().contains(&query))
+            .filter(|&row| (self.rows[row].label.resolve().to_lowercase()).contains(&query))
             .collect();
         cx.notify();
         let picker = cx.entity();
@@ -255,7 +264,7 @@ impl PickerDelegate for LocalHistoryPicker {
 
     fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
         div()
-            .child(self.rows[self.matches[ix]].label.clone())
+            .child(self.rows[self.matches[ix]].label.resolve())
             .into_any_element()
     }
 
@@ -282,39 +291,61 @@ impl PickerDelegate for LocalHistoryPicker {
 
 impl Workbench {
     /// Lists the active file's local history in a picker, in place of any
-    /// palette. A toast says if it has no file or no entries.
+    /// palette. A toast says if it has no file or no entries. Only the
+    /// window's latest listing lands, and its picker shows only if nothing
+    /// moved meanwhile ([`Listing::holds`]).
     pub(super) fn show_local_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.active_editor(cx).cloned();
         let Some(editor) = editor else {
-            return toast::show(cx, Toast::info(NO_FILE));
+            return toast::show(cx, Toast::info(no_file()));
         };
         let Some(path) = self.op_path(&editor, cx) else {
-            return toast::show(cx, Toast::info(NO_FILE));
+            return toast::show(cx, Toast::info(no_file()));
         };
         let Some(history) = fe_gpui::pane_item::local_history(cx) else {
             return toast::show(cx, Toast::info(no_history(&path)));
         };
+        let listing = Listing::now(self, editor, window, cx);
+        #[cfg(test)]
+        let hold = (cx.has_global::<ListingHolds>())
+            .then(|| cx.global_mut::<ListingHolds>().next())
+            .flatten();
         let at = path.clone();
         let entries = cx.background_spawn(async move { history.entries(&at) });
         cx.spawn_in(window, async move |workbench, cx| {
             let entries = entries.await;
+            #[cfg(test)]
+            if let Some(hold) = hold {
+                hold.recv().await.ok();
+            }
             workbench
-                .update_in(cx, |workbench, window, cx| match entries {
-                    Ok(entries) if entries.is_empty() => {
-                        toast::show(cx, Toast::info(no_history(&path)))
+                .update_in(cx, |workbench, window, cx| {
+                    // A newer listing replaces this one.
+                    if !listing.latest(cx) {
+                        return;
                     }
-                    Ok(entries) => {
-                        // A picker for a file the user has since left isn't
-                        // what they're looking at.
-                        if workbench.active_editor(cx) == Some(&editor) {
-                            workbench.pick_history_entry(path, entries, &editor, window, cx);
+                    match entries {
+                        Ok(entries) if entries.is_empty() => {
+                            toast::show(cx, Toast::info(no_history(&path)))
                         }
-                    }
-                    Err(error) => {
-                        let name = file_name(Some(&path));
-                        let toast = Toast::error(format!("Couldn't read local history of {name}"))
-                            .detail(error.to_string());
-                        toast::show(cx, toast);
+                        Ok(entries) => {
+                            // A picker over what the user has since moved
+                            // to, or for a file they've left, isn't what
+                            // they're looking at.
+                            if listing.holds(workbench, window, cx) {
+                                let editor = listing.editor.clone();
+                                workbench.pick_history_entry(path, entries, &editor, window, cx);
+                            }
+                        }
+                        Err(error) => {
+                            let name = file_name(Some(&path));
+                            let message = tr!(
+                                "workbench-navigation-local-history-read-failed",
+                                name = name
+                            );
+                            let toast = Toast::error(message.to_string()).detail(error.to_string());
+                            toast::show(cx, toast);
+                        }
                     }
                 })
                 .ok();
@@ -345,8 +376,8 @@ impl Workbench {
             workbench: cx.entity().downgrade(),
         };
         self.dismiss_palette(window, cx);
-        let picker =
-            cx.new(|cx| Picker::new(delegate, "Select a Version", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-navigation-local-history-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));
         (self.shell().clone()).update(cx, |shell, cx| {
             shell.show_modal(LOCAL_HISTORY_PICKER, picker, window, cx)
@@ -381,8 +412,11 @@ impl Workbench {
                 .update_in(cx, |workbench, window, cx| match read {
                     Ok(text) => workbench.finish_saved_diff(ask, text, window, cx),
                     Err(error) => {
-                        let toast = Toast::error(format!("Couldn't read that version of {name}"))
-                            .detail(error.to_string());
+                        let message = tr!(
+                            "workbench-navigation-local-history-version-failed",
+                            name = name
+                        );
+                        let toast = Toast::error(message.to_string()).detail(error.to_string());
                         toast::show(cx, toast);
                     }
                 })
@@ -397,7 +431,8 @@ impl Workbench {
     /// and a toast says so.
     pub(super) fn restore_local_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(diff) = self.active_history_diff(cx) else {
-            return toast::show(cx, Toast::info(NOT_A_HISTORY_DIFF));
+            let message = tr!("workbench-navigation-local-history-not-a-version");
+            return toast::show(cx, Toast::info(message.to_string()));
         };
         let (left, right) = {
             let view = diff.read(cx);
@@ -420,8 +455,12 @@ impl Workbench {
                     let moved = right.read(cx).model().buffer().version() != version;
                     if moved {
                         let name = file_name(right.read(cx).model().path());
-                        let toast = Toast::info(format!("{name} changed while it was restored"))
-                            .detail("It wasn't restored. Try again.");
+                        let message = tr!(
+                            "workbench-navigation-local-history-restore-moved",
+                            name = name
+                        );
+                        let detail = tr!("workbench-navigation-local-history-restore-moved-detail");
+                        let toast = Toast::info(message.to_string()).detail(detail.to_string());
                         return toast::show(cx, toast);
                     }
                     right.update(cx, |editor, cx| {
@@ -445,10 +484,86 @@ impl Workbench {
     }
 }
 
+/// What a command for the active file answers when it has none.
+fn no_file() -> String {
+    tr!("workbench-navigation-local-history-no-file").into()
+}
+
 /// What a file with no entries answers.
 fn no_history(path: &Path) -> String {
-    format!("No local history for {}", file_name(Some(path)))
+    let name = file_name(Some(path));
+    tr!("workbench-navigation-local-history-none", name = name).into()
 }
+
+/// Each window's latest local history listing, by its workbench.
+#[derive(Default)]
+struct Listings(HashMap<EntityId, u64>);
+
+impl gpui::Global for Listings {}
+
+/// Where a listing was asked, and its number among its window's.
+struct Listing {
+    number: u64,
+    /// The active editor, whose file's entries are listed.
+    editor: Entity<EditorView>,
+    focused: Option<FocusHandle>,
+    modal: Option<ModalId>,
+}
+
+impl Listing {
+    /// A new listing asked of `workbench` now, of `editor`'s file.
+    fn now(
+        workbench: &Workbench,
+        editor: Entity<EditorView>,
+        window: &Window,
+        cx: &mut Context<Workbench>,
+    ) -> Self {
+        let id = cx.entity_id();
+        let latest = cx.default_global::<Listings>().0.entry(id).or_default();
+        *latest += 1;
+        Self {
+            number: *latest,
+            editor,
+            focused: window.focused(cx),
+            modal: workbench.shell().read(cx).modals().read(cx).modal(),
+        }
+    }
+
+    /// Whether it's its window's latest listing.
+    fn latest(&self, cx: &Context<Workbench>) -> bool {
+        let latest = cx
+            .try_global::<Listings>()
+            .and_then(|l| l.0.get(&cx.entity_id()));
+        latest == Some(&self.number)
+    }
+
+    /// Whether nothing moved since it was asked: the same editor is
+    /// active, focus is where it was, and no modal or palette shows but
+    /// the one that did, if any (the command palette it was run from,
+    /// closing): not quick open opened meanwhile, say.
+    fn holds(&self, workbench: &Workbench, window: &Window, cx: &Context<Workbench>) -> bool {
+        let modal = workbench.shell().read(cx).modals().read(cx).modal();
+        workbench.active_editor(cx) == Some(&self.editor)
+            && window.focused(cx) == self.focused
+            && (modal.is_none() || modal == self.modal)
+    }
+}
+
+/// Holds the next listings' landing, in order, each until its sender sends
+/// or drops.
+#[cfg(test)]
+#[derive(Default)]
+pub(super) struct ListingHolds(pub(super) std::collections::VecDeque<async_channel::Receiver<()>>);
+
+#[cfg(test)]
+impl ListingHolds {
+    fn next(&mut self) -> Option<async_channel::Receiver<()>> {
+        self.0.pop_front()
+    }
+}
+
+#[cfg(test)]
+impl gpui::Global for ListingHolds {}
 
 #[cfg(test)]
 impl Workbench {

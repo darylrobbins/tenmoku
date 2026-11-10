@@ -7,6 +7,7 @@ use gpui::{
     AnyElement, App, Context, Entity, Focusable as _, IntoElement as _, ParentElement as _,
     SharedString, WeakEntity, Window, div,
 };
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -99,8 +100,15 @@ impl GoToLine {
             Some(Target {
                 line,
                 column: Some(column),
-            }) => format!("Go to line {line}, column {column}"),
-            Some(Target { line, column: None }) => format!("Go to line {line}"),
+            }) => tr!(
+                "workbench-navigation-go-to-line-column",
+                line = line,
+                column = column
+            )
+            .into(),
+            Some(Target { line, column: None }) => {
+                tr!("workbench-navigation-go-to-line", line = line).into()
+            }
             None => String::new(),
         }
     }
@@ -179,9 +187,16 @@ impl PickerDelegate for GoToLine {
         Some(if self.target.is_some() {
             SharedString::default()
         } else if self.query_empty {
-            format!("Line {} of {}", self.caret_line, self.lines).into()
+            tr!(
+                "workbench-navigation-go-to-line-status",
+                line = self.caret_line,
+                lines = self.lines
+            )
         } else {
-            format!("Type a line number between 1 and {}", self.lines).into()
+            tr!(
+                "workbench-navigation-go-to-line-out-of-range",
+                lines = self.lines
+            )
         })
     }
 }

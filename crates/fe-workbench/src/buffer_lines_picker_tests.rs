@@ -8,7 +8,7 @@ use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_gpui::{EditorView, commands::RunCommand};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
-use super::MAX_ROWS;
+use super::{MAX_ROW_CHARS, MAX_ROWS, excerpt};
 use crate::{PickerDelegate as _, Workbench, tests::open_root, workbench::Palette};
 
 /// A workbench showing `notes.txt` holding `text`, focused.
@@ -161,4 +161,64 @@ fn caps_a_huge_buffer_and_says_so(cx: &mut TestAppContext) {
     let (listed, status) = rows(&workbench, cx);
     assert_eq!(listed, []);
     assert_eq!(status.as_deref(), Some("No matching lines"));
+}
+
+/// A row is matched whole: a query found past the chars a row shows still
+/// lists it, and its excerpt shows the match, highlighted.
+// One highlighted range, not a range of them.
+#[allow(clippy::single_range_in_vec_init)]
+#[gpui::test]
+fn matches_past_the_chars_a_row_shows(cx: &mut TestAppContext) {
+    let long = format!("{}needle{}", "a".repeat(1_200), "b".repeat(3_000));
+    let text = format!("short\n{long}\n");
+    let (_dir, workbench, _, cx) = opened(&text, cx);
+    run("search.buffer_lines", cx);
+    type_query(&workbench, "needle", cx);
+    let (listed, status) = rows(&workbench, cx);
+    assert_eq!(listed, [(2, long.clone(), vec![1_200..1_206])]);
+    assert_eq!(status, None);
+
+    let (shown, highlights) = excerpt(&long, &listed[0].2);
+    assert_eq!(shown.chars().count(), MAX_ROW_CHARS + 2);
+    assert!(shown.starts_with('…') && shown.ends_with('…'), "{shown}");
+    assert_eq!(highlights.len(), 1);
+    assert_eq!(&shown[highlights[0].clone()], "needle");
+}
+
+/// A row no longer than the cap shows whole; a longer one with nothing
+/// matched shows its start.
+// One highlighted range, not a range of them.
+#[allow(clippy::single_range_in_vec_init)]
+#[test]
+fn excerpts_cut_only_long_rows() {
+    assert_eq!(excerpt("short", &[1..2]), ("short".to_owned(), vec![1..2]));
+    let long = "é".repeat(MAX_ROW_CHARS + 5);
+    let (shown, highlights) = excerpt(&long, &[]);
+    assert_eq!(shown, format!("{}…", "é".repeat(MAX_ROW_CHARS)));
+    assert!(highlights.is_empty(), "{highlights:?}");
+}
+
+/// Focus moving off the picker hides it without a dismissal: the preview's
+/// scroll goes back all the same, and focus stays where it went.
+#[gpui::test]
+fn focus_moving_away_restores_the_scroll(cx: &mut TestAppContext) {
+    let text: String = (1..=300).map(|row| format!("row {row}\n")).collect();
+    let (_dir, workbench, editor, cx) = opened(&text, cx);
+    let top = |cx: &mut VisualTestContext| editor.read_with(cx, |editor, _| editor.scroll_top());
+    assert_eq!(top(cx), 0.);
+    run("search.buffer_lines", cx);
+    let picker = (workbench.read_with(cx, |workbench, cx| workbench.buffer_lines_picker(cx)))
+        .expect("the lines picker shows");
+    picker.update(cx, |picker, cx| picker.select(249, cx));
+    draw(cx);
+    assert!(top(cx) > 0., "the row is previewed");
+    drop(picker);
+
+    let elsewhere = workbench.read_with(cx, |workbench, cx| workbench.focus_handle(cx));
+    cx.update(|window, cx| window.focus(&elsewhere, cx));
+    draw(cx);
+    let shown = workbench.read_with(cx, |workbench, cx| workbench.buffer_lines_picker(cx));
+    assert!(shown.is_none(), "the picker is hidden");
+    assert_eq!(top(cx), 0., "the scroll is back");
+    assert!(cx.update(|window, _| elsewhere.is_focused(window)));
 }

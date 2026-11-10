@@ -6,8 +6,9 @@
 //! Rows match the query by subsequence over their text, ignoring case, the
 //! chars matched highlighted, in buffer order. Only the first
 //! [`MAX_ROWS`] rows of the buffer are listed; a longer buffer says so in
-//! the status line under the input. A row's text is listed and matched up
-//! to [`MAX_ROW_CHARS`] chars.
+//! the status line under the input. A row's whole text is matched; a row
+//! longer than [`MAX_ROW_CHARS`] chars shows as that many around its first
+//! matched char ([`excerpt`]).
 //!
 //! Moving the selection previews the row in the editor as the symbol
 //! picker previews a symbol ([`RowPreview`]): it scrolls there, opening a
@@ -28,6 +29,7 @@ use gpui::{
     IntoElement as _, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity,
     Window, div,
 };
+use kiln_l10n::{text, tr};
 
 use crate::{
     Workbench,
@@ -39,8 +41,11 @@ use crate::{
 /// The buffer rows listed at most.
 pub(crate) const MAX_ROWS: u32 = 50_000;
 
-/// The chars of a row listed and matched at most.
+/// The chars of a row shown at most.
 pub(crate) const MAX_ROW_CHARS: usize = 1_000;
+
+/// The chars an excerpt shows before its first matched char.
+const EXCERPT_LEAD: usize = 20;
 
 /// The folds before a preview opened some, and what says they still apply.
 struct FoldsBefore {
@@ -143,6 +148,9 @@ impl RowPreview {
     /// Dismissed: closes the folds the preview opened and puts the scroll
     /// back.
     pub(crate) fn restore(&mut self, cx: &mut App) {
+        if self.scroll_before.is_none() && self.folds_before.is_none() {
+            return;
+        }
         let Some(editor) = self.editor() else {
             return;
         };
@@ -161,8 +169,8 @@ impl RowPreview {
 struct Line {
     /// Its zero-based buffer row.
     row: u32,
-    /// Its text from its first char that isn't whitespace, up to
-    /// [`MAX_ROW_CHARS`] chars, its line break left out.
+    /// Its text from its first char that isn't whitespace, trailing
+    /// whitespace and its line break left out.
     text: String,
     /// Its first char that isn't whitespace, in bytes from the row's start.
     indent: usize,
@@ -178,18 +186,13 @@ fn lines(text: &Text) -> (Vec<Line>, bool) {
         let end = start + text.row_len(row) as usize;
         let mut indent = 0;
         let mut shown = String::new();
-        let mut taken = 0;
         let chars = text.chunks_in_range(start..end).flat_map(str::chars);
         for ch in chars {
             if shown.is_empty() && ch.is_whitespace() {
                 indent += ch.len_utf8();
                 continue;
             }
-            if taken == MAX_ROW_CHARS {
-                break;
-            }
             shown.push(ch);
-            taken += 1;
         }
         let kept = shown.trim_end().len();
         shown.truncate(kept);
@@ -218,6 +221,7 @@ pub(crate) struct BufferLinesPicker {
     /// Focused before it opened, and again once it's dismissed.
     previous_focus: Option<FocusHandle>,
     _follows: Option<Subscription>,
+    _released: Option<Subscription>,
 }
 
 impl BufferLinesPicker {
@@ -244,11 +248,18 @@ impl BufferLinesPicker {
             matches,
             previous_focus,
             _follows: None,
+            _released: None,
         }
     }
 
-    /// Previews the selected row from now on as the selection moves.
+    /// Previews the selected row from now on as the selection moves, and
+    /// puts the preview back however the picker goes unconfirmed: the modal
+    /// layer hides it without a dismissal when focus moves elsewhere, which
+    /// stays where it went.
     fn follow(&mut self, cx: &mut Context<Picker<Self>>) {
+        // A pick or a dismissal has already kept or restored it, leaving
+        // nothing to restore.
+        self._released = Some(cx.on_release(|picker, cx| picker.delegate.preview.restore(cx)));
         // `Picker::select` is the only way the selection moves, and it
         // notifies; the delegate has no hook for it.
         self._follows = Some(cx.observe_self(|picker, cx| {
@@ -310,7 +321,8 @@ impl PickerDelegate for BufferLinesPicker {
         let ui = fe_ui::ui_theme(cx);
         let (line, highlights) = &self.matches[ix];
         let line = &self.lines[*line];
-        let label = HighlightedLabel::new(line.text.clone(), highlights.clone(), &ui);
+        let (text, highlights) = excerpt(&line.text, highlights);
+        let label = HighlightedLabel::new(text, highlights, &ui);
         div()
             .flex()
             .flex_1()
@@ -378,17 +390,56 @@ impl PickerDelegate for BufferLinesPicker {
 
     fn status(&self) -> Option<SharedString> {
         if self.preview.editor.is_none() {
-            Some("No editor".into())
+            Some(tr!("workbench-navigation-buffer-lines-no-editor"))
         } else if self.lines.is_empty() {
-            Some("No lines".into())
+            Some(tr!("workbench-navigation-buffer-lines-none"))
         } else if self.matches.is_empty() {
-            Some("No matching lines".into())
+            Some(tr!("workbench-navigation-buffer-lines-no-matches"))
         } else if self.capped {
-            Some(format!("The first {} rows", group(MAX_ROWS)).into())
+            Some(tr!(
+                "workbench-navigation-buffer-lines-capped",
+                count = MAX_ROWS,
+                shown = group(MAX_ROWS)
+            ))
         } else {
             None
         }
     }
+}
+
+/// What a row of `text` shows, with its `highlights` (byte ranges of
+/// `text`) as byte ranges of what it shows: all of it, or for a row longer
+/// than [`MAX_ROW_CHARS`] chars, that many from a little before its first
+/// highlight, an ellipsis standing for what's cut off at either end.
+fn excerpt(text: &str, highlights: &[Range<usize>]) -> (String, Vec<Range<usize>>) {
+    const ELLIPSIS: &str = "…";
+    let chars = text.chars().count();
+    if chars <= MAX_ROW_CHARS {
+        return (text.to_owned(), highlights.to_vec());
+    }
+    let first = highlights
+        .first()
+        .map_or(0, |range| text[..range.start].chars().count());
+    let start = first
+        .saturating_sub(EXCERPT_LEAD)
+        .min(chars - MAX_ROW_CHARS);
+    let byte = |char_ix: usize| {
+        text.char_indices()
+            .nth(char_ix)
+            .map_or(text.len(), |(at, _)| at)
+    };
+    let (from, to) = (byte(start), byte(start + MAX_ROW_CHARS));
+    let lead = if from > 0 { ELLIPSIS } else { "" };
+    let trail = if to < text.len() { ELLIPSIS } else { "" };
+    let shown = format!("{lead}{}{trail}", &text[from..to]);
+    let shifted = (highlights.iter())
+        .filter(|range| range.end > from && range.start < to)
+        .map(|range| {
+            let (start, end) = (range.start.max(from), range.end.min(to));
+            start - from + lead.len()..end - from + lead.len()
+        })
+        .collect();
+    (shown, shifted)
 }
 
 /// `n` with its thousands grouped by commas.
@@ -421,7 +472,8 @@ impl Workbench {
         let previous = window.focused(cx);
         let editor = self.active_editor(cx).map(Entity::downgrade);
         let delegate = BufferLinesPicker::new(cx.entity().downgrade(), editor, previous, cx);
-        let picker = cx.new(|cx| Picker::new(delegate, "Search lines…", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-navigation-buffer-lines-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| {
             picker.delegate.follow(cx);
             picker.show(window, cx);

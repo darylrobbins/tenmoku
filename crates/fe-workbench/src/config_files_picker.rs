@@ -18,6 +18,7 @@ use gpui::{
     IntoElement as _, ParentElement as _, SharedString, Styled as _, Task, WeakEntity, Window, div,
     px,
 };
+use kiln_l10n::{text, tr};
 
 use crate::{
     Workbench,
@@ -272,13 +273,13 @@ impl PickerDelegate for ConfigFilesPicker {
 
     fn status(&self) -> Option<SharedString> {
         if self.dir.is_none() {
-            Some("No config folder".into())
+            Some(tr!("workbench-navigation-config-files-no-folder"))
         } else if !self.listed {
-            Some("Listing files…".into())
+            Some(tr!("workbench-navigation-config-files-listing"))
         } else if self.rows.is_empty() {
-            Some("No config files".into())
+            Some(tr!("workbench-navigation-config-files-none"))
         } else if self.matches.is_empty() {
-            Some("No matching files".into())
+            Some(tr!("workbench-navigation-config-files-no-matches"))
         } else {
             None
         }
@@ -302,8 +303,8 @@ impl Workbench {
         let previous = window.focused(cx);
         let dir = config_dir(cx);
         let delegate = ConfigFilesPicker::new(cx.entity().downgrade(), dir, previous);
-        let picker =
-            cx.new(|cx| Picker::new(delegate, "Open config file…", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-navigation-config-files-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| {
             picker.show(window, cx);
             picker.delegate.list(cx);

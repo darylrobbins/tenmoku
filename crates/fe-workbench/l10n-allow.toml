@@ -11,6 +11,20 @@ migrated = [
     "src/task_commands.rs",
     "src/git_commands.rs",
     "src/keymaps_picker.rs",
+    # W3 (rest): navigation and the pickers.
+    "src/nav.rs",
+    "src/nav_picker.rs",
+    "src/symbol_picker.rs",
+    "src/go_to_line.rs",
+    "src/quick_open.rs",
+    "src/harpoon.rs",
+    "src/local_history_view.rs",
+    "src/workbench_files.rs",
+    "src/ignore_assist.rs",
+    "src/buffer_picker.rs",
+    "src/buffer_lines_picker.rs",
+    "src/recent_picker.rs",
+    "src/config_files_picker.rs",
 ]
 
 # Ids and joins, not text: a picker row's element id, and the text a row's
@@ -40,3 +54,38 @@ reason = "What a row's query matches: its keys and its title, joined by a space"
 file = "src/git_commands.rs"
 text = "{name}{} {args}"
 reason = "The ex line as typed: the command's name, its `!` and its arguments"
+
+[[literal]]
+file = "src/harpoon.rs"
+text = "harpoon-row:{}"
+reason = "A Harpoon row's debug selector"
+
+[[literal]]
+file = "src/symbol_picker.rs"
+text = "symbol-picker-icon:{}:{path}"
+reason = "A symbol row icon's debug selector"
+
+[[literal]]
+file = "src/recent_picker.rs"
+text = "recent-icon:{name}:{path}"
+reason = "A recent row icon's debug selector"
+
+[[literal]]
+file = "src/recent_picker.rs"
+text = "recent-new-window-{ix}"
+reason = "A recent folder row's Open in New Window button's element id"
+
+[[literal]]
+file = "src/buffer_picker.rs"
+text = "buffer-icon:{name}:{path}"
+reason = "A buffer row icon's debug selector"
+
+[[literal]]
+file = "src/config_files_picker.rs"
+text = "config-files-icon:{name}:{path}"
+reason = "A config file row icon's debug selector"
+
+[[literal]]
+file = "src/nav.rs"
+text = " (by {provider})"
+reason = "The suffix references_panel.rs (W6, not yet migrated) still appends to its status; nav's own statuses are whole messages"

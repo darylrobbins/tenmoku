@@ -43,6 +43,7 @@ use gpui::{
     InteractiveElement as _, IntoElement as _, KeystrokeEvent, ParentElement as _, SharedString,
     Styled as _, Subscription, Task, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
+use kiln_l10n::{text, tr};
 use kiln_shell::{ModalId, picker::Mode};
 
 use crate::{
@@ -54,9 +55,6 @@ use crate::{
 
 /// The list picker's id in the modal layer.
 pub(crate) const HARPOON_LIST: ModalId = ModalId("harpoon");
-
-/// What a rootless window's commands say.
-pub(crate) const NO_FOLDER: &str = "Open a folder first";
 
 /// Where the lists are kept, if not under the user's state directory.
 struct StateDir(PathBuf);
@@ -151,8 +149,8 @@ fn shown(rel: &Path) -> String {
     parts.join("/")
 }
 
-fn toast(level: log::Level, message: String, cx: &mut App) {
-    Workbench::notify(cx, level, message, None);
+fn toast(level: log::Level, message: SharedString, cx: &mut App) {
+    Workbench::notify(cx, level, message.into(), None);
 }
 
 impl Workbench {
@@ -160,11 +158,15 @@ impl Workbench {
     /// root, or nowhere to keep its list.
     fn harpoon_place(&self, cx: &mut App) -> Option<(PathBuf, PathBuf)> {
         let Some(root) = self.root().map(Path::to_owned) else {
-            toast(log::Level::Info, NO_FOLDER.to_owned(), cx);
+            toast(
+                log::Level::Info,
+                tr!("workbench-navigation-harpoon-no-folder"),
+                cx,
+            );
             return None;
         };
         let Some(file) = list_file(&root, cx) else {
-            let message = "Harpoon marks can't be kept: no state directory".to_owned();
+            let message = tr!("workbench-navigation-harpoon-no-state-dir");
             toast(log::Level::Warn, message, cx);
             return None;
         };
@@ -176,12 +178,17 @@ impl Workbench {
         let pane = self.pane().read(cx);
         let path = (pane.active()).and_then(|ix| pane.tabs().get(ix)?.path.clone());
         let Some(path) = path else {
-            toast(log::Level::Info, "No file to mark".to_owned(), cx);
+            toast(
+                log::Level::Info,
+                tr!("workbench-navigation-harpoon-no-file"),
+                cx,
+            );
             return None;
         };
         let rel = relative(root, &path);
         if rel.is_none() {
-            let message = format!("{} isn't in the open folder", path.display());
+            let path = path.display().to_string();
+            let message = tr!("workbench-navigation-harpoon-outside-folder", path = path);
             toast(log::Level::Info, message, cx);
         }
         rel
@@ -212,23 +219,40 @@ impl Workbench {
                 let (level, message) = match added {
                     Ok((_, (Added::New(ix), rel))) => (
                         log::Level::Info,
-                        format!("Harpoon: marked {} as {}", shown(&rel), ix + 1),
+                        tr!(
+                            "workbench-navigation-harpoon-marked",
+                            file = shown(&rel),
+                            slot = ix + 1
+                        ),
                     ),
                     Ok((_, (Added::Already(ix), rel))) => (
                         log::Level::Info,
-                        format!("Harpoon: {} is already {}", shown(&rel), ix + 1),
+                        tr!(
+                            "workbench-navigation-harpoon-already-marked",
+                            file = shown(&rel),
+                            slot = ix + 1
+                        ),
                     ),
                     Ok((_, (Added::Full, _))) => (
                         log::Level::Info,
-                        format!("Harpoon: the list is full ({} files)", harpoon::MAX_MARKS),
+                        tr!(
+                            "workbench-navigation-harpoon-full",
+                            count = harpoon::MAX_MARKS
+                        ),
                     ),
                     Ok((_, (Added::Invalid, rel))) => (
                         log::Level::Info,
-                        format!("Harpoon: can't mark {}", rel.display()),
+                        tr!(
+                            "workbench-navigation-harpoon-cant-mark",
+                            file = rel.display().to_string()
+                        ),
                     ),
                     Err(error) => (
                         log::Level::Error,
-                        format!("Harpoon: can't save the list: {error}"),
+                        tr!(
+                            "workbench-navigation-harpoon-save-failed",
+                            error = error.to_string()
+                        ),
                     ),
                 };
                 toast(level, message, cx);
@@ -260,10 +284,19 @@ impl Workbench {
             };
             cx.update(|cx| {
                 let message = match removed {
-                    Ok((_, (true, rel))) => format!("Harpoon: unmarked {}", shown(&rel)),
-                    Ok((_, (false, rel))) => format!("Harpoon: {} isn't marked", shown(&rel)),
+                    Ok((_, (true, rel))) => {
+                        tr!("workbench-navigation-harpoon-unmarked", file = shown(&rel))
+                    }
+                    Ok((_, (false, rel))) => {
+                        tr!(
+                            "workbench-navigation-harpoon-not-marked",
+                            file = shown(&rel)
+                        )
+                    }
                     Err(error) => {
-                        let message = format!("Harpoon: can't save the list: {error}");
+                        let error = error.to_string();
+                        let message =
+                            tr!("workbench-navigation-harpoon-save-failed", error = error);
                         return toast(log::Level::Error, message, cx);
                     }
                 };
@@ -329,7 +362,8 @@ impl Workbench {
                     }
                     Some(match found {
                         Found::Empty(slot) => {
-                            let message = format!("Harpoon: nothing marked as {slot}");
+                            let message =
+                                tr!("workbench-navigation-harpoon-slot-empty", slot = slot);
                             toast(log::Level::Info, message, cx);
                             false
                         }
@@ -364,7 +398,8 @@ impl Workbench {
         let workbench = cx.entity();
         let picker = cx.new(|cx| {
             let delegate = HarpoonPicker::new(workbench.downgrade(), root, file);
-            Picker::new(delegate, "Marked files…", fe_ui::ui_theme(cx), cx)
+            let placeholder = text!("workbench-navigation-harpoon-placeholder");
+            Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx)
         });
         picker.update(cx, |picker, cx| {
             let root_changed = cx.subscribe_in(
@@ -492,7 +527,10 @@ impl Asked {
 
 /// Says the file `rel` is missing.
 fn missing(rel: &Path, cx: &mut App) {
-    let message = format!("Harpoon: file missing: {}", shown(rel));
+    let message = tr!(
+        "workbench-navigation-harpoon-file-missing",
+        file = shown(rel)
+    );
     toast(log::Level::Warn, message, cx);
 }
 
@@ -665,7 +703,8 @@ impl HarpoonPicker {
                     }
                 }
                 Err(error) => {
-                    let message = format!("Harpoon: can't save the list: {error}");
+                    let error = error.to_string();
+                    let message = tr!("workbench-navigation-harpoon-save-failed", error = error);
                     toast(log::Level::Error, message, cx);
                 }
             }))
@@ -769,9 +808,10 @@ impl PickerDelegate for HarpoonPicker {
             .filter(|parent| !parent.as_os_str().is_empty())
             .map(|parent| div().text_color(ui.muted_text).child(shown(parent)));
         let icon = file_icon_ref(&name).element(px(14.), ui.icon);
-        let missing = row
-            .missing
-            .then(|| div().text_color(ui.muted_text).child("missing"));
+        let missing = row.missing.then(|| {
+            let label = tr!("workbench-navigation-harpoon-row-missing");
+            div().text_color(ui.muted_text).child(label)
+        });
         div()
             .flex()
             .flex_1()
@@ -837,8 +877,7 @@ impl PickerDelegate for HarpoonPicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        (self.loaded && self.rows.is_empty())
-            .then(|| "No marked files: Harpoon: Add File marks the active one".into())
+        (self.loaded && self.rows.is_empty()).then(|| tr!("workbench-navigation-harpoon-empty"))
     }
 }
 

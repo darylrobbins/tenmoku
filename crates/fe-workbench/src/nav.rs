@@ -40,6 +40,7 @@ use fe_nav::{
 };
 use fe_project::FsChange;
 use gpui::{App, AppContext as _, Context, Entity, Focusable as _, Task, Window};
+use kiln_l10n::{Text, text, tr, verbatim};
 
 use crate::{
     Picker, StatusBar, StatusItem, StatusSide, Workbench,
@@ -53,7 +54,7 @@ use crate::{
 pub(crate) const HISTORY_LIMIT: usize = 100;
 
 /// The status bar item naming the provider of the last answer.
-pub(crate) const SOURCE_ITEM: &str = "nav_source";
+pub(crate) const SOURCE_ITEM: &str = verbatim!("nav_source");
 
 /// A place to go back or forward to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,16 +188,13 @@ impl Nav {
         let workbench = cx.weak_entity();
         let definitions = cx.new(|cx| {
             let delegate = DefinitionsPicker::new(workbench.clone());
-            Picker::new(delegate, "Definitions", fe_ui::ui_theme(cx), cx)
+            let placeholder = text!("workbench-navigation-definitions-placeholder");
+            Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx)
         });
         let symbols = cx.new(|cx| {
             let delegate = SymbolsPicker::new(workbench, navigation.clone());
-            Picker::new(
-                delegate,
-                "Go to symbol in workspace…",
-                fe_ui::ui_theme(cx),
-                cx,
-            )
+            let placeholder = text!("workbench-navigation-symbols-placeholder");
+            Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx)
         });
         let (ready_tx, ready) = async_channel::bounded(1);
         Self {
@@ -438,18 +436,30 @@ pub(crate) fn show_source(status_bar: &Entity<StatusBar>, provider: &str, cx: &m
         id: SOURCE_ITEM.into(),
         side: StatusSide::Left,
         priority: 100,
-        text: format!("by {provider}").into(),
+        text: tr!("workbench-navigation-source", provider = provider),
         command: None,
     };
     status_bar.update(cx, |bar, cx| bar.set_item(item, cx));
 }
 
 /// How a provider answered, for a status line: ` (by search)`, or nothing
-/// for an exact provider.
+/// for an exact provider. Only the references panel's status still appends
+/// it, until its own card makes its statuses whole messages; nav's take
+/// [`source`].
 pub(crate) fn by(provider: &str, precision: Precision) -> String {
     match precision {
         Precision::Exact => String::new(),
         Precision::Search => format!(" (by {provider})"),
+    }
+}
+
+/// How a provider answered, as the nav statuses' `source` argument: `search`
+/// for a search's answer, which a status names its `provider` after, or
+/// `exact`.
+pub(crate) fn source(precision: Precision) -> &'static str {
+    match precision {
+        Precision::Exact => "exact",
+        Precision::Search => "search",
     }
 }
 
@@ -719,7 +729,8 @@ impl Workbench {
         let peek = peek && self.can_peek(cx);
         if self.nav_state.root.is_none() {
             let editor = self.active_editor(cx).cloned().filter(|_| peek);
-            return self.no_definitions(editor.as_ref(), "No folder open".into(), window, cx);
+            let status = text!("workbench-navigation-no-folder");
+            return self.no_definitions(editor.as_ref(), status, window, cx);
         }
         let Some(request) = self.nav_request(cx) else {
             return;
@@ -795,11 +806,12 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (noun, verb) = match related {
-            None => ("definition", "definition"),
-            Some(Related::Declaration) => ("declaration", "declaration"),
-            Some(Related::TypeDefinition) => ("type definition", "type definition"),
-            Some(Related::Implementation) => ("implementation", "implementations"),
+        // The statuses' `kind` argument.
+        let kind = match related {
+            None => "definition",
+            Some(Related::Declaration) => "declaration",
+            Some(Related::TypeDefinition) => "type-definition",
+            Some(Related::Implementation) => "implementation",
         };
         let answer = match answer {
             Ok(answer) => answer,
@@ -808,18 +820,29 @@ impl Workbench {
             // that is, none found.
             Err(NavError::Unsupported) if related.is_some() => {
                 let status = match word {
-                    Some(word) => format!("No {noun} found for `{word}`"),
-                    None => "No symbol at the caret".to_owned(),
+                    Some(word) => text!(
+                        "workbench-navigation-not-found",
+                        kind = kind,
+                        word = word,
+                        source = "exact",
+                        provider = ""
+                    ),
+                    None => text!(
+                        "workbench-navigation-no-symbol",
+                        source = "exact",
+                        provider = ""
+                    ),
                 };
                 return self.no_definitions(peek.as_ref(), status, window, cx);
             }
             Err(error) => {
-                let status = format!("Go to {verb} failed: {error}");
+                let error = error.to_string();
+                let status = text!("workbench-navigation-failed", kind = kind, error = error);
                 return self.no_definitions(peek.as_ref(), status, window, cx);
             }
         };
         show_source(&self.status_bar().clone(), &answer.provider, cx);
-        let by = by(&answer.provider, answer.precision);
+        let (source, provider) = (source(answer.precision), answer.provider.clone());
         let Definitions {
             word,
             items,
@@ -835,12 +858,33 @@ impl Workbench {
             return self.jump_from(from, &first.location, window, cx);
         }
         let status = match (word, items.len()) {
-            (None, _) => format!("No symbol at the caret{by}"),
-            (Some(word), 0) if partial => {
-                format!("No {noun} found for `{word}` yet: the project is still being indexed{by}")
-            }
-            (Some(word), 0) => format!("No {noun} found for `{word}`{by}"),
-            (Some(word), count) => format!("{count} {noun}s of `{word}`{by}"),
+            (None, _) => text!(
+                "workbench-navigation-no-symbol",
+                source = source,
+                provider = provider
+            ),
+            (Some(word), 0) if partial => text!(
+                "workbench-navigation-not-found-yet",
+                kind = kind,
+                word = word,
+                source = source,
+                provider = provider
+            ),
+            (Some(word), 0) => text!(
+                "workbench-navigation-not-found",
+                kind = kind,
+                word = word,
+                source = source,
+                provider = provider
+            ),
+            (Some(word), count) => text!(
+                "workbench-navigation-found",
+                count = count,
+                kind = kind,
+                word = word,
+                source = source,
+                provider = provider
+            ),
         };
         if peek.is_some() {
             return self.no_definitions(peek.as_ref(), status, window, cx);
@@ -855,7 +899,7 @@ impl Workbench {
     fn no_definitions(
         &mut self,
         peek: Option<&Entity<fe_gpui::EditorView>>,
-        status: String,
+        status: Text,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -863,7 +907,7 @@ impl Workbench {
         match peek {
             Some(editor) => {
                 self.close_peek_in(editor, window, cx);
-                toast::show(cx, toast::Toast::info(status));
+                toast::show(cx, toast::Toast::info(status.resolve().to_string()));
             }
             None => self.show_definitions(Vec::new(), status, window, cx),
         }
@@ -873,7 +917,7 @@ impl Workbench {
     fn show_definitions(
         &mut self,
         items: Vec<fe_nav::Definition>,
-        status: String,
+        status: Text,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

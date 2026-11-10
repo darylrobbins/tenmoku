@@ -12,7 +12,7 @@ use fe_gpui::{EditorSettings, EditorTheme, commands::RunCommand, set_vim_enabled
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln_shell::picker::Mode;
 
-use super::{HarpoonPicker, NO_FOLDER, set_state_dir};
+use super::{HarpoonPicker, set_state_dir};
 use crate::{Launch, Picker, Workbench};
 
 /// A window of a workbench rooted at `root`, keeping its lists under
@@ -323,7 +323,7 @@ fn rootless_window_has_no_marks(cx: &mut TestAppContext) {
         "workbench.harpoon_remove_current",
     ] {
         run(id, cx);
-        assert_eq!(said(&workbench, cx), [NO_FOLDER], "{id}");
+        assert_eq!(said(&workbench, cx), ["Open a folder first"], "{id}");
         assert!(list(&workbench, cx).is_none(), "{id}");
     }
     assert_eq!(fs::read_dir(state.path()).unwrap().count(), 0);

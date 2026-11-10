@@ -34,6 +34,7 @@ use gpui::{
     AnyElement, AnyWindowHandle, App, AppContext as _, Context, FocusHandle, IntoElement as _,
     SharedString, Task, WeakEntity, Window,
 };
+use kiln_l10n::tr;
 
 use crate::{
     Pane, Workbench,
@@ -409,10 +410,14 @@ impl PickerDelegate for QuickOpen {
 
     fn status(&self) -> Option<SharedString> {
         Some(match (&self.root, &self.build) {
-            (None, _) => "No folder open".into(),
-            (Some(_), Build::Done) if self.matches.len() == 1 => "1 result".into(),
-            (Some(_), Build::Done) => format!("{} results", self.matches.len()).into(),
-            (Some(_), _) => format!("Indexing… {} files", self.indexed).into(),
+            (None, _) => tr!("workbench-navigation-no-folder"),
+            (Some(_), Build::Done) => tr!(
+                "workbench-navigation-results",
+                count = self.matches.len(),
+                source = "exact",
+                provider = ""
+            ),
+            (Some(_), _) => tr!("workbench-navigation-indexing", count = self.indexed),
         })
     }
 }

@@ -14,6 +14,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EntityId, Focusable, Global, PromptButton, PromptLevel,
     Window,
 };
+use kiln_l10n::tr;
 
 #[cfg(test)]
 use super::OPEN_PANEL_FAILS;
@@ -230,9 +231,9 @@ impl Workbench {
         if in_use || held {
             drop(window.prompt(
                 PromptLevel::Critical,
-                &format!("“{name}” is open in another tab."),
-                Some("Close it first, or save under another name."),
-                &[PromptButton::ok("OK")],
+                &tr!("workbench-navigation-save-as-in-use", name = name.as_str()),
+                Some(&tr!("workbench-navigation-save-as-in-use-detail")),
+                &[PromptButton::ok(tr!("workbench-navigation-ok"))],
                 cx,
             ));
             return finish(editor, false, cx);
@@ -289,9 +290,9 @@ impl Workbench {
                     let detail = format!("{error:#}");
                     drop(window.prompt(
                         PromptLevel::Critical,
-                        &format!("“{name}” couldn’t be saved."),
+                        &tr!("workbench-navigation-save-as-failed", name = name.as_str()),
                         Some(&detail),
-                        &[PromptButton::ok("OK")],
+                        &[PromptButton::ok(tr!("workbench-navigation-ok"))],
                         cx,
                     ));
                     finish(&editor, false, cx);
@@ -642,7 +643,8 @@ impl Workbench {
             log::error!("can't open settings: there's no config directory");
             toast::show(
                 cx,
-                Toast::error("Can't open settings").detail("There's no config directory"),
+                Toast::error(tr!("workbench-navigation-settings-cant-open").to_string())
+                    .detail(tr!("workbench-navigation-no-config-dir").to_string()),
             );
             return;
         };
@@ -656,8 +658,14 @@ impl Workbench {
                 cx.update(|_, cx| {
                     toast::show(
                         cx,
-                        Toast::error(format!("Can't create {}", path.display()))
-                            .detail(error.to_string()),
+                        Toast::error(
+                            tr!(
+                                "workbench-navigation-cant-create",
+                                path = path.display().to_string()
+                            )
+                            .to_string(),
+                        )
+                        .detail(error.to_string()),
                     )
                 })
                 .ok();
@@ -682,7 +690,8 @@ impl Workbench {
             log::error!("can't open the keymap: there's no config directory");
             toast::show(
                 cx,
-                Toast::error("Can't open the keymap").detail("There's no config directory"),
+                Toast::error(tr!("workbench-navigation-keymap-cant-open").to_string())
+                    .detail(tr!("workbench-navigation-no-config-dir").to_string()),
             );
             return;
         };
@@ -696,8 +705,14 @@ impl Workbench {
                 cx.update(|_, cx| {
                     toast::show(
                         cx,
-                        Toast::error(format!("Can't create {}", path.display()))
-                            .detail(error.to_string()),
+                        Toast::error(
+                            tr!(
+                                "workbench-navigation-cant-create",
+                                path = path.display().to_string()
+                            )
+                            .to_string(),
+                        )
+                        .detail(error.to_string()),
                     )
                 })
                 .ok();
