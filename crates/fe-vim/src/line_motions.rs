@@ -441,13 +441,14 @@ fn closed_end(row: u32) -> u32 {
 }
 
 /// The row `steps` visible rows below `row`, a closed fold counting as one,
-/// at most `last_row`; a fold landed in is at its header.
+/// at most `last_row`; a fold landed in is at its header. A count past the
+/// last visible row goes to `last_row`, the buffer's end, as `G` does.
 fn down_visible(row: u32, steps: u32, last_row: u32) -> u32 {
     let mut row = row;
     for _ in 0..steps {
         let next = closed_end(row).saturating_add(1);
         if next > last_row {
-            break;
+            return last_row;
         }
         row = next;
     }

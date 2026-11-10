@@ -840,3 +840,24 @@ fn counted_g_underscore_counts_a_closed_fold_as_a_row() {
     assert!(folded("G2g_").2);
     assert_eq!(after(FOLDED, (0, 0), "2g_"), ((1, 10), false));
 }
+
+/// An oversized count past a terminal closed fold goes to the buffer's end,
+/// not the fold's header (nvim 0.12: `4g_` from (0, 0) with rows 1-3
+/// folded reaches (3, 8), and `d4g_` takes all the text).
+#[test]
+fn oversized_g_underscore_past_a_terminal_fold_clamps_to_the_buffer_end() {
+    const TEXT: &str = "abc\ndefghijkl\nmnopq\nrstuvwxyz";
+    let folded = |keys: &str| {
+        let mut vim = HeadlessVim::new(TEXT, (1, 0));
+        vim.feed("zfjj").unwrap();
+        vim.feed("zc").unwrap();
+        vim.feed("gg").unwrap();
+        vim.feed(keys).unwrap();
+        (vim.text(), vim.cursor())
+    };
+    assert_eq!(folded("4g_").1, (3, 8));
+    assert_eq!(folded("v4g_").1, (3, 8));
+    assert_eq!(folded("d4g_").0, "");
+    // Counts within the visible rows still land on the fold's header.
+    assert_eq!(folded("2g_").1, (1, 8));
+}
