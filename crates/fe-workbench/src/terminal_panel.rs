@@ -103,6 +103,12 @@ struct TaskTab {
     id: u64,
     /// The task's label, which a rerun finds its tab by.
     label: String,
+    /// The root it was run in: with the label, which task it is. Where it
+    /// runs is the task's own, and an edit to it is still this task.
+    root: PathBuf,
+    /// When it last started, among this panel's runs: the latest has the
+    /// last word on how the task went.
+    started: u64,
     /// Which of the label's tabs this is: 1 goes by the label alone, the
     /// rest as `label (2)` and on.
     ordinal: usize,
@@ -121,7 +127,7 @@ impl TaskTab {
 
 /// Where a task's session has got to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TaskRun {
+pub(crate) enum TaskRun {
     Running,
     /// It exited with 0.
     Passed,
@@ -168,6 +174,8 @@ pub struct TerminalPanel {
     last_task: Option<Task>,
     /// The id the last task tab got.
     last_task_id: u64,
+    /// The runs started: see [`TaskTab::started`].
+    runs_started: u64,
     /// The shell a session runs instead of the user's.
     #[cfg(test)]
     shell: Option<(String, Vec<String>)>,
@@ -214,6 +222,7 @@ impl TerminalPanel {
             focus_out: None,
             last_task: None,
             last_task_id: 0,
+            runs_started: 0,
             #[cfg(test)]
             shell: None,
             #[cfg(test)]
@@ -381,8 +390,9 @@ impl TerminalPanel {
             }
         };
         let finished = self.sessions.iter().position(|session| {
-            (session.task.as_ref())
-                .is_some_and(|tab| tab.label == task.label && tab.run != TaskRun::Running)
+            (session.task.as_ref()).is_some_and(|tab| {
+                tab.label == task.label && tab.root == self.cwd && tab.run != TaskRun::Running
+            })
         });
         let kept = finished
             .and_then(|ix| self.sessions[ix].task.as_ref())
@@ -393,9 +403,12 @@ impl TerminalPanel {
         });
         let view = self.new_view(options, true, window, cx);
         let exited = self.follow_exit(&view, window, cx);
+        self.runs_started += 1;
         let tab = TaskTab {
             id,
             label: task.label.clone(),
+            root: self.cwd.clone(),
+            started: self.runs_started,
             ordinal,
             run: TaskRun::Running,
         };
@@ -567,6 +580,43 @@ impl TerminalPanel {
             window.activate_window();
             self.activate(ix, window, cx);
             cx.emit(TerminalPanelEvent::ShowRequested);
+        }
+    }
+
+    /// How the task `label` run from `root`, last went,
+    /// whoever started it: running if any of its tabs is, else how its
+    /// latest run ended; none if it has no tab.
+    pub(crate) fn task_run(&self, root: &Path, label: &str) -> Option<TaskRun> {
+        let tabs = (self.sessions.iter())
+            .filter_map(|session| session.task.as_ref())
+            .filter(|tab| tab.label == label && tab.root == root);
+        let mut latest: Option<&TaskTab> = None;
+        for tab in tabs {
+            if tab.run == TaskRun::Running {
+                return Some(TaskRun::Running);
+            }
+            if latest.is_none_or(|latest| tab.started > latest.started) {
+                latest = Some(tab);
+            }
+        }
+        latest.map(|tab| tab.run)
+    }
+
+    /// Stops the task `label` run from `root`: drops its
+    /// running sessions, which hangs them up.
+    pub(crate) fn stop_task(
+        &mut self,
+        root: &Path,
+        label: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        while let Some(ix) = self.sessions.iter().position(|session| {
+            (session.task.as_ref()).is_some_and(|tab| {
+                tab.label == label && tab.root == root && tab.run == TaskRun::Running
+            })
+        }) {
+            self.remove(ix, window, cx);
         }
     }
 

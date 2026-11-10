@@ -14,6 +14,8 @@ use gpui::{AnyView, App, AppContext as _, Context, Entity, Focusable, Subscripti
 use super::toast;
 use super::{Launch, LayoutKeys, TERMINAL_BUTTON, Workbench, active_diff_view};
 use crate::title_bar;
+#[path = "run_widget.rs"]
+mod run_widget;
 use crate::{
     Dock, MenuBarView, OutlinePanel, Pane, PaneGroup, ProjectPanel, StatusBar,
     dock::DockOp,
@@ -49,11 +51,19 @@ impl Workbench {
     /// transparent macOS title bar, with the workbench's items in it (see
     /// [`title_bar`]): see [`crate::titlebar_options`]. Off by default.
     pub fn set_title_bar(&mut self, shown: bool, cx: &mut Context<Self>) {
-        let items = title_bar::items(cx.entity().downgrade());
+        let mut items = title_bar::items(cx.entity().downgrade());
+        let terminal = self.terminal().clone();
+        run_widget::install(&mut items, &cx.entity(), &terminal, cx);
         self.shell.update(cx, |shell, cx| {
             shell.set_title_bar_items(items, cx);
             shell.set_title_bar(shown, cx);
         });
+    }
+
+    /// Presses the run widget's play, without the read it waits for.
+    #[cfg(test)]
+    pub(crate) fn press_run_play(window: &mut Window, cx: &mut App) {
+        run_widget::press_play(window, cx);
     }
 
     /// What the title bar shows: whether back and forward can go, the
@@ -720,6 +730,23 @@ impl Workbench {
             .update(cx, |workspace, cx| workspace.save(cx));
     }
 
+    /// The task the run widget shows in `root`, as chosen there: its label.
+    pub(crate) fn run_task_choice(&self, root: &Path) -> Option<String> {
+        let root = root.to_str()?;
+        self.layout_keys.run_tasks.borrow().get(root).cloned()
+    }
+
+    /// Remembers `label` as the task the run widget shows in `root`, in the
+    /// window's saved layout.
+    pub(crate) fn choose_run_task(&mut self, root: &Path, label: String, cx: &mut Context<Self>) {
+        let Some(root) = root.to_str() else {
+            return;
+        };
+        (self.layout_keys.run_tasks.borrow_mut()).insert(root.to_owned(), label);
+        self.layout_keys_changed(cx);
+        cx.notify();
+    }
+
     /// The window's layout id, once it has a layout.
     pub fn layout_id(&self) -> Option<u64> {
         self.layout_id
@@ -931,6 +958,13 @@ impl LayoutKeys {
         if let Some(root) = self.root.borrow().as_deref().and_then(|root| root.to_str()) {
             keys.push(("root", Value::from(root)));
         }
+        let run_tasks = self.run_tasks.borrow();
+        if !run_tasks.is_empty() {
+            let tasks = run_tasks
+                .iter()
+                .map(|(root, label)| (root.clone(), Value::from(label.as_str())));
+            keys.push(("run_tasks", Value::Object(tasks.collect())));
+        }
         keys
     }
 
@@ -960,6 +994,12 @@ impl LayoutKeys {
         }
         if let Some(shown) = entry.get("breadcrumbs").and_then(Value::as_bool) {
             self.breadcrumbs.set(shown);
+        }
+        if let Some(saved) = entry.get("run_tasks").and_then(Value::as_object) {
+            let tasks = saved
+                .iter()
+                .filter_map(|(root, label)| Some((root.clone(), label.as_str()?.to_owned())));
+            *self.run_tasks.borrow_mut() = tasks.collect();
         }
     }
 }

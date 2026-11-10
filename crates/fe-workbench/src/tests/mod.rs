@@ -103,6 +103,7 @@ mod quick_open_races;
 mod references_landing;
 mod references_panel;
 mod restore_lsp_clean;
+mod run_widget_b3;
 mod search_panel;
 mod search_panel_cancel;
 mod search_panel_followups;

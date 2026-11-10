@@ -624,6 +624,7 @@ impl Workbench {
             bounds: Cell::new(Some(window.window_bounds())),
             zen_sidebar: Cell::new(None),
             root: std::cell::RefCell::new(launch_root.clone()),
+            run_tasks: Default::default(),
         });
         workspace.update(cx, |workspace, _| {
             let keys = layout_keys.clone();
@@ -1185,7 +1186,8 @@ impl Render for Workbench {
 /// terminal dock's sizes (`terminal_dock`), whether the breadcrumbs show,
 /// the window's `bounds`, and its `root`: the folder it's on, which a
 /// launch with no argument reopens it on (kiln-core's
-/// `restore_last_quit`), whichever root's layouts it's saved among.
+/// `restore_last_quit`), whichever root's layouts it's saved among, and
+/// the task the run widget shows in each root (`run_tasks`).
 /// A window with no root, or one that isn't UTF-8, saves none.
 struct LayoutKeys {
     sidebar: Entity<Dock>,
@@ -1201,6 +1203,9 @@ struct LayoutKeys {
     zen_sidebar: Cell<Option<bool>>,
     /// The workbench's root, as it last changed.
     root: std::cell::RefCell<Option<PathBuf>>,
+    /// The task the run widget shows in each root, by its label, as chosen
+    /// or as a restored entry has it (`run_tasks`, by root).
+    run_tasks: std::cell::RefCell<std::collections::BTreeMap<String, String>>,
 }
 
 /// The active item of `pane`, if it's a diff view.

@@ -57,6 +57,8 @@ migrated = [
     "src/title_bar.rs",
     "src/workbench_chrome.rs",
     "src/git_branch.rs",
+    # The run widget in the title bar (T1539).
+    "src/run_widget.rs",
 ]
 
 # Ids and joins, not text: a picker row's element id, and the text a row's
@@ -66,6 +68,31 @@ migrated = [
 file = "src/spell_commands.rs"
 text = "spell-row-{}"
 reason = "A suggestion row's element id"
+
+[[literal]]
+file = "src/run_widget.rs"
+text = "Cargo.toml"
+reason = "A file name that defines tasks, matched against the watcher's paths"
+
+[[literal]]
+file = "src/run_widget.rs"
+text = "Makefile"
+reason = "A file name that defines tasks, matched against the watcher's paths"
+
+[[literal]]
+file = "src/run_widget.rs"
+text = "Justfile"
+reason = "A file name that defines tasks, matched against the watcher's paths"
+
+[[literal]]
+file = "src/run_widget.rs"
+text = "title-run"
+reason = "The label button's element id"
+
+[[literal]]
+file = "src/run_widget.rs"
+text = "run-task-row-{}"
+reason = "A task row's element id"
 
 [[literal]]
 file = "src/task_commands.rs"
