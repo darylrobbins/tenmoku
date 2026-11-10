@@ -1,0 +1,19 @@
+#!/bin/sh
+# Stand-in xcodebuild (T1661). Starts, outside its own process group (like testmanagerd's runner),
+# two "runners" at a path under the build products: one ignores TERM and has a child
+# helper-resist that ignores TERM; one exits on TERM and leaves helper-orphan, which
+# ignores TERM. MODE=hang: waits until TERM (default action). MODE=exit: exits 0 at 3 s.
+M=$(cd "$(dirname "$0")" && pwd)
+while [ $# -gt 0 ]; do
+	[ "$1" = -derivedDataPath ] && derived=$2
+	shift
+done
+dir="$derived/Build/Products/Debug"
+mkdir -p "$dir"
+cp "$M/resister" "$dir/MockRunner-e2etest"
+cp "$M/quitter" "$dir/MockQuitter-e2etest"
+"$M/setsid" "$dir/MockRunner-e2etest" "$M/helper-resist" &
+"$M/setsid" "$dir/MockQuitter-e2etest" "$M/helper-orphan" &
+echo "stand-in: family started"
+if [ "$MODE" = exit ]; then sleep 3; exit 0; fi
+while :; do sleep 1; done

@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "mock xcodebuild: exits 0 having run no tests"
+exit 0

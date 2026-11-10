@@ -1,0 +1,6 @@
+#!/bin/sh
+# Starts "$1 $2" as a child, then exits 3 s later, leaving it orphaned.
+"$1" "$2" &
+sleep 3
+echo "stand-in: late-parent exits, leaving pid $! orphaned"
+exit 0

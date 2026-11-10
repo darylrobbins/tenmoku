@@ -1,0 +1,4 @@
+#!/bin/sh
+echo "mock xcodebuild: ignoring TERM, hanging"
+trap '' TERM
+while :; do sleep 1; done

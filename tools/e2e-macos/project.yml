@@ -1,11 +1,15 @@
-# XcodeGen spec for the XCUITest spike (T1661): one macOS UI-testing bundle that
-# drives a bundled Tenmoku.app from outside, with real OS input.
+# XcodeGen spec for the XCUITest suite (T1661's spike, grown into E2E-1 by T1682): one
+# macOS UI-testing bundle that drives a bundled Tenmoku.app from outside, with real OS
+# input. Its tests are in TenmokuE2E/ (SmokeTests.swift, the helpers in Support.swift,
+# each test's fixture in Fixtures.swift).
 #
 # Nothing here is committed generated output: scripts/e2e-macos.sh runs
 #   xcodegen generate --spec tools/e2e-macos/project.yml --project <target>/e2e-macos
 # and builds and tests that project, with derived data beside it. The app under
 # test is not a target here: the script bundles it and hands its path to the test
-# runner (TEST_RUNNER_E2E_APP), which launches it with XCUIApplication(url:).
+# runner (TEST_RUNNER_E2E_APP), which launches it with XCUIApplication(url:). The
+# script also passes CODE_SIGN_ENTITLEMENTS: one read-write exception, for the run's
+# scratch folder, which Xcode merges into the sandboxed runner's entitlements.
 name: TenmokuE2E
 options:
   bundleIdPrefix: dev.tenmoku

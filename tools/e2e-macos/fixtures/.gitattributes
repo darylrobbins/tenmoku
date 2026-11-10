@@ -1,0 +1,3 @@
+# The suite compares these fixtures byte for byte (encodings, BOMs, CRLF line endings):
+# never normalize their line endings on check-in or checkout.
+* -text

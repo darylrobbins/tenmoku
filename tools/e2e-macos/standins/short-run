@@ -1,0 +1,9 @@
+#!/bin/sh
+# Stand-in: writes a real result bundle (MOCK_XCRESULT) where asked, and logs 2 of 3 test runs.
+while [ $# -gt 0 ]; do
+	[ "$1" = -resultBundlePath ] && out=$2
+	shift
+done
+cp -R "$MOCK_XCRESULT" "$out"
+echo "Test Case '-[TenmokuE2E.SmokeTests testMenuFileSave]' passed (1.000 seconds)."
+echo "Test Case '-[TenmokuE2E.SmokeTests testTypeAndSaveWithCmdS]' passed (1.000 seconds)."

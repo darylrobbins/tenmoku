@@ -1,0 +1,5 @@
+#!/bin/sh
+# Starts $1 as a child, then exits on TERM, leaving it orphaned.
+"$1" &
+trap 'exit 0' TERM
+while :; do sleep 1; done

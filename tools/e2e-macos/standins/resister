@@ -1,0 +1,5 @@
+#!/bin/sh
+# Ignores TERM; starts $1 (if given) as a child first.
+trap '' TERM
+if [ -n "${1:-}" ]; then "$1" & fi
+while :; do sleep 1; done

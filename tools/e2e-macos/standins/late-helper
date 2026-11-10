@@ -1,0 +1,10 @@
+#!/bin/sh
+# Ignores TERM. Waits until its parent has exited, then starts $1 as a child of its own
+# (late-child), and runs until killed.
+trap '' TERM
+parent=$PPID
+while kill -0 "$parent" 2>/dev/null; do sleep 1; done
+sleep 1
+"$1" &
+echo "stand-in: late-helper (pid $$, parent gone) started late-child pid $!"
+while :; do sleep 1; done

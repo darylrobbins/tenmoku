@@ -1,0 +1,4 @@
+# vim on, its unnamed register apart from the system clipboard (the default).
+[vim]
+enabled = true
+clipboard = ""

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Stand-in xcodebuild for F1 (T1682): an orphan that starts a child after its parent has
+# exited. It starts, outside its own process group and at a path under the build products
+# (as testmanagerd starts the runner), MockLateParent-e2etest, which starts late-helper and
+# exits 3 s later. late-helper, now an orphan that matches no root, ignores TERM, waits
+# until its parent has gone, then starts late-child, which ignores TERM too and runs until
+# killed. MODE=hang: waits until TERM (default action). MODE=exit: exits 0 at 8 s.
+M=$(cd "$(dirname "$0")" && pwd)
+while [ $# -gt 0 ]; do
+	[ "$1" = -derivedDataPath ] && derived=$2
+	shift
+done
+dir="$derived/Build/Products/Debug"
+mkdir -p "$dir"
+cp "$M/late-parent" "$dir/MockLateParent-e2etest"
+"$M/setsid" "$dir/MockLateParent-e2etest" "$M/late-helper" "$M/late-child" &
+echo "stand-in: late-orphan started"
+if [ "$MODE" = exit ]; then sleep 8; exit 0; fi
+while :; do sleep 1; done

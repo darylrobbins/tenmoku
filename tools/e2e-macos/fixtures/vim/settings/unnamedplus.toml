@@ -1,0 +1,4 @@
+# vim on, its unnamed register shared with the system clipboard.
+[vim]
+enabled = true
+clipboard = "unnamedplus"

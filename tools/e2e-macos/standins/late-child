@@ -1,0 +1,4 @@
+#!/bin/sh
+# Ignores TERM and runs until killed.
+trap '' TERM
+while :; do sleep 1; done

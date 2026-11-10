@@ -1,5 +1,5 @@
 #!/bin/sh
-# Drive a bundled Tenmoku.app with XCUITest (the T1661 spike's smoke tests). See --help.
+# Drive a bundled Tenmoku.app with XCUITest (the E2E-1 suite, T1682). See --help.
 #
 # Never called from regatta.toml, nextest, CI or another script: a run takes over the
 # screen, mouse and keyboard of the Mac it runs on.
@@ -9,27 +9,40 @@ start_dir=$(pwd)
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 spec="$root/tools/e2e-macos/project.yml"
+sources="$root/tools/e2e-macos/TenmokuE2E"
+declarations_file="$sources/Fixtures.swift"
+fixtures="$root/tools/e2e-macos/fixtures"
 e2e_id=dev.tenmoku.tenmoku.e2e
 
 usage() {
 	cat <<EOF
-Usage: scripts/e2e-macos.sh [--no-build] [--iterations N] [--only TEST] [--results DIR]
-                            [--timeout SECONDS] [--dry-run]
+Usage: scripts/e2e-macos.sh [--no-build] [--iterations N] [--only TEST] [--fixture NAME]
+                            [--results DIR] [--timeout SECONDS] [--dry-run]
 
 Builds the release binary, bundles Tenmoku.app with scripts/bundle-macos.sh, gives the
 bundle the id $e2e_id and re-signs it, generates the XCUITest project in
 tools/e2e-macos/project.yml with xcodegen, and runs its SmokeTests with xcodebuild test.
-The tests launch the bundle by URL, on a scratch project with scratch config, state and
-home folders, never one of the installed Tenmoku.app copies.
+The tests launch the bundle by URL, each on a scratch set of its own (a project, config,
+state and home folder), never one of the installed Tenmoku.app copies.
+
+Each test declares its fixture in tools/e2e-macos/TenmokuE2E/Fixtures.swift: a folder
+under tools/e2e-macos/fixtures/ whose project/ becomes the scratch project, optionally
+one of its settings/<name>.toml as the scratch config's settings.toml, and whether the
+state folder starts empty (a first launch) or with a setup.toml that keeps the setup
+wizard away. The runner is sandboxed (it may write only this run's scratch folder, and
+nothing in the repo), so this script makes every set before the run, one per test and
+iteration.
 
   --no-build        skip 'cargo build --release -p fastedit' (the bundle is still made,
                     from the binary already built)
   --iterations N    run each test N times, relaunching the runner each time (default 1)
-  --only TEST       run one test, such as testMenuFileSave
+  --only TEST       run one test, such as testSaveWithCmdSAndFileMenu
+  --fixture NAME    run only the tests whose declared fixture is NAME, a folder under
+                    tools/e2e-macos/fixtures/ (with --only, that test must declare it)
   --results DIR     where the result bundle, attachments, AX dumps and JSON summaries go
                     (default: \${CARGO_TARGET_DIR:-target}/e2e-macos/results/<time>)
   --timeout SECONDS stop the run, the test runner and the app after this long
-                    (default: 600 plus 180 per iteration)
+                    (default: 600 plus 60 per test run)
   --dry-run         print every command and run none
   -h, --help        this text
 
@@ -37,8 +50,8 @@ Everything else is under \${CARGO_TARGET_DIR:-target}/e2e-macos/: bundle/, the g
 TenmokuE2E.xcodeproj, DerivedData/ and scratch/. macOS only, from a logged-in GUI
 session with the screen unlocked: a locked screen hangs a UI test. Xcode, xcodegen and
 the Accessibility and Automation Mode grants are the user's to set up; this script never
-changes System Settings. It prints the result bundle, the attachments folder and a
-pass/fail line last, and exits non-zero when a test fails.
+changes System Settings. It prints the result bundle, the attachments folder, each test
+run's time and a pass/fail line last, and exits non-zero when a test fails.
 EOF
 }
 
@@ -54,6 +67,7 @@ need_arg() {
 build=1
 iterations=1
 only=""
+fixture=""
 results=""
 timeout=""
 dry=""
@@ -62,6 +76,7 @@ while [ $# -gt 0 ]; do
 	--no-build) build=""; shift ;;
 	--iterations) need_arg "$@"; iterations=$2; shift 2 ;;
 	--only) need_arg "$@"; only=$2; shift 2 ;;
+	--fixture) need_arg "$@"; fixture=$2; shift 2 ;;
 	--results) need_arg "$@"; results=$2; shift 2 ;;
 	--timeout) need_arg "$@"; timeout=$2; shift 2 ;;
 	--dry-run) dry=1; shift ;;
@@ -73,11 +88,48 @@ done
 case "$iterations" in
 "" | *[!0-9]* | 0*) die "--iterations takes a whole number from 1, got '$iterations'" ;;
 esac
-case "$only" in
-"" | testTypeAndSaveWithCmdS | testMenuFileSave | testDumpAccessibilityTree) ;;
-*) die "--only takes testTypeAndSaveWithCmdS, testMenuFileSave or testDumpAccessibilityTree, got '$only'" ;;
-esac
-[ -z "$timeout" ] && timeout=$((600 + 180 * iterations))
+
+# The tests and their fixtures, one "test fixture settings=NAME fresh=true" line each,
+# from the one-line entries of Fixtures.swift's table. Every test method must have
+# exactly one, and every fixture and settings file named must exist, before anything runs.
+declarations=$(sed -nE 's/^[[:space:]]*"(test[A-Za-z0-9]+)": Fixture\("([A-Za-z0-9_-]+)"(, settings: "([A-Za-z0-9_-]+)")?(, fresh: (true))?\),?$/\1 \2 settings=\4 fresh=\6/p' "$declarations_file")
+[ -n "$declarations" ] || die "no fixture declarations in $declarations_file"
+methods=$(sed -nE 's/^[[:space:]]*func (test[A-Za-z0-9]+)\(\).*/\1/p' "$sources"/*.swift | sort)
+declared=$(printf '%s\n' "$declarations" | cut -d' ' -f1 | sort)
+[ "$(printf '%s\n' "$declared" | uniq -d)" = "" ] ||
+	die "a test is declared twice in $declarations_file: $(printf '%s\n' "$declared" | uniq -d | tr '\n' ' ' | sed 's/ $//')"
+[ "$methods" = "$declared" ] ||
+	die "the test methods and the declarations in $declarations_file differ: methods $(printf '%s\n' "$methods" | tr '\n' ' ' | sed 's/ $//'), declared $(printf '%s\n' "$declared" | tr '\n' ' ' | sed 's/ $//')"
+printf '%s\n' "$declarations" | while read -r name fixture_name settings fresh; do
+	[ -d "$fixtures/$fixture_name/project" ] ||
+		die "$name declares fixture '$fixture_name', but $fixtures/$fixture_name/project is not a folder"
+	settings=${settings#settings=}
+	if [ -n "$settings" ] && [ ! -f "$fixtures/$fixture_name/settings/$settings.toml" ]; then
+		die "$name declares settings '$settings', but $fixtures/$fixture_name/settings/$settings.toml is missing"
+	fi
+	: "$fresh"
+done
+
+if [ -n "$fixture" ]; then
+	case "$fixture" in
+	*/* | .*) die "--fixture takes a folder name under $fixtures, got '$fixture'" ;;
+	esac
+	[ -d "$fixtures/$fixture/project" ] ||
+		die "--fixture: $fixtures/$fixture/project is not a folder (see $fixtures)"
+fi
+if [ -n "$only" ]; then
+	printf '%s\n' "$declared" | grep -qx "$only" ||
+		die "--only takes one of the declared tests ($(printf '%s\n' "$declared" | tr '\n' ' ' | sed 's/ $//')), got '$only'"
+fi
+selected=$(printf '%s\n' "$declarations" | while read -r name fixture_name settings fresh; do
+	if [ -n "$only" ] && [ "$name" != "$only" ]; then continue; fi
+	if [ -n "$fixture" ] && [ "$fixture_name" != "$fixture" ]; then continue; fi
+	echo "$name $fixture_name $settings $fresh"
+done)
+[ -n "$selected" ] || die "no test declares fixture '$fixture'${only:+ among --only $only}"
+tests=$(printf '%s\n' "$selected" | wc -l | tr -d ' ')
+
+[ -z "$timeout" ] && timeout=$((600 + 60 * tests * iterations))
 case "$timeout" in
 "" | *[!0-9]* | 0*) die "--timeout takes a whole number of seconds, got '$timeout'" ;;
 esac
@@ -112,7 +164,8 @@ attachments="$results/attachments"
 xcodebuild_log="$results/xcodebuild.log"
 # How long a stopped run gets between TERM and KILL.
 grace=10
-# Only for exercising the watchdog with a harmless stand-in; never set it otherwise.
+# Only for exercising the watchdog with a harmless stand-in (tools/e2e-macos/standins);
+# never set it otherwise.
 xcodebuild=${E2E_XCODEBUILD:-xcodebuild}
 
 # Shell-quotes one word for display, only when it needs it.
@@ -152,8 +205,11 @@ run() {
 # starts) and the app under test (which launchd starts), both outside that group and
 # matched by their paths in this run's build products and bundle, and every descendant
 # of any of them. A tracker records each one, as "pid start-time", every second while the
-# run lasts, so a descendant stays known after its parent has gone. Cleanup, which only
-# the main shell runs, signals the recorded processes that are still the same process.
+# run lasts, so a descendant stays known after its parent has gone. Every recorded
+# process that is still the same process (pid and start time) is itself a root of the
+# next pass, so a child that an orphaned helper starts after its parent has exited is
+# found too (F1). Cleanup, which only the main shell runs, signals the recorded processes
+# that are still the same process.
 run_pid=""
 watcher=""
 tail_pid=""
@@ -164,6 +220,7 @@ roots() {
 	if [ -n "$run_pid" ]; then pgrep -g "$run_pid" 2>/dev/null || true; fi
 	pgrep -U "$(id -u)" -f "$derived/Build/Products/" 2>/dev/null || true
 	pgrep -U "$(id -u)" -f "$app/Contents/MacOS/tenmoku" 2>/dev/null || true
+	alive_owned
 }
 
 descendants() {
@@ -179,10 +236,10 @@ started_at() {
 }
 
 record_owned() {
-	for owner in $(roots); do
+	for owner in $(roots | sort -u); do
 		echo "$owner"
 		descendants "$owner"
-	done | while read -r pid; do
+	done | sort -u | while read -r pid; do
 		started=$(started_at "$pid")
 		if [ -n "$started" ]; then echo "$pid $started"; fi
 	done >>"$owned"
@@ -198,8 +255,9 @@ alive_owned() {
 	done | sort -u
 }
 
-# TERM to every owned process still alive, then KILL to any left after $grace seconds.
-# Runs only in the main shell, to the end, whatever xcodebuild does meanwhile.
+# TERM to every owned process still alive, then KILL to any left after $grace seconds,
+# and KILL again to any a killed process started meanwhile. Runs only in the main shell,
+# to the end, whatever xcodebuild does meanwhile.
 cleanup_run() {
 	if [ -n "$tracker" ]; then
 		kill "$tracker" 2>/dev/null || true
@@ -223,6 +281,19 @@ cleanup_run() {
 		# shellcheck disable=SC2086
 		kill -KILL $pids 2>/dev/null || true
 	fi
+	tries=0
+	while [ -n "$pids" ] && [ "$tries" -lt 3 ]; do
+		sleep 1
+		tries=$((tries + 1))
+		record_owned
+		pids=$(alive_owned)
+		if [ -n "$pids" ]; then
+			# shellcheck disable=SC2086 # one line of pids
+			echo "e2e-macos: still running after KILL, sending KILL again to:" $pids >&2
+			# shellcheck disable=SC2086
+			kill -KILL $pids 2>/dev/null || true
+		fi
+	done
 	rm -f "$owned"
 }
 
@@ -294,8 +365,9 @@ run_watched() {
 	return "$status"
 }
 
-# The tests' own text attachments (ax-tree-*, launched-*, window-title-*, file-menu-*,
-# scratch-*, tenmoku-log-*), copied out of the export under the names the tests gave them.
+# The tests' own text attachments (ax-tree-*, launched-*, window-title-*, disk-*,
+# backups-*, pasteboard-*, scratch-*, tenmoku-log-* and so on, each named
+# <kind>-<test>-<iteration>), copied out of the export under the names the tests gave them.
 copy_named_attachments() {
 	manifest="$attachments/manifest.json"
 	[ -f "$manifest" ] || return 1
@@ -306,7 +378,8 @@ copy_named_attachments() {
 			name=$(plutil -extract "$t.attachments.$a.suggestedHumanReadableName" raw -o - "$manifest") ||
 				return 1
 			case "$name" in
-			ax-tree-* | launched-* | window-title-* | file-menu-* | scratch-* | tenmoku-log-*)
+			failure-*) ;;
+			*-test[A-Za-z0-9]*-[0-9][0-9][0-9]*)
 				# XCTest appends _<n>_<UUID> to a name; drop it and the extension.
 				base=$(printf '%s' "$name" | sed -E 's/(_[0-9]+_[0-9A-F-]{36})?(\.[a-z]+)?$//')
 				cp "$attachments/$file" "$results/$base.txt" || return 1
@@ -352,37 +425,71 @@ run /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $e2e_id" "$app/Contents/
 run "$root/scripts/bundle-macos.sh" --sign-only "$app"
 
 # Xcode 27's test runner is sandboxed and can't write here, so the scratch sets are made
-# now, one per test run: a project with an empty notes.txt, config, a state folder whose
-# setup.toml keeps the setup wizard away and whose whats_new.toml, the bundle's version,
-# the What's New tab, and a home for the app's log.
-tests=3
-[ -n "$only" ] && tests=1
-pool=$((tests * iterations))
-# The bundle's version: bundle-macos.sh's default, the [workspace.package] one.
-version=$(awk '
-	/^\[/ { in_pkg = ($0 == "[workspace.package]") }
-	in_pkg && /^version[ \t]*=/ { gsub(/.*=[ \t]*"|".*/, ""); print; exit }
-' "$root/Cargo.toml")
-[ -n "$version" ] || die "no [workspace.package] version in $root/Cargo.toml"
+# now: <scratch>/<test>/<iteration>/, each a copy of the test's fixture project, a config
+# folder (with the declared settings.toml, if any), a state folder (holding a setup.toml
+# that keeps the setup wizard away, unless the test declares a fresh state) and a home
+# for the app's log.
 run mkdir -p "$results"
-echo "+ for n in 001 .. $(printf '%03d' "$pool"): mkdir -p $(quote "$scratch")/\$n/{project,config,state,home};" \
-	": >\$n/project/notes.txt; echo 'outcome = \"skipped\"' >\$n/state/setup.toml;" \
-	"echo 'seen = \"$version\"' >\$n/state/whats_new.toml"
-if [ -z "$dry" ]; then
-	n=1
-	while [ "$n" -le "$pool" ]; do
-		set_dir="$scratch/$(printf '%03d' "$n")"
-		mkdir -p "$set_dir/project" "$set_dir/config" "$set_dir/state" "$set_dir/home"
-		: >"$set_dir/project/notes.txt"
-		echo 'outcome = "skipped"' >"$set_dir/state/setup.toml"
-		echo "seen = \"$version\"" >"$set_dir/state/whats_new.toml"
-		n=$((n + 1))
-	done
-fi
+last=$(printf '%03d' "$iterations")
+echo "# fixtures: $tests test(s) x $iterations iteration(s), one scratch set each"
+printf '%s\n' "$selected" | while read -r name fixture_name settings fresh; do
+	settings=${settings#settings=}
+	fresh=${fresh#fresh=}
+	sets="$(quote "$scratch/$name")/{001..$last}"
+	echo "+ $name: mkdir -p $sets/{config,state,home}; cp -R $(quote "$fixtures/$fixture_name/project") $sets/project"
+	if [ -n "$settings" ]; then
+		echo "+ $name:   cp $(quote "$fixtures/$fixture_name/settings/$settings.toml") $sets/config/settings.toml"
+	fi
+	if [ "$fresh" = true ]; then
+		echo "+ $name:   (fresh state: no setup.toml, an empty state folder)"
+	else
+		echo "+ $name:   echo 'outcome = \"skipped\"' >$sets/state/setup.toml"
+	fi
+	if [ -z "$dry" ]; then
+		n=1
+		while [ "$n" -le "$iterations" ]; do
+			set_dir="$scratch/$name/$(printf '%03d' "$n")"
+			mkdir -p "$set_dir/config" "$set_dir/state" "$set_dir/home"
+			cp -R "$fixtures/$fixture_name/project" "$set_dir/project"
+			if [ -n "$settings" ]; then
+				cp "$fixtures/$fixture_name/settings/$settings.toml" "$set_dir/config/settings.toml"
+			fi
+			if [ "$fresh" != true ]; then
+				echo 'outcome = "skipped"' >"$set_dir/state/setup.toml"
+			fi
+			n=$((n + 1))
+		done
+	fi
+done
 run xcodegen generate --spec "$spec" --project "$e2e"
 
+# The runner stays sandboxed: Xcode signs it with the template's entitlements (app
+# sandbox, read-only "/") merged with the test target's CODE_SIGN_ENTITLEMENTS. The
+# target's add one read-write exception, for this run's scratch folder only, so a test
+# can change a scratch file behind the app's back (testRunnerWritesOnlyItsScratch checks
+# both sides of it).
+entitlements="$e2e/TenmokuE2E.entitlements"
+echo "+ write $(quote "$entitlements"): read-write exception for $(quote "$scratch/") only"
+if [ -z "$dry" ]; then
+	cat >"$entitlements" <<ENTITLEMENTS
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+	<array>
+		<string>$scratch/</string>
+	</array>
+</dict>
+</plist>
+ENTITLEMENTS
+fi
+
 only_args=""
-[ -n "$only" ] && only_args="-only-testing:TenmokuE2E/SmokeTests/$only"
+for name in $(printf '%s\n' "$selected" | cut -d' ' -f1); do
+	only_args="$only_args -only-testing:TenmokuE2E/SmokeTests/$name"
+done
+# Every test is named, so a run of the whole suite selects the declared tests only.
 iteration_args=""
 [ "$iterations" -gt 1 ] && iteration_args="-test-iterations $iterations -test-repetition-relaunch-enabled YES"
 
@@ -394,18 +501,18 @@ echo "# in a process group of its own, output also in $(quote "$xcodebuild_log")
 echo "# watchdog that then sends TERM, and KILL ${grace}s later, to it, the runner and the app"
 # shellcheck disable=SC2086 # the two option lists split into words on purpose
 show env TEST_RUNNER_E2E_APP="$app" TEST_RUNNER_E2E_SCRATCH="$scratch" \
-	TEST_RUNNER_E2E_POOL="$pool" \
+	TEST_RUNNER_E2E_ITERATIONS="$iterations" TEST_RUNNER_E2E_FIXTURES="$fixtures" \
 	xcodebuild test -project "$project" -scheme TenmokuE2E -destination platform=macOS \
-	-derivedDataPath "$derived" -resultBundlePath "$xcresult" \
+	-derivedDataPath "$derived" -resultBundlePath "$xcresult" CODE_SIGN_ENTITLEMENTS="$entitlements" \
 	-test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
 	-maximum-test-execution-time-allowance 300 $iteration_args $only_args
 test_status=0
 if [ -z "$dry" ]; then
 	# shellcheck disable=SC2086
 	run_watched env TEST_RUNNER_E2E_APP="$app" TEST_RUNNER_E2E_SCRATCH="$scratch" \
-		TEST_RUNNER_E2E_POOL="$pool" \
+		TEST_RUNNER_E2E_ITERATIONS="$iterations" TEST_RUNNER_E2E_FIXTURES="$fixtures" \
 		"$xcodebuild" test -project "$project" -scheme TenmokuE2E -destination platform=macOS \
-		-derivedDataPath "$derived" -resultBundlePath "$xcresult" \
+		-derivedDataPath "$derived" -resultBundlePath "$xcresult" CODE_SIGN_ENTITLEMENTS="$entitlements" \
 		-test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
 		-maximum-test-execution-time-allowance 300 $iteration_args $only_args ||
 		test_status=$?
@@ -445,20 +552,28 @@ if [ -z "$dry" ]; then
 	passed=$(grep -cE "^Test Case '-\[TenmokuE2E\.SmokeTests [A-Za-z0-9_]+\]' passed " "$xcodebuild_log" || true)
 	total=$(plutil -extract totalTestCount raw -o - "$results/summary.json" 2>/dev/null || echo "?")
 	summary_passed=$(plutil -extract passedTests raw -o - "$results/summary.json" 2>/dev/null || echo "?")
+	# Each test run in the order it ran, with its time.
+	grep -E "^Test Case '-\[TenmokuE2E\.SmokeTests [A-Za-z0-9_]+\]' (passed|failed) " "$xcodebuild_log" |
+		sed -E "s/^Test Case '-\[TenmokuE2E\.SmokeTests ([A-Za-z0-9_]+)\]' (passed|failed) \(([0-9.]+) seconds\)\.?$/run: \1 \2 \3 s/" || true
 	echo "test runs: $passed passed of $finished finished, $expected_runs expected; summary: $summary_passed passed of $total tests"
 	if [ "$passed" != "$expected_runs" ] || [ "$finished" != "$expected_runs" ] ||
 		[ "$total" != "$tests" ] || [ "$summary_passed" != "$tests" ]; then
 		count_problem="expected $expected_runs passing test runs of $tests tests; the log shows $passed of $finished and the summary $summary_passed of $total"
 	fi
+	records=0
+	others=0
 	for record in "$results"/launched-*.txt; do
 		[ -f "$record" ] || continue
-		echo "launched ($(basename "$record")): $(head -n 1 "$record")"
-		break
+		records=$((records + 1))
+		if grep '^pid ' "$record" | grep -qv " executable $app/Contents/MacOS/tenmoku "; then
+			others=$((others + 1))
+		fi
 	done
+	echo "launch records: $records, of which $others name a $e2e_id process other than $(quote "$app")"
 fi
 echo "result bundle: $xcresult"
 echo "attachments: $attachments"
-echo "AX dumps and launch records: $results"
+echo "AX dumps, launch and disk records: $results"
 if [ -n "$dry" ]; then
 	echo "e2e-macos: dry run, nothing ran"
 elif [ "$test_status" -eq 124 ]; then
