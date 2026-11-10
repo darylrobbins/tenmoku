@@ -173,7 +173,9 @@ pub use status_bar::{StatusBar, StatusItem, StatusSide};
 pub use terminal_panel::TerminalPanel;
 pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options};
 pub use trust::{TrustChanged, set_trust_file};
-pub use workbench::{Launch, RootChanged, Workbench, resolve_launch, window_layouts};
+pub use workbench::{
+    AfterFrame, AfterFrameHook, Launch, RootChanged, Workbench, resolve_launch, window_layouts,
+};
 
 use chat_panel::ChatPanel;
 use hierarchy_panel::HierarchyPanel;

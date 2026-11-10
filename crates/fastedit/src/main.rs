@@ -38,9 +38,11 @@ mod windows_console;
 mod workspace_extensions;
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     io,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -356,6 +358,199 @@ fn give(
     window
         .update(cx, |workbench, _, cx| workbench.reload_settings(&event, cx))
         .ok();
+}
+
+/// How often `FASTEDIT_A11Y_DUMP` rewrites its file.
+const A11Y_DUMP_EVERY: Duration = Duration::from_secs(1);
+
+/// The file `FASTEDIT_A11Y_DUMP` names, if it is set and not empty.
+fn a11y_dump_path() -> Option<PathBuf> {
+    std::env::var_os("FASTEDIT_A11Y_DUMP")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+/// What a drawn frame, or a retry, does about the dump.
+#[derive(Debug, PartialEq)]
+enum Next {
+    /// Serialize the tree and write it now.
+    Write,
+    /// The once-a-second budget is spent: come back in this long.
+    RetryIn(Duration),
+    Nothing,
+}
+
+/// The dump's once-a-second budget, one for the app, shared by its windows.
+#[derive(Default)]
+struct A11yDumpBudget {
+    last: Option<Instant>,
+}
+
+impl Global for A11yDumpBudget {}
+
+impl A11yDumpBudget {
+    /// Takes the budget at `now`, or says how long until it is free. The
+    /// check and the take are one call, made just before serializing.
+    fn claim(&mut self, now: Instant) -> Result<(), Duration> {
+        let waited = self.last.map(|at| now.saturating_duration_since(at));
+        match waited {
+            Some(waited) if waited < A11Y_DUMP_EVERY => Err(A11Y_DUMP_EVERY - waited),
+            _ => {
+                self.last = Some(now);
+                Ok(())
+            }
+        }
+    }
+}
+
+/// One window's part in the dump: whether a frame is drawn that no write has
+/// covered, and whether a retry is already waiting for the budget.
+#[derive(Default)]
+struct DumpGate {
+    drawn: bool,
+    retry: bool,
+}
+
+impl DumpGate {
+    /// A frame was drawn with a11y active.
+    fn frame_drawn(&mut self, budget: &mut A11yDumpBudget, now: Instant) -> Next {
+        self.drawn = true;
+        if self.retry {
+            return Next::Nothing;
+        }
+        self.claim(budget, now)
+    }
+
+    /// The wait the budget asked for is over. A frame that came in the
+    /// meantime is written now, with the latest tree; losing the budget to
+    /// another window waits again, and the dump is never dropped.
+    fn retry_due(&mut self, budget: &mut A11yDumpBudget, now: Instant) -> Next {
+        self.retry = false;
+        if !self.drawn {
+            return Next::Nothing;
+        }
+        self.claim(budget, now)
+    }
+
+    fn claim(&mut self, budget: &mut A11yDumpBudget, now: Instant) -> Next {
+        match budget.claim(now) {
+            Ok(()) => {
+                self.drawn = false;
+                Next::Write
+            }
+            Err(wait) => {
+                self.retry = true;
+                Next::RetryIn(wait)
+            }
+        }
+    }
+}
+
+/// Reads a window's a11y tree as JSON, if it has one.
+type A11yRead = dyn Fn(&mut Window, &mut App) -> Option<String>;
+
+/// Where the dump reads a window's a11y state: the window's own in the app,
+/// and injected, since a headless gpui window never activates a11y (design
+/// section 9).
+#[derive(Clone)]
+struct A11ySource {
+    active: Rc<dyn Fn(&Window) -> bool>,
+    read: Rc<A11yRead>,
+}
+
+impl A11ySource {
+    fn window() -> Self {
+        Self {
+            active: Rc::new(|window| window.is_a11y_active()),
+            read: Rc::new(|window, _| window.debug_a11y_tree_json()),
+        }
+    }
+}
+
+/// What `FASTEDIT_A11Y_DUMP` runs on.
+struct A11yDump {
+    path: PathBuf,
+    source: A11ySource,
+    gates: RefCell<HashMap<WindowId, DumpGate>>,
+}
+
+impl A11yDump {
+    fn act(self: &Rc<Self>, next: Next, window: &mut Window, cx: &mut App) {
+        match next {
+            Next::Nothing => {}
+            Next::Write => {
+                if let Some(json) = (self.source.read)(window, cx) {
+                    write_a11y_dump(&self.path, &json);
+                }
+            }
+            Next::RetryIn(wait) => {
+                let dump = self.clone();
+                window
+                    .spawn(cx, async move |cx| {
+                        cx.background_executor().timer(wait).await;
+                        // A closed window fails the update, and the retry
+                        // with it.
+                        cx.update(|window, cx| dump.step(window, cx, DumpGate::retry_due))
+                            .ok();
+                    })
+                    .detach();
+            }
+        }
+    }
+
+    /// Runs one of the gate's steps for `window`, then what it decides.
+    fn step(
+        self: &Rc<Self>,
+        window: &mut Window,
+        cx: &mut App,
+        step: fn(&mut DumpGate, &mut A11yDumpBudget, Instant) -> Next,
+    ) {
+        let id = window.window_handle().window_id();
+        let now = cx.background_executor().now();
+        let next = gpui::BorrowAppContext::update_global(cx, |budget: &mut A11yDumpBudget, _| {
+            step(self.gates.borrow_mut().entry(id).or_default(), budget, now)
+        });
+        self.act(next, window, cx);
+    }
+}
+
+/// With `FASTEDIT_A11Y_DUMP=<path>`, writes `source`'s tree to `path` after
+/// each frame a window draws with a11y active, at most once a second for the
+/// app. [`fe_workbench::AfterFrame`] is the trigger: the workbench defers it
+/// from its render, past the draw, so every drawn frame (the first, a child
+/// view's, one the platform forced) reads its own tree and no frame has to be
+/// asked for. A frame inside the second is written when it ends, from the
+/// latest frame then. An idle window draws nothing and serializes nothing.
+fn install_a11y_dump(path: PathBuf, source: A11ySource, cx: &mut App) {
+    cx.set_global(A11yDumpBudget::default());
+    let dump = Rc::new(A11yDump {
+        path,
+        source,
+        gates: RefCell::default(),
+    });
+    let closing = dump.clone();
+    cx.on_window_closed(move |_, id| {
+        closing.gates.borrow_mut().remove(&id);
+    })
+    .detach();
+    cx.set_global(fe_workbench::AfterFrame(Rc::new(move |window, cx| {
+        // Cheap, and first: activation forces a redraw, which comes back here.
+        if (dump.source.active)(window) {
+            dump.step(window, cx, DumpGate::frame_drawn);
+        }
+    })));
+}
+
+/// Writes `json` to `path` by way of a sibling file, so a reader never sees
+/// half a tree.
+fn write_a11y_dump(path: &Path, json: &str) {
+    let mut staged = path.as_os_str().to_owned();
+    staged.push(".tmp");
+    let staged = PathBuf::from(staged);
+    let written = std::fs::write(&staged, json).and_then(|()| std::fs::rename(&staged, path));
+    if let Err(error) = written {
+        log::warn!(target: "fastedit", "can't write the a11y dump {}: {error}", path.display());
+    }
 }
 
 /// Has a new window follow its root's settings: now, and whenever the
@@ -918,6 +1113,9 @@ fn main() {
         // Once, for this first window.
         fe_workbench::offer_setup(window, setup, cx);
         fe_workbench::set_window_opener(cx, open_window_on);
+        if let Some(path) = a11y_dump_path() {
+            install_a11y_dump(path, A11ySource::window(), cx);
+        }
         let opened = open_files(window, files_left(files, launch_failed), cx);
         let landed = cx.spawn(async move |_| {
             if let Some(read) = launch_read {
@@ -1402,5 +1600,217 @@ mod tests {
         }
         assert!(!enabled(Level::Info, "gpui"));
         assert!(enabled(Level::Warn, "gpui"));
+    }
+
+    /// Two windows draw at the same instant: one takes the app's budget and
+    /// writes, the other waits it out and then writes.
+    #[test]
+    fn the_a11y_dump_budget_is_claimed_once_across_windows() {
+        use super::{A11Y_DUMP_EVERY, A11yDumpBudget, DumpGate, Next};
+        let t0 = std::time::Instant::now();
+        let mut budget = A11yDumpBudget::default();
+        let (mut first, mut second) = (DumpGate::default(), DumpGate::default());
+        assert_eq!(first.frame_drawn(&mut budget, t0), Next::Write);
+        assert_eq!(
+            second.frame_drawn(&mut budget, t0),
+            Next::RetryIn(A11Y_DUMP_EVERY)
+        );
+        assert_eq!(
+            second.retry_due(&mut budget, t0 + A11Y_DUMP_EVERY),
+            Next::Write
+        );
+    }
+
+    /// A frame inside the second isn't dropped: the second's end writes it,
+    /// once however many frames came.
+    #[test]
+    fn a_redraw_inside_the_second_is_written_when_it_ends() {
+        use super::{A11yDumpBudget, DumpGate, Next};
+        use std::time::Duration;
+        let t0 = std::time::Instant::now();
+        let ms = Duration::from_millis;
+        let mut budget = A11yDumpBudget::default();
+        let mut gate = DumpGate::default();
+        assert_eq!(gate.frame_drawn(&mut budget, t0), Next::Write);
+        assert_eq!(
+            gate.frame_drawn(&mut budget, t0 + ms(200)),
+            Next::RetryIn(ms(800))
+        );
+        assert_eq!(gate.frame_drawn(&mut budget, t0 + ms(500)), Next::Nothing);
+        assert_eq!(gate.retry_due(&mut budget, t0 + ms(1000)), Next::Write);
+        assert_eq!(
+            gate.retry_due(&mut budget, t0 + ms(3000)),
+            Next::Nothing,
+            "no frame since: nothing to write"
+        );
+    }
+
+    /// Another window took the budget while a retry waited: the retry waits
+    /// again, and the dump isn't dropped.
+    #[test]
+    fn a_retry_that_loses_the_budget_waits_again() {
+        use super::{A11Y_DUMP_EVERY, A11yDumpBudget, DumpGate, Next};
+        use std::time::Duration;
+        let t0 = std::time::Instant::now();
+        let mut budget = A11yDumpBudget::default();
+        let (mut waiting, mut other) = (DumpGate::default(), DumpGate::default());
+        assert_eq!(waiting.frame_drawn(&mut budget, t0), Next::Write);
+        let soon = t0 + Duration::from_millis(100);
+        assert!(matches!(
+            waiting.frame_drawn(&mut budget, soon),
+            Next::RetryIn(_)
+        ));
+        let due = t0 + A11Y_DUMP_EVERY;
+        assert_eq!(other.frame_drawn(&mut budget, due), Next::Write);
+        assert_eq!(
+            waiting.retry_due(&mut budget, due),
+            Next::RetryIn(A11Y_DUMP_EVERY),
+            "the budget is another window's"
+        );
+        assert_eq!(
+            waiting.retry_due(&mut budget, due + A11Y_DUMP_EVERY),
+            Next::Write
+        );
+    }
+
+    /// A byte inside the rows the editor test inserts: past the three-row file.
+    const PROBE: usize = 40;
+
+    /// A redraw only the editor asked for, with the Workbench not told, is
+    /// dumped from its own frame; and an idle window dumps nothing more.
+    /// The source is injected: a headless window never activates a11y.
+    #[gpui::test]
+    fn an_isolated_child_redraw_is_dumped_after_its_frame(cx: &mut TestAppContext) {
+        use super::{A11ySource, install_a11y_dump};
+        use std::{cell::Cell, rc::Rc, time::Duration};
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
+            fe_gpui::pane_item::set_undo_store(cx, None);
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let file = root.join("rows.txt");
+        fs::write(&file, "a\nb\nc\n").unwrap();
+        let launch = Launch {
+            root: Some(root),
+            file: None,
+        };
+        let (workbench, cx) = cx.add_window_view(move |window, cx| {
+            let theme = EditorTheme::default_dark(cx);
+            Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+        };
+        cx.simulate_resize(gpui::size(gpui::px(1400.), gpui::px(600.)));
+        draw(cx);
+
+        let dumped = dir.path().join("a11y.json");
+        let reads = Rc::new(Cell::new(0_u32));
+        let editor = Rc::new(std::cell::RefCell::new(None));
+        let source = A11ySource {
+            active: Rc::new(|_| true),
+            read: {
+                let (reads, editor) = (reads.clone(), editor.clone());
+                Rc::new(move |_, cx| {
+                    reads.set(reads.get() + 1);
+                    let editor: Option<gpui::Entity<fe_gpui::EditorView>> = editor.borrow().clone();
+                    // Whether the editor's last frame drew the caret at a
+                    // byte only the inserted rows reach: frame-derived.
+                    let drawn = editor?.update(cx, |editor, _| editor.caret_bounds_at(PROBE));
+                    Some(format!("{{\"drawn\":{}}}", drawn.is_some()))
+                })
+            },
+        };
+        cx.update(|_, cx| install_a11y_dump(dumped.clone(), source, cx));
+
+        let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+        let path = file.clone();
+        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        cx.executor().allow_parking();
+        let opened = loop {
+            draw(cx);
+            let opened = pane.read_with(cx, |pane, _| pane.active_editor().cloned());
+            if opened.is_some() || std::time::Instant::now() > deadline {
+                break opened.expect("the file opens");
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        *editor.borrow_mut() = Some(opened.clone());
+        draw(cx);
+        cx.executor().advance_clock(Duration::from_millis(1100));
+        draw(cx);
+        let drawn = || {
+            let json = fs::read_to_string(&dumped).unwrap_or_default();
+            serde_json::from_str::<serde_json::Value>(&json)
+                .ok()
+                .and_then(|json| json["drawn"].as_bool())
+        };
+        assert_eq!(
+            drawn(),
+            Some(false),
+            "the three-row file reaches nowhere near the probe: {:?}",
+            fs::read_to_string(&dumped)
+        );
+
+        // Only the editor redraws: ten rows go in at the end. The retries the
+        // frames so far left are let out first, and the budget freed, so the
+        // first frame after the edit is in the file as soon as the draw is
+        // done. The probe byte is in the inserted rows: the editor's own model
+        // has them at once, but only a frame drawn after the edit has laid
+        // them out, so the dump holds that frame's.
+        cx.executor().advance_clock(Duration::from_millis(1100));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(1100));
+        opened.update(cx, |editor, cx| {
+            let end = editor.model().text().len();
+            editor.select_and_reveal(end..end, cx);
+            editor.model_mut().insert(&"more\n".repeat(10));
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            drawn(),
+            Some(true),
+            "the dump holds the frame after the edit: {:?}",
+            fs::read_to_string(&dumped)
+        );
+        // Frames drawn inside the second are written when it ends, and
+        // nothing more is.
+        cx.executor().advance_clock(Duration::from_millis(1100));
+        cx.run_until_parked();
+        assert_eq!(drawn(), Some(true), "still the edited frame, a second on");
+
+        // Idle: no frame, no read.
+        let settled = reads.get();
+        cx.executor().advance_clock(Duration::from_secs(5));
+        cx.run_until_parked();
+        assert_eq!(reads.get(), settled, "an idle window serializes nothing");
+    }
+
+    /// With the variable unset there is no path, so no task starts.
+    #[test]
+    fn the_a11y_dump_is_off_without_its_variable() {
+        // SAFETY: no other test reads this variable, and none run it set.
+        unsafe { std::env::remove_var("FASTEDIT_A11Y_DUMP") };
+        assert_eq!(super::a11y_dump_path(), None);
+    }
+
+    /// The dump replaces the file whole and leaves no staging file behind.
+    #[test]
+    fn the_a11y_dump_replaces_the_file_whole() {
+        let dir = std::env::temp_dir().join(format!("fe-a11y-dump-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tree.json");
+        super::write_a11y_dump(&path, "{\"first\":1}");
+        super::write_a11y_dump(&path, "{\"second\":2}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"second\":2}");
+        assert!(!dir.join("tree.json.tmp").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

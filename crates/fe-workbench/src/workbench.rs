@@ -354,6 +354,20 @@ pub struct Workbench {
 impl EventEmitter<RootChanged> for Workbench {}
 impl EventEmitter<TrustChanged> for Workbench {}
 
+/// A hook the app installs to run once after each frame the window draws:
+/// the initial frame, a frame a child view asked for, and one the platform
+/// forced alike, and never before the draw. [`Workbench`] renders on every
+/// frame (it is the window's root), and defers the hook from there past
+/// the draw and present. Nothing installed costs one global lookup a frame;
+/// an idle window draws no frames, so the hook never runs.
+#[derive(Clone)]
+pub struct AfterFrame(pub Rc<AfterFrameHook>);
+
+/// What an [`AfterFrame`] runs.
+pub type AfterFrameHook = dyn Fn(&mut Window, &mut App);
+
+impl gpui::Global for AfterFrame {}
+
 /// What runs Install/Uninstall 'tenmoku' Command in PATH: the app sets it
 /// ([`Workbench::set_shell_command_handler`]), as the work is the binary's.
 /// The argument is whether to install.
@@ -1059,6 +1073,9 @@ impl Focusable for Workbench {
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(hook) = cx.try_global::<AfterFrame>().cloned() {
+            window.defer(cx, move |window, cx| (hook.0)(window, cx));
+        }
         window.set_window_title(&self.active.read(cx).title(cx));
         let followed = self.follow_active_editor(window, cx);
         self.land_problem(window, cx);

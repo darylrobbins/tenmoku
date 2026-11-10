@@ -10,6 +10,11 @@
 #   driver.sh key <keys>...         xdotool key names: ctrl+p Return ctrl+shift+bracketleft
 #   driver.sh type <text>           type text
 #   driver.sh log [n]               last n lines of the app's log (default 30)
+#   driver.sh a11y-tree <out.json> [path]
+#                                   walk the app's AT-SPI tree in its own Xvfb
+#                                   and D-Bus session; needs no `start`. Also
+#                                   leaves <out>.dump.json, the app's own dump
+#                                   (FASTEDIT_A11Y_DUMP)
 #   driver.sh stop                  quit the app and Xvfb
 #
 # FE_WAYLAND=1 driver.sh start runs the app on Wayland instead: Weston,
@@ -41,6 +46,100 @@ shot() {
   DISPLAY=$DISPLAY_NUM xdotool mousemove 1279 799
   sleep 0.2
   python3 "$HERE/xwd2png.py" "$FB" "$1"
+}
+
+# Runs inside dbus-run-session (see a11y-tree): the AT-SPI bus, an Xvfb of its
+# own and the app, then a busctl walk of the tree (design doc, Spike 2).
+a11y_probe() {
+  local out="$1" target="$2" disp=":${FE_A11Y_DISPLAY:-93}" work="$RUN_DIR/a11y"
+  rm -rf "$work"; mkdir -p "$work/config" "$work/state"
+  local launcher=/usr/libexec/at-spi-bus-launcher
+  [[ -x "$launcher" ]] || launcher="$(command -v at-spi-bus-launcher || true)"
+  [[ -n "$launcher" ]] || die "no at-spi-bus-launcher: apt install at-spi2-core"
+  "$launcher" --launch-immediately & pids="$!"
+  trap 'kill $pids 2>/dev/null || true' EXIT
+  sleep 1
+  busctl --user set-property org.a11y.Bus /org/a11y/bus org.a11y.Status IsEnabled b true
+  local addr
+  addr="$(busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress | cut -d'"' -f2)"
+  local num="${disp#:}"
+  [[ -e "/tmp/.X11-unix/X$num" || -e "/tmp/.X$num-lock" ]] \
+    && die "display $disp is in use: set FE_A11Y_DISPLAY to a free number"
+  Xvfb "$disp" -screen 0 1280x800x24 & local xpid="$!"; pids="$pids $xpid"
+  for _ in $(seq 50); do
+    kill -0 "$xpid" 2>/dev/null || die "Xvfb on $disp exited"
+    DISPLAY=$disp xdotool getdisplaygeometry >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  DISPLAY=$disp xdotool getdisplaygeometry >/dev/null 2>&1 || die "Xvfb on $disp isn't ready"
+  # The setup wizard shows on a fresh config; the walk then reads its nodes.
+  # FE_A11Y_KEYS (xdotool key names) is pressed first, e.g. "Escape" to skip it.
+  # GPUI prefers WAYLAND_DISPLAY to DISPLAY, and AT_SPI_BUS_ADDRESS beats the
+  # private session's bus discovery: clear the one, pin the other.
+  env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET AT_SPI_BUS_ADDRESS="$addr" \
+    DISPLAY=$disp XDG_CONFIG_HOME="$work/config" XDG_STATE_HOME="$work/state" \
+    FASTEDIT_A11Y_DUMP="${out%.json}.dump.json" RUST_LOG=info "$BIN" "$target" > "$work/app.log" 2>&1 & pids="$pids $!"
+  for _ in $(seq 60); do grep -q 'Accessibility activated' "$work/app.log" && break; sleep 0.5; done
+  grep -q 'Accessibility activated' "$work/app.log" \
+    || { tail -20 "$work/app.log" >&2; die "a11y never activated"; }
+  sleep "${FE_A11Y_SETTLE:-4}"
+  if [[ -n "${FE_A11Y_KEYS:-}" ]]; then
+    DISPLAY=$disp xdotool mousemove 640 400 key --delay 80 $FE_A11Y_KEYS
+    sleep 2
+  fi
+  ADDR="$addr" python3 - "$out" <<'PY'
+import json, os, subprocess, sys
+
+addr = os.environ["ADDR"]
+ACC = "org.a11y.atspi.Accessible"
+
+
+def busctl(*args):
+    return subprocess.run(["busctl", f"--address={addr}", "--json=short", "--timeout=5", *args],
+                          capture_output=True, text=True, check=True, timeout=10).stdout
+
+
+def children(bus, path):
+    return [(c[0], c[1]) for c in json.loads(busctl("call", bus, path, ACC, "GetChildren"))["data"][0]]
+
+
+def attempt(fn, *args):
+    # One node failing to answer is a finding, not the end of the walk.
+    try:
+        return fn(*args)
+    except (subprocess.SubprocessError, ValueError, KeyError) as error:
+        detail = getattr(error, "stderr", None) or str(error)
+        return f"<error: {detail.strip()[:120]}>"
+
+
+def prop(bus, path, name):
+    return json.loads(busctl("get-property", bus, path, ACC, name))["data"]
+
+
+def role_id(bus, path):
+    # accesskit_unix answers GetRole (the AT-SPI Role number) and leaves the
+    # name methods empty or unknown.
+    return json.loads(busctl("call", bus, path, ACC, "GetRole"))["data"][0]
+
+
+def walk(bus, path, depth=0):
+    node = {"name": attempt(prop, bus, path, "Name"), "role": attempt(role_id, bus, path)}
+    if depth < 40:
+        kids = attempt(children, bus, path)
+        node["children"] = kids if isinstance(kids, str) else [walk(b, p, depth + 1) for b, p in kids]
+    return node
+
+
+root = ("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root")
+tree = {"name": "root", "role": "application root",
+        "children": [walk(b, p) for b, p in children(*root)]}
+with open(sys.argv[1], "w") as f:
+    json.dump(tree, f, indent=2)
+    f.write("\n")
+if not any(c.get("name") == "tenmoku" for c in tree["children"]):
+    sys.exit("no tenmoku node under the AT-SPI root: " + json.dumps(tree["children"])[:300])
+print(f"wrote {sys.argv[1]}")
+PY
 }
 
 cmd="${1:-}"; shift || true
@@ -126,6 +225,20 @@ case "$cmd" in
     ;;
   log)
     tail -n "${1:-30}" "$LOG"
+    ;;
+  a11y-tree)
+    [[ $# -ge 1 ]] || die "usage: a11y-tree <out.json> [path]"
+    [[ -x "$BIN" ]] || die "$BIN missing: run 'driver.sh build'"
+    for tool in dbus-run-session busctl Xvfb xdotool; do
+      command -v "$tool" >/dev/null || die "needs $tool"
+    done
+    out="$(realpath -m "$1")"
+    # A private session bus keeps the probe off the user's; re-enter this
+    # script inside it.
+    exec dbus-run-session -- "$0" a11y-probe "$out" "${2:-$REPO}"
+    ;;
+  a11y-probe)
+    a11y_probe "$1" "$2"
     ;;
   stop)
     # Killing the session ends Xvfb and the app with it, unsaved edits and all.

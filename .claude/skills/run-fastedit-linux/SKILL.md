@@ -61,7 +61,32 @@ Then **read the PNG** to see the result.
 | `key <keys>...` | xdotool key names: `ctrl+p`, `Return`, `Escape`, `ctrl+shift+bracketleft`, `F10` |
 | `type <text>` | type text into what has focus |
 | `log [n]` | tail of the app's log (`/tmp/fastedit-run/app.log`) |
+| `a11y-tree <out.json> [path]` | read the accessibility tree (see below); starts its own Xvfb and D-Bus, so no `start` |
 | `stop` | kill the app and Xvfb; unsaved edits are dropped |
+
+## Accessibility tree
+
+`driver.sh a11y-tree <out.json> [path]` runs the app under Xvfb in a private
+`dbus-run-session` with `at-spi-bus-launcher`, sets `org.a11y.Status IsEnabled`
+true so accesskit_unix activates, then walks the live AT-SPI tree with `busctl`
+(design doc `docs/decisions/qenw9xxdzk-accessibility-design.md`, Spike 2 and
+section 9 shape 4). It needs `dbus-run-session`, `busctl`, `Xvfb`, `xdotool` and
+`/usr/libexec/at-spi-bus-launcher` (`apt install at-spi2-core`), and a built
+binary. It uses display `:93` (`FE_A11Y_DISPLAY`), not `start`'s, and a fresh
+config, so the setup wizard shows: `FE_A11Y_KEYS=Escape` skips it before the walk.
+`FE_A11Y_SETTLE` (seconds, default 4) waits for the first frames.
+
+The output is JSON: `{name, role, children}` per node, where `role` is the
+AT-SPI role number (43 push button, 23 frame). It also leaves
+`<out>.dump.json`, what `FASTEDIT_A11Y_DUMP` wrote.
+
+`FASTEDIT_A11Y_DUMP=<path> tenmoku` writes `Window::debug_a11y_tree_json()` to
+`<path>` after each frame a window draws while the platform has a11y active
+(VoiceOver or Accessibility Inspector on the Mac, an AT-SPI client on Linux),
+at most once a second for the app; a frame inside that second is written when
+it ends. The trigger is `fe_workbench::AfterFrame`, which `Workbench::render`
+defers past the draw. An idle window draws no frames, so nothing is written.
+Unset, nothing is installed.
 
 The window is 1200×800 centred on the screen: x 40–1240. The menu bar is
 the top 28 px (File at x 64, Edit 103, View 147, Go 187, Window 236); the

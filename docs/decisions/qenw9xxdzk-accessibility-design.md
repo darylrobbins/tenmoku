@@ -2,7 +2,8 @@
 
 ## 1. Status
 
-Status: **proposed**. Approver: the user. Approval has two parts:
+Status: **proposed**. On 2026-11-09 the user approved sections 3 and 10 as
+written. Approver: the user. Approval has two parts:
 the platform path (section 3) and the first slice (section 10). This card
 files no implementation card. The lead readies the cards in section 11 only
 after the user approves. Source card T294 (Mac T1430), written 2026-11-07.
