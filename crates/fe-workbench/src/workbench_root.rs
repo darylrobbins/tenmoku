@@ -187,6 +187,9 @@ impl Workbench {
         // So the new tree reveals the active file, if it's under the root.
         self.revealed = None;
         self.root = Some(root.clone());
+        // Its saved layout names the new root, for the next launch.
+        *self.layout_keys.root.borrow_mut() = Some(root.clone());
+        self.layout_keys_changed(cx);
         self.root_settings = Self::watch_root_settings(Some(&root), cx);
         for pane in self.panes(cx) {
             let root = Some(root.clone());

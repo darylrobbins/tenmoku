@@ -620,6 +620,7 @@ impl Workbench {
             breadcrumbs: Cell::new(true),
             bounds: Cell::new(Some(window.window_bounds())),
             zen_sidebar: Cell::new(None),
+            root: std::cell::RefCell::new(launch_root.clone()),
         });
         workspace.update(cx, |workspace, _| {
             let keys = layout_keys.clone();
@@ -1177,8 +1178,11 @@ impl Render for Workbench {
 /// workspace's panes ([`Workspace::on_save`]): the docks' places under
 /// `docks` (`sidebar` and `terminal`, where a layout saved before the
 /// workspace saved it kept them too), the sidebar's state (`dock`), the
-/// terminal dock's sizes (`terminal_dock`), whether the breadcrumbs show
-/// and the window's `bounds`.
+/// terminal dock's sizes (`terminal_dock`), whether the breadcrumbs show,
+/// the window's `bounds`, and its `root`: the folder it's on, which a
+/// launch with no argument reopens it on (kiln-core's
+/// `restore_last_quit`), whichever root's layouts it's saved among.
+/// A window with no root, or one that isn't UTF-8, saves none.
 struct LayoutKeys {
     sidebar: Entity<Dock>,
     terminal: Entity<kiln_shell::Dock>,
@@ -1191,6 +1195,8 @@ struct LayoutKeys {
     /// While Zen Mode is on, whether the sidebar showed before it, until
     /// it's shown or hidden meanwhile.
     zen_sidebar: Cell<Option<bool>>,
+    /// The workbench's root, as it last changed.
+    root: std::cell::RefCell<Option<PathBuf>>,
 }
 
 /// The active item of `pane`, if it's a diff view.

@@ -909,6 +909,9 @@ impl LayoutKeys {
         if let Some(bounds) = self.bounds.get() {
             keys.push(("bounds", layout::save_bounds(bounds)));
         }
+        if let Some(root) = self.root.borrow().as_deref().and_then(|root| root.to_str()) {
+            keys.push(("root", Value::from(root)));
+        }
         keys
     }
 

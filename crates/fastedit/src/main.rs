@@ -16,6 +16,7 @@ mod log_file;
 #[cfg(target_os = "macos")]
 mod mac_speller;
 mod perf;
+mod reopen;
 #[cfg(unix)]
 mod shell_command;
 mod sparkle;
@@ -47,6 +48,7 @@ use std::{
 use cli::Target;
 use config::{config, log_keymap_report};
 use perf::Startup;
+use reopen::LaunchWindow;
 use vim_remaps::VimRemaps;
 
 use fe_buffer::Buffer;
@@ -256,7 +258,10 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
 }
 
 /// Gives `window` the settings of its root: the config service's for the
-/// launch root (or none), else its root's own, read off the main thread.
+/// launch root, else its root's own, read off the main thread; a window
+/// with no root beside a launch root (one a launch with no argument
+/// reopened, say) has the user's alone, not the launch root's project
+/// layer.
 /// Each call is a new load of the window's ([`begin_load`]); one read off
 /// the main thread is given only if it's still the window's newest, for
 /// the root it still has ([`finish_load`]).
@@ -267,7 +272,7 @@ fn settle(window: WindowHandle<Workbench>, diagnostics: Vec<Diagnostic>, cx: &mu
     let launch_root = cx
         .try_global::<WindowSettings>()
         .and_then(|settings| settings.launch_root.clone());
-    if root.is_none() || root == launch_root {
+    if root == launch_root {
         let settings = current_settings(cx);
         return give(window, settings, diagnostics, cx);
     }
@@ -457,20 +462,10 @@ fn open_documents(paths: &[PathBuf], cx: &mut App) {
     });
 }
 
-/// The windows a launch on `root` opens, each with its layout (unless
-/// there's no state directory) and the entry it restores, if any: see
-/// [`kiln::shell::layout::launch`]. A folder launch (`folder`) restores the
-/// root's saved windows, and a launch with no argument (no root) those of
-/// the last such launch; a file launch restores nothing.
-fn launch_windows(root: Option<&Path>, folder: bool) -> Vec<(Option<WindowLayout>, Option<Value>)> {
-    let windows: Vec<_> = (layout_store(root).iter())
-        .flat_map(|store| kiln::shell::layout::launch(store, folder))
-        .map(|(layout, entry)| (Some(layout), entry))
-        .collect();
-    if windows.is_empty() {
-        return vec![(None, None)];
-    }
-    windows
+/// The windows a launch on `root` opens, at least one: see
+/// [`reopen::launch_windows_in`].
+fn launch_windows(root: Option<&Path>, folder: bool) -> Vec<LaunchWindow> {
+    reopen::launch_windows_in(fe_config::paths::app_paths().layouts_dir(), root, folder)
 }
 
 /// The saved layouts of the windows on the folder `root`, or of those with
@@ -739,6 +734,14 @@ fn main() {
             fe_workbench::resolve_launch(path)
         };
         let reading = launch.file.take().map(|(path, _)| loader::start(path));
+        // A folder launch reopens its saved windows, and a launch with no
+        // argument those open at the last quit, each on its own folder; a
+        // file launch opens the file, in a window that saves its layout
+        // from now on. The first window's root is the launch's: its settings
+        // and extensions load as a folder launch's do.
+        let mut windows = launch_windows(launch.root.as_deref(), reading.is_none());
+        let (root, layout, entry) = windows.remove(0);
+        launch.root = root;
         let store = load_settings(launch.root.as_deref());
         let settings: Arc<Settings> = store.settings().clone();
         app_icon::set();
@@ -847,12 +850,6 @@ fn main() {
 
         let theme = theme::editor_theme(&settings.editor, cx);
         fe_gpui::set_restore_style(cx, theme.clone(), settings.editor.clone());
-        // A folder launch reopens its saved windows, and a launch with no
-        // argument the last such launch's; a file launch opens the file, in
-        // a window that saves its layout from now on.
-        let mut windows = launch_windows(launch.root.as_deref(), reading.is_none());
-        let (layout, entry) = windows.remove(0);
-        let root = launch.root.clone();
         let launch_root = launch.root.clone();
         let mut failed = None;
         let mut launch_failed = false;
@@ -934,12 +931,9 @@ fn main() {
             None if waits_by_itself => wait::add_own(quit, waited_on, landed, cx),
             None => landed.detach(),
         }
-        // The root's other saved windows.
-        for (layout, entry) in windows {
-            let launch = Launch {
-                root: root.clone(),
-                file: None,
-            };
+        // The other windows restored, each on its root.
+        for (root, layout, entry) in windows {
+            let launch = Launch { root, file: None };
             let theme = theme.clone();
             let mut options = window_options(
                 &WindowSpec::main(fe_config::APP_NAME).app_id(app_id().reverse_dns),
@@ -1237,6 +1231,46 @@ mod tests {
         });
         cx.update(|cx| super::watch_window(window, Default::default(), cx));
         window
+    }
+
+    /// A window with no root beside a launch root (a launch with no
+    /// argument reopening a folder window first, then a rootless one) reads
+    /// the user's settings alone, off the main thread, rather than taking
+    /// the launch root's, project layer and all, at once (T1666 F2).
+    #[gpui::test]
+    fn a_rootless_window_beside_a_launch_root_reads_the_users_settings(cx: &mut TestAppContext) {
+        let launch = tempfile::tempdir().unwrap();
+        let launch = fs::canonicalize(launch.path()).unwrap();
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+            fe_gpui::pane_item::set_undo_store(cx, None);
+            cx.set_global(super::WindowSettings {
+                launch_root: Some(launch),
+                ..Default::default()
+            });
+        });
+        let window = cx.add_window(|window, cx| {
+            let theme = EditorTheme::default_dark(cx);
+            let launch = Launch {
+                root: None,
+                file: None,
+            };
+            Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+        });
+        cx.update(|cx| super::watch_window(window, Default::default(), cx));
+        assert_eq!(
+            given_undo(window, cx),
+            None,
+            "not the launch root's settings at once"
+        );
+        cx.executor().allow_parking();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while given_undo(window, cx).is_none() && std::time::Instant::now() < deadline {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(given_undo(window, cx), Some(true), "the user's, once read");
     }
 
     fn undo_setting(persistent_undo: bool) -> std::sync::Arc<fe_config::Settings> {

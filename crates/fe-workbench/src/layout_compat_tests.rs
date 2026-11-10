@@ -98,6 +98,7 @@ fn todays_entry(root: &Path) -> Value {
         "terminal_dock": {"size": 360.0, "side_size": 360.0, "bottom_size": 240.0},
         "breadcrumbs": false,
         "bounds": {"state": "windowed", "x": 40.0, "y": 30.0, "width": 1400.0, "height": 900.0},
+        "root": root.to_str().unwrap(),
     })
 }
 

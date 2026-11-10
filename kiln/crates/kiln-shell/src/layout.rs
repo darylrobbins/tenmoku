@@ -39,11 +39,15 @@
 //! ([`LayoutStore::restore_last_session`]), at most [`MAX_RESTORED`]; older
 //! sessions' windows are deleted. A file launch's window marks its entries
 //! `"restore": false`, so no later launch restores it.
+//!
+//! A launch on no folder in particular can reopen the windows the app last
+//! quit with, across roots ([`launch_last_quit`]), each on the folder it was
+//! on, at most [`MAX_RESTORED`] in all.
 
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
@@ -532,6 +536,24 @@ pub fn launch(store: &LayoutStore, restore: bool) -> Vec<(WindowLayout, Option<V
         }
     }
     windows
+}
+
+/// The windows open when the app last quit, in the layouts directory
+/// `dir`, whatever their roots, newest first, at most [`MAX_RESTORED`]:
+/// each with the folder it was on (the empty path for none), its layout,
+/// in the store it was saved in, and the entry it restores. A window whose
+/// folder isn't `there` is skipped. See kiln-core's
+/// [`restore_last_quit`](kiln_core::layout::restore_last_quit).
+pub fn launch_last_quit(
+    dir: &Path,
+    there: impl Fn(&Path) -> bool,
+) -> Vec<(PathBuf, WindowLayout, Value)> {
+    (kiln_core::layout::restore_last_quit(dir, MAX_RESTORED, there).into_iter())
+        .map(|window| {
+            let layout = WindowLayout::new(window.store, window.claim);
+            (window.root, layout, window.entry)
+        })
+        .collect()
 }
 
 /// A new window on `store`'s root (not the launch's): the newest entry no
