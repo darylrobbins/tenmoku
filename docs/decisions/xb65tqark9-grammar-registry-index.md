@@ -598,3 +598,414 @@ the earlier runs before the rebases, since their files didn't change:
 A Mac build may give other wasm bytes than this Linux one, since it uses a
 different wasi-sdk archive. Card 2 builds in CI, and that build is the one
 published.
+
+## Evidence (macOS determinism, T1681)
+
+The follow-up C3 left for the Mac. Host: macOS on Apple Silicon, with
+`tar --version` giving `bsdtar 3.5.3 - libarchive 3.7.4`, so
+`scripts/package-language-pack.sh` took its BSD tar branch. wasi-sdk 34.0 from
+`~/.cache/tree-sitter/wasi-sdk`. Commit 4886d2117 (committer time 1794293829,
+the serial), 2026-11-10. Each run started from a clean `target/grammar-wasm/`
+(and `build-grammar-registry.sh` clears `target/registry/`):
+
+```sh
+for i in 1 2; do
+  rm -rf target/grammar-wasm
+  scripts/build-grammar-wasm.sh
+  scripts/build-grammar-registry.sh
+  (cd target/registry && find . -type f | LC_ALL=C sort | xargs shasum -a 256) >run$i.sha
+done
+cmp run1.sha run2.sha && echo IDENTICAL
+```
+
+In both runs `build-grammar-wasm.sh` built every module and then exited 100:
+its parity test failed on 1 of 63 languages (liquid, whose golden predates
+T1649's `string.special.key` highlighting; this card touches no golden). The
+test runs after the modules are built, so the registry build went ahead on the
+full set. Both runs wrote 350 files (63 artifact directories, the
+index, 9 tarballs with their `.sha256` files). `cmp` printed `IDENTICAL`
+and the two listings hash the same (`shasum -a 256 run1.sha` and `run2.sha`
+both `0af03af91afe268debde4e85caf5af401d2a4c6f51987fb81763528b2937e956`).
+Nothing differed, so no script changed (C2 doesn't apply). The index and
+tarball lines of both listings:
+
+```text
+4625f2b1ba8df4004c8dfbc2e90997980c71245a06b54f160cffa68d4d7d8897  ./index.json
+4f98147b756cbe282dae07cea9a5fefda5b36fef50a45a25b0036781b63d09f2  ./packs/Tenmoku-language-pack-data.tar.gz
+b3e200bde0dda7b73fcc555fc6f60d2a4ca9b2e95a543054127434a5e68a64fa  ./packs/Tenmoku-language-pack-dotnet.tar.gz
+85ae230fca941e5ca9629403a75e84b7b7935789c2dd2d1d93d3dd3d94c8372e  ./packs/Tenmoku-language-pack-functional.tar.gz
+2a6175a89e366227b80539e8bbb5a3a563493c97d18bba1bf8c410ea6a9f1476  ./packs/Tenmoku-language-pack-jvm.tar.gz
+c575a51d133e15f6ba76c8b5d9304063cf187ac6403a83d0af0185c88a289ef3  ./packs/Tenmoku-language-pack-mobile.tar.gz
+2a7c5cb89dd6d74e1df02ea3bf5b7461d14773c2cd78cf9db0e296f0962a5886  ./packs/Tenmoku-language-pack-scripting.tar.gz
+968bfa64b8972907a588edb39678a2d362c49b3d240a12151a43c7dd39ba172a  ./packs/Tenmoku-language-pack-systems.tar.gz
+7a42d0ccdc2063b0459448d91e2697f6d3e02460e8589126c2fba85d8b3e3f4c  ./packs/Tenmoku-language-pack-web.tar.gz
+632db2cdb74bb22e62e781f0ae473e80e2c5e8bb6cae8e91e2987d7eb69a6f65  ./packs/Tenmoku-language-pack.tar.gz
+```
+
+These hashes differ from the Linux run's, as the section above says they may,
+since the Mac and Linux wasi-sdk archives give other wasm bytes.
+
+The complete listing follows. `run1.sha` and `run2.sha` are byte-identical,
+so it stands for both; the checksums of the two saved files and the comparison
+are:
+
+```text
+$ shasum -a 256 run1.sha run2.sha
+0af03af91afe268debde4e85caf5af401d2a4c6f51987fb81763528b2937e956  run1.sha
+0af03af91afe268debde4e85caf5af401d2a4c6f51987fb81763528b2937e956  run2.sha
+$ cmp run1.sha run2.sha && echo IDENTICAL
+IDENTICAL
+```
+
+```text
+4625f2b1ba8df4004c8dfbc2e90997980c71245a06b54f160cffa68d4d7d8897  ./index.json
+9ec95a90150fa19e2cee78faf49138fc480f6f7a2354006a0ab150c44239447e  ./languages/astro/LICENSE
+c1aefa040a884a393152576b8360d700b73e40ea64c8044d155afc9bdb991031  ./languages/astro/extension.toml
+ffe276824ff4e1e1c7f471c8d246585d6120f1d48f6df709fa98a76380fceae8  ./languages/astro/highlights.scm
+e454c59fb808c594ce0026a86c47c3e5d61c384ec8952fcfb27a45eb3656895f  ./languages/astro/injections.scm
+5a2fb8768d5e1d1dfe39c7a96a68a53000b64558cb16d2a06e93c01868376e47  ./languages/astro/tree-sitter-astro.wasm
+512d5f9072b6227e356c765b40a4194fda964f75095b0816f24ce75aa8df03fa  ./languages/awk/LICENSE
+db970526f273b6634dde245530fc273369d74b406dc169c7a85a247b34ce1607  ./languages/awk/extension.toml
+c0de09335da85d9c939b6168c0765f4161133218afd3e0b4ebee6225b5897d4c  ./languages/awk/highlights.scm
+34999105fcfaa7b31d41b547f0f99ca86c96a0bd9aa1679c7c42aa9777b6550a  ./languages/awk/injections.scm
+2702683f99b6c3cd77a0d0240c7b2974c4171c5c60d26327568e83001d0d798c  ./languages/awk/tree-sitter-awk.wasm
+96e0c1803ffb831c7287b1fb7f88567d05e58d37da553e6bb9a9c4a765434ecb  ./languages/blade/LICENSE
+c0bdd90d5f69d046b7fdec009f4b9762b63106ceccfae7d2ff07cdf6951c38cf  ./languages/blade/extension.toml
+489dafc5343f9def2652035c9b507683d98c5668c63407f33e79e2f9f173f145  ./languages/blade/highlights.scm
+2fd6f76c4c18c04a43cc905d87330ffe458106b79fa71510534db5ca5fb34b8f  ./languages/blade/injections.scm
+b63488cd57db7c33e4e25cebb48a3e9d7f07512cb6e234054d28b222b8b010fd  ./languages/blade/tree-sitter-blade.wasm
+a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499  ./languages/clojure/LICENSE
+6a1040101b598875bb8605d63d5e7a40c3aceb8aff76e6f6cec15bbfd1ecf502  ./languages/clojure/extension.toml
+3901bb140af6dd026771a6d14c993d0d83671a460100b68a51b8fc8ebc6e4a33  ./languages/clojure/highlights.scm
+b06b36a5404b734f55ae280012bf8881f28390298f948b06e905eafe0734a919  ./languages/clojure/injections.scm
+86bc78e2f401f373ca4d82cc75975d2baf246b4945a4eb9eee4514195bc4d2ee  ./languages/clojure/tree-sitter-clojure.wasm
+97334c0f9c0962b33cbe03223f584b8ed64c2d14419ce80cc2e945eb8d367d28  ./languages/cmake/LICENSE
+f2ff9ec7d94a94c3dc7af9d387dbe87732392e26d8a5e6a84a2f73939bfc5f40  ./languages/cmake/extension.toml
+f6b574615c9eac3b925cb4354c29101ea5930857591c5629a437387ee102aeed  ./languages/cmake/highlights.scm
+ac596f9afbb98946caf788d166d45772e1de9a6b3e1de0a1eb90fdb91c205bc4  ./languages/cmake/injections.scm
+76be696089b6cfaee1bd50fde5b9883e1fdde69e96a31a77642326b7e954aae5  ./languages/cmake/tree-sitter-cmake.wasm
+2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1  ./languages/cpp/LICENSE
+300ee4288f0d901ed0800c2bed837aafd3c267746339dd05f069b4ae204a8448  ./languages/cpp/extension.toml
+4301cfaa699e55984b6f9106c2aaa6477066b634fe8beb7387bf1c73a26ecdc3  ./languages/cpp/highlights.scm
+b738d12eb8f04d14d7454d2cf874e070620f6f074c4af9559cf8fd507c0ec814  ./languages/cpp/injections.scm
+20129669e8bb9a2f69ec1bbbbd2d04395dff936f8704cbf72532627423e7dbb1  ./languages/cpp/tree-sitter-cpp.wasm
+778fb7d63b8c1844da315648c02f325c4713a6f4a5d19644fd413421422776d3  ./languages/csharp/LICENSE
+303055bb6ffc14755ff2caf87e15d1a97caf93d8de5c088459ee212c15752be6  ./languages/csharp/extension.toml
+ab8a9930aeeee70fa2dbfde82e4763170b7e826bc642338ad0683772c20c060f  ./languages/csharp/highlights.scm
+f106338d536801b0838cbcd173813f01fc086cca3736938024dd1e81381adda6  ./languages/csharp/injections.scm
+4367df4bff295a670c1d64b18db4217648d6c9789408db9275e909edcaa08d64  ./languages/csharp/tree-sitter-c-sharp.wasm
+ecf206b1a27e8e4ea07f1e1529cb111b4be5ce8420bd27b8269981d9c0c389f8  ./languages/d/LICENSE
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/d/LICENSE-APACHE
+b4ca05d0b0104835123c7faa89fce708bf5dcf516f216eaaeb3cf1138e656609  ./languages/d/extension.toml
+a4c63d0e4cf55e284ad8c2489505018190dd558dd0c47db7534f89f99f333d74  ./languages/d/highlights.scm
+2978c30a90acc34497e21dfda6963f22af79d57d949d2f872f9f4a725c62a31f  ./languages/d/injections.scm
+d0983a2e574bfd014bf12d15cb7fb7a3376e3cdf1f8f38a3da844aa70b54adfb  ./languages/d/tree-sitter-d.wasm
+d270cb3a4985d75033bd77d875ccebff1d66e32788a3f727891e28d76132dd46  ./languages/dart/LICENSE
+a70a04ebb286d72b3606dda7939606c4183da58a33b95790f80256cef5b639f1  ./languages/dart/extension.toml
+a5f4b5c9986fa22b4fcc9b70a5aef7e24ab4363926e12fa8bc0fb1b3b4f3640a  ./languages/dart/highlights.scm
+963efa4924a90013ae878a0ad19f177cb07129040eed4a37ecf7fddb40117a6f  ./languages/dart/injections.scm
+824e5c81a8c0208d5a8deaeafabf47b53652372d9761608364d4e67a3cba67fa  ./languages/dart/tree-sitter-dart.wasm
+c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78  ./languages/ejs/LICENSE
+40be1df6705ab9384b44c62f2240d0e2dc4ef5c92d27e5fb6dc84ff13fc13048  ./languages/ejs/extension.toml
+b8f95f416ea17d755acf4a695b153ba997332cc8ed18c4ba8f1c0da89b3bd3b5  ./languages/ejs/highlights.scm
+fb5fb124e719d107447c70773c249064af7bcc5322cc4f679b5b4dfab4a20a77  ./languages/ejs/injections.scm
+e7a8caec5355d1e9394b39efeb5acb6ec5b674590369084b874f0cd96d539212  ./languages/ejs/tree-sitter-embedded-template.wasm
+a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9  ./languages/elixir/LICENSE
+119588423fbaa46a6955a044fee5a23338c7de190d8c4651a94c6d0b98ca2cda  ./languages/elixir/NOTICE
+e949d1ab37404e1fcfc35ffcd67968c36f0f1917ce892dcd12c91ca52026b87d  ./languages/elixir/extension.toml
+72d83a4dbeb10824086bd7216a5020351286bee53f2970e3f7e1c536f691d1f9  ./languages/elixir/highlights.scm
+aca1ea5381d136bfe46586288c8f6b95618636d105e65b8adc6cc9d2dc313b26  ./languages/elixir/injections.scm
+c7c8f489f6b6c1fc984bf4312a41e0ae3e74f963df8b5eeba3efb07814254336  ./languages/elixir/tree-sitter-elixir.wasm
+26f7bf09693dd895ea64777316bad0133b131a8478a660b4785d4b9d1322f9a1  ./languages/elm/LICENSE
+0eed3a4e59df71a29b7f4566e10629cf1aa5c354707dd1426dc89f9f5f624897  ./languages/elm/extension.toml
+04073e9e4a06bfee5dfce2b501344ec23b0c3db29bc42be57d4ec4d4cc415c38  ./languages/elm/highlights.scm
+b008498037f2d0aa2e9ef77d7181f1f9a0be9a73781858edc9b1a8a1b7b14a2a  ./languages/elm/injections.scm
+6a865e1fb9f0ad36701d05584bbe06333f7fb86cbbd1252e26936e6ba277d1bb  ./languages/elm/tree-sitter-elm.wasm
+c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78  ./languages/erb/LICENSE
+4cd43dbe17f596994313128067897ae044d4a5eb839a1a57dd5d8a7f61b16f97  ./languages/erb/extension.toml
+b8f95f416ea17d755acf4a695b153ba997332cc8ed18c4ba8f1c0da89b3bd3b5  ./languages/erb/highlights.scm
+de8cefde8eb6e9d1f55ae6d029189fe2244f5e6a74748a3876681fcc0aa23011  ./languages/erb/injections.scm
+e7a8caec5355d1e9394b39efeb5acb6ec5b674590369084b874f0cd96d539212  ./languages/erb/tree-sitter-embedded-template.wasm
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/erlang/LICENSE
+35f77e2833f79d5527d3d9f247d90c41fa0fe1a10a7c6dcda001a20b6b2f3652  ./languages/erlang/extension.toml
+c2fc0904d0c19a3073cc7840a49e69c37cbd98a55c33fbba471aaef8e1bf7e86  ./languages/erlang/highlights.scm
+b06b36a5404b734f55ae280012bf8881f28390298f948b06e905eafe0734a919  ./languages/erlang/injections.scm
+d8ed8e25f6c894230ea56828de8af85a814e3e371dc207ca9454d0e57132d2ef  ./languages/erlang/tree-sitter-erlang.wasm
+6b0382b16279f26ff69014300541967a356a666eb0b91b422f6862f6b7dad17e  ./languages/fish/LICENSE
+28b7516a63328f076857681561f9b6efbcdb729bf079c994d97977e9ab41ec18  ./languages/fish/extension.toml
+053707f2a2158772b2c2392107244c2815bec9e3e8cafc09aef0c90b0e8841bb  ./languages/fish/highlights.scm
+d50d0bc716833dddb48fa22e77d38c96ad514baf4aea88826390c371315418ea  ./languages/fish/injections.scm
+fd67720f9b365ceee387e0f7a7dc5f81cef7cb79a6869a2a3e411b8eb94bbabf  ./languages/fish/tree-sitter-fish.wasm
+c0fc02a86ae2b179c4729694c523bbf42da674e5136ed8e12e3cb2f26556ea9f  ./languages/fortran/LICENSE
+490d7240c3ec2b14aa3afaef3c1218d1f513baaca02c832c0e86884014931f54  ./languages/fortran/extension.toml
+db892f2cfc9c97d6664f63112c1c5e7f3a982775ad0568c7084a988bd73580a1  ./languages/fortran/highlights.scm
+c838eb88558c4032c727e0249436324432836592f1bb78ec9353c0487e2539ce  ./languages/fortran/injections.scm
+1f72c6c413ac48eee64ef3f115b0458c4c324b4989924cbddef70415fccaf63d  ./languages/fortran/tree-sitter-fortran.wasm
+f9352b63e87252b282b252bf27530027c8ca69829e0023f8b8b682a736f271fd  ./languages/fsharp/LICENSE
+be0d410e135942241b326f7eb663c301099bf999b326cc107e860bd08a172553  ./languages/fsharp/extension.toml
+327a26f010c8c274092dc8cb3047a4812142e1b9b398ccb82c698f3560a8f02f  ./languages/fsharp/highlights.scm
+dfb1c27a0bf14911e605fa8a9133369d8a42421a51d2d13c0951bc372da4801c  ./languages/fsharp/injections.scm
+2655d5b2b43eb6ee04533e5ebc179e6032e73075cde6b86bea0a3f803545fbf1  ./languages/fsharp/tree-sitter-fsharp.wasm
+cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30  ./languages/gleam/LICENSE
+b053ff5356a6b2c6970542388bc4fd63e670d281867cd7fd232a3547d9cd90bb  ./languages/gleam/extension.toml
+0fe6a57af70a9f3b2c4fb210647b116595648121d2dc8f3f995adb77050232fd  ./languages/gleam/highlights.scm
+e5ec9bdf27e08ac6e7acf5d8b49747ce9e6ad9ff975b4fd69b1e1efeb5cf7856  ./languages/gleam/injections.scm
+dd4138dce003c9f008bfcf0bae2bcfc68337ebcbf0b8e971939ea1add6561c1f  ./languages/gleam/tree-sitter-gleam.wasm
+f44d7107a33801260dc82624c91a71ebf5918b4038a0fb0e3ef60e2dd9ba1999  ./languages/glsl/LICENSE
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/glsl/LICENSE-APACHE
+424ef6341f54368b035c2feec27317cb6176ad7b9dc6ec127940b48290b17ea3  ./languages/glsl/extension.toml
+d778b31450c58f0117373170adbedd3037f27e314c4456025c18067ded07bea7  ./languages/glsl/highlights.scm
+77e12c6bad2e42553ddb349b58747daf42ba0ec15587d14c78b4cfdf31fa3432  ./languages/glsl/injections.scm
+997a72e3f05a8932358ad18448d4d9d7b48fdffa4b686faafcc86a7f2585baac  ./languages/glsl/tree-sitter-glsl.wasm
+806b8fcd19c1cdf23e178eb25942acc844a38669e36b2c896c7baf5f8bcecbb4  ./languages/gomod/LICENSE
+b4703ad5fa110f2a0fd3642c82b5bbd59238905941e295f3fc72bc93aa85283d  ./languages/gomod/extension.toml
+1107b38d2754cf8c902f42c579e2cf8b3d1d850c9cf17190f599378e62bdde08  ./languages/gomod/highlights.scm
+8d76186494c71453c368d2ed491c4b02b2ae24ca2a69cf0efa77bde9f6b8c414  ./languages/gomod/injections.scm
+527f6d7641438143fa5edbce43d52288fc14fca7e06c97a38c73ab1b01eb510d  ./languages/gomod/tree-sitter-gomod-orchard.wasm
+099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6  ./languages/gosum/LICENSE
+735527bd0ab4b7903f7cad761c0f5e8c3c1edf40e6b97e187b8cfda799e284be  ./languages/gosum/extension.toml
+7184274210f23c3a396f5e41d39ec0ff609e891ccc56b109f531b67a7c482771  ./languages/gosum/highlights.scm
+a88a2a945063e5a2a6038ef7f947c61c74dff1ac764c1970a3accde177fec088  ./languages/gosum/injections.scm
+489e34b3079d9fdb3bf6072f3c448b8a410ebee0ed020309ed6806050cc09ba1  ./languages/gosum/tree-sitter-gosum.wasm
+44ee910db99318d5d0b74b0d187ab2c8cbc411ca0be632ad9300e54036a9d822  ./languages/gotmpl/LICENSE
+a9a8a3f5c9a431dcf8280aa7e2558c3d71fcffd6131060ef751e60b0477d324b  ./languages/gotmpl/extension.toml
+5af7d8e6f51f0c5501ba38a5acbf64bf98782f02f490185e3af0d2434f184b50  ./languages/gotmpl/highlights.scm
+ffe1e146a45036a84cf7a4d4c08744f09c8e887bc32ffad792acf731b13cc341  ./languages/gotmpl/injections.scm
+abe9f7d532000ef4aada594b8f93cf5c86dd3bdcb0bb4120cf3c9dbf731889b5  ./languages/gotmpl/tree-sitter-gotmpl.wasm
+910d2cfec76df90457dd9ff08abb273c8e52348b2e04ffd80e10cf89b912a553  ./languages/gowork/LICENSE
+b8db50221fcb61c1420bd8e2afe6684b085b011c88e86521ca67cf4c96606656  ./languages/gowork/extension.toml
+27db1c11e6d214431795389825ddb9884bdac1a7b87aa68c99490ceb44cada1f  ./languages/gowork/highlights.scm
+c183540e626209d19b84ab261762a83e6ef6313bcd1b798a5f21956d8515d6af  ./languages/gowork/injections.scm
+b5b8bb9e672be5b07ba24b001bb748879084421c15769c039633fa62530e5a9a  ./languages/gowork/tree-sitter-gowork.wasm
+7bd2788c7154b102cf03eeb335faba32d897fb82f252b28663c16c76738aaba5  ./languages/graphql/LICENSE
+dda7680b81c150682f322a124b21d604d54931edff6da16fb74a31ec76f6c844  ./languages/graphql/extension.toml
+408e6734b129d247514d07ae1da431ab65ca25505d20bf5bfd46d1b7559d6e1c  ./languages/graphql/highlights.scm
+f5da78d06f12587ee4bf59a2b9a688090662b44b1dd201779add699897280c45  ./languages/graphql/injections.scm
+41daf134d1416e12292bafe347559581c543ed91b6462c5cb989266e4076783f  ./languages/graphql/tree-sitter-graphql.wasm
+5f10fff4ea3c4892af1e2f1af0b9ba7fa79843598808a1dbbbbc8231ca81d1ad  ./languages/groovy/LICENSE
+d75a2884758df3c738e7d3911d6a759a6e51ea41f5e2f4dfdedf3d5db55be43d  ./languages/groovy/extension.toml
+628cf9cb2255f9656c32c2d44466bc38adc85e851d62247b862b96166fef6d8d  ./languages/groovy/highlights.scm
+3c92b04cc357c71cba29f540fe2f96bc58cb2994e7afcc681581cc580fdd06a7  ./languages/groovy/injections.scm
+c210cb7f29b6514c714c05c60c97b460df63f8e8581d47bf631a845b998104bf  ./languages/groovy/tree-sitter-groovy.wasm
+b1cbb99105fb1649ff510224117fcb635ef534475ebc59c20fa6e3f284293967  ./languages/handlebars/LICENSE
+1b21fb29f15eb544f2e2a4027b5c0173d860366eadf82fb49471e85ff43a4a75  ./languages/handlebars/extension.toml
+92ae940ffadad64127ee952c7d96a3abf0cc73f9bbf7d9693a4448626fbc3ef5  ./languages/handlebars/highlights.scm
+8587b12e0fd65ca0ee35c71a929b96c514af17aead7bbc1a5b19318a751c597c  ./languages/handlebars/injections.scm
+7899b0e2ac49d36fb8f2795a37c8cb8ab4ad34c39f436872221c6546fbc78d49  ./languages/handlebars/tree-sitter-handlebars.wasm
+2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1  ./languages/haskell/LICENSE
+5a9f79af945bd2135806304c32284356197775d2724699e058c5a2cd0dd9e24a  ./languages/haskell/extension.toml
+8e7ca3c2f69dc9d1056ddf9e2901bcc9b5e3e29da190626015c33950cb0a00ab  ./languages/haskell/highlights.scm
+4ae628d072f6d73fb8df10bd01094437bbe566bc03797161426978ea861ae9de  ./languages/haskell/injections.scm
+8a370a41aec73c9bf299784fd6cc2a6efa3c9d91aa9959f7bad3ac9d568b8d5f  ./languages/haskell/tree-sitter-haskell.wasm
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/hcl/LICENSE
+074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff  ./languages/hcl/LICENSE-APACHE
+4736bc330788e3aecc49422c141b83517399bd52ac07214c84f6cf51128a160c  ./languages/hcl/extension.toml
+6e6235e2bd4f7daf31a902a0869368644be6472ce810f1f7a0a46dd9b2487434  ./languages/hcl/highlights.scm
+8a07b208848c5dc8d45331f9f010a08b37c3d5a5c8162d1bf222266e5158195c  ./languages/hcl/injections.scm
+8a1d8338ce7472547d1bbbc3a1e5206423988efdcea4ce9e20288c7dc78637a9  ./languages/hcl/tree-sitter-hcl.wasm
+a36f89fb6cebf85bfb6702c9a8bf39a17ea0fa7b98d1b2d8f4b281e9bdcd4994  ./languages/heex/LICENSE
+b4c4082c86803a161ac57f56e4ed7961ba38677051e6d465390a164550e07288  ./languages/heex/extension.toml
+9865bc5bf4c55deb7504da8fe88bfa15e95a4c8f890f814f89391d4369d0ea60  ./languages/heex/highlights.scm
+8edbf8aa4926d46b34a4538566ff2f89a90d45ca4cd5a737fc657406d44f63d9  ./languages/heex/injections.scm
+13ec1bdc395435ca8f011b5b326ea45221cdfa5801eae3ef8318525038620ad4  ./languages/heex/tree-sitter-heex.wasm
+dec735ccc031754dd05e6556dd9e959915eb367cf01cf009c77a1a38786932b1  ./languages/hlsl/LICENSE
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/hlsl/LICENSE-APACHE
+9c910f97c0dc03b1cf0d402fd53e6322bd058252eea94186f4f67772c226e291  ./languages/hlsl/extension.toml
+adf0e314a1da54a14338a32694a84b74fd415746c4f3dd01eb0d431166cb2f08  ./languages/hlsl/highlights.scm
+fb6206189b65c2e4f85dfa196889c00fc577f63a7d3af9665ca0f1f12e66bbdd  ./languages/hlsl/injections.scm
+0a35284ef0a8e7d167259cc87593125bd3886b89b9fdbb7f1d2c24add921a851  ./languages/hlsl/tree-sitter-hlsl.wasm
+a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2  ./languages/jinja/LICENSE
+57058cefd423b17720664c5d09fee47cd641c8f2705d3716d57299a284952591  ./languages/jinja/LICENSE-TWIG
+9733638dbd4ebf822d357497f46bb3a951e578d8860fe0e5a07f377680d818bf  ./languages/jinja/extension.toml
+eedfabffd2341e8624cec8174190cac678bb95da39f73c042e117ec8aeccc841  ./languages/jinja/highlights.scm
+75c16dd067e719193c320890986d57b61ed8464f6859754301b9454de02ffee7  ./languages/jinja/injections.scm
+4c8de702be695f58c4c4ab42f0985615b9c29df88b21a16dd815bf70ced4facd  ./languages/jinja/tree-sitter-jinja.wasm
+74f800107f200f4e28da33e9c3f86230d37d8f4c0a4916f7111e800c395ee3a2  ./languages/julia/LICENSE
+6c0904a117cf7222a1159fe719af4d7f2ff289f421e2e1e79a8931365dae0849  ./languages/julia/extension.toml
+18b8dd94acce1c2faeda2ff659216c1a6e97d3e93d3b7c7779e8b35f8e6af2de  ./languages/julia/highlights.scm
+3e41a78c747359ac3d9f65a08767c91fabe3a804973625abd0acfa73de9f0ce1  ./languages/julia/injections.scm
+6b8723dadca806051f32c2397769bfbe5063bbd1e35fa7d898c82927adc47ad4  ./languages/julia/tree-sitter-julia.wasm
+8159dc4e5ec52ee8ad940e2faa687d8b045b672d34102adb644571477f63e347  ./languages/kdl/LICENSE
+89f6e510fc2fd09d65a6a4880f4f6064da917d34c4373863145b8df99e5627cb  ./languages/kdl/extension.toml
+6c3e2d6fd8073059899aa2022723d57004c0a4267c3bd2f9ce2ef3ca29088953  ./languages/kdl/highlights.scm
+92cdbd9a4ea6bc4713b23a316bb726ff53e5e7776b85f4082067d96f74baecbb  ./languages/kdl/injections.scm
+77270a1bd4afe7eb988cfeab7e916e36c6520e25ad7f77ffff45ef4f3d47d3ec  ./languages/kdl/tree-sitter-kdl.wasm
+948495f61768f7de26bcc61113d8cd95f50bbc15adb678c28c941c6c8fcd5903  ./languages/kotlin/LICENSE
+074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff  ./languages/kotlin/LICENSE-APACHE
+8a39f4395faa3a28ff2008d8aaf7bf6c07d14637df96fd351441149abfa586f8  ./languages/kotlin/extension.toml
+53f71edf120a3ad1d82da7d408a02c91acd14dba200e4d02f6fb0f674d002f46  ./languages/kotlin/highlights.scm
+5cd8ed9255bbac7b1ebe792545f45d615ce413968c77e7e0f051cd69fc20ae21  ./languages/kotlin/injections.scm
+ff41d07736ef1b22def69557add54167c07158bac2b0203af97c6671def0a589  ./languages/kotlin/tree-sitter-kotlin.wasm
+7174d0c27fa92745f89c7e64bdf3cdc94eacac77915cad97790d993cdc24a010  ./languages/latex/LICENSE
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/latex/LICENSE-APACHE
+f95e79ee79be0d553f9b2ed671e63907e1c4141714e09fd7258f43f2fd442bdb  ./languages/latex/extension.toml
+524cc114457ae8ea2903503347fc81dfb34c2d35fd11d7edf62e7810faa4209f  ./languages/latex/highlights.scm
+f91b85e987b8842993f34d85eda2212058763878b6aa51e00e2037efe40950b8  ./languages/latex/injections.scm
+3fab859773370c8870a67ffe5f4ff5320b90c1c9c421bf23a33058220770c6d7  ./languages/latex/tree-sitter-latex.wasm
+3b3e4e4252d5d7d1c18e1257005f23242bf0580ad619204fd093c99b8c56748d  ./languages/liquid/LICENSE
+5982b71c61a5fb3c0739758b9d2f4bd301f5affe92605c0f6ad9677dda6ad905  ./languages/liquid/extension.toml
+3a3c1efd9e193ae704b9818a1331fe83c85a34a81464ddb20f862a3fbbe006b8  ./languages/liquid/highlights.scm
+5b0979c43cb0e582ca531539ed275b98986b574e682c40bc5b37b6e9712e2bbe  ./languages/liquid/injections.scm
+1a2860250d6163a9420115df480eeb3acab2a7624c3dc24647e7301d73d2d803  ./languages/liquid/tree-sitter-liquid.wasm
+5edebab3318dc8aabfaf032f62aec7c4a597745948102f5c4a4ab0e1dd218c72  ./languages/nginx/LICENSE
+2a04fbf7e1cd312446e38941e6efad4bf6174fa4b0557c2d5202f181c18ac579  ./languages/nginx/extension.toml
+e95cf27132065ebc60d6f8382866c25e26d247e32aae6775acf8fa3e7a59f079  ./languages/nginx/highlights.scm
+07f836b8d09b1a55287b8b6a3c8fcc1d1ee9dde4a8e6473a1c931ab23501f0f6  ./languages/nginx/injections.scm
+9368eb2119328be9757a0a1c2ffdcf72b0545948d3e6f071f1c00b1088239c6e  ./languages/nginx/tree-sitter-nginx.wasm
+c1b72e50266464ec5118d26200e17bf1f472d142e62ab637e1ffc23986657a78  ./languages/nix/LICENSE
+30e2e50e652be22ad8a3a700cebb570d86ee1ac2ffe570c0065938b025fc9246  ./languages/nix/extension.toml
+9570e63a7cd09d10456241f7bc01c48b247aa5ff200c6bc0a12684128fb45a46  ./languages/nix/highlights.scm
+b8899cc47c04632abea5858b6b432e623817dc5b98db65556fa8ba1d1b4df0cb  ./languages/nix/injections.scm
+e8e23db3384a341ddab82307aaf9d2001df3c2d81843d4af29d6f08e857def7f  ./languages/nix/tree-sitter-nix.wasm
+099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6  ./languages/objc/LICENSE
+2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1  ./languages/objc/LICENSE-TREE-SITTER-C
+465c45946a887a9e7608fb8f22b1fdc7ced101f64ce15e4eec72d54663bd37b7  ./languages/objc/extension.toml
+1411c1ba85a44ec1c63e939e283d1f40748f74c15a02d36d40150fc5c8b2192f  ./languages/objc/highlights.scm
+ce25a2f8f01bc48a1e89c21d1e032ab6a4795c66b9fb01f1d59e75ec55d796c1  ./languages/objc/injections.scm
+b0d08c296e9d316ee1baef70c8383e2e8ced955d0ac8883356b4eb51c62f9b78  ./languages/objc/tree-sitter-objc.wasm
+f977a20805dd6e275f14bc090a5f8e638401dad4df366841c1060f12c75b74ae  ./languages/ocaml/LICENSE
+40c331f2dd7b0330b475c04953a3368c946e1a8abbdd9090e63f9d3c57ae95ac  ./languages/ocaml/extension.toml
+9a2696aaf3c7434e6c913f1c40c210a6dce9afb2ce986891d767d50b51a33b65  ./languages/ocaml/highlights.scm
+b06b36a5404b734f55ae280012bf8881f28390298f948b06e905eafe0734a919  ./languages/ocaml/injections.scm
+36bb2fab66b16ded6003a95f3ed52ea63c5d67e5cf2ee6e1e529897161b751d0  ./languages/ocaml/tree-sitter-ocaml.wasm
+68a9a526ae357ed5a2f8ca5dabb14131b283554b69639bb04816088d4b1f2fa0  ./languages/perl/LICENSE
+f58576682df1bf62e00277ab51b1cb4408c4265f89de8ca80b0335642e3d4856  ./languages/perl/extension.toml
+6400ebad4f0b86a918268f1179baaf046826ad5f8db2089331ee79915468138c  ./languages/perl/highlights.scm
+31b8c2df3aa953b3b3339811c6bd1f50aac1a2e9d62dce2781cf958d835ec6da  ./languages/perl/injections.scm
+e886a6704e9e3c171e145ccdcd3e2df11663ef32ddcca68d0181294d378bb141  ./languages/perl/tree-sitter-perl.wasm
+664764fabf40c0b318e06324a5a12379092a2df25b8cbf2415f71bc0bb352346  ./languages/php/LICENSE
+0a6c8170881f8c51553475fee0790c718366b464be4f5b3d5f6c92753d3f0e1d  ./languages/php/extension.toml
+a2a7367659cff3b4be09961c8117d69a9b8703bfc266f8092e089b1760f197e9  ./languages/php/highlights.scm
+7d07b1ed3ce1b8ffe3b91731e71afa627ecb1c8edd899605d98f930b4171f76c  ./languages/php/injections.scm
+800ff4989aab8aa74584be7d837ef46b53779c44a0df16f4ec218997cfd85a85  ./languages/php/tree-sitter-php.wasm
+664764fabf40c0b318e06324a5a12379092a2df25b8cbf2415f71bc0bb352346  ./languages/php_only/LICENSE
+2837bf389b430769399982031ea4a3ca4a207e314fdc704dd8f40baa9253ec9a  ./languages/php_only/extension.toml
+dee02aeaa5d44bbeffe067227a72d4371f52387107dc29bfeb13765a755b1e09  ./languages/php_only/highlights.scm
+b90a3d4df0216a730e795da814bd6a90a6910752c0a0df450e3f08121c9d825f  ./languages/php_only/injections.scm
+1ad79486818c875a4db139b4baf465a637d5344f1e99571cbf5a73145cbc46f0  ./languages/php_only/tree-sitter-php-only.wasm
+1fca8454c0d77a73f9922a52d39e1f7c339f5da5d03f2766eff66b859fa19477  ./languages/powershell/LICENSE
+194bcdfb7296fbf4ad41df1b80a47543d0c2fcd8eb3dd26c435c84ee182bcdb6  ./languages/powershell/extension.toml
+37b202e28cbf7d69b21ef1f4bdb4cf79a87607164941c1f46620e0dc0d73e29b  ./languages/powershell/highlights.scm
+c838eb88558c4032c727e0249436324432836592f1bb78ec9353c0487e2539ce  ./languages/powershell/injections.scm
+a4708bddb25afd97c63eb2e24a1a0ae7c39eb9b7290de438c18273315c201d60  ./languages/powershell/tree-sitter-powershell.wasm
+3297073719030b7261afd78b7267931ccc03a27f7a65ca6fc644316180f71bf6  ./languages/properties/LICENSE
+38af545ab006f3cd1164dadce3938a3d276405e9f17fcecd95a0b79e29d3bf3e  ./languages/properties/extension.toml
+3aa0902a52a4da23f0ce240b2968d8c1bf3ace6c90056e1f859ab389a9ca5e26  ./languages/properties/highlights.scm
+25dffcbfd48950f9eda2892a7aace6b944c8653be0605c3be0ed6deb88212b82  ./languages/properties/injections.scm
+a44a4658d8c16936aeab043afb34b0a4c11de53cc67b697cd3dcbce11c04de36  ./languages/properties/tree-sitter-properties.wasm
+1cc17f880ff4fa68079a72b98b89d42e8ce16b1bdbb1ec7b6f33465241e41003  ./languages/proto/LICENSE
+fac6561fd3bf56448c069ca7031d4ccadd717a2b8b2a48a762d0be3e34b59679  ./languages/proto/extension.toml
+3883fc70019f57e5967c9770c91d2812f046a742d3b44627387384c4341fb767  ./languages/proto/highlights.scm
+922d08a3eef7a4e248706db8b1139443bc134d4b34652a6cb562829e477efa8c  ./languages/proto/injections.scm
+2f5f8447e0bfc12e54987b7fd227c6e6d0b0d1677366002790e231d76f441e4d  ./languages/proto/tree-sitter-proto.wasm
+de2e49529f03d573bc3fa229dc83acfe22c63a5ad1766b289563edfd45b72dea  ./languages/r/LICENSE
+e05db9bc720748e822069a2e99304438ea92c52a259376d36efb0a5734864c3f  ./languages/r/extension.toml
+41c4007628edd78c6f1bae70b4cd9faa55cac83d3eb0c0bc9230a52a613c2237  ./languages/r/highlights.scm
+eea3cb100b570bc5f5843b6d1e3c22f265fd884f435e6772770e05980e384ebf  ./languages/r/injections.scm
+d69b2257dece5ddda025212e265d9c817be1bac172e8b1338dd0ce7b87559fea  ./languages/r/tree-sitter-r.wasm
+cc35bd4a973bf6067558e88b56d9a369e02c36e240b2b537aef8f751b7808fd7  ./languages/racket/LICENSE
+f8d1fb6224e65a963834aaae71619988521eeba31ffc2d7d934a1010fb856d3c  ./languages/racket/extension.toml
+4b0a84b0a3c9f0cc0d7a3fd99d1a98549c9fd59725dc60cbe6668836966a8dd7  ./languages/racket/highlights.scm
+0a96d2252b3ad8ca2544501dd88120ea6c6ffb8bf82762407ea89fc647c4d645  ./languages/racket/injections.scm
+5d81922a8b4e76641ff05bdac31dffac566518e73dc34a58dd167afc87e0cc1f  ./languages/racket/tree-sitter-racket.wasm
+a68922e8cbc9c35818ef424668e8ce844b05b4afeb9fa957dea7a5f23c197ca1  ./languages/razor/LICENSE
+778fb7d63b8c1844da315648c02f325c4713a6f4a5d19644fd413421422776d3  ./languages/razor/LICENSE-TREE-SITTER-CSHARP
+a74c44b7f64031b74c503e655a7f601b9d941e44b5294f2bca65c8d142ef5e9c  ./languages/razor/extension.toml
+8ea5b2da7b853d009ef4e149d22e432906521ea088eb6c784e9b5022427c07ad  ./languages/razor/highlights.scm
+7ebe585edec8c3a3d1fc6ea3f0fcbc00d5557d1d955b0cb79a477ed0ea30cf5b  ./languages/razor/injections.scm
+6f6cfc21453d2bb590f3df81c006859039af064be7faef99416ed9cfecccdb17  ./languages/razor/tree-sitter-razor.wasm
+c6137844f3f63aa4522dfc1cde8dff4f3314ed594ea954a73e3073dcc9d33b11  ./languages/ron/LICENSE
+62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a  ./languages/ron/LICENSE-APACHE
+c6137844f3f63aa4522dfc1cde8dff4f3314ed594ea954a73e3073dcc9d33b11  ./languages/ron/LICENSE-MIT
+500c9c5cd452b3169eb9b184cc7962cca9a06b979ad4e411156539d4eaba8472  ./languages/ron/extension.toml
+59f0f6c8bea0858aefad24885aa4272dfa8fd719dee59f32b9918ccb8c04cf94  ./languages/ron/highlights.scm
+532c751f9c8defd5efc797cd0956b13a2f3e049024127d88bf690eb19d25763d  ./languages/ron/injections.scm
+adbf681a100d47a185dda4866140546da37e1659600a6b699bf8df98fed25c6f  ./languages/ron/tree-sitter-ron.wasm
+ee006f02a3d856df282e409be2a86e24a65bb573a98b9c28343771141351bb6b  ./languages/ruby/LICENSE
+07f33545bf02b7a2fa09aec9d1475af09789f923cbcd0f755118509479977a54  ./languages/ruby/extension.toml
+e04c8af7f629fecb4db155e28b2c1d676fbd8a9c6fbd2ac9a66cf141748e9029  ./languages/ruby/highlights.scm
+bac7d3389dae76f31810375fbbd11ce12bce9638cd76a1116a18991307199ab9  ./languages/ruby/injections.scm
+b3546d9df1ff6aa875cfe213fd83f8b8b2ba5413f29607c86d4b641cbe175553  ./languages/ruby/tree-sitter-ruby.wasm
+1f95ed26e1f4074074c9c7083e61c0a9e4c3b9f435745044995f3beb4ed28575  ./languages/scala/LICENSE
+a974a805b2f6363c97c53f762c4cc920c528d45c718c149bab1e0ee7c503427c  ./languages/scala/extension.toml
+c6e2d65c4f84b5484af3e1edc3451850fe8d878ce11f79550e426f8ac6e2df4a  ./languages/scala/highlights.scm
+4e14e0797e6543a53206872e989481860e46c200eaaeb561a9c4064cabb71d2c  ./languages/scala/injections.scm
+eef94ce5ffc24456528319ca940f97001a4634385702cd313859f3f27f5e262d  ./languages/scala/tree-sitter-scala.wasm
+0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727  ./languages/scss/LICENSE
+c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78  ./languages/scss/LICENSE-CSS
+144e4535e433d92bf52f7c1ec7ca1178df0c9df34a3148e94692dadb06a30f69  ./languages/scss/extension.toml
+cbcdbb766e45987488f090cc56f1833057675095b37f6c6aed0d3325f8e2e645  ./languages/scss/highlights.scm
+8698072e1540fcfe9a3d2790d8450dd61788e0c4f8c4cbd632fde23a6084c355  ./languages/scss/injections.scm
+5be363ca82cf2913b882d21a91730bed9c252d491995dfbdf4c9184df67d6239  ./languages/scss/tree-sitter-scss.wasm
+8844f0cc9b76b9c8a9d0251904eb7536b6bb9976e0ec577e8f27ab96d42523ef  ./languages/solidity/LICENSE
+54f2a9b56ec322494fcbea55cbcbece40bb2333e839ec9d333eecfe27dcc5536  ./languages/solidity/extension.toml
+f75c5b3d540931ad4204da9987253419c944002feafc9b6c0fcac155f6293e83  ./languages/solidity/highlights.scm
+e2a50d888cbd90258e93197c9fbf668eebe1cdccd29248b6041d716bbc7c00e4  ./languages/solidity/injections.scm
+c796a2dc9801af147dec44e9058147c6ef140aed0ac332ba9869e27de3c276ab  ./languages/solidity/tree-sitter-solidity.wasm
+3b3e4e4252d5d7d1c18e1257005f23242bf0580ad619204fd093c99b8c56748d  ./languages/sql/LICENSE
+bc19525ab2b17b181a7e4060a883fe8f9e0f5c04ca9b4a7bacdaf9b7d1eaa3c6  ./languages/sql/extension.toml
+fe319dcc0add9e45380316f820f3cc8af33795a99a4550fb4bd91a3b99159cbb  ./languages/sql/highlights.scm
+348a22ec95d5c3a876db856108870c8ef14e80511e7b80638504d21526b9f1cb  ./languages/sql/injections.scm
+ef40885877b7a38a55295f31f953816c74aec31b9349271562707cce974071d6  ./languages/sql/tree-sitter-sql.wasm
+099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6  ./languages/starlark/LICENSE
+26f17fc8f34fc3583c9f6a8e64c8f54ab9be4306165b11dce7b4457f81f6476a  ./languages/starlark/extension.toml
+b786d7d33ffd1b2987660bde171f291e0a685e95c6d22089480cbdd2ed7c8d79  ./languages/starlark/highlights.scm
+a1f2c0f9c9f0246afda2fdbe095f39498aaf241e0f1d78967bdb410772a6cdc6  ./languages/starlark/injections.scm
+da650e6c2f6e5be0c471c0178aa32c65b83edf792f3d3f89c201f5e984bc32e9  ./languages/starlark/tree-sitter-starlark.wasm
+0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727  ./languages/svelte/LICENSE
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/svelte/LICENSE-APACHE
+9d86557b8be5c9a72e7fb7ad75dc3a4dd6f6343034a071fd2d6001fd7356254b  ./languages/svelte/extension.toml
+1f28360c8aa11cec98bfa6680c7d1aca408c8f0ce331f1baee7975f7ff7654fe  ./languages/svelte/highlights.scm
+2cdc027fa6241d544b041b78099459a1b308c5ba1c549d319630e955dfa3103f  ./languages/svelte/injections.scm
+9d1cdc676b811f7f4131a804bffd3f5b6c7bbf3086e0c887a01131f3319eec1d  ./languages/svelte/tree-sitter-svelte.wasm
+3533cec129bb4bba015c0d61d86dd7c3b7e82110e4d2ff7837a01eff5bad5ccc  ./languages/swift/LICENSE
+f7abd9b3f16f1e187cbd83ae35b41c855eaddce34cd9ead51381da312850736c  ./languages/swift/extension.toml
+b0bbeb918904b252e8bd361f4afb4756647232391110a67deecbf7227464aff8  ./languages/swift/highlights.scm
+30081a3ec89c3c1f6a9020e6f104b8c9dd4fc69d59ea11aeab81328bf7f749a2  ./languages/swift/injections.scm
+bb66de33963b9c0d9d8c5f4181a3dcfd0be527a0cec026d4233005b175a52bc2  ./languages/swift/tree-sitter-swift.wasm
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/terraform/LICENSE
+074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff  ./languages/terraform/LICENSE-APACHE
+61df8977be477c3834071978715b613b130f9923f7bc9bf66e6e40ad4603fdfc  ./languages/terraform/extension.toml
+4b9e331fad2eb3a0cde17e898951f0857df662f23c5715821ce57bf94ac7418a  ./languages/terraform/highlights.scm
+ec784b07a6a18e259cb9569e19fbbb556d90f96d25baf63d245978677560277b  ./languages/terraform/injections.scm
+525cdde2e77e54b09c6bfd36a04c284a327df314ba9b464d1340a1198ff35a43  ./languages/terraform/tree-sitter-terraform.wasm
+57058cefd423b17720664c5d09fee47cd641c8f2705d3716d57299a284952591  ./languages/twig/LICENSE
+0a39db996ff4e8ae74a3d39cea898d850a02b466c778d3fb926c7fb2c56d8d4f  ./languages/twig/extension.toml
+385b031dac865a03804f4446c6587f788f5d1307108939ca0a7694fc7b347136  ./languages/twig/highlights.scm
+0768de62a5dace728b519614b8014da171baeca64c5c006bda32c67e0c38ef70  ./languages/twig/injections.scm
+74a3888284a6b0ee30d587767c3749e992ac22f293feb7bdf66a964f78583773  ./languages/twig/tree-sitter-twig.wasm
+14eaaaa5c0cdb0eb86e85c55643c4cfa04593dbfbaef6a20f35337667b7278d7  ./languages/vim/LICENSE
+deec47c91b65939fefc942ba231c68d8010745920432b7deba305f089e718f93  ./languages/vim/extension.toml
+705bcc3a08eff73f89bbf15e9f2fa7fdf6e249821990a56f2c1aebd48d4aa3b8  ./languages/vim/highlights.scm
+45c7d8eb9201e857e7aa3a3a3c63252fc4504c84f2918e9033618a7cb553e69e  ./languages/vim/injections.scm
+1fd44b568fc2d9441fe4627e6f845db35bf77b45074fc12a7848c237fbfb479b  ./languages/vim/tree-sitter-vim.wasm
+91ebb180e4e2e34628c45e405584d0faac6863660b69e8139da96290e58c14dd  ./languages/vue/LICENSE
+c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  ./languages/vue/LICENSE-APACHE
+8a981a7ebe4533c01b3ebdf08d17d1937e892000c0618a9fc2a51b11a3da6816  ./languages/vue/extension.toml
+55f92f4cc9a8ad1f9701986b58c26abe571ba7b30c79141cad624fe9c18eae2f  ./languages/vue/highlights.scm
+8fbb6dcc0ca7c14cb238002335d013a430140d1bd4e478b03642af32a77b3adb  ./languages/vue/injections.scm
+cdfdc60b440806346372966859a9748154c18c85d64e9dfba4868a79d5d8725a  ./languages/vue/tree-sitter-vue.wasm
+0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727  ./languages/zig/LICENSE
+050ce6749244f463c3fc602d0cf57507caee85538ef8f5d3052b0640c37b9f6e  ./languages/zig/extension.toml
+30388b3fb4930247d4b56d63a73bc590263cfee7faf6cbf9d55e425767632381  ./languages/zig/highlights.scm
+d55106b00ab4b4b89076aa5fd766e1742bbb317aad8194b8510e2e14340a0e5b  ./languages/zig/injections.scm
+c152827c347ff03742986d4369e864424accc353be62f8ddcb95f1a3711399a9  ./languages/zig/tree-sitter-zig.wasm
+4f98147b756cbe282dae07cea9a5fefda5b36fef50a45a25b0036781b63d09f2  ./packs/Tenmoku-language-pack-data.tar.gz
+faefd57193a23229fa4941466228e9c3c8b5147a7ff8f94fafdae7dd47df2ac1  ./packs/Tenmoku-language-pack-data.tar.gz.sha256
+b3e200bde0dda7b73fcc555fc6f60d2a4ca9b2e95a543054127434a5e68a64fa  ./packs/Tenmoku-language-pack-dotnet.tar.gz
+ae21968bc0f44cac07c2e390b6227c469f1340c2e0518005e42a8074c62a7e71  ./packs/Tenmoku-language-pack-dotnet.tar.gz.sha256
+85ae230fca941e5ca9629403a75e84b7b7935789c2dd2d1d93d3dd3d94c8372e  ./packs/Tenmoku-language-pack-functional.tar.gz
+f1f9eac188989ea7c23e7167e4529e3709a8d17c9f34db97011f9741ca56f770  ./packs/Tenmoku-language-pack-functional.tar.gz.sha256
+2a6175a89e366227b80539e8bbb5a3a563493c97d18bba1bf8c410ea6a9f1476  ./packs/Tenmoku-language-pack-jvm.tar.gz
+820a760e08d326505ec97876a7711055e5439710bf7412ed3ebb579ae3b1ca1d  ./packs/Tenmoku-language-pack-jvm.tar.gz.sha256
+c575a51d133e15f6ba76c8b5d9304063cf187ac6403a83d0af0185c88a289ef3  ./packs/Tenmoku-language-pack-mobile.tar.gz
+783f4a9e4dc43440f77df7bb04b6cc7f3d86c93750b0413e724c5ea68debea22  ./packs/Tenmoku-language-pack-mobile.tar.gz.sha256
+2a7c5cb89dd6d74e1df02ea3bf5b7461d14773c2cd78cf9db0e296f0962a5886  ./packs/Tenmoku-language-pack-scripting.tar.gz
+da976ad7e2acd428ac1f9f1734445857422867085268da4873e97e5083800185  ./packs/Tenmoku-language-pack-scripting.tar.gz.sha256
+968bfa64b8972907a588edb39678a2d362c49b3d240a12151a43c7dd39ba172a  ./packs/Tenmoku-language-pack-systems.tar.gz
+3f6157ca0ecd464af7db1a4a5674de50a6b6667a727c2236bc5d6a20730cbc17  ./packs/Tenmoku-language-pack-systems.tar.gz.sha256
+7a42d0ccdc2063b0459448d91e2697f6d3e02460e8589126c2fba85d8b3e3f4c  ./packs/Tenmoku-language-pack-web.tar.gz
+70e74c3450078747801030140e45b974c7adb9edb3ab36256b18722af7e6874e  ./packs/Tenmoku-language-pack-web.tar.gz.sha256
+632db2cdb74bb22e62e781f0ae473e80e2c5e8bb6cae8e91e2987d7eb69a6f65  ./packs/Tenmoku-language-pack.tar.gz
+c6664819373f7fbdf6a25bf15d0b8a52dcfaadf4e59d1e25d145ba7d2c0804ee  ./packs/Tenmoku-language-pack.tar.gz.sha256
+```
