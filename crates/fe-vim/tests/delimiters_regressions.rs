@@ -53,6 +53,7 @@ fn unchanged(text: &str, column: usize, keys: &str) {
 
 #[test]
 fn distinct_joined_chars_in_a_pattern_name_keep_their_own_requirements() {
+    let _limit = unhurried();
     unchanged(
         "<a\u{200d}a\u{200d}\u{301}.>x</a\u{200d}a\u{200d}x>",
         0,
@@ -62,11 +63,13 @@ fn distinct_joined_chars_in_a_pattern_name_keep_their_own_requirements() {
 
 #[test]
 fn a_magic_dot_before_a_zwj_pairs_with_nothing() {
+    let _limit = unhurried();
     unchanged("<a.\u{200d}>x</a.\u{200d}>", 0, "dit");
 }
 
 #[test]
 fn a_star_before_a_zwj_is_a_multi() {
+    let _limit = unhurried();
     let (text, register) = run("<a*\u{200d}>x</aaa\u{200d}>", 0, "dit");
     assert_eq!(
         (text.as_str(), register.as_str()),
@@ -76,11 +79,13 @@ fn a_star_before_a_zwj_is_a_multi() {
 
 #[test]
 fn a_private_use_char_in_the_text_is_not_a_stand_in() {
+    let _limit = unhurried();
     unchanged("<a\u{200d}.>x</\u{f0000}x>", 0, "dit");
 }
 
 #[test]
 fn a_bare_lt_before_an_empty_closing_tag_keeps_the_boundary() {
+    let _limit = unhurried();
     let (text, register) = run("<ab c><</>x</ab>", 6, "dit");
     assert_eq!((text.as_str(), register.as_str()), ("<ab c></ab>", "<</>x"));
 }
@@ -146,6 +151,7 @@ fn eleven_distinct_joined_chars_in_a_pattern_name_pair() {
 
 #[test]
 fn a_match_boundary_atom_in_a_pattern_name_is_not_prefiltered() {
+    let _limit = unhurried();
     // `\zs` and `\ze` move where a match starts or ends from its `<`, so the
     // row search can't say where a tag's `<` is: each span is tried.
     for text in ["<a\\zsb>x</ab>", "<a\\zeb>x</ab>", "<ab\\zs>x</ab>"] {
