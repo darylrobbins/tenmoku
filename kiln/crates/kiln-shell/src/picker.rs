@@ -55,7 +55,7 @@ use kiln_command::{
 };
 use kiln_core::CommandCatalog;
 use kiln_l10n::Text;
-use kiln_platform::commands::RunCommand;
+use kiln_platform::{commands::RunCommand, locale::ActiveLocale};
 use kiln_ui::{PaletteFrame, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, ui_theme};
 
 /// The key context a picker's element sets.
@@ -168,8 +168,15 @@ impl<D: PickerDelegate> Picker<D> {
         _ui: UiTheme,
         cx: &mut Context<Self>,
     ) -> Self {
-        let placeholder = placeholder.into().resolve();
+        let placeholder = placeholder.into();
         let input = cx.new(|cx| TextInput::new(placeholder, &ui_theme(cx), cx));
+        // The input resolves its placeholder as it renders: draw it again
+        // in a new locale.
+        cx.observe_global::<ActiveLocale>(|picker, cx| {
+            picker.input.update(cx, |_, cx| cx.notify());
+            cx.notify();
+        })
+        .detach();
         let changed = cx.subscribe(&input, |picker, input, event, cx| {
             if *event == TextInputEvent::Changed {
                 let query = input.read(cx).text().to_owned();

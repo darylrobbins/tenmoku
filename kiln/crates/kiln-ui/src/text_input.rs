@@ -11,6 +11,7 @@ use gpui::{
 };
 
 use kiln_core::{Motion, TextEdit};
+use kiln_l10n::Text;
 use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::{ActiveTheme as _, Tokens, UiTheme, focus_ring, radius};
@@ -98,7 +99,8 @@ pub struct TextInput {
     text: String,
     /// Where typed text goes: a grapheme boundary in `text`.
     caret: usize,
-    placeholder: SharedString,
+    /// Resolved as it renders, so a keyed one follows the locale.
+    placeholder: Text,
     /// Its accessible name; the placeholder stands in without one.
     name: Option<SharedString>,
     focus: FocusHandle,
@@ -134,7 +136,7 @@ impl TextInput {
 
     /// Its colours come from `cx.theme()` as it renders. `_theme` is
     /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
-    pub fn new(placeholder: impl Into<SharedString>, _theme: &UiTheme, cx: &mut App) -> Self {
+    pub fn new(placeholder: impl Into<Text>, _theme: &UiTheme, cx: &mut App) -> Self {
         Self {
             text: String::new(),
             caret: 0,
@@ -231,6 +233,17 @@ impl TextInput {
     pub fn name(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
         self
+    }
+
+    /// The name a screen reader reads now: the one [`TextInput::name`] set,
+    /// else the placeholder in the active locale.
+    pub fn accessible_name(&self) -> SharedString {
+        (self.name.clone()).unwrap_or_else(|| self.placeholder.resolve())
+    }
+
+    /// The placeholder it shows while empty, in the active locale.
+    pub fn placeholder(&self) -> SharedString {
+        self.placeholder.resolve()
     }
 
     /// Its border colour, if it's [`TextInput::bordered`]: focus doesn't
@@ -809,10 +822,7 @@ impl Render for TextInput {
         }
         let styled = (!full.is_empty()).then(|| StyledText::new(full).with_highlights(highlights));
         let layout = styled.as_ref().map(|styled| styled.layout().clone());
-        let name = self
-            .name
-            .clone()
-            .unwrap_or_else(|| self.placeholder.clone());
+        let name = self.accessible_name();
         let ring = (focused && self.bordered).then(|| {
             focus_ring(radius::CONTROL, px(1.), colors)
                 .debug_selector(|| "text-input-focus-ring".into())
@@ -847,7 +857,7 @@ impl Render for TextInput {
                 )
             })
             .when(self.text.is_empty() && self.marked.is_none(), |row| {
-                row.child(div().text_color(muted).child(self.placeholder.clone()))
+                row.child(div().text_color(muted).child(self.placeholder.resolve()))
             })
             .child(
                 canvas(
