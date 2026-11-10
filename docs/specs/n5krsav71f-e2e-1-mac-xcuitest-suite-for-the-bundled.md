@@ -113,3 +113,27 @@ Record the answers in a decision file `docs/decisions/<lane>-xcuitest-suite.md`.
 Depends on T1664, which also edits `scripts/e2e-macos.sh` (it makes the script launch the app with a
 temp state dir); this card rebases onto that change and keeps its temp-dir behaviour.
 Uses a human-run UI session: a UI run needs the user's go-ahead before it starts, as in the spike.
+
+## Implementation notes
+
+- Done without a UI session (2026-11-10): the spike record's Status (C1); 13 tests in
+  `SmokeTests` over `Support.swift` helpers, each declaring its fixture in
+  `Fixtures.swift` (C2, C4: `waitForTree()` on `Split Right`, `editorSettle` the only
+  fixed delay); fixture sets per test and iteration, `--fixture`, declarations checked by
+  the script (C3, shellcheck clean); F1 fixed (recorded live processes are roots) with
+  the `late-orphan` stand-in, all stand-ins in `tools/e2e-macos/standins/` and run on
+  every exit path (C5, results in `docs/decisions/n5krsav71f-xcuitest-suite.md`).
+- `tools/e2e-macos/fixtures/.gitattributes` (`* -text`) keeps `crlf.txt` CRLF against the
+  repo's `* text=auto eol=lf`.
+- C6 entitlements: Xcode merges the target's `CODE_SIGN_ENTITLEMENTS` into the sandboxed
+  runner's signature (checked with `build-for-testing` and `codesign -d`), so the script
+  signs the runner with one read-write exception for the run's scratch folder, and
+  `testRunnerWritesOnlyItsScratch` checks it at runtime. A standalone sandboxed probe
+  could not run from the agent's own sandboxed shell (SIGTRAP at sandbox init), so the
+  runtime answer comes from the first UI run.
+- Waiting on the user at the Mac (blocked 2026-11-10, screen locked): the go-ahead for UI
+  runs, the Automation Mode prompt read word for word on the first run's fresh
+  enablement, and the authorization-duration observations (C6, C7). Plan once given: run
+  `scripts/e2e-macos.sh --no-build --only testRunnerWritesOnlyItsScratch` (no app
+  launch), then one iteration of the suite, fix what the real app does differently, then
+  `--iterations 3`; then `short-run` with that run's result bundle.
