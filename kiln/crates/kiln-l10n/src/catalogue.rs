@@ -15,7 +15,8 @@ use gpui_shared_string::SharedString;
 use unic_langid::{CharacterDirection, LanguageIdentifier};
 
 use crate::isolate::{format_ltr, format_rtl};
-use crate::{Args, FALLBACK_LOCALE, Resources};
+use crate::pseudo::{bracket, pseudo_source};
+use crate::{Args, FALLBACK_LOCALE, PSEUDO_LOCALE, Resources};
 
 pub(crate) type Bundle = FluentBundle<Arc<FluentResource>>;
 
@@ -56,6 +57,10 @@ pub fn negotiate(
         chain.push(fallback);
     }
     chain
+}
+
+fn is_pseudo(locale: &LanguageIdentifier) -> bool {
+    *locale == PSEUDO_LOCALE
 }
 
 /// A message formatted in one locale of the chain.
@@ -113,7 +118,21 @@ impl Catalogue {
             }
         }
         let shipped: Vec<LanguageIdentifier> = by_locale.iter().map(|(l, _)| l.clone()).collect();
-        let chain = negotiate(requested, &shipped);
+        // The pseudo-locale is built from en-US only when asked for, and is
+        // never one of the `shipped` locales.
+        let mut available = shipped.clone();
+        if requested.iter().any(is_pseudo)
+            && let Some((_, files)) = by_locale.iter().find(|(l, _)| *l == FALLBACK_LOCALE)
+        {
+            let files = files
+                .iter()
+                .map(|(name, text)| (name.clone(), pseudo_source(text)))
+                .collect();
+            let pseudo: LanguageIdentifier = PSEUDO_LOCALE.parse().expect("en-XA is a valid tag");
+            available.push(pseudo.clone());
+            by_locale.push((pseudo, files));
+        }
+        let chain = negotiate(requested, &available);
         let bundles = chain
             .iter()
             .map(|locale| {
@@ -178,7 +197,10 @@ impl Catalogue {
                 continue;
             };
             let mut errors = Vec::new();
-            let text = write_pattern(bundle, pattern, args, &mut errors);
+            let mut text = write_pattern(bundle, pattern, args, &mut errors);
+            if is_pseudo(locale) {
+                text = bracket(&text);
+            }
             return Some(Formatted {
                 text: SharedString::from(text),
                 locale: locale.clone(),
@@ -192,6 +214,13 @@ impl Catalogue {
     pub fn try_format(&self, key: &str, args: &Args) -> Option<Formatted> {
         let fluent = (!args.is_empty()).then(|| args.to_fluent());
         self.lookup(key, None, fluent.as_ref())
+    }
+
+    /// `key`'s attribute `name` with `args`, with Fluent's errors, or `None`
+    /// when no locale has it. Never logs.
+    pub fn try_attribute(&self, key: &str, name: &str, args: &Args) -> Option<Formatted> {
+        let fluent = (!args.is_empty()).then(|| args.to_fluent());
+        self.lookup(key, Some(name), fluent.as_ref())
     }
 
     /// `key`'s attribute `name`, such as a command's `.description`, or

@@ -83,3 +83,85 @@ pub fn public_keys(source: &str) -> Vec<String> {
     }
     keys
 }
+
+/// One message of a `.ftl` file, as [`message_shapes`] describes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MessageShape {
+    pub key: String,
+    /// Whether the message has a value of its own, not only attributes.
+    pub has_value: bool,
+    pub attributes: Vec<String>,
+    /// The `$variables` its value and attributes use, which a caller must
+    /// pass.
+    pub variables: BTreeSet<String>,
+}
+
+/// The messages in `source`, with the arguments each needs: what a check
+/// that formats every message supplies sample values for.
+pub fn message_shapes(source: &str) -> Vec<MessageShape> {
+    use fluent_syntax::ast::{Expression, InlineExpression, Pattern, PatternElement};
+
+    fn inline(expression: &InlineExpression<&str>, out: &mut BTreeSet<String>) {
+        match expression {
+            InlineExpression::VariableReference { id } => {
+                out.insert(id.name.to_string());
+            }
+            InlineExpression::FunctionReference { arguments, .. } => call(arguments, out),
+            InlineExpression::TermReference {
+                arguments: Some(arguments),
+                ..
+            } => call(arguments, out),
+            InlineExpression::Placeable { expression } => expr(expression, out),
+            _ => {}
+        }
+    }
+    fn call(arguments: &fluent_syntax::ast::CallArguments<&str>, out: &mut BTreeSet<String>) {
+        arguments.positional.iter().for_each(|a| inline(a, out));
+        arguments.named.iter().for_each(|a| inline(&a.value, out));
+    }
+    fn expr(expression: &Expression<&str>, out: &mut BTreeSet<String>) {
+        match expression {
+            Expression::Select { selector, variants } => {
+                inline(selector, out);
+                variants.iter().for_each(|v| pattern(&v.value, out));
+            }
+            Expression::Inline(expression) => inline(expression, out),
+        }
+    }
+    fn pattern(p: &Pattern<&str>, out: &mut BTreeSet<String>) {
+        for element in &p.elements {
+            if let PatternElement::Placeable { expression } = element {
+                expr(expression, out);
+            }
+        }
+    }
+
+    let resource = match fluent_syntax::parser::parse(source) {
+        Ok(resource) => resource,
+        Err((resource, _)) => resource,
+    };
+    let mut shapes = Vec::new();
+    for entry in &resource.body {
+        let Entry::Message(message) = entry else {
+            continue;
+        };
+        let mut variables = BTreeSet::new();
+        if let Some(value) = &message.value {
+            pattern(value, &mut variables);
+        }
+        for attribute in &message.attributes {
+            pattern(&attribute.value, &mut variables);
+        }
+        shapes.push(MessageShape {
+            key: message.id.name.to_string(),
+            has_value: message.value.is_some(),
+            attributes: message
+                .attributes
+                .iter()
+                .map(|a| a.id.name.to_string())
+                .collect(),
+            variables,
+        });
+    }
+    shapes
+}

@@ -30,6 +30,7 @@
 mod args;
 mod catalogue;
 mod isolate;
+mod pseudo;
 mod resources;
 mod text;
 
@@ -43,7 +44,10 @@ pub use catalogue::{
 };
 pub use gpui_shared_string::SharedString;
 pub use isolate::{FSI, PDI, strip_isolates};
-pub use resources::{Registered, ResourceFile, Resources, public_keys};
+pub use pseudo::{PSEUDO_LOCALE, pseudo_source};
+pub use resources::{
+    MessageShape, Registered, ResourceFile, Resources, message_shapes, public_keys,
+};
 pub use text::Text;
 pub use unic_langid::{CharacterDirection, LanguageIdentifier};
 
