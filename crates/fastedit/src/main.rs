@@ -1091,6 +1091,7 @@ mod tests {
         cx.update(|cx| {
             fe_gpui::init(cx);
             fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
         });
         let launch = Launch {
             root: Some(root.clone()),
@@ -1132,6 +1133,7 @@ mod tests {
         cx.update(|cx| {
             fe_gpui::init(cx);
             fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
         });
         let window = |cx: &mut TestAppContext| {
             let dir = tempfile::tempdir().unwrap();
@@ -1174,6 +1176,7 @@ mod tests {
         cx.update(|cx| {
             fe_gpui::init(cx);
             fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
             fe_gpui::pane_item::set_undo_store(cx, None);
         });
         let dir = tempfile::tempdir().unwrap();
@@ -1215,6 +1218,7 @@ mod tests {
         cx.update(|cx| {
             fe_gpui::init(cx);
             fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
             fe_gpui::pane_item::set_undo_store(cx, None);
             cx.set_global(super::WindowSettings {
                 launch_root: Some(launch.to_owned()),
@@ -1244,6 +1248,7 @@ mod tests {
         cx.update(|cx| {
             fe_gpui::init(cx);
             fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
             fe_gpui::pane_item::set_undo_store(cx, None);
             cx.set_global(super::WindowSettings {
                 launch_root: Some(launch),
