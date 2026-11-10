@@ -164,17 +164,19 @@ impl SettingsPath {
 }
 
 /// A writer of boolean settings into the settings file at `path`, editing
-/// it in place, or creating it from `template` (see
-/// [`kiln_core::write_setting`]). A failed write is logged, naming the
-/// setting and the file.
+/// it in place, or creating it from the text `template` returns (see
+/// [`kiln_core::write_setting`]). `template` is called on the background
+/// executor at each write, never when the writer is made, so a file created
+/// after the host's locale changed gets the new locale's template. A failed
+/// write is logged, naming the setting and the file.
 pub fn setting_writer(
     path: SettingsPath,
-    template: &'static str,
+    template: impl Fn() -> &'static str + Send + Sync + 'static,
     cx: &App,
 ) -> Writer<SettingKey, bool> {
     Writer::new(cx, move |key: &SettingKey, value| {
         let path = path.get();
-        write_setting(&path, key, value, template);
+        write_setting(&path, key, value, template());
     })
 }
 

@@ -84,7 +84,7 @@ fn settings_are_written_in_place(cx: &mut TestAppContext) {
     let scratch = Scratch::new("in-place");
     let (first, second) = (scratch.0.join("first.toml"), scratch.0.join("second.toml"));
     let path = SettingsPath::new(&first);
-    let writer = cx.update(|cx| setting_writer(path.clone(), TEMPLATE, cx));
+    let writer = cx.update(|cx| setting_writer(path.clone(), || TEMPLATE, cx));
 
     // A missing file starts from the template, the default's comment
     // becoming the setting.
