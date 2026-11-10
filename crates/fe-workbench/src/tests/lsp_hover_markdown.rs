@@ -42,6 +42,7 @@ fn hover_markdown_renders_rich(cx: &mut TestAppContext) {
             .read_with(&s.cx, |w, cx| w.pane().read(cx).tabs().len())
     };
     let before = tabs(&s);
+    s.cx.update(|_, cx| fe_gpui::PaintedHoverCard::set(cx));
 
     s.cx.simulate_keystrokes("cmd-k cmd-i");
     s.until("the hover", |s| {
@@ -50,12 +51,15 @@ fn hover_markdown_renders_rich(cx: &mut TestAppContext) {
             .is_some()
     });
 
-    // The fence is block 0, the rule 1, the paragraph 2.
-    let fence = s.cx.debug_bounds("md-block-0");
-    let paragraph = s.cx.debug_bounds("md-block-2").expect("the paragraph");
-    assert!(fence.is_some(), "the fence is drawn");
+    // The leading fence is the card's signature (T556); the rest is
+    // Markdown, the rule block 0 and the paragraph 1.
+    let signature = s.cx.debug_bounds("hover-card-signature");
+    let rule = s.cx.debug_bounds("md-block-0");
+    let paragraph = s.cx.debug_bounds("md-block-1").expect("the paragraph");
+    assert!(signature.is_some(), "the signature is drawn");
+    assert!(rule.is_some(), "the rule is drawn");
 
-    // The fence's `fn` is painted in the theme's keyword colour.
+    // The signature's `fn` is drawn in the theme's keyword colour.
     let (renderer, theme) = editor.read_with(&s.cx, |view, _| {
         (
             view.markdown_renderer().cloned().expect("a renderer"),
@@ -65,9 +69,20 @@ fn hover_markdown_renders_rich(cx: &mut TestAppContext) {
     let keyword = Highlight::from_capture("keyword").expect("a highlight");
     let keyword = theme.syntax_color(keyword).expect("a keyword colour");
     assert_ne!(keyword, theme.foreground);
+    let card = s.cx.update(|_, cx| fe_gpui::PaintedHoverCard::take(cx));
+    let signature = (card.iter().rev())
+        .find(|text| text.part == fe_gpui::HoverCardPart::Signature)
+        .expect("the signature is recorded");
+    assert_eq!(signature.text, "fn f()");
+    assert_eq!(
+        signature.runs.first().map(|run| (run.len, run.color)),
+        Some((2, keyword)),
+        "{signature:?}"
+    );
+    // A fence the renderer draws, as the docs' examples are, is painted
+    // in it too: `fn`, a glyph each.
     let glyphs = painted::glyphs(renderer, theme, "```rust\nfn f()\n```");
     let keywords = glyphs.iter().filter(|c| **c == keyword).count();
-    // `fn`, a glyph each.
     assert!(keywords >= 2, "{keywords} keyword glyphs of {glyphs:?}");
     assert!(keywords < glyphs.len(), "the rest isn't all keyword colour");
 

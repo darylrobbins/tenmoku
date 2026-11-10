@@ -204,7 +204,7 @@ impl RenderOnce for DocumentElement {
             .flex()
             .flex_col()
             .w_full()
-            .gap(MarkdownStyle::BLOCK_GAP)
+            .gap(style.block_gap)
             .text_color(style.foreground)
             .text_size(style.text_size)
             .line_height(relative(style.line_height))
@@ -267,12 +267,8 @@ fn list_item_prefix(ix: usize, start: Option<u64>, ordered: bool, depth: usize) 
 }
 
 /// Space between a container's blocks: none in a tight list's items.
-fn gap(tight: bool) -> gpui::Pixels {
-    if tight {
-        px(0.)
-    } else {
-        MarkdownStyle::BLOCK_GAP
-    }
+fn gap(tight: bool, style: &MarkdownStyle) -> gpui::Pixels {
+    if tight { px(0.) } else { style.block_gap }
 }
 
 /// `blocks` one under another.
@@ -280,7 +276,11 @@ pub(crate) fn render_blocks(blocks: &[Block], tight: bool, cx: &mut RenderCx) ->
     let children: Vec<_> = (blocks.iter().enumerate())
         .map(|(ix, block)| render(block, ix == 0, cx))
         .collect();
-    let container = div().flex().flex_col().gap(gap(tight)).children(children);
+    let container = div()
+        .flex()
+        .flex_col()
+        .gap(gap(tight, cx.style))
+        .children(children);
     cx.track(container, blocks.iter().map(|b| b.lines.clone()).collect())
 }
 
@@ -341,7 +341,7 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
             let rendered: Vec<_> = (items.iter().enumerate())
                 .map(|(ix, item)| render_item(item, ix, *start, *tight, depth, cx))
                 .collect();
-            let list = div().flex().flex_col().gap(gap(*tight)).children(rendered);
+            let list = (div().flex().flex_col().gap(gap(*tight, style))).children(rendered);
             let list = cx
                 .track(list, items.iter().map(|item| item.lines.clone()).collect())
                 .into_any_element();
@@ -394,8 +394,8 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 .when(element.is_some(), |this| this.restrict_scroll_to_axis())
                 .when(header.is_none(), |this| this.rounded(px(4.)))
                 .bg(style.code_background)
-                .py(px(16.))
-                .when(body.is_none(), |this| this.px(px(16.)))
+                .py(style.code_padding)
+                .when(body.is_none(), |this| this.px(style.code_padding))
                 .font_family(style.code_font_family.clone())
                 .font_features(style.code_font_features.clone())
                 .text_size(style.code_font_size)
@@ -445,7 +445,12 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
         BlockKind::Table { align, head, rows } => {
             table::render(align, head, rows, &block.lines, cx)
         }
-        BlockKind::Rule => div().w_full().h(px(1.)).bg(style.border).into_any_element(),
+        BlockKind::Rule => div()
+            .debug_selector(|| "md-rule".into())
+            .w_full()
+            .h(px(1.))
+            .bg(style.rule)
+            .into_any_element(),
         // Shown as written: the preview doesn't render HTML.
         BlockKind::Html(html) => div()
             .child(html.trim_end_matches('\n').to_owned())

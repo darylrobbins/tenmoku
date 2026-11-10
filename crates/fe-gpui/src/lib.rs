@@ -56,7 +56,10 @@ use fe_syntax::Highlight;
 pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, px};
 pub use gutter_annotations::{GutterAnnotation, GutterAnnotations};
-pub use hover::{HoverContent, HoverFuture, HoverProvider, MarkdownRenderer};
+pub use hover::{
+    DefinitionFuture, HoverCardPart, HoverCardText, HoverContent, HoverDefinition, HoverFuture,
+    HoverProvider, MarkdownRenderer, PaintedHoverCard,
+};
 pub use image_viewer::pane_item::status as image_status;
 pub use image_viewer::{
     ImageViewer, KEY_CONTEXT as IMAGE_VIEWER_CONTEXT, Zoom as ImageZoom, size_text,

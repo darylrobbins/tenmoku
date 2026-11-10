@@ -81,7 +81,7 @@ impl RenderOnce for Compact {
             .flex_col()
             .w_full()
             .max_w(self.max_width)
-            .gap(MarkdownStyle::BLOCK_GAP)
+            .gap(style.block_gap)
             .text_color(style.foreground)
             .text_size(style.text_size)
             .line_height(relative(style.line_height))

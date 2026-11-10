@@ -8,9 +8,15 @@
 //! - **Asking.** The provider is asked once the delay is up, once per word
 //!   rested on: moves within the word don't ask again. Leaving the word
 //!   drops the request, which cancels it.
-//! - **Text.** The provider's is markdown, shown as text: fenced code
-//!   blocks in the editor's font, the rest as written, in the UI font.
-//!   There's no markdown renderer.
+//! - **The card.** Diagnostics first, then the provider's Markdown laid
+//!   out as the design's hover card ([`CardText`]): its leading fences are
+//!   the module path, in faint small code, and the signature, in its syntax
+//!   colours; the rest is the docs, drawn by the host's
+//!   [`MarkdownRenderer`], or else as text with fenced code in the editor's
+//!   font. A footer under the provider's answer says where the provider
+//!   says it's defined ([`HoverProvider::definition`]) and, with vim on,
+//!   `gd definition`. It's a floating surface: the popover colour (the
+//!   design's raised surface), a hairline, radius 6 and the float shadow.
 //! - **Hiding.** Moving off what it shows (the word asked about, or the
 //!   range the provider answered for) hides it [`HOVER_HIDE_DELAY`] later,
 //!   unless the pointer reaches the popover or comes back first: it stays
@@ -36,14 +42,22 @@
 //!   ([`crate::GutterAnnotations::hover`]), until the pointer leaves the
 //!   entry.
 
-use std::{cell::Cell, future::Future, ops::Range, pin::Pin, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::Cell, future::Future, ops::Range, path::PathBuf, pin::Pin, rc::Rc, sync::Arc,
+    time::Duration,
+};
 
-use fe_buffer::{Bias, BufferId, Version};
-use fe_editor::{decorations::DecorationKind, diagnostics::DiagnosticEntry};
+use fe_buffer::{Bias, Buffer, BufferId, Version};
+use fe_editor::{
+    decorations::DecorationKind,
+    diagnostics::{DiagnosticEntry, RelatedInfo},
+};
+use fe_syntax::{HighlightSpan, Syntax, fence_language, language_by_name};
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, Context, Div, InteractiveElement as _, IntoElement,
-    ParentElement as _, Pixels, Point, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Task, Window, anchored, canvas, deferred, div, px,
+    AnyElement, App, AvailableSpace, Bounds, BoxShadow, Context, Div, Font, FontWeight, Global,
+    Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, StyledText, Subscription, Task,
+    TextRun, Window, anchored, canvas, deferred, div, font, hsla, point, px,
 };
 use kiln_l10n::tr;
 
@@ -84,12 +98,33 @@ pub struct HoverContent {
 /// whatever the reason. Dropping it should cancel the work.
 pub type HoverFuture = Pin<Box<dyn Future<Output = Option<HoverContent>>>>;
 
+/// Where what a hover is about is defined, as its [`HoverProvider`] says:
+/// the card's footer shows it, unless it's where the hover is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HoverDefinition {
+    /// The file it's in; `None` for the buffer asked about.
+    pub path: Option<PathBuf>,
+    /// The zero-based row it starts on.
+    pub row: u32,
+}
+
+/// A [`HoverProvider`]'s definition to come: `None` for not known.
+pub type DefinitionFuture = Pin<Box<dyn Future<Output = Option<HoverDefinition>>>>;
+
 /// Where a view's hover text comes from, set by its host
 /// ([`EditorView::set_hover_provider`]): fe-gpui knows nothing of language
 /// servers.
 pub trait HoverProvider {
     /// What to show about byte `offset` of `buffer`, at its `version`.
     fn hover(&self, buffer: BufferId, version: Version, offset: usize) -> HoverFuture;
+
+    /// Where what's at byte `offset` of `buffer`, at its `version`, is
+    /// defined, for the card's footer: asked once the hover has answered
+    /// with something to show. Not known, by default.
+    fn definition(&self, buffer: BufferId, version: Version, offset: usize) -> DefinitionFuture {
+        let _ = (buffer, version, offset);
+        Box::pin(std::future::ready(None))
+    }
 }
 
 /// The popover: waiting out the delay, asking, or shown.
@@ -126,6 +161,12 @@ struct Current {
     shown: bool,
     /// The provider's answer, once it has come.
     content: Option<HoverContent>,
+    /// `content` as the card lays it out, once drawn: parsed and
+    /// highlighted once, not every frame.
+    card: Option<Rc<CardText>>,
+    /// Where the provider says what it answered about is defined, once it
+    /// has said.
+    definition: Option<HoverDefinition>,
     /// The offset the provider was asked about, until the pointer moves on
     /// within what this covers: what a reply's range must hold.
     requested: usize,
@@ -145,8 +186,9 @@ struct Hovered {
     /// Where: the offset of the grapheme under the pointer, or of the end
     /// of the row it's just past ([`Under`]).
     under: Under,
-    /// The range and message of each diagnostic there.
-    items: Vec<(Range<usize>, String)>,
+    /// The range of each diagnostic there, and what the popover says of
+    /// it, untranslated: a locale switch doesn't make it stale.
+    items: Vec<(Range<usize>, DiagnosticItem)>,
     /// The word there, to ask the provider about, if there's one.
     word: Option<Range<usize>>,
     /// The buffer version and scroll it was found at: an edit or a scroll
@@ -192,9 +234,8 @@ impl Under {
         }
     }
 
-    /// The range and text of each of `entries` here, by start
-    /// ([`diagnostic_text`]).
-    fn items(self, entries: &[DiagnosticEntry<'_>]) -> Vec<(Range<usize>, String)> {
+    /// The range and what's said of each of `entries` here, by start.
+    fn items(self, entries: &[DiagnosticEntry<'_>]) -> Vec<(Range<usize>, DiagnosticItem)> {
         let offset = self.offset();
         (entries.iter())
             .filter(|entry| {
@@ -204,33 +245,64 @@ impl Under {
                     Self::RowEnd(_) => empty_here,
                 }
             })
-            .map(|entry| (entry.range.clone(), diagnostic_text(entry)))
+            .map(|entry| (entry.range.clone(), DiagnosticItem::new(entry)))
             .collect()
     }
 }
 
-/// A diagnostic as the popover says it: its message, then a line per
-/// related location, `↳ main.rs:4: first borrow here` (`line 4` in its own
-/// file), then its code and the page describing it, if it has both.
-fn diagnostic_text(entry: &DiagnosticEntry<'_>) -> String {
-    let mut text = entry.message.clone();
-    for related in &entry.related {
-        let name = (related.range.is_none())
-            .then(|| related.path.as_deref()?.file_name())
-            .flatten();
-        let at = match name {
-            Some(name) => format!("{}:{}", name.to_string_lossy(), related.row + 1),
-            None => tr!("gpui-hover-related-line", line = related.row + 1).to_string(),
-        };
-        let line = tr!("gpui-hover-related", at = at, message = &related.message);
-        text.push('\n');
-        text.push_str(&line);
+/// What the popover says of a diagnostic, as data: what [`Hovered`]
+/// compares to tell whether the diagnostics where it was found changed, so
+/// that switching the locale doesn't. [`DiagnosticItem::text`] says it in
+/// the active locale.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DiagnosticItem {
+    message: String,
+    /// Its related locations, as they've moved.
+    related: Vec<RelatedInfo>,
+    code: Option<String>,
+    code_href: Option<String>,
+}
+
+impl DiagnosticItem {
+    fn new(entry: &DiagnosticEntry<'_>) -> Self {
+        Self {
+            message: entry.message.clone(),
+            related: entry.related.clone(),
+            code: entry.code.clone(),
+            code_href: entry.code_href.clone(),
+        }
     }
-    if let (Some(code), Some(href)) = (&entry.code, &entry.code_href) {
-        text.push('\n');
-        text.push_str(&tr!("gpui-hover-code", code = code, href = href));
+
+    /// The diagnostic as the popover says it, in the active locale: its
+    /// message, then a line per related location, `↳ main.rs:4: first
+    /// borrow here` (`line 4` in its own file), then its code and the page
+    /// describing it, if it has both.
+    fn text(&self) -> String {
+        let mut text = self.message.clone();
+        for related in &self.related {
+            let name = (related.range.is_none())
+                .then(|| related.path.as_deref()?.file_name())
+                .flatten();
+            let at = match name {
+                Some(name) => format!("{}:{}", name.to_string_lossy(), related.row + 1),
+                None => tr!("gpui-hover-related-line", line = related.row + 1).to_string(),
+            };
+            let line = tr!("gpui-hover-related", at = at, message = &related.message);
+            text.push('\n');
+            text.push_str(&line);
+        }
+        if let (Some(code), Some(href)) = (&self.code, &self.code_href) {
+            text.push('\n');
+            text.push_str(&tr!("gpui-hover-code", code = code, href = href));
+        }
+        text
     }
-    text
+}
+
+/// The diagnostics' text, a line apart, in the active locale.
+fn diagnostics_text(items: &[(Range<usize>, DiagnosticItem)]) -> String {
+    let texts: Vec<String> = items.iter().map(|(_, item)| item.text()).collect();
+    texts.join("\n")
 }
 
 /// A part of the popover's text.
@@ -280,10 +352,7 @@ impl Current {
     fn blocks(&self) -> Vec<Block> {
         let mut blocks = Vec::new();
         if !self.hovered.items.is_empty() {
-            let messages: Vec<&str> = (self.hovered.items.iter())
-                .map(|(_, message)| message.as_str())
-                .collect();
-            blocks.push(Block::Text(messages.join("\n")));
+            blocks.push(Block::Text(diagnostics_text(&self.hovered.items)));
         }
         if let Some(content) = &self.content {
             blocks.extend(markdown_blocks(&content.text));
@@ -613,6 +682,7 @@ impl EditorView {
             text: tooltip,
             range: None,
         });
+        current.card = None;
         cx.notify();
     }
 
@@ -813,10 +883,10 @@ impl EditorView {
                 return;
             };
             let content = provider.hover(buffer, version, offset).await;
-            view.update(cx, |view, cx| {
+            let answered = view.update(cx, |view, cx| {
                 let current_version = view.model.snapshot().version();
                 let Some(current) = view.popover.current.as_mut() else {
-                    return;
+                    return false;
                 };
                 // For text the view has moved on from, or nothing: what
                 // there was to show stays, if it still stands. One with
@@ -831,6 +901,7 @@ impl EditorView {
                     if covers {
                         current.content = Some(content);
                         cx.notify();
+                        return true;
                     } else if current.hovered.items.is_empty() {
                         view.hide_popover(cx);
                     } else {
@@ -840,6 +911,23 @@ impl EditorView {
                         cx.notify();
                     }
                 }
+                false
+            });
+            if !matches!(answered, Ok(true)) {
+                return;
+            }
+            // Then where it's defined, for the footer.
+            let Some(definition) = provider.definition(buffer, version, offset).await else {
+                return;
+            };
+            view.update(cx, |view, cx| {
+                let current_version = view.model.snapshot().version();
+                if let Some(current) = (view.popover.current.as_mut())
+                    .filter(|current| current.content.is_some() && current_version == version)
+                {
+                    current.definition = Some(definition);
+                    cx.notify();
+                }
             })
             .ok();
         });
@@ -848,6 +936,8 @@ impl EditorView {
             at,
             shown: shown || delay.is_none(),
             content,
+            card: None,
+            definition: None,
             requested: ask.unwrap_or(hovered_offset),
             _task: task,
             hiding: None,
@@ -966,56 +1056,108 @@ impl EditorView {
             self.popover.current = None;
         }
         let blocks = self.popover_blocks()?;
+        let footer = self.card_footer();
+        let current = self.popover.current.as_mut()?;
+        let card = match (&current.content, &current.card) {
+            (None, _) => None,
+            (Some(content), Some(card)) if card.source == content.text => Some(card.clone()),
+            (Some(content), _) => {
+                let card = Rc::new(CardText::new(&content.text));
+                current.card = Some(card.clone());
+                Some(card)
+            }
+        };
         let current = self.popover.current.as_ref()?;
         let (at, scroll) = (current.at, current.scroll.clone());
         let line_height =
             (self.layout.as_ref()).map_or(px(20.), |layout| px(layout.frame.line_height));
-        // Its padding and border, above and below.
-        let chrome = window.rem_size() * 0.25 * 2. + px(2.);
+        let theme = &self.theme;
+        let sizes = CardSizes::new(theme);
+        // Its padding and border, above and below, and the footer's room.
+        let footer_room = match &footer {
+            Some(_) => sizes.small * FOOTER_LINE_HEIGHT + FOOTER_GAP * 2. + px(1.),
+            None => px(0.),
+        };
+        let chrome = window.rem_size() * 0.25 * 2. + px(2.) + footer_room;
         let room = window.viewport_size().height - WINDOW_MARGIN * 2. - chrome;
         let max_height = (line_height * MAX_POPOVER_ROWS).min(room).max(px(0.));
-        let theme = &self.theme;
         let ui_font = crate::ui_font_family(cx);
-        let font = |block: &Block| -> SharedString {
-            match block {
-                Block::Text(_) => ui_font.clone(),
-                Block::Code(_) => theme.font_family.clone(),
-            }
-        };
+        // What it says, part by part, for the view's own tests.
         #[cfg(test)]
         {
+            let font_of = |block: &Block| -> SharedString {
+                match block {
+                    Block::Text(_) => ui_font.clone(),
+                    Block::Code(_) => theme.font_family.clone(),
+                }
+            };
             let texts: Vec<&str> = blocks.iter().map(Block::text).collect();
             self.painted_popover = Some(texts.join("\n"));
             self.painted_popover_blocks = (blocks.iter())
-                .map(|block| (block.clone(), font(block)))
+                .map(|block| (block.clone(), font_of(block)))
                 .collect();
         }
+        #[cfg(not(test))]
+        drop(blocks);
         let theme = &self.theme;
-        let markdown = (self.markdown_renderer.clone())
-            .zip(current.content.as_ref().map(|content| content.text.clone()));
-        let mut children: Vec<Div> = Vec::new();
-        let mut drawn_by_renderer = None;
-        if let Some((renderer, text)) = markdown {
-            // The diagnostics stay text; only the provider's is Markdown.
-            if !current.hovered.items.is_empty() {
-                children.push(
-                    div().font_family(ui_font.clone()).child(SharedString::from(
-                        (current.hovered.items.iter())
-                            .map(|(_, message)| message.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    )),
+        let fonts = CardFonts::new(theme, ui_font.clone());
+        let faint = faint_text(theme);
+        let mut children: Vec<AnyElement> = Vec::new();
+        // The diagnostics first, as text: only the provider's is Markdown.
+        if !current.hovered.items.is_empty() {
+            let text = diagnostics_text(&current.hovered.items);
+            let runs = vec![run(text.len(), fonts.ui.clone(), theme.foreground)];
+            children.push(
+                card_text(HoverCardPart::Diagnostics, text, sizes.body, runs, cx)
+                    .into_any_element(),
+            );
+        }
+        if let Some(card) = &card {
+            if let Some(path) = &card.path {
+                let runs = vec![run(path.len(), fonts.code.clone(), faint)];
+                let text = card_text(
+                    HoverCardPart::ModulePath,
+                    path.clone(),
+                    sizes.small_code,
+                    runs,
+                    cx,
                 );
+                children.push(text.into_any_element());
             }
-            // Its padding and border, left and right.
-            let max_width = px(560.) - window.rem_size() * 0.5 * 2. - px(2.);
-            drawn_by_renderer = Some(renderer.render(&text, theme, max_width, window, cx));
-        } else {
-            children.extend(blocks.iter().map(|block| {
-                div()
-                    .font_family(font(block))
-                    .child(SharedString::from(block.text().to_owned()))
-            }));
+            if let Some(signature) = &card.signature {
+                let runs = signature.runs(theme, &fonts.code);
+                let text = signature.code.clone();
+                let text = card_text(HoverCardPart::Signature, text, sizes.code, runs, cx);
+                children.push(text.into_any_element());
+            }
+            let docs = card.docs.as_str();
+            if !docs.trim().is_empty() {
+                match self.markdown_renderer.clone() {
+                    Some(renderer) => {
+                        // Its padding and border, left and right.
+                        let max_width = POPOVER_WIDTH - window.rem_size() * 0.5 * 2. - px(2.);
+                        let drawn = renderer.render(docs, theme, max_width, window, cx);
+                        children.push(
+                            div()
+                                .debug_selector(|| "hover-card-docs".into())
+                                .child(drawn)
+                                .into_any_element(),
+                        );
+                    }
+                    None => {
+                        for block in markdown_blocks(docs) {
+                            let font = match &block {
+                                Block::Text(_) => fonts.ui.clone(),
+                                Block::Code(_) => fonts.code.clone(),
+                            };
+                            let text = block.text().to_owned();
+                            let runs = vec![run(text.len(), font, theme.foreground)];
+                            let text = card_text(HoverCardPart::Docs, text, sizes.body, runs, cx);
+                            children.push(text.into_any_element());
+                        }
+                    }
+                }
+            }
         }
         // The prose in the UI family, a renderer's too, inheriting it; code
         // sets its own.
@@ -1025,8 +1167,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .gap_1()
-            .children(children)
-            .children(drawn_by_renderer);
+            .children(children);
         let content = div()
             .id("hover-popover-content")
             .debug_selector(|| "hover-popover-content".into())
@@ -1034,22 +1175,53 @@ impl EditorView {
             .overflow_y_scroll()
             .track_scroll(&scroll)
             .child(body);
+        // Under the content, whatever its scroll: where it's defined, left,
+        // and the key that goes there, right.
+        let footer = footer.map(|footer| {
+            let mut row = div()
+                .debug_selector(|| "hover-card-footer".into())
+                .flex()
+                .flex_row()
+                .justify_between()
+                .gap_4()
+                .mt(FOOTER_GAP)
+                .pt(FOOTER_GAP)
+                .border_t_1()
+                .border_color(theme.popover_border)
+                .line_height(sizes.small * FOOTER_LINE_HEIGHT);
+            let small = fonts.ui_small.clone();
+            let piece = |text: String, cx: &mut App| {
+                let runs = vec![run(text.len(), small.clone(), faint)];
+                card_text(HoverCardPart::Footer, text, sizes.small, runs, cx)
+            };
+            row = row.child(match footer.location {
+                Some(location) => piece(location, cx),
+                None => div(),
+            });
+            if let Some(hint) = footer.hint {
+                row = row.child(piece(hint, cx));
+            }
+            row
+        });
         // It takes the pointer: the text under it sees no moves, clicks or
-        // wheel.
+        // wheel. A floating surface: raised, a hairline round it, the
+        // design's menu radius and float shadow.
         let popover = div()
             .id("hover-popover")
             .debug_selector(|| "hover-popover".into())
             .occlude()
-            .max_w(px(560.))
+            .max_w(POPOVER_WIDTH)
             .px_2()
             .py_1()
             .bg(theme.popover_background)
             .border_1()
             .border_color(theme.popover_border)
-            .rounded_sm()
+            .rounded(CARD_RADIUS)
+            .shadow(vec![float_shadow(theme)])
             .text_color(theme.foreground)
             .text_size(theme.font_size)
-            .child(content);
+            .child(content)
+            .children(footer);
         let bounds = self.popover.bounds.clone();
         let drawn = div()
             .on_children_prepainted(move |drawn, _, _| bounds.set(drawn.first().copied()))
@@ -1062,6 +1234,423 @@ impl EditorView {
                 .into_any_element(),
         )
     }
+
+    /// The card's footer, for the provider's answer: where it says what the
+    /// hover is about is defined, unless that's where the hover is, and
+    /// `gd`, vim's key to go there, while vim is on. `None` with neither.
+    fn card_footer(&self) -> Option<CardFooter> {
+        let current = (self.popover.current.as_ref())
+            .filter(|current| !current.hovered.host && current.content.is_some())?;
+        let text = self.model.text();
+        let here = current.requested.min(text.len());
+        let row = text.offset_to_point(here).row;
+        let own = self.model.path();
+        let location = (current.definition.as_ref())
+            .filter(|definition| {
+                let same_file = (definition.path.as_deref())
+                    .is_none_or(|path| own.is_some_and(|own| own == path));
+                !(same_file && definition.row == row)
+            })
+            .map(|definition| {
+                let path = definition.path.as_deref().or(own);
+                match path.and_then(|path| path.file_name()) {
+                    Some(name) => format!("{}:{}", name.to_string_lossy(), definition.row + 1),
+                    None => tr!("gpui-hover-related-line", line = definition.row + 1).to_string(),
+                }
+            });
+        let hint = (self.vim.is_some())
+            .then(|| tr!("gpui-hover-go-to-definition", keys = VIM_DEFINITION_KEYS).to_string());
+        (location.is_some() || hint.is_some()).then_some(CardFooter { location, hint })
+    }
+}
+
+/// The card's widest.
+const POPOVER_WIDTH: Pixels = px(560.);
+
+/// The card's corner radius: the design's for menus and cards.
+pub(crate) const CARD_RADIUS: Pixels = px(6.);
+
+/// The design's float shadow: 0 12 32, at 55% black on a dark surface and
+/// 14% on a light one (kiln-ui's `SHADOW_FLOAT`, which fe-gpui doesn't
+/// depend on).
+const SHADOW_Y: Pixels = px(12.);
+const SHADOW_BLUR: Pixels = px(32.);
+const SHADOW_DARK: f32 = 0.55;
+const SHADOW_LIGHT: f32 = 0.14;
+
+/// The footer's line height, as a multiple of its text size: the design's
+/// UI small, 11 / 14.
+const FOOTER_LINE_HEIGHT: f32 = 14. / 11.;
+
+/// Above the footer's hairline, and between it and the footer's text.
+const FOOTER_GAP: Pixels = px(4.);
+
+/// Vim's keys to go to a definition, as the footer names them.
+const VIM_DEFINITION_KEYS: &str = "gd";
+
+/// The float shadow under a card on `theme`'s popover surface.
+pub(crate) fn float_shadow(theme: &EditorTheme) -> BoxShadow {
+    let alpha = match theme.popover_background.l > 0.5 {
+        true => SHADOW_LIGHT,
+        false => SHADOW_DARK,
+    };
+    BoxShadow {
+        color: hsla(0., 0., 0., alpha),
+        offset: point(px(0.), SHADOW_Y),
+        blur_radius: SHADOW_BLUR,
+        spread_radius: px(0.),
+        inset: false,
+    }
+}
+
+/// The card's faint text, its module path and footer: the theme's line
+/// numbers' colour, which is the design's faint text.
+fn faint_text(theme: &EditorTheme) -> Hsla {
+    theme.gutter_foreground
+}
+
+/// The card's text sizes, from the editor's: at its default 13, the
+/// design's code (13), code small (12), UI body (13) and UI small (11).
+struct CardSizes {
+    code: Pixels,
+    small_code: Pixels,
+    body: Pixels,
+    small: Pixels,
+}
+
+impl CardSizes {
+    fn new(theme: &EditorTheme) -> Self {
+        let size = theme.font_size;
+        Self {
+            code: size,
+            small_code: size - px(1.),
+            body: size,
+            small: size - px(2.),
+        }
+    }
+}
+
+/// The card's fonts: the editor's for code, the UI's for prose, and the
+/// UI's at UI small's weight for the footer.
+struct CardFonts {
+    code: Font,
+    ui: Font,
+    ui_small: Font,
+}
+
+impl CardFonts {
+    fn new(theme: &EditorTheme, ui: SharedString) -> Self {
+        let mut code = font(theme.font_family.clone());
+        code.features = theme.font_features.clone();
+        let ui_small = Font {
+            weight: FontWeight::MEDIUM,
+            ..font(ui.clone())
+        };
+        Self {
+            code,
+            ui: font(ui),
+            ui_small,
+        }
+    }
+}
+
+/// The footer's two sides.
+struct CardFooter {
+    location: Option<String>,
+    hint: Option<String>,
+}
+
+fn run(len: usize, font: Font, color: Hsla) -> TextRun {
+    TextRun {
+        len,
+        font,
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    }
+}
+
+/// `text` in `runs` at `size`, as part `part` of the card, recorded if
+/// [`PaintedHoverCard`] is recording.
+fn card_text(
+    part: HoverCardPart,
+    text: String,
+    size: Pixels,
+    runs: Vec<TextRun>,
+    cx: &mut App,
+) -> Div {
+    PaintedHoverCard::record(cx, part, &text, size, &runs);
+    div()
+        .debug_selector(move || part.selector().into())
+        .text_size(size)
+        .child(StyledText::new(text).with_runs(runs))
+}
+
+/// A part of the hover card ([`PaintedHoverCard`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoverCardPart {
+    /// The messages of the diagnostics there, above the rest.
+    Diagnostics,
+    /// The module path, above the signature.
+    ModulePath,
+    /// The signature, in its syntax colours.
+    Signature,
+    /// The prose docs, when no [`MarkdownRenderer`] draws them.
+    Docs,
+    /// The footer: where it's defined, and the key to go there.
+    Footer,
+}
+
+impl HoverCardPart {
+    /// Its `debug_selector`.
+    fn selector(self) -> &'static str {
+        match self {
+            Self::Diagnostics => "hover-card-diagnostics",
+            Self::ModulePath => "hover-card-path",
+            Self::Signature => "hover-card-signature",
+            Self::Docs => "hover-card-docs",
+            Self::Footer => "hover-card-footer",
+        }
+    }
+}
+
+/// A text the hover card drew.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoverCardText {
+    pub part: HoverCardPart,
+    pub text: String,
+    pub font_size: Pixels,
+    /// Its font and colour, by byte range of `text`, covering it.
+    pub runs: Vec<TextRun>,
+}
+
+/// The texts of the hover card as each frame builds it, part by part, with
+/// their fonts, sizes and colours: what a test can't read back from the
+/// glyphs. Nothing is recorded, and the card does nothing extra, unless
+/// the Global is installed with [`PaintedHoverCard::set`]. A frame records
+/// every card text it builds, so [`PaintedHoverCard::take`] after the draw
+/// you mean.
+#[derive(Default)]
+pub struct PaintedHoverCard(Vec<HoverCardText>);
+
+impl Global for PaintedHoverCard {}
+
+impl PaintedHoverCard {
+    /// Starts recording, dropping anything recorded before.
+    pub fn set(cx: &mut App) {
+        cx.set_global(Self::default());
+    }
+
+    /// What has been recorded since the last take, in build order; empty
+    /// if not recording.
+    pub fn take(cx: &mut App) -> Vec<HoverCardText> {
+        match cx.try_global::<Self>() {
+            Some(_) => std::mem::take(&mut cx.global_mut::<Self>().0),
+            None => Vec::new(),
+        }
+    }
+
+    /// Stops recording.
+    pub fn clear(cx: &mut App) {
+        if cx.has_global::<Self>() {
+            cx.remove_global::<Self>();
+        }
+    }
+
+    fn record(cx: &mut App, part: HoverCardPart, text: &str, font_size: Pixels, runs: &[TextRun]) {
+        if cx.has_global::<Self>() {
+            cx.global_mut::<Self>().0.push(HoverCardText {
+                part,
+                text: text.to_owned(),
+                font_size,
+                runs: runs.to_vec(),
+            });
+        }
+    }
+}
+
+/// How long a signature's code may take to parse: it's parsed once per
+/// answer, on the UI thread, and is a line or two.
+const SIGNATURE_PARSE_BUDGET: Duration = Duration::from_millis(50);
+
+/// How many times highlighting is retried for injected languages compiled
+/// on the way, as fe-markdown's fences are.
+const HIGHLIGHT_ATTEMPTS: usize = 3;
+
+/// A hover's text as the card lays it out (`docs/design/design-system.md`,
+/// Hover card): the leading fences are its module path and signature, as
+/// rust-analyzer sends them, and the rest is its docs.
+#[derive(Debug)]
+pub(crate) struct CardText {
+    /// What it was laid out from.
+    source: String,
+    /// The module path above the signature, `core::option::Option`: a
+    /// leading fence of one word followed by another fence, or a fence's
+    /// first line when it's one word and a blank line parts it from the
+    /// rest.
+    pub(crate) path: Option<String>,
+    /// The signature: the leading fence's code, highlighted as its info
+    /// string's language.
+    pub(crate) signature: Option<Signature>,
+    /// The rest, Markdown, as written: all of it without a leading fence.
+    pub(crate) docs: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct Signature {
+    pub(crate) code: String,
+    highlights: Vec<HighlightSpan>,
+}
+
+/// A leading fence of a hover's text.
+struct Fence {
+    info: String,
+    code: String,
+    /// Where the text after it starts.
+    end: usize,
+}
+
+impl CardText {
+    pub(crate) fn new(markdown: &str) -> Self {
+        let fences = leading_fences(markdown);
+        // One word, as a path is: no whitespace.
+        let one_word = |code: &str| !code.is_empty() && !code.contains(char::is_whitespace);
+        let (path, signature, rest) = match fences.as_slice() {
+            [first, second, ..] if one_word(first.code.trim_matches('\n')) => (
+                Some(first.code.trim_matches('\n').to_owned()),
+                Some((second.info.as_str(), second.code.clone())),
+                second.end,
+            ),
+            [first, ..] => {
+                let code = first.code.trim_matches('\n');
+                match code.split_once("\n\n") {
+                    Some((path, signature)) if one_word(path) && !signature.trim().is_empty() => (
+                        Some(path.to_owned()),
+                        Some((first.info.as_str(), signature.trim_matches('\n').to_owned())),
+                        first.end,
+                    ),
+                    _ => (
+                        None,
+                        Some((first.info.as_str(), code.to_owned())),
+                        first.end,
+                    ),
+                }
+            }
+            [] => (None, None, 0),
+        };
+        Self {
+            source: markdown.to_owned(),
+            path,
+            signature: (signature.filter(|(_, code)| !code.trim().is_empty())).map(
+                |(info, code)| Signature {
+                    highlights: highlight(info, &code),
+                    code,
+                },
+            ),
+            docs: markdown[rest..].to_owned(),
+        }
+    }
+}
+
+impl Signature {
+    /// Runs covering its code: each highlight's span in the theme's colour
+    /// for it, the rest in the foreground, all in `code`.
+    fn runs(&self, theme: &EditorTheme, code: &Font) -> Vec<TextRun> {
+        let text = &self.code;
+        let mut runs = Vec::new();
+        let mut at = 0;
+        let mut push = |len: usize, color: Hsla| {
+            if len > 0 {
+                runs.push(run(len, code.clone(), color));
+            }
+        };
+        for span in &self.highlights {
+            let start = span.range.start.max(at).min(text.len());
+            let end = span.range.end.min(text.len());
+            if start >= end || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+                continue;
+            }
+            push(start - at, theme.foreground);
+            let color = theme
+                .syntax_color(span.highlight)
+                .unwrap_or(theme.foreground);
+            push(end - start, color);
+            at = end;
+        }
+        push(text.len() - at, theme.foreground);
+        runs
+    }
+}
+
+/// The highlights of `code` in the language a fence's `info` names; none
+/// for an unknown or absent one.
+fn highlight(info: &str, code: &str) -> Vec<HighlightSpan> {
+    let Some(language) = fence_language(info) else {
+        return Vec::new();
+    };
+    let buffer = Buffer::new(code);
+    let mut syntax = Syntax::new(language, &buffer.snapshot());
+    syntax.parse_within(SIGNATURE_PARSE_BUDGET);
+    let mut spans = Vec::new();
+    for _ in 0..HIGHLIGHT_ATTEMPTS {
+        spans = syntax.highlights(0..code.len());
+        let missing = syntax.take_missing_languages();
+        if missing.is_empty() {
+            break;
+        }
+        for name in missing {
+            language_by_name(name);
+        }
+    }
+    spans
+}
+
+/// The fenced code blocks `markdown` starts with, blank lines apart, at
+/// most two: what the card's header can be made of. A fence never closed
+/// runs to the end.
+fn leading_fences(markdown: &str) -> Vec<Fence> {
+    let mut fences = Vec::new();
+    // The open fence's char, length and info, and its lines so far.
+    let mut open: Option<(char, usize, String, Vec<&str>)> = None;
+    let mut at = 0;
+    for line in markdown.split_inclusive('\n') {
+        at += line.len();
+        let text = line.trim_end_matches(['\n', '\r']);
+        match &mut open {
+            Some((ch, len, info, lines)) => match fence(text) {
+                Some((close, close_len, rest))
+                    if close == *ch && close_len >= *len && rest.trim().is_empty() =>
+                {
+                    fences.push(Fence {
+                        info: std::mem::take(info),
+                        code: lines.join("\n"),
+                        end: at,
+                    });
+                    open = None;
+                    if fences.len() == 2 {
+                        break;
+                    }
+                }
+                _ => lines.push(text),
+            },
+            None if text.trim().is_empty() => {}
+            None => match fence(text) {
+                Some((ch, len, info)) if ch == '~' || !info.contains('`') => {
+                    open = Some((ch, len, info.trim().to_owned(), Vec::new()));
+                }
+                _ => break,
+            },
+        }
+    }
+    if let Some((_, _, info, lines)) = open {
+        fences.push(Fence {
+            info,
+            code: lines.join("\n"),
+            end: markdown.len(),
+        });
+    }
+    fences
 }
 
 /// `markdown` as text and fenced code blocks (CommonMark's fences: three or

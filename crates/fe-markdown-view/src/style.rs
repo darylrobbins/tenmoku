@@ -36,6 +36,18 @@ pub struct MarkdownStyle {
     pub text_size: Pixels,
     /// Body text's line height as a multiple of `text_size`.
     pub line_height: f32,
+    /// Between blocks: [`MarkdownStyle::BLOCK_GAP`], or
+    /// [`MarkdownStyle::COMPACT_GAP`] in the compact form.
+    pub block_gap: Pixels,
+    /// Around a code block's code: [`MarkdownStyle::CODE_PADDING`], or
+    /// [`MarkdownStyle::COMPACT_GAP`] in the compact form.
+    pub code_padding: Pixels,
+    /// Horizontal rules: `border`, or in the compact form `float_border`,
+    /// since `border` hardly shows on a floating surface.
+    pub rule: Hsla,
+    /// The hairline around a floating surface, the editor's popover
+    /// border: what the compact form, drawn on one, draws its rules in.
+    pub float_border: Hsla,
 }
 
 impl MarkdownStyle {
@@ -45,6 +57,11 @@ impl MarkdownStyle {
     pub const PADDING: Pixels = px(26.);
     /// Between blocks.
     pub const BLOCK_GAP: Pixels = px(16.);
+    /// Around a code block's code.
+    pub const CODE_PADDING: Pixels = px(16.);
+    /// The compact form's gap between blocks, and its code blocks' padding:
+    /// a popover's own padding is 8, so more would float its code.
+    pub const COMPACT_GAP: Pixels = px(8.);
 
     /// The preview of a document in `editor`'s colours and code font, with
     /// the chrome's muted text, borders, links and panels. A light editor
@@ -65,15 +82,25 @@ impl MarkdownStyle {
             syntax: editor.syntax.clone(),
             text_size: px(14.),
             line_height: 1.6,
+            block_gap: Self::BLOCK_GAP,
+            code_padding: Self::CODE_PADDING,
+            rule: ui.border,
+            float_border: editor.popover_border,
         }
     }
 
     /// This style for a hover popover or completion docs, as VS Code sizes
-    /// their text: the editor's font size less one, at line height 1.4.
+    /// their text: the editor's font size less one, at line height 1.4,
+    /// code at its own (the editor's). Blocks are [`Self::COMPACT_GAP`]
+    /// apart, code is padded as much, and rules are the floating surface's
+    /// hairline, so they show on it.
     pub fn compact(&self) -> MarkdownStyle {
         MarkdownStyle {
             text_size: self.code_font_size - px(1.),
             line_height: 1.4,
+            block_gap: Self::COMPACT_GAP,
+            code_padding: Self::COMPACT_GAP,
+            rule: self.float_border,
             ..self.clone()
         }
     }
@@ -193,6 +220,10 @@ mod tests {
             syntax,
             text_size: px(14.),
             line_height: 1.6,
+            block_gap: MarkdownStyle::BLOCK_GAP,
+            code_padding: MarkdownStyle::CODE_PADDING,
+            rule: foreground,
+            float_border: foreground,
         };
         let code = "let a = 1;\nlet b = 2;\n";
         let span = |range| HighlightSpan {

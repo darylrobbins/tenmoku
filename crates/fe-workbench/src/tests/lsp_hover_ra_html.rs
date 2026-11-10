@@ -19,9 +19,13 @@ use super::hover_markdown::painted;
 /// rust-analyzer 1.98.1's hover text.
 const HOVER: &str = include_str!("../../../fe-markdown/tests/fixtures/ra_hover_transpose.md");
 
-/// The fixture's blocks: two fences, a rule, the types, a rule, the
+/// The fixture's blocks after its two leading fences, which the card draws
+/// as its module path and signature (T556): a rule, the types, a rule, the
 /// summary, the `<code>` paragraph, the heading and the example.
-const EXAMPLE: &str = "md-block-8";
+const EXAMPLE: &str = "md-block-6";
+
+/// The card's module path and signature, from the fixture's two fences.
+const HEADER: [&str; 2] = ["hover-card-path", "hover-card-signature"];
 
 /// Whether `inner` shows any of `outer`.
 fn overlaps(inner: Bounds<Pixels>, outer: Bounds<Pixels>) -> bool {
@@ -88,15 +92,16 @@ fn hover(cx: &mut TestAppContext, lines: &painted::Lines) {
         assert!(held.contains(line), "{line:?} isn't in {held:?}");
     }
 
-    // It's at its height cap, its fences at the top, the example below
-    // the fold.
+    // It's at its height cap, its fences at the top as the card's header,
+    // the example running past the fold (the compact form's 8 px gaps
+    // bring its start into view: T556).
     let content = s.cx.debug_bounds("hover-popover-content").expect("drawn");
     let body = s.cx.debug_bounds("hover-popover-body").expect("drawn");
     assert!(
         body.size.height > content.size.height,
         "{body:?} in {content:?}"
     );
-    for fence in ["md-block-0", "md-block-1"] {
+    for fence in HEADER {
         let bounds = s.cx.debug_bounds(fence).expect("the fence is drawn");
         assert!(
             overlaps(bounds, content),
@@ -104,9 +109,12 @@ fn hover(cx: &mut TestAppContext, lines: &painted::Lines) {
         );
     }
     let example = s.cx.debug_bounds(EXAMPLE).expect("drawn");
-    assert!(!overlaps(example, content), "{example:?} in {content:?}");
+    assert!(
+        example.bottom() > content.bottom(),
+        "{example:?} in {content:?}"
+    );
 
-    // Scrolled past the fences, as in the user's screenshot.
+    // Scrolled down, as in the user's screenshot.
     s.cx.simulate_event(ScrollWheelEvent {
         position: content.center(),
         delta: ScrollDelta::Lines(point(0., -8.)),
@@ -114,15 +122,16 @@ fn hover(cx: &mut TestAppContext, lines: &painted::Lines) {
         touch_phase: TouchPhase::Moved,
     });
     s.draw();
-    for fence in ["md-block-0", "md-block-1"] {
-        let bounds = s.cx.debug_bounds(fence).expect("the fence is drawn");
-        assert!(
-            !overlaps(bounds, content),
-            "{fence} {bounds:?} in {content:?}"
-        );
-    }
+    // As far as it goes: the module path out of view, the example's end
+    // in it.
+    let path = s.cx.debug_bounds(HEADER[0]).expect("the path is drawn");
+    assert!(!overlaps(path, content), "{path:?} in {content:?}");
     let example = s.cx.debug_bounds(EXAMPLE).expect("drawn");
     assert!(overlaps(example, content), "{example:?} in {content:?}");
+    assert!(
+        example.bottom() <= content.bottom(),
+        "{example:?} in {content:?}"
+    );
 
     // What the popover laid out shows no tag, link source or escape.
     let shown = lines.lock().expect("the lines").join("\n");

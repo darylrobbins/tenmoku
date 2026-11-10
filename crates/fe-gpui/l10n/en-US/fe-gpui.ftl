@@ -139,6 +139,9 @@ gpui-size-bytes =
 gpui-hover-related-line = line { $line }
 gpui-hover-related = ↳ { $at }: { $message }
 gpui-hover-code = { $code }: { $href }
+# The hover card's footer: vim's keys (gd) to go to the definition, then what
+# they do.
+gpui-hover-go-to-definition = { $keys } definition
 
 ## Proposed changes
 

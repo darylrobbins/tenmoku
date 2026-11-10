@@ -8,8 +8,8 @@ use fe_markdown::BlockKind;
 use fe_markdown_view::{LinkHandler, MarkdownStyle, markdown_element};
 use fe_syntax::Highlight;
 use gpui::{
-    Bounds, Context, IntoElement, Modifiers, ParentElement as _, Pixels, Render, TestAppContext,
-    VisualTestContext, Window, div, point, px,
+    Bounds, Context, IntoElement, Modifiers, ParentElement as _, Pixels, Render, Styled as _,
+    TestAppContext, VisualTestContext, Window, anchored, div, point, px,
 };
 use kiln_ui::UiTheme;
 
@@ -19,6 +19,9 @@ struct Host {
     document: fe_markdown::Document,
     style: MarkdownStyle,
     clicks: Clicks,
+    /// In an anchored box as wide as its content, as a hover popover
+    /// places it, rather than a block as wide as the window.
+    floating: bool,
 }
 
 impl Render for Host {
@@ -26,18 +29,35 @@ impl Render for Host {
         let clicks = self.clicks.clone();
         let on_link: LinkHandler =
             Rc::new(move |dest, _, _| clicks.borrow_mut().push(dest.to_owned()));
-        div().child(markdown_element(
-            &self.document,
-            &self.style,
-            px(400.),
-            Some(on_link),
-        ))
+        let element = markdown_element(&self.document, &self.style, px(400.), Some(on_link));
+        if self.floating {
+            div().child(
+                anchored()
+                    .position(point(px(10.), px(10.)))
+                    .child(div().max_w(px(420.)).px(px(8.)).py(px(4.)).child(element)),
+            )
+        } else {
+            div().child(element)
+        }
     }
 }
 
 fn open<'a>(
     cx: &'a mut TestAppContext,
     markdown: &str,
+) -> (
+    &'a mut VisualTestContext,
+    Clicks,
+    EditorTheme,
+    MarkdownStyle,
+) {
+    open_in(cx, markdown, false)
+}
+
+fn open_in<'a>(
+    cx: &'a mut TestAppContext,
+    markdown: &str,
+    floating: bool,
 ) -> (
     &'a mut VisualTestContext,
     Clicks,
@@ -58,6 +78,7 @@ fn open<'a>(
         document: fe_markdown::parse(markdown),
         style: style.clone(),
         clicks: clicks.clone(),
+        floating,
     };
     let (_, cx) = cx.add_window_view(|_, _| host);
     for _ in 0..3 {
@@ -123,6 +144,60 @@ fn compact_markdown_lays_out_blocks(cx: &mut TestAppContext) {
     // The image is its alt text, not an img.
     assert_eq!(bounds(cx, "md-image-0".into()), None);
     assert!(bounds(cx, "md-image-blocked-0-alt".into()).is_some());
+}
+
+/// The compact form is tighter than the preview: code padded 8, blocks 8
+/// apart, and a rule drawn 1 px tall across the column in the floating
+/// surface's hairline, which shows on the popover, even in a box only as
+/// wide as its content. Code keeps the editor's line height.
+#[gpui::test]
+fn compact_spacing_and_a_visible_rule(cx: &mut TestAppContext) {
+    let markdown = "```rust\nfn f()\n```\n\n---\n\nThe docs, long enough to set the width.\n";
+    let (cx, _, editor, style) = open_in(cx, markdown, true);
+
+    // The preview's are as they were; the compact form's are 8.
+    let preview = MarkdownStyle::new(&editor, &UiTheme::default_dark());
+    assert_eq!(preview.block_gap, MarkdownStyle::BLOCK_GAP);
+    assert_eq!(preview.code_padding, px(16.));
+    assert_eq!(preview.rule, preview.border);
+    assert_eq!((style.block_gap, style.code_padding), (px(8.), px(8.)));
+
+    let code = bounds(cx, "md-code-0".into()).expect("the code block");
+    let text = bounds(cx, "md-code-0-text".into()).expect("its text");
+    assert_eq!(text.left() - code.left(), px(8.), "{text:?} in {code:?}");
+    assert_eq!(text.top() - code.top(), px(8.), "{text:?} in {code:?}");
+    assert_eq!(
+        code.bottom() - text.bottom(),
+        px(8.),
+        "{text:?} in {code:?}"
+    );
+    // One line, at the editor's line height, not the prose's 1.4.
+    let line = style.code_font_size * style.code_line_height;
+    assert!(
+        (text.size.height - line).abs() < px(0.5),
+        "{:?} for a {line:?} line",
+        text.size.height
+    );
+
+    let blocks: Vec<_> = (0..3)
+        .map(|ix| bounds(cx, format!("md-block-{ix}")).expect("a block"))
+        .collect();
+    for pair in blocks.windows(2) {
+        assert_eq!(pair[1].top() - pair[0].bottom(), px(8.), "{pair:?}");
+    }
+
+    let rule = bounds(cx, "md-rule".into()).expect("the rule is drawn");
+    assert_eq!(rule.size.height, px(1.));
+    assert_eq!(
+        rule.size.width, blocks[2].size.width,
+        "{rule:?} under {blocks:?}"
+    );
+    assert!(rule.size.width > px(100.), "{rule:?}");
+    assert_eq!(style.rule, editor.popover_border);
+    assert_ne!(
+        style.rule, editor.popover_background,
+        "it shows on the popover"
+    );
 }
 
 /// Paints a document and reads back the colour of each glyph. The test
@@ -287,6 +362,7 @@ mod painted {
                     document,
                     style,
                     clicks: Clicks::default(),
+                    floating: false,
                 })
             })
             .expect("open a window");
