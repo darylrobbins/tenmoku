@@ -7,6 +7,8 @@ use gpui::{
     Styled as _, WeakEntity, Window, div,
 };
 
+use kiln_l10n::tr;
+
 use crate::{
     picker::{Picker, PickerDelegate},
     status_bar::{language_label, plain_text},
@@ -119,7 +121,7 @@ impl PickerDelegate for LanguagePicker {
             div()
                 .ml_2()
                 .text_color(fe_ui::ui_theme(cx).muted_text)
-                .child("current")
+                .child(tr!("workbench-setup-current"))
         });
         div()
             .flex()

@@ -57,7 +57,7 @@ fn paths(page: &StartPage, kind: SectionKind) -> Vec<PathBuf> {
 
 fn keys(page: &StartPage) -> Vec<(String, char)> {
     (page.rows())
-        .filter_map(|row| Some((row.label.clone(), row.key?)))
+        .filter_map(|row| Some((row.label.resolve().to_string(), row.key?)))
         .collect()
 }
 
@@ -119,10 +119,10 @@ fn model_lists_start_actions_and_existing_recents() {
     );
     // A recent row says its name, then where it is from `~`.
     let first = &page.section(SectionKind::RecentFiles).unwrap().rows[0];
-    assert_eq!(first.label, "file0.txt");
+    assert_eq!(first.label.resolve(), "file0.txt");
     assert_eq!(first.detail.as_deref(), Some("~"));
     let folder = &page.section(SectionKind::RecentFolders).unwrap().rows[1];
-    assert_eq!(folder.label, "folder2");
+    assert_eq!(folder.label.resolve(), "folder2");
     assert!(keys(&page).is_empty(), "no letter keys with vim off");
 
     // Clone Repository only where a clone command is registered.
@@ -285,9 +285,10 @@ fn vim_adds_the_dashboard_keys(cx: &mut TestAppContext) {
     assert_eq!(row('n').invocation.command.as_str(), "workbench.new_file");
     assert_eq!(row('q').invocation.command.as_str(), "app.quit");
     // The key's letter in the label, underlined.
-    assert_eq!(row('n').key_in_label(), Some(0..1));
-    assert_eq!(row('p').key_in_label(), Some(1..2));
-    assert_eq!(row('s').key_in_label(), Some(5..6));
+    let key_in_label = |key| row(key).key_in(&row(key).label.resolve());
+    assert_eq!(key_in_label('n'), Some(0..1));
+    assert_eq!(key_in_label('p'), Some(1..2));
+    assert_eq!(key_in_label('s'), Some(5..6));
 
     let dir = tempfile::tempdir().unwrap();
     let (workbench, mut vcx) = window(cx, true, &dir.path().join("recent.toml"));

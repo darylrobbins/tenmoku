@@ -467,9 +467,35 @@ fn font_list_is_curated(cx: &mut TestAppContext) {
     );
 
     // Each is drawn in itself, the default in what it stands for.
-    assert_eq!(label_family(default), "Spline Sans Mono");
-    assert_eq!(label_family("Default (Menlo)"), "Menlo");
-    assert_eq!(label_family("Comic Code"), "Comic Code");
+    let families = |settings: &Settings, installed: &[&str]| {
+        let choices = Choices::from_settings(settings, installed);
+        let controls = Step::Font.controls(&choices);
+        let family = (controls.into_iter())
+            .find(|c| c.id == ControlId::FontFamily)
+            .unwrap();
+        (family.options.iter())
+            .map(label_family)
+            .collect::<Vec<_>>()
+    };
+    let installed = font_families(|family| system.contains(&family));
+    let mut settings = Settings::default();
+    settings.editor.font_family = Some("Comic Code".to_owned());
+    assert_eq!(
+        families(&settings, &installed),
+        [
+            "Spline Sans Mono",
+            "Spline Sans Mono",
+            "Menlo",
+            "Ubuntu Mono",
+            "Comic Code"
+        ]
+    );
+    let installed =
+        font_families(|family| family != "Spline Sans Mono" && system.contains(&family));
+    assert_eq!(
+        families(&Settings::default(), &installed),
+        ["Menlo", "Menlo", "Ubuntu Mono"]
+    );
 
     // And the sheet asks the text system family by family: what it lists is
     // just what the kiln helper finds installed, with the set font after.

@@ -10,7 +10,7 @@ use fe_keymap::Entry;
 use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext};
 
 use super::*;
-use crate::shortcuts_editor::recorder::{CHORD_WINDOW, PROMPT};
+use crate::shortcuts_editor::recorder::{CHORD_WINDOW, prompt};
 
 /// The open recorder: its label, conflict preview and When error.
 #[derive(Debug, PartialEq, Eq)]
@@ -24,7 +24,7 @@ fn recording(editor: &Entity<ShortcutsEditor>, cx: &mut VisualTestContext) -> Op
     editor.read_with(cx, |editor, _| {
         editor.recorder().map(|recorder| Recording {
             label: recorder.label(),
-            conflict: recorder.conflict().map(str::to_owned),
+            conflict: recorder.conflict().map(|note| note.to_string()),
             when_error: recorder.when_error().map(str::to_owned),
         })
     })
@@ -154,7 +154,7 @@ fn recording_captures_bound_keys_without_running_them(cx: &mut TestAppContext) {
     assert!(drawn("shortcuts-recorder", cx));
     assert!(recorder_focused(&editor, cx));
     assert_eq!(recording(&editor, cx).unwrap().label, "");
-    assert!(!PROMPT.is_empty());
+    assert_eq!(prompt(), "Press desired key combination, then Enter");
 
     // The keys of Close Tab are recorded; the tab stays.
     press(&keys("secondary-w"), cx);

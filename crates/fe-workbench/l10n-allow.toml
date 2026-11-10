@@ -37,6 +37,21 @@ migrated = [
     "src/config_files_picker.rs",
     # The find and replace row in B3 (T557).
     "src/find_bar.rs",
+    # W4: the setup wizard, the start page, the shortcuts editor and the
+    # small pickers.
+    "src/setup_wizard.rs",
+    "src/setup_wizard_model.rs",
+    "src/setup_wizard_preview.rs",
+    "src/setup_launch.rs",
+    "src/start_page.rs",
+    "src/start_page_model.rs",
+    "src/shortcuts_editor.rs",
+    "src/shortcuts_recorder.rs",
+    "src/encoding_picker.rs",
+    "src/line_ending_picker.rs",
+    "src/language_picker.rs",
+    "src/theme_picker.rs",
+    "src/config_problems.rs",
 ]
 
 # Ids and joins, not text: a picker row's element id, and the text a row's
@@ -133,3 +148,73 @@ reason = "A find field toggle's debug selector, for tests"
 file = "src/find_bar.rs"
 text = "{id}-focus-ring"
 reason = "A find or replace field's focus ring's debug selector, for tests"
+
+[[literal]]
+file = "src/setup_wizard.rs"
+text = "setup-radio-{id:?}"
+reason = "A radio group's element id"
+
+[[literal]]
+file = "src/setup_wizard.rs"
+text = "setup-radio-{id:?}-{option}"
+reason = "An option's debug selector"
+
+[[literal]]
+file = "src/setup_wizard.rs"
+text = "setup-tile-{id:?}"
+reason = "A theme tile's element id"
+
+[[literal]]
+file = "src/setup_wizard.rs"
+text = "setup-switch-{id:?}"
+reason = "A switch's debug selector"
+
+[[literal]]
+file = "src/setup_wizard.rs"
+text = "setup-{name}-{id:?}"
+reason = "A stepper button's debug selector"
+
+[[literal]]
+file = "src/start_page.rs"
+text = "start-page-row:{}"
+reason = "A row's debug selector"
+
+[[literal]]
+file = "src/shortcuts_editor.rs"
+text = "shortcuts-row-{command}"
+reason = "A command's first line's debug selector"
+
+[[literal]]
+file = "src/shortcuts_editor.rs"
+text = "shortcuts-row-{command}-{nth}"
+reason = "A command's other lines' debug selector"
+
+[[literal]]
+file = "src/shortcuts_editor.rs"
+text = "shortcuts-hidden-{command}-{nth}"
+reason = "A hidden binding's debug selector"
+
+[[literal]]
+file = "src/shortcuts_editor.rs"
+text = "shortcuts-edit-{command}"
+reason = "A line's pencil's element id"
+
+[[literal]]
+file = "src/shortcuts_editor.rs"
+text = "shortcuts-edit-{command}-{nth}"
+reason = "A line's pencil's element id"
+
+[[literal]]
+file = "src/shortcuts_editor.rs"
+text = "shortcuts-add-{command}"
+reason = "A line's Add button's element id"
+
+[[literal]]
+file = "src/shortcuts_editor.rs"
+text = "shortcuts-conflict-{command}-{nth}"
+reason = "A conflict mark's element id"
+
+[[literal]]
+file = "src/shortcuts_editor.rs"
+text = "menu-item:{}"
+reason = "A menu item's debug selector"

@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 use fe_command::{CommandId, Invocation, Value};
 use fe_config::recent::RecentList;
+use gpui::SharedString;
+use kiln_l10n::{Text, text, tr};
 
 /// The most recent folders, and the most recent files, listed.
 pub(crate) const MAX_RECENT: usize = 5;
@@ -43,12 +45,12 @@ pub(crate) enum SectionKind {
 }
 
 impl SectionKind {
-    pub(crate) fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> SharedString {
         match self {
-            SectionKind::Start => "Start",
-            SectionKind::RecentFolders => "Recent Folders",
-            SectionKind::RecentFiles => "Recent Files",
-            SectionKind::Settings => "Settings",
+            SectionKind::Start => tr!("workbench-setup-start-start"),
+            SectionKind::RecentFolders => tr!("workbench-setup-start-recent-folders"),
+            SectionKind::RecentFiles => tr!("workbench-setup-start-recent-files"),
+            SectionKind::Settings => tr!("workbench-setup-start-settings"),
         }
     }
 }
@@ -74,7 +76,9 @@ pub(crate) enum RowIcon {
 /// One row: what it says, and what it runs.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Row {
-    pub(crate) label: String,
+    /// A command row's key, resolved as it's drawn, or a recent entry's
+    /// name.
+    pub(crate) label: Text,
     /// A recent entry's folder, shortened by `~`: quieter, after the label.
     pub(crate) detail: Option<String>,
     pub(crate) icon: RowIcon,
@@ -84,12 +88,13 @@ pub(crate) struct Row {
 }
 
 impl Row {
-    /// Where in [`Row::label`] the key's letter first shows, ignoring case,
-    /// for the view to underline: a byte range.
-    pub(crate) fn key_in_label(&self) -> Option<std::ops::Range<usize>> {
+    /// Where in `label`, [`Row::label`] as shown, the key's letter first
+    /// shows, ignoring case, for the view to underline: a byte range. A
+    /// translation without the letter underlines nothing.
+    pub(crate) fn key_in(&self, label: &str) -> Option<std::ops::Range<usize>> {
         let key = self.key?;
         let (start, ch) =
-            (self.label.char_indices()).find(|(_, ch)| ch.to_lowercase().eq(key.to_lowercase()))?;
+            (label.char_indices()).find(|(_, ch)| ch.to_lowercase().eq(key.to_lowercase()))?;
         Some(start..start + ch.len_utf8())
     }
 }
@@ -126,15 +131,20 @@ impl StartPage {
         let Options { vim, clone, home } = options;
         let key = |key: char| vim.then_some(key);
         let mut start = vec![
-            command_row("New File", RowIcon::NewFile, key('n'), "workbench.new_file"),
             command_row(
-                "Open File…",
+                text!("workbench-setup-start-new-file"),
+                RowIcon::NewFile,
+                key('n'),
+                "workbench.new_file",
+            ),
+            command_row(
+                text!("workbench-setup-start-open-file"),
                 RowIcon::OpenFile,
                 key('f'),
                 "workbench.open_file",
             ),
             command_row(
-                "Open Folder…",
+                text!("workbench-setup-start-open-folder"),
                 RowIcon::OpenFolder,
                 key('p'),
                 "workbench.open_folder",
@@ -142,7 +152,7 @@ impl StartPage {
         ];
         if clone {
             start.push(command_row(
-                "Clone Repository…",
+                text!("workbench-setup-start-clone"),
                 RowIcon::Clone,
                 None,
                 CLONE,
@@ -150,9 +160,14 @@ impl StartPage {
         }
         if vim {
             start.extend([
-                command_row("Find Text", RowIcon::Search, key('g'), "search.show"),
                 command_row(
-                    "Recent Files…",
+                    text!("workbench-setup-start-find-text"),
+                    RowIcon::Search,
+                    key('g'),
+                    "search.show",
+                ),
+                command_row(
+                    text!("workbench-setup-start-recent"),
                     RowIcon::Recent,
                     key('r'),
                     "workbench.open_recent",
@@ -168,20 +183,25 @@ impl StartPage {
             .collect();
         let mut settings = vec![
             command_row(
-                "Open Settings",
+                text!("workbench-setup-start-open-settings"),
                 RowIcon::Settings,
                 key('s'),
                 "workbench.open_settings_ui",
             ),
             command_row(
-                "Keyboard Shortcuts",
+                text!("workbench-setup-start-shortcuts"),
                 RowIcon::Shortcuts,
                 None,
                 "workbench.open_keyboard_shortcuts",
             ),
         ];
         if vim {
-            settings.push(command_row("Quit", RowIcon::Quit, key('q'), "app.quit"));
+            settings.push(command_row(
+                text!("workbench-setup-start-quit"),
+                RowIcon::Quit,
+                key('q'),
+                "app.quit",
+            ));
         }
         let sections = [
             (SectionKind::Start, start),
@@ -224,9 +244,9 @@ fn invocation(command: &str) -> Invocation {
     Invocation::new(CommandId::parse(command).expect("the Start page's command IDs are valid"))
 }
 
-fn command_row(label: &str, icon: RowIcon, key: Option<char>, command: &str) -> Row {
+fn command_row(label: Text, icon: RowIcon, key: Option<char>, command: &str) -> Row {
     Row {
-        label: label.to_owned(),
+        label,
         detail: None,
         icon,
         key,
@@ -250,7 +270,7 @@ fn recent_row(path: &Path, folder: bool, home: Option<&Path>) -> Row {
     };
     let args = Value::from_iter([("path", path_value(path))]);
     Row {
-        label,
+        label: Text::verbatim(label),
         detail,
         icon,
         key: None,

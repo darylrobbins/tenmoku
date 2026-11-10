@@ -13,6 +13,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, Window, div,
 };
+use kiln_l10n::{text, tr};
 use kiln_shell::ModalId;
 
 use crate::{
@@ -24,6 +25,7 @@ use crate::{
 pub(crate) const LINE_ENDING_PICKER: ModalId = ModalId("line_ending");
 
 /// The endings offered, in order: label, and the editor command setting it.
+/// The labels are the endings' own names, as VS Code shows them.
 const OFFERED: [(&str, LineEnding, &str); 2] = [
     ("LF", LineEnding::Lf, "editor.set_end_of_line_lf"),
     ("CRLF", LineEnding::CrLf, "editor.set_end_of_line_crlf"),
@@ -75,8 +77,12 @@ impl PickerDelegate for LineEndingPicker {
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let (label, ending, _) = OFFERED[self.matches[ix]];
         let muted = fe_ui::ui_theme(cx).muted_text;
-        let current =
-            (ending == self.current).then(|| div().ml_2().text_color(muted).child("current"));
+        let current = (ending == self.current).then(|| {
+            div()
+                .ml_2()
+                .text_color(muted)
+                .child(tr!("workbench-setup-current"))
+        });
         div()
             .flex()
             .items_center()
@@ -118,7 +124,7 @@ impl Workbench {
         let picker = cx.new(|cx| {
             Picker::new(
                 delegate,
-                "Select End of Line Sequence",
+                text!("workbench-setup-line-ending-placeholder"),
                 fe_ui::ui_theme(cx),
                 cx,
             )

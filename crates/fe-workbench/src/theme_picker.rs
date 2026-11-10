@@ -26,6 +26,7 @@ use kiln::{
     extensions::{BUILTIN_THEMES, ThemeInfo},
     ui::ActiveTheme as _,
 };
+use kiln_l10n::tr;
 
 use crate::{
     picker::{Picker, PickerDelegate},
@@ -304,16 +305,22 @@ impl PickerDelegate for ThemePicker {
             .map(|(key, value)| (*key, value.as_deref().map(SettingValue::Str)))
             .collect();
         let written = match &self.settings_path {
-            Some(path) => fe_config::write_settings(path, &changes)
-                .map_err(|error| format!("{}: {error}", path.display())),
-            None => Err("there's no config directory".to_owned()),
+            Some(path) => fe_config::write_settings(path, &changes).map_err(|error| {
+                let path = path.display().to_string();
+                let error = error.to_string();
+                tr!(
+                    "workbench-setup-theme-write-error",
+                    path = path,
+                    error = error
+                )
+                .to_string()
+            }),
+            None => Err(tr!("workbench-setup-theme-no-config-dir").to_string()),
         };
         if let Err(error) = written {
             log::error!("can't keep the theme {}: {error}", row.title);
-            toast::show(
-                cx,
-                Toast::error(format!("Can't keep the theme {}", row.title)).detail(error),
-            );
+            let message = tr!("workbench-setup-theme-keep-failed", theme = &row.title);
+            toast::show(cx, Toast::error(message).detail(error));
         }
         self.restore_focus(window, cx);
         true

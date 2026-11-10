@@ -87,7 +87,11 @@ type Shown = (Option<EncodingAction>, Vec<(&'static str, bool)>);
 fn picker(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<Shown> {
     let picker = workbench.read_with(cx, |workbench, cx| workbench.encoding_picker(cx))?;
     Some(picker.read_with(cx, |picker, _| {
-        (picker.delegate.action(), picker.delegate.labels())
+        // The labels are resolved now; a test compares them as text.
+        let labels = (picker.delegate.labels().into_iter())
+            .map(|(label, current)| (&*label.to_string().leak(), current))
+            .collect();
+        (picker.delegate.action(), labels)
     }))
 }
 
@@ -321,10 +325,13 @@ fn the_status_bar_item_lists_the_actions_then_the_encodings(cx: &mut TestAppCont
     pick("save", cx);
     let (action, labels) = picker(&workbench, cx).expect("the encodings show");
     assert_eq!(action, Some(EncodingAction::Save));
-    let all: Vec<_> = super::choices().iter().map(|choice| choice.label).collect();
+    let all: Vec<_> = super::choices()
+        .iter()
+        .map(|choice| choice.label())
+        .collect();
     assert_eq!(
-        labels.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
-        all
+        all,
+        labels.iter().map(|(label, _)| *label).collect::<Vec<_>>()
     );
     let current: Vec<_> = labels.iter().filter(|(_, current)| *current).collect();
     assert_eq!(current, [&("UTF-8", true)]);
@@ -348,7 +355,10 @@ fn the_status_bar_item_lists_the_actions_then_the_encodings(cx: &mut TestAppCont
 fn the_encodings_offered_are_encoding_rs_s() {
     let names: Vec<_> = super::choices()
         .iter()
-        .map(|choice| (choice.label, choice.encoding.name(), choice.encoding.bom))
+        .map(|choice| (choice.label(), choice.encoding.name(), choice.encoding.bom))
+        .collect();
+    let names: Vec<_> = (names.iter())
+        .map(|(label, name, bom)| (&**label, *name, *bom))
         .collect();
     assert_eq!(names.len(), 21);
     for expected in [

@@ -39,13 +39,14 @@ use fe_ui::{ActiveTheme as _, TextInput, TextInputEvent};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
     InteractiveElement as _, IntoElement, KeyContext, KeyDownEvent, MouseButton,
-    ParentElement as _, ScrollStrategy, Styled as _, Subscription, Window, anchored, deferred, div,
-    point, px,
+    ParentElement as _, ScrollStrategy, SharedString, Styled as _, Subscription, Window, anchored,
+    deferred, div, point, px,
 };
 use kiln::{
     core::Os,
     platform::keys::{self, HOLDS_ALL_KEYS},
 };
+use kiln_l10n::{Text, text, tr, verbatim};
 
 use super::{Identity, LINE_HEIGHT, ShortcutsEditor, build_model, input_command};
 
@@ -59,7 +60,9 @@ pub(crate) const CHORD_WINDOW: Duration = Duration::from_millis(1500);
 const CHORD_LEN: usize = 2;
 
 /// What the box says before a key is pressed.
-pub(crate) const PROMPT: &str = "Press desired key combination, then Enter";
+pub(crate) fn prompt() -> SharedString {
+    tr!("workbench-setup-shortcuts-recorder-prompt")
+}
 
 /// Where the binding being recorded is, in the keymap a conflict preview
 /// is reported on: no file has it.
@@ -92,7 +95,7 @@ pub(crate) struct Recorder {
     /// Why the When doesn't parse.
     when_error: Option<String>,
     /// The other commands bound to the keys where the binding would apply.
-    conflict: Option<String>,
+    conflict: Option<Text>,
     /// Its When's changes, and its box's and When's blurs.
     _subscriptions: Vec<Subscription>,
 }
@@ -112,8 +115,8 @@ impl Recorder {
 
     /// What the conflict preview says, if the keys clash.
     #[cfg(test)]
-    pub(crate) fn conflict(&self) -> Option<&str> {
-        self.conflict.as_deref()
+    pub(crate) fn conflict(&self) -> Option<SharedString> {
+        self.conflict.as_ref().map(Text::resolve)
     }
 
     /// Why the When doesn't parse, if it doesn't.
@@ -238,7 +241,9 @@ impl ShortcutsEditor {
                 let ui = fe_ui::ui_theme(cx);
                 let context = row.context.clone().unwrap_or_default();
                 let input = cx.new(|cx| {
-                    let mut input = TextInput::new("When", &ui, cx).bordered();
+                    let mut input =
+                        TextInput::new(tr!("workbench-setup-shortcuts-column-when"), &ui, cx)
+                            .bordered();
                     input.set_text(context, cx);
                     input
                 });
@@ -352,7 +357,7 @@ impl ShortcutsEditor {
         keys: KeySequence,
         context: Option<&str>,
         cx: &App,
-    ) -> Option<String> {
+    ) -> Option<Text> {
         let command = CommandId::parse(&recorder.command).ok()?;
         let context = context.map(ContextPredicate::parse).transpose().ok()?;
         let changed = |keys: &KeySequence, location: &Location| {
@@ -399,7 +404,9 @@ impl ShortcutsEditor {
                 also.push(command);
             }
         }
-        (!also.is_empty()).then(|| format!("Also bound to {}", also.join(", ")))
+        let commands = also.join(verbatim!(", "));
+        (!also.is_empty())
+            .then(|| text!("workbench-setup-shortcuts-also-bound", commands = commands))
     }
 
     /// The box's keys: every one is held from the keymap and recorded,
@@ -459,10 +466,10 @@ impl ShortcutsEditor {
         context.add(KEY_CONTEXT);
         context.add(HOLDS_ALL_KEYS);
         let shown = match label.is_empty() {
-            true => div().text_color(ui.muted_text).child(PROMPT),
+            true => div().text_color(ui.muted_text).child(prompt()),
             false => div().text_color(ui.text).child(label),
         };
-        let preview = recorder.conflict.clone().map(|note| {
+        let preview = recorder.conflict.as_ref().map(Text::resolve).map(|note| {
             deferred(
                 anchored().offset(point(px(0.), LINE_HEIGHT)).child(
                     div()

@@ -39,6 +39,7 @@ use kiln::{
     },
     prelude::AppExt as _,
 };
+use kiln_l10n::{text, tr, verbatim};
 
 use crate::{
     KEY_CONTEXT as WORKBENCH_CONTEXT, Workbench,
@@ -71,20 +72,9 @@ const SAMPLE_MIN_WIDTH: Pixels = px(200.);
 /// How tall the list of fonts is.
 const LIST_HEIGHT: Pixels = px(104.);
 
-const SKIP: &str = "Skip setup";
-const SKIP_TOOLTIP: &str = "Keeps what you've chosen so far";
-const BACK: &str = "Back";
-const CONTINUE: &str = "Continue";
-const FINISH: &str = "Start Editing";
-const SHELL_COMMAND: &str = "Open files from Terminal with `tenmoku`";
-const INSTALL: &str = "Install";
-
 /// What's around a tile's art across its width: the focus ring's padding and
 /// border and the 2 px chosen ring, on both sides.
 const TILE_FRAME: Pixels = px(8.);
-
-/// What VoiceOver calls the code sample.
-const SAMPLE_LABEL: &str = "Code sample";
 
 /// The least the sample shows, in a window too small for the rest.
 const SAMPLE_MIN_HEIGHT: Pixels = px(120.);
@@ -95,13 +85,37 @@ const MODE_DARK: usize = 0;
 const MODE_LIGHT: usize = 1;
 const MODE_SYSTEM: usize = 2;
 
+/// The command the Ready page says the settings change in.
+const SETTINGS: &str = "workbench.open_settings_ui";
+
 /// The Ready page's hints: what to call a command, and which it is.
-const SETTINGS: (&str, &str) = ("Settings", "workbench.open_settings_ui");
-const HINTS: [(&str, &str); 3] = [
-    ("Command Palette", "command_palette.toggle"),
-    ("Go to File", "quick_open.toggle"),
-    ("Open Folder", "workbench.open_folder"),
-];
+fn hints() -> [(SharedString, &'static str); 3] {
+    [
+        (
+            tr!("workbench-setup-hint-command-palette"),
+            "command_palette.toggle",
+        ),
+        (tr!("workbench-setup-hint-go-to-file"), "quick_open.toggle"),
+        (
+            tr!("workbench-setup-hint-open-folder"),
+            "workbench.open_folder",
+        ),
+    ]
+}
+
+/// What VoiceOver calls a stepper's buttons, down and up.
+fn step_labels(id: ControlId) -> (SharedString, SharedString) {
+    match id {
+        ControlId::FontSize => (
+            tr!("workbench-setup-font-size-decrease"),
+            tr!("workbench-setup-font-size-increase"),
+        ),
+        _ => (
+            tr!("workbench-setup-decrease"),
+            tr!("workbench-setup-increase"),
+        ),
+    }
+}
 
 /// The files the sheet writes, when not fe-config's: under test, none unless
 /// set, so no test touches the user's.
@@ -404,7 +418,9 @@ impl SetupWizard {
                 .background_spawn(async move {
                     let written = match path {
                         Some(path) => fe_config::write_settings(&path, &chosen.writes_of(&keys)),
-                        None => Err(io::Error::other("there's no settings file to write to")),
+                        None => Err(io::Error::other(
+                            tr!("workbench-setup-no-settings-file").to_string(),
+                        )),
                     };
                     (written, keys, chosen)
                 })
@@ -412,7 +428,7 @@ impl SetupWizard {
             let written = written.map_err(|error| {
                 log::warn!("can't set {dotted}: {error}");
                 cx.update(|cx| {
-                    let message = format!("Can't change {dotted}");
+                    let message = tr!("workbench-setup-change-failed", key = &dotted);
                     toast::show(cx, Toast::error(message).detail(error.to_string()))
                 });
             });
@@ -611,12 +627,12 @@ impl SetupWizard {
             .child(
                 div()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(control.title),
+                    .child(control.title.clone()),
             )
             .child(
                 div()
                     .text_color(colors.text.muted)
-                    .child(control.description),
+                    .child(control.description.clone()),
             )
     }
 
@@ -797,9 +813,9 @@ impl SetupWizard {
         let group = self.node(
             div().id(part(control.id, "group")),
             Role::RadioGroup,
-            control.title,
+            control.title.clone(),
         );
-        let group = group.aria_description(control.description);
+        let group = group.aria_description(control.description.clone());
         if shape(control.id) == Shape::Tiles {
             let tiles: Vec<AnyElement> = options
                 .map(|option| self.tile(control, option, focused, cx))
@@ -816,7 +832,7 @@ impl SetupWizard {
         let body = match shape(control.id) {
             Shape::List => {
                 let rows = options.map(|option| {
-                    let family = label_family(&control.options[option].label);
+                    let family = label_family(&control.options[option]);
                     let radio = self.radio(control, option, focused, cx);
                     let radio = radio.ghost().w_full().justify_start();
                     radio.font_family(family).into_any_element()
@@ -861,7 +877,7 @@ impl SetupWizard {
             .debug_selector(move || format!("setup-switch-{id:?}"))
             .on(on)
             .aria_toggled(if on { Toggled::True } else { Toggled::False })
-            .aria_description(control.description)
+            .aria_description(control.description.clone())
             .when(focused, |switch| switch.aria_active_descendant())
             .on_change(cx.listener(move |this, on: &bool, _, cx| {
                 this.click_stop(Stop::Control(id), cx);
@@ -869,7 +885,7 @@ impl SetupWizard {
                     this.choose(&control, usize::from(*on), cx);
                 }
             }));
-        let switch = self.node(switch, Role::Switch, control.title);
+        let switch = self.node(switch, Role::Switch, control.title.clone());
         let row = div()
             .flex()
             .items_center()
@@ -888,8 +904,7 @@ impl SetupWizard {
     ) -> AnyElement {
         let id = control.id;
         let last = control.options.len() - 1;
-        let step = |name: &'static str, text: &'static str, by: isize, cx: &mut Context<Self>| {
-            let label = format!("{} {}", text, control.title.to_lowercase());
+        let step = |name: &'static str, label: SharedString, by: isize, cx: &mut Context<Self>| {
             let shown = if by < 0 { "\u{2212}" } else { "+" };
             let enabled = match by < 0 {
                 true => control.selected > 0,
@@ -904,8 +919,9 @@ impl SetupWizard {
                 }));
             self.node(button, Role::Button, label)
         };
-        let down = step("step-down", "Decrease", -1, cx);
-        let up = step("step-up", "Increase", 1, cx);
+        let (decrease, increase) = step_labels(id);
+        let down = step("step-down", decrease, -1, cx);
+        let up = step("step-up", increase, 1, cx);
         let value = control.options[control.selected].label.clone();
         let (min, max) = (
             control.options[0].label.parse().unwrap_or(0.),
@@ -915,13 +931,13 @@ impl SetupWizard {
             .node(
                 div().id(part(id, "stepper")),
                 Role::SpinButton,
-                control.title,
+                control.title.clone(),
             )
             .aria_value(value.clone())
             .aria_numeric_value(value.parse().unwrap_or(0.))
             .aria_min_numeric_value(min)
             .aria_max_numeric_value(max)
-            .aria_description(control.description)
+            .aria_description(control.description.clone())
             .when(focused, |stepper| stepper.aria_active_descendant())
             .flex()
             .items_center()
@@ -942,7 +958,8 @@ impl SetupWizard {
     /// The code sample, for VoiceOver a picture: it can't be focused or read
     /// a line at a time.
     fn render_sample(&self, cx: &App) -> gpui::Stateful<gpui::Div> {
-        let node = self.node(div().id("setup-sample"), Role::Figure, SAMPLE_LABEL);
+        let label = tr!("workbench-setup-code-sample");
+        let node = self.node(div().id("setup-sample"), Role::Figure, label);
         node.debug_selector(|| "setup-sample".into())
             .children(self.sample.as_ref().map(|sample| sample.render(cx)))
     }
@@ -1061,22 +1078,24 @@ impl SetupWizard {
     /// The Ready page: what the run changed, where to change it, and three
     /// hints with the keymap's keys.
     fn render_ready(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let changed = match self.choices.changed_count() {
-            0 => "Tenmoku's defaults are set".to_owned(),
-            1 => "You changed 1 setting".to_owned(),
-            count => format!("You changed {count} settings"),
+        let changed = tr!(
+            "workbench-setup-changed",
+            count = self.choices.changed_count()
+        );
+        let settings = match shortcut(SETTINGS, cx) {
+            Some(keys) => tr!("workbench-setup-change-in-settings-keys", keys = keys),
+            None => tr!("workbench-setup-change-in-settings"),
         };
-        let settings = match shortcut(SETTINGS.1, cx) {
-            Some(keys) => format!("Change any of them in {} ({keys})", SETTINGS.0),
-            None => format!("Change any of them in {}", SETTINGS.0),
-        };
-        let hints = HINTS.iter().enumerate().map(|(ix, (name, command))| {
-            let text = match shortcut(command, cx) {
-                Some(keys) => format!("{name} ({keys})"),
-                None => (*name).to_owned(),
-            };
-            self.label(("setup-hint", ix as u64), text)
-        });
+        let hints = hints()
+            .into_iter()
+            .enumerate()
+            .map(|(ix, (name, command))| {
+                let text = match shortcut(command, cx) {
+                    Some(keys) => tr!("workbench-setup-hint-keys", name = name, keys = keys),
+                    None => name,
+                };
+                self.label(("setup-hint", ix as u64), text)
+            });
         let colors = cx.theme().colors;
         let lead = div()
             .flex()
@@ -1100,14 +1119,18 @@ impl SetupWizard {
     fn render_shell_command(&self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors;
         let focused = self.stop == Stop::Install;
-        let install = Button::new("setup-install-shell", INSTALL)
-            .debug_selector(|| "setup-install-shell".into())
-            .when(focused, |button| button.aria_active_descendant())
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.click_stop(Stop::Install, cx);
-                this.install(window, cx);
-            }));
-        let install = self.ring(focused, self.node(install, Role::Button, INSTALL), cx);
+        let install = Button::new(
+            verbatim!("setup-install-shell"),
+            text!("workbench-setup-install"),
+        )
+        .debug_selector(|| "setup-install-shell".into())
+        .when(focused, |button| button.aria_active_descendant())
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.click_stop(Stop::Install, cx);
+            this.install(window, cx);
+        }));
+        let label = tr!("workbench-setup-install");
+        let install = self.ring(focused, self.node(install, Role::Button, label), cx);
         div()
             .flex()
             .items_center()
@@ -1116,7 +1139,7 @@ impl SetupWizard {
             .child(
                 div()
                     .text_color(colors.text.muted)
-                    .child(self.label("setup-shell-command", SHELL_COMMAND)),
+                    .child(self.label("setup-shell-command", tr!("workbench-setup-shell-command"))),
             )
             .child(install)
             .into_any_element()
@@ -1126,16 +1149,16 @@ impl SetupWizard {
         let colors = cx.theme().colors;
         let ui = fe_ui::ui_theme(cx);
         let stop = self.stop;
-        let skip = Button::new("setup-skip", SKIP)
+        let skip = Button::new(verbatim!("setup-skip"), text!("workbench-setup-skip"))
             .ghost()
             .debug_selector(|| "setup-skip".into())
             .when(stop == Stop::Skip, |button| button.aria_active_descendant())
             .tooltip(move |_, cx| {
-                cx.new(|_| Tooltip::new(SKIP_TOOLTIP, None::<&str>, &ui))
-                    .into()
+                let tooltip = tr!("workbench-setup-skip-tooltip");
+                cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
             })
             .on_click(cx.listener(|this, _, window, cx| this.close(Outcome::Skipped, window, cx)));
-        let skip = self.node(skip, Role::Button, SKIP);
+        let skip = self.node(skip, Role::Button, tr!("workbench-setup-skip"));
         let dots = (0..steps().len()).map(|page| {
             div().size(px(6.)).rounded_full().bg(if page == self.page {
                 colors.accent.base
@@ -1144,15 +1167,19 @@ impl SetupWizard {
             })
         });
         let back = (self.page > 0).then(|| {
-            let back = Button::new("setup-back", BACK)
+            let back = Button::new(verbatim!("setup-back"), text!("workbench-setup-back"))
                 .debug_selector(|| "setup-back".into())
                 .large()
                 .when(stop == Stop::Back, |button| button.aria_active_descendant())
                 .on_click(cx.listener(|this, _, _, cx| this.back(cx)));
-            self.ring(stop == Stop::Back, self.node(back, Role::Button, BACK), cx)
+            let label = tr!("workbench-setup-back");
+            self.ring(stop == Stop::Back, self.node(back, Role::Button, label), cx)
         });
-        let label = if self.last_page() { FINISH } else { CONTINUE };
-        let primary = Button::new("setup-primary", label)
+        let label = match self.last_page() {
+            true => text!("workbench-setup-finish"),
+            false => text!("workbench-setup-continue"),
+        };
+        let primary = Button::new(verbatim!("setup-primary"), label.clone())
             .primary()
             .large()
             .debug_selector(|| "setup-primary".into())
@@ -1160,7 +1187,7 @@ impl SetupWizard {
                 button.aria_active_descendant()
             })
             .on_click(cx.listener(|this, _, window, cx| this.primary(window, cx)));
-        let primary = self.node(primary, Role::Button, label);
+        let primary = self.node(primary, Role::Button, label.resolve());
         div()
             .flex()
             .flex_none()
@@ -1184,10 +1211,15 @@ impl SetupWizard {
     }
 
     /// The label the card has on this page.
-    fn dialog_label(&self) -> String {
+    fn dialog_label(&self) -> SharedString {
         let (page, count) = (self.page + 1, steps().len());
         let title = self.step().title();
-        format!("Set Up Tenmoku, step {page} of {count}, {title}")
+        tr!(
+            "workbench-setup-dialog",
+            page = page,
+            count = count,
+            title = title
+        )
     }
 
     /// Every (role, label) the last render passed.

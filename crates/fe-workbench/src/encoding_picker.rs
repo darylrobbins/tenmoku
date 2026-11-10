@@ -42,6 +42,7 @@ use gpui::{
     ParentElement as _, SharedString, Styled as _, WeakEntity, Window, div,
 };
 use imara_diff::{Algorithm, Diff, InternedInput};
+use kiln_l10n::{text, tr};
 use kiln_shell::ModalId;
 
 use crate::{
@@ -69,67 +70,95 @@ impl EncodingAction {
     /// The actions the status bar's item lists, in order.
     const ALL: [EncodingAction; 2] = [EncodingAction::Reopen, EncodingAction::Save];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> SharedString {
         match self {
-            EncodingAction::Reopen => "Reopen with Encoding",
-            EncodingAction::Save => "Save with Encoding",
+            EncodingAction::Reopen => tr!("workbench-setup-encoding-reopen"),
+            EncodingAction::Save => tr!("workbench-setup-encoding-save"),
         }
     }
 
-    fn placeholder(self) -> &'static str {
+    fn placeholder(self) -> kiln_l10n::Text {
         match self {
-            EncodingAction::Reopen => "Select File Encoding to Reopen File",
-            EncodingAction::Save => "Select File Encoding to Save with",
+            EncodingAction::Reopen => text!("workbench-setup-encoding-reopen-placeholder"),
+            EncodingAction::Save => text!("workbench-setup-encoding-save-placeholder"),
         }
     }
 }
 
-/// An encoding the picker offers: its label, the WHATWG label
-/// `encoding_rs` knows it by, and whether a save writes a BOM.
+/// An encoding the picker offers: the WHATWG label `encoding_rs` knows it
+/// by, and whether a save writes a BOM. [`EncodingChoice::label`] names it.
 struct Offered {
-    label: &'static str,
     whatwg: &'static str,
     bom: bool,
 }
 
-const fn offered(label: &'static str, whatwg: &'static str, bom: bool) -> Offered {
-    Offered { label, whatwg, bom }
+const fn offered(whatwg: &'static str, bom: bool) -> Offered {
+    Offered { whatwg, bom }
 }
 
 /// The encodings offered, in order. UTF-16 saves with a BOM, as VS Code's
 /// does.
 const OFFERED: [Offered; 21] = [
-    offered("UTF-8", "utf-8", false),
-    offered("UTF-8 with BOM", "utf-8", true),
-    offered("UTF-16 LE", "utf-16le", true),
-    offered("UTF-16 BE", "utf-16be", true),
-    offered("Western (Windows 1252)", "windows-1252", false),
-    offered("Western (ISO 8859-15)", "iso-8859-15", false),
-    offered("Central European (Windows 1250)", "windows-1250", false),
-    offered("Central European (ISO 8859-2)", "iso-8859-2", false),
-    offered("Cyrillic (Windows 1251)", "windows-1251", false),
-    offered("Cyrillic (KOI8-R)", "koi8-r", false),
-    offered("Greek (Windows 1253)", "windows-1253", false),
-    offered("Greek (ISO 8859-7)", "iso-8859-7", false),
-    offered("Turkish (Windows 1254)", "windows-1254", false),
-    offered("Hebrew (Windows 1255)", "windows-1255", false),
-    offered("Arabic (Windows 1256)", "windows-1256", false),
-    offered("Japanese (Shift JIS)", "shift_jis", false),
-    offered("Japanese (EUC-JP)", "euc-jp", false),
-    offered("Simplified Chinese (GBK)", "gbk", false),
-    offered("Simplified Chinese (GB18030)", "gb18030", false),
-    offered("Traditional Chinese (Big5)", "big5", false),
-    offered("Korean (EUC-KR)", "euc-kr", false),
+    offered("utf-8", false),
+    offered("utf-8", true),
+    offered("utf-16le", true),
+    offered("utf-16be", true),
+    offered("windows-1252", false),
+    offered("iso-8859-15", false),
+    offered("windows-1250", false),
+    offered("iso-8859-2", false),
+    offered("windows-1251", false),
+    offered("koi8-r", false),
+    offered("windows-1253", false),
+    offered("iso-8859-7", false),
+    offered("windows-1254", false),
+    offered("windows-1255", false),
+    offered("windows-1256", false),
+    offered("shift_jis", false),
+    offered("euc-jp", false),
+    offered("gbk", false),
+    offered("gb18030", false),
+    offered("big5", false),
+    offered("euc-kr", false),
 ];
 
 /// One encoding the picker offers, as a choice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EncodingChoice {
-    pub(crate) label: &'static str,
+    /// The WHATWG label it's offered by.
+    whatwg: &'static str,
     pub(crate) encoding: FileEncoding,
 }
 
 impl EncodingChoice {
+    /// What the picker lists it as.
+    pub(crate) fn label(self) -> SharedString {
+        match (self.whatwg, self.encoding.bom) {
+            ("utf-8", false) => tr!("workbench-setup-encoding-utf-8"),
+            ("utf-8", true) => tr!("workbench-setup-encoding-utf-8-bom"),
+            ("utf-16le", true) => tr!("workbench-setup-encoding-utf-16le"),
+            ("utf-16be", true) => tr!("workbench-setup-encoding-utf-16be"),
+            ("windows-1252", false) => tr!("workbench-setup-encoding-windows-1252"),
+            ("iso-8859-15", false) => tr!("workbench-setup-encoding-iso-8859-15"),
+            ("windows-1250", false) => tr!("workbench-setup-encoding-windows-1250"),
+            ("iso-8859-2", false) => tr!("workbench-setup-encoding-iso-8859-2"),
+            ("windows-1251", false) => tr!("workbench-setup-encoding-windows-1251"),
+            ("koi8-r", false) => tr!("workbench-setup-encoding-koi8-r"),
+            ("windows-1253", false) => tr!("workbench-setup-encoding-windows-1253"),
+            ("iso-8859-7", false) => tr!("workbench-setup-encoding-iso-8859-7"),
+            ("windows-1254", false) => tr!("workbench-setup-encoding-windows-1254"),
+            ("windows-1255", false) => tr!("workbench-setup-encoding-windows-1255"),
+            ("windows-1256", false) => tr!("workbench-setup-encoding-windows-1256"),
+            ("shift_jis", false) => tr!("workbench-setup-encoding-shift-jis"),
+            ("euc-jp", false) => tr!("workbench-setup-encoding-euc-jp"),
+            ("gbk", false) => tr!("workbench-setup-encoding-gbk"),
+            ("gb18030", false) => tr!("workbench-setup-encoding-gb18030"),
+            ("big5", false) => tr!("workbench-setup-encoding-big5"),
+            ("euc-kr", false) => tr!("workbench-setup-encoding-euc-kr"),
+            _ => self.encoding.label().into(),
+        }
+    }
+
     /// What a toast calls it: the encoding's label.
     fn name(self) -> String {
         self.encoding.label()
@@ -148,7 +177,7 @@ pub(crate) fn choices() -> Vec<EncodingChoice> {
     OFFERED
         .iter()
         .map(|offered| EncodingChoice {
-            label: offered.label,
+            whatwg: offered.whatwg,
             encoding: FileEncoding {
                 encoding: Encoding::for_label(offered.whatwg.as_bytes())
                     .expect("encoding_rs knows the encodings offered"),
@@ -161,7 +190,7 @@ pub(crate) fn choices() -> Vec<EncodingChoice> {
 /// The choice labelled `label`.
 #[cfg(test)]
 pub(crate) fn choice(label: &str) -> Option<EncodingChoice> {
-    choices().into_iter().find(|choice| choice.label == label)
+    choices().into_iter().find(|choice| choice.label() == label)
 }
 
 /// A picker's rows: the two actions, or the encodings for one.
@@ -204,11 +233,11 @@ impl EncodingPicker {
     }
 
     /// Row `row`'s label, and its WHATWG name for an encoding.
-    fn row(&self, row: usize) -> (&'static str, Option<&'static str>) {
+    fn row(&self, row: usize) -> (SharedString, Option<&'static str>) {
         match &self.rows {
             Rows::Actions => (EncodingAction::ALL[row].label(), None),
             Rows::Encodings { choices, .. } => {
-                (choices[row].label, Some(choices[row].encoding.name()))
+                (choices[row].label(), Some(choices[row].encoding.name()))
             }
         }
     }
@@ -234,7 +263,7 @@ impl EncodingPicker {
 #[cfg(test)]
 impl EncodingPicker {
     /// The matches' labels, each with whether it's marked current.
-    pub(crate) fn labels(&self) -> Vec<(&'static str, bool)> {
+    pub(crate) fn labels(&self) -> Vec<(SharedString, bool)> {
         (0..self.matches.len())
             .map(|ix| (self.row(self.matches[ix]).0, self.is_current(ix)))
             .collect()
@@ -272,15 +301,19 @@ impl PickerDelegate for EncodingPicker {
     }
 
     fn match_id(&self, ix: usize) -> SharedString {
-        self.row(self.matches[ix]).0.into()
+        self.row(self.matches[ix]).0
     }
 
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let (label, name) = self.row(self.matches[ix]);
         let muted = fe_ui::ui_theme(cx).muted_text;
         let name = name.map(|name| div().ml_2().text_color(muted).child(name));
-        let current =
-            (self.is_current(ix)).then(|| div().ml_2().text_color(muted).child("current"));
+        let current = (self.is_current(ix)).then(|| {
+            div()
+                .ml_2()
+                .text_color(muted)
+                .child(tr!("workbench-setup-current"))
+        });
         div()
             .flex()
             .items_center()
@@ -349,7 +382,8 @@ impl Workbench {
             return;
         };
         let delegate = EncodingPicker::new(Rows::Actions, &editor, cx.entity().downgrade());
-        self.show_encoding_picker(delegate, "Select Action", window, cx);
+        let placeholder = text!("workbench-setup-encoding-actions-placeholder");
+        self.show_encoding_picker(delegate, placeholder, window, cx);
     }
 
     /// Shows the encodings to `action` the active editor's file in, its
@@ -388,7 +422,7 @@ impl Workbench {
     fn show_encoding_picker(
         &mut self,
         delegate: EncodingPicker,
-        placeholder: &str,
+        placeholder: kiln_l10n::Text,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -407,13 +441,13 @@ impl Workbench {
         let buffer = view.model().buffer().id();
         if view.is_saving() {
             Some(
-                Toast::info(format!("“{name}” is being saved"))
-                    .detail("Try again once the save is done."),
+                Toast::info(tr!("workbench-setup-encoding-saving", name = name))
+                    .detail(tr!("workbench-setup-encoding-saving-detail")),
             )
         } else if Running::holds(buffer, cx) {
             Some(
-                Toast::info(format!("“{name}” is already changing its encoding"))
-                    .detail("Try again once that's done."),
+                Toast::info(tr!("workbench-setup-encoding-running", name = name))
+                    .detail(tr!("workbench-setup-encoding-running-detail")),
             )
         } else {
             None
@@ -435,7 +469,7 @@ impl Workbench {
     ) {
         let model = editor.read(cx).model();
         let Some(path) = model.path().map(Path::to_owned) else {
-            let toast = Toast::info("Only a file on disk can be reopened with an encoding");
+            let toast = Toast::info(tr!("workbench-setup-encoding-reopen-no-file"));
             return self.show_toast(toast, cx);
         };
         let name = fe_gpui::pane_item::file_name(Some(&path));
@@ -444,10 +478,11 @@ impl Workbench {
             (buffer.is_dirty(), BufferState::of(&buffer, &path))
         };
         if dirty {
-            let toast = Toast::warning(format!("“{name}” has unsaved changes")).detail(format!(
-                "Save or undo them before reopening it with {}.",
-                choice.name()
-            ));
+            let toast = Toast::warning(tr!("workbench-setup-encoding-reopen-dirty", name = &name))
+                .detail(tr!(
+                    "workbench-setup-encoding-reopen-dirty-detail",
+                    encoding = choice.name()
+                ));
             return self.show_toast(toast, cx);
         }
         if let Some(toast) = self.busy(editor, &name, cx) {
@@ -469,8 +504,11 @@ impl Workbench {
                     let (file, stamp) = match read {
                         Ok(read) => read,
                         Err(error) => {
-                            let toast = Toast::error(format!("Couldn't reopen “{name}”"))
-                                .detail(error.to_string());
+                            let toast = Toast::error(tr!(
+                                "workbench-setup-encoding-reopen-failed",
+                                name = &name
+                            ))
+                            .detail(error.to_string());
                             return workbench.show_toast(toast, cx);
                         }
                     };
@@ -485,8 +523,14 @@ impl Workbench {
                                 .is_some_and(|path| state == BufferState::of(&buffer, path))
                     };
                     if !unchanged {
-                        let toast = Toast::warning(format!("“{name}” changed while it was read"))
-                            .detail(format!("It wasn't reopened with {}.", choice.name()));
+                        let toast = Toast::warning(tr!(
+                            "workbench-setup-encoding-reopen-changed",
+                            name = &name
+                        ))
+                        .detail(tr!(
+                            "workbench-setup-encoding-reopen-changed-detail",
+                            encoding = choice.name()
+                        ));
                         return workbench.show_toast(toast, cx);
                     }
                     workbench.reload_keeping_selections(&editor, file, stamp, cx);
@@ -599,8 +643,12 @@ impl Workbench {
             // Held to the end: no other encoding operation starts meanwhile.
             let _running = running;
             let refused = |error: &dyn std::fmt::Display| {
-                Toast::error(format!("“{name}” wasn't saved in {}", choice.name()))
-                    .detail(error.to_string())
+                let message = tr!(
+                    "workbench-setup-encoding-save-failed",
+                    name = &name,
+                    encoding = choice.name()
+                );
+                Toast::error(message).detail(error.to_string())
             };
             let show = |toast, cx: &mut gpui::AsyncWindowContext| {
                 (workbench.update(cx, |workbench, cx| workbench.show_toast(toast, cx))).ok();
@@ -619,15 +667,18 @@ impl Workbench {
                 // the encoding then, and only then gives the buffer a file.
                 if editor.is_saving() {
                     return Err(Box::new(
-                        Toast::info(format!("“{name}” is being saved"))
-                            .detail("Try again once the save is done."),
+                        Toast::info(tr!("workbench-setup-encoding-saving", name = &name))
+                            .detail(tr!("workbench-setup-encoding-saving-detail")),
                     ));
                 }
                 // Nothing writes it now to check it again.
                 if editor.model().buffer().version() != checked_version {
                     return Err(Box::new(
-                        Toast::info(format!("“{name}” changed while it was checked"))
-                            .detail(format!("It wasn't set to {}.", choice.name())),
+                        Toast::info(tr!("workbench-setup-encoding-save-changed", name = &name))
+                            .detail(tr!(
+                                "workbench-setup-encoding-save-changed-detail",
+                                encoding = choice.name()
+                            )),
                     ));
                 }
                 (editor.model_mut().buffer_mut()).set_encoding(choice.encoding);

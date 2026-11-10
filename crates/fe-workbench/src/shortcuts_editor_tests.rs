@@ -28,7 +28,7 @@ use crate::{
     Launch, Workbench,
     open::ConfigDirOverride,
     shortcuts_editor::{
-        MenuItem, NOTHING_FOUND, RESET_REFUSED_HINT, ShortcutsEditor, conflict_note,
+        MenuItem, ShortcutsEditor, conflict_note, nothing_found, reset_refused_hint,
     },
     workbench::toast::Level,
 };
@@ -534,7 +534,7 @@ fn search_by_keystroke_filters_rows(cx: &mut TestAppContext) {
     set_search(&editor, "no such command anywhere", cx);
     assert_eq!(lines(&editor, cx), []);
     assert!(drawn("shortcuts-empty", cx));
-    let _ = NOTHING_FOUND;
+    assert_eq!(nothing_found(), "No keybindings found");
     cx.simulate_keystrokes("escape");
     draw(cx);
     assert!(lines(&editor, cx).len() > 100);
@@ -1398,7 +1398,8 @@ fn reset_is_disabled_for_another_platforms_entry_on_a_kiln_default_without_its_p
     let item = cx
         .debug_bounds("menu-item:Reset Keybinding")
         .expect("drawn");
-    assert!(drawn("shortcuts-menu-hint", cx), "{RESET_REFUSED_HINT}");
+    assert_eq!(reset_refused_hint(), "Edit keymap.toml");
+    assert!(drawn("shortcuts-menu-hint", cx));
     cx.simulate_click(item.center(), Modifiers::none());
     draw(cx);
     assert_eq!(dirs.read_keymap(), text, "nothing written");

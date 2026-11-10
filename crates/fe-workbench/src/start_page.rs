@@ -249,7 +249,7 @@ impl StartPageView {
             RowIcon::File(name) => (file_icon_ref(name), ui.icon),
             icon => (IconRef::Bundled(bundled(icon)), ui.icon),
         };
-        let label: SharedString = row.label.clone().into();
+        let label = row.label.resolve();
         let underline = HighlightStyle {
             underline: Some(UnderlineStyle {
                 thickness: px(1.),
@@ -257,7 +257,7 @@ impl StartPageView {
             }),
             ..HighlightStyle::default()
         };
-        let highlights = row.key_in_label().map(|range| (range, underline));
+        let highlights = row.key_in(&label).map(|range| (range, underline));
         let label = StyledText::new(label).with_highlights(highlights);
         let selected = ix == self.selected;
         let selected_bg = if focused {

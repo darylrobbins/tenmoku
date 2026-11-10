@@ -71,6 +71,7 @@ use kiln::{
         locale::ActiveLocale,
     },
 };
+use kiln_l10n::{tr, verbatim};
 use kiln_shell::{PaneItem, PaneView as _};
 
 use self::recorder::Recorder;
@@ -99,10 +100,14 @@ const SOURCE_WIDTH: Pixels = px(80.);
 /// can't tell what the user's file does to the command's default on
 /// another platform ([`ShortcutsEditor::reset_refused`]), which takes a
 /// keymap store kept without every platform's defaults.
-pub(crate) const RESET_REFUSED_HINT: &str = "Edit keymap.toml";
+pub(crate) fn reset_refused_hint() -> SharedString {
+    tr!("workbench-setup-shortcuts-reset-refused-hint")
+}
 
 /// What the list says when the search finds nothing.
-pub(crate) const NOTHING_FOUND: &str = "No keybindings found";
+pub(crate) fn nothing_found() -> SharedString {
+    tr!("workbench-setup-shortcuts-nothing-found")
+}
 
 /// What a line shows, to find it again among new lines: its command, and
 /// its binding's keys and location.
@@ -129,13 +134,13 @@ pub(crate) enum MenuItem {
 }
 
 impl MenuItem {
-    pub(crate) fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> SharedString {
         match self {
-            MenuItem::CopyCommandId => "Copy Command ID",
-            MenuItem::AddKeybinding => "Add Keybinding",
-            MenuItem::RemoveKeybinding => "Remove Keybinding",
-            MenuItem::ResetKeybinding => "Reset Keybinding",
-            MenuItem::ShowSameKeybindings => "Show Same Keybindings",
+            MenuItem::CopyCommandId => tr!("workbench-setup-shortcuts-copy-command-id"),
+            MenuItem::AddKeybinding => tr!("workbench-setup-shortcuts-add"),
+            MenuItem::RemoveKeybinding => tr!("workbench-setup-shortcuts-remove"),
+            MenuItem::ResetKeybinding => tr!("workbench-setup-shortcuts-reset"),
+            MenuItem::ShowSameKeybindings => tr!("workbench-setup-shortcuts-show-same"),
         }
     }
 }
@@ -144,7 +149,7 @@ impl MenuItem {
 struct LineMenu {
     line: usize,
     items: Vec<MenuItem>,
-    /// Those of `items` shown but refused, with [`RESET_REFUSED_HINT`].
+    /// Those of `items` shown but refused, with [`reset_refused_hint`].
     disabled: Vec<MenuItem>,
     /// Where it was asked for, in the window.
     position: Point<Pixels>,
@@ -184,7 +189,7 @@ impl ShortcutsEditor {
     fn new(cx: &mut Context<Self>) -> Self {
         let ui = fe_ui::ui_theme(cx);
         let search = cx
-            .new(|cx| TextInput::new("Search keybindings by command or keys", &ui, cx).bordered());
+            .new(|cx| TextInput::new(tr!("workbench-setup-shortcuts-search"), &ui, cx).bordered());
         let subscriptions = vec![
             cx.subscribe(&search, |this, _, event, cx| {
                 if *event == TextInputEvent::Changed {
@@ -414,8 +419,11 @@ impl ShortcutsEditor {
             return None;
         }
         Some(match self.overrider(binding) {
-            Some(by) => format!("Hidden by {}", by.location),
-            None => "Hidden by an unbind entry".to_owned(),
+            Some(by) => {
+                let location = by.location.to_string();
+                tr!("workbench-setup-shortcuts-hidden-by", location = location).to_string()
+            }
+            None => tr!("workbench-setup-shortcuts-hidden-by-unbind").to_string(),
         })
     }
 
@@ -607,15 +615,17 @@ impl ShortcutsEditor {
         let Some(path) = keymap_path(cx) else {
             toast::show(
                 cx,
-                Toast::error("Can't change the keybinding").detail("There's no config directory"),
+                Toast::error(tr!("workbench-setup-shortcuts-change-failed"))
+                    .detail(tr!("workbench-setup-shortcuts-no-config-dir")),
             );
             return;
         };
         let defaults = default_keymaps(cx);
         let write = queue_write(path, defaults, edit, guard, cx);
         cx.spawn(async move |this, cx| {
-            let written =
-                (write.recv().await).unwrap_or_else(|_| Err("the write was dropped".into()));
+            let written = (write.recv().await).unwrap_or_else(|_| {
+                Err(tr!("workbench-setup-shortcuts-write-dropped").to_string())
+            });
             match written {
                 Ok(written) => {
                     this.update(cx, |this, cx| {
@@ -629,7 +639,8 @@ impl ShortcutsEditor {
                     cx.update(|cx| {
                         toast::show(
                             cx,
-                            Toast::error("Can't change the keybinding").detail(error),
+                            Toast::error(tr!("workbench-setup-shortcuts-change-failed"))
+                                .detail(error),
                         )
                     });
                 }
@@ -767,9 +778,9 @@ impl ShortcutsEditor {
             .and_then(|binding| binding.when.clone())
             .unwrap_or_default();
         let source = match binding.map(|binding| self.source(binding)) {
-            Some(ShortcutSource::Default) => "Default",
-            Some(ShortcutSource::User) => "User",
-            None => "",
+            Some(ShortcutSource::Default) => tr!("workbench-setup-shortcuts-source-default"),
+            Some(ShortcutSource::User) => tr!("workbench-setup-shortcuts-source-user"),
+            None => SharedString::default(),
         };
         let cell = || {
             div()
@@ -924,7 +935,7 @@ impl ShortcutsEditor {
     /// The table's column headings.
     fn header(&self, cx: &App) -> impl IntoElement + use<> {
         let ui = fe_ui::ui_theme(cx);
-        let heading = |title: &'static str| {
+        let heading = |title: SharedString| {
             div()
                 .overflow_hidden()
                 .whitespace_nowrap()
@@ -943,10 +954,26 @@ impl ShortcutsEditor {
             .border_color(ui.border)
             .text_color(ui.muted_text)
             .child(div().flex_none().w(EDIT_WIDTH))
-            .child(heading("Command").flex_1().min_w_0())
-            .child(heading("Keybinding").flex_none().w(KEYS_WIDTH))
-            .child(heading("When").flex_1().min_w_0())
-            .child(heading("Source").flex_none().w(SOURCE_WIDTH))
+            .child(
+                heading(tr!("workbench-setup-shortcuts-column-command"))
+                    .flex_1()
+                    .min_w_0(),
+            )
+            .child(
+                heading(tr!("workbench-setup-shortcuts-column-keybinding"))
+                    .flex_none()
+                    .w(KEYS_WIDTH),
+            )
+            .child(
+                heading(tr!("workbench-setup-shortcuts-column-when"))
+                    .flex_1()
+                    .min_w_0(),
+            )
+            .child(
+                heading(tr!("workbench-setup-shortcuts-column-source"))
+                    .flex_none()
+                    .w(SOURCE_WIDTH),
+            )
     }
 
     /// The open menu, drawn over the window where it was asked for, as
@@ -974,7 +1001,7 @@ impl ShortcutsEditor {
                     true => row.text_color(colors.text.muted).child(
                         div()
                             .debug_selector(|| "shortcuts-menu-hint".into())
-                            .child(RESET_REFUSED_HINT),
+                            .child(reset_refused_hint()),
                     ),
                     false => row
                         .hover(move |style| style.bg(hover))
@@ -1319,19 +1346,31 @@ pub(crate) fn conflict_note(binding: &ShortcutBinding) -> Option<String> {
                 also.push(command.clone())
             }
             ShortcutIssue::Shadowed { by, keys } => {
-                starts.push(format!("{by} ({})", fe_keymap::shortcut_label(keys)))
+                let keys = fe_keymap::shortcut_label(keys);
+                let command = by.to_string();
+                let starting = tr!(
+                    "workbench-setup-shortcuts-command-keys",
+                    command = command,
+                    keys = keys
+                );
+                starts.push(starting.to_string())
             }
             _ => {}
         }
     }
-    let mut notes = Vec::new();
-    if !also.is_empty() {
-        notes.push(format!("Also bound to {}", also.join(", ")));
-    }
-    if !starts.is_empty() {
-        notes.push(format!("Starts the keys of {}", starts.join(", ")));
-    }
-    (!notes.is_empty()).then(|| notes.join("; "))
+    // The lists are joined here, as one argument each.
+    let (also, starts) = (also.join(verbatim!(", ")), starts.join(verbatim!(", ")));
+    let note = match (also.is_empty(), starts.is_empty()) {
+        (true, true) => return None,
+        (false, true) => tr!("workbench-setup-shortcuts-also-bound", commands = also),
+        (true, false) => tr!("workbench-setup-shortcuts-starts-keys", commands = starts),
+        (false, false) => tr!(
+            "workbench-setup-shortcuts-also-bound-and-starts-keys",
+            also = also,
+            starts = starts
+        ),
+    };
+    Some(note.to_string())
 }
 
 /// The keymaps the user's lies over, each file's path and text, for an
@@ -1476,10 +1515,6 @@ impl ResetGuard {
     }
 }
 
-/// What a refused Reset's toast says when the file changed after the
-/// menu offered it.
-const RESET_REFUSED: &str = "Reset can't tell what the entries for other platforms in keymap.toml do to this default; edit keymap.toml";
-
 /// What a queued write answers: the file written, or why it failed.
 type WriteResult = Result<fe_keymap::KeymapWrite, String>;
 
@@ -1559,7 +1594,11 @@ fn queue_write(
                     &job.edit,
                     Os::current(),
                     |source| match &job.guard {
-                        Some(guard) if guard.refuses(source) => Err(RESET_REFUSED.into()),
+                        // What a refused Reset's toast says when the file
+                        // changed after the menu offered it.
+                        Some(guard) if guard.refuses(source) => {
+                            Err(tr!("workbench-setup-shortcuts-reset-refused").to_string())
+                        }
                         _ => Ok(()),
                     },
                     || {},
@@ -1626,7 +1665,7 @@ impl Render for ShortcutsEditor {
                 .px_6()
                 .py_4()
                 .text_color(ui.muted_text)
-                .child(NOTHING_FOUND)
+                .child(nothing_found())
                 .into_any_element()
         } else {
             uniform_list(
@@ -1676,7 +1715,7 @@ impl PaneItem for ShortcutsEditor {
     const KIND: &'static str = "fastedit.shortcuts_editor";
 
     fn tab_title(&self, _: &App) -> SharedString {
-        "Keyboard Shortcuts".into()
+        tr!("workbench-setup-shortcuts-title")
     }
 
     fn tab_icon(&self, _: &App) -> Option<Icon> {

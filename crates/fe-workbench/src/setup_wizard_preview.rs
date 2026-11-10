@@ -31,8 +31,9 @@ use kiln::{
     core::theme::{Appearance, ThemeData},
     platform::fonts,
 };
+use kiln_l10n::verbatim;
 
-use crate::pane::Pane;
+use crate::{pane::Pane, setup_wizard_model::ControlOption};
 
 /// A tile's outer width, which fits a title as long as "Catppuccin Macchiato".
 pub(crate) const TILE_WIDTH: Pixels = px(128.);
@@ -51,8 +52,10 @@ const SIDEBAR_WIDTH: Pixels = px(24.);
 const BAR_WIDTHS: [Pixels; 3] = [px(30.), px(44.), px(22.)];
 
 /// The sample: a row or two of each thing a theme colours, and narrow enough
-/// for the column beside the tiles at the default size.
-const SAMPLE: &str = r#"// Fire a glaze and report it.
+/// for the column beside the tiles at the default size. It's Rust, not
+/// Tenmoku's text, so it isn't translated.
+const SAMPLE: &str = verbatim!(
+    r#"// Fire a glaze and report it.
 const KILN: &str = "anagama";
 
 struct Glaze {
@@ -64,7 +67,8 @@ fn fire(g: &Glaze) -> String {
     let done = heat > 1200;
     format!("{KILN}: {done}")
 }
-"#;
+"#
+);
 
 /// The colours a tile takes from its theme.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -230,12 +234,11 @@ pub(crate) fn installed_font_families(cx: &App) -> Vec<&'static str> {
     font_families(|family| fonts::first_installed(&[family], cx).is_some())
 }
 
-/// The family a font's option is drawn in: "Default (Spline Sans Mono)" is
-/// Spline Sans Mono's.
-pub(crate) fn label_family(label: &str) -> SharedString {
-    let default = label.strip_prefix("Default (");
-    let family = default.and_then(|label| label.strip_suffix(')'));
-    SharedString::from(family.unwrap_or(label).to_owned())
+/// The family a font's option is drawn in: its own, and the default's,
+/// "Default (Spline Sans Mono)", the one it stands for. Read from the option,
+/// not its label, which is translated.
+pub(crate) fn label_family(option: &ControlOption) -> SharedString {
+    SharedString::from(option.family().unwrap_or(&option.label).to_owned())
 }
 
 /// What `theme` was given by [`EditorTheme::set_metrics`], for

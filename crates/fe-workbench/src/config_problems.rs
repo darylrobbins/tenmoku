@@ -27,7 +27,11 @@ use gpui::{
     ParentElement as _, PromptButton, PromptLevel, SharedString, Styled as _, Subscription,
     WeakEntity, Window, div, px,
 };
-use kiln_platform::config::{self, ConfigDiagnostics};
+use kiln_l10n::tr;
+use kiln_platform::{
+    config::{self, ConfigDiagnostics},
+    locale::ActiveLocale,
+};
 
 use crate::{Pane, Picker, PickerDelegate, Workbench, workbench::Palette};
 use kiln_shell::{Icon, StatusItem, StatusSide, StatusTone};
@@ -43,36 +47,44 @@ const PRIORITY: i32 = 50;
 
 /// The status item for `count` problems: none for none.
 pub(crate) fn status_item(count: usize) -> Option<StatusItem> {
-    let text = match count {
-        0 => return None,
-        1 => "1 config problem".to_owned(),
-        count => format!("{count} config problems"),
-    };
+    if count == 0 {
+        return None;
+    }
+    let text = tr!("workbench-setup-config-problems-status", count = count);
     Some(
         StatusItem::new(ITEM, StatusSide::Left, PRIORITY, text)
             .icon(Icon::FileCog)
             .tone(StatusTone::Warning)
-            .tooltip("Show Config Problems")
+            .tooltip(fe_command::l10n::command_label(SHOW, ""))
             .command(Invocation::of(SHOW).expect("a valid command ID")),
     )
 }
 
 impl Workbench {
-    /// Follows [`ConfigDiagnostics`]: call once, from `new`, then
+    /// Follows [`ConfigDiagnostics`], and the language, which the status
+    /// item says them in: call once, from `new`, then
     /// [`Workbench::sync_config_problems`] for those there are already.
     pub(crate) fn follow_config_problems(window: &Window, cx: &mut Context<Self>) -> Subscription {
-        cx.observe_global_in::<ConfigDiagnostics>(window, Self::sync_config_problems)
+        let problems =
+            cx.observe_global_in::<ConfigDiagnostics>(window, Self::sync_config_problems);
+        let locale = cx.observe_global::<ActiveLocale>(Self::sync_config_status);
+        Subscription::join(problems, locale)
+    }
+
+    /// Sets the status item for the problems now.
+    fn sync_config_status(&mut self, cx: &mut Context<Self>) {
+        let item = status_item(config::diagnostics(cx).len());
+        self.status_bar().clone().update(cx, |bar, cx| match item {
+            Some(item) => bar.set_item(item, cx),
+            None => bar.remove_item(ITEM, cx),
+        });
     }
 
     /// Sets the status item for the problems now, and gives an open list
     /// them; with none, the list goes.
     pub(crate) fn sync_config_problems(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_config_status(cx);
         let problems = config::diagnostics(cx).to_vec();
-        let item = status_item(problems.len());
-        self.status_bar().clone().update(cx, |bar, cx| match item {
-            Some(item) => bar.set_item(item, cx),
-            None => bar.remove_item(ITEM, cx),
-        });
         if self.palette != Some(Palette::ConfigProblems) {
             return;
         }
@@ -205,13 +217,16 @@ impl ConfigProblemsPicker {
         let buffer = match read {
             Ok(buffer) => buffer,
             Err(error) => {
-                let message = format!("Can't open {}", file_name(problem));
+                let message = tr!(
+                    "workbench-setup-config-open-failed",
+                    file = file_name(problem)
+                );
                 // Answered by its one button; nothing waits on it.
                 drop(window.prompt(
                     PromptLevel::Warning,
                     &message,
                     Some(&error.to_string()),
-                    &[PromptButton::ok("OK")],
+                    &[PromptButton::ok(tr!("workbench-setup-config-ok"))],
                     cx,
                 ));
                 return;
@@ -269,7 +284,14 @@ fn detail(problem: &Diagnostic) -> String {
         Severity::Warning => "warning",
     };
     let name = file_name(problem);
-    format!("{name}:{}:{} · {severity}", problem.line, problem.column)
+    // The place, as a compiler writes it: not words to translate.
+    let place = format!("{name}:{}:{}", problem.line, problem.column);
+    let detail = tr!(
+        "workbench-setup-config-problem-detail",
+        place = place,
+        severity = severity
+    );
+    detail.to_string()
 }
 
 impl PickerDelegate for ConfigProblemsPicker {
@@ -360,10 +382,8 @@ impl PickerDelegate for ConfigProblemsPicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        Some(match self.matches.len() {
-            1 => "1 problem".into(),
-            count => format!("{count} problems").into(),
-        })
+        let count = self.matches.len();
+        Some(tr!("workbench-setup-config-problems-count", count = count))
     }
 }
 
@@ -383,15 +403,17 @@ fn read(path: &Path) -> io::Result<Buffer> {
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
     let file = options.open(path)?;
     if !file.metadata()?.is_file() {
-        return Err(io::Error::other("not a regular file"));
+        return Err(io::Error::other(
+            tr!("workbench-setup-config-not-a-file").to_string(),
+        ));
     }
     let mut bytes = Vec::new();
     file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_BYTES {
-        return Err(io::Error::other(format!(
-            "bigger than {} KiB",
-            MAX_BYTES / 1024
-        )));
+        let kib = MAX_BYTES / 1024;
+        return Err(io::Error::other(
+            tr!("workbench-setup-config-too-big", kib = kib).to_string(),
+        ));
     }
     Buffer::from_reader_detecting(bytes.as_slice())
 }

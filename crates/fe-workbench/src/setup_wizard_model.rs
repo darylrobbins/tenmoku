@@ -16,10 +16,12 @@
 use std::collections::BTreeMap;
 
 use fe_config::{SettingValue, Settings, themes};
+use gpui::SharedString;
 use kiln::{
     core::{Os, theme::Appearance},
     platform::fonts,
 };
+use kiln_l10n::tr;
 use serde::Serialize;
 
 /// A setting's path, table names then its name: `["theme", "mode"]`.
@@ -48,9 +50,6 @@ const SOFT_WRAP: Key = &["editor", "soft_wrap"];
 /// The font sizes offered: the schema's 6 to 72 is more than a list wants.
 const FONT_SIZES: std::ops::RangeInclusive<u8> = 10..=24;
 
-/// What a value not offered shows as, where showing it would mean nothing.
-const CUSTOM: &str = "Custom";
-
 /// A page of the wizard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Step {
@@ -74,24 +73,24 @@ pub(crate) fn steps() -> [Step; 5] {
 
 impl Step {
     /// The page's heading.
-    pub(crate) fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> SharedString {
         match self {
-            Step::Appearance => "Appearance",
-            Step::Font => "Font",
-            Step::Keyboard => "Keyboard",
-            Step::Editing => "Editing",
-            Step::Ready => "Ready",
+            Step::Appearance => tr!("workbench-setup-appearance"),
+            Step::Font => tr!("workbench-setup-font"),
+            Step::Keyboard => tr!("workbench-setup-keyboard"),
+            Step::Editing => tr!("workbench-setup-editing"),
+            Step::Ready => tr!("workbench-setup-ready"),
         }
     }
 
     /// The line under the heading.
-    pub(crate) fn subtitle(self) -> &'static str {
+    pub(crate) fn subtitle(self) -> SharedString {
         match self {
-            Step::Appearance => "Choose the colors Tenmoku shows.",
-            Step::Font => "Choose how text looks in the editor.",
-            Step::Keyboard => "Choose the keys you edit with.",
-            Step::Editing => "Choose what the editor does for you.",
-            Step::Ready => "That's everything Tenmoku needs to start.",
+            Step::Appearance => tr!("workbench-setup-appearance-subtitle"),
+            Step::Font => tr!("workbench-setup-font-subtitle"),
+            Step::Keyboard => tr!("workbench-setup-keyboard-subtitle"),
+            Step::Editing => tr!("workbench-setup-editing-subtitle"),
+            Step::Ready => tr!("workbench-setup-ready-subtitle"),
         }
     }
 
@@ -153,78 +152,82 @@ pub(crate) enum ControlId {
 
 impl ControlId {
     /// The setting it writes, and its title and one-line description.
-    fn describe(self) -> (Key, &'static str, &'static str) {
+    fn describe(self) -> (Key, SharedString, SharedString) {
         match self {
             ControlId::ThemeMode => (
                 THEME_MODE,
-                "Mode",
-                "Stay dark or light, or follow the system's appearance.",
+                tr!("workbench-setup-mode"),
+                tr!("workbench-setup-mode-description"),
             ),
             ControlId::DarkTheme => (
                 THEME_DARK,
-                "Dark theme",
-                "The colors to use when the appearance is dark.",
+                tr!("workbench-setup-dark-theme"),
+                tr!("workbench-setup-dark-theme-description"),
             ),
             ControlId::LightTheme => (
                 THEME_LIGHT,
-                "Light theme",
-                "The colors to use when the appearance is light.",
+                tr!("workbench-setup-light-theme"),
+                tr!("workbench-setup-light-theme-description"),
             ),
             ControlId::FontFamily => (
                 FONT_FAMILY,
-                "Font family",
-                "The font text is shown in, in the editor and the terminal.",
+                tr!("workbench-setup-font-family"),
+                tr!("workbench-setup-font-family-description"),
             ),
-            ControlId::FontSize => (FONT_SIZE, "Font size", "The size of text, in points."),
+            ControlId::FontSize => (
+                FONT_SIZE,
+                tr!("workbench-setup-font-size"),
+                tr!("workbench-setup-font-size-description"),
+            ),
             ControlId::FontLigatures => (
                 FONT_LIGATURES,
-                "Ligatures",
-                "Join character sequences such as -> into one shape, if the font has them.",
+                tr!("workbench-setup-ligatures"),
+                tr!("workbench-setup-ligatures-description"),
             ),
             ControlId::Keyboard => (
                 VIM_ENABLED,
-                "Keys",
-                "Tenmoku's standard VS Code-style keys, or Vim's modes and motions.",
+                tr!("workbench-setup-keys"),
+                tr!("workbench-setup-keys-description"),
             ),
             ControlId::VimPreset => (
                 VIM_PRESET,
-                "Vim keys",
-                "Which maps Vim starts with, on top of your own.",
+                tr!("workbench-setup-vim-keys"),
+                tr!("workbench-setup-vim-keys-description"),
             ),
             ControlId::LineNumbers => (
                 LINE_NUMBERS,
-                "Line numbers",
-                "Number rows absolutely, or by their distance from the caret.",
+                tr!("workbench-setup-line-numbers"),
+                tr!("workbench-setup-line-numbers-description"),
             ),
             ControlId::FormatOnSave => (
                 FORMAT_ON_SAVE,
-                "Format on save",
-                "Have the language server format a file as it's saved.",
+                tr!("workbench-setup-format-on-save"),
+                tr!("workbench-setup-format-on-save-description"),
             ),
             ControlId::AutoSave => (
                 AUTO_SAVE,
-                "Auto save",
-                "Save changed files without being asked.",
+                tr!("workbench-setup-auto-save"),
+                tr!("workbench-setup-auto-save-description"),
             ),
             ControlId::InlineDiagnostics => (
                 INLINE_DIAGNOSTICS,
-                "Inline diagnostics",
-                "Which problems show their message at the end of their row.",
+                tr!("workbench-setup-inline-diagnostics"),
+                tr!("workbench-setup-inline-diagnostics-description"),
             ),
             ControlId::Minimap => (
                 MINIMAP,
-                "Minimap",
-                "Draw the whole file small beside the text.",
+                tr!("workbench-setup-minimap"),
+                tr!("workbench-setup-minimap-description"),
             ),
             ControlId::InlayHints => (
                 INLAY_HINTS,
-                "Inlay hints",
-                "Show the types and parameter names a language server infers.",
+                tr!("workbench-setup-inlay-hints"),
+                tr!("workbench-setup-inlay-hints-description"),
             ),
             ControlId::SoftWrap => (
                 SOFT_WRAP,
-                "Soft wrap",
-                "Wrap long rows at the edge of the editor rather than scrolling.",
+                tr!("workbench-setup-soft-wrap"),
+                tr!("workbench-setup-soft-wrap-description"),
             ),
         }
     }
@@ -245,8 +248,8 @@ impl ControlId {
 pub(crate) struct Control {
     pub(crate) id: ControlId,
     pub(crate) key: Key,
-    pub(crate) title: &'static str,
-    pub(crate) description: &'static str,
+    pub(crate) title: SharedString,
+    pub(crate) description: SharedString,
     pub(crate) options: Vec<ControlOption>,
     /// The option showing now, as an index into `options`.
     pub(crate) selected: usize,
@@ -264,14 +267,31 @@ impl Control {
 pub(crate) struct ControlOption {
     pub(crate) label: String,
     value: Value,
+    /// The font family a font's option is drawn in: the default's is the
+    /// family it stands for.
+    family: Option<String>,
 }
 
 impl ControlOption {
-    fn new(label: impl Into<String>, value: Value) -> Self {
+    fn new(label: impl AsRef<str>, value: Value) -> Self {
         Self {
-            label: label.into(),
+            label: label.as_ref().to_owned(),
             value,
+            family: None,
         }
+    }
+
+    /// A font's option, drawn in `family`.
+    fn font(label: impl AsRef<str>, family: &str, value: Value) -> Self {
+        Self {
+            family: Some(family.to_owned()),
+            ..Self::new(label, value)
+        }
+    }
+
+    /// The family the option is drawn in, if it's a font's.
+    pub(crate) fn family(&self) -> Option<&str> {
+        self.family.as_deref()
     }
 }
 
@@ -348,13 +368,13 @@ fn own_theme_id(appearance: Appearance) -> String {
 }
 
 /// The options that spell each of `values` as the file does.
-fn listed(values: &[(&str, &str)]) -> Vec<ControlOption> {
+fn listed(values: &[(&str, SharedString)]) -> Vec<ControlOption> {
     (values.iter())
-        .map(|(value, label)| ControlOption::new(*label, Value::text(value)))
+        .map(|(value, label)| ControlOption::new(label, Value::text(value)))
         .collect()
 }
 
-fn toggle(off: &str, on: &str) -> Vec<ControlOption> {
+fn toggle(off: SharedString, on: SharedString) -> Vec<ControlOption> {
     vec![
         ControlOption::new(off, Value::Bool(false)),
         ControlOption::new(on, Value::Bool(true)),
@@ -492,56 +512,70 @@ impl Choices {
         let shown = self.shown(key, id);
         let mut options = match id {
             ControlId::ThemeMode => listed(&[
-                ("dark", "Dark"),
-                ("light", "Light"),
-                ("system", "Match System"),
+                ("dark", tr!("workbench-setup-mode-dark")),
+                ("light", tr!("workbench-setup-mode-light")),
+                ("system", tr!("workbench-setup-mode-system")),
             ]),
             ControlId::DarkTheme => theme_options(Appearance::Dark),
             ControlId::LightTheme => theme_options(Appearance::Light),
             ControlId::FontFamily => {
-                let default =
-                    ControlOption::new(format!("Default ({})", self.default_font), Value::Unset);
+                let label = tr!("workbench-setup-font-default", family = &self.default_font);
+                let default = ControlOption::font(label, &self.default_font, Value::Unset);
                 let installed = (self.installed_fonts.iter())
-                    .map(|family| ControlOption::new(family, Value::text(family)));
+                    .map(|family| ControlOption::font(family, family, Value::text(family)));
                 std::iter::once(default).chain(installed).collect()
             }
             ControlId::FontSize => size_options(&shown),
-            ControlId::Keyboard => toggle("Standard", "Vim"),
+            ControlId::Keyboard => toggle(
+                tr!("workbench-setup-keys-standard"),
+                tr!("workbench-setup-keys-vim"),
+            ),
             ControlId::VimPreset => listed(&[
-                ("none", "Plain vim"),
-                ("lazyvim", "LazyVim, Space as leader"),
+                ("none", tr!("workbench-setup-vim-keys-plain")),
+                ("lazyvim", tr!("workbench-setup-vim-keys-lazyvim")),
             ]),
-            ControlId::LineNumbers => {
-                listed(&[("on", "On"), ("relative", "Relative"), ("hybrid", "Hybrid")])
-            }
+            ControlId::LineNumbers => listed(&[
+                ("on", tr!("workbench-setup-line-numbers-on")),
+                ("relative", tr!("workbench-setup-line-numbers-relative")),
+                ("hybrid", tr!("workbench-setup-line-numbers-hybrid")),
+            ]),
             ControlId::AutoSave => listed(&[
-                ("off", "Off"),
-                ("after_delay", "After a pause"),
-                ("on_focus_change", "When focus leaves"),
+                ("off", tr!("workbench-setup-off")),
+                ("after_delay", tr!("workbench-setup-auto-save-after-delay")),
+                (
+                    "on_focus_change",
+                    tr!("workbench-setup-auto-save-on-focus-change"),
+                ),
             ]),
             ControlId::InlineDiagnostics => listed(&[
-                ("off", "Off"),
-                ("error", "Errors"),
-                ("warning", "Errors and warnings"),
+                ("off", tr!("workbench-setup-off")),
+                ("error", tr!("workbench-setup-inline-diagnostics-errors")),
+                (
+                    "warning",
+                    tr!("workbench-setup-inline-diagnostics-warnings"),
+                ),
             ]),
             ControlId::FontLigatures
             | ControlId::FormatOnSave
             | ControlId::Minimap
             | ControlId::InlayHints
-            | ControlId::SoftWrap => toggle("Off", "On"),
+            | ControlId::SoftWrap => toggle(tr!("workbench-setup-off"), tr!("workbench-setup-on")),
         };
         let selected =
             (options.iter().position(|option| option.value == shown)).unwrap_or_else(|| {
                 // A theme or font not offered means something by its name.
-                let label = match &shown {
-                    Value::Text(text)
-                        if id == ControlId::FontFamily || id.theme_appearance().is_some() =>
-                    {
-                        text.clone()
+                let option = match shown.clone() {
+                    Value::Text(text) if id == ControlId::FontFamily => {
+                        ControlOption::font(&text, &text, shown)
                     }
-                    _ => CUSTOM.to_owned(),
+                    Value::Text(text) if id.theme_appearance().is_some() => {
+                        ControlOption::new(text, shown)
+                    }
+                    // What a value not offered shows as, where showing it
+                    // would mean nothing.
+                    _ => ControlOption::new(tr!("workbench-setup-custom"), shown),
                 };
-                options.push(ControlOption::new(label, shown));
+                options.push(option);
                 options.len() - 1
             });
         Control {
