@@ -9,13 +9,18 @@
 //! groups; `:s` keeps Vim's syntax (`\(\)`, `\1`, `&`, `\c`, 'ignorecase' off
 //! by default). Both match within one row, and for equivalent patterns they
 //! produce the same text; only `:s` takes a pattern that spans rows.
+//!
+//! [`vim_command`] writes a find bar's query, and its replacement, as the
+//! `/` or `:%s` that finds the same matches and makes the same text, where
+//! Vim's syntax can say it exactly.
 
 use std::ops::Range;
 
 use fe_text::Text;
 
 use super::{
-    Deadline, Engine, Interrupted, Pattern, RowMatches, Window, row_end, row_text, time_limit, unit,
+    Deadline, Engine, FindQuery, Interrupted, Pattern, RowMatches, Window, row_end, row_text,
+    time_limit, unit,
 };
 
 /// A replacement template, parsed.
@@ -114,6 +119,45 @@ impl Replacement {
         Self { parts }
     }
 
+    /// It in `:s`'s replacement syntax ('magic'), for between the second
+    /// `/` and the third: `&` the whole match, `\1`..`\9` a group, `\r` a
+    /// line break, and `\`, `&`, `~` and `/` escaped where they're literal.
+    /// `None` with a named group or one past 9, which `:s` can't name.
+    pub fn to_vim(&self) -> Option<String> {
+        let mut out = String::new();
+        for part in &self.parts {
+            match *part {
+                Part::Literal(ref text) => {
+                    let mut chars = text.chars().peekable();
+                    while let Some(ch) = chars.next() {
+                        match ch {
+                            '\\' | '&' | '~' | '/' => {
+                                out.push('\\');
+                                out.push(ch);
+                            }
+                            // A line break, as the find bar makes `\r\n` and
+                            // a lone `\r` one.
+                            '\r' | '\n' => {
+                                if ch == '\r' {
+                                    chars.next_if_eq(&'\n');
+                                }
+                                out.push_str("\\r");
+                            }
+                            ch => out.push(ch),
+                        }
+                    }
+                }
+                Part::Group(0) => out.push('&'),
+                Part::Group(number @ 1..=9) => {
+                    out.push('\\');
+                    out.push(char::from_digit(number as u32, 10)?);
+                }
+                Part::Group(_) | Part::Named(_) => return None,
+            }
+        }
+        Some(out)
+    }
+
     /// The text for the match `matches` has just found in `hay`.
     fn expand(&self, pattern: &Pattern, matches: &RowMatches<'_>, hay: &str) -> String {
         let mut out = String::new();
@@ -168,7 +212,10 @@ impl Pattern {
         if range.end > start + hay.len() {
             return None;
         }
-        let mut matches = self.grouped(hay, &deadline);
+        // No match past `range.start` is wanted, so none past it is looked
+        // for: rejecting candidates there (not whole words, say) could
+        // take the rest of a long row.
+        let mut matches = self.grouped(hay, &deadline).up_to(range.start - start);
         while let Some(found) = matches.next() {
             if start + found.start > range.start {
                 break;
@@ -250,6 +297,269 @@ pub fn replace_where(
         }
     }
     Ok(edits)
+}
+
+/// The Vim command that does what a find bar does with `query`: with no
+/// `with`, the `/` that finds its matches (`/dirty`); with `with`, the `:%s`
+/// that replaces every one as Replace All does (`:%s/dirty/needs_paint/gI`).
+/// Match Case is `:s`'s `I` or `i`, or for `/` a `\C` or `\c` where
+/// `ignores_case(pattern)` (Vim's 'ignorecase' and 'smartcase' for that
+/// pattern) would otherwise get it wrong. `None` if the query is empty or
+/// doesn't compile, if it can match nothing (`x?`, `^`), where `:s` and
+/// Replace All differ, or where Vim's syntax has no exact equivalent
+/// ([`vim_pattern`], [`Replacement::to_vim`]).
+pub fn vim_command(
+    query: &FindQuery,
+    with: Option<&Replacement>,
+    ignores_case: impl FnOnce(&str) -> bool,
+) -> Option<String> {
+    // After a match `:s` takes no empty one where it ends, as Replace All
+    // does, so no pattern that can match nothing is the same.
+    let Engine::Regex { regex, .. } = Pattern::from_query(query).ok()?.engine else {
+        return None;
+    };
+    if regex.is_match("") {
+        return None;
+    }
+    let pattern = vim_pattern(query)?;
+    if let Some(with) = with {
+        let with = with.to_vim()?;
+        let case = if query.match_case { 'I' } else { 'i' };
+        return Some(format!(":%s/{pattern}/{with}/g{case}"));
+    }
+    let case = match (query.match_case, ignores_case(&pattern)) {
+        (true, true) => "\\C",
+        (false, false) => "\\c",
+        _ => "",
+    };
+    Some(format!("/{pattern}{case}"))
+}
+
+/// `query`'s text as a Vim pattern for between `/`s, matching what
+/// [`Pattern::from_query`] makes of it but for case, which
+/// [`vim_command`] adds. Literal text stays as it is unless it holds one of
+/// 'magic''s special characters, and then goes after `\V`; a regex that is
+/// more than letters, digits, `_` and spaces is written very magic (`\v`).
+/// Whole Word puts a literal between `\<` and `\>`, which agree with the
+/// find bar's check (no word character either side) where the query starts
+/// and ends with a word character and the text beside a match is ASCII.
+///
+/// `None` where there's no exact equivalent: a line break in the text;
+/// Whole Word on a regex, or on literal text starting or ending with
+/// something other than a word character; and in a regex, the classes and
+/// escapes whose meaning differs (`\d`, `\w`, `\s` and `\b` are Unicode in
+/// the regex crate, ASCII in Vim), flags and named groups, nested classes
+/// and set operations, `^` or `$` other than at a branch's ends, and
+/// escapes other than `\t` and escaped punctuation.
+pub fn vim_pattern(query: &FindQuery) -> Option<String> {
+    let text = &query.text;
+    if text.is_empty() || text.contains(['\n', '\r']) {
+        return None;
+    }
+    if !query.regex {
+        let mut out = String::new();
+        if text.contains(['\\', '.', '*', '[', '~', '^', '$']) {
+            out.push_str("\\V");
+        }
+        if query.whole_word {
+            let word =
+                |ch: Option<char>| ch.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+            if !word(text.chars().next()) || !word(text.chars().next_back()) {
+                return None;
+            }
+            out.push_str("\\<");
+        }
+        for ch in text.chars() {
+            if matches!(ch, '\\' | '/') {
+                out.push('\\');
+            }
+            out.push(ch);
+        }
+        if query.whole_word {
+            out.push_str("\\>");
+        }
+        return Some(out);
+    }
+    if query.whole_word {
+        return None;
+    }
+    let plain = |ch: char| ch.is_alphanumeric() || ch == '_' || ch == ' ';
+    if text.chars().all(plain) {
+        return Some(text.clone());
+    }
+    regex_to_vim(&text.chars().collect::<Vec<_>>())
+}
+
+/// A `regex`-crate pattern, `source`, in Vim's very magic syntax: see
+/// [`vim_pattern`].
+fn regex_to_vim(source: &[char]) -> Option<String> {
+    let mut out = String::from("\\v");
+    // Where `^` is the row's start in Vim too: a branch's start.
+    let mut branch_start = true;
+    let mut at = 0;
+    while let Some(&ch) = source.get(at) {
+        at += 1;
+        let starts_branch = matches!(ch, '|' | '(');
+        match ch {
+            '\\' => {
+                let escaped = *source.get(at)?;
+                at += 1;
+                match escaped {
+                    't' => out.push_str("\\t"),
+                    // `\<` and `\>` are word boundaries in the regex crate.
+                    '<' | '>' | '_' => return None,
+                    escaped if escaped.is_ascii_punctuation() => {
+                        out.push('\\');
+                        out.push(escaped);
+                    }
+                    _ => return None,
+                }
+            }
+            '.' | '|' | ')' => out.push(ch),
+            '(' => match source.get(at) {
+                Some('?') if source.get(at + 1) == Some(&':') => {
+                    at += 2;
+                    out.push_str("%(");
+                }
+                Some('?') => return None,
+                _ => out.push('('),
+            },
+            '^' if branch_start => out.push('^'),
+            '$' if matches!(source.get(at), None | Some('|' | ')')) => out.push('$'),
+            '^' | '$' => return None,
+            '*' | '+' | '?' => {
+                let lazy = source.get(at) == Some(&'?');
+                at += usize::from(lazy);
+                out.push_str(match (ch, lazy) {
+                    (_, false) => match ch {
+                        '*' => "*",
+                        '+' => "+",
+                        _ => "?",
+                    },
+                    ('*', true) => "{-}",
+                    ('+', true) => "{-1,}",
+                    _ => "{-,1}",
+                });
+            }
+            '{' => {
+                let close = at + source[at..].iter().position(|&ch| ch == '}')?;
+                let bounds: String = source[at..close].iter().collect();
+                let (low, high) = bounds.split_once(',').unwrap_or((&bounds, &bounds));
+                let digits = |part: &str| part.chars().all(|ch| ch.is_ascii_digit());
+                if low.is_empty() || !digits(low) || !digits(high) {
+                    return None;
+                }
+                at = close + 1;
+                let lazy = source.get(at) == Some(&'?');
+                at += usize::from(lazy);
+                out.push('{');
+                if lazy {
+                    out.push('-');
+                }
+                out.push_str(&bounds);
+                out.push('}');
+            }
+            '[' => at = class_to_vim(source, at, &mut out)?,
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_alphanumeric() || ch == '_' || ch == ' ' || !ch.is_ascii() => {
+                if ch.is_control() {
+                    return None;
+                }
+                out.push(ch);
+            }
+            // Literal in the regex crate, special or reserved in very magic.
+            ch if ch.is_ascii_punctuation() => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => return None,
+        }
+        branch_start = starts_branch;
+    }
+    Some(out)
+}
+
+/// The class starting after the `[` before `at` in `source`, written onto
+/// `out` as a Vim collection; where `source` goes on after it.
+fn class_to_vim(source: &[char], mut at: usize, out: &mut String) -> Option<usize> {
+    out.push('[');
+    if source.get(at) == Some(&'^') {
+        at += 1;
+        out.push('^');
+    }
+    // A `[` goes last, where no `:`, `=` or `.` can follow it and make it
+    // one of Vim's `[:alpha:]`, `[=a=]` or `[.a.]`.
+    let mut bracket = false;
+    let mut first = true;
+    loop {
+        let ch = *source.get(at)?;
+        if ch == ']' && !first {
+            at += 1;
+            break;
+        }
+        first = false;
+        let low = class_char(source, &mut at)?;
+        // `--` after a member is a set difference.
+        if source.get(at..at + 2) == Some(&['-', '-']) {
+            return None;
+        }
+        let range = source.get(at) == Some(&'-') && source.get(at + 1).is_some_and(|&ch| ch != ']');
+        if range {
+            at += 1;
+            let high = class_char(source, &mut at)?;
+            if low == '[' || high == '[' {
+                return None;
+            }
+            push_member(low, out);
+            out.push('-');
+            push_member(high, out);
+        } else if low == '[' {
+            bracket = true;
+        } else {
+            push_member(low, out);
+        }
+    }
+    if bracket {
+        out.push('[');
+    }
+    out.push(']');
+    Some(at)
+}
+
+/// The character a class member at `at` in `source` stands for, moving
+/// `at` past it; `None` for what isn't one character (a nested class, a
+/// set operation, `\d`) or isn't written the same in Vim.
+fn class_char(source: &[char], at: &mut usize) -> Option<char> {
+    let ch = *source.get(*at)?;
+    *at += 1;
+    match ch {
+        '\\' => {
+            let escaped = *source.get(*at)?;
+            *at += 1;
+            match escaped {
+                't' => Some('\t'),
+                '<' | '>' | '_' => None,
+                escaped if escaped.is_ascii_punctuation() => Some(escaped),
+                _ => None,
+            }
+        }
+        '[' => None,
+        '&' | '-' | '~' if source.get(*at) == Some(&ch) => None,
+        ch if ch.is_control() && ch != '\t' => None,
+        ch => Some(ch),
+    }
+}
+
+/// `ch` as a member of a Vim collection.
+fn push_member(ch: char, out: &mut String) {
+    match ch {
+        ']' | '^' | '-' | '\\' => {
+            out.push('\\');
+            out.push(ch);
+        }
+        '\t' => out.push_str("\\t"),
+        ch => out.push(ch),
+    }
 }
 
 /// A match `:s` takes over rows ([`Walk::next`]), as offsets in the text
@@ -590,5 +900,260 @@ impl<'a> Finder<'a> {
     fn after(&self, at: usize) -> usize {
         let hay = &self.window.hay[at - self.window.base..];
         at + unit(hay).unwrap_or(1)
+    }
+}
+
+#[cfg(test)]
+mod vim_command_tests {
+    use fe_text::Text;
+
+    use super::{FindQuery, Pattern, Replacement, replace_all, vim_command, vim_pattern};
+    use crate::HeadlessVim;
+
+    fn query(text: &str, regex: bool, match_case: bool, whole_word: bool) -> FindQuery {
+        FindQuery {
+            text: text.to_owned(),
+            regex,
+            match_case,
+            whole_word,
+        }
+    }
+
+    /// What Replace All makes of `text`, every match of `query` replaced by
+    /// `with` (regex syntax with the query's regex).
+    fn find_bar(text: &str, query: &FindQuery, with: &str) -> String {
+        let pattern = Pattern::from_query(query).unwrap();
+        let with = Replacement::parse(with, query.regex);
+        let mut text = Text::new(text);
+        let edits = replace_all(&text, &pattern, &with).unwrap();
+        for (range, new) in edits.into_iter().rev() {
+            text.replace(range, &new);
+        }
+        text.to_string()
+    }
+
+    /// What `command`, an ex command, makes of `text` in vim, with
+    /// 'ignorecase' and 'smartcase'.
+    fn vim(text: &str, command: &str, case: (bool, bool)) -> String {
+        let mut vim = HeadlessVim::new(text, (0, 0));
+        vim.set_search_case(case.0, case.1);
+        let keys = command.replace('<', "<lt>");
+        vim.feed(&format!("{keys}<CR>")).unwrap();
+        let message = vim.state().message().unwrap_or_default();
+        assert!(!message.starts_with('E'), "{command}: {message}");
+        vim.text()
+    }
+
+    const TEXT: &str = "Dirty dirty DIRTY dirtyx\n\
+        a.b axb a/b 1+1 11 [x] x ~ \\ ^a$ a^ a|b a? $\n\
+        foo food xfoo foo_ foo-bar <b> =@%&~#!\"',;:`-?{}\n\
+        aaa ab abab aXb tab\there\n\
+        émoji été";
+
+    /// Each query, with Replace All marking its matches, gives the same
+    /// text as its `:%s` in vim, case on and off; and its `/` pattern,
+    /// with vim's 'ignorecase' and 'smartcase' either way, finds the same
+    /// matches.
+    #[test]
+    fn commands_find_what_the_find_bar_does() {
+        let literal = [
+            "dirty", "Dirty", "a.b", "a/b", "1+1", "[x]", "~", "\\", "^a$", "a^", "$", "tab\th",
+            "<b>", "=@%&~#!", "été",
+        ];
+        let regex = [
+            "dirt(y)", "d.r", "a|b", "^foo", "here$", "a+?", "a{2,3}", "a{2}", "a{1,}?", "[a-c]+",
+            "[^a-z ]", "[]a]", "[a\\]-]", "[-x]", "[\\[x]", "\\.", "a\\.b", "(?:ab)+", "<b>",
+            "=@%&~#!", "a/b", "\\t", "\\{\\}", "\\$", "a\\|b", "[\\^a]", "\\-", "é.", "(a)|b$",
+            "ab*?", "a\\?",
+        ];
+        let cases = (literal.iter().map(|text| (*text, false)))
+            .chain(regex.iter().map(|text| (*text, true)));
+        for (text, regex) in cases {
+            // A regex's marks hold the match; literal text's can't.
+            let (marked, vim_marked) = match regex {
+                true => ("<$0>", "<&>"),
+                false => ("<", "<"),
+            };
+            let with = Replacement::parse(marked, regex);
+            for match_case in [false, true] {
+                let query = query(text, regex, match_case, false);
+                let expected = find_bar(TEXT, &query, marked);
+                assert_ne!(expected, TEXT, "{text:?} matches");
+                let command = vim_command(&query, Some(&with), |_| unreachable!())
+                    .unwrap_or_else(|| panic!("{text:?} has an equivalent"));
+                assert_eq!(vim(TEXT, &command, (false, false)), expected, "{command}");
+                for case in [(false, false), (true, false), (true, true)] {
+                    let ignores = |pattern: &str| {
+                        case.0 && (!case.1 || !crate::search::has_uppercase(pattern))
+                    };
+                    let search = vim_command(&query, None, ignores).unwrap();
+                    let pattern = search.strip_prefix('/').unwrap();
+                    let command = format!(":%s/{pattern}/{vim_marked}/g");
+                    assert_eq!(
+                        vim(TEXT, &command, case),
+                        expected,
+                        "{search} with {case:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_designs_examples() {
+        let dirty = query("dirty", false, true, false);
+        assert_eq!(
+            vim_command(&dirty, None, |_| false).as_deref(),
+            Some("/dirty")
+        );
+        let regex = query("dirty", true, true, false);
+        let with = Replacement::parse("needs_paint", true);
+        assert_eq!(
+            vim_command(&regex, Some(&with), |_| unreachable!()).as_deref(),
+            Some(":%s/dirty/needs_paint/gI")
+        );
+        // Case where 'ignorecase' (and 'smartcase') would get it wrong.
+        assert_eq!(
+            vim_command(&dirty, None, |_| true).as_deref(),
+            Some("/dirty\\C")
+        );
+        let any_case = query("dirty", false, false, false);
+        assert_eq!(
+            vim_command(&any_case, None, |_| false).as_deref(),
+            Some("/dirty\\c")
+        );
+        assert_eq!(
+            vim_command(&any_case, None, |_| true).as_deref(),
+            Some("/dirty")
+        );
+        assert_eq!(
+            vim_command(&any_case, Some(&with), |_| unreachable!()).as_deref(),
+            Some(":%s/dirty/needs_paint/gi")
+        );
+    }
+
+    /// Replacements, literal and with groups, make the same text in vim.
+    #[test]
+    fn replacements_make_the_same_text() {
+        let cases = [
+            ("dirty", false, "a&b~c\\d/e$1"),
+            ("dirty", false, "two\nrows"),
+            ("(d)(i)rty", true, "$2-$1-$0-$&-$$-${1}x-$1a"),
+            ("(d)irty", true, "\\n\\t\\\\&~/\\x"),
+            ("(d)irty", true, "$9"),
+        ];
+        for (text, regex, with) in cases {
+            let query = query(text, regex, true, false);
+            let parsed = Replacement::parse(with, regex);
+            let command = vim_command(&query, Some(&parsed), |_| unreachable!()).unwrap();
+            assert_eq!(
+                vim(TEXT, &command, (false, false)),
+                find_bar(TEXT, &query, with),
+                "{command}"
+            );
+        }
+    }
+
+    /// Whole Word on literal text between word characters is `\<` and `\>`.
+    #[test]
+    fn whole_words() {
+        for text in ["foo", "foo_", "a", "a.b", "foo-bar"] {
+            let query = query(text, false, true, true);
+            let with = Replacement::parse("<", false);
+            let command = vim_command(&query, Some(&with), |_| unreachable!()).unwrap();
+            assert_eq!(
+                vim(TEXT, &command, (false, false)),
+                find_bar(TEXT, &query, "<"),
+                "{command}"
+            );
+        }
+        let foo = query("foo", false, true, true);
+        assert_eq!(vim_pattern(&foo).as_deref(), Some("\\<foo\\>"));
+        let dotted = query("a.b", false, true, true);
+        assert_eq!(vim_pattern(&dotted).as_deref(), Some("\\V\\<a.b\\>"));
+    }
+
+    /// What Vim can't say exactly has no command.
+    #[test]
+    fn no_command_without_an_exact_equivalent() {
+        let regexes = [
+            "\\d",
+            "\\w+",
+            "\\s",
+            "\\bx",
+            "\\Bx",
+            "(?i)a",
+            "(?P<n>a)",
+            "(?<n>a)",
+            "[[:alpha:]]",
+            "[a&&b]",
+            "[a--b]",
+            "[\\d]",
+            "\\x41",
+            "\\u{41}",
+            "a^",
+            "$a",
+            "x?",
+            "^",
+            "a*",
+            "\\<a",
+            "a\\>",
+            "\\Aa",
+            "a\\z",
+            "\\pL",
+            "a{,2}",
+            "\\_",
+            "a|",
+            "(",
+            "",
+        ];
+        for text in regexes {
+            let query = query(text, true, true, false);
+            assert_eq!(vim_command(&query, None, |_| false), None, "{text:?}");
+        }
+        let cases = [
+            query("a", true, true, true),
+            query("-a", false, true, true),
+            query("a-", false, true, true),
+            query("é", false, true, true),
+            query("a\nb", false, true, false),
+            query("", false, true, false),
+        ];
+        for query in cases {
+            assert_eq!(vim_command(&query, None, |_| false), None, "{query:?}");
+        }
+        let dirty = query("(d)irty", true, true, false);
+        for with in ["${name}", "$10"] {
+            let with = Replacement::parse(with, true);
+            assert_eq!(
+                vim_command(&dirty, Some(&with), |_| false),
+                None,
+                "{with:?}"
+            );
+        }
+    }
+
+    /// Whether a selection is a match to replace looks no further along
+    /// its row than its start: rejecting what follows (not whole words)
+    /// isn't gone through.
+    #[test]
+    fn replacement_at_stops_at_the_range() {
+        let text = Text::new(&format!("x {}\nfoo\n", "a".repeat(5_000)));
+        let query = FindQuery {
+            text: "foo|a|x".to_owned(),
+            regex: true,
+            match_case: true,
+            whole_word: true,
+        };
+        let pattern = Pattern::from_query(&query).unwrap();
+        let with = Replacement::parse("y", true);
+        let before = crate::search::regex_calls();
+        assert_eq!(
+            pattern.replacement_at(&text, 0..1, &with).as_deref(),
+            Some("y")
+        );
+        assert_eq!(pattern.replacement_at(&text, 2..3, &with), None);
+        let calls = crate::search::regex_calls() - before;
+        assert!(calls < 10, "{calls} regex calls");
     }
 }

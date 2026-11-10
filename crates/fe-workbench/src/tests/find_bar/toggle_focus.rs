@@ -1,7 +1,7 @@
 //! A click on a Match Case, Whole Word or Regex toggle leaves focus where it
 //! was.
 
-use gpui::{Modifiers, TestAppContext, VisualTestContext, point, px};
+use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
 use super::{draw, editor, editor_focused, input_focused, opened, pane, query, run, selection};
 
@@ -19,8 +19,9 @@ fn clicking_the_regex_toggle_keeps_typing_in_the_input(cx: &mut TestAppContext) 
     run("find.show", cx);
     assert_eq!(query(&pane, cx), "foo");
 
-    let bar = cx.debug_bounds("pane-find-bar").expect("drawn");
-    click_at(point(bar.right() - px(12.), bar.center().y), cx);
+    // The regex toggle, the last inside the find field.
+    let regex = cx.debug_bounds("find-toggle:2").expect("drawn");
+    click_at(regex.center(), cx);
     assert!(pane.read_with(cx, |pane, cx| { pane.find_bar().unwrap().query(cx).regex }));
     assert!(input_focused(&pane, cx));
 

@@ -25,6 +25,8 @@ migrated = [
     "src/buffer_lines_picker.rs",
     "src/recent_picker.rs",
     "src/config_files_picker.rs",
+    # The find and replace row in B3 (T557).
+    "src/find_bar.rs",
 ]
 
 # Ids and joins, not text: a picker row's element id, and the text a row's
@@ -89,3 +91,13 @@ reason = "A config file row icon's debug selector"
 file = "src/nav.rs"
 text = " (by {provider})"
 reason = "The suffix references_panel.rs (W6, not yet migrated) still appends to its status; nav's own statuses are whole messages"
+
+[[literal]]
+file = "src/find_bar.rs"
+text = "find-toggle:{ix}"
+reason = "A find field toggle's debug selector, for tests"
+
+[[literal]]
+file = "src/find_bar.rs"
+text = "{id}-focus-ring"
+reason = "A find or replace field's focus ring's debug selector, for tests"

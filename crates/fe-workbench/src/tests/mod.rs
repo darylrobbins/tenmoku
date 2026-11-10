@@ -61,6 +61,7 @@ mod default_fonts;
 mod default_keymaps;
 mod file_icon_set_surfaces;
 pub(crate) mod find_bar;
+mod find_bar_b3;
 mod find_keys;
 mod icon_theme_install;
 mod launch;

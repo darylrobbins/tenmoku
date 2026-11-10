@@ -3,14 +3,14 @@
 use gpui::{
     App, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
     RenderOnce, Role, SharedString, StatefulInteractiveElement as _, Styled as _, Toggled, Window,
-    div, prelude::FluentBuilder as _, px,
+    div, prelude::FluentBuilder as _, px, svg,
 };
 
 use crate::{
-    ActiveTheme as _, ClickHandler, Tokens, UiTheme,
+    ActiveTheme as _, ClickHandler, Icon, Tokens, UiTheme,
     controls::{
-        Control, DISABLED_OPACITY, TOGGLE_ON_ALPHA, key_focus, name_tooltip, with_alpha,
-        with_key_focus,
+        Control, DISABLED_OPACITY, TOGGLE_ON_ALPHA, assert_named, key_focus, name_tooltip,
+        with_alpha, with_key_focus,
     },
     radius,
 };
@@ -22,10 +22,13 @@ use crate::{
 /// Its label is its accessible name unless [`ToggleButton::name`] gives a
 /// fuller one, as a search option labelled `Aa` needs ("Match Case"); a
 /// named toggle shows its name, and its key if it has one, in a tooltip.
+/// One showing an icon in place of a label ([`ToggleButton::icon_only`])
+/// must be given a name: drawing one without is a debug assertion.
 #[derive(IntoElement)]
 pub struct ToggleButton {
     id: ElementId,
     label: SharedString,
+    icon: Option<Icon>,
     name: Option<SharedString>,
     shortcut: Option<SharedString>,
     on: bool,
@@ -53,12 +56,40 @@ impl ToggleButton {
         Self {
             id: id.into(),
             label: label.into(),
+            icon: None,
             name: None,
             shortcut: None,
             on: false,
             disabled: false,
             on_click: None,
         }
+    }
+
+    /// A toggle showing only `icon`, 16 px, in the toggle's text colour
+    /// (muted while off). Give it a [`ToggleButton::name`].
+    pub fn icon_only(id: impl Into<ElementId>, icon: Icon) -> Self {
+        Self {
+            id: id.into(),
+            label: SharedString::default(),
+            icon: Some(icon),
+            name: None,
+            shortcut: None,
+            on: false,
+            disabled: false,
+            on_click: None,
+        }
+    }
+
+    /// The icon an [`ToggleButton::icon_only`] toggle shows.
+    pub fn icon(&self) -> Option<Icon> {
+        self.icon
+    }
+
+    /// Its accessible name: [`ToggleButton::name`]'s, else its label.
+    pub fn accessible_name(&self) -> Option<&SharedString> {
+        self.name
+            .as_ref()
+            .or(Some(&self.label).filter(|label| !label.is_empty()))
     }
 
     pub fn on(mut self, on: bool) -> Self {
@@ -108,6 +139,12 @@ impl ToggleButton {
     /// Space while focused, with the focus ring while focused from the
     /// keyboard.
     pub(crate) fn element(self, window: &mut Window, cx: &mut App) -> Control {
+        if self.icon.is_some() {
+            assert_named(
+                self.name.as_ref(),
+                kiln_l10n::verbatim!("ToggleButton::icon_only"),
+            );
+        }
         let colors = cx.theme().colors;
         let hover = colors.state.hover;
         let (background, text) = toggle_colors(self.on, &colors);
@@ -139,7 +176,16 @@ impl ToggleButton {
                 button.hover(move |style| style.bg(hover))
             })
             .when_some(tooltip, |button, tooltip| button.tooltip(tooltip))
-            .child(self.label)
+            .when_some(self.icon, |button, icon| {
+                button.child(
+                    svg()
+                        .path(icon.path())
+                        .size(px(16.))
+                        .flex_none()
+                        .text_color(text),
+                )
+            })
+            .when(self.icon.is_none(), |button| button.child(self.label))
             .when_some(self.on_click.filter(|_| !disabled), |button, on_click| {
                 button.on_click(on_click)
             });
@@ -147,5 +193,34 @@ impl ToggleButton {
             with_key_focus(button, focus, radius::CONTROL, px(0.), &colors),
             disabled,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_icon_toggle_is_named_by_its_name_a_labelled_one_by_its_label() {
+        let theme = UiTheme::default();
+        let icon = ToggleButton::icon_only("regex", Icon::Regex);
+        assert_eq!(icon.icon(), Some(Icon::Regex));
+        assert_eq!(icon.accessible_name(), None);
+        let icon = icon.name("Use Regular Expression");
+        assert_eq!(
+            icon.accessible_name().map(SharedString::as_ref),
+            Some("Use Regular Expression")
+        );
+        let labelled = ToggleButton::new("case", "Aa", &theme);
+        assert_eq!(labelled.icon(), None);
+        assert_eq!(
+            labelled.accessible_name().map(SharedString::as_ref),
+            Some("Aa")
+        );
+        let named = labelled.name("Match Case");
+        assert_eq!(
+            named.accessible_name().map(SharedString::as_ref),
+            Some("Match Case")
+        );
     }
 }

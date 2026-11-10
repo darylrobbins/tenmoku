@@ -31,6 +31,14 @@
 //! closing the bar or the bar's following another editor drops them; an edit
 //! inside moves their ends.
 //!
+//! The bar draws as the design's find row (`docs/design/design-system.md`,
+//! Find and replace): the query in a bordered field with the accent focus
+//! ring, Match Case, Whole Word and Regex as icon toggles inside it, then the
+//! count, Find Previous, Find Next and Find in Selection; the replace row's
+//! field holds Preserve Case, then Replace and Replace All. With vim on, the
+//! equivalent Vim command shows faintly at the row's right end
+//! ([`FindBar::vim_command`]), and a click copies it.
+//!
 //! The commands are the pane's typed commands ([`crate::find_commands`]),
 //! which its root runs ([`crate::Pane::run_find`]). The bar's element sets
 //! [`KEY_CONTEXT`] and its inputs `text_input`, the replace input
@@ -41,16 +49,21 @@ use std::ops::Range;
 use fe_buffer::{Anchor, BufferId, Origin, Text};
 use fe_editor::Movement;
 use fe_gpui::{EditorView, commands::RunCommand};
-use fe_ui::{Icon, IconButton, TextInput, TextInputEvent, ToggleButton, UiTheme};
+use fe_ui::{
+    ActiveTheme as _, Button, FamilySlot, FontFamilies, Icon, IconButton, TextInput,
+    TextInputEvent, ToggleButton, Tooltip, UiTheme, focus_ring, radius,
+};
 use fe_vim::search::{
     Deadline, FindQuery, Interrupted, Pattern, PatternError, matches_reaching_until,
     replace::{Replacement, replace_all, replace_where},
 };
 use gpui::{
-    App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity, Window,
+    AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable as _,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, RenderOnce, Role,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, WeakEntity, Window,
     div, px,
 };
+use kiln_l10n::{text, tr};
 
 use crate::{
     Pane,
@@ -66,6 +79,11 @@ pub(crate) const REPLACE_KEY_CONTEXT: &str = "replace_input";
 
 /// The width of the column the chevron that shows the replace row is in.
 const CHEVRON_WIDTH: f32 = 28.;
+
+/// The find and replace fields' width, which they shrink from, to
+/// [`FIELD_MIN_WIDTH`], only when the bar is too narrow for it.
+const FIELD_WIDTH: f32 = 360.;
+const FIELD_MIN_WIDTH: f32 = 160.;
 
 /// A range of the text and what replaces it.
 type Edit = (Range<usize>, String);
@@ -103,8 +121,9 @@ pub(crate) struct FindBar {
     replacing: bool,
     replace_input: Entity<TextInput>,
     /// What the label says in place of the count after a replace all, and
-    /// whether it's an error, until the next find command or query change.
-    status: Option<(SharedString, bool)>,
+    /// whether it's an error, until the next find command or query change:
+    /// resolved as it's drawn, so in the locale active then.
+    status: Option<(kiln_l10n::Text, bool)>,
     match_case: bool,
     whole_word: bool,
     regex: bool,
@@ -135,8 +154,10 @@ pub(crate) struct FindBar {
 
 impl FindBar {
     pub(crate) fn new(ui: &UiTheme, cx: &mut Context<Pane>) -> Self {
-        let input = cx.new(|cx| TextInput::new("Find", ui, cx));
-        let replace_input = cx.new(|cx| TextInput::new("Replace", ui, cx));
+        // A placeholder is resolved once, as a picker's is.
+        let input = cx.new(|cx| TextInput::new(tr!("workbench-find-placeholder"), ui, cx));
+        let replace_input =
+            cx.new(|cx| TextInput::new(tr!("workbench-find-replace-placeholder"), ui, cx));
         let changed = cx.subscribe(&input, |pane, _, event, cx| {
             if *event == TextInputEvent::Changed {
                 pane.update_find(|bar, editor, cx| bar.search(editor, cx), cx);
@@ -374,7 +395,7 @@ impl FindBar {
             let step = match self.plan_next(editor, &pattern, &with, self.preserve_case) {
                 Ok(step) => step,
                 Err(Interrupted) => {
-                    self.status = Some(("Search took too long".into(), true));
+                    self.status = Some((text!("workbench-find-too-long"), true));
                     return;
                 }
             };
@@ -491,7 +512,7 @@ impl FindBar {
                 Ok(edits) => edits,
                 // Nothing changes, vim's mode and selection neither.
                 Err(Interrupted) => {
-                    self.status = Some(("Search took too long".into(), true));
+                    self.status = Some((text!("workbench-find-too-long"), true));
                     return;
                 }
             };
@@ -502,7 +523,7 @@ impl FindBar {
                 apply(editor, edits, cx);
                 self.leave(editor, true);
             }
-            self.status = Some((format!("Replaced {count}").into(), false));
+            self.status = Some((text!("workbench-find-replaced", count = count), false));
         });
     }
 
@@ -679,24 +700,72 @@ impl FindBar {
     /// what the last replace all did, the pattern's error, or the count of
     /// `editor`'s matches, nothing while it's counted or the query is empty.
     pub(crate) fn label(&self, editor: Option<&EditorView>) -> Option<(SharedString, bool)> {
-        if let Some(status) = &self.status {
-            return Some(status.clone());
+        if let Some((status, error)) = &self.status {
+            return Some((status.resolve(), *error));
         }
         let pattern = self.pattern.as_ref()?;
         if let Err(error) = pattern {
             return Some((error.to_string().into(), true));
         }
         let count = editor?.find_count()?;
-        let text = if count.total == 0 {
-            "No results".to_string()
-        } else {
-            let current = count
-                .current
-                .map_or_else(|| "?".to_string(), |current| current.to_string());
-            let more = if count.capped { "+" } else { "" };
-            format!("{current} of {}{more}", count.total)
+        let total = count.total;
+        let text = match (count.current, count.capped) {
+            _ if total == 0 => tr!("workbench-find-no-results"),
+            (Some(current), false) => tr!("workbench-find-count", current = current, total = total),
+            (Some(current), true) => {
+                tr!(
+                    "workbench-find-count-capped",
+                    current = current,
+                    total = total
+                )
+            }
+            (None, false) => tr!("workbench-find-count-unknown", total = total),
+            (None, true) => tr!("workbench-find-count-unknown-capped", total = total),
         };
-        Some((text.into(), false))
+        Some((text, false))
+    }
+
+    /// The toggles inside the find field, in order: what each runs, its
+    /// icon, its accessible name and whether it's on.
+    pub(crate) fn field_toggles(&self) -> [(FindOp, Icon, SharedString, bool); 3] {
+        [
+            (
+                FindOp::ToggleCase,
+                Icon::CaseSensitive,
+                tr!("workbench-find-match-case"),
+                self.match_case,
+            ),
+            (
+                FindOp::ToggleWholeWord,
+                Icon::WholeWord,
+                tr!("workbench-find-whole-word"),
+                self.whole_word,
+            ),
+            (
+                FindOp::ToggleRegex,
+                Icon::Regex,
+                tr!("workbench-find-regex"),
+                self.regex,
+            ),
+        ]
+    }
+
+    /// The Vim command that does what the bar does
+    /// ([`fe_vim::search::replace::vim_command`]): with the replace row
+    /// hidden, the `/` that finds the query's matches, under vim's
+    /// 'ignorecase' and 'smartcase'; shown, the `:%s` that replaces them all
+    /// as Replace All does. `None` with Find in Selection or, replacing,
+    /// Preserve Case on, which Vim has no command for, or where Vim's
+    /// syntax can't say the query or the replacement exactly.
+    pub(crate) fn vim_command(&self, cx: &App) -> Option<String> {
+        if self.scope.is_some() || (self.replacing && self.preserve_case) {
+            return None;
+        }
+        let with = self.replacing.then(|| self.replacement(cx));
+        let registers = fe_gpui::vim_registers(cx);
+        fe_vim::search::replace::vim_command(&self.query(cx), with.as_ref(), |pattern| {
+            registers.is_some_and(|registers| registers.ignores_case(pattern, false))
+        })
     }
 
     /// The bar, under the pane's toolbar, while it's open.
@@ -710,35 +779,55 @@ impl FindBar {
             return None;
         }
         let label = self.label(editor.map(|editor| editor.read(cx)));
-        let toggles = [
-            (FindOp::ToggleCase, "Aa", self.match_case),
-            (FindOp::ToggleWholeWord, "ab", self.whole_word),
-            (FindOp::ToggleRegex, ".*", self.regex),
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(ix, (op, text, on))| {
-            div()
-                .debug_selector(move || format!("find-toggle:{ix}"))
-                .child(
-                    ToggleButton::new(("find-option", ix), text, ui)
-                        .on(on)
-                        .on_click(
-                            cx.listener(move |pane, _, window, cx| pane.run_find(op, window, cx)),
-                        ),
-                )
-        });
+        let toggles =
+            (self.field_toggles().into_iter().enumerate()).map(|(ix, (op, icon, name, on))| {
+                div()
+                    .debug_selector(move || format!("find-toggle:{ix}"))
+                    .child(
+                        ToggleButton::icon_only(("find-option", ix), icon)
+                            .name(name)
+                            .on(on)
+                            .on_click(cx.listener(move |pane, _, window, cx| {
+                                pane.run_find(op, window, cx)
+                            })),
+                    )
+            });
         let in_selection = div().debug_selector(|| "find-in-selection".into()).child(
-            ToggleButton::new("find-in-selection", "[ ]", ui)
+            ToggleButton::icon_only("find-in-selection", Icon::SquareDashedText)
+                .name(tr!("workbench-find-in-selection"))
                 .on(self.scope.is_some())
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.run_find(FindOp::ToggleInSelection, window, cx)
                 })),
         );
+        let steps = [
+            (
+                FindOp::Previous,
+                Icon::ChevronUp,
+                "find-previous",
+                tr!("workbench-find-previous"),
+            ),
+            (
+                FindOp::Next,
+                Icon::ChevronDown,
+                "find-next",
+                tr!("workbench-find-next"),
+            ),
+        ]
+        .map(|(op, icon, id, name)| {
+            div().debug_selector(move || id.into()).child(
+                IconButton::new(id, icon, ui).name(name).on_click(
+                    cx.listener(move |pane, _, window, cx| pane.run_find(op, window, cx)),
+                ),
+            )
+        });
         let label = label.map(|(text, error)| {
             let color = if error { ui.error_text } else { ui.muted_text };
             div()
+                .debug_selector(|| "find-count".into())
                 .flex_none()
+                // Clear of the field's focus ring.
+                .pl_1()
                 .max_w(px(240.))
                 .overflow_hidden()
                 .whitespace_nowrap()
@@ -762,34 +851,48 @@ impl FindBar {
                     },
                     ui,
                 )
-                .name("Toggle Replace")
+                .name(tr!("workbench-find-toggle-replace"))
                 .selected(self.replacing)
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.run_find(FindOp::ToggleReplace, window, cx)
                 })),
             );
+        let vim_command = (fe_gpui::vim_enabled(cx))
+            .then(|| self.vim_command(cx))
+            .flatten()
+            .map(|command| vim_command_element(command, cx));
         let find_row = div()
             .flex()
             .items_center()
             .gap_1()
+            .py_1()
             .child(chevron)
-            .child(div().flex_1().min_w_0().child(self.input.clone()))
+            .child(field_slot().child(field(
+                "find-field",
+                &self.input,
+                toggles.map(IntoElement::into_any_element).collect(),
+                cx,
+            )))
             .children(label)
             .child(
                 div()
                     .flex()
                     .flex_none()
+                    .items_center()
                     .gap_0p5()
                     // The pane takes focus on a click inside it unless
-                    // something prevents the default; a toggle keeps focus
-                    // where it was, the input or the editor.
+                    // something prevents the default; a button here keeps
+                    // focus where it was, the input or the editor.
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                    .child(in_selection)
-                    .children(toggles),
-            );
+                    .children(steps)
+                    .child(in_selection),
+            )
+            .child(div().flex_1())
+            .children(vim_command);
         let replace_row = self.replacing.then(|| {
             let preserve_case = div().debug_selector(|| "find-preserve-case".into()).child(
-                ToggleButton::new("find-preserve-case", "AB", ui)
+                ToggleButton::new("find-preserve-case", verbatim_label("AB"), ui)
+                    .name(tr!("workbench-find-preserve-case"))
                     .on(self.preserve_case)
                     .on_click(cx.listener(|pane, _, _, cx| {
                         pane.update_find(|bar, _, _| bar.toggle_preserve_case(), cx);
@@ -797,12 +900,20 @@ impl FindBar {
                     })),
             );
             let buttons = [
-                (FindOp::ReplaceNext, "Replace", "find-replace"),
-                (FindOp::ReplaceAll, "Replace All", "find-replace-all"),
+                (
+                    FindOp::ReplaceNext,
+                    text!("workbench-find-replace"),
+                    "find-replace",
+                ),
+                (
+                    FindOp::ReplaceAll,
+                    text!("workbench-find-replace-all"),
+                    "find-replace-all",
+                ),
             ]
-            .map(|(op, text, id)| {
+            .map(|(op, label, id)| {
                 div().debug_selector(move || id.into()).child(
-                    ToggleButton::new(id, text, ui).on_click(
+                    Button::new(id, label).small().on_click(
                         cx.listener(move |pane, _, window, cx| pane.run_find(op, window, cx)),
                     ),
                 )
@@ -811,23 +922,22 @@ impl FindBar {
                 .flex()
                 .items_center()
                 .gap_1()
-                // Under the chevron, so the inputs line up.
+                .pb_1()
+                // Under the chevron, so the fields line up.
                 .child(div().flex_none().w(px(CHEVRON_WIDTH)))
-                .child(
-                    div()
-                        .key_context(REPLACE_KEY_CONTEXT)
-                        .flex_1()
-                        .min_w_0()
-                        .child(self.replace_input.clone()),
-                )
+                .child(field_slot().key_context(REPLACE_KEY_CONTEXT).child(field(
+                    "find-replace-field",
+                    &self.replace_input,
+                    vec![preserve_case.into_any_element()],
+                    cx,
+                )))
                 .child(
                     div()
                         .flex()
                         .flex_none()
-                        .gap_0p5()
+                        .gap_1()
                         // A replace keeps focus where it was too.
                         .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                        .child(preserve_case)
                         .children(buttons),
                 )
         });
@@ -854,6 +964,108 @@ impl FindBar {
     }
 }
 
+/// `label`, a glyph rather than a word, which isn't translated.
+fn verbatim_label(label: &'static str) -> SharedString {
+    SharedString::new_static(label)
+}
+
+/// Where a find or replace field goes: [`FIELD_WIDTH`] wide, so the two
+/// line up whatever follows each.
+fn field_slot() -> gpui::Div {
+    div()
+        .flex_none()
+        .flex_shrink(1.)
+        .w(px(FIELD_WIDTH))
+        .min_w(px(FIELD_MIN_WIDTH))
+}
+
+/// A find or replace field: `input` in the controls' bordered box with the
+/// accent focus ring while it has focus, `toggles` inside it at its end.
+fn field(
+    id: &'static str,
+    input: &Entity<TextInput>,
+    toggles: Vec<AnyElement>,
+    cx: &App,
+) -> impl IntoElement {
+    let colors = cx.theme().colors;
+    div()
+        .debug_selector(move || id.into())
+        .relative()
+        .flex()
+        .items_center()
+        .w_full()
+        .rounded(radius::CONTROL)
+        .border_1()
+        .border_color(colors.border.control)
+        .bg(colors.surface.panel)
+        .child(div().flex_1().min_w_0().child(input.clone()))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_0p5()
+                .pr_1()
+                // A toggle keeps focus where it was, the input or the editor.
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                .children(toggles),
+        )
+        .child(FieldRing {
+            id,
+            focus: input.focus_handle(cx),
+        })
+}
+
+/// A field's focus ring, drawn while its input has focus: the controls'
+/// 2 px of the accent, 1 px out ([`focus_ring`]).
+#[derive(IntoElement)]
+struct FieldRing {
+    id: &'static str,
+    focus: FocusHandle,
+}
+
+impl RenderOnce for FieldRing {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let id = self.id;
+        match self.focus.is_focused(window) {
+            true => focus_ring(radius::CONTROL, px(1.), &cx.theme().colors)
+                .debug_selector(move || format!("{id}-focus-ring")),
+            false => div(),
+        }
+    }
+}
+
+/// The Vim command, faint, in the code font, which a click copies.
+fn vim_command_element(command: String, cx: &App) -> impl IntoElement + use<> {
+    let colors = cx.theme().colors;
+    let family =
+        (cx.try_global::<FontFamilies>().cloned().unwrap_or_default()).family(FamilySlot::Code, cx);
+    let name = tr!("workbench-find-vim-command", command = command.clone());
+    let tooltip = tr!("workbench-find-vim-command-tooltip");
+    let copied = command.clone();
+    div()
+        .id("find-vim-command")
+        .debug_selector(|| "find-vim-command".into())
+        .role(Role::Button)
+        .aria_label(name)
+        .flex_shrink(1.)
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .font_family(family)
+        .text_color(colors.text.faint)
+        .cursor_pointer()
+        .tooltip(move |_, cx| {
+            let tooltip = Tooltip::new(tooltip.clone(), None::<SharedString>, &fe_ui::ui_theme(cx));
+            cx.new(|_| tooltip).into()
+        })
+        // Copying leaves focus where it was.
+        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone())))
+        .child(command)
+}
+
 /// The match the primary selection is in `editor`, or with vim on the one
 /// starting at the caret, and its replacement by `with`, in the match's case
 /// with `preserve_case`; none outside `scope`, for which nothing is searched
@@ -876,8 +1088,11 @@ fn current_match(
     }
     let range = match editor.vim_mode() {
         Some(_) if selection.is_empty() => {
+            // Only a match starting at the caret is wanted, so the search
+            // stops past it: rejecting candidates later on the row (not
+            // whole words, say) could take the rest of a long row.
             let row = text.offset_to_point(selection.start).row;
-            let window = selection.start..row_end(text, row);
+            let window = selection.start..(selection.start + 1).min(row_end(text, row));
             match first_reaching(text, row, window, pattern, deadline)? {
                 Some(found) if found.start == selection.start => found,
                 _ => return Ok(None),
