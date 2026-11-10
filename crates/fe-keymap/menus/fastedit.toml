@@ -7,125 +7,129 @@
 # macOS's Hide, Services, Minimize and Zoom are left out (`platform`).
 # fe-keymap's build script generates each platform's text from this table
 # (`DEFAULT_MACOS_MENUS`, `DEFAULT_LINUX_MENUS`).
+#
+# Each title is a key in fe-keymap's catalogue (`title_key`, in
+# l10n/en-US/keymap.ftl), shown in the active locale; `$app` in one is the
+# app's name. A literal `title` (or menu `name`) has no place here. The
+# Services item takes kiln-core's own title, `kiln-core-menu-services`.
 
 [[menus]]
-name = "Tenmoku"
+title_key = "keymap-menu-app"
 platform = "macos"
 
 [[menus.items]]
-title = "Hide Tenmoku"
+title_key = "keymap-menu-hide-app"
 command = "app.hide"
 
 [[menus.items]]
-title = "Hide Others"
+title_key = "keymap-menu-hide-others"
 command = "app.hide_others"
 
 [[menus.items]]
-title = "Show All"
+title_key = "keymap-menu-show-all"
 command = "app.show_all"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Check for Updates…"
+title_key = "keymap-menu-check-for-updates"
 command = "app.check_for_updates"
 
 [[menus.items]]
-title = "Set Up Tenmoku…"
+title_key = "keymap-menu-set-up-app"
 command = "app.set_up"
 
 [[menus.items]]
-title = "Settings…"
+title_key = "keymap-menu-settings"
 command = "workbench.open_settings_ui"
 
 [[menus.items]]
-title = "Keyboard Shortcuts"
+title_key = "keymap-menu-keyboard-shortcuts"
 command = "workbench.open_keyboard_shortcuts"
 
 [[menus.items]]
-title = "Keyboard Shortcuts (JSON)"
+title_key = "keymap-menu-keyboard-shortcuts-json"
 command = "workbench.open_keyboard_shortcuts_json"
 
 [[menus.items]]
-title = "Install 'tenmoku' Command in PATH"
+title_key = "keymap-menu-install-shell-command-in-path"
 command = "app.install_shell_command"
 
 [[menus.items]]
-title = "Uninstall 'tenmoku' Command from PATH"
+title_key = "keymap-menu-uninstall-shell-command-from-path"
 command = "app.uninstall_shell_command"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Services"
 system = "services"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Quit Tenmoku"
+title_key = "keymap-menu-quit-app"
 command = "app.quit"
 
 [[menus]]
-name = "File"
+title_key = "keymap-menu-file"
 
 [[menus.items]]
-title = "New File"
+title_key = "keymap-menu-new-file"
 command = "workbench.new_file"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Open Folder…"
+title_key = "keymap-menu-open-folder"
 command = "workbench.open_folder"
 
 [[menus.items]]
-title = "Open File…"
+title_key = "keymap-menu-open-file"
 command = "workbench.open_file"
 
 # Its ctrl-r is vim's in a vim editor, which in insert mode leaves it
 # unhandled; on macOS a shortcut shown is an AppKit key equivalent, which
 # would then open Recent, so there it shows none (`shortcut_context`).
 [[menus.items]]
-title = "Open Recent…"
+title_key = "keymap-menu-open-recent"
 command = "workbench.open_recent"
 platform = "!macos"
 
 [[menus.items]]
-title = "Open Recent…"
+title_key = "keymap-menu-open-recent"
 command = "workbench.open_recent"
 shortcut_context = []
 platform = "macos"
 
 [[menus.items]]
-title = "Trust This Folder"
+title_key = "keymap-menu-trust-this-folder"
 command = "workbench.trust_folder"
 
 [[menus.items]]
-title = "Untrust This Folder"
+title_key = "keymap-menu-untrust-this-folder"
 command = "workbench.untrust_folder"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Save"
+title_key = "keymap-menu-save"
 command = "editor.save"
 
 [[menus.items]]
-title = "Save As…"
+title_key = "keymap-menu-save-as"
 command = "workbench.save_as"
 
 [[menus.items]]
-title = "Save All"
+title_key = "keymap-menu-save-all"
 command = "workbench.save_all"
 
 [[menus.items]]
-title = "Save without Formatting"
+title_key = "keymap-menu-save-without-formatting"
 command = "workbench.save_without_formatting"
 
 [[menus.items]]
@@ -133,34 +137,34 @@ separator = true
 
 # VS Code's File > Compare Active File With… (Zed has none).
 [[menus.items]]
-title = "Compare Active File With…"
+title_key = "keymap-menu-compare-active-file-with"
 command = "diff.compare_file"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Settings…"
+title_key = "keymap-menu-settings"
 command = "workbench.open_settings_ui"
 platform = "!macos"
 
 [[menus.items]]
-title = "Keyboard Shortcuts"
+title_key = "keymap-menu-keyboard-shortcuts"
 command = "workbench.open_keyboard_shortcuts"
 platform = "!macos"
 
 [[menus.items]]
-title = "Keyboard Shortcuts (JSON)"
+title_key = "keymap-menu-keyboard-shortcuts-json"
 command = "workbench.open_keyboard_shortcuts_json"
 platform = "!macos"
 
 [[menus.items]]
-title = "Install 'tenmoku' Command in PATH"
+title_key = "keymap-menu-install-shell-command-in-path"
 command = "app.install_shell_command"
 platform = "!macos"
 
 [[menus.items]]
-title = "Uninstall 'tenmoku' Command from PATH"
+title_key = "keymap-menu-uninstall-shell-command-from-path"
 command = "app.uninstall_shell_command"
 platform = "!macos"
 
@@ -169,19 +173,19 @@ separator = true
 platform = "!macos"
 
 [[menus.items]]
-title = "Close Tab"
+title_key = "keymap-menu-close-tab"
 command = "workbench.close_tab"
 
 [[menus.items]]
-title = "Reopen Closed Editor"
+title_key = "keymap-menu-reopen-closed-editor"
 command = "workbench.reopen_closed_editor"
 
 [[menus.items]]
-title = "Close Pane"
+title_key = "keymap-menu-close-pane"
 command = "pane.close"
 
 [[menus.items]]
-title = "Close Window"
+title_key = "keymap-menu-close-window"
 command = "window.close"
 
 [[menus.items]]
@@ -189,20 +193,20 @@ separator = true
 platform = "!macos"
 
 [[menus.items]]
-title = "Quit"
+title_key = "keymap-menu-quit"
 command = "app.quit"
 platform = "!macos"
 
 [[menus]]
-name = "Edit"
+title_key = "keymap-menu-edit"
 
 [[menus.items]]
-title = "Undo"
+title_key = "keymap-menu-undo"
 command = "editor.undo"
 os_action = "undo"
 
 [[menus.items]]
-title = "Redo"
+title_key = "keymap-menu-redo"
 command = "editor.redo"
 os_action = "redo"
 
@@ -210,23 +214,23 @@ os_action = "redo"
 separator = true
 
 [[menus.items]]
-title = "Cut"
+title_key = "keymap-menu-cut"
 command = "editor.cut"
 os_action = "cut"
 
 [[menus.items]]
-title = "Copy"
+title_key = "keymap-menu-copy"
 command = "editor.copy"
 os_action = "copy"
 
 [[menus.items]]
-title = "Paste"
+title_key = "keymap-menu-paste"
 command = "editor.paste"
 os_action = "paste"
 alternatives = [{ command = "text_input.paste", when = "text_input" }]
 
 [[menus.items]]
-title = "Select All"
+title_key = "keymap-menu-select-all"
 command = "editor.select_all"
 os_action = "select_all"
 
@@ -234,66 +238,66 @@ os_action = "select_all"
 separator = true
 
 [[menus.items]]
-title = "Indent"
+title_key = "keymap-menu-indent"
 command = "editor.indent"
 
 [[menus.items]]
-title = "Outdent"
+title_key = "keymap-menu-outdent"
 command = "editor.outdent"
 
 [[menus.items]]
-title = "Move Line Up"
+title_key = "keymap-menu-move-line-up"
 command = "editor.move_rows_up"
 
 [[menus.items]]
-title = "Move Line Down"
+title_key = "keymap-menu-move-line-down"
 command = "editor.move_rows_down"
 
 [[menus.items]]
-title = "Duplicate Line"
+title_key = "keymap-menu-duplicate-line"
 command = "editor.duplicate_rows"
 
 [[menus.items]]
-title = "Delete Line"
+title_key = "keymap-menu-delete-line"
 command = "editor.delete_rows"
 
 [[menus.items]]
-title = "Toggle Line Comment"
+title_key = "keymap-menu-toggle-line-comment"
 command = "editor.toggle_comment"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Rename Symbol…"
+title_key = "keymap-menu-rename-symbol"
 command = "lsp.rename"
 
 [[menus.items]]
-title = "Code Actions…"
+title_key = "keymap-menu-code-actions"
 command = "lsp.code_actions"
 
 [[menus.items]]
-title = "Organize Imports"
+title_key = "keymap-menu-organize-imports"
 command = "lsp.organize_imports"
 
 [[menus.items]]
-title = "Fix All"
+title_key = "keymap-menu-fix-all"
 command = "lsp.fix_all"
 
 [[menus.items]]
-title = "Refactor…"
+title_key = "keymap-menu-refactor"
 command = "lsp.refactor"
 
 [[menus.items]]
-title = "Source Action…"
+title_key = "keymap-menu-source-action"
 command = "lsp.source_action"
 
 [[menus.items]]
-title = "Format Document"
+title_key = "keymap-menu-format-document"
 command = "lsp.format_document"
 
 [[menus.items]]
-title = "Format Selection"
+title_key = "keymap-menu-format-selection"
 command = "lsp.format_selection"
 
 [[menus.items]]
@@ -301,129 +305,129 @@ separator = true
 
 # Menus have no submenus to put these in.
 [[menus.items]]
-title = "Spelling: Suggest Corrections…"
+title_key = "keymap-menu-spelling-suggest-corrections"
 command = "spell.suggest"
 
 [[menus.items]]
-title = "Spelling: Next Misspelling"
+title_key = "keymap-menu-spelling-next-misspelling"
 command = "spell.next"
 
 [[menus.items]]
-title = "Spelling: Previous Misspelling"
+title_key = "keymap-menu-spelling-previous-misspelling"
 command = "spell.previous"
 
 [[menus.items]]
-title = "Spelling: Add Word to Dictionary"
+title_key = "keymap-menu-spelling-add-word-to-dictionary"
 command = "spell.add_word"
 
 [[menus.items]]
-title = "Spelling: Ignore Word"
+title_key = "keymap-menu-spelling-ignore-word"
 command = "spell.ignore_word"
 
 [[menus.items]]
-title = "Spelling: Toggle Spell Check"
+title_key = "keymap-menu-spelling-toggle-spell-check"
 command = "spell.toggle"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Find"
+title_key = "keymap-menu-find"
 command = "find.show"
 
 [[menus.items]]
-title = "Replace"
+title_key = "keymap-menu-replace"
 command = "find.show_replace"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Find in Files"
+title_key = "keymap-menu-find-in-files"
 command = "search.show"
 
 [[menus.items]]
-title = "Replace in Files"
+title_key = "keymap-menu-replace-in-files"
 command = "search.show_replace"
 
 [[menus]]
-name = "View"
+title_key = "keymap-menu-view"
 
 [[menus.items]]
-title = "Project"
+title_key = "keymap-menu-project"
 command = "dock.show_project"
 
 [[menus.items]]
-title = "Search"
+title_key = "keymap-menu-search"
 command = "search.show"
 
 [[menus.items]]
-title = "Outline"
+title_key = "keymap-menu-outline"
 command = "outline.show"
 
 [[menus.items]]
-title = "Problems"
+title_key = "keymap-menu-problems"
 command = "problems.show"
 
 [[menus.items]]
-title = "Toggle Dock"
+title_key = "keymap-menu-toggle-dock"
 command = "dock.toggle"
 
 [[menus.items]]
-title = "Toggle Terminal"
+title_key = "keymap-menu-toggle-terminal"
 command = "terminal.toggle"
 
 [[menus.items]]
-title = "Chat"
+title_key = "keymap-menu-chat"
 command = "chat.open"
 
 [[menus.items]]
-title = "Toggle Breadcrumbs"
+title_key = "keymap-menu-toggle-breadcrumbs"
 command = "view.toggle_breadcrumbs"
 
 [[menus.items]]
-title = "Status Bar"
+title_key = "keymap-menu-status-bar"
 command = "view.toggle_status_bar"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Soft Wrap"
+title_key = "keymap-menu-soft-wrap"
 command = "editor.toggle_soft_wrap"
 
 [[menus.items]]
-title = "Toggle Vim Mode"
+title_key = "keymap-menu-toggle-vim-mode"
 command = "vim.toggle"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Fold"
+title_key = "keymap-menu-fold"
 command = "editor.fold"
 
 [[menus.items]]
-title = "Unfold"
+title_key = "keymap-menu-unfold"
 command = "editor.unfold"
 
 [[menus.items]]
-title = "Fold All"
+title_key = "keymap-menu-fold-all"
 command = "editor.fold_all"
 
 [[menus.items]]
-title = "Unfold All"
+title_key = "keymap-menu-unfold-all"
 command = "editor.unfold_all"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Restart Language Server"
+title_key = "keymap-menu-restart-language-server"
 command = "lsp.restart"
 
 [[menus.items]]
-title = "Language Server Log"
+title_key = "keymap-menu-language-server-log"
 command = "lsp.show_log"
 
 [[menus.items]]
@@ -431,11 +435,11 @@ separator = true
 
 # There's no Terminal menu to hold these.
 [[menus.items]]
-title = "Run Task…"
+title_key = "keymap-menu-run-task"
 command = "tasks.run"
 
 [[menus.items]]
-title = "Run Build Task"
+title_key = "keymap-menu-run-build-task"
 command = "tasks.run_build"
 
 [[menus.items]]
@@ -443,140 +447,140 @@ separator = true
 
 # The git views' toggles; Toggle Inline Diff is enabled in a diff view.
 [[menus.items]]
-title = "Toggle Line Blame"
+title_key = "keymap-menu-toggle-line-blame"
 command = "git.toggle_line_blame"
 
 [[menus.items]]
-title = "Toggle Blame Annotations"
+title_key = "keymap-menu-toggle-blame-annotations"
 command = "git.toggle_blame_annotations"
 
 [[menus.items]]
-title = "Toggle Inline Diff"
+title_key = "keymap-menu-toggle-inline-diff"
 command = "diff.toggle_inline"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Toggle Full Screen"
+title_key = "keymap-menu-toggle-full-screen"
 command = "window.toggle_fullscreen"
 
 [[menus.items]]
-title = "Toggle Zen Mode"
+title_key = "keymap-menu-toggle-zen-mode"
 command = "workbench.toggle_zen_mode"
 
 [[menus]]
-name = "Go"
+title_key = "keymap-menu-go"
 
 [[menus.items]]
-title = "Back"
+title_key = "keymap-menu-back"
 command = "nav.back"
 
 [[menus.items]]
-title = "Forward"
+title_key = "keymap-menu-forward"
 command = "nav.forward"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Go to File…"
+title_key = "keymap-menu-go-to-file"
 command = "quick_open.toggle"
 
 [[menus.items]]
-title = "Go to Line/Column…"
+title_key = "keymap-menu-go-to-line-column"
 command = "go_to_line.toggle"
 
 [[menus.items]]
-title = "Go to Bracket"
+title_key = "keymap-menu-go-to-bracket"
 command = "editor.go_to_bracket"
 
 [[menus.items]]
-title = "Go to Symbol in File…"
+title_key = "keymap-menu-go-to-symbol-in-file"
 command = "nav.document_symbols"
 
 [[menus.items]]
-title = "Go to Symbol in Workspace…"
+title_key = "keymap-menu-go-to-symbol-in-workspace"
 command = "nav.workspace_symbols"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Go to Definition"
+title_key = "keymap-menu-go-to-definition"
 command = "nav.goto_definition"
 
 [[menus.items]]
-title = "Go to Declaration"
+title_key = "keymap-menu-go-to-declaration"
 command = "nav.goto_declaration"
 
 [[menus.items]]
-title = "Go to Type Definition"
+title_key = "keymap-menu-go-to-type-definition"
 command = "nav.goto_type_definition"
 
 [[menus.items]]
-title = "Go to Implementations"
+title_key = "keymap-menu-go-to-implementations"
 command = "nav.goto_implementation"
 
 [[menus.items]]
-title = "Peek References"
+title_key = "keymap-menu-peek-references"
 command = "editor.peek_references"
 
 [[menus.items]]
-title = "Show Call Hierarchy"
+title_key = "keymap-menu-show-call-hierarchy"
 command = "nav.show_call_hierarchy"
 
 [[menus.items]]
-title = "Show Type Hierarchy"
+title_key = "keymap-menu-show-type-hierarchy"
 command = "nav.show_type_hierarchy"
 
 [[menus.items]]
-title = "Find All References"
+title_key = "keymap-menu-find-all-references"
 command = "nav.find_references"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Next Tab"
+title_key = "keymap-menu-next-tab"
 command = "workbench.next_tab"
 
 [[menus.items]]
-title = "Previous Tab"
+title_key = "keymap-menu-previous-tab"
 command = "workbench.previous_tab"
 
 [[menus.items]]
-title = "Switch Tab"
+title_key = "keymap-menu-switch-tab"
 command = "workbench.tab_switcher_next"
 
 [[menus.items]]
-title = "Switch Tab Backward"
+title_key = "keymap-menu-switch-tab-backward"
 command = "workbench.tab_switcher_previous"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Focus Left Pane"
+title_key = "keymap-menu-focus-left-pane"
 command = "pane.focus_left"
 
 [[menus.items]]
-title = "Focus Right Pane"
+title_key = "keymap-menu-focus-right-pane"
 command = "pane.focus_right"
 
 [[menus.items]]
-title = "Focus Above Pane"
+title_key = "keymap-menu-focus-above-pane"
 command = "pane.focus_up"
 
 [[menus.items]]
-title = "Focus Below Pane"
+title_key = "keymap-menu-focus-below-pane"
 command = "pane.focus_down"
 
 [[menus.items]]
 separator = true
 
 [[menus.items]]
-title = "Reveal Active File in Project"
+title_key = "keymap-menu-reveal-active-file-in-project"
 command = "project_panel.reveal_active"
 
 [[menus.items]]
@@ -585,31 +589,31 @@ separator = true
 # VS Code's Go > Next Problem / Previous Change group (git.next_change runs
 # in a diff view too).
 [[menus.items]]
-title = "Next Problem"
+title_key = "keymap-menu-next-problem"
 command = "diagnostics.next"
 
 [[menus.items]]
-title = "Previous Problem"
+title_key = "keymap-menu-previous-problem"
 command = "diagnostics.previous"
 
 [[menus.items]]
-title = "Next Change"
+title_key = "keymap-menu-next-change"
 command = "git.next_change"
 
 [[menus.items]]
-title = "Previous Change"
+title_key = "keymap-menu-previous-change"
 command = "git.previous_change"
 
 [[menus]]
-name = "Window"
+title_key = "keymap-menu-window"
 
 [[menus.items]]
-title = "Minimize"
+title_key = "keymap-menu-minimize"
 command = "window.minimize"
 platform = "macos"
 
 [[menus.items]]
-title = "Zoom"
+title_key = "keymap-menu-zoom"
 command = "window.zoom"
 platform = "macos"
 
@@ -618,25 +622,25 @@ separator = true
 platform = "macos"
 
 [[menus.items]]
-title = "Split Right"
+title_key = "keymap-menu-split-right"
 command = "pane.split_right"
 
 [[menus.items]]
-title = "Split Down"
+title_key = "keymap-menu-split-down"
 command = "pane.split_down"
 
 [[menus.items]]
-title = "Move Tab Left"
+title_key = "keymap-menu-move-tab-left"
 command = "pane.move_tab_left"
 
 [[menus.items]]
-title = "Move Tab Right"
+title_key = "keymap-menu-move-tab-right"
 command = "pane.move_tab_right"
 
 [[menus.items]]
-title = "Move Tab Up"
+title_key = "keymap-menu-move-tab-up"
 command = "pane.move_tab_up"
 
 [[menus.items]]
-title = "Move Tab Down"
+title_key = "keymap-menu-move-tab-down"
 command = "pane.move_tab_down"

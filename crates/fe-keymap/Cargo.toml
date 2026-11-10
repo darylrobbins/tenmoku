@@ -11,6 +11,7 @@ publish.workspace = true
 fe-command.workspace = true
 fe-config.workspace = true
 kiln-core.workspace = true
+kiln-l10n.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -22,6 +23,7 @@ toml_edit.workspace = true
 
 [dev-dependencies]
 fe-vim.workspace = true
+kiln-l10n = { workspace = true, features = ["lint"] }
 schemars.workspace = true
 tempfile.workspace = true
 

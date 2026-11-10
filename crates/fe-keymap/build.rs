@@ -9,7 +9,9 @@
 //!   `default` for an OS not named, the entry dropped with neither;
 //! - `secondary` in a keystroke is `cmd` on macOS and `ctrl` elsewhere.
 //!
-//! Anything else in an entry is copied as it is.
+//! Anything else in an entry is copied as it is, so each copy names its
+//! titles by the same `title_key`s as the table (this crate's catalogue,
+//! `l10n/`), never by literal text: `tests/l10n.rs` checks the copies too.
 
 use std::{env, fs, path::Path};
 

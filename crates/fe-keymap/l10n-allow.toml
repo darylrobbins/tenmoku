@@ -1,0 +1,17 @@
+# fe-keymap's exceptions to the literal lint (kiln_l10n::lint::literals).
+#
+# Only the files listed are checked. KM1 (the built-in menus' titles, which
+# are data: menus/fastedit.toml) left src/keymap_edit.rs unmigrated: its
+# errors and `KEYMAP_HEADER`, a `pub const` the keymap file starts with that
+# fe-workbench writes and compares against, move with a card of their own,
+# which then replaces this list with `all = true`.
+migrated = [
+    "src/l10n.rs",
+    "src/lib.rs",
+    "src/shortcuts_model.rs",
+]
+
+[[literal]]
+file = "src/shortcuts_model.rs"
+text = "{} {after}"
+reason = "The search query with its quoted keys cut out, rejoined to be split into words"

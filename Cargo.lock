@@ -2336,6 +2336,7 @@ dependencies = [
  "fe-vim",
  "kiln-command",
  "kiln-core",
+ "kiln-l10n",
  "schemars",
  "serde",
  "serde_json",

@@ -21,6 +21,7 @@ pub use kiln_core::{
 pub use fe_command::{CommandId, ContextPredicate};
 
 mod keymap_edit;
+pub mod l10n;
 mod shortcuts_model;
 
 pub use keymap_edit::{
@@ -46,11 +47,15 @@ pub fn user_keymap_path() -> Option<PathBuf> {
 /// an editor focused.
 pub const MENU_SHORTCUT_CONTEXT: [&str; 2] = ["workbench", "editor"];
 
-/// The built-in menus, [`MENUS`], as on `os`.
+/// The built-in menus, [`MENUS`], as on `os`. Their titles are keys in
+/// this crate's catalogue ([`l10n`]); `$app` in them is Tenmoku's name,
+/// which this sets for every menu title first ([`menu::set_label_arg`]),
+/// as kiln does for the app's name before it parses an app's menus.
 pub fn default_menus_for(
     catalog: Option<&dyn CommandCatalog>,
     os: Os,
 ) -> (Option<MenuBar>, Vec<Diagnostic>) {
+    menu::set_label_arg("app", fe_config::paths::app_id().display);
     let path = Path::new(menu::DEFAULT_MENUS_PATH);
     MenuBar::parse_in(path, MENUS, catalog, os, &MENU_SHORTCUT_CONTEXT)
 }
@@ -90,7 +95,8 @@ pub const DEFAULT_MACOS: &str = include_str!(concat!(env!("OUT_DIR"), "/keymap-m
 pub const DEFAULT_LINUX: &str = include_str!(concat!(env!("OUT_DIR"), "/keymap-linux.toml"));
 
 /// fastedit's built-in menu bar, for every platform: native on macOS, drawn
-/// in the window elsewhere. See [`default_menus`].
+/// in the window elsewhere. See [`default_menus`]. Each title is a
+/// `title_key` in this crate's catalogue ([`l10n`]), never a literal.
 pub const MENUS: &str = include_str!("../menus/fastedit.toml");
 
 /// [`MENUS`] as resolved on macOS. Generated from [`MENUS`] by this crate's
