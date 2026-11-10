@@ -9,6 +9,7 @@ use fe_lsp::code_action::CodeActionQuery;
 use fe_nav::Related;
 use gpui::{App, Context, Window};
 use kiln::Cx;
+use kiln_l10n::{tr, verbatim};
 
 use kiln_shell::DockPosition;
 
@@ -1160,7 +1161,7 @@ impl Workbench {
     /// Close Peek
     #[command(id = "peek.close", context = "peek || peek_shown")]
     fn close_peek_command(&mut self, cx: &mut Cx<Self>) {
-        self.in_context("peek || peek_shown", cx, Self::close_peek);
+        self.in_context(verbatim!("peek || peek_shown"), cx, Self::close_peek);
     }
 
     /// Open Peeked Definition
@@ -1575,15 +1576,17 @@ impl Workbench {
     /// Markdown: Toggle Preview
     #[command(id = "markdown.toggle_preview", context = "editor || markdown_preview")]
     fn toggle_markdown_preview_command(&mut self, cx: &mut Cx<Self>) {
-        self.in_context("editor || markdown_preview", cx, |this, window, cx| {
-            this.toggle_markdown_preview(window, cx)
-        });
+        self.in_context(
+            verbatim!("editor || markdown_preview"),
+            cx,
+            |this, window, cx| this.toggle_markdown_preview(window, cx),
+        );
     }
 
     /// Open as Text
     #[command(id = "image.open_as_text", context = "ImageViewer && svg")]
     fn open_as_text_command(&mut self, cx: &mut Cx<Self>) {
-        self.in_context("ImageViewer && svg", cx, |this, window, cx| {
+        self.in_context(verbatim!("ImageViewer && svg"), cx, |this, window, cx| {
             let pane = this.pane().clone();
             let path = svg_tab(&pane, true, cx);
             if let Some(path) = path {
@@ -1918,7 +1921,7 @@ impl Workbench {
     /// with none, says so.
     fn pick_plugin(&mut self, purpose: Purpose, window: &mut Window, cx: &mut Context<Self>) {
         if !extensions_picker::has_user_plugins(cx) {
-            let message = "No plugins are installed".to_owned();
+            let message = tr!("workbench-plugins-none-installed").to_string();
             return Workbench::notify(cx, log::Level::Info, message, None);
         }
         extensions_picker::open_next_for(purpose, cx);

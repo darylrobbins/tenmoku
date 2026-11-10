@@ -23,6 +23,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, Window, div,
 };
+use kiln_l10n::{text, tr};
 use kiln_shell::ModalId;
 
 use crate::{
@@ -34,13 +35,12 @@ use crate::{
 };
 
 /// What `tasks.rerun_last` says before any task has run.
-pub(crate) const NO_TASK_RUN: &str = "No task has run yet";
+pub(crate) fn no_task_run() -> SharedString {
+    tr!("workbench-task-none-run")
+}
 
 /// The picker's name in the modal layer.
 const TASK_PICKER: ModalId = ModalId("tasks");
-
-/// What the status line says until the list is read.
-const READING: &str = "Reading tasks…";
 
 /// What reads a project's files, on a background thread.
 pub(crate) type Files = Arc<dyn ProjectFiles + Send + Sync>;
@@ -122,9 +122,14 @@ fn detail(task: &Task) -> String {
 /// What the list shows with nothing to run.
 pub(crate) fn nothing_to_run(group: Option<Group>) -> String {
     match group {
-        None => format!("No tasks: add {TASKS_FILE}"),
-        Some(group) => format!("No {group} tasks: add {TASKS_FILE}"),
+        None => tr!("workbench-task-none", file = TASKS_FILE),
+        Some(group) => tr!(
+            "workbench-task-none-in-group",
+            group = group.to_string(),
+            file = TASKS_FILE
+        ),
     }
+    .to_string()
 }
 
 /// The default build task among `tasks`, the one `tasks.run_build` runs.
@@ -336,7 +341,8 @@ impl PickerDelegate for TaskPicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        (!self.loaded).then_some(READING.into())
+        // Until the list is read.
+        (!self.loaded).then(|| tr!("workbench-task-reading"))
     }
 }
 
@@ -352,7 +358,7 @@ impl Workbench {
     pub(crate) fn rerun_last_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.last_task(cx) {
             Some(task) => self.run_task(task, window, cx),
-            None => toast::show(cx, Toast::info(NO_TASK_RUN)),
+            None => toast::show(cx, Toast::info(no_task_run())),
         }
     }
 
@@ -406,8 +412,8 @@ impl Workbench {
             _reading: None,
         };
         let placeholder = match group {
-            None => "Run task…",
-            Some(_) => "Run build task…",
+            None => text!("workbench-task-run-placeholder"),
+            Some(_) => text!("workbench-task-run-build-placeholder"),
         };
         let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));

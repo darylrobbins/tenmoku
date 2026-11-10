@@ -24,13 +24,14 @@ use fe_command::{CommandId, ContextStack, Invocation, Source, Value};
 use fe_gpui::EditorView;
 use fe_keymap::Keymap;
 use fe_ui::{HighlightedLabel, char_ranges};
-use fe_vim::{RemapMode, RemapSet, VimKey};
+use fe_vim::{Remap, RemapMode, RemapSet, VimKey};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
     IntoElement as _, Keystroke, Modifiers, ParentElement as _, SharedString, Styled as _,
     WeakEntity, Window, div,
 };
 use kiln::platform::{command_actions::dispatch_invocation, keys};
+use kiln_l10n::{text, tr, verbatim};
 
 use crate::{
     ListedCommands, Workbench,
@@ -39,16 +40,17 @@ use crate::{
     workbench::Palette,
 };
 
-/// The context a vim normal-mode map's row shows.
-pub(crate) const VIM_NORMAL: &str = "vim normal";
+/// The context a vim normal-mode map's row shows, in the column where the
+/// bindings' contexts show as their predicates print, untranslated.
+pub(crate) const VIM_NORMAL: &str = verbatim!("vim normal");
 
 /// What picking a row does.
 #[derive(Clone, Debug, PartialEq)]
 enum Action {
     /// Runs the command with the args.
     Command(CommandId, Value),
-    /// Types the keys.
-    Keys(Vec<VimKey>),
+    /// Types the keys of the map, as long as it's still the one they run.
+    Keys(Vec<VimKey>, Remap),
 }
 
 /// A binding or a map.
@@ -142,13 +144,26 @@ fn map_rows(set: &RemapSet, titles: &HashMap<String, String>) -> Vec<Row> {
                         .unwrap_or_else(|| id.as_str().to_owned());
                     (title, Action::Command(id.clone(), Value::Null))
                 }
-                None => (map.to.clone(), Action::Keys(keys)),
+                None => (map.to.clone(), Action::Keys(keys, map.clone())),
             };
             rows.push(Row::new(shown, title, VIM_NORMAL.to_owned(), action));
         }
     }
     rows.sort_by(|a, b| a.keys.cmp(&b.keys));
     rows
+}
+
+/// Whether `editor` has vim on, with `map` still the normal-mode map that
+/// `keys` run, as when its row was listed.
+fn maps(editor: &Entity<EditorView>, keys: &[VimKey], map: &Remap, cx: &App) -> bool {
+    let Some(((last, prefix), state)) = keys.split_last().zip(editor.read(cx).vim_state()) else {
+        return false;
+    };
+    (state
+        .remaps()
+        .continuations(RemapMode::Normal, prefix)
+        .iter())
+    .any(|continuation| continuation.key == *last && continuation.map == Some(map))
 }
 
 /// One key in vim notation, as a map's keys are written.
@@ -330,7 +345,9 @@ impl PickerDelegate for KeymapsPicker {
     /// once the picker has gone. A map of keys types them in the editor its
     /// row is listed from, focused, back in normal mode first if it's in
     /// another (a typed `<Esc>`), wherever focus was: typed elsewhere, they
-    /// could do anything. Its editor closed meanwhile, it does nothing.
+    /// could do anything. Its editor closed meanwhile, or vim turned off in
+    /// it or the map changed since the picker opened, it does nothing: the
+    /// keys would go in as text, or run something else.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let Some(&(row, _)) = self.matches.get(ix) else {
             return false;
@@ -339,15 +356,19 @@ impl PickerDelegate for KeymapsPicker {
         let stack = self.stack.clone();
         let previous = self.previous_focus.take();
         let action = match action {
-            Action::Keys(mut keys) => {
-                let Some(editor) = self.editor.as_ref().and_then(WeakEntity::upgrade) else {
+            Action::Keys(mut keys, map) => {
+                let editor = self.editor.as_ref().and_then(WeakEntity::upgrade);
+                let Some(editor) = editor.filter(|editor| maps(editor, &keys, &map, cx)) else {
+                    if let Some(previous) = previous {
+                        window.focus(&previous, cx);
+                    }
                     return true;
                 };
                 window.focus(&editor.focus_handle(cx), cx);
                 if editor.read(cx).vim_mode() != Some("normal") {
                     keys.insert(0, VimKey::Esc);
                 }
-                Action::Keys(keys)
+                Action::Keys(keys, map)
             }
             command => {
                 if let Some(previous) = previous {
@@ -366,7 +387,7 @@ impl PickerDelegate for KeymapsPicker {
                     log::warn!("{error}");
                 }
             }
-            Action::Keys(keys) => {
+            Action::Keys(keys, _) => {
                 for key in keys {
                     window.dispatch_keystroke(keystroke(key), cx);
                 }
@@ -383,9 +404,9 @@ impl PickerDelegate for KeymapsPicker {
 
     fn status(&self) -> Option<SharedString> {
         if self.rows.is_empty() {
-            Some("No keymaps".into())
+            Some(tr!("workbench-keymaps-none"))
         } else if self.matches.is_empty() {
-            Some("No matching keymaps".into())
+            Some(tr!("workbench-keymaps-no-matches"))
         } else {
             None
         }
@@ -416,7 +437,14 @@ impl Workbench {
         rows.extend(vim.unwrap_or_default());
         let editor = editor.as_ref().map(Entity::downgrade);
         let delegate = KeymapsPicker::new(rows, previous, stack, editor);
-        let picker = cx.new(|cx| Picker::new(delegate, "Search keymaps…", fe_ui::ui_theme(cx), cx));
+        let picker = cx.new(|cx| {
+            Picker::new(
+                delegate,
+                text!("workbench-keymaps-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
+        });
         picker.update(cx, |picker, cx| picker.show(window, cx));
         self.show_palette(Palette::Keymaps, picker, window, cx);
     }

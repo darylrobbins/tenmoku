@@ -22,7 +22,6 @@ use crate::{
     pane_group::Direction,
     persist::save_toggles_to,
     spell::{Dictionary, Speller},
-    spell_commands::{NO_MISSPELLING_HERE, NO_MISSPELLINGS, READ_ONLY},
     spell_squiggles::REST,
     workbench::toast::Level,
 };
@@ -278,7 +277,7 @@ fn suggest_replaces_the_word(cx: &mut TestAppContext) {
     put_caret(&editor, "one", 1, s.cx);
     run("spell.suggest", s.cx);
     assert_eq!(s.suggestions(), None);
-    assert_eq!(s.toasts(), [info(NO_MISSPELLING_HERE)]);
+    assert_eq!(s.toasts(), [info("No misspelling here")]);
 }
 
 #[gpui::test]
@@ -312,7 +311,7 @@ fn no_word_at_a_caret_with_no_editor(cx: &mut TestAppContext) {
     let mut s = spelling(cx);
     run("spell.suggest", s.cx);
     assert_eq!(s.suggestions(), None);
-    assert_eq!(s.toasts(), [info(NO_MISSPELLING_HERE)]);
+    assert_eq!(s.toasts(), [info("No misspelling here")]);
 }
 
 #[gpui::test]
@@ -350,7 +349,7 @@ fn a_read_only_editor_is_left_alone(cx: &mut TestAppContext) {
     editor.update(s.cx, |view, cx| view.set_read_only(true, cx));
     run("spell.suggest", s.cx);
     assert_eq!(s.suggestions(), None);
-    assert_eq!(s.toasts(), [info(READ_ONLY)]);
+    assert_eq!(s.toasts(), [info("This editor is read-only")]);
 }
 
 #[gpui::test]
@@ -401,7 +400,7 @@ fn a_squiggle_split_by_typing_is_no_word(cx: &mut TestAppContext) {
     // Before the next check, so with its squiggle yet.
     run("spell.add_word", s.cx);
     assert_eq!(s.dictionary(), "");
-    assert_eq!(s.toasts(), [info(NO_MISSPELLING_HERE)]);
+    assert_eq!(s.toasts(), [info("No misspelling here")]);
 }
 
 #[gpui::test]
@@ -430,7 +429,7 @@ fn add_to_dictionary_is_global(cx: &mut TestAppContext) {
     assert_eq!(s.dictionary(), "teh\n");
     assert_eq!(
         s.toasts(),
-        [info("Added Teh to dictionary"), info(NO_MISSPELLING_HERE)]
+        [info("Added Teh to dictionary"), info("No misspelling here")]
     );
 }
 
@@ -642,7 +641,7 @@ fn ignore_is_for_the_session(cx: &mut TestAppContext) {
     // With no word there, there's nothing to ignore.
     put_caret(&third, "again", 1, s.cx);
     run("spell.ignore_word", s.cx);
-    assert_eq!(s.toasts(), [info(NO_MISSPELLING_HERE)]);
+    assert_eq!(s.toasts(), [info("No misspelling here")]);
 }
 
 #[gpui::test]
@@ -738,7 +737,7 @@ fn no_misspellings_to_go_to(cx: &mut TestAppContext) {
     let at = put_caret(&editor, "good", 1, s.cx);
     run("spell.next", s.cx);
     assert_eq!(caret(&editor, s.cx), at);
-    assert_eq!(s.toasts(), [info(NO_MISSPELLINGS)]);
+    assert_eq!(s.toasts(), [info("No misspellings")]);
     run("spell.previous", s.cx);
     assert_eq!(caret(&editor, s.cx), at);
 }

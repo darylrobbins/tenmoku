@@ -29,7 +29,8 @@ use std::ops::Range;
 
 use fe_gpui::{DiffView, EditorView};
 use fe_vim::HostCommand;
-use gpui::{App, Context, Entity, WeakEntity, Window};
+use gpui::{App, Context, Entity, SharedString, WeakEntity, Window};
+use kiln_l10n::{tr, verbatim};
 
 use super::{
     Workbench, git_blame, git_branch, git_commit, git_diff, git_stage,
@@ -101,42 +102,47 @@ pub(crate) enum Feature {
 }
 
 impl GitCommand {
-    /// Its palette title, its method's in `workbench_commands.rs`, which
-    /// its `Not supported yet` answer names.
-    pub(crate) fn title(self) -> &'static str {
+    /// Its command's ID, its method's in `workbench_commands.rs`.
+    pub(crate) fn id(self) -> &'static str {
         match self {
-            DiffIndex => "Git: Compare with Index",
-            DiffHead => "Git: Compare with HEAD",
-            CompareFile => "Compare Active File With…",
-            NextChange => "Go to Next Change",
-            PreviousChange => "Go to Previous Change",
-            StageFile => "Git: Stage File",
-            UnstageFile => "Git: Unstage File",
-            DiscardFile => "Git: Discard File Changes",
-            ResetBuffer => "Git: Revert Editor to Index",
-            StageHunk => "Git: Stage Change",
-            UnstageHunk => "Git: Undo Stage Change",
-            RevertHunk => "Git: Revert Change",
-            Commit => "Git: Commit Staged",
-            CommitAmend => "Git: Commit Staged (Amend)",
-            ToggleLineBlame => "Git: Toggle Line Blame",
-            ToggleBlameAnnotations => "Git: Toggle Blame Annotations",
-            BlameLine => "Git: Show Line Blame",
-            OpenLineCommit => "Git: Open Line's Commit Change",
-            SwitchBranch => "Git: Switch Branch…",
-            CreateBranch => "Git: Create Branch…",
-            FileHistory => "Git: File History",
-            Log => "Git: Log",
-            LogAll => "Git: Log (All Branches)",
-            Stash => "Git: Stash",
-            StashIncludeUntracked => "Git: Stash (Include Untracked)",
-            StashPop => "Git: Pop Stash…",
-            StashApply => "Git: Apply Stash…",
-            Fetch => "Git: Fetch",
-            Pull => "Git: Pull",
-            Push => "Git: Push",
-            PushForceWithLease => "Git: Push (Force with Lease)",
+            DiffIndex => "git.diff_index",
+            DiffHead => "git.diff_head",
+            CompareFile => "diff.compare_file",
+            NextChange => "git.next_change",
+            PreviousChange => "git.previous_change",
+            StageFile => "git.stage_file",
+            UnstageFile => "git.unstage_file",
+            DiscardFile => "git.discard_file",
+            ResetBuffer => "git.reset_buffer",
+            StageHunk => "git.stage_hunk",
+            UnstageHunk => "git.unstage_hunk",
+            RevertHunk => "git.revert_hunk",
+            Commit => "git.commit",
+            CommitAmend => "git.commit_amend",
+            ToggleLineBlame => "git.toggle_line_blame",
+            ToggleBlameAnnotations => "git.toggle_blame_annotations",
+            BlameLine => "git.blame_line",
+            OpenLineCommit => "git.open_line_commit",
+            SwitchBranch => "git.switch_branch",
+            CreateBranch => "git.create_branch",
+            FileHistory => "git.file_history",
+            Log => "git.log",
+            LogAll => "git.log_all",
+            Stash => "git.stash",
+            StashIncludeUntracked => "git.stash_include_untracked",
+            StashPop => "git.stash_pop",
+            StashApply => "git.stash_apply",
+            Fetch => "git.fetch",
+            Pull => "git.pull",
+            Push => "git.push",
+            PushForceWithLease => "git.push_force_with_lease",
         }
+    }
+
+    /// Its palette title, which its `Not supported yet` answer names: its
+    /// command's `command-<id>` message, the one the palette shows.
+    pub(crate) fn title(self) -> SharedString {
+        fe_command::l10n::command_label(self.id(), self.id())
     }
 
     pub(crate) fn feature(self) -> Feature {
@@ -184,10 +190,10 @@ enum Takes {
 }
 
 /// The ex commands' names: fugitive's `:Git` and its short form.
-const GIT: &[&str] = &["Git", "G"];
-const GDIFFSPLIT: &[&str] = &["Gdiffsplit", "Gvdiffsplit"];
-const GITSIGNS: &str = "Gitsigns";
-const GCLOG: &str = "Gclog";
+const GIT: &[&str] = &[verbatim!("Git"), "G"];
+const GDIFFSPLIT: &[&str] = &[verbatim!("Gdiffsplit"), verbatim!("Gvdiffsplit")];
+const GITSIGNS: &str = verbatim!("Gitsigns");
+const GCLOG: &str = verbatim!("Gclog");
 
 /// Each ex form: the command names it's typed with, the words that follow
 /// the name, what it takes after them, and the command it runs.
@@ -197,7 +203,7 @@ const EX_FORMS: &[(&[&str], &[&str], Takes, GitCommand)] = &[
     (GDIFFSPLIT, &["HEAD"], Takes::Nothing, DiffHead),
     (&[GITSIGNS], &["next_hunk"], Takes::Nothing, NextChange),
     (&[GITSIGNS], &["prev_hunk"], Takes::Nothing, PreviousChange),
-    (&["Gwrite"], &[], Takes::Nothing, StageFile),
+    (&[verbatim!("Gwrite")], &[], Takes::Nothing, StageFile),
     (&[GITSIGNS], &["stage_buffer"], Takes::Nothing, StageFile),
     (
         &[GITSIGNS],
@@ -205,7 +211,7 @@ const EX_FORMS: &[(&[&str], &[&str], Takes, GitCommand)] = &[
         Takes::Nothing,
         UnstageFile,
     ),
-    (&["Gread"], &[], Takes::Nothing, ResetBuffer),
+    (&[verbatim!("Gread")], &[], Takes::Nothing, ResetBuffer),
     (&[GITSIGNS], &["reset_buffer"], Takes::Nothing, ResetBuffer),
     (&[GITSIGNS], &["stage_hunk"], Takes::Nothing, StageHunk),
     (
@@ -262,7 +268,7 @@ pub(crate) fn ex_command(
     if range && name != GITSIGNS && name != GCLOG {
         return Err(fe_vim::messages::no_range_allowed());
     }
-    let unsupported = || format!("Not supported: :{line}");
+    let unsupported = || tr!("workbench-git-ex-not-supported", line = line).to_string();
     if bang {
         return Err(unsupported());
     }

@@ -2633,6 +2633,7 @@ dependencies = [
  "imara-diff",
  "kiln",
  "kiln-command",
+ "kiln-l10n",
  "kiln-platform",
  "kiln-plugin",
  "kiln-shell",

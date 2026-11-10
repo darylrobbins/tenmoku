@@ -228,3 +228,52 @@ fn enter_runs_the_command_in_the_focused_editor(cx: &mut TestAppContext) {
     let focused = cx.update(|window, cx| editor.focus_handle(cx).is_focused(window));
     assert!(focused, "focus is back in the editor");
 }
+
+/// A map of keys whose row is confirmed after vim is turned off, or after
+/// its map changed, since the picker opened types nothing: its keys would
+/// go in as text, or run what the map runs now.
+#[gpui::test]
+fn a_stale_map_of_keys_types_nothing(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(cx);
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    let remap = |to: &str| Remap {
+        modes: vec![RemapMode::Normal],
+        from: "<leader>xx".to_owned(),
+        to: to.to_owned(),
+        recursive: false,
+    };
+    let issues = cx.update(|_, cx| set_vim_remaps(cx, &[remap("dd")], "<Space>"));
+    assert_eq!(issues, []);
+    draw(cx);
+    let text = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |editor, _| editor.model().buffer().text().to_string())
+    };
+
+    // Vim turned off while the picker shows.
+    run("keymaps.search", cx);
+    cx.update(|_, cx| set_vim_enabled(cx, false));
+    draw(cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.vim_mode()), None);
+    confirm_row(&workbench, |(keys, ..)| keys == "<Space>xx", cx);
+    assert_eq!(palette(&workbench, cx), None);
+    assert_eq!(text(cx), TEXT);
+
+    // The map changed while the picker shows.
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    draw(cx);
+    run("keymaps.search", cx);
+    let issues = cx.update(|_, cx| set_vim_remaps(cx, &[remap("G")], "<Space>"));
+    assert_eq!(issues, []);
+    draw(cx);
+    confirm_row(&workbench, |(keys, ..)| keys == "<Space>xx", cx);
+    assert_eq!(palette(&workbench, cx), None);
+    assert_eq!(text(cx), TEXT);
+    let caret = editor.read_with(cx, |editor, _| editor.model().primary_selection().head());
+    assert_eq!(caret, 0, "G didn't run either");
+
+    // Still the map it was, it runs.
+    run("keymaps.search", cx);
+    confirm_row(&workbench, |(keys, ..)| keys == "<Space>xx", cx);
+    let caret = editor.read_with(cx, |editor, _| editor.model().primary_selection().head());
+    assert_ne!(caret, 0, "G ran");
+}

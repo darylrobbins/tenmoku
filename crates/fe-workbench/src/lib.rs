@@ -41,6 +41,7 @@ mod hierarchy_panel;
 mod ignore_assist;
 mod ignore_diagnostics;
 mod inline_edit;
+pub mod l10n;
 mod language_picker;
 mod line_ending_picker;
 pub mod loader;

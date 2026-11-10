@@ -1,0 +1,42 @@
+# fe-workbench's literal lint (docs/decisions/xte5e7hqsw-i18n-design.md § 8).
+#
+# While the crate migrates, only the files in `migrated` are checked: each
+# fe-workbench card (W1–W8) adds its files' lines, and W8 replaces the list
+# with `all = true`.
+migrated = [
+    # W1: the command titles and the commands' own text.
+    "src/workbench_commands.rs",
+    "src/find_commands.rs",
+    "src/spell_commands.rs",
+    "src/task_commands.rs",
+    "src/git_commands.rs",
+    "src/keymaps_picker.rs",
+]
+
+# Ids and joins, not text: a picker row's element id, and the text a row's
+# query matches against.
+
+[[literal]]
+file = "src/spell_commands.rs"
+text = "spell-row-{}"
+reason = "A suggestion row's element id"
+
+[[literal]]
+file = "src/task_commands.rs"
+text = "task-row-{}"
+reason = "A task row's element id"
+
+[[literal]]
+file = "src/task_commands.rs"
+text = "{} · {command}"
+reason = "A task row's detail: its source (a file or tool name) and its command line, joined by a middle dot"
+
+[[literal]]
+file = "src/keymaps_picker.rs"
+text = "{keys} {title}"
+reason = "What a row's query matches: its keys and its title, joined by a space"
+
+[[literal]]
+file = "src/git_commands.rs"
+text = "{name}{} {args}"
+reason = "The ex line as typed: the command's name, its `!` and its arguments"

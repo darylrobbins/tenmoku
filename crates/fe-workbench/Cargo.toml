@@ -45,6 +45,9 @@ fe-ui.workspace = true
 # The workbench's typed commands: `#[kiln::command]` expands to `::kiln::..` paths.
 kiln.workspace = true
 kiln-platform.workspace = true
+# The UI string catalogue: the workbench's strings and command titles
+# (docs/decisions/xte5e7hqsw-i18n-design.md).
+kiln-l10n.workspace = true
 # A plugin install prompt's plain-words warnings and its grant decisions,
 # and the plugin host: its engine, cache, grants and kiln slices.
 kiln-plugin.workspace = true
@@ -97,6 +100,10 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+# The catalogue checks (tests/l10n.rs): the literal lint, the keys lint and
+# the registry check of command titles.
+kiln-l10n = { workspace = true, features = ["lint"] }
+fe-command = { workspace = true, features = ["lint"] }
 # The tests' trashes go to a test trash, never the user's Trash.
 fe-project = { workspace = true, features = ["test-support"] }
 # Card 1's fake server and its launcher, and the LSP types it speaks.

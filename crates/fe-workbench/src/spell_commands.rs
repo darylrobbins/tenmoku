@@ -26,6 +26,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, Task, WeakEntity, Window, div,
 };
+use kiln_l10n::{text, tr};
 use kiln_shell::ModalId;
 
 use crate::{
@@ -37,22 +38,22 @@ use crate::{
 };
 
 /// What the commands on the word at the caret say with none there.
-pub(crate) const NO_MISSPELLING_HERE: &str = "No misspelling here";
+pub(crate) fn no_misspelling_here() -> SharedString {
+    tr!("workbench-spell-no-misspelling-here")
+}
 
 /// What `spell.next` and `spell.previous` say with nowhere to go.
-pub(crate) const NO_MISSPELLINGS: &str = "No misspellings";
+pub(crate) fn no_misspellings() -> SharedString {
+    tr!("workbench-spell-no-misspellings")
+}
 
 /// What `spell.suggest` says of an editor that takes no edits.
-pub(crate) const READ_ONLY: &str = "This editor is read-only";
+pub(crate) fn read_only() -> SharedString {
+    tr!("workbench-spell-read-only")
+}
 
 /// The picker's name in the modal layer.
 const SPELL_PICKER: ModalId = ModalId("spelling");
-
-/// What the status line says until the speller has answered.
-const ASKING: &str = "Finding suggestions…";
-
-/// What the status line says if the speller has nothing to offer.
-const NO_SUGGESTIONS: &str = "No suggestions";
 
 /// The misspelled word at an editor's caret.
 struct WordAtCaret {
@@ -205,7 +206,7 @@ impl PickerDelegate for SpellPicker {
             return true;
         };
         if editor.read(cx).is_read_only() {
-            toast::show(cx, Toast::info(READ_ONLY));
+            toast::show(cx, Toast::info(read_only()));
             return true;
         }
         let (at, since, word) = (&self.at, self.since, self.word.as_str());
@@ -222,8 +223,8 @@ impl PickerDelegate for SpellPicker {
             )
         });
         let Some(start) = start else {
-            let toast = Toast::info(format!("{word} changed while the suggestions were open"))
-                .detail("It wasn't replaced. Try again.");
+            let toast = Toast::info(tr!("workbench-spell-word-changed", word = word))
+                .detail(tr!("workbench-spell-word-changed-detail"));
             toast::show(cx, toast);
             return true;
         };
@@ -247,9 +248,11 @@ impl PickerDelegate for SpellPicker {
 
     fn status(&self) -> Option<SharedString> {
         if !self.loaded {
-            Some(ASKING.into())
+            // Until the speller has answered.
+            Some(tr!("workbench-spell-asking"))
         } else if self.suggestions.is_empty() {
-            Some(NO_SUGGESTIONS.into())
+            // The speller has nothing to offer.
+            Some(tr!("workbench-spell-no-suggestions"))
         } else {
             None
         }
@@ -282,10 +285,10 @@ impl Workbench {
     /// answered, off the main thread.
     pub(crate) fn suggest_spelling(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(found), Some(speller)) = (self.misspelling_at_caret(cx), self.speller()) else {
-            return toast::show(cx, Toast::info(NO_MISSPELLING_HERE));
+            return toast::show(cx, Toast::info(no_misspelling_here()));
         };
         if found.editor.read(cx).is_read_only() {
-            return toast::show(cx, Toast::info(READ_ONLY));
+            return toast::show(cx, Toast::info(read_only()));
         }
         let language = self.spell_language().to_owned();
         let word = found.word.clone();
@@ -321,8 +324,8 @@ impl Workbench {
             _asking: None,
             word: found.word.clone(),
         };
-        let placeholder = format!("Replace {}…", found.word);
-        let picker = cx.new(|cx| Picker::new(delegate, &placeholder, fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-spell-replace", word = found.word.clone());
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));
         (self.shell().clone()).update(cx, |shell, cx| {
             shell.show_modal(SPELL_PICKER, picker.clone(), window, cx);
@@ -335,17 +338,19 @@ impl Workbench {
     /// session even if that fails.
     pub(crate) fn add_word_at_caret(&mut self, cx: &mut Context<Self>) {
         let Some(WordAtCaret { word, .. }) = self.misspelling_at_caret(cx) else {
-            return toast::show(cx, Toast::info(NO_MISSPELLING_HERE));
+            return toast::show(cx, Toast::info(no_misspelling_here()));
         };
         let writing = self.write_spell_word(&word, cx);
         self.accept_in_other_windows(&word, cx);
         cx.spawn(async move |_, cx| {
             let toast = match writing.await {
-                Ok(()) => Toast::info(format!("Added {word} to dictionary")),
+                Ok(()) => Toast::info(tr!("workbench-spell-added", word = &word)),
                 Err(error) => {
                     log::warn!("can't add {word} to the dictionary: {error}");
-                    Toast::error(format!("Can't add {word} to dictionary"))
-                        .detail(format!("It counts until you quit: {error}"))
+                    Toast::error(tr!("workbench-spell-not-added", word = &word)).detail(tr!(
+                        "workbench-spell-not-added-detail",
+                        error = error.to_string()
+                    ))
                 }
             };
             cx.update(|cx| toast::show(cx, toast));
@@ -357,7 +362,7 @@ impl Workbench {
     /// the app quits.
     pub(crate) fn ignore_word_at_caret(&mut self, cx: &mut Context<Self>) {
         let Some(WordAtCaret { word, .. }) = self.misspelling_at_caret(cx) else {
-            return toast::show(cx, Toast::info(NO_MISSPELLING_HERE));
+            return toast::show(cx, Toast::info(no_misspelling_here()));
         };
         self.ignore_spell_word(&word, cx);
         self.accept_in_other_windows(&word, cx);
@@ -402,7 +407,7 @@ impl Workbench {
             Some((editor, word))
         });
         let Some((editor, word)) = word else {
-            return toast::show(cx, Toast::info(NO_MISSPELLINGS));
+            return toast::show(cx, Toast::info(no_misspellings()));
         };
         editor.update(cx, |view, cx| {
             view.select_and_reveal(word.start..word.start, cx)

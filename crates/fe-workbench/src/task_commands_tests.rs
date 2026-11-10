@@ -19,7 +19,7 @@ use kiln_shell::Picker;
 
 use crate::{
     Launch, TerminalPanel, Workbench,
-    task_commands::{NO_TASK_RUN, ShownRow, TaskPicker, TestFiles},
+    task_commands::{ShownRow, TaskPicker, TestFiles},
     task_defs::{ProjectFiles, TASKS_FILE},
     task_run::UNTRUSTED,
     tests::open,
@@ -393,7 +393,10 @@ fn rerun_last_task(cx: &mut TestAppContext) {
 
     // None yet.
     project.run("tasks.rerun_last");
-    assert_eq!(project.toasts(), [(Level::Info, NO_TASK_RUN.to_owned())]);
+    assert_eq!(
+        project.toasts(),
+        [(Level::Info, "No task has run yet".to_owned())]
+    );
     assert_eq!(project.tabs(), Vec::<String>::new());
 
     project.write("Makefile", "all:\n\ttrue\n\nclean:\n\ttrue\n");
@@ -416,7 +419,10 @@ fn rerun_last_task(cx: &mut TestAppContext) {
     assert_eq!(after[0], before[0]);
     assert_ne!(after[1], before[1]);
     assert_eq!(project.last_task().as_deref(), Some("make clean"));
-    assert_eq!(project.toasts(), [(Level::Info, NO_TASK_RUN.to_owned())]);
+    assert_eq!(
+        project.toasts(),
+        [(Level::Info, "No task has run yet".to_owned())]
+    );
 }
 
 #[gpui::test]

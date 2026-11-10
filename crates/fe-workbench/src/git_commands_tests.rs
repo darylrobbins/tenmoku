@@ -449,3 +449,54 @@ fn active_editor_in_diff_view(cx: &mut TestAppContext) {
     assert_eq!(followed(cx), Some(ItemId(right.entity_id())));
     assert_ne!(tab, right);
 }
+
+/// Every git command, for [`each_title_is_its_typed_commands`].
+const ALL: [GitCommand; 31] = [
+    GitCommand::DiffIndex,
+    GitCommand::DiffHead,
+    GitCommand::CompareFile,
+    GitCommand::NextChange,
+    GitCommand::PreviousChange,
+    GitCommand::StageFile,
+    GitCommand::UnstageFile,
+    GitCommand::DiscardFile,
+    GitCommand::ResetBuffer,
+    GitCommand::StageHunk,
+    GitCommand::UnstageHunk,
+    GitCommand::RevertHunk,
+    GitCommand::Commit,
+    GitCommand::CommitAmend,
+    GitCommand::ToggleLineBlame,
+    GitCommand::ToggleBlameAnnotations,
+    GitCommand::BlameLine,
+    GitCommand::OpenLineCommit,
+    GitCommand::SwitchBranch,
+    GitCommand::CreateBranch,
+    GitCommand::FileHistory,
+    GitCommand::Log,
+    GitCommand::LogAll,
+    GitCommand::Stash,
+    GitCommand::StashIncludeUntracked,
+    GitCommand::StashPop,
+    GitCommand::StashApply,
+    GitCommand::Fetch,
+    GitCommand::Pull,
+    GitCommand::Push,
+    GitCommand::PushForceWithLease,
+];
+
+/// A git command's title, which its `Not supported yet` answer names, is
+/// its typed command's: the one `command-<id>` message, equal in en-US to
+/// the title its method in `workbench_commands.rs` declares.
+#[test]
+fn each_title_is_its_typed_commands() {
+    use kiln::__private::{CommandRecord, inventory};
+    for command in ALL {
+        let record = (inventory::iter::<CommandRecord>())
+            .find(|record| record.krate == "fe_workbench" && record.id == command.id())
+            .unwrap_or_else(|| panic!("{} is a typed command", command.id()));
+        assert_eq!(command.title(), record.title, "{command:?}");
+        let key = fe_command::command_key(command.id());
+        assert_eq!(command.title(), kiln_l10n::message(&key), "{command:?}");
+    }
+}
