@@ -114,6 +114,7 @@ mod status_bar_go_to_line;
 mod status_bar_icons;
 mod tabs;
 mod title_bar;
+mod title_bar_b3;
 mod toolbar_history;
 mod trash_isolation;
 mod tree_keys;

@@ -9,5 +9,6 @@ kiln_l10n::resources! {
         "../l10n/en-US/navigation.ftl",
         "../l10n/en-US/find.ftl",
         "../l10n/en-US/setup.ftl",
+        "../l10n/en-US/chrome.ftl",
     ],
 }

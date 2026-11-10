@@ -17,8 +17,9 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The card, right of its module path and signature: no code block
-    // behind them now.
-    probe(700., 262., "surface.raised"),
+    // behind them now. (Clear of the signature's end since the 38 px title
+    // bar moved the card down, T1538.)
+    probe(820., 262., "surface.raised"),
 ];
 
 /// The hover card at the caret: rust-analyzer's two fences, then the docs.

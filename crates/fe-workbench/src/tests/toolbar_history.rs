@@ -1,5 +1,5 @@
-//! The pane toolbar's back and forward buttons follow the navigation
-//! history, and breadcrumb picks are jumps.
+//! The title bar's back and forward buttons follow the navigation history,
+//! and breadcrumb picks are jumps.
 
 use std::{
     fs,
@@ -9,14 +9,23 @@ use std::{
 use fe_command::Source;
 use fe_gpui::EditorView;
 use fe_ui::CrumbKind;
-use gpui::{
-    Bounds, Entity, Focusable as _, Modifiers, Pixels, Point, TestAppContext, VisualTestContext,
-};
+use gpui::{Bounds, Entity, Focusable as _, Modifiers, Pixels, TestAppContext, VisualTestContext};
 
 use super::open_root;
 
 mod goto;
 use crate::{Pane, Workbench, pane_toolbar::NavButtons};
+
+/// Where the title bar's back and forward buttons are drawn.
+fn button(forward: bool, cx: &mut VisualTestContext) -> Bounds<Pixels> {
+    let id = if forward {
+        "title-forward"
+    } else {
+        "title-back"
+    };
+    cx.debug_bounds(format!("icon-button:{id}").leak())
+        .expect("drawn")
+}
 
 const MAIN: &str = "\
 mod util;
@@ -56,6 +65,7 @@ fn opened<'a>(
     root: &Path,
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
     let (workbench, cx) = open_root(cx, root);
+    workbench.update(cx, |workbench, cx| workbench.set_title_bar(true, cx));
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
     let pane = active(&workbench, cx);
     let path = root.join("src/main.rs");
@@ -115,9 +125,9 @@ fn at(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (PathBuf, us
     })
 }
 
-fn nav(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> (bool, bool) {
-    pane.read_with(cx, |pane, _| {
-        let NavButtons { back, forward } = pane.toolbar().nav;
+fn nav(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (bool, bool) {
+    workbench.read_with(cx, |workbench, _| {
+        let NavButtons { back, forward } = workbench.nav_buttons();
         (back, forward)
     })
 }
@@ -134,25 +144,9 @@ fn mouse_runs(workbench: &Entity<Workbench>, command: &str, cx: &mut VisualTestC
     })
 }
 
-/// Where the buttons sit in a pane, from its top left: they sit alike in
-/// every pane.
-fn button_offsets(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> [Point<Pixels>; 2] {
-    let origin = pane.read_with(cx, |pane, _| pane.bounds().origin);
-    ["back", "forward"].map(|id| {
-        let button = cx.debug_bounds(format!("icon-button:{id}").leak());
-        let button: Bounds<Pixels> = button.expect("drawn");
-        button.center() - origin
-    })
-}
-
-fn click_button(
-    pane: &Entity<Pane>,
-    offsets: &[Point<Pixels>; 2],
-    forward: bool,
-    cx: &mut VisualTestContext,
-) {
-    let origin = pane.read_with(cx, |pane, _| pane.bounds().origin);
-    cx.simulate_click(origin + offsets[forward as usize], Modifiers::none());
+fn click_button(forward: bool, cx: &mut VisualTestContext) {
+    let at = button(forward, cx).center();
+    cx.simulate_click(at, Modifiers::none());
     settle(cx);
 }
 
@@ -172,42 +166,38 @@ fn click_crumb(pane: &Entity<Pane>, kind: CrumbKind, label: &str, cx: &mut Visua
 fn buttons_follow_the_history(cx: &mut TestAppContext) {
     let (_dir, root) = project();
     let (workbench, cx) = opened(cx, &root);
-    let pane = active(&workbench, cx);
-    let offsets = button_offsets(&pane, cx);
     let main = root.join("src/main.rs");
     let util = root.join("src/util.rs");
-    assert_eq!(nav(&pane, cx), (false, false));
+    assert_eq!(nav(&workbench, cx), (false, false));
 
     let origin = caret_at(&workbench, "helper", 1, cx);
     cx.simulate_keystrokes("f12");
     settle(cx);
     let target = at(&workbench, cx);
     assert_eq!(target.0, util);
-    assert_eq!(nav(&pane, cx), (true, false));
+    assert_eq!(nav(&workbench, cx), (true, false));
 
     // As ctrl-minus returns.
-    click_button(&pane, &offsets, false, cx);
+    click_button(false, cx);
     assert_eq!(at(&workbench, cx), (main.clone(), origin));
-    assert_eq!(nav(&pane, cx), (false, true));
+    assert_eq!(nav(&workbench, cx), (false, true));
 
-    click_button(&pane, &offsets, true, cx);
+    click_button(true, cx);
     assert_eq!(at(&workbench, cx), target);
-    assert_eq!(nav(&pane, cx), (true, false));
+    assert_eq!(nav(&workbench, cx), (true, false));
 
     // A new jump clears the way forward.
-    click_button(&pane, &offsets, false, cx);
-    assert_eq!(nav(&pane, cx), (false, true));
+    click_button(false, cx);
+    assert_eq!(nav(&workbench, cx), (false, true));
     cx.simulate_keystrokes("f12");
     settle(cx);
-    assert_eq!(nav(&pane, cx), (true, false));
+    assert_eq!(nav(&workbench, cx), (true, false));
 }
 
 #[gpui::test]
-fn every_pane_shows_one_history(cx: &mut TestAppContext) {
+fn the_title_bar_goes_back_in_the_active_pane(cx: &mut TestAppContext) {
     let (_dir, root) = project();
     let (workbench, cx) = opened(cx, &root);
-    let first = active(&workbench, cx);
-    let offsets = button_offsets(&first, cx);
     let main = root.join("src/main.rs");
 
     cx.simulate_keystrokes("cmd-\\");
@@ -217,22 +207,25 @@ fn every_pane_shows_one_history(cx: &mut TestAppContext) {
     let origin = caret_at(&workbench, "helper", 1, cx);
     cx.simulate_keystrokes("f12");
     settle(cx);
-    assert_eq!(nav(&left, cx), (true, false));
-    assert_eq!(nav(&right, cx), (true, false));
+    assert_eq!(nav(&workbench, cx), (true, false));
 
-    // Back in the inactive pane activates it, and opens the target there.
+    // Back, from the title bar, goes back in the active pane.
     assert_eq!(active(&workbench, cx), right);
-    click_button(&left, &offsets, false, cx);
-    assert_eq!(active(&workbench, cx), left);
+    click_button(false, cx);
+    assert_eq!(active(&workbench, cx), right);
     assert_eq!(at(&workbench, cx), (main.clone(), origin));
-    assert_eq!(nav(&left, cx), (false, true));
-    assert_eq!(nav(&right, cx), (false, true));
+    assert_eq!(nav(&workbench, cx), (false, true));
     assert_eq!(mouse_runs(&workbench, "nav.back", cx), 1);
 
-    click_button(&right, &offsets, true, cx);
-    assert_eq!(active(&workbench, cx), right);
-    // Forward returns to where back left from: the left pane's caret, at the start.
-    assert_eq!(at(&workbench, cx), (root.join("src/main.rs"), 0));
+    // With the left pane active, forward opens the target there.
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.activate(left.clone(), window, cx)
+    });
+    settle(cx);
+    assert_eq!(active(&workbench, cx), left);
+    click_button(true, cx);
+    assert_eq!(active(&workbench, cx), left);
+    assert_eq!(at(&workbench, cx).0, root.join("src/util.rs"));
     assert_eq!(mouse_runs(&workbench, "nav.forward", cx), 1);
 }
 
@@ -241,19 +234,18 @@ fn crumb_picks_push_history(cx: &mut TestAppContext) {
     let (_dir, root) = project();
     let (workbench, cx) = opened(cx, &root);
     let pane = active(&workbench, cx);
-    let offsets = button_offsets(&pane, cx);
     let main = root.join("src/main.rs");
 
     // A sibling symbol from the symbol crumb.
     let in_b = caret_at(&workbench, "util::helper", 2, cx);
-    assert_eq!(nav(&pane, cx), (false, false));
+    assert_eq!(nav(&workbench, cx), (false, false));
     click_crumb(&pane, CrumbKind::Symbol, "b", cx);
     cx.simulate_keystrokes("up enter");
     settle(cx);
     let (_, in_a) = at(&workbench, cx);
     assert_eq!(in_a, MAIN.find("a()").unwrap());
-    assert_eq!(nav(&pane, cx), (true, false));
-    click_button(&pane, &offsets, false, cx);
+    assert_eq!(nav(&workbench, cx), (true, false));
+    click_button(false, cx);
     assert_eq!(at(&workbench, cx), (main.clone(), in_b));
 
     // Another file from the entry crumb.
@@ -261,8 +253,8 @@ fn crumb_picks_push_history(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("u t i l enter");
     settle(cx);
     assert_eq!(at(&workbench, cx).0, root.join("src/util.rs"));
-    assert_eq!(nav(&pane, cx), (true, false));
-    click_button(&pane, &offsets, false, cx);
+    assert_eq!(nav(&workbench, cx), (true, false));
+    click_button(false, cx);
     assert_eq!(at(&workbench, cx), (main, in_b));
 }
 
@@ -290,8 +282,6 @@ fn button_state_is_pushed_on_change_only(cx: &mut TestAppContext) {
 fn an_editor_jump_pushes_history(cx: &mut TestAppContext) {
     let (_dir, root) = project();
     let (workbench, cx) = opened(cx, &root);
-    let pane = active(&workbench, cx);
-    let offsets = button_offsets(&pane, cx);
     let main = root.join("src/main.rs");
 
     // A click on a sticky scroll row: the caret is at the header, and the
@@ -303,9 +293,9 @@ fn an_editor_jump_pushes_history(cx: &mut TestAppContext) {
         cx.emit(fe_gpui::commands::EditorViewEvent::Jumped { from: in_b })
     });
     settle(cx);
-    assert_eq!(nav(&pane, cx), (true, false));
+    assert_eq!(nav(&workbench, cx), (true, false));
     assert_eq!(at(&workbench, cx), (main.clone(), header));
-    click_button(&pane, &offsets, false, cx);
+    click_button(false, cx);
     assert_eq!(at(&workbench, cx), (main, in_b));
 }
 
@@ -313,8 +303,6 @@ fn an_editor_jump_pushes_history(cx: &mut TestAppContext) {
 fn go_to_bracket_is_a_jump(cx: &mut TestAppContext) {
     let (_dir, root) = project();
     let (workbench, cx) = opened(cx, &root);
-    let pane = active(&workbench, cx);
-    let offsets = button_offsets(&pane, cx);
     let main = root.join("src/main.rs");
 
     // Just before the call's `(`: the bracket's partner is the `)`.
@@ -323,11 +311,11 @@ fn go_to_bracket_is_a_jump(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-shift-\\");
     settle(cx);
     assert_eq!(at(&workbench, cx), (main.clone(), to));
-    assert_eq!(nav(&pane, cx), (true, false));
+    assert_eq!(nav(&workbench, cx), (true, false));
 
-    click_button(&pane, &offsets, false, cx);
+    click_button(false, cx);
     assert_eq!(at(&workbench, cx), (main.clone(), from));
-    assert_eq!(nav(&pane, cx), (false, true));
-    click_button(&pane, &offsets, true, cx);
+    assert_eq!(nav(&workbench, cx), (false, true));
+    click_button(true, cx);
     assert_eq!(at(&workbench, cx), (main, to));
 }

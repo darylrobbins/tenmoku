@@ -34,7 +34,7 @@ fn window_options_follow_the_platform(cx: &mut TestAppContext) {
     assert!(titlebar.appears_transparent);
     assert_eq!(
         titlebar.traffic_light_position,
-        Some(point(px(12.), px(9.)))
+        Some(point(px(14.), px(12.)))
     );
     assert!(mac.app_owns_titlebar_drag);
     assert_eq!(mac.app_id.as_deref(), Some("com.example.notes"));

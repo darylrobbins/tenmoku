@@ -19,8 +19,8 @@ use fe_gpui::{
 use fe_ui::{ROW_HEIGHT, UI_BODY};
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, WeakEntity, WeakFocusHandle, Window, WindowBounds, div, px,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, WeakEntity, WeakFocusHandle, Window, WindowBounds, div, px,
 };
 
 use self::recent_picker::RecentPicker;
@@ -268,6 +268,9 @@ pub struct Workbench {
     /// Whether the panes show their toolbars.
     breadcrumbs: bool,
     nav: NavButtons,
+    /// HEAD's branch for the title bar, or its short id when detached;
+    /// none outside a repository.
+    title_branch: Option<SharedString>,
     /// What the active pane's symbol chain was last worked out for: the
     /// pane, the editor, its caret and the outline: `None` if none can come
     /// (plain text, an unsupported language, a file too large), `Some(None)`
@@ -709,6 +712,7 @@ impl Workbench {
             toolbar_picker,
             breadcrumbs: true,
             nav: NavButtons::default(),
+            title_branch: None,
             chain_key: None,
             _outline: cx.observe(&outline, |workbench, _, cx| {
                 if workbench.palette == Some(Palette::Toolbar) {

@@ -12,7 +12,7 @@ use gpui::{
 };
 
 use super::{open, open_root};
-use crate::{Launch, Pane, Workbench, pane_toolbar::NavButtons};
+use crate::{Launch, Pane, Workbench};
 
 const MOD_RS: &str = "\
 mod outer {
@@ -238,14 +238,10 @@ fn layout_and_buttons(cx: &mut TestAppContext) {
         ]
     );
 
-    // Back and forward are disabled: clicks dispatch nothing.
-    let before = invocations(&workbench, cx).len();
+    // No back or forward: they're the title bar's.
     for id in ["back", "forward"] {
-        let button = bounds(format!("icon-button:{id}"), cx).expect(id);
-        assert!(toolbar.contains(&button.center()));
-        click(button, cx);
+        assert_eq!(bounds(format!("icon-button:{id}"), cx), None, "{id}");
     }
-    assert_eq!(invocations(&workbench, cx).len(), before);
 
     // The tab bar's buttons sit at its right end, and stay put as it
     // scrolls.
@@ -518,18 +514,6 @@ fn symbol_crumbs_open_sibling_pickers(cx: &mut TestAppContext) {
 fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     let dir = project();
     let (workbench, cx) = opened(cx, &dir);
-
-    // Enabled, back dispatches `nav.back`.
-    workbench.update(cx, |workbench, cx| {
-        let nav = NavButtons {
-            back: true,
-            forward: true,
-        };
-        workbench.set_nav_buttons(nav, cx)
-    });
-    settle(cx);
-    click(bounds("icon-button:back".into(), cx).unwrap(), cx);
-    assert_eq!(mouse_runs(&workbench, "nav.back", cx), 1);
 
     cx.simulate_keystrokes("cmd-\\");
     settle(cx);

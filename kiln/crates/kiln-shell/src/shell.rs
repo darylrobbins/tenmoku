@@ -17,8 +17,8 @@ use kiln_platform::{Capabilities, focus};
 use kiln_ui::{ROW_HEIGHT, ui_theme};
 
 use crate::{
-    Closing, DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar, close,
-    command_palette, dock,
+    Closing, DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar, TitleBarItems,
+    close, command_palette, dock,
     menu_bar::Open,
     pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH},
     window_frame::{self, TopRow},
@@ -57,6 +57,7 @@ pub struct Shell {
     title: SharedString,
     text_size: Option<Pixels>,
     title_bar: bool,
+    title_bar_items: TitleBarItems,
     menu_bar: Option<Entity<MenuBarView>>,
     window_frame: bool,
     client_tiling: Option<Tiling>,
@@ -111,6 +112,7 @@ impl Shell {
             title: SharedString::default(),
             text_size: None,
             title_bar: false,
+            title_bar_items: TitleBarItems::default(),
             menu_bar: None,
             window_frame: false,
             client_tiling: None,
@@ -163,6 +165,13 @@ impl Shell {
     /// is transparent (macOS).
     pub fn set_title_bar(&mut self, shown: bool, cx: &mut Context<Self>) {
         self.title_bar = shown;
+        cx.notify();
+    }
+
+    /// The app's items in the unified title bar, in place of its centred
+    /// title on the left: see [`TitleBarItems`].
+    pub fn set_title_bar_items(&mut self, items: TitleBarItems, cx: &mut Context<Self>) {
+        self.title_bar_items = items;
         cx.notify();
     }
 
@@ -388,7 +397,7 @@ impl Render for Shell {
             .text_color(ui.text)
             .when_some(self.text_size, |shell, size| shell.text_size(size))
             .when(self.title_bar, |shell| {
-                shell.child(TitleBar::new(self.title.clone()))
+                shell.child(TitleBar::new(self.title.clone()).items(self.title_bar_items.clone()))
             })
             .children(top_row)
             .child(main)

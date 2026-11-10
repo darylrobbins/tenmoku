@@ -187,3 +187,24 @@ fn the_unified_title_bar_draws_no_frame(cx: &mut TestAppContext) {
     assert_eq!(cx.debug_bounds("window-close"), None);
     assert_eq!(cx.debug_bounds("window-resize-Top"), None);
 }
+
+#[gpui::test]
+fn the_unified_window_has_the_lights_at_14_12(cx: &mut TestAppContext) {
+    let spec = kiln_platform::window_options::WindowSpec::main("Notes");
+    let options = cx.update(|cx| {
+        kiln_platform::window_options::window_options(&spec, &support::mac(), cx)
+    });
+    let titlebar = options.titlebar.expect("a title bar");
+    assert_eq!(
+        titlebar.traffic_light_position,
+        Some(gpui::point(gpui::px(14.), gpui::px(12.)))
+    );
+    assert!(titlebar.appears_transparent);
+    assert!(options.app_owns_titlebar_drag);
+
+    // Elsewhere the window manager places its own buttons.
+    let options = cx.update(|cx| {
+        kiln_platform::window_options::window_options(&spec, &support::linux(), cx)
+    });
+    assert_eq!(options.titlebar.unwrap().traffic_light_position, None);
+}

@@ -19,8 +19,8 @@ use fe_gpui::{EditorView, commands::RunCommand};
 use fe_syntax::{Outline, OutlineKind};
 use gpui::{App, EntityId, SharedString, WeakEntity, Window};
 
-/// Which of back and forward can run. The workbench pushes it into each
-/// pane; both are off until there's a navigation history.
+/// Which of back and forward can run, which the title bar's buttons show;
+/// both are off until there's a navigation history.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NavButtons {
     pub(crate) back: bool,
@@ -31,7 +31,6 @@ pub(crate) struct NavButtons {
 #[derive(Clone, Debug)]
 pub(crate) struct Toolbar {
     pub(crate) visible: bool,
-    pub(crate) nav: NavButtons,
     /// The workbench's root, which path crumbs are relative to.
     pub(crate) root: Option<PathBuf>,
     pub(crate) symbols: SymbolChain,
@@ -41,7 +40,6 @@ impl Default for Toolbar {
     fn default() -> Self {
         Self {
             visible: true,
-            nav: NavButtons::default(),
             root: None,
             symbols: SymbolChain::default(),
         }

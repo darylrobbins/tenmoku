@@ -4,8 +4,7 @@ use fe_ui::CrumbKind;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 
 use super::{
-    MAIN, active, at, button_offsets, caret_at, click_button, click_crumb, nav, opened, project,
-    pushes, settle,
+    MAIN, active, at, caret_at, click_button, click_crumb, nav, opened, project, pushes, settle,
 };
 use crate::Workbench;
 
@@ -30,7 +29,6 @@ fn a_symbol_pick_drops_a_running_goto_definition(cx: &mut TestAppContext) {
     let (_dir, root) = project();
     let (workbench, cx) = opened(cx, &root);
     let pane = active(&workbench, cx);
-    let offsets = button_offsets(&pane, cx);
     let main = root.join("src/main.rs");
     let (origin, release) = hold_goto(&workbench, cx);
 
@@ -46,10 +44,10 @@ fn a_symbol_pick_drops_a_running_goto_definition(cx: &mut TestAppContext) {
     assert_eq!(at(&workbench, cx), picked, "the held answer was dropped");
     assert_eq!(pushes(&workbench, cx), before, "and recorded nothing");
 
-    assert_eq!(nav(&pane, cx), (true, false));
-    click_button(&pane, &offsets, false, cx);
+    assert_eq!(nav(&workbench, cx), (true, false));
+    click_button(false, cx);
     assert_eq!(at(&workbench, cx), (main, origin));
-    click_button(&pane, &offsets, true, cx);
+    click_button(true, cx);
     assert_eq!(at(&workbench, cx), picked);
 }
 

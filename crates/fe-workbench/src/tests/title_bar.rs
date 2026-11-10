@@ -1,5 +1,5 @@
-//! The unified title bar: opt-in, the root's name centred, the window
-//! dragged and zoomed from its empty space.
+//! The unified title bar: opt-in, the root's name in the project widget,
+//! the window dragged and zoomed from its empty space.
 
 use std::path::Path;
 
@@ -86,6 +86,7 @@ fn off_by_default(cx: &mut TestAppContext) {
     let (workbench, cx) = opened(cx, &dir.path().join("demo"), false);
     assert_eq!(cx.debug_bounds("title-bar"), None);
     assert_eq!(cx.debug_bounds("title-bar-label"), None);
+    assert_eq!(cx.debug_bounds("title-project"), None);
     assert_eq!(pane_top(&workbench, cx), px(0.));
 }
 
@@ -98,12 +99,14 @@ fn shows_the_root_name(cx: &mut TestAppContext) {
     assert_eq!((bar.origin.x, bar.origin.y), (px(0.), px(0.)));
     assert_eq!(bar.size.width, size.width);
     assert_eq!(bar.size.height, TITLE_BAR_HEIGHT);
-    assert_eq!(TITLE_BAR_HEIGHT, px(32.));
+    assert_eq!(TITLE_BAR_HEIGHT, px(38.));
     assert_eq!(name(&workbench, cx), "demo");
-    assert!(near(
-        bounds("title-bar-label", cx).center().x,
-        size.width / 2.
-    ));
+    // The project widget reads it, after the traffic lights, in place of a
+    // centred title.
+    assert_eq!(cx.debug_bounds("title-bar-label"), None);
+    let project = bounds("title-project", cx);
+    assert!(project.left() > TRAFFIC_LIGHT_INSET, "{project:?}");
+    assert!(near(project.center().y, bar.center().y), "{project:?}");
     assert_eq!(pane_top(&workbench, cx), TITLE_BAR_HEIGHT);
     let dock = workbench.read_with(cx, |workbench, _| workbench.dock().clone());
     let (rail, column) = dock.read_with(cx, |dock, _| {
@@ -122,7 +125,8 @@ fn shows_the_root_name(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(name(&workbench, cx), "other");
 
-    // A long name stays out of the traffic lights, in a narrow window.
+    // A long name stays out of the traffic lights and clear of search and
+    // settings, in a narrow window.
     let long = dir.path().join("x".repeat(100));
     std::fs::create_dir(&long).unwrap();
     cx.simulate_resize(gpui::size(px(300.), px(400.)));
@@ -130,11 +134,13 @@ fn shows_the_root_name(cx: &mut TestAppContext) {
         workbench.update(cx, |workbench, cx| workbench.set_root(long, window, cx))
     });
     draw(cx);
-    let label = bounds("title-bar-label", cx);
-    assert!(label.left() >= TRAFFIC_LIGHT_INSET - px(1.), "{label:?}");
+    let left = bounds("title-bar-left", cx);
+    assert!(left.left() >= TRAFFIC_LIGHT_INSET - px(1.), "{left:?}");
+    let search = bounds("icon-button:title-search", cx);
+    assert!(left.right() <= search.left(), "{left:?} {search:?}");
     assert!(
-        label.right() <= px(300.) - TRAFFIC_LIGHT_INSET + px(1.),
-        "{label:?}"
+        bounds("icon-button:title-settings", cx).right() <= px(300.),
+        "settings still shows"
     );
 }
 
@@ -168,20 +174,30 @@ fn drag_and_double_click(cx: &mut TestAppContext) {
     let (workbench, cx) = opened(cx, &dir.path().join("demo"), true);
     requests();
     let bar = bounds("title-bar", cx);
-    let label = bounds("title-bar-label", cx);
-    let empty = point(px(100.), bar.center().y);
-    let empty = if label.contains(&empty) {
-        point(bar.right() - px(10.), bar.center().y)
-    } else {
-        empty
-    };
+    let left = bounds("title-bar-left", cx);
+    let right = bounds("title-bar-right", cx);
+    // Between the left and right items.
+    let empty = point((left.right() + right.left()) / 2., bar.center().y);
+    assert!(left.right() + px(20.) < right.left());
 
     mouse_down(empty, 1, cx);
     assert_eq!(requests(), [Request::Move]);
-    mouse_down(label.center(), 1, cx);
-    assert_eq!(requests(), [Request::Move]);
     mouse_down(empty, 2, cx);
     assert_eq!(requests(), [Request::DoubleClick]);
+    // Left of the items, by the traffic lights.
+    mouse_down(point(px(10.), bar.center().y), 1, cx);
+    assert_eq!(requests(), [Request::Move]);
+
+    // The items are buttons: a press on one doesn't move the window.
+    for selector in [
+        "icon-button:title-back",
+        "title-project",
+        "icon-button:title-settings",
+    ] {
+        mouse_down(bounds(selector, cx).center(), 1, cx);
+        mouse_down(bounds(selector, cx).center(), 2, cx);
+        assert_eq!(requests(), [], "{selector}");
+    }
 
     let tab = workbench.read_with(cx, |workbench, cx| workbench.pane().read(cx).tab_bounds(0));
     mouse_down(tab.expect("a tab").center(), 1, cx);

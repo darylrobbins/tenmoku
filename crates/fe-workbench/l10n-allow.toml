@@ -52,6 +52,11 @@ migrated = [
     "src/language_picker.rs",
     "src/theme_picker.rs",
     "src/config_problems.rs",
+    # The title bar in B3 (T1538): the bar, the window chrome and the
+    # branch widget's pickers.
+    "src/title_bar.rs",
+    "src/workbench_chrome.rs",
+    "src/git_branch.rs",
 ]
 
 # Ids and joins, not text: a picker row's element id, and the text a row's
@@ -218,3 +223,13 @@ reason = "A conflict mark's element id"
 file = "src/shortcuts_editor.rs"
 text = "menu-item:{}"
 reason = "A menu item's debug selector"
+
+[[literal]]
+file = "src/git_branch.rs"
+text = "refs/heads/{name}"
+reason = "A local branch row's element id: its full ref name"
+
+[[literal]]
+file = "src/git_branch.rs"
+text = "refs/remotes/{}"
+reason = "A remote-tracking branch row's element id: its full ref name"

@@ -587,11 +587,19 @@ impl Button {
         .when_some(name, |base, name| base.aria_label(name))
         .when_some(self.shortcut, |base, key| base.aria_keyshortcuts(key))
         .when_some(tooltip, |base, tooltip| base.tooltip(tooltip))
+        .children(self.icon.map(|icon| {
+            svg()
+                .path(icon.path())
+                .size(px(14.))
+                .flex_none()
+                .text_color(look.text)
+        }))
+        // A button the caller lets shrink ends its label in an ellipsis;
+        // its icon keeps its size.
         .children(
-            self.icon
-                .map(|icon| svg().path(icon.path()).size(px(14.)).text_color(look.text)),
+            self.label
+                .map(|label| div().min_w_0().truncate().child(label)),
         )
-        .children(self.label)
         .when_some(self.on_click.filter(|_| !disabled), |base, on_click| {
             base.on_click(move |event, window, cx| on_click(event, window, cx))
         });

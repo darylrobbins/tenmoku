@@ -45,7 +45,7 @@ use crate::{
     loader::{self, Opened},
     nav::Place,
     pane_drag::{DraggedTab, TabDropped},
-    pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
+    pane_toolbar::{self, Toolbar, ToolbarRequest},
     start_page::StartPageView,
     tab_switcher::Mru,
     workbench::toast::{self, Toast},
@@ -2804,7 +2804,8 @@ impl Pane {
             .child(strip)
     }
 
-    /// Back and forward, then the crumbs; nothing while hidden.
+    /// The crumbs; nothing while hidden. Back and forward are the title
+    /// bar's.
     fn toolbar_row(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         #[cfg(test)]
         self.drawn_crumbs.clear();
@@ -2812,20 +2813,6 @@ impl Pane {
             return None;
         }
         let ui = fe_ui::ui_theme(cx);
-        let nav = |button: IconButton, enabled: bool, command: &'static str| {
-            button.disabled(!enabled).on_click(move |_, window, cx| {
-                pane_toolbar::dispatch(command, Source::Mouse, window, cx)
-            })
-        };
-        let NavButtons { back, forward } = self.toolbar.nav;
-        let back_button = self.button("back", Icon::ArrowLeft, "Go Back", Some("nav.back"), &ui);
-        let forward_button = self.button(
-            "forward",
-            Icon::ArrowRight,
-            "Go Forward",
-            Some("nav.forward"),
-            &ui,
-        );
         let crumbs = self.crumbs(cx);
         #[cfg(test)]
         {
@@ -2854,8 +2841,6 @@ impl Pane {
             .debug_selector(|| "pane-toolbar".into())
             // A tab dropped here goes where the marker in the tab bar says.
             .on_drop(self.state.on_drop(cx))
-            .child(nav(back_button, back, "nav.back"))
-            .child(nav(forward_button, forward, "nav.forward"))
             .child(Breadcrumbs::new(crumbs, &ui));
         Some(toolbar)
     }

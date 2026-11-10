@@ -74,7 +74,7 @@ pub use picker::{Picker, PickerDelegate};
 pub use root::Root;
 pub use shell::Shell;
 pub use status::{StatusItem, StatusItems, StatusSide};
-pub use title_bar::TitleBar;
+pub use title_bar::{TitleBar, TitleBarItems, TitleBarSlot};
 pub use view_container::{ViewContainer, ViewSpec};
 pub use view_stack::{StackedView, ViewId, ViewStack};
 pub use workspace::{Workspace, WorkspaceEvent};

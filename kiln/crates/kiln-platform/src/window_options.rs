@@ -11,16 +11,18 @@ use gpui::{
 
 use crate::Capabilities;
 
-/// The unified title bar's height.
-pub const TITLE_BAR_HEIGHT: Pixels = px(32.);
+/// The unified title bar's height: the design's 38 px.
+pub const TITLE_BAR_HEIGHT: Pixels = px(38.);
 
-/// Where the traffic lights sit, from the window's top-left corner: 9 px
-/// down centres the 14 px buttons in the 32 px bar.
-pub const TRAFFIC_LIGHTS: Point<Pixels> = point(px(12.), px(9.));
+/// Where the traffic lights sit, from the window's top-left corner: 12 px
+/// down centres the 14 px buttons in the 38 px bar, and 14 px in matches
+/// that.
+pub const TRAFFIC_LIGHTS: Point<Pixels> = point(px(14.), px(12.));
 
-/// The width the traffic lights take, plus a gap: a centred title keeps
-/// out of it on both sides.
-pub const TRAFFIC_LIGHT_INSET: Pixels = px(78.);
+/// The width the traffic lights take, plus a gap: 14 px in, three 14 px
+/// buttons 6 px apart, then 12 px, as before the bar grew. A centred title keeps out of it on both
+/// sides, and the bar's left items start after it.
+pub const TRAFFIC_LIGHT_INSET: Pixels = px(80.);
 
 /// The title bar options for a window whose content draws under its title
 /// bar, on macOS. Its host also sets `WindowOptions::app_owns_titlebar_drag`

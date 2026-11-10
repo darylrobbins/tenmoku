@@ -58,6 +58,7 @@ use gpui::{
     IntoElement as _, ParentElement as _, PromptButton, PromptLevel, SharedString, Styled as _,
     Subscription, WeakEntity, Window, div,
 };
+use kiln_l10n::{text, tr};
 use kiln_shell::{Icon, ModalEvent, StatusItem, StatusSide};
 
 use super::{
@@ -76,26 +77,39 @@ pub(crate) const ITEM: &str = "git.branch";
 /// Its priority: before the vim mode's 0, leftmost.
 const PRIORITY: i32 = -100;
 
-/// The branch picker's first row.
+/// The branch picker's first row, in en-US, for tests.
+#[cfg(test)]
 pub(crate) const CREATE_ROW: &str = "+ Create new branch…";
 
-/// What a command answers outside a repository.
-const NO_REPO: &str = "Not in a git repository";
-
-/// What an invalid branch name answers.
-const INVALID_NAME: &str = "Not a valid branch name";
-
-/// The question when a switch would overwrite local changes.
+/// The overwrite question, in en-US, for tests.
+#[cfg(test)]
 pub(crate) const OVERWRITE: &str = "Your local changes would be overwritten by checkout.";
 
-/// Its buttons, VS Code's but for Migrate Changes.
-const OVERWRITE_BUTTONS: [PromptButton; 3] = [
-    PromptButton::Ok(SharedString::new_static("Stash & Checkout")),
-    PromptButton::Other(SharedString::new_static("Force Checkout")),
-    PromptButton::Cancel(SharedString::new_static("Cancel")),
-];
+/// The branch picker's first row.
+fn create_row() -> SharedString {
+    tr!("workbench-chrome-branch-create-row")
+}
 
-/// The answers to [`OVERWRITE_BUTTONS`]; anything else cancels.
+/// What a command answers outside a repository.
+fn no_repo() -> String {
+    tr!("workbench-chrome-branch-not-a-repository").to_string()
+}
+
+/// What an invalid branch name answers.
+fn invalid_name() -> SharedString {
+    tr!("workbench-chrome-branch-invalid-name")
+}
+
+/// The overwrite question's buttons, VS Code's but for Migrate Changes.
+fn overwrite_buttons() -> [PromptButton; 3] {
+    [
+        PromptButton::Ok(tr!("workbench-chrome-branch-stash-and-checkout")),
+        PromptButton::Other(tr!("workbench-chrome-branch-force-checkout")),
+        PromptButton::Cancel(tr!("workbench-chrome-branch-cancel")),
+    ]
+}
+
+/// The answers to [`overwrite_buttons`]; anything else cancels.
 const STASH: usize = 0;
 const FORCE: usize = 1;
 
@@ -110,7 +124,7 @@ pub(super) fn run(
     cx: &mut Context<Workbench>,
 ) {
     let Some(origin) = workbench.origin() else {
-        return workbench.answer_git_op(&op, NO_REPO.to_owned(), cx);
+        return workbench.answer_git_op(&op, no_repo(), cx);
     };
     let name = op.args.trim().to_owned();
     match (op.command, name.is_empty()) {
@@ -198,7 +212,9 @@ enum Outcome {
 impl Workbench {
     /// Shows `branch` on the status bar: where HEAD points, and what
     /// changed ([`Marks`]). None, outside a repository, hides the item.
+    /// The title bar's branch widget follows it.
     pub(crate) fn set_branch_item(&mut self, branch: Option<(Head, Marks)>, cx: &mut App) {
+        self.title_branch = branch.as_ref().map(|(head, _)| head_name(head).into());
         let bar = self.status_bar.clone();
         bar.update(cx, |bar, cx| match branch {
             Some((head, marks)) => bar.set_item(status_item(&head, marks), cx),
@@ -262,9 +278,9 @@ impl Workbench {
     ) {
         match branches {
             Ok(Some(branches)) => self.show_branch_picker(origin, branches, window, cx),
-            Ok(None) => self.answer_git_op(&op, NO_REPO.to_owned(), cx),
+            Ok(None) => self.answer_git_op(&op, no_repo(), cx),
             Err(error) => {
-                let toast = Toast::error("Can't list the branches");
+                let toast = Toast::error(tr!("workbench-chrome-branch-cant-list"));
                 toast::show(cx, toast.detail(error.to_string()));
             }
         }
@@ -288,7 +304,12 @@ impl Workbench {
         };
         let picker = cx.new(|cx| {
             let ui = ui_theme(cx);
-            Picker::new(delegate, "Select a ref to checkout", ui, cx)
+            Picker::new(
+                delegate,
+                text!("workbench-chrome-branch-pick-placeholder"),
+                ui,
+                cx,
+            )
         });
         self.show_branch_modal(picker, window, cx);
     }
@@ -312,7 +333,12 @@ impl Workbench {
         };
         let picker = cx.new(|cx| {
             let ui = ui_theme(cx);
-            Picker::new(delegate, "Branch name", ui, cx)
+            Picker::new(
+                delegate,
+                text!("workbench-chrome-branch-name-placeholder"),
+                ui,
+                cx,
+            )
         });
         self.show_branch_modal(picker, window, cx);
     }
@@ -419,7 +445,7 @@ impl Workbench {
                 self.git.update(cx, |git, cx| git.refresh(cx));
                 return self.check_open_files(window, cx);
             }
-            Outcome::NoRepo => return self.answer_branch(op.as_ref(), NO_REPO.to_owned(), cx),
+            Outcome::NoRepo => return self.answer_branch(op.as_ref(), no_repo(), cx),
             Outcome::Overwrite(paths, resolved) => match switch.target() {
                 Some(target) => {
                     // Retries go to the ref the first attempt meant.
@@ -435,17 +461,18 @@ impl Workbench {
         };
         let output = match error {
             SwitchError::InvalidName => {
-                return self.answer_branch(op.as_ref(), INVALID_NAME.to_owned(), cx);
+                return self.answer_branch(op.as_ref(), invalid_name().to_string(), cx);
             }
             SwitchError::NotFound => {
-                return self.answer_branch(op.as_ref(), format!("Not found: {name}"), cx);
+                let answer = tr!("workbench-chrome-branch-not-found", name = &name);
+                return self.answer_branch(op.as_ref(), answer.to_string(), cx);
             }
             SwitchError::Failed { output } => output,
             error => error.to_string(),
         };
         let message = match switch {
-            Switch::Create(_) => format!("Can't create branch {name}"),
-            _ => format!("Can't switch to {name}"),
+            Switch::Create(_) => tr!("workbench-chrome-branch-cant-create", name = &name),
+            _ => tr!("workbench-chrome-branch-cant-switch", name = &name),
         };
         toast::show(cx, Toast::error(message).detail(output));
     }
@@ -462,11 +489,12 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let detail = overwrite_detail(&paths);
+        let question = tr!("workbench-chrome-branch-overwrite");
         let answer = window.prompt(
             PromptLevel::Warning,
-            OVERWRITE,
+            &question,
             Some(&detail),
-            &OVERWRITE_BUTTONS,
+            &overwrite_buttons(),
             cx,
         );
         cx.spawn_in(window, async move |workbench, cx| {
@@ -495,10 +523,7 @@ impl Workbench {
 
 /// The status item for `head`, with `*`, `+` and `!` as `marks` say.
 fn status_item(head: &Head, marks: Marks) -> StatusItem {
-    let name = match head {
-        Head::Branch(name) | Head::Unborn(name) | Head::Detached(name) => name,
-    };
-    let mut text = name.to_string();
+    let mut text = head_name(head).to_owned();
     for (set, mark) in [
         (marks.working, '*'),
         (marks.staged, '+'),
@@ -511,8 +536,15 @@ fn status_item(head: &Head, marks: Marks) -> StatusItem {
     let switch = fe_command::Invocation::of("git.switch_branch").expect("a valid command ID");
     StatusItem::new(ITEM, StatusSide::Left, PRIORITY, text)
         .icon(Icon::GitBranch)
-        .tooltip("Switch Branch…")
+        .tooltip(tr!("workbench-chrome-switch-branch"))
         .command(switch)
+}
+
+/// HEAD's branch, or its short id when detached.
+fn head_name(head: &Head) -> &str {
+    match head {
+        Head::Branch(name) | Head::Unborn(name) | Head::Detached(name) => name,
+    }
 }
 
 /// Runs `switch` in the repository containing `root`. Runs on the
@@ -559,7 +591,11 @@ fn run_switch(root: &Path, switch: &Switch) -> Outcome {
 fn overwrite_detail(paths: &[String]) -> String {
     let mut lines: Vec<String> = paths.iter().take(MAX_PATHS).cloned().collect();
     if paths.len() > MAX_PATHS {
-        lines.push(format!("and {} more", paths.len() - MAX_PATHS));
+        let more = tr!(
+            "workbench-chrome-branch-overwrite-more",
+            count = paths.len() - MAX_PATHS
+        );
+        lines.push(more.to_string());
     }
     lines.join("\n")
 }
@@ -588,28 +624,38 @@ fn now() -> i64 {
 }
 
 /// How long ago `seconds` was: `just now`, `5 minutes ago`, `1 day ago`.
-fn ago(seconds: i64) -> String {
+fn ago(seconds: i64) -> SharedString {
     const MINUTE: i64 = 60;
     const HOUR: i64 = 60 * MINUTE;
     const DAY: i64 = 24 * HOUR;
     let seconds = seconds.max(0);
-    let (count, unit) = if seconds < MINUTE {
-        return "just now".to_owned();
+    if seconds < MINUTE {
+        tr!("workbench-chrome-branch-ago-now")
     } else if seconds < HOUR {
-        (seconds / MINUTE, "minute")
+        tr!(
+            "workbench-chrome-branch-ago-minutes",
+            count = seconds / MINUTE
+        )
     } else if seconds < DAY {
-        (seconds / HOUR, "hour")
+        tr!("workbench-chrome-branch-ago-hours", count = seconds / HOUR)
     } else if seconds < 14 * DAY {
-        (seconds / DAY, "day")
+        tr!("workbench-chrome-branch-ago-days", count = seconds / DAY)
     } else if seconds < 60 * DAY {
-        (seconds / (7 * DAY), "week")
+        tr!(
+            "workbench-chrome-branch-ago-weeks",
+            count = seconds / (7 * DAY)
+        )
     } else if seconds < 365 * DAY {
-        (seconds / (30 * DAY), "month")
+        tr!(
+            "workbench-chrome-branch-ago-months",
+            count = seconds / (30 * DAY)
+        )
     } else {
-        (seconds / (365 * DAY), "year")
-    };
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {unit}{plural} ago")
+        tr!(
+            "workbench-chrome-branch-ago-years",
+            count = seconds / (365 * DAY)
+        )
+    }
 }
 
 /// `branch` by the kind of ref it is: a remote-tracking one by its
@@ -679,7 +725,7 @@ impl BranchPicker {
         (0..self.match_count())
             .map(|ix| match self.branch(ix) {
                 Some(branch) => (branch.name.clone(), branch.is_current),
-                None => (CREATE_ROW.to_owned(), false),
+                None => (create_row().to_string(), false),
             })
             .collect()
     }
@@ -726,9 +772,13 @@ impl PickerDelegate for BranchPicker {
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let muted = ui_theme(cx).muted_text;
         let Some(branch) = self.branch(ix) else {
-            return div().child(CREATE_ROW).into_any_element();
+            return div().child(create_row()).into_any_element();
         };
-        let current = (branch.is_current).then(|| div().text_color(muted).child("current"));
+        let current = (branch.is_current).then(|| {
+            div()
+                .text_color(muted)
+                .child(tr!("workbench-chrome-branch-current"))
+        });
         div()
             .flex()
             .items_center()
@@ -815,7 +865,7 @@ impl NamePicker {
 
 impl NamePicker {
     fn label(&self) -> String {
-        format!("Create branch '{}' and switch to it", self.name)
+        tr!("workbench-chrome-branch-create", name = &self.name).to_string()
     }
 }
 
@@ -860,7 +910,7 @@ impl PickerDelegate for NamePicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        (!self.name.is_empty() && !self.valid).then_some(INVALID_NAME.into())
+        (!self.name.is_empty() && !self.valid).then(invalid_name)
     }
 }
 

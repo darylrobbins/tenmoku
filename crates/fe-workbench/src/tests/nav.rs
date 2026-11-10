@@ -280,8 +280,8 @@ fn back_and_forward(cx: &mut TestAppContext) {
     let util = root.join("src/util.rs");
     let before = caret_on(&workbench, "helper", cx);
     let buttons = |cx: &mut VisualTestContext| {
-        workbench.read_with(cx, |workbench, cx| {
-            let nav = workbench.pane().read(cx).toolbar().nav;
+        workbench.read_with(cx, |workbench, _| {
+            let nav = workbench.nav_buttons();
             (nav.back, nav.forward)
         })
     };
@@ -459,8 +459,8 @@ fn press(keys: &str, cx: &mut VisualTestContext) {
 }
 
 fn buttons(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (bool, bool) {
-    workbench.read_with(cx, |workbench, cx| {
-        let nav = workbench.pane().read(cx).toolbar().nav;
+    workbench.read_with(cx, |workbench, _| {
+        let nav = workbench.nav_buttons();
         (nav.back, nav.forward)
     })
 }

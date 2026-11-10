@@ -13,7 +13,6 @@ use gpui::{AnyView, App, AppContext as _, Context, Entity, Focusable, Subscripti
 #[cfg(test)]
 use super::toast;
 use super::{Launch, LayoutKeys, TERMINAL_BUTTON, Workbench, active_diff_view};
-#[cfg(test)]
 use crate::title_bar;
 use crate::{
     Dock, MenuBarView, OutlinePanel, Pane, PaneGroup, ProjectPanel, StatusBar,
@@ -27,6 +26,7 @@ use crate::{
     workbench::Palette,
 };
 use fe_command::Value;
+use kiln_l10n::text;
 use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
     PaneView as _, Shell, Workspace, WorkspaceEvent,
@@ -46,11 +46,24 @@ impl Workbench {
     }
 
     /// Shows or hides the title bar the standalone app draws under its
-    /// transparent macOS title bar: see [`crate::titlebar_options`]. Off by
-    /// default.
+    /// transparent macOS title bar, with the workbench's items in it (see
+    /// [`title_bar`]): see [`crate::titlebar_options`]. Off by default.
     pub fn set_title_bar(&mut self, shown: bool, cx: &mut Context<Self>) {
-        self.shell
-            .update(cx, |shell, cx| shell.set_title_bar(shown, cx));
+        let items = title_bar::items(cx.entity().downgrade());
+        self.shell.update(cx, |shell, cx| {
+            shell.set_title_bar_items(items, cx);
+            shell.set_title_bar(shown, cx);
+        });
+    }
+
+    /// What the title bar shows: whether back and forward can go, the
+    /// root's name and HEAD's branch.
+    pub(crate) fn title_bar_state(&self) -> title_bar::State {
+        title_bar::State {
+            nav: self.nav,
+            project: title_bar::name(self.root.as_deref()),
+            branch: self.title_branch.clone(),
+        }
     }
 
     /// Shows or hides the menu bar drawn in the window (kiln-shell's), from
@@ -217,7 +230,14 @@ impl Workbench {
         };
         self.dismiss_palette(window, cx);
         let delegate = RenameTerminal::new(self.terminal.downgrade(), id, &label);
-        let picker = cx.new(|cx| Picker::new(delegate, "Terminal name…", fe_ui::ui_theme(cx), cx));
+        let picker = cx.new(|cx| {
+            Picker::new(
+                delegate,
+                text!("workbench-chrome-terminal-name-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
+        });
         picker.update(cx, |picker, cx| {
             picker.show(window, cx);
             let input = picker.input().clone();
@@ -411,7 +431,6 @@ impl Workbench {
             pane.update_toolbar(
                 |toolbar| {
                     toolbar.visible = self.breadcrumbs;
-                    toolbar.nav = self.nav;
                     toolbar.root = self.root.clone();
                 },
                 cx,

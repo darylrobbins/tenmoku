@@ -328,19 +328,23 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Enables back and forward in every pane, as the navigation history
-    /// allows.
+    /// Enables back and forward in the title bar, as the navigation
+    /// history allows.
     pub(crate) fn set_nav_buttons(&mut self, nav: NavButtons, cx: &mut Context<Self>) {
-        self.nav = nav;
         #[cfg(test)]
         {
             self.nav_pushes += 1;
         }
-        for pane in self.panes(cx) {
-            pane.update(cx, |pane, cx| {
-                pane.update_toolbar(|toolbar| toolbar.nav = nav, cx)
-            });
+        if self.nav != nav {
+            self.nav = nav;
+            cx.notify();
         }
+    }
+
+    /// Which of back and forward can run.
+    #[cfg(test)]
+    pub(crate) fn nav_buttons(&self) -> NavButtons {
+        self.nav
     }
 
     /// Pushes the symbols enclosing `editor`'s caret into the active pane,
