@@ -6,6 +6,10 @@ use std::{fs, path::Path};
 /// Directories with no recorded entry yet, each with why.
 const NOT_RELEASED: &[(&str, &str)] = &[
     (
+        "glsl",
+        "added on neon after grammars-2; its wasm is recorded with the next grammar release",
+    ),
+    (
         "gotmpl",
         "added on helium; recorded by the Mac's next grammar release",
     ),

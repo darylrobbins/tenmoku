@@ -326,8 +326,8 @@ settings-lsp-max_file_bytes =
 
 settings-lsp-servers =
     Servers by name: changes to the built-in rust-analyzer, pyright,
-    typescript-language-server, typescript-go, gopls and
-    vscode-css-language-server, or servers of your own, which need a `command`.
+    typescript-language-server, typescript-go, gopls,
+    vscode-css-language-server, jdtls and kotlin-lsp, or servers of your own, which need a `command`.
 
 settings-lsp-timeouts = How long requests may take, in milliseconds, by method.
 
