@@ -21,7 +21,8 @@ toml.workspace = true
 toml_edit.workspace = true
 unicode-segmentation.workspace = true
 
-# O_NONBLOCK, for opening untrusted files (src/platform/fs.rs).
+# O_NONBLOCK, for opening untrusted files (src/platform/fs.rs); process groups
+# and signals (src/platform/process_tree.rs).
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
@@ -33,8 +34,16 @@ security-framework.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store.workspace = true
-# A file's volume and index, its identity (src/platform/fs.rs).
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+# A file's volume and index, its identity (src/platform/fs.rs); a job object
+# per process tree, its thread resumed once assigned (src/platform/process_tree.rs).
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 secret-service.workspace = true

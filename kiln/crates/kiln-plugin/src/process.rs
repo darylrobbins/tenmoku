@@ -17,14 +17,14 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Target};
-use kiln_core::platform::{OutputDrain, StdinFeed};
+use kiln_core::platform::{OutputDrain, ProcessTree, StdinFeed};
 use kiln_l10n::tr;
 
 use crate::bindings::kiln::extension::process::{Host, Output};
@@ -246,9 +246,8 @@ impl State {
             .args(args)
             .env_clear()
             .envs(self.environment.iter().map(|(name, value)| (name, value)));
-        // No console window for a program run from a GUI app
-        // (`CREATE_NO_WINDOW`).
-        kiln_core::platform::without_console_window(&mut command);
+        // No console window for a program run from a GUI app (`CREATE_NO_WINDOW`): set by
+        // `ProcessTree::spawn` with the rest of the creation flags, in `run`.
         // The check took its time from the share too: what is left is the run's.
         let now = Instant::now();
         let own_end = now + self.deadline;
@@ -447,6 +446,11 @@ impl From<io::Error> for Failure {
 /// The program's stdio are sockets rather than pipes, so this thread alone can feed and drain
 /// them without blocking: when it returns, by any path, the host's ends close with it and no
 /// reader or writer is left behind, whatever the program, or one it started, holds open.
+///
+/// The program runs as a [`ProcessTree`], so killing it kills what it started too, and when this
+/// returns, by any path, nothing it started is left running: a program it started that holds
+/// its output open still makes the run time out, but no longer outlives it. A kill here, at the
+/// cap or the deadline, has no grace period: the run is already over, and the call waits on it.
 fn run(
     mut command: Command,
     stdin: Option<&[u8]>,
@@ -475,10 +479,9 @@ fn run(
     }
     #[cfg(test)]
     crate::tests::seams::launching();
-    let mut child = command.spawn()?;
+    let mut child = ProcessTree::spawn(&mut command)?;
     // The command holds the program's ends: they must close here for its output to end.
     drop(command);
-    let mut child = Running(&mut child);
     let mut stdout = OutputDrain::new(stdout)?;
     let mut stderr = OutputDrain::new(stderr)?;
     if let Some(feed) = &mut feed {
@@ -495,11 +498,13 @@ fn run(
             }
         }
         if stdout.over() || stderr.over() {
-            child.kill();
+            // It may have exited since it was looked at; either way what it started is killed,
+            // and it is reaped.
+            drop(child.kill());
             status = Some(None);
         }
         if status.is_none()
-            && let Some(exited) = child.0.try_wait()?
+            && let Some(exited) = child.try_wait()?
         {
             status = Some(exited.code());
         }
@@ -518,25 +523,6 @@ fn run(
         }
         if !moved {
             thread::sleep(IDLE.min(deadline - now));
-        }
-    }
-}
-
-/// A spawned program, killed and reaped if it is still running when this drops.
-struct Running<'a>(&'a mut Child);
-
-impl Running<'_> {
-    fn kill(&mut self) {
-        // It may have exited since it was looked at; either way it is reaped.
-        drop(self.0.kill());
-        drop(self.0.wait());
-    }
-}
-
-impl Drop for Running<'_> {
-    fn drop(&mut self) {
-        if !matches!(self.0.try_wait(), Ok(Some(_))) {
-            self.kill();
         }
     }
 }

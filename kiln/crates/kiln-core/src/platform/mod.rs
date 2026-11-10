@@ -12,8 +12,10 @@ pub use fs::{
     open_for_reading, owned_and_unshared, path_identity, private, program_candidates, sync_dir,
 };
 pub(crate) mod keychain;
+pub(crate) mod process_tree;
 pub(crate) mod stdio;
 
+pub use process_tree::ProcessTree;
 pub use stdio::{OutputDrain, OutputSource, StdinFeed, without_console_window};
 
 use std::fmt;
