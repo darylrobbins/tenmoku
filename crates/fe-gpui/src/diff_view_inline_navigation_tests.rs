@@ -69,7 +69,7 @@ fn caret(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> u32 {
 }
 
 fn message(diff: &Entity<DiffView>, cx: &mut VisualTestContext) -> Option<SharedString> {
-    diff.read_with(cx, |diff, _| diff.message.clone())
+    diff.read_with(cx, |diff, _| diff.message().cloned())
 }
 
 /// Inline to the second hunk and back, the untouched left editor's caret at

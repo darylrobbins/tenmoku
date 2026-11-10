@@ -7,7 +7,12 @@
 //! rows are tinted removed, the right side's added and modified rows added,
 //! and their changed words more strongly ([`DiffTints`]): within a modified
 //! row pair the words [`InlineDiff::changed_spans`] finds, and the whole
-//! text of a row with no partner. Scrolling either
+//! text of a row with no partner, in the theme's `diff_*` tokens. Each
+//! hunk has a header row above it on both sides naming the symbols around
+//! it and how many rows it removes and adds, `impl MinimapTile › render · 4
+//! changes` ([`DiffView::hunk_header`]), and each changed row a `−` (left)
+//! or `+` (right) at the gutter's left edge ([`Glyph`]), so colour is never
+//! the only cue. Scrolling either
 //! side scrolls the other to the same screen row, and `diff.next_change` /
 //! `diff.previous_change` move between hunks, wrapping at the ends.
 //! `diff.toggle_inline` shows the right side alone instead, the removed
@@ -59,7 +64,7 @@ use kiln_shell::{CloseAnswer, PaneItem};
 mod fold;
 mod inline;
 
-pub use fold::{CONTEXT_ROWS, EXPAND_ROWS, Expand, HiddenBlock};
+pub use fold::{CONTEXT_ROWS, EXPAND_ROWS, Expand, Glyph, HiddenBlock, crumb};
 
 use crate::{
     EditorView,
@@ -114,6 +119,27 @@ pub fn no_changes() -> SharedString {
 /// nothing was compared: `Too large to compare`.
 pub fn too_large() -> SharedString {
     tr!("gpui-diff-too-large")
+}
+
+/// What navigation last said: see [`DiffView::message`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Said {
+    WrappedToFirst,
+    WrappedToLast,
+    NoChanges,
+    TooLarge,
+}
+
+impl Said {
+    /// In the active locale.
+    fn text(self) -> SharedString {
+        match self {
+            Said::WrappedToFirst => wrapped_to_first(),
+            Said::WrappedToLast => wrapped_to_last(),
+            Said::NoChanges => no_changes(),
+            Said::TooLarge => too_large(),
+        }
+    }
 }
 
 /// The en-US messages, which the tests compare with.
@@ -236,8 +262,13 @@ pub struct DiffView {
     diffed: Option<[Version; 2]>,
     /// A diff running off the main thread.
     diffing: Option<Task<()>>,
-    /// What navigation last said about the diff shown, in the header.
-    message: Option<SharedString>,
+    /// What navigation last said about the diff shown, in the header:
+    /// kept as what it was, so the header says it in the locale it's drawn
+    /// in.
+    message: Option<Said>,
+    /// [`DiffView::message`]'s text: `message` resolved as it was set, and
+    /// again each frame, so it's in the locale drawn in.
+    message_text: Option<SharedString>,
     /// Whether the right side's buffer was dirty when last looked at: a
     /// save elsewhere changes it without changing the text.
     dirty: bool,
@@ -287,6 +318,10 @@ pub struct DiffView {
     _subscriptions: Vec<Subscription>,
     /// Looks for edits from elsewhere every [`POLL`].
     _poll: Task<()>,
+    /// The popover of the sides' glyph columns, none, which tells their
+    /// annotations from a host's ([`DiffView::show_glyph_column`]).
+    #[allow(clippy::type_complexity)]
+    glyph_column: Rc<dyn Fn(usize, u32) -> Option<crate::HoverContent>>,
     /// How many times each side's scroll top was set from the other's.
     #[cfg(test)]
     pub(crate) scroll_sets: [usize; 2],
@@ -369,6 +404,7 @@ impl DiffView {
             diffed: None,
             diffing: None,
             message: None,
+            message_text: None,
             dirty: false,
             visited: None,
             inline: false,
@@ -388,6 +424,7 @@ impl DiffView {
             revealing: None,
             _subscriptions: subscriptions,
             _poll: poll,
+            glyph_column: Rc::new(|_, _| None),
             #[cfg(test)]
             scroll_sets: [0; 2],
         };
@@ -430,10 +467,23 @@ impl DiffView {
         &self.diff
     }
 
+    /// Whether a diff is running off the main thread, the last one's
+    /// fillers and tints showing meanwhile. For tests outside the crate.
+    #[doc(hidden)]
+    pub fn diff_pending(&self) -> bool {
+        self.diffing.is_some()
+    }
+
     /// What navigation last said: that it wrapped, found no changes, or
     /// that the texts are too large to compare.
     pub fn message(&self) -> Option<&SharedString> {
-        self.message.as_ref()
+        self.message_text.as_ref()
+    }
+
+    /// Notes what navigation said, or that it said nothing.
+    fn say(&mut self, said: Option<Said>) {
+        self.message = said;
+        self.message_text = said.map(Said::text);
     }
 
     /// Scrolls side `to` to screen row `top`, where the other side's first
@@ -519,9 +569,10 @@ impl DiffView {
             });
         }
         self.refold(cx);
+        self.show_glyph_column(cx);
         self.go_on_revealing(cx);
         // What navigation said was about the last diff.
-        self.message = None;
+        self.say(None);
         self.visited = None;
         cx.notify();
     }
@@ -534,22 +585,30 @@ impl DiffView {
         }
     }
 
-    /// Side `ix`'s blocks: fillers side by side, inline the removed rows
-    /// above the right side's; and the label rows of the blocks hidden.
+    /// Side `ix`'s blocks: each hunk's header row, then fillers side by
+    /// side, inline the removed rows above the right side's; and the label
+    /// rows of the blocks hidden.
     fn blocks_of(&self, ix: usize) -> Vec<HostBlock> {
         let side = [Side::Left, Side::Right][ix];
-        let mut blocks = match (self.inline, ix) {
-            (true, 0) => return Vec::new(),
-            (true, _) => inline::removed_blocks(&self.diff, &self.texts[0], &self.words[0]),
-            (false, _) => (self.diff.fillers(side).into_iter().enumerate())
-                .map(|(id, (above, rows))| HostBlock {
+        if self.inline && ix == 0 {
+            return Vec::new();
+        }
+        let mut blocks = self.header_blocks(ix);
+        match self.inline {
+            true => blocks.extend(inline::removed_blocks(
+                &self.diff,
+                &self.texts[0],
+                &self.words[0],
+            )),
+            false => blocks.extend((self.diff.fillers(side).into_iter().enumerate()).map(
+                |(id, (above, rows))| HostBlock {
                     above,
                     rows,
                     kind: HostBlockKind::Filler,
                     id: id as u64,
-                })
-                .collect(),
-        };
+                },
+            )),
+        }
         blocks.extend(self.label_blocks(ix));
         blocks
     }
@@ -568,10 +627,10 @@ impl DiffView {
         let count = self.diff.hunks().len();
         if count == 0 {
             let message = match self.diff.too_large() {
-                true => too_large(),
-                false => no_changes(),
+                true => Said::TooLarge,
+                false => Said::NoChanges,
             };
-            self.message = Some(message);
+            self.say(Some(message));
             cx.notify();
             return;
         }
@@ -585,11 +644,11 @@ impl DiffView {
         };
         let (index, wrapped) = match found {
             Some(index) => (index, None),
-            None if forward => (0, Some(wrapped_to_first())),
-            None => (count - 1, Some(wrapped_to_last())),
+            None if forward => (0, Some(Said::WrappedToFirst)),
+            None => (count - 1, Some(Said::WrappedToLast)),
         };
         let hunk = self.diff.hunks()[index].clone();
-        self.message = wrapped;
+        self.say(wrapped);
         let other = 1 - focused;
         let other_row = hunk.range([Side::Left, Side::Right][other]).start;
         let mut carets = [None; 2];
@@ -625,7 +684,7 @@ impl DiffView {
     fn status(&self) -> Option<SharedString> {
         match self.diff.too_large() {
             true => Some(too_large()),
-            false => self.message.clone(),
+            false => self.message.map(Said::text),
         }
     }
 
@@ -962,10 +1021,13 @@ impl DecorationProvider for DiffTints {
 
 impl Render for DiffView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // In the locale drawn in.
+        self.message_text = self.message.map(Said::text);
         self.start_narrow(window, cx);
         self.keep_aligned(cx);
         self.sync_buffers(cx);
         self.sync_outlines(cx);
+        self.show_glyph_column(cx);
         // The sides' theme, as the host last set it.
         let theme = self.views[0].read(cx).theme.clone();
         let mut key_context = KeyContext::default();

@@ -15,10 +15,16 @@
 //! can't sit in one list: the left side's rows the parent's, the right's
 //! the commit's, each after its line number, a hunk's removed and added
 //! rows paired across, the shorter side hatched; the removed rows tinted
-//! removed, the added added, and, as `DiffView` tints them, the changed
-//! words of a modified pair darker ([`Diffed::words`]) and a row with no
-//! partner darker throughout. Unchanged rows away from the hunks are
-//! folded into `N hidden lines` rows, which a click shows.
+//! removed, the added added (the theme's `diff_*` tokens), and, as
+//! `DiffView` tints them, the changed words of a modified pair darker
+//! ([`Diffed::words`]) and a row with no partner darker throughout. A
+//! changed row has a `−` (left) or `+` (right) after its line number, so
+//! colour is never the only cue. Each hunk is under a header row naming
+//! the symbols around it from the file's outline and how many rows it
+//! removes and adds (`impl MinimapTile › render · 4 changes`,
+//! [`Diffed::symbols`]), code small; navigation lands on it. Unchanged
+//! rows away from the hunks are folded into `N hidden lines` rows, which
+//! a click shows.
 //!
 //! The whole view scrolls vertically, one list of rows, telling the model
 //! which rows it shows so it reads the sections near them
@@ -59,6 +65,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, div, font, pattern_slash,
     prelude::FluentBuilder as _, px, svg, uniform_list,
 };
+use kiln_l10n::{tr, verbatim};
 use kiln_shell::{PaneItem, PaneView as _};
 
 use super::{
@@ -69,10 +76,17 @@ use super::{
 use crate::{Pane, Workbench};
 
 /// The key context the view's element sets.
-const KEY_CONTEXT: &str = "CommitDiffView";
+const KEY_CONTEXT: &str = verbatim!("CommitDiffView");
 
 /// The columns a tab takes in a row.
 const TAB_WIDTH: usize = 4;
+
+/// A hunk header's text size over the code's: code small, 12 px to 13.
+const CODE_SMALL: f32 = 12. / 13.;
+
+/// How wide a changed row's `+` or `−` is, after its line number, in
+/// characters.
+const GLYPH_EMS: f32 = 1.5;
 
 /// A row of the view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,13 +105,22 @@ enum ViewRow {
     },
     /// Line `line` of a section's diff, a fold of unchanged rows.
     Hidden { section: usize, line: usize },
+    /// The header of a section's hunk `hunk`, above its rows: the symbols
+    /// around it and its `changes`, the rows it removes and adds.
+    Hunk {
+        section: usize,
+        hunk: usize,
+        changes: usize,
+    },
 }
 
 impl ViewRow {
     fn section(self) -> usize {
         match self {
             ViewRow::Header(section) | ViewRow::Note(section) => section,
-            ViewRow::Pair { section, .. } | ViewRow::Hidden { section, .. } => section,
+            ViewRow::Pair { section, .. }
+            | ViewRow::Hidden { section, .. }
+            | ViewRow::Hunk { section, .. } => section,
         }
     }
 }
@@ -151,6 +174,8 @@ pub(crate) enum Drawn {
     Note(String),
     Pair([Option<CellSeen>; 2]),
     Hidden(String),
+    /// A hunk's header.
+    Hunk(String),
 }
 
 /// A section header as drawn.
@@ -176,6 +201,8 @@ pub(crate) struct HeaderSeen {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CellSeen {
     pub(crate) number: u32,
+    /// The `+` or `−` before its text, on a changed row.
+    pub(crate) glyph: Option<&'static str>,
     pub(crate) text: String,
     /// The row's tint, if it has one.
     pub(crate) tint: Option<Hsla>,
@@ -371,6 +398,13 @@ impl CommitDiffView {
                         hunk: Some(hunk),
                         row: self.rows.len(),
                     });
+                    let changes = removed.len() + added.len();
+                    let header = ViewRow::Hunk {
+                        section,
+                        hunk,
+                        changes,
+                    };
+                    self.push(header, start);
                     hunk += 1;
                     for pair in 0..removed.len().max(added.len()) {
                         let (left, right) = (removed.get(pair), added.get(pair));
@@ -669,7 +703,7 @@ impl CommitDiffView {
     /// The width of a section's line numbers, for its widest.
     fn gutter(&self, diffed: &Diffed) -> Pixels {
         let digits = diffed.left.row_count().max(diffed.right.row_count());
-        self.em * (digits.to_string().len() + 2) as f32
+        self.em * ((digits.to_string().len() + 2) as f32 + GLYPH_EMS)
     }
 
     /// How far a section's sides scroll sideways: until its widest row's
@@ -731,11 +765,16 @@ impl CommitDiffView {
     fn title(&self, cx: &App) -> String {
         let diff = self.diff.read(cx);
         let commit = &diff.commit().commit;
-        let head = format!("{} - {}", commit.short, commit.summary);
+        let head = tr!(
+            "workbench-diff-title",
+            short = commit.short.as_str(),
+            summary = commit.summary.as_str()
+        );
         match (diff.message(), diff.sections().len()) {
-            (Some(_), _) => head,
-            (None, 1) => format!("{head} (1 file)"),
-            (None, files) => format!("{head} ({files} files)"),
+            (Some(_), _) => head.to_string(),
+            (None, files) => {
+                tr!("workbench-diff-title-files", title = head, count = files).to_string()
+            }
         }
     }
 
@@ -750,28 +789,40 @@ impl CommitDiffView {
         let ui = fe_ui::ui_theme(cx);
         let commit = self.diff.read(cx).commit().commit.clone();
         let none = self.stops.is_empty();
-        let button = |id: &'static str, icon, title: &'static str| {
+        let button = |id: &'static str, icon, key: &'static str| {
             IconButton::new(id, icon, &ui)
-                .name(title)
+                .name(tr!(key))
                 .tooltip(move |_, cx| {
-                    let tooltip = Tooltip::new(title, None::<String>, &fe_ui::ui_theme(cx));
+                    let tooltip = Tooltip::new(tr!(key), None::<String>, &fe_ui::ui_theme(cx));
                     cx.new(|_| tooltip).into()
                 })
         };
-        let previous = button("commit-diff-previous", Icon::ArrowLeft, "Previous Change")
-            .disabled(none)
-            .on_click(cx.listener(|view, _, _, cx| view.go_to_change(false, cx)));
-        let next = button("commit-diff-next", Icon::ArrowRight, "Next Change")
-            .disabled(none)
-            .on_click(cx.listener(|view, _, _, cx| view.go_to_change(true, cx)));
+        let previous = button(
+            "commit-diff-previous",
+            Icon::ArrowLeft,
+            "workbench-diff-previous-change",
+        )
+        .disabled(none)
+        .on_click(cx.listener(|view, _, _, cx| view.go_to_change(false, cx)));
+        let next = button(
+            "commit-diff-next",
+            Icon::ArrowRight,
+            "workbench-diff-next-change",
+        )
+        .disabled(none)
+        .on_click(cx.listener(|view, _, _, cx| view.go_to_change(true, cx)));
         let collapse = button(
             "commit-diff-collapse-all",
             Icon::FoldVertical,
-            "Collapse All",
+            "workbench-diff-collapse-all",
         )
         .on_click(cx.listener(|view, _, _, cx| view.collapse_all(cx)));
-        let expand = button("commit-diff-expand-all", Icon::UnfoldVertical, "Expand All")
-            .on_click(cx.listener(|view, _, _, cx| view.expand_all(cx)));
+        let expand = button(
+            "commit-diff-expand-all",
+            Icon::UnfoldVertical,
+            "workbench-diff-expand-all",
+        )
+        .on_click(cx.listener(|view, _, _, cx| view.expand_all(cx)));
         (div()
             .flex_none()
             .h(ROW_HEIGHT)
@@ -862,7 +913,7 @@ impl CommitDiffView {
                 ViewRow::Note(_) => {
                     let (text, color) = match &section.texts {
                         Texts::Failed(error) => (error.clone(), ui.error_text),
-                        _ => (super::commit_diff::LOADING.to_owned(), ui.muted_text),
+                        _ => (super::commit_diff::loading().to_string(), ui.muted_text),
                     };
                     #[cfg(test)]
                     seen.borrow_mut().rows.insert(ix, Drawn::Note(text.clone()));
@@ -896,6 +947,28 @@ impl CommitDiffView {
                         .child(text)
                         .into_any_element()
                 }
+                ViewRow::Hunk {
+                    section: _,
+                    hunk,
+                    changes,
+                } => {
+                    let Texts::Read(diffed) = &section.texts else {
+                        continue;
+                    };
+                    let text = hunk_header(diffed, hunk, changes);
+                    #[cfg(test)]
+                    seen.borrow_mut()
+                        .rows
+                        .insert(ix, Drawn::Hunk(text.to_string()));
+                    (base.px_4())
+                        .debug_selector(move || format!("commit-diff-hunk:{ix}"))
+                        .bg(theme.background.blend(theme.diff_filler))
+                        .text_color(theme.gutter_foreground)
+                        .text_size(theme.font_size * CODE_SMALL)
+                        .font_family(theme.font_family.clone())
+                        .child(text)
+                        .into_any_element()
+                }
                 ViewRow::Pair {
                     section: at,
                     left,
@@ -925,6 +998,7 @@ impl CommitDiffView {
                         paired,
                         offset,
                         gutter,
+                        em: self.em,
                     };
                     let cells = [cell(0, left), cell(1, right)];
                     #[cfg(test)]
@@ -1015,7 +1089,10 @@ struct Cell {
     /// The other side has a row beside it.
     paired: bool,
     offset: Pixels,
+    /// The line number's and glyph's width.
     gutter: Pixels,
+    /// A character's width.
+    em: Pixels,
 }
 
 impl Cell {
@@ -1035,6 +1112,15 @@ impl Cell {
         detabbed(text, &words)
     }
 
+    /// The `+` or `−` before a changed row's text, so colour is never the
+    /// only cue.
+    fn glyph(&self) -> Option<&'static str> {
+        (self.changed && self.row.is_some()).then_some(match self.side {
+            0 => "\u{2212}",
+            _ => "+",
+        })
+    }
+
     /// Its row's tint and its changed words'.
     fn tints(&self, theme: &EditorTheme) -> Option<(Hsla, Hsla)> {
         self.changed.then_some(match self.side {
@@ -1043,8 +1129,8 @@ impl Cell {
         })
     }
 
-    /// Its line number, then its text clipped and scrolled by its offset;
-    /// a filler hatched.
+    /// Its line number and a changed row's glyph, then its text clipped
+    /// and scrolled by its offset; a filler hatched.
     /// `clip` is handed its text's clip.
     fn render(&self, diffed: &Diffed, theme: &EditorTheme, clip: impl FnOnce(Div) -> Div) -> Div {
         let cell = div().flex_1().min_w_0().h_full().flex().items_center();
@@ -1064,11 +1150,25 @@ impl Cell {
             })
             .collect::<Vec<_>>();
         let text = StyledText::new(text).with_highlights(highlights);
+        let glyph_width = self.gutter.min(self.em * GLYPH_EMS);
+        let glyph_color = match self.side {
+            0 => theme.change_deleted,
+            _ => theme.change_added,
+        };
         cell.when_some(tints, |cell, (row, _)| cell.bg(row))
             .child(
-                (div().flex_none().w(self.gutter).pr_2().text_right())
-                    .text_color(theme.gutter_foreground)
-                    .child((row + 1).to_string()),
+                (div()
+                    .flex_none()
+                    .w(self.gutter - glyph_width)
+                    .pr_2()
+                    .text_right())
+                .text_color(theme.gutter_foreground)
+                .child((row + 1).to_string()),
+            )
+            .child(
+                (div().flex_none().w(glyph_width).text_center())
+                    .text_color(glyph_color)
+                    .children(self.glyph()),
             )
             .child(clip(
                 (div().flex_1().min_w_0().h_full().overflow_hidden())
@@ -1089,6 +1189,7 @@ impl Cell {
         let tints = self.tints(theme);
         Some(CellSeen {
             number: row + 1,
+            glyph: self.glyph(),
             text,
             tint: tints.map(|(row, _)| row),
             words: words.into_iter().filter(|span| !span.is_empty()).collect(),
@@ -1105,7 +1206,7 @@ struct HeaderParts {
     icon: IconRef,
     name: String,
     dir: String,
-    note: Option<&'static str>,
+    note: Option<SharedString>,
     counts: Option<(u32, u32)>,
     letter: char,
 }
@@ -1120,8 +1221,15 @@ fn header_parts(diff: &CommitDiff, ix: usize, section: &Section) -> HeaderParts 
         None => (String::new(), path),
     };
     let dir = match &section.from {
-        Some(from) if dir.is_empty() => format!("← {}", diff.display_path(from)),
-        Some(from) => format!("{dir} ← {}", diff.display_path(from)),
+        Some(from) if dir.is_empty() => tr!(
+            "workbench-diff-renamed-from",
+            from = diff.display_path(from)
+        )
+        .to_string(),
+        Some(from) => {
+            let from = diff.display_path(from);
+            tr!("workbench-diff-dir-renamed-from", dir = dir, from = from).to_string()
+        }
         None => dir,
     };
     let letter = match (&section.from, section.kind) {
@@ -1165,7 +1273,7 @@ impl HeaderParts {
             name: self.name.clone(),
             dir: self.dir.clone(),
             dir_color: colors.muted,
-            note: self.note.map(str::to_owned),
+            note: self.note.as_ref().map(ToString::to_string),
             counts: self.counts(colors),
             letter: self.letter,
             letter_color: colors.letter(self.letter),
@@ -1197,7 +1305,8 @@ impl HeaderParts {
             .text_ellipsis()
             .text_color(colors.muted)
             .child(self.dir.clone());
-        let note = (self.note).map(|note| div().flex_none().text_color(colors.muted).child(note));
+        let note =
+            (self.note.clone()).map(|note| div().flex_none().text_color(colors.muted).child(note));
         let counts = (self.counts(colors).into_iter())
             .map(|(text, color)| div().flex_none().text_color(color).child(text));
         let letter = (div().flex_none().w(LETTER_WIDTH).text_right())
@@ -1231,7 +1340,7 @@ impl Render for CommitDiffView {
         let toolbar = self.toolbar(cx);
         let body = match self.diff.read(cx).message() {
             Some(message) => (div().flex_1().p_4().text_color(ui.muted_text))
-                .child(message.to_owned())
+                .child(message)
                 .into_any_element(),
             None => uniform_list(
                 "commit-diff-rows",
@@ -1271,12 +1380,31 @@ impl PaneItem for CommitDiffView {
     }
 
     fn window_title(&self, cx: &App) -> SharedString {
-        format!("{} — fastedit", self.title(cx)).into()
+        let title = self.title(cx);
+        tr!(
+            "workbench-diff-window-title",
+            title = title,
+            app = verbatim!("fastedit")
+        )
     }
 
     // Not split or saved in a layout: the Graph opens it.
     fn serialize(&self, _: &App) -> Option<fe_command::Value> {
         None
+    }
+}
+
+/// What hunk `hunk` of `diffed`'s header says, its rows removed and added
+/// `changes`: `impl MinimapTile › render · 4 changes`, or the count alone
+/// in no symbol.
+fn hunk_header(diffed: &Diffed, hunk: usize, changes: usize) -> SharedString {
+    match diffed.symbols.get(hunk).and_then(Option::as_deref) {
+        Some(symbol) => tr!(
+            "workbench-diff-hunk-header",
+            symbol = symbol,
+            count = changes
+        ),
+        None => tr!("workbench-diff-hunk-changes", count = changes),
     }
 }
 

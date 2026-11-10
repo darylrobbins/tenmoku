@@ -9,6 +9,7 @@
 
 use fe_git::CommitInfo;
 use gpui::{App, Context, Focusable as _, KeyContext, KeyDownEvent, WeakEntity, Window};
+use kiln_l10n::tr;
 
 use crate::{Workbench, dock::DockOp};
 
@@ -28,31 +29,41 @@ pub(super) fn ago(seconds: i64) -> String {
     const HOUR: i64 = 60 * MINUTE;
     const DAY: i64 = 24 * HOUR;
     let seconds = seconds.max(0);
-    let (count, unit) = if seconds < MINUTE {
-        return "just now".to_owned();
+    let ago = if seconds < MINUTE {
+        tr!("workbench-diff-just-now")
     } else if seconds < HOUR {
-        (seconds / MINUTE, "minute")
+        tr!("workbench-diff-minutes-ago", count = seconds / MINUTE)
     } else if seconds < DAY {
-        (seconds / HOUR, "hour")
+        tr!("workbench-diff-hours-ago", count = seconds / HOUR)
     } else if seconds < 14 * DAY {
-        (seconds / DAY, "day")
+        tr!("workbench-diff-days-ago", count = seconds / DAY)
     } else if seconds < 60 * DAY {
-        (seconds / (7 * DAY), "week")
+        tr!("workbench-diff-weeks-ago", count = seconds / (7 * DAY))
     } else if seconds < 365 * DAY {
-        (seconds / (30 * DAY), "month")
+        tr!("workbench-diff-months-ago", count = seconds / (30 * DAY))
     } else {
-        (seconds / (365 * DAY), "year")
+        tr!("workbench-diff-years-ago", count = seconds / (365 * DAY))
     };
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {unit}{plural} ago")
+    ago.to_string()
 }
 
 /// `commit`'s row texts, at `now`: `<short>  <summary>` and `<author>,
 /// <time ago>`.
 pub(super) fn texts(commit: &CommitInfo, now: i64) -> [String; 2] {
+    let ago = ago(now - commit.time);
     [
-        format!("{}  {}", commit.short, commit.summary),
-        format!("{}, {}", commit.author, ago(now - commit.time)),
+        tr!(
+            "workbench-diff-commit-summary",
+            short = commit.short.as_str(),
+            summary = commit.summary.as_str()
+        )
+        .to_string(),
+        tr!(
+            "workbench-diff-commit-byline",
+            author = commit.author.as_str(),
+            ago = ago
+        )
+        .to_string(),
     ]
 }
 

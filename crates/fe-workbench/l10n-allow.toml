@@ -57,6 +57,10 @@ migrated = [
     "src/title_bar.rs",
     "src/workbench_chrome.rs",
     "src/git_branch.rs",
+    # B3 diff views: the commit diff, and the commit lists' row texts.
+    "src/commit_diff_view.rs",
+    "src/commit_diff.rs",
+    "src/commit_rows.rs",
     # The run widget in the title bar (T1539).
     "src/run_widget.rs",
 ]
@@ -260,3 +264,25 @@ reason = "A local branch row's element id: its full ref name"
 file = "src/git_branch.rs"
 text = "refs/remotes/{}"
 reason = "A remote-tracking branch row's element id: its full ref name"
+
+# The commit diff's debug selectors, which tests click and find rows by.
+
+[[literal]]
+file = "src/commit_diff_view.rs"
+text = "commit-diff-header:{at}"
+reason = "A section header's debug selector, never shown"
+
+[[literal]]
+file = "src/commit_diff_view.rs"
+text = "commit-diff-hidden:{ix}"
+reason = "A fold row's debug selector, never shown"
+
+[[literal]]
+file = "src/commit_diff_view.rs"
+text = "commit-diff-hunk:{ix}"
+reason = "A hunk header's debug selector, never shown"
+
+[[literal]]
+file = "src/commit_diff_view.rs"
+text = "commit-diff-chevron:{ix}"
+reason = "A section chevron's debug selector, never shown"

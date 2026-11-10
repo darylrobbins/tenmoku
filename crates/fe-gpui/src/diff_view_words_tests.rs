@@ -79,8 +79,15 @@ fn painted(
     })
 }
 
+/// The blocks a side painted, less the hunks' headers, which the diff
+/// view draws over.
 fn painted_blocks(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<PaintedBlock> {
-    view.read_with(cx, |view, _| view.painted_blocks.clone())
+    view.read_with(cx, |view, _| {
+        let blocks = view.painted_blocks.iter();
+        (blocks.filter(|block| block.id < super::fold::HEADER_IDS))
+            .cloned()
+            .collect()
+    })
 }
 
 /// Whether `inner` lies across `outer`'s row, inside its left and right.
@@ -208,7 +215,11 @@ fn inline_mode(cx: &mut TestAppContext) {
 
     // The removed rows' block: its paired row's changed word, and the row
     // with no partner whole.
+    // Less the hunk's header.
     let blocks = right.read_with(cx, |view, _| view.blocks().to_vec());
+    let blocks: Vec<_> = (blocks.into_iter())
+        .filter(|block| block.id < super::fold::HEADER_IDS)
+        .collect();
     assert_eq!(blocks.len(), 1);
     let HostBlockKind::Lines {
         lines,

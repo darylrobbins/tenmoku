@@ -500,6 +500,7 @@ fn body(cx: &mut TestAppContext) {
     let theme = view.read_with(cx, |view, cx| view.theme(cx));
     let same = |number: u32, text: &str| CellSeen {
         number,
+        glyph: None,
         text: text.to_owned(),
         tint: None,
         words: Vec::new(),
@@ -519,15 +520,25 @@ fn body(cx: &mut TestAppContext) {
         cells(&view, 2, cx),
         [Some(same(2, "line 2")), Some(same(2, "line 2"))]
     );
-    assert_eq!(hidden(9, cx), "14 hidden lines");
+    assert_eq!(hidden(10, cx), "14 hidden lines");
     assert_eq!(
-        cells(&view, 10, cx),
+        cells(&view, 11, cx),
         [Some(same(23, "line 23")), Some(same(23, "line 23"))]
     );
-    assert_eq!(hidden(18, cx), "2 hidden lines");
+    assert_eq!(hidden(20, cx), "2 hidden lines");
 
-    // A modified pair: each row tinted, its changed word darker.
-    let [left, right] = cells(&view, 5, cx);
+    // Each hunk under a header of its own: no symbol in this text, and how
+    // many rows it removes and adds.
+    let hunk = |ix: usize, cx: &mut VisualTestContext| match drawn_row(&view, ix, cx) {
+        Drawn::Hunk(text) => text,
+        other => panic!("row {ix} is {other:?}"),
+    };
+    assert_eq!(hunk(5, cx), "2 changes");
+    assert_eq!(hunk(14, cx), "2 changes");
+
+    // A modified pair: each row tinted, its changed word darker, a `−` and
+    // a `+` before them.
+    let [left, right] = cells(&view, 6, cx);
     let (left, right) = (left.unwrap(), right.unwrap());
     assert_eq!((left.number, left.text.as_str()), (5, long_row(5).as_str()));
     assert_eq!(
@@ -535,6 +546,7 @@ fn body(cx: &mut TestAppContext) {
         (Some(theme.diff_removed_row), Some(theme.diff_removed_word))
     );
     assert_eq!(left.words, vec![11..12], "the 5");
+    assert_eq!((left.glyph, right.glyph), (Some("−"), Some("+")));
     assert_eq!(
         (right.number, right.text.as_str()),
         (5, long_row(6).as_str())
@@ -546,26 +558,26 @@ fn body(cx: &mut TestAppContext) {
     assert_eq!(right.words, vec![11..12], "the 6");
 
     // Added rows beside the left side's filler, darker throughout.
-    let [filler, added] = cells(&view, 13, cx);
+    let [filler, added] = cells(&view, 15, cx);
     assert_eq!(filler, None);
     let added = added.unwrap();
     assert_eq!((added.number, added.text.as_str()), (26, "added one"));
     assert_eq!(added.words, vec![0..9]);
     assert_eq!(added.tint, Some(theme.diff_added_row));
     assert_eq!(
-        cells(&view, 15, cx),
+        cells(&view, 17, cx),
         [Some(same(26, "line 26")), Some(same(28, "line 26"))]
     );
 
     // A click on a fold shows its rows.
     let b_header = view.read_with(cx, |view, _| view.header_row(1)).unwrap();
-    click("commit-diff-hidden:9", cx);
+    click("commit-diff-hidden:10", cx);
     assert_eq!(
-        cells(&view, 9, cx),
+        cells(&view, 10, cx),
         [Some(same(9, "line 9")), Some(same(9, "line 9"))]
     );
     assert_eq!(
-        cells(&view, 22, cx),
+        cells(&view, 23, cx),
         [Some(same(22, "line 22")), Some(same(22, "line 22"))]
     );
     let moved = view.read_with(cx, |view, _| view.header_row(1)).unwrap();
@@ -573,8 +585,8 @@ fn body(cx: &mut TestAppContext) {
 
     // A sideways scroll over a section moves both its sides, the rest of
     // it with them, and no other section.
-    wheel(view_row(&view, 5, false, cx), point(px(-120.), px(0.)), cx);
-    let [left, right] = cells(&view, 5, cx).map(Option::unwrap);
+    wheel(view_row(&view, 6, false, cx), point(px(-120.), px(0.)), cx);
+    let [left, right] = cells(&view, 6, cx).map(Option::unwrap);
     assert_eq!([left.offset, right.offset], [px(120.); 2]);
     assert_eq!(
         [left.text_x, right.text_x],
@@ -583,12 +595,13 @@ fn body(cx: &mut TestAppContext) {
     );
     let [left, right] = cells(&view, 2, cx).map(Option::unwrap);
     assert_eq!([left.text_x, right.text_x], [Some(px(-120.)); 2]);
-    let [filler, added] = cells(&view, moved + 1, cx);
+    // b.rs's first row is its hunk's header.
+    let [filler, added] = cells(&view, moved + 2, cx);
     assert_eq!(filler, None, "b.rs was added");
     assert_eq!(added.unwrap().text_x, Some(px(0.)), "b.rs stays");
     // Back past the start stops there.
-    wheel(view_row(&view, 5, true, cx), point(px(500.), px(0.)), cx);
-    let [left, right] = cells(&view, 5, cx).map(Option::unwrap);
+    wheel(view_row(&view, 6, true, cx), point(px(500.), px(0.)), cx);
+    let [left, right] = cells(&view, 6, cx).map(Option::unwrap);
     assert_eq!([left.offset, right.offset], [px(0.); 2]);
     // As far as the end of the section's widest row, whatever its line
     // numbers' width (a.rs's two digits, b.rs's three) and however wide its
@@ -598,9 +611,9 @@ fn body(cx: &mut TestAppContext) {
         let room = seen.borrow().room.get(&(ix, side)).copied();
         room.unwrap_or_else(|| panic!("row {ix} side {side} isn't drawn"))
     };
-    let wide = moved + 1;
+    let wide = moved + 2;
     assert_eq!(cells(&view, wide, cx)[1].as_ref().unwrap().text, WIDE);
-    for (row, side) in [(5, 0), (wide, 1)] {
+    for (row, side) in [(6, 0), (wide, 1)] {
         assert!(room(row, side, cx) < px(0.), "row {row} runs past its side");
         wheel(
             view_row(&view, row, side == 0, cx),
@@ -616,7 +629,7 @@ fn body(cx: &mut TestAppContext) {
         );
     }
     wheel(
-        view_row(&view, 5, true, cx),
+        view_row(&view, 6, true, cx),
         point(px(100_000.), px(0.)),
         cx,
     );
@@ -632,7 +645,7 @@ fn body(cx: &mut TestAppContext) {
     assert!(unread(cx), "g.rs is far down");
     assert_eq!(view.read_with(cx, |view, _| view.viewport().start), 0);
     wheel(
-        view_row(&view, 5, true, cx),
+        view_row(&view, 6, true, cx),
         point(px(0.), -ROW_HEIGHT * 200.),
         cx,
     );
@@ -946,11 +959,12 @@ fn sideways_scroll_follows_the_geometry(cx: &mut TestAppContext) {
     draw(cx);
     open_held(&workbench, cx);
     let view = active_view(&workbench, cx);
-    let offset = |cx: &mut VisualTestContext| cells(&view, 5, cx)[0].as_ref().unwrap().offset;
+    // a.rs's long row, under its hunk's header.
+    let offset = |cx: &mut VisualTestContext| cells(&view, 6, cx)[0].as_ref().unwrap().offset;
 
     // As far right as a narrow window lets a.rs's long row go.
     wheel(
-        view_row(&view, 5, true, cx),
+        view_row(&view, 6, true, cx),
         point(px(-100_000.), px(0.)),
         cx,
     );
@@ -963,7 +977,7 @@ fn sideways_scroll_follows_the_geometry(cx: &mut TestAppContext) {
     draw(cx);
     let wide = offset(cx);
     assert!(wide < narrow, "{wide:?} < {narrow:?}");
-    wheel(view_row(&view, 5, true, cx), point(px(20.), px(0.)), cx);
+    wheel(view_row(&view, 6, true, cx), point(px(20.), px(0.)), cx);
     assert_eq!(offset(cx), wide - px(20.));
 
     // Measured again in another font, at the same size.

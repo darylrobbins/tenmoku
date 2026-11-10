@@ -57,6 +57,7 @@ mod breadcrumb_symbol_icons;
 mod caret_keys_hosts;
 mod caret_keys_lines;
 mod coloured_icon_surfaces;
+mod commit_diff_b3;
 mod default_fonts;
 mod default_keymaps;
 mod file_icon_set_surfaces;

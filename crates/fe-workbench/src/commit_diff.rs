@@ -41,12 +41,17 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
+
+use fe_buffer::Text;
+use fe_syntax::Outline;
 
 use fe_editor::text_diff::{HunkKind, MAX_DIFF_BYTES, Side, TextDiff};
 use fe_git::{ChangeKind, CommitFile, CommitStats, LogCommit, Repo};
-use fe_gpui::diff_view::CONTEXT_ROWS;
-use gpui::{AppContext as _, Context};
+use fe_gpui::diff_view::{CONTEXT_ROWS, crumb};
+use gpui::{AppContext as _, Context, SharedString};
+use kiln_l10n::tr;
 
 /// The sections' texts read at once.
 pub(crate) const READS: usize = 4;
@@ -55,7 +60,13 @@ pub(crate) const READS: usize = 4;
 /// read for.
 pub(crate) const NEAR: usize = 40;
 
-/// What a section, or the whole commit, shows until it's read.
+/// What a section, or the whole commit, shows until it's read: `Loading…`.
+pub(crate) fn loading() -> SharedString {
+    tr!("workbench-diff-loading")
+}
+
+/// [`loading`] in en-US, which the tests compare with.
+#[cfg(test)]
 pub(crate) const LOADING: &str = "Loading…";
 
 /// Why a section shows no diff, after its header.
@@ -68,10 +79,11 @@ pub(crate) enum NotShown {
 }
 
 impl NotShown {
-    pub(crate) fn text(self) -> &'static str {
+    /// In the active locale.
+    pub(crate) fn text(self) -> SharedString {
         match self {
-            NotShown::Binary => "Binary file not shown",
-            NotShown::TooLarge => "Large file not shown",
+            NotShown::Binary => tr!("workbench-diff-binary-not-shown"),
+            NotShown::TooLarge => tr!("workbench-diff-large-not-shown"),
         }
     }
 }
@@ -149,19 +161,33 @@ pub(crate) struct Diffed {
     ///
     /// [`InlineDiff::changed_spans`]: fe_editor::inline_diff::InlineDiff::changed_spans
     pub(crate) words: [HashMap<u32, Vec<Range<usize>>>; 2],
+    /// The symbols around each hunk shown, in order, outermost first
+    /// (`impl Foo › bar`), as [`hunk_symbols`] finds them: `None` for one
+    /// in no symbol, or with no outline.
+    pub(crate) symbols: Vec<Option<String>>,
 }
 
 impl Diffed {
-    fn new(left: String, right: String) -> Self {
+    /// The diff of `left` and `right`, the texts of the file at `path`
+    /// before and after.
+    fn new(left: String, right: String, path: &Path) -> Self {
         let diff = TextDiff::new(&left, &right);
         let words = words(&diff, &left, &right);
-        let (left, right) = (SideText::new(left), SideText::new(right));
-        let lines = lines(&diff, [left.row_count(), right.row_count()]);
+        let rows = [left.as_str(), right.as_str()].map(|text| SideText::new(text.to_owned()));
+        let lines = lines(&diff, rows.each_ref().map(SideText::row_count));
+        let symbols = hunk_symbols(
+            &diff,
+            [&left, &right],
+            rows.each_ref().map(SideText::row_count),
+            path,
+        );
+        let [left, right] = rows;
         Self {
             left,
             right,
             lines,
             words,
+            symbols,
         }
     }
 
@@ -170,10 +196,9 @@ impl Diffed {
         match line {
             Line::Same { left, .. } | Line::Removed(left) => self.left.row(*left).to_owned(),
             Line::Added(right) => self.right.row(*right).to_owned(),
-            Line::Hidden { left, .. } => match left.len() {
-                1 => "1 hidden line".to_owned(),
-                rows => format!("{rows} hidden lines"),
-            },
+            Line::Hidden { left, .. } => {
+                tr!("workbench-diff-hidden-lines", count = left.len()).to_string()
+            }
         }
     }
 }
@@ -200,6 +225,73 @@ fn words(diff: &TextDiff, left: &str, right: &str) -> [HashMap<u32, Vec<Range<us
     }
     words
 }
+
+/// How long a side's text is parsed for its outline, on the background
+/// executor, before its hunks go unnamed.
+const PARSE_BUDGET: Duration = Duration::from_millis(500);
+
+/// The symbols around each hunk of `diff` of `texts` (left, right) that
+/// [`lines`] shows, in order: those around its first row on a side it has
+/// rows on, the right's, else for a modified hunk the left's, in that
+/// side's outline as the file at
+/// `path`'s language has it ([`crumb`]). Each side is
+/// parsed only if a hunk asks for it.
+fn hunk_symbols(
+    diff: &TextDiff,
+    texts: [&str; 2],
+    rows: [u32; 2],
+    path: &Path,
+) -> Vec<Option<String>> {
+    let mut outlines: [Option<Option<(Text, Outline)>>; 2] = [None, None];
+    let mut symbols = Vec::new();
+    for hunk in diff.hunks() {
+        // As `lines` shows them: none for a hunk with no rows to show.
+        let shown = hunk.left.start.min(rows[0])..hunk.left.end.min(rows[0]);
+        let added = hunk.right.start.min(rows[1])..hunk.right.end.min(rows[1]);
+        if shown.is_empty() && added.is_empty() {
+            continue;
+        }
+        // Only a side with rows in the hunk: rows added or removed just
+        // above a symbol aren't in it.
+        let sides = [(1, &hunk.right), (0, &hunk.left)];
+        let order = (sides.into_iter()).filter(|(_, rows)| !rows.is_empty());
+        let mut symbol = None;
+        for (ix, _) in order {
+            let found = outlines[ix].get_or_insert_with(|| outline_of(texts[ix], path));
+            let row = hunk.range([Side::Left, Side::Right][ix]).start;
+            symbol = (found.as_ref()).and_then(|(text, outline)| crumb(outline, text, row));
+            if symbol.is_some() {
+                break;
+            }
+        }
+        symbols.push(symbol);
+    }
+    symbols
+}
+
+/// `text`'s outline as the file at `path`'s language has it, parsed within
+/// [`PARSE_BUDGET`], and the text it's of: `None` for a language with no
+/// outline, or none known.
+fn outline_of(text: &str, path: &Path) -> Option<(Text, Outline)> {
+    let start = &text[..text.floor_char_boundary(DETECT_BYTES)];
+    let language = fe_syntax::detect_language_name(Some(path), start)?;
+    let language = fe_syntax::language_by_name(language)?;
+    if !fe_syntax::outline_supported(language.name()) {
+        return None;
+    }
+    let buffer = fe_buffer::Buffer::new(text);
+    let snapshot = buffer.snapshot();
+    let mut syntax = fe_syntax::Syntax::new(language, &snapshot);
+    if !syntax.parse_within(PARSE_BUDGET) {
+        return None;
+    }
+    let outline = fe_syntax::outline(&syntax).ok()?;
+    Some((snapshot.text().clone(), outline))
+}
+
+/// How much of a text its language is detected from, as an editor detects
+/// it.
+const DETECT_BYTES: usize = 512;
 
 /// The rows of the diff `diff` of texts of `rows` rows (left, right): see
 /// the module docs.
@@ -600,10 +692,10 @@ impl CommitDiff {
 
     /// What shows in place of the rows: `Loading…` until the files are
     /// read, or why they couldn't be.
-    pub(crate) fn message(&self) -> Option<&str> {
+    pub(crate) fn message(&self) -> Option<SharedString> {
         match &self.listing {
-            Listing::Loading(_) => Some(LOADING),
-            Listing::Failed(error) => Some(error),
+            Listing::Loading(_) => Some(loading()),
+            Listing::Failed(error) => Some(error.clone().into()),
             Listing::Read => None,
         }
     }
@@ -620,10 +712,11 @@ impl CommitDiff {
         let section = self.sections.get(ix)?;
         let mut text = self.display_path(&section.path);
         if let Some(from) = &section.from {
-            text = format!("{} → {text}", self.display_path(from));
+            let from = self.display_path(from);
+            text = tr!("workbench-diff-renamed", from = from, path = text).to_string();
         }
         if let Texts::NotShown(why) = section.texts {
-            text = format!("{text} · {}", why.text());
+            text = tr!("workbench-diff-not-shown", path = text, why = why.text()).to_string();
         }
         Some(text)
     }
@@ -632,7 +725,7 @@ impl CommitDiff {
     pub(crate) fn row_text(&self, row: usize) -> Option<String> {
         match *self.rows.get(row)? {
             Row::Header(ix) => self.header_text(ix),
-            Row::Loading(_) => Some(LOADING.to_owned()),
+            Row::Loading(_) => Some(loading().to_string()),
             Row::Failed(ix) => match &self.sections[ix].texts {
                 Texts::Failed(error) => Some(error.clone()),
                 _ => None,
@@ -676,7 +769,7 @@ fn read(
     if left.len() > MAX_DIFF_BYTES || right.len() > MAX_DIFF_BYTES {
         return Ok(Read::NotShown(NotShown::TooLarge));
     }
-    Ok(Read::Texts(Box::new(Diffed::new(left, right))))
+    Ok(Read::Texts(Box::new(Diffed::new(left, right, &file.path))))
 }
 
 #[cfg(test)]

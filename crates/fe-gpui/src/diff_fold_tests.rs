@@ -14,7 +14,7 @@ use gpui::{
 use std::ops::RangeInclusive;
 
 use super::{
-    fold::{Label, ScreenRows, hidden_blocks, reveal, row_count},
+    fold::{HEADER_IDS, Label, ScreenRows, hidden_blocks, reveal, row_count},
     *,
 };
 use crate::init;
@@ -129,11 +129,12 @@ fn row_y(view: &Entity<EditorView>, row: u32, cx: &mut VisualTestContext) -> Pix
     })
 }
 
-/// The label rows' blocks of a side: `(row above, id)`.
+/// The label rows' blocks of a side, as the rows they're above: the hunk
+/// headers' left out.
 fn label_blocks(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<u32> {
     view.read_with(cx, |view, _| {
         (view.blocks().iter())
-            .filter(|block| block.kind == HostBlockKind::Reserve)
+            .filter(|block| block.kind == HostBlockKind::Reserve && block.id < HEADER_IDS)
             .map(|block| block.above)
             .collect()
     })

@@ -71,8 +71,14 @@ fn filler(above: u32, rows: u32, id: u64) -> HostBlock {
     }
 }
 
+/// A side's blocks, less the hunks' headers.
 fn blocks(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<HostBlock> {
-    view.read_with(cx, |view, _| view.blocks().to_vec())
+    view.read_with(cx, |view, _| {
+        (view.blocks().iter())
+            .filter(|block| block.id < super::fold::HEADER_IDS)
+            .cloned()
+            .collect()
+    })
 }
 
 /// The window y the last frame painted buffer row `row` at.
@@ -338,7 +344,9 @@ fn caret(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> u32 {
 }
 
 fn message(diff: &Entity<DiffView>, cx: &mut VisualTestContext) -> Option<String> {
-    diff.read_with(cx, |diff, _| diff.message().map(ToString::to_string))
+    diff.read_with(cx, |diff, _| {
+        diff.message().map(|message| message.to_string())
+    })
 }
 
 #[gpui::test]

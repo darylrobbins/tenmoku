@@ -5,7 +5,7 @@
 
 kiln_l10n::resources! {
     dynamic_prefixes = ["command-"];
-    "en-US" => ["../l10n/en-US/fe-gpui.ftl"],
+    "en-US" => ["../l10n/en-US/fe-gpui.ftl", "../l10n/en-US/diff.ftl"],
 }
 
 /// The title fe-gpui's command `id` registers with, resolved now: its

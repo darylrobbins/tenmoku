@@ -6,6 +6,11 @@
 //!
 //! The header row says what the hunk is, then has its buttons: Accept and
 //! Reject for a pending hunk, Reject alone for a stale one.
+//!
+//! The tints are the theme's diff tokens, as a diff view's ([`Tints`]): the
+//! block on `diff_added_row`, the old rows on `diff_removed_row`, and each
+//! button on the word tint of what it does to the text, `diff_added_word`
+//! for Accept and `diff_removed_word` for Reject.
 //! A frame reads only the new text's rows in view, through [`Texts`].
 
 use std::{collections::HashMap, ops::Range, sync::Arc};
@@ -28,24 +33,8 @@ use crate::{EditorTheme, EditorView, view::ProposalButton};
 /// hunk's index in the frame's [`Hunk`]s; below are the host's.
 const IDS: u64 = 1 << 32;
 
-/// Behind a hunk's block: its new text. Until the themes have diff colours.
-const ADDED: Hsla = Hsla {
-    h: 130. / 360.,
-    s: 0.45,
-    l: 0.45,
-    a: 0.2,
-};
-/// Behind a hunk's old rows.
-const REMOVED: Hsla = Hsla {
-    h: 0.,
-    s: 0.6,
-    l: 0.5,
-    a: 0.2,
-};
 /// How opaque a stale hunk's header is over the text colour.
 const DIM_ALPHA: f32 = 0.6;
-/// How opaque a button is over the colour of what it does.
-const BUTTON_ALPHA: f32 = 0.45;
 /// Either side of a button's label, in line heights.
 const BUTTON_PAD: f32 = 0.4;
 /// Before each button, in line heights.
@@ -359,11 +348,66 @@ fn hunk(hunks: &[Hunk], id: u64) -> Option<&Hunk> {
 /// The hunks' blocks and bands in a frame, to paint.
 #[derive(Default)]
 pub(crate) struct Layout {
+    /// The tints it's painted in, from the theme it was laid out in.
+    tints: Tints,
     blocks: Vec<Placed>,
     /// Full-width bands behind the old rows of the hunks shown.
     pub(crate) removed: Vec<Rect>,
     /// Over the part of each button in view, which shows a pointing hand.
     hitboxes: Vec<Hitbox>,
+}
+
+/// The colours a frame paints the proposals in: the theme's diff tokens.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Tints {
+    /// Behind a hunk's block, its new text: `diff_added_row`.
+    block: Hsla,
+    /// Behind a hunk's old rows: `diff_removed_row`.
+    band: Hsla,
+    /// Behind Accept: `diff_added_word`, stronger over the block's tint.
+    accept: Hsla,
+    /// Behind Reject: `diff_removed_word`.
+    reject: Hsla,
+}
+
+impl Tints {
+    /// `theme`'s.
+    fn of(theme: &EditorTheme) -> Self {
+        Self {
+            block: theme.diff_added_row,
+            band: theme.diff_removed_row,
+            accept: theme.diff_added_word,
+            reject: theme.diff_removed_word,
+        }
+    }
+
+    /// The colour of a button, as of what it does to the text.
+    fn button(&self, button: ProposalButton) -> Hsla {
+        match button {
+            ProposalButton::Accept => self.accept,
+            ProposalButton::Reject => self.reject,
+        }
+    }
+}
+
+impl EditorView {
+    /// The tints the last frame laid the proposals out in, if it showed a
+    /// block or a band of one, as `[block, band, accept, reject]` (see
+    /// [`Tints`]): for tests outside the crate.
+    #[doc(hidden)]
+    pub fn drawn_proposal_tints(&self) -> Option<[Hsla; 4]> {
+        let proposals = &self.layout.as_ref()?.proposals;
+        if proposals.blocks.is_empty() && proposals.removed.is_empty() {
+            return None;
+        }
+        let Tints {
+            block,
+            band,
+            accept,
+            reject,
+        } = proposals.tints;
+        Some([block, band, accept, reject])
+    }
 }
 
 /// A hunk's block laid out in a frame.
@@ -437,15 +481,6 @@ fn label(button: ProposalButton) -> SharedString {
         ProposalButton::Accept => tr!("gpui-proposal-accept"),
         ProposalButton::Reject => tr!("gpui-proposal-reject"),
     }
-}
-
-/// The colour of a button, as of what it does to the text.
-fn button_color(button: ProposalButton) -> Hsla {
-    match button {
-        ProposalButton::Accept => ADDED,
-        ProposalButton::Reject => REMOVED,
-    }
-    .opacity(BUTTON_ALPHA)
 }
 
 /// The buttons of a hunk's header row with `status`, after its text
@@ -658,6 +693,7 @@ pub(super) fn layout(
         })
         .collect();
     Layout {
+        tints: Tints::of(theme),
         blocks: placed.into_iter().flatten().collect(),
         removed,
         hitboxes: Vec::new(),
@@ -682,7 +718,7 @@ pub(super) fn insert_hitboxes(
 /// Paints the bands behind the hunks' old rows, under the text.
 pub(super) fn paint_bands(proposals: &Layout, layout: &FrameLayout, window: &mut Window) {
     for &band in &proposals.removed {
-        window.paint_quad(fill(layout.bounds(band), REMOVED));
+        window.paint_quad(fill(layout.bounds(band), proposals.tints.band));
     }
 }
 
@@ -701,11 +737,13 @@ pub(super) fn paint(
     for block in &proposals.blocks {
         let bounds: Bounds<Pixels> = layout.bounds(block.rect);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.paint_quad(fill(bounds, ADDED));
+            window.paint_quad(fill(bounds, proposals.tints.block));
             for button in &block.buttons {
                 let rect = layout.bounds(button.rect);
                 let corner = rect.size.height / 4.;
-                window.paint_quad(fill(rect, button_color(button.button)).corner_radii(corner));
+                window.paint_quad(
+                    fill(rect, proposals.tints.button(button.button)).corner_radii(corner),
+                );
                 let label = &button.label;
                 (label.line).paint(layout.to_window(label.at), line_height, window, cx);
             }

@@ -30,11 +30,14 @@ use std::{
 };
 
 use fe_buffer::Text;
-use fe_editor::text_diff::{Side, TextDiff};
+use fe_editor::{
+    decorations::Tint,
+    text_diff::{Side, TextDiff},
+};
 use fe_syntax::{NoOutline, Outline};
 use fe_ui::Icon;
 use gpui::{
-    AnyElement, App, AppContext as _, AvailableSpace, ContentMask, Context,
+    AnyElement, App, AppContext as _, AvailableSpace, Bounds, ContentMask, Context,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Radians, SharedString,
     StatefulInteractiveElement as _, Styled as _, Transformation, WeakEntity, canvas, div, px, svg,
 };
@@ -56,6 +59,17 @@ pub const EXPAND_ROWS: u32 = 20;
 /// The ids of the label rows' blocks, from this one on, apart from the
 /// fillers' and the removed rows'.
 const LABEL_IDS: u64 = 1 << 32;
+
+/// The ids of the hunk headers' blocks, from this one on: the hunk's index
+/// added.
+pub(super) const HEADER_IDS: u64 = 1 << 33;
+
+/// A hunk header's text size over the editor's: code small, 12 px to the
+/// code's 13.
+const CODE_SMALL: f32 = 12. / 13.;
+
+/// The start of a hunk header's element id and debug selector, never shown.
+const HUNK_ID: &str = kiln_l10n::verbatim!("diff-hunk");
 
 /// A side's folds as last set, as `(start, end)`, and the buffer version
 /// they were set at.
@@ -223,7 +237,7 @@ pub(super) fn folded_rows(rows: &Range<u32>) -> Range<u32> {
 /// The enclosing symbols of `row` of `text` in `outline`, outermost first,
 /// as `impl Foo › fn bar`'s names: those containing the row's first
 /// non-blank char. `None` if there are none.
-pub(super) fn crumb(outline: &Outline, text: &Text, row: u32) -> Option<String> {
+pub fn crumb(outline: &Outline, text: &Text, row: u32) -> Option<String> {
     let row = row.min(text.row_count().checked_sub(1)?);
     let start = text.row_start(row);
     let len = (text.row_len(row) as usize).min(256);
@@ -549,6 +563,63 @@ impl DiffView {
             .collect()
     }
 
+    /// The hunk headers' blocks on side `ix`: a row above each hunk's first
+    /// row, the same on both sides so they stay lined up. Before the side's
+    /// other blocks, so a header is above a filler or removed rows at its
+    /// row. Each is a band of no lines, which the editor lays out only in
+    /// view, and the label layer draws the header over it: not a reserve
+    /// block, which the editor places every frame, in view or not, at a cost
+    /// that grows with their number.
+    pub(super) fn header_blocks(&self, ix: usize) -> Vec<HostBlock> {
+        let side = [Side::Left, Side::Right][ix];
+        (self.diff.hunks().iter().enumerate())
+            .map(|(n, hunk)| HostBlock {
+                above: hunk.range(side).start,
+                rows: 1,
+                kind: HostBlockKind::Lines {
+                    lines: Vec::new(),
+                    tint: Tint::Muted,
+                    words: Vec::new(),
+                },
+                id: HEADER_IDS + n as u64,
+            })
+            .collect()
+    }
+
+    /// The symbols enclosing hunk `n`, outermost first (`impl Foo › bar`),
+    /// around its first row on a side it has rows on: the right's, else
+    /// for a modified hunk the left's. A side with no rows in it isn't
+    /// asked, so rows added or removed just above a symbol aren't put in
+    /// it. `None` without an outline, or with no symbol around it.
+    pub(super) fn hunk_symbol(&self, n: usize, cx: &App) -> Option<String> {
+        let hunk = self.diff.hunks().get(n)?;
+        let sides = [(1, &hunk.right), (0, &hunk.left)];
+        let order = (sides.into_iter())
+            .filter(|(_, rows)| !rows.is_empty())
+            .map(|(ix, _)| ix);
+        order.into_iter().find_map(|ix| {
+            let (_, outline) = self.outlines[ix].as_ref()?;
+            let text = self.views[ix].read(cx).model().text();
+            crumb(
+                outline,
+                text,
+                hunk.range([Side::Left, Side::Right][ix]).start,
+            )
+        })
+    }
+
+    /// What hunk `n`'s header says: the symbols around it and how many rows
+    /// it removes and adds, `impl MinimapTile › render · 4 changes`, or the
+    /// count alone with no symbol around it. `None` past the last hunk.
+    pub fn hunk_header(&self, n: usize, cx: &App) -> Option<SharedString> {
+        let hunk = self.diff.hunks().get(n)?;
+        let count = hunk.left.len() + hunk.right.len();
+        Some(match self.hunk_symbol(n, cx) {
+            Some(symbol) => kiln_l10n::tr!("gpui-diff-hunk-header", symbol = symbol, count = count),
+            None => kiln_l10n::tr!("gpui-diff-hunk-changes", count = count),
+        })
+    }
+
     /// The right side's screen rows as its blocks and folds are now.
     pub(super) fn right_screen_rows(&self) -> ScreenRows {
         let hidden = (self.hidden.iter())
@@ -559,11 +630,12 @@ impl DiffView {
     }
 
     /// Finds each side's outline again, off the main thread, when its
-    /// syntax has moved on since, or is of another language, and blocks are
-    /// hidden: their labels name the symbols around them. An outline found
+    /// syntax has moved on since, or is of another language, and there are
+    /// hunks or blocks hidden: their headers and labels name the symbols
+    /// around them. An outline found
     /// for a language or version the side no longer has isn't kept.
     pub(super) fn sync_outlines(&mut self, cx: &mut Context<Self>) {
-        if self.hidden.is_empty() {
+        if self.hidden.is_empty() && self.diff.hunks().is_empty() {
             return;
         }
         for ix in 0..2 {
@@ -699,14 +771,16 @@ impl DiffView {
             .collect()
     }
 
-    /// Side `ix`'s label rows, drawn over their reserve blocks, or a first
-    /// block's over the first row, where the side's last layout put them:
-    /// absolute over the side, after it.
+    /// Side `ix`'s label rows and hunk headers, drawn over their reserve
+    /// blocks, or a first block's label over the first row, and the `+` or
+    /// `−` of each changed row in view ([`glyphs`]), where the side's last
+    /// layout put them: absolute over the side, after it. `None` with no
+    /// hunks.
     pub(super) fn label_layer(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let labels = self.labels(ix, cx);
-        if labels.is_empty() {
+        if self.diff.hunks().is_empty() {
             return None;
         }
+        let labels = self.labels(ix, cx);
         let editor = self.views[ix].clone();
         let this = cx.entity().downgrade();
         let layer = canvas(
@@ -727,7 +801,35 @@ impl DiffView {
                     Some((bounds, layout.bounds(whole(0., frame.height))))
                 });
                 let gutter = (view.layout.as_ref()).map_or(0., |layout| layout.frame.text_left);
+                let in_view = |bounds: &Bounds<Pixels>, clip: &Bounds<Pixels>| {
+                    bounds.bottom() > clip.top() && bounds.top() < clip.bottom()
+                };
+                // The headers in view, and what each says.
+                let headers: Vec<_> = (this.upgrade())
+                    .map(|diff| {
+                        let diff = diff.read(cx);
+                        (header_rows(view).into_iter())
+                            .filter_map(|(n, bounds, clip)| {
+                                Some((n, diff.hunk_header(n, cx)?, bounds, clip))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let glyphs = (this.upgrade())
+                    .map(|diff| glyphs(diff.read(cx), ix, cx))
+                    .unwrap_or_default();
                 let mut elements = Vec::new();
+                let mut place = |mut element: AnyElement,
+                                 bounds: Bounds<Pixels>,
+                                 clip: Bounds<Pixels>,
+                                 window: &mut gpui::Window,
+                                 cx: &mut App| {
+                    window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
+                        let space = bounds.size.map(AvailableSpace::Definite);
+                        element.prepaint_as_root(bounds.origin, space, window, cx);
+                    });
+                    elements.push((element, clip));
+                };
                 for label in &labels {
                     let placed = match label.first {
                         true => first_row,
@@ -738,15 +840,18 @@ impl DiffView {
                     let Some((bounds, clip)) = placed else {
                         continue;
                     };
-                    if bounds.bottom() <= clip.top() || bounds.top() >= clip.bottom() {
+                    if !in_view(&bounds, &clip) {
                         continue;
                     }
-                    let mut element = label_row(label, ix, &theme, px(gutter), &this);
-                    window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
-                        let space = bounds.size.map(AvailableSpace::Definite);
-                        element.prepaint_as_root(bounds.origin, space, window, cx);
-                    });
-                    elements.push((element, clip));
+                    let element = label_row(label, ix, &theme, px(gutter), &this);
+                    place(element, bounds, clip, window, cx);
+                }
+                for (n, text, bounds, clip) in headers {
+                    let element = header_row(text, ix, n, &theme, px(gutter));
+                    place(element, bounds, clip, window, cx);
+                }
+                for (glyph, bounds, clip) in glyphs {
+                    place(glyph_cell(glyph, &theme), bounds, clip, window, cx);
                 }
                 elements
             },
@@ -767,6 +872,277 @@ impl DiffView {
                 .into_any_element(),
         )
     }
+}
+
+/// A row's mark in a diff side's gutter, so colour is never the only cue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Glyph {
+    /// `+`: a row the right side has in a hunk, added or changed.
+    Added,
+    /// `−`: a row the left side has in a hunk, removed or changed, or
+    /// inline a row of a removed block.
+    Removed,
+}
+
+impl Glyph {
+    pub fn text(self) -> &'static str {
+        match self {
+            Glyph::Added => "+",
+            Glyph::Removed => "\u{2212}",
+        }
+    }
+}
+
+/// The marks side `ix` of `diff` shows in its gutter as its last frame laid
+/// it out, each where it goes, at the gutter's left edge, and the side's
+/// bounds, which clip it: `−` on the left's rows in a hunk, `+` on the
+/// right's, and inline `−` on each row of a removed block in view. None
+/// without a gutter.
+pub(super) fn glyphs(
+    diff: &DiffView,
+    ix: usize,
+    cx: &App,
+) -> Vec<(Glyph, Bounds<Pixels>, Bounds<Pixels>)> {
+    let side = [Side::Left, Side::Right][ix];
+    let view = diff.views[ix].read(cx);
+    let Some(layout) = view.layout.as_ref() else {
+        return Vec::new();
+    };
+    // Only in the side's own column: never over a host's, such as blame.
+    let owned = (view.gutter_annotations())
+        .is_some_and(|annotations| std::rc::Rc::ptr_eq(&annotations.hover, &diff.glyph_column));
+    let frame = &layout.frame;
+    let column = frame.annotation_column;
+    if !owned || column.width <= 0. {
+        return Vec::new();
+    }
+    let cell = |y: f32| {
+        layout.bounds(Rect {
+            x: column.x,
+            y,
+            width: column.width,
+            height: frame.line_height,
+        })
+    };
+    let clip = layout.bounds(Rect {
+        x: 0.,
+        y: 0.,
+        width: frame.width,
+        height: frame.height,
+    });
+    let glyph = match side {
+        Side::Left => Glyph::Removed,
+        Side::Right => Glyph::Added,
+    };
+    let hunks = diff.diff.hunks();
+    let mut out = Vec::new();
+    let mut previous = None;
+    for row in &frame.rows {
+        // A row's first display row only, though the sides don't wrap.
+        if previous == Some(row.buffer_row) {
+            continue;
+        }
+        previous = Some(row.buffer_row);
+        let at = hunks.partition_point(|hunk| hunk.range(side).end <= row.buffer_row);
+        if hunks
+            .get(at)
+            .is_some_and(|hunk| hunk.range(side).contains(&row.buffer_row))
+        {
+            out.push((glyph, cell(frame.row_top(row.row)), clip));
+        }
+    }
+    if diff.inline && ix == 1 {
+        let blocks = view.blocks();
+        let line_height = frame.line_height;
+        for laid in &frame.blocks {
+            let removed = (blocks.get(laid.id as usize)).is_some_and(|block| {
+                block.id < HEADER_IDS && matches!(block.kind, HostBlockKind::Lines { .. })
+            });
+            if !removed || line_height <= 0. {
+                continue;
+            }
+            // Only its rows in the frame: a large block is mostly out of it.
+            let first = (-laid.rect.y / line_height).floor().max(0.) as u32;
+            let end = ((frame.height - laid.rect.y) / line_height).ceil().max(0.) as u32;
+            for line in first..end.min(laid.rows) {
+                let y = laid.rect.y + line_height * line as f32;
+                out.push((Glyph::Removed, cell(y), clip));
+            }
+        }
+    }
+    out
+}
+
+/// The hunk headers' blocks of `view`'s last frame in view: each one's hunk,
+/// its window bounds across the frame, and the frame's, which clip it.
+fn header_rows(view: &crate::EditorView) -> Vec<(usize, Bounds<Pixels>, Bounds<Pixels>)> {
+    let Some(layout) = view.layout.as_ref() else {
+        return Vec::new();
+    };
+    let frame = &layout.frame;
+    let clip = layout.bounds(Rect {
+        x: 0.,
+        y: 0.,
+        width: frame.width,
+        height: frame.height,
+    });
+    let blocks = view.blocks();
+    (frame.blocks.iter())
+        .filter_map(|laid| {
+            let block = blocks.get(usize::try_from(laid.id).ok()?)?;
+            let n = block.id.checked_sub(HEADER_IDS)?;
+            let bounds = layout.bounds(Rect {
+                x: 0.,
+                y: laid.rect.y,
+                width: frame.width,
+                height: frame.line_height * laid.rows as f32,
+            });
+            Some((n as usize, bounds, clip))
+        })
+        .collect()
+}
+
+impl DiffView {
+    /// Gives each side shown, while there are hunks, a gutter annotation
+    /// column for its rows' glyphs ([`glyphs`]): one blank entry over the
+    /// whole text, which only makes room, left of the gutter's own marks, and
+    /// shows no popover. It's made again as of each buffer version the side
+    /// is drawn at, so the editor never maps edits from an old version to
+    /// place it. A column the host shows instead, such as blame, is left
+    /// be and no glyphs are drawn over it; they come back once it goes.
+    pub(super) fn show_glyph_column(&self, cx: &mut Context<Self>) {
+        let want = !self.diff.hunks().is_empty();
+        for (ix, view) in self.views.iter().enumerate() {
+            let shown = !(self.inline && ix == 0) && want;
+            let has = view
+                .read(cx)
+                .gutter_annotations()
+                .map(|annotations| std::rc::Rc::ptr_eq(&annotations.hover, &self.glyph_column));
+            match (has, shown) {
+                // Another's column, or none wanted and none there.
+                (Some(false), _) | (None, false) => continue,
+                // Ours, as of the buffer's version: an older one would have
+                // every layout replay the edits since.
+                (Some(true), true) => {
+                    let view = view.read(cx);
+                    let version = view.model().buffer().version();
+                    let current = (view.gutter_annotations())
+                        .is_some_and(|annotations| annotations.version == version);
+                    if current {
+                        continue;
+                    }
+                }
+                (Some(true), false) | (None, true) => {}
+            }
+            let hover = self.glyph_column.clone();
+            view.update(cx, |view, cx| {
+                let annotations = shown.then(|| {
+                    // The shared buffer's, which the `current` check above
+                    // compares with: the side's model can lag it while a
+                    // diff of an edit through another model is pending.
+                    let snapshot = view.model().buffer().snapshot();
+                    let rows = snapshot.anchor_before(0)..snapshot.anchor_after(snapshot.len());
+                    crate::GutterAnnotations {
+                        version: snapshot.version(),
+                        entries: vec![crate::GutterAnnotation {
+                            rows,
+                            text: SharedString::new_static(" "),
+                            heat: None,
+                        }],
+                        hover,
+                        on_click: std::rc::Rc::new(|_, _, _, _| {}),
+                    }
+                });
+                view.set_gutter_annotations(annotations, cx);
+            });
+        }
+    }
+
+    /// The row bands and word highlights side `ix` (0 left, 1 right) painted
+    /// in its last frame, in paint order: each one's window bounds, colour,
+    /// and whether it's a word's. For tests outside the crate.
+    #[doc(hidden)]
+    pub fn drawn_tints(&self, ix: usize, cx: &App) -> Vec<(Bounds<Pixels>, gpui::Hsla, bool)> {
+        use fe_editor::decorations::DecorationKind;
+        let view = self.views[ix].read(cx);
+        let Some(layout) = view.layout.as_ref() else {
+            return Vec::new();
+        };
+        (layout.decorations.placed.iter())
+            .filter_map(|placed| match placed.kind {
+                DecorationKind::RowBackground => Some((placed.bounds, placed.color, false)),
+                DecorationKind::Highlight => Some((placed.bounds, placed.color, true)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Where side `ix` (0 left, 1 right) painted its host's gutter glyph,
+    /// a lightbulb, in its last frame. For tests outside the crate.
+    #[doc(hidden)]
+    pub fn drawn_lightbulb(&self, ix: usize, cx: &App) -> Option<Bounds<Pixels>> {
+        self.views[ix].read(cx).glyph_hit
+    }
+
+    /// The marks side `ix` (0 left, 1 right) showed in its gutter in its
+    /// last frame, each with the window bounds it was drawn in: see
+    /// [`Glyph`]. For tests outside the crate.
+    #[doc(hidden)]
+    pub fn drawn_glyphs(&self, ix: usize, cx: &App) -> Vec<(Glyph, Bounds<Pixels>)> {
+        (glyphs(self, ix, cx).into_iter())
+            .map(|(glyph, bounds, _)| (glyph, bounds))
+            .collect()
+    }
+}
+
+/// A row's [`Glyph`], centred in its cell, in the change colour of what it
+/// marks.
+fn glyph_cell(glyph: Glyph, theme: &EditorTheme) -> AnyElement {
+    let color = match glyph {
+        Glyph::Added => theme.change_added,
+        Glyph::Removed => theme.change_deleted,
+    };
+    div()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(color)
+        .text_size(theme.font_size)
+        .font_family(theme.font_family.clone())
+        .child(glyph.text())
+        .into_any_element()
+}
+
+/// Hunk `n`'s header row on side `side`: `text`, code small and muted,
+/// after the gutter, on the filler colour. Its debug selector is
+/// `diff-hunk:<side>:<n>`.
+fn header_row(
+    text: SharedString,
+    side: usize,
+    n: usize,
+    theme: &EditorTheme,
+    gutter: Pixels,
+) -> AnyElement {
+    div()
+        .id(SharedString::from(format!("{HUNK_ID}:{side}:{n}")))
+        .debug_selector(move || format!("{HUNK_ID}:{side}:{n}"))
+        // The wheel scrolls the side beneath.
+        .block_mouse_except_scroll()
+        .size_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .bg(theme.background.blend(theme.diff_filler))
+        .text_color(theme.gutter_foreground)
+        .text_size(theme.font_size * CODE_SMALL)
+        .font_family(theme.font_family.clone())
+        .whitespace_nowrap()
+        .overflow_hidden()
+        // Past the gutter, where the text starts.
+        .child(div().flex_none().w(gutter))
+        .child(div().min_w_0().px(px(6.)).overflow_hidden().child(text))
+        .into_any_element()
 }
 
 /// A label row: its chevrons, `36 hidden lines` and the symbols around it,

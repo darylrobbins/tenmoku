@@ -136,7 +136,9 @@ fn sections(cx: &mut TestAppContext) {
     let dir = fixture();
     let diff = diff_of(cx, dir.path(), 0..50);
     assert_eq!(
-        diff.read_with(cx, |diff, _| diff.message().map(str::to_owned)),
+        diff.read_with(cx, |diff, _| diff
+            .message()
+            .map(|message| message.to_string())),
         Some(LOADING.to_owned())
     );
     cx.run_until_parked();

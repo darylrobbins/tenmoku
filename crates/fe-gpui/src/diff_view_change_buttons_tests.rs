@@ -182,7 +182,7 @@ fn edges(cx: &mut TestAppContext) {
     click("next-change", cx);
     let by_click = (
         caret(&diff, cx),
-        diff.read_with(cx, |d, _| d.message.clone()),
+        diff.read_with(cx, |d, _| d.message().cloned()),
     );
     let (diff, cx) = diff_view(&left, &right, cx);
     for _ in 0..4 {
@@ -190,7 +190,7 @@ fn edges(cx: &mut TestAppContext) {
     }
     let by_key = (
         caret(&diff, cx),
-        diff.read_with(cx, |d, _| d.message.clone()),
+        diff.read_with(cx, |d, _| d.message().cloned()),
     );
     assert_eq!(by_click, by_key);
     assert_eq!(by_click.0, 1);

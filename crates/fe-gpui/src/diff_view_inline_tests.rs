@@ -55,8 +55,14 @@ fn side(diff: &Entity<DiffView>, ix: usize, cx: &mut VisualTestContext) -> Entit
     diff.read_with(cx, |diff, _| diff.views[ix].clone())
 }
 
+/// A side's blocks, less the hunks' headers.
 fn blocks(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<HostBlock> {
-    view.read_with(cx, |view, _| view.blocks().to_vec())
+    view.read_with(cx, |view, _| {
+        (view.blocks().iter())
+            .filter(|block| block.id < super::fold::HEADER_IDS)
+            .cloned()
+            .collect()
+    })
 }
 
 fn toggle(_diff: &Entity<DiffView>, cx: &mut VisualTestContext) {
