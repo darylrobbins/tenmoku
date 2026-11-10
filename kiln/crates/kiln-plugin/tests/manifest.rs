@@ -115,6 +115,36 @@ fn the_wasm_path_must_be_a_file_inside_the_extension() {
 }
 
 #[test]
+fn manifest_wasm_path_with_backslash_is_refused() {
+    let dir = dir_with("[contributes.plugin]\nwasm = \"components\\\\p.wasm\"\n");
+    let manifest = load(dir.path());
+    let error = PluginManifest::from_extension(&manifest, ExtensionOrigin::User).unwrap_err();
+    assert!(
+        matches!(error, PluginManifestError::WasmPath { .. }),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("use / in extension paths"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_pathext_program_name_loads_with_a_warning() {
+    let dir = dir_with(
+        "[contributes.plugin]\nwasm = \"p.wasm\"\ncapabilities = [\"process.spawn:rg.exe\", \"process.spawn:rg.sh\"]\n",
+    );
+    let manifest = load(dir.path());
+    let plugin = PluginManifest::from_extension(&manifest, ExtensionOrigin::User)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        plugin.warnings,
+        ["write `rg`; the extension is found on Windows"]
+    );
+}
+
+#[test]
 fn internal_parent_traversal_is_allowed() {
     let dir = dir_with("[contributes.plugin]\nwasm = \"components/../p.wasm\"\n");
     fs::create_dir(dir.path().join("components")).unwrap();

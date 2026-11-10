@@ -108,6 +108,7 @@ impl std::fmt::Display for PluginManifestError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WasmPathError {
     Empty,
+    Backslash,
     Absolute,
     Outside,
     DirUnreadable,
@@ -120,6 +121,7 @@ impl std::fmt::Display for WasmPathError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&tr!(match self {
             Self::Empty => "kiln-plugin-wasm-path-empty",
+            Self::Backslash => "kiln-plugin-wasm-path-backslash",
             Self::Absolute => "kiln-plugin-wasm-path-absolute",
             Self::Outside => "kiln-plugin-wasm-path-outside",
             Self::DirUnreadable => "kiln-plugin-wasm-path-dir-unreadable",
@@ -142,6 +144,9 @@ pub struct PluginManifest {
     pub capabilities: Grants,
     /// A reserved slot: accepted and kept, never verified.
     pub signature: Option<String>,
+    /// Notes on capabilities that were accepted but are better written
+    /// another way, such as `process.spawn:rg.exe`.
+    pub warnings: Vec<String>,
 }
 
 impl PluginManifest {
@@ -173,6 +178,7 @@ impl PluginManifest {
             }
         })?;
         let mut capabilities = Grants::new();
+        let mut warnings = Vec::new();
         match entry.get("capabilities") {
             None => {}
             Some(Value::Array(items)) => {
@@ -186,6 +192,7 @@ impl PluginManifest {
                             source,
                         }
                     })?;
+                    warnings.extend(capability.warning());
                     capabilities.insert(capability);
                 }
             }
@@ -205,6 +212,7 @@ impl PluginManifest {
             wasm,
             capabilities,
             signature,
+            warnings,
         }))
     }
 
@@ -220,6 +228,9 @@ fn wasm_file(dir: &Path, entry: &str) -> Result<PathBuf, WasmPathError> {
     let relative = Path::new(entry);
     if entry.is_empty() {
         return Err(WasmPathError::Empty);
+    }
+    if entry.contains('\\') {
+        return Err(WasmPathError::Backslash);
     }
     if relative.has_root() || relative.is_absolute() {
         return Err(WasmPathError::Absolute);

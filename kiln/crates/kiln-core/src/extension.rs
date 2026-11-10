@@ -645,6 +645,9 @@ fn contributed_file(
     if entry.is_empty() {
         return Err(tr!("kiln-core-extension-path-empty").into());
     }
+    if entry.contains('\\') {
+        return Err(tr!("kiln-core-extension-path-backslash").into());
+    }
     if relative.has_root() || relative.is_absolute() {
         return Err(tr!(
             "kiln-core-extension-path-absolute",

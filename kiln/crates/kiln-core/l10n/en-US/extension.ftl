@@ -37,6 +37,7 @@ kiln-core-extension-too-many-files = contributes { $count } { $count ->
     }; an extension may contribute at most { $max }
 kiln-core-extension-expected-path = expected a path, found { $found }
 kiln-core-extension-path-empty = the path is empty
+kiln-core-extension-path-backslash = use / in extension paths
 kiln-core-extension-path-absolute = { $entry } must be relative to the extension's directory
 kiln-core-extension-path-outside = { $entry } is outside the extension's directory
 kiln-core-extension-path-unreadable = { $entry } can't be read: { $reason }

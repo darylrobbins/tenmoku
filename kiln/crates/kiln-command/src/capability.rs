@@ -133,7 +133,33 @@ fn parse_program(program: &str) -> Result<Target, &'static str> {
     {
         return Err("a program name has no spaces or control characters");
     }
+    if program.contains(['/', '\\', ':']) {
+        return Err("a program name is a bare name, with no `/`, `\\` or `:`");
+    }
     Ok(Target::Named(program.to_string()))
+}
+
+/// Extensions Windows' `PATHEXT` commonly holds.
+const PATHEXT_EXTENSIONS: [&str; 5] = ["exe", "com", "bat", "cmd", "ps1"];
+
+impl Capability {
+    /// A note on a capability that parses but is better written another way:
+    /// `process.spawn:rg.exe` names the program with an extension Windows
+    /// finds on its own. A pure string rule, the same on every OS.
+    pub fn warning(&self) -> Option<String> {
+        let Self::ProcessSpawn(Target::Named(program)) = self else {
+            return None;
+        };
+        let (stem, extension) = program.rsplit_once('.')?;
+        if stem.is_empty()
+            || !PATHEXT_EXTENSIONS
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        {
+            return None;
+        }
+        Some(format!("write `{stem}`; the extension is found on Windows"))
+    }
 }
 
 /// A host name: `.`-separated labels of ASCII letters, digits, `-` and `_`,

@@ -81,6 +81,7 @@ kiln-plugin-manifest-capability = { $id }: { $reason }
 # `$path` is the `wasm` path, quoted; `$reason` one of the messages below.
 kiln-plugin-manifest-wasm-path = { $id }: wasm path { $path }: { $reason }
 kiln-plugin-wasm-path-empty = the path is empty
+kiln-plugin-wasm-path-backslash = use / in extension paths
 kiln-plugin-wasm-path-absolute = must be relative to the extension's directory
 kiln-plugin-wasm-path-outside = is outside the extension's directory
 kiln-plugin-wasm-path-dir-unreadable = the extension's directory is unreadable
