@@ -320,8 +320,11 @@ fn a_body_cut_short_is_an_error() {
 
 #[test]
 fn a_trickling_reply_keeps_the_idle_timeout_off_and_silence_trips_it() {
-    // Each piece arrives well inside the timeout, but the head alone, and
-    // the one chunk's framing and data, take longer than it.
+    // Each piece arrives well inside the timeout (a quarter of it, so a loaded
+    // machine can oversleep a gap by 3x and still not trip it), but the head
+    // and the one chunk's framing and data together take twice as long as it.
+    const IDLE: Duration = Duration::from_millis(1000);
+    const GAP: Duration = Duration::from_millis(250);
     let pieces: [&[u8]; 8] = [
         b"HTTP/1.1 200 OK\r\n",
         b"Transfer-Encoding: chunked\r\n",
@@ -338,14 +341,14 @@ fn a_trickling_reply_keeps_the_idle_timeout_off_and_silence_trips_it() {
     const SILENCE: Duration = Duration::from_secs(10);
     let server = Server::start(move |mut stream, _| {
         for piece in pieces {
-            thread::sleep(Duration::from_millis(120));
+            thread::sleep(GAP);
             stream.write_all(piece).unwrap();
             stream.flush().unwrap();
         }
         // Then nothing, with the connection open.
         thread::sleep(SILENCE);
     });
-    let client = loopback().with_idle_timeout(Duration::from_millis(300));
+    let client = loopback().with_idle_timeout(IDLE);
     let started = Instant::now();
     let mut response = get(&client, &server.url("/")).unwrap();
     assert_eq!(response.headers["x-slow"], "1");
