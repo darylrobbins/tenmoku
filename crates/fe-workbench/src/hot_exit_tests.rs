@@ -29,14 +29,14 @@ use crate::{Launch, Workbench};
 
 /// A root holding `a.txt`, its layouts and its backups, in a temporary
 /// state directory.
-struct Project {
+pub(super) struct Project {
     _dir: tempfile::TempDir,
-    root: PathBuf,
+    pub(super) root: PathBuf,
     layouts: LayoutStore,
     backups: BackupStore,
 }
 
-fn project() -> Project {
+pub(super) fn project() -> Project {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("project");
     std::fs::create_dir(&root).unwrap();
@@ -59,7 +59,7 @@ fn in_state_dir(dir: tempfile::TempDir, root: PathBuf) -> Project {
 
 /// The project's state as a crash leaves it on disk: a copy of its state
 /// directory, with no lock in it held, as the OS drops a dead process's.
-fn crash_image(project: &Project) -> Project {
+pub(super) fn crash_image(project: &Project) -> Project {
     fn copy(from: &Path, to: &Path) {
         std::fs::create_dir_all(to).unwrap();
         for entry in std::fs::read_dir(from).unwrap() {
@@ -78,7 +78,7 @@ fn crash_image(project: &Project) -> Project {
     in_state_dir(image, project.root.clone())
 }
 
-fn init(vim: bool, cx: &mut TestAppContext) {
+pub(super) fn init(vim: bool, cx: &mut TestAppContext) {
     cx.update(|cx| {
         fe_gpui::init(cx);
         crate::init(cx);
@@ -117,14 +117,20 @@ fn open(
 
 /// A launch on the root: its first window, restoring its entry if it has
 /// one.
-fn launch(project: &Project, cx: &mut TestAppContext) -> (Entity<Workbench>, VisualTestContext) {
+pub(super) fn launch(
+    project: &Project,
+    cx: &mut TestAppContext,
+) -> (Entity<Workbench>, VisualTestContext) {
     let mut windows = layout::launch(&project.layouts, true);
     let (layout, entry) = windows.remove(0);
     open(project, layout, entry, cx)
 }
 
 /// A launch on the root after a quit: its one saved window.
-fn relaunch(project: &Project, cx: &mut TestAppContext) -> (Entity<Workbench>, VisualTestContext) {
+pub(super) fn relaunch(
+    project: &Project,
+    cx: &mut TestAppContext,
+) -> (Entity<Workbench>, VisualTestContext) {
     let mut windows = layout::launch(&project.layouts, true);
     assert_eq!(windows.len(), 1);
     let (layout, entry) = windows.remove(0);
@@ -132,14 +138,18 @@ fn relaunch(project: &Project, cx: &mut TestAppContext) -> (Entity<Workbench>, V
 }
 
 /// Opens the root's `a.txt` in the active pane, focused.
-fn open_file(workbench: &Entity<Workbench>, project: &Project, cx: &mut VisualTestContext) {
+pub(super) fn open_file(
+    workbench: &Entity<Workbench>,
+    project: &Project,
+    cx: &mut VisualTestContext,
+) {
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
     let path = project.root.join("a.txt");
     cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
     draw(cx);
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
@@ -155,7 +165,7 @@ fn run(id: &str, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
-fn wait(time: Duration, cx: &mut VisualTestContext) {
+pub(super) fn wait(time: Duration, cx: &mut VisualTestContext) {
     cx.executor().advance_clock(time);
     draw(cx);
 }
@@ -170,7 +180,10 @@ fn answer(button: &str, cx: &mut VisualTestContext) {
 }
 
 /// Every pane's editors, in order.
-fn editors(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Entity<EditorView>> {
+pub(super) fn editors(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Vec<Entity<EditorView>> {
     workbench.read_with(cx, |workbench, cx| {
         (workbench.pane_group(cx).panes().iter())
             .flat_map(|pane| {
@@ -183,7 +196,7 @@ fn editors(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Ent
 }
 
 /// An editor's path, text, whether it's dirty, and its caret.
-fn state(
+pub(super) fn state(
     editor: &Entity<EditorView>,
     cx: &mut VisualTestContext,
 ) -> (Option<String>, String, bool, usize) {
@@ -207,7 +220,7 @@ fn show(workbench: &Entity<Workbench>, ix: usize, cx: &mut VisualTestContext) {
 }
 
 /// The backups' texts, oldest first.
-fn backups(project: &Project) -> Vec<String> {
+pub(super) fn backups(project: &Project) -> Vec<String> {
     (newest(project).into_iter())
         .map(|backup| backup.text.to_string())
         .collect()
@@ -230,7 +243,7 @@ fn newest(project: &Project) -> Vec<Backup> {
 
 /// `app.quit`, as the app quits: nothing is asked, the quit goes ahead and
 /// saves the layout, and the window goes as the process ends.
-fn quit(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
+pub(super) fn quit(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
     let quits = Rc::new(Cell::new(0));
     let (counted, quitting) = (quits.clone(), workbench.clone());
     cx.update(|_, cx| {
@@ -420,28 +433,36 @@ fn vim(first: &mut TestAppContext, second: &mut TestAppContext, third: &mut Test
     quit(&workbench, &mut cx);
     let image = crash_image(&project);
 
-    // Restored, then `u`, back to the file on disk: with the backup's text
-    // over the file's, and with the file since changed to the backup's
-    // text, when the restore changes no text.
+    // Restored over the file on disk, then `u`, back to it.
     let disk = project.root.join("a.txt");
-    for (project, disk_text, cx) in [(&project, "alpha\n", second), (&image, "alpha!\n", third)] {
-        std::fs::write(&disk, disk_text).unwrap();
-        init(true, cx);
-        let (workbench, mut cx) = relaunch(project, cx);
-        let editor = editors(&workbench, &mut cx).remove(0);
-        assert_eq!(state(&editor, &mut cx), saved, "at its caret, dirty");
-        let mode = editor.read_with(&cx, |editor, _| editor.vim_mode());
-        assert_eq!(mode, Some("normal"));
-        show(&workbench, 0, &mut cx);
-        cx.simulate_keystrokes("u");
-        draw(&mut cx);
-        let (_, text, dirty, _) = state(&editor, &mut cx);
-        assert_eq!(
-            (text.as_str(), dirty),
-            (disk_text, false),
-            "one u undoes the restore"
-        );
-    }
+    init(true, second);
+    let (workbench, mut cx) = relaunch(&project, second);
+    let editor = editors(&workbench, &mut cx).remove(0);
+    assert_eq!(state(&editor, &mut cx), saved, "at its caret, dirty");
+    let mode = editor.read_with(&cx, |editor, _| editor.vim_mode());
+    assert_eq!(mode, Some("normal"));
+    show(&workbench, 0, &mut cx);
+    cx.simulate_keystrokes("u");
+    draw(&mut cx);
+    let (_, text, dirty, _) = state(&editor, &mut cx);
+    assert_eq!(
+        (text.as_str(), dirty),
+        ("alpha\n", false),
+        "one u undoes the restore"
+    );
+
+    // With the file since changed to the backup's text, there's nothing
+    // unsaved: the editor is restored clean, at its caret, its backup gone.
+    std::fs::write(&disk, "alpha!\n").unwrap();
+    init(true, third);
+    let (workbench, mut cx) = relaunch(&image, third);
+    let editor = editors(&workbench, &mut cx).remove(0);
+    assert_eq!(
+        state(&editor, &mut cx),
+        (saved.0, saved.1, false, saved.3),
+        "at its caret, clean"
+    );
+    assert!(backups(&image).is_empty(), "its backup removed");
 }
 
 /// An orphan of a file that can't be opened stays in the store, for a

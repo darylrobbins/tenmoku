@@ -729,6 +729,7 @@ impl Workbench {
         // their files are in, the workbench follows it
         // ([`Workbench::follow_workspace`]).
         *self.template.borrow_mut() = self.active.downgrade();
+        self.note_restored_paths(entry);
         let restored =
             (self.workspace).update(cx, |workspace, cx| workspace.restore(entry, window, cx));
         if !restored {

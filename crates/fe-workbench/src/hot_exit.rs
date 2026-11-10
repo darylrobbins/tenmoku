@@ -43,14 +43,15 @@
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet, hash_map::Entry},
-    io,
-    path::PathBuf,
+    fs::File,
+    io::{self, Read as _},
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use fe_buffer::{BackupId, BackupStore, Buffer, BufferId};
+use fe_buffer::{BackupId, BackupStore, Buffer, BufferId, DiskStamp, SaveSnapshot};
 use fe_command::Value;
 use fe_editor::EditorModel;
 use fe_gpui::{
@@ -97,6 +98,12 @@ struct Tracked {
     revision: Option<BackupRevision>,
     /// The wait for its next write and then the write, or its removal.
     pending: Option<Task<()>>,
+    /// Whether it was restored from its backup, so may hold just what its
+    /// file does though dirty ([`reconcile_later`]).
+    restored: bool,
+    /// The wait for its next comparison with its file and the comparison,
+    /// while it's restored and dirty.
+    reconcile: Option<Task<()>>,
 }
 
 /// What a launch found in the store.
@@ -251,23 +258,38 @@ impl Workbench {
             let tracked = match self.hot_exit.buffers.entry(buffer) {
                 Entry::Occupied(tracked) => tracked.into_mut(),
                 Entry::Vacant(slot) => {
-                    let backup = pane_item::buffer_backup(buffer, cx)
-                        .unwrap_or_else(|| BufferBackup::new(store.clone(), BackupId::new()));
-                    pane_item::set_buffer_backup(buffer, Some(backup.clone()), cx);
-                    slot.insert(Tracked {
-                        backup,
+                    let restored = pane_item::buffer_backup(buffer, cx);
+                    let tracked = Tracked {
+                        restored: restored.is_some(),
+                        backup: restored
+                            .unwrap_or_else(|| BufferBackup::new(store.clone(), BackupId::new())),
                         revision: None,
                         pending: None,
-                    })
+                        reconcile: None,
+                    };
+                    pane_item::set_buffer_backup(buffer, Some(tracked.backup.clone()), cx);
+                    slot.insert(tracked)
                 }
             };
             if dirty {
                 if tracked.revision.as_ref() != Some(&revision) {
+                    // Compared at once as it's restored (or made dirty
+                    // again), else once its edits pause, as it's backed up.
+                    let wait = match tracked.revision {
+                        None => Duration::ZERO,
+                        Some(_) => BACKUP_DELAY,
+                    };
                     tracked.revision = Some(revision);
+                    if tracked.restored {
+                        tracked.reconcile = Some(reconcile_later(editor.clone(), wait, cx));
+                    }
                     tracked.pending = Some(write_later(editor, tracked.backup.clone(), cx));
                 }
-            } else if tracked.revision.take().is_some() {
-                tracked.pending = Some(remove_now(&tracked.backup, cx));
+            } else {
+                tracked.reconcile = None;
+                if tracked.revision.take().is_some() {
+                    tracked.pending = Some(remove_now(&tracked.backup, cx));
+                }
             }
         }
     }
@@ -317,6 +339,122 @@ impl Workbench {
             }
         }
     }
+}
+
+/// After `wait`, compares `editor`'s buffer, restored from its backup and
+/// dirty, with its file, off the main thread, and marks it saved if the
+/// file holds just what saving it would write, byte for byte: a backup is
+/// restored dirty even when it holds the file's text
+/// ([`Buffer::from_backup`]), and a dirty buffer is backed up again as the
+/// app quits, so without this a buffer once backed up over an unchanged
+/// file would come back marked modified at every launch until saved.
+/// Clean, its backup goes, as any clean buffer's does.
+///
+/// The comparison counts only if, as it lands, the editor still shows that
+/// buffer at that path, unedited (its version), with the stamp it had on
+/// disk, and the file still has the stamp it was read with, before and
+/// after the read: else nothing changes, and the next edit compares again.
+fn reconcile_later(
+    editor: Entity<EditorView>,
+    wait: Duration,
+    cx: &mut Context<Workbench>,
+) -> Task<()> {
+    let editor = editor.downgrade();
+    cx.spawn(async move |_, cx| {
+        if !wait.is_zero() {
+            cx.background_executor().timer(wait).await;
+        }
+        let taken = editor.read_with(cx, |editor, _| {
+            let model = editor.model();
+            let buffer = model.buffer();
+            let path = model.path()?.to_owned();
+            buffer.is_dirty().then(|| Compared {
+                buffer: buffer.id(),
+                path,
+                stamp: buffer.disk_stamp(),
+                snapshot: buffer.save_snapshot(),
+            })
+        });
+        let Ok(Some(compared)) = taken else {
+            return;
+        };
+        let Compared {
+            buffer,
+            path,
+            stamp,
+            snapshot,
+        } = compared;
+        let read = cx.background_spawn({
+            let path = path.clone();
+            async move {
+                let read = holds(&path, &snapshot)?;
+                Some((snapshot, read))
+            }
+        });
+        let Some((snapshot, read)) = read.await else {
+            return;
+        };
+        (editor.update(cx, |editor, cx| {
+            #[cfg(test)]
+            if let Some(landing) = LANDING.take() {
+                landing(editor, cx);
+            }
+            let same = {
+                let model = editor.model();
+                let current = model.buffer();
+                current.id() == buffer
+                    && model.path() == Some(path.as_path())
+                    && current.disk_stamp() == stamp
+                    && current.version() == snapshot.version()
+                    && current.is_dirty()
+            };
+            // As a save's finish checks: a write since the read is caught,
+            // one between this check and the next line isn't.
+            if !same || DiskStamp::of(&path).ok().flatten() != Some(read) {
+                return;
+            }
+            let mut current = editor.model_mut().buffer_mut();
+            current.did_save_snapshot(&snapshot, Some(read));
+            drop(current);
+            cx.notify();
+        }))
+        .ok();
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Run once, as the next comparison of [`reconcile_later`] lands, before
+    /// it's checked: for tests to change the file or the editor meanwhile.
+    pub(super) static LANDING: std::cell::Cell<Option<Box<Landing>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) type Landing = dyn FnOnce(&mut EditorView, &mut Context<EditorView>);
+
+/// A buffer as [`reconcile_later`] compares it with its file.
+struct Compared {
+    buffer: BufferId,
+    path: PathBuf,
+    /// The buffer's stamp of its file.
+    stamp: Option<DiskStamp>,
+    snapshot: SaveSnapshot,
+}
+
+/// The stamp of the file at `path` if it holds what writing `snapshot`
+/// would, and still had that stamp once read.
+fn holds(path: &Path, snapshot: &SaveSnapshot) -> Option<DiskStamp> {
+    let mut file = File::open(path).ok()?;
+    let stamp = DiskStamp::from_metadata(&file.metadata().ok()?).ok()?;
+    let mut held = Vec::new();
+    file.read_to_end(&mut held).ok()?;
+    if DiskStamp::of(path).ok().flatten() != Some(stamp) {
+        return None;
+    }
+    let mut written = Vec::with_capacity(held.len());
+    snapshot.write_to(&mut written).ok()?;
+    (held == written).then_some(stamp)
 }
 
 /// Writes `backup` of `editor`'s buffer [`BACKUP_DELAY`] from now, if it's
@@ -699,3 +837,7 @@ fn prune(store: &BackupStore, corrupt: &[BackupId]) {
 #[cfg(test)]
 #[path = "hot_exit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "hot_exit_reconcile.rs"]
+mod reconcile;

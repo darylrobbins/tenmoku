@@ -5,10 +5,11 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     rc::Rc,
 };
 
+use fe_command::Value;
 use fe_editor::EditorModel;
 use fe_git::ChangeKind;
 use fe_gpui::{
@@ -106,6 +107,21 @@ pub fn window_layouts(dir: impl Into<PathBuf>, root: Option<&Path>) -> LayoutSto
     // use, for the first-run decision.
     fe_config::first_run::note_writing(&dir);
     LayoutStore::new(dir, root.unwrap_or(Path::new("")))
+}
+
+/// `path` with its `..` components gone, if it has any: resolved through
+/// the file system up to the last of them, as opening the file resolves
+/// them (`link/..` is the link's target's parent, not the link's), and
+/// kept as it is after it, symbolic links and all. `None` when it has no
+/// `..`, or the folder before the last one can't be resolved.
+fn resolved_parents(path: &Path) -> Option<PathBuf> {
+    let components: Vec<Component> = path.components().collect();
+    let last = components
+        .iter()
+        .rposition(|component| *component == Component::ParentDir)?;
+    let head: PathBuf = components[..=last].iter().collect();
+    let tail: PathBuf = components[last + 1..].iter().collect();
+    Some(dunce::canonicalize(head).ok()?.join(tail))
 }
 
 /// The workbench was re-rooted at the folder it carries, by
@@ -274,6 +290,10 @@ pub struct Workbench {
     /// are ([`Workspace::restoring`]): the workbench takes up its editors
     /// once they're in.
     restoring: bool,
+    /// The paths with `..` in them a restored layout saved its files by,
+    /// which their editors leave for the paths resolved
+    /// ([`Workbench::note_restored_paths`]).
+    restored_aliases: HashSet<PathBuf>,
     /// fastedit's own keys in the saved layout.
     layout_keys: Rc<LayoutKeys>,
     /// Keeps the window's bounds in [`LayoutKeys`].
@@ -704,6 +724,7 @@ impl Workbench {
             commands_run: Vec::new(),
             layout_id: None,
             restoring: false,
+            restored_aliases: HashSet::new(),
             layout_keys,
             _bounds: bounds,
             hot_exit: Default::default(),
@@ -750,9 +771,38 @@ impl Workbench {
         workbench
     }
 
+    /// Notes the paths with `..` in them that `entry`, a layout being
+    /// restored, saved its editors' files by (a launch given `../x` keeps
+    /// the `..`), in place of any noted before: the editors restored by
+    /// them go by the paths resolved once they're tracked
+    /// ([`Workbench::track_editors`]). A file opened by such a path since
+    /// keeps it, a buffer of its own beside the file's.
+    pub(super) fn note_restored_paths(&mut self, entry: &Value) {
+        fn walk(value: &Value, found: &mut HashSet<PathBuf>) {
+            if let Some(path) = value.get("state").and_then(|state| state.get("path"))
+                && let Some(path) = path.as_str().map(Path::new)
+                && path.components().any(|part| part == Component::ParentDir)
+            {
+                found.insert(path.to_owned());
+            }
+            match value {
+                Value::Array(items) => items.iter().for_each(|item| walk(item, found)),
+                Value::Object(map) => map.values().for_each(|item| walk(item, found)),
+                _ => {}
+            }
+        }
+        self.restored_aliases.clear();
+        if let Some(panes) = entry.get("panes") {
+            walk(panes, &mut self.restored_aliases);
+        }
+    }
+
     /// Observes each open editor, and stops observing closed ones. A newly
-    /// observed editor gets its diff base, and its file, if it has one, is
-    /// recorded as opened recently. The problems are listed again.
+    /// observed editor restored by a path with `..` in it
+    /// ([`Workbench::note_restored_paths`]) goes by the path resolved
+    /// ([`resolved_parents`]), as the file opened from the tree does. Its
+    /// file, if it has one, is recorded as opened recently, and it gets its
+    /// diff base. The problems are listed again.
     fn track_editors(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
         let open: HashSet<EntityId> = editors.iter().map(Entity::entity_id).collect();
@@ -774,6 +824,14 @@ impl Workbench {
             });
             let subscriptions = [observed, jumps];
             (self.editors).insert(editor.entity_id(), (editor.clone(), subscriptions));
+            let path = editor.read(cx).model().path().map(Path::to_owned);
+            let alias = path.filter(|path| self.restored_aliases.remove(path));
+            if let Some(resolved) = alias.as_deref().and_then(resolved_parents) {
+                editor.update(cx, |editor, cx| {
+                    editor.model_mut().move_path(resolved);
+                    cx.notify();
+                });
+            }
             if let Some(path) = editor.read(cx).model().path().map(Path::to_owned) {
                 recent_picker::record(path, false, cx);
             }
