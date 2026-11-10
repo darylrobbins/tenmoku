@@ -1,0 +1,39 @@
+# XcodeGen spec for the XCUITest spike (T1661): one macOS UI-testing bundle that
+# drives a bundled Tenmoku.app from outside, with real OS input.
+#
+# Nothing here is committed generated output: scripts/e2e-macos.sh runs
+#   xcodegen generate --spec tools/e2e-macos/project.yml --project <target>/e2e-macos
+# and builds and tests that project, with derived data beside it. The app under
+# test is not a target here: the script bundles it and hands its path to the test
+# runner (TEST_RUNNER_E2E_APP), which launches it with XCUIApplication(url:).
+name: TenmokuE2E
+options:
+  bundleIdPrefix: dev.tenmoku
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    # Ad-hoc ("Sign to Run Locally"): no team, no provisioning profile.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    SWIFT_VERSION: "5.0"
+    GENERATE_INFOPLIST_FILE: YES
+targets:
+  TenmokuE2E:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: TenmokuE2E
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenmoku.e2e.tests
+schemes:
+  TenmokuE2E:
+    build:
+      targets:
+        TenmokuE2E: [test]
+    test:
+      targets:
+        - TenmokuE2E
