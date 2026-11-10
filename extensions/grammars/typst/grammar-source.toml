@@ -1,0 +1,6 @@
+# Where this extension's WebAssembly grammar comes from: a commit of its
+# GitHub repository, which scripts/build-grammar-wasm.sh fetches and compiles.
+git = "https://github.com/uben0/tree-sitter-typst"
+rev = "46cf4ded12ee974a70bf8457263b67ad7ee0379d"
+src = "src"
+grammar = "typst"

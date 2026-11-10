@@ -1,0 +1,17 @@
+id = "tenmoku.grammar_typst"
+name = "Typst syntax"
+version = "0.10.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "typst"
+wasm = "tree-sitter-typst.wasm"
+extensions = ["typ"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = true
