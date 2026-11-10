@@ -171,7 +171,7 @@ impl Substitute {
 }
 
 thread_local! {
-    /// The deadline a preview's reading of the line is under, if one is.
+    // The deadline a preview's reading of the line is under, if one is.
     static PARSE_DEADLINE: std::cell::RefCell<Option<Deadline>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -329,7 +329,7 @@ fn tilde_len_within(
 
 /// What a replacement that ran past its deadline fails with.
 fn preview_timed_out() -> ExError {
-    ExError::Unsupported("the preview's time limit".into())
+    ExError::Unsupported(tr!("vim-unsupported-preview-time-limit").into())
 }
 
 /// One piece of a compiled replacement.

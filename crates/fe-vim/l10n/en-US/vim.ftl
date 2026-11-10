@@ -43,6 +43,7 @@ vim-unsupported-buffer-in-global = a buffer command in :g or :normal: not suppor
 vim-unsupported-window-in-global = a window command in :g or :normal: not supported yet
 vim-unsupported-bar-after-buffer-command = | after a buffer command: not supported yet
 vim-unsupported-ls-flags = :ls flags: not supported yet
+vim-unsupported-preview-time-limit = the preview's time limit
 vim-unsupported-bd-several = :bd of several buffers: not supported yet
 vim-unsupported-buffer-count = a count other than a number: not supported yet
 vim-unsupported-buffer-mark = a mark as a buffer number: not supported yet

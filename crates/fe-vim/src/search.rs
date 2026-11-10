@@ -42,10 +42,10 @@ thread_local! {
     // The regex-call budget for [`set_call_limit`]; `u64::MAX` for none.
     static CALL_LIMIT: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
 
-    /// The work units [`Deadline::work`] has been given on this thread.
+    // The work units [`Deadline::work`] has been given on this thread.
     static WORK_DONE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 
-    /// The work budget for [`set_work_limit`]; `u64::MAX` for none.
+    // The work budget for [`set_work_limit`]; `u64::MAX` for none.
     static WORK_LIMIT: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
 }
 
