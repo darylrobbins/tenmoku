@@ -280,6 +280,7 @@ licence. No module is committed.
 | wgsl | `tree-sitter-wgsl.wasm` | https://github.com/szebniok/tree-sitter-wgsl at `40259f3c77ea856841a4e0c4c807705f3e4a2b65` (`src`) | MIT; `highlights.scm` is upstream's `queries/highlights.scm`, adapted: captures renamed to fe-syntax's vocabulary, `(ERROR)` pattern dropped |
 | vhdl | `tree-sitter-vhdl.wasm` | [jpt13653903/tree-sitter-vhdl](https://github.com/jpt13653903/tree-sitter-vhdl) at `0d5d60b269c7f9861c2bada7cef58fe62e6e7879` (`src`) | MIT; `highlights.scm` is upstream's `queries/Neovim/highlights.scm` (same licence), less `@spell`; `injections.scm` is comment-only |
 | typst | `tree-sitter-typst.wasm` | https://github.com/uben0/tree-sitter-typst at `46cf4ded12ee974a70bf8457263b67ad7ee0379d` (`src`) | MIT; `highlights.scm` and `injections.scm` are upstream's `queries/typst/`, adapted: captures renamed to fe-syntax's vocabulary, unsupported shebang injection and `#set-lang-from-info-string!` replaced by `@injection.language` |
+| scheme | `tree-sitter-scheme.wasm` | [6cdh/tree-sitter-scheme](https://github.com/6cdh/tree-sitter-scheme) at `45c72463ac4260ef6e07d1c0642ed43d4e9957b4` (`src`) | MIT; `highlights.scm` is upstream's `queries/highlights.scm` (same licence) with a few rules added (record type names, defined procedure names); `injections.scm` is comment-only; claiming `.scm` also opens tree-sitter query files as Scheme (both are s-expressions) |
 
 A language added after these needn't have a `Cargo.lock` pin. Its directory's
 `grammar-source.toml` names its source in one of two more forms: a GitHub
