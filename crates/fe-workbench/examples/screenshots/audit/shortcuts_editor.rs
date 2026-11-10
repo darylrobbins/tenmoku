@@ -13,8 +13,8 @@ pub(crate) const SURFACE: Surface = Surface {
 };
 
 const PROBES: &[Probe] = &[
-    // The search box, right of its placeholder.
-    probe(720., 113., "surface.background"),
+    // Below the search box, whose field is the panel's colour.
+    probe(900., 140., "surface.background"),
     // The table, between the header and the first row.
     probe(720., 160., "surface.background"),
     // The table, between two columns.

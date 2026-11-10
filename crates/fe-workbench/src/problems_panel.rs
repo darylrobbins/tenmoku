@@ -95,17 +95,17 @@ pub(crate) const WARNINGS_ITEM: &str = "problems.warnings";
 /// The command that shows the panel, which the status item runs.
 pub(crate) const SHOW: &str = "problems.show";
 
-/// The problems in the sidebar: on the rail once it has shown; focused when
-/// shown, for its commands. The icon bundle has no warning sign: an error's
-/// cross.
+/// The problems in the sidebar: always on the rail, at its foot, a red dot
+/// on it while there are errors; focused when shown, for its commands.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("problems"),
     name: "Problems",
-    icon: fe_ui::Icon::X,
+    icon: fe_ui::Icon::TriangleAlert,
     show_command: SHOW,
     show_op: crate::dock::DockOp::Problems(ProblemsOp::Show),
     order: 60,
-    always_on_rail: false,
+    // At the rail's foot (`dock::RAIL_FOOT`).
+    always_on_rail: true,
     focus_on_show: true,
 };
 
@@ -1089,8 +1089,11 @@ impl Workbench {
         self.sync_problems(cx);
     }
 
-    /// Shows `counts` on the status bar: the pair of items, or neither.
+    /// Shows `counts` on the status bar, the pair of items or neither, and
+    /// the errors on the rail's Problems button.
     pub(crate) fn show_problem_counts(&mut self, counts: DiagnosticCounts, cx: &mut Context<Self>) {
+        let dock = self.dock().clone();
+        dock.update(cx, |dock, cx| dock.set_errors(counts.errors, cx));
         let bar = self.status_bar().clone();
         bar.update(cx, |bar, cx| {
             let items = status_items(counts);

@@ -132,6 +132,11 @@ reason = "A constructor's name in assert_named's debug assertion"
 # Element IDs and debug selectors, never shown.
 
 [[literal]]
+file = "src/activity_rail.rs"
+text = "rail-icon:{icon_id}"
+reason = "A rail button's icon's debug selector, by the button's element ID"
+
+[[literal]]
 file = "src/breadcrumbs.rs"
 text = "crumb:{ix}:{label}"
 reason = "A crumb's debug selector"

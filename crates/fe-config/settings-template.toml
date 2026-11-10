@@ -283,6 +283,9 @@
 # settings, with LazyVim's dashboard keys while vim is on. Off, the pane says
 # "No open files".
 # start_page = true
+# Which edge of the window the activity rail is on, "left" or "right". The
+# sidebar opens beside it, so they move together, at once.
+# rail = "left"
 # The language of Tenmoku's own text: auto follows the system's preferred
 # languages; a tag such as "de" or "pt-BR" picks a shipped one. Menus and
 # panels change at once; macOS's own panels and the updater follow the

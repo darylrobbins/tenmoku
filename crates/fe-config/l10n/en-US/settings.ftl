@@ -565,6 +565,13 @@ settings-workbench-preview_tabs =
     tab, in italics, that the next one replaces. Editing it,
     double-clicking it or its tab, or pinning it keeps it open.
 
+settings-workbench-rail =
+    Which edge of the window the activity rail is on, `left` or
+    `right`. The sidebar opens beside it, so they move together, at
+    once.
+    .left = On the window's left edge, the sidebar to its right.
+    .right = On the window's right edge, the sidebar to its left.
+
 settings-workbench-start_page =
     Whether a window with no tabs open shows the Start page in its empty
     pane: New File, Open File, Open Folder, the recent folders and files,

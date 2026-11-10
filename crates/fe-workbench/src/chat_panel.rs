@@ -94,7 +94,7 @@ use chat_context::MAX_FILE;
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("chat"),
     name: "Chat",
-    icon: fe_ui::Icon::MessageSquare,
+    icon: fe_ui::Icon::Bot,
     show_command: "chat.open",
     show_op: DockOp::ShowChat,
     order: 47,

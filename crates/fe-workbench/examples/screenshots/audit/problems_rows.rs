@@ -23,7 +23,7 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The panel, below its rows.
-    probe(850., 400., "surface.panel"),
+    probe(174., 400., "surface.panel"),
     // The editor, below the code its squiggles mark.
     probe(400., 400., "surface.background"),
 ];

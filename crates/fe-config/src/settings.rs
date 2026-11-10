@@ -611,6 +611,10 @@ pub struct WorkbenchSettings {
     /// and the settings, with LazyVim's dashboard keys while vim is on.
     /// Off, the pane says "No open files".
     pub start_page: bool,
+    /// Which edge of the window the activity rail is on, `left` or
+    /// `right`. The sidebar opens beside it, so they move together, at
+    /// once.
+    pub rail: RailSide,
     /// The language of Tenmoku's own text: `auto` follows the system's
     /// preferred languages; a tag such as `de` or `pt-BR` picks a shipped
     /// one. Menus and panels change at once; macOS's own panels and the
@@ -632,6 +636,17 @@ pub enum IconTheme {
     Material,
     /// Plain line icons in the theme's colours.
     Minimal,
+}
+
+/// `workbench.rail`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RailSide {
+    /// On the window's left edge, the sidebar to its right.
+    #[default]
+    Left,
+    /// On the window's right edge, the sidebar to its left.
+    Right,
 }
 
 /// `workbench.locale`: `auto`, or a BCP 47 language tag such as `de` or
@@ -794,6 +809,7 @@ impl Default for WorkbenchSettings {
             zen_mode: ZenModeSettings::default(),
             icon_theme: IconTheme::default(),
             start_page: true,
+            rail: RailSide::default(),
             locale: LocaleSetting::default(),
         }
     }

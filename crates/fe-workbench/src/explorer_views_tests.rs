@@ -126,6 +126,7 @@ fn the_rail_has_one_explorer_of_folders_over_the_outline(cx: &mut TestAppContext
             DockPanel::Search.id(),
             DockPanel::SourceControl.id(),
             DockPanel::Chat.id(),
+            DockPanel::Problems.id(),
         ]
     );
     assert!(!panels.contains(&PanelId("outline")), "{panels:?}");
@@ -134,7 +135,7 @@ fn the_rail_has_one_explorer_of_folders_over_the_outline(cx: &mut TestAppContext
     assert!(!icons.contains(&Icon::ListTree), "{icons:?}");
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::Explorer, "Explorer".to_owned())
+        (true, DockPanel::Explorer, "Project".to_owned())
     );
 
     // Its views: the tree, drawn in its body, over the outline, collapsed.
@@ -197,7 +198,7 @@ fn show_project_and_outline_show_show_the_explorer(cx: &mut TestAppContext) {
     dispatch("outline.show", cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::Explorer, "Explorer".to_owned())
+        (true, DockPanel::Explorer, "Project".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
     assert!(cx.update(|window, _| outline.is_focused(window)));
@@ -212,7 +213,7 @@ fn show_project_and_outline_show_show_the_explorer(cx: &mut TestAppContext) {
     dispatch("outline.show", cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::Explorer, "Explorer".to_owned())
+        (true, DockPanel::Explorer, "Project".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(true), Some(false)]);
     assert!(cx.update(|window, _| outline.is_focused(window)));
@@ -224,7 +225,7 @@ fn show_project_and_outline_show_show_the_explorer(cx: &mut TestAppContext) {
     dispatch("dock.show_project", cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::Explorer, "Explorer".to_owned())
+        (true, DockPanel::Explorer, "Project".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
     assert!(tree_focused(&workbench, cx));
@@ -278,7 +279,7 @@ fn a_layout_saved_with_the_project_panel_loads_the_explorer_as_built(cx: &mut Te
     restore(&workbench, &entry(project), cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::Explorer, "Explorer".to_owned())
+        (true, DockPanel::Explorer, "Project".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(true)]);
     let size = workbench.read_with(cx, |workbench, cx| {
@@ -306,7 +307,7 @@ fn a_layout_saved_with_the_outline_panel_loads_the_explorer_then_views_as_saved(
     restore(&workbench, &entry(outline), cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::Explorer, "Explorer".to_owned())
+        (true, DockPanel::Explorer, "Project".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(true)]);
 

@@ -14,7 +14,7 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The panel, below its message.
-    probe(850., 400., "surface.panel"),
+    probe(174., 400., "surface.panel"),
     // The editor beside it, below the code.
     probe(400., 400., "surface.background"),
 ];

@@ -14,9 +14,9 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The query row, left of the query.
-    probe(820., 152., "surface.panel"),
+    probe(144., 152., "surface.panel"),
     // The panel, below the results.
-    probe(850., 400., "surface.panel"),
+    probe(174., 400., "surface.panel"),
 ];
 
 /// Types `query` into the search panel's input and runs the search.

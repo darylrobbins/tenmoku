@@ -6,8 +6,12 @@
 //!
 //! A panel is any view implementing [`DockItem`], registered with
 //! [`DockState::add_panel`] and named by its [`PanelId`]. The rail lists
-//! the panels in registration order; one that isn't
-//! [`DockItem::always_on_rail`] joins it once it has shown.
+//! the panels in registration order, in two groups: the top one, and at
+//! a side dock's foot the [`DockItem::on_rail_foot`] panels, then the
+//! [`RailAction`]s. One that isn't [`DockItem::always_on_rail`] joins it
+//! once it has shown. The selection's bar is on the rail's edge facing the
+//! panel, and the host can badge a panel's button
+//! ([`DockState::set_badge`]).
 //!
 //! [`DockState`] is the dock's state, for the view that draws it, a
 //! [`DockView`]: [`Dock`] is kiln's, and a host can hold the state in a
@@ -54,7 +58,9 @@ use gpui::{
 use kiln_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
 use kiln_core::{shortcut_label, shortcuts};
 use kiln_platform::{command_actions::dispatch_invocation, keys};
-use kiln_ui::{ActivityRail, Icon, RAIL_WIDTH, RailButton, TAB_HEIGHT, Tooltip, ui_theme};
+use kiln_ui::{
+    ActivityRail, Badge, BadgeTone, Icon, RAIL_WIDTH, RailButton, TAB_HEIGHT, Tooltip, ui_theme,
+};
 
 use crate::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
 
@@ -159,6 +165,12 @@ pub trait DockItem: Render + Focusable + 'static {
         false
     }
 
+    /// Whether its rail button is in the rail's bottom group, before the
+    /// [`RailAction`]s, rather than its top one.
+    fn on_rail_foot(&self) -> bool {
+        false
+    }
+
     /// Its own state, for a saved layout: [`DockState::save`] keeps it
     /// under the panel's id. None, saving nothing, unless a panel has
     /// state to keep, as a [`ViewContainer`](crate::ViewContainer) keeps
@@ -182,6 +194,7 @@ trait PanelHandle {
     fn always_on_rail(&self, cx: &App) -> bool;
     fn joins_rail_on_show(&self, cx: &App) -> bool;
     fn focus_on_show(&self, cx: &App) -> bool;
+    fn on_rail_foot(&self, cx: &App) -> bool;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn save_state(&self, cx: &App) -> Option<Value>;
     fn restore_state(&self, saved: &Value, cx: &mut App);
@@ -227,6 +240,10 @@ impl<P: DockItem> PanelHandle for Panel<P> {
         self.entity.read(cx).focus_on_show()
     }
 
+    fn on_rail_foot(&self, cx: &App) -> bool {
+        self.entity.read(cx).on_rail_foot()
+    }
+
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.entity.focus_handle(cx)
     }
@@ -270,6 +287,48 @@ pub struct RailAction {
     pub command: &'static str,
 }
 
+/// A badge on a panel's rail button, which the host sets
+/// ([`DockState::set_badge`]) as what it counts changes: a count, or a dot
+/// with none, in a colour by its meaning, and the accessible name that says
+/// what it means, such as "3 changed files".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RailBadge {
+    pub count: Option<usize>,
+    pub tone: BadgeTone,
+    pub name: SharedString,
+}
+
+impl RailBadge {
+    /// A count of `count`.
+    pub fn count(count: usize, tone: BadgeTone, name: impl Into<SharedString>) -> Self {
+        Self {
+            count: Some(count),
+            tone,
+            name: name.into(),
+        }
+    }
+
+    /// A dot.
+    pub fn dot(tone: BadgeTone, name: impl Into<SharedString>) -> Self {
+        Self {
+            count: None,
+            tone,
+            name: name.into(),
+        }
+    }
+
+    /// The badge drawn for it on the rail's `ix`th button.
+    fn element(&self, ix: usize) -> Badge {
+        let badge = match self.count {
+            Some(count) => Badge::count(count),
+            None => Badge::dot(),
+        };
+        badge
+            .tone(self.tone)
+            .name(("dock-rail-badge", ix), self.name.clone())
+    }
+}
+
 /// What the last frame drew of a dock: where its rail, its buttons and its
 /// column were laid out, the icons its buttons drew and the last tooltip
 /// built. Cloning it shares it, so a host can read it without the dock.
@@ -285,6 +344,8 @@ pub struct DrawnDock {
     icons: Rc<RefCell<Vec<Icon>>>,
     /// The ids of the buttons drawn highlighted.
     highlighted: Rc<RefCell<Vec<PanelId>>>,
+    /// The badges drawn, by their buttons' ids, top to bottom.
+    badges: Rc<RefCell<Vec<(PanelId, RailBadge)>>>,
     tooltip: Rc<RefCell<Option<String>>>,
     /// The column's title row, its panel and its edge's handle.
     column: ScrollHandle,
@@ -345,6 +406,15 @@ impl DrawnDock {
         self.column.bounds_for_item(0)
     }
 
+    /// The ids of the rail's buttons, panels' and actions', top to bottom,
+    /// as [`DrawnDock::rail_icons`] lists their icons.
+    pub fn rail_ids(&self) -> Vec<PanelId> {
+        (self.buttons.borrow().iter())
+            .filter(|id| !id.0.is_empty())
+            .copied()
+            .collect()
+    }
+
     /// The icons the rail's buttons drew, top to bottom.
     pub fn rail_icons(&self) -> Vec<Icon> {
         self.icons.borrow().clone()
@@ -353,6 +423,12 @@ impl DrawnDock {
     /// The ids of the rail's buttons drawn highlighted, panels' and actions'.
     pub fn rail_highlighted(&self) -> Vec<PanelId> {
         self.highlighted.borrow().clone()
+    }
+
+    /// The badges the rail's buttons drew, by their panels' ids, top to
+    /// bottom.
+    pub fn rail_badges(&self) -> Vec<(PanelId, RailBadge)> {
+        self.badges.borrow().clone()
     }
 
     /// The text of the last tooltip a rail button built.
@@ -399,6 +475,8 @@ pub struct DockState {
     joined: HashSet<PanelId>,
     /// The rail's actions, with whether each is highlighted.
     actions: Vec<(RailAction, bool)>,
+    /// The badges on panels' rail buttons, as the host set them.
+    badges: HashMap<PanelId, RailBadge>,
     /// The panel's width at a side.
     side_size: Pixels,
     /// The panel's height at the bottom.
@@ -427,6 +505,7 @@ impl DockState {
             visible: true,
             joined: HashSet::new(),
             actions: Vec::new(),
+            badges: HashMap::new(),
             side_size: px(240.),
             bottom_size: px(240.),
             built: px(240.),
@@ -609,6 +688,20 @@ impl DockState {
         if let Some((_, was)) = self.actions.iter_mut().find(|(action, _)| action.id == id) {
             *was = highlighted;
         }
+    }
+
+    /// Puts `badge` on `panel`'s rail button, or takes its badge off. The
+    /// host sets it as what the badge counts changes, and redraws the dock.
+    pub fn set_badge(&mut self, panel: PanelId, badge: Option<RailBadge>) {
+        match badge {
+            Some(badge) => self.badges.insert(panel, badge),
+            None => self.badges.remove(&panel),
+        };
+    }
+
+    /// The badge on `panel`'s rail button, as set.
+    pub fn badge(&self, panel: PanelId) -> Option<&RailBadge> {
+        self.badges.get(&panel)
     }
 
     /// The registered panel of type `P`, if any.
@@ -920,6 +1013,7 @@ impl DockState {
         let contexts = self.shortcut_contexts.clone();
         let last_tooltip = self.drawn.tooltip.clone();
         RailButton::new(("dock-rail-action", ix), action.icon, &ui_theme(cx))
+            .name(action.title.clone())
             .highlighted(highlighted)
             .on_click(move |_, window, cx| run_action(command, window, cx))
             .tooltip(move |_, cx| {
@@ -939,10 +1033,16 @@ impl DockState {
         if self.rail_highlighted() == Some(id) {
             self.drawn.highlighted.borrow_mut().push(id);
         }
+        let badge = self.badges.get(&id).map(|badge| {
+            self.drawn.badges.borrow_mut().push((id, badge.clone()));
+            badge.element(ix)
+        });
         let contexts = self.shortcut_contexts.clone();
         let last_tooltip = self.drawn.tooltip.clone();
         RailButton::new(("dock-rail", ix), icon, &ui_theme(cx))
+            .name(title.clone())
             .highlighted(self.rail_highlighted() == Some(id))
+            .when_some(badge, RailButton::badge)
             .on_click(cx.listener(move |view, _, window, cx| view.rail_clicked(id, window, cx)))
             .tooltip(move |_, cx| {
                 let shortcut = command.and_then(|command| Self::shortcut(&contexts, command, cx));
@@ -960,23 +1060,30 @@ impl DockState {
         self.drawn.buttons.borrow_mut().clear();
         self.drawn.icons.borrow_mut().clear();
         self.drawn.highlighted.borrow_mut().clear();
+        self.drawn.badges.borrow_mut().clear();
         self.drawn.cursor.set(None);
         let (size, min) = (self.current_size(), self.min_size());
         self.drawn.no_rail.set(self.rail_hidden);
         self.drawn
             .column_drawn
             .set(self.visible && self.active.is_some());
-        let shown: Vec<_> = (0..self.panels.len())
+        let (foot, top): (Vec<_>, Vec<_>) = (0..self.panels.len())
             .filter(|&ix| !self.rail_hidden && self.on_rail(self.panels[ix].id(), cx))
-            .collect();
-        let buttons: Vec<_> = shown
-            .into_iter()
+            .partition(|&ix| self.panels[ix].on_rail_foot(cx));
+        let buttons: Vec<_> = (top.into_iter())
             .map(|ix| self.rail_button(ix, cx))
             .collect();
-        let actions: Vec<_> = (self.actions.iter().enumerate())
-            .filter(|_| !self.rail_hidden)
-            .map(|(ix, (action, highlighted))| self.action_button(ix, action, *highlighted, cx))
+        // The bottom group: its panels, then the actions.
+        let mut actions: Vec<_> = (foot.into_iter())
+            .map(|ix| self.rail_button(ix, cx))
             .collect();
+        actions.extend(
+            (self.actions.iter().enumerate())
+                .filter(|_| !self.rail_hidden)
+                .map(|(ix, (action, highlighted))| {
+                    self.action_button(ix, action, *highlighted, cx)
+                }),
+        );
         let active = self.active.and_then(|id| self.handle(id));
         let body = active
             .filter(|_| self.visible)
@@ -1002,7 +1109,7 @@ impl DockState {
                 TAB_HEIGHT
             } else {
                 // The buttons, then the row's bottom border.
-                RAIL_WIDTH + px(1.)
+                RailButton::HEIGHT + px(1.)
             };
             self.drawn.rail_in_title.set(body.is_some());
             let rail = div()
@@ -1067,6 +1174,7 @@ impl DockState {
                 .insert(buttons.len(), PanelId(""));
         }
         let rail = ActivityRail::new("dock-rail", ui)
+            .on_left(left)
             .children(buttons)
             .footer(actions)
             .track(&self.drawn.rail);

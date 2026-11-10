@@ -1,6 +1,7 @@
-//! The activity rail on the window's right edge: its layout beside the
-//! dock, clicks that switch and collapse panels, the highlight, tooltips
-//! and icons.
+//! The activity rail on the window's left edge, as `workbench.rail`
+//! defaults: its layout beside the dock, clicks that switch and collapse
+//! panels, the highlight, tooltips and icons. Its B3 measures, groups,
+//! selection and badges are `rail_b3`'s.
 
 use std::{fs, path::Path, time::Duration};
 
@@ -9,6 +10,7 @@ use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, Keymap, KeymapLayer};
 use fe_ui::{Icon, RAIL_WIDTH, ROW_HEIGHT, TAB_HEIGHT};
 use gpui::{
     AssetSource as _, Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext, point,
+    px,
 };
 
 use super::open;
@@ -80,14 +82,14 @@ fn the_rail_stays_when_the_dock_hides(cx: &mut TestAppContext) {
     let (rail, column) = dock.read_with(cx, |dock, _| {
         (dock.rail_bounds().unwrap(), dock.column_bounds().unwrap())
     });
-    assert_eq!(rail.right(), window.width, "{rail:?}");
+    assert_eq!(rail.left(), px(0.), "{rail:?}");
     assert_eq!(rail.size.width, RAIL_WIDTH);
     // Above the status bar.
     assert_eq!(rail.size.height, window.height - ROW_HEIGHT);
-    assert_eq!(column.right(), rail.left(), "{column:?}");
+    assert_eq!(column.left(), rail.right(), "{column:?}");
     assert_eq!(column.size.width, PANEL_WIDTH);
-    let right = pane.read_with(cx, |pane, _| pane.bounds().right());
-    assert_eq!(right, column.left());
+    let left = pane.read_with(cx, |pane, _| pane.bounds().left());
+    assert_eq!(left, column.right());
 
     cx.simulate_keystrokes("cmd-b");
     draw(cx);
@@ -95,9 +97,9 @@ fn the_rail_stays_when_the_dock_hides(cx: &mut TestAppContext) {
     let (hidden, column) = dock.read_with(cx, |dock, _| (dock.rail_bounds(), dock.column_bounds()));
     assert_eq!(hidden, Some(rail));
     assert_eq!(column, None);
-    let moved = pane.read_with(cx, |pane, _| pane.bounds().right());
-    assert_eq!(moved, right + PANEL_WIDTH);
-    assert_eq!(moved, rail.left());
+    let moved = pane.read_with(cx, |pane, _| pane.bounds().left());
+    assert_eq!(moved, left - PANEL_WIDTH);
+    assert_eq!(moved, rail.right());
 }
 
 #[gpui::test]
@@ -143,7 +145,7 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     };
     assert_eq!(
         highlighted(cx),
-        (Some(DockPanel::Explorer), "Explorer".into())
+        (Some(DockPanel::Explorer), "Project".into())
     );
     cx.simulate_keystrokes("cmd-shift-f");
     assert_eq!(highlighted(cx), (Some(DockPanel::Search), "Search".into()));
@@ -152,7 +154,7 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-alt-o");
     assert_eq!(
         highlighted(cx),
-        (Some(DockPanel::Explorer), "Explorer".into())
+        (Some(DockPanel::Explorer), "Project".into())
     );
 
     // The title row is TAB_HEIGHT high, and a click on it does nothing.
@@ -211,7 +213,7 @@ fn tooltips_show_name_and_shortcut(cx: &mut TestAppContext) {
     };
     assert_eq!(
         hover(DockPanel::Explorer, cx),
-        shown("Explorer ⇧⌘E", "Explorer Shift+Super+E")
+        shown("Project ⇧⌘E", "Project Shift+Super+E")
     );
     assert_eq!(
         hover(DockPanel::Search, cx),
@@ -256,12 +258,14 @@ fn buttons_draw_lucide_icons(cx: &mut TestAppContext) {
     let dock = dock(&workbench, cx);
     let drawn =
         |cx: &mut VisualTestContext| dock.read_with(cx, |dock, _| dock.rail_icons().to_vec());
-    // The Terminal button is pinned below the panels'.
+    // Problems, the Git log and Terminal are pinned below the panels'.
     let icons = [
         Icon::Files,
         Icon::Search,
         Icon::GitBranch,
-        Icon::MessageSquare,
+        Icon::Bot,
+        Icon::TriangleAlert,
+        Icon::GitGraph,
         Icon::FileTerminal,
     ];
     assert_eq!(drawn(cx), icons);

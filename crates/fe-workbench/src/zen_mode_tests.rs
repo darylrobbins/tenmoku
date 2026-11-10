@@ -242,7 +242,12 @@ fn settings_control_what_hides(cx: &mut TestAppContext) {
         assert!(pane.read_with(cx, |pane, _| pane.pane().tab_bar_hidden()));
     }
     keys("cmd-k z", cx);
-    assert_eq!(margins(&panes[0], cx).0, 0.);
+    // No margin: the pane starts at the sidebar's edge, on the left.
+    let sidebar = workbench.read_with(cx, |workbench, cx| {
+        let dock = workbench.dock().read(cx);
+        dock.column_bounds().expect("shown").right()
+    });
+    assert_eq!(margins(&panes[0], cx).0, f32::from(sidebar));
     for pane in &panes {
         assert!(!pane.read_with(cx, |pane, _| pane.pane().tab_bar_hidden()));
     }

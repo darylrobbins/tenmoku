@@ -65,6 +65,10 @@ fn opened(
     cx.update(|_, cx| set_vim_enabled(cx, true));
     let terminal = workbench.read_with(cx, |workbench, _| workbench.terminal().clone());
     terminal.update(cx, |terminal, _| terminal.set_shell("/bin/sh", &[]));
+    // Written for a sidebar on the right, `workbench.rail`'s old default.
+    workbench.update(cx, |workbench, cx| {
+        workbench.move_sidebar(kiln_shell::DockPosition::Right, cx)
+    });
     focus(
         &workbench.read_with(cx, |workbench, cx| workbench.focus_handle(cx)),
         cx,

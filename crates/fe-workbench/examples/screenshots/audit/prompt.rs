@@ -30,7 +30,7 @@ const PROBES: &[Probe] = &[
     // Trust Folder, the primary button, left of its label.
     probe(497., 407., "accent.base"),
     // The scrim over the editor, below the code.
-    probe_over(100., 450., "surface.overlay", "surface.background"),
+    probe_over(850., 450., "surface.overlay", "surface.background"),
 ];
 
 /// Turns on trust prompting, with a trust file beside the project, and the

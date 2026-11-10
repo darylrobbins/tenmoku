@@ -54,7 +54,6 @@ use crate::{
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
 };
-use fe_ui::Icon;
 use kiln::ViewCommands as _;
 use kiln_shell::{
     DockPosition, DockState, DockView as _, ModalEvent, ModalLayer, PaneView as _, Shell,
@@ -129,8 +128,7 @@ fn resolved_parents(path: &Path) -> Option<PathBuf> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootChanged(pub PathBuf);
 
-/// The sidebar rail's Terminal button.
-const TERMINAL_BUTTON: &str = "terminal";
+pub(crate) use crate::dock::TERMINAL_BUTTON;
 
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
@@ -470,9 +468,15 @@ impl Workbench {
         let git_log = cx.new(|cx| GitLogPanel::new(workbench, cx));
         // Its key is read when it first draws, not now.
         let chat = cx.new(|cx| ChatPanel::new(window, cx));
+        // On the side `workbench.rail` names; the window's own settings,
+        // once loaded, move it if theirs differ (`reload_settings`).
+        let rail = (cx.try_global::<kiln::GlobalSettings<fe_config::Settings>>())
+            .map_or_else(Default::default, |global| global.settings().workbench.rail);
+        let sidebar = crate::dock::rail_position(rail);
         let dock = cx.new(|cx| {
             let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), cx));
             Dock::new(
+                sidebar,
                 panel.clone(),
                 search,
                 outline.clone(),
@@ -484,18 +488,12 @@ impl Workbench {
                 cx,
             )
         });
-        // Opens the terminal from the sidebar, whose button follows the
-        // bottom dock (`follow_terminal`).
+        // The Git log, and the terminal, whose button follows the bottom
+        // dock (`follow_terminal`), at the rail's foot.
         dock.update(cx, |dock, cx| {
-            dock.add_action(
-                kiln_shell::RailAction {
-                    id: TERMINAL_BUTTON,
-                    icon: Icon::FileTerminal,
-                    title: "Terminal".into(),
-                    command: "terminal.toggle",
-                },
-                cx,
-            )
+            for action in crate::dock::rail_actions() {
+                dock.add_action(action, cx);
+            }
         });
         let git = Self::new_git(root.clone(), &changes, cx);
         let quick_open = Self::new_quick_open(root, pane.downgrade(), cx);
@@ -583,7 +581,7 @@ impl Workbench {
             shell.set_menu_bar(None, cx);
             shell.set_window_frame(false, cx);
             shell.set_title(title_bar::name(launch_root.as_deref()), cx);
-            shell.set_dock(DockPosition::Right, Some(dock.clone().into()), cx);
+            shell.set_dock(sidebar, Some(dock.clone().into()), cx);
             shell.set_dock(DockPosition::Bottom, Some(terminal_dock.clone().into()), cx);
             shell.set_status_bar(Some(status_bar.clone().into()), cx);
         });

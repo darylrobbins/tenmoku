@@ -120,6 +120,9 @@ fn terminal_focused(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -
 #[gpui::test]
 fn the_terminal_moves_right_with_its_session_and_focus(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
+    // On the left by default (`workbench.rail`): moved right first.
+    assert_eq!(positions(&workbench, cx), (Left, Bottom));
+    run("dock.move_sidebar_right", cx);
     assert_eq!(positions(&workbench, cx), (Right, Bottom));
     run("terminal.toggle", cx);
     let started = sessions(&workbench, cx);
@@ -180,17 +183,30 @@ fn the_places_are_kept_in_the_layout(cx: &mut TestAppContext) {
     assert_eq!(entry["docks"]["sidebar"].as_str(), Some("right"));
     assert_eq!(entry["docks"]["terminal"].as_str(), Some("left"));
 
+    // The sidebar stays on `workbench.rail`'s side, the left; the
+    // terminal, saved there, gives way to the side the sidebar was saved
+    // on.
     let (second, cx, _dir) = opened(&mut app);
     second.update_in(cx, |workbench, window, cx| {
         workbench.restore_layout(&entry, window, cx)
     });
     draw(cx);
-    assert_eq!(positions(&second, cx), (Right, Left));
+    assert_eq!(positions(&second, cx), (Left, Right));
     run("terminal.toggle", cx);
     let [sidebar, terminal] = drawn(&second, cx);
     let viewport = cx.update(|window, _| window.viewport_size());
-    assert_eq!(sidebar.right(), viewport.width);
-    assert!(terminal.right() < viewport.width / 2., "{terminal:?}");
+    assert_eq!(sidebar.left(), Pixels::ZERO);
+    assert!(terminal.left() > viewport.width / 2., "{terminal:?}");
+
+    // A terminal saved on the other side stays there.
+    let docks = Value::from_iter([("sidebar", "left"), ("terminal", "right")]);
+    let entry = Value::from_iter([("docks", docks)]);
+    let (fourth, cx, _dir) = opened(&mut app);
+    fourth.update_in(cx, |workbench, window, cx| {
+        workbench.restore_layout(&entry, window, cx)
+    });
+    draw(cx);
+    assert_eq!(positions(&fourth, cx), (Left, Right));
 
     // Places that aren't one dock per edge, or the sidebar at the bottom,
     // are left as built.
@@ -204,7 +220,7 @@ fn the_places_are_kept_in_the_layout(cx: &mut TestAppContext) {
         draw(cx);
         assert_eq!(
             positions(&third, cx),
-            (Right, Bottom),
+            (Left, Bottom),
             "{sidebar} {terminal}"
         );
     }

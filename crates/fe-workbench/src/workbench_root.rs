@@ -95,7 +95,8 @@ impl Workbench {
     }
 
     /// Subscribes to a root's Changes panel: its rows open as the project
-    /// panel's do, and the project panel shows the statuses it lists.
+    /// panel's do, the project panel shows the statuses it lists, and the
+    /// rail's Changes button counts them.
     pub(super) fn follow_changes(
         changes: &Entity<GitPanel>,
         window: &mut Window,
@@ -112,6 +113,8 @@ impl Workbench {
                     let statuses: Vec<_> = (changes.read(cx).statuses())
                         .map(|(path, kind)| (path.to_owned(), kind))
                         .collect();
+                    let count = statuses.len();
+                    (workbench.dock).update(cx, |dock, cx| dock.set_changed_files(count, cx));
                     (workbench.panel).update(cx, |panel, cx| panel.set_git_statuses(statuses, cx));
                     workbench.tint_tabs(cx);
                 }
@@ -259,8 +262,9 @@ impl Workbench {
     }
 
     /// Applies reloaded settings to the open editors and to editors yet to
-    /// open, and `status_bar.visible` to the status bar if the reload
-    /// changed it, so reloading for any other key keeps a toggle.
+    /// open, and `status_bar.visible` to the status bar and
+    /// `workbench.rail` to the rail and sidebar if the reload changed them,
+    /// so reloading for any other key keeps a toggle or a move.
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         self.preview_tabs = event.settings.workbench.preview_tabs;
         self.set_start_page_on(event.settings.workbench.start_page, cx);
@@ -275,6 +279,12 @@ impl Workbench {
         }
         if event.settings.terminal != event.previous.terminal {
             self.set_terminal_settings(&event.settings.terminal, cx);
+        }
+        let rail = event.settings.workbench.rail;
+        if rail != event.previous.workbench.rail {
+            // The sidebar opens on the rail's side: they move together, as
+            // `dock.move_sidebar_left` and `_right` move them.
+            self.move_sidebar(crate::dock::rail_position(rail), cx);
         }
         if event.settings.tree != event.previous.tree {
             let show_ignored = event.settings.tree.show_ignored;

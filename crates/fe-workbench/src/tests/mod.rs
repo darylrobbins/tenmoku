@@ -101,6 +101,7 @@ mod pane_toolbar_no_path_item;
 mod project_panel;
 pub(crate) mod quick_open;
 mod quick_open_races;
+mod rail_b3;
 mod references_landing;
 mod references_panel;
 mod restore_lsp_clean;

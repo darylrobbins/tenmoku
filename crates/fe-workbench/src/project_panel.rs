@@ -48,7 +48,7 @@ use ops::EditKind;
 /// project panel's of before, which layouts saved then name.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("project"),
-    name: "Explorer",
+    name: "Project",
     icon: fe_ui::Icon::Files,
     show_command: "dock.show_project",
     show_op: crate::dock::DockOp::ShowProject,

@@ -56,12 +56,18 @@ fn chat_is_on_the_rail_from_the_start(cx: &mut TestAppContext) {
         DockPanel::Search,
         DockPanel::SourceControl,
         DockPanel::Chat,
+        DockPanel::Problems,
     ];
     assert_eq!(rail(&workbench, cx), base);
     let icons = workbench.read_with(cx, |workbench, cx| workbench.dock().read(cx).rail_icons());
-    assert_eq!(icons.len(), base.len() + 1, "the Terminal action follows");
-    assert_eq!(icons[3], Icon::MessageSquare);
-    assert_eq!(icons[4], Icon::FileTerminal);
+    assert_eq!(
+        icons.len(),
+        base.len() + 2,
+        "the Git log and Terminal actions follow"
+    );
+    assert_eq!(icons[3], Icon::Bot);
+    assert_eq!(icons[4], Icon::TriangleAlert);
+    assert_eq!(icons[6], Icon::FileTerminal);
 
     dispatch("git.file_history", cx);
     dispatch("nav.find_references", cx);

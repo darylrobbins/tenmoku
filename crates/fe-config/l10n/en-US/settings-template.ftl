@@ -295,6 +295,10 @@ settings-template-workbench-start_page =
     settings, with LazyVim's dashboard keys while vim is on. Off, the pane says
     "No open files".
 
+settings-template-workbench-rail =
+    Which edge of the window the activity rail is on, "left" or "right". The
+    sidebar opens beside it, so they move together, at once.
+
 settings-template-workbench-locale =
     The language of Tenmoku's own text: auto follows the system's preferred
     languages; a tag such as "de" or "pt-BR" picks a shipped one. Menus and

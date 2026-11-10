@@ -31,9 +31,9 @@ const PROBES: &[Probe] = &[
     // The editor, below the code.
     probe(400., 400., "surface.background"),
     // The project tree, below its last row.
-    probe(850., 400., "surface.panel"),
+    probe(150., 400., "surface.panel"),
     // The activity rail, between its buttons.
-    probe(985., 400., "surface.panel"),
+    probe(20., 400., "surface.chrome"),
     // The status bar, between its items.
     probe(500., 590., "surface.panel"),
 ];

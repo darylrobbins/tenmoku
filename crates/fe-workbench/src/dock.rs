@@ -1,8 +1,14 @@
-//! The right dock: one panel at a time, the Explorer, project search,
+//! The sidebar: one panel at a time, the Explorer, project search,
 //! Source Control, find references' results, the problems, a file's git
 //! history or the AI chat, under a title row naming it, and picked from the
-//! activity rail on the window's right edge, which stays when the dock
-//! hides. Switching keeps each panel's state. The Explorer is a
+//! activity rail on the window's left edge, or its right
+//! (`workbench.rail`, [`rail_position`]), which stays when the dock hides.
+//! Switching keeps each panel's state. The rail's top group is Project
+//! (the Explorer), Search, Changes (Source Control) and Chat, then the
+//! panels shown on first use; its foot is Problems, then the Git log and
+//! Terminal actions ([`rail_actions`]). Changes' button counts the changed
+//! files ([`Dock::set_changed_files`]), Problems' has a dot while there
+//! are errors ([`Dock::set_errors`]). The Explorer is a
 //! [`ViewContainer`] of two views, the project tree (Folders) over the
 //! outline (collapsed until shown or expanded), whose collapse and weights
 //! the dock's saved state keeps; `dock.show_project` shows it, and
@@ -25,13 +31,19 @@
 //! [`DockOp`], as a rail click does; the search panel's own are in its
 //! registry ([`search_panel::registry`]).
 
-use fe_ui::Icon;
+use fe_config::settings::RailSide;
+use fe_ui::{BadgeTone, Icon};
 use gpui::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     Subscription, Window, div,
 };
-use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId, ViewContainer, ViewSpec};
+use kiln_l10n::tr;
+use kiln_platform::locale::ActiveLocale;
+use kiln_shell::{
+    DockItem, DockPosition, DockState, DockView, PanelId, RailAction, ViewContainer, ViewSpec,
+    dock::RailBadge,
+};
 
 use crate::{
     ChatPanel, GitLogPanel, GitPanel, HierarchyPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH,
@@ -75,9 +87,10 @@ impl DockPanel {
 }
 
 impl DockPanel {
-    /// The panels the rail always has, in its order; References, Problems
-    /// and History follow once they have shown.
-    pub const ALL: [DockPanel; 4] = always_on_rail();
+    /// The panels the rail always has, in its order, Problems at its foot;
+    /// References, History and the others join the top group once they
+    /// have shown.
+    pub const ALL: [DockPanel; 5] = always_on_rail();
 
     /// The panel registered as `id`, for a module's [`SidebarPanel`].
     pub(crate) const fn new(id: &'static str) -> Self {
@@ -204,6 +217,41 @@ pub(crate) fn panel_icon(panel: DockPanel) -> Icon {
     panel.sidebar().icon
 }
 
+/// The panels whose rail buttons are in the rail's foot, before its
+/// actions ([`rail_actions`]).
+const RAIL_FOOT: [DockPanel; 1] = [DockPanel::Problems];
+
+/// The sidebar's rail action that shows the terminal's dock, whose button
+/// follows it.
+pub(crate) const TERMINAL_BUTTON: &str = "terminal";
+
+/// The rail's actions, at its foot after Problems: the Git log, then the
+/// terminal.
+pub(crate) fn rail_actions() -> [RailAction; 2] {
+    [
+        RailAction {
+            id: "git_log",
+            icon: Icon::GitGraph,
+            title: tr!("workbench-dock-git-log"),
+            command: "git.log",
+        },
+        RailAction {
+            id: TERMINAL_BUTTON,
+            icon: Icon::FileTerminal,
+            title: tr!("workbench-dock-terminal"),
+            command: "terminal.toggle",
+        },
+    ]
+}
+
+/// The edge `workbench.rail` puts the rail and the sidebar on.
+pub(crate) fn rail_position(side: RailSide) -> DockPosition {
+    match side {
+        RailSide::Left => DockPosition::Left,
+        RailSide::Right => DockPosition::Right,
+    }
+}
+
 /// fastedit's panels in kiln-shell's dock: each is what its module's
 /// [`SidebarPanel`] declares. Its title row has its name, or what `$title`,
 /// a method of the panel's, gives.
@@ -253,6 +301,10 @@ macro_rules! dock_item {
 
             fn focus_on_show(&self) -> bool {
                 $sidebar.focus_on_show
+            }
+
+            fn on_rail_foot(&self) -> bool {
+                RAIL_FOOT.contains(&$sidebar.panel)
             }
         }
     };
@@ -313,6 +365,10 @@ pub struct Dock {
     chat: Option<Entity<ChatPanel>>,
     /// Made the first time a changeset is shown.
     ai_changes: Option<Entity<AiChangesPanel>>,
+    /// What Changes' and Problems' badges count: the changed files and the
+    /// errors.
+    changed_files: usize,
+    errors: usize,
     #[cfg(test)]
     ops: Vec<DockOp>,
     /// The explorer's views' collapse and weights are the dock's state,
@@ -322,6 +378,8 @@ pub struct Dock {
     _source_control_changed: Subscription,
     /// Retitles Graph when the log lists something else.
     _graph_changed: Subscription,
+    /// Its text in a new language ([`Dock::follow_locale`]).
+    _locale: Subscription,
 }
 
 /// The Explorer: `project`'s tree over `outline`, collapsed at first.
@@ -335,18 +393,21 @@ fn explorer(
         let mut explorer = ViewContainer::new(sidebar.panel.id(), sidebar.name, sidebar.icon, cx)
             .show_command(sidebar.show_command);
         explorer.add_view(folders(project), cx);
-        explorer.add_view(
-            ViewSpec {
-                id: crate::outline_panel::VIEW,
-                title: "Outline".into(),
-                order: 20,
-                default_collapsed: true,
-                view: cx.new(|cx| Tracked::new(outline, cx)).into(),
-            },
-            cx,
-        );
+        let outline = outline_view(outline, cx);
+        explorer.add_view(outline, cx);
         explorer
     })
+}
+
+/// The Explorer's Outline view: `outline`, collapsed at first.
+fn outline_view(outline: &Entity<OutlinePanel>, cx: &mut App) -> ViewSpec {
+    ViewSpec {
+        id: crate::outline_panel::VIEW,
+        title: tr!("workbench-dock-outline"),
+        order: 20,
+        default_collapsed: true,
+        view: cx.new(|cx| Tracked::new(outline, cx)).into(),
+    }
 }
 
 /// A view drawn in an element tracking its focus, for one that draws
@@ -382,7 +443,7 @@ impl Render for Tracked {
 fn folders(project: &Entity<ProjectPanel>) -> ViewSpec {
     ViewSpec {
         id: crate::project_panel::FOLDERS,
-        title: "Folders".into(),
+        title: tr!("workbench-dock-folders"),
         order: 10,
         default_collapsed: false,
         view: project.clone().into(),
@@ -392,9 +453,10 @@ fn folders(project: &Entity<ProjectPanel>) -> ViewSpec {
 impl Dock {
     /// Shows the Explorer, of `project` and `outline`, first; Source
     /// Control, of `changes` over `git_log`, follows search on the rail,
-    /// and `chat` it.
+    /// and `chat` it. At `position`, the rail's side.
     #[allow(clippy::too_many_arguments, private_interfaces)]
     pub fn new(
+        position: DockPosition,
         project: Entity<ProjectPanel>,
         search: Entity<SearchPanel>,
         outline: Entity<OutlinePanel>,
@@ -405,7 +467,7 @@ impl Dock {
         problems: Entity<ProblemsPanel>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut state = DockState::new(DockPosition::Right)
+        let mut state = DockState::new(position)
             .size(PANEL_WIDTH)
             .shortcut_contexts([crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
         let explorer = explorer(&project, &outline, cx);
@@ -445,12 +507,34 @@ impl Dock {
             git_log: Some(git_log),
             chat: Some(chat),
             ai_changes: None,
+            changed_files: 0,
+            errors: 0,
             #[cfg(test)]
             ops: Vec::new(),
             _explorer_changed: explorer_changed,
             _source_control_changed: source_control_changed,
             _graph_changed: graph_changed,
+            _locale: cx.observe_global::<ActiveLocale>(Self::follow_locale),
         }
+    }
+
+    /// Puts its text in the language just chosen: the rail actions'
+    /// titles, the Explorer's views' and the badges' names. The views keep
+    /// their collapse, as [`Dock::set_project`]'s do.
+    fn follow_locale(&mut self, cx: &mut Context<Self>) {
+        for action in rail_actions() {
+            self.state.add_action(action);
+        }
+        let outline = outline_view(&self.outline, cx);
+        let folders = folders(&self.project);
+        (self.explorer).update(cx, |explorer, cx| {
+            explorer.add_view(folders, cx);
+            explorer.add_view(outline, cx);
+        });
+        let (changed_files, errors) = (self.changed_files, self.errors);
+        self.set_changed_files(changed_files, cx);
+        self.set_errors(errors, cx);
+        cx.notify();
     }
 
     pub fn project(&self) -> &Entity<ProjectPanel> {
@@ -505,7 +589,39 @@ impl Dock {
         let view = source_control::changes_view(&changes);
         (self.source_control).update(cx, |container, cx| container.add_view(view, cx));
         self.changes = changes;
+        // Until the new root's changes are listed.
+        self.set_changed_files(0, cx);
         cx.notify();
+    }
+
+    /// Badges Changes' rail button with `count`, the files the Changes
+    /// view lists, in `status.modified`; none at none.
+    pub(crate) fn set_changed_files(&mut self, count: usize, cx: &mut Context<Self>) {
+        self.changed_files = count;
+        let badge = (count > 0).then(|| {
+            let name = tr!("workbench-dock-changed-files", count = count);
+            RailBadge::count(count, BadgeTone::Modified, name)
+        });
+        self.set_badge(DockPanel::SourceControl, badge, cx);
+    }
+
+    /// Badges Problems' rail button with a red dot while there are
+    /// `errors`.
+    pub(crate) fn set_errors(&mut self, errors: usize, cx: &mut Context<Self>) {
+        self.errors = errors;
+        let badge = (errors > 0).then(|| {
+            let name = tr!("workbench-dock-errors", count = errors);
+            RailBadge::dot(BadgeTone::Error, name)
+        });
+        self.set_badge(DockPanel::Problems, badge, cx);
+    }
+
+    /// Puts `badge` on `panel`'s rail button, redrawing if it changed.
+    fn set_badge(&mut self, panel: DockPanel, badge: Option<RailBadge>, cx: &mut Context<Self>) {
+        if self.state.badge(panel.id()) != badge.as_ref() {
+            self.state.set_badge(panel.id(), badge);
+            cx.notify();
+        }
     }
 
     pub fn references(&self) -> &Entity<ReferencesPanel> {

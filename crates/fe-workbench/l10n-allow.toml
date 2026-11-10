@@ -63,6 +63,9 @@ migrated = [
     "src/commit_rows.rs",
     # The run widget in the title bar (T1539).
     "src/run_widget.rs",
+    # The sidebar's dock and its rail in B3 (T1540).
+    "src/dock.rs",
+    "src/dock_layout.rs",
 ]
 
 # Ids and joins, not text: a picker row's element id, and the text a row's

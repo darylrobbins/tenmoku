@@ -968,18 +968,23 @@ impl LayoutKeys {
         keys
     }
 
-    /// Puts back the docks' places, if two edges with the sidebar at a
-    /// side, then the sidebar's state and the terminal's dock's sizes (it
-    /// stays hidden, with no session), and notes the breadcrumbs.
+    /// Puts back the terminal dock's place, if the saved places are two
+    /// edges with the sidebar at a side, then the sidebar's state and the
+    /// terminal's dock's sizes (it stays hidden, with no session), and
+    /// notes the breadcrumbs. The sidebar stays on the rail's side, as
+    /// `workbench.rail` put it: the terminal's dock gives way if it was
+    /// saved there ([`dock_layout::displaced`]).
     pub(super) fn restore(&self, entry: &Value, cx: &mut App) {
         let position = |dock| {
             let name = entry.get("docks")?.get(dock)?.as_str()?;
             dock_layout::position_named(name)
         };
-        if let (Some(sidebar), Some(terminal)) = (position("sidebar"), position("terminal"))
-            && sidebar != terminal
-            && sidebar != DockPosition::Bottom
+        if let (Some(saved), Some(terminal)) = (position("sidebar"), position("terminal"))
+            && saved != terminal
+            && saved != DockPosition::Bottom
         {
+            let sidebar = self.sidebar.read(cx).state().position();
+            let terminal = dock_layout::displaced(saved, sidebar, terminal);
             let docks = (&self.sidebar, &self.terminal, &self.shell);
             place_docks(docks, sidebar, terminal, cx);
         }

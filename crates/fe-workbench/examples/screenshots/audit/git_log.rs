@@ -15,7 +15,7 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The selected newest commit, right of its summary.
-    probe(900., 391., "list.row_selected"),
+    probe(224., 391., "list.row_selected"),
     // The panel, below the graph.
-    probe(850., 500., "surface.panel"),
+    probe(174., 500., "surface.panel"),
 ];

@@ -14,7 +14,7 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The selected first action, New File, at its left end.
-    probe(400., 202., "list.row_selected"),
+    probe(682., 202., "list.row_selected"),
     // The page, below its last section.
     probe(300., 450., "surface.background"),
 ];

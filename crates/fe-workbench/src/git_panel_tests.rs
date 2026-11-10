@@ -198,7 +198,7 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
             dock.active(),
             dock.title()
         )),
-        (true, DockPanel::SourceControl, "Source Control".into())
+        (true, DockPanel::SourceControl, "Changes".into())
     );
     assert!(cx.update(|window, cx| panel.focus_handle(cx).is_focused(window)));
     assert_eq!(
@@ -230,7 +230,9 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
             Icon::Files,
             Icon::Search,
             Icon::GitBranch,
-            Icon::MessageSquare,
+            Icon::Bot,
+            Icon::TriangleAlert,
+            Icon::GitGraph,
             Icon::FileTerminal
         ]
     );

@@ -117,7 +117,8 @@ fn dragged_sizes_are_kept_in_the_layout(cx: &mut TestAppContext) {
     run("terminal.toggle", cx);
     let (drawn, size) = sidebar(&first, cx);
     assert_eq!(size, BUILT);
-    drag(&drawn, point(px(-80.), px(0.)), cx);
+    // On the left, its inner edge is its right.
+    drag(&drawn, point(px(80.), px(0.)), cx);
     let (drawn, size, shown) = terminal_dock(&first, cx);
     assert!(shown);
     assert_eq!(size, BUILT);

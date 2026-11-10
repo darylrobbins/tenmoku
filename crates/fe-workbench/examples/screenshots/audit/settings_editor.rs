@@ -15,9 +15,9 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The page list's selected page, unfocused, right of its name.
-    probe(150., 158., "list.row_selected_inactive"),
+    probe(432., 158., "list.row_selected_inactive"),
     // A toggle that's on, left of its knob.
-    probe(673., 349., "accent.base"),
+    probe(955., 349., "accent.base"),
     // The page list, below its last page.
     probe(300., 470., "surface.background"),
 ];

@@ -19,7 +19,7 @@ use crate::{GitLogPanel, GitPanel};
 /// its views' rows take keys (the dock focuses the view it shows).
 pub(crate) const SIDEBAR: super::SidebarPanel = super::SidebarPanel {
     panel: crate::DockPanel::new("scm"),
-    name: "Source Control",
+    name: "Changes",
     icon: fe_ui::Icon::GitBranch,
     show_command: "git.show_changes",
     show_op: super::DockOp::ShowChanges,

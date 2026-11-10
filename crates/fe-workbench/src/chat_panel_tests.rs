@@ -180,6 +180,7 @@ fn chat_open_shows_the_panel(cx: &mut TestAppContext) {
         DockPanel::Search,
         DockPanel::SourceControl,
         DockPanel::Chat,
+        DockPanel::Problems,
     ];
     assert_eq!(rail(&workbench, cx), base);
     let panel = chat(&workbench, cx).expect("made with the dock");

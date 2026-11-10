@@ -16,9 +16,9 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The commit message box, right of its placeholder's start.
-    probe(744., 125., "surface.background"),
+    probe(68., 125., "surface.background"),
     // The Commit button, disabled with no message, left of its label.
-    probe(893., 160., "state.disabled"),
+    probe(217., 160., "state.disabled"),
     // The panel, below the graph.
-    probe(850., 500., "surface.panel"),
+    probe(174., 500., "surface.panel"),
 ];

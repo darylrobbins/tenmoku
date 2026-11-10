@@ -15,7 +15,7 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The selected row, `main.rs`, the tree unfocused.
-    probe(850., 202., "list.row_selected_inactive"),
+    probe(174., 202., "list.row_selected_inactive"),
     // The tree, below its last row.
-    probe(850., 400., "surface.panel"),
+    probe(174., 400., "surface.panel"),
 ];

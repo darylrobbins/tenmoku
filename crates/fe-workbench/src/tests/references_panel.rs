@@ -300,7 +300,9 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         Icon::Files,
         Icon::Search,
         Icon::GitBranch,
-        Icon::MessageSquare,
+        Icon::Bot,
+        Icon::TriangleAlert,
+        Icon::GitGraph,
         Icon::FileTerminal,
     ];
     let before = (rail.to_vec(), false);
@@ -317,8 +319,8 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         header(&panel, cx).as_deref(),
         Some("References to `helper`")
     );
-    // References joins above the Terminal button.
-    let after = [&rail[..4], &[Icon::FileSymlink, Icon::FileTerminal]].concat();
+    // References joins the top group, above the foot.
+    let after = [&rail[..4], &[Icon::FileSymlink], &rail[4..]].concat();
     assert_eq!(tabs(cx), (after, true));
 
     let focused = cx.update(|window, cx| panel.focus_handle(cx).is_focused(window));

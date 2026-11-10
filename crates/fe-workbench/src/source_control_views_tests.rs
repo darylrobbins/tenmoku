@@ -201,17 +201,20 @@ fn the_rail_has_one_source_control_button(cx: &mut TestAppContext) {
             DockPanel::Search.id(),
             DockPanel::SourceControl.id(),
             DockPanel::Chat.id(),
+            DockPanel::Problems.id(),
         ]
     );
     for old in ["changes", "git_log"] {
         assert_eq!(DockPanel::of(PanelId(old)), None, "{old}");
     }
-    assert!(!icons.contains(&Icon::GitGraph), "{icons:?}");
+    // The Git log's is the rail action's alone, at the foot.
+    let graphs = icons.iter().filter(|icon| **icon == Icon::GitGraph);
+    assert_eq!(graphs.count(), 1, "{icons:?}");
     let branches = icons.iter().filter(|icon| **icon == Icon::GitBranch);
     assert_eq!(branches.count(), 1, "{icons:?}");
     assert_eq!(icons[2], Icon::GitBranch);
-    assert_eq!(DockPanel::SourceControl.name(), "Source Control");
-    assert_eq!(tooltip_title, "Source Control");
+    assert_eq!(DockPanel::SourceControl.name(), "Changes");
+    assert_eq!(tooltip_title, "Changes");
 
     // Its views: the changes over the log, both expanded, Graph's header
     // naming the branch its first draw listed.
@@ -239,7 +242,7 @@ fn show_changes_and_git_log_show_their_view(cx: &mut TestAppContext) {
     dispatch("git.show_changes", cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Source Control".to_owned())
+        (true, DockPanel::SourceControl, "Changes".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
     assert_eq!(focused(&workbench, cx), [true, false]);
@@ -253,7 +256,7 @@ fn show_changes_and_git_log_show_their_view(cx: &mut TestAppContext) {
     dispatch("git.log", cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Source Control".to_owned())
+        (true, DockPanel::SourceControl, "Changes".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
     assert_eq!(graph_title(&workbench, cx), "Graph: main");
@@ -297,7 +300,7 @@ fn views_collapse_and_weights_survive_a_restart(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Source Control".to_owned())
+        (true, DockPanel::SourceControl, "Changes".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(true), Some(false)]);
     assert_eq!(weights(&workbench, cx), [Some(1.), Some(2.5)]);
@@ -339,7 +342,7 @@ fn an_old_layout_on_git_log_restores_the_graph(cx: &mut TestAppContext) {
     restore("git_log", cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Source Control".to_owned())
+        (true, DockPanel::SourceControl, "Changes".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx)[1], Some(false));
     let lines = log(&workbench, cx);
@@ -351,7 +354,7 @@ fn an_old_layout_on_git_log_restores_the_graph(cx: &mut TestAppContext) {
     restore("changes", cx);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Source Control".to_owned())
+        (true, DockPanel::SourceControl, "Changes".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(true)]);
 }

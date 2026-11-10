@@ -15,8 +15,9 @@ use kiln_shell::PanelId;
 use super::{DockOp, DockPanel, PANELS, ProblemsOp, SidebarPanel, panel_icon};
 use crate::{Launch, Workbench, tests::open};
 
-/// Each panel as it was before its module declared it: its name, id, rail
-/// icon, show command and that command's op.
+/// Each panel as it was before its module declared it, with B3's names
+/// and icons (T1540): its name, id, rail icon, show command and that
+/// command's op.
 fn base() -> [(
     DockPanel,
     &'static str,
@@ -28,7 +29,7 @@ fn base() -> [(
     [
         (
             DockPanel::Explorer,
-            "Explorer",
+            "Project",
             "project",
             Icon::Files,
             "dock.show_project",
@@ -44,7 +45,7 @@ fn base() -> [(
         ),
         (
             DockPanel::SourceControl,
-            "Source Control",
+            "Changes",
             "scm",
             Icon::GitBranch,
             "git.show_changes",
@@ -54,7 +55,7 @@ fn base() -> [(
             DockPanel::Chat,
             "Chat",
             "chat",
-            Icon::MessageSquare,
+            Icon::Bot,
             "chat.open",
             DockOp::ShowChat,
         ),
@@ -70,7 +71,7 @@ fn base() -> [(
             DockPanel::Problems,
             "Problems",
             "problems",
-            Icon::X,
+            Icon::TriangleAlert,
             "problems.show",
             DockOp::Problems(ProblemsOp::Show),
         ),
@@ -180,15 +181,15 @@ fn dispatch(id: &str, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
-/// The rail's panels, top to bottom, with the icons the last frame drew.
+/// The rail's panels, top to bottom, the foot's after the top's, with the
+/// icons the last frame drew.
 fn rail(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<(DockPanel, Icon)> {
     workbench.read_with(cx, |workbench, cx| {
-        let dock = workbench.dock().read(cx);
-        let state = dock.state();
-        let on_rail = (state.panel_ids().into_iter())
-            .filter(|id| state.on_rail(*id, cx))
-            .map(|id| DockPanel::of(id).expect("a sidebar panel"));
-        on_rail.zip(state.drawn().rail_icons()).collect()
+        let drawn = workbench.dock().read(cx).state().drawn();
+        (drawn.rail_ids().into_iter())
+            .zip(drawn.rail_icons())
+            .filter_map(|(id, icon)| Some((DockPanel::of(id)?, icon)))
+            .collect()
     })
 }
 
@@ -218,7 +219,7 @@ fn each_panel_keeps_its_base_name_id_icon_and_show_command() {
 }
 
 #[test]
-fn the_rail_always_has_the_base_four() {
+fn the_rail_always_has_the_base_five() {
     assert_eq!(
         DockPanel::ALL,
         [
@@ -226,6 +227,7 @@ fn the_rail_always_has_the_base_four() {
             DockPanel::Search,
             DockPanel::SourceControl,
             DockPanel::Chat,
+            DockPanel::Problems,
         ]
     );
     let on_rail: Vec<DockPanel> = (PANELS.iter())
@@ -259,43 +261,40 @@ fn the_rail_always_has_the_base_four() {
 fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut TestAppContext) {
     let dir = repo();
     let (workbench, cx) = opened(cx, dir.path());
-    let base = [
+    let top = [
         (DockPanel::Explorer, Icon::Files),
         (DockPanel::Search, Icon::Search),
         (DockPanel::SourceControl, Icon::GitBranch),
-        (DockPanel::Chat, Icon::MessageSquare),
+        (DockPanel::Chat, Icon::Bot),
     ];
+    // Problems is always at the foot.
+    let foot = [(DockPanel::Problems, Icon::TriangleAlert)];
+    let base = [top.as_slice(), &foot].concat();
     assert_eq!(rail(&workbench, cx), base);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::Explorer, "Explorer".to_owned())
+        (true, DockPanel::Explorer, "Project".to_owned())
     );
 
     dispatch("problems.show", cx);
-    let with_problems = [base.as_slice(), &[(DockPanel::Problems, Icon::X)]].concat();
-    assert_eq!(rail(&workbench, cx), with_problems);
+    assert_eq!(rail(&workbench, cx), base);
 
     dispatch("nav.find_references", cx);
-    // In registration order: References before Problems.
-    let both = [
-        base.as_slice(),
-        &[
-            (DockPanel::References, Icon::FileSymlink),
-            (DockPanel::Problems, Icon::X),
-        ],
-    ]
-    .concat();
+    // After the top group, before the foot.
+    let references = (DockPanel::References, Icon::FileSymlink);
+    let both = [top.as_slice(), &[references], &foot].concat();
     assert_eq!(rail(&workbench, cx), both);
 
     dispatch("git.log", cx);
     assert_eq!(rail(&workbench, cx), both);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Source Control".to_owned())
+        (true, DockPanel::SourceControl, "Changes".to_owned())
     );
 
     dispatch("git.file_history", cx);
-    let with_history = [both.as_slice(), &[(DockPanel::History, Icon::FileDiff)]].concat();
+    let history = (DockPanel::History, Icon::FileDiff);
+    let with_history = [top.as_slice(), &[references, history], &foot].concat();
     assert_eq!(rail(&workbench, cx), with_history);
     assert_eq!(
         shown(&workbench, cx),
@@ -401,6 +400,7 @@ mod git_log_rail_tests {
                 DockPanel::Search,
                 DockPanel::SourceControl,
                 DockPanel::Chat,
+                DockPanel::Problems,
             ]
         );
         let icons = distinct(cx);
@@ -421,7 +421,7 @@ mod git_log_rail_tests {
         click(&workbench, DockPanel::SourceControl, cx);
         assert_eq!(
             shown(&workbench, cx),
-            (true, DockPanel::SourceControl, "Source Control".to_owned())
+            (true, DockPanel::SourceControl, "Changes".to_owned())
         );
         let (lines, message) = log(&workbench, cx);
         assert!(lines.iter().any(|line| line.contains("init")), "{lines:?}");

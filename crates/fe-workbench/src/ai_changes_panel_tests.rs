@@ -1309,7 +1309,7 @@ fn on_rail(s: &mut Setup<'_>) -> bool {
 }
 
 #[gpui::test]
-fn ai_changes_shows_in_the_right_sidebar_on_changeset(cx: &mut TestAppContext) {
+fn ai_changes_shows_in_the_sidebar_on_changeset(cx: &mut TestAppContext) {
     let mut s = setup(cx);
     let panel = s.panel();
     let (visible, active, position, has_problems) = s.workbench.read_with(s.cx, |wb, cx| {
@@ -1326,7 +1326,8 @@ fn ai_changes_shows_in_the_right_sidebar_on_changeset(cx: &mut TestAppContext) {
         (
             true,
             DockPanel::AiChanges,
-            kiln_shell::DockPosition::Right,
+            // `workbench.rail`'s default side.
+            kiln_shell::DockPosition::Left,
             true
         )
     );
