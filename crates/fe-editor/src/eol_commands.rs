@@ -15,26 +15,14 @@ use crate::{
 
 /// Registers the two commands. They change the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "set_end_of_line_lf",
-        "Change End of Line Sequence to LF",
-        true,
-        |model, _| {
-            model.set_end_of_line(LineEnding::Lf);
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "set_end_of_line_crlf",
-        "Change End of Line Sequence to CRLF",
-        true,
-        |model, _| {
-            model.set_end_of_line(LineEnding::CrLf);
-            Ok(Effect::Changed)
-        },
-    );
+    add(registry, "set_end_of_line_lf", true, |model, _| {
+        model.set_end_of_line(LineEnding::Lf);
+        Ok(Effect::Changed)
+    });
+    add(registry, "set_end_of_line_crlf", true, |model, _| {
+        model.set_end_of_line(LineEnding::CrLf);
+        Ok(Effect::Changed)
+    });
 }
 
 impl EditorModel {

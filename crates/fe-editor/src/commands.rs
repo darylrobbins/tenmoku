@@ -14,6 +14,7 @@ use fe_command::{
     Effect, Registry,
 };
 use fe_display::Fold;
+use kiln_l10n::tr;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
@@ -298,8 +299,10 @@ pub const MAX_MOVE_COUNT: u32 = 10_000;
 fn move_count<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
     let count = u32::deserialize(deserializer)?;
     if count > MAX_MOVE_COUNT {
-        return Err(D::Error::custom(format!(
-            "count {count} is more than {MAX_MOVE_COUNT}"
+        return Err(D::Error::custom(tr!(
+            "editor-move-count-too-large",
+            count = count,
+            max = MAX_MOVE_COUNT
         )));
     }
     Ok(count)
@@ -307,288 +310,150 @@ fn move_count<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Erro
 
 pub(crate) type Run = Result<Effect, CommandError>;
 
-/// A movement's command and its `select_` twin: IDs and titles, and the
-/// movement for a page of so many rows.
-type MovementCommands = (
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    fn(u32) -> Movement,
-);
+/// A movement's command and its `select_` twin, by ID, and the movement
+/// for a page of so many rows.
+type MovementCommands = (&'static str, &'static str, fn(u32) -> Movement);
 
 /// The editor's registry, with every editor command.
 pub fn registry() -> Registry<Editor> {
     let mut registry = Registry::new();
     let movements: [MovementCommands; 14] = [
-        (
-            "move_left",
-            "Move Left",
-            "select_left",
-            "Select Left",
-            |_| Movement::Left,
-        ),
-        (
-            "move_right",
-            "Move Right",
-            "select_right",
-            "Select Right",
-            |_| Movement::Right,
-        ),
-        ("move_up", "Move Up", "select_up", "Select Up", |_| {
-            Movement::Up
+        ("move_left", "select_left", |_| Movement::Left),
+        ("move_right", "select_right", |_| Movement::Right),
+        ("move_up", "select_up", |_| Movement::Up),
+        ("move_down", "select_down", |_| Movement::Down),
+        ("move_word_left", "select_word_left", |_| Movement::WordLeft),
+        ("move_word_right", "select_word_right", |_| {
+            Movement::WordRight
         }),
-        (
-            "move_down",
-            "Move Down",
-            "select_down",
-            "Select Down",
-            |_| Movement::Down,
-        ),
-        (
-            "move_word_left",
-            "Move Word Left",
-            "select_word_left",
-            "Select Word Left",
-            |_| Movement::WordLeft,
-        ),
-        (
-            "move_word_right",
-            "Move Word Right",
-            "select_word_right",
-            "Select Word Right",
-            |_| Movement::WordRight,
-        ),
-        (
-            "move_subword_left",
-            "Move Subword Left",
-            "select_subword_left",
-            "Select Subword Left",
-            |_| Movement::SubwordLeft,
-        ),
-        (
-            "move_subword_right",
-            "Move Subword Right",
-            "select_subword_right",
-            "Select Subword Right",
-            |_| Movement::SubwordRight,
-        ),
-        (
-            "move_line_start",
-            "Move to Line Start",
-            "select_line_start",
-            "Select to Line Start",
-            |_| Movement::LineStart,
-        ),
-        (
-            "move_line_end",
-            "Move to Line End",
-            "select_line_end",
-            "Select to Line End",
-            |_| Movement::LineEnd,
-        ),
-        (
-            "move_document_start",
-            "Move to Document Start",
-            "select_document_start",
-            "Select to Document Start",
-            |_| Movement::DocumentStart,
-        ),
-        (
-            "move_document_end",
-            "Move to Document End",
-            "select_document_end",
-            "Select to Document End",
-            |_| Movement::DocumentEnd,
-        ),
-        (
-            "page_up",
-            "Page Up",
-            "select_page_up",
-            "Select Page Up",
-            Movement::PageUp,
-        ),
-        (
-            "page_down",
-            "Page Down",
-            "select_page_down",
-            "Select Page Down",
-            Movement::PageDown,
-        ),
+        ("move_subword_left", "select_subword_left", |_| {
+            Movement::SubwordLeft
+        }),
+        ("move_subword_right", "select_subword_right", |_| {
+            Movement::SubwordRight
+        }),
+        ("move_line_start", "select_line_start", |_| {
+            Movement::LineStart
+        }),
+        ("move_line_end", "select_line_end", |_| Movement::LineEnd),
+        ("move_document_start", "select_document_start", |_| {
+            Movement::DocumentStart
+        }),
+        ("move_document_end", "select_document_end", |_| {
+            Movement::DocumentEnd
+        }),
+        ("page_up", "select_page_up", Movement::PageUp),
+        ("page_down", "select_page_down", Movement::PageDown),
     ];
     for extend in [false, true] {
-        for (move_id, move_title, select_id, select_title, movement) in movements {
-            let (id, title) = if extend {
-                (select_id, select_title)
-            } else {
-                (move_id, move_title)
-            };
-            add(&mut registry, id, title, false, move |model, host| {
+        for (move_id, select_id, movement) in movements {
+            let id = if extend { select_id } else { move_id };
+            add(&mut registry, id, false, move |model, host| {
                 model.move_cursors(movement(host.page_rows()), extend);
                 Ok(Effect::Changed)
             });
         }
     }
-    add(
-        &mut registry,
-        "select_all",
-        "Select All",
-        false,
-        |model, _| {
-            model.select_all();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        &mut registry,
-        "backspace",
-        "Delete Backward",
-        true,
-        |model, _| {
-            model.backspace();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        &mut registry,
-        "delete",
-        "Delete Forward",
-        true,
-        |model, _| {
-            model.delete_forward();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        &mut registry,
-        "delete_word_left",
-        "Delete Word Left",
-        true,
-        |model, _| {
-            model.delete_word_left();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        &mut registry,
-        "delete_subword_left",
-        "Delete Subword Left",
-        true,
-        |model, _| {
-            model.delete_subword_left();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        &mut registry,
-        "delete_subword_right",
-        "Delete Subword Right",
-        true,
-        |model, _| {
-            model.delete_subword_right();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        &mut registry,
-        "newline",
-        "Insert Newline",
-        true,
-        |model, host| {
-            model.newline_in(host);
-            Ok(Effect::Changed)
-        },
-    );
-    add(&mut registry, "tab", "Insert Tab", true, |model, _| {
+    add(&mut registry, "select_all", false, |model, _| {
+        model.select_all();
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "backspace", true, |model, _| {
+        model.backspace();
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "delete", true, |model, _| {
+        model.delete_forward();
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "delete_word_left", true, |model, _| {
+        model.delete_word_left();
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "delete_subword_left", true, |model, _| {
+        model.delete_subword_left();
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "delete_subword_right", true, |model, _| {
+        model.delete_subword_right();
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "newline", true, |model, host| {
+        model.newline_in(host);
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "tab", true, |model, _| {
         // In a snippet, tab goes to its next stop.
         if !model.next_snippet_stop() {
             model.tab();
         }
         Ok(Effect::Changed)
     });
-    add(&mut registry, "fold", "Fold", false, |model, host| {
+    add(&mut registry, "fold", false, |model, host| {
         model.fold_from(&|row| host.fold_range_at(row), !host.folds_exclusive());
         Ok(Effect::Changed)
     });
-    add(&mut registry, "unfold", "Unfold", false, |model, _| {
+    add(&mut registry, "unfold", false, |model, _| {
         model.unfold();
         Ok(Effect::Changed)
     });
-    add(
-        &mut registry,
-        "fold_all",
-        "Fold All",
-        false,
-        |model, host| {
-            let candidates = host.fold_ranges(0..model.text().row_count());
-            if host.folds_exclusive() {
-                model.fold_all_exact(candidates);
-            } else {
-                model.fold_all(candidates);
-            }
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        &mut registry,
-        "unfold_all",
-        "Unfold All",
-        false,
-        |model, _| {
-            model.unfold_all();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        &mut registry,
-        "toggle_soft_wrap",
-        "Toggle Soft Wrap",
-        false,
-        |model, _| {
-            model.toggle_soft_wrap();
-            Ok(Effect::Changed)
-        },
-    );
-    add(&mut registry, "copy", "Copy", false, |model, host| {
+    add(&mut registry, "fold_all", false, |model, host| {
+        let candidates = host.fold_ranges(0..model.text().row_count());
+        if host.folds_exclusive() {
+            model.fold_all_exact(candidates);
+        } else {
+            model.fold_all(candidates);
+        }
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "unfold_all", false, |model, _| {
+        model.unfold_all();
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "toggle_soft_wrap", false, |model, _| {
+        model.toggle_soft_wrap();
+        Ok(Effect::Changed)
+    });
+    add(&mut registry, "copy", false, |model, host| {
         let (text, _) = model.copy_text();
         host.write_clipboard(text);
         Ok(Effect::Nothing)
     });
-    add(&mut registry, "cut", "Cut", true, |model, host| {
+    add(&mut registry, "cut", true, |model, host| {
         let text = model.cut();
         host.write_clipboard(text);
         Ok(Effect::Changed)
     });
-    add(&mut registry, "paste", "Paste", true, |model, host| {
+    add(&mut registry, "paste", true, |model, host| {
         let Some(text) = host.read_clipboard() else {
             return Ok(Effect::Nothing);
         };
         model.paste(&text);
         Ok(Effect::Changed)
     });
-    add(&mut registry, "undo", "Undo", true, |model, _| {
-        model
-            .undo()
-            .map_err(|error| CommandError::new(format!("undo failed: {error}")))?;
+    add(&mut registry, "undo", true, |model, _| {
+        model.undo().map_err(|error| {
+            CommandError::new(tr!("editor-undo-failed", error = error.to_string()))
+        })?;
         Ok(Effect::Changed)
     });
-    add(&mut registry, "redo", "Redo", true, |model, _| {
-        model
-            .redo()
-            .map_err(|error| CommandError::new(format!("redo failed: {error}")))?;
+    add(&mut registry, "redo", true, |model, _| {
+        model.redo().map_err(|error| {
+            CommandError::new(tr!("editor-redo-failed", error = error.to_string()))
+        })?;
         Ok(Effect::Changed)
     });
-    add(&mut registry, "save", "Save", false, |model, _| {
-        model
-            .save()
-            .map_err(|error| CommandError::new(format!("save failed: {error}")))?;
+    add(&mut registry, "save", false, |model, _| {
+        model.save().map_err(|error| {
+            CommandError::new(tr!("editor-save-failed", error = error.to_string()))
+        })?;
         Ok(Effect::Notify)
     });
 
     registry
         .register_with_args(
             "editor.insert",
-            "Insert Text",
+            &crate::l10n::command_title("editor.insert"),
             |target: &mut EditorTarget<'_>, actor: &Actor, args: InsertArgs| {
                 run_as(target, actor, |model, host| {
                     let mut chars = args.text.chars();
@@ -601,15 +466,13 @@ pub fn registry() -> Registry<Editor> {
             },
         )
         .expect("editor command IDs are valid and distinct")
-        .description(
-            "Replaces every selection with `text`, as typing does. A single char typed closes what it opens, in the host's language, unless auto-closing is off, and one typed as its row's first non-blank that closes a block re-indents the row to the block's.",
-        )
+        .description(&crate::l10n::command_description("editor.insert"))
         .context(ContextPredicate::identifier(CONTEXT))
         .mutates_buffer(true);
     registry
         .register_with_args(
             "editor.move",
-            "Move",
+            &crate::l10n::command_title("editor.move"),
             |target: &mut EditorTarget<'_>, actor: &Actor, args: MoveArgs| {
                 run_as(target, actor, |model, _| {
                     // Caught up first, so the selections compared are
@@ -629,9 +492,7 @@ pub fn registry() -> Registry<Editor> {
             },
         )
         .expect("editor command IDs are valid and distinct")
-        .description(
-            "Moves every caret `count` times (at most 10,000) by `motion`, extending the selections if `extend`.",
-        )
+        .description(&crate::l10n::command_description("editor.move"))
         .context(ContextPredicate::identifier(CONTEXT));
     crate::multi_cursor::register(&mut registry);
     crate::cursor_history::register(&mut registry);
@@ -655,21 +516,21 @@ pub fn registry() -> Registry<Editor> {
     registry
 }
 
-/// Registers `editor.<name>`, which takes no args and runs `run` as the
-/// invoking actor.
+/// Registers `editor.<name>`, titled by its `command-editor-<name>`
+/// message, which takes no args and runs `run` as the invoking actor.
 pub(crate) fn add(
     registry: &mut Registry<Editor>,
     name: &str,
-    title: &str,
     mutates_buffer: bool,
     run: impl Fn(&mut EditorModel, &mut dyn EditorHost) -> Run + 'static,
 ) {
     // Escape leaves a snippet, as it does in VS Code.
     let leaves_snippet = name == "single_selection";
+    let id = format!("editor.{name}");
     registry
         .register(
-            &format!("editor.{name}"),
-            title,
+            &id,
+            &crate::l10n::command_title(&id),
             move |target: &mut EditorTarget<'_>, actor: &Actor| {
                 if leaves_snippet {
                     target.model.end_snippet();

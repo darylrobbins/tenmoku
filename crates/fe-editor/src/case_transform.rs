@@ -100,16 +100,12 @@ fn title_case(lower: &str) -> String {
 
 /// Registers the case commands. Each edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    for (name, title, case) in [
-        ("transform_uppercase", "Transform to Uppercase", Case::Upper),
-        ("transform_lowercase", "Transform to Lowercase", Case::Lower),
-        (
-            "transform_titlecase",
-            "Transform to Title Case",
-            Case::Title,
-        ),
+    for (name, case) in [
+        ("transform_uppercase", Case::Upper),
+        ("transform_lowercase", Case::Lower),
+        ("transform_titlecase", Case::Title),
     ] {
-        add(registry, name, title, true, move |model, _| {
+        add(registry, name, true, move |model, _| {
             model.transform_case(case);
             Ok(Effect::Changed)
         });

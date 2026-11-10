@@ -21,19 +21,13 @@ use crate::{
 
 /// Registers the transpose command. It edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "transpose_letters",
-        "Transpose Letters",
-        true,
-        |model, _| {
-            Ok(if model.transpose_letters() {
-                Effect::Changed
-            } else {
-                Effect::Nothing
-            })
-        },
-    );
+    add(registry, "transpose_letters", true, |model, _| {
+        Ok(if model.transpose_letters() {
+            Effect::Changed
+        } else {
+            Effect::Nothing
+        })
+    });
 }
 
 impl EditorModel {

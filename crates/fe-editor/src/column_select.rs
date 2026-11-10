@@ -45,17 +45,13 @@ enum Direction {
 /// Registers the column select commands. None edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
     let commands = [
-        ("column_select_left", "Column Select Left", Direction::Left),
-        (
-            "column_select_right",
-            "Column Select Right",
-            Direction::Right,
-        ),
-        ("column_select_up", "Column Select Up", Direction::Up),
-        ("column_select_down", "Column Select Down", Direction::Down),
+        ("column_select_left", Direction::Left),
+        ("column_select_right", Direction::Right),
+        ("column_select_up", Direction::Up),
+        ("column_select_down", Direction::Down),
     ];
-    for (name, title, direction) in commands {
-        add(registry, name, title, false, move |model, _| {
+    for (name, direction) in commands {
+        add(registry, name, false, move |model, _| {
             model.column_select(direction);
             Ok(Effect::Changed)
         });

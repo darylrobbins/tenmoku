@@ -26,30 +26,18 @@ pub struct CommentTokens {
 /// Registers `editor.toggle_comment` and `editor.toggle_block_comment`,
 /// which edit the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "toggle_comment",
-        "Toggle Line Comment",
-        true,
-        |model, host| {
-            if let Some(tokens) = host.comment_tokens() {
-                model.toggle_comment(tokens);
-            }
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "toggle_block_comment",
-        "Toggle Block Comment",
-        true,
-        |model, host| {
-            if let Some((open, close)) = host.comment_tokens().and_then(|tokens| tokens.block) {
-                model.toggle_block_comment(open, close);
-            }
-            Ok(Effect::Changed)
-        },
-    );
+    add(registry, "toggle_comment", true, |model, host| {
+        if let Some(tokens) = host.comment_tokens() {
+            model.toggle_comment(tokens);
+        }
+        Ok(Effect::Changed)
+    });
+    add(registry, "toggle_block_comment", true, |model, host| {
+        if let Some((open, close)) = host.comment_tokens().and_then(|tokens| tokens.block) {
+            model.toggle_block_comment(open, close);
+        }
+        Ok(Effect::Changed)
+    });
 }
 
 impl EditorModel {

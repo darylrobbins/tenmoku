@@ -24,24 +24,15 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
     add(
         registry,
         "convert_indentation_to_spaces",
-        "Convert Indentation to Spaces",
         true,
         |model, _| Ok(effect(model, |model| model.convert_indentation_to_spaces())),
     );
-    add(
-        registry,
-        "convert_indentation_to_tabs",
-        "Convert Indentation to Tabs",
-        true,
-        |model, _| Ok(effect(model, |model| model.convert_indentation_to_tabs())),
-    );
-    add(
-        registry,
-        "detect_indentation",
-        "Detect Indentation from Content",
-        false,
-        |model, _| Ok(effect(model, |model| model.detect_indentation())),
-    );
+    add(registry, "convert_indentation_to_tabs", true, |model, _| {
+        Ok(effect(model, |model| model.convert_indentation_to_tabs()))
+    });
+    add(registry, "detect_indentation", false, |model, _| {
+        Ok(effect(model, |model| model.detect_indentation()))
+    });
 }
 
 /// Runs `change` and reports it: `Changed` for an edit, `Notify` when only the

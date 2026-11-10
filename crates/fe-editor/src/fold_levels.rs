@@ -18,47 +18,35 @@ use crate::{
     indented_block, indented_blocks,
 };
 
-/// The level commands: name, title and the level each folds.
-const LEVELS: [(&str, &str, u32); 7] = [
-    ("fold_level_1", "Fold Level 1", 1),
-    ("fold_level_2", "Fold Level 2", 2),
-    ("fold_level_3", "Fold Level 3", 3),
-    ("fold_level_4", "Fold Level 4", 4),
-    ("fold_level_5", "Fold Level 5", 5),
-    ("fold_level_6", "Fold Level 6", 6),
-    ("fold_level_7", "Fold Level 7", 7),
+/// The level commands: name and the level each folds.
+const LEVELS: [(&str, u32); 7] = [
+    ("fold_level_1", 1),
+    ("fold_level_2", 2),
+    ("fold_level_3", 3),
+    ("fold_level_4", 4),
+    ("fold_level_5", 5),
+    ("fold_level_6", 6),
+    ("fold_level_7", 7),
 ];
 
 /// Registers the level commands and the two recursive ones. None edits.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    for (name, title, level) in LEVELS {
-        add(registry, name, title, false, move |model, host| {
+    for (name, level) in LEVELS {
+        add(registry, name, false, move |model, host| {
             let candidates = all_candidates(model, host);
             model.fold_level(level, candidates);
             Ok(Effect::Changed)
         });
     }
-    add(
-        registry,
-        "fold_recursively",
-        "Fold Recursively",
-        false,
-        |model, host| {
-            let candidates = all_candidates(model, host);
-            model.fold_recursively(&|row| host.fold_range_at(row), candidates);
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "unfold_recursively",
-        "Unfold Recursively",
-        false,
-        |model, host| {
-            model.unfold_recursively(&|row| host.fold_range_at(row));
-            Ok(Effect::Changed)
-        },
-    );
+    add(registry, "fold_recursively", false, |model, host| {
+        let candidates = all_candidates(model, host);
+        model.fold_recursively(&|row| host.fold_range_at(row), candidates);
+        Ok(Effect::Changed)
+    });
+    add(registry, "unfold_recursively", false, |model, host| {
+        model.unfold_recursively(&|row| host.fold_range_at(row));
+        Ok(Effect::Changed)
+    });
 }
 
 fn all_candidates(model: &EditorModel, host: &dyn EditorHost) -> Vec<RangeInclusive<u32>> {

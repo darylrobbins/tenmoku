@@ -30,32 +30,20 @@ impl ExpandHistory {
 
 /// Registers the commands. Neither edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "expand_selection",
-        "Expand Selection",
-        false,
-        |model, host| {
-            Ok(if model.expand_selection(host) {
-                Effect::Changed
-            } else {
-                Effect::Nothing
-            })
-        },
-    );
-    add(
-        registry,
-        "shrink_selection",
-        "Shrink Selection",
-        false,
-        |model, _| {
-            Ok(if model.shrink_selection() {
-                Effect::Changed
-            } else {
-                Effect::Nothing
-            })
-        },
-    );
+    add(registry, "expand_selection", false, |model, host| {
+        Ok(if model.expand_selection(host) {
+            Effect::Changed
+        } else {
+            Effect::Nothing
+        })
+    });
+    add(registry, "shrink_selection", false, |model, _| {
+        Ok(if model.shrink_selection() {
+            Effect::Changed
+        } else {
+            Effect::Nothing
+        })
+    });
 }
 
 impl EditorModel {

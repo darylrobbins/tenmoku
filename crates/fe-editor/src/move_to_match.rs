@@ -23,7 +23,6 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
     add(
         registry,
         "move_last_selection_to_next_find_match",
-        "Move Last Selection to Next Find Match",
         false,
         |model, _| {
             model.move_last_selection_to_next_find_match();

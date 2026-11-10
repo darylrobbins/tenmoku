@@ -10,6 +10,7 @@ use std::{collections::HashSet, fmt, ops::Range, sync::Arc, sync::OnceLock};
 use fe_buffer::{Bias, ResolvedSelection};
 use fe_display::{DisplayMap, ExpandedRow};
 use fe_text::TextSource;
+use kiln_l10n::tr;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -30,10 +31,11 @@ pub enum CopyError {
 impl fmt::Display for CopyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CopyError::TooLarge { len } => write!(
-                f,
-                "the selection is {len} bytes, more than the {COPY_LIMIT} a copy takes"
-            ),
+            CopyError::TooLarge { len } => f.write_str(&tr!(
+                "editor-viewer-copy-too-large",
+                len = *len,
+                limit = COPY_LIMIT
+            )),
         }
     }
 }

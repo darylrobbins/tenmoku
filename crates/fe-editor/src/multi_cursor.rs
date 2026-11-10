@@ -18,56 +18,39 @@ use crate::{
 /// [`EditorModel::add_carets_at_all_occurrences`] make.
 pub const MAX_OCCURRENCES: usize = 10_000;
 
-/// A command's name and title, and the model method it runs.
-type Command = (&'static str, &'static str, fn(&mut EditorModel));
+/// A command's name, and the model method it runs.
+type Command = (&'static str, fn(&mut EditorModel));
 
 /// Registers the multi-cursor commands. None edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
     let commands: [Command; 8] = [
-        (
-            "add_cursor_above",
-            "Add Cursor Above",
-            EditorModel::add_caret_above,
-        ),
-        (
-            "add_cursor_below",
-            "Add Cursor Below",
-            EditorModel::add_caret_below,
-        ),
+        ("add_cursor_above", EditorModel::add_caret_above),
+        ("add_cursor_below", EditorModel::add_caret_below),
         (
             "select_next_occurrence",
-            "Select Next Occurrence",
             EditorModel::select_next_occurrence,
         ),
         (
             "select_all_occurrences",
-            "Select All Occurrences",
             EditorModel::select_all_occurrences,
         ),
         (
             "add_caret_at_next_occurrence",
-            "Add Caret at Next Occurrence",
             EditorModel::add_caret_at_next_occurrence,
         ),
         (
             "add_carets_at_all_occurrences",
-            "Add Carets at All Occurrences",
             EditorModel::add_carets_at_all_occurrences,
         ),
         (
             "split_selection_into_lines",
-            "Split Selection into Lines",
             EditorModel::split_selection_into_lines,
         ),
-        (
-            "single_selection",
-            "Single Selection",
-            EditorModel::single_selection,
-        ),
+        ("single_selection", EditorModel::single_selection),
     ];
-    for (name, title, run) in commands {
+    for (name, run) in commands {
         // `Changed` stands only if the selections did change.
-        add(registry, name, title, false, move |model, _| {
+        add(registry, name, false, move |model, _| {
             run(model);
             Ok(Effect::Changed)
         });

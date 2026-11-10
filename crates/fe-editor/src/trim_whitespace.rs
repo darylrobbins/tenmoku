@@ -18,16 +18,10 @@ use crate::{
 
 /// Registers the trim command. It edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "trim_trailing_whitespace",
-        "Trim Trailing Whitespace",
-        true,
-        |model, _| {
-            model.trim_trailing_whitespace();
-            Ok(Effect::Changed)
-        },
-    );
+    add(registry, "trim_trailing_whitespace", true, |model, _| {
+        model.trim_trailing_whitespace();
+        Ok(Effect::Changed)
+    });
 }
 
 /// The spaces and tabs at the end of each row of `text`, as sorted, disjoint

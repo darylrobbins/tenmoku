@@ -16,36 +16,18 @@ use crate::{
 
 /// Registers the three delete commands. They edit the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "delete_all_left",
-        "Delete All Left",
-        true,
-        |model, _| {
-            model.delete_all_left();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "delete_all_right",
-        "Delete All Right",
-        true,
-        |model, _| {
-            model.delete_all_right();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "delete_word_right",
-        "Delete Word Right",
-        true,
-        |model, _| {
-            model.delete_word_right();
-            Ok(Effect::Changed)
-        },
-    );
+    add(registry, "delete_all_left", true, |model, _| {
+        model.delete_all_left();
+        Ok(Effect::Changed)
+    });
+    add(registry, "delete_all_right", true, |model, _| {
+        model.delete_all_right();
+        Ok(Effect::Changed)
+    });
+    add(registry, "delete_word_right", true, |model, _| {
+        model.delete_word_right();
+        Ok(Effect::Changed)
+    });
 }
 
 impl EditorModel {

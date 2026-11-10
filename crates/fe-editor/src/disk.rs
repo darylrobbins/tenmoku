@@ -10,6 +10,7 @@ use std::{
 };
 
 use fe_buffer::{DecodedFile, DiskStamp, LineEnding, Origin, SaveSnapshot, TransactionId};
+use kiln_l10n::tr;
 
 use crate::EditorModel;
 
@@ -25,7 +26,7 @@ pub enum SaveError {
 impl fmt::Display for SaveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SaveError::ChangedOnDisk => f.write_str("the file changed on disk since it was read"),
+            SaveError::ChangedOnDisk => f.write_str(&tr!("editor-save-changed-on-disk")),
             SaveError::Io(error) => error.fmt(f),
         }
     }
@@ -470,12 +471,12 @@ fn ensure_regular(path: &Path) -> io::Result<()> {
         #[cfg(not(unix))]
         return Err(io::Error::new(
             io::ErrorKind::IsADirectory,
-            "Is a directory",
+            tr!("editor-save-is-a-directory").to_string(),
         ));
     } else {
         Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "not a regular file",
+            tr!("editor-save-not-a-regular-file").to_string(),
         ))
     }
 }
@@ -513,7 +514,9 @@ fn resolve(path: &Path) -> io::Result<PathBuf> {
             _ => return Ok(path),
         }
     }
-    Err(io::Error::other("too many levels of symbolic links"))
+    Err(io::Error::other(
+        tr!("editor-save-symlink-loop").to_string(),
+    ))
 }
 
 /// A buffer's path as the models of it share it: one set through any
@@ -583,9 +586,12 @@ impl EditorModel {
     /// `overwrite`, it refuses a file changed since it was read. Fails with
     /// [`io::ErrorKind::NotFound`] for a buffer with no path.
     pub fn prepare_save(&self, overwrite: bool) -> io::Result<SaveJob> {
-        let path = self
-            .path()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "buffer has no path"))?;
+        let path = self.path().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                tr!("editor-save-no-path").to_string(),
+            )
+        })?;
         Ok(self.prepare_save_to(path.to_owned(), overwrite))
     }
 

@@ -51,6 +51,7 @@ use fe_buffer::{
     Buffer, BufferId, HunkId, HunkStatus, Origin, ProposalError, ProposedChange, TransactionId,
     Version,
 };
+use kiln_l10n::tr;
 
 /// The buffers a changeset reaches, by id. The workbench implements this;
 /// tests implement it over a map.
@@ -85,11 +86,16 @@ impl std::fmt::Display for ChangesetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Conflict { path } => {
-                write!(f, "{} changed since it was proposed", path.display())
+                let path = path.display().to_string();
+                f.write_str(&tr!("editor-changeset-conflict", path = path))
             }
-            Self::NoSuchFile { path } => write!(f, "{} is not in the changeset", path.display()),
+            Self::NoSuchFile { path } => {
+                let path = path.display().to_string();
+                f.write_str(&tr!("editor-changeset-no-such-file", path = path))
+            }
             Self::NotPending { path } => {
-                write!(f, "that hunk of {} is not pending", path.display())
+                let path = path.display().to_string();
+                f.write_str(&tr!("editor-changeset-not-pending", path = path))
             }
         }
     }

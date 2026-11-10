@@ -20,7 +20,7 @@ use crate::{
 
 /// Registers the join command. It edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(registry, "join_lines", "Join Lines", true, |model, _| {
+    add(registry, "join_lines", true, |model, _| {
         model.join_lines();
         Ok(Effect::Changed)
     });

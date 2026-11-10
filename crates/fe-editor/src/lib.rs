@@ -41,6 +41,7 @@ pub mod indent_guides;
 mod indent_style;
 pub mod inline_diff;
 mod join_lines;
+pub mod l10n;
 mod last_edit;
 mod line_sort;
 pub mod linked_ranges;

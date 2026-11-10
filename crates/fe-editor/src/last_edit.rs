@@ -24,16 +24,10 @@ pub(crate) type LastEdit = Rc<Cell<Option<Anchor>>>;
 
 /// Registers `editor.go_to_last_edit_location`, which doesn't edit.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "go_to_last_edit_location",
-        "Go to Last Edit Location",
-        false,
-        |model, _| {
-            model.go_to_last_edit_location();
-            Ok(Effect::Changed)
-        },
-    );
+    add(registry, "go_to_last_edit_location", false, |model, _| {
+        model.go_to_last_edit_location();
+        Ok(Effect::Changed)
+    });
 }
 
 impl EditorModel {

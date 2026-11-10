@@ -79,11 +79,11 @@ impl CursorHistory {
 }
 
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(registry, "cursor_undo", "Cursor Undo", false, |model, _| {
+    add(registry, "cursor_undo", false, |model, _| {
         model.cursor_undo();
         Ok(Effect::Changed)
     });
-    add(registry, "cursor_redo", "Cursor Redo", false, |model, _| {
+    add(registry, "cursor_redo", false, |model, _| {
         model.cursor_redo();
         Ok(Effect::Changed)
     });

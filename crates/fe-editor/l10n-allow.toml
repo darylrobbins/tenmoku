@@ -1,0 +1,93 @@
+# fe-editor's literal lint (docs/decisions/xte5e7hqsw-i18n-design.md § 8).
+all = true
+
+# The scripted fake AI's script language: its verbs, its parse errors and
+# its step log are for whoever writes a demo or test script, in the
+# language's own (English) words, as a compiler's would be.
+
+[[file]]
+path = "src/scripted_ai.rs"
+reason = "A developer script language's verbs, parse errors and step log"
+
+# The ids commands register under.
+
+[[literal]]
+file = "src/commands.rs"
+text = "editor.{name}"
+reason = "A command's id: the editor's prefix and its name"
+
+# Text an edit writes into the buffer, not shown as UI: indentation, comment
+# tokens and rows joined by line breaks and spaces.
+
+[[literal]]
+file = "src/lib.rs"
+text = "\n{indent}"
+reason = "A line break and the new row's indentation, inserted into the buffer"
+
+[[literal]]
+file = "src/auto_indent.rs"
+text = "\n{indent}"
+reason = "A line break and the new row's indentation, inserted into the buffer"
+
+[[literal]]
+file = "src/comment.rs"
+text = "{token} "
+reason = "A line comment token and its space, inserted into the buffer"
+
+[[literal]]
+file = "src/comment.rs"
+text = "{open} "
+reason = "A block comment's opener and its space, inserted into the buffer"
+
+[[literal]]
+file = "src/comment.rs"
+text = " {close}"
+reason = "A block comment's closer and its space, inserted into the buffer"
+
+[[literal]]
+file = "src/row_insert.rs"
+text = "{indent}\n"
+reason = "A new row's indentation and line break, inserted into the buffer"
+
+[[literal]]
+file = "src/row_insert.rs"
+text = "{copy}\n"
+reason = "Copied rows and a line break, inserted into the buffer"
+
+[[literal]]
+file = "src/rows.rs"
+text = "{other}\n{own}"
+reason = "Two blocks of rows swapped, joined by a line break, in the buffer"
+
+[[literal]]
+file = "src/rows.rs"
+text = "{own}\n{other}"
+reason = "Two blocks of rows swapped, joined by a line break, in the buffer"
+
+[[literal]]
+file = "src/rows.rs"
+text = "{other_text}\n"
+reason = "Rows moved past others, with their line break, in the buffer"
+
+[[literal]]
+file = "src/rows.rs"
+text = "\n{other_text}"
+reason = "Rows moved past others, with their line break, in the buffer"
+
+[[literal]]
+file = "src/rows.rs"
+text = "{copy}\n"
+reason = "Duplicated rows and a line break, inserted into the buffer"
+
+[[literal]]
+file = "src/rows.rs"
+text = "\n{copy}"
+reason = "Duplicated rows and a line break, inserted into the buffer"
+
+# An `.expect` inside `thread_local!`, which the lint reads as a bare
+# literal: a panic message, never shown.
+
+[[literal]]
+file = "src/line_sort.rs"
+text = "compiled collation data for the root locale"
+reason = "An .expect message inside thread_local!, never shown"

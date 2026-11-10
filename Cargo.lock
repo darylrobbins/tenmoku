@@ -2242,6 +2242,7 @@ dependencies = [
  "icu_properties",
  "imara-diff",
  "kiln-command",
+ "kiln-l10n",
  "log",
  "proptest",
  "rand 0.9.5",

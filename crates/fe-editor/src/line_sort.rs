@@ -27,36 +27,18 @@ use crate::{
 
 /// Registers the line commands. Each edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "sort_lines_ascending",
-        "Sort Lines Ascending",
-        true,
-        |model, _| {
-            model.sort_lines(false);
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "sort_lines_descending",
-        "Sort Lines Descending",
-        true,
-        |model, _| {
-            model.sort_lines(true);
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "delete_duplicate_lines",
-        "Delete Duplicate Lines",
-        true,
-        |model, _| {
-            model.delete_duplicate_lines();
-            Ok(Effect::Changed)
-        },
-    );
+    add(registry, "sort_lines_ascending", true, |model, _| {
+        model.sort_lines(false);
+        Ok(Effect::Changed)
+    });
+    add(registry, "sort_lines_descending", true, |model, _| {
+        model.sort_lines(true);
+        Ok(Effect::Changed)
+    });
+    add(registry, "delete_duplicate_lines", true, |model, _| {
+        model.delete_duplicate_lines();
+        Ok(Effect::Changed)
+    });
 }
 
 /// Compares two rows' text by root collation, then by code point.

@@ -20,36 +20,28 @@ use crate::{
     commands::{Editor, add},
 };
 
-/// A command's name and title, and the model method it runs.
-type Command = (&'static str, &'static str, fn(&mut EditorModel));
+/// A command's name, and the model method it runs.
+type Command = (&'static str, fn(&mut EditorModel));
 
 /// Registers the row commands. Each edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
     let commands: [Command; 6] = [
-        ("indent", "Indent", EditorModel::indent_rows),
+        ("indent", EditorModel::indent_rows),
         // In a snippet, outdent (shift-tab) goes to its previous stop.
-        ("outdent", "Outdent", |model| {
+        ("outdent", |model| {
             if !model.prev_snippet_stop() {
                 model.outdent_rows();
             }
         }),
-        ("move_rows_up", "Move Rows Up", |model| {
-            model.move_rows(true)
-        }),
-        ("move_rows_down", "Move Rows Down", |model| {
-            model.move_rows(false)
-        }),
-        (
-            "duplicate_rows",
-            "Duplicate Rows",
-            EditorModel::duplicate_rows,
-        ),
-        ("delete_rows", "Delete Rows", EditorModel::delete_rows),
+        ("move_rows_up", |model| model.move_rows(true)),
+        ("move_rows_down", |model| model.move_rows(false)),
+        ("duplicate_rows", EditorModel::duplicate_rows),
+        ("delete_rows", EditorModel::delete_rows),
     ];
-    for (name, title, run) in commands {
+    for (name, run) in commands {
         // `Changed` stands only if the text (and with it the selections)
         // did change.
-        add(registry, name, title, true, move |model, _| {
+        add(registry, name, true, move |model, _| {
             run(model);
             Ok(Effect::Changed)
         });

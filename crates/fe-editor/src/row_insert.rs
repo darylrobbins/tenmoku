@@ -19,36 +19,18 @@ use crate::{
 
 /// Registers the row insertion commands. Each edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    add(
-        registry,
-        "insert_line_below",
-        "Insert Line Below",
-        true,
-        |model, host| {
-            model.insert_row_below(host);
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "insert_line_above",
-        "Insert Line Above",
-        true,
-        |model, _| {
-            model.insert_row_above();
-            Ok(Effect::Changed)
-        },
-    );
-    add(
-        registry,
-        "copy_rows_up",
-        "Copy Rows Up",
-        true,
-        |model, _| {
-            model.copy_rows_up();
-            Ok(Effect::Changed)
-        },
-    );
+    add(registry, "insert_line_below", true, |model, host| {
+        model.insert_row_below(host);
+        Ok(Effect::Changed)
+    });
+    add(registry, "insert_line_above", true, |model, _| {
+        model.insert_row_above();
+        Ok(Effect::Changed)
+    });
+    add(registry, "copy_rows_up", true, |model, _| {
+        model.copy_rows_up();
+        Ok(Effect::Changed)
+    });
 }
 
 impl EditorModel {
