@@ -355,6 +355,69 @@ impl<L: MeasuredLine> RowLayout<L> {
         self.start_x() + f64::from(self.line.x_for_index(display))
     }
 
+    /// Where the buffer range `range` of this row is drawn, as x ranges from
+    /// column 0, left to right: one per visual piece, as in right-to-left
+    /// text a range is drawn in several. Each end is placed as by
+    /// [`RowLayout::x_for_offset`]; of a long row, the parts outside the
+    /// shaped slice are one piece each, as its index places them, up to the
+    /// slice's edge as drawn: in right-to-left text the caret at the slice's
+    /// end can be across it.
+    pub fn x_ranges(
+        &self,
+        range: Range<usize>,
+        long_rows: &mut LongRows,
+        widths: &mut dyn CharWidth,
+    ) -> Vec<Range<f64>> {
+        let shown = self.shown();
+        let start_x = self.start_x();
+        let shaped = |range: Range<usize>| {
+            let display = |offset: usize| self.expanded.to_display(offset - shown.start);
+            (self
+                .line
+                .visual_ranges(display(range.start)..display(range.end)))
+            .into_iter()
+            .map(|piece| start_x + f64::from(piece.start)..start_x + f64::from(piece.end))
+        };
+        let mut x = |offset| self.x_for_offset(offset, long_rows, widths);
+        let mut pieces = Vec::new();
+        if range.start < shown.start {
+            let end = if range.end < shown.start {
+                x(range.end)
+            } else {
+                start_x
+            };
+            pieces.push(x(range.start)..end);
+        }
+        if range.end > shown.end {
+            let start = if range.start > shown.end {
+                x(range.start)
+            } else {
+                (shaped(shown.clone()).map(|piece| piece.end)).fold(start_x, f64::max)
+            };
+            pieces.push(start..x(range.end));
+        }
+        let (start, end) = (
+            range.start.clamp(shown.start, shown.end),
+            range.end.clamp(shown.start, shown.end),
+        );
+        if start < end || pieces.is_empty() {
+            pieces.extend(shaped(start..end));
+        }
+        pieces.sort_by(|a, b| a.start.total_cmp(&b.start));
+        pieces
+    }
+
+    /// The x (from column 0) of the right end of this row's text, where a
+    /// selected line break is shown: of right-to-left text at its end, right
+    /// of the caret at the row's end.
+    pub fn text_right_x(&self, long_rows: &mut LongRows, widths: &mut dyn CharWidth) -> f64 {
+        (self
+            .x_ranges(self.start..self.end, long_rows, widths)
+            .into_iter())
+        .map(|piece| piece.end)
+        .fold(f64::NEG_INFINITY, f64::max)
+    }
+
     /// The width of the ghost text's inlay drawn in this row, without the
     /// hints; 0 where there is none.
     pub fn ghost_width(&self) -> f64 {
@@ -1496,8 +1559,12 @@ fn lay_out_frame<M: TextMeasure>(
         })
         .collect();
     let containing = |offset: usize| rows.iter().find(|row| row.contains(offset));
-    let mut x_at = |row: &RowLayout<M::Line>, offset: usize| {
-        text_left + (row.x_for_offset(offset, long_rows, widths) - scroll_x) as f32
+    let screen_x = |x: f64| text_left + (x - scroll_x) as f32;
+    let x_at = |row: &RowLayout<M::Line>,
+                offset: usize,
+                long_rows: &mut LongRows,
+                widths: &mut dyn CharWidth| {
+        screen_x(row.x_for_offset(offset, long_rows, widths))
     };
 
     let mut selection_rects = Vec::new();
@@ -1510,7 +1577,7 @@ fn lay_out_frame<M: TextMeasure>(
         let head_row = containing(head);
         if let Some(row) = head_row {
             cursors.push(Rect {
-                x: x_at(row, head),
+                x: x_at(row, head, long_rows, widths),
                 y: row_top(row.row),
                 width: CURSOR_WIDTH,
                 height: line_height,
@@ -1532,22 +1599,40 @@ fn lay_out_frame<M: TextMeasure>(
             if from > to || from == to && !line_break {
                 continue;
             }
-            // In right-to-left text the end can be left of the start.
-            let (start, end) = (x_at(row, from), x_at(row, to));
-            let (left, mut right) = (start.min(end), start.max(end));
+            // One rect per visual piece: in right-to-left text a range
+            // crossing a change of direction is drawn in several.
+            let mut pieces: Vec<(f32, f32)> = if from < to {
+                (row.x_ranges(from..to, long_rows, widths).into_iter())
+                    .map(|piece| (screen_x(piece.start), screen_x(piece.end)))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             if line_break {
-                right += em * 0.6;
+                // Once, right of the row's text.
+                let right = screen_x(row.text_right_x(long_rows, widths));
+                pieces.push((right, right + em * 0.6));
+            }
+            pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut merged: Vec<(f32, f32)> = Vec::with_capacity(pieces.len());
+            for (left, right) in pieces {
+                match merged.last_mut() {
+                    Some(last) if left <= last.1 => last.1 = last.1.max(right),
+                    _ => merged.push((left, right)),
+                }
             }
             // Far along a long row, a selection reaches far off screen,
             // further than an `f32` places its visible edge exactly.
             // With no text area, both edges are at its left.
             let clamp = |x: f32| x.clamp(text_left - em, (width + em).max(text_left - em));
-            selection_rects.push(Rect::from_corners(
-                clamp(left),
-                row_top(row.row),
-                clamp(right),
-                row_top(row.row) + line_height,
-            ));
+            for (left, right) in merged {
+                selection_rects.push(Rect::from_corners(
+                    clamp(left),
+                    row_top(row.row),
+                    clamp(right),
+                    row_top(row.row) + line_height,
+                ));
+            }
         }
     }
     active_rows.sort_unstable();
@@ -1619,7 +1704,7 @@ fn lay_out_frame<M: TextMeasure>(
             let line = shape(FOLD_MARKER, &styles.line_number);
             FoldMarker {
                 rect: Rect {
-                    x: x_at(row, row.end) + em,
+                    x: x_at(row, row.end, long_rows, widths) + em,
                     y: row_top(row.row),
                     width: line.width(),
                     height: line_height,
