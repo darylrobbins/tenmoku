@@ -26,7 +26,16 @@ use gpui::{
     WindowId, div, px,
 };
 
-use crate::{EditorSettings, EditorTheme, commands::RunCommand, pane_item::file_name};
+use kiln_l10n::tr;
+
+use crate::{
+    EditorSettings, EditorTheme,
+    commands::RunCommand,
+    pane_item::{
+        file_name,
+        status::{self, Selected},
+    },
+};
 
 mod element;
 mod find;
@@ -109,8 +118,9 @@ pub struct FileViewer {
     restore: Option<Restore>,
     /// Counts the text snapshots the model has had, for [`CursorKey`].
     generation: u64,
-    /// The status bar's cursor text, and the selection and text it's of.
-    cursor: Option<(CursorKey, SharedString)>,
+    /// The status bar's cursor, its line and column and what's selected,
+    /// and the selection and text it's of.
+    cursor: Option<(CursorKey, Cursor)>,
     /// Works out the cursor text for another selection or text, off the
     /// main thread: finding a row or a column can read much of the file.
     cursor_task: Option<(CursorKey, Task<()>)>,
@@ -144,6 +154,10 @@ struct Watch {
 /// What a cursor text is of: a snapshot of the text, the anchor and the
 /// head.
 type CursorKey = (u64, usize, usize);
+
+/// The cursor item's line and column, from 1, and what's selected
+/// ([`status::cursor_label`]).
+type Cursor = (u32, usize, Selected);
 
 struct Restore {
     anchor: usize,
@@ -292,11 +306,7 @@ impl FileViewer {
     pub fn refuse_changed(&mut self, cx: &mut Context<Self>) {
         self.converting = false;
         self.mark_changed(cx);
-        self.banner = format!(
-            "{} changed on disk. Reload it before editing.",
-            self.file_name()
-        )
-        .into();
+        self.banner = tr!("gpui-file-viewer-changed-reload", name = self.file_name());
         cx.notify();
     }
 
@@ -450,7 +460,7 @@ impl FileViewer {
             return;
         }
         self.changed_sent = true;
-        self.banner = format!("{} changed on disk.", self.file_name()).into();
+        self.banner = tr!("gpui-file-viewer-changed", name = self.file_name());
         self.offers_reload = true;
         cx.emit(FileViewerEvent::Changed);
         cx.notify();
@@ -496,8 +506,9 @@ impl FileViewer {
     /// The status bar's cursor text, `Ln 12, Col 5` and maybe
     /// ` (17 selected)` as the editor's, the last worked out, which may be of an earlier
     /// selection while the current one's is worked out.
-    pub(crate) fn cursor_text(&self) -> Option<&SharedString> {
-        self.cursor.as_ref().map(|(_, text)| text)
+    pub(crate) fn cursor_text(&self) -> Option<SharedString> {
+        let (_, (line, column, selected)) = self.cursor.as_ref()?;
+        Some(status::cursor_label(*line, *column, *selected))
     }
 
     /// Works out the cursor text off the main thread, unless it's of the
@@ -526,17 +537,17 @@ impl FileViewer {
             };
             let row = text.offset_to_point(head).row;
             let column = chars_in(text.row_start(row)..head) + 1;
-            let mut cursor = format!("Ln {}, Col {column}", row + 1);
             let selection = anchor.min(head)..anchor.max(head);
-            if !selection.is_empty() {
-                cursor += &format!(" ({} selected)", chars_in(selection));
-            }
-            cursor
+            let selected = match selection.is_empty() {
+                true => Selected::Nothing,
+                false => Selected::Chars(chars_in(selection)),
+            };
+            (row + 1, column, selected)
         });
         let task = cx.spawn(async move |this, cx| {
             let cursor = working.await;
             this.update(cx, |viewer, cx| {
-                viewer.cursor = Some((key, cursor.into()));
+                viewer.cursor = Some((key, cursor));
                 viewer.cursor_task = None;
                 #[cfg(test)]
                 {
@@ -580,7 +591,8 @@ impl FileViewer {
                 // It changed, as far as checks go, so they leave this banner
                 // be.
                 self.mark_changed(cx);
-                self.banner = format!("Cannot read {}: {error}", self.file_name()).into();
+                let (name, error) = (self.file_name(), error.to_string());
+                self.banner = tr!("gpui-file-viewer-cannot-read", name = name, error = error);
                 cx.notify();
                 return;
             }
@@ -748,7 +760,7 @@ impl Render for FileViewer {
                 .rounded(px(3.))
                 .text_color(theme.foreground)
                 .cursor_pointer()
-                .child("Reload")
+                .child(tr!("gpui-file-viewer-reload"))
                 .on_click(cx.listener(|viewer, _, _, cx| viewer.reload(cx)))
         });
         let converting = self.converting;
@@ -762,7 +774,7 @@ impl Render for FileViewer {
                 .border_color(theme.popover_border)
                 .rounded(px(3.))
                 .text_color(theme.foreground)
-                .child("Edit This File");
+                .child(tr!("gpui-file-viewer-edit"));
             if converting {
                 button.opacity(0.5)
             } else {

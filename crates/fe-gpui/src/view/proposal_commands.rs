@@ -40,49 +40,20 @@ impl CommandTarget for ProposalCommands {
 pub(crate) fn registry() -> Registry<ProposalCommands> {
     use ProposalOp::*;
     let commands = [
-        (
-            "proposal.next_hunk",
-            "Next Proposed Change",
-            NextHunk,
-            false,
-        ),
-        (
-            "proposal.previous_hunk",
-            "Previous Proposed Change",
-            PreviousHunk,
-            false,
-        ),
-        (
-            "proposal.accept_hunk",
-            "Accept Proposed Change",
-            AcceptHunk,
-            true,
-        ),
-        (
-            "proposal.reject_hunk",
-            "Reject Proposed Change",
-            RejectHunk,
-            false,
-        ),
-        (
-            "proposal.accept_all",
-            "Accept All Proposed Changes",
-            AcceptAll,
-            true,
-        ),
-        (
-            "proposal.reject_all",
-            "Reject All Proposed Changes",
-            RejectAll,
-            false,
-        ),
+        ("proposal.next_hunk", NextHunk, false),
+        ("proposal.previous_hunk", PreviousHunk, false),
+        ("proposal.accept_hunk", AcceptHunk, true),
+        ("proposal.reject_hunk", RejectHunk, false),
+        ("proposal.accept_all", AcceptAll, true),
+        ("proposal.reject_all", RejectAll, false),
     ];
     let mut registry = Registry::new();
-    for (id, title, op, mutates) in commands {
+    for (id, op, mutates) in commands {
+        let title = crate::l10n::command_title(id);
         registry
             .register(
                 id,
-                title,
+                &title,
                 move |target: &mut Option<ProposalOp>, _: &Actor| {
                     *target = Some(op);
                     Ok(Dispatched::new(Effect::Nothing))

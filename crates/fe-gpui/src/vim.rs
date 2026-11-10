@@ -143,8 +143,9 @@ use fe_vim::{
 };
 use gpui::{
     AnyWindowHandle, App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, Pixels,
-    Point, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    Point, SharedString, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
 };
+use kiln_l10n::tr;
 
 use crate::{
     EditorView,
@@ -361,7 +362,9 @@ pub(crate) const MOTION_PREFIXES: [&str; 3] = ["editor.move", "editor.select", "
 
 /// What the status bar says of a map's keys after a file or window command,
 /// which the host runs once the keys' update is over: they aren't run.
-const HANDED_HOST_COMMAND: &str = "a map's keys after a file or window command aren't run";
+fn handed_host_command() -> SharedString {
+    tr!("gpui-vim-map-keys-after-host-command")
+}
 
 /// The prefix of vim's keys in GPUI's key contexts, whose identifiers can't
 /// hold `.`: `vim_mode` is `vim.mode`.
@@ -828,7 +831,7 @@ impl EditorView {
             .is_some_and(|state| state.message().is_none());
         self.finish_vim_host(VimHostHold(token), false, cx);
         if unsaid && let Some(state) = &mut self.vim {
-            state.set_host_message(format!("a map's keys after {what} aren't run"));
+            state.set_host_message(tr!("gpui-vim-map-keys-not-run", what = what).to_string());
         }
     }
 
@@ -1031,7 +1034,13 @@ fn run_remap_command(
         Err(error) => {
             view.update(cx, |view, cx| {
                 if let Some(state) = &mut view.vim {
-                    state.set_host_message(format!("fe:{id}: {error}"));
+                    let command = format!("fe:{id}");
+                    let message = tr!(
+                        "gpui-vim-command-failed",
+                        command = command,
+                        error = error.to_string()
+                    );
+                    state.set_host_message(message.to_string());
                 }
                 cx.notify();
             });
@@ -2978,7 +2987,7 @@ impl EditorView {
         };
         self.vim_replaying = false;
         self.end_live_line(wait.line.as_deref(), cx);
-        self.stop_map(true, Some(HANDED_HOST_COMMAND));
+        self.stop_map(true, Some(handed_host_command()));
         self.release_held_keys(cx);
         self.wait_for_remap_later(wait.origin, cx);
         cx.notify();
@@ -3027,7 +3036,7 @@ impl EditorView {
 
     /// Drops the rest of a replay, `rest` whether keys were left of it, and
     /// says `handed` of them if any were.
-    fn stop_map(&mut self, rest: bool, handed: Option<&'static str>) {
+    fn stop_map(&mut self, rest: bool, handed: Option<SharedString>) {
         let Some(state) = &mut self.vim else {
             return;
         };
@@ -3037,7 +3046,7 @@ impl EditorView {
             && rest
         {
             log::warn!("{note}");
-            state.set_host_message(note);
+            state.set_host_message(note.to_string());
         }
     }
 
@@ -3060,11 +3069,18 @@ impl EditorView {
         let message = if !known_command(&id, cx) {
             fe_vim::messages::not_an_editor_command(&format!("fe:{id}"))
         } else if let Some(message) = needs_args(&id, cx) {
-            format!("fe:{id}: {message}")
+            let command = format!("fe:{id}");
+            tr!(
+                "gpui-vim-command-failed",
+                command = command,
+                error = message
+            )
+            .to_string()
         } else if (meta.as_ref().and_then(|meta| meta.context.as_ref()))
             .is_some_and(|context| !context.eval(&invocation.context))
         {
-            format!("fe:{id} doesn't apply here")
+            let command = format!("fe:{id}");
+            tr!("gpui-vim-command-not-here", command = command).to_string()
         } else {
             let refused = match (&meta, registry().get(&id)) {
                 (_, Some(_)) => self.refuses_vim(&invocation),
@@ -3173,7 +3189,7 @@ impl EditorView {
         if !ok || state.failed() {
             self.stop_map(rest, None);
         } else if handed || state.has_host_command() {
-            self.stop_map(rest, Some(HANDED_HOST_COMMAND));
+            self.stop_map(rest, Some(handed_host_command()));
         } else {
             // A `:normal` suspended at the command goes on first, with the
             // rest of its keys and rows: they come before the map's keys.
@@ -3243,7 +3259,7 @@ impl EditorView {
         &mut self,
         key: VimKey,
         line: &mut Option<String>,
-        handed: &mut Option<&'static str>,
+        handed: &mut Option<SharedString>,
         cx: &mut Context<Self>,
     ) -> bool {
         self.sync_visual();
@@ -3328,7 +3344,7 @@ impl EditorView {
         &mut self,
         key: VimKey,
         line: &mut Option<String>,
-        handed: &mut Option<&'static str>,
+        handed: &mut Option<SharedString>,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(state) = &mut self.vim else {
@@ -3371,7 +3387,7 @@ impl EditorView {
         // run, not a macro replay's; but a map's is left for the
         // host, which takes it from the editor, and ends the map.
         if mapped && self.vim.as_ref().is_some_and(VimState::has_host_command) {
-            *handed = Some(HANDED_HOST_COMMAND);
+            *handed = Some(handed_host_command());
             return false;
         }
         if let Some(command) = self.take_vim_host_command() {
@@ -3441,7 +3457,7 @@ impl EditorView {
     fn replay_fed(
         &mut self,
         key: VimKey,
-        handed: &mut Option<&'static str>,
+        handed: &mut Option<SharedString>,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(state) = &mut self.vim else {
@@ -3463,7 +3479,7 @@ impl EditorView {
                 // A map's `do`, `dp` or `<Cmd>w<CR>` hands the host a command
                 // too, and ends the map, as an ex line's does.
                 if mapped && self.vim.as_ref().is_some_and(VimState::has_host_command) {
-                    *handed = Some(HANDED_HOST_COMMAND);
+                    *handed = Some(handed_host_command());
                     return false;
                 }
                 // A macro replay's `.` after a filter runs no shell command,

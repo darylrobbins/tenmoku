@@ -16,9 +16,10 @@ use fe_display::{
     layout::{Frame, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, StyleRun, TextMeasure, Vec2},
 };
 use gpui::{
-    App, Bounds, ContentMask, CursorStyle, FontId, Hitbox, HitboxBehavior, Hsla, Pixels, Window,
-    fill, px,
+    App, Bounds, ContentMask, CursorStyle, FontId, Hitbox, HitboxBehavior, Hsla, Pixels,
+    SharedString, Window, fill, px,
 };
+use kiln_l10n::tr;
 
 use super::{FrameLayout, GlyphWidths, Line, Shaper};
 use crate::{EditorTheme, EditorView, view::ProposalButton};
@@ -43,8 +44,6 @@ const REMOVED: Hsla = Hsla {
 };
 /// How opaque a stale hunk's header is over the text colour.
 const DIM_ALPHA: f32 = 0.6;
-/// A pending hunk's header.
-const PENDING: &str = "Proposed change";
 /// How opaque a button is over the colour of what it does.
 const BUTTON_ALPHA: f32 = 0.45;
 /// Either side of a button's label, in line heights.
@@ -244,7 +243,8 @@ pub(super) fn hunks(view: &EditorView, texts: &mut Texts) -> Vec<Hunk> {
         let dry_run = stale.then(|| proposal.dry_run(snapshot));
         for hunk in hunks {
             let header = match hunk.status {
-                HunkStatus::Pending => PENDING.to_string(),
+                // A pending hunk's header.
+                HunkStatus::Pending => tr!("gpui-proposal-label").to_string(),
                 HunkStatus::Stale => (dry_run.iter())
                     .flat_map(|dry_run| dry_run.hunks())
                     .find(|outcome| outcome.id == hunk.id)
@@ -432,10 +432,10 @@ fn buttons(status: HunkStatus, read_only: bool) -> &'static [ProposalButton] {
     }
 }
 
-fn label(button: ProposalButton) -> &'static str {
+fn label(button: ProposalButton) -> SharedString {
     match button {
-        ProposalButton::Accept => "Accept",
-        ProposalButton::Reject => "Reject",
+        ProposalButton::Accept => tr!("gpui-proposal-accept"),
+        ProposalButton::Reject => tr!("gpui-proposal-reject"),
     }
 }
 
@@ -464,7 +464,7 @@ fn header_buttons(
     let shaped = (buttons(status, read_only).iter())
         .map(|&button| {
             let text = label(button);
-            let line = shaper.shape(text, &runs(text, false, status, theme));
+            let line = shaper.shape(&text, &runs(&text, false, status, theme));
             let width = line.width() + pad * 2.;
             let at = x + gap;
             x = at + width;

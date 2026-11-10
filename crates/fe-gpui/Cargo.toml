@@ -21,6 +21,8 @@ fe-text.workspace = true
 # The diff view's change buttons (diff_view.rs).
 fe-ui.workspace = true
 fe-vim.workspace = true
+# The editor view's strings (l10n.rs).
+kiln-l10n.workspace = true
 kiln-platform.workspace = true
 # EditorView is a pane item (pane_item.rs).
 kiln-shell.workspace = true
@@ -35,6 +37,9 @@ usvg.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]
+# The literal and key checks, and the command keys' (tests/l10n.rs).
+fe-command = { workspace = true, features = ["lint"] }
+kiln-l10n = { workspace = true, features = ["lint"] }
 # The bundled fonts, which the screenshots example (and fe-gpui's font tests)
 # register and pin, as Tenmoku does.
 fe-fonts = { path = "../fe-fonts" }

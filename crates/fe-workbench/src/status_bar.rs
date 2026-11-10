@@ -45,7 +45,7 @@ use kiln_shell::{
 
 use crate::encoding_picker::CHANGE_ENCODING;
 
-pub(crate) use built_in::{PLAIN_TEXT, language_label};
+pub(crate) use built_in::{language_label, plain_text};
 
 pub use kiln_shell::StatusSide;
 

@@ -29,6 +29,7 @@ use gpui::{
     Styled as _, Subscription, SvgRenderer, SvgSize, Task, Window, canvas, div, fill, point, px,
     size,
 };
+use kiln_l10n::tr;
 
 use crate::{EditorTheme, commands::RunCommand};
 
@@ -49,9 +50,6 @@ const SETTLE: Duration = Duration::from_millis(150);
 
 /// The most pixels a side of a re-rendered SVG has.
 const MAX_RENDER_SIDE: f32 = 8192.;
-
-/// Why an SVG isn't drawn when it links a file outside the workspace.
-const BLOCKED: &str = "Blocked: links a file outside the workspace";
 
 /// `image.open_as_text`: replaces an SVG viewer tab with an editor on
 /// the file. The workbench runs it.
@@ -268,16 +266,12 @@ impl CommandTarget for ImageCommands {
 /// The four zoom commands, in the [`KEY_CONTEXT`] context. Their handlers
 /// do nothing: the view runs them.
 pub(crate) fn registry() -> Registry<ImageCommands> {
-    let commands = [
-        (ZOOM_IN, "Zoom In"),
-        (ZOOM_OUT, "Zoom Out"),
-        (ZOOM_FIT, "Fit to Window"),
-        (ZOOM_ACTUAL, "Actual Size"),
-    ];
+    let commands = [ZOOM_IN, ZOOM_OUT, ZOOM_FIT, ZOOM_ACTUAL];
     let mut registry = Registry::new();
-    for (id, title) in commands {
+    for id in commands {
+        let title = crate::l10n::command_title(id);
         registry
-            .register(id, title, |_: &mut (), _: &Actor| {
+            .register(id, &title, |_: &mut (), _: &Actor| {
                 Ok(Dispatched::new(Effect::Nothing))
             })
             .expect("image command IDs are valid and distinct")
@@ -423,8 +417,11 @@ impl ImageViewer {
     /// The zoom as the status bar says it: `Fit` or `150%`.
     pub fn zoom_text(&self) -> SharedString {
         match self.zoom {
-            Zoom::Fit => "Fit".into(),
-            Zoom::Scale(scale) => format!("{}%", (scale * 100.).round()).into(),
+            Zoom::Fit => tr!("gpui-image-zoom-fit"),
+            Zoom::Scale(scale) => {
+                let percent = (scale * 100.).round().to_string();
+                tr!("gpui-image-zoom-percent", percent = percent)
+            }
         }
     }
 
@@ -450,11 +447,12 @@ impl ImageViewer {
                 viewer.loading = None;
                 viewer.content = match decoded {
                     Decoded::Ready(picture) => Content::Ready(picture),
-                    Decoded::TooLarge => Content::Message("Too large to preview".into()),
-                    Decoded::Missing => Content::Message("File not found".into()),
-                    Decoded::Blocked => Content::Message(BLOCKED.into()),
+                    Decoded::TooLarge => Content::Message(tr!("gpui-image-too-large")),
+                    Decoded::Missing => Content::Message(tr!("gpui-image-not-found")),
+                    // An SVG linking a file outside the workspace isn't drawn.
+                    Decoded::Blocked => Content::Message(tr!("gpui-image-blocked")),
                     Decoded::Failed(why) => {
-                        Content::Message(format!("Can't display this image: {why}").into())
+                        Content::Message(tr!("gpui-image-cannot-display", reason = why))
                     }
                 };
                 viewer.clamp_scroll();
@@ -912,7 +910,7 @@ impl Render for ImageViewer {
                 .text_color(theme.gutter_foreground)
                 .text_size(theme.font_size)
                 .font_family(theme.font_family.clone())
-                .child("Text")
+                .child(tr!("gpui-image-open-as-text"))
                 // The viewer's own press would start a pan or a click.
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(move |_, window, cx| {
@@ -1032,7 +1030,7 @@ fn decode_in(path: &Path, svg: Option<(&SvgRenderer, Option<&Path>)>) -> Decoded
         Err(error) => return Decoded::Failed(error.to_string()),
     };
     match file.metadata() {
-        Ok(meta) if !meta.is_file() => return Decoded::Failed("not a regular file".into()),
+        Ok(meta) if !meta.is_file() => return Decoded::Failed(tr!("gpui-image-not-a-file").into()),
         Ok(meta) if meta.len() > MAX_BYTES => return Decoded::TooLarge,
         Ok(_) => {}
         Err(error) => return Decoded::Failed(error.to_string()),
@@ -1047,7 +1045,7 @@ fn decode_in(path: &Path, svg: Option<(&SvgRenderer, Option<&Path>)>) -> Decoded
     if is_svg(path) {
         return match svg {
             Some((renderer, root)) => decode_svg(path, bytes, renderer, root),
-            None => Decoded::Failed("not a supported image format".into()),
+            None => Decoded::Failed(tr!("gpui-image-unsupported").into()),
         };
     }
     let reader = match image::ImageReader::new(Cursor::new(&bytes)).with_guessed_format() {
@@ -1063,7 +1061,7 @@ fn decode_in(path: &Path, svg: Option<(&SvgRenderer, Option<&Path>)>) -> Decoded
             | Raster::Bmp
             | Raster::Ico),
         ) => format,
-        _ => return Decoded::Failed("not a supported image format".into()),
+        _ => return Decoded::Failed(tr!("gpui-image-unsupported").into()),
     };
     match reader.into_dimensions() {
         Ok((width, height)) if u64::from(width) * u64::from(height) > MAX_PIXELS => {
@@ -1114,7 +1112,7 @@ fn decode_svg(path: &Path, bytes: Vec<u8>, renderer: &SvgRenderer, root: Option<
         match gunzip(&bytes, MAX_SVG_BYTES as usize) {
             Ok(data) => data,
             Err(Gunzip::TooLarge) => return Decoded::TooLarge,
-            Err(Gunzip::Malformed) => return Decoded::Failed("malformed gzip data".into()),
+            Err(Gunzip::Malformed) => return Decoded::Failed(tr!("gpui-image-bad-gzip").into()),
         }
     } else {
         bytes
@@ -1127,7 +1125,7 @@ fn decode_svg(path: &Path, bytes: Vec<u8>, renderer: &SvgRenderer, root: Option<
     match check_svg_links(&data, &folders) {
         Ok(true) => {}
         Ok(false) => return Decoded::Blocked,
-        Err(why) => return Decoded::Failed(why.into()),
+        Err(why) => return Decoded::Failed(why.to_string()),
     }
     let data = with_default_size(data);
     let parsed = match renderer.parse_svg(&data) {
@@ -1509,14 +1507,14 @@ impl Inflater<'_> {
 /// read with the XML parser and options usvg reads it with, as a path. An
 /// existing file outside the folders blocks the SVG, and data this can't
 /// read isn't drawn. (The Markdown preview's rule.)
-fn check_svg_links(data: &[u8], folders: &[PathBuf]) -> Result<bool, &'static str> {
-    let text = std::str::from_utf8(data).map_err(|_| "the SVG isn't UTF-8")?;
+fn check_svg_links(data: &[u8], folders: &[PathBuf]) -> Result<bool, SharedString> {
+    let text = std::str::from_utf8(data).map_err(|_| tr!("gpui-image-svg-not-utf8"))?;
     let options = usvg::roxmltree::ParsingOptions {
         allow_dtd: true,
         ..Default::default()
     };
     let document = usvg::roxmltree::Document::parse_with_options(text, options)
-        .map_err(|_| "can't parse the SVG")?;
+        .map_err(|_| tr!("gpui-image-svg-unparsed"))?;
     let hrefs = (document.descendants())
         .flat_map(|node| node.attributes())
         .filter(|attr| attr.name() == "href");
@@ -1537,11 +1535,15 @@ pub fn size_text(bytes: u64) -> String {
     const MIB: u64 = KIB * 1024;
     const GIB: u64 = MIB * 1024;
     match bytes {
-        GIB.. => format!("{:.1} GiB", bytes as f64 / GIB as f64),
-        MIB.. => format!("{} MiB", bytes / MIB),
-        KIB.. => format!("{} KiB", bytes / KIB),
-        _ => format!("{bytes} bytes"),
+        GIB.. => {
+            let size = format!("{:.1}", bytes as f64 / GIB as f64);
+            tr!("gpui-size-gib", size = size)
+        }
+        MIB.. => tr!("gpui-size-mib", size = bytes / MIB),
+        KIB.. => tr!("gpui-size-kib", size = bytes / KIB),
+        _ => tr!("gpui-size-bytes", count = bytes),
     }
+    .to_string()
 }
 
 #[cfg(test)]

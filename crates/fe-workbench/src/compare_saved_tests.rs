@@ -4,7 +4,7 @@
 use std::fs;
 
 use fe_buffer::Origin;
-use fe_gpui::{DiffView, EditorView, diff_view::NO_CHANGES};
+use fe_gpui::{DiffView, EditorView};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use crate::{
@@ -100,7 +100,7 @@ fn no_changes_and_no_file(cx: &mut TestAppContext) {
     assert_eq!(hunks(&diff, cx), 0);
     run("git.next_change", cx);
     let message = diff.read_with(cx, |diff, _| diff.message().map(ToString::to_string));
-    assert_eq!(message.as_deref(), Some(NO_CHANGES));
+    assert_eq!(message.as_deref(), Some("No changes"));
 
     // Asking again shows the tab, not a second one.
     let tab = pane(&workbench, cx).read_with(cx, |pane, _| pane.tabs().len());

@@ -9,7 +9,7 @@ use gpui::{
 
 use crate::{
     picker::{Picker, PickerDelegate},
-    status_bar::{PLAIN_TEXT, language_label},
+    status_bar::{language_label, plain_text},
 };
 
 /// A row: the language's id, `None` for Plain Text, and its label.
@@ -33,7 +33,7 @@ impl LanguagePicker {
             .map(|id| (Some(id), language_label(id)))
             .collect();
         languages.sort_by_key(|(_, label)| label.to_lowercase());
-        let rows: Vec<Row> = [(None, PLAIN_TEXT.into())]
+        let rows: Vec<Row> = [(None, plain_text())]
             .into_iter()
             .chain(languages)
             .collect();

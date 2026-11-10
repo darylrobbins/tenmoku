@@ -6,7 +6,7 @@
 //! `mutates_buffer` is set, typing, an input method's text and a middle-click
 //! paste. With vim on, a refused edit, and any key that would open an insert
 //! or replace session, stays in normal mode with nvim's message for a buffer
-//! that isn't 'modifiable' ([`E21`]). Motions, the visual modes, yanks,
+//! that isn't 'modifiable' ([`e21`]). Motions, the visual modes, yanks,
 //! searches and `:` lines that don't edit work as usual.
 //!
 //! Vim is checked where every vim command runs, however its keys came
@@ -36,7 +36,14 @@ use gpui::{Bounds, Context, EventEmitter, Pixels, SharedString, px};
 use super::EditorView;
 use crate::vim;
 
-/// nvim's message for an edit to a buffer that isn't 'modifiable'.
+/// nvim's message for an edit to a buffer that isn't 'modifiable': `E21:`,
+/// an id, before its text in the active locale.
+pub(crate) fn e21() -> String {
+    format!("E21: {}", kiln_l10n::tr!("gpui-vim-e21"))
+}
+
+/// [`e21`] in en-US, which the tests compare with.
+#[cfg(test)]
 pub(crate) const E21: &str = "E21: Cannot make changes, 'modifiable' is off";
 
 /// Rows a host places between an editor's rows, such as a diff's filler
@@ -408,11 +415,11 @@ impl EditorView {
         f32::from((self.theme.font_size * self.theme.line_height).round()).max(1.)
     }
 
-    /// With vim on, leaves [`E21`] as vim's message; with vim off a refused
+    /// With vim on, leaves [`e21`] as vim's message; with vim off a refused
     /// edit does nothing.
     pub(crate) fn refuse_edit(&mut self, cx: &mut Context<Self>) {
         if let Some(state) = &mut self.vim {
-            state.set_host_message(E21);
+            state.set_host_message(e21());
         }
         cx.notify();
     }
@@ -462,7 +469,7 @@ impl EditorView {
     }
 
     /// Refuses `invocation`, one of vim's, in a read-only view, saying
-    /// [`E21`]: a command line it would have submitted closes.
+    /// [`e21`]: a command line it would have submitted closes.
     pub(crate) fn refuse_vim(&mut self, invocation: &Invocation, cx: &mut Context<Self>) {
         if invocation.command.as_str() == "vim.command_line_submit" {
             let cancel = Invocation::of("vim.command_line_cancel").expect("a valid command ID");

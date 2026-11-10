@@ -20,7 +20,11 @@ thread_local! {
         let mut registry = fe_editor::commands::registry();
         let accept = |_: &mut EditorTarget<'_>, _: &Actor| Ok(Dispatched::new(Effect::Nothing));
         registry
-            .register(completion_menu::ACCEPT, "Accept Completion", accept)
+            .register(
+                completion_menu::ACCEPT,
+                &crate::l10n::command_title(completion_menu::ACCEPT),
+                accept,
+            )
             .expect("a valid, distinct command ID")
             .context(ContextPredicate::identifier(completion_menu::KEY_CONTEXT));
         registry

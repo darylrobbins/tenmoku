@@ -16,8 +16,11 @@ use crate::pane_item::{file_name, restore_style, status};
 /// The id of the `Read-only` status item: on the right, before the cursor.
 pub(crate) const READ_ONLY_STATUS: &str = "read_only";
 
-/// The banner a restored viewer shows when its saved state has none.
-const RESTORED_BANNER: &str = "Read only: too large to edit";
+/// The banner a restored viewer shows when its saved state has none:
+/// `Read only: too large to edit`.
+fn restored_banner() -> SharedString {
+    kiln_l10n::tr!("gpui-file-viewer-too-large")
+}
 
 impl PaneItem for FileViewer {
     const KIND: &'static str = "fastedit.file_viewer";
@@ -28,7 +31,12 @@ impl PaneItem for FileViewer {
 
     /// `big.log — Tenmoku`.
     fn window_title(&self, cx: &App) -> SharedString {
-        format!("{} — {}", self.tab_title(cx), fe_config::APP_NAME).into()
+        let title = self.tab_title(cx);
+        kiln_l10n::tr!(
+            "gpui-window-title",
+            title = title,
+            app = fe_config::APP_NAME
+        )
     }
 
     // Never dirty, so `is_dirty`, `may_close`, `close_revision` and `save`
@@ -49,12 +57,18 @@ impl PaneItem for FileViewer {
     /// `Read-only`, and the cursor as the editor shows it.
     fn status_items(&self, _: &App) -> Vec<StatusItem> {
         vec![
-            StatusItem::new(READ_ONLY_STATUS, StatusSide::Right, 50, "Read-only").icon(Icon::Lock),
+            StatusItem::new(
+                READ_ONLY_STATUS,
+                StatusSide::Right,
+                50,
+                kiln_l10n::tr!("gpui-status-read-only"),
+            )
+            .icon(Icon::Lock),
             StatusItem::new(
                 status::CURSOR,
                 StatusSide::Right,
                 100,
-                self.cursor_text().cloned().unwrap_or_else(|| "…".into()),
+                self.cursor_text().unwrap_or_else(|| "…".into()),
             ),
         ]
     }
@@ -108,9 +122,8 @@ impl PaneItem for FileViewer {
                 let banner = state
                     .get("banner")
                     .and_then(Value::as_str)
-                    .unwrap_or(RESTORED_BANNER)
-                    .to_owned();
-                let viewer = cx.new(|cx| FileViewer::new(view, index, banner.into(), theme, cx));
+                    .map_or_else(restored_banner, |banner| banner.to_owned().into());
+                let viewer = cx.new(|cx| FileViewer::new(view, index, banner, theme, cx));
                 viewer.update(cx, |viewer, cx| place_head(viewer, &state, cx));
                 Some(viewer)
             })

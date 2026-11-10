@@ -152,7 +152,9 @@ fn decorations(text: &Text, preview: &SubstitutePreview) -> Vec<Decoration> {
     for (end, row) in rows_after(text, &preview.matches) {
         out.push(Decoration::new(
             end..end,
-            DecorationKind::AfterLine(Arc::from(format!("→ {row}"))),
+            DecorationKind::AfterLine(Arc::from(
+                kiln_l10n::tr!("gpui-substitute-preview-row", row = row).as_ref(),
+            )),
             Tint::Added,
         ));
     }

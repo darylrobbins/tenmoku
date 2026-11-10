@@ -10,7 +10,7 @@ use fe_command::{Invocation, Value};
 use gpui::{AnyView, App, AppContext as _, Context, Entity, SharedString, Task, Window};
 use kiln_shell::{PaneItem, StatusItem, StatusSide};
 
-use super::{ImageViewer, Zoom, size_text, zoom_of};
+use super::{ImageViewer, ZOOM_ACTUAL, ZOOM_FIT, Zoom, size_text, zoom_of};
 use crate::pane_item::{file_name, restore_style};
 
 /// The ids of the viewer's status bar items, on the right.
@@ -33,7 +33,12 @@ impl PaneItem for ImageViewer {
 
     /// `logo.png — Tenmoku`.
     fn window_title(&self, cx: &App) -> SharedString {
-        format!("{} — {}", self.tab_title(cx), fe_config::APP_NAME).into()
+        let title = self.tab_title(cx);
+        kiln_l10n::tr!(
+            "gpui-window-title",
+            title = title,
+            app = fe_config::APP_NAME
+        )
     }
 
     // Never dirty, so `is_dirty`, `may_close`, `close_revision` and `save`
@@ -59,7 +64,7 @@ impl PaneItem for ImageViewer {
                 status::DIMENSIONS,
                 StatusSide::Right,
                 100,
-                format!("{width} × {height}"),
+                kiln_l10n::tr!("gpui-image-dimensions", width = width, height = height),
             ));
         }
         if let Some(len) = self.file_len() {
@@ -72,8 +77,11 @@ impl PaneItem for ImageViewer {
         }
         if self.pixel_size().is_some() {
             let (command, tooltip) = match self.zoom() {
-                Zoom::Fit => ("image.zoom_actual", "Actual Size"),
-                Zoom::Scale(_) => ("image.zoom_fit", "Fit to Window"),
+                Zoom::Fit => (
+                    ZOOM_ACTUAL,
+                    kiln_l10n::tr!("gpui-image-actual-size-tooltip"),
+                ),
+                Zoom::Scale(_) => (ZOOM_FIT, kiln_l10n::tr!("gpui-image-fit-tooltip")),
             };
             items.push(
                 StatusItem::new(status::ZOOM, StatusSide::Right, 300, self.zoom_text())

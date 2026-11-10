@@ -70,7 +70,7 @@ use crate::{
     external_format::{BufferPath, FormatError, Runner, format_text},
     lsp::{Answer, CodeActioner, resolve, routed_language},
     plugin_format::{self, PluginAnswer, PluginFormatter},
-    status_bar::{PLAIN_TEXT, language_label},
+    status_bar::{language_label, plain_text},
     workbench::toast::{self, Toast},
 };
 
@@ -101,7 +101,7 @@ impl Workbench {
         };
         let language = (editor.read(cx).syntax())
             .map(|syntax| language_label(syntax.language().name()))
-            .unwrap_or_else(|| PLAIN_TEXT.into());
+            .unwrap_or_else(plain_text);
         let task = self.format_range(&editor, selection, false, cx);
         cx.spawn(async move |_, cx| {
             let message = match task.await {

@@ -27,7 +27,7 @@ use kiln::{Cx, platform::command_actions::dispatch_window};
 
 use crate::{
     Workbench,
-    status_bar::{PLAIN_TEXT, language_label},
+    status_bar::{language_label, plain_text},
     task_commands::project_files,
     task_defs::Task,
     test_runnables::{Runnable, TEST_LANGUAGES, no_runner, runnable_at, runnables, test_command},
@@ -179,7 +179,7 @@ impl Workbench {
         let syntax = view.syntax();
         let language = syntax.map(|syntax| syntax.language().name());
         let Some(language) = language.filter(|language| TEST_LANGUAGES.contains(language)) else {
-            let label = language.map_or(PLAIN_TEXT.into(), language_label);
+            let label = language.map_or_else(plain_text, language_label);
             return Err(no_runner(&label));
         };
         let snapshot = view.model().snapshot();

@@ -1,0 +1,294 @@
+all = true
+
+# Doc comments on items inside `thread_local!`, which the lint reads as
+# string literals.
+
+[[literal]]
+file = "src/commands.rs"
+text = " Built once: GPUI runs on one thread, and handlers aren't `Sync`."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " What plugins' invocations of the editor's commands are checked"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " against ([`set_plugin_policy`])."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " What the last frame of the view about to dispatch showed: set by"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " [`EditorView::page_rows`], which every dispatch asks first."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " The display columns [`VIEWPORT`] shows of an unwrapped row, set with it."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " The display row [`VIEWPORT`] starts at, set with it."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " The first row a command asked to show, which the view takes in"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " [`EditorView::dispatched`]."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " Whether a command asked for the viewport, as every scroll does,"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/commands.rs"
+text = " even one that leaves the top row alone."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/pane_item.rs"
+text = " The last save asked for of each buffer being saved, which the next"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/pane_item.rs"
+text = " one waits for. GPUI runs on one thread."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/pane_item.rs"
+text = " The reason of the save whose hook runs, per editor."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/pane_item.rs"
+text = " What the next [`EditorView::write_copy`] waits for before it writes."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/view/ime.rs"
+text = " fe-editor's commands and accepting a completion, in its context as"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/view/ime.rs"
+text = " dispatch has it: to tell which end a composition."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/vim.rs"
+text = " Built once, as `EDITOR_COMMANDS` is."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/vim.rs"
+text = " The host's full command catalog, for [`known_command`]."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = " The host's commands with their titles, for the popup"
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = " ([`set_host_commands`])."
+reason = "A doc comment inside thread_local!, never shown"
+
+[[literal]]
+file = "src/view/ime.rs"
+text = "a valid, distinct command ID"
+reason = "An .expect() message inside thread_local!, a panic's text"
+
+# Ids: key contexts, element ids and debug selectors, a backup's file name.
+
+[[literal]]
+file = "src/diff_view.rs"
+text = "DiffView"
+reason = "A GPUI key context, an id"
+
+[[literal]]
+file = "src/image_viewer.rs"
+text = "ImageViewer"
+reason = "A GPUI key context, an id"
+
+[[literal]]
+file = "src/diff_fold.rs"
+text = "diff-fold-{part}:{side}:{n}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/diff_fold.rs"
+text = "diff-fold:{side}:{n}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/diff_fold.rs"
+text = "diff-fold-label:{side}:{n}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/diff_fold.rs"
+text = "diff-fold-crumb:{side}:{n}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "which-key-icon-{key}"
+reason = "A debug selector, never shown"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "which-key-entry-{key}"
+reason = "A debug selector, never shown"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "which-key-arrow-{arrow}"
+reason = "A debug selector, never shown"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "which-key-title-{title_key}"
+reason = "A debug selector, never shown"
+
+[[literal]]
+file = "src/pane_item.rs"
+text = "{id}.owner"
+reason = "A backup's owner file name in the backup store"
+
+[[literal]]
+file = "src/vim.rs"
+text = "fe:{id}"
+reason = "An fe: command as vim's command line names it: a prefix and an id"
+
+# Keys as vim's notation names them, `<Space>`, `<PageUp>`: ids, as in nvim.
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Bar"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Space"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Esc"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Tab"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Del"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Left"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Right"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Up"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Down"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "Home"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "End"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "PageUp"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "PageDown"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+[[literal]]
+file = "src/vim/which_key.rs"
+text = "LeftMouse"
+reason = "A key's name in vim's notation, which vim keeps in every language"
+
+# Codes and markup that aren't prose.
+
+[[literal]]
+file = "src/view/host.rs"
+text = "E21: {}"
+reason = "nvim's E-code, an id, before the message from the catalogue"
+
+[[literal]]
+file = "src/image_viewer.rs"
+text = " width=\"300\""
+reason = "SVG markup a size-less SVG gets, not text"
+
+[[literal]]
+file = "src/image_viewer.rs"
+text = " height=\"150\""
+reason = "SVG markup a size-less SVG gets, not text"
+
+# Errors that only reach the log: a backup that isn't restored or written.
+
+[[literal]]
+file = "src/pane_item.rs"
+text = "it's in use"
+reason = "Only logged: why a backup isn't restored"
+
+[[literal]]
+file = "src/pane_item.rs"
+text = "no file and no backup"
+reason = "Only logged: why an editor isn't restored"
+
+[[literal]]
+file = "src/pane_item.rs"
+text = "backup {} is another editor's"
+reason = "Only logged: why a backup isn't written"
+
+# Test-only notes of what a frame painted, inside #[cfg(test)] blocks the lint reads.
+
+[[literal]]
+file = "src/element.rs"
+text = "find scope"
+reason = "A #[cfg(test)] note of a painted stage"
+
+[[literal]]
+file = "src/element/decorations.rs"
+text = "after line"
+reason = "A #[cfg(test)] note of a painted stage"

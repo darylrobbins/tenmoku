@@ -2306,6 +2306,7 @@ dependencies = [
  "image",
  "kiln-command",
  "kiln-core",
+ "kiln-l10n",
  "kiln-platform",
  "kiln-shell",
  "kiln-ui",

@@ -41,6 +41,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, deferred, div,
     relative, svg,
 };
+use kiln_l10n::tr;
 use kiln_platform::keys::{PendingChord, pending_continuations};
 
 use super::{Vim, registry, which_key_icons as icons, which_key_layout as layout};
@@ -573,7 +574,7 @@ pub(crate) fn title(entry: &WhichKeyEntry, cx: &App) -> String {
 /// `label()`), from whichever registry has it: vim's, the proposals', the
 /// diff view's, the editor's, the host's ([`set_host_commands`]), the
 /// typed commands or the app's. Its ID if none does.
-pub(crate) fn command_title(id: &str, cx: &App) -> String {
+pub fn command_title(id: &str, cx: &App) -> String {
     let Ok(command) = CommandId::parse(id) else {
         return id.to_owned();
     };
@@ -654,7 +655,7 @@ pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElemen
         let title = title(entry, cx);
         let title = match &entry.label {
             WhichKeyLabel::Group { .. } => title,
-            _ if entry.group => format!("{title} +"),
+            _ if entry.group => tr!("gpui-which-key-command-group", title = title).to_string(),
             _ => title,
         };
         let key = entry.key.clone();
@@ -732,7 +733,8 @@ pub(crate) fn popup_layer(view: &EditorView, cx: &App) -> Option<impl IntoElemen
                 .debug_selector(|| "which-key-footer".into())
                 .flex_none()
                 .text_color(theme.gutter_foreground)
-                .child(layout::FOOTER),
+                // The hint along the popup's last row.
+                .child(tr!("gpui-which-key-footer")),
         );
     Some(deferred(panel))
 }

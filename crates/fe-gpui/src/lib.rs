@@ -30,6 +30,7 @@ pub mod inlay_hints;
 mod inline_diagnostics;
 pub mod keymap;
 mod keymap_remap_conflicts;
+pub mod l10n;
 pub mod lens;
 mod link_ranges;
 pub mod menu;
@@ -93,6 +94,13 @@ pub use vim::{
     set_vim_search_case, set_vim_subword_motions, set_vim_which_key, set_vim_which_key_groups,
     vim_enabled, vim_registers,
 };
+
+/// The which-key popup's reader of command titles, for a host's tests:
+/// [`which_key::command_title`] is the title the popup shows for a command,
+/// through its registry's `label()` in the active locale.
+pub mod which_key {
+    pub use crate::vim::which_key::command_title;
+}
 
 /// Key context active while an editor is focused: the `fe-command`
 /// context name, so keymap and command predicates agree.

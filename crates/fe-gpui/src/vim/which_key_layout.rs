@@ -92,6 +92,3 @@ pub(crate) fn entry_colors(entry: &WhichKeyEntry, theme: &EditorTheme) -> EntryC
         },
     }
 }
-
-/// The hint along the popup's last row.
-pub(crate) const FOOTER: &str = "esc close";

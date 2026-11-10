@@ -33,6 +33,7 @@ use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global,
     Hsla, PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window, WindowId,
 };
+use kiln_l10n::tr;
 use kiln_shell::{CloseAnswer, Icon, IconRef, PaneItem, StatusItem, StatusSide, file_icon_ref};
 
 use crate::{DiffView, EditorSettings, EditorTheme, EditorView, commands::RunCommand};
@@ -43,6 +44,7 @@ use crate::{DiffView, EditorSettings, EditorTheme, EditorView, commands::RunComm
 /// consts are their ids; a host item with one of them shows in its place.
 pub mod status {
     use gpui::SharedString;
+    use kiln_l10n::{tr, verbatim};
     use kiln_shell::StatusFill;
 
     use crate::EditorTheme;
@@ -78,51 +80,87 @@ pub mod status {
         (LANGUAGE, 500),
     ];
 
-    /// What the language item shows with no language.
-    pub const PLAIN_TEXT: &str = "Plain Text";
+    /// What the language item shows with no language: `Plain Text`.
+    pub fn plain_text() -> SharedString {
+        tr!("gpui-status-plain-text")
+    }
 
-    /// The label the language item and picker show for a language id.
+    /// What a cursor item says of the selection, beside the caret's line
+    /// and column ([`cursor_label`]).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Selected {
+        /// One caret, nothing selected.
+        Nothing,
+        /// One selection of this many characters.
+        Chars(usize),
+        /// This many carets or selections, more than one.
+        Selections(usize),
+    }
+
+    /// The cursor item's text: `Ln 12, Col 5`, `Ln 12, Col 5 (17 selected)`
+    /// or `Ln 12, Col 5 (3 selections)`, each one whole message, its count
+    /// a plural selector. `line` and `column` count from 1.
+    pub fn cursor_label(line: u32, column: usize, selected: Selected) -> SharedString {
+        match selected {
+            Selected::Nothing => tr!("gpui-status-cursor", line = line, column = column),
+            Selected::Chars(count) => tr!(
+                "gpui-status-cursor-selected",
+                line = line,
+                column = column,
+                count = count
+            ),
+            Selected::Selections(count) => tr!(
+                "gpui-status-cursor-selections",
+                line = line,
+                column = column,
+                count = count
+            ),
+        }
+    }
+
+    /// The label the language item and picker show for a language id: its
+    /// name, which stays as written in every locale.
     pub fn language_label(id: &str) -> SharedString {
         let label = match id {
-            "bash" => "Bash",
-            "c" => "C",
-            "cpp" => "C++",
-            "csharp" => "C#",
-            "css" => "CSS",
-            "csv" => "CSV",
-            "diff" => "Diff",
-            "dockerfile" => "Dockerfile",
-            "dotenv" => "Dotenv",
-            "gitattributes" => "Git Attributes",
-            "gitcommit" => "Git Commit Message",
-            "gitconfig" => "Git Config",
-            "gitignore" => "Ignore",
-            "gitrebase" => "Git Rebase Todo",
-            "go" => "Go",
-            "html" => "HTML",
-            "ini" => "INI",
-            "java" => "Java",
-            "javascript" => "JavaScript",
-            "json" => "JSON",
-            "json5" => "JSON5",
-            "just" => "Just",
-            "kotlin" => "Kotlin",
-            "lua" => "Lua",
-            "make" => "Makefile",
-            "markdown" => "Markdown",
-            "php" => "PHP",
-            "python" => "Python",
-            "ruby" => "Ruby",
-            "rust" => "Rust",
-            "scala" => "Scala",
-            "sql" => "SQL",
-            "swift" => "Swift",
-            "toml" => "TOML",
-            "tsv" => "TSV",
-            "tsx" => "TSX",
-            "typescript" => "TypeScript",
-            "xml" => "XML",
-            "yaml" => "YAML",
+            "bash" => verbatim!("Bash"),
+            "c" => verbatim!("C"),
+            "cpp" => verbatim!("C++"),
+            "csharp" => verbatim!("C#"),
+            "css" => verbatim!("CSS"),
+            "csv" => verbatim!("CSV"),
+            "diff" => verbatim!("Diff"),
+            "dockerfile" => verbatim!("Dockerfile"),
+            "dotenv" => verbatim!("Dotenv"),
+            "gitattributes" => verbatim!("Git Attributes"),
+            "gitcommit" => verbatim!("Git Commit Message"),
+            "gitconfig" => verbatim!("Git Config"),
+            "gitignore" => verbatim!("Ignore"),
+            "gitrebase" => verbatim!("Git Rebase Todo"),
+            "go" => verbatim!("Go"),
+            "html" => verbatim!("HTML"),
+            "ini" => verbatim!("INI"),
+            "java" => verbatim!("Java"),
+            "javascript" => verbatim!("JavaScript"),
+            "json" => verbatim!("JSON"),
+            "json5" => verbatim!("JSON5"),
+            "just" => verbatim!("Just"),
+            "kotlin" => verbatim!("Kotlin"),
+            "lua" => verbatim!("Lua"),
+            "make" => verbatim!("Makefile"),
+            "markdown" => verbatim!("Markdown"),
+            "php" => verbatim!("PHP"),
+            "python" => verbatim!("Python"),
+            "ruby" => verbatim!("Ruby"),
+            "rust" => verbatim!("Rust"),
+            "scala" => verbatim!("Scala"),
+            "sql" => verbatim!("SQL"),
+            "swift" => verbatim!("Swift"),
+            "toml" => verbatim!("TOML"),
+            "tsv" => verbatim!("TSV"),
+            "tsx" => verbatim!("TSX"),
+            "typescript" => verbatim!("TypeScript"),
+            "xml" => verbatim!("XML"),
+            "yaml" => verbatim!("YAML"),
             other => return SharedString::from(other.to_owned()),
         };
         label.into()
@@ -132,11 +170,13 @@ pub mod status {
     /// normal mode.
     pub(super) fn vim_mode_label(mode: &str) -> SharedString {
         match mode {
-            "normal" | "operator_pending" => "NORMAL".into(),
-            "insert" => "INSERT".into(),
-            "visual" => "VISUAL".into(),
-            "visual_line" => "VISUAL LINE".into(),
-            "visual_block" => "VISUAL BLOCK".into(),
+            "normal" | "operator_pending" => tr!("gpui-vim-mode-normal"),
+            "insert" => tr!("gpui-vim-mode-insert"),
+            "replace" => tr!("gpui-vim-mode-replace"),
+            "visual" => tr!("gpui-vim-mode-visual"),
+            "visual_line" => tr!("gpui-vim-mode-visual-line"),
+            "visual_block" => tr!("gpui-vim-mode-visual-block"),
+            "cmdline" => tr!("gpui-vim-mode-cmdline"),
             other => other.to_uppercase().into(),
         }
     }
@@ -160,19 +200,22 @@ pub mod status {
     /// of its query ([`fe_vim::VimState::jump_query`]).
     pub(super) fn jump_label(query: &str) -> SharedString {
         match query {
-            "" => "JUMP".into(),
-            query => format!("JUMP {query}").into(),
+            "" => tr!("gpui-vim-mode-jump"),
+            query => tr!("gpui-vim-mode-jump-query", query = query),
         }
     }
 }
 
-/// Why an unsavable editor's save failed ([`EditorView::set_unsavable`]).
-pub const UNSAVABLE: &str = "this is a copy to review, not saved";
+/// Why an unsavable editor's save failed ([`EditorView::set_unsavable`]):
+/// `this is a copy to review, not saved`.
+fn unsavable() -> io::Error {
+    io::Error::other(tr!("gpui-save-unsavable").to_string())
+}
 
 /// A tab's label for a buffer at `path`: its file name, or `untitled`.
 pub fn file_name(path: Option<&Path>) -> String {
     path.and_then(Path::file_name).map_or_else(
-        || "untitled".into(),
+        || tr!("gpui-untitled").to_string(),
         |name| name.to_string_lossy().into_owned(),
     )
 }
@@ -182,12 +225,14 @@ pub fn file_name(path: Option<&Path>) -> String {
 /// first button and Escape to a cancel button, which would take Return from
 /// it, so Cancel is an ok button: Escape reaches it by its title, as AppKit's
 /// alerts and kiln-ui's in-window prompt give "Cancel" Escape.
-pub const DISCARD_BUTTONS: [PromptButton; 2] = [
-    PromptButton::Ok(SharedString::new_static("Cancel")),
-    PromptButton::Other(SharedString::new_static("Discard")),
-];
+pub fn discard_buttons() -> [PromptButton; 2] {
+    [
+        PromptButton::Ok(tr!("gpui-close-cancel")),
+        PromptButton::Other(tr!("gpui-close-discard")),
+    ]
+}
 
-/// The answer to [`DISCARD_BUTTONS`] that closes the editor.
+/// The answer to [`discard_buttons`] that closes the editor.
 const DISCARD: usize = 1;
 
 /// Vim's file and window commands, for a host to run.
@@ -215,10 +260,15 @@ impl EditorView {
 pub const SAVE_AS: &str = "workbench.save_as";
 
 /// The buttons of the prompt before a save overwrites a file that changed
-/// on disk.
-const OVERWRITE_BUTTONS: [&str; 2] = ["Overwrite", "Cancel"];
+/// on disk: Overwrite, and Cancel, the cancel button.
+fn overwrite_buttons() -> [PromptButton; 2] {
+    [
+        PromptButton::new(tr!("gpui-save-overwrite")),
+        PromptButton::cancel(tr!("gpui-save-cancel")),
+    ]
+}
 
-/// The answer to [`OVERWRITE_BUTTONS`] that saves over the file.
+/// The answer to [`overwrite_buttons`] that saves over the file.
 const OVERWRITE: usize = 0;
 
 /// A save the user wouldn't let overwrite a file that changed on disk:
@@ -228,7 +278,7 @@ struct NotSaved(String);
 
 impl fmt::Display for NotSaved {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "not saved: {} changed on disk", self.0)
+        f.write_str(&tr!("gpui-save-not-saved-changed", name = &self.0))
     }
 }
 
@@ -336,7 +386,7 @@ pub trait SaveHook {
 impl EditorView {
     /// Has the editor never save its buffer, to its path or any other:
     /// [`EditorView::save`], Save As ([`EditorView::save_as_with`]) and
-    /// [`EditorView::write_copy`] fail with [`UNSAVABLE`], and the save
+    /// [`EditorView::write_copy`] fail with `this is a copy to review, not saved`, and the save
     /// command does nothing. For a copy of a file to review, not to keep.
     /// Off by default; a split takes it.
     pub fn set_unsavable(&mut self, unsavable: bool) {
@@ -495,7 +545,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
         if self.unsavable {
-            return Task::ready(Err(io::Error::other(UNSAVABLE).into()));
+            return Task::ready(Err(unsavable().into()));
         }
         let (previous, guard) = self.queue_save();
         let edits = self.edits_allowed(reason);
@@ -619,7 +669,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
         if self.unsavable {
-            return Task::ready(Err(io::Error::other(UNSAVABLE).into()));
+            return Task::ready(Err(unsavable().into()));
         }
         let window = window.window_handle().window_id();
         let (previous, guard) = self.queue_save();
@@ -664,7 +714,7 @@ impl EditorView {
                 // what's there, so it stays where it was.
                 let replaced = || {
                     let name = file_name(Some(&path));
-                    io::Error::other(format!("{name} was replaced while it was being saved"))
+                    io::Error::other(tr!("gpui-save-replaced", name = name).to_string())
                 };
                 if !saved.is_current() {
                     return Err(replaced().into());
@@ -703,7 +753,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> Task<io::Result<()>> {
         if self.unsavable {
-            return Task::ready(Err(io::Error::other(UNSAVABLE)));
+            return Task::ready(Err(unsavable()));
         }
         let (previous, guard) = self.queue_save();
         let job = self.model.prepare_save_to(path, overwrite);
@@ -781,9 +831,9 @@ impl EditorView {
         })
         .detach();
         cx.foreground_executor().spawn(async move {
-            result
-                .await
-                .unwrap_or_else(|_| Err(io::Error::other("the save was dropped").into()))
+            result.await.unwrap_or_else(|_| {
+                Err(io::Error::other(tr!("gpui-save-dropped").to_string()).into())
+            })
         })
     }
 
@@ -826,9 +876,9 @@ impl EditorView {
             let answer = cx.update_window(window, |_, window, cx| {
                 window.prompt(
                     PromptLevel::Critical,
-                    &format!("“{name}” couldn’t be saved."),
+                    &tr!("gpui-save-failed", name = name),
                     Some(&detail),
-                    &["OK"],
+                    &[PromptButton::ok(tr!("gpui-save-failed-ok"))],
                     cx,
                 )
             });
@@ -902,9 +952,9 @@ async fn save_asking(
             let answer = cx.update_window(window, |_, window, cx| {
                 window.prompt(
                     PromptLevel::Warning,
-                    &format!("“{name}” changed on disk since it was opened."),
-                    Some("Overwrite it with your version?"),
-                    &OVERWRITE_BUTTONS,
+                    &tr!("gpui-save-changed-on-disk", name = &name),
+                    Some(&tr!("gpui-save-changed-on-disk-detail")),
+                    &overwrite_buttons(),
                     cx,
                 )
             })?;
@@ -946,12 +996,9 @@ async fn save_asking(
     if let Some(encoding) = encoding
         && !recorded
     {
-        return Err(io::Error::other(format!(
-            "the file changed on disk after it was written in {}; \
-             the buffer keeps its encoding",
-            encoding.label()
-        ))
-        .into());
+        let encoding = encoding.label();
+        let error = tr!("gpui-save-encoding-kept", encoding = encoding);
+        return Err(io::Error::other(error.to_string()).into());
     }
     Ok(())
 }
@@ -1668,8 +1715,11 @@ impl PaneItem for EditorView {
 
     /// `main.rs — Tenmoku`, `main.rs ● — Tenmoku` with unsaved changes.
     fn window_title(&self, cx: &App) -> SharedString {
-        let dirty = if self.is_dirty(cx) { " ●" } else { "" };
-        format!("{}{dirty} — {}", self.tab_title(cx), fe_config::APP_NAME).into()
+        let (title, app) = (self.tab_title(cx), fe_config::APP_NAME);
+        match self.is_dirty(cx) {
+            true => tr!("gpui-window-title-dirty", title = title, app = app),
+            false => tr!("gpui-window-title", title = title, app = app),
+        }
     }
 
     fn is_dirty(&self, _: &App) -> bool {
@@ -1693,7 +1743,7 @@ impl PaneItem for EditorView {
 
     /// A dirty editor asks whether to discard its changes: Discard closes
     /// it, Cancel keeps it and is the default, with Return and Escape (see
-    /// [`DISCARD_BUTTONS`]). A clean one closes. The shell doesn't ask while
+    /// [`discard_buttons`]). A clean one closes. The shell doesn't ask while
     /// another editor shows its buffer.
     ///
     /// While the app quits ([`kiln_shell::layout::quitting`]), a dirty
@@ -1708,15 +1758,13 @@ impl PaneItem for EditorView {
         if kiln_shell::layout::quitting(cx) && back_up_to_close(self, cx) {
             return CloseAnswer::Close;
         }
-        let question = format!(
-            "Discard unsaved changes to {}?",
-            file_name(self.model.path())
-        );
+        let name = file_name(self.model.path());
+        let question = tr!("gpui-close-discard-question", name = name);
         let answer = window.prompt(
             PromptLevel::Warning,
             &question,
-            Some("Your changes will be lost if you close it without saving."),
-            &DISCARD_BUTTONS,
+            Some(&tr!("gpui-close-discard-detail")),
+            &discard_buttons(),
             cx,
         );
         CloseAnswer::Ask(cx.spawn(async move |_, _| answer.await == Ok(DISCARD)))
@@ -2371,14 +2419,16 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
     };
     let row = text.offset_to_point(head).row;
     let column = text.offset_to_char(head) - text.offset_to_char(text.row_start(row)) + 1;
-    let mut cursor = format!("Ln {}, Col {column}", row + 1);
-    if selections.len() > 1 {
-        cursor += &format!(" ({} selections)", selections.len());
+    let selected = if selections.len() > 1 {
+        status::Selected::Selections(selections.len())
     } else if !primary.range.is_empty() {
         let chars =
             text.offset_to_char(primary.range.end) - text.offset_to_char(primary.range.start);
-        cursor += &format!(" ({chars} selected)");
-    }
+        status::Selected::Chars(chars)
+    } else {
+        status::Selected::Nothing
+    };
+    let cursor = status::cursor_label(row + 1, column, selected);
     let encoding = model.buffer().encoding().label();
     let line_ending = match model.buffer().line_ending() {
         fe_buffer::LineEnding::Lf => "LF",
@@ -2387,7 +2437,7 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
     let language = match editor.syntax() {
         Some(syntax) => status::language_label(syntax.language().name()),
         None if editor.is_loading_language() => "…".into(),
-        None => status::PLAIN_TEXT.into(),
+        None => status::plain_text(),
     };
     let vim_mode = editor.vim_mode().map(|mode| {
         // A pending jump is normal mode's colour, whatever mode it left.
@@ -2410,25 +2460,28 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
             )
         });
     let indent = match model.indent_style() {
-        Some(IndentStyle::Tabs) => format!("Tab Size: {}", model.tab_size()),
-        Some(IndentStyle::Spaces(n)) => format!("Spaces: {n}"),
-        None => format!("Spaces: {}", model.tab_size()),
+        Some(IndentStyle::Tabs) => tr!("gpui-status-tab-size", size = model.tab_size()),
+        Some(IndentStyle::Spaces(n)) => tr!("gpui-status-spaces", size = n),
+        None => tr!("gpui-status-spaces", size = model.tab_size()),
     };
     let language_command = Invocation::of("language.select").expect("a valid command ID");
     let go_to_line_command = Invocation::of("go_to_line.toggle").expect("a valid command ID");
     let line_ending_command = (!editor.is_read_only()).then(|| {
         let change = Invocation::of("workbench.change_line_ending").expect("a valid command ID");
-        (change, "Select End of Line Sequence")
+        (change, tr!("gpui-status-line-ending-tooltip"))
     });
-    let texts: [(SharedString, Option<(Invocation, &str)>); 5] = [
+    let texts: [(SharedString, Option<(Invocation, SharedString)>); 5] = [
         (
-            cursor.into(),
-            Some((go_to_line_command, "Go to Line/Column")),
+            cursor,
+            Some((go_to_line_command, tr!("gpui-status-cursor-tooltip"))),
         ),
-        (indent.into(), None),
+        (indent, None),
         (encoding.into(), None),
         (line_ending.into(), line_ending_command),
-        (language, Some((language_command, "Change Language Mode"))),
+        (
+            language,
+            Some((language_command, tr!("gpui-status-language-tooltip"))),
+        ),
     ];
     let right = status::RIGHT
         .into_iter()

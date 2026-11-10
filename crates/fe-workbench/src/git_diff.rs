@@ -72,7 +72,7 @@ use fe_git::Repo;
 use fe_gpui::{
     DiffSide, DiffView, EditorView,
     commands::EditorViewEvent,
-    diff_view::{NO_CHANGES, WRAPPED_TO_FIRST, WRAPPED_TO_LAST},
+    diff_view::{no_changes, wrapped_to_first, wrapped_to_last},
 };
 use fe_vim::HostCommand;
 use gpui::{
@@ -1737,7 +1737,7 @@ impl Workbench {
         let changes = model.row_changes();
         let count = changes.len();
         if count == 0 {
-            return self.answer_git_op(&op, NO_CHANGES.to_owned(), cx);
+            return self.answer_git_op(&op, no_changes().to_string(), cx);
         }
         let head = model.primary_selection().head();
         let row = model.text().offset_to_point(head).row;
@@ -1753,8 +1753,8 @@ impl Workbench {
         };
         let (index, wrapped) = match found {
             Some(index) => (index, None),
-            None if forward => (0, Some(WRAPPED_TO_FIRST)),
-            None => (count - 1, Some(WRAPPED_TO_LAST)),
+            None if forward => (0, Some(wrapped_to_first())),
+            None => (count - 1, Some(wrapped_to_last())),
         };
         let row = changes[index].rows.start;
         let head = editor.update(cx, |editor, cx| {
@@ -1765,7 +1765,7 @@ impl Workbench {
         });
         state(cx).visited = Some((id, index, head, changes.clone()));
         if let Some(wrapped) = wrapped {
-            self.answer_git_op(&op, wrapped.to_owned(), cx);
+            self.answer_git_op(&op, wrapped.to_string(), cx);
         }
     }
 

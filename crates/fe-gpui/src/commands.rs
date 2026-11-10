@@ -99,68 +99,30 @@ const SAVE: &str = "editor.save";
 fn editor_registry() -> Registry<Editor> {
     let mut registry = fe_editor::commands::registry();
     registry.set_plugin_policy(Arc::new(InstalledPolicy));
-    for (id, title) in [
-        (SHOW_HOVER, "Show Hover"),
-        (signature_help::SHOW, "Show Signature Help"),
-        (GO_TO_BRACKET, "Go to Bracket"),
-    ] {
+    for id in [SHOW_HOVER, signature_help::SHOW, GO_TO_BRACKET] {
+        let title = crate::l10n::command_title(id);
         registry
-            .register(id, title, |_: &mut EditorTarget<'_>, _: &Actor| {
+            .register(id, &title, |_: &mut EditorTarget<'_>, _: &Actor| {
                 Ok(Dispatched::new(Effect::Nothing))
             })
             .expect("view command IDs are valid and distinct")
             .context(ContextPredicate::identifier(fe_editor::commands::CONTEXT));
     }
     let menu = [
-        (
-            completion_menu::TRIGGER,
-            "Trigger Completion",
-            fe_editor::commands::CONTEXT,
-        ),
-        (
-            completion_menu::SELECT_PREV,
-            "Select Previous Completion",
-            completion_menu::KEY_CONTEXT,
-        ),
-        (
-            completion_menu::SELECT_NEXT,
-            "Select Next Completion",
-            completion_menu::KEY_CONTEXT,
-        ),
-        (
-            completion_menu::ACCEPT,
-            "Accept Completion",
-            completion_menu::KEY_CONTEXT,
-        ),
-        (
-            completion_menu::DISMISS,
-            "Dismiss Completion",
-            completion_menu::KEY_CONTEXT,
-        ),
-        (
-            ghost_text::ACCEPT,
-            "Accept Suggestion",
-            ghost_text::KEY_CONTEXT,
-        ),
-        (
-            ghost_text::ACCEPT_WORD,
-            "Accept Next Word of Suggestion",
-            ghost_text::KEY_CONTEXT,
-        ),
-        (
-            ghost_text::ACCEPT_LINE,
-            "Accept Next Line of Suggestion",
-            ghost_text::KEY_CONTEXT,
-        ),
-        (
-            ghost_text::DISMISS,
-            "Dismiss Suggestion",
-            ghost_text::KEY_CONTEXT,
-        ),
+        (completion_menu::TRIGGER, fe_editor::commands::CONTEXT),
+        (completion_menu::SELECT_PREV, completion_menu::KEY_CONTEXT),
+        (completion_menu::SELECT_NEXT, completion_menu::KEY_CONTEXT),
+        (completion_menu::ACCEPT, completion_menu::KEY_CONTEXT),
+        (completion_menu::DISMISS, completion_menu::KEY_CONTEXT),
+        (ghost_text::ACCEPT, ghost_text::KEY_CONTEXT),
+        (ghost_text::ACCEPT_WORD, ghost_text::KEY_CONTEXT),
+        (ghost_text::ACCEPT_LINE, ghost_text::KEY_CONTEXT),
+        (ghost_text::DISMISS, ghost_text::KEY_CONTEXT),
     ];
-    for (id, title, context) in menu {
+    for (id, context) in menu {
+        let title = crate::l10n::command_title(id);
         registry
-            .register(id, title, |_: &mut EditorTarget<'_>, _: &Actor| {
+            .register(id, &title, |_: &mut EditorTarget<'_>, _: &Actor| {
                 Ok(Dispatched::new(Effect::Nothing))
             })
             .expect("view command IDs are valid and distinct")
@@ -175,15 +137,16 @@ type AppCommand = fn(&mut App);
 /// when dispatched: a binding to it hands its keystroke to vim instead
 /// ([`crate::vim`]).
 fn register_vim_commands(app: &mut Registry<AppCommands>) {
-    let commands: [(&str, &str, AppCommand); 2] = [
-        (vim::TOGGLE, "Toggle Vim Mode", |cx| {
+    let commands: [(&str, AppCommand); 2] = [
+        (vim::TOGGLE, |cx| {
             let enabled = vim::vim_enabled(cx);
             vim::set_vim_enabled(cx, !enabled)
         }),
-        (vim::KEY, "Vim Key", |_| {}),
+        (vim::KEY, |_| {}),
     ];
-    for (id, title, run) in commands {
-        app.register(id, title, move |cx: &mut &mut App, _: &Actor| {
+    for (id, run) in commands {
+        let title = crate::l10n::command_title(id);
+        app.register(id, &title, move |cx: &mut &mut App, _: &Actor| {
             run(cx);
             Ok(Dispatched::new(Effect::Nothing))
         })

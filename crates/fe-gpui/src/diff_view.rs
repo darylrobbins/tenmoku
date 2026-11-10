@@ -52,6 +52,7 @@ use gpui::{
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, PromptLevel, Render,
     SharedString, Styled as _, Subscription, Task, Window, div, px,
 };
+use kiln_l10n::tr;
 use kiln_shell::{CloseAnswer, PaneItem};
 
 #[path = "diff_fold.rs"]
@@ -63,7 +64,7 @@ pub use fold::{CONTEXT_ROWS, EXPAND_ROWS, Expand, HiddenBlock};
 use crate::{
     EditorView,
     commands::{EditorViewEvent, HostBlock, HostBlockKind, RunCommand},
-    pane_item::{DISCARD_BUTTONS, restore_style},
+    pane_item::{discard_buttons, restore_style},
 };
 
 /// Key context active while either side of a diff view is focused.
@@ -91,26 +92,46 @@ pub const ASYNC_BYTES: usize = 1024 * 1024;
 /// milliseconds there.
 const WORDS_ASYNC_BYTES: usize = 64 * 1024;
 
-/// What navigation says when it wraps past the last hunk.
-pub const WRAPPED_TO_FIRST: &str = "Wrapped to first change";
+/// What navigation says when it wraps past the last hunk: `Wrapped to
+/// first change`.
+pub fn wrapped_to_first() -> SharedString {
+    tr!("gpui-diff-wrapped-to-first")
+}
 
-/// What navigation says when it wraps past the first hunk.
-pub const WRAPPED_TO_LAST: &str = "Wrapped to last change";
+/// What navigation says when it wraps past the first hunk: `Wrapped to
+/// last change`.
+pub fn wrapped_to_last() -> SharedString {
+    tr!("gpui-diff-wrapped-to-last")
+}
 
-/// What navigation says when the texts are the same.
-pub const NO_CHANGES: &str = "No changes";
+/// What navigation says when the texts are the same: `No changes`.
+pub fn no_changes() -> SharedString {
+    tr!("gpui-diff-no-changes")
+}
 
 /// What the header and navigation say when a side is over
 /// [`text_diff::MAX_DIFF_BYTES`](fe_editor::text_diff::MAX_DIFF_BYTES), so
-/// nothing was compared.
-pub const TOO_LARGE: &str = "Too large to compare";
+/// nothing was compared: `Too large to compare`.
+pub fn too_large() -> SharedString {
+    tr!("gpui-diff-too-large")
+}
+
+/// The en-US messages, which the tests compare with.
+#[cfg(test)]
+pub(crate) const WRAPPED_TO_FIRST: &str = "Wrapped to first change";
+#[cfg(test)]
+pub(crate) const WRAPPED_TO_LAST: &str = "Wrapped to last change";
+#[cfg(test)]
+pub(crate) const NO_CHANGES: &str = "No changes";
+#[cfg(test)]
+pub(crate) const TOO_LARGE: &str = "Too large to compare";
 
 /// How often the view looks for edits made through a model it doesn't
 /// show, such as the file's editor in another window, which redraw
 /// neither it nor its sides.
 const POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// The answer to [`DISCARD_BUTTONS`] that closes.
+/// The answer to [`discard_buttons`] that closes.
 const DISCARD: usize = 1;
 
 /// The [`CommandTarget`] of the diff view's commands, which its
@@ -127,16 +148,12 @@ impl CommandTarget for DiffCommands {
 /// [`TOGGLE_FOLDING`], in the [`KEY_CONTEXT`] context. Their handlers do
 /// nothing: the view runs them.
 pub(crate) fn registry() -> Registry<DiffCommands> {
-    let commands = [
-        (NEXT_CHANGE, "Go to Next Difference"),
-        (PREVIOUS_CHANGE, "Go to Previous Difference"),
-        (TOGGLE_INLINE, "Toggle Inline Diff"),
-        (TOGGLE_FOLDING, "Toggle Unchanged Regions"),
-    ];
+    let commands = [NEXT_CHANGE, PREVIOUS_CHANGE, TOGGLE_INLINE, TOGGLE_FOLDING];
     let mut registry = Registry::new();
-    for (id, title) in commands {
+    for id in commands {
+        let title = crate::l10n::command_title(id);
         registry
-            .register(id, title, |_: &mut (), _: &Actor| {
+            .register(id, &title, |_: &mut (), _: &Actor| {
                 Ok(Dispatched::new(Effect::Nothing))
             })
             .expect("diff command IDs are valid and distinct")
@@ -551,10 +568,10 @@ impl DiffView {
         let count = self.diff.hunks().len();
         if count == 0 {
             let message = match self.diff.too_large() {
-                true => TOO_LARGE,
-                false => NO_CHANGES,
+                true => too_large(),
+                false => no_changes(),
             };
-            self.message = Some(message.into());
+            self.message = Some(message);
             cx.notify();
             return;
         }
@@ -568,11 +585,11 @@ impl DiffView {
         };
         let (index, wrapped) = match found {
             Some(index) => (index, None),
-            None if forward => (0, Some(WRAPPED_TO_FIRST)),
-            None => (count - 1, Some(WRAPPED_TO_LAST)),
+            None if forward => (0, Some(wrapped_to_first())),
+            None => (count - 1, Some(wrapped_to_last())),
         };
         let hunk = self.diff.hunks()[index].clone();
-        self.message = wrapped.map(SharedString::from);
+        self.message = wrapped;
         let other = 1 - focused;
         let other_row = hunk.range([Side::Left, Side::Right][other]).start;
         let mut carets = [None; 2];
@@ -607,7 +624,7 @@ impl DiffView {
     /// said, or that the texts are too large to compare.
     fn status(&self) -> Option<SharedString> {
         match self.diff.too_large() {
-            true => Some(TOO_LARGE.into()),
+            true => Some(too_large()),
             false => self.message.clone(),
         }
     }
@@ -642,27 +659,28 @@ impl DiffView {
         let ui = fe_ui::ui_theme(cx);
         let (current, count) = self.current_change(window, cx);
         let label = (count > 0).then(|| match current {
-            Some(index) => format!("Change {} of {count}", index + 1),
-            None => format!("{count} changes"),
+            Some(index) => tr!("gpui-diff-change-of", index = index + 1, count = count),
+            None => tr!("gpui-diff-changes", count = count),
         });
-        let button = |id: &'static str, icon, title: &'static str, command: &'static str| {
+        let button = |id: &'static str, icon, title: SharedString, command: &'static str| {
             IconButton::new(id, icon, &ui)
-                .name(title)
+                .name(title.clone())
                 .disabled(count == 0)
                 .tooltip(move |_, cx| {
                     let shortcut = key_label(command, cx);
-                    let tooltip = Tooltip::new(title, shortcut, &fe_ui::ui_theme(cx));
+                    let tooltip = Tooltip::new(title.clone(), shortcut, &fe_ui::ui_theme(cx));
                     cx.new(|_| tooltip).into()
                 })
         };
         let previous = button(
             "previous-change",
             Icon::ArrowLeft,
-            "Previous Change",
+            tr!("gpui-diff-previous-change"),
             PREVIOUS_CHANGE,
         )
         .on_click(cx.listener(|this, _, window, cx| this.previous_change(window, cx)));
-        let next = button("next-change", Icon::ArrowRight, "Next Change", NEXT_CHANGE)
+        let next_title = tr!("gpui-diff-next-change");
+        let next = button("next-change", Icon::ArrowRight, next_title, NEXT_CHANGE)
             .on_click(cx.listener(|this, _, window, cx| this.next_change(window, cx)));
         div()
             .flex_none()
@@ -1027,11 +1045,22 @@ impl PaneItem for DiffView {
     /// `a.rs (Index ↔ Working Tree)`.
     fn tab_title(&self, _: &App) -> SharedString {
         let [left, right] = &self.titles;
-        format!("{} ({left} ↔ {right})", self.file_name).into()
+        let name = &self.file_name;
+        tr!(
+            "gpui-diff-tab-title",
+            name = name,
+            left = left,
+            right = right
+        )
     }
 
     fn window_title(&self, cx: &App) -> SharedString {
-        format!("{} — {}", self.tab_title(cx), fe_config::APP_NAME).into()
+        let title = self.tab_title(cx);
+        tr!(
+            "gpui-window-title",
+            title = title,
+            app = fe_config::APP_NAME
+        )
     }
 
     /// The compared path, else the right side's model's. The view keeps the
@@ -1063,12 +1092,12 @@ impl PaneItem for DiffView {
         if !self.is_dirty(cx) {
             return CloseAnswer::Close;
         }
-        let question = format!("Discard unsaved changes to {}?", self.file_name);
+        let question = tr!("gpui-close-discard-question", name = &self.file_name);
         let answer = window.prompt(
             PromptLevel::Warning,
             &question,
-            Some("Your changes will be lost if you close it without saving."),
-            &DISCARD_BUTTONS,
+            Some(&tr!("gpui-close-discard-detail")),
+            &discard_buttons(),
             cx,
         );
         CloseAnswer::Ask(cx.spawn(async move |_, _| answer.await == Ok(DISCARD)))

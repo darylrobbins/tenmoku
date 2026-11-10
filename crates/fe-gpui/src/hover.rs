@@ -45,6 +45,7 @@ use gpui::{
     ParentElement as _, Pixels, Point, ScrollHandle, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, Task, Window, anchored, canvas, deferred, div, px,
 };
+use kiln_l10n::tr;
 
 use crate::{EditorTheme, EditorView};
 
@@ -219,12 +220,15 @@ fn diagnostic_text(entry: &DiagnosticEntry<'_>) -> String {
             .flatten();
         let at = match name {
             Some(name) => format!("{}:{}", name.to_string_lossy(), related.row + 1),
-            None => format!("line {}", related.row + 1),
+            None => tr!("gpui-hover-related-line", line = related.row + 1).to_string(),
         };
-        text += &format!("\n↳ {at}: {}", related.message);
+        let line = tr!("gpui-hover-related", at = at, message = &related.message);
+        text.push('\n');
+        text.push_str(&line);
     }
     if let (Some(code), Some(href)) = (&entry.code, &entry.code_href) {
-        text += &format!("\n{code}: {href}");
+        text.push('\n');
+        text.push_str(&tr!("gpui-hover-code", code = code, href = href));
     }
     text
 }

@@ -810,10 +810,7 @@ fn label_row(
                     .text_color(theme.gutter_foreground),
             )
     };
-    let hidden = match label.hidden {
-        1 => "1 hidden line".to_owned(),
-        rows => format!("{rows} hidden lines"),
-    };
+    let hidden = kiln_l10n::tr!("gpui-diff-hidden-lines", count = label.hidden);
     let quarter = std::f32::consts::FRAC_PI_2;
     div()
         .id(SharedString::from(format!("diff-fold:{side}:{n}")))

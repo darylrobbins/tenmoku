@@ -137,7 +137,7 @@ fn a_window_and_a_quit_ask(cx: &mut TestAppContext) {
 /// would take Return from it (Escape finds it by its title).
 #[test]
 fn cancel_is_the_default() {
-    let [first, discard] = fe_gpui::pane_item::DISCARD_BUTTONS;
+    let [first, discard] = fe_gpui::pane_item::discard_buttons();
     assert_eq!(first.label().as_ref(), "Cancel");
     assert!(!first.is_cancel());
     assert_eq!(discard.label().as_ref(), "Discard");
