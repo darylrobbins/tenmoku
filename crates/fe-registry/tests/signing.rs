@@ -82,12 +82,16 @@ impl Fixture {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(stdin.as_bytes())
-            .unwrap();
+        // The binary may exit before reading all of stdin (an early
+        // refusal), so a broken pipe is fine: the exit status and output
+        // are what the tests assert on. Dropping stdin closes it.
+        let mut pipe = child.stdin.take().unwrap();
+        match pipe.write_all(stdin.as_bytes()) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(e) => panic!("writing stdin: {e}"),
+        }
+        drop(pipe);
         child.wait_with_output().unwrap()
     }
 
