@@ -5,6 +5,7 @@ kiln_l10n::resources! {
     dynamic_prefixes = ["command-"];
     "en-US" => [
         "../l10n/en-US/commands.ftl",
+        "../l10n/en-US/git.ftl",
         "../l10n/en-US/navigation.ftl",
         "../l10n/en-US/find.ftl",
     ],

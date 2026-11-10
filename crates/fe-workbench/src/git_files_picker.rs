@@ -26,6 +26,7 @@ use gpui::{
     IntoElement as _, ParentElement as _, SharedString, Styled as _, Task, WeakEntity, Window, div,
     px,
 };
+use kiln_l10n::{text, tr};
 
 use crate::{
     Workbench,
@@ -324,14 +325,15 @@ impl PickerDelegate for GitFilesPicker {
 
     fn status(&self) -> Option<SharedString> {
         Some(match &self.listing {
-            Listing::Pending => "Listing files…".into(),
-            Listing::NoRoot => "No folder open".into(),
-            Listing::NotRepo => "Not a git repository".into(),
+            Listing::Pending => tr!("workbench-git-files-listing"),
+            Listing::NoRoot => tr!("workbench-git-files-no-folder"),
+            Listing::NotRepo => tr!("workbench-git-files-not-repo"),
             Listing::Failed(error) => error.clone().into(),
-            Listing::Listed { .. } if self.rows.is_empty() => "No files".into(),
-            Listing::Listed { .. } if self.matches.is_empty() => "No matching files".into(),
-            Listing::Listed { .. } if self.matches.len() == 1 => "1 file".into(),
-            Listing::Listed { .. } => format!("{} files", self.matches.len()).into(),
+            Listing::Listed { .. } if self.rows.is_empty() => tr!("workbench-git-files-none"),
+            Listing::Listed { .. } if self.matches.is_empty() => {
+                tr!("workbench-git-files-no-match")
+            }
+            Listing::Listed { .. } => tr!("workbench-git-files-count", count = self.matches.len()),
         })
     }
 }
@@ -353,8 +355,14 @@ impl Workbench {
         let previous = window.focused(cx);
         let root = self.root().map(Path::to_owned);
         let delegate = GitFilesPicker::new(cx.entity().downgrade(), root, previous);
-        let picker =
-            cx.new(|cx| Picker::new(delegate, "Go to tracked file…", fe_ui::ui_theme(cx), cx));
+        let picker = cx.new(|cx| {
+            Picker::new(
+                delegate,
+                text!("workbench-git-files-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
+        });
         picker.update(cx, |picker, cx| {
             picker.show(window, cx);
             picker.delegate.list(cx);

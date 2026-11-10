@@ -36,10 +36,11 @@ use fe_buffer::{BufferId, Version};
 use fe_git::{BlameRun, CommitInfo};
 use fe_gpui::{EditorView, GutterAnnotation, GutterAnnotations};
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, WeakEntity};
+use kiln_l10n::tr;
 
 use super::{
-    Blamed, EDIT_REST, NO_FILE, ago, blame, date, landed as blame_landed, line_blaming,
-    next_serial, now, open_line_commit, popover, repo, state,
+    Blamed, EDIT_REST, ago, blame, date, landed as blame_landed, line_blaming, next_serial,
+    no_file, now, open_line_commit, popover, repo, state,
 };
 use crate::workbench::{
     Workbench,
@@ -87,7 +88,7 @@ pub(super) struct Column {
 /// annotations away.
 pub(super) fn toggle(workbench: &mut Workbench, op: GitOp, cx: &mut Context<Workbench>) {
     let Some(editor) = op.editor.clone() else {
-        return workbench.answer_git_op(&op, NO_FILE.to_owned(), cx);
+        return workbench.answer_git_op(&op, no_file().into(), cx);
     };
     let id = editor.entity_id();
     state(cx)
@@ -98,7 +99,7 @@ pub(super) fn toggle(workbench: &mut Workbench, op: GitOp, cx: &mut Context<Work
     }
     let model = editor.read(cx).model();
     let Some(path) = model.path().map(Path::to_owned) else {
-        return workbench.answer_git_op(&op, NO_FILE.to_owned(), cx);
+        return workbench.answer_git_op(&op, no_file().into(), cx);
     };
     let buffer = model.buffer().id();
     // One annotation column: provenance yields to blame, and blame to it.
@@ -429,7 +430,7 @@ pub(super) fn label(commit: &CommitInfo, now: i64) -> String {
         author.pop();
         author.push('…');
     }
-    format!("{when} {author}")
+    tr!("workbench-git-blame-column", when = when, author = author).into()
 }
 
 /// After a git refresh, or as editor `id` becomes active: reads HEAD's id

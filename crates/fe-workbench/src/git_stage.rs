@@ -86,11 +86,12 @@ use gpui::{
     App, AppContext as _, Context, Entity, Global, PromptButton, PromptLevel, SharedString, Task,
     WeakEntity, Window,
 };
+use kiln_l10n::tr;
 
 use super::{
     Workbench,
     git_commands::{GitCommand, GitOp},
-    git_diff::{self, E21, NO_FILE},
+    git_diff::{self, E21, no_file},
     toast::{self, Toast},
     vim_host,
 };
@@ -100,29 +101,44 @@ use crate::{
 };
 
 /// What deleting an untracked file adds to its question.
-const IRREVERSIBLE: &str = "This is IRREVERSIBLE! This file will be FOREVER LOST if you proceed.";
+fn irreversible() -> SharedString {
+    tr!("workbench-git-stage-irreversible")
+}
 
 /// What discarding several files adds when some are untracked.
-const SOME_IRREVERSIBLE: &str =
-    "This is IRREVERSIBLE! The untracked files among them will be FOREVER LOST if you proceed.";
+fn some_irreversible() -> SharedString {
+    tr!("workbench-git-stage-some-irreversible")
+}
 
 /// What discarding files with no changes answers.
-const NOTHING_TO_DISCARD: &str = "No changes to discard";
+fn nothing_to_discard() -> SharedString {
+    tr!("workbench-git-stage-nothing-to-discard")
+}
 
 /// What staging a change answers with none there.
-const NO_CHANGE_TO_STAGE: &str = "No change to stage at this line";
+fn no_change_to_stage() -> SharedString {
+    tr!("workbench-git-stage-no-change-to-stage")
+}
 
 /// What reverting a change answers with none there.
-const NO_CHANGE_TO_REVERT: &str = "No change to revert at this line";
+fn no_change_to_revert() -> SharedString {
+    tr!("workbench-git-stage-no-change-to-revert")
+}
 
 /// What staging from a diff view's git side answers.
-const GIT_SIDE: &str = "Stage from the Working Tree side";
+fn git_side() -> SharedString {
+    tr!("workbench-git-stage-git-side")
+}
 
 /// What undoing a stage answers with none of the file's to undo.
-const NOTHING_STAGED: &str = "No staged change to undo";
+fn nothing_staged() -> SharedString {
+    tr!("workbench-git-stage-nothing-staged")
+}
 
 /// What undoing a stage answers when the index has changed since.
-const INDEX_CHANGED: &str = "Index changed since; not undone";
+fn index_changed() -> SharedString {
+    tr!("workbench-git-stage-index-changed")
+}
 
 /// Why git work didn't happen.
 enum Failed {
@@ -147,7 +163,9 @@ type Save = Box<dyn FnOnce(&mut App) -> Task<Option<String>>>;
 
 /// What a save answers, before the file's name, if its editor moved to
 /// another buffer or file before its turn came.
-const MOVED: &str = "Not saved or staged: the editor no longer edits ";
+fn moved(name: String) -> String {
+    tr!("workbench-git-stage-moved", name = name).into()
+}
 
 /// An open editor of a file being staged, with the buffer and path it
 /// edited when checked: the save checks they're still its own.
@@ -162,8 +180,14 @@ struct Pinned {
 /// reads it, in its own encoding; a file that can't be read is an answer
 /// naming it. A missing file holds none.
 fn has_markers(path: &Path) -> Result<bool, String> {
-    let read = loader::read(path.to_owned())
-        .map_err(|error| format!("Not staged: can't read {}: {error}", file_name(path)))?;
+    let read = loader::read(path.to_owned()).map_err(|error| -> String {
+        tr!(
+            "workbench-git-stage-cant-read",
+            name = file_name(path),
+            error = error.to_string()
+        )
+        .into()
+    })?;
     Ok(read.is_some_and(|buffer| {
         !fe_git::conflict_markers::parse(&buffer.text().to_string()).is_empty()
     }))
@@ -184,7 +208,9 @@ fn unconfirmed(paths: &[PathBuf], asked: &[PathBuf]) -> Result<Vec<PathBuf>, Str
 }
 
 /// What a save answers if its window closed before its turn came.
-const WINDOW_CLOSED: &str = "Not saved: the window closed";
+fn window_closed() -> SharedString {
+    tr!("workbench-git-stage-window-closed")
+}
 
 /// Work that changes a repository: given the app, it starts and returns
 /// its task.
@@ -211,7 +237,9 @@ struct ResetReads {
 impl Global for ResetReads {}
 
 /// What staging part of a file that isn't UTF-8 answers.
-const NOT_UTF8: &str = "Can't stage part of a file that isn't UTF-8";
+fn not_utf8() -> SharedString {
+    tr!("workbench-git-stage-not-utf8")
+}
 
 /// A file's entry in the index: its mode and its blob's id, as `git
 /// ls-files --stage` gives them.
@@ -264,7 +292,7 @@ pub(super) fn run(
                     let path =
                         (op.editor.as_ref()).and_then(|editor| workbench.op_path(editor, cx));
                     let Some(path) = path else {
-                        return workbench.answer_git_op(&op, NO_FILE.to_owned(), cx);
+                        return workbench.answer_git_op(&op, no_file().into(), cx);
                     };
                     (path, workbench.working_editor(&op, cx))
                 }
@@ -285,7 +313,7 @@ pub(super) fn run(
         GitCommand::ResetBuffer => workbench.reset_buffer(op, cx),
         GitCommand::StageHunk => {
             let Some(editor) = op.editor.clone() else {
-                return workbench.answer_git_op(&op, NO_FILE.to_owned(), cx);
+                return workbench.answer_git_op(&op, no_file().into(), cx);
             };
             let pick = picked(&op, &editor, cx);
             workbench.stage_change(&editor, pick, op, cx);
@@ -293,7 +321,7 @@ pub(super) fn run(
         GitCommand::UnstageHunk => workbench.undo_stage(op, cx),
         GitCommand::RevertHunk => workbench.revert_change(op, cx),
         _ => {
-            let text = format!("Not supported yet: {}", command.title());
+            let text = tr!("workbench-git-not-supported-yet", what = command.title()).into();
             workbench.answer_git_op(&op, text, cx);
         }
     }
@@ -459,15 +487,15 @@ impl Workbench {
                         || model.path() != pinned.path.as_deref()
                     {
                         let name = pinned.path.as_deref().map(file_name).unwrap_or_default();
-                        return Task::ready(Some(format!("{MOVED}{name}")));
+                        return Task::ready(Some(moved(name)));
                     }
                 }
                 let saves: Vec<Task<Option<String>>> = (editors.iter())
                     .map(|Pinned { editor, .. }| {
                         let saved = cx.update_window(handle, |_, window, cx| {
-                            vim_host::save(editor, NO_FILE.to_owned(), window, cx)
+                            vim_host::save(editor, no_file().into(), window, cx)
                         });
-                        saved.unwrap_or_else(|_| Task::ready(Some(WINDOW_CLOSED.to_owned())))
+                        saved.unwrap_or_else(|_| Task::ready(Some(window_closed().into())))
                     })
                     .collect();
                 let pinned = editors.clone();
@@ -498,24 +526,21 @@ impl Workbench {
                         .ok();
                     })
                     .ok();
-                    Some(format!("{name} now has merge conflicts; not staged"))
+                    Some(tr!("workbench-git-stage-now-conflicted", name = name).into())
                 })
             }))
         };
         let question = match unresolved.as_slice() {
             [] => return self.stage_checked(paths, Vec::new(), save(Vec::new()), cx),
-            [path] => format!(
-                "Are you sure you want to stage {} with merge conflicts?",
-                file_name(path)
-            ),
-            files => format!(
-                "Are you sure you want to stage {} files with merge conflicts?",
-                files.len()
+            [path] => tr!("workbench-git-stage-confirm-merge", name = file_name(path)),
+            files => tr!(
+                "workbench-git-stage-confirm-merge-many",
+                count = files.len()
             ),
         };
         let buttons = [
-            PromptButton::Ok(SharedString::new_static("Stage")),
-            PromptButton::Cancel(SharedString::new_static("Cancel")),
+            PromptButton::Ok(tr!("workbench-git-stage-button")),
+            PromptButton::Cancel(tr!("workbench-git-cancel")),
         ];
         let answer = window.prompt(PromptLevel::Warning, &question, None, &buttons, cx);
         cx.spawn(async move |workbench, cx| {
@@ -552,10 +577,9 @@ impl Workbench {
                     continue;
                 }
                 if has_markers(path).map_err(Failed::Answer)? {
-                    return Err(Failed::Answer(format!(
-                        "{} now has merge conflicts; not staged",
-                        file_name(path)
-                    )));
+                    return Err(Failed::Answer(
+                        tr!("workbench-git-stage-now-conflicted", name = file_name(path)).into(),
+                    ));
                 }
             }
             repo.stage(paths).map_err(git_failed)
@@ -614,7 +638,7 @@ impl Workbench {
             workbench
                 .update_in(cx, |workbench, window, cx| match read {
                     Ok(files) if files.is_empty() => {
-                        let nothing = Failed::Answer(NOTHING_TO_DISCARD.to_owned());
+                        let nothing = Failed::Answer(nothing_to_discard().into());
                         workbench.report(nothing, op.as_ref(), cx)
                     }
                     Ok(files) => workbench.confirm_discard(files, op, window, cx),
@@ -637,33 +661,39 @@ impl Workbench {
         let (question, detail, button) = match files.as_slice() {
             [] => return,
             [(path, Discard::Restore)] => (
-                format!(
-                    "Are you sure you want to discard changes in {}?",
-                    file_name(path)
+                tr!(
+                    "workbench-git-stage-confirm-discard",
+                    name = file_name(path)
                 ),
                 None,
-                "Discard File".to_owned(),
+                tr!("workbench-git-stage-discard-file"),
             ),
             [(path, Discard::Delete)] => (
-                format!("Are you sure you want to DELETE {}?", file_name(path)),
-                Some(IRREVERSIBLE),
-                "Delete File".to_owned(),
+                tr!("workbench-git-stage-confirm-delete", name = file_name(path)),
+                Some(irreversible()),
+                tr!("workbench-git-stage-delete-file"),
             ),
             files => (
-                format!(
-                    "Are you sure you want to discard changes in {} files?",
-                    files.len()
+                tr!(
+                    "workbench-git-stage-confirm-discard-many",
+                    count = files.len()
                 ),
                 (files.iter().any(|(_, discard)| *discard == Discard::Delete))
-                    .then_some(SOME_IRREVERSIBLE),
-                format!("Discard {} Files", files.len()),
+                    .then_some(some_irreversible()),
+                tr!("workbench-git-stage-discard-files", count = files.len()),
             ),
         };
         let buttons = [
-            PromptButton::Ok(SharedString::from(button)),
-            PromptButton::Cancel(SharedString::new_static("Cancel")),
+            PromptButton::Ok(button),
+            PromptButton::Cancel(tr!("workbench-git-cancel")),
         ];
-        let answer = window.prompt(PromptLevel::Warning, &question, detail, &buttons, cx);
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &question,
+            detail.as_deref(),
+            &buttons,
+            cx,
+        );
         cx.spawn(async move |workbench, cx| {
             if answer.await != Ok(0) {
                 return;
@@ -790,12 +820,12 @@ impl Workbench {
             let model = editor.read(cx).model();
             if model.buffer().id() != buffer || model.path() != file.as_deref() {
                 let name = file.as_deref().map(file_name).unwrap_or_default();
-                return Task::ready(Some(format!("{MOVED}{name}")));
+                return Task::ready(Some(moved(name)));
             }
             let saved = cx.update_window(window, |_, window, cx| {
-                vim_host::save(&editor, NO_FILE.to_owned(), window, cx)
+                vim_host::save(&editor, no_file().into(), window, cx)
             });
-            saved.unwrap_or_else(|_| Task::ready(Some(WINDOW_CLOSED.to_owned())))
+            saved.unwrap_or_else(|_| Task::ready(Some(window_closed().into())))
         });
         self.stage(vec![path], true, Some(op), Some(save), cx);
     }
@@ -807,10 +837,10 @@ impl Workbench {
             return self.answer_git_op(&op, E21.to_owned(), cx);
         }
         let Some(editor) = self.working_editor(&op, cx) else {
-            return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
+            return self.answer_git_op(&op, no_file().into(), cx);
         };
         let Some(path) = editor.read(cx).model().path().map(Path::to_owned) else {
-            return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
+            return self.answer_git_op(&op, no_file().into(), cx);
         };
         let buffer = editor.read(cx).model().buffer().id();
         let reads = cx.default_global::<ResetReads>();
@@ -826,7 +856,11 @@ impl Workbench {
             let text = repo.index_text(&real).map_err(git_failed)?;
             #[cfg(test)]
             gate.await;
-            let not_in_index = || Failed::Answer(format!("{} is not in the index", file_name(&at)));
+            let not_in_index = || {
+                Failed::Answer(
+                    tr!("workbench-git-stage-not-in-index", name = file_name(&at)).into(),
+                )
+            };
             text.ok_or_else(not_in_index)
         });
         let editor = editor.downgrade();
@@ -861,16 +895,16 @@ impl Workbench {
         let Some(path) = view.model().path().map(Path::to_owned) else {
             // A diff view's git side, or an editor with no file.
             let answer = match self.diff_of(editor) {
-                Some(_) => GIT_SIDE,
-                None => NO_FILE,
+                Some(_) => git_side(),
+                None => no_file(),
             };
-            return self.answer_git_op(&op, answer.to_owned(), cx);
+            return self.answer_git_op(&op, answer.to_string(), cx);
         };
         // The text as the file has it: a UTF-8 BOM is the buffer's, not
         // its text's. Another encoding's bytes aren't the text's.
         let encoding = view.model().buffer().encoding();
         if encoding.encoding != FileEncoding::UTF8.encoding {
-            return self.answer_git_op(&op, NOT_UTF8.to_owned(), cx);
+            return self.answer_git_op(&op, not_utf8().into(), cx);
         }
         let bom = if encoding.bom { "\u{feff}" } else { "" };
         let text = format!("{bom}{}", view.model().text());
@@ -881,9 +915,9 @@ impl Workbench {
             let (real, rela) = (&real[0], relative(repo, &real[0])?);
             let before = file_entry(repo, real, &rela)?;
             let index = blob(repo, &before.id)?;
-            let index = String::from_utf8(index).map_err(|_| Failed::Answer(NOT_UTF8.into()))?;
+            let index = String::from_utf8(index).map_err(|_| Failed::Answer(not_utf8().into()))?;
             let Some(text) = staged_text(&index, &text, &pick) else {
-                return Err(Failed::Answer(NO_CHANGE_TO_STAGE.to_owned()));
+                return Err(Failed::Answer(no_change_to_stage().into()));
             };
             repo.set_index_text(real, &text).map_err(git_failed)?;
             let Some(after) = index_entry(repo, &rela)? else {
@@ -905,7 +939,7 @@ impl Workbench {
     fn undo_stage(&mut self, op: GitOp, cx: &mut Context<Self>) {
         let path = (op.editor.as_ref()).and_then(|editor| self.op_path(editor, cx));
         let Some(path) = path else {
-            return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
+            return self.answer_git_op(&op, no_file().into(), cx);
         };
         let staged = cx.default_global::<StagedChanges>().clone();
         let real = git::resolve(&path);
@@ -914,12 +948,12 @@ impl Workbench {
             let mut stacks = staged.0.lock().unwrap_or_else(PoisonError::into_inner);
             let stack = stacks.entry(real.clone()).or_default();
             let Some(last) = stack.last() else {
-                return Err(Failed::Answer(NOTHING_STAGED.to_owned()));
+                return Err(Failed::Answer(nothing_staged().into()));
             };
             // Changed, or gone, since: it can never be undone now.
             if index_entry(repo, &rela)?.as_ref() != Some(&last.after) {
                 stack.pop();
-                return Err(Failed::Answer(INDEX_CHANGED.to_owned()));
+                return Err(Failed::Answer(index_changed().into()));
             }
             // The blob that was there, as it was: not filtered again.
             let Entry { mode, id } = &last.before;
@@ -938,7 +972,7 @@ impl Workbench {
     /// changes meeting `op`'s rows, as one undo step: see the module docs.
     fn revert_change(&mut self, op: GitOp, cx: &mut Context<Self>) {
         let Some(editor) = op.editor.clone() else {
-            return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
+            return self.answer_git_op(&op, no_file().into(), cx);
         };
         if editor.read(cx).is_read_only() {
             return self.answer_git_op(&op, E21.to_owned(), cx);
@@ -952,14 +986,14 @@ impl Workbench {
             reverted
         });
         if reverted == 0 {
-            self.answer_git_op(&op, NO_CHANGE_TO_REVERT.to_owned(), cx);
+            self.answer_git_op(&op, no_change_to_revert().into(), cx);
         }
     }
 }
 
 /// What a file not in the index answers.
 fn not_in_index(real: &Path) -> Failed {
-    Failed::Answer(format!("{} is not in the index", file_name(real)))
+    Failed::Answer(tr!("workbench-git-stage-not-in-index", name = file_name(real)).into())
 }
 
 /// `real`'s path in `repo`'s working tree.
@@ -978,7 +1012,9 @@ fn git_output(repo: &Repo, args: &[&OsStr]) -> Result<Vec<u8>, Failed> {
         .arg("--literal-pathspecs")
         .args(args)
         .output()
-        .map_err(|error| Failed::Git(format!("git: {error}")))?;
+        .map_err(|error| {
+            Failed::Git(tr!("workbench-git-error", error = error.to_string()).into())
+        })?;
     match output.status.success() {
         true => Ok(output.stdout),
         false => Err(Failed::Git(
@@ -1014,10 +1050,9 @@ fn index_entry(repo: &Repo, rela: &Path) -> Result<Option<Entry>, Failed> {
         }
     }
     match conflicted {
-        true => Err(Failed::Answer(format!(
-            "{} has unresolved conflicts",
-            file_name(rela)
-        ))),
+        true => Err(Failed::Answer(
+            tr!("workbench-git-stage-unresolved", name = file_name(rela)).into(),
+        )),
         false => Ok(None),
     }
 }
@@ -1028,10 +1063,9 @@ fn file_entry(repo: &Repo, real: &Path, rela: &Path) -> Result<Entry, Failed> {
     let entry = index_entry(repo, rela)?.ok_or_else(|| not_in_index(real))?;
     match entry.mode.as_str() {
         "100644" | "100755" => Ok(entry),
-        _ => Err(Failed::Answer(format!(
-            "{} is not a file in the index",
-            file_name(real)
-        ))),
+        _ => Err(Failed::Answer(
+            tr!("workbench-git-stage-not-a-file", name = file_name(real)).into(),
+        )),
     }
 }
 
@@ -1116,10 +1150,13 @@ fn discard_as_asked(repo: &Repo, paths: &[PathBuf], asked: &[Discard]) -> Result
         [] => Ok(()),
         changed => {
             let names: Vec<String> = changed.iter().map(|(path, _)| file_name(path)).collect();
-            Err(Failed::Answer(format!(
-                "Changed since you were asked, so not discarded: {}",
-                names.join(", ")
-            )))
+            Err(Failed::Answer(
+                tr!(
+                    "workbench-git-stage-changed-since",
+                    names = names.join(", ")
+                )
+                .into(),
+            ))
         }
     }
 }
@@ -1164,7 +1201,7 @@ fn failure(error: &str) -> Toast {
     let mut lines = error.trim().lines();
     let first = lines.next().unwrap_or_default();
     let rest = lines.collect::<Vec<_>>().join("\n");
-    let toast = Toast::error(format!("Git: {first}"));
+    let toast = Toast::error(tr!("workbench-git-failure", first = first));
     match rest.trim() {
         "" => toast,
         rest => toast.detail(rest),

@@ -11,7 +11,8 @@ use fe_editor::EditorModel;
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationProvider, Tint, overlaps};
 use fe_git::conflict_markers;
 use fe_gpui::{Lens, LensItem, LensProvider};
-use gpui::{Context, Window};
+use gpui::{Context, SharedString, Window};
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -25,22 +26,52 @@ pub(crate) const MAX_SCAN_BYTES: usize = 8 << 20;
 /// show.
 const PRIORITY: i32 = -200;
 
-const CURRENT_LABEL: &str = "(Current Change)";
-const INCOMING_LABEL: &str = "(Incoming Change)";
+fn current_label() -> SharedString {
+    tr!("workbench-git-conflict-current-label")
+}
+
+fn incoming_label() -> SharedString {
+    tr!("workbench-git-conflict-incoming-label")
+}
 
 /// A lens's items, in VS Code's order: title and command.
-const ACTIONS: [(&str, &str); 4] = [
-    ("Accept Current Change", "git.accept_current"),
-    ("Accept Incoming Change", "git.accept_incoming"),
-    ("Accept Both Changes", "git.accept_both"),
-    ("Compare Changes", "git.compare_conflict"),
-];
+fn actions() -> [(SharedString, &'static str); 4] {
+    [
+        (
+            tr!("workbench-git-conflict-accept-current"),
+            "git.accept_current",
+        ),
+        (
+            tr!("workbench-git-conflict-accept-incoming"),
+            "git.accept_incoming",
+        ),
+        (tr!("workbench-git-conflict-accept-both"), "git.accept_both"),
+        (
+            tr!("workbench-git-conflict-compare"),
+            "git.compare_conflict",
+        ),
+    ]
+}
 
-const WRAPPED_TO_FIRST: &str = "Wrapped to the first conflict";
-const WRAPPED_TO_LAST: &str = "Wrapped to the last conflict";
-const NO_CONFLICTS: &str = "No merge conflicts found in this file";
-const NOT_IN_CONFLICT: &str = "Editor cursor is not within a merge conflict";
-const READ_ONLY: &str = "Cannot make changes, the editor is read-only";
+fn wrapped_to_first() -> SharedString {
+    tr!("workbench-git-conflict-wrapped-first")
+}
+
+fn wrapped_to_last() -> SharedString {
+    tr!("workbench-git-conflict-wrapped-last")
+}
+
+fn no_conflicts() -> SharedString {
+    tr!("workbench-git-conflict-none")
+}
+
+fn not_in_conflict() -> SharedString {
+    tr!("workbench-git-conflict-not-in")
+}
+
+fn read_only() -> SharedString {
+    tr!("workbench-git-conflict-read-only")
+}
 
 /// Which side of a conflict an accept command keeps.
 #[derive(Clone, Copy)]
@@ -96,14 +127,14 @@ impl ConflictBands {
         };
         let mut out = Vec::new();
         // The label sits after the marker's text, its line break not included.
-        let label = |line: Range<usize>, label: &str| {
+        let label = |line: Range<usize>, label: SharedString| {
             let end = line.start + text[line.clone()].trim_end_matches(['\r', '\n']).len();
-            let kind = DecorationKind::AfterLine(label.into());
+            let kind = DecorationKind::AfterLine(label.as_ref().into());
             Decoration::new(line.start..end, kind, Tint::Muted).with_priority(PRIORITY)
         };
         for conflict in conflict_markers::parse(&text) {
-            out.push(label(conflict.start.line.clone(), CURRENT_LABEL));
-            out.push(label(conflict.end.line.clone(), INCOMING_LABEL));
+            out.push(label(conflict.start.line.clone(), current_label()));
+            out.push(label(conflict.end.line.clone(), incoming_label()));
             out.push(band(
                 conflict.start.line.start..conflict.current.end,
                 Tint::Added,
@@ -158,8 +189,8 @@ impl ConflictLenses {
         (conflict_markers::parse(&text).iter())
             .map(|conflict| {
                 let row = rows.offset_to_point(conflict.start.line.start).row;
-                let items = ACTIONS.iter().map(|&(title, command)| LensItem {
-                    title: title.into(),
+                let items = actions().into_iter().map(|(title, command)| LensItem {
+                    title,
                     invocation: Invocation::of(command)
                         .expect("the accept commands are registered")
                         .args(Value::Object(
@@ -258,15 +289,21 @@ impl Workbench {
         };
         let model = editor.read(cx).model();
         let (Some(path), Some((current, incoming))) = (model.path(), sides_at(model, row)) else {
-            return toast::show(cx, Toast::info(NOT_IN_CONFLICT.to_owned()));
+            return toast::show(cx, Toast::info(not_in_conflict()));
         };
         let path = path.to_path_buf();
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
-        let left = (format!("{name}: Current Changes").into(), current);
-        let right = (format!("{name}: Incoming Changes").into(), incoming);
+        let left = (
+            tr!("workbench-git-conflict-current-side", name = name.as_str()),
+            current,
+        );
+        let right = (
+            tr!("workbench-git-conflict-incoming-side", name = name.as_str()),
+            incoming,
+        );
         self.open_text_compare(left, right, &path, window, cx);
     }
 
@@ -300,7 +337,7 @@ impl Workbench {
             (rows.into_iter().zip(starts).collect::<Vec<_>>(), row)
         };
         if starts.is_empty() {
-            return toast::show(cx, Toast::info(NO_CONFLICTS.to_owned()));
+            return toast::show(cx, Toast::info(no_conflicts()));
         }
         let found = match forward {
             true => starts.iter().find(|(start, _)| *start > row),
@@ -308,12 +345,12 @@ impl Workbench {
         };
         let (at, wrapped) = match (found, forward) {
             (Some((_, at)), _) => (*at, None),
-            (None, true) => (starts[0].1, Some(WRAPPED_TO_FIRST)),
-            (None, false) => (starts[starts.len() - 1].1, Some(WRAPPED_TO_LAST)),
+            (None, true) => (starts[0].1, Some(wrapped_to_first())),
+            (None, false) => (starts[starts.len() - 1].1, Some(wrapped_to_last())),
         };
         editor.update(cx, |editor, cx| editor.select_and_reveal(at..at, cx));
         if let Some(wrapped) = wrapped {
-            toast::show(cx, Toast::info(wrapped.to_owned()));
+            toast::show(cx, Toast::info(wrapped));
         }
     }
 
@@ -333,14 +370,14 @@ impl Workbench {
             return;
         };
         if editor.read(cx).is_read_only() {
-            return toast::show(cx, Toast::info(READ_ONLY.to_owned()));
+            return toast::show(cx, Toast::info(read_only()));
         }
         if plan_accept(editor.read(cx).model(), side, which).is_empty() {
             let message = match which {
-                Which::All => NO_CONFLICTS,
-                Which::At(_) => NOT_IN_CONFLICT,
+                Which::All => no_conflicts(),
+                Which::At(_) => not_in_conflict(),
             };
-            return toast::show(cx, Toast::info(message.to_owned()));
+            return toast::show(cx, Toast::info(message));
         }
         editor.update(cx, |editor, cx| {
             editor.edit_and_reveal(|model| plan_accept(model, side, which), cx)

@@ -36,7 +36,8 @@ use std::{
 };
 
 use fe_git::{Head, PullMode, RemoteError, Repo};
-use gpui::{App, AppContext as _, AsyncApp, Context, EntityId, Global, Window};
+use gpui::{App, AppContext as _, AsyncApp, Context, EntityId, Global, SharedString, Window};
+use kiln_l10n::tr;
 
 use super::{
     super::{
@@ -48,22 +49,29 @@ use super::{
 use crate::Workbench;
 
 /// What a command answers outside a repository.
-const NO_REPO: &str = "Not in a git repository";
+fn no_repo() -> SharedString {
+    tr!("workbench-git-not-a-repository")
+}
 
 /// What a command answers while another's running in its repository.
-pub(crate) const ALREADY_RUNNING: &str =
-    "A fetch, pull or push is already running; wait for it to finish";
+pub(crate) fn already_running() -> SharedString {
+    tr!("workbench-git-remote-already-running")
+}
 
 /// What force-pushing says under its question.
-const FORCE_DETAIL: &str = "This replaces the remote branch, if it's still where your last fetch \
-saw it.";
+fn force_detail() -> SharedString {
+    tr!("workbench-git-remote-force-detail")
+}
 
 /// What a force-push answers when a yes no longer holds.
-pub(crate) const TARGET_CHANGED: &str = "the branch or its upstream changed since you were asked, \
-so nothing was pushed; run it again";
+pub(crate) fn target_changed() -> SharedString {
+    tr!("workbench-git-remote-target-changed")
+}
 
 /// What a push answers on a branch with nothing to push.
-const NO_COMMITS: &str = "the branch has no commits yet; commit first";
+fn no_commits() -> SharedString {
+    tr!("workbench-git-remote-no-commits")
+}
 
 /// Runs `op`, a remote command, once its repository's been found in the
 /// background.
@@ -74,7 +82,7 @@ pub(super) fn run(
     cx: &mut Context<Workbench>,
 ) {
     let Some(root) = workbench.root().map(Path::to_owned) else {
-        return workbench.answer_git_op(&op, NO_REPO.to_owned(), cx);
+        return workbench.answer_git_op(&op, no_repo().into(), cx);
     };
     let origin = Origin {
         root,
@@ -182,11 +190,11 @@ impl Workbench {
         }
         let Found { repository, target } = match found {
             Ok(Some(found)) => found,
-            Ok(None) => return self.answer_git_op(&op, NO_REPO.to_owned(), cx),
+            Ok(None) => return self.answer_git_op(&op, no_repo().into(), cx),
             Err(error) => return toast::show(cx, failure(op.command, error, &origin.root)),
         };
         if is_running(&repository, cx) {
-            return toast::show(cx, Toast::info(ALREADY_RUNNING));
+            return toast::show(cx, Toast::info(already_running()));
         }
         match target {
             Err(error) => toast::show(cx, failure(op.command, error, &origin.root)),
@@ -206,8 +214,11 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let (answer, answered) = futures::channel::oneshot::channel();
-        let titles = vec!["Yes".to_owned(), "No".to_owned()];
-        let question = (Toast::warning(force_question(&target)).detail(FORCE_DETAIL)).choices(
+        let titles = vec![
+            tr!("workbench-git-yes").into(),
+            tr!("workbench-git-no").into(),
+        ];
+        let question = (Toast::warning(force_question(&target)).detail(force_detail())).choices(
             titles,
             move |choice| {
                 answer.send(choice).ok();
@@ -243,7 +254,7 @@ impl Workbench {
             return log::info!("not running {command:?}: the root changed");
         }
         let Some(claim) = claim(&repository, cx) else {
-            return toast::show(cx, Toast::info(ALREADY_RUNNING));
+            return toast::show(cx, Toast::info(already_running()));
         };
         let going = Toast::info(progress(command));
         let going = self.toasts.update(cx, |layer, cx| layer.push(going, cx));
@@ -308,8 +319,12 @@ fn find(root: &Path, command: GitCommand) -> Result<Option<Found>, RemoteError> 
         return Ok(None);
     };
     let shared = git_read(&repo, &["rev-parse", "--git-common-dir"])?;
-    let repository = (dunce::canonicalize(repo.workdir().join(shared)))
-        .map_err(|error| failed(&format!("the git directory: {error}")))?;
+    let repository = (dunce::canonicalize(repo.workdir().join(shared))).map_err(|error| {
+        failed(&tr!(
+            "workbench-git-remote-git-directory",
+            error = error.to_string()
+        ))
+    })?;
     let target = match command {
         GitCommand::PushForceWithLease => force_target(&repo).map(Some),
         _ => Ok(None),
@@ -321,7 +336,7 @@ fn find(root: &Path, command: GitCommand) -> Result<Option<Found>, RemoteError> 
 fn force_target(repo: &Repo) -> Result<Target, RemoteError> {
     let branch = match repo.current_branch()? {
         Head::Branch(branch) => branch,
-        Head::Unborn(_) => return Err(failed(NO_COMMITS)),
+        Head::Unborn(_) => return Err(failed(&no_commits())),
         Head::Detached(_) => return Err(RemoteError::Detached),
     };
     let config = |key: &str| {
@@ -345,7 +360,12 @@ fn force_target(repo: &Repo) -> Result<Target, RemoteError> {
 /// What force-pushing to `target` asks first.
 fn force_question(target: &Target) -> String {
     let (branch, upstream) = (&target.branch, target.upstream());
-    format!("Force-push {branch} to {upstream} with lease?")
+    tr!(
+        "workbench-git-remote-force-question",
+        branch = branch.as_str(),
+        upstream = upstream.as_str()
+    )
+    .into()
 }
 
 /// Force-pushes what was `confirmed`, if it's still what a force-push from
@@ -353,13 +373,18 @@ fn force_question(target: &Target) -> String {
 fn force_push(repo: &Repo, confirmed: Option<&Target>) -> Result<String, RemoteError> {
     let target = force_target(repo)?;
     if confirmed != Some(&target) {
-        return Err(failed(TARGET_CHANGED));
+        return Err(failed(&target_changed()));
     }
     #[cfg(test)]
     after_force_check(repo.workdir());
     repo.force_push_commit(&target.commit, &target.remote, &target.merge)?;
     let (branch, upstream) = (&target.branch, target.upstream());
-    Ok(format!("Force-pushed {branch} to {upstream} with lease"))
+    Ok(tr!(
+        "workbench-git-remote-force-pushed",
+        branch = branch.as_str(),
+        upstream = upstream.as_str()
+    )
+    .into())
 }
 
 /// What a test has happen in a working tree once a force-push's checks have
@@ -391,12 +416,15 @@ fn run_remote(root: &Path, command: GitCommand, confirmed: Option<&Target>) -> O
         Err(error) => return Outcome::Failed(error.into()),
     };
     let ran = match command {
-        GitCommand::Fetch => (repo.fetch(false)).map(|()| "Fetched".to_owned()),
-        GitCommand::Pull => (repo.pull(PullMode::FastForwardOnly)).map(|()| "Pulled".to_owned()),
+        GitCommand::Fetch => {
+            (repo.fetch(false)).map(|()| tr!("workbench-git-remote-fetched").into())
+        }
+        GitCommand::Pull => (repo.pull(PullMode::FastForwardOnly))
+            .map(|()| tr!("workbench-git-remote-pulled").into()),
         GitCommand::PushForceWithLease => force_push(&repo, confirmed),
         _ => match repo.push(false) {
             Err(RemoteError::NoUpstream) => publish(&repo),
-            pushed => pushed.map(|()| "Pushed".to_owned()),
+            pushed => pushed.map(|()| tr!("workbench-git-remote-pushed").into()),
         },
     };
     match ran {
@@ -410,14 +438,17 @@ fn run_remote(root: &Path, command: GitCommand, confirmed: Option<&Target>) -> O
 fn publish(repo: &Repo) -> Result<String, RemoteError> {
     let branch = match repo.current_branch()? {
         Head::Branch(branch) => branch,
-        Head::Unborn(_) => return Err(failed(NO_COMMITS)),
+        Head::Unborn(_) => return Err(failed(&no_commits())),
         Head::Detached(_) => return Err(RemoteError::Detached),
     };
     let remote = publish_remote(repo)?;
     repo.publish(&remote)?;
-    Ok(format!(
-        "Pushed {branch} to {remote} and set its upstream to {remote}/{branch}"
-    ))
+    Ok(tr!(
+        "workbench-git-remote-published",
+        branch = branch.as_str(),
+        remote = remote.as_str()
+    )
+    .into())
 }
 
 /// `origin`, else the only remote.
@@ -428,10 +459,7 @@ fn publish_remote(repo: &Repo) -> Result<String, RemoteError> {
         [] => Err(RemoteError::NoRemote),
         [only] => Ok((*only).to_owned()),
         _ if remotes.contains(&"origin") => Ok("origin".to_owned()),
-        _ => Err(failed(
-            "there are several remotes and none is called origin; \
-             run git push -u with the one you want from a terminal",
-        )),
+        _ => Err(failed(&tr!("workbench-git-remote-several-remotes"))),
     }
 }
 
@@ -442,7 +470,7 @@ fn git_read(repo: &Repo, args: &[&str]) -> Result<String, RemoteError> {
         .current_dir(repo.workdir())
         .args(args)
         .output()
-        .map_err(|error| failed(&format!("git: {error}")))?;
+        .map_err(|error| failed(&tr!("workbench-git-error", error = error.to_string())))?;
     if !output.status.success() {
         return Err(failed(&String::from_utf8_lossy(&output.stderr)));
     }
@@ -456,16 +484,16 @@ fn failed(output: &str) -> RemoteError {
 }
 
 /// What `command` says while it runs.
-fn progress(command: GitCommand) -> &'static str {
+fn progress(command: GitCommand) -> SharedString {
     match command {
-        GitCommand::Fetch => "Fetching…",
-        GitCommand::Pull => "Pulling…",
-        GitCommand::PushForceWithLease => "Force-pushing…",
-        _ => "Pushing…",
+        GitCommand::Fetch => tr!("workbench-git-remote-fetching"),
+        GitCommand::Pull => tr!("workbench-git-remote-pulling"),
+        GitCommand::PushForceWithLease => tr!("workbench-git-remote-force-pushing"),
+        _ => tr!("workbench-git-remote-pushing"),
     }
 }
 
-/// `command`'s name in the middle of a sentence.
+/// Which of `git.ftl`'s `-git-remote-verb` forms `command` selects.
 fn verb(command: GitCommand) -> &'static str {
     match command {
         GitCommand::Fetch => "fetch",
@@ -479,7 +507,7 @@ fn verb(command: GitCommand) -> &'static str {
 fn told(command: GitCommand, outcome: Outcome, root: &Path) -> Toast {
     match outcome {
         Outcome::Done(done) => Toast::info(done),
-        Outcome::NoRepo => Toast::info(NO_REPO),
+        Outcome::NoRepo => Toast::info(no_repo()),
         Outcome::Failed(error) => failure(command, error, root),
     }
 }
@@ -489,26 +517,10 @@ fn told(command: GitCommand, outcome: Outcome, root: &Path) -> Toast {
 fn failure(command: GitCommand, error: RemoteError, root: &Path) -> Toast {
     let verb = verb(command);
     let (sentence, detail) = match error {
-        RemoteError::NoRemote => (
-            format!(
-                "Can't {verb}: there's no upstream or origin to use. \
-                 Add a remote with git remote add origin <url>."
-            ),
-            None,
-        ),
-        RemoteError::NoUpstream => (
-            format!("Can't {verb}: the branch has no upstream. Run Git: Push to publish it first."),
-            None,
-        ),
-        RemoteError::Detached => (
-            format!("Can't {verb}: HEAD is detached. Switch to a branch first."),
-            None,
-        ),
+        RemoteError::NoRemote => (tr!("workbench-git-remote-no-remote", verb = verb), None),
+        RemoteError::NoUpstream => (tr!("workbench-git-remote-no-upstream", verb = verb), None),
+        RemoteError::Detached => (tr!("workbench-git-remote-detached", verb = verb), None),
         RemoteError::Conflicts { paths } => {
-            let files = match paths.len() {
-                1 => "1 file".to_owned(),
-                count => format!("{count} files"),
-            };
             let detail = (paths.iter())
                 .map(|path| {
                     path.strip_prefix(root)
@@ -518,54 +530,47 @@ fn failure(command: GitCommand, error: RemoteError, root: &Path) -> Toast {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let count = paths.len();
             (
-                format!("The {verb} stopped on conflicts in {files}. Resolve them, then commit."),
+                tr!("workbench-git-remote-conflicts", verb = verb, count = count),
                 Some(detail),
             )
         }
-        RemoteError::NotFastForward => (
-            format!(
-                "Can't {verb}: the branch and its upstream have diverged, so it can't \
-                 fast-forward. Merge or rebase them from a terminal."
-            ),
-            None,
-        ),
+        RemoteError::NotFastForward => (tr!("workbench-git-remote-diverged", verb = verb), None),
         RemoteError::Rejected { output } if command == GitCommand::PushForceWithLease => (
-            format!(
-                "Can't {verb}: the remote branch changed since your last fetch, or the remote \
-                 refused it. Fetch, check what changed, and try again."
-            ),
+            tr!("workbench-git-remote-lease-rejected", verb = verb),
             Some(output),
         ),
         RemoteError::Rejected { output } => (
-            format!(
-                "Can't {verb}: the remote refused it, usually because it has commits you \
-                 don't. Pull, then push again."
-            ),
+            tr!("workbench-git-remote-rejected", verb = verb),
             Some(output),
         ),
-        RemoteError::Auth { output } => (
-            format!(
-                "Can't {verb}: the remote wants credentials git can't ask for here, or refused \
-                 them. Set up a credential helper or ssh key, then try again."
-            ),
-            Some(output),
-        ),
+        RemoteError::Auth { output } => {
+            (tr!("workbench-git-remote-auth", verb = verb), Some(output))
+        }
         // Git's own first line, the cause when it's signing refused or a
         // local change in the way: it says what to do too.
         RemoteError::Failed { output } => {
+            let git_failed = tr!("workbench-git-remote-failed");
             let first = (output.lines())
                 .map(str::trim)
                 .find(|line| !line.is_empty())
-                .unwrap_or("git failed");
+                .unwrap_or(&git_failed);
             let first = (first.strip_prefix("error: "))
                 .or_else(|| first.strip_prefix("fatal: "))
                 .unwrap_or(first);
-            let sentence = format!("Can't {verb}: {first}");
+            let sentence = tr!("workbench-git-remote-cant", verb = verb, cause = first);
             let detail = (output.trim().lines().count() > 1).then_some(output);
             (sentence, detail)
         }
-        RemoteError::Git(error) => (format!("Can't {verb}: {error}"), None),
+        RemoteError::Git(error) => (
+            tr!(
+                "workbench-git-remote-cant",
+                verb = verb,
+                cause = error.to_string()
+            ),
+            None,
+        ),
     };
     match detail {
         Some(detail) => Toast::error(sentence).detail(detail),

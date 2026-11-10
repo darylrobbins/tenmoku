@@ -13,7 +13,7 @@ use fe_git::RemoteError;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
-use super::{AFTER_FORCE_CHECK, ALREADY_RUNNING, TARGET_CHANGED, failure};
+use super::{AFTER_FORCE_CHECK, already_running, failure, target_changed};
 use crate::{
     Launch, Workbench,
     workbench::{
@@ -336,7 +336,7 @@ fn a_stale_yes_force_pushes_nothing(cx: &mut TestAppContext) {
     toasts(&workbench, cx);
     draw(cx);
     let told = error(&workbench, cx);
-    assert!(told.contains(TARGET_CHANGED), "{told}");
+    assert!(told.contains(target_changed().as_ref()), "{told}");
     assert_eq!(commit_of(origin, "main"), main);
     assert_eq!(commit_of(origin, "feat"), feat);
 
@@ -352,7 +352,7 @@ fn a_stale_yes_force_pushes_nothing(cx: &mut TestAppContext) {
     toasts(&workbench, cx);
     draw(cx);
     let told = error(&workbench, cx);
-    assert!(told.contains(TARGET_CHANGED), "{told}");
+    assert!(told.contains(target_changed().as_ref()), "{told}");
     assert_eq!(commit_of(origin, "feat"), feat);
 
     // Asked again, it's about the branch now.
@@ -438,7 +438,7 @@ fn one_runs_at_a_time_in_a_repository(cx: &mut TestAppContext) {
         .concat();
         assert_eq!(
             shown,
-            [(Level::Info, ALREADY_RUNNING.to_owned())],
+            [(Level::Info, already_running().to_string())],
             "{root:?}"
         );
     }
@@ -470,7 +470,7 @@ fn already_running_comes_before_a_force_pushs_errors(cx: &mut TestAppContext) {
     run(&workbench, GitCommand::Push, cx);
     toasts(&workbench, cx);
     run(&workbench, GitCommand::PushForceWithLease, cx);
-    assert_eq!(info(&workbench, cx), ALREADY_RUNNING);
+    assert_eq!(info(&workbench, cx), already_running());
     cx.update(|_, cx| Workbench::release_git_work(0, cx));
     draw(cx);
     toasts(&workbench, cx);
@@ -480,7 +480,7 @@ fn already_running_comes_before_a_force_pushs_errors(cx: &mut TestAppContext) {
     run(&workbench, GitCommand::Fetch, cx);
     toasts(&workbench, cx);
     run(&workbench, GitCommand::PushForceWithLease, cx);
-    assert_eq!(info(&workbench, cx), ALREADY_RUNNING);
+    assert_eq!(info(&workbench, cx), already_running());
     cx.update(|_, cx| Workbench::release_git_work(0, cx));
     draw(cx);
     assert_eq!(info(&workbench, cx), "Fetched");
@@ -515,7 +515,7 @@ fn runs_off_main_thread(cx: &mut TestAppContext) {
         GitCommand::PushForceWithLease,
     ] {
         run(&workbench, command, cx);
-        assert_eq!(info(&workbench, cx), ALREADY_RUNNING, "{command:?}");
+        assert_eq!(info(&workbench, cx), already_running(), "{command:?}");
         assert_eq!(cx.update(|_, cx| Workbench::git_work_held(cx)), 1);
     }
 

@@ -11,6 +11,16 @@ migrated = [
     "src/task_commands.rs",
     "src/git_commands.rs",
     "src/keymaps_picker.rs",
+    "src/git.rs",
+    "src/git_blame.rs",
+    "src/git_blame_column.rs",
+    "src/git_conflicts.rs",
+    "src/git_diff.rs",
+    "src/git_files_picker.rs",
+    "src/git_remote.rs",
+    "src/git_stage.rs",
+    "src/git_stash.rs",
+
     # W3 (rest): navigation and the pickers.
     "src/nav.rs",
     "src/nav_picker.rs",
@@ -56,6 +66,28 @@ reason = "What a row's query matches: its keys and its title, joined by a space"
 file = "src/git_commands.rs"
 text = "{name}{} {args}"
 reason = "The ex line as typed: the command's name, its `!` and its arguments"
+
+# Git plumbing, not text: a config key and a ref name handed to git.
+
+[[literal]]
+file = "src/git_remote.rs"
+text = "branch.{branch}.{key}"
+reason = "A git config key, passed to git config"
+
+[[literal]]
+file = "src/git_remote.rs"
+text = "refs/heads/{branch}^{{commit}}"
+reason = "A revision, passed to git rev-parse"
+
+[[literal]]
+file = "src/git_blame.rs"
+text = "{year:04}-{month:02}-{day:02} {:02}:{:02} {sign}{:02}{:02}"
+reason = "A commit's author time as numbers, in its own offset: ISO-like, not words"
+
+[[literal]]
+file = "src/git_files_picker.rs"
+text = "git-files-icon:{name}:{path}"
+reason = "A test selector for a row's icon"
 
 [[literal]]
 file = "src/harpoon.rs"

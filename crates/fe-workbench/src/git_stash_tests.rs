@@ -13,7 +13,7 @@ use fe_gpui::{EditorSettings, EditorTheme, EditorView, set_vim_enabled};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln_shell::Picker;
 
-use super::{MessagePicker, NO_STASHES, NOTHING_TO_SAVE, STASH_CHANGED, STASH_PICKER, StashPicker};
+use super::{MessagePicker, STASH_PICKER, StashPicker, no_stashes, nothing_to_save, stash_changed};
 use crate::{
     Launch, Workbench,
     workbench::{git_commands::GitCommand, toast::Level},
@@ -276,7 +276,7 @@ fn commands(cx: &mut TestAppContext) {
     run(&workbench, GitCommand::Stash, cx);
     cx.simulate_keystrokes("enter");
     draw(cx);
-    let nothing = (Level::Info, NOTHING_TO_SAVE.to_owned(), None);
+    let nothing = (Level::Info, nothing_to_save().to_string(), None);
     assert_eq!(toasts(&workbench, cx), [nothing]);
     assert_eq!(stashes(&root).len(), 2);
 
@@ -284,7 +284,7 @@ fn commands(cx: &mut TestAppContext) {
     git(&root, &["stash", "clear"]);
     run(&workbench, GitCommand::StashPop, cx);
     assert!(modal::<StashPicker>(&workbench, cx).is_none());
-    let none = (Level::Info, NO_STASHES.to_owned(), None);
+    let none = (Level::Info, no_stashes().to_string(), None);
     assert_eq!(toasts(&workbench, cx), [none]);
 }
 
@@ -342,7 +342,7 @@ fn stash_moved(cx: &mut TestAppContext) {
     git(&root, &["stash", "push", "-q", "-m", "other"]);
     cx.simulate_keystrokes("enter");
     draw(cx);
-    let moved = (Level::Info, STASH_CHANGED.to_owned(), None);
+    let moved = (Level::Info, stash_changed().to_string(), None);
     assert_eq!(toasts(&workbench, cx), [moved]);
     assert_eq!(
         stashes(&root),

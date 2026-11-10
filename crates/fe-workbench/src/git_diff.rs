@@ -75,10 +75,12 @@ use fe_gpui::{
     diff_view::{no_changes, wrapped_to_first, wrapped_to_last},
 };
 use fe_vim::HostCommand;
+use gpui::SharedString;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, Focusable as _, Global, Subscription,
     WeakEntity, Window,
 };
+use kiln_l10n::{Text, text, tr, verbatim};
 use kiln_shell::{ItemHandle as _, PaneItem as _, PaneView as _};
 
 use super::{
@@ -91,31 +93,43 @@ use super::{
 use crate::{Pane, Picker, QuickOpen, git, loader, quick_open::Pick};
 
 /// What a git diff answers outside a repository.
-const NO_REPO: &str = "Not in a git repository";
+fn no_repo() -> SharedString {
+    tr!("workbench-git-not-a-repository")
+}
 
 /// What a command for the active file answers when it has none.
-pub(super) const NO_FILE: &str = "E32: No file name";
+pub(super) fn no_file() -> SharedString {
+    tr!("workbench-git-no-file-name")
+}
 
-/// What a read-only side answers to an edit.
-pub(super) const E21: &str = "E21: Cannot make changes, 'modifiable' is off";
+/// What a read-only side answers to an edit. Vim's own error text, which
+/// `vim_host` and `vim_filter` take as it is.
+pub(super) const E21: &str = verbatim!("E21: Cannot make changes, 'modifiable' is off");
 
 /// What putting into a read-only side answers.
-const E793: &str = "E793: No other buffer in diff mode is modifiable";
+fn e793() -> SharedString {
+    tr!("workbench-git-diff-no-other-modifiable")
+}
 
 /// The compare picker's placeholder.
-const COMPARE_WITH: &str = "Compare with…";
+fn compare_with() -> Text {
+    text!("workbench-git-diff-compare-with")
+}
 
 /// The right side's title in a git diff.
-const WORKING_TREE: &str = "Working Tree";
+fn working_tree() -> SharedString {
+    tr!("workbench-git-diff-working-tree")
+}
 
 /// The left side's title in `diff.compare_saved`.
-const SAVED: &str = "Saved";
-
-/// What a file too large to edit answers, before its name.
-const TOO_LARGE: &str = "Too large to compare";
+fn saved() -> SharedString {
+    tr!("workbench-git-diff-saved")
+}
 
 /// What `:w {path}` and `:sav[eas]` answer in a diff view's side.
-const NOT_IN_DIFF: &str = "Not supported yet: writing a diff side to another file";
+fn not_in_diff() -> SharedString {
+    tr!("workbench-git-diff-write-side")
+}
 
 /// What a git diff's left side is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,10 +142,10 @@ pub(crate) enum Base {
 }
 
 impl Base {
-    fn title(self) -> &'static str {
+    fn title(self) -> SharedString {
         match self {
-            Base::Index => "Index",
-            Base::Head | Base::Staged => "HEAD",
+            Base::Index => tr!("workbench-git-diff-index"),
+            Base::Head | Base::Staged => verbatim!("HEAD").into(),
         }
     }
 }
@@ -267,7 +281,7 @@ pub(super) fn same_file(a: &Path, b: &Path) -> bool {
 
 /// `path`'s name, and the answer when it's too large to compare.
 fn too_large(path: &Path) -> String {
-    format!("{TOO_LARGE}: {}", file_name(path))
+    tr!("workbench-git-diff-too-large", name = file_name(path)).into()
 }
 
 /// The file at `path`, read for a diff's side: none if it's missing, an
@@ -277,7 +291,14 @@ fn read_file(path: &Path) -> Result<Option<Buffer>, String> {
     if loader::is_large(path) {
         return Err(too_large(path));
     }
-    let cant = |error: std::io::Error| format!("Can't open {}: {error}", path.display());
+    let cant = |error: std::io::Error| {
+        tr!(
+            "workbench-git-diff-cant-open",
+            path = path.display().to_string(),
+            error = error.to_string()
+        )
+        .into()
+    };
     loader::read(path.to_owned()).map_err(cant)
 }
 
@@ -295,7 +316,7 @@ pub(super) fn run(
         GitCommand::NextChange => workbench.go_to_change(op, true, window, cx),
         GitCommand::PreviousChange => workbench.go_to_change(op, false, window, cx),
         _ => {
-            let text = format!("Not supported yet: {}", op.command.title());
+            let text = tr!("workbench-git-not-supported-yet", what = op.command.title()).into();
             workbench.answer_git_op(&op, text, cx);
         }
     }
@@ -334,7 +355,7 @@ pub(super) fn host_command(
     let read_only = editor.read(cx).is_read_only();
     match command {
         HostCommand::Write { path: Some(_), .. } | HostCommand::SaveAs { .. } => {
-            message(&editor, NOT_IN_DIFF, cx)
+            message(&editor, not_in_diff(), cx)
         }
         HostCommand::Write { .. }
         | HostCommand::WriteQuit {
@@ -447,10 +468,10 @@ fn puts_into_index(diff: &Entity<DiffView>, editor: &Entity<EditorView>, cx: &mu
 fn put(diff: &Entity<DiffView>, editor: &Entity<EditorView>, rows: Range<u32>, cx: &mut App) {
     let right = diff.read(cx).right().clone();
     if editor != diff.read(cx).left() {
-        return message(editor, E793, cx);
+        return message(editor, e793(), cx);
     }
     if right.read(cx).is_read_only() {
-        return message(editor, E793, cx);
+        return message(editor, e793(), cx);
     }
     // Diffed afresh, so the hunks are those of the texts as they are.
     let texts = [diff.read(cx).left(), &right]
@@ -565,11 +586,11 @@ pub(super) fn link_path(path: &Path) -> PathBuf {
 /// executor.
 pub(super) fn repo_of(real: &Path) -> Result<Repo, String> {
     let Some(folder) = real.ancestors().skip(1).find(|folder| folder.is_dir()) else {
-        return Err(NO_REPO.to_owned());
+        return Err(no_repo().into());
     };
     match Repo::discover(folder) {
         Ok(Some(repo)) => Ok(repo),
-        Ok(None) => Err(NO_REPO.to_owned()),
+        Ok(None) => Err(no_repo().into()),
         Err(error) => Err(error.to_string()),
     }
 }
@@ -1030,7 +1051,7 @@ impl Workbench {
                 let request = if live { request.live() } else { request };
                 self.request_guarded_diff(request, guard, window, cx)
             }
-            None => self.answer_git_op(&op, NO_FILE.to_owned(), cx),
+            None => self.answer_git_op(&op, no_file().into(), cx),
         }
     }
 
@@ -1181,8 +1202,8 @@ impl Workbench {
         };
         let right = match (index, source) {
             (Some(index), _) => Err(fixed_side(Base::Index.title(), &index)),
-            (None, Some(source)) => Ok((WORKING_TREE.into(), source)),
-            (None, None) => Err(fixed_side(WORKING_TREE, "")),
+            (None, Some(source)) => Ok((working_tree(), source)),
+            (None, None) => Err(fixed_side(working_tree(), "")),
         };
         let left = fixed_side(request.base.title(), &text);
         let compared = (request.path.clone(), Some(request.base), deleted);
@@ -1361,7 +1382,7 @@ impl Workbench {
     fn compare_file(&mut self, op: GitOp, window: &mut Window, cx: &mut Context<Self>) {
         let path = (op.editor.as_ref()).and_then(|editor| self.op_path(editor, cx));
         let Some(path) = path else {
-            return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
+            return self.answer_git_op(&op, no_file().into(), cx);
         };
         if !op.args.is_empty() {
             let folder = (self.root.clone()).or_else(|| path.parent().map(Path::to_owned));
@@ -1381,7 +1402,7 @@ impl Workbench {
         let picker = cx.new(|cx| {
             Picker::new(
                 QuickOpen::new(root, pane),
-                COMPARE_WITH,
+                compare_with(),
                 fe_ui::ui_theme(cx),
                 cx,
             )
@@ -1424,8 +1445,13 @@ impl Workbench {
             let read: Result<_, String> = read.await;
             workbench
                 .update_in(cx, |workbench, window, cx| {
-                    let missing =
-                        |path: &Path| format!("Can't open {}: No such file", path.display());
+                    let missing = |path: &Path| {
+                        tr!(
+                            "workbench-git-diff-no-such-file",
+                            path = path.display().to_string()
+                        )
+                        .into()
+                    };
                     let (buffer, disk) = match read {
                         Ok((Some(buffer), disk)) => (buffer, disk),
                         Ok((None, _)) => return workbench.answer_git_op(&op, missing(&other), cx),
@@ -1490,7 +1516,7 @@ impl Workbench {
     ) -> Option<Option<SavedAsk>> {
         let editor = self.active_editor(cx).cloned();
         let path = editor.and_then(|editor| self.op_path(&editor, cx))?;
-        if let Some(diff) = self.open_saved_diff(&path, SAVED, None, cx) {
+        if let Some(diff) = self.open_saved_diff(&path, &saved(), None, cx) {
             self.show_diff(&diff, window, cx);
             return Some(None);
         }
@@ -1498,7 +1524,7 @@ impl Workbench {
         Some(Some(SavedAsk {
             path,
             landing,
-            label: SAVED.to_owned(),
+            label: saved().to_string(),
             entry: None,
         }))
     }
@@ -1536,7 +1562,12 @@ impl Workbench {
         entry: Option<EntryId>,
         cx: &mut App,
     ) -> Option<Entity<DiffView>> {
-        let title = format!("{} ({label} ↔ {WORKING_TREE})", file_name(path));
+        let title = tr!(
+            "workbench-git-diff-saved-title",
+            name = file_name(path),
+            label = label,
+            working = working_tree()
+        );
         let views: Vec<_> = (diff_views(cx).iter())
             .filter(|compared| {
                 compared.base.is_none()
@@ -1589,7 +1620,7 @@ impl Workbench {
         let model = match self.file_model(&path, cx) {
             Some(model) => model,
             None if entry.is_some() => {
-                let closed = format!("{} is no longer open", file_name(&path));
+                let closed = tr!("workbench-git-diff-no-longer-open", name = file_name(&path));
                 return toast::show(cx, Toast::info(closed));
             }
             None => {
@@ -1598,7 +1629,7 @@ impl Workbench {
             }
         };
         let left = DiffSide::new(label, EditorModel::new(saved, None)).read_only();
-        let right = Ok((WORKING_TREE.into(), model));
+        let right = Ok((working_tree(), model));
         let diff = self.new_diff((path, None, false), left, right, cx);
         if let Some(compared) = compared(&diff.downgrade(), cx) {
             compared.history = entry;
@@ -1668,8 +1699,8 @@ impl Workbench {
                 };
                 let deleted = model.is_none();
                 let right = match model {
-                    Some(model) => Ok((WORKING_TREE.into(), model)),
-                    None => Err(fixed_side(WORKING_TREE, "")),
+                    Some(model) => Ok((working_tree(), model)),
+                    None => Err(fixed_side(working_tree(), "")),
                 };
                 let left = fixed_side(short, &text.unwrap_or_default());
                 let diff = workbench.new_diff((path, None, deleted), left, right, cx);
@@ -1781,7 +1812,7 @@ impl Workbench {
         // A map waiting for the write goes on, or ends, once the diff is
         // closed too, with `close`, which ends it either way.
         let hold = editor.update(cx, |editor, cx| editor.hold_vim_host(cx));
-        let saved = vim_host::save(&editor, NO_FILE.to_owned(), window, cx);
+        let saved = vim_host::save(&editor, no_file().into(), window, cx);
         cx.spawn_in(window, async move |workbench, cx| {
             let failed = saved.await;
             workbench

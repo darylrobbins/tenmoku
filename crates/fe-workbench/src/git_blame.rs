@@ -62,9 +62,11 @@ use fe_editor::{
 use fe_git::{BlameRun, CommitInfo, Repo};
 use fe_gpui::{DiffSide, DiffView, EditorView, HoverContent};
 use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, Global, Subscription, Task, WeakEntity, Window,
+    App, AppContext as _, Context, Entity, EntityId, Global, SharedString, Subscription, Task,
+    WeakEntity, Window,
 };
 use imara_diff::{Algorithm, Diff, InternedInput, TokenSource};
+use kiln_l10n::tr;
 use kiln_shell::PaneView as _;
 
 use super::{
@@ -81,22 +83,32 @@ pub(crate) const REST: Duration = Duration::from_millis(150);
 pub(crate) const EDIT_REST: Duration = Duration::from_millis(300);
 
 /// What a row edited or added since HEAD shows.
-const NOT_COMMITTED: &str = "Not Committed Yet";
+fn not_committed() -> SharedString {
+    tr!("workbench-git-blame-not-committed")
+}
 
 /// A buffer over this many bytes isn't blamed.
 const MAX_BYTES: usize = 5 * 1024 * 1024;
 
 /// What blame answers outside a repository.
-const NO_REPO: &str = "Not in a git repository";
+fn no_repo() -> SharedString {
+    tr!("workbench-git-not-a-repository")
+}
 
 /// What a command for the active file answers when it has none.
-const NO_FILE: &str = "E32: No file name";
+fn no_file() -> SharedString {
+    tr!("workbench-git-no-file-name")
+}
 
 /// What blame answers for a file git doesn't track.
-const UNTRACKED: &str = "Not tracked by git";
+fn untracked() -> SharedString {
+    tr!("workbench-git-blame-untracked")
+}
 
 /// What blame answers for a buffer over [`MAX_BYTES`].
-const TOO_LARGE: &str = "Too large to blame";
+fn too_large() -> SharedString {
+    tr!("workbench-git-blame-too-large")
+}
 
 /// A buffer's rows' blame, or why it has none.
 type Found = Result<Arc<[BlameRun]>, String>;
@@ -264,7 +276,7 @@ pub(super) fn run(
         GitCommand::BlameLine => blame_line(workbench, op, window, cx),
         GitCommand::OpenLineCommit => open_line_commit(workbench, op, None, window, cx),
         _ => {
-            let text = format!("Not supported yet: {}", op.command.title());
+            let text = tr!("workbench-git-not-supported-yet", what = op.command.title()).into();
             workbench.answer_git_op(&op, text, cx);
         }
     }
@@ -688,11 +700,11 @@ fn check_head(_: &mut Workbench, cx: &mut Context<Workbench>) {
 fn repo(path: &Path) -> Result<(Repo, PathBuf), String> {
     let real = git::resolve(path);
     let Some(folder) = real.ancestors().skip(1).find(|folder| folder.is_dir()) else {
-        return Err(NO_REPO.to_owned());
+        return Err(no_repo().to_string());
     };
     match Repo::discover(folder) {
         Ok(Some(repo)) => Ok((repo, real)),
-        Ok(None) => Err(NO_REPO.to_owned()),
+        Ok(None) => Err(no_repo().to_string()),
         Err(error) => Err(error.to_string()),
     }
 }
@@ -706,11 +718,11 @@ fn blame(path: &Path, text: &str) -> (Option<String>, Found) {
     };
     let head = repo.head_id();
     if text.len() > MAX_BYTES {
-        return (head, Err(TOO_LARGE.to_owned()));
+        return (head, Err(too_large().to_string()));
     }
     let known = |size: Result<Option<u64>, fe_git::GitError>| matches!(size, Ok(Some(_)));
     if !known(repo.head_blob_size(&real)) && !known(repo.index_blob_size(&real)) {
-        return (head, Err(UNTRACKED.to_owned()));
+        return (head, Err(untracked().to_string()));
     }
     let found = (repo.blame(&real, text))
         .map(Arc::from)
@@ -748,7 +760,7 @@ fn ago(seconds: i64) -> String {
     const DAY: i64 = 24 * HOUR;
     let seconds = seconds.max(0);
     let (count, unit) = if seconds < MINUTE {
-        return "just now".to_owned();
+        return tr!("workbench-git-blame-just-now").into();
     } else if seconds < HOUR {
         (seconds / MINUTE, "minute")
     } else if seconds < DAY {
@@ -762,8 +774,16 @@ fn ago(seconds: i64) -> String {
     } else {
         (seconds / (365 * DAY), "year")
     };
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {unit}{plural} ago")
+    let count = count as u64;
+    match unit {
+        "minute" => tr!("workbench-git-blame-ago-minutes", count = count),
+        "hour" => tr!("workbench-git-blame-ago-hours", count = count),
+        "day" => tr!("workbench-git-blame-ago-days", count = count),
+        "week" => tr!("workbench-git-blame-ago-weeks", count = count),
+        "month" => tr!("workbench-git-blame-ago-months", count = count),
+        _ => tr!("workbench-git-blame-ago-years", count = count),
+    }
+    .into()
 }
 
 /// `commit`'s author time in its own offset: `2026-10-14 09:30 +0200`.
@@ -795,13 +815,14 @@ pub(super) fn date(commit: &CommitInfo) -> String {
 /// committed yet, at `now`.
 fn label(commit: Option<&CommitInfo>, now: i64) -> String {
     match commit {
-        Some(commit) => format!(
-            "{}, {} ({})",
-            commit.summary,
-            commit.author,
-            ago(now - commit.time)
-        ),
-        None => NOT_COMMITTED.to_owned(),
+        Some(commit) => tr!(
+            "workbench-git-blame-label",
+            summary = commit.summary.as_str(),
+            author = commit.author.as_str(),
+            ago = ago(now - commit.time)
+        )
+        .into(),
+        None => not_committed().to_string(),
     }
 }
 
@@ -809,16 +830,17 @@ fn label(commit: Option<&CommitInfo>, now: i64) -> String {
 /// committed yet, at `now`.
 fn popover(commit: Option<&CommitInfo>, now: i64) -> HoverContent {
     let text = match commit {
-        Some(commit) => format!(
-            "**{}** {}\n{} ({})\n\n{}\n\n{}",
-            commit.author,
-            commit.email,
-            date(commit),
-            ago(now - commit.time),
-            commit.message.trim_end(),
-            commit.short,
-        ),
-        None => NOT_COMMITTED.to_owned(),
+        Some(commit) => tr!(
+            "workbench-git-blame-popover",
+            author = commit.author.as_str(),
+            email = commit.email.as_str(),
+            date = date(commit),
+            ago = ago(now - commit.time),
+            message = commit.message.trim_end(),
+            short = commit.short.as_str()
+        )
+        .into(),
+        None => not_committed().to_string(),
     };
     HoverContent { text, range: None }
 }
@@ -859,10 +881,10 @@ fn ask(
     op: &GitOp,
     row: Option<u32>,
     cx: &mut App,
-) -> Result<Ask, &'static str> {
-    let editor = op.editor.clone().ok_or(NO_FILE)?;
+) -> Result<Ask, SharedString> {
+    let editor = op.editor.clone().ok_or_else(no_file)?;
     let model = editor.read(cx).model();
-    let path = model.path().ok_or(NO_FILE)?.to_owned();
+    let path = model.path().ok_or_else(no_file)?.to_owned();
     let caret = (model.text())
         .offset_to_point(model.primary_selection().head())
         .row;
@@ -947,7 +969,7 @@ fn blame_line(
 ) {
     let ask = match ask(workbench, &op, None, cx) {
         Ok(ask) => ask,
-        Err(answer) => return workbench.answer_git_op(&op, answer.to_owned(), cx),
+        Err(answer) => return workbench.answer_git_op(&op, answer.to_string(), cx),
     };
     let then = move |workbench: &mut Workbench,
                      ask: Ask,
@@ -982,7 +1004,7 @@ fn open_line_commit(
 ) {
     let ask = match ask(workbench, &op, row, cx) {
         Ok(ask) => ask,
-        Err(answer) => return workbench.answer_git_op(&op, answer.to_owned(), cx),
+        Err(answer) => return workbench.answer_git_op(&op, answer.to_string(), cx),
     };
     let (path, text, row) = (ask.path.clone(), ask.text.clone(), ask.row);
     let read = cx.background_spawn(async move { read_origin(&path, &text, row) });
@@ -1038,7 +1060,7 @@ struct Origin {
 fn read_origin(path: &Path, text: &str, row: u32) -> Result<Option<(Origin, Texts)>, String> {
     let (repo, real) = repo(path)?;
     if text.len() > MAX_BYTES {
-        return Err(TOO_LARGE.to_owned());
+        return Err(too_large().to_string());
     }
     let error = |error: fe_git::GitError| error.to_string();
     let Some(head) = repo.head_text(&real).map_err(error)? else {
@@ -1046,7 +1068,7 @@ fn read_origin(path: &Path, text: &str, row: u32) -> Result<Option<(Origin, Text
         return if added {
             Ok(None)
         } else {
-            Err(UNTRACKED.to_owned())
+            Err(untracked().to_string())
         };
     };
     let Some(row) = head_row(&head, text, row) else {
@@ -1147,7 +1169,7 @@ fn blame_row(workdir: &Path, real: &Path, row: u32) -> Result<Option<Origin>, St
         .args(["blame", "--porcelain", "-L", &lines, "HEAD", "--"])
         .arg(relative)
         .output()
-        .map_err(|error| format!("git: {error}"))?;
+        .map_err(|error| tr!("workbench-git-error", error = error.to_string()).to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
     }
@@ -1159,7 +1181,7 @@ fn blame_row(workdir: &Path, real: &Path, row: u32) -> Result<Option<Origin>, St
         first.next().and_then(|row| row.parse::<u32>().ok()),
     ) else {
         let out = String::from_utf8_lossy(&output.stdout);
-        return Err(format!("git blame said: {out}"));
+        return Err(tr!("workbench-git-blame-said", out = out.as_ref()).to_string());
     };
     let (mut path, mut previous) = (real.to_owned(), None);
     // The commit's headers, up to the row's text.

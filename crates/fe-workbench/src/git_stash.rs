@@ -40,6 +40,7 @@ use gpui::{
     IntoElement as _, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity,
     Window, div,
 };
+use kiln_l10n::{text, tr};
 use kiln_shell::{ModalEvent, ModalId};
 
 use super::{
@@ -75,16 +76,24 @@ impl gpui::Global for ListingHolds {}
 pub(crate) const STASH_PICKER: ModalId = ModalId("git_stash");
 
 /// What a command answers outside a repository.
-const NO_REPO: &str = "Not in a git repository";
+fn no_repo() -> SharedString {
+    tr!("workbench-git-not-a-repository")
+}
 
 /// What popping or applying answers with nothing stashed: VS Code's.
-pub(crate) const NO_STASHES: &str = "There are no stashes in the repository.";
+pub(crate) fn no_stashes() -> SharedString {
+    tr!("workbench-git-stash-none")
+}
 
 /// What a stash with nothing to stash answers.
-pub(crate) const NOTHING_TO_SAVE: &str = "No local changes to save";
+pub(crate) fn nothing_to_save() -> SharedString {
+    tr!("workbench-git-stash-nothing-to-save")
+}
 
 /// What a pop or apply answers once the entry picked has moved or gone.
-pub(crate) const STASH_CHANGED: &str = "The stash changed since it was listed; pick again";
+pub(crate) fn stash_changed() -> SharedString {
+    tr!("workbench-git-stash-changed")
+}
 
 /// Runs `op`, a stash command.
 pub(super) fn run(
@@ -96,7 +105,7 @@ pub(super) fn run(
     let changes = workbench.dock.read(cx).changes().clone();
     let origin = workbench.stash_origin();
     let Some(origin) = origin.filter(|_| !changes.read(cx).not_a_repository()) else {
-        return workbench.answer_git_op(&op, NO_REPO.to_owned(), cx);
+        return workbench.answer_git_op(&op, no_repo().into(), cx);
     };
     match op.command {
         GitCommand::Stash => workbench.ask_stash_message(origin, false, window, cx),
@@ -136,13 +145,14 @@ impl Work {
     /// What a failure's toast says.
     fn failed(&self) -> String {
         match self {
-            Work::Push { .. } => "Can't stash".to_owned(),
+            Work::Push { .. } => tr!("workbench-git-stash-cant-stash").into(),
             Work::Take { verb, entry } => {
-                let verb = match verb {
-                    Verb::Pop => "pop",
-                    Verb::Apply => "apply",
-                };
-                format!("Can't {verb} stash@{{{}}}", entry.index)
+                let index = entry.index.to_string();
+                match verb {
+                    Verb::Pop => tr!("workbench-git-stash-cant-pop", index = index),
+                    Verb::Apply => tr!("workbench-git-stash-cant-apply", index = index),
+                }
+                .into()
             }
         }
     }
@@ -203,7 +213,12 @@ impl Workbench {
         };
         let picker = cx.new(|cx| {
             let ui = ui_theme(cx);
-            Picker::new(delegate, "Stash message (optional)", ui, cx)
+            Picker::new(
+                delegate,
+                text!("workbench-git-stash-message-placeholder"),
+                ui,
+                cx,
+            )
         });
         self.show_stash_modal(picker, window, cx);
     }
@@ -283,14 +298,14 @@ impl Workbench {
     ) {
         let entries = match entries {
             Ok(Some(entries)) => entries,
-            Ok(None) => return self.answer_git_op(&op, NO_REPO.to_owned(), cx),
+            Ok(None) => return self.answer_git_op(&op, no_repo().into(), cx),
             Err(error) => {
-                let toast = Toast::error("Can't list the stashes");
+                let toast = Toast::error(tr!("workbench-git-stash-cant-list"));
                 return toast::show(cx, toast.detail(error.to_string()));
             }
         };
         if entries.is_empty() {
-            return self.answer_git_op(&op, NO_STASHES.to_owned(), cx);
+            return self.answer_git_op(&op, no_stashes().into(), cx);
         }
         let delegate = StashPicker {
             workbench: cx.entity().downgrade(),
@@ -302,8 +317,8 @@ impl Workbench {
             _root: None,
         };
         let placeholder = match verb {
-            Verb::Pop => "Pick a stash to pop",
-            Verb::Apply => "Pick a stash to apply",
+            Verb::Pop => text!("workbench-git-stash-pick-pop"),
+            Verb::Apply => text!("workbench-git-stash-pick-apply"),
         };
         let picker = cx.new(|cx| {
             let ui = ui_theme(cx);
@@ -388,8 +403,8 @@ impl Workbench {
             return log::info!("{work:?} landed after the root changed");
         }
         let error = match outcome {
-            Outcome::NoRepo => return toast::show(cx, Toast::info(NO_REPO)),
-            Outcome::Moved => return toast::show(cx, Toast::info(STASH_CHANGED)),
+            Outcome::NoRepo => return toast::show(cx, Toast::info(no_repo())),
+            Outcome::Moved => return toast::show(cx, Toast::info(stash_changed())),
             Outcome::Done => None,
             Outcome::Failed(error) => Some(error),
         };
@@ -397,7 +412,7 @@ impl Workbench {
         self.check_open_files(window, cx);
         let toast = match error {
             None => return,
-            Some(StashError::NothingToStash) => Toast::info(NOTHING_TO_SAVE),
+            Some(StashError::NothingToStash) => Toast::info(nothing_to_save()),
             Some(StashError::Conflict { conflicts }) => {
                 let mut detail = conflicts.join("\n");
                 if matches!(
@@ -407,13 +422,16 @@ impl Workbench {
                         ..
                     }
                 ) {
-                    detail.push_str("\nThe stash entry is kept in case you need it again.");
+                    detail.push_str(&tr!("workbench-git-stash-entry-kept"));
                 }
                 let Work::Take { entry, .. } = &work else {
                     unreachable!("a push applies nothing");
                 };
-                Toast::warning(format!("Conflicts applying stash@{{{}}}", entry.index))
-                    .detail(detail)
+                Toast::warning(tr!(
+                    "workbench-git-stash-conflicts",
+                    index = entry.index.to_string()
+                ))
+                .detail(detail)
             }
             Some(StashError::Failed { output }) => Toast::error(work.failed()).detail(output),
             Some(error) => Toast::error(work.failed()).detail(error.to_string()),
@@ -457,7 +475,12 @@ fn run_stash(root: &Path, work: &Work) -> Outcome {
 
 /// `entry`'s row: `stash@{n}: message`.
 fn label(entry: &StashEntry) -> String {
-    format!("stash@{{{}}}: {}", entry.index, entry.message)
+    tr!(
+        "workbench-git-stash-row",
+        index = entry.index.to_string(),
+        message = entry.message.as_str()
+    )
+    .into()
 }
 
 /// Focuses `back`, if there's one.
@@ -511,14 +534,14 @@ impl StashModal for MessagePicker {
 impl MessagePicker {
     /// Its one row's label.
     pub(crate) fn label(&self) -> String {
-        let what = match self.include_untracked {
-            true => "Stash local changes, untracked files included",
-            false => "Stash local changes",
-        };
-        match self.message.is_empty() {
-            true => what.to_owned(),
-            false => format!("{what}, as '{}'", self.message),
+        let message = self.message.as_str();
+        match (self.include_untracked, self.message.is_empty()) {
+            (true, true) => tr!("workbench-git-stash-save-untracked"),
+            (false, true) => tr!("workbench-git-stash-save"),
+            (true, false) => tr!("workbench-git-stash-save-untracked-as", message = message),
+            (false, false) => tr!("workbench-git-stash-save-as", message = message),
         }
+        .into()
     }
 }
 
