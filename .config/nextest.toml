@@ -1,3 +1,5 @@
+experimental = ["setup-scripts"]
+
 # Keep nextest's store in the workspace even when CARGO_TARGET_DIR points elsewhere,
 # so Regatta finds the JUnit report at target/nextest/ci/junit.xml.
 [store]
@@ -60,3 +62,16 @@ or (package(fe-workbench) and (test(=tests::m3_signoff::a_100k_file_project_end_
   or test(=tests::project_panel::only_visible_rows_are_built)))
 '''
 test-group = "fsevents"
+
+# Every run gets its own Tenmoku state and config dirs (T1664): tests used to
+# write the user's real ~/.local/state/tenmoku. Both profiles run the script.
+[scripts.setup.isolate-state]
+command = ["bash", "scripts/nextest-isolate-state.sh"]
+
+[[profile.default.scripts]]
+filter = 'all()'
+setup = 'isolate-state'
+
+[[profile.ci.scripts]]
+filter = 'all()'
+setup = 'isolate-state'

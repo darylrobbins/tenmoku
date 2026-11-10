@@ -82,6 +82,13 @@ case "$timeout" in
 "" | *[!0-9]* | 0*) die "--timeout takes a whole number of seconds, got '$timeout'" ;;
 esac
 
+# Whatever this script (or a tool it starts) launches keeps its state out of the user's
+# real ~/.local/state/tenmoku (T1664). The tests' app gets scratch state dirs of its own.
+TENMOKU_STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tenmoku-e2e-state.XXXXXX")
+TENMOKU_CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tenmoku-e2e-config.XXXXXX")
+trap 'rm -rf "$TENMOKU_STATE_DIR" "$TENMOKU_CONFIG_DIR"' EXIT
+export TENMOKU_STATE_DIR TENMOKU_CONFIG_DIR
+
 [ "$(uname -s)" = Darwin ] || die "macOS only (XCUITest drives AppKit apps)"
 
 absolute() {
