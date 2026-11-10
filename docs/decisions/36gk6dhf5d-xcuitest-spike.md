@@ -506,18 +506,14 @@ No workflow was edited. From the docs:
   `project.yml` is 27-only). The runner sandbox found above may differ, and the script
   copes either way.
 - **Hardware and cost.** The standard arm64 runner has 3 M1 cores, 7 GB RAM and 14 GB SSD
-  (the runners reference). The standard macOS runner costs $0.062 a minute
-  ([runner pricing](https://docs.github.com/en/billing/reference/actions-runner-pricing)),
-  against $0.006 for a standard 2-core Linux runner. Standard hosted runners are free in
-  public repositories. For a private repository, as Tenmoku's is today, each job's
-  minutes × rate is deducted from the plan's included compute allowance. That allowance
-  is "a monetary amount, not a fixed number of minutes" ($18 a month on Pro or Team)
-  ([How use of GitHub Actions is measured](https://docs.github.com/en/billing/concepts/product-billing/github-actions)).
-  At $0.062 a minute, a 45-minute macOS job is about $2.80, so a run on every push would
-  use up Pro's $18 in about six runs.
-  The release build took 14 min 08 s here. On 3 cores, with the 14 GB disk that the Linux
-  job already overflows (T1655), expect it to be the bulk of the job. The tests
-  themselves take about a minute for three.
+  (the runners reference). The repository is public: `darylrobbins/fastedit` redirects
+  to `darylrobbins/tenmoku`, whose visibility is PUBLIC (`gh repo view`). Standard
+  GitHub-hosted runners are free in public repositories
+  ([How use of GitHub Actions is measured](https://docs.github.com/en/billing/concepts/product-billing/github-actions)),
+  so a macOS job costs runner time and time in the queue, not money. The release build
+  took 14 min 08 s here. On 3 cores, with the 14 GB disk that the Linux job already
+  overflows (T1655), expect it to be the bulk of the job. The tests themselves take about
+  a minute for three.
 
 **Finding:** feasible on paper (passwordless sudo for Automation Mode, a window server
 already in use), unproven in practice. **Open question:** does XCUITest get a session on
@@ -644,7 +640,8 @@ activation under XCUITest works.
    `.github/workflows/`). A `workflow_dispatch`-only job on `macos-26` that runs
    `sudo automationmodetool enable-automationmode-without-authentication`, builds,
    runs `scripts/e2e-macos.sh --iterations 3`, and uploads the result bundle. It records
-   whether a hosted runner can drive the app and what the job costs. A scheduled job is a
+   whether a hosted runner can drive the app, how long the job runs and how long it
+   waits for a runner. A scheduled job is a
    later decision.
 3. **E2E-3: a11y chrome for the suite** (feature, m): A11Y-2 plus A11Y-3 from the T294
    design, taken first, because status-bar items and regions unlock the most partial
