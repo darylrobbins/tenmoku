@@ -36,17 +36,17 @@ Short answers, argued in the sections below:
 
 ## 1. Status
 
-**Status: proposed.** Approver: **the user (Daryl Robbins)**. Nothing is built
-until the user signs off.
+**Status: approved.** Approver: **the user (Daryl Robbins)**. Approved by the
+user on 2026-11-09.
 
 - **No code changed.** `git diff --stat` against the lane's base (the commit
   adding this card's spec, 3964c10 on a801b67 at this revision; a rebase onto
   a newer main moves it) lists only this file. The measurements in
   §5 ran from a temporary test file and a temporary dev-dependency. Both were
   removed before the commit, and cargo's target dir was outside the repo.
-- **No cards filed.** This card files no implementation card. When it lands, the
-  lead brings this document to the user. The cards in §6 are drafted only after
-  the user approves it.
+- **Cards filed.** The §6 cards were filed on 2026-11-09 under dedupe keys
+  plugins3-1 onward. S1 is deliberately not filed: it waits for the user's
+  sign-off on condition 7 of §4.5.
 
 **Amends** the accepted record
 [vmtnmkay62-extensions-and-plugins.md](vmtnmkay62-extensions-and-plugins.md)
