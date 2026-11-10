@@ -5,9 +5,11 @@ Card T1661 (lane `36gk6dhf5d`), 2026-11-09. Harness: `tools/e2e-macos/project.ym
 
 ## Status
 
-Status: **proposed**. Approver: **the user**. This card files no follow-up card. The suite,
-the CI job and the a11y prerequisites in *Recommendation* are drafted only after the user
-signs this off.
+Status: **approved** (2026-11-09, approved by the user). Approver: **the user**. This card
+files no follow-up card itself; the user's sign-off filed E2E-1 (T1682, the suite) and
+E2E-2 (the CI probe job). The suite, the CI job and the a11y prerequisites in
+*Recommendation* are drafted only after the user signs this off. The suite's own record
+is `docs/decisions/n5krsav71f-xcuitest-suite.md`.
 
 The spike answers whether XCUITest can drive the shipped app with real OS input, and what
 it sees. It changes no product code and adds nothing to nextest, the gate or CI.
