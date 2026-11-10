@@ -19,10 +19,13 @@ interface process {
     /// file the grant was bound to, by the absolute path recorded then, never the name looked
     /// up again. If that file changed or went since, the grant is suspended until the user
     /// grants it again, and nothing runs. `args` reach the program as they are, never through a
-    /// shell. The environment holds only `PATH` (the system's), `HOME`, `LANG`, `LC_*`, `TMPDIR`
-    /// and `TERM`.
+    /// shell. The environment holds only these. On Unix: `PATH` (the system's), `HOME`, `LANG`,
+    /// `LC_*`, `TMPDIR` and `TERM`. On Windows: `PATH` (`%SystemRoot%\System32;%SystemRoot%;
+    /// %SystemRoot%\System32\Wbem`), `SystemRoot`, `windir`, `SystemDrive`, `USERPROFILE`,
+    /// `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `PATHEXT`, `ProgramData`,
+    /// `NUMBER_OF_PROCESSORS` and `PROCESSOR_ARCHITECTURE`.
     ///
     /// Fails with `denied` when no grant allows the program or it is suspended, and with
-    /// `failed` when it can't be started, or runs past the host's deadline (30 s) and is killed.
+    /// `failed` when it can't be started, or runs past the host's deadline (10 s) and is killed.
     spawn: func(program: string, args: list<string>, stdin: option<list<u8>>) -> result<output, error>;
 }

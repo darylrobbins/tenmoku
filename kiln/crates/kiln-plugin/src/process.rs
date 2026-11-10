@@ -114,7 +114,8 @@ impl ProgramBudget {
     }
 }
 
-/// The `PATH` a spawned program gets: the system's own directories, not the app's.
+/// The `PATH` a spawned program gets on Unix: the system's own directories, not the app's.
+/// See [`kiln_core::platform::system_path`] for this OS's.
 pub const SYSTEM_PATH: &str = "/usr/bin:/bin";
 
 /// How long a spawn waits, when its program neither wrote nor read, before looking again.
@@ -412,19 +413,12 @@ impl std::fmt::Display for SpawnError {
     }
 }
 
-/// The environment a spawned program gets out of the app's `environment`: `PATH` set to
-/// [`SYSTEM_PATH`], and `HOME`, `LANG`, `LC_*`, `TMPDIR` and `TERM` as the app has them.
+/// The environment a spawned program gets out of the app's, by this OS's rules:
+/// [`kiln_core::platform::minimal_environment`].
 pub fn minimal_environment(
     environment: impl IntoIterator<Item = (OsString, OsString)>,
 ) -> Vec<(OsString, OsString)> {
-    let passed = |name: &OsString| {
-        name.to_str().is_some_and(|name| {
-            matches!(name, "HOME" | "LANG" | "TMPDIR" | "TERM") || name.starts_with("LC_")
-        })
-    };
-    let mut minimal = vec![("PATH".into(), SYSTEM_PATH.into())];
-    minimal.extend(environment.into_iter().filter(|(name, _)| passed(name)));
-    minimal
+    kiln_core::platform::minimal_environment(environment)
 }
 
 enum Failure {

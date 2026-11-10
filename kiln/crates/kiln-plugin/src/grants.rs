@@ -284,6 +284,17 @@ pub struct ProgramIdentity {
     pub modified: (i64, i64),
     /// The SHA-256 of the content, in lower-case hex.
     pub sha256: String,
+    /// The program that runs the file, when it is not run directly: `cmd.exe` for a `.bat` or
+    /// `.cmd` file, which reads its arguments again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interpreter: Option<String>,
+}
+
+/// The interpreter a file named `path` is run through: `cmd.exe` for `.bat` and `.cmd`.
+pub fn interpreter_for(path: &Path) -> Option<String> {
+    let extension = path.extension()?.to_str()?;
+    (extension.eq_ignore_ascii_case("bat") || extension.eq_ignore_ascii_case("cmd"))
+        .then(|| "cmd.exe".to_owned())
 }
 
 /// TOML integers are signed 64-bit, and a device or inode number may not
@@ -361,6 +372,7 @@ pub fn resolve_program(name: &str, path_var: &OsStr) -> Result<ProgramIdentity, 
         })?;
         return Ok(ProgramIdentity {
             name: name.to_owned(),
+            interpreter: interpreter_for(&path),
             path,
             device,
             inode,

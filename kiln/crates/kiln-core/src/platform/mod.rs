@@ -5,7 +5,13 @@
 //! operating system (kiln's `docs/framework.md` §4); everything else
 //! asks [`Os`], so it can be tested "as Linux" on any host.
 
+pub(crate) mod env;
 pub(crate) mod fs;
+
+pub use env::{
+    minimal_environment, minimal_environment_for, system_path, system_path_for, unix_environment,
+    windows_environment,
+};
 
 pub use fs::{
     canonicalize, create_private_dir, file_identity, is_executable, modified_parts,
