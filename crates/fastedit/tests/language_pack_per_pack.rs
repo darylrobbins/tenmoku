@@ -73,28 +73,43 @@ fn skip() -> bool {
 }
 
 /// crates/fe-registry's `grammar-registry`, built once.
+/// A copy of `grammar-registry` this test process alone runs. Even a build
+/// with nothing to do rewrites cargo's copy of the binary, and nextest runs
+/// each test in its own process: a test starting the shared copy while
+/// another test's build rewrites it gets "Malformed Mach-o file" on macOS. So
+/// each process builds and copies under one lock in the target directory.
 fn grammar_registry() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let output = Command::new(cargo)
-            .args(["build", "--quiet", "--locked", "-p", "fe-registry"])
-            .args(["--bin", "grammar-registry", "--message-format=json"])
-            .current_dir(root())
-            .stderr(Stdio::inherit())
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "building grammar-registry failed");
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        let executable = (stdout.lines())
-            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .find_map(|message| {
-                let name = &message["target"]["name"];
-                let path = message["executable"].as_str()?;
-                (name == "grammar-registry").then(|| PathBuf::from(path))
-            });
-        executable.expect("cargo names grammar-registry's executable")
+        let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        let lock = fs::File::create(tmp.join("grammar-registry.lock")).unwrap();
+        lock.lock().unwrap();
+        let built = build_grammar_registry();
+        let own = tmp.join(format!("grammar-registry-{}", std::process::id()));
+        fs::copy(&built, &own).unwrap();
+        own
     })
+}
+
+fn build_grammar_registry() -> PathBuf {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .args(["build", "--quiet", "--locked", "-p", "fe-registry"])
+        .args(["--bin", "grammar-registry", "--message-format=json"])
+        .current_dir(root())
+        .stderr(Stdio::inherit())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "building grammar-registry failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let executable = (stdout.lines())
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|message| {
+            let name = &message["target"]["name"];
+            let path = message["executable"].as_str()?;
+            (name == "grammar-registry").then(|| PathBuf::from(path))
+        });
+    executable.expect("cargo names grammar-registry's executable")
 }
 
 fn wasm_name(language: &str) -> String {
