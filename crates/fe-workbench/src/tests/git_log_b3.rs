@@ -14,7 +14,8 @@ use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext,
 use crate::{
     Launch, Workbench,
     workbench::git_commands::git_log::{
-        CARD_DELAY, GitLogPanel, GraphColors, float_shadow, is_agent_commit, lane_palette,
+        CARD_DELAY, CLEARANCE, GitLogPanel, GraphColors, float_shadow, is_agent_commit,
+        lane_palette, rgb_distance,
     },
 };
 
@@ -175,12 +176,65 @@ fn colliding_roles_leave_no_lane_the_accent_or_the_agent() {
     let palette = |signals: &[gpui::Hsla]| lane_palette(signals, accent, agent);
     // Only signals, never the reserved two, each once.
     assert_eq!(palette(&[accent, other, agent, other]), [other]);
-    // None left: transparent, which is no signal's and no one's colour.
-    for signals in [&[accent, agent][..], &[]] {
-        let lanes = palette(signals);
-        assert_eq!(lanes.len(), 1);
-        assert_eq!(lanes[0].a, 0.);
+    // Every role the reserved two: shifted signals, still off both.
+    let lanes = palette(&[accent, agent, accent, agent]);
+    assert!(lanes.len() > 1);
+    for lane in &lanes {
+        assert_ne!(*lane, accent);
+        assert_ne!(*lane, agent);
+        assert!(lane.a > 0.);
     }
+    // Greys and black/white, which a hue can't move: still drawn apart.
+    for (accent, agent) in [
+        (hsla(0., 0., 0.5, 1.), hsla(0., 0., 0.75, 1.)),
+        (hsla(0., 0., 0., 1.), hsla(0., 0., 1., 1.)),
+    ] {
+        let lanes = lane_palette(&[accent, agent, accent], accent, agent);
+        assert!(!lanes.is_empty());
+        for lane in &lanes {
+            assert!(rgb_distance(*lane, accent) >= CLEARANCE, "{lane:?}");
+            assert!(rgb_distance(*lane, agent) >= CLEARANCE, "{lane:?}");
+        }
+    }
+    // No signal to derive from: transparent, no one's colour.
+    let lanes = palette(&[]);
+    assert_eq!(lanes.len(), 1);
+    assert_eq!(lanes[0].a, 0.);
+}
+
+#[gpui::test]
+fn a_theme_of_only_reserved_signals_gets_shifted_signal_lanes(cx: &mut TestAppContext) {
+    let (graph, accent, agent, signals) = cx.update(|cx| {
+        let mut theme = fe_ui::ActiveTheme::theme(cx).clone();
+        let (accent, agent) = (theme.colors.accent.base, theme.colors.agent.base);
+        let c = &mut theme.colors;
+        for role in [
+            &mut c.status.modified,
+            &mut c.status.success,
+            &mut c.status.warning,
+            &mut c.status.error,
+            &mut c.vcs.added,
+            &mut c.vcs.deleted,
+            &mut c.vcs.conflict,
+            &mut c.vcs.untracked,
+            &mut c.status.info,
+        ] {
+            *role = accent;
+        }
+        c.vcs.deleted = agent;
+        let signals = [c.status.modified, c.vcs.deleted];
+        fe_ui::set_theme(cx, theme);
+        (GraphColors::new(cx), accent, agent, signals)
+    });
+    assert_ne!(accent, agent);
+    assert!(signals.contains(&accent) && signals.contains(&agent));
+    let lanes: Vec<_> = (0..16).map(|lane| graph.lane(lane)).collect();
+    for lane in &lanes {
+        assert_ne!(*lane, accent);
+        assert_ne!(*lane, agent);
+        assert!(lane.a > 0.);
+    }
+    assert_ne!(graph.lane(0), graph.lane(1));
 }
 
 #[gpui::test]

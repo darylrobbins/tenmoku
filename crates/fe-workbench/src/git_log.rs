@@ -255,9 +255,19 @@ impl GraphColors {
 }
 
 /// The lanes' colours: the `signals` that are neither `accent` nor `agent`,
-/// each once, so always signal roles. A theme that makes every one of them
-/// the accent or the agent colour has none to give: the lanes are then
-/// drawn transparent, not in a colour that means something else.
+/// each once, so always signal roles.
+///
+/// Policy for a theme that makes every signal role the accent or the agent
+/// colour: none is eligible as written, so the palette is derived from the
+/// signals by shifting each one off the reserved colours: its hue is turned
+/// in steps of [`HUE_STEP`] (a grey, black or white one, which a hue can't
+/// move, is first given [`MIN_SATURATION`] and its lightness pulled into
+/// the middle band) until its rendered RGB colour is at least
+/// [`CLEARANCE`] from the accent, the agent colour and the lanes already
+/// taken. The lanes are then still signal-only, each a signal role shifted
+/// off the reserved colours, and never the accent or the agent colour; they
+/// never fall back to a non-signal colour. Only an empty `signals` (no role
+/// to derive from) leaves transparent lanes.
 pub(crate) fn lane_palette(signals: &[Hsla], accent: Hsla, agent: Hsla) -> Vec<Hsla> {
     let mut lanes: Vec<Hsla> = Vec::new();
     for color in signals {
@@ -266,9 +276,52 @@ pub(crate) fn lane_palette(signals: &[Hsla], accent: Hsla, agent: Hsla) -> Vec<H
         }
     }
     if lanes.is_empty() {
+        for color in signals {
+            let base = Hsla {
+                s: color.s.max(MIN_SATURATION),
+                l: color.l.clamp(0.3, 0.7),
+                a: 1.,
+                ..*color
+            };
+            let shifted = (1..=(1. / HUE_STEP) as u32)
+                .flat_map(|turn| {
+                    [0., 0.15, -0.15].map(|lift| Hsla {
+                        h: (base.h + HUE_STEP * turn as f32).fract(),
+                        l: (base.l + lift).clamp(0.2, 0.8),
+                        ..base
+                    })
+                })
+                .find(|candidate| {
+                    [accent, agent]
+                        .iter()
+                        .chain(&lanes)
+                        .all(|other| rgb_distance(*candidate, *other) >= CLEARANCE)
+                });
+            if let Some(shifted) = shifted {
+                lanes.push(shifted);
+            }
+        }
+    }
+    if lanes.is_empty() {
         lanes.push(transparent_black());
     }
     lanes
+}
+
+/// How far [`lane_palette`] turns a colliding signal's hue at a time.
+const HUE_STEP: f32 = 0.05;
+
+/// The saturation a grey signal is given, so turning its hue changes it.
+const MIN_SATURATION: f32 = 0.5;
+
+/// The least RGB distance a shifted lane keeps from the accent, the agent
+/// colour and the other lanes.
+pub(crate) const CLEARANCE: f32 = 0.08;
+
+/// The distance of `a` and `b` as drawn: Euclidean, in RGB.
+pub(crate) fn rgb_distance(a: Hsla, b: Hsla) -> f32 {
+    let (a, b): (gpui::Rgba, gpui::Rgba) = (a.into(), b.into());
+    ((a.r - b.r).powi(2) + (a.g - b.g).powi(2) + (a.b - b.b).powi(2)).sqrt()
 }
 
 /// The float shadow under a card on `raised`: `SHADOW_FLOAT`, its darker
