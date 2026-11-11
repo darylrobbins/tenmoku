@@ -22,16 +22,17 @@ use fe_display::{
 };
 use fe_editor::decorations::DecorationKind;
 use gpui::{
-    App, Bounds, ContentMask, CursorStyle, DispatchPhase, Hitbox, HitboxBehavior, Hsla,
-    MouseExitEvent, MouseMoveEvent, PathBuilder, Pixels, Window, fill, point, px, size,
+    App, Bounds, ContentMask, CursorStyle, DispatchPhase, Font, Hitbox, HitboxBehavior, Hsla,
+    MouseExitEvent, MouseMoveEvent, PathBuilder, Pixels, SharedString, Window, fill, point, px,
+    size,
 };
 
 use super::{
-    FrameLayout, Line, PointerOutside, Shaper,
+    FrameLayout, GlyphWidths, Line, PointerOutside, Shaper,
     decorations::{diff_color, tint_color},
 };
 use crate::{
-    EditorTheme, EditorView,
+    DrawnText, EditorTheme, EditorView,
     lens::{self, Lens, LensItem, PaintedRow},
     view::{HostBlockKind, ReservedBlock},
 };
@@ -39,10 +40,6 @@ use crate::{
 /// Lens rows' block ids: this plus the lens's index in the frame's
 /// [`lenses`]. Below are the host's and the proposals'.
 const LENS_IDS: u64 = 1 << 40;
-/// A lens row's text size, of the editor font's.
-pub(super) const LENS_SCALE: f32 = 0.9;
-/// Between a lens row's items.
-const LENS_SEPARATOR: &str = " | ";
 
 /// How opaque a text block's band is over its tint, and its highlighted
 /// words, but for a diff tint's ([`diff_color`]).
@@ -117,6 +114,8 @@ pub(super) fn lens_blocks<'a>(
 pub(super) struct PlacedLens {
     /// In the frame.
     rect: Rect,
+    /// What its text is shaped in, and at what size.
+    font: (Font, Pixels),
     items: Vec<PlacedItem>,
     /// The separators between them, and where each is painted.
     separators: Vec<(Vec2, Line)>,
@@ -135,20 +134,21 @@ struct PlacedItem {
     hitbox: Option<Hitbox>,
 }
 
-/// The lens rows in view, each item shaped by `small` in the muted text
-/// colour from its row's first non-blank column, as `shaper` measures the
-/// row's indentation, then ` | ` between them. Only as much is measured and
-/// shaped as can show: the indentation is counted in columns up to the
-/// view's right edge, items starting past it are left out, and a title
-/// longer than [`MAX_SHAPED_ROW_BYTES`] is shaped around the view only, as
-/// a long line of a text block is ([`slice`]), measured by `widths`.
+/// The lens rows in view, each item shaped by `small`, the design's UI
+/// small, in the faint text colour from its row's first non-blank column,
+/// as `shaper` measures the row's indentation, then [`lens::SEPARATOR`]
+/// between them. Only as much is measured and shaped as can show: the
+/// indentation is counted in columns up to the view's right edge, items
+/// starting past it are left out, and a title longer than
+/// [`MAX_SHAPED_ROW_BYTES`] is shaped around the view only, as a long line
+/// of a text block is ([`slice`]), measured in `small`'s font.
 pub(super) fn lens_layout(
     frame: &Frame<Line>,
     lenses: &[Lens],
     view: &EditorView,
     shaper: &mut Shaper,
     small: &mut Shaper,
-    widths: &mut dyn CharWidth,
+    cx: &App,
 ) -> Vec<PlacedLens> {
     let (text, tab_size) = (view.model.text(), view.model.tab_size().max(1));
     let color = view.theme.gutter_foreground;
@@ -162,6 +162,8 @@ pub(super) fn lens_layout(
     let space = shaper.shape(" ", &run(" ")).width();
     // How far from column 0 the view reaches.
     let reach = frame.scroll.x + frame.width;
+    // `small`'s widths, made once a long title needs them.
+    let mut small_widths: Option<GlyphWidths> = None;
     let mut out = Vec::new();
     for laid in &frame.blocks {
         let ix = laid
@@ -191,12 +193,13 @@ pub(super) fn lens_layout(
         let y = laid.rect.y;
         let mut placed = PlacedLens {
             rect: laid.rect,
+            font: (small.font().clone(), small.font_size()),
             items: Vec::new(),
             separators: Vec::new(),
         };
         for (n, item) in lens.items.iter().enumerate() {
             if n > 0 {
-                let line = small.shape(LENS_SEPARATOR, &run(LENS_SEPARATOR));
+                let line = small.shape(lens::SEPARATOR, &run(lens::SEPARATOR));
                 let width = line.width();
                 placed.separators.push((Vec2 { x, y }, line));
                 x += width;
@@ -207,13 +210,14 @@ pub(super) fn lens_layout(
             let title = &item.title;
             let (line, width, offset) = match title.len() > MAX_SHAPED_ROW_BYTES {
                 true => {
-                    let mut widths = Scaled(&mut *widths, LENS_SCALE);
-                    let width = clusters(title, &mut widths)
-                        .last()
-                        .map_or(0., |(_, _, end)| end);
+                    let widths = small_widths.get_or_insert_with(|| {
+                        let text_system = cx.text_system().clone();
+                        GlyphWidths::new(text_system, small.font(), small.font_size())
+                    });
+                    let width = clusters(title, widths).last().map_or(0., |(_, _, end)| end);
                     // The view's left edge, from the title's start.
                     let left = text_area.x - x;
-                    let (range, offset) = slice(title, frame, left, &mut widths);
+                    let (range, offset) = slice(title, frame, left, widths);
                     let shown = &title[range];
                     (small.shape(shown, &run(shown)), width as f32, offset as f32)
                 }
@@ -246,20 +250,6 @@ pub(super) fn lens_layout(
     out
 }
 
-/// Another measure's widths, scaled: the editor font's for a lens's
-/// smaller text.
-struct Scaled<'a>(&'a mut dyn CharWidth, f32);
-
-impl CharWidth for Scaled<'_> {
-    fn char_width(&mut self, ch: char) -> f32 {
-        self.0.char_width(ch) * self.1
-    }
-
-    fn cluster_width(&mut self, cluster: &str) -> f32 {
-        self.0.cluster_width(cluster) * self.1
-    }
-}
-
 /// Puts a hitbox over the part of each lens item in view.
 pub(super) fn insert_lens_hitboxes(
     placed: &mut [PlacedLens],
@@ -283,14 +273,16 @@ fn lens_hovered(hitbox: &Hitbox, window: &Window, cx: &App) -> bool {
 
 /// Paints the lens rows, each clipped to its row inside the text area, the
 /// item under the pointer underlined with a pointing hand, noting in
-/// `painted` the part of each row and item in view, which a click goes by.
-/// The pointer moving onto or off an item, or out of the window, redraws.
+/// `painted` the part of each row and item in view, which a click goes by,
+/// and in `drawn` the text of each. The pointer moving onto or off an item,
+/// or out of the window, redraws.
 pub(super) fn paint_lenses(
     placed: &[PlacedLens],
     layout: &FrameLayout,
     window: &mut Window,
     cx: &mut App,
     painted: &mut Vec<PaintedRow>,
+    drawn: &mut Vec<DrawnText>,
 ) {
     let line_height = px(layout.frame.line_height);
     let text_area = layout.frame.text_bounds();
@@ -299,6 +291,28 @@ pub(super) fn paint_lenses(
         #[cfg(test)]
         let mut underlined = Vec::new();
         let bounds = layout.bounds(lens.rect);
+        let (font, font_size) = &lens.font;
+        let mut texts = Vec::new();
+        for (n, item) in lens.items.iter().enumerate() {
+            let piece = |at: Vec2, line: &Line| {
+                let origin = layout.to_window(at);
+                let bounds = Bounds::new(origin, size(line.layout.width, line_height));
+                (line.color_at(0).unwrap_or_default(), bounds)
+            };
+            if let Some((at, line)) = n.checked_sub(1).and_then(|n| lens.separators.get(n)) {
+                texts.push((SharedString::new_static(lens::SEPARATOR), piece(*at, line)));
+            }
+            texts.push((item.item.title.clone(), piece(item.at, &item.line)));
+        }
+        drawn.extend(
+            (texts.into_iter()).map(|(text, (color, bounds))| DrawnText {
+                text,
+                font: font.clone(),
+                font_size: *font_size,
+                color,
+                bounds,
+            }),
+        );
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for (at, line) in &lens.separators {
                 line.paint(layout.to_window(*at), line_height, window, cx);

@@ -110,6 +110,9 @@ pub(crate) struct FrameLayout {
     agent_runs: Vec<(f32, f32)>,
     /// What the gutter drew, for [`EditorView::drawn_gutter`].
     drawn_gutter: DrawnGutter,
+    /// What the language-server annotations and matches drew, for
+    /// [`EditorView::drawn_annotations`].
+    drawn_annotations: DrawnAnnotations,
     /// Over the fold toggles and markers, which show a pointing hand.
     clickable: Vec<Hitbox>,
     /// Over the text, right of the gutter, where a hover range is found.
@@ -120,8 +123,12 @@ pub(crate) struct FrameLayout {
     annotation_hitbox: Option<Hitbox>,
     /// The band of the find's scope to paint ([`find_scope_rects`]).
     find_scope: Vec<Rect>,
-    /// The search matches to paint ([`match_rects`]).
-    matches: Vec<Rect>,
+    /// The search matches to paint ([`match_rects`]), each with whether it's
+    /// the current match.
+    matches: Vec<(Rect, bool)>,
+    /// Whether a match is current, in view or not ([`current_match`]): then
+    /// the others take `find_match_other` ([`match_colors`]).
+    match_current: bool,
     /// The previewed search match to paint over them
     /// ([`current_match_rects`]).
     current_match: Vec<Rect>,
@@ -599,7 +606,39 @@ impl Shaper {
             font_size: theme.font_size,
         }
     }
+
+    /// Shapes in the design's UI small: the UI's sans family
+    /// ([`crate::ui_font_family`]) at medium weight, two pixels under the
+    /// editor's size (11 at its default 13), as the hover card's footer.
+    /// Inlay hints and lens rows are set in it.
+    pub(crate) fn ui_small(
+        theme: &EditorTheme,
+        text_system: Arc<WindowTextSystem>,
+        cx: &App,
+    ) -> Self {
+        Self {
+            text_system,
+            font: Font {
+                weight: FontWeight::MEDIUM,
+                ..gpui::font(crate::ui_font_family(cx))
+            },
+            font_size: (theme.font_size - px(UI_SMALL_LESS)).max(px(1.)),
+        }
+    }
+
+    /// The font it shapes in.
+    pub(crate) fn font(&self) -> &Font {
+        &self.font
+    }
+
+    /// The size it shapes at.
+    pub(crate) fn font_size(&self) -> Pixels {
+        self.font_size
+    }
 }
+
+/// How much smaller than the editor's text the design's UI small is.
+const UI_SMALL_LESS: f32 = 2.;
 
 impl TextMeasure for Shaper {
     type Style = Hsla;
@@ -1106,7 +1145,10 @@ impl Element for EditorElement {
         let gutter = view.gutter;
         // The swatches' gaps after the hints, so a hint at a swatch's
         // offset comes first; the hints' indexes are the view's.
-        let mut hints = crate::inlay_hints::inlays(view);
+        // The design's UI small, which hints and lens rows are set in.
+        let mut small = Shaper::ui_small(theme, shaper.text_system.clone(), cx);
+        let space = glyph_widths.char_width(' ');
+        let mut hints = crate::inlay_hints::inlays(view, &mut small, space);
         let first_swatch = hints.len();
         hints.extend(crate::color_swatches::inlays(view));
         let unnecessary = unnecessary_ranges(&model.diagnostics());
@@ -1350,19 +1392,8 @@ impl Element for EditorElement {
             }
         }
         let placed = host_blocks::layout(&frame, view, &mut shaper, &mut glyph_widths, host_x);
-        let mut small = Shaper {
-            text_system: shaper.text_system.clone(),
-            font: shaper.font.clone(),
-            font_size: font_size * host_blocks::LENS_SCALE,
-        };
-        let mut lens_rows = host_blocks::lens_layout(
-            &frame,
-            &lenses,
-            view,
-            &mut shaper,
-            &mut small,
-            &mut glyph_widths,
-        );
+        let mut lens_rows =
+            host_blocks::lens_layout(&frame, &lenses, view, &mut shaper, &mut small, cx);
         let mut proposals = proposal::layout(
             &frame,
             &hunks,
@@ -1380,7 +1411,7 @@ impl Element for EditorElement {
             &mut glyph_widths,
             host_x,
         );
-        let inlay_hints = crate::inlay_hints::layout(&frame, view, &mut small);
+        let inlay_hints = crate::inlay_hints::layout(&frame, view, &mut small, space);
         let color_swatches = crate::color_swatches::layout(&frame, view, first_swatch);
         let annotations = annotation_column::layout(&frame, view, &mut shaper, em);
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
@@ -1469,6 +1500,7 @@ impl Element for EditorElement {
             hovered_fold: hovered,
             agent_runs: Vec::new(),
             drawn_gutter: DrawnGutter::default(),
+            drawn_annotations: DrawnAnnotations::default(),
             clickable,
             text,
             annotation_column: annotations,
@@ -1476,6 +1508,7 @@ impl Element for EditorElement {
             find_scope: Vec::new(),
             matches: Vec::new(),
             current_match: Vec::new(),
+            match_current: false,
             highlight_ran_out: None,
             brackets: Vec::new(),
             jump: None,
@@ -1502,8 +1535,10 @@ impl Element for EditorElement {
         layout.annotation_hitbox = column;
         layout.clickable.extend(entries);
         layout.find_scope = find_scope_rects(&mut layout, view);
-        layout.matches = match_rects(&mut layout, view);
+        let current = current_match(view);
+        layout.matches = match_rects(&mut layout, view, current.as_ref());
         layout.current_match = current_match_rects(&mut layout, view);
+        layout.match_current = view.search_preview().is_some() || current.is_some();
         layout.brackets = bracket_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
         layout.decorations = Decorations::layout(&mut layout, view, &queried, em, window);
@@ -1793,6 +1828,7 @@ impl Element for EditorElement {
         let mut inlay_hints_bounds = Vec::new();
         #[cfg(test)]
         let mut painted_inlay_hints = Vec::new();
+        let mut drawn = DrawnAnnotations::default();
         #[cfg(test)]
         let mut painted_swatches = Vec::new();
 
@@ -1851,6 +1887,7 @@ impl Element for EditorElement {
                         window,
                         cx,
                         &mut lens_rows,
+                        &mut drawn.lenses,
                     );
                     proposal::paint(
                         &layout.proposals,
@@ -1873,22 +1910,22 @@ impl Element for EditorElement {
                             decorations::note("find scope");
                         }
                     }
-                    // Under the selection, which stays visible over a match.
-                    for &found in &matches {
+                    // The others under the selection, which stays visible
+                    // over them.
+                    let (current_color, others) = match_colors(&theme, layout.match_current);
+                    for &(found, current) in &matches {
                         let found = layout.bounds(found);
-                        window.paint_quad(fill(found, search_match_color(&theme)));
+                        // In order, the current one too, painted below.
                         #[cfg(test)]
                         if found.intersects(&text_bounds) {
                             painted_matches.push(found);
                             decorations::note("matches");
                         }
-                    }
-                    // As the find bar's current match shows, selected.
-                    for &found in &current_match {
-                        let found = layout.bounds(found);
-                        window.paint_quad(fill(found, theme.selection));
-                        #[cfg(test)]
-                        painted_current_match.push(found);
+                        if current {
+                            continue;
+                        }
+                        window.paint_quad(fill(found, others).corner_radii(MATCH_RADIUS));
+                        drawn.matches.push((found, others));
                     }
                     for &selection in &selections {
                         let selection = layout.bounds(selection);
@@ -1897,6 +1934,24 @@ impl Element for EditorElement {
                         painted_selections.push(selection);
                         #[cfg(test)]
                         decorations::note("selection");
+                    }
+                    // The current match over the selection, which is the
+                    // find bar's current match: a search line's preview, or
+                    // the match selected or at the caret.
+                    let current = (matches.iter())
+                        .filter(|&&(_, current)| current)
+                        .map(|&(found, _)| (found, false))
+                        .chain(current_match.iter().map(|&found| (found, true)));
+                    for (found, previewed) in current {
+                        let found = layout.bounds(found);
+                        window.paint_quad(fill(found, current_color).corner_radii(MATCH_RADIUS));
+                        drawn.current_match.push((found, current_color));
+                        #[cfg(test)]
+                        if previewed {
+                            painted_current_match.push(found);
+                        }
+                        #[cfg(not(test))]
+                        let _ = previewed;
                     }
                     for &bracket in &brackets {
                         let bracket = layout.bounds(bracket);
@@ -1938,10 +1993,11 @@ impl Element for EditorElement {
                     crate::inlay_hints::paint(
                         &layout.inlay_hints,
                         &layout,
-                        theme.gutter_foreground,
+                        &theme,
                         window,
                         cx,
                         &mut inlay_hints_bounds,
+                        &mut drawn.inlay_hints,
                         #[cfg(test)]
                         &mut painted_inlay_hints,
                     );
@@ -2076,6 +2132,24 @@ impl Element for EditorElement {
             minimap::paint(&layout, &theme, minimap_hover, minimap_dragged, window);
         });
         layout.drawn_gutter = drawn_gutter(&layout, &theme, &marks, agent_dots, drawn_chevrons);
+        drawn.inline_diagnostics = inline_diagnostics.drawn();
+        for placed in &layout.decorations.placed {
+            match &placed.kind {
+                DecorationKind::Highlight => drawn.highlights.push((placed.bounds, placed.color)),
+                DecorationKind::Underline { wavy } => {
+                    drawn.underlines.push((placed.bounds, placed.color, *wavy));
+                }
+                DecorationKind::SyntaxUnderline(_) => {
+                    drawn.underlines.push((placed.bounds, placed.color, false));
+                }
+                _ => {}
+            }
+        }
+        for (squiggle, style) in &squiggles {
+            let color = style.color.unwrap_or(theme.foreground);
+            drawn.underlines.push((*squiggle, color, style.wavy));
+        }
+        layout.drawn_annotations = drawn;
         #[cfg(test)]
         let painted_minimap = minimap::painted(&layout, &theme, minimap_hover, minimap_dragged);
         #[cfg(test)]
@@ -2806,6 +2880,60 @@ impl EditorView {
     pub fn drawn_gutter(&self) -> Option<&DrawnGutter> {
         Some(&self.layout.as_ref()?.drawn_gutter)
     }
+
+    /// What the last frame drew of the language-server annotations and the
+    /// search matches: `None` before the first. For tests outside the crate.
+    #[doc(hidden)]
+    pub fn drawn_annotations(&self) -> Option<&DrawnAnnotations> {
+        Some(&self.layout.as_ref()?.drawn_annotations)
+    }
+}
+
+/// What a frame drew of the language-server annotations and the search
+/// matches, in window coordinates: for tests outside the crate
+/// ([`EditorView::drawn_annotations`]).
+#[doc(hidden)]
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DrawnAnnotations {
+    /// The inlay hints' pills.
+    pub inlay_hints: Vec<DrawnPill>,
+    /// The diagnostics' messages after their rows: each one's buffer row,
+    /// bounds and colour.
+    pub inline_diagnostics: Vec<(u32, Bounds<Pixels>, Hsla)>,
+    /// The decorations' highlights, the identifier's uses among them.
+    pub highlights: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The diagnostics' squiggles and the decorations' underlines, a
+    /// mutable binding's among them: each one's bounds, as tall as it's
+    /// thick, colour and whether it's wavy.
+    pub underlines: Vec<(Bounds<Pixels>, Hsla, bool)>,
+    /// The search matches but the current one.
+    pub matches: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The current search match, a rect for each row it's on.
+    pub current_match: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The lens rows' text, items and separators, in order.
+    pub lenses: Vec<DrawnText>,
+}
+
+/// A piece of text a frame drew.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnText {
+    pub text: SharedString,
+    pub font: Font,
+    pub font_size: Pixels,
+    pub color: Hsla,
+    /// Where it's drawn: from its origin, as wide as it's shaped.
+    pub bounds: Bounds<Pixels>,
+}
+
+/// An inlay hint's pill.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnPill {
+    pub bounds: Bounds<Pixels>,
+    pub background: Hsla,
+    pub corner_radius: Pixels,
+    pub text: DrawnText,
 }
 
 /// Takes the agent lane's rows out of the change bars: an agent's rows show
@@ -3353,11 +3481,19 @@ fn bracket_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
 /// The most search matches painted in a frame.
 pub(crate) const MAX_MATCHES: usize = 1_000;
 
-/// The theme's search-match colour, for vim's matches and the find
-/// pattern's: its foreground, faint, until the theme has a slot for it.
-fn search_match_color(theme: &EditorTheme) -> Hsla {
-    theme.foreground.opacity(0.22)
+/// The colours of the current search match and of the others, for vim's
+/// matches and the find pattern's: the current one `find_match`, and the
+/// others `find_match_other` while one is current, else `find_match` too.
+fn match_colors(theme: &EditorTheme, current: bool) -> (Hsla, Hsla) {
+    let others = match current {
+        true => theme.find_match_other,
+        false => theme.find_match,
+    };
+    (theme.find_match, others)
 }
+
+/// The corner radius of a find match's fill: the design's for find fills.
+const MATCH_RADIUS: Pixels = px(2.);
 
 /// The band of the find's scope: the selection's colour, fainter, as what
 /// was selected when it was captured.
@@ -3405,7 +3541,11 @@ thread_local! {
 /// The find pattern's matches are only those inside the find's scope, if it
 /// has one ([`EditorView::find_scope`]), which alone use the budget; a row
 /// shown outside it isn't searched.
-fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
+fn match_rects(
+    layout: &mut FrameLayout,
+    view: &EditorView,
+    current: Option<&Range<usize>>,
+) -> Vec<(Rect, bool)> {
     // How many more ranges the frame may find: bounded for the find
     // pattern only.
     let previewed = view.previewed_pattern();
@@ -3419,6 +3559,7 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     let Some(pattern) = pattern else {
         return Vec::new();
     };
+    let is_current = |range: &Range<usize>| current == Some(range);
     #[cfg(test)]
     CANDIDATES.with(|n| n.set(0));
     #[cfg(test)]
@@ -3591,12 +3732,13 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
                 }
                 false => (left, width),
             };
-            rects.push(Rect {
+            let rect = Rect {
                 x: left,
                 y: frame.row_top(row.row),
                 width,
                 height: frame.line_height,
-            });
+            };
+            rects.push((rect, is_current(range)));
             if rects.len() >= MAX_MATCHES {
                 break 'rows;
             }
@@ -3663,6 +3805,72 @@ fn find_scope_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
         }
     }
     rects
+}
+
+/// The current search match ([`EditorView::match_pattern`]'s), in view or
+/// not, but while a search line's preview shows its own
+/// ([`current_match_rects`]): the match the primary selection is, as the
+/// find bar selects the match it's on, or with vim on the one starting at
+/// the caret, as nvim's CurSearch; as [`EditorView::find_count`] tells its
+/// current one, an empty one too, but uncapped. The count tells it when it
+/// has every match; else it's found on the candidate's own row, searched
+/// from its start (from earlier rows too, for a pattern that spans rows) as
+/// far as the candidate, so neither the viewport nor the count's cap decides
+/// it. `None` past the search's time limit.
+fn current_match(view: &EditorView) -> Option<Range<usize>> {
+    if view.previewed_pattern().is_some() {
+        return None;
+    }
+    // The find's count, when it has them all, says without a search.
+    if view.find_pattern().is_some()
+        && let Some(count) = view.find_count()
+        && !count.capped
+    {
+        let counted = view.find_counted()?;
+        return count
+            .current
+            .and_then(|n| counted.get(n.checked_sub(1)?).cloned());
+    }
+    let pattern = view.match_pattern()?;
+    let text = view.model.text();
+    let selection = view.model.primary_selection();
+    let vim = view.vim.is_some();
+    let start = match vim {
+        true => selection.head(),
+        false => selection.range.start,
+    };
+    let row = text.offset_to_point(start).row;
+    // Up to the selection's end, or a character past the caret: what a
+    // match starting there reaches.
+    let window = match vim {
+        true => start..text.clip_offset((start + 1).min(text.len()), fe_buffer::Bias::Right),
+        false => selection.range.clone(),
+    };
+    let mut deadline = fe_vim::search::Deadline::after(fe_vim::search::time_limit());
+    let found = match pattern.spans_rows() {
+        true => {
+            let shown = [(row, window)];
+            fe_vim::search::matches_across_until(text, &shown, pattern, &mut deadline)
+        }
+        false => fe_vim::search::matches_reaching_until(
+            text,
+            row,
+            window,
+            pattern,
+            usize::MAX,
+            &mut deadline,
+        ),
+    };
+    let found = found.into_iter().find(|found| match vim {
+        true => found.start == start,
+        false => *found == selection.range,
+    })?;
+    // A find's scope leaves out what's outside it.
+    let scope = view.find_pattern().and_then(|_| view.find_scope());
+    match scope {
+        Some(scope) if !EditorView::in_find_scope(text, &scope, &found) => None,
+        _ => Some(found),
+    }
 }
 
 /// The rects of the match a vim search line's preview shows

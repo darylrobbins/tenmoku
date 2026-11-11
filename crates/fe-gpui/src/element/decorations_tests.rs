@@ -331,7 +331,8 @@ fn highlights_and_underlines_span_their_range(cx: &mut TestAppContext) {
         (bounds.top(), bounds.size.height),
         (shown[1].2, line_height)
     );
-    assert_eq!(color, theme.foreground.opacity(0.22));
+    // A muted one is a use of the identifier under the caret (T1550).
+    assert_eq!(color, theme.identifier_highlight);
 
     // Just below the baseline, 1 px, in the tint.
     let baseline_y = with_layout(&view, cx, |layout| {

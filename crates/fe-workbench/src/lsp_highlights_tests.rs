@@ -120,11 +120,23 @@ fn server_highlights_show_where_the_caret_rests(cx: &mut TestAppContext) {
     assert_eq!(shown(&mut s, &editor), vec![]);
     rest(&mut s);
     s.until("the highlights", |s| !shown(s, &editor).is_empty());
+    // A read and a write alike: the identifier highlight (T1550).
     assert_eq!(
         shown(&mut s, &editor),
-        vec![(8..11, Tint::Muted), (20..23, Tint::Accent)]
+        vec![(8..11, Tint::Muted), (20..23, Tint::Muted)]
     );
     assert_eq!(requests(&s), 1);
+    s.draw();
+    let (drawn, fill) = editor.read_with(&s.cx, |editor, _| {
+        let drawn = editor
+            .drawn_annotations()
+            .expect("drawn")
+            .highlights
+            .clone();
+        (drawn, editor.theme().identifier_highlight)
+    });
+    let colors: Vec<_> = drawn.iter().map(|&(_, color)| color).collect();
+    assert_eq!(colors, [fill, fill]);
 
     // Off the symbol, they're gone before the next answer.
     move_caret(&mut s, &editor, 5);

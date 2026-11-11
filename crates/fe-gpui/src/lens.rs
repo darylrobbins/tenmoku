@@ -1,16 +1,23 @@
 //! Clickable rows above an editor's rows, as VS Code's CodeLens: a
 //! language server's "3 references" or a merge conflict's "Accept Current
-//! Change | Accept Incoming Change". A [`LensProvider`], added with
+//! Change · Accept Incoming Change". A [`LensProvider`], added with
 //! [`crate::EditorView::add_lens_provider`], gives [`Lens`]es for the text
 //! each frame draws; the providers' lenses over one row make one lens row,
 //! a block row above the row's first display row, laid out and painted by
 //! [`crate::element`]'s `host_blocks`. A click on an item runs its command.
+//!
+//! A lens row is set in the design's UI small, the UI's sans family, in
+//! faint text, its items `·` separated (`docs/design/design-system.md#editor`,
+//! Language-server formatting).
 
 use std::collections::BTreeMap;
 
 use fe_buffer::BufferSnapshot;
 use fe_command::Invocation;
 use gpui::{Bounds, Pixels, SharedString};
+
+/// Between a lens row's items.
+pub(crate) const SEPARATOR: &str = " \u{b7} ";
 
 /// One clickable item of a lens row.
 #[derive(Clone, Debug, PartialEq)]

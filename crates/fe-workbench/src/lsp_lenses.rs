@@ -20,6 +20,7 @@ use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, Lens, LensItem, LensProvider};
 use fe_lsp::{CodeLens, IncarnationId, LspError, LspNavigation, ServerId, SessionId};
 use gpui::{AppContext as _, Context, Entity, EntityId, SharedString, Task};
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -58,6 +59,11 @@ impl LensProvider for Shown {
             })
             .collect()
     }
+}
+
+/// What a toast says of a lens titled `title` whose command can't run.
+fn unsupported(title: &str) -> SharedString {
+    tr!("workbench-lens-unsupported", title = title)
 }
 
 /// The click on lens `id`.
@@ -486,10 +492,7 @@ impl Workbench {
                 .and_then(LspNavigation::lens_locations);
             let (Some(word), Some(locations)) = (origin, locations) else {
                 log::debug!("lens {title:?}: unusable arguments");
-                toast::show(
-                    cx,
-                    Toast::info(format!("{title}: this command isn't supported")),
-                );
+                toast::show(cx, Toast::info(unsupported(&title)));
                 return;
             };
             // The panel takes focus in the window the click was in, once this
@@ -517,15 +520,15 @@ impl Workbench {
             Ok(()) => {}
             Err(LspError::Unavailable(why)) => {
                 log::debug!("lens {title:?} not run: {why}");
-                cx.update(|cx| {
-                    toast::show(
-                        cx,
-                        Toast::info(format!("{title}: this command isn't supported")),
-                    )
-                });
+                cx.update(|cx| toast::show(cx, Toast::info(unsupported(&title))));
             }
             Err(error) => {
-                cx.update(|cx| toast::show(cx, Toast::info(format!("{title}: {error}"))));
+                let failed = tr!(
+                    "workbench-lens-failed",
+                    title = &title,
+                    error = error.to_string()
+                );
+                cx.update(|cx| toast::show(cx, Toast::info(failed)));
             }
         })
         .detach();

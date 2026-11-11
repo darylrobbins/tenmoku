@@ -1,8 +1,16 @@
 //! Inlay hints a host gives an editor ([`EditorView::set_inlay_hints`]):
 //! short labels drawn inside the text at buffer offsets, such as a
-//! variable's inferred type, in a muted chip as VS Code draws them. They're
-//! anchored in the buffer and follow edits until the host's next answer
-//! replaces them; the caret is never inside one.
+//! variable's inferred type, as small pills: the design's UI small in faint
+//! text on the raised surface, radius 4
+//! (`docs/design/design-system.md#editor`, Language-server formatting).
+//! They're anchored in the buffer and follow edits until the host's next
+//! answer replaces them; the caret is never inside one.
+//!
+//! The row makes room for a hint by shaping what it's given in the editor's
+//! font, so it's given spaces, as many as cover the pill, its label shaped
+//! in UI small and [`PILL_PADDING`] each side ([`inlays`]), and one more
+//! each side the hint asks padding for. A hint's spaces are worked out once
+//! per hint, font and size.
 
 use std::{any::Any, future::Future, ops::Range, pin::Pin, rc::Rc};
 
@@ -11,7 +19,16 @@ use fe_display::layout::{self, Frame, MeasuredLine as _, Vec2};
 use gpui::Pixels;
 use gpui::{App, Bounds, Context, Hsla, Window, fill, px};
 
-use crate::{EditorView, element::FrameLayout, element::Line, element::Shaper};
+use crate::{
+    DrawnPill, DrawnText, EditorTheme, EditorView, element::FrameLayout, element::Line,
+    element::Shaper,
+};
+
+/// A pill's corner radius: the design's for small controls.
+const PILL_RADIUS: Pixels = px(4.);
+
+/// Between a pill's edge and its label, at the least.
+const PILL_PADDING: f32 = 4.;
 
 /// What an [`InlayHint`] labels.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -53,7 +70,9 @@ pub trait InlayHintHost {
 }
 
 impl InlayHint {
-    /// The text drawn: the label with a space for each side of padding.
+    /// The label with a space for each side of padding, as tests name a
+    /// painted hint.
+    #[cfg(test)]
     pub(crate) fn text(&self) -> String {
         let (left, right) = (self.padding_left, self.padding_right);
         let mut text = String::with_capacity(self.label.len() + 2);
@@ -89,6 +108,16 @@ pub(crate) struct Hints {
     states: Vec<State>,
     /// The resolutions under way, by hint id: dropped with the hints.
     tasks: std::collections::HashMap<u64, gpui::Task<()>>,
+    /// How many spaces each hint's pill takes in the row ([`inlays`]).
+    room: std::cell::RefCell<Room>,
+}
+
+/// The spaces each hint's pill takes, by hint id, for the font, size and
+/// space width they were measured in: measured again when one changes.
+#[derive(Default)]
+struct Room {
+    measured_in: Option<(gpui::SharedString, u32, u32)>,
+    spaces: std::collections::HashMap<u64, usize>,
 }
 
 /// The next hint identity.
@@ -195,6 +224,7 @@ impl EditorView {
             ids: hints.iter().map(|_| next_id()).collect(),
             states: vec![State::Unresolved; hints.len()],
             tasks: Default::default(),
+            room: Default::default(),
             hints,
         };
         let snapshot = self.model.snapshot().clone();
@@ -414,78 +444,167 @@ fn rebase(
     if overlap { Vec::new() } else { mapped }
 }
 
-/// The hints a frame lays out, in the transparent style: the chip's text is
-/// painted separately, smaller ([`layout`]).
-pub(crate) fn inlays(view: &EditorView) -> Vec<layout::Inlay<Hsla>> {
-    (view.inlay_hints.hints.iter())
-        .map(|hint| layout::Inlay {
-            offset: hint.offset,
-            text: hint.text(),
-            style: Hsla::transparent_black(),
+/// The hints a frame lays out, as spaces in the transparent style, `space`
+/// wide each in the editor's font: as many as cover the pill, its label
+/// shaped by `small` with [`PILL_PADDING`] each side, and one each side the
+/// hint is padded on. The pill and its label are painted over them
+/// ([`layout`], [`paint`]).
+pub(crate) fn inlays(
+    view: &EditorView,
+    small: &mut Shaper,
+    space: f32,
+) -> Vec<layout::Inlay<Hsla>> {
+    let hints = &view.inlay_hints;
+    let space = space.max(1.);
+    let mut room = hints.room.borrow_mut();
+    let measured_in = (
+        small.font().family.clone(),
+        f32::from(small.font_size()).to_bits(),
+        space.to_bits(),
+    );
+    if room.measured_in.as_ref() != Some(&measured_in) {
+        room.spaces.clear();
+        room.measured_in = Some(measured_in);
+    }
+    // Hints gone since.
+    if room.spaces.len() > hints.ids.len() {
+        room.spaces.retain(|id, _| hints.ids.contains(id));
+    }
+    (hints.hints.iter().zip(&hints.ids))
+        .map(|(hint, id)| {
+            let spaces = *room.spaces.entry(*id).or_insert_with(|| {
+                let label = label(hint);
+                let runs = [layout::StyleRun {
+                    len: label.len(),
+                    style: Hsla::transparent_black(),
+                }];
+                let width = layout::TextMeasure::shape(small, &label, &runs).width();
+                ((width + 2. * PILL_PADDING) / space).ceil().max(1.) as usize
+            });
+            let pad = |on: bool| if on { " " } else { "" };
+            layout::Inlay {
+                offset: hint.offset,
+                text: format!(
+                    "{}{}{}",
+                    pad(hint.padding_left),
+                    " ".repeat(spaces),
+                    pad(hint.padding_right)
+                ),
+                style: Hsla::transparent_black(),
+            }
         })
         .collect()
+}
+
+/// What a hint's pill says: its label on one line.
+fn label(hint: &InlayHint) -> String {
+    hint.label.replace(['\n', '\r'], " ")
 }
 
 /// A hint a frame laid out, shaped small to paint.
 pub(crate) struct Shown {
     ix: usize,
+    /// Its label, shaped in `line`.
+    label: String,
+    line: Line,
+    /// All it takes in the row, its padding too.
+    rect: layout::Rect,
+    /// The pill's part of `rect`, inside the padding.
+    pill: layout::Rect,
+    /// What it's shaped in, and at what size.
+    font: (gpui::Font, Pixels),
     #[cfg(test)]
     text: String,
-    line: Line,
-    rect: layout::Rect,
 }
 
-/// Shapes the hints `frame` laid out, from the view's hints, with `small`.
-pub(crate) fn layout(frame: &Frame<Line>, view: &EditorView, small: &mut Shaper) -> Vec<Shown> {
-    let muted = view.theme.gutter_foreground;
+/// Shapes the hints `frame` laid out, from the view's hints, with `small`,
+/// the design's UI small, in faint text: the theme's line numbers' colour.
+/// Each one's pill is its room in the row less a `space` for each side it's
+/// padded on.
+pub(crate) fn layout(
+    frame: &Frame<Line>,
+    view: &EditorView,
+    small: &mut Shaper,
+    space: f32,
+) -> Vec<Shown> {
+    let faint = view.theme.gutter_foreground;
     (frame.hints.iter())
         .filter_map(|&(ix, rect)| {
-            let text = view.inlay_hints.hints.get(ix)?.text();
+            let hint = view.inlay_hints.hints.get(ix)?;
+            let label = label(hint);
             let runs = [layout::StyleRun {
-                len: text.len(),
-                style: muted,
+                len: label.len(),
+                style: faint,
             }];
-            let line = layout::TextMeasure::shape(small, &text, &runs);
+            let line = layout::TextMeasure::shape(small, &label, &runs);
+            let (left, right) = (
+                if hint.padding_left { space } else { 0. },
+                if hint.padding_right { space } else { 0. },
+            );
+            let pill = layout::Rect {
+                x: rect.x + left,
+                width: (rect.width - left - right).max(0.),
+                ..rect
+            };
             Some(Shown {
                 ix,
-                #[cfg(test)]
-                text,
+                label,
                 line,
                 rect,
+                pill,
+                font: (small.font().clone(), small.font_size()),
+                #[cfg(test)]
+                text: hint.text(),
             })
         })
         .collect()
 }
 
-/// Paints the chips and their text, noting in tests what was painted.
+/// Paints the pills and their text, noting what was drawn in `drawn`, and
+/// in tests what was painted.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint(
     shown: &[Shown],
     layout: &FrameLayout,
-    theme_muted: Hsla,
+    theme: &EditorTheme,
     window: &mut Window,
     cx: &mut App,
     bounds_out: &mut Vec<(usize, Bounds<Pixels>)>,
+    drawn: &mut Vec<DrawnPill>,
     #[cfg(test)] painted: &mut Vec<(String, Bounds<Pixels>)>,
 ) {
     let line_height = px(layout.frame.line_height);
+    // The design's raised surface, as the hover card's.
+    let surface = theme.popover_background;
     for hint in shown {
         let bounds = layout.bounds(hint.rect);
         bounds_out.push((hint.ix, bounds));
-        // A little in from the row's top and bottom, as a chip.
+        // A little in from the row's top and bottom, as a pill.
         let inset = px(1.);
-        let chip = Bounds::new(
-            bounds.origin + gpui::point(px(0.), inset),
-            gpui::size(bounds.size.width, bounds.size.height - inset * 2.),
+        let pill = layout.bounds(hint.pill);
+        let pill = Bounds::new(
+            pill.origin + gpui::point(px(0.), inset),
+            gpui::size(pill.size.width, pill.size.height - inset * 2.),
         );
-        let mut background = fill(chip, theme_muted.opacity(0.1));
-        background.corner_radii = gpui::Corners::all(px(3.));
-        window.paint_quad(background);
-        let across = (hint.rect.width - hint.line.width()).max(0.) / 2.;
+        window.paint_quad(fill(pill, surface).corner_radii(PILL_RADIUS));
+        let across = (hint.pill.width - hint.line.width()).max(0.) / 2.;
         let origin = layout.to_window(Vec2 {
-            x: hint.rect.x + across,
-            y: hint.rect.y,
+            x: hint.pill.x + across,
+            y: hint.pill.y,
         });
         hint.line.paint(origin, line_height, window, cx);
+        drawn.push(DrawnPill {
+            bounds: pill,
+            background: surface,
+            corner_radius: PILL_RADIUS,
+            text: DrawnText {
+                text: hint.label.clone().into(),
+                font: hint.font.0.clone(),
+                font_size: hint.font.1,
+                color: hint.line.color_at(0).unwrap_or(theme.gutter_foreground),
+                bounds: Bounds::new(origin, gpui::size(px(hint.line.width()), pill.size.height)),
+            },
+        });
         #[cfg(test)]
         painted.push((hint.text.clone(), bounds));
     }

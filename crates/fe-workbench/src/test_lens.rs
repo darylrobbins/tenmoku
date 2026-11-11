@@ -1,12 +1,16 @@
 //! A Run Test lens above each test, as rust-analyzer's in VS Code: a
-//! [`LensProvider`] per editor, giving `Run Test` over each test function
-//! and `Run Tests` over each test module or class, whose click runs
-//! `tests.run_row` ([`crate::test_commands`]) for that row, wherever the
-//! caret is.
+//! [`LensProvider`] per editor, giving `▷ Run test` over each test function
+//! and `▷ Run tests` over each test module or class
+//! (`docs/design/design-system.md#editor`; the editor sets lens rows in UI
+//! small sans), whose click runs `tests.run_row` ([`crate::test_commands`])
+//! for that row, wherever the caret is.
 //!
 //! The provider is asked each frame for a snapshot but has no tree, so it
 //! shows what [`sync`] read off the editor's parse: the rows, anchored to
 //! the text, so an edit moves them at once and a new parse corrects them.
+//! What it read is of a version and a language: a parse in another language
+//! of the same text (the editor's language changed) is read again, and an
+//! editor in no language with runnables shows none.
 //! The editors that get one are the tabs' showing a file inside a trusted
 //! root, in a language with runnables, while `editor.code_lens` is on.
 
@@ -15,7 +19,8 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use fe_buffer::{Anchor, BufferSnapshot, Version};
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, Lens, LensItem, LensProvider};
-use gpui::{App, Context, Entity, EntityId, Subscription, WeakEntity};
+use gpui::{App, Context, Entity, EntityId, SharedString, Subscription, WeakEntity};
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -25,26 +30,35 @@ use crate::{
 /// What a click on a test's lens runs.
 const RUN_ROW: &str = "tests.run_row";
 
-/// One lens row: where it sits, and what it says.
-type Row = (Anchor, &'static str);
+/// One lens row: where it sits, and what it runs.
+type Row = (Anchor, RunnableKind);
 
-/// What a provider shows: the rows of the parse at `version`.
+/// What a provider shows: the rows of the parse at `read`'s version, in its
+/// language.
 #[derive(Default)]
 struct Shown {
-    version: Option<Version>,
+    read: Option<(Version, &'static str)>,
     rows: Vec<Row>,
+}
+
+/// What the lens over a runnable of `kind` says.
+fn title(kind: RunnableKind) -> SharedString {
+    match kind {
+        RunnableKind::Module => tr!("workbench-lens-run-tests"),
+        RunnableKind::Test | RunnableKind::File => tr!("workbench-lens-run-test"),
+    }
 }
 
 impl LensProvider for Shown {
     fn lenses(&mut self, snapshot: &BufferSnapshot) -> Vec<Lens> {
         let text = snapshot.text();
         (self.rows.iter())
-            .map(|(anchor, title)| {
-                let row = text.offset_to_point(snapshot.resolve(anchor)).row;
+            .map(|&(anchor, kind)| {
+                let row = text.offset_to_point(snapshot.resolve(&anchor)).row;
                 Lens {
                     row,
                     items: vec![LensItem {
-                        title: (*title).into(),
+                        title: title(kind),
                         invocation: click(row),
                     }],
                 }
@@ -153,38 +167,39 @@ fn sync(workbench: &mut Workbench, again: &Slots, cx: &mut Context<Workbench>) {
 }
 
 /// Reads `editor`'s parse into `shown` if it is new, and whether the editor
-/// is in a language with runnables.
+/// is in a language with runnables. One that isn't, or has no parse, empties
+/// `shown`, so no rows of a language it was in show if it gets one again.
 fn read_rows(
     editor: &Entity<EditorView>,
     shown: &Rc<RefCell<Shown>>,
     cx: &mut Context<Workbench>,
 ) -> Option<()> {
     let view = editor.read(cx);
-    let syntax = view.syntax()?;
-    let language = syntax.language().name();
-    if !TEST_LANGUAGES.contains(&language) {
+    let syntax = view.syntax();
+    let language = syntax
+        .map(|syntax| syntax.language().name())
+        .filter(|language| TEST_LANGUAGES.contains(language));
+    let (Some(syntax), Some(language)) = (syntax, language) else {
+        *shown.borrow_mut() = Shown::default();
         return None;
-    }
+    };
     let snapshot = view.model().snapshot();
     let current =
         syntax.version() == snapshot.version() && !syntax.needs_parse() && !syntax.failed();
-    if !current || shown.borrow().version == Some(snapshot.version()) {
+    let read = (snapshot.version(), language);
+    if !current || shown.borrow().read == Some(read) {
         return Some(());
     }
     let text = snapshot.text();
     let rows = (runnables(language, syntax, text).into_iter())
-        .filter_map(|runnable| {
-            let title = match runnable.kind {
-                RunnableKind::Test => "Run Test",
-                RunnableKind::Module => "Run Tests",
-                RunnableKind::File => return None,
-            };
+        .filter(|runnable| runnable.kind != RunnableKind::File)
+        .map(|runnable| {
             let row = runnable.rows.start.min(text.row_count().saturating_sub(1));
-            Some((snapshot.anchor_before(text.row_start(row)), title))
+            (snapshot.anchor_before(text.row_start(row)), runnable.kind)
         })
         .collect();
     *shown.borrow_mut() = Shown {
-        version: Some(snapshot.version()),
+        read: Some(read),
         rows,
     };
     editor.update(cx, |_, cx| cx.notify());

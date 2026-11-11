@@ -94,6 +94,10 @@ migrated = [
     "src/problems_panel.rs",
     # The editor gutter in B3 (T1549): provenance's column and agent lane.
     "src/provenance_column.rs",
+    # Language-server annotations in B3 (T1550): the test lenses and a
+    # language server's.
+    "src/test_lens.rs",
+    "src/lsp_lenses.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the

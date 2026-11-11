@@ -168,13 +168,11 @@ fn the_most_severe_message_per_row_shows_and_the_level_filters(cx: &mut TestAppC
     assert_eq!(shown(&view, cx), warning);
     let colors = messages(&view, cx);
     let theme = view.read_with(cx, |view, _| view.theme.clone());
-    assert_eq!(
-        colors[0].color,
-        theme.diagnostic_color(Severity::Error).opacity(0.6)
-    );
+    // An error's at full strength, a warning's at 70% (T1550).
+    assert_eq!(colors[0].color, theme.diagnostic_color(Severity::Error));
     assert_eq!(
         colors[1].color,
-        theme.diagnostic_color(Severity::Warning).opacity(0.6)
+        theme.diagnostic_color(Severity::Warning).opacity(0.7)
     );
 
     level(&view, InlineDiagnostics::Error, cx);

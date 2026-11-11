@@ -11,6 +11,10 @@
 //!   row, by the rows the gutter's dot takes it to cover; of equals, the one
 //!   starting earliest. A message whose first line is blank has nothing to
 //!   show, and gives way.
+//! - **Strength.** An error's in the error colour at full strength, a
+//!   warning's in the warning colour at 70% (the design's lens,
+//!   `docs/design/design-system.md#editor`), and the rest dimmer still
+//!   ([`alpha`]).
 //! - **Where.** A soft-wrapped row shows it on its last display row, after
 //!   anything else drawn after the line. It's cut with an ellipsis at the
 //!   frame's right edge, which leaves out a minimap; with under
@@ -39,9 +43,7 @@ use fe_editor::{
     decorations::DecorationKind,
     diagnostics::{DiagnosticEntry, Severity},
 };
-#[cfg(test)]
-use gpui::Bounds;
-use gpui::{App, Hsla, Pixels, Point, Window, point, px};
+use gpui::{App, Bounds, Hsla, Pixels, Point, Window, point, px};
 use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::{
@@ -49,8 +51,15 @@ use crate::{
     element::{FrameLayout, Line, Shaper},
 };
 
-/// The opacity of a message, of its severity's colour.
-const ALPHA: f32 = 0.6;
+/// The opacity of a message, of its severity's colour: an error's full, a
+/// warning's 70%, and an information's or a hint's 60%, under a warning's.
+fn alpha(severity: Severity) -> f32 {
+    match severity {
+        Severity::Error => 1.,
+        Severity::Warning => 0.7,
+        Severity::Information | Severity::Hint => 0.6,
+    }
+}
 
 /// The fewest chars' room, each a space wide, a message is drawn in.
 const MIN_ROOM_CHARS: f32 = 8.;
@@ -81,6 +90,9 @@ pub(crate) struct Shown {
     origin: Point<Pixels>,
     /// The glyphs kept of the message, then any ellipsis.
     line: Line,
+    /// Its buffer row, and what it's drawn over and in, for
+    /// [`crate::DrawnAnnotations`].
+    drawn: (u32, Bounds<Pixels>, Hsla),
     #[cfg(test)]
     painted: PaintedMessage,
 }
@@ -117,6 +129,13 @@ pub(crate) struct Painted {
     pub(crate) messages: Vec<PaintedMessage>,
     pub(crate) shapes: usize,
     pub(crate) steps: usize,
+}
+
+impl Layout {
+    /// Each message's buffer row, bounds and colour.
+    pub(crate) fn drawn(&self) -> Vec<(u32, Bounds<Pixels>, Hsla)> {
+        self.shown.iter().map(|shown| shown.drawn).collect()
+    }
 }
 
 #[cfg(test)]
@@ -371,7 +390,9 @@ pub(crate) fn layout(
         if message.is_empty() {
             continue;
         }
-        let color = theme.diagnostic_color(entry.severity).opacity(ALPHA);
+        let color = theme
+            .diagnostic_color(entry.severity)
+            .opacity(alpha(entry.severity));
         let shape = (shaped.entry((message.clone(), color)))
             .or_insert_with(|| {
                 #[cfg(test)]
@@ -397,8 +418,10 @@ pub(crate) fn layout(
             }
         });
         let at = origin + point(px(x), px(top));
+        let bounds = Bounds::new(at, gpui::size(px(kept.width()), px(frame.line_height)));
         found.shown.push(Shown {
             origin: at,
+            drawn: (row.buffer_row, bounds, color),
             #[cfg(test)]
             painted: PaintedMessage {
                 buffer_row: row.buffer_row,
@@ -407,7 +430,7 @@ pub(crate) fn layout(
                     None => message,
                 },
                 color,
-                bounds: Bounds::new(at, gpui::size(px(kept.width()), px(frame.line_height))),
+                bounds,
                 glyphs: line.glyphs(),
             },
             line,

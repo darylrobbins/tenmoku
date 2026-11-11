@@ -1,7 +1,9 @@
 //! Highlights the other uses of the symbol at the caret, as VS Code's
 //! `editor.occurrencesHighlight` does: the language server's document
-//! highlights where it provides them, write uses stronger than reads, else
-//! the word's whole-word occurrences.
+//! highlights where it provides them, else the word's whole-word
+//! occurrences. Every use, text, read or write, takes the identifier
+//! highlight's fill (`docs/design/design-system.md#editor`), which the
+//! editor paints for a muted highlight.
 //!
 //! Every open editor has one [`CaretHighlights`] provider, installed once.
 //! Only the active editor shows any: for a caret in (or a selection of) one
@@ -16,7 +18,7 @@ use fe_editor::decorations::{
 };
 use fe_editor::occurrences::OccurrenceHighlights;
 use fe_gpui::EditorView;
-use fe_lsp::{DocumentHighlight, HighlightKind};
+use fe_lsp::DocumentHighlight;
 use gpui::{App, Context, Entity, EntityId, Task};
 
 use crate::Workbench;
@@ -90,12 +92,8 @@ impl DecorationProvider for CaretHighlights {
             if item.range.end > len || !overlaps(&item.range, &range) {
                 continue;
             }
-            let tint = match item.kind {
-                HighlightKind::Write => Tint::Accent,
-                HighlightKind::Text | HighlightKind::Read => Tint::Muted,
-            };
             out.push(
-                Decoration::new(item.range.clone(), DecorationKind::Highlight, tint)
+                Decoration::new(item.range.clone(), DecorationKind::Highlight, Tint::Muted)
                     .with_priority(PRIORITY),
             );
         }

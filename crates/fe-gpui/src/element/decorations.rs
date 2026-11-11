@@ -17,7 +17,8 @@ use super::{FrameLayout, Line};
 use crate::{EditorTheme, EditorView};
 
 /// How opaque each kind is over its tint: a row background faint, a
-/// highlight as a search match ([`super::search_match_color`]).
+/// highlight without a colour of its own ([`highlight_color`]) as a search
+/// match was before the theme had a slot for one.
 const ROW_BACKGROUND_ALPHA: f32 = 0.08;
 const HIGHLIGHT_ALPHA: f32 = 0.22;
 const GUTTER_ALPHA: f32 = 0.6;
@@ -89,6 +90,15 @@ pub(super) fn diff_color(theme: &EditorTheme, tint: Tint, kind: &DecorationKind)
         (Tint::Yank, DecorationKind::Highlight) => Some(theme.vim_yank_highlight),
         _ => None,
     }
+}
+
+/// A highlight's colour of its own, painted as the theme has it, unfaded:
+/// a muted highlight is a use of the identifier under the caret (the
+/// occurrences' and a language server's document highlights, read or
+/// text), drawn in `identifier_highlight`. `None` for any other tint, which
+/// takes its tint faded ([`HIGHLIGHT_ALPHA`]).
+pub(super) fn highlight_color(theme: &EditorTheme, tint: Tint) -> Option<Hsla> {
+    (tint == Tint::Muted).then_some(theme.identifier_highlight)
 }
 
 /// The colour the theme gives the highlight `name`, if it has one.
@@ -341,6 +351,7 @@ impl Decorations {
                             };
                             if decoration.kind == DecorationKind::Highlight {
                                 let color = diff_color(theme, decoration.tint, &decoration.kind)
+                                    .or_else(|| highlight_color(theme, decoration.tint))
                                     .unwrap_or(tint.opacity(HIGHLIGHT_ALPHA));
                                 place(whole_row(row.row, left, width), color, None);
                                 continue;

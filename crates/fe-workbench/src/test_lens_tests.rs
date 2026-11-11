@@ -1,5 +1,6 @@
 //! The Run Test lenses, in a headless workbench over a real folder whose
-//! sessions are fake, so no process starts.
+//! sessions are fake, so no process starts: `▷ Run test` in UI small sans
+//! (T1550), read again when the editor's language changes (T1410 F1).
 
 use std::{fs, io, path::Path, sync::Arc};
 
@@ -62,7 +63,10 @@ fn project<'a>(cx: &'a mut TestAppContext, name: &str, text: &str, trusted: bool
     fs::write(&path, text).unwrap();
     let settings = fe_config::project_settings_path(dir.path());
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    fs::write(settings, "[lsp.servers.rust-analyzer]\nenabled = false\n").unwrap();
+    // No server starts, the Python one either when an editor turns Python.
+    let servers = "[lsp.servers.rust-analyzer]\nenabled = false\n\n\
+                   [lsp.servers.pyright]\nenabled = false\n";
+    fs::write(settings, servers).unwrap();
     cx.update(|cx| cx.set_global(TestFiles(Arc::new(Disk))));
     let launch = Launch {
         root: Some(dir.path().to_owned()),
@@ -134,13 +138,16 @@ fn row(row: u32, title: &str) -> (u32, String) {
 fn a_rust_test_gets_a_run_test_lens_on_its_attribute_row(cx: &mut TestAppContext) {
     let mut project = project(cx, "src/lib.rs", LIB, true);
     // The module's `#[cfg(test)]` and the test's `#[test]`.
-    assert_eq!(project.shown(), [row(4, "Run Tests"), row(8, "Run Test")]);
+    assert_eq!(
+        project.shown(),
+        [row(4, "▷ Run tests"), row(8, "▷ Run test")]
+    );
 }
 
 #[gpui::test]
 fn lens_follows_edits_by_version(cx: &mut TestAppContext) {
     let mut project = project(cx, "src/lib.rs", LIB, true);
-    assert_eq!(project.shown()[1], row(8, "Run Test"));
+    assert_eq!(project.shown()[1], row(8, "▷ Run test"));
 
     // A line above moves both lenses at once.
     project.editor.update(project.cx, |editor, cx| {
@@ -148,7 +155,10 @@ fn lens_follows_edits_by_version(cx: &mut TestAppContext) {
         editor.model_mut().insert("// hi\n");
         cx.notify();
     });
-    assert_eq!(project.shown(), [row(5, "Run Tests"), row(9, "Run Test")]);
+    assert_eq!(
+        project.shown(),
+        [row(5, "▷ Run tests"), row(9, "▷ Run test")]
+    );
 
     // A new test below gets its own once the parse catches up.
     let end = project
@@ -161,7 +171,7 @@ fn lens_follows_edits_by_version(cx: &mut TestAppContext) {
     });
     let shown = project.shown();
     assert_eq!(shown.len(), 3, "{shown:?}");
-    assert_eq!(shown[2], row(15, "Run Test"));
+    assert_eq!(shown[2], row(15, "▷ Run test"));
 }
 
 #[gpui::test]
@@ -246,5 +256,75 @@ fn clicking_the_lens_runs_that_test_not_the_one_at_the_caret(cx: &mut TestAppCon
     assert_eq!(
         started,
         ["cargo test -p p tests::adds -- --exact --nocapture"]
+    );
+}
+
+#[gpui::test]
+fn the_test_lens_reads_run_test_in_ui_small_sans(cx: &mut TestAppContext) {
+    let mut project = project(cx, "src/lib.rs", LIB, true);
+    assert_eq!(
+        project.shown(),
+        [row(4, "▷ Run tests"), row(8, "▷ Run test")]
+    );
+    draw(project.cx);
+    let (drawn, theme) = project.editor.read_with(project.cx, |editor, _| {
+        let drawn = editor.drawn_annotations().expect("drawn").lenses.clone();
+        (drawn, editor.theme().clone())
+    });
+    let texts: Vec<&str> = drawn.iter().map(|text| text.text.as_ref()).collect();
+    assert_eq!(texts, ["▷ Run tests", "▷ Run test"]);
+    let ui = project.cx.update(|_, cx| fe_gpui::ui_font_family(cx));
+    for text in &drawn {
+        // The design's UI small: sans, 500, 11 px at the default 13.
+        assert_eq!(text.font.family, ui, "{text:?}");
+        assert_eq!(text.font.weight, gpui::FontWeight::MEDIUM, "{text:?}");
+        assert_eq!(text.font_size, theme.font_size - gpui::px(2.), "{text:?}");
+        assert_eq!(text.color, theme.gutter_foreground, "{text:?}");
+    }
+}
+
+/// The editor's language set to `name`, its parse caught up.
+fn set_language(project: &mut Project, name: &str) {
+    project.editor.update(project.cx, |editor, cx| {
+        editor.set_language(Some(name), cx);
+    });
+    for _ in 0..3 {
+        draw(project.cx);
+    }
+    let language = project.editor.read_with(project.cx, |editor, _| {
+        editor.syntax().map(|syntax| syntax.language().name())
+    });
+    assert_eq!(language, Some(name));
+}
+
+#[gpui::test]
+fn switching_the_language_without_an_edit_reads_the_lenses_again(cx: &mut TestAppContext) {
+    // Rust's tests, and a Python test function under them.
+    let text = format!("{LIB}def test_adds():\n    pass\n");
+    let mut project = project(cx, "src/lib.rs", &text, true);
+    assert_eq!(
+        project.shown(),
+        [row(4, "▷ Run tests"), row(8, "▷ Run test")]
+    );
+
+    // The same text as Python: Python's test, not Rust's.
+    set_language(&mut project, "python");
+    let python = project.shown();
+    assert_eq!(python, [row(13, "▷ Run test")]);
+
+    // And back, with no edit between: Rust's again.
+    set_language(&mut project, "rust");
+    assert_eq!(
+        project.shown(),
+        [row(4, "▷ Run tests"), row(8, "▷ Run test")]
+    );
+
+    // A language with no runnables shows none, and Rust's come back after.
+    set_language(&mut project, "toml");
+    assert_eq!(project.shown(), []);
+    set_language(&mut project, "rust");
+    assert_eq!(
+        project.shown(),
+        [row(4, "▷ Run tests"), row(8, "▷ Run test")]
     );
 }
