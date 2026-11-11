@@ -915,3 +915,21 @@ fn a_caret_moved_by_an_edit_elsewhere(cx: &mut TestAppContext) {
     assert_eq!(hidden_left(&diff, cx), []);
     assert_aligned(&diff, cx);
 }
+
+#[gpui::test]
+fn set_number_options_leave_a_diff_sides_numbers_absolute(cx: &mut TestAppContext) {
+    let (diff, cx) = changed_view(6, &[2], cx);
+    let sides = diff.read_with(cx, |diff, _| diff.views.clone());
+    for side in &sides {
+        side.update(cx, |view, _| {
+            view.model_mut().set_number(false);
+            view.model_mut().set_relative_number(true);
+            view.model_mut().set_line_numbers(fe_display::LineNumbers {
+                number: false,
+                relative: true,
+            });
+        });
+        let numbers = side.read_with(cx, |view, _| view.model().line_numbers());
+        assert_eq!(numbers, fe_display::LineNumbers::default());
+    }
+}

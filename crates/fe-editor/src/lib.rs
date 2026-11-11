@@ -191,6 +191,9 @@ pub struct EditorModel {
     auto_close: bool,
     /// vim's 'cursorline': whether the caret's row is banded.
     cursor_line: bool,
+    /// Whether the gutter's numbers are held at each row's own
+    /// ([`EditorModel::fix_absolute_line_numbers`]).
+    absolute_line_numbers: bool,
     /// The pairs typing inserted whose closers typing may still move over,
     /// by closer (see [`EditorModel::forget_auto_closed`]).
     auto_closed: Vec<pairs::AutoClosed>,
@@ -246,6 +249,7 @@ impl EditorModel {
             clock: Rc::new(Instant::now),
             auto_close: true,
             cursor_line: true,
+            absolute_line_numbers: false,
             auto_closed: Vec::new(),
             expand_history: None,
             snippet: None,
@@ -309,6 +313,7 @@ impl EditorModel {
             clock: Rc::clone(&self.clock),
             auto_close: self.auto_close,
             cursor_line: self.cursor_line,
+            absolute_line_numbers: false,
             auto_closed: Vec::new(),
             expand_history: None,
             snippet: None,
@@ -649,7 +654,17 @@ impl EditorModel {
         self.display.line_numbers()
     }
 
+    /// Holds the gutter at each row's own number, whatever is set after:
+    /// `:set rnu`, `nonu` and the editor's setting then change nothing.
+    pub fn fix_absolute_line_numbers(&mut self) {
+        self.absolute_line_numbers = true;
+        self.display.set_line_numbers(LineNumbers::default());
+    }
+
     pub fn set_line_numbers(&mut self, line_numbers: LineNumbers) {
+        if self.absolute_line_numbers {
+            return;
+        }
         self.display.set_line_numbers(line_numbers);
     }
 

@@ -191,6 +191,53 @@ fn line_numbers_are_the_buffer_rows_one_based_and_active_on_the_caret(cx: &mut T
 }
 
 #[gpui::test]
+fn pinned_numbers_follow_the_line_number_mode(cx: &mut TestAppContext) {
+    let (view, cx) = editor(&source(), "main.rs", cx);
+    // The caret on row 20, 15 rows under the function's header.
+    view.update(cx, |view, cx| {
+        let start = view.model.text().row_start(20);
+        view.model.set_selections([ResolvedSelection {
+            range: start..start,
+            reversed: false,
+        }]);
+        cx.notify();
+    });
+    scroll_to_row(&view, 10, cx);
+    let widths = |view: &Entity<EditorView>, cx: &mut VisualTestContext| {
+        let band = band(view, cx).expect("pinned");
+        let widths: Vec<_> = (band.rows.iter())
+            .map(|row| row.number.map(|(bounds, _)| bounds.size.width))
+            .collect();
+        widths
+    };
+    let set = |number, relative, cx: &mut VisualTestContext| {
+        view.update(cx, |view, cx| {
+            let numbers = fe_display::LineNumbers { number, relative };
+            view.model.set_line_numbers(numbers);
+            cx.notify();
+        });
+        draw(cx);
+    };
+    // Rows 5 and 6.
+    let [Some(one), Some(_)] = widths(&view, cx)[..] else {
+        panic!("absolute numbers");
+    };
+    // 16 and 15 rows from the caret's, in both relative modes.
+    for number in [false, true] {
+        set(number, true, cx);
+        let [Some(first), Some(second)] = widths(&view, cx)[..] else {
+            panic!("relative numbers");
+        };
+        assert_eq!((first, second), (one * 2., one * 2.));
+    }
+    set(true, false, cx);
+    assert_eq!(widths(&view, cx), [Some(one), Some(one)]);
+    // :set nonu nornu: none.
+    set(false, false, cx);
+    assert_eq!(widths(&view, cx), [None, None]);
+}
+
+#[gpui::test]
 fn the_function_row_is_pushed_up_as_its_last_row_scrolls_under_it(cx: &mut TestAppContext) {
     let (view, cx) = editor(&source(), "main.rs", cx);
     let line_height = line_height(&view, cx);

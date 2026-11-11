@@ -1839,29 +1839,22 @@ fn lay_out_frame<M: TextMeasure>(
         (display.visible_line(primary_row), first_line)
     });
     let line_numbers = first_rows()
-        .filter(|_| gutter && (numbers.number || numbers.relative))
+        .filter(|_| gutter)
         .enumerate()
-        .map(|(ix, row)| {
+        .filter_map(|(ix, row)| {
             let style = if active_buffer_rows.binary_search(&row.buffer_row).is_ok() {
                 &styles.active_line_number
             } else {
                 &styles.line_number
             };
-            let number = match relative_from {
-                Some((primary_line, first_line)) => {
-                    match (first_line + ix as u32).abs_diff(primary_line) {
-                        0 if numbers.number => row.buffer_row + 1,
-                        distance => distance,
-                    }
-                }
-                None => row.buffer_row + 1,
-            };
+            let (primary_line, first_line) = relative_from.unwrap_or_default();
+            let number = numbers.shown(row.buffer_row, first_line + ix as u32, primary_line)?;
             let line = shape(&number.to_string(), style);
             let origin = Vec2 {
                 x: fold_column_x - number_gap - line.width(),
                 y: row_top(row.row),
             };
-            (origin, line)
+            Some((origin, line))
         })
         .collect();
     let fold_markers = folded

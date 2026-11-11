@@ -81,6 +81,22 @@ impl Default for LineNumbers {
     }
 }
 
+impl LineNumbers {
+    /// The number shown for the row starting `buffer_row`, `None` where the
+    /// gutter shows none. `line` and `primary_line` are the visible line
+    /// ([`DisplayMap::visible_line`]) of that row and of the primary caret's.
+    pub fn shown(self, buffer_row: u32, line: u32, primary_line: u32) -> Option<u32> {
+        match (self.number, self.relative) {
+            (false, false) => None,
+            (_, false) => Some(buffer_row + 1),
+            (number, true) => Some(match line.abs_diff(primary_line) {
+                0 if number => buffer_row + 1,
+                distance => distance,
+            }),
+        }
+    }
+}
+
 /// The text a [`DisplayMap`] shows.
 enum Source {
     Buffer(BufferSnapshot),

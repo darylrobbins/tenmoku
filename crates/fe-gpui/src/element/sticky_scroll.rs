@@ -469,6 +469,9 @@ pub(crate) fn layout(
         .filter(|selection| selection.range.is_empty())
         .map(|selection| text.offset_to_point(selection.head()).row)
         .collect();
+    let numbers = display.line_numbers();
+    let primary_line =
+        display.visible_line(text.offset_to_point(model.primary_selection().head()).row);
     let tab_size = model.tab_size();
     let wrapped = display.wrap_width().is_some();
     let text_bounds = frame.text_bounds();
@@ -537,18 +540,23 @@ pub(crate) fn layout(
             (slice, shaped)
         };
         let number = view.gutter.then(|| {
+            let number = numbers.shown(
+                row.buffer_row,
+                display.visible_line(row.buffer_row),
+                primary_line,
+            )?;
             let color = match caret_rows.contains(&row.buffer_row) {
                 true => theme.gutter_active_foreground,
                 false => theme.gutter_foreground,
             };
-            let number = (row.buffer_row + 1).to_string();
+            let number = number.to_string();
             let run = StyleRun {
                 len: number.len(),
                 style: color,
             };
             let line = shaper.shape(&number, &[run]);
             let x = number_right - f32::from(line.layout.width);
-            (x, line)
+            Some((x, line))
         });
         rows.push(Row {
             buffer_row: row.buffer_row,
@@ -557,7 +565,7 @@ pub(crate) fn layout(
             x: layout.frame.text_left + (slice.start_x - scroll_x) as f32,
             #[cfg(test)]
             text: expanded.text().to_owned(),
-            number,
+            number: number.flatten(),
             hitbox: None,
         });
     }
