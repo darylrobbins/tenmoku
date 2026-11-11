@@ -13,6 +13,11 @@
 //!   [`GutterAnnotations::hover`] in the popover below it; a plain left
 //!   click calls [`GutterAnnotations::on_click`], leaving the carets and
 //!   folds be. Elsewhere in the column a click does nothing.
+//! - **Agent lane.** Rows a host names as an agent's
+//!   ([`EditorView::set_gutter_annotations_with_agent_lane`]) are drawn as
+//!   a dotted lane in the change bar instead, in the theme's `agent_lane`
+//!   (`docs/design/design-system.md#agent-provenance`); they follow edits
+//!   as the entries do.
 
 use std::{ops::Range, rc::Rc};
 
@@ -52,6 +57,8 @@ pub struct GutterAnnotations {
 /// The view's annotations, with what's derived from them.
 pub(crate) struct Annotated {
     pub(crate) annotations: GutterAnnotations,
+    /// The agent lane's rows' bytes, anchored at the annotations' version.
+    agent: Vec<Range<Anchor>>,
     /// The column's width, for the font and size it was measured in.
     width: Option<(FontId, Pixels, f32)>,
     /// The entries' rows, at the buffer version last resolved at.
@@ -69,24 +76,34 @@ pub(crate) struct Resolved {
     by_row: Vec<(Range<u32>, usize)>,
     /// The rows edits have touched since, sorted and apart.
     edited: Vec<Range<u32>>,
+    /// The agent lane's rows, sorted by start.
+    agent: Vec<Range<u32>>,
 }
 
 impl Resolved {
     /// The entry row `row` shows, if it isn't edited: the first by start
     /// of those holding it.
     pub(crate) fn entry_at(&self, row: u32) -> Option<usize> {
-        let edited = self.edited.partition_point(|rows| rows.end <= row);
-        if self
-            .edited
-            .get(edited)
-            .is_some_and(|rows| rows.start <= row)
-        {
+        if self.is_edited(row) {
             return None;
         }
         let after = self.by_row.partition_point(|(rows, _)| rows.start <= row);
         (self.by_row[..after].iter().rev())
             .find(|(rows, _)| rows.contains(&row))
             .map(|&(_, ix)| ix)
+    }
+
+    /// Whether an edit since the annotations' version touched `row`.
+    fn is_edited(&self, row: u32) -> bool {
+        let edited = self.edited.partition_point(|rows| rows.end <= row);
+        (self.edited.get(edited)).is_some_and(|rows| rows.start <= row)
+    }
+
+    /// Whether `row` is in the agent lane: an agent's, and not edited since.
+    pub(crate) fn agent_at(&self, row: u32) -> bool {
+        let after = self.agent.partition_point(|rows| rows.start <= row);
+        let agent = self.agent[..after].iter().any(|rows| rows.contains(&row));
+        agent && !self.is_edited(row)
     }
 
     /// The first buffer row of entry `ix`.
@@ -104,8 +121,29 @@ impl EditorView {
         annotations: Option<GutterAnnotations>,
         cx: &mut Context<Self>,
     ) {
-        self.annotations = annotations.map(|annotations| Annotated {
+        self.show_annotations(annotations.map(|annotations| (annotations, Vec::new())), cx);
+    }
+
+    /// Shows `annotations` as [`Self::set_gutter_annotations`] does, and
+    /// draws the rows of `agent`, anchored at the annotations' version, as
+    /// the change bar's dotted agent lane: see [`crate::gutter_annotations`].
+    pub fn set_gutter_annotations_with_agent_lane(
+        &mut self,
+        annotations: GutterAnnotations,
+        agent: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_annotations(Some((annotations, agent)), cx);
+    }
+
+    fn show_annotations(
+        &mut self,
+        annotations: Option<(GutterAnnotations, Vec<Range<Anchor>>)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.annotations = annotations.map(|(annotations, agent)| Annotated {
             annotations,
+            agent,
             width: None,
             resolved: None,
         });
@@ -234,7 +272,7 @@ impl EditorView {
         let shown = self.annotations.as_mut()?;
         let snapshot = self.model.snapshot();
         if shown.resolved.as_ref().map(|resolved| resolved.version) != Some(snapshot.version()) {
-            shown.resolved = Some(resolve(&shown.annotations, snapshot));
+            shown.resolved = Some(resolve(&shown.annotations, &shown.agent, snapshot));
         }
         shown.resolved.as_ref()
     }
@@ -249,32 +287,37 @@ impl EditorView {
     }
 }
 
-/// `annotations`' rows in `snapshot`: none at all for a version it can't
-/// map from.
-fn resolve(annotations: &GutterAnnotations, snapshot: &BufferSnapshot) -> Resolved {
+/// `annotations`' rows and the agent lane's, `agent`, in `snapshot`: none at
+/// all for a version it can't map from.
+fn resolve(
+    annotations: &GutterAnnotations,
+    agent: &[Range<Anchor>],
+    snapshot: &BufferSnapshot,
+) -> Resolved {
     let version = annotations.version;
     let entries = &annotations.entries;
     let (floor, now) = (snapshot.oldest_version(), snapshot.version());
     let in_log = |version: Version| floor <= version && version <= now;
+    let ranges = || (entries.iter().map(|entry| &entry.rows)).chain(agent);
     let mappable = in_log(version)
-        && (entries.iter())
-            .all(|entry| in_log(entry.rows.start.version()) && in_log(entry.rows.end.version()));
+        && ranges().all(|rows| in_log(rows.start.version()) && in_log(rows.end.version()));
     if !mappable {
         return Resolved {
             version: now,
             entries: Vec::new(),
             by_row: Vec::new(),
             edited: Vec::new(),
+            agent: Vec::new(),
         };
     }
     let text = snapshot.text();
-    let anchors: Vec<Anchor> = (entries.iter())
-        .flat_map(|entry| [entry.rows.start, entry.rows.end])
-        .collect();
+    let anchors: Vec<Anchor> = ranges().flat_map(|rows| [rows.start, rows.end]).collect();
     let offsets = snapshot.resolve_many(&anchors);
-    let rows: Vec<Range<u32>> = (offsets.chunks(2))
+    let mut rows: Vec<Range<u32>> = (offsets.chunks(2))
         .map(|pair| rows_of(text, pair[0]..pair[1].max(pair[0])))
         .collect();
+    let mut agent = rows.split_off(entries.len());
+    agent.sort_by_key(|rows| rows.start);
     let mut by_row: Vec<(Range<u32>, usize)> = (rows.iter().cloned()).zip(0..).collect();
     by_row.sort_by_key(|(rows, _)| rows.start);
     let mut edited: Vec<Range<u32>> = Vec::new();
@@ -290,6 +333,7 @@ fn resolve(annotations: &GutterAnnotations, snapshot: &BufferSnapshot) -> Resolv
         entries: rows,
         by_row,
         edited,
+        agent,
     }
 }
 
@@ -393,7 +437,7 @@ mod map_tests {
             on_click: Rc::new(|_, _, _, _| {}),
         };
         edit(&mut buffer);
-        let resolved = resolve(&annotations, buffer.current());
+        let resolved = resolve(&annotations, &[], buffer.current());
         let rows = buffer.current().text().row_count();
         (0..rows)
             .filter(|&row| resolved.entry_at(row).is_some())

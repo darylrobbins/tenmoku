@@ -5,13 +5,16 @@
 //! - **Per editor.** On for the active editor only; another tab or split on
 //!   its buffer isn't annotated. It goes when the editor's tab closes.
 //! - **Entries.** One per run of rows from
-//!   [`Provenance::row_authors`](fe_buffer::Provenance::row_authors): `AI ·
-//!   <agent>`, `You`, the tool's name (`Format`, `LSP`) or the host's. Rows
-//!   with no author are blank. AI rows have heat 1.0, so they are the tinted
-//!   ones; the others none.
+//!   [`Provenance::row_authors`](fe_buffer::Provenance::row_authors): `You`,
+//!   the tool's name (`Format`, `LSP`) or the host's. Rows with no author are
+//!   blank, and so are an agent's: they draw as the change bar's dotted agent
+//!   lane instead (`docs/design/design-system.md#agent-provenance`,
+//!   [`EditorView::set_gutter_annotations_with_agent_lane`]). No entry has
+//!   heat.
 //! - **Following edits.** Made afresh from the buffer's provenance
 //!   [`EDIT_REST`] after the last edit; rows edited since are blank until then.
 //! - **Pointer.** Resting on an entry says who wrote it; clicking does nothing.
+//! - **Text.** In `l10n/en-US/editor.ftl`, keys `workbench-editor-provenance-…`.
 //! - **One column.** Turning it on turns the editor's blame annotations off,
 //!   and turning those on turns it off; neither remembers the other's state.
 //!
@@ -22,6 +25,7 @@ use std::{collections::HashMap, rc::Rc, time::Duration};
 use fe_buffer::{Author, Version};
 use fe_gpui::{EditorView, GutterAnnotation, GutterAnnotations, HoverContent};
 use gpui::{App, Context, Entity, EntityId, Global, Subscription, Task, WeakEntity};
+use kiln_l10n::tr;
 
 use crate::workbench::Workbench;
 
@@ -155,40 +159,44 @@ fn follow(id: EntityId, cx: &mut Context<Workbench>) {
     }
 }
 
-/// Puts editor `id`'s provenance in its annotation column, as it is now.
+/// Puts editor `id`'s provenance in its annotation column and its agent
+/// lane, as it is now.
 fn show(id: EntityId, editor: &Entity<EditorView>, cx: &mut App) {
-    let annotations = annotations(editor, cx);
+    let (annotations, agent) = annotations(editor, cx);
     if let Some(column) = state(cx).columns.get_mut(&id) {
         column.shown = annotations.version;
     }
     editor.update(cx, |editor, cx| {
-        editor.set_gutter_annotations(Some(annotations), cx)
+        editor.set_gutter_annotations_with_agent_lane(annotations, agent, cx)
     });
 }
 
-/// An entry's text for `author`.
-fn label(author: &Author) -> String {
-    match author {
-        Author::User => "You".to_owned(),
-        Author::Ai { agent } => format!("AI · {agent}"),
-        Author::Tool("lsp") => "LSP".to_owned(),
-        Author::Tool("format") => "Format".to_owned(),
+/// An entry's text for `author`; an agent's rows have none, but the lane.
+fn label(author: &Author) -> Option<String> {
+    Some(match author {
+        Author::User => tr!("workbench-editor-provenance-you").into(),
+        Author::Ai { .. } => return None,
+        Author::Tool("lsp") => tr!("workbench-editor-provenance-lsp").into(),
+        Author::Tool("format") => tr!("workbench-editor-provenance-format").into(),
         Author::Tool(name) => (*name).to_owned(),
         Author::Host(name) => name.to_string(),
-    }
+    })
 }
 
-/// What resting on an entry of `author` says.
-fn written_by(author: &Author) -> String {
+/// What resting on an entry of `author`, labelled `label`, says.
+fn written_by(author: &Author, label: &str) -> String {
     match author {
-        Author::User => "Written by you".to_owned(),
-        Author::Ai { agent } => format!("Written by {agent}"),
-        other => format!("Written by {}", label(other)),
+        Author::User => tr!("workbench-editor-provenance-written-by-you").into(),
+        _ => tr!("workbench-editor-provenance-written-by", author = label).into(),
     }
 }
 
-/// `editor`'s buffer's authors as annotations at its version now.
-fn annotations(editor: &Entity<EditorView>, cx: &App) -> GutterAnnotations {
+/// `editor`'s buffer's authors as annotations at its version now, and the
+/// bytes of the rows an agent wrote.
+fn annotations(
+    editor: &Entity<EditorView>,
+    cx: &App,
+) -> (GutterAnnotations, Vec<std::ops::Range<fe_buffer::Anchor>>) {
     let model = editor.read(cx).model();
     let snapshot = model.snapshot();
     let buffer = model.buffer();
@@ -201,29 +209,34 @@ fn annotations(editor: &Entity<EditorView>, cx: &App) -> GutterAnnotations {
             text.row_start(row)
         }
     };
-    let (mut entries, mut authors) = (Vec::new(), Vec::new());
+    let (mut entries, mut hovers, mut agent) = (Vec::new(), Vec::new(), Vec::new());
     for (rows, author) in buffer.provenance().row_authors(text, 0..count) {
         let Some(author) = author else {
             continue;
         };
+        let rows =
+            snapshot.anchor_before(start(rows.start))..snapshot.anchor_before(start(rows.end));
+        let Some(label) = label(&author) else {
+            agent.push(rows);
+            continue;
+        };
+        hovers.push(written_by(&author, &label));
         entries.push(GutterAnnotation {
-            rows: snapshot.anchor_before(start(rows.start))
-                ..snapshot.anchor_before(start(rows.end)),
-            text: label(&author).into(),
-            heat: matches!(author, Author::Ai { .. }).then_some(1.0),
+            rows,
+            text: label.into(),
+            heat: None,
         });
-        authors.push(author);
     }
-    GutterAnnotations {
+    let annotations = GutterAnnotations {
         version: snapshot.version(),
         entries,
         hover: Rc::new(move |ix, _| {
-            let author = authors.get(ix)?;
             Some(HoverContent {
-                text: written_by(author),
+                text: hovers.get(ix)?.clone(),
                 range: None,
             })
         }),
         on_click: Rc::new(|_, _, _, _| {}),
-    }
+    };
+    (annotations, agent)
 }

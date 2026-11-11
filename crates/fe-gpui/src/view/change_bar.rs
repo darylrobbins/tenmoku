@@ -10,9 +10,9 @@ use gpui::{Bounds, Context, Pixels, Point, point, px};
 
 use super::{EditorView, EditorViewEvent};
 
-/// How far from the edge a deletion mark is drawn on a click still hits it,
-/// in pixels: slack beyond the wedge, which already spans a quarter line
-/// either side of the edge.
+/// How far past a quarter line either side of the edge a removed line's
+/// notch is drawn on a click still hits it, in pixels: the notch itself is
+/// only a few pixels tall.
 const MARK_REACH: f32 = 3.;
 
 impl EditorView {
@@ -45,7 +45,7 @@ impl EditorView {
     }
 
     /// The deletion whose mark, as the last frame drew it, a click at
-    /// `position` is on or within [`MARK_REACH`] of: the marks the renderer
+    /// `position` is within a quarter line and [`MARK_REACH`] of: the marks the renderer
     /// placed are the only targets, so a row's continuation under soft wrap
     /// or a row scrolled out of view has none.
     fn deletion_at(&self, position: Point<Pixels>) -> Option<Range<u32>> {
@@ -53,13 +53,14 @@ impl EditorView {
         let frame = &layout.frame;
         let mark = layout.decorations.placed.iter().find(|placed| {
             placed.kind == DecorationKind::Gutter(GutterMark::Deletion) && {
-                let reach = px(MARK_REACH);
-                // The wedge fills half the lane, but a click anywhere
+                let reach = px(frame.line_height / 4. + MARK_REACH);
+                // The notch starts at the lane's left, but a click anywhere
                 // across the lane hits it.
                 let lane = layout.bounds(frame.change_lane);
+                let edge = placed.bounds.center().y;
                 let hit = Bounds::from_corners(
-                    point(lane.left(), placed.bounds.top() - reach),
-                    point(lane.right(), placed.bounds.bottom() + reach),
+                    point(lane.left(), edge - reach),
+                    point(lane.right(), edge + reach),
                 );
                 hit.contains(&position)
             }

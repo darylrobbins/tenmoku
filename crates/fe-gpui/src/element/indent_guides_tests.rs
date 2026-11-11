@@ -1,6 +1,7 @@
 //! Indent guides drawn in a headless window: one thin rect per run of each
-//! guide's display rows, at its column, in the active colour for the
-//! caret's block, and none with `editor.indent_guides` off.
+//! guide's display rows, every 4 columns, broken by a display row whose code
+//! starts left of it, in the active colour for the caret's block, and none
+//! with `editor.indent_guides` off.
 
 use fe_buffer::Buffer;
 use fe_editor::{EditorModel, IndentStyle};
@@ -113,14 +114,14 @@ fn four_spaces_get_a_guide_at_each_level_through_blank_rows(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-fn two_spaces_get_a_guide_every_two_columns(cx: &mut TestAppContext) {
+fn two_spaces_still_get_a_guide_every_four_columns(cx: &mut TestAppContext) {
     let (view, cx) = editor(
         "a:\n  b:\n    c:\n      d",
         |model| model.set_indent_style(Some(IndentStyle::Spaces(2))),
         cx,
     );
-    let computed = computed(&view, 2, cx);
-    assert_eq!(computed, [(0, 1..4), (2, 2..4), (4, 3..4)]);
+    let computed = computed(&view, 4, cx);
+    assert_eq!(computed, [(0, 1..4), (4, 3..4)]);
     let want: Vec<_> = (computed.into_iter())
         .map(|(column, rows)| expected(&view, column, rows, cx))
         .collect();
@@ -146,7 +147,9 @@ fn tabs_get_a_guide_every_tab_size(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_wrapped_row_is_one_run_down_all_its_pieces(cx: &mut TestAppContext) {
+fn a_wrapped_row_s_continuation_breaks_the_guide(cx: &mut TestAppContext) {
+    // Row 1's continuations start at column 0, with code: the guide at
+    // column 0 stops above them and goes on below.
     let text = format!("fn f() {{\n    {}\n    x\n}}\n", "word ".repeat(80));
     let (view, cx) = editor(
         &text,
@@ -157,22 +160,23 @@ fn a_wrapped_row_is_one_run_down_all_its_pieces(cx: &mut TestAppContext) {
         cx,
     );
     draw(cx);
-    let pieces = view.read_with(cx, |view, _| {
+    let (pieces, line_height) = view.read_with(cx, |view, _| {
         let frame = &view.layout.as_ref().expect("drawn").frame;
-        (frame.rows.iter())
+        let pieces = (frame.rows.iter())
             .filter(|row| row.buffer_row == 1)
-            .count()
+            .count();
+        (pieces, frame.line_height)
     });
     assert!(pieces > 1, "row 1 wraps: {pieces} pieces");
     let placed = guides(&view, cx);
-    assert_eq!(bounds(&placed), [expected(&view, 0, 1..3, cx)]);
-    let line_height = view.read_with(cx, |view, _| {
-        view.layout.as_ref().unwrap().frame.line_height
-    });
-    assert_eq!(
-        placed[0].bounds.size.height,
-        px((pieces + 1) as f32 * line_height)
-    );
+    let first = expected(&view, 0, 1..2, cx);
+    let row_2 = expected(&view, 0, 2..3, cx);
+    let one_row = |bounds: Bounds<Pixels>| Bounds {
+        size: gpui::size(bounds.size.width, px(line_height)),
+        ..bounds
+    };
+    assert_eq!(bounds(&placed), [one_row(first), row_2]);
+    assert_eq!(row_2.top() - first.top(), px(pieces as f32 * line_height));
 }
 
 #[gpui::test]

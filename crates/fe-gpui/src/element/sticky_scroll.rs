@@ -24,8 +24,7 @@ use fe_config::StickyScrollModel;
 use fe_display::{
     Bias, BlockMap, CharWidth, ExpandedRow, RowIndex, RowSlice, StickyRow,
     layout::{
-        LINE_NUMBER_GAP_EMS, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, StyleRun, TextMeasure,
-        Vec2, row_runs,
+        MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, StyleRun, TextMeasure, Vec2, row_runs,
     },
 };
 use fe_syntax::Syntax;
@@ -480,7 +479,7 @@ pub(crate) fn layout(
         false => 0.,
     };
     let view_width = f64::from(text_bounds.width);
-    let number_right = frame.fold_column.x - em * LINE_NUMBER_GAP_EMS;
+    let number_right = frame.problem_column.x;
     // The text from `slice`, tabs expanded, shaped in the colours the text
     // area gives it.
     let shape = |shaper: &mut Shaper, slice: &RowSlice| {

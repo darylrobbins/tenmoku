@@ -11,10 +11,7 @@ use fe_display::{
     layout::{MeasuredLine as _, Rect, RowLayout},
 };
 use fe_editor::decorations::{Decoration, DecorationKind, GutterMark, Tint};
-use gpui::{
-    App, Bounds, DecorationRun, Hsla, PathBuilder, Pixels, Point, TextRun, UnderlineStyle, Window,
-    fill, point, px,
-};
+use gpui::{App, Bounds, DecorationRun, Hsla, Pixels, TextRun, UnderlineStyle, Window, fill, px};
 
 use super::{FrameLayout, Line};
 use crate::{EditorTheme, EditorView};
@@ -24,15 +21,18 @@ use crate::{EditorTheme, EditorView};
 const ROW_BACKGROUND_ALPHA: f32 = 0.08;
 const HIGHLIGHT_ALPHA: f32 = 0.22;
 const GUTTER_ALPHA: f32 = 0.6;
-/// A deletion wedge is drawn in the full colour, to stand out from the bars.
+/// A removed line's notch is drawn in the full colour, to stand out from the
+/// bars.
 const DELETION_ALPHA: f32 = 1.0;
 const AFTER_LINE_ALPHA: f32 = 0.6;
 
-/// A gutter bar's width, in pixels, rounded to device pixels. Bars and
-/// deletion wedges sit in the frame's change lane
-/// ([`fe_display::layout::Frame::change_lane`]), clear of the line numbers
-/// and the chevrons; a bar has rounded ends.
-const BAR_WIDTH: f32 = 3.;
+/// Bars and removed lines' notches sit at the left of the frame's change
+/// lane ([`fe_display::layout::Frame::change_lane`]), clear of the line
+/// numbers and the chevrons, a bar as wide as
+/// [`super::change_bar_width`] says, rounded to device pixels, with rounded
+/// ends. A notch is twice a bar's width across and this much of it tall, on
+/// the edge between two rows.
+const NOTCH_HEIGHT: f32 = 2. / 3.;
 /// How far a gutter bar stops short of each end of its run of rows, in
 /// pixels, so the bars of two adjacent changes show a gap between them.
 const BAR_INSET: f32 = 1.;
@@ -103,7 +103,8 @@ pub(crate) struct Placed {
     /// In window coordinates. An underline's height is its thickness.
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) color: Hsla,
-    /// Half the smaller side of a gutter mark, rounding its ends; zero for
+    /// Half the smaller side of a gutter mark, a bar or a notch, rounding its
+    /// ends; zero for
     /// every other kind.
     pub(crate) corner_radius: Pixels,
     /// An after-line decoration's text, shaped in `color`.
@@ -169,7 +170,11 @@ impl Decorations {
         let text_bounds = frame.text_bounds();
         let lane = frame.change_lane;
         let scale = window.scale_factor();
-        let bar = (BAR_WIDTH * scale).round().max(1.) / scale;
+        let bar = (super::change_bar_width(lane.width) * scale)
+            .round()
+            .max(1.)
+            / scale;
+        let notch = (bar * NOTCH_HEIGHT * scale).round().max(1.) / scale;
         let space = glyph_widths.char_width(' ');
         // Where the next after-line text goes on each display row.
         let mut after: HashMap<u32, f32> = HashMap::new();
@@ -243,13 +248,13 @@ impl Decorations {
                     let Some(edge) = edge else {
                         continue;
                     };
-                    // A wedge half a line tall centred on the edge, its base
-                    // at the bars' left edge, its tip pointing at the text.
+                    // A notch centred on the edge, from the bars' left edge
+                    // toward the text.
                     let rect = Rect {
                         x: lane.x,
-                        y: edge - line_height / 4.,
-                        width: lane.width / 2.,
-                        height: line_height / 2.,
+                        y: edge - notch / 2.,
+                        width: bar * 2.,
+                        height: notch,
                     };
                     place(rect, tint.opacity(DELETION_ALPHA), None);
                 }
@@ -403,7 +408,7 @@ impl Decorations {
         out.placed = (placed.into_iter())
             .map(|(kind, rect, color, text)| Placed {
                 corner_radius: match kind {
-                    DecorationKind::Gutter(GutterMark::Bar) => px(rect.width.min(rect.height) / 2.),
+                    DecorationKind::Gutter(_) => px(rect.width.min(rect.height) / 2.),
                     _ => px(0.),
                 },
                 kind,
@@ -457,17 +462,10 @@ impl Decorations {
                     window.paint_quad(quad);
                     painted = true;
                 }
-                // After the bars, so a wedge sits over the end of a bar.
+                // After the bars, so a notch sits over the end of a bar.
                 for placed in of(|kind| *kind == DecorationKind::Gutter(GutterMark::Deletion)) {
-                    let [base_top, tip, base_bottom] = wedge_points(placed.bounds);
-                    let mut path = PathBuilder::fill();
-                    path.move_to(base_top);
-                    path.line_to(tip);
-                    path.line_to(base_bottom);
-                    path.close();
-                    if let Ok(path) = path.build() {
-                        window.paint_path(path, placed.color);
-                    }
+                    let quad = fill(placed.bounds, placed.color).corner_radii(placed.corner_radius);
+                    window.paint_quad(quad);
                     painted = true;
                 }
             }
@@ -493,17 +491,6 @@ fn underline_style(placed: &Placed) -> UnderlineStyle {
         color: Some(placed.color),
         wavy: matches!(placed.kind, DecorationKind::Underline { wavy: true }),
     }
-}
-
-/// The corners of a deletion wedge in `bounds`: a triangle pointing toward
-/// the text, its tip on the middle of the right edge.
-fn wedge_points(bounds: Bounds<Pixels>) -> [Point<Pixels>; 3] {
-    let (left, right) = (bounds.left(), bounds.right());
-    [
-        point(left, bounds.top()),
-        point(right, bounds.center().y),
-        point(left, bounds.bottom()),
-    ]
 }
 
 #[cfg(test)]

@@ -141,29 +141,26 @@ fn a_tall_line_height_keeps_the_glyph_in_its_slot(cx: &mut TestAppContext) {
     assert_in_slot(&view, bounds, cx);
 }
 
-/// Both of `bounds`' horizontal edges are in the 2 em left of the line
-/// numbers, which start at the editor's left edge.
+/// `bounds` is centred on the gutter's problem column, right of the line
+/// numbers, and no more than a fifth wider than it.
 fn assert_in_slot(
     view: &Entity<EditorView>,
     bounds: gpui::Bounds<Pixels>,
     cx: &mut VisualTestContext,
 ) {
-    let (left, em) = view.read_with(cx, |view, _| {
+    let column = view.read_with(cx, |view, _| {
         let layout = view.layout.as_ref().unwrap();
-        let frame = &layout.frame;
-        let rows = view.model().text().row_count();
-        // The gutter is a whole number of ems wide.
-        let em = (frame.text_left - frame.annotation_column.width)
-            / fe_display::layout::gutter_width(rows, 1.);
-        (
-            layout.origin.x + gpui::px(frame.annotation_column.width),
-            em,
-        )
+        layout.bounds(layout.frame.problem_column)
     });
-    assert!(bounds.left() >= left, "{bounds:?} left of {left:?}");
+    assert!(column.size.width > gpui::px(0.));
+    assert_eq!(
+        bounds.center().x,
+        column.center().x,
+        "{bounds:?} {column:?}"
+    );
     assert!(
-        bounds.right() <= left + gpui::px(2. * em),
-        "{bounds:?} past the slot's {em} em"
+        bounds.size.width <= column.size.width * 1.2,
+        "{bounds:?} wider than {column:?} allows"
     );
 }
 

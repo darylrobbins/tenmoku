@@ -170,3 +170,35 @@ pub(super) fn paint(
         }
     });
 }
+
+/// The agent lane's runs over the frame's display rows, in frame
+/// coordinates: the top and bottom of each run of rows shown one under the
+/// next whose buffer rows are in the lane ([`crate::gutter_annotations`]),
+/// a block or a fold between two rows ending it.
+pub(super) fn agent_runs(frame: &Frame<Line>, view: &EditorView) -> Vec<(f32, f32)> {
+    let Some((_, resolved)) = view.annotation_rows() else {
+        return Vec::new();
+    };
+    if !view.gutter {
+        return Vec::new();
+    }
+    let screen_row = |row: u32| frame.block_map.screen_row(row);
+    let mut runs: Vec<(f32, f32)> = Vec::new();
+    let mut last: Option<(u32, u32)> = None;
+    for row in &frame.rows {
+        if !resolved.agent_at(row.buffer_row) {
+            last = None;
+            continue;
+        }
+        let top = frame.row_top(row.row);
+        let joins = last.is_some_and(|(screen, buffer)| {
+            screen_row(row.row) == screen + 1 && row.buffer_row - buffer <= 1
+        });
+        match runs.last_mut() {
+            Some(run) if joins => run.1 = top + frame.line_height,
+            _ => runs.push((top, top + frame.line_height)),
+        }
+        last = Some((screen_row(row.row), row.buffer_row));
+    }
+    runs
+}

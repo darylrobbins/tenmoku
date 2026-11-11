@@ -29,7 +29,7 @@ use crate::Syntax;
 /// parse limit, or before the first parse.
 pub fn fold_ranges(syntax: &Syntax, rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
     let mut ranges = Vec::new();
-    for_each_candidate(syntax, rows.clone(), rows, |range| ranges.push(range));
+    for_each_candidate(syntax, rows.clone(), rows, |range, _| ranges.push(range));
     ranges.sort_by_key(|range| (*range.start(), *range.end()));
     ranges.dedup();
     ranges
@@ -44,7 +44,7 @@ pub fn fold_ranges(syntax: &Syntax, rows: Range<u32>) -> Vec<RangeInclusive<u32>
 /// None without a tree.
 pub fn fold_scopes(syntax: &Syntax, rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
     let mut scopes = Vec::new();
-    for_each_candidate(syntax, rows.clone(), 0..rows.end, |range| {
+    for_each_candidate(syntax, rows.clone(), 0..rows.end, |range, _| {
         if *range.end() >= rows.start {
             scopes.push(range);
         }
@@ -54,13 +54,31 @@ pub fn fold_scopes(syntax: &Syntax, rows: Range<u32>) -> Vec<RangeInclusive<u32>
     scopes
 }
 
+/// The innermost candidate headed by `row`, and the row its node closes on:
+/// its last row with text, which is the candidate's own last row unless the
+/// candidate stops before a row its closing delimiter starts (`}`, `end`,
+/// `fi`, `*/`, a closing tag or fence). None if no candidate starts on `row`.
+pub fn fold_candidate_closing(syntax: &Syntax, row: u32) -> Option<(RangeInclusive<u32>, u32)> {
+    let mut headed: Option<(RangeInclusive<u32>, u32)> = None;
+    let rows = row..row.saturating_add(1);
+    for_each_candidate(syntax, rows.clone(), rows, |range, closing| {
+        let inner = headed
+            .as_ref()
+            .is_none_or(|(best, _)| range.end() < best.end());
+        if *range.start() == row && inner {
+            headed = Some((range, closing));
+        }
+    });
+    headed
+}
+
 /// The innermost candidate headed by `row`, or if there's none, the
 /// innermost one containing it.
 pub fn fold_range_at(syntax: &Syntax, row: u32) -> Option<RangeInclusive<u32>> {
     let mut headed: Option<RangeInclusive<u32>> = None;
     let mut containing: Option<RangeInclusive<u32>> = None;
     let rows = row..row.saturating_add(1);
-    for_each_candidate(syntax, rows.clone(), 0..rows.end, |range| {
+    for_each_candidate(syntax, rows.clone(), 0..rows.end, |range, _| {
         if *range.start() == row {
             if headed.as_ref().is_none_or(|best| range.end() < best.end()) {
                 headed = Some(range);
@@ -570,12 +588,13 @@ fn classes(syntax: &Syntax) -> Option<&'static [Class]> {
 
 /// Calls `found` with the candidate of each foldable node overlapping `rows`
 /// that starts in `starts`, in tree order, along with those of bodies just
-/// below `rows` whose header ends in it.
+/// below `rows` whose header ends in it; and with the row the node closes on
+/// ([`fold_candidate_closing`]).
 fn for_each_candidate(
     syntax: &Syntax,
     rows: Range<u32>,
     starts: Range<u32>,
-    mut found: impl FnMut(RangeInclusive<u32>),
+    mut found: impl FnMut(RangeInclusive<u32>, u32),
 ) {
     let (Some(tree), Some(classes)) = (syntax.tree(), classes(syntax)) else {
         return;
@@ -594,8 +613,8 @@ fn for_each_candidate(
     'nodes: loop {
         #[cfg(test)]
         WALKED.set(WALKED.get() + 1);
-        if let Some(range) = candidates.of(cursor.node()) {
-            found(range);
+        if let Some((range, closing)) = candidates.of(cursor.node()) {
+            found(range, closing);
         }
         // tree-sitter's search for the first child past `start` doesn't
         // backtrack out of a hidden node that ends after `start` but holds
@@ -607,8 +626,8 @@ fn for_each_candidate(
             if !past(cursor.node()) {
                 continue;
             }
-            if let Some(range) = candidates.after(&cursor) {
-                found(range);
+            if let Some((range, closing)) = candidates.after(&cursor) {
+                found(range, closing);
             }
             cursor.goto_parent();
         }
@@ -619,8 +638,8 @@ fn for_each_candidate(
                 if !past(cursor.node()) {
                     continue 'nodes;
                 }
-                if let Some(range) = candidates.after(&cursor) {
-                    found(range);
+                if let Some((range, closing)) = candidates.after(&cursor) {
+                    found(range, closing);
                 }
             }
             if !cursor.goto_parent() {
@@ -670,7 +689,7 @@ impl Candidates<'_> {
 
     /// The candidate of the first node past `rows`, at the cursor or after
     /// comments following it, for a body whose header ends in `self.starts`.
-    fn after(&self, cursor: &TreeCursor) -> Option<RangeInclusive<u32>> {
+    fn after(&self, cursor: &TreeCursor) -> Option<(RangeInclusive<u32>, u32)> {
         let mut cursor = cursor.clone();
         while cursor.node().is_extra() {
             if !cursor.goto_next_sibling() {
@@ -681,8 +700,9 @@ impl Candidates<'_> {
     }
 
     /// The rows `node` folds, if it's foldable, starts in `self.starts`
-    /// and spans more than one.
-    fn of(&self, node: Node) -> Option<RangeInclusive<u32>> {
+    /// and spans more than one; and its last row with text, the row of its
+    /// closing delimiter when the rows stop before that.
+    fn of(&self, node: Node) -> Option<(RangeInclusive<u32>, u32)> {
         let first = match self.class(node) {
             Class::Node => node.start_position().row,
             Class::Body => {
@@ -697,12 +717,20 @@ impl Candidates<'_> {
         if !self.starts.contains(&u32::try_from(first).ok()?) {
             return None;
         }
-        let mut last = self.last_text_row(node, first);
+        let mut closing = self.last_text_row(node, first);
+        let mut last = closing;
         if last > first && self.closes_on(node, last) {
             last -= 1;
         }
+        // A body's closer may be its parent's: Lua's `end`, Swift's `}`
+        // after a control-flow body, PHP's `endif`.
+        if self.class(node) == Class::Body
+            && let Some(row) = self.closed_after(node, closing)
+        {
+            closing = row;
+        }
         let row = |row: usize| u32::try_from(row).ok();
-        (last > first).then_some(row(first)?..=row(last)?)
+        (last > first).then_some((row(first)?..=row(last)?, row(closing)?))
     }
 
     /// The last row of `node` with text on it, no earlier than `first`.
@@ -715,6 +743,22 @@ impl Candidates<'_> {
             column = usize::MAX;
         }
         last
+    }
+
+    /// The row of the closing delimiter right after `node` among its
+    /// parent's children, if the first child after it with text is one
+    /// and starts a row past `last`.
+    fn closed_after(&self, node: Node, last: usize) -> Option<usize> {
+        let mut sibling = node.next_sibling();
+        while let Some(next) = sibling {
+            if !next.is_extra() && next.end_byte() > next.start_byte() {
+                let at = next.start_position();
+                let closes = self.class(next) == Class::Closer && at.row > last;
+                return (closes && self.starts_row(at)).then_some(at.row);
+            }
+            sibling = next.next_sibling();
+        }
+        None
     }
 
     /// Whether `node`'s row `last` starts with its closing delimiter.
@@ -822,6 +866,8 @@ fn last_child<'tree>(cursor: &mut TreeCursor<'tree>) -> Option<Node<'tree>> {
     }
 }
 
+#[cfg(test)]
+mod closing_tests;
 #[cfg(test)]
 mod large_prefix_tests;
 #[cfg(test)]

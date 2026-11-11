@@ -80,8 +80,8 @@ fn changes_are_bars_in_the_lane_and_no_row_is_tinted(cx: &mut TestAppContext) {
     assert_eq!(
         marks[0].bounds,
         Bounds::new(
-            gpui::point(lane.origin.x, tops[3] - line_height / 4.),
-            gpui::size(lane.size.width / 2., line_height / 2.),
+            gpui::point(lane.origin.x, tops[3] - px(1.)),
+            gpui::size(px(6.), px(2.)),
         )
     );
     assert_eq!(marks[0].bounds.center().y, tops[3]);

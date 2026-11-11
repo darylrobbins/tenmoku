@@ -56,6 +56,7 @@ pub use comment::{CommentTokens, auto_pairs, comment_tokens};
 pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
 pub use fence::fence_language;
+pub use fold::fold_candidate_closing;
 pub use fold::{fold_range_at, fold_ranges, fold_scopes};
 pub use highlight::{Highlight, HighlightSpan, Highlights, resolve_theme};
 pub use imports::{ImportsError, module_specifiers, module_specifiers_supported};

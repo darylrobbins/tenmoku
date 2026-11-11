@@ -1,4 +1,5 @@
-//! `editor.toggle_provenance`: who wrote each row, in the annotation column.
+//! `editor.toggle_provenance`: who wrote each row, in the annotation column,
+//! an agent's rows in the change bar's dotted agent lane.
 
 use std::{path::Path, process::Command, time::Duration};
 
@@ -59,6 +60,24 @@ fn texts(tab: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<String> {
         .collect()
 }
 
+/// The buffer rows the last frame drew the agent lane's dots on.
+fn agent_rows(tab: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<u32> {
+    tab.update(cx, |tab, _| {
+        let dots = (tab.drawn_gutter()).map_or_else(Vec::new, |drawn| drawn.agent_dots.clone());
+        let rows = tab.model().text().row_count();
+        (0..rows)
+            .filter(|&row| {
+                let offset = tab.model().text().row_start(row);
+                let Some(bounds) = tab.caret_bounds_at(offset) else {
+                    return false;
+                };
+                (dots.iter())
+                    .any(|dot| bounds.top() <= dot.top() && dot.bottom() <= bounds.bottom())
+            })
+            .collect()
+    })
+}
+
 fn hover(tab: &Entity<EditorView>, ix: usize, cx: &mut VisualTestContext) -> Option<String> {
     tab.read_with(cx, |tab, _| {
         let shown = tab.gutter_annotations()?;
@@ -97,19 +116,20 @@ fn toggle_shows_authors_by_row_run(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn an_accepted_ai_hunk_shows_the_agent(cx: &mut TestAppContext) {
+fn an_accepted_ai_hunk_draws_the_agent_lane(cx: &mut TestAppContext) {
     let (_dir, _workbench, tab, cx) = open_text(cx);
     edit(&tab, 4, "x", Origin::User, cx);
     edit(&tab, 10, "z", ai("claude"), cx);
+    assert_eq!(agent_rows(&tab, cx), [] as [u32; 0]);
     run(TOGGLE, cx);
-    assert_eq!(
-        entries(&tab, cx).unwrap(),
-        [
-            ("You".to_owned(), None),
-            ("AI · claude".to_owned(), Some(1.0))
-        ]
-    );
-    assert_eq!(hover(&tab, 1, cx).as_deref(), Some("Written by claude"));
+    draw(cx);
+    // The agent's row has no entry, but the lane.
+    assert_eq!(entries(&tab, cx).unwrap(), [("You".to_owned(), None)]);
+    assert_eq!(hover(&tab, 0, cx).as_deref(), Some("Written by you"));
+    assert_eq!(agent_rows(&tab, cx), [2]);
+    run(TOGGLE, cx);
+    draw(cx);
+    assert_eq!(agent_rows(&tab, cx), [] as [u32; 0]);
 }
 
 #[gpui::test]
@@ -123,7 +143,8 @@ fn edits_update_the_column(cx: &mut TestAppContext) {
     assert_eq!(texts(&tab, cx), ["You"]);
     cx.executor().advance_clock(Duration::from_millis(400));
     draw(cx);
-    assert_eq!(texts(&tab, cx), ["You", "AI · claude"]);
+    assert_eq!(texts(&tab, cx), ["You"]);
+    assert_eq!(agent_rows(&tab, cx), [2]);
 }
 
 #[gpui::test]

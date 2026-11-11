@@ -45,6 +45,7 @@ mod vim;
 pub use color_swatches::ColorSwatch;
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
 pub use diff_view::{DiffSide, DiffView};
+pub use element::{ChevronKind, DrawnChevron, DrawnGutter};
 pub use fe_config::{
     EditorSettings, SettingsEvent, StickyScrollSettings,
     settings::{InlineDiagnostics, RenderWhitespace},

@@ -99,9 +99,17 @@ pub(crate) struct FrameLayout {
     /// The buffer version laid out: positions in the frame are offsets in
     /// that text, which a later edit may have shortened.
     pub(crate) version: fe_buffer::Version,
-    /// Over the fold column, whose hovering shows the chevrons of folds that
-    /// are open.
-    fold_column: Hitbox,
+    /// Over the gutter, right of any annotation column, whose hovering shows
+    /// the chevrons of folds that are open.
+    gutter: Hitbox,
+    /// The fold toggle under the pointer as the frame was laid out, and
+    /// its fold's rows ([`hovered_fold`]).
+    pub(crate) hovered_fold: Option<HoveredFold>,
+    /// The agent lane's runs of rows, their tops and bottoms in frame
+    /// coordinates ([`annotation_column::agent_runs`]).
+    agent_runs: Vec<(f32, f32)>,
+    /// What the gutter drew, for [`EditorView::drawn_gutter`].
+    drawn_gutter: DrawnGutter,
     /// Over the fold toggles and markers, which show a pointing hand.
     clickable: Vec<Hitbox>,
     /// Over the text, right of the gutter, where a hover range is found.
@@ -954,7 +962,8 @@ impl Element for EditorElement {
             // Less any room the view keeps for text after a line.
             let wrap = match view.gutter {
                 true => {
-                    layout::wrap_width_with_annotation_column(width, rows, em, annotation_width)
+                    let gutter = gutter_columns(font_size.into());
+                    layout::wrap_width_with_gutter(width, rows, em, &gutter, annotation_width)
                 }
                 false => layout::wrap_width_without_gutter(width, em),
             } - view.wrap_reserve * em;
@@ -1105,21 +1114,12 @@ impl Element for EditorElement {
         // The colours of the frame's `Foreground` decorations, found once
         // the frame's rows are known.
         let foreground: std::cell::RefCell<Vec<StyledSpan<Hsla>>> = Default::default();
+        let columns = gutter_columns(font_size.into());
         let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
-            true if annotation_width > 0. => layout::layout_frame_with_annotation_column_and_hints(
+            true => layout::layout_frame_with_gutter_and_hints(
                 input,
+                &columns,
                 annotation_width,
-                &blocks,
-                inlay.as_ref(),
-                &hints,
-                &mut shaper,
-                &mut long_rows,
-                &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
-                |rows| fold_headers(syntax, server_folds.as_deref().map(Vec::as_slice), rows),
-            ),
-            true => layout::layout_frame_with_hints(
-                input,
                 &blocks,
                 inlay.as_ref(),
                 &hints,
@@ -1390,8 +1390,26 @@ impl Element for EditorElement {
                 size(px(rect.width), px(rect.height)),
             )
         };
-        let fold_column =
-            window.insert_hitbox(to_window(frame.fold_column), HitboxBehavior::Normal);
+        let gutter_hitbox = window.insert_hitbox(
+            to_window(Rect {
+                x: frame.annotation_column.width,
+                y: 0.,
+                width: match gutter {
+                    true => (frame.text_left - frame.annotation_column.width).max(0.),
+                    false => 0.,
+                },
+                height: frame.height,
+            }),
+            HitboxBehavior::Normal,
+        );
+        let hovered = hovered_fold(
+            &frame,
+            origin,
+            view,
+            syntax,
+            server_folds.as_deref().map(Vec::as_slice),
+            window,
+        );
         let clickable = frame
             .fold_click_areas()
             .map(|area| window.insert_hitbox(to_window(area.rect), HitboxBehavior::Normal))
@@ -1447,7 +1465,10 @@ impl Element for EditorElement {
             glyph_widths,
             tab_size,
             version: view.model.snapshot().version(),
-            fold_column,
+            gutter: gutter_hitbox,
+            hovered_fold: hovered,
+            agent_runs: Vec::new(),
+            drawn_gutter: DrawnGutter::default(),
             clickable,
             text,
             annotation_column: annotations,
@@ -1491,6 +1512,8 @@ impl Element for EditorElement {
             (layout.decorations.placed)
                 .retain(|placed| !matches!(placed.kind, DecorationKind::Gutter(_)));
         }
+        layout.agent_runs = annotation_column::agent_runs(&layout.frame, view);
+        clear_bars_from_agent_runs(&mut layout);
         layout.indent_guides = indent_guides::layout(&mut layout, view, window);
         layout.rulers = rulers::layout(&mut layout, view, window);
         layout.whitespace = whitespace::layout(&layout, view);
@@ -1752,6 +1775,9 @@ impl Element for EditorElement {
         let mut painted_current_match = Vec::new();
         #[cfg(test)]
         let mut painted_chevrons = Vec::new();
+        let mut drawn_chevrons = Vec::new();
+        let agent_dots = agent_lane_dots(&layout, window);
+        let closing = closing_chevron(&layout, view.model.text());
         #[cfg(test)]
         let mut painted_brackets = Vec::new();
         #[cfg(test)]
@@ -2000,21 +2026,56 @@ impl Element for EditorElement {
                 paint_lightbulb(bounds, kind, window);
             }
             layout.decorations.paint(Layer::Gutter, window, cx);
+            paint_agent_lane(&agent_dots, theme.agent_lane, window);
             // Folded rows' chevrons always show; the rest only while the
-            // pointer is over the fold column.
+            // pointer is in the gutter. The hovered one is at full strength
+            // on a tile, and its fold's closing row has an up-chevron.
+            let hovered = layout.hovered_fold.as_ref();
             for toggle in &frame.fold_toggles {
                 if !toggle.folded && !column_hovered {
                     continue;
                 }
                 let chevron = layout.bounds(frame.chevron_box(toggle));
-                paint_chevron(chevron, toggle.folded, theme.gutter_foreground, window);
+                let is_hovered = hovered.is_some_and(|fold| fold.row == toggle.buffer_row);
+                let color = match is_hovered {
+                    true => theme.gutter_active_foreground,
+                    false => theme.gutter_foreground,
+                };
+                if is_hovered {
+                    let radius = chevron.size.width * HOVER_TILE_RADIUS;
+                    window.paint_quad(fill(chevron, theme.fold_hover).corner_radii(radius));
+                }
+                let kind = match toggle.folded {
+                    true => ChevronKind::Folded,
+                    false => ChevronKind::Open,
+                };
+                paint_chevron(chevron, kind, color, window);
                 #[cfg(test)]
                 painted_chevrons.push((toggle.buffer_row, toggle.folded, chevron));
+                drawn_chevrons.push(DrawnChevron {
+                    row: toggle.buffer_row,
+                    kind,
+                    hovered: is_hovered,
+                    bounds: chevron,
+                    color,
+                });
+            }
+            if let Some((row, bounds)) = closing {
+                let color = theme.gutter_active_foreground;
+                paint_chevron(bounds, ChevronKind::Closing, color, window);
+                drawn_chevrons.push(DrawnChevron {
+                    row,
+                    kind: ChevronKind::Closing,
+                    hovered: false,
+                    bounds,
+                    color,
+                });
             }
             // Over the text and the gutter, beside the minimap.
             sticky_scroll::paint(&layout, &theme, window, cx);
             minimap::paint(&layout, &theme, minimap_hover, minimap_dragged, window);
         });
+        layout.drawn_gutter = drawn_gutter(&layout, &theme, &marks, agent_dots, drawn_chevrons);
         #[cfg(test)]
         let painted_minimap = minimap::painted(&layout, &theme, minimap_hover, minimap_dragged);
         #[cfg(test)]
@@ -2029,7 +2090,7 @@ impl Element for EditorElement {
         // clears the flag too. Every event that places the pointer counts,
         // not just moves: a window can move under a still pointer and then
         // be clicked or scrolled.
-        let hitbox = layout.fold_column.clone();
+        let hitbox = layout.gutter.clone();
         let view = self.view.downgrade();
         on_pointer_event::<MouseMoveEvent>(&view, &hitbox, window);
         on_pointer_event::<MouseDownEvent>(&view, &hitbox, window);
@@ -2042,7 +2103,7 @@ impl Element for EditorElement {
                 if phase == DispatchPhase::Bubble {
                     let id = window.window_handle().window_id();
                     cx.default_global::<PointerOutside>().0.insert(id);
-                    set_fold_column_hovered(&view, false, cx);
+                    set_gutter_hovered(&view, None, cx);
                     view.update(cx, |view, cx| {
                         view.set_hover(None, cx);
                         view.hide_popover(cx);
@@ -2152,6 +2213,14 @@ struct PointerOutside(HashSet<WindowId>);
 
 impl Global for PointerOutside {}
 
+/// The windows a pointer event has placed the pointer in. Until one does, a
+/// window's pointer position is no event's (a headless or offscreen window
+/// reports its corner), so the gutter isn't hovered.
+#[derive(Default)]
+struct PointerSeen(HashSet<WindowId>);
+
+impl Global for PointerSeen {}
+
 /// On each `E`, which places the pointer in the window, reconciles the
 /// view's fold column hover with it.
 fn on_pointer_event<E: MouseEvent>(
@@ -2164,6 +2233,7 @@ fn on_pointer_event<E: MouseEvent>(
         if phase == DispatchPhase::Bubble {
             let id = window.window_handle().window_id();
             cx.default_global::<PointerOutside>().0.remove(&id);
+            cx.default_global::<PointerSeen>().0.insert(id);
             reconcile_fold_column(&view, &column, window, cx);
         }
     });
@@ -2346,10 +2416,13 @@ type Squiggle = (Bounds<Pixels>, UnderlineStyle);
 /// colour.
 type Mark = (u32, Bounds<Pixels>, Hsla);
 
+/// A problem dot's diameter, of the problem column's width.
+const PROBLEM_DOT: f32 = 0.6;
+
 /// For `diagnostics`, in the frame's text: a wavy underline under each
 /// piece of each one on the frame's rows, in its severity's colour, the most
-/// severe last, so on top; and, at the gutter's left (right of any
-/// annotation column), a dot on the first
+/// severe last, so on top; and, in the gutter's problem column
+/// ([`Frame::problem_column`], right of the line numbers), a dot on the first
 /// display row of each buffer row one covers, in the colour of the most
 /// severe covering it. An empty range is underlined under the char after
 /// it, or a space's width at a row's end.
@@ -2440,13 +2513,15 @@ fn diagnostic_marks(
         }
     }
     pieces.sort_by_key(|(severity, _)| *severity);
-    let side = (frame.line_height * 0.35).round();
+    // Centred in the problem column, whatever the line height.
+    let column = frame.problem_column;
+    let side = (column.width * PROBLEM_DOT).round().min(frame.line_height);
     let marks: Vec<(u32, Rect, Hsla)> = (frame.rows.iter())
         .filter(|row| row.start == text.row_start(row.buffer_row))
         .filter_map(|row| {
             let severity = rows.get(&row.buffer_row)?;
             let rect = Rect {
-                x: frame.annotation_column.width + side / 2.,
+                x: column.x + (column.width - side) / 2.,
                 y: frame.row_top(row.row) + (frame.line_height - side) / 2.,
                 width: side,
                 height: side,
@@ -2575,7 +2650,311 @@ fn fade_spans(
     out
 }
 
-/// Sets whether the pointer is over `column` in the rendered frame. Unlike
+/// The code size the design's gutter widths are given at
+/// (`docs/design/design-system.md#editor`): 81 px in all at 13 px.
+const GUTTER_DESIGN_SIZE: f32 = 13.;
+/// The room left of the line numbers.
+const GUTTER_INSET: f32 = 4.;
+/// The line numbers, right-aligned.
+const GUTTER_NUMBERS: f32 = 38.;
+/// The problem dot's column, right of the numbers.
+const GUTTER_DOT: f32 = 10.;
+/// The fold column, reserved whether or not a chevron shows.
+const GUTTER_FOLD: f32 = 16.;
+/// The change bar, at the change lane's left edge.
+const GUTTER_BAR: f32 = 3.;
+/// Clear room between the change bar and the code.
+const GUTTER_GAP: f32 = 10.;
+/// A chevron's hover tile, centred in the fold column.
+const GUTTER_CHEVRON: f32 = 14.;
+/// The room left of a line number whose digits outgrow [`GUTTER_NUMBERS`].
+const GUTTER_NUMBERS_PAD: f32 = 8.;
+
+/// The gutter's columns for code `font_size` px: the design's widths at
+/// [`GUTTER_DESIGN_SIZE`], scaled with the font and rounded to whole pixels.
+/// Left to right: the line numbers ([`GUTTER_INSET`] and
+/// [`GUTTER_NUMBERS`]), the problem dot, the fold column, and the change
+/// lane (the bar and the gap to the code).
+pub(crate) fn gutter_columns(font_size: f32) -> layout::Gutter {
+    let scaled = |width: f32| (width * font_size / GUTTER_DESIGN_SIZE).round();
+    layout::Gutter {
+        numbers: scaled(GUTTER_INSET + GUTTER_NUMBERS),
+        numbers_pad: scaled(GUTTER_NUMBERS_PAD),
+        number_gap: scaled(GUTTER_DOT),
+        fold_column: scaled(GUTTER_FOLD),
+        change_lane: scaled(GUTTER_BAR + GUTTER_GAP),
+        chevron: scaled(GUTTER_CHEVRON),
+    }
+}
+
+/// The fold toggle under the pointer in the gutter.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HoveredFold {
+    /// The buffer row it heads.
+    pub(crate) row: u32,
+    /// An open fold's candidate, header first, and the row its closing
+    /// up-chevron shows on: the syntax node's last row
+    /// ([`fe_syntax::fold_candidate_closing`]), or a server range's last;
+    /// none for a folded row's.
+    pub(crate) open: Option<(RangeInclusive<u32>, u32)>,
+}
+
+/// The fold toggle under the pointer in `frame`, laid out at `origin`, while
+/// `view`'s gutter is hovered: its row and, unless it's folded, its
+/// candidate from the server's ranges or else the syntax tree's.
+fn hovered_fold(
+    frame: &Frame<Line>,
+    origin: Point<Pixels>,
+    view: &EditorView,
+    syntax: Option<&Syntax>,
+    server_folds: Option<&[RangeInclusive<u32>]>,
+    window: &Window,
+) -> Option<HoveredFold> {
+    if !view.fold_column_hovered {
+        return None;
+    }
+    let row = toggle_under(frame, origin, window.mouse_position())?;
+    let toggle = frame
+        .fold_toggles
+        .iter()
+        .find(|toggle| toggle.buffer_row == row)?;
+    // A server's range says nothing of a closer: its closing row is the last
+    // one it folds away. A syntax candidate's is its node's last row, the
+    // `}`, `end` or `*/` row a candidate stops before.
+    let open = match (toggle.folded, server_folds) {
+        (true, _) => None,
+        (false, Some(ranges)) => crate::server_folds::range_at(ranges, row)
+            .filter(|range| *range.start() == row)
+            .map(|range| {
+                let closing = *range.end();
+                (range, closing)
+            }),
+        (false, None) => syntax.and_then(|syntax| fe_syntax::fold_candidate_closing(syntax, row)),
+    };
+    Some(HoveredFold { row, open })
+}
+
+/// The buffer row of the fold toggle of `frame` (laid out at `origin`) under
+/// window `position`.
+fn toggle_under(
+    frame: &Frame<Line>,
+    origin: Point<Pixels>,
+    position: Point<Pixels>,
+) -> Option<u32> {
+    let at = Vec2 {
+        x: (position.x - origin.x).into(),
+        y: (position.y - origin.y).into(),
+    };
+    (frame.fold_toggles.iter())
+        .find(|toggle| toggle.rect.contains(at))
+        .map(|toggle| toggle.buffer_row)
+}
+
+/// What a frame drew in its gutter, in window coordinates: for tests
+/// outside the crate ([`EditorView::drawn_gutter`]).
+#[doc(hidden)]
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DrawnGutter {
+    /// Left to right: the room before the line numbers, the numbers, the
+    /// problem dot's column, the fold column, the change bar and the gap to
+    /// the code.
+    pub columns: [Bounds<Pixels>; 6],
+    /// The x the code starts at, before any scrolling.
+    pub text_left: Pixels,
+    pub chevrons: Vec<DrawnChevron>,
+    /// The problem dots: each one's buffer row, bounds and colour.
+    pub dots: Vec<(u32, Bounds<Pixels>, Hsla)>,
+    /// The agent lane's dots.
+    pub agent_dots: Vec<Bounds<Pixels>>,
+    /// The change bars, after the agent lane took its rows from them.
+    pub bars: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The notches marking removed lines.
+    pub notches: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The indent guides, and whether each is a step brighter.
+    pub indent_guides: Vec<(Bounds<Pixels>, bool)>,
+}
+
+/// A chevron drawn in the fold column.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnChevron {
+    /// The buffer row it's on.
+    pub row: u32,
+    pub kind: ChevronKind,
+    /// Drawn at full strength on the hover tile.
+    pub hovered: bool,
+    pub bounds: Bounds<Pixels>,
+    pub color: Hsla,
+}
+
+/// Which way a chevron points.
+#[doc(hidden)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ChevronKind {
+    /// Down: an open fold's header.
+    Open,
+    /// Right: a folded row.
+    Folded,
+    /// Up, and smaller: the hovered fold's closing row.
+    Closing,
+}
+
+impl EditorView {
+    /// What the last frame drew in the gutter: `None` before the first. For
+    /// tests outside the crate.
+    #[doc(hidden)]
+    pub fn drawn_gutter(&self) -> Option<&DrawnGutter> {
+        Some(&self.layout.as_ref()?.drawn_gutter)
+    }
+}
+
+/// Takes the agent lane's rows out of the change bars: an agent's rows show
+/// its lane instead.
+fn clear_bars_from_agent_runs(layout: &mut FrameLayout) {
+    if layout.agent_runs.is_empty() {
+        return;
+    }
+    let runs: Vec<(Pixels, Pixels)> = (layout.agent_runs.iter())
+        .map(|&(top, bottom)| {
+            let bounds = layout.bounds(Rect {
+                x: 0.,
+                y: top,
+                width: 0.,
+                height: bottom - top,
+            });
+            (bounds.top(), bounds.bottom())
+        })
+        .collect();
+    let placed = mem::take(&mut layout.decorations.placed);
+    for placed in placed {
+        if placed.kind != DecorationKind::Gutter(fe_editor::decorations::GutterMark::Bar) {
+            layout.decorations.placed.push(placed);
+            continue;
+        }
+        // What's left of the bar between the runs over it.
+        let (mut top, bottom) = (placed.bounds.top(), placed.bounds.bottom());
+        for &(run_top, run_bottom) in &runs {
+            if run_bottom <= top || run_top >= bottom {
+                continue;
+            }
+            if run_top > top {
+                layout
+                    .decorations
+                    .placed
+                    .push(bar_piece(&placed, top, run_top));
+            }
+            top = top.max(run_bottom);
+        }
+        if top < bottom {
+            layout
+                .decorations
+                .placed
+                .push(bar_piece(&placed, top, bottom));
+        }
+    }
+}
+
+/// `bar` from `top` to `bottom`, its ends still rounded.
+fn bar_piece(bar: &decorations::Placed, top: Pixels, bottom: Pixels) -> decorations::Placed {
+    let mut piece = bar.clone();
+    piece.bounds = Bounds::from_corners(
+        point(bar.bounds.left(), top),
+        point(bar.bounds.right(), bottom),
+    );
+    piece.corner_radius = piece.corner_radius.min((bottom - top) / 2.);
+    piece
+}
+
+/// The agent lane's dots: circles a change bar wide at the bar's left
+/// edge, one every two bar widths down each run, placed by the document's
+/// y so they keep their places as it scrolls.
+fn agent_lane_dots(layout: &FrameLayout, window: &Window) -> Vec<Bounds<Pixels>> {
+    let frame = &layout.frame;
+    let lane = frame.change_lane;
+    let scale = window.scale_factor();
+    let side = (change_bar_width(lane.width) * scale).round().max(1.) / scale;
+    let period = side * 2.;
+    let mut dots = Vec::new();
+    for &(top, bottom) in &layout.agent_runs {
+        let mut y = ((top + frame.scroll.y) / period).ceil() * period - frame.scroll.y;
+        while y + side <= bottom {
+            dots.push(layout.bounds(Rect {
+                x: lane.x,
+                y,
+                width: side,
+                height: side,
+            }));
+            y += period;
+        }
+    }
+    dots
+}
+
+/// Paints the agent lane's `dots` in `color`.
+fn paint_agent_lane(dots: &[Bounds<Pixels>], color: Hsla, window: &mut Window) {
+    for &dot in dots {
+        window.paint_quad(fill(dot, color).corner_radii(dot.size.width / 2.));
+    }
+}
+
+/// What `layout` drew in the gutter, with the problem dots `marks`, the agent
+/// lane's dots and the chevrons as they were painted.
+fn drawn_gutter(
+    layout: &FrameLayout,
+    theme: &EditorTheme,
+    marks: &[Mark],
+    agent_dots: Vec<Bounds<Pixels>>,
+    chevrons: Vec<DrawnChevron>,
+) -> DrawnGutter {
+    use fe_editor::decorations::GutterMark;
+    let frame = &layout.frame;
+    let left = frame.annotation_column.x + frame.annotation_column.width;
+    let inset = (GUTTER_INSET * f32::from(theme.font_size) / GUTTER_DESIGN_SIZE).round();
+    let (problem, fold, lane) = (frame.problem_column, frame.fold_column, frame.change_lane);
+    let bar = change_bar_width(lane.width);
+    let span = |from: f32, to: f32| {
+        layout.bounds(Rect {
+            x: from,
+            y: 0.,
+            width: (to - from).max(0.),
+            height: frame.height,
+        })
+    };
+    let marks_of = |mark: GutterMark| {
+        (layout.decorations.placed.iter())
+            .filter(|placed| placed.kind == DecorationKind::Gutter(mark))
+            .map(|placed| (placed.bounds, placed.color))
+            .collect()
+    };
+    DrawnGutter {
+        columns: [
+            span(left, left + inset),
+            span(left + inset, problem.x),
+            span(problem.x, problem.x + problem.width),
+            span(fold.x, fold.x + fold.width),
+            span(lane.x, lane.x + bar),
+            span(lane.x + bar, frame.text_left),
+        ],
+        text_left: layout.origin.x + px(frame.text_left),
+        chevrons,
+        dots: marks.to_vec(),
+        agent_dots,
+        bars: marks_of(GutterMark::Bar),
+        notches: marks_of(GutterMark::Deletion),
+        indent_guides: (layout.indent_guides.iter())
+            .map(|guide| (guide.bounds, guide.color == theme.indent_guide_active))
+            .collect(),
+    }
+}
+
+/// How wide a change bar is in a change lane `lane` wide: the design's
+/// [`GUTTER_BAR`] of [`GUTTER_BAR`] and [`GUTTER_GAP`].
+pub(crate) fn change_bar_width(lane: f32) -> f32 {
+    lane * GUTTER_BAR / (GUTTER_BAR + GUTTER_GAP)
+}
+
+/// Sets whether the pointer is over the gutter, `column`, in the rendered
+/// frame, and over which fold toggle. Unlike
 /// [`Hitbox::is_hovered`], this holds after a key press too (GPUI's
 /// keyboard modality suppresses hover, but a key doesn't move the pointer),
 /// while still honouring clipping and whatever covers the column.
@@ -2589,13 +2968,28 @@ fn reconcile_fold_column(
     let outside = cx
         .try_global::<PointerOutside>()
         .is_some_and(|outside| outside.0.contains(&id));
-    let hovered = !outside && column.is_hovered_at(window.mouse_position(), window);
-    set_fold_column_hovered(view, hovered, cx);
+    let seen = (cx.try_global::<PointerSeen>()).is_some_and(|seen| seen.0.contains(&id));
+    let position = window.mouse_position();
+    let hovered = seen && !outside && column.is_hovered_at(position, window);
+    set_gutter_hovered(view, hovered.then_some(position), cx);
 }
 
-fn set_fold_column_hovered(view: &WeakEntity<EditorView>, hovered: bool, cx: &mut App) {
+/// Sets whether the pointer is over the gutter, at `position` if it is, and
+/// draws again when that changes or it moves onto another fold toggle than
+/// the one the last frame drew hovered.
+fn set_gutter_hovered(
+    view: &WeakEntity<EditorView>,
+    position: Option<Point<Pixels>>,
+    cx: &mut App,
+) {
     view.update(cx, |view, cx| {
-        if view.fold_column_hovered != hovered {
+        let hovered = position.is_some();
+        let layout = view.layout.as_ref();
+        let toggle = position
+            .zip(layout)
+            .and_then(|(position, layout)| toggle_under(&layout.frame, layout.origin, position));
+        let drawn = layout.and_then(|layout| layout.hovered_fold.as_ref().map(|fold| fold.row));
+        if view.fold_column_hovered != hovered || (hovered && toggle != drawn) {
             view.fold_column_hovered = hovered;
             cx.notify();
         }
@@ -2618,6 +3012,18 @@ pub(crate) fn chevron_points(chevron: Bounds<Pixels>, folded: bool) -> [Point<Pi
     }
 }
 
+/// The three points of an up-chevron stroked in `chevron`, as
+/// [`chevron_points`]' open one turned over.
+fn up_chevron_points(chevron: Bounds<Pixels>) -> [Point<Pixels>; 3] {
+    let [start, tip, end] = chevron_points(chevron, false);
+    let centre = chevron.center();
+    let flip = |at: Point<Pixels>| point(at.x, centre.y * 2. - at.y);
+    [flip(start), flip(tip), flip(end)]
+}
+
+/// The host's glyph's side, of the problem column's width.
+const GLYPH: f32 = 1.2;
+
 /// The host's glyph, if its row's first display row is shown: the buffer
 /// row, its bounds in window coordinates and its kind. It sits where the
 /// row's dot would.
@@ -2630,14 +3036,12 @@ fn gutter_glyph(
     let frame = &layout.frame;
     let shown = (frame.rows.iter())
         .find(|shown| shown.buffer_row == row && shown.start == text.row_start(row))?;
-    // Within the slot's 2 em, whatever the line height. The gutter is a
-    // whole number of ems wide, right of the annotation column.
-    let rows = view.model.text().row_count();
-    let em = (frame.text_left - frame.annotation_column.width)
-        / fe_display::layout::gutter_width(rows, 1.);
-    let side = (frame.line_height * 0.8).min(em * 1.8).round();
+    // Centred on the problem column, a little wider than it, whatever the
+    // line height.
+    let column = frame.problem_column;
+    let side = (frame.line_height * 0.8).min(column.width * GLYPH).round();
     let rect = Rect {
-        x: frame.annotation_column.width + (em * 2. - side) / 2.,
+        x: column.x + (column.width - side) / 2.,
         y: frame.row_top(shown.row) + (frame.line_height - side) / 2.,
         width: side,
         height: side,
@@ -2693,8 +3097,42 @@ fn paint_lightbulb(bounds: Bounds<Pixels>, kind: GlyphKind, window: &mut Window)
     }
 }
 
-fn paint_chevron(chevron: Bounds<Pixels>, folded: bool, color: Hsla, window: &mut Window) {
-    let [start, tip, end] = chevron_points(chevron, folded);
+/// A hover tile's corner radius, of its side: the design's 4 px of 14.
+const HOVER_TILE_RADIUS: f32 = 4. / 14.;
+
+/// The closing up-chevron's box, of an open chevron's.
+const CLOSING_CHEVRON: f32 = 0.75;
+
+/// The hovered open fold's closing row's up-chevron, if that row's first
+/// display row is shown and it has no fold toggle of its own: its buffer
+/// row and its box, smaller than the header's, centred where the header's
+/// is in its row.
+fn closing_chevron(layout: &FrameLayout, text: &Text) -> Option<(u32, Bounds<Pixels>)> {
+    let (_, closing) = layout.hovered_fold.as_ref()?.open.clone()?;
+    let frame = &layout.frame;
+    // A row heading a fold of its own, `} else {`, keeps its own chevron.
+    if (frame.fold_toggles.iter()).any(|toggle| toggle.buffer_row == closing) {
+        return None;
+    }
+    let shown = (frame.rows.iter())
+        .find(|shown| shown.buffer_row == closing && shown.start == text.row_start(closing))?;
+    let column = frame.fold_column;
+    let side = (frame.fold_chevron * CLOSING_CHEVRON).round();
+    let rect = Rect {
+        x: column.x + (column.width - side) / 2.,
+        y: frame.row_top(shown.row) + (frame.line_height - side) / 2.,
+        width: side,
+        height: side,
+    };
+    Some((closing, layout.bounds(rect)))
+}
+
+fn paint_chevron(chevron: Bounds<Pixels>, kind: ChevronKind, color: Hsla, window: &mut Window) {
+    let [start, tip, end] = match kind {
+        ChevronKind::Open => chevron_points(chevron, false),
+        ChevronKind::Folded => chevron_points(chevron, true),
+        ChevronKind::Closing => up_chevron_points(chevron),
+    };
     let mut path = PathBuilder::stroke((chevron.size.width / 12.).max(px(1.)));
     path.move_to(start);
     path.line_to(tip);

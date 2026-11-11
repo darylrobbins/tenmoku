@@ -1,7 +1,7 @@
 //! The gutter's fold chevrons in a headless window: folded rows' chevrons
-//! always show, and the rest only while the pointer is over the fold column.
-//! A move that changes whether it is notifies the view, whose window a test
-//! app then draws when effects flush.
+//! always show, and the rest only while the pointer is in the gutter. A move
+//! that changes whether it is, or which chevron it's over, notifies the
+//! view, whose window a test app then draws when effects flush.
 
 use std::{cell::Cell, rc::Rc};
 
@@ -106,30 +106,34 @@ fn column_at(view: &Entity<EditorView>, row: u32, cx: &mut VisualTestContext) ->
 }
 
 #[gpui::test]
-fn open_fold_chevrons_show_only_while_the_pointer_is_over_their_column(cx: &mut TestAppContext) {
+fn open_fold_chevrons_show_only_while_the_pointer_is_in_the_gutter(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx);
     let candidates = [(0, false), (4, false)];
     assert_eq!(painted(&view, cx), [], "the pointer hasn't moved");
-    let column = bounds_of(&view, cx, |frame| frame.fold_column);
-    let numbers = point(column.left() - px(3.), column_at(&view, 0, cx).y);
-    let text = point(column.right() + px(20.), column_at(&view, 0, cx).y);
+    let text_left = bounds_of(&view, cx, |frame| frame.text_bounds()).left();
+    let numbers = bounds_of(&view, cx, |frame| frame.problem_column).left() - px(3.);
+    let numbers = point(numbers, column_at(&view, 0, cx).y);
+    let text = point(text_left + px(20.), column_at(&view, 0, cx).y);
     let count = count_notifications(&view, cx);
 
-    assert!(!move_to(numbers, &count, cx));
-    assert_eq!(painted(&view, cx), [], "over the line numbers");
-    // Into the column on a row that can't fold.
-    assert!(move_to(column_at(&view, 2, cx), &count, cx));
+    move_to(text, &count, cx);
+    assert_eq!(painted(&view, cx), [], "over the text");
+    // Into the gutter over the line numbers.
+    assert!(move_to(numbers, &count, cx));
+    assert_eq!(painted(&view, cx), candidates, "over the line numbers");
+    // Within it, onto the fold column of a row that can't fold: nothing
+    // changes.
+    assert!(!move_to(column_at(&view, 2, cx), &count, cx));
     assert_eq!(painted(&view, cx), candidates);
-    // Within it, onto a candidate's row: nothing changes.
-    assert!(!move_to(column_at(&view, 4, cx), &count, cx));
+    // Onto a candidate's chevron, which is drawn hovered.
+    assert!(move_to(column_at(&view, 4, cx), &count, cx));
     assert_eq!(painted(&view, cx), candidates);
+    // Just left of the text, in the gap after the change bar.
+    let gap = point(text_left - px(2.), column_at(&view, 0, cx).y);
+    assert!(move_to(gap, &count, cx));
+    assert_eq!(painted(&view, cx), candidates, "in the gap before the code");
     assert!(move_to(text, &count, cx));
     assert_eq!(painted(&view, cx), [], "over the text");
-    // Into the column on a candidate's row.
-    assert!(move_to(column_at(&view, 0, cx), &count, cx));
-    assert_eq!(painted(&view, cx), candidates);
-    assert!(move_to(numbers, &count, cx));
-    assert_eq!(painted(&view, cx), [], "over the line numbers");
 
     assert!(move_to(column_at(&view, 0, cx), &count, cx));
     exit_window(column_at(&view, 0, cx), cx);
@@ -137,13 +141,12 @@ fn open_fold_chevrons_show_only_while_the_pointer_is_over_their_column(cx: &mut 
 }
 
 #[gpui::test]
-fn the_column_moving_under_a_still_pointer_shows_the_chevrons(cx: &mut TestAppContext) {
-    // 999 rows: one more widens the gutter by an em.
-    let (view, cx) = editor_on(format!("{TEXT}{}", "\n".repeat(990)), cx);
+fn the_gutter_moving_under_a_still_pointer_shows_the_chevrons(cx: &mut TestAppContext) {
+    // 9,999 rows: one more widens the line numbers' column by a digit.
+    let (view, cx) = editor_on(format!("{TEXT}{}", "\n".repeat(9990)), cx);
     let candidates = [(0, false), (4, false)];
-    let column = bounds_of(&view, cx, |frame| frame.fold_column);
-    let em = column.size.width / 3.75;
-    let pointer = point(column.right() + em / 2., column_at(&view, 0, cx).y);
+    let text_left = bounds_of(&view, cx, |frame| frame.text_bounds()).left();
+    let pointer = point(text_left + px(2.), column_at(&view, 0, cx).y);
     let count = count_notifications(&view, cx);
     move_to(pointer, &count, cx);
     assert_eq!(painted(&view, cx), [], "over the text");
@@ -157,15 +160,15 @@ fn the_column_moving_under_a_still_pointer_shows_the_chevrons(cx: &mut TestAppCo
         });
         cx.run_until_parked();
     };
-    let len = TEXT.len() + 990;
+    let len = TEXT.len() + 9990;
     edit(len..len, "\n", cx);
     assert_eq!(
         painted(&view, cx),
         candidates,
-        "the column moved under the pointer"
+        "the gutter widened under the pointer"
     );
     edit(len..len + 1, "", cx);
-    assert_eq!(painted(&view, cx), [], "and away from it");
+    assert_eq!(painted(&view, cx), [], "and narrowed from under it");
 }
 
 #[gpui::test]

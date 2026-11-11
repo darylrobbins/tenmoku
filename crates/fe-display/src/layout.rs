@@ -204,6 +204,10 @@ pub struct Frame<L> {
     /// height, where chevrons go. Line numbers end [`LINE_NUMBER_GAP_EMS`]
     /// left of it.
     pub fold_column: Rect,
+    /// The gap between the line numbers' right edge and the fold column, the
+    /// frame's height ([`Gutter::number_gap`]), where a host may draw a
+    /// row's problem dot; zero wide without a gutter.
+    pub problem_column: Rect,
     /// The column left of the gutter, the frame's height, where a host's
     /// per-row annotations go; zero wide when there's none.
     pub annotation_column: Rect,
@@ -737,10 +741,59 @@ const CURSOR_WIDTH: f32 = 2.;
 
 /// The gutter's width, which fits the line numbers of `buffer_rows` rows.
 /// Left to right: 2 em for the diagnostics' marks, the digits, the
-/// [`LINE_NUMBER_GAP_EMS`] gap, the fold column and the change lane.
+/// [`LINE_NUMBER_GAP_EMS`] gap, the fold column and the change lane: the
+/// width of [`Gutter::ems`].
 pub fn gutter_width(buffer_rows: u32, em: f32) -> f32 {
-    let digits = buffer_rows.to_string().len().max(3) as f32;
-    em * (digits + 2. + LINE_NUMBER_GAP_EMS + FOLD_COLUMN_EMS + CHANGE_LANE_EMS)
+    Gutter::ems(em).width(buffer_rows, em)
+}
+
+/// The widths of the gutter's columns, in pixels, left to right after any
+/// annotation column: the line numbers', right-aligned in it; a gap (the
+/// column a host may draw a problem dot in, [`Frame::problem_column`]); the
+/// fold column; the change lane, whose left edge the change marks take and
+/// whose rest is clear room before the text.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Gutter {
+    /// The line numbers' column at least, room left of the digits included.
+    pub numbers: f32,
+    /// The room left of the widest line number once its digits widen the
+    /// column past `numbers`.
+    pub numbers_pad: f32,
+    /// Between the line numbers' right edge and the fold column.
+    pub number_gap: f32,
+    pub fold_column: f32,
+    pub change_lane: f32,
+    /// The side of a chevron's square box, at most
+    /// [`FOLD_CHEVRON_LINE_FRACTION`] of a row's height.
+    pub chevron: f32,
+}
+
+impl Gutter {
+    /// The gutter in ems: 2 em for the diagnostics' marks and room for three
+    /// digits at least, [`LINE_NUMBER_GAP_EMS`], [`FOLD_COLUMN_EMS`],
+    /// [`CHANGE_LANE_EMS`], chevrons [`FOLD_CHEVRON_EMS`].
+    pub fn ems(em: f32) -> Self {
+        Gutter {
+            numbers: em * 5.,
+            numbers_pad: em * 2.,
+            number_gap: em * LINE_NUMBER_GAP_EMS,
+            fold_column: em * FOLD_COLUMN_EMS,
+            change_lane: em * CHANGE_LANE_EMS,
+            chevron: em * FOLD_CHEVRON_EMS,
+        }
+    }
+
+    /// The line numbers' column for `buffer_rows` rows' numbers, `em` a
+    /// digit's advance.
+    pub fn numbers_width(&self, buffer_rows: u32, em: f32) -> f32 {
+        let digits = buffer_rows.to_string().len() as f32;
+        self.numbers.max(digits * em + self.numbers_pad)
+    }
+
+    /// The whole gutter's width for `buffer_rows` rows' numbers.
+    pub fn width(&self, buffer_rows: u32, em: f32) -> f32 {
+        self.numbers_width(buffer_rows, em) + self.number_gap + self.fold_column + self.change_lane
+    }
 }
 
 /// The width to soft wrap at in an editor `width` wide: what's right of the
@@ -759,7 +812,19 @@ pub fn wrap_width_with_annotation_column(
     em: f32,
     annotation_width: f32,
 ) -> f32 {
-    let available = width - annotation_width - gutter_width(buffer_rows, em) - em * 2.;
+    wrap_width_with_gutter(width, buffer_rows, em, &Gutter::ems(em), annotation_width)
+}
+
+/// [`wrap_width_with_annotation_column`] for a frame laid out with `gutter`
+/// ([`layout_frame_with_gutter_and_hints`]).
+pub fn wrap_width_with_gutter(
+    width: f32,
+    buffer_rows: u32,
+    em: f32,
+    gutter: &Gutter,
+    annotation_width: f32,
+) -> f32 {
+    let available = width - annotation_width - gutter.width(buffer_rows, em) - em * 2.;
     (available / em).floor().max(1.) * em
 }
 
@@ -874,7 +939,7 @@ pub fn layout_frame_with_hints<M: TextMeasure>(
 ) -> Frame<M::Line> {
     lay_out_frame(
         input,
-        Some(0.),
+        Some((0., Gutter::ems(input.em))),
         blocks,
         inlay,
         hints,
@@ -934,7 +999,38 @@ pub fn layout_frame_with_annotation_column_and_hints<M: TextMeasure>(
 ) -> Frame<M::Line> {
     lay_out_frame(
         input,
-        Some(annotation_width),
+        Some((annotation_width, Gutter::ems(input.em))),
+        blocks,
+        inlay,
+        hints,
+        measure,
+        long_rows,
+        widths,
+        highlights,
+        fold_candidates,
+    )
+}
+
+/// Lays out like [`layout_frame_with_annotation_column_and_hints`], with the
+/// gutter's columns as wide as `gutter` says rather than [`Gutter::ems`].
+/// Wrap it at [`wrap_width_with_gutter`].
+#[allow(clippy::too_many_arguments)]
+pub fn layout_frame_with_gutter_and_hints<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    gutter: &Gutter,
+    annotation_width: f32,
+    blocks: &BlockMap,
+    inlay: Option<&Inlay<M::Style>>,
+    hints: &[Inlay<M::Style>],
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+    fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
+) -> Frame<M::Line> {
+    lay_out_frame(
+        input,
+        Some((annotation_width, *gutter)),
         blocks,
         inlay,
         hints,
@@ -999,12 +1095,12 @@ pub fn layout_frame_without_gutter_with_hints<M: TextMeasure>(
     )
 }
 
-/// [`layout_frame_with_hints`], with the gutter and an annotation column
-/// that wide before it, or with neither (`None`).
+/// [`layout_frame_with_hints`], with the gutter as wide as its columns say
+/// and an annotation column that wide before it, or with neither (`None`).
 #[allow(clippy::too_many_arguments)]
 fn lay_out_frame<M: TextMeasure>(
     input: &FrameInput<M::Style>,
-    annotation_width: Option<f32>,
+    gutter: Option<(f32, Gutter)>,
     blocks: &BlockMap,
     inlay: Option<&Inlay<M::Style>>,
     hints: &[Inlay<M::Style>],
@@ -1036,16 +1132,19 @@ fn lay_out_frame<M: TextMeasure>(
     // Left to right: the annotation column, the fold column, the change lane
     // and the text; without a gutter, the columns and lane are empty, at the
     // left edge.
-    let gutter = annotation_width.is_some();
-    let annotation_width = annotation_width.unwrap_or(0.);
-    let (text_left, fold_column_width, change_lane_width) = match gutter {
-        true => (
-            annotation_width + gutter_width(text.row_count(), em),
-            em * FOLD_COLUMN_EMS,
-            em * CHANGE_LANE_EMS,
+    let columns = gutter.map(|(_, columns)| columns);
+    let annotation_width = gutter.map_or(0., |(width, _)| width);
+    let gutter = gutter.is_some();
+    let (text_left, fold_column_width, change_lane_width) = match columns {
+        Some(columns) => (
+            annotation_width + columns.width(text.row_count(), em),
+            columns.fold_column,
+            columns.change_lane,
         ),
-        false => (em * NO_GUTTER_LEFT_EMS, 0., 0.),
+        None => (em * NO_GUTTER_LEFT_EMS, 0., 0.),
     };
+    let number_gap = columns.map_or(0., |columns| columns.number_gap);
+    let chevron = columns.map_or(em * FOLD_CHEVRON_EMS, |columns| columns.chevron);
     let lane_x = if gutter {
         text_left - change_lane_width
     } else {
@@ -1759,7 +1858,7 @@ fn lay_out_frame<M: TextMeasure>(
             };
             let line = shape(&number.to_string(), style);
             let origin = Vec2 {
-                x: fold_column_x - em * LINE_NUMBER_GAP_EMS - line.width(),
+                x: fold_column_x - number_gap - line.width(),
                 y: row_top(row.row),
             };
             (origin, line)
@@ -1890,13 +1989,19 @@ fn lay_out_frame<M: TextMeasure>(
             width: fold_column_width,
             height,
         },
+        problem_column: Rect {
+            x: fold_column_x - number_gap,
+            y: 0.,
+            width: number_gap,
+            height,
+        },
         annotation_column: Rect {
             x: 0.,
             y: 0.,
             width: annotation_width,
             height,
         },
-        fold_chevron: (em * FOLD_CHEVRON_EMS).min(line_height * FOLD_CHEVRON_LINE_FRACTION),
+        fold_chevron: chevron.min(line_height * FOLD_CHEVRON_LINE_FRACTION),
         fold_toggles,
         fold_markers,
         inlay: inlay_rect,

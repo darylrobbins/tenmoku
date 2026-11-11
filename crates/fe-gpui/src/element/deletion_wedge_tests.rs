@@ -1,4 +1,4 @@
-//! A deletion's wedge: its corners, and that it paints in the gutter layer.
+//! A deletion's notch paints in the gutter layer.
 
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
@@ -7,7 +7,7 @@ use fe_editor::{
     EditorModel,
     decorations::{Decoration, DecorationProvider, GutterMark, Tint, overlaps},
 };
-use gpui::{Bounds, TestAppContext, point, px, size};
+use gpui::TestAppContext;
 
 use super::*;
 use crate::{EditorTheme, EditorView, init};
@@ -28,19 +28,6 @@ impl DecorationProvider for Fixed {
                 .cloned(),
         );
     }
-}
-
-#[test]
-fn the_points_are_a_triangle_toward_the_text() {
-    let bounds = Bounds::new(point(px(10.), px(20.)), size(px(5.), px(12.)));
-    assert_eq!(
-        wedge_points(bounds),
-        [
-            point(px(10.), px(20.)),
-            point(px(15.), px(26.)),
-            point(px(10.), px(32.)),
-        ]
-    );
 }
 
 #[gpui::test]
