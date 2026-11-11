@@ -161,6 +161,45 @@ impl RowIndex {
         self.locate(offset, measure).x
     }
 
+    /// [`RowIndex::x_for_offset`] of each of `offsets`, which ascend,
+    /// appended to `out`: in one walk from the first to the last, rather
+    /// than one from a checkpoint each.
+    pub fn xs_for_offsets(
+        &mut self,
+        offsets: &[usize],
+        measure: &mut dyn CharWidth,
+        out: &mut Vec<f64>,
+    ) {
+        let (Some(&first), Some(&last)) = (offsets.first(), offsets.last()) else {
+            return;
+        };
+        // Indexed up to the last, so the walk crosses only measured marks.
+        let last = self.locate(last, measure).offset;
+        let mut at = self.locate(first, measure);
+        let end =
+            (self.text).clip_offset((last + MAX_CLUSTER_BYTES + 4).min(self.end), Bias::Right);
+        let text = self.text.slice_to_string(at.offset..end.max(at.offset));
+        self.count(text.len());
+        let mut units = Clusters::new(&text);
+        let mut unit = units.next();
+        for &offset in offsets {
+            let offset = offset.clamp(self.range().start, self.end);
+            while let Some((cluster, piece)) = unit
+                && at.offset + cluster.len() <= offset
+            {
+                let (columns, x) = self.measure_cluster(cluster, piece, at, measure);
+                at = Position {
+                    offset: at.offset + cluster.len(),
+                    column: at.column + columns,
+                    x,
+                    cluster: false,
+                };
+                unit = units.next();
+            }
+            out.push(at.x);
+        }
+    }
+
     /// The display column of `offset`, clamped as for
     /// [`RowIndex::x_for_offset`].
     pub fn column_for_offset(&mut self, offset: usize, measure: &mut dyn CharWidth) -> usize {
@@ -1040,6 +1079,33 @@ mod tests {
             index.slice(0.0..800., 200., measure);
             let scanned = index.scanned.get();
             assert!(scanned <= 4 * CHUNK, "{pattern:?}: {scanned} bytes scanned");
+        }
+    }
+
+    #[test]
+    fn xs_at_once_are_xs_one_at_a_time_in_one_walk() {
+        let row = "ab\tcé中 😀e\u{301}xyz".repeat(8000);
+        let (text, range) = middle_row(&row);
+        let from = range.start + 3 * CHUNK + 5;
+        let offsets: Vec<usize> = (from..from + 64 * 1024)
+            .filter(|&offset| text.clip_offset(offset, Bias::Left) == offset)
+            .collect();
+        let measure = &mut Wide::default();
+        let mut index = RowIndex::new(&text, range.clone(), 4, measure);
+        let mut xs = Vec::new();
+        index.xs_for_offsets(&offsets, measure, &mut xs);
+        // About the bytes walked, once, not a chunk from a checkpoint each.
+        let span = offsets.last().unwrap() - range.start;
+        let scanned = index.scanned.get();
+        assert!(scanned <= 3 * span, "{scanned} bytes scanned for {span}");
+        assert!(measure.calls <= 3 * span, "{} calls", measure.calls);
+        let mut fresh = RowIndex::new(&text, range, 4, measure);
+        for (offset, x) in offsets.iter().zip(&xs) {
+            let one = fresh.x_for_offset(*offset, measure);
+            assert!(
+                (one - x).abs() <= 1e-6 * one.max(1.),
+                "{offset}: {one} vs {x}"
+            );
         }
     }
 

@@ -225,6 +225,25 @@ impl ExpandedRow {
         self.expand(buffer_col) + spans
     }
 
+    /// [`ExpandedRow::to_display`] of each of `buffer_cols`, which ascend,
+    /// appended to `out`: in one pass over the tabs and spans, rather than
+    /// one over those before each.
+    pub fn to_display_ascending(&self, buffer_cols: &[usize], out: &mut Vec<usize>) {
+        let (mut tab, mut extra) = (0, 0);
+        let (mut span, mut spans) = (0, 0);
+        for &col in buffer_cols {
+            while let Some(next) = self.tabs.get(tab).filter(|t| t.buffer_col < col) {
+                extra += next.width - 1;
+                tab += 1;
+            }
+            while let Some(next) = self.spans.get(span).filter(|s| s.buffer_col < col) {
+                spans += next.len;
+                span += 1;
+            }
+            out.push(col + extra + spans);
+        }
+    }
+
     /// The display column where the character at `buffer_col` starts: past
     /// every hint at `buffer_col`, unlike [`ExpandedRow::to_display`].
     pub fn to_display_after_hints(&self, buffer_col: usize) -> usize {
@@ -446,5 +465,17 @@ mod tests {
                 prop_assert_eq!(expanded.to_buffer(display, Bias::Right), buffer_col);
             }
         }
+    }
+
+    #[test]
+    fn to_display_ascending_is_to_display_of_each() {
+        let mut row = ExpandedRow::new("\ta\tbc\t\td é\tf", 4);
+        row.insert_hints(&[(2, ": T"), (2, "x"), (9, "→")]);
+        row.insert_inlay(5, "ghost");
+        let cols: Vec<usize> = (0..=16).collect();
+        let mut at_once = Vec::new();
+        row.to_display_ascending(&cols, &mut at_once);
+        let each: Vec<usize> = cols.iter().map(|&col| row.to_display(col)).collect();
+        assert_eq!(at_once, each);
     }
 }

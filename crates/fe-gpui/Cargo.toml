@@ -39,6 +39,12 @@ unicode-segmentation.workspace = true
 unicode-bidi.workspace = true
 
 [dev-dependencies]
+# The text area's accessible text, loaded as a platform adapter reads it
+# (element/a11y_text_tests.rs, benches/a11y_text.rs): the version gpui-pre
+# 0.3.9's AccessKit adapters use, already in the lock.
+accesskit_consumer = "=0.38.0"
+# The a11y recorder (fe_ui::nodes): the editor's group and text area.
+fe-ui = { workspace = true, features = ["test-support"] }
 # The literal and key checks, and the command keys' (tests/l10n.rs).
 fe-command = { workspace = true, features = ["lint"] }
 kiln-l10n = { workspace = true, features = ["lint"] }
@@ -78,6 +84,12 @@ harness = false
 # Frame time with the minimap off and on, headless (PERF.md, "Minimap").
 [[bench]]
 name = "minimap"
+harness = false
+
+# The text area's accessible text: the builder and a consumer update at the
+# cap, against section 4's budget (benches/a11y_text.rs).
+[[bench]]
+name = "a11y_text"
 harness = false
 
 # Hand-checking proposed changes: diff blocks, buttons, undo and commands.

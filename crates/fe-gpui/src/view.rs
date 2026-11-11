@@ -19,6 +19,7 @@ use gpui::{
     ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, Styled as _, Subscription, Task,
     Window, canvas, deferred, div, point, px, size,
 };
+use kiln_l10n::tr;
 
 use crate::{
     commands::RunCommand,
@@ -123,6 +124,10 @@ pub struct EditorView {
     pub(crate) scrolled_display_top: Option<u32>,
     /// What the last frame laid out, for hit testing and IME.
     pub(crate) layout: Option<crate::element::FrameLayout>,
+    /// The text area's accessible text, which the frame's prepaint builds
+    /// while a screen reader is on and its node's synthetic children read
+    /// ([`crate::element::a11y_text`]).
+    pub(crate) a11y_text: crate::element::A11yTextCell,
     drag: Option<Drag>,
     /// Text being composed by an input method ([`ime`]).
     composition: Option<ime::Composition>,
@@ -435,6 +440,7 @@ impl EditorView {
             scrolled_top: None,
             scrolled_display_top: None,
             layout: None,
+            a11y_text: Default::default(),
             drag: None,
             composition: None,
             primary_selection: cfg!(target_os = "linux"),
@@ -1951,8 +1957,14 @@ impl Render for EditorView {
         if self.ghost_text_shown() {
             key_context.add(ghost_text::KEY_CONTEXT);
         }
-        div()
-            .id("editor")
+        let editor = fe_ui::node(
+            div().id("editor"),
+            window,
+            cx,
+            fe_ui::Role::Group,
+            tr!("gpui-a11y-editor"),
+        );
+        editor
             .key_context(key_context)
             .track_focus(&self.focus)
             .size_full()
@@ -1971,12 +1983,60 @@ impl Render for EditorView {
                 view.on_run_command(run, window, cx)
             }))
             .on_key_down(cx.listener(Self::on_vim_key))
-            .child(EditorElement::new(cx.entity()))
+            .child(self.text_area(window, cx))
             .child(crate::hover::popover_layer(cx))
             .child(crate::completion_menu::menu_layer(cx))
             .child(crate::signature_help::popover_layer(cx))
             .child(overlay_layer(cx))
             .children(crate::vim::which_key::popup_layer(self, cx))
+    }
+}
+
+impl EditorView {
+    /// The text, as a screen reader's text area: a wrapper around the
+    /// editor element only, named for the file, which stays the focused
+    /// node while the editor is (the popovers beside it aren't focus
+    /// targets) and holds the text runs the element's prepaint builds.
+    fn text_area(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let name = match &self.tab_title {
+            Some((title, _)) => title.clone(),
+            None => crate::pane_item::file_name(self.model.path()).into(),
+        };
+        let area = fe_ui::node(
+            div().id("editor-text").size_full(),
+            window,
+            cx,
+            fe_ui::Role::MultilineTextInput,
+            name,
+        );
+        let area = match window.is_a11y_active() {
+            true => {
+                let focused = self.focus.is_focused(window);
+                crate::element::attach_a11y_text(area, self.a11y_text.clone(), focused, cx)
+            }
+            false => area,
+        };
+        area.child(EditorElement::new(cx.entity()))
+    }
+
+    /// Takes a screen reader's selection, from `anchor` to `focus` (buffer
+    /// offsets): the primary selection, others dropped, or a caret where
+    /// they meet. It's VoiceOver moving the caret, so it scrolls into view.
+    /// As a click or a jump does, it drops a pending vim command and leaves
+    /// vim's visual mode first, so neither acts on or restores the old
+    /// selection, and ends a composition, typing nothing.
+    pub(crate) fn select_from_a11y(&mut self, anchor: usize, focus: usize, cx: &mut Context<Self>) {
+        self.cancel_vim(cx);
+        self.composition = None;
+        self.split_session(
+            fe_vim::Splits::Moves,
+            |model| match anchor == focus {
+                true => model.set_cursor(focus),
+                false => model.select_range(anchor.min(focus)..anchor.max(focus), focus < anchor),
+            },
+            cx,
+        );
+        self.changed(cx);
     }
 }
 

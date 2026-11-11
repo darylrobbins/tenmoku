@@ -38,6 +38,11 @@ use crate::{
     vim::{CaretShape, UNDERLINE_HEIGHT},
 };
 
+pub(crate) mod a11y_text;
+// Declared here, not in a11y_text.rs, which the a11y_text bench compiles.
+#[cfg(test)]
+#[path = "element/a11y_text_tests.rs"]
+mod a11y_text_tests;
 mod annotation_column;
 mod bidi;
 pub(crate) mod decorations;
@@ -518,6 +523,25 @@ impl MeasuredLine for Line {
         }
     }
 
+    /// One walk over the glyphs, finding each as
+    /// [`LineLayout::x_for_index`] does: the first glyph at or after the
+    /// index, or the line's end.
+    fn xs_for_indexes(&self, indexes: &[usize], out: &mut Vec<f32>) {
+        if self.bidi.is_some() {
+            out.extend(indexes.iter().map(|&index| self.x_for_index(index)));
+            return;
+        }
+        let mut glyphs = (self.layout.runs.iter())
+            .flat_map(|run| run.glyphs.iter())
+            .peekable();
+        out.extend(indexes.iter().map(|&index| {
+            while glyphs.next_if(|glyph| glyph.index < index).is_some() {}
+            let x = glyphs
+                .peek()
+                .map_or(self.layout.width, |glyph| glyph.position.x);
+            f32::from(x)
+        }));
+    }
     fn visual_ranges(&self, range: Range<usize>) -> Vec<Range<f32>> {
         match &self.bidi {
             Some(bidi) => bidi.visual_ranges(range),
@@ -681,6 +705,32 @@ impl CharWidth for GlyphWidths {
 }
 
 #[cfg(test)]
+mod line_position_tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    fn xs_at_once_are_xs_one_at_a_time(cx: &mut TestAppContext) {
+        let mut shaper = Shaper {
+            text_system: Arc::new(WindowTextSystem::new(cx.text_system().clone())),
+            font: gpui::font("Menlo"),
+            font_size: px(13.),
+        };
+        for text in ["", "let x = 1;", "a\u{301}b 😀 →\tz", "fi ffi ->"] {
+            let line = shaper.shape(text, &[]);
+            let indexes: Vec<usize> = (0..=text.len())
+                .filter(|&index| text.is_char_boundary(index))
+                .collect();
+            let mut xs = Vec::new();
+            line.xs_for_indexes(&indexes, &mut xs);
+            let one_by_one: Vec<f32> = indexes.iter().map(|&ix| line.x_for_index(ix)).collect();
+            assert_eq!(xs, one_by_one, "{text:?}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod glyph_width_tests {
     use gpui::TestAppContext;
 
@@ -720,6 +770,97 @@ mod glyph_width_tests {
         let summed = long.chars().map(|ch| widths.char_width(ch)).sum::<f32>();
         assert_eq!(widths.cluster_width(&long), summed);
         assert_eq!(widths.clusters.len(), 2);
+    }
+}
+
+/// The text area's accessible text, shared by the editor element, which
+/// builds it in prepaint, and the text area's node, which pushes it.
+pub(crate) type A11yTextCell = std::rc::Rc<std::cell::RefCell<A11yTextState>>;
+
+#[derive(Default)]
+pub(crate) struct A11yTextState {
+    /// This frame's, while a screen reader is on.
+    pub(crate) text: Option<a11y_text::A11yText>,
+    /// The runs' node ids in the tree last sent, for a screen reader's
+    /// selection.
+    ids: HashMap<gpui::accesskit::NodeId, a11y_text::RunKey>,
+}
+
+/// The [`a11y_text::A11yText`] of `layout`'s frame, with the primary
+/// selection, read-only if the editor is or outside vim's typing modes.
+fn build_a11y_text(layout: &mut FrameLayout, view: &EditorView, scale: f32) -> a11y_text::A11yText {
+    let model = &view.model;
+    let primary = model.primary_selection();
+    a11y_text::build(a11y_text::Input {
+        display: model.display(),
+        frame: &layout.frame,
+        long_rows: &mut layout.long_rows,
+        widths: &mut layout.glyph_widths,
+        tab_size: layout.tab_size,
+        anchor: primary.tail(),
+        head: primary.head(),
+        origin: (layout.origin.x.into(), layout.origin.y.into()),
+        scale,
+        cap: a11y_text::Cap::EDITOR,
+        read_only: view.is_read_only() || !view.accepts_text(),
+    })
+}
+
+/// `area`, the text area's node, with the text runs in `cell` as its
+/// children, the selection and read-only state on it, and a handler for a
+/// screen reader's `SetTextSelection`. It's the focused node while the
+/// editor is focused.
+pub(crate) fn attach_a11y_text<E: gpui::StatefulInteractiveElement>(
+    area: E,
+    cell: A11yTextCell,
+    focused: bool,
+    cx: &mut Context<EditorView>,
+) -> E {
+    use gpui::accesskit::{Action, ActionData};
+    let built = cell.clone();
+    let area = area.a11y_synthetic_children(move |builder| {
+        let mut state = built.borrow_mut();
+        let A11yTextState { text, ids } = &mut *state;
+        ids.clear();
+        let Some(text) = text else {
+            return;
+        };
+        let keys: HashMap<_, _> = (text.runs.iter())
+            .map(|run| {
+                let key = run.key;
+                (
+                    key,
+                    builder.synthetic_node_id((key.buffer_row, key.segment)),
+                )
+            })
+            .collect();
+        let nodes = text.write(builder.parent_node(), |key| keys[&key]);
+        for ((id, node), run) in nodes.into_iter().zip(&text.runs) {
+            if builder.push_child(id, node) {
+                ids.insert(id, run.key);
+            }
+        }
+    });
+    let view = cx.entity().downgrade();
+    let area = area.on_a11y_action(Action::SetTextSelection, move |data, _, cx| {
+        let Some(ActionData::SetTextSelection(selection)) = data else {
+            return;
+        };
+        let offsets = {
+            let state = cell.borrow();
+            let offset = |position: &gpui::accesskit::TextPosition| {
+                let key = state.ids.get(&position.node)?;
+                state.text.as_ref()?.offset(*key, position.character_index)
+            };
+            offset(&selection.anchor).zip(offset(&selection.focus))
+        };
+        if let Some((anchor, focus)) = offsets {
+            (view.update(cx, |view, cx| view.select_from_a11y(anchor, focus, cx))).ok();
+        }
+    });
+    match focused {
+        true => area.aria_active_descendant(),
+        false => area,
     }
 }
 
@@ -1424,6 +1565,13 @@ impl Element for EditorElement {
         self.view.update(cx, |view, _| {
             view.place_overlay(overlay.map(|at| (at, bounds)))
         });
+        // The text a screen reader is given, which the text area's node
+        // reads once this element has prepainted.
+        let view = self.view.read(cx);
+        let a11y = window
+            .is_a11y_active()
+            .then(|| build_a11y_text(&mut layout, view, window.scale_factor()));
+        view.a11y_text.borrow_mut().text = a11y;
         layout.prepaint_took = started.elapsed();
         Some(layout)
     }

@@ -121,6 +121,12 @@ pub trait MeasuredLine {
     fn x_for_index(&self, index: usize) -> f32;
     /// The boundary closest to `x`.
     fn index_for_x(&self, x: f32) -> usize;
+    /// Appends [`MeasuredLine::x_for_index`] of each of `indexes`, which
+    /// ascend, to `out`. A line that finds each x by scanning from its
+    /// start should do them all in one scan.
+    fn xs_for_indexes(&self, indexes: &[usize], out: &mut Vec<f32>) {
+        out.extend(indexes.iter().map(|&index| self.x_for_index(index)));
+    }
     /// Where `range` is drawn, as x ranges from the line's start, left to
     /// right: one per visual piece, as a range crossing a change of text
     /// direction is drawn in several. By default one, between the x of its
@@ -353,6 +359,68 @@ impl<L: MeasuredLine> RowLayout<L> {
             .expanded
             .to_display(offset.clamp(shown.start, shown.end) - shown.start);
         self.start_x() + f64::from(self.line.x_for_index(display))
+    }
+
+    /// [`RowLayout::x_for_offset`] of each of `offsets`, which ascend,
+    /// appended to `out`: the shaped ones in one pass over the line, and a
+    /// long row's others in one walk of its index each side of the slice,
+    /// so a row's worth costs about as much as measuring it once.
+    pub fn xs_for_offsets(
+        &self,
+        offsets: &[usize],
+        long_rows: &mut LongRows,
+        widths: &mut dyn CharWidth,
+        out: &mut Vec<f64>,
+    ) {
+        let shown = self.shown();
+        let before = offsets.partition_point(|&offset| offset < shown.start);
+        let after = offsets.partition_point(|&offset| offset <= shown.end);
+        let has_index = self.index(long_rows).is_some();
+        let (inside, outside) = match has_index {
+            true => (before..after, [0..before, after..offsets.len()]),
+            // Without its index, a long row clamps to the slice.
+            false => (0..offsets.len(), [0..0, 0..0]),
+        };
+        let mut xs = vec![0.; offsets.len()];
+        let mut hint = 0;
+        let mut hints_before = 0.;
+        for part in outside {
+            if part.is_empty() {
+                continue;
+            }
+            let index = self.index(long_rows).expect("checked above");
+            let mut walked = Vec::with_capacity(part.len());
+            index.xs_for_offsets(&offsets[part.clone()], widths, &mut walked);
+            for (ix, x) in part.zip(walked) {
+                let offset = offsets[ix];
+                while let Some((at, width)) = self.outside_hints.get(hint)
+                    && *at < offset
+                {
+                    hints_before += width;
+                    hint += 1;
+                }
+                let inlay = if offset > shown.end {
+                    self.inlay_width
+                } else {
+                    0.
+                };
+                xs[ix] = x + inlay + hints_before;
+            }
+        }
+        if !inside.is_empty() {
+            let cols: Vec<usize> = (offsets[inside.clone()].iter())
+                .map(|&offset| offset.clamp(shown.start, shown.end) - shown.start)
+                .collect();
+            let mut display = Vec::with_capacity(cols.len());
+            self.expanded.to_display_ascending(&cols, &mut display);
+            let mut line = Vec::with_capacity(display.len());
+            self.line.xs_for_indexes(&display, &mut line);
+            let start_x = self.start_x();
+            for (ix, x) in inside.zip(line) {
+                xs[ix] = start_x + f64::from(x);
+            }
+        }
+        out.extend(xs);
     }
 
     /// Where the buffer range `range` of this row is drawn, as x ranges from

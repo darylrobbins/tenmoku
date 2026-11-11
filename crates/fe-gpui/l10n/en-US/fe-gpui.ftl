@@ -24,6 +24,11 @@ gpui-status-language-tooltip = Change Language Mode
 gpui-status-plain-text = Plain Text
 gpui-status-read-only = Read-only
 
+## A screen reader's names
+
+# The editor's group, around its text area (named for the file) and popovers.
+gpui-a11y-editor = Editor
+
 ## The vim mode item, as nvim's modes say it
 
 gpui-vim-mode-normal = NORMAL

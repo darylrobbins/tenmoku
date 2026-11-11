@@ -2288,6 +2288,7 @@ dependencies = [
 name = "fe-gpui"
 version = "0.1.3"
 dependencies = [
+ "accesskit_consumer",
  "criterion",
  "dunce",
  "fe-buffer",
