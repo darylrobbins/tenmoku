@@ -18,13 +18,110 @@ use fe_display::{
 };
 use fe_editor::ViewerModel;
 use gpui::{
-    App, Bounds, ContentMask, DecorationRun, Element, ElementId, Entity, Font, FontId,
+    App, Bounds, ContentMask, Context, DecorationRun, Element, ElementId, Entity, Font, FontId,
     GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, Pixels, Point,
     Style, TextAlign, TextRun, Window, WindowTextSystem, fill, point, px, relative, size,
 };
 
 use super::FileViewer;
-use crate::element::GlyphWidths;
+use crate::element::{
+    GlyphWidths,
+    a11y_text::{self, A11yText, RunKey},
+};
+
+/// The text area's accessible text, shared by [`FileViewerElement`], which
+/// builds it in prepaint, and the text area's node, which pushes it.
+pub(crate) type A11yTextCell = std::rc::Rc<std::cell::RefCell<A11yTextState>>;
+
+#[derive(Default)]
+pub(crate) struct A11yTextState {
+    /// This frame's, while a screen reader is on.
+    pub(crate) text: Option<A11yText>,
+    /// The runs' node ids in the tree last sent, for a screen reader's
+    /// selection.
+    ids: std::collections::HashMap<gpui::accesskit::NodeId, RunKey>,
+}
+
+/// The [`A11yText`] of `layout`'s frame and the viewer's selection: the
+/// editor's builder, cap and projection, always read-only. The viewer has
+/// no folds or wrap, and its text is bytes of the file.
+pub(crate) fn build_a11y_text(
+    layout: &mut ViewerLayout,
+    viewer: &FileViewer,
+    scale: f32,
+) -> A11yText {
+    let model = &viewer.model;
+    a11y_text::build(a11y_text::Input {
+        display: model.display(),
+        frame: &layout.frame,
+        long_rows: &mut layout.long_rows,
+        widths: &mut layout.glyph_widths,
+        tab_size: layout.tab_size,
+        anchor: viewer.anchor(),
+        head: model.head(),
+        origin: (layout.origin.x.into(), layout.origin.y.into()),
+        scale,
+        cap: a11y_text::Cap::EDITOR,
+        read_only: true,
+    })
+}
+
+/// `area`, the text area's node, with the text runs in `cell` as its
+/// children, the selection on it and a handler for a screen reader's
+/// `SetTextSelection`. It's the focused node while the viewer is focused.
+pub(crate) fn attach_a11y_text<E: gpui::StatefulInteractiveElement>(
+    area: E,
+    cell: A11yTextCell,
+    focused: bool,
+    cx: &mut Context<FileViewer>,
+) -> E {
+    use gpui::accesskit::{Action, ActionData};
+    let built = cell.clone();
+    let area = area.a11y_synthetic_children(move |builder| {
+        let mut state = built.borrow_mut();
+        let A11yTextState { text, ids } = &mut *state;
+        ids.clear();
+        let Some(text) = text else {
+            return;
+        };
+        let keys: std::collections::HashMap<_, _> = (text.runs.iter())
+            .map(|run| {
+                let key = run.key;
+                (
+                    key,
+                    builder.synthetic_node_id((key.buffer_row, key.segment)),
+                )
+            })
+            .collect();
+        let nodes = text.write(builder.parent_node(), |key| keys[&key]);
+        for ((id, node), run) in nodes.into_iter().zip(&text.runs) {
+            if builder.push_child(id, node) {
+                ids.insert(id, run.key);
+            }
+        }
+    });
+    let view = cx.entity().downgrade();
+    let area = area.on_a11y_action(Action::SetTextSelection, move |data, _, cx| {
+        let Some(ActionData::SetTextSelection(selection)) = data else {
+            return;
+        };
+        let offsets = {
+            let state = cell.borrow();
+            let offset = |position: &gpui::accesskit::TextPosition| {
+                let key = state.ids.get(&position.node)?;
+                state.text.as_ref()?.offset(*key, position.character_index)
+            };
+            offset(&selection.anchor).zip(offset(&selection.focus))
+        };
+        if let Some((anchor, focus)) = offsets {
+            (view.update(cx, |view, cx| view.select_from_a11y(anchor, focus, cx))).ok();
+        }
+    });
+    match focused {
+        true => area.aria_active_descendant(),
+        false => area,
+    }
+}
 
 /// What one frame laid out: kept by the view for hit testing.
 pub(crate) struct ViewerLayout {
@@ -287,7 +384,7 @@ impl Element for FileViewerElement {
             viewer.scroll = scroll;
             viewer.autoscroll = false;
         });
-        Some(ViewerLayout {
+        let mut layout = ViewerLayout {
             origin: bounds.origin,
             frame,
             long_rows,
@@ -295,7 +392,15 @@ impl Element for FileViewerElement {
             font_id,
             font_size,
             tab_size,
-        })
+        };
+        // The text a screen reader is given, which the text area's node
+        // reads once this element has prepainted.
+        let viewer = self.view.read(cx);
+        let a11y = window
+            .is_a11y_active()
+            .then(|| build_a11y_text(&mut layout, viewer, window.scale_factor()));
+        viewer.a11y_text.borrow_mut().text = a11y;
+        Some(layout)
     }
 
     fn paint(

@@ -327,3 +327,410 @@ fn an_index_that_changes_while_polling_keeps_its_rows(cx: &mut TestAppContext) {
     assert!(!viewer.read_with(cx, |v, _| v.is_polling()));
     assert_eq!(*events.borrow(), [FileViewerEvent::Changed]);
 }
+
+mod a11y {
+    //! The viewer's text area as a screen reader reads it: the editor's
+    //! builder over the viewer's frame, loaded in `accesskit_consumer`
+    //! (design section 9, shape 1). GPUI's test platform can't turn a11y
+    //! on, so the builder is called on the drawn frame, as prepaint does.
+
+    use accesskit_consumer::Tree;
+    use gpui::accesskit::{self, Node, NodeId, Role, TreeId, TreeUpdate};
+
+    use super::*;
+    use crate::{
+        element::a11y_text::{A11yText, RunKey},
+        file_viewer::element::build_a11y_text,
+    };
+
+    const ROOT: NodeId = NodeId(0);
+    const AREA: NodeId = NodeId(1);
+
+    fn run_id(key: RunKey) -> NodeId {
+        NodeId(((u64::from(key.buffer_row) + 1) << 20) | (u64::from(key.segment) + 1000))
+    }
+
+    /// The viewer's text for its last frame.
+    pub(super) fn text_of(viewer: &Entity<FileViewer>, cx: &mut VisualTestContext) -> A11yText {
+        viewer.update(cx, |viewer, _| {
+            let mut layout = viewer.layout.take().expect("drawn");
+            let text = build_a11y_text(&mut layout, viewer, 1.);
+            viewer.layout = Some(layout);
+            text
+        })
+    }
+
+    pub(super) struct Read {
+        pub(super) document: String,
+        pub(super) lines: Vec<String>,
+        pub(super) selected: String,
+        pub(super) focus_line: usize,
+        pub(super) read_only: bool,
+        pub(super) area: accesskit::Rect,
+    }
+
+    pub(super) fn reads(text: &A11yText) -> Read {
+        let mut area = Node::new(Role::MultilineTextInput);
+        let runs = text.write(&mut area, run_id);
+        area.set_children(runs.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+        let mut root = Node::new(Role::Window);
+        root.set_children(vec![AREA]);
+        let mut nodes = runs;
+        nodes.push((AREA, area));
+        nodes.push((ROOT, root));
+        let tree = Tree::new(
+            TreeUpdate {
+                nodes,
+                tree: Some(accesskit::Tree::new(ROOT)),
+                tree_id: TreeId::ROOT,
+                focus: AREA,
+            },
+            true,
+        );
+        let state = tree.state();
+        let area = state.focus().expect("focused");
+        assert!(area.supports_text_ranges());
+        let selection = area.text_selection().expect("a selection");
+        let focus = area.text_selection_focus().unwrap();
+        // A caret has a box wherever it is.
+        assert!(!focus.to_degenerate_range().bounding_boxes().is_empty());
+        let first = area.document_range().bounding_boxes();
+        Read {
+            document: area.document_range().text(),
+            lines: (0..text.runs.len())
+                .map(|ix| area.line_range_from_index(ix).expect("a line").text())
+                .collect(),
+            selected: selection.text(),
+            focus_line: focus.to_line_index(),
+            read_only: area.is_read_only(),
+            area: first[0],
+        }
+    }
+
+    fn scrolled_to(viewer: &Entity<FileViewer>, cx: &mut VisualTestContext, rows: u32) {
+        viewer.update(cx, |viewer, cx| {
+            let line = viewer.layout.as_ref().unwrap().frame.line_height;
+            viewer.scroll = point(px(0.), px(line * rows as f32));
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+
+    fn file_slice(lines: &[String], rows: std::ops::Range<usize>) -> String {
+        let mut out = lines[rows.clone()].join("\n");
+        if rows.end < lines.len() {
+            out.push('\n');
+        }
+        out
+    }
+
+    #[gpui::test]
+    fn runs_are_the_files_rows_in_order_with_margins_both_sides(cx: &mut TestAppContext) {
+        let (_dir, view, lines) = generated(8 * 1024 * 1024);
+        let index = complete_index(&view);
+        let (viewer, cx, _) = viewer(cx, view, index);
+        scrolled_to(&viewer, cx, 5000);
+
+        let text = text_of(&viewer, cx);
+        let first = text.runs.first().unwrap().key.buffer_row as usize;
+        let last = text.runs.last().unwrap().key.buffer_row as usize;
+        let visible = viewer.read_with(cx, |v, _| {
+            let rows = &v.layout.as_ref().unwrap().frame.rows;
+            (
+                rows[0].buffer_row as usize,
+                rows.last().unwrap().buffer_row as usize,
+            )
+        });
+        assert!(
+            first < visible.0 && last > visible.1,
+            "{first} {visible:?} {last}"
+        );
+        assert!(text.runs.len() <= 300);
+        let keys: Vec<_> = text.runs.iter().map(|run| run.key).collect();
+        assert!(keys.windows(2).all(|pair| pair[0] < pair[1]), "in order");
+        assert!(keys.iter().all(|key| key.segment == 0), "no soft wrap");
+
+        let read = reads(&text);
+        assert_eq!(read.document, file_slice(&lines, first..last + 1));
+        assert_eq!(read.lines.len(), text.runs.len());
+        assert_eq!(read.lines[0], format!("{}\n", lines[first]));
+        assert!(read.read_only, "the viewer's text node is read-only");
+        assert!(read.area.width() > 0. && read.area.height() > 0.);
+    }
+
+    #[gpui::test]
+    fn a_row_wider_than_the_view_is_one_run_not_wrapped(cx: &mut TestAppContext) {
+        // The viewer has no soft wrap: a long row is one run, whole.
+        let long = "word ".repeat(400);
+        let text = format!("short\n{long}\nend");
+        let lines = text.split('\n').map(str::to_owned).collect();
+        let (_dir, view, lines) = write_file(&text, lines);
+        let index = complete_index(&view);
+        let (viewer, cx, _) = viewer(cx, view, index);
+
+        let text_now = text_of(&viewer, cx);
+        let keys: Vec<(u32, u32)> = text_now
+            .runs
+            .iter()
+            .map(|run| (run.key.buffer_row, run.key.segment))
+            .collect();
+        assert_eq!(keys, [(0, 0), (1, 0), (2, 0)]);
+        let read = reads(&text_now);
+        assert_eq!(
+            read.lines,
+            [
+                "short\n".to_owned(),
+                format!("{}\n", lines[1]),
+                "end".to_owned(),
+            ]
+        );
+        assert_eq!(read.document, text);
+    }
+
+    #[gpui::test]
+    fn the_selection_reads_as_the_files_bytes(cx: &mut TestAppContext) {
+        let text = "zero one two\nfirst row\r\nsecond row here\n\nthird";
+        let lines = text.split('\n').map(str::to_owned).collect();
+        let (_dir, view, _) = write_file(text, lines);
+        let index = complete_index(&view);
+        let (viewer, cx, _) = viewer(cx, view, index);
+
+        let second = text.find("second").unwrap();
+        viewer.update(cx, |viewer, cx| viewer.select_from_a11y(5, second + 3, cx));
+        cx.run_until_parked();
+        let text_now = text_of(&viewer, cx);
+        let read = reads(&text_now);
+        assert_eq!(read.selected, &text[5..second + 3]);
+        assert_eq!(read.focus_line, 2);
+
+        // Backwards.
+        viewer.update(cx, |viewer, cx| viewer.select_from_a11y(second + 3, 5, cx));
+        cx.run_until_parked();
+        let read = reads(&text_of(&viewer, cx));
+        assert_eq!(read.selected, &text[5..second + 3]);
+        assert_eq!(read.focus_line, 0);
+
+        // A caret on the blank line, and on the CRLF's break.
+        let blank = text.find("\n\n").unwrap() + 1;
+        for caret in [blank, text.find('\r').unwrap()] {
+            viewer.update(cx, |viewer, cx| viewer.select_from_a11y(caret, caret, cx));
+            cx.run_until_parked();
+            assert_eq!(reads(&text_of(&viewer, cx)).selected, "");
+        }
+
+        // Select All over the whole file is the whole document.
+        viewer.update(cx, |viewer, cx| viewer.select_from_a11y(0, text.len(), cx));
+        cx.run_until_parked();
+        let read = reads(&text_of(&viewer, cx));
+        assert_eq!(read.selected, read.document);
+        assert_eq!(read.document, text);
+    }
+
+    #[gpui::test]
+    fn a_selection_beyond_the_window_is_projected_onto_it(cx: &mut TestAppContext) {
+        let (_dir, view, _) = generated(8 * 1024 * 1024);
+        let index = complete_index(&view);
+        let len = view.len() as usize;
+        let (viewer, cx, _) = viewer(cx, view, index);
+        scrolled_to(&viewer, cx, 5000);
+
+        viewer.update(cx, |viewer, cx| viewer.select_from_a11y(0, len, cx));
+        cx.run_until_parked();
+        let text_now = text_of(&viewer, cx);
+        let read = reads(&text_now);
+        assert_eq!(read.selected, read.document);
+        assert!(read.document.len() <= 64 * 1024);
+    }
+}
+
+mod a11y_edges {
+    //! The shared builder's edge cases, through the viewer's own frame and
+    //! shaper (design sections 4 and 9).
+
+    use gpui::accesskit::{Node, NodeId, Role};
+
+    use super::{
+        a11y::{reads, text_of},
+        *,
+    };
+    use crate::element::a11y_text::RunKey;
+
+    #[gpui::test]
+    fn invalid_bytes_are_question_marks_and_selection_maps_to_file_bytes(cx: &mut TestAppContext) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bin.log");
+        let bytes = b"ab\xffcd\nef\xc3\x28gh\nend";
+        std::fs::write(&path, bytes).unwrap();
+        let view = Arc::new(FileView::open(&path).unwrap());
+        let index = complete_index(&view);
+        let (viewer, cx, _) = viewer(cx, view, index);
+        viewer.update(cx, |v, cx| v.select_from_a11y(1, 10, cx));
+        cx.run_until_parked();
+        let text = text_of(&viewer, cx);
+        let read = reads(&text);
+        assert_eq!(
+            read.document.chars().count(),
+            bytes.len(),
+            "{:?}",
+            read.document
+        );
+        assert!(read.document.contains("ab?cd"));
+        // The run offsets are file bytes.
+        let run = &text.runs[1];
+        assert_eq!(run.start, 6);
+        assert_eq!(text.offset(run.key, 2), Some(8));
+        assert_eq!(read.selected, "b?cd\nef?(");
+        assert_eq!(read.focus_line, 1);
+    }
+
+    #[gpui::test]
+    fn the_empty_file_has_one_empty_run_with_a_box(cx: &mut TestAppContext) {
+        let (_dir, view, lines) = write_file("", vec![String::new()]);
+        let _ = lines;
+        let index = complete_index(&view);
+        let (viewer, cx, _) = viewer(cx, view, index);
+        let text = text_of(&viewer, cx);
+        assert_eq!(text.runs.len(), 1);
+        assert!(text.runs[0].character_lengths.is_empty());
+        let read = reads(&text);
+        assert_eq!((read.document.as_str(), read.selected.as_str()), ("", ""));
+    }
+
+    #[gpui::test]
+    fn an_empty_last_line_and_crlf_blank_lines_have_boxes(cx: &mut TestAppContext) {
+        let text = "a\r\n\r\nb\n";
+        let (_dir, view, _) = write_file(text, vec![]);
+        let index = complete_index(&view);
+        let (viewer, cx, _) = viewer(cx, view, index);
+        let built = text_of(&viewer, cx);
+        assert_eq!(reads(&built).document, text);
+        // Carets on each break and on the empty last line: `reads` asks
+        // for the focus's box each time.
+        for caret in 0..=text.len() {
+            if !text.is_char_boundary(caret) || text[..caret].ends_with('\r') {
+                continue;
+            }
+            viewer.update(cx, |v, cx| v.select_from_a11y(caret, caret, cx));
+            cx.run_until_parked();
+            reads(&text_of(&viewer, cx));
+        }
+    }
+
+    #[gpui::test]
+    fn a_caret_scrolled_off_either_edge_is_at_the_window_edge(cx: &mut TestAppContext) {
+        let (_dir, view, _) = generated(8 * 1024 * 1024);
+        let index = complete_index(&view);
+        let len = view.len() as usize;
+        let (viewer, cx, _) = viewer(cx, view, index);
+        viewer.update(cx, |v, cx| {
+            let line = v.layout.as_ref().unwrap().frame.line_height;
+            v.scroll = point(px(0.), px(line * 5000.));
+            v.select_from_a11y(0, 0, cx);
+            // select_from_a11y wants it in view; scroll back off.
+            v.autoscroll = false;
+            v.scroll = point(px(0.), px(line * 5000.));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let text = text_of(&viewer, cx);
+        assert_eq!(text.focus, (text.runs[0].key, 0));
+        let read = reads(&text);
+        assert_eq!(read.focus_line, 0);
+        viewer.update(cx, |v, cx| {
+            let line = v.layout.as_ref().unwrap().frame.line_height;
+            v.model.set_selection(len, len);
+            v.autoscroll = false;
+            v.scroll = point(px(0.), px(line * 5000.));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let text = text_of(&viewer, cx);
+        let last = text.runs.last().unwrap();
+        assert_eq!(text.focus.0, last.key);
+        reads(&text);
+    }
+
+    #[gpui::test]
+    fn a_selection_past_a_truncated_row_ends_at_the_cut(cx: &mut TestAppContext) {
+        let long = "x".repeat(200 * 1024);
+        let text = format!("short\n{long}\nend");
+        let (_dir, view, _) = write_file(&text, vec![]);
+        let index = complete_index(&view);
+        let (viewer, cx, _) = viewer(cx, view, index);
+        viewer.update(cx, |v, cx| v.select_from_a11y(0, text.len() - 1, cx));
+        cx.run_until_parked();
+        let built = text_of(&viewer, cx);
+        let read = reads(&built);
+        assert!(read.document.len() <= 64 * 1024);
+        assert_eq!(read.selected, read.document);
+    }
+
+    #[gpui::test]
+    fn boxes_for_visible_margin_and_spanning_ranges_and_hit_testing(cx: &mut TestAppContext) {
+        let (_dir, view, _) = generated(8 * 1024 * 1024);
+        let index = complete_index(&view);
+        let (viewer, cx, _) = viewer(cx, view, index);
+        let built = text_of(&viewer, cx);
+        let (first_visible, last_visible) = viewer.read_with(cx, |v, _| {
+            let rows = &v.layout.as_ref().unwrap().frame.rows;
+            (rows[0].buffer_row, rows.last().unwrap().buffer_row)
+        });
+        let mut area = Node::new(Role::MultilineTextInput);
+        let run_id = |key: RunKey| NodeId(((u64::from(key.buffer_row) + 1) << 20) | 7);
+        let runs = built.write(&mut area, run_id);
+        area.set_children(runs.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+        let mut root = Node::new(Role::Window);
+        root.set_children(vec![NodeId(1)]);
+        let mut nodes = runs;
+        nodes.push((NodeId(1), area));
+        nodes.push((NodeId(0), root));
+        let tree = accesskit_consumer::Tree::new(
+            gpui::accesskit::TreeUpdate {
+                nodes,
+                tree: Some(gpui::accesskit::Tree::new(NodeId(0))),
+                tree_id: gpui::accesskit::TreeId::ROOT,
+                focus: NodeId(1),
+            },
+            true,
+        );
+        let state = tree.state();
+        let area = state.focus().unwrap();
+        let line = |row: u32| {
+            let index = built.runs.iter().position(|r| r.key.buffer_row == row);
+            area.line_range_from_index(index.expect("a run")).unwrap()
+        };
+        let visible = line(first_visible).bounding_boxes();
+        assert!(!visible.is_empty());
+        let margin_row = built.runs.last().unwrap().key.buffer_row;
+        assert!(margin_row > last_visible, "a margin row below");
+        assert!(!line(margin_row).bounding_boxes().is_empty());
+        let spanning = line(first_visible)
+            .start()
+            .to_degenerate_range()
+            .bounding_boxes();
+        assert!(!spanning.is_empty());
+        let span = area.document_range().bounding_boxes();
+        assert!(!span.is_empty());
+        // A visible character's centre hits that character: the fourth of
+        // the first visible row.
+        let ix = built
+            .runs
+            .iter()
+            .position(|r| r.key.buffer_row == first_visible)
+            .unwrap();
+        let run = &built.runs[ix];
+        let at = |c: usize| gpui::accesskit::Point {
+            x: run.bounds.x0 + f64::from(run.positions[c]) + f64::from(run.widths[c]) / 2.,
+            y: (run.bounds.y0 + run.bounds.y1) / 2.,
+        };
+        let before: usize = built.runs[..ix]
+            .iter()
+            .map(|r| r.text.chars().count())
+            .sum();
+        for c in [0, 3, 10] {
+            let hit = area.text_position_at_point(at(c));
+            assert_eq!(hit.to_line_index(), ix);
+            assert_eq!(hit.to_global_utf16_index(), before + c, "char {c}");
+        }
+    }
+}

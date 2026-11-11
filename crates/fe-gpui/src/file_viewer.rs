@@ -41,7 +41,7 @@ mod element;
 mod find;
 mod pane_item;
 
-use element::{FileViewerElement, ViewerLayout};
+use element::{A11yTextCell, FileViewerElement, ViewerLayout, attach_a11y_text};
 
 /// How often a view polls an index that is still building.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -103,6 +103,9 @@ pub struct FileViewer {
     pub(crate) autoscroll: bool,
     /// What the last frame laid out, for hit testing.
     pub(crate) layout: Option<ViewerLayout>,
+    /// The text a screen reader reads, built with each frame while one is
+    /// on ([`crate::element::a11y_text`]).
+    pub(crate) a11y_text: A11yTextCell,
     /// Where a mouse drag selects from.
     drag: Option<usize>,
     /// Checks the index once the host can hear of it, then polls it while
@@ -215,6 +218,7 @@ impl FileViewer {
             scroll: Point::default(),
             autoscroll: false,
             layout: None,
+            a11y_text: Default::default(),
             drag: None,
             poll: None,
             changed_sent: false,
@@ -714,7 +718,17 @@ impl FileViewer {
     }
 
     /// The selection's end that isn't the head.
-    fn anchor(&self) -> usize {
+    /// Takes a screen reader's selection, from `anchor` to `focus` (file
+    /// byte offsets), scrolled into view.
+    pub(crate) fn select_from_a11y(&mut self, anchor: usize, focus: usize, cx: &mut Context<Self>) {
+        self.model.set_selection(anchor, focus);
+        self.restore = None;
+        self.autoscroll = true;
+        self.check_index(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn anchor(&self) -> usize {
         let selection = self.model.selection();
         if self.model.head() == selection.start {
             selection.end
@@ -808,8 +822,22 @@ impl Render for FileViewer {
             )
             .children(edit)
             .children(reload);
-        let text = div()
-            .id("file-viewer-text")
+        let name: SharedString = self.file_name().into();
+        let text = fe_ui::node(
+            div().id("file-viewer-text"),
+            window,
+            cx,
+            fe_ui::Role::MultilineTextInput,
+            name,
+        );
+        let text = match window.is_a11y_active() {
+            true => {
+                let focused = self.focus.is_focused(window);
+                attach_a11y_text(text, self.a11y_text.clone(), focused, cx)
+            }
+            false => text,
+        };
+        let text = text
             .flex_1()
             .min_h_0()
             .cursor(CursorStyle::IBeam)
@@ -819,18 +847,24 @@ impl Render for FileViewer {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .child(FileViewerElement::new(cx.entity()));
-        div()
-            .id("file-viewer")
-            .key_context(key_context)
-            .track_focus(&self.focus)
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(theme.background)
-            .on_action(cx.listener(Self::on_run_command))
-            .on_key_down(cx.listener(Self::on_key_down))
-            .child(banner)
-            .child(text)
+        let group_name: SharedString = self.file_name().into();
+        fe_ui::node(
+            div().id("file-viewer"),
+            window,
+            cx,
+            fe_ui::Role::Group,
+            group_name,
+        )
+        .key_context(key_context)
+        .track_focus(&self.focus)
+        .size_full()
+        .flex()
+        .flex_col()
+        .bg(theme.background)
+        .on_action(cx.listener(Self::on_run_command))
+        .on_key_down(cx.listener(Self::on_key_down))
+        .child(banner)
+        .child(text)
     }
 }
 
