@@ -38,10 +38,10 @@ mod git_log;
 mod git_log_card;
 #[path = "audit/hover.rs"]
 mod hover;
+#[path = "audit/problems.rs"]
+mod problems;
 #[path = "audit/problems_panel.rs"]
 mod problems_panel;
-#[path = "audit/problems_rows.rs"]
-mod problems_rows;
 #[path = "audit/project_tree_git.rs"]
 mod project_tree_git;
 #[path = "audit/prompt.rs"]
@@ -98,7 +98,7 @@ const SURFACES: &[&Surface] = &[
     &git_log::SURFACE,
     &problems_panel::SURFACE,
     &hover::SURFACE,
-    &problems_rows::SURFACE,
+    &problems::SURFACE,
     &terminal_session::SURFACE,
     &git_log_card::SURFACE,
 ];

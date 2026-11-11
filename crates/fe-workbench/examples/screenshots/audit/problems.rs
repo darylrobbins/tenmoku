@@ -1,7 +1,9 @@
-//! The Problems panel with rows: one problem of each severity in
-//! `src/main.rs`, the error with a related location, and one in
-//! `README.md`, put on the open editors as a language server's would be
-//! (`Workbench::set_diagnostics_for_audit`), so the editor shows their
+//! The Problems panel in B3 with rows (T1547): the header's scope switch
+//! and severity filters with their counts, then one problem of each
+//! severity in `src/main.rs`, the error with a related location, and one in
+//! `README.md`, grouped by file with count badges, the first problem
+//! selected. They're put on the open editors as a language server's would
+//! be (`Workbench::set_diagnostics_for_audit`), so the editor shows their
 //! squiggles too.
 
 use std::{ops::Range, path::Path};
@@ -11,12 +13,18 @@ use fe_editor::diagnostics::{Diagnostic, RelatedInfo, Severity};
 use crate::{
     audit_scenes::{DEFAULT, Step, Surface, fail, run},
     scenes::MAIN_RS,
-    token_probe::{Probe, probe},
+    token_probe::{Probe, probe, probe_over},
 };
 
 pub(crate) const SURFACE: Surface = Surface {
-    name: "problems_rows",
-    steps: |root| vec![diagnostics(root), run("problems.show")],
+    name: "problems",
+    steps: |root| {
+        vec![
+            diagnostics(root),
+            run("problems.show"),
+            run("problems.select_first"),
+        ]
+    },
     probes: PROBES,
     ..DEFAULT
 };
@@ -24,6 +32,13 @@ pub(crate) const SURFACE: Surface = Surface {
 const PROBES: &[Probe] = &[
     // The panel, below its rows.
     probe(174., 400., "surface.panel"),
+    // A problem row's indent, left of its glyph: `src/main.rs`'s warning.
+    probe(50., 212., "surface.panel"),
+    // README.md's count badge, left of its digit.
+    probe_over(253.5, 140., "list.row_hover", "surface.panel"),
+    // The selected row, the first problem (README.md's), focused: its
+    // indent, left of its glyph.
+    probe_over(50., 164., "list.row_selected", "surface.panel"),
     // The editor, below the code its squiggles mark.
     probe(400., 400., "surface.background"),
 ];

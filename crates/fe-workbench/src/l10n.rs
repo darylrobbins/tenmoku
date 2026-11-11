@@ -18,5 +18,6 @@ kiln_l10n::resources! {
         "../l10n/en-US/pane.ftl",
         "../l10n/en-US/settings.ftl",
         "../l10n/en-US/status.ftl",
+        "../l10n/en-US/problems.ftl",
     ],
 }

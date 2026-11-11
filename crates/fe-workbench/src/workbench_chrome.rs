@@ -825,6 +825,7 @@ impl Workbench {
         let editor = self.active_editor(cx).cloned();
         let outline = self.dock.read(cx).outline().clone();
         outline.update(cx, |outline, cx| outline.set_editor(editor.as_ref(), cx));
+        self.follow_problems_file(editor.as_ref(), cx);
         self.push_symbols(editor.as_ref(), cx);
         let id = editor.as_ref().map(Entity::entity_id);
         self.follow_vim_keys(editor.as_ref(), window, cx);

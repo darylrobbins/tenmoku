@@ -90,6 +90,8 @@ migrated = [
     # The status bar in B3 (T1543): the bar and vim's command line.
     "src/status_bar.rs",
     "src/vim_line.rs",
+    # The Problems panel in B3 (T1547).
+    "src/problems_panel.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -100,6 +102,15 @@ migrated = [
 file = "src/project_panel.rs"
 text = "Project"
 reason = "The Explorer's name in its SidebarPanel const, not shown: the dock titles it workbench-project-title"
+
+# The Problems panel's name as its SidebarPanel const declares it, by which
+# the rail orders it and tests name it: the dock titles it
+# workbench-problems-title (dock.rs).
+
+[[literal]]
+file = "src/problems_panel.rs"
+text = "Problems"
+reason = "The Problems panel's name in its SidebarPanel const, not shown: the dock titles it workbench-problems-title"
 
 # Ids and joins, not text: a picker row's element id, and the text a row's
 # query matches against.
@@ -175,6 +186,26 @@ reason = "A commit's author time as numbers, in its own offset: ISO-like, not wo
 file = "src/git_files_picker.rs"
 text = "git-files-icon:{name}:{path}"
 reason = "A test selector for a row's icon"
+
+[[literal]]
+file = "src/problems_panel.rs"
+text = "problem-{generation}"
+reason = "The rows' element id name, per list"
+
+[[literal]]
+file = "src/problems_panel.rs"
+text = "problems-filter:{}"
+reason = "A severity filter's debug selector"
+
+[[literal]]
+file = "src/problems_panel.rs"
+text = "problems-badge:{ix}"
+reason = "A file row's count badge's debug selector"
+
+[[literal]]
+file = "src/problems_panel.rs"
+text = "problems-glyph:{ix}:{}"
+reason = "A problem row's severity glyph's debug selector, with the icon's name"
 
 [[literal]]
 file = "src/harpoon.rs"

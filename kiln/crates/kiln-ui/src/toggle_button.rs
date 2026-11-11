@@ -29,6 +29,8 @@ pub struct ToggleButton {
     id: ElementId,
     label: SharedString,
     icon: Option<Icon>,
+    /// An icon before the label, and its colour while on.
+    glyph: Option<(Icon, Hsla)>,
     name: Option<SharedString>,
     shortcut: Option<SharedString>,
     on: bool,
@@ -57,6 +59,7 @@ impl ToggleButton {
             id: id.into(),
             label: label.into(),
             icon: None,
+            glyph: None,
             name: None,
             shortcut: None,
             on: false,
@@ -72,6 +75,7 @@ impl ToggleButton {
             id: id.into(),
             label: SharedString::default(),
             icon: Some(icon),
+            glyph: None,
             name: None,
             shortcut: None,
             on: false,
@@ -90,6 +94,14 @@ impl ToggleButton {
         self.name
             .as_ref()
             .or(Some(&self.label).filter(|label| !label.is_empty()))
+    }
+
+    /// Draws `icon`, 14 px, before the label: in `color` while on, such as a
+    /// severity filter's glyph in its severity's colour, and in the toggle's
+    /// muted text colour while off.
+    pub fn glyph(mut self, icon: Icon, color: Hsla) -> Self {
+        self.glyph = Some((icon, color));
+        self
     }
 
     pub fn on(mut self, on: bool) -> Self {
@@ -183,6 +195,15 @@ impl ToggleButton {
                         .size(px(16.))
                         .flex_none()
                         .text_color(text),
+                )
+            })
+            .when_some(self.glyph, |button, (icon, color)| {
+                button.gap_1().child(
+                    svg()
+                        .path(icon.path())
+                        .size(px(14.))
+                        .flex_none()
+                        .text_color(if self.on { color } else { text }),
                 )
             })
             .when(self.icon.is_none(), |button| button.child(self.label))

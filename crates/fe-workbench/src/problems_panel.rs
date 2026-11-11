@@ -14,6 +14,15 @@
 //! their related rows, and `problems.select_first` and
 //! `problems.select_last` go to the first and the last of them.
 //!
+//! Its header (`docs/design/design-system.md#problems`) has a scope switch,
+//! This file (the active editor's file alone) or Project (every file), and a
+//! filter per severity that doubles as its count in the scope: errors,
+//! warnings, and information with hints, each a toggle, off hiding its
+//! problems. A file whose problems the scope or the filters hide all of isn't
+//! listed, and its row's count badge counts the problems shown. With nothing
+//! listed, the panel shows a centred empty state: an icon, a heading and one
+//! hint. Its text is the catalogue's (`l10n/en-US/problems.ftl`).
+//!
 //! The workbench lists the problems again whenever an open editor changes,
 //! as a diagnostic arriving or clearing notifies it, and as tabs open and
 //! close ([`Workbench::sync_problems`]). It keeps the window's error and
@@ -68,14 +77,18 @@ use fe_editor::diagnostics::{
 use fe_gpui::{EditorTheme, EditorView, commands::RunCommand};
 use fe_lsp::{FileDiagnostic, PositionEncoding, decode_file_diagnostics};
 use fe_text::Text;
-use fe_ui::ROW_HEIGHT;
+use fe_ui::{
+    ActiveTheme as _, CODE_SMALL, FamilySlot, FontFamilies, ROW_HEIGHT, SegmentedControl,
+    ToggleButton, UI_HEADING, UI_SMALL, file_icon_ref, radius,
+};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollStrategy,
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px, svg,
     uniform_list,
 };
+use kiln_l10n::tr;
 
 use crate::{Pane, Workbench, loader, pane::Reveal, task_run::TaskTabs};
 use kiln_shell::{Icon, StatusItem, StatusSide, StatusTone};
@@ -136,9 +149,73 @@ pub(crate) enum ProblemsOp {
 /// locations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Row {
-    File(usize),
+    /// A file, and how many of its problems are shown.
+    File(usize, usize),
     Problem(usize, usize),
     Related(usize, usize, usize),
+}
+
+/// Which files the panel lists: the header's scope switch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Scope {
+    /// The active editor's file alone.
+    ThisFile,
+    /// Every file.
+    #[default]
+    Project,
+}
+
+impl Scope {
+    /// In the switch's order.
+    const ALL: [Scope; 2] = [Scope::ThisFile, Scope::Project];
+
+    fn label(self) -> SharedString {
+        match self {
+            Scope::ThisFile => tr!("workbench-problems-scope-this-file"),
+            Scope::Project => tr!("workbench-problems-scope-project"),
+        }
+    }
+}
+
+/// A severity filter in the header, which shows its count and hides its
+/// problems while off. Hints go with information: the design has three.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Filter {
+    Errors,
+    Warnings,
+    Infos,
+}
+
+impl Filter {
+    /// In the header's order.
+    pub(crate) const ALL: [Filter; 3] = [Filter::Errors, Filter::Warnings, Filter::Infos];
+
+    /// The filter `severity`'s problems are under.
+    pub(crate) fn of(severity: Severity) -> Filter {
+        match severity {
+            Severity::Error => Filter::Errors,
+            Severity::Warning => Filter::Warnings,
+            Severity::Information | Severity::Hint => Filter::Infos,
+        }
+    }
+
+    /// The severity whose glyph and colour it shows.
+    fn severity(self) -> Severity {
+        match self {
+            Filter::Errors => Severity::Error,
+            Filter::Warnings => Severity::Warning,
+            Filter::Infos => Severity::Information,
+        }
+    }
+
+    /// Its accessible name and tooltip, with `count`.
+    pub(crate) fn name(self, count: usize) -> SharedString {
+        match self {
+            Filter::Errors => tr!("workbench-problems-filter-errors", count = count),
+            Filter::Warnings => tr!("workbench-problems-filter-warnings", count = count),
+            Filter::Infos => tr!("workbench-problems-filter-infos", count = count),
+        }
+    }
 }
 
 /// Where opening a row goes.
@@ -405,6 +482,13 @@ pub struct ProblemsPanel {
     sources: BTreeMap<u64, Vec<SourceProblem>>,
     /// The task tabs those belong to.
     pub(crate) task_tabs: TaskTabs,
+    /// The header's scope.
+    scope: Scope,
+    /// The active editor's file, which This file lists.
+    active: Option<PathBuf>,
+    /// Each [`Filter`]'s, by its index: whether it's off, hiding its
+    /// problems.
+    off: [bool; 3],
 }
 
 impl ProblemsPanel {
@@ -432,6 +516,9 @@ impl ProblemsPanel {
             colors,
             sources: BTreeMap::new(),
             task_tabs: TaskTabs::default(),
+            scope: Scope::default(),
+            active: None,
+            off: [false; 3],
         }
     }
 
@@ -477,9 +564,8 @@ impl ProblemsPanel {
 
     /// Lists `files`, with paths relative to `root`, each with its
     /// diagnostics as sent if no editor shows it, keeping the selected
-    /// problem selected if it's still listed: the nearest with its message,
-    /// severity and source (and the same related row of it, if it has
-    /// one). The window's counts, if the status item doesn't show them yet.
+    /// problem selected if it's still listed ([`ProblemsPanel::relist`]).
+    /// The window's counts, if the status item doesn't show them yet.
     fn set_files(
         &mut self,
         root: Option<PathBuf>,
@@ -495,28 +581,108 @@ impl ProblemsPanel {
         if files == self.files && sent == self.sent && root == self.root {
             return item;
         }
+        let was = self.selection();
+        self.root = root;
+        self.files = files;
+        self.sent = sent;
+        self.relist(was, cx);
+        item
+    }
+
+    /// Lists the active editor's file as `path`, for This file.
+    pub(crate) fn set_active_file(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+        if self.active == path {
+            return;
+        }
+        let was = self.selection();
+        self.active = path;
+        if self.scope == Scope::ThisFile {
+            self.relist(was, cx);
+        }
+    }
+
+    /// Switches the header's scope to `scope`.
+    pub(crate) fn set_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
+        if self.scope == scope {
+            return;
+        }
+        let was = self.selection();
+        self.scope = scope;
+        self.relist(was, cx);
+    }
+
+    /// Turns `filter` off, hiding its problems, or back on.
+    pub(crate) fn toggle_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+        let was = self.selection();
+        self.off[filter as usize] = !self.off[filter as usize];
+        self.relist(was, cx);
+    }
+
+    /// The selected row as what it shows, to select it again once the list
+    /// changes: its file's path, its problem, and which of the problem's
+    /// related locations, if it's one.
+    fn selection(&self) -> Option<(PathBuf, Problem, Option<usize>)> {
         let related = match self.selected.and_then(|ix| self.rows.get(ix)) {
             Some(Row::Related(_, _, related)) => Some(*related),
             _ => None,
         };
-        let selected = self.selected_problem().map(|(path, problem)| {
-            let path = path.to_owned();
-            (path, problem.clone())
-        });
-        self.root = root;
-        self.files = files;
-        self.sent = sent;
-        self.rows.clear();
+        let (path, problem) = self.selected_problem()?;
+        Some((path.to_owned(), problem.clone(), related))
+    }
+
+    /// Whether the scope lists the file listed as `path`.
+    fn in_scope(&self, path: &Path) -> bool {
+        match self.scope {
+            Scope::Project => true,
+            Scope::ThisFile => self.active.as_deref() == Some(path),
+        }
+    }
+
+    /// Whether the filters show `severity`'s problems.
+    fn shows(&self, severity: Severity) -> bool {
+        !self.off[Filter::of(severity) as usize]
+    }
+
+    /// How many problems of each [`Filter`]'s the scope has, shown or not.
+    fn scope_counts(&self) -> [usize; 3] {
+        let mut counts = [0; 3];
+        let files = self.files.iter().filter(|file| self.in_scope(&file.path));
+        for problem in files.flat_map(|file| &file.problems) {
+            counts[Filter::of(problem.severity) as usize] += 1;
+        }
+        counts
+    }
+
+    /// Lists the rows of the files in scope, each with the problems the
+    /// filters show, a file showing none left out, and selects `was` again
+    /// if it's still listed: the nearest problem with its message, severity
+    /// and source (and the same related row of it, if it was one).
+    fn relist(&mut self, was: Option<(PathBuf, Problem, Option<usize>)>, cx: &mut Context<Self>) {
+        let mut rows = Vec::new();
         for (ix, file) in self.files.iter().enumerate() {
-            self.rows.push(Row::File(ix));
+            if !self.in_scope(&file.path) {
+                continue;
+            }
+            let header = rows.len();
+            rows.push(Row::File(ix, 0));
+            let mut shown = 0;
             for (problem_ix, problem) in file.problems.iter().enumerate() {
-                self.rows.push(Row::Problem(ix, problem_ix));
-                (self.rows).extend(
+                if !self.shows(problem.severity) {
+                    continue;
+                }
+                shown += 1;
+                rows.push(Row::Problem(ix, problem_ix));
+                rows.extend(
                     (0..problem.related.len()).map(|related| Row::Related(ix, problem_ix, related)),
                 );
             }
+            match shown {
+                0 => rows.truncate(header),
+                shown => rows[header] = Row::File(ix, shown),
+            }
         }
-        self.selected = selected.and_then(|(path, was)| {
+        self.rows = rows;
+        self.selected = was.and_then(|(path, was, related)| {
             let file = self.files.iter().position(|file| file.path == path)?;
             let problems = &self.files[file].problems;
             // The same problem, unmoved; else the nearest saying the same.
@@ -540,7 +706,6 @@ impl ProblemsPanel {
         });
         self.generation += 1;
         cx.notify();
-        item
     }
 
     /// The selected problem, or the problem of the selected related row,
@@ -607,7 +772,8 @@ impl ProblemsPanel {
     /// Selects row `ix`, if it's still `generation`'s and a problem's or a
     /// related location's, and opens it.
     fn open(&mut self, generation: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if generation != self.generation || matches!(self.rows.get(ix), None | Some(Row::File(_))) {
+        if generation != self.generation || matches!(self.rows.get(ix), None | Some(Row::File(..)))
+        {
             return;
         }
         self.select(ix, cx);
@@ -674,11 +840,104 @@ impl ProblemsPanel {
         self.sent[ix].as_ref().is_some_and(|sent| sent.reading)
     }
 
-    /// What shows in place of the rows, if anything.
-    fn message(&self) -> Option<&'static str> {
-        self.files
-            .is_empty()
-            .then_some("No problems in the open files")
+    /// What the centred empty state says while nothing's listed: its
+    /// heading and its hint.
+    fn empty_state(&self) -> Option<(SharedString, SharedString)> {
+        if !self.rows.is_empty() {
+            return None;
+        }
+        let hidden = self.scope_counts().iter().sum::<usize>() > 0;
+        Some(match (hidden, self.scope) {
+            (true, _) => (
+                tr!("workbench-problems-hidden"),
+                tr!("workbench-problems-hidden-hint"),
+            ),
+            (false, Scope::ThisFile) => (
+                tr!("workbench-problems-empty"),
+                tr!("workbench-problems-empty-this-file-hint"),
+            ),
+            (false, Scope::Project) => (
+                tr!("workbench-problems-empty"),
+                tr!("workbench-problems-empty-hint"),
+            ),
+        })
+    }
+
+    /// The header: the scope switch, then the severity filters, each with
+    /// its glyph and its count in the scope, at the right. In a narrow
+    /// panel the filters wrap onto a line of their own, together.
+    fn render_header(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let ui = fe_ui::ui_theme(cx);
+        let counts = self.scope_counts();
+        let scope = SegmentedControl::new(SCOPE_ID, tr!("workbench-problems-scope"))
+            .small()
+            .segments(Scope::ALL.map(Scope::label))
+            .selected(self.scope as usize)
+            .on_change(
+                cx.listener(|panel, ix: &usize, _, cx| panel.set_scope(Scope::ALL[*ix], cx)),
+            );
+        let filters = Filter::ALL.map(|filter| {
+            let (count, severity) = (counts[filter as usize], filter.severity());
+            let toggle = ToggleButton::new((FILTER_ID, filter as usize), count.to_string(), &ui)
+                .glyph(severity_glyph(severity), self.color(severity))
+                .name(filter.name(count))
+                .on(!self.off[filter as usize])
+                .on_click(cx.listener(move |panel, _, _, cx| panel.toggle_filter(filter, cx)));
+            div()
+                .flex_none()
+                .debug_selector(move || filter_selector(filter))
+                .child(toggle)
+        });
+        div()
+            .flex_none()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .px_3()
+            .py_1()
+            .child(scope)
+            .child(
+                div()
+                    .flex_none()
+                    .ml_auto()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .children(filters),
+            )
+    }
+
+    /// The empty state, centred: an icon, the heading and the hint.
+    fn render_empty(heading: SharedString, hint: SharedString, cx: &App) -> gpui::Div {
+        let c = cx.theme().colors;
+        div()
+            .debug_selector(|| EMPTY_SELECTOR.into())
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .px_4()
+            .text_center()
+            .child(
+                svg()
+                    .path(fe_ui::Icon::CircleCheck.path())
+                    .size(px(24.))
+                    .flex_none()
+                    .text_color(c.text.muted),
+            )
+            .child(
+                div()
+                    .text_size(UI_HEADING.size)
+                    .line_height(UI_HEADING.line_height)
+                    .font_weight(gpui::FontWeight(UI_HEADING.weight as f32))
+                    .text_color(c.text.primary)
+                    .child(heading),
+            )
+            .child(div().text_color(c.text.muted).child(hint))
     }
 
     fn render_rows(
@@ -688,11 +947,23 @@ impl ProblemsPanel {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let ui = fe_ui::ui_theme(cx);
+        let c = cx.theme().colors;
+        let code = (cx.try_global::<FontFamilies>().cloned().unwrap_or_default())
+            .family(FamilySlot::Code, cx);
         let generation = self.generation;
         let selected_bg = if self.focus.contains_focused(window, cx) {
             ui.row_selected
         } else {
             ui.row_selected_inactive
+        };
+        // A problem's source and position: faint, in code small.
+        let faint = |text: String| {
+            div()
+                .flex_none()
+                .font_family(code.clone())
+                .text_size(CODE_SMALL.size)
+                .text_color(c.text.faint)
+                .child(text)
         };
         // A row's identity is its list's too, so one pressed before the
         // list changed isn't clicked as the row that replaced it.
@@ -710,26 +981,43 @@ impl ProblemsPanel {
                     .overflow_hidden()
                     .whitespace_nowrap();
                 let row = match *self.rows.get(ix)? {
-                    Row::File(file) => {
-                        let file = &self.files[file];
-                        row.text_color(ui.tab_active_text)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .child(self.display_path(&file.path)),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(ui.muted_text)
-                                    .child(file.problems.len().to_string()),
-                            )
+                    Row::File(file, shown) => {
+                        let path = &self.files[file].path;
+                        let file_name = (path.file_name())
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let icon = file_icon_ref(&file_name);
+                        row.child(
+                            div()
+                                .size(px(14.))
+                                .flex_none()
+                                .child(icon.element(px(14.), ui.icon)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_color(c.text.muted)
+                                .child(self.display_path(path)),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(move || badge_selector(ix))
+                                .flex_none()
+                                .px(px(6.))
+                                .rounded(radius::CONTROL)
+                                .bg(ui.row_hover)
+                                .text_color(c.text.muted)
+                                .text_size(UI_SMALL.size)
+                                .line_height(UI_SMALL.line_height)
+                                .child(shown.to_string()),
+                        )
                     }
                     Row::Problem(file, problem) => {
                         let problem = &self.files[file].problems[problem];
+                        let glyph = severity_glyph(problem.severity);
                         row.pl_5()
                             .when(self.selected == Some(ix), |row| row.bg(selected_bg))
                             .hover(move |row| row.bg(ui.row_hover))
@@ -738,10 +1026,15 @@ impl ProblemsPanel {
                             }))
                             .child(
                                 div()
+                                    .debug_selector(move || glyph_selector(ix, glyph))
                                     .flex_none()
-                                    .w(px(10.))
-                                    .text_color(self.color(problem.severity))
-                                    .child(severity_icon(problem.severity)),
+                                    .size(px(14.))
+                                    .child(
+                                        svg()
+                                            .path(glyph.path())
+                                            .size(px(14.))
+                                            .text_color(self.color(problem.severity)),
+                                    ),
                             )
                             .child(
                                 div()
@@ -749,17 +1042,13 @@ impl ProblemsPanel {
                                     .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis()
+                                    .text_color(c.text.primary)
                                     .child(first_line(&problem.message).to_owned()),
                             )
                             .when_some(problem.source.clone(), |row, source| {
-                                row.child(div().flex_none().text_color(ui.muted_text).child(source))
+                                row.child(faint(source))
                             })
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(ui.muted_text)
-                                    .child(position(problem, self.reading(file))),
-                            )
+                            .child(faint(position(problem, self.reading(file))))
                     }
                     Row::Related(file, problem, related) => {
                         let related = &self.files[file].problems[problem].related[related];
@@ -775,14 +1064,10 @@ impl ProblemsPanel {
                                     .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis()
+                                    .text_color(c.text.muted)
                                     .child(first_line(&related.message).to_owned()),
                             )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(ui.muted_text)
-                                    .child(related_position(related)),
-                            )
+                            .child(faint(related_position(related)))
                     }
                 };
                 Some(row.into_any_element())
@@ -791,8 +1076,45 @@ impl ProblemsPanel {
     }
 }
 
-/// A severity's mark in its row.
-fn severity_icon(severity: Severity) -> &'static str {
+/// The scope switch's element id.
+const SCOPE_ID: &str = "problems-scope";
+
+/// The severity filters' element ids' name.
+const FILTER_ID: &str = "problems-filter";
+
+/// The empty state's test selector.
+const EMPTY_SELECTOR: &str = "problems-empty";
+
+/// `filter`'s toggle's test selector.
+pub(crate) fn filter_selector(filter: Filter) -> String {
+    format!("problems-filter:{}", filter as usize)
+}
+
+/// Row `ix`'s count badge's test selector, on a file's row.
+pub(crate) fn badge_selector(ix: usize) -> String {
+    format!("problems-badge:{ix}")
+}
+
+/// Row `ix`'s severity glyph's test selector, naming the glyph drawn.
+pub(crate) fn glyph_selector(ix: usize, glyph: fe_ui::Icon) -> String {
+    format!("problems-glyph:{ix}:{}", glyph.name())
+}
+
+/// A severity's glyph, in its row and on its filter: ✕, ▲, and a dotted
+/// circle for information; a diamond for a hint, so its shape tells it from
+/// information's as its colour does.
+pub(crate) fn severity_glyph(severity: Severity) -> fe_ui::Icon {
+    match severity {
+        Severity::Error => fe_ui::Icon::CircleX,
+        Severity::Warning => fe_ui::Icon::TriangleAlert,
+        Severity::Information => fe_ui::Icon::CircleDot,
+        Severity::Hint => fe_ui::Icon::Diamond,
+    }
+}
+
+/// A severity's letter, as the tests name a row's severity.
+#[cfg(test)]
+fn severity_mark(severity: Severity) -> &'static str {
     match severity {
         Severity::Error => "E",
         Severity::Warning => "W",
@@ -842,23 +1164,17 @@ fn counts(files: &[FileProblems]) -> DiagnosticCounts {
     counts
 }
 
-/// `n` and `noun`, plural unless `n` is 1.
-fn count(n: usize, noun: &str) -> String {
-    let s = if n == 1 { "" } else { "s" };
-    format!("{n} {noun}{s}")
-}
-
 /// The status items for `counts`: the errors', then the warnings', none
 /// without either. Each has both counts, as `1 error, 1 warning`, for a
-/// tooltip.
+/// tooltip, a plural message.
 fn status_items(counts: DiagnosticCounts) -> Vec<StatusItem> {
     if counts.errors + counts.warnings == 0 {
         return Vec::new();
     }
-    let tooltip = format!(
-        "{}, {}",
-        count(counts.errors, "error"),
-        count(counts.warnings, "warning")
+    let tooltip = tr!(
+        "workbench-problems-status-tooltip",
+        errors = counts.errors,
+        warnings = counts.warnings
     );
     let item = |id, priority, n: usize, icon, tone| {
         StatusItem::new(id, StatusSide::Left, priority, n.to_string())
@@ -894,13 +1210,18 @@ impl Focusable for ProblemsPanel {
 impl Render for ProblemsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
-        let list = uniform_list(
-            "problem-rows",
-            self.rows.len(),
-            cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
-        )
-        .track_scroll(&self.scroll)
-        .flex_1();
+        let header = self.render_header(cx);
+        let body = match self.empty_state() {
+            Some((heading, hint)) => Self::render_empty(heading, hint, cx).into_any_element(),
+            None => uniform_list(
+                "problem-rows",
+                self.rows.len(),
+                cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
+            )
+            .track_scroll(&self.scroll)
+            .flex_1()
+            .into_any_element(),
+        };
         div()
             .track_focus(&self.focus)
             .key_context(self.key_context(cx))
@@ -915,17 +1236,8 @@ impl Render for ProblemsPanel {
             .bg(ui.panel_background)
             .text_color(ui.text)
             .text_size(px(12.))
-            .when_some(self.message(), |panel, message| {
-                panel.child(
-                    div()
-                        .flex_none()
-                        .px_3()
-                        .py_2()
-                        .text_color(ui.muted_text)
-                        .child(message),
-                )
-            })
-            .child(list)
+            .child(header)
+            .child(body)
     }
 }
 
@@ -979,7 +1291,12 @@ impl Workbench {
         merge_sources(&mut files, &panel.read(cx).sources, &texts);
         let files = files.into_values().collect();
         let root = self.root().map(Path::to_owned);
-        let counts = panel.update(cx, |panel, cx| panel.set_files(root, files, cx));
+        let active = (self.active_editor(cx))
+            .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
+        let counts = panel.update(cx, |panel, cx| {
+            panel.set_active_file(active, cx);
+            panel.set_files(root, files, cx)
+        });
         if let Some(counts) = counts {
             self.show_problem_counts(counts, cx);
         }
@@ -1087,6 +1404,19 @@ impl Workbench {
             });
         }
         self.sync_problems(cx);
+    }
+
+    /// Tells the Problems panel which file `editor`, the active one, shows,
+    /// for This file. The workbench calls it as it renders, as a tab change
+    /// doesn't always notify.
+    pub(crate) fn follow_problems_file(
+        &mut self,
+        editor: Option<&Entity<EditorView>>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = editor.and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
+        let panel = self.dock().read(cx).problems().clone();
+        panel.update(cx, |panel, cx| panel.set_active_file(path, cx));
     }
 
     /// Shows `counts` on the status bar, the pair of items or neither, and
@@ -1353,9 +1683,9 @@ fn typing(editor: &Entity<EditorView>, cx: &App) -> bool {
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ShownRow {
-    /// A file's path, as shown, and its problem count.
+    /// A file's path, as shown, and its badge's count of the problems shown.
     File(String, usize),
-    /// A problem's severity mark, message, source and `row:col`.
+    /// A problem's severity letter, message, source and `row:col`.
     Problem(&'static str, String, Option<String>, String),
     /// A related location's message and `file:row`.
     Related(String, String),
@@ -1366,16 +1696,16 @@ impl ProblemsPanel {
     pub(crate) fn shown_rows(&self) -> Vec<ShownRow> {
         (self.rows.iter())
             .map(|row| match *row {
-                Row::File(file) => {
+                Row::File(file, count) => {
                     let file = &self.files[file];
                     let shown = crate::tests::slashed(self.display_path(&file.path));
-                    ShownRow::File(shown, file.problems.len())
+                    ShownRow::File(shown, count)
                 }
                 Row::Problem(file, problem) => {
                     let reading = self.reading(file);
                     let problem = &self.files[file].problems[problem];
                     ShownRow::Problem(
-                        severity_icon(problem.severity),
+                        severity_mark(problem.severity),
                         first_line(&problem.message).to_owned(),
                         problem.source.clone(),
                         position(problem, reading),
@@ -1396,8 +1726,18 @@ impl ProblemsPanel {
         self.selected
     }
 
-    pub(crate) fn message_text(&self) -> Option<&'static str> {
-        self.message()
+    /// The empty state's heading and hint, while it shows.
+    pub(crate) fn message_text(&self) -> Option<(SharedString, SharedString)> {
+        self.empty_state()
+    }
+
+    pub(crate) fn scope(&self) -> Scope {
+        self.scope
+    }
+
+    /// Each [`Filter`]'s count in the scope, as its toggle shows it.
+    pub(crate) fn filter_counts(&self) -> [usize; 3] {
+        self.scope_counts()
     }
 
     /// The key context its element sets.

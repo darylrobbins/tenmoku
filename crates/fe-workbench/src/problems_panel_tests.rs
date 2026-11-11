@@ -225,7 +225,12 @@ fn lists(cx: &mut TestAppContext) {
     s.until("all cleared", |s| rows(s).is_empty());
     let panel = panel(&mut s);
     let message = panel.read_with(&s.cx, |panel, _| panel.message_text());
-    assert_eq!(message, Some("No problems in the open files"));
+    let message = message.map(|(heading, hint)| (heading.to_string(), hint.to_string()));
+    let empty = (
+        "No problems",
+        "Errors and warnings in the open files show here",
+    );
+    assert_eq!(message, Some((empty.0.to_owned(), empty.1.to_owned())));
     assert_eq!(item(&mut s), None);
 }
 

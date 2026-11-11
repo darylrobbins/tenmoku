@@ -335,7 +335,13 @@ macro_rules! dock_item {
 
 dock_item!(SearchPanel, search_panel::SIDEBAR);
 dock_item!(ReferencesPanel, crate::references_panel::SIDEBAR);
-dock_item!(ProblemsPanel, problems_panel::SIDEBAR);
+// Titled from the catalogue; always on the rail, so it joins none on show.
+dock_item!(
+    ProblemsPanel,
+    problems_panel::SIDEBAR,
+    |_: &ProblemsPanel, _: &App| tr!("workbench-problems-title"),
+    false
+);
 dock_item!(AiChangesPanel, crate::ai_changes_panel::SIDEBAR, off_rail);
 // Titled with the file it lists.
 dock_item!(
