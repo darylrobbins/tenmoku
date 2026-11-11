@@ -303,6 +303,16 @@ macro_rules! dock_item {
             $sidebar.name.into()
         });
     };
+    // Its own header actions: `$actions` of the panel.
+    ($panel:ty, $sidebar:expr, actions = $actions:expr) => {
+        dock_item!(
+            $panel,
+            $sidebar,
+            |_: &$panel, _: &App| $sidebar.name.into(),
+            true,
+            $actions
+        );
+    };
     // Shown by its command alone: never on the rail.
     ($panel:ty, $sidebar:expr, off_rail) => {
         dock_item!(
@@ -316,6 +326,15 @@ macro_rules! dock_item {
         dock_item!($panel, $sidebar, $title, true);
     };
     ($panel:ty, $sidebar:expr, $title:expr, $joins_rail:expr) => {
+        dock_item!(
+            $panel,
+            $sidebar,
+            $title,
+            $joins_rail,
+            |_: &$panel, _: &App| Vec::new()
+        );
+    };
+    ($panel:ty, $sidebar:expr, $title:expr, $joins_rail:expr, $actions:expr) => {
         impl DockItem for $panel {
             fn id(&self) -> PanelId {
                 $sidebar.panel.id()
@@ -344,11 +363,20 @@ macro_rules! dock_item {
             fn focus_on_show(&self) -> bool {
                 $sidebar.focus_on_show
             }
+
+            fn actions(&self, cx: &App) -> Vec<kiln_shell::PaneAction> {
+                $actions(self, cx)
+            }
         }
     };
 }
 
-dock_item!(SearchPanel, search_panel::SIDEBAR);
+// Titled by its name; its header carries the results' actions.
+dock_item!(
+    SearchPanel,
+    search_panel::SIDEBAR,
+    actions = |panel: &SearchPanel, _: &App| panel.pane_actions()
+);
 dock_item!(ReferencesPanel, crate::references_panel::SIDEBAR);
 /// The bottom panel's Problems tool window, titled from the catalogue.
 impl DockItem for ProblemsPanel {

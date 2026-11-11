@@ -94,6 +94,9 @@ migrated = [
     "src/problems_panel.rs",
     # The editor gutter in B3 (T1549): provenance's column and agent lane.
     "src/provenance_column.rs",
+    # The Search panel in B3 (T322).
+    "src/search_panel.rs",
+    "src/search_replace.rs",
     # Language-server annotations in B3 (T1550): the test lenses and a
     # language server's.
     "src/test_lens.rs",
@@ -447,6 +450,46 @@ reason = "The and push button's element id"
 file = "src/git_panel.rs"
 text = "change-letter:{at}"
 reason = "A row's status letter's debug selector"
+
+# The Search panel's name as its SidebarPanel const declares it, by which the
+# rail orders it and tests name it: the dock shows it as it does any panel's.
+
+[[literal]]
+file = "src/search_panel.rs"
+text = "Search"
+reason = "The Search panel's name in its SidebarPanel const, not shown: it names the panel for the rail's order and tests"
+
+# Ids and test selectors, not text.
+
+[[literal]]
+file = "src/search_panel.rs"
+text = "result-{layout}"
+reason = "The result rows' element id name, per layout"
+
+[[literal]]
+file = "src/search_panel.rs"
+text = "search-replace-file:{ix}"
+reason = "A test selector for a row's Replace button"
+
+[[literal]]
+file = "src/search_panel.rs"
+text = "search-dismiss:{ix}"
+reason = "A test selector for a row's dismiss button"
+
+[[literal]]
+file = "src/search_panel.rs"
+text = "search-chevron:{ix}:{state}"
+reason = "A test selector for a row's chevron"
+
+[[literal]]
+file = "src/search_panel.rs"
+text = "search-line-text:{ix}"
+reason = "A test selector for a result line's text"
+
+[[literal]]
+file = "src/search_replace.rs"
+text = ".replace-{}-{}"
+reason = "A temporary file's name beside the one it replaces"
 
 [[literal]]
 file = "src/terminal_panel.rs"

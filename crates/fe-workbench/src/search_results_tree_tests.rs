@@ -115,17 +115,16 @@ fn keys(keys: &str, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
-/// The view mode button's icon and tooltip.
-fn view_button(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> (Icon, &'static str) {
-    search.read_with(cx, |search, cx| {
-        let (_, icon, tooltip, enabled, _) = search.toolbar_buttons(cx)[2];
-        assert!(enabled);
-        (icon, tooltip)
+/// The view mode action's icon and tooltip.
+fn view_button(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> (Icon, String) {
+    search.read_with(cx, |search, _| {
+        let action = &search.pane_actions()[2];
+        (action.icon, action.title.to_string())
     })
 }
 
-fn collapse_button(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> &'static str {
-    search.read_with(cx, |search, cx| search.toolbar_buttons(cx)[3].2)
+fn collapse_button(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> String {
+    search.read_with(cx, |search, _| search.pane_actions()[3].title.to_string())
 }
 
 /// The rows, a folder's and a file's as its label and a line's as its
@@ -141,7 +140,7 @@ fn rows(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Vec<String>
 }
 
 fn depths(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Vec<usize> {
-    search.read_with(cx, |search, _| search.depths())
+    search.read_with(cx, |search, _| search.depths.clone())
 }
 
 fn selected(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Option<usize> {
@@ -178,10 +177,16 @@ fn tree_groups_files_under_folders(cx: &mut TestAppContext) {
         rows(&search, cx),
         ["src/a.rs", "1", "3", "src/b.rs", "1", "top.rs", "1"]
     );
-    assert_eq!(view_button(&search, cx), (Icon::ListTree, "View as Tree"));
+    assert_eq!(
+        view_button(&search, cx),
+        (Icon::ListTree, "View as Tree".into())
+    );
 
-    click("search-toolbar-view-mode", cx);
-    assert_eq!(view_button(&search, cx), (Icon::List, "View as List"));
+    click("icon-button:search-view-mode", cx);
+    assert_eq!(
+        view_button(&search, cx),
+        (Icon::List, "View as List".into())
+    );
     assert_eq!(
         rows(&search, cx),
         ["src", "a.rs", "1", "3", "b.rs", "1", "top.rs", "1"]
@@ -339,10 +344,10 @@ fn collapse_all_counts_folders(cx: &mut TestAppContext) {
     assert_eq!(rows(&search, cx), ["src", "top.rs"]);
     assert_eq!(collapse_button(&search, cx), "Expand All");
 
-    click("search-toolbar-collapse", cx);
+    click("icon-button:search-collapse", cx);
     assert_eq!(rows(&search, cx).len(), 8, "every folder and file");
     assert_eq!(collapse_button(&search, cx), "Collapse All");
-    click("search-toolbar-collapse", cx);
+    click("icon-button:search-collapse", cx);
     assert_eq!(rows(&search, cx), ["src", "top.rs"]);
     assert_eq!(collapse_button(&search, cx), "Expand All");
 
@@ -445,7 +450,7 @@ fn switching_back_to_list(cx: &mut TestAppContext) {
     assert_eq!(selected(&search, cx), Some(0));
 
     // The list shows every file, the folder's selection going to its first.
-    click("search-toolbar-view-mode", cx);
+    click("icon-button:search-view-mode", cx);
     assert_eq!(rows(&search, cx), flat);
     assert_eq!(selected(&search, cx), Some(0));
     let query = search.read_with(cx, |search, cx| search.input().read(cx).text().to_owned());

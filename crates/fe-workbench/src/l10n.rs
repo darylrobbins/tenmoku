@@ -20,6 +20,7 @@ kiln_l10n::resources! {
         "../l10n/en-US/status.ftl",
         "../l10n/en-US/problems.ftl",
         "../l10n/en-US/editor.ftl",
+        "../l10n/en-US/search.ftl",
         "../l10n/en-US/lens.ftl",
         "../l10n/en-US/terminal.ftl",
         "../l10n/en-US/git_log.ftl",

@@ -75,25 +75,29 @@ use fe_project::{
     SearchSummary,
 };
 use fe_ui::{
-    HighlightedLabel, Icon, IconButton, ROW_HEIGHT, TREE_INDENT, TextInput, TextInputEvent,
-    ToggleButton, Tooltip, UiTheme,
+    Icon, IconButton, ROW_HEIGHT, TREE_INDENT, TextInput, TextInputEvent, ToggleButton, UI_BODY,
+    UI_HEADING, UI_SMALL, UiTheme,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Global,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, PromptButton,
-    PromptLevel, Render, ScrollHandle, ScrollStrategy, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px, svg, uniform_list,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, FontFeatures,
+    FontWeight, Global, HighlightStyle, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ParentElement as _, PromptButton, PromptLevel, Render, ScrollHandle, ScrollStrategy,
+    SharedString, StatefulInteractiveElement as _, Styled as _, StyledText, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px, svg,
+    uniform_list,
 };
+use kiln_l10n::{tr, verbatim};
+use kiln_shell::PaneAction;
 
 use crate::{
     Pane,
+    find_bar::{field, verbatim_label},
     pane::Reveal,
     picker::{self, PaletteOp},
     preserve_case,
     workbench_commands::{ReplaceAllInFiles, ReplaceInFiles, invoked_in},
 };
-use search_replace::{Boundary, MakeEdits, Target, count};
+use search_replace::{Boundary, MakeEdits, Target};
 
 /// Project search in the sidebar: focused when shown, for its input.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
@@ -114,10 +118,12 @@ pub(crate) const KEY_CONTEXT: &str = "search_panel";
 pub(crate) const RESULTS_KEY_CONTEXT: &str = "search_results";
 
 /// Replace All's prompt's buttons; Replace is the default.
-const REPLACE_BUTTONS: [PromptButton; 2] = [
-    PromptButton::Ok(SharedString::new_static("Replace")),
-    PromptButton::Cancel(SharedString::new_static("Cancel")),
-];
+fn replace_buttons() -> [PromptButton; 2] {
+    [
+        PromptButton::Ok(tr!("workbench-search-confirm-ok")),
+        PromptButton::Cancel(tr!("workbench-search-confirm-cancel")),
+    ]
+}
 
 /// A search option, with a toggle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,6 +250,8 @@ pub struct SearchPanel {
     clears: u64,
     scroll: UniformListScrollHandle,
     toggles: ScrollHandle,
+    /// This panel, for the dock header's actions to reach it.
+    this: WeakEntity<Self>,
     /// The row ranges the last frame built.
     #[cfg(test)]
     built: Vec<Range<usize>>,
@@ -255,10 +263,13 @@ impl SearchPanel {
     /// until a query runs.
     pub fn new(root: Option<PathBuf>, pane: WeakEntity<Pane>, cx: &mut Context<Self>) -> Self {
         let ui = fe_ui::ui_theme(cx);
-        let input = cx.new(|cx| TextInput::new("Search", &ui, cx));
-        let include = cx.new(|cx| TextInput::new("files to include", &ui, cx));
-        let exclude = cx.new(|cx| TextInput::new("files to exclude", &ui, cx));
-        let replace = cx.new(|cx| TextInput::new("Replace", &ui, cx));
+        let input = cx.new(|cx| TextInput::new(tr!("workbench-search-placeholder"), &ui, cx));
+        let include =
+            cx.new(|cx| TextInput::new(tr!("workbench-search-include-placeholder"), &ui, cx));
+        let exclude =
+            cx.new(|cx| TextInput::new(tr!("workbench-search-exclude-placeholder"), &ui, cx));
+        let replace =
+            cx.new(|cx| TextInput::new(tr!("workbench-search-replace-placeholder"), &ui, cx));
         let fields = [
             (&input, false),
             (&include, true),
@@ -309,6 +320,7 @@ impl SearchPanel {
             clears: 0,
             scroll: UniformListScrollHandle::new(),
             toggles: ScrollHandle::new(),
+            this: cx.weak_entity(),
             #[cfg(test)]
             built: Vec::new(),
             _inputs: submitted,
@@ -386,8 +398,14 @@ impl SearchPanel {
         let filter = match self.filter(&root, cx) {
             Ok(filter) => filter,
             Err(error) => {
-                self.status =
-                    Status::BadGlob(format!("Invalid glob {}: {}", error.glob, error.message));
+                self.status = Status::BadGlob(
+                    tr!(
+                        "workbench-search-bad-glob",
+                        glob = error.glob.to_string(),
+                        message = error.message.to_string()
+                    )
+                    .to_string(),
+                );
                 return;
             }
         };
@@ -749,21 +767,21 @@ impl SearchPanel {
         }
         let text = match &self.status {
             Status::Idle => return None,
-            Status::NoFolder => "No folder open".into(),
-            Status::Searching => "Searching…".into(),
+            Status::NoFolder => tr!("workbench-search-no-folder"),
+            Status::Searching => tr!("workbench-search-searching"),
             Status::Failed(error) => return Some((error.to_string().into(), true)),
             Status::BadGlob(message) => return Some((message.clone().into(), true)),
             Status::Done(summary) if summary.truncated => {
-                format!("Showing the first {} results", self.options.max_matches)
+                tr!("workbench-search-truncated", max = self.options.max_matches)
             }
-            Status::Done(summary) if summary.matches == 0 => "No results".into(),
-            Status::Done(summary) => format!(
-                "{} in {}",
-                count(summary.matches, "result"),
-                count(summary.files_matched, "file")
+            Status::Done(summary) if summary.matches == 0 => tr!("workbench-search-no-results"),
+            Status::Done(summary) => tr!(
+                "workbench-search-summary",
+                results = summary.matches,
+                files = summary.files_matched
             ),
         };
-        Some((text.into(), false))
+        Some((text, false))
     }
 
     /// Opens the file of row `ix`, if the rows are still `layout`'s, with
@@ -986,16 +1004,18 @@ impl SearchPanel {
             return;
         }
         let template = self.replace.read(cx).text().to_owned();
-        let question = format!(
-            "Replace {} across {} with “{template}”?",
-            count(matches, "occurrence"),
-            count(files, "file")
+        let question = tr!(
+            "workbench-search-confirm-replace",
+            occurrences = matches,
+            files = files,
+            template = template.as_str()
         );
+        let detail = tr!("workbench-search-confirm-detail");
         let answer = window.prompt(
             PromptLevel::Warning,
             &question,
-            Some("Files that aren't open are saved, and can't be undone."),
-            &REPLACE_BUTTONS,
+            Some(&detail),
+            &replace_buttons(),
             cx,
         );
         let targets = self.targets(0..self.files.len());
@@ -1075,7 +1095,7 @@ impl SearchPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(boundary) = boundary else {
-            self.notice = Some(("Can't read the project folder".into(), true));
+            self.notice = Some((tr!("workbench-search-cannot-read-folder").to_string(), true));
             cx.notify();
             return;
         };
@@ -1088,7 +1108,7 @@ impl SearchPanel {
                 return;
             }
         };
-        self.notice = Some(("Replacing…".into(), false));
+        self.notice = Some((tr!("workbench-search-replacing").to_string(), false));
         let clears = self.clears;
         self.replacing = Some(cx.spawn(async move |panel, cx| {
             let outcome = search_replace::replace(boundary, targets, replacer, cx).await;
@@ -1348,8 +1368,8 @@ impl SearchPanel {
                             .child(
                                 ToggleButton::new(
                                     ("search-replace-file", ix),
-                                    "Replace",
-                                    kiln_l10n::tr!("workbench-find-replace"),
+                                    tr!("workbench-search-replace-in-row"),
+                                    tr!("workbench-search-replace-in-row"),
                                     &ui,
                                 )
                                 .on_click(cx.listener(
@@ -1364,11 +1384,18 @@ impl SearchPanel {
                         .flex_none()
                         .debug_selector(move || format!("search-dismiss:{ix}"))
                         .child(
-                            ToggleButton::new(("search-dismiss", ix), "×", "Dismiss", &ui)
-                                .on_click(cx.listener(move |panel, _, _, cx| {
+                            ToggleButton::new(
+                                ("search-dismiss", ix),
+                                verbatim_label("×"),
+                                tr!("workbench-search-dismiss"),
+                                &ui,
+                            )
+                            .on_click(cx.listener(
+                                move |panel, _, _, cx| {
                                     cx.stop_propagation();
                                     on_dismiss(panel, cx)
-                                })),
+                                },
+                            )),
                         );
                     let chevron = svg()
                         .path(if expanded {
@@ -1442,10 +1469,15 @@ impl SearchPanel {
                             .child(
                                 div()
                                     .flex_none()
+                                    .min_w(LINE_NUMBER_WIDTH)
+                                    .text_right()
                                     .text_color(ui.muted_text)
+                                    .text_size(UI_SMALL.size)
+                                    .line_height(UI_SMALL.line_height)
+                                    .font_features(tabular_figures())
                                     .child(line.line_number.to_string()),
                             )
-                            .child(line_label(line, &ui))
+                            .child(line_label(line, ix, &ui, cx))
                     }
                 }
                 .into_any_element()
@@ -1464,9 +1496,48 @@ impl SearchPanel {
     }
 }
 
-/// A line's preview, its matches highlighted ([`line_highlights`]).
-fn line_label(line: &LineMatch, ui: &UiTheme) -> HighlightedLabel {
-    HighlightedLabel::new(line.preview.clone(), line_highlights(line), ui)
+/// The width of the chevron that shows the replace field, which it sits
+/// under.
+const REPLACE_INDENT: gpui::Pixels = px(24.);
+
+/// The width of a line number's column, which four digits fill in UI small.
+const LINE_NUMBER_WIDTH: gpui::Pixels = px(28.);
+
+/// OpenType's tabular figures, which line numbers of any digits share a
+/// width in.
+fn tabular_figures() -> FontFeatures {
+    FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
+}
+
+/// How a match shows in a result line: bold in the active tab's colour, on
+/// the editor's fill for the other matches of a find.
+pub(crate) fn match_style(ui: &UiTheme, cx: &App) -> HighlightStyle {
+    let fill = fe_gpui::editor_palette(cx).editor.find_match_other;
+    HighlightStyle {
+        color: Some(ui.tab_active_text),
+        font_weight: Some(FontWeight::BOLD),
+        background_color: Some(gpui::rgba(fill.to_rgba_u32()).into()),
+        ..HighlightStyle::default()
+    }
+}
+
+/// A line's preview, its matches highlighted ([`line_highlights`]) and
+/// filled ([`match_style`]), ending in an ellipsis where the row is too
+/// narrow for it.
+fn line_label(line: &LineMatch, ix: usize, ui: &UiTheme, cx: &App) -> impl IntoElement + use<> {
+    let style = match_style(ui, cx);
+    let highlights = line_highlights(line)
+        .into_iter()
+        .map(|range| (range, style));
+    div()
+        .flex_1()
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .text_color(ui.text)
+        .debug_selector(move || format!("search-line-text:{ix}"))
+        .child(StyledText::new(line.preview.clone()).with_highlights(highlights))
 }
 
 /// A line's matches in its preview: shifted by `preview_start`, clipped to
@@ -2036,87 +2107,139 @@ impl Drop for SearchPanel {
     }
 }
 
-/// What a results toolbar button does.
-type ToolbarAction = fn(&mut SearchPanel, &mut Window, &mut Context<SearchPanel>);
+/// What a header action does.
+type HeaderAction = fn(&mut SearchPanel, &mut Window, &mut Context<SearchPanel>);
 
 impl SearchPanel {
-    /// The results toolbar's buttons: each one's debug selector and ID,
-    /// icon, tooltip, whether it's enabled, and what it does. View as Tree
-    /// is View as List in the tree, and Collapse All is Expand All once
-    /// every folder and file shown is collapsed.
-    fn toolbar_buttons(
-        &self,
-        cx: &App,
-    ) -> [(&'static str, Icon, &'static str, bool, ToolbarAction); 4] {
-        let view: (Icon, &str, ToolbarAction) = if self.view_as_tree {
-            (Icon::List, "View as List", |panel, _, cx| {
-                panel.set_view_as_tree(false, cx)
-            })
-        } else {
-            (Icon::ListTree, "View as Tree", |panel, _, cx| {
-                panel.set_view_as_tree(true, cx)
-            })
-        };
-        let collapse: (Icon, &str, ToolbarAction) = if self.all_collapsed() {
-            (Icon::UnfoldVertical, "Expand All", |panel, _, cx| {
-                panel.collapse_all(false, cx)
-            })
-        } else {
-            (Icon::FoldVertical, "Collapse All", |panel, _, cx| {
-                panel.collapse_all(true, cx)
-            })
-        };
-        [
+    /// The view's own actions, in the dock's header before ⋯ and —: each
+    /// one's ID, icon, tooltip, command and what it does. View as Tree is
+    /// View as List in the tree, and Collapse All is Expand All once every
+    /// folder and file shown is collapsed. As a button in the header has no
+    /// disabled look, one that doesn't apply (Refresh with no query, Clear
+    /// with nothing to clear, Collapse with no results) does nothing.
+    pub(crate) fn pane_actions(&self) -> Vec<PaneAction> {
+        let view: (Icon, SharedString, &'static str, HeaderAction) = if self.view_as_tree {
             (
-                "search-toolbar-refresh",
+                Icon::List,
+                tr!("workbench-search-view-as-list"),
+                "search.view_as_list",
+                |panel, _, cx| panel.set_view_as_tree(false, cx),
+            )
+        } else {
+            (
+                Icon::ListTree,
+                tr!("workbench-search-view-as-tree"),
+                "search.view_as_tree",
+                |panel, _, cx| panel.set_view_as_tree(true, cx),
+            )
+        };
+        let collapse: (Icon, SharedString, &'static str) = if self.all_collapsed() {
+            (
+                Icon::UnfoldVertical,
+                tr!("workbench-search-expand-all"),
+                "search.expand_all",
+            )
+        } else {
+            (
+                Icon::FoldVertical,
+                tr!("workbench-search-collapse-all"),
+                "search.collapse_all",
+            )
+        };
+        let actions: [(&'static str, Icon, SharedString, &'static str, HeaderAction); 4] = [
+            (
+                "search-refresh",
                 Icon::RefreshCw,
-                "Refresh",
-                self.can_refresh(cx),
+                tr!("workbench-search-refresh"),
+                "search.refresh",
                 |panel, _, cx| panel.refresh(cx),
             ),
             (
-                "search-toolbar-clear",
+                "search-clear",
                 Icon::ListX,
-                "Clear Search Results",
-                self.can_clear(cx),
-                Self::clear_results,
+                tr!("workbench-search-clear"),
+                "search.clear_results",
+                |panel, window, cx| {
+                    if panel.can_clear(cx) {
+                        panel.clear_results(window, cx)
+                    }
+                },
             ),
-            ("search-toolbar-view-mode", view.0, view.1, true, view.2),
+            ("search-view-mode", view.0, view.1, view.2, view.3),
             (
-                "search-toolbar-collapse",
+                "search-collapse",
                 collapse.0,
                 collapse.1,
-                !self.files.is_empty(),
                 collapse.2,
+                |panel, _, cx| {
+                    if !panel.files.is_empty() {
+                        let all = panel.all_collapsed();
+                        panel.collapse_all(!all, cx);
+                    }
+                },
             ),
-        ]
+        ];
+        actions
+            .into_iter()
+            .map(|(id, icon, title, command, act)| {
+                let this = self.this.clone();
+                PaneAction {
+                    id,
+                    icon,
+                    title,
+                    command: Some(command),
+                    run: Rc::new(move |window, cx| {
+                        this.update(cx, |panel, cx| act(panel, window, cx)).ok();
+                    }),
+                }
+            })
+            .collect()
     }
 
-    /// The results toolbar, right-aligned above the query, as
-    /// [`crate::git_panel`] draws its buttons.
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let ui = fe_ui::ui_theme(cx);
-        let buttons = self
-            .toolbar_buttons(cx)
-            .map(|(id, icon, tooltip, enabled, act)| {
-                div().flex_none().debug_selector(move || id.into()).child(
-                    IconButton::new(id, icon, tooltip, &ui)
-                        .disabled(!enabled)
-                        .tooltip(move |_, cx| {
-                            cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
-                        })
-                        .on_click(cx.listener(move |panel, _, window, cx| act(panel, window, cx))),
-                )
-            });
+    /// What shows in place of the results when a search found nothing: a
+    /// search icon, a heading and one hint line, centred.
+    fn render_empty(&self, ui: &UiTheme) -> impl IntoElement + use<> {
         div()
-            .flex_none()
+            .debug_selector(|| "search-empty".into())
+            .flex_1()
+            .min_h_0()
             .flex()
-            .justify_end()
+            .flex_col()
             .items_center()
-            .gap_0p5()
-            .px_2()
-            .pt_1()
-            .children(buttons)
+            .justify_center()
+            .gap_2()
+            .px_4()
+            .text_center()
+            .child(
+                svg()
+                    .path(Icon::Search.path())
+                    .size(px(24.))
+                    .flex_none()
+                    .text_color(ui.muted_text),
+            )
+            .child(
+                div()
+                    .text_size(UI_HEADING.size)
+                    .line_height(UI_HEADING.line_height)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(ui.text)
+                    .child(tr!("workbench-search-empty-heading")),
+            )
+            .child(
+                div()
+                    .text_size(UI_BODY.size)
+                    .line_height(UI_BODY.line_height)
+                    .text_color(ui.muted_text)
+                    .child(tr!("workbench-search-empty-hint")),
+            )
+    }
+
+    /// Whether the last search finished with nothing found, which the
+    /// empty state says in place of the status line.
+    fn found_nothing(&self) -> bool {
+        self.rows.is_empty()
+            && self.notice.is_none()
+            && matches!(&self.status, Status::Done(s) if s.matches == 0 && !s.truncated)
     }
 }
 
@@ -2132,34 +2255,39 @@ impl Render for SearchPanel {
         let toggles = [
             (
                 SearchOption::Regex,
-                ".*",
-                kiln_l10n::tr!("workbench-find-regex"),
+                Icon::Regex,
+                tr!("workbench-search-regex"),
                 self.regex,
             ),
             (
                 SearchOption::MatchCase,
-                "Aa",
-                kiln_l10n::tr!("workbench-find-match-case"),
+                Icon::CaseSensitive,
+                tr!("workbench-search-match-case"),
                 self.match_case,
             ),
             (
                 SearchOption::WholeWord,
-                "ab",
-                kiln_l10n::tr!("workbench-find-whole-word"),
+                Icon::WholeWord,
+                tr!("workbench-search-whole-word"),
                 self.whole_word,
             ),
         ]
-        .map(|(option, label, name, on)| {
-            ToggleButton::new(("search-option", option as usize), label, name, &ui)
+        .map(|(option, icon, name, on)| {
+            ToggleButton::icon_only(("search-option", option as usize), icon, name)
                 .on(on)
                 .on_click(cx.listener(move |panel, _, _, cx| panel.toggle(option, cx)))
         });
         let details_toggle = div()
+            .flex_none()
             .debug_selector(|| "search-details-toggle".into())
             .child(
-                ToggleButton::new("search-details-toggle", "...", "Toggle Search Details", &ui)
-                    .on(self.details_shown)
-                    .on_click(cx.listener(|panel, _, window, cx| panel.toggle_details(window, cx))),
+                ToggleButton::icon_only(
+                    "search-details-toggle",
+                    Icon::Ellipsis,
+                    tr!("workbench-search-details"),
+                )
+                .on(self.details_shown)
+                .on_click(cx.listener(|panel, _, window, cx| panel.toggle_details(window, cx))),
             );
         let list = uniform_list(
             "search-results",
@@ -2169,7 +2297,7 @@ impl Render for SearchPanel {
         .track_scroll(&self.scroll)
         .flex_1();
         let results_context = if fe_gpui::vim_enabled(cx) {
-            "search_results vim"
+            verbatim!("search_results vim")
         } else {
             RESULTS_KEY_CONTEXT
         };
@@ -2193,7 +2321,7 @@ impl Render for SearchPanel {
                     } else {
                         Icon::ChevronRight
                     },
-                    "Toggle Replace",
+                    tr!("workbench-search-toggle-replace"),
                     &ui,
                 )
                 .selected(self.replace_shown)
@@ -2208,30 +2336,33 @@ impl Render for SearchPanel {
                 })),
             );
         let replace = self.replace_shown.then(|| {
+            let preserve_case = div()
+                .debug_selector(|| "search-preserve-case".into())
+                .child(
+                    ToggleButton::new(
+                        "search-preserve-case",
+                        verbatim_label("AB"),
+                        tr!("workbench-search-preserve-case"),
+                        &ui,
+                    )
+                    .on(self.preserve_case)
+                    .on_click(cx.listener(|panel, _, _, cx| panel.toggle_preserve_case(cx))),
+                );
             div()
                 .flex_none()
                 .flex()
                 .items_center()
-                .pr_2()
-                .child(div().flex_1().min_w_0().child(self.replace.clone()))
-                .child(
-                    div()
-                        .flex_none()
-                        .pr_1()
-                        .debug_selector(|| "search-preserve-case".into())
-                        .child(
-                            ToggleButton::new(
-                                "search-preserve-case",
-                                "AB",
-                                kiln_l10n::tr!("workbench-find-preserve-case"),
-                                &ui,
-                            )
-                            .on(self.preserve_case)
-                            .on_click(
-                                cx.listener(|panel, _, _, cx| panel.toggle_preserve_case(cx)),
-                            ),
-                        ),
-                )
+                .gap_1()
+                .px_2()
+                .pb_1()
+                // Under the chevron, so the fields line up.
+                .child(div().flex_none().w(REPLACE_INDENT))
+                .child(div().flex_1().min_w_0().child(field(
+                    "search-replace-field",
+                    &self.replace,
+                    vec![preserve_case.into_any_element()],
+                    cx,
+                )))
                 .child(
                     div()
                         .flex_none()
@@ -2239,8 +2370,8 @@ impl Render for SearchPanel {
                         .child(
                             ToggleButton::new(
                                 "search-replace-all",
-                                "Replace All",
-                                "Replace All",
+                                tr!("workbench-search-replace-all"),
+                                tr!("workbench-search-replace-all"),
                                 &ui,
                             )
                             .on_click(cx.listener(
@@ -2249,7 +2380,11 @@ impl Render for SearchPanel {
                         ),
                 )
         });
-        let toolbar = self.render_toolbar(cx);
+        let body = if self.found_nothing() {
+            self.render_empty(&ui).into_any_element()
+        } else {
+            results.into_any_element()
+        };
         div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
@@ -2278,31 +2413,37 @@ impl Render for SearchPanel {
             .bg(ui.panel_background)
             .text_color(ui.text)
             .text_size(px(12.))
-            .child(toolbar)
             .child(
                 div()
                     .flex_none()
                     .flex()
                     .items_center()
-                    .pr_2()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
                     .child(replace_toggle)
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .on_key_down(cx.listener(Self::on_query_key))
-                            .child(self.input.clone()),
+                            .child(field(
+                                "search-field",
+                                &self.input,
+                                vec![
+                                    div()
+                                        .id("search-options")
+                                        .flex()
+                                        .flex_none()
+                                        .gap_0p5()
+                                        .track_scroll(&self.toggles)
+                                        .children(toggles)
+                                        .into_any_element(),
+                                ],
+                                cx,
+                            )),
                     )
-                    .child(
-                        div()
-                            .id("search-options")
-                            .flex()
-                            .flex_none()
-                            .gap_0p5()
-                            .track_scroll(&self.toggles)
-                            .children(toggles)
-                            .child(details_toggle),
-                    ),
+                    .child(details_toggle),
             )
             .children(replace)
             .when(self.details_shown, |panel| {
@@ -2311,30 +2452,36 @@ impl Render for SearchPanel {
                         .flex_none()
                         .flex()
                         .flex_col()
+                        .gap_1()
+                        .px_2()
+                        .pb_1()
                         .child(
                             div()
                                 .debug_selector(|| "search-include-field".into())
-                                .child(self.include.clone()),
+                                .child(field("search-include", &self.include, Vec::new(), cx)),
                         )
                         .child(
                             div()
                                 .debug_selector(|| "search-exclude-field".into())
-                                .child(self.exclude.clone()),
+                                .child(field("search-exclude", &self.exclude, Vec::new(), cx)),
                         ),
                 )
             })
-            .when_some(self.status(), |panel, (status, error)| {
-                let color = if error { ui.error_text } else { ui.muted_text };
-                panel.child(
-                    div()
-                        .flex_none()
-                        .px_3()
-                        .pb_1()
-                        .text_color(color)
-                        .child(status),
-                )
-            })
-            .child(results)
+            .when_some(
+                self.status().filter(|_| !self.found_nothing()),
+                |panel, (status, error)| {
+                    let color = if error { ui.error_text } else { ui.muted_text };
+                    panel.child(
+                        div()
+                            .flex_none()
+                            .px_3()
+                            .pb_1()
+                            .text_color(color)
+                            .child(status),
+                    )
+                },
+            )
+            .child(body)
     }
 }
 
@@ -2407,126 +2554,47 @@ pub(crate) fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(registry())));
 }
 
+/// The title command `id` registers with: its `command-<id>` message,
+/// which `label()` resolves again in the active locale wherever it's shown.
+fn command_title(id: &str) -> SharedString {
+    kiln_l10n::message(&fe_command::l10n::command_key(id))
+}
+
 pub(crate) fn registry() -> Registry<SearchCommands> {
     use SearchOp::*;
     let search = KEY_CONTEXT;
     let results = RESULTS_KEY_CONTEXT;
     let commands = [
-        ("search.toggle_regex", "Toggle Regex", search, ToggleRegex),
-        (
-            "search.toggle_case",
-            "Toggle Match Case",
-            search,
-            ToggleCase,
-        ),
-        (
-            "search.toggle_whole_word",
-            "Toggle Whole Word",
-            search,
-            ToggleWholeWord,
-        ),
-        (
-            "search.toggle_preserve_case",
-            "Toggle Preserve Case",
-            search,
-            TogglePreserveCase,
-        ),
-        (
-            "search.toggle_replace",
-            "Toggle Replace",
-            search,
-            ToggleReplace,
-        ),
-        (
-            "search.toggle_details",
-            "Toggle Search Details",
-            search,
-            ToggleDetails,
-        ),
-        (
-            "search.focus_results",
-            "Focus Search Results",
-            search,
-            FocusResults,
-        ),
-        (
-            "search.select_next",
-            "Select Next Result",
-            results,
-            SelectNext,
-        ),
-        (
-            "search.select_previous",
-            "Select Previous Result",
-            results,
-            SelectPrevious,
-        ),
-        (
-            "search.select_first",
-            "Select First Result",
-            results,
-            SelectFirst,
-        ),
-        (
-            "search.select_last",
-            "Select Last Result",
-            results,
-            SelectLast,
-        ),
-        (
-            "search.open_selected",
-            "Open Selected Result",
-            results,
-            OpenSelected,
-        ),
-        (
-            "search.collapse_or_parent",
-            "Collapse Result or Select Its File",
-            results,
-            CollapseOrParent,
-        ),
-        (
-            "search.expand_or_first_child",
-            "Expand Result or Select Its First Match",
-            results,
-            ExpandOrFirstChild,
-        ),
-        ("search.refresh", "Refresh", search, Refresh),
-        (
-            "search.clear_results",
-            "Clear Search Results",
-            search,
-            ClearResults,
-        ),
-        ("search.collapse_all", "Collapse All", search, CollapseAll),
-        ("search.expand_all", "Expand All", search, ExpandAll),
-        ("search.view_as_tree", "View as Tree", search, ViewAsTree),
-        ("search.view_as_list", "View as List", search, ViewAsList),
-        (
-            "search.replace_in_file",
-            "Replace in Selected File",
-            search,
-            ReplaceInFile,
-        ),
-        (
-            "search.dismiss_file",
-            "Dismiss Selected File",
-            search,
-            DismissFile,
-        ),
-        (
-            "text_input.submit",
-            "Submit",
-            TextInput::KEY_CONTEXT,
-            Submit,
-        ),
+        ("search.toggle_regex", search, ToggleRegex),
+        ("search.toggle_case", search, ToggleCase),
+        ("search.toggle_whole_word", search, ToggleWholeWord),
+        ("search.toggle_preserve_case", search, TogglePreserveCase),
+        ("search.toggle_replace", search, ToggleReplace),
+        ("search.toggle_details", search, ToggleDetails),
+        ("search.focus_results", search, FocusResults),
+        ("search.select_next", results, SelectNext),
+        ("search.select_previous", results, SelectPrevious),
+        ("search.select_first", results, SelectFirst),
+        ("search.select_last", results, SelectLast),
+        ("search.open_selected", results, OpenSelected),
+        ("search.collapse_or_parent", results, CollapseOrParent),
+        ("search.expand_or_first_child", results, ExpandOrFirstChild),
+        ("search.refresh", search, Refresh),
+        ("search.clear_results", search, ClearResults),
+        ("search.collapse_all", search, CollapseAll),
+        ("search.expand_all", search, ExpandAll),
+        ("search.view_as_tree", search, ViewAsTree),
+        ("search.view_as_list", search, ViewAsList),
+        ("search.replace_in_file", search, ReplaceInFile),
+        ("search.dismiss_file", search, DismissFile),
+        ("text_input.submit", TextInput::KEY_CONTEXT, Submit),
     ];
     let mut registry = Registry::new();
-    for (id, title, context, op) in commands {
+    for (id, context, op) in commands {
         registry
             .register(
                 id,
-                title,
+                &command_title(id),
                 move |target: &mut Option<SearchOp>, _: &Actor| {
                     *target = Some(op);
                     Ok(Dispatched::new(Effect::Notify))

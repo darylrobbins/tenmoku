@@ -63,6 +63,14 @@ use fe_editor::EditorModel;
 use fe_gpui::EditorView;
 use fe_project::Replacer;
 use gpui::{App, AppContext as _, AsyncApp, Entity};
+use kiln_l10n::tr;
+
+/// A reason a file was left as it was, as the message `tr!` names, a `String`.
+macro_rules! why {
+    ($($message:tt)*) => {
+        String::from(tr!($($message)*))
+    };
+}
 
 #[cfg(doc)]
 use crate::loader;
@@ -147,28 +155,35 @@ impl Outcome {
     /// skipped.
     pub(crate) fn message(&self) -> (String, bool) {
         let mut message = if self.replaced == 0 {
-            "Replaced nothing".to_owned()
+            tr!("workbench-search-replaced-nothing").to_string()
         } else {
-            format!(
-                "Replaced {} in {}",
-                count(self.replaced, "occurrence"),
-                count(self.files, "file")
+            tr!(
+                "workbench-search-replaced",
+                occurrences = self.replaced,
+                files = self.files
             )
+            .to_string()
         };
         if !self.skipped.is_empty() {
             let skipped: Vec<_> = (self.skipped.iter())
-                .map(|(rel, why)| format!("{rel} ({why})"))
+                .map(|(rel, why)| {
+                    tr!(
+                        "workbench-search-skipped-file",
+                        rel = rel.as_str(),
+                        why = why.as_str()
+                    )
+                    .to_string()
+                })
                 .collect();
-            message += &format!("; skipped {}", skipped.join(", "));
+            message = tr!(
+                "workbench-search-with-skipped",
+                message = message,
+                skipped = skipped.join(", ")
+            )
+            .to_string();
         }
         (message, !self.skipped.is_empty())
     }
-}
-
-/// `n` and `noun`, plural unless `n` is 1.
-pub(crate) fn count(n: usize, noun: &str) -> String {
-    let s = if n == 1 { "" } else { "s" };
-    format!("{n} {noun}{s}")
 }
 
 /// Replaces `replacer`'s matches in `targets`, the search's files beneath
@@ -292,7 +307,7 @@ pub(crate) async fn replace<R: MakeEdits + ?Sized>(
                 for (rel, why) in live.skipped {
                     outcome
                         .skipped
-                        .push((rel, format!("{why}: saved, but not in its editor")));
+                        .push((rel, why!("workbench-search-why-not-in-editor", why = why)));
                 }
                 return;
             }
@@ -318,7 +333,7 @@ pub(crate) async fn replace<R: MakeEdits + ?Sized>(
 /// skipped.
 fn locate(boundary: &Boundary, path: &Path) -> Result<(PathBuf, PathBuf), String> {
     let rel = (path.strip_prefix(&boundary.root))
-        .map_err(|_| "it isn't in the project".to_owned())?
+        .map_err(|_| why!("workbench-search-why-outside"))?
         .to_owned();
     open_beneath(boundary, &rel)?;
     let resolved = boundary.resolved.join(&rel);
@@ -336,7 +351,9 @@ fn open_beneath(boundary: &Boundary, rel: &Path) -> Result<File, String> {
 
 /// `rel`'s folder, relative too, and its name.
 fn split(rel: &Path) -> Result<(&Path, &OsStr), String> {
-    let name = rel.file_name().ok_or("it isn't in the project")?;
+    let name = rel
+        .file_name()
+        .ok_or_else(|| why!("workbench-search-why-outside"))?;
     Ok((rel.parent().unwrap_or(Path::new("")), name))
 }
 
@@ -351,7 +368,9 @@ fn open_folder_beneath(boundary: &Boundary, rel: &Path) -> Result<File, String> 
         path::Component,
     };
 
-    const MOVED: &str = "the project folder has moved";
+    fn moved() -> String {
+        why!("workbench-search-why-moved")
+    }
     let flags = SEARCH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     // The folder itself, from the file system's root a component at a time
     // too: its resolved path has no symlink, so one on the way now means it
@@ -360,29 +379,29 @@ fn open_folder_beneath(boundary: &Boundary, rel: &Path) -> Result<File, String> 
         .read(true)
         .custom_flags(SEARCH | libc::O_DIRECTORY | libc::O_CLOEXEC)
         .open("/")
-        .map_err(|_| MOVED.to_owned())?;
+        .map_err(|_| moved())?;
     for name in boundary.resolved.components() {
         match name {
             Component::RootDir => {}
             Component::Normal(name) => {
-                root = open_at(&root, name, flags, 0).map_err(|_| MOVED.to_owned())?;
+                root = open_at(&root, name, flags, 0).map_err(|_| moved())?;
             }
-            _ => return Err(MOVED.into()),
+            _ => return Err(moved()),
         }
     }
-    let metadata = root.metadata().map_err(|_| MOVED.to_owned())?;
+    let metadata = root.metadata().map_err(|_| moved())?;
     if (metadata.dev(), metadata.ino()) != boundary.id {
-        return Err(MOVED.into());
+        return Err(moved());
     }
     let mut at = root;
     for name in rel.components() {
         let Component::Normal(name) = name else {
-            return Err("it isn't in the project".into());
+            return Err(why!("workbench-search-why-outside"));
         };
         at = open_at(&at, name, flags, 0).map_err(|error| match error.raw_os_error() {
-            Some(libc::ENOENT) => "it no longer exists".into(),
-            Some(libc::ELOOP | libc::ENOTDIR) => "it's no longer in the project".into(),
-            _ => format!("can't read it: {error}"),
+            Some(libc::ENOENT) => why!("workbench-search-why-gone"),
+            Some(libc::ELOOP | libc::ENOTDIR) => why!("workbench-search-why-left-project"),
+            _ => why!("workbench-search-why-unreadable", error = error.to_string()),
         })?;
     }
     Ok(at)
@@ -396,23 +415,25 @@ fn open_folder_beneath(boundary: &Boundary, rel: &Path) -> Result<File, String> 
     use fe_project::beneath;
     use std::path::Component;
 
-    const MOVED: &str = "the project folder has moved";
-    let root = beneath::open_folder(&boundary.resolved).map_err(|_| MOVED.to_owned())?;
+    fn moved() -> String {
+        why!("workbench-search-why-moved")
+    }
+    let root = beneath::open_folder(&boundary.resolved).map_err(|_| moved())?;
     if beneath::identity(&root).ok() != Some(boundary.id) {
-        return Err(MOVED.into());
+        return Err(moved());
     }
     let mut at = root;
     for name in rel.components() {
         let Component::Normal(name) = name else {
-            return Err("it isn't in the project".into());
+            return Err(why!("workbench-search-why-outside"));
         };
         at = beneath::open_folder_in(&at, name).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
-                "it no longer exists".into()
+                why!("workbench-search-why-gone")
             } else if beneath::is_link_or_not_folder(&error) {
-                "it's no longer in the project".into()
+                why!("workbench-search-why-left-project")
             } else {
-                format!("can't read it: {error}")
+                why!("workbench-search-why-unreadable", error = error.to_string())
             }
         })?;
     }
@@ -421,7 +442,7 @@ fn open_folder_beneath(boundary: &Boundary, rel: &Path) -> Result<File, String> 
 
 #[cfg(not(any(unix, windows)))]
 fn open_folder_beneath(_: &Boundary, _: &Path) -> Result<File, String> {
-    Err("can't check it on this system".into())
+    Err(why!("workbench-search-why-unsupported"))
 }
 
 /// How folders are opened on the way to a file: only to look up what's in
@@ -445,14 +466,17 @@ const SEARCH: libc::c_int = libc::O_RDONLY;
 fn open_in(folder: &File, name: &OsStr) -> Result<File, String> {
     let flags = libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     let file = open_at(folder, name, flags, 0).map_err(|error| match error.raw_os_error() {
-        Some(libc::ENOENT) => "it no longer exists".into(),
-        Some(libc::ELOOP | libc::ENOTDIR) => "it's no longer a regular file".into(),
-        _ => format!("can't read it: {error}"),
+        Some(libc::ENOENT) => why!("workbench-search-why-gone"),
+        Some(libc::ELOOP | libc::ENOTDIR) => why!("workbench-search-why-not-regular"),
+        _ => why!("workbench-search-why-unreadable", error = error.to_string()),
     })?;
     match file.metadata() {
         Ok(metadata) if metadata.is_file() => Ok(file),
-        Ok(_) => Err("it's no longer a regular file".into()),
-        Err(error) => Err(format!("can't read it: {error}")),
+        Ok(_) => Err(why!("workbench-search-why-not-regular")),
+        Err(error) => Err(why!(
+            "workbench-search-why-unreadable",
+            error = error.to_string()
+        )),
     }
 }
 
@@ -461,23 +485,26 @@ fn open_in(folder: &File, name: &OsStr) -> Result<File, String> {
     use fe_project::beneath;
     let file = beneath::open_file_in(folder, name).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            "it no longer exists".into()
+            why!("workbench-search-why-gone")
         } else if beneath::is_link_or_not_folder(&error) {
-            "it's no longer a regular file".into()
+            why!("workbench-search-why-not-regular")
         } else {
-            format!("can't read it: {error}")
+            why!("workbench-search-why-unreadable", error = error.to_string())
         }
     })?;
     match file.metadata() {
         Ok(metadata) if metadata.is_file() => Ok(file),
-        Ok(_) => Err("it's no longer a regular file".into()),
-        Err(error) => Err(format!("can't read it: {error}")),
+        Ok(_) => Err(why!("workbench-search-why-not-regular")),
+        Err(error) => Err(why!(
+            "workbench-search-why-unreadable",
+            error = error.to_string()
+        )),
     }
 }
 
 #[cfg(not(any(unix, windows)))]
 fn open_in(_: &File, _: &OsStr) -> Result<File, String> {
-    Err("can't check it on this system".into())
+    Err(why!("workbench-search-why-unsupported"))
 }
 
 /// `openat(2)` of `name` in `folder`.
@@ -538,10 +565,10 @@ fn write_beneath(
     let as_read = |folder: &File| -> Result<std::fs::Metadata, String> {
         let metadata = open_in(folder, name)?
             .metadata()
-            .map_err(|error| format!("can't read it: {error}"))?;
+            .map_err(|error| why!("workbench-search-why-unreadable", error = error.to_string()))?;
         match DiskStamp::from_metadata(&metadata) {
             Ok(stamp) if stamp == read_stamp => Ok(metadata),
-            _ => Err("it changed on disk since it was read".into()),
+            _ => Err(why!("workbench-search-why-changed")),
         }
     };
     let mode = as_read(&folder)?.permissions().mode() & 0o7777;
@@ -555,7 +582,7 @@ fn write_beneath(
     ));
     let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     let temp = open_at(&folder, &temp_name, flags, 0o600)
-        .map_err(|error| format!("not saved: {error}"))?;
+        .map_err(|error| why!("workbench-search-why-not-saved", error = error.to_string()))?;
     let remove_temp = |why: String| {
         if let Ok(name) = std::ffi::CString::new(temp_name.as_bytes()) {
             // SAFETY: `folder` is an open folder and `name` NUL-terminated.
@@ -597,7 +624,12 @@ fn write_beneath(
         temp.sync_all()?;
         DiskStamp::from_metadata(&temp.metadata()?)
     })()
-    .map_err(|error| remove_temp(format!("not saved: {error}")))?;
+    .map_err(|error| {
+        remove_temp(why!(
+            "workbench-search-why-not-saved",
+            error = error.to_string()
+        ))
+    })?;
 
     #[cfg(test)]
     tests::write_hook(tests::WriteStage::BeforeRename, rel);
@@ -609,7 +641,7 @@ fn write_beneath(
         again.metadata().map(|m| (m.dev(), m.ino())),
     );
     if folder_id.is_err() || folder_id.ok() != again_id.ok() {
-        return Err(remove_temp("it's no longer in the project".into()));
+        return Err(remove_temp(why!("workbench-search-why-left-project")));
     }
     as_read(&folder).map_err(remove_temp)?;
     let (from, to) = (
@@ -617,13 +649,16 @@ fn write_beneath(
         std::ffi::CString::new(name.as_bytes()),
     );
     let (Ok(from), Ok(to)) = (from, to) else {
-        return Err(remove_temp("it isn't in the project".into()));
+        return Err(remove_temp(why!("workbench-search-why-outside")));
     };
     let fd = folder.as_raw_fd();
     // SAFETY: `fd` is an open folder and both names NUL-terminated.
     if unsafe { libc::renameat(fd, from.as_ptr(), fd, to.as_ptr()) } != 0 {
         let error = io::Error::last_os_error();
-        return Err(remove_temp(format!("not saved: {error}")));
+        return Err(remove_temp(why!(
+            "workbench-search-why-not-saved",
+            error = error.to_string()
+        )));
     }
     // The rename on disk too, as far as the folder can be synced: its
     // handle is only for lookups, so it's opened to read for it.
@@ -659,10 +694,10 @@ fn write_beneath(
     let as_read = |folder: &File| -> Result<(), String> {
         let metadata = open_in(folder, name)?
             .metadata()
-            .map_err(|error| format!("can't read it: {error}"))?;
+            .map_err(|error| why!("workbench-search-why-unreadable", error = error.to_string()))?;
         match DiskStamp::from_metadata(&metadata) {
             Ok(stamp) if stamp == read_stamp => Ok(()),
-            _ => Err("it changed on disk since it was read".into()),
+            _ => Err(why!("workbench-search-why-changed")),
         }
     };
     as_read(&folder)?;
@@ -675,7 +710,7 @@ fn write_beneath(
         TEMPS.fetch_add(1, Ordering::Relaxed)
     ));
     let temp = beneath::create_new_in(&folder, &temp_name)
-        .map_err(|error| format!("not saved: {error}"))?;
+        .map_err(|error| why!("workbench-search-why-not-saved", error = error.to_string()))?;
     let remove_temp = |why: String| {
         beneath::remove_file_in(&folder, &temp_name).ok();
         why
@@ -688,7 +723,12 @@ fn write_beneath(
         temp.sync_all()?;
         DiskStamp::from_metadata(&temp.metadata()?)
     })()
-    .map_err(|error| remove_temp(format!("not saved: {error}")))?;
+    .map_err(|error| {
+        remove_temp(why!(
+            "workbench-search-why-not-saved",
+            error = error.to_string()
+        ))
+    })?;
     drop(temp);
 
     #[cfg(test)]
@@ -698,11 +738,15 @@ fn write_beneath(
     let again = open_folder_beneath(boundary, folder_rel).map_err(remove_temp)?;
     let folder_id = beneath::identity(&folder).ok();
     if folder_id.is_none() || folder_id != beneath::identity(&again).ok() {
-        return Err(remove_temp("it's no longer in the project".into()));
+        return Err(remove_temp(why!("workbench-search-why-left-project")));
     }
     as_read(&folder).map_err(remove_temp)?;
-    beneath::rename_replacing_in(&folder, &temp_name, name)
-        .map_err(|error| remove_temp(format!("not saved: {error}")))?;
+    beneath::rename_replacing_in(&folder, &temp_name, name).map_err(|error| {
+        remove_temp(why!(
+            "workbench-search-why-not-saved",
+            error = error.to_string()
+        ))
+    })?;
     #[cfg(test)]
     tests::write_hook(tests::WriteStage::AfterRename, rel);
     Ok(written)
@@ -715,7 +759,7 @@ fn write_beneath(
     _: &SaveSnapshot,
     _: DiskStamp,
 ) -> Result<DiskStamp, String> {
-    Err("can't check it on this system".into())
+    Err(why!("workbench-search-why-unsupported"))
 }
 
 /// The editors of every window's workbench showing the file at `path`,
@@ -792,7 +836,7 @@ fn replace_open(
     if binary {
         outcome
             .skipped
-            .push((target.rel.clone(), "it's binary".into()));
+            .push((target.rel.clone(), why!("workbench-search-why-binary")));
         return;
     }
     let mut replaced = 0;
@@ -857,15 +901,20 @@ fn read_closed(
     replacer: &(impl MakeEdits + ?Sized),
 ) -> Result<(Buffer, Edits), String> {
     let file = open_beneath(boundary, rel)?;
-    let buffer = Buffer::from_file(file).map_err(|error| format!("can't read it: {error}"))?;
+    let buffer = Buffer::from_file(file)
+        .map_err(|error| why!("workbench-search-why-unreadable", error = error.to_string()))?;
     let text = buffer.text().to_string();
     if text.contains('\0') {
-        return Err("it's binary".into());
+        return Err(why!("workbench-search-why-binary"));
     }
     // Unedited, it can be written back only if it read cleanly.
     if let Err(error) = buffer.save_snapshot().write_to(io::sink()) {
         let label = buffer.encoding().label();
-        return Err(format!("it isn't valid {label}: {error}"));
+        return Err(why!(
+            "workbench-search-why-invalid",
+            label = label.to_string(),
+            error = error.to_string()
+        ));
     }
     let edits = replacer.edits(&text);
     Ok((buffer, edits))
@@ -881,7 +930,7 @@ fn prepare_closed(
 ) -> Result<(SaveSnapshot, usize, DiskStamp), String> {
     let read_stamp = buffer
         .disk_stamp()
-        .ok_or_else(|| "can't tell whether it changed".to_owned())?;
+        .ok_or_else(|| why!("workbench-search-why-cannot-tell"))?;
     let replaced = edits.len();
     let label = buffer.encoding().label();
     let edits = coalesce(&buffer.text().to_string(), edits);
@@ -890,7 +939,11 @@ fn prepare_closed(
     // What the save will write, so one that would fail is skipped here.
     let snapshot = model.buffer().save_snapshot();
     if let Err(error) = snapshot.write_to(io::sink()) {
-        return Err(format!("it can't be written as {label}: {error}"));
+        return Err(why!(
+            "workbench-search-why-unwritable",
+            label = label.to_string(),
+            error = error.to_string()
+        ));
     }
     Ok((snapshot, replaced, read_stamp))
 }

@@ -98,12 +98,13 @@ fn click_row(search: &Entity<SearchPanel>, ix: usize, cx: &mut VisualTestContext
     draw(cx);
 }
 
-/// Each toolbar button's tooltip and whether it's enabled.
-fn toolbar(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> [(&'static str, bool); 4] {
-    search.read_with(cx, |search, cx| {
-        search
-            .toolbar_buttons(cx)
-            .map(|(_, _, tooltip, enabled, _)| (tooltip, enabled))
+/// Each header action's tooltip, in the dock header's order: Refresh,
+/// Clear Search Results, the view mode, Collapse All / Expand All.
+fn toolbar(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Vec<String> {
+    search.read_with(cx, |search, _| {
+        (search.pane_actions().into_iter())
+            .map(|action| action.title.to_string())
+            .collect()
     })
 }
 
@@ -138,8 +139,8 @@ fn text(input: &Entity<TextInput>, cx: &mut VisualTestContext) -> String {
 fn refresh_disabled_without_query(cx: &mut TestAppContext) {
     let dir = project();
     let (_workbench, search, cx) = panel(cx, dir.path());
-    assert_eq!(toolbar(&search, cx)[0], ("Refresh", false));
-    click("search-toolbar-refresh", cx);
+    assert_eq!(toolbar(&search, cx)[0], "Refresh");
+    click("icon-button:search-refresh", cx);
     run("search.refresh", cx);
     assert_eq!(status(&search, cx), None);
     assert!(rows(&search, cx).is_empty());
@@ -147,8 +148,8 @@ fn refresh_disabled_without_query(cx: &mut TestAppContext) {
     // Typed, not yet run: Refresh runs it.
     cx.simulate_input("foo");
     draw(cx);
-    assert_eq!(toolbar(&search, cx)[0], ("Refresh", true));
-    click("search-toolbar-refresh", cx);
+    assert_eq!(toolbar(&search, cx)[0], "Refresh");
+    click("icon-button:search-refresh", cx);
     assert_eq!(status(&search, cx).as_deref(), Some("3 results in 2 files"));
 }
 
@@ -160,7 +161,7 @@ fn refresh_reruns_query(cx: &mut TestAppContext) {
     fs::write(dir.path().join("c.rs"), "foo d\nFOO\n").unwrap();
     fs::write(dir.path().join("b.rs"), "Foo\n").unwrap();
     let generation = search.read_with(cx, |search, _| search.generation);
-    click("search-toolbar-refresh", cx);
+    click("icon-button:search-refresh", cx);
     assert!(search.read_with(cx, |search, _| search.generation) > generation);
     assert_eq!(rows(&search, cx), ["a.rs", "1", "3", "c.rs", "1"]);
     assert!(
@@ -181,7 +182,7 @@ fn refresh_reruns_query(cx: &mut TestAppContext) {
 fn clear_disabled_when_pristine(cx: &mut TestAppContext) {
     let dir = project();
     let (_workbench, search, cx) = panel(cx, dir.path());
-    assert_eq!(toolbar(&search, cx)[1], ("Clear Search Results", false));
+    assert_eq!(toolbar(&search, cx)[1], "Clear Search Results");
     let fields = search.read_with(cx, |search, _| {
         [
             search.input().clone(),
@@ -194,10 +195,8 @@ fn clear_disabled_when_pristine(cx: &mut TestAppContext) {
     for field in &fields {
         field.update(cx, |input, cx| input.set_text("x", cx));
         draw(cx);
-        assert!(toolbar(&search, cx)[1].1);
-        click("search-toolbar-clear", cx);
+        click("icon-button:search-clear", cx);
         assert_eq!(text(field, cx), "");
-        assert!(!toolbar(&search, cx)[1].1);
     }
 
     // So do results, though the query that found them has gone.
@@ -207,10 +206,8 @@ fn clear_disabled_when_pristine(cx: &mut TestAppContext) {
     draw(cx);
     query.update(cx, |input, cx| input.set_text("", cx));
     draw(cx);
-    assert!(toolbar(&search, cx)[1].1);
-    click("search-toolbar-clear", cx);
+    click("icon-button:search-clear", cx);
     assert!(rows(&search, cx).is_empty());
-    assert!(!toolbar(&search, cx)[1].1);
 }
 
 #[gpui::test]
@@ -258,7 +255,7 @@ fn clear_resets_fields_results_and_focuses_query(cx: &mut TestAppContext) {
     search.update(cx, |search, cx| search.run(cx));
     draw(cx);
     cx.update(|window, cx| window.focus(&replace.focus_handle(cx), cx));
-    click("search-toolbar-clear", cx);
+    click("icon-button:search-clear", cx);
     assert_eq!(text(&query, cx), "");
     assert!(rows(&search, cx).is_empty());
     assert!(focused(&query, cx));
@@ -289,7 +286,6 @@ fn clear_during_a_replacement_leaves_the_status_empty(cx: &mut TestAppContext) {
     assert_eq!(status(&search, cx), None);
     assert!(rows(&search, cx).is_empty());
     assert_eq!(text(&query, cx), "");
-    assert!(!toolbar(&search, cx)[1].1);
 }
 
 #[gpui::test]
@@ -440,32 +436,32 @@ fn left_on_line_selects_parent(cx: &mut TestAppContext) {
 fn collapse_all_flips_to_expand_all(cx: &mut TestAppContext) {
     let dir = project();
     let (_workbench, search, cx) = panel(cx, dir.path());
-    assert_eq!(toolbar(&search, cx)[3], ("Collapse All", false));
+    assert_eq!(toolbar(&search, cx)[3], "Collapse All");
     cx.simulate_input("foo");
     cx.simulate_keystrokes("enter");
     draw(cx);
     let icon = |cx: &mut VisualTestContext| {
-        search.read_with(cx, |search, cx| search.toolbar_buttons(cx)[3].1)
+        search.read_with(cx, |search, _| search.pane_actions()[3].icon)
     };
-    assert_eq!(toolbar(&search, cx)[3], ("Collapse All", true));
+    assert_eq!(toolbar(&search, cx)[3], "Collapse All");
     assert_eq!(icon(cx), Icon::FoldVertical);
 
-    click("search-toolbar-collapse", cx);
+    click("icon-button:search-collapse", cx);
     assert_eq!(rows(&search, cx), ["a.rs", "b.rs"]);
-    assert_eq!(toolbar(&search, cx)[3], ("Expand All", true));
+    assert_eq!(toolbar(&search, cx)[3], "Expand All");
     assert_eq!(icon(cx), Icon::UnfoldVertical);
-    click("search-toolbar-collapse", cx);
+    click("icon-button:search-collapse", cx);
     assert_eq!(rows(&search, cx), ["a.rs", "1", "3", "b.rs", "1"]);
-    assert_eq!(toolbar(&search, cx)[3], ("Collapse All", true));
+    assert_eq!(toolbar(&search, cx)[3], "Collapse All");
 
     // It flips once the last group is collapsed by hand, and back once one
     // is expanded.
     click_row(&search, 0, cx);
-    assert_eq!(toolbar(&search, cx)[3].0, "Collapse All");
+    assert_eq!(toolbar(&search, cx)[3], "Collapse All");
     click_row(&search, 1, cx);
-    assert_eq!(toolbar(&search, cx)[3].0, "Expand All");
+    assert_eq!(toolbar(&search, cx)[3], "Expand All");
     click_row(&search, 1, cx);
-    assert_eq!(toolbar(&search, cx)[3].0, "Collapse All");
+    assert_eq!(toolbar(&search, cx)[3], "Collapse All");
 
     // The commands, which the palette lists.
     run("search.collapse_all", cx);
@@ -488,19 +484,19 @@ fn collapse_all_flips_to_expand_all(cx: &mut TestAppContext) {
 fn new_search_resets_collapse(cx: &mut TestAppContext) {
     let dir = project();
     let (_workbench, search, cx) = searched(cx, dir.path());
-    click("search-toolbar-collapse", cx);
+    click("icon-button:search-collapse", cx);
     assert_eq!(rows(&search, cx), ["a.rs", "b.rs"]);
     cx.simulate_keystrokes("enter");
     draw(cx);
     assert_eq!(rows(&search, cx).len(), 5, "a new search");
-    click("search-toolbar-collapse", cx);
-    click("search-toolbar-refresh", cx);
+    click("icon-button:search-collapse", cx);
+    click("icon-button:search-refresh", cx);
     assert_eq!(rows(&search, cx).len(), 5, "a refresh");
 
     // A dismissal keeps each other file's state, and new files of the same
     // run come in expanded.
     fs::write(dir.path().join("c.rs"), "foo\n").unwrap();
-    click("search-toolbar-refresh", cx);
+    click("icon-button:search-refresh", cx);
     click_row(&search, 3, cx);
     assert_eq!(rows(&search, cx), ["a.rs", "1", "3", "b.rs", "c.rs", "1"]);
     click("search-dismiss:0", cx);

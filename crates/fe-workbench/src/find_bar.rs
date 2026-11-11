@@ -1102,7 +1102,7 @@ impl RenderOnce for SearchLandmark {
 }
 
 /// `label`, a glyph rather than a word, which isn't translated.
-fn verbatim_label(label: &'static str) -> SharedString {
+pub(crate) fn verbatim_label(label: &'static str) -> SharedString {
     SharedString::new_static(label)
 }
 
@@ -1118,7 +1118,7 @@ fn field_slot() -> gpui::Div {
 
 /// A find or replace field: `input` in the controls' bordered box with the
 /// accent focus ring while it has focus, `toggles` inside it at its end.
-fn field(
+pub(crate) fn field(
     id: &'static str,
     input: &Entity<TextInput>,
     toggles: Vec<AnyElement>,
