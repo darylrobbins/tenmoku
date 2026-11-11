@@ -1051,7 +1051,7 @@ impl Workbench {
                 let request = if live { request.live() } else { request };
                 self.request_guarded_diff(request, guard, window, cx)
             }
-            None => self.answer_git_op(&op, no_file().into(), cx),
+            None => self.fail_git_op(&op, no_file().into(), cx),
         }
     }
 
@@ -1154,7 +1154,7 @@ impl Workbench {
         }
         let (text, exists, disk, index) = match read {
             Ok(read) => read,
-            Err(answer) if request.asked => return self.answer_git_op(&request.op, answer, cx),
+            Err(answer) if request.asked => return self.fail_git_op(&request.op, answer, cx),
             Err(_) => return,
         };
         let deleted = !exists;
@@ -1382,13 +1382,13 @@ impl Workbench {
     fn compare_file(&mut self, op: GitOp, window: &mut Window, cx: &mut Context<Self>) {
         let path = (op.editor.as_ref()).and_then(|editor| self.op_path(editor, cx));
         let Some(path) = path else {
-            return self.answer_git_op(&op, no_file().into(), cx);
+            return self.fail_git_op(&op, no_file().into(), cx);
         };
         if !op.args.is_empty() {
             let folder = (self.root.clone()).or_else(|| path.parent().map(Path::to_owned));
             return match vim_host::resolve(&op.args, folder.as_deref()) {
                 Ok(other) => self.compare_with(other, path, op, window, cx),
-                Err(answer) => self.answer_git_op(&op, answer, cx),
+                Err(answer) => self.fail_git_op(&op, answer, cx),
             };
         }
         let workbench = cx.weak_entity();
@@ -1454,17 +1454,17 @@ impl Workbench {
                     };
                     let (buffer, disk) = match read {
                         Ok((Some(buffer), disk)) => (buffer, disk),
-                        Ok((None, _)) => return workbench.answer_git_op(&op, missing(&other), cx),
-                        Err(answer) => return workbench.answer_git_op(&op, answer, cx),
+                        Ok((None, _)) => return workbench.fail_git_op(&op, missing(&other), cx),
+                        Err(answer) => return workbench.fail_git_op(&op, answer, cx),
                     };
                     // Not a split of a diff's side, whose comparison it'd share.
                     let model = match (workbench.file_model(&path, cx), disk) {
                         (Some(model), _) => model,
                         (None, Ok(Some(disk))) => EditorModel::new(disk, Some(path.clone())),
                         (None, Ok(None)) => {
-                            return workbench.answer_git_op(&op, missing(&path), cx);
+                            return workbench.fail_git_op(&op, missing(&path), cx);
                         }
-                        (None, Err(answer)) => return workbench.answer_git_op(&op, answer, cx),
+                        (None, Err(answer)) => return workbench.fail_git_op(&op, answer, cx),
                     };
                     let right = Ok((workbench.relative(&path).into(), model));
                     let left = EditorModel::new(buffer, None);
@@ -1676,7 +1676,7 @@ impl Workbench {
             (workbench.update_in(cx, |workbench, window, cx| {
                 let (text, disk) = match read {
                     Ok(read) => read,
-                    Err(answer) => return workbench.answer_git_op(&op, answer, cx),
+                    Err(answer) => return workbench.fail_git_op(&op, answer, cx),
                 };
                 let open = workbench.open_revision_diff(&path, &id, cx);
                 let model = match (workbench.file_model(&path, cx), disk) {
@@ -1684,7 +1684,7 @@ impl Workbench {
                     (None, Ok(disk)) => disk.map(|disk| EditorModel::new(disk, Some(path.clone()))),
                     // Shown as it is, if one's open.
                     (None, Err(_)) if open.is_some() => None,
-                    (None, Err(answer)) => return workbench.answer_git_op(&op, answer, cx),
+                    (None, Err(answer)) => return workbench.fail_git_op(&op, answer, cx),
                 };
                 let old = match open {
                     // Opened meanwhile, or its right side still has nothing
@@ -1768,7 +1768,7 @@ impl Workbench {
         let changes = model.row_changes();
         let count = changes.len();
         if count == 0 {
-            return self.answer_git_op(&op, no_changes().to_string(), cx);
+            return self.fail_git_op(&op, no_changes().to_string(), cx);
         }
         let head = model.primary_selection().head();
         let row = model.text().offset_to_point(head).row;

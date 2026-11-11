@@ -119,7 +119,7 @@ pub(super) fn run(
     cx: &mut Context<Workbench>,
 ) {
     let Some(origin) = workbench.origin() else {
-        return workbench.answer_git_op(&op, no_repo(), cx);
+        return workbench.fail_git_op(&op, no_repo(), cx);
     };
     let name = op.args.trim().to_owned();
     match (op.command, name.is_empty()) {
@@ -276,7 +276,7 @@ impl Workbench {
     ) {
         match branches {
             Ok(Some(branches)) => self.show_branch_picker(origin, branches, window, cx),
-            Ok(None) => self.answer_git_op(&op, no_repo(), cx),
+            Ok(None) => self.fail_git_op(&op, no_repo(), cx),
             Err(error) => {
                 let toast = Toast::error(tr!("workbench-chrome-branch-cant-list"));
                 toast::show(cx, toast.detail(error.to_string()));
@@ -510,10 +510,10 @@ impl Workbench {
         .detach();
     }
 
-    /// Answers `op` with `text`, else shows it in a toast.
+    /// Answers `op` with the failure `text`, else shows it in a toast.
     fn answer_branch(&self, op: Option<&GitOp>, text: String, cx: &mut App) {
         match op {
-            Some(op) => self.answer_git_op(op, text, cx),
+            Some(op) => self.fail_git_op(op, text, cx),
             None => toast::show(cx, Toast::info(text)),
         }
     }

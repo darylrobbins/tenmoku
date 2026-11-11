@@ -352,13 +352,27 @@ impl Workbench {
         }
     }
 
-    /// Answers `op` with `text`: on the vim line it was typed on, else in a
-    /// toast.
+    /// Answers `op` with the report `text`: on the vim line it was typed on,
+    /// else in a toast.
     pub(super) fn answer_git_op(&self, op: &GitOp, text: String, cx: &mut App) {
+        self.answer_git_op_as(op, text, false, cx);
+    }
+
+    /// Answers `op` with the failure `text`: a vim error, announced
+    /// assertively, on the line it was typed on, else a toast.
+    pub(super) fn fail_git_op(&self, op: &GitOp, text: String, cx: &mut App) {
+        self.answer_git_op_as(op, text, true, cx);
+    }
+
+    fn answer_git_op_as(&self, op: &GitOp, text: String, error: bool, cx: &mut App) {
         match &op.editor {
-            Some(editor) if op.typed => {
-                editor.update(cx, |editor, cx| editor.set_vim_message(text, cx));
-            }
+            Some(editor) if op.typed => editor.update(cx, |editor, cx| {
+                if error {
+                    editor.set_vim_error(text, cx)
+                } else {
+                    editor.set_vim_message(text, cx)
+                }
+            }),
             _ => toast::show(cx, Toast::info(text)),
         }
     }

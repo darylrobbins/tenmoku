@@ -93,7 +93,7 @@ pub(super) fn run(
 ) {
     let changes = workbench.dock.read(cx).changes().clone();
     if changes.read(cx).not_a_repository() {
-        return workbench.answer_git_op(&op, no_repo().into(), cx);
+        return workbench.fail_git_op(&op, no_repo().into(), cx);
     }
     let amend = op.command == GitCommand::CommitAmend;
     workbench.focus_commit_box(amend, window, cx);
@@ -110,17 +110,20 @@ pub(super) fn host_command(
     let message = |editor: &Entity<EditorView>, text: &str, cx: &mut Context<Workbench>| {
         editor.update(cx, |editor, cx| editor.set_vim_message(text, cx))
     };
+    let error = |editor: &Entity<EditorView>, text: &str, cx: &mut Context<Workbench>| {
+        editor.update(cx, |editor, cx| editor.set_vim_error(text, cx))
+    };
     match command {
         HostCommand::Write { path: None, .. } => message(&editor, &kept(), cx),
         // The box has no file to save as, nor a copy to write.
         HostCommand::Write { path: Some(_), .. } | HostCommand::SaveAs { .. } => {
-            message(&editor, &not_in_the_box(), cx)
+            error(&editor, &not_in_the_box(), cx)
         }
         HostCommand::WriteQuit { .. } => workbench.commit_from_box(false, window, cx),
         HostCommand::Quit { force } => {
             let blank = editor.read(cx).model().text().to_string().trim().is_empty();
             if !force && !blank {
-                return message(&editor, &e37(), cx);
+                return error(&editor, &e37(), cx);
             }
             let changes = workbench.dock.read(cx).changes().clone();
             changes.update(cx, |changes, cx| {
@@ -147,9 +150,9 @@ pub(super) fn host_command(
                 };
                 workbench.run_git_op(op, window, cx);
             }
-            Err(answer) => message(&editor, &answer, cx),
+            Err(answer) => error(&editor, &answer, cx),
         },
-        HostCommand::DiffGet { .. } | HostCommand::DiffPut { .. } => message(&editor, &e99(), cx),
+        HostCommand::DiffGet { .. } | HostCommand::DiffPut { .. } => error(&editor, &e99(), cx),
         HostCommand::Edit { .. } | HostCommand::WriteAll | HostCommand::QuitAll { .. } => {
             match workbench.active_editor(cx).cloned() {
                 Some(active) => {
@@ -157,13 +160,13 @@ pub(super) fn host_command(
                     changes.update(cx, |changes, _| changes.leave_box());
                     workbench.run_vim_host_command(&active.downgrade(), command, window, cx)
                 }
-                None => message(&editor, &not_in_the_box(), cx),
+                None => error(&editor, &not_in_the_box(), cx),
             }
         }
         HostCommand::DiffSplit { .. }
         | HostCommand::Read { .. }
         | HostCommand::Filter { .. }
-        | HostCommand::ReadCommand { .. } => message(&editor, &not_in_the_box(), cx),
+        | HostCommand::ReadCommand { .. } => error(&editor, &not_in_the_box(), cx),
         HostCommand::Explore
         | HostCommand::OldFiles
         | HostCommand::ReplaceInFiles { .. }

@@ -92,7 +92,7 @@ pub(super) fn run(
             what = format!(":{}", typed_line(&op))
         )
         .to_string();
-        return workbench.answer_git_op(&op, text, cx);
+        return workbench.fail_git_op(&op, text, cx);
     }
     workbench.show_file_history(op, window, cx);
 }
@@ -238,7 +238,7 @@ impl Workbench {
         let path = (op.editor.as_ref())
             .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
         let Some(path) = path else {
-            return self.answer_git_op(&op, tr!("workbench-git-no-file-name").to_string(), cx);
+            return self.fail_git_op(&op, tr!("workbench-git-no-file-name").to_string(), cx);
         };
         let panel = match self.dock.read(cx).history().cloned() {
             Some(panel) => panel,
@@ -384,7 +384,7 @@ impl Workbench {
         let state = asks.reads.remove(at);
         let (left, right) = match read {
             Ok(texts) => texts,
-            Err(answer) => return self.answer_git_op(&clicked(), answer, cx),
+            Err(answer) => return self.fail_git_op(&clicked(), answer, cx),
         };
         // Before its tab's added, which may count as a navigation.
         let show = self.may_show_commit(&state, cx, me);
@@ -537,7 +537,7 @@ impl HistoryPanel {
                 self.status = Status::NotARepository;
                 if let Some(workbench) = self.workbench.upgrade() {
                     workbench.update(cx, |workbench, cx| {
-                        workbench.answer_git_op(
+                        workbench.fail_git_op(
                             &op,
                             tr!("workbench-git-not-a-repository").to_string(),
                             cx,

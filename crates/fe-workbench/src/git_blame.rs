@@ -969,7 +969,7 @@ fn blame_line(
 ) {
     let ask = match ask(workbench, &op, None, cx) {
         Ok(ask) => ask,
-        Err(answer) => return workbench.answer_git_op(&op, answer.to_string(), cx),
+        Err(answer) => return workbench.fail_git_op(&op, answer.to_string(), cx),
     };
     let then = move |workbench: &mut Workbench,
                      ask: Ask,
@@ -981,7 +981,7 @@ fn blame_line(
         }
         let runs = match found {
             Ok(runs) => runs,
-            Err(answer) => return workbench.answer_git_op(&op, answer.clone(), cx),
+            Err(answer) => return workbench.fail_git_op(&op, answer.clone(), cx),
         };
         let Some(commit) = row_commit(runs, ask.row) else {
             return;
@@ -1004,7 +1004,7 @@ fn open_line_commit(
 ) {
     let ask = match ask(workbench, &op, row, cx) {
         Ok(ask) => ask,
-        Err(answer) => return workbench.answer_git_op(&op, answer.to_string(), cx),
+        Err(answer) => return workbench.fail_git_op(&op, answer.to_string(), cx),
     };
     let (path, text, row) = (ask.path.clone(), ask.text.clone(), ask.row);
     let read = cx.background_spawn(async move { read_origin(&path, &text, row) });
@@ -1029,7 +1029,7 @@ fn open_line_commit(
                     });
                     git_diff::diff_head_guarded(workbench, op, guard, window, cx);
                 }
-                Err(answer) => workbench.answer_git_op(&op, answer, cx),
+                Err(answer) => workbench.fail_git_op(&op, answer, cx),
             }
         }))
         .ok();

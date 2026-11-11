@@ -292,7 +292,7 @@ pub(super) fn run(
                     let path =
                         (op.editor.as_ref()).and_then(|editor| workbench.op_path(editor, cx));
                     let Some(path) = path else {
-                        return workbench.answer_git_op(&op, no_file().into(), cx);
+                        return workbench.fail_git_op(&op, no_file().into(), cx);
                     };
                     (path, workbench.working_editor(&op, cx))
                 }
@@ -313,7 +313,7 @@ pub(super) fn run(
         GitCommand::ResetBuffer => workbench.reset_buffer(op, cx),
         GitCommand::StageHunk => {
             let Some(editor) = op.editor.clone() else {
-                return workbench.answer_git_op(&op, no_file().into(), cx);
+                return workbench.fail_git_op(&op, no_file().into(), cx);
             };
             let pick = picked(&op, &editor, cx);
             workbench.stage_change(&editor, pick, op, cx);
@@ -771,7 +771,7 @@ impl Workbench {
     fn report(&self, failed: Failed, op: Option<&GitOp>, cx: &mut App) {
         match (failed, op) {
             (Failed::Git(error), _) => toast::show(cx, failure(&error)),
-            (Failed::Answer(answer), Some(op)) => self.answer_git_op(op, answer, cx),
+            (Failed::Answer(answer), Some(op)) => self.fail_git_op(op, answer, cx),
             (Failed::Answer(answer), None) => toast::show(cx, Toast::warning(answer)),
         }
     }
@@ -834,13 +834,13 @@ impl Workbench {
     /// in the index, read on the background executor: see the module docs.
     fn reset_buffer(&mut self, op: GitOp, cx: &mut Context<Self>) {
         if (op.editor.as_ref()).is_some_and(|editor| editor.read(cx).is_read_only()) {
-            return self.answer_git_op(&op, E21.to_owned(), cx);
+            return self.fail_git_op(&op, E21.to_owned(), cx);
         }
         let Some(editor) = self.working_editor(&op, cx) else {
-            return self.answer_git_op(&op, no_file().into(), cx);
+            return self.fail_git_op(&op, no_file().into(), cx);
         };
         let Some(path) = editor.read(cx).model().path().map(Path::to_owned) else {
-            return self.answer_git_op(&op, no_file().into(), cx);
+            return self.fail_git_op(&op, no_file().into(), cx);
         };
         let buffer = editor.read(cx).model().buffer().id();
         let reads = cx.default_global::<ResetReads>();
@@ -898,13 +898,13 @@ impl Workbench {
                 Some(_) => git_side(),
                 None => no_file(),
             };
-            return self.answer_git_op(&op, answer.to_string(), cx);
+            return self.fail_git_op(&op, answer.to_string(), cx);
         };
         // The text as the file has it: a UTF-8 BOM is the buffer's, not
         // its text's. Another encoding's bytes aren't the text's.
         let encoding = view.model().buffer().encoding();
         if encoding.encoding != FileEncoding::UTF8.encoding {
-            return self.answer_git_op(&op, not_utf8().into(), cx);
+            return self.fail_git_op(&op, not_utf8().into(), cx);
         }
         let bom = if encoding.bom { "\u{feff}" } else { "" };
         let text = format!("{bom}{}", view.model().text());
@@ -939,7 +939,7 @@ impl Workbench {
     fn undo_stage(&mut self, op: GitOp, cx: &mut Context<Self>) {
         let path = (op.editor.as_ref()).and_then(|editor| self.op_path(editor, cx));
         let Some(path) = path else {
-            return self.answer_git_op(&op, no_file().into(), cx);
+            return self.fail_git_op(&op, no_file().into(), cx);
         };
         let staged = cx.default_global::<StagedChanges>().clone();
         let real = git::resolve(&path);
@@ -972,10 +972,10 @@ impl Workbench {
     /// changes meeting `op`'s rows, as one undo step: see the module docs.
     fn revert_change(&mut self, op: GitOp, cx: &mut Context<Self>) {
         let Some(editor) = op.editor.clone() else {
-            return self.answer_git_op(&op, no_file().into(), cx);
+            return self.fail_git_op(&op, no_file().into(), cx);
         };
         if editor.read(cx).is_read_only() {
-            return self.answer_git_op(&op, E21.to_owned(), cx);
+            return self.fail_git_op(&op, E21.to_owned(), cx);
         }
         let rows = match picked(&op, &editor, cx) {
             Pick::Changes(rows) | Pick::Rows(rows) => rows,
@@ -986,7 +986,7 @@ impl Workbench {
             reverted
         });
         if reverted == 0 {
-            self.answer_git_op(&op, no_change_to_revert().into(), cx);
+            self.fail_git_op(&op, no_change_to_revert().into(), cx);
         }
     }
 }

@@ -960,7 +960,7 @@ impl Workbench {
         let path = (op.editor.as_ref())
             .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
         let Some(at) = path.or_else(|| self.root.clone()) else {
-            return self.answer_git_op(&op, tr!("workbench-git-not-a-repository").to_string(), cx);
+            return self.fail_git_op(&op, tr!("workbench-git-not-a-repository").to_string(), cx);
         };
         let panel =
             (self.dock.read(cx).git_log().cloned()).expect("the dock has its Git Log panel");
@@ -1371,7 +1371,7 @@ impl GitLogPanel {
                 self.not_repository = true;
                 if let (Some(op), Some(workbench)) = (op, self.workbench.upgrade()) {
                     workbench.update(cx, |workbench, cx| {
-                        workbench.answer_git_op(
+                        workbench.fail_git_op(
                             &op,
                             tr!("workbench-git-not-a-repository").to_string(),
                             cx,

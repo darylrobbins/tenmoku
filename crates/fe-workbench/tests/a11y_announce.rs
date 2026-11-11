@@ -432,3 +432,49 @@ fn a_toast_shown_in_an_inactive_window_is_not_said(cx: &mut TestAppContext) {
     assert_eq!(said_in(elsewhere, cx), None, "not said in the other window");
     assert_eq!(said(cx).0, MARK, "nor in its own");
 }
+
+/// Types `line` as an ex command in the focused vim editor.
+fn ex(line: &str, cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes(":");
+    cx.simulate_input(line);
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+}
+
+#[gpui::test]
+fn a_typed_git_failure_is_assertive(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_workbench, _editor, cx) = opened(dir.path(), cx);
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    draw(cx);
+
+    // The folder is no repository: `answer_git_op` answers with a failure.
+    mark(cx);
+    ex("Git fetch", cx);
+    assert_eq!(said(cx), assertive("Not in a git repository"));
+}
+
+#[gpui::test]
+fn a_quickfix_failure_is_assertive_and_a_report_polite(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_workbench, _editor, cx) = opened(dir.path(), cx);
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    draw(cx);
+
+    // A report: the list's summary, with no jump.
+    mark(cx);
+    ex("vimgrep /needle/j **", cx);
+    let (text, politeness) = said(cx);
+    assert_eq!(politeness, Politeness::Polite, "{text}");
+    assert_ne!(text, MARK);
+
+    // A failure with no code: no default build task to run.
+    mark(cx);
+    ex("make", cx);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    draw(cx);
+    let (text, politeness) = said(cx);
+    assert_eq!(politeness, Politeness::Assertive, "{text}");
+    assert!(!text.starts_with('E'), "an uncoded failure: {text}");
+    assert_ne!(text, MARK);
+}

@@ -88,7 +88,7 @@ pub(super) struct Column {
 /// annotations away.
 pub(super) fn toggle(workbench: &mut Workbench, op: GitOp, cx: &mut Context<Workbench>) {
     let Some(editor) = op.editor.clone() else {
-        return workbench.answer_git_op(&op, no_file().into(), cx);
+        return workbench.fail_git_op(&op, no_file().into(), cx);
     };
     let id = editor.entity_id();
     state(cx)
@@ -99,7 +99,7 @@ pub(super) fn toggle(workbench: &mut Workbench, op: GitOp, cx: &mut Context<Work
     }
     let model = editor.read(cx).model();
     let Some(path) = model.path().map(Path::to_owned) else {
-        return workbench.answer_git_op(&op, no_file().into(), cx);
+        return workbench.fail_git_op(&op, no_file().into(), cx);
     };
     let buffer = model.buffer().id();
     // One annotation column: provenance yields to blame, and blame to it.
@@ -329,7 +329,7 @@ fn apply(workbench: &Workbench, id: EntityId, cx: &mut App) {
         Err(answer) => match asked {
             Some(op) => {
                 state(cx).columns.remove(&id);
-                return workbench.answer_git_op(&op, answer, cx);
+                return workbench.fail_git_op(&op, answer, cx);
             }
             None => Arc::from([]),
         },

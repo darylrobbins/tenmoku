@@ -73,7 +73,7 @@ use kiln_shell::ItemHandle as _;
 use crate::{
     RootChanged, Workbench,
     quickfix::{QuickfixItem, QuickfixKind, QuickfixList},
-    quickfix_commands::say,
+    quickfix_commands::{say, say_error},
     task_commands::{default_build, nothing_to_run, read_tasks},
     task_defs::Group,
     task_problems,
@@ -135,7 +135,7 @@ impl Workbench {
             false => args.to_owned(),
             true => match fe_gpui::vim_registers(cx).and_then(|r| r.last_search()) {
                 Some((pattern, _)) => pattern.to_owned(),
-                None => return say(editor, ExError::NoPreviousSearch.to_string(), cx),
+                None => return say_error(editor, ExError::NoPreviousSearch.to_string(), cx),
             },
         };
         let grep = Grep {
@@ -160,17 +160,17 @@ impl Workbench {
     ) {
         let (pattern, flags, globs) = match QuickfixAction::parse_vimgrep(args) {
             Ok(parts) => parts,
-            Err(error) => return say(editor, error.to_string(), cx),
+            Err(error) => return say_error(editor, error.to_string(), cx),
         };
         let pattern = match pattern.is_empty() {
             false => pattern,
             true => match fe_gpui::vim_registers(cx).and_then(|r| r.last_search()) {
                 Some((pattern, _)) => pattern.to_owned(),
-                None => return say(editor, ExError::NoPreviousSearch.to_string(), cx),
+                None => return say_error(editor, ExError::NoPreviousSearch.to_string(), cx),
             },
         };
         let Some(root) = self.root().map(Path::to_owned) else {
-            return say(editor, NO_FOLDER, cx);
+            return say_error(editor, NO_FOLDER, cx);
         };
         let current = editor.and_then(|editor| editor.path(cx));
         let globs = globs
@@ -179,7 +179,7 @@ impl Workbench {
             .collect::<Result<Vec<_>, _>>();
         let globs = match globs {
             Ok(globs) => globs,
-            Err(error) => return say(editor, error, cx),
+            Err(error) => return say_error(editor, error, cx),
         };
         let name = if location { "lvimgrep" } else { "vimgrep" };
         let grep = Grep {
@@ -204,14 +204,14 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let Some(root) = self.root().map(Path::to_owned) else {
-            return say(editor, NO_FOLDER, cx);
+            return say_error(editor, NO_FOLDER, cx);
         };
         let globs: Vec<&str> = grep.globs.iter().map(String::as_str).collect();
         let filter = match PathFilter::new(&root, &globs, &[]) {
             Ok(filter) => filter,
             Err(error) => {
                 let text = format!("Invalid glob {}: {}", error.glob, error.message);
-                return say(editor, text, cx);
+                return say_error(editor, text, cx);
             }
         };
         let query = SearchQuery {
@@ -277,11 +277,11 @@ impl Workbench {
                     grep.pattern,
                     last_line(&reason)
                 );
-                return say(editor, text, cx);
+                return say_error(editor, text, cx);
             }
         };
         if items.is_empty() {
-            return say(editor, format!("E480: No match: {}", grep.pattern), cx);
+            return say_error(editor, format!("E480: No match: {}", grep.pattern), cx);
         }
         let capped = |text: String| match truncated {
             true => format!(
@@ -334,7 +334,7 @@ impl Workbench {
                 }
                 let Some(task) = default_build(&tasks).cloned() else {
                     let editor = editor.and_then(|editor| editor.upgrade());
-                    return say(editor.as_ref(), nothing_to_run(Some(Group::Build)), cx);
+                    return say_error(editor.as_ref(), nothing_to_run(Some(Group::Build)), cx);
                 };
                 let heard: RunHeard = Box::new(move |workbench, problems, cx| {
                     let landing = workbench.made(title, pane, problems, cx);

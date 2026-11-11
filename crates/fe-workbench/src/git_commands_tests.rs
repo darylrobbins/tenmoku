@@ -500,3 +500,84 @@ fn each_title_is_its_typed_commands() {
         assert_eq!(command.title(), kiln_l10n::message(&key), "{command:?}");
     }
 }
+
+/// What the window's live region says now, and how urgently.
+fn said(cx: &mut VisualTestContext) -> (String, fe_ui::Politeness) {
+    draw(cx);
+    let nodes = cx.update(|window, cx| fe_ui::nodes(window, cx));
+    let status = (nodes.into_iter().rev())
+        .find(|node| node.role == fe_ui::Role::Status)
+        .expect("the announcer's Status node");
+    (
+        status
+            .states
+            .value
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        status.states.live.unwrap_or_default(),
+    )
+}
+
+#[gpui::test]
+fn a_git_answer_is_a_polite_report_and_a_failure_is_assertive(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, mut vcx) = window(cx, dir.path());
+    let cx = &mut vcx;
+    let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
+    let op = GitOp {
+        command: GitCommand::StageFile,
+        args: String::new(),
+        range: None,
+        editor,
+        typed: true,
+    };
+    workbench.update(cx, |workbench, cx| {
+        workbench.answer_git_op(&op, "a report".into(), cx)
+    });
+    assert_eq!(said(cx), ("a report".to_owned(), fe_ui::Politeness::Polite));
+    workbench.update(cx, |workbench, cx| {
+        workbench.fail_git_op(&op, "a failure".into(), cx)
+    });
+    assert_eq!(
+        said(cx),
+        ("a failure".to_owned(), fe_ui::Politeness::Assertive)
+    );
+}
+
+#[gpui::test]
+fn the_commit_boxs_failures_are_assertive_and_its_reports_polite(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, mut vcx) = window(cx, dir.path());
+    let cx = &mut vcx;
+    let editor = workbench
+        .read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned())
+        .unwrap();
+    let run = |command: HostCommand, cx: &mut VisualTestContext| {
+        let editor = editor.clone();
+        cx.update(|window, cx| {
+            workbench.update(cx, |workbench, cx| {
+                super::git_commit::host_command(workbench, editor, command, window, cx)
+            })
+        });
+    };
+    // `:w` keeps the message: a report.
+    run(
+        HostCommand::Write {
+            force: false,
+            path: None,
+        },
+        cx,
+    );
+    let (text, politeness) = said(cx);
+    assert_eq!(politeness, fe_ui::Politeness::Polite, "{text}");
+    // `:w name` has no file to write: a failure with no code.
+    run(
+        HostCommand::Write {
+            force: false,
+            path: Some("x".into()),
+        },
+        cx,
+    );
+    let (text, politeness) = said(cx);
+    assert_eq!(politeness, fe_ui::Politeness::Assertive, "{text}");
+}

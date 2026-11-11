@@ -82,7 +82,7 @@ pub(super) fn run(
     cx: &mut Context<Workbench>,
 ) {
     let Some(root) = workbench.root().map(Path::to_owned) else {
-        return workbench.answer_git_op(&op, no_repo().into(), cx);
+        return workbench.fail_git_op(&op, no_repo().into(), cx);
     };
     let origin = Origin {
         root,
@@ -190,7 +190,7 @@ impl Workbench {
         }
         let Found { repository, target } = match found {
             Ok(Some(found)) => found,
-            Ok(None) => return self.answer_git_op(&op, no_repo().into(), cx),
+            Ok(None) => return self.fail_git_op(&op, no_repo().into(), cx),
             Err(error) => return toast::show(cx, failure(op.command, error, &origin.root)),
         };
         if is_running(&repository, cx) {

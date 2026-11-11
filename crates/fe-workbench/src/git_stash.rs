@@ -106,7 +106,7 @@ pub(super) fn run(
     let changes = workbench.dock.read(cx).changes().clone();
     let origin = workbench.stash_origin();
     let Some(origin) = origin.filter(|_| !changes.read(cx).not_a_repository()) else {
-        return workbench.answer_git_op(&op, no_repo().into(), cx);
+        return workbench.fail_git_op(&op, no_repo().into(), cx);
     };
     match op.command {
         GitCommand::Stash => workbench.ask_stash_message(origin, false, window, cx),
@@ -299,14 +299,14 @@ impl Workbench {
     ) {
         let entries = match entries {
             Ok(Some(entries)) => entries,
-            Ok(None) => return self.answer_git_op(&op, no_repo().into(), cx),
+            Ok(None) => return self.fail_git_op(&op, no_repo().into(), cx),
             Err(error) => {
                 let toast = Toast::error(tr!("workbench-git-stash-cant-list"));
                 return toast::show(cx, toast.detail(error.to_string()));
             }
         };
         if entries.is_empty() {
-            return self.answer_git_op(&op, no_stashes().into(), cx);
+            return self.fail_git_op(&op, no_stashes().into(), cx);
         }
         let delegate = StashPicker {
             workbench: cx.entity().downgrade(),

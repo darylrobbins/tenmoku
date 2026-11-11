@@ -471,10 +471,10 @@ impl Workbench {
                             short = commit.short.as_str()
                         )
                         .to_string();
-                        return workbench.answer_git_op(&clicked(), answer, cx);
+                        return workbench.fail_git_op(&clicked(), answer, cx);
                     }
                     Err(error) => {
-                        return workbench.answer_git_op(&clicked(), error.to_string(), cx);
+                        return workbench.fail_git_op(&clicked(), error.to_string(), cx);
                     }
                 };
                 workbench.land_revision(commit, path, text, asked, window, cx);

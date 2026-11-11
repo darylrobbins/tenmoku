@@ -216,7 +216,7 @@ impl Workbench {
             self.quickfix_changed(cx);
         }
         match outcome {
-            Err(error) => say(editor, error.to_string(), cx),
+            Err(error) => say_error(editor, error.to_string(), cx),
             Ok(Outcome::Say(text)) => say(editor, text, cx),
             Ok(Outcome::Land(item, text)) => self.land_on(item, text, window, cx),
         }
@@ -271,7 +271,7 @@ impl Workbench {
         let pane = self.pane().entity_id();
         if location && self.quickfixes(cx).location(&pane).is_err() {
             let editor = editor.cloned().or_else(|| self.active_editor(cx).cloned());
-            return say(
+            return say_error(
                 editor.as_ref(),
                 QuickfixError::NoLocationList.to_string(),
                 cx,
@@ -467,13 +467,32 @@ pub(crate) fn shown_revision(
     stack.current().map(|_| stack.revision())
 }
 
-/// Says `text` as `editor`'s vim message, or with no editor or vim off as
-/// a toast.
+/// Says the report `text` as `editor`'s vim message, or with no editor or
+/// vim off as a toast.
 pub(crate) fn say(editor: Option<&Entity<EditorView>>, text: impl Into<String>, cx: &mut App) {
-    let text = text.into();
+    say_as(editor, text.into(), false, cx);
+}
+
+/// Says the failure `text` as `editor`'s vim error, announced assertively,
+/// or with no editor or vim off as a toast.
+pub(crate) fn say_error(
+    editor: Option<&Entity<EditorView>>,
+    text: impl Into<String>,
+    cx: &mut App,
+) {
+    say_as(editor, text.into(), true, cx);
+}
+
+fn say_as(editor: Option<&Entity<EditorView>>, text: String, error: bool, cx: &mut App) {
     match editor {
         Some(editor) if editor.read(cx).vim_state().is_some() => {
-            editor.update(cx, |editor, cx| editor.set_vim_message(text, cx));
+            editor.update(cx, |editor, cx| {
+                if error {
+                    editor.set_vim_error(text, cx)
+                } else {
+                    editor.set_vim_message(text, cx)
+                }
+            });
         }
         _ => toast::show(cx, Toast::info(text)),
     }
