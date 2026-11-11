@@ -161,3 +161,61 @@ fn a_held_paste_goes_in_after_an_earlier_held_prefix(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(line(&workbench, cx), Some((':', "s/a/x/jP".to_owned())));
 }
+
+/// Holds `zz` (a `<Cmd>` that waits for a write) and an ambiguous `j`, then
+/// commits `commit` and pastes `pasted`, all while the write is on its way.
+fn hold_prefix_text_and_paste(
+    workbench: &Entity<Workbench>,
+    commit_text: &str,
+    pasted: &str,
+    cx: &mut VisualTestContext,
+) {
+    cx.simulate_keystrokes("x :");
+    cx.simulate_input("s/a/");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(pasted.into()));
+    for key in ["z", "z", "j"] {
+        let keystroke = gpui::Keystroke::parse(key).unwrap();
+        cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx));
+    }
+    let input = input(workbench, cx);
+    input.update_in(cx, |input, window, cx| {
+        use gpui::EntityInputHandler as _;
+        input.replace_text_in_range(None, commit_text, window, cx)
+    });
+    crate::tests::find_bar::run("text_input.paste", cx);
+    draw(cx);
+}
+
+/// Platform text and a paste held behind an ambiguous prefix go in after
+/// the prefix's own `<Cmd>`, in order.
+#[gpui::test]
+fn held_text_and_paste_wait_for_a_prefix_s_cmd(cx: &mut TestAppContext) {
+    let maps = vec![
+        cnoremap("zz", "<Cmd>w<CR>x/"),
+        cnoremap("j", "<Cmd>w<CR>y/"),
+        cnoremap("jk", "Q"),
+    ];
+    let (_dir, workbench, _editor, cx) = opened(cx, maps);
+    hold_prefix_text_and_paste(&workbench, "PQ", "RS", cx);
+    cx.executor().advance_clock(super::CHORD_TIMEOUT * 2);
+    draw(cx);
+    assert_eq!(line(&workbench, cx), Some((':', "s/a/x/y/PQRS".to_owned())));
+}
+
+/// A prefix that resolves to a map closing the line takes the held text and
+/// paste to the editor, in order, none lost.
+#[gpui::test]
+fn held_text_and_paste_follow_a_prefix_that_closes_the_line(cx: &mut TestAppContext) {
+    let maps = vec![
+        cnoremap("zz", "<Cmd>w<CR>x/"),
+        cnoremap("j", "<CR>"),
+        cnoremap("jk", "Q"),
+    ];
+    let (_dir, workbench, editor, cx) = opened(cx, maps);
+    hold_prefix_text_and_paste(&workbench, "xx", "x", cx);
+    cx.executor().advance_clock(super::CHORD_TIMEOUT * 2);
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    // `s/a/x/` made `xaa`; the three `x`s took them all out, none lost.
+    assert_eq!(text(&editor, cx), "");
+}

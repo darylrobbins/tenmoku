@@ -554,6 +554,10 @@ impl StatusBar {
             let line = editor.update(cx, |editor, _| editor.remap_line_timeout());
             let keys = line.typed.into_iter().map(|(key, _)| key).collect();
             self.type_line_keys(keys, line.then, line.rest, Vec::new(), window, cx);
+            // Keys that are left wait for a `<Cmd>`'s command to be over.
+            if self.line_holding_for_command(cx) {
+                return;
+            }
         }
     }
 
@@ -807,7 +811,19 @@ impl StatusBar {
             }
             HeldEdit::Op(_) if !open => {}
             edit => {
-                (bar.update(cx, |bar, cx| bar.make_held(edit, window, cx))).ok();
+                let left = bar.update(cx, |bar, cx| bar.make_held(edit, window, cx));
+                match left {
+                    // Resolving the prefix before it left a `<Cmd>` waiting
+                    // for a command: it goes in after it, in its place.
+                    Ok(Some((edit, true))) => {
+                        (bar.update(cx, |bar, _| bar.line.held.insert(0, edit))).ok();
+                    }
+                    // Resolving it closed the line: the editor takes it.
+                    Ok(Some((HeldEdit::Text(text) | HeldEdit::Paste(text), false))) => {
+                        Self::type_in_editor(&text, window, cx)
+                    }
+                    _ => {}
+                }
             }
         }
         let again = bar.clone();
@@ -844,10 +860,29 @@ impl StatusBar {
     }
 
     /// Makes one edit that was held, other than a key, on the open line.
-    fn make_held(&mut self, edit: HeldEdit, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(input) = (self.line.input.clone()).filter(|_| self.line.open.is_some()) else {
-            return;
-        };
+    /// Text, a paste and a command come after any keys held for a longer
+    /// `c` map, which resolve first: if that leaves a `<Cmd>` waiting for a
+    /// command, or ends the line, the edit comes back, with whether to hold
+    /// it again (the line is open) or give it to the editor.
+    fn make_held(
+        &mut self,
+        edit: HeldEdit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(HeldEdit, bool)> {
+        let input = (self.line.input.clone()).filter(|_| self.line.open.is_some())?;
+        if matches!(
+            edit,
+            HeldEdit::Text(_) | HeldEdit::Paste(_) | HeldEdit::Op(_)
+        ) {
+            self.resolve_line_prefix(window, cx);
+            if self.line_holding_for_command(cx) {
+                return Some((edit, true));
+            }
+            if self.line.open.is_none() {
+                return Some((edit, false));
+            }
+        }
         match edit {
             HeldEdit::Key(_) => {}
             HeldEdit::Char(ch) => match self.line_typed(ch, window, cx) {
@@ -855,18 +890,14 @@ impl StatusBar {
                 Typed::Swallow => {}
                 Typed::Insert(text) => input.update(cx, |input, cx| input.insert(&text, cx)),
             },
-            HeldEdit::Text(text) => input.update(cx, |input, cx| input.insert(&text, cx)),
-            HeldEdit::Paste(text) => {
-                // Keys held for a longer map go in first, and may end the line.
-                self.resolve_line_prefix(window, cx);
-                if self.line.open.is_some() {
-                    input.update(cx, |input, cx| input.insert(&text, cx));
-                }
+            HeldEdit::Text(text) | HeldEdit::Paste(text) => {
+                input.update(cx, |input, cx| input.insert(&text, cx))
             }
             HeldEdit::Op(op) => {
                 self.line_op(op, window, cx);
             }
         }
+        None
     }
 
     /// Shows in its editor what the open `/` or `?` line would land on, or
