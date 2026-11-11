@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{ops::Range, rc::Rc};
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use gpui::{
     App, Bounds, Context, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle,
     Focusable, HighlightStyle, Hsla, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Pixels, Point, Render, Role, SharedString, StatefulInteractiveElement as _,
-    Styled as _, StyledText, TextRun, UTF16Selection, UnderlineStyle, Window, canvas, div,
-    prelude::FluentBuilder as _, px, size,
+    ParentElement as _, Pixels, Point, Render, Role, SharedString, StatefulInteractiveElement,
+    Styled as _, StyledText, TextRun, UTF16Selection, UnderlineStyle, WeakEntity, Window,
+    accesskit, canvas, div, prelude::FluentBuilder as _, px, size,
 };
 
 use kiln_core::{Motion, TextEdit};
@@ -19,6 +19,138 @@ use crate::{ActiveTheme as _, Tokens, UiTheme, focus_ring, radius};
 #[cfg(test)]
 #[path = "tests/text_input_caret.rs"]
 mod caret_tests;
+
+/// One line of text as a screen reader sees it: the node of a
+/// [`TextInput`] or a [`crate::TextField`], which holds its text as one
+/// `TextRun` child, and the selection in that run. Its node also takes a
+/// screen reader's `SetTextSelection` ([`A11yLine::attach`]). It's built
+/// only while `window.is_a11y_active()`, so without a screen reader it
+/// costs nothing.
+///
+/// A character, to AccessKit, is a grapheme here, so a screen reader moving
+/// the caret by one lands where the arrow keys would; one longer than a
+/// `character_lengths` entry holds (255 bytes) is split at a char boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct A11yLine {
+    pub(crate) role: Role,
+    /// What the run reads: the text, or a bullet a grapheme when masked, so
+    /// a password's text appears nowhere in the tree.
+    pub(crate) text: String,
+    /// The selection's ends, as byte offsets in `text`.
+    pub(crate) anchor: usize,
+    pub(crate) focus: usize,
+    /// Keys don't type: a screen reader doesn't take them for typing.
+    pub(crate) read_only: bool,
+}
+
+impl A11yLine {
+    /// The run's character lengths in UTF-8 bytes: one a grapheme.
+    pub(crate) fn character_lengths(&self) -> Vec<u8> {
+        let mut lengths = Vec::new();
+        for grapheme in self.text.graphemes(true) {
+            if let Ok(len) = u8::try_from(grapheme.len()) {
+                lengths.push(len);
+                continue;
+            }
+            let mut len = 0usize;
+            for ch in grapheme.chars() {
+                if len + ch.len_utf8() > usize::from(u8::MAX) {
+                    lengths.push(len as u8);
+                    len = 0;
+                }
+                len += ch.len_utf8();
+            }
+            if len > 0 {
+                lengths.push(len as u8);
+            }
+        }
+        lengths
+    }
+
+    /// The character index of byte `offset` in `text`: of the character it
+    /// starts, or of the one holding it.
+    pub(crate) fn character_index(&self, offset: usize) -> usize {
+        let mut end = 0;
+        (self.character_lengths().into_iter())
+            .take_while(|len| {
+                end += usize::from(*len);
+                end <= offset
+            })
+            .count()
+    }
+
+    /// The byte offset in `text` of character `index`, clamped to the end.
+    pub(crate) fn byte_offset(&self, index: usize) -> usize {
+        (self.character_lengths().into_iter())
+            .take(index)
+            .map(usize::from)
+            .sum()
+    }
+
+    /// The run, as a node to put under the line's node as `run`, and the
+    /// selection set on `parent`, the line's node.
+    pub(crate) fn write(
+        &self,
+        parent: &mut accesskit::Node,
+        run: accesskit::NodeId,
+    ) -> accesskit::Node {
+        let mut node = accesskit::Node::new(Role::TextRun);
+        node.set_value(self.text.clone());
+        node.set_character_lengths(self.character_lengths());
+        node.set_text_direction(accesskit::TextDirection::LeftToRight);
+        let position = |offset| accesskit::TextPosition {
+            node: run,
+            character_index: self.character_index(offset),
+        };
+        parent.set_text_selection(accesskit::TextSelection {
+            anchor: position(self.anchor),
+            focus: position(self.focus),
+        });
+        if self.read_only {
+            parent.set_read_only();
+        }
+        node
+    }
+
+    /// The byte offsets in `text` of a screen reader's `selection`, anchor
+    /// first: `None` unless both ends are in `run`.
+    pub(crate) fn selection_from(
+        &self,
+        selection: &accesskit::TextSelection,
+        run: accesskit::NodeId,
+    ) -> Option<(usize, usize)> {
+        let offset = |position: &accesskit::TextPosition| {
+            (position.node == run).then(|| self.byte_offset(position.character_index))
+        };
+        Some((offset(&selection.anchor)?, offset(&selection.focus)?))
+    }
+
+    /// `element`, the line's node, with the run as its child and a
+    /// `SetTextSelection` handler that gives `select` the byte offsets in
+    /// `text` of the new selection's ends. `run` remembers the run's id.
+    pub(crate) fn attach<E: StatefulInteractiveElement>(
+        self,
+        element: E,
+        run: Rc<Cell<Option<accesskit::NodeId>>>,
+        select: impl Fn(&accesskit::TextSelection, accesskit::NodeId, &mut App) + 'static,
+    ) -> E {
+        let built = run.clone();
+        element
+            .a11y_synthetic_children(move |builder| {
+                let id = builder.synthetic_node_id("text-run");
+                built.set(Some(id));
+                let node = self.write(builder.parent_node(), id);
+                builder.push_child(id, node);
+            })
+            .on_a11y_action(accesskit::Action::SetTextSelection, move |data, _, cx| {
+                if let (Some(accesskit::ActionData::SetTextSelection(selection)), Some(id)) =
+                    (data, run.get())
+                {
+                    select(selection, id, cx);
+                }
+            })
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextInputEvent {
@@ -71,11 +203,12 @@ type BeforeInput = Rc<dyn Fn(&str, &str, &mut Window, &mut App) -> Settled>;
 
 /// A single-line text input. Typed text goes in at the caret, which the
 /// `move_*` methods move by kiln-core's [`Motion`] rules (graphemes and
-/// words); it starts at the end. The one selection it has is all of the
-/// text ([`TextInput::select_all`]): the platform sees it as the selected
-/// range, the next edit (typing, a paste, a platform replacement, a
-/// delete) replaces it instead of adding to the text, and a move drops it,
-/// Left going to the start and Right to the end.
+/// words); it starts at the end. It has one selection, from an anchor to
+/// the caret: all of the text ([`TextInput::select_all`]), or any range a
+/// screen reader selects. The platform sees it as the selected range, the
+/// next edit (typing, a paste, a platform replacement, a delete) replaces
+/// it instead of adding to the text, and a move drops it, Left going to
+/// its start and Right to its end.
 ///
 /// An IME composition sits at the caret, underlined. [`TextInput::text`]
 /// leaves it out and no [`TextInputEvent::Changed`] is emitted while it's
@@ -111,8 +244,10 @@ pub struct TextInput {
     typing: bool,
     /// The composition at the caret, and the selected bytes within it.
     marked: Option<(String, Range<usize>)>,
-    /// All of the (non-empty) text is selected.
-    selected: bool,
+    /// The selection's other end, the caret being its head: the selection
+    /// is between the two (in either order) while this is set, and empty
+    /// if they meet. A grapheme boundary in `text`.
+    anchor: Option<usize>,
     /// The font and size it was last drawn in, which it inherits from its
     /// parents: the platform asks for bounds outside drawing.
     /// Committed text was deleted under the composition: `Changed` is owed
@@ -126,6 +261,10 @@ pub struct TextInput {
     pub(crate) painted_caret: Option<(Bounds<Pixels>, Bounds<Pixels>)>,
     /// See [`TextInput::set_before_platform_input`].
     before_input: Option<BeforeInput>,
+    /// A screen reader sees a `SearchInput`: see [`TextInput::search`].
+    search: bool,
+    /// The id of its text run in the last accessibility tree.
+    a11y_run: Rc<Cell<Option<accesskit::NodeId>>>,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -149,14 +288,85 @@ impl TextInput {
             height: px(30.),
             typing: true,
             marked: None,
-            selected: false,
+            anchor: None,
             change_owed: false,
             drawn_font: None,
             typing_filter: None,
             #[cfg(test)]
             painted_caret: None,
             before_input: None,
+            search: false,
+            a11y_run: Rc::default(),
         }
+    }
+
+    /// Makes it a search field to a screen reader (a `SearchInput`), for a
+    /// find or picker query; it's a `TextInput` otherwise.
+    pub fn search(mut self) -> Self {
+        self.search = true;
+        self
+    }
+
+    /// Its role to a screen reader: see [`TextInput::search`].
+    pub fn a11y_role(&self) -> Role {
+        match self.search {
+            true => Role::SearchInput,
+            false => Role::TextInput,
+        }
+    }
+
+    /// What a screen reader is given: the text as the platform sees it
+    /// (an open composition in it, at the caret) and the selection: all of
+    /// it, the composition's selection, or the caret. It's read-only while
+    /// [`TextInput::set_typing`] has turned typing off.
+    pub(crate) fn a11y_line(&self) -> A11yLine {
+        let text = self.full_text();
+        let (anchor, focus) = match &self.marked {
+            Some((_, selected)) => (self.caret + selected.start, self.caret + selected.end),
+            None => (self.anchor.unwrap_or(self.caret), self.caret),
+        };
+        A11yLine {
+            role: self.a11y_role(),
+            text,
+            anchor,
+            focus,
+            read_only: !self.typing,
+        }
+    }
+
+    /// Takes a screen reader's `SetTextSelection`, with `run` the id of the
+    /// text run it names: it selects from the anchor to the focus, each on
+    /// a grapheme boundary, the caret at the focus; a collapsed one is just
+    /// the caret. A composition is dropped first, as a move drops it.
+    pub(crate) fn select_from_a11y(
+        &mut self,
+        selection: &accesskit::TextSelection,
+        run: accesskit::NodeId,
+        cx: &mut Context<Self>,
+    ) {
+        let line = self.a11y_line();
+        let Some((anchor, focus)) = line.selection_from(selection, run) else {
+            return;
+        };
+        // Offsets in the composition are its start in the committed text,
+        // and those after it move back by its length.
+        let marked = self.marked.as_ref().map_or(0, |(text, _)| text.len());
+        let caret = self.caret;
+        let committed = |offset: usize| match offset {
+            at if at <= caret => at,
+            at if at >= caret + marked => at - marked,
+            _ => caret,
+        };
+        let (anchor, focus) = (committed(anchor), committed(focus));
+        self.drop_composition();
+        let len = self.text.len();
+        let (anchor, focus) = (
+            self.boundary_before(anchor.min(len)),
+            self.boundary_before(focus.min(len)),
+        );
+        self.caret = focus;
+        self.anchor = (anchor != focus).then_some(anchor);
+        self.finish_edit(false, cx);
     }
 
     /// Asks `hook` before an edit from the platform goes in that isn't a
@@ -270,7 +480,7 @@ impl TextInput {
     /// [`TextInputEvent::Changed`]. The caret goes to the end.
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
         self.marked = None;
-        self.selected = false;
+        self.anchor = None;
         self.change_owed = false;
         self.text = text.into();
         self.caret = self.text.len();
@@ -286,14 +496,21 @@ impl TextInput {
     /// Nothing is selected in empty text.
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
         self.marked = None;
-        self.selected = !self.text.is_empty();
+        self.anchor = (!self.text.is_empty()).then_some(0);
         self.caret = self.text.len();
         cx.notify();
     }
 
     /// Whether all of the text is selected.
     pub fn selected(&self) -> bool {
-        self.selected
+        !self.text.is_empty() && self.selection() == (0..self.text.len())
+    }
+
+    /// The selected bytes of [`TextInput::text`], start first: empty at
+    /// the caret when nothing is selected.
+    pub fn selection(&self) -> Range<usize> {
+        let anchor = self.anchor.unwrap_or(self.caret);
+        anchor.min(self.caret)..anchor.max(self.caret)
     }
 
     /// Whether typed text goes in, as it does unless turned off here. Off,
@@ -346,7 +563,7 @@ impl TextInput {
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.marked = None;
-        self.selected = false;
+        self.anchor = None;
         let edited = !self.text.is_empty();
         self.text.clear();
         self.caret = 0;
@@ -393,18 +610,21 @@ impl TextInput {
         cx.emit(TextInputEvent::Submitted);
     }
 
-    /// Deletes the selected text, if any; whether it did.
+    /// Deletes the selected text, if any, leaving the caret where it was;
+    /// whether it did.
     fn take_selection(&mut self) -> bool {
-        let selected = std::mem::take(&mut self.selected);
-        if selected {
-            self.text.clear();
-            self.caret = 0;
+        let selection = self.selection();
+        self.anchor = None;
+        if selection.is_empty() {
+            return false;
         }
-        selected
+        self.text.replace_range(selection.clone(), "");
+        self.caret = self.boundary_after(selection.start);
+        true
     }
 
     /// Where `motion` takes the caret, by [`TextEdit`]'s rules: from the
-    /// selection, if all of the text is, else from the caret. A line break
+    /// selection, if there is one, else from the caret. A line break
     /// [`TextInput::set_text`] put in (a host's, such as a pasted carriage
     /// return) counts as whitespace, and a CRLF as one grapheme.
     fn target(&self, motion: Motion) -> usize {
@@ -414,10 +634,9 @@ impl TextInput {
         // graphemes then makes a CRLF one step.
         let flat = self.text.replace(['\n', '\r'], "\t");
         let mut edit = TextEdit::with_text(&flat);
-        if self.selected {
-            edit.select_all();
-        } else {
-            edit.move_caret_to(self.caret);
+        match self.anchor {
+            Some(anchor) => edit.set_selection(anchor, self.caret),
+            None => edit.move_caret_to(self.caret),
         }
         edit.move_by(motion);
         let target = edit.caret();
@@ -462,7 +681,7 @@ impl TextInput {
     fn move_by(&mut self, motion: Motion, cx: &mut Context<Self>) {
         self.drop_composition();
         self.caret = self.target(motion);
-        self.selected = false;
+        self.anchor = None;
         self.finish_edit(false, cx);
     }
 
@@ -517,6 +736,13 @@ impl TextInput {
 
     fn caret_utf16(&self) -> usize {
         self.text[..self.caret].encode_utf16().count()
+    }
+
+    /// The selection's UTF-16 range in the text.
+    fn selection_utf16(&self) -> Range<usize> {
+        let utf16 = |bytes: usize| self.text[..bytes].encode_utf16().count();
+        let selection = self.selection();
+        utf16(selection.start)..utf16(selection.end)
     }
 
     /// The composition's UTF-16 range in the full text, at the caret.
@@ -590,16 +816,15 @@ impl EntityInputHandler for TextInput {
     ) -> Option<UTF16Selection> {
         let start = self.caret_utf16();
         let range = match &self.marked {
-            None if self.selected => 0..self.utf16_len(),
             Some((text, selected)) => {
                 let utf16 = |bytes: usize| text[..bytes].encode_utf16().count();
                 start + utf16(selected.start)..start + utf16(selected.end)
             }
-            None => start..start,
+            None => self.selection_utf16(),
         };
         Some(UTF16Selection {
             range,
-            reversed: false,
+            reversed: self.marked.is_none() && self.anchor.is_some_and(|a| a > self.caret),
         })
     }
 
@@ -638,7 +863,8 @@ impl EntityInputHandler for TextInput {
             }
             commits = range.is_none();
         }
-        if self.selected && (range.is_none() || range == Some(0..self.utf16_len())) {
+        let selection = self.selection_utf16();
+        if !selection.is_empty() && (range.is_none() || range == Some(selection)) {
             // The platform replaces the selection, as typing does.
             self.insert(text, cx);
             return;
@@ -650,7 +876,7 @@ impl EntityInputHandler for TextInput {
         }
         let bytes = range.map(|range| self.committed_range(&range));
         self.marked = None;
-        self.selected = false;
+        self.anchor = None;
         match bytes {
             Some(bytes) if bytes != (self.caret..self.caret) => {
                 let line = text.lines().next().unwrap_or_default();
@@ -812,12 +1038,13 @@ impl Render for TextInput {
         let full = self.full_text();
         let caret = self.caret + self.marked.as_ref().map_or(0, |(_, selected)| selected.end);
         let mut highlights = Vec::new();
-        if self.selected {
+        let selected = self.selection();
+        if self.marked.is_none() && !selected.is_empty() {
             let selection = HighlightStyle {
                 background_color: Some(text.opacity(0.3)),
                 ..HighlightStyle::default()
             };
-            highlights.push((0..full.len(), selection));
+            highlights.push((selected, selection));
         }
         if let Some((marked, _)) = &self.marked {
             let underline = HighlightStyle {
@@ -833,15 +1060,21 @@ impl Render for TextInput {
         let styled = (!full.is_empty()).then(|| StyledText::new(full).with_highlights(highlights));
         let layout = styled.as_ref().map(|styled| styled.layout().clone());
         let name = self.accessible_name();
+        let line = window.is_a11y_active().then(|| self.a11y_line());
+        let weak = cx.entity().downgrade();
+        let run = self.a11y_run.clone();
         let ring = (focused && self.bordered).then(|| {
             focus_ring(radius::CONTROL, px(1.), colors)
                 .debug_selector(|| "text-input-focus-ring".into())
         });
-        div()
-            .id("text-input")
-            .role(Role::TextInput)
-            .aria_label(name)
-            .key_context(Self::KEY_CONTEXT)
+        let node = crate::node(div().id("text-input"), window, cx, self.a11y_role(), name);
+        let node = match line {
+            Some(line) => line.attach(node, run, move |selection, run, cx| {
+                select_in(&weak, selection, run, cx)
+            }),
+            None => node,
+        };
+        node.key_context(Self::KEY_CONTEXT)
             .track_focus(&self.focus)
             .on_mouse_down(MouseButton::Left, {
                 let focus = self.focus.clone();
@@ -905,5 +1138,17 @@ impl Render for TextInput {
                 .inset_0(),
             )
             .children(ring)
+    }
+}
+
+/// Gives `input` a screen reader's `selection` of text run `run`.
+fn select_in(
+    input: &WeakEntity<TextInput>,
+    selection: &accesskit::TextSelection,
+    run: accesskit::NodeId,
+    cx: &mut App,
+) {
+    if let Some(input) = input.upgrade() {
+        input.update(cx, |input, cx| input.select_from_a11y(selection, run, cx));
     }
 }

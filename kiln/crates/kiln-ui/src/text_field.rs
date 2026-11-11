@@ -24,21 +24,21 @@
 //! double- and triple-click selection, events, focus ring and theme.
 
 use kiln_l10n::Text;
-use std::ops::Range;
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use gpui::{
     App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     GlobalElementId, Hsla, InteractiveElement as _, IntoElement, KeyBinding, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, Role,
-    ShapedLine, SharedString, StatefulInteractiveElement as _, Style, Styled as _, Subscription,
-    TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, point,
+    ShapedLine, SharedString, Style, Styled as _, Subscription, TextRun, UTF16Selection,
+    UnderlineStyle, WeakEntity, Window, accesskit, actions, div, fill, point,
     prelude::FluentBuilder as _, px, relative, size,
 };
 use kiln_core::{Motion, TextEdit};
 use unicode_segmentation::UnicodeSegmentation as _;
 
-use crate::{ActiveTheme as _, focus_ring, height, radius};
+use crate::{ActiveTheme as _, focus_ring, height, radius, text_input::A11yLine};
 
 actions!(
     text_field,
@@ -116,6 +116,10 @@ pub struct TextField {
     last_bounds: Option<Bounds<Pixels>>,
     /// While the mouse button is down after a click in the field.
     selecting: bool,
+    /// A screen reader sees a `SearchInput`: see [`TextField::search`].
+    search: bool,
+    /// The id of its text run in the last accessibility tree.
+    a11y_run: Rc<Cell<Option<accesskit::NodeId>>>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -150,7 +154,54 @@ impl TextField {
             last_line: None,
             last_bounds: None,
             selecting: false,
+            search: false,
+            a11y_run: Rc::default(),
             _subscriptions: subscriptions,
+        }
+    }
+
+    /// Makes it a search field to a screen reader (a `SearchInput`), for a
+    /// find or filter query; it's a `TextInput` otherwise, and a
+    /// `PasswordInput` while [`masked`](Self::masked), whatever this says.
+    pub fn search(mut self) -> Self {
+        self.search = true;
+        self
+    }
+
+    /// Its role to a screen reader: see [`TextField::search`].
+    pub fn a11y_role(&self) -> Role {
+        match (self.masked, self.search) {
+            (true, _) => Role::PasswordInput,
+            (false, true) => Role::SearchInput,
+            (false, false) => Role::TextInput,
+        }
+    }
+
+    /// What a screen reader is given: the text as drawn, so a bullet a
+    /// grapheme while masked, and the selection in it.
+    pub(crate) fn a11y_line(&self) -> A11yLine {
+        let selection = self.edit.selection();
+        A11yLine {
+            role: self.a11y_role(),
+            text: self.shown_text().to_string(),
+            anchor: self.shown_offset(selection.anchor),
+            focus: self.shown_offset(selection.head),
+            read_only: false,
+        }
+    }
+
+    /// Takes a screen reader's `SetTextSelection`, with `run` the id of the
+    /// text run it names: it selects from the anchor to the focus, each on
+    /// a grapheme boundary, as [`set_selection`](Self::set_selection) does.
+    pub(crate) fn select_from_a11y(
+        &mut self,
+        selection: &accesskit::TextSelection,
+        run: accesskit::NodeId,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((anchor, focus)) = self.a11y_line().selection_from(selection, run) {
+            let (anchor, head) = (self.real_offset(anchor), self.real_offset(focus));
+            self.set_selection(anchor, head, cx);
         }
     }
 
@@ -627,15 +678,18 @@ impl Render for TextField {
             .name
             .clone()
             .unwrap_or_else(|| self.placeholder.resolve());
-        div()
-            .id("text-field")
-            .role(if self.masked {
-                Role::PasswordInput
-            } else {
-                Role::TextInput
-            })
-            .aria_label(name)
-            .key_context(Self::KEY_CONTEXT)
+        let node = crate::node(div().id("text-field"), window, cx, self.a11y_role(), name);
+        let node = match window.is_a11y_active() {
+            true => {
+                let weak = cx.entity().downgrade();
+                self.a11y_line()
+                    .attach(node, self.a11y_run.clone(), move |selection, run, cx| {
+                        select_in(&weak, selection, run, cx)
+                    })
+            }
+            false => node,
+        };
+        node.key_context(Self::KEY_CONTEXT)
             .track_focus(&self.focus)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
@@ -892,6 +946,18 @@ impl Element for TextLine {
             field.last_line = has_text.then_some(line);
             field.last_bounds = Some(bounds);
         });
+    }
+}
+
+/// Gives `field` a screen reader's `selection` of text run `run`.
+fn select_in(
+    field: &WeakEntity<TextField>,
+    selection: &accesskit::TextSelection,
+    run: accesskit::NodeId,
+    cx: &mut App,
+) {
+    if let Some(field) = field.upgrade() {
+        field.update(cx, |field, cx| field.select_from_a11y(selection, run, cx));
     }
 }
 

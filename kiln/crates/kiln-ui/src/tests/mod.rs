@@ -19,6 +19,7 @@ mod roles;
 mod tabs;
 mod text_field;
 mod text_input;
+mod text_input_a11y;
 mod text_input_ime;
 mod theme_tokens;
 mod tinted_icon_set;

@@ -8,9 +8,10 @@ use gpui::{
     AppContext as _, ClipboardItem, Context, Entity, EntityInputHandler as _, FocusHandle,
     Focusable as _, InteractiveElement as _, IntoElement, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, Styled as _,
-    Subscription, TestAppContext, VisualTestContext, Window, div, point, px,
+    Subscription, TestAppContext, VisualTestContext, Window, accesskit::Role, div, point, px,
 };
 
+use super::text_input_a11y as a11y_tests;
 use crate::{TextField, TextFieldEvent};
 
 /// A window holding a field, recording its events.
@@ -387,4 +388,155 @@ fn the_text_scrolls_to_keep_the_caret_in_view(cx: &mut TestAppContext) {
     // Deleting the text scrolls back.
     cx.simulate_keystrokes("secondary-a backspace");
     assert_eq!(field.read_with(cx, |field, _| field.scroll_x()), px(0.));
+}
+
+// Its accessible node, loaded in accesskit_consumer as
+// tests::text_input_a11y does for TextInput.
+
+fn a11y(host: &Entity<Host>, cx: &mut VisualTestContext) -> a11y_tests::Read {
+    let field = field(host, cx);
+    a11y_tests::read(&field.read_with(cx, |field, _| field.a11y_line()))
+}
+
+/// Gives the field the `SetTextSelection` for UTF-16 `anchor..focus`.
+fn set_a11y_selection(
+    host: &Entity<Host>,
+    anchor: usize,
+    focus: usize,
+    cx: &mut VisualTestContext,
+) {
+    let field = field(host, cx);
+    let line = field.read_with(cx, |field, _| field.a11y_line());
+    let selection = a11y_tests::select(&line, anchor, focus);
+    field.update(cx, |field, cx| {
+        field.select_from_a11y(&selection, a11y_tests::RUN, cx)
+    });
+}
+
+#[gpui::test]
+fn its_node_has_the_value_and_the_selection_after_typing(cx: &mut TestAppContext) {
+    let (host, cx) = open("", false, cx);
+    cx.simulate_input("héllo");
+    let typed = a11y(&host, cx);
+    assert_eq!(typed.role, Role::TextInput);
+    assert_eq!(typed.value.as_deref(), Some("héllo"));
+    assert_eq!((typed.selection, typed.utf16_len), ((5, 5), 5));
+
+    // A backwards selection stays backwards: the focus is where the caret
+    // went.
+    cx.simulate_keystrokes("shift-left shift-left");
+    let selected = a11y(&host, cx);
+    assert_eq!(selected.selection, (5, 3));
+    assert_eq!(selected.selected, "lo");
+    cx.simulate_input("p");
+    let replaced = a11y(&host, cx);
+    assert_eq!(replaced.value.as_deref(), Some("hélp"));
+    assert_eq!(replaced.selection, (4, 4));
+}
+
+#[gpui::test]
+fn an_empty_field_still_has_a_run(cx: &mut TestAppContext) {
+    let (host, cx) = open("", false, cx);
+    let empty = a11y(&host, cx);
+    assert_eq!(empty.value.as_deref(), Some(""));
+    assert_eq!((empty.selection, empty.utf16_len), ((0, 0), 0));
+}
+
+#[gpui::test]
+fn set_text_selection_selects_in_the_field(cx: &mut TestAppContext) {
+    let (host, cx) = open("héllo world", false, cx);
+    set_a11y_selection(&host, 1, 5, cx);
+    assert_eq!(selected(&host, cx), "éllo");
+    let read = a11y(&host, cx);
+    assert_eq!((read.selection, read.selected.as_str()), ((1, 5), "éllo"));
+
+    // Backwards: the anchor stays at the end, so shift-right shrinks it.
+    set_a11y_selection(&host, 11, 6, cx);
+    assert_eq!(a11y(&host, cx).selection, (11, 6));
+    cx.simulate_keystrokes("shift-right");
+    assert_eq!(selected(&host, cx), "orld");
+
+    // A caret, which typing then goes at.
+    set_a11y_selection(&host, 5, 5, cx);
+    assert_eq!(caret(&host, cx), 6, "after héllo");
+    cx.simulate_input("!");
+    assert_eq!(value(&host, cx), "héllo! world");
+    assert_eq!(a11y(&host, cx).selection, (6, 6));
+    assert!(take_events(&host, cx).contains(&TextFieldEvent::Changed));
+}
+
+#[gpui::test]
+fn non_bmp_text_counts_in_utf16_in_a_field(cx: &mut TestAppContext) {
+    let (host, cx) = open("", false, cx);
+    cx.simulate_input("😀x👨‍👩‍👧");
+    let read = a11y(&host, cx);
+    assert_eq!(read.utf16_len, 2 + 1 + 8);
+    assert_eq!(read.selection, (11, 11));
+    cx.simulate_keystrokes("shift-left");
+    assert_eq!(a11y(&host, cx).selection, (11, 3), "the family, a grapheme");
+
+    set_a11y_selection(&host, 0, 2, cx);
+    assert_eq!(selected(&host, cx), "😀");
+    assert_eq!(a11y(&host, cx).selected, "😀");
+}
+
+#[gpui::test]
+fn a_masked_field_is_a_password_input_without_its_text(cx: &mut TestAppContext) {
+    let secret = "pa😀ss";
+    let (host, cx) = open(secret, false, cx);
+    let field = field(&host, cx);
+    field.update(cx, |field, cx| field.set_masked(true, cx));
+    let line = field.read_with(cx, |field, _| field.a11y_line());
+    let read = a11y_tests::read(&line);
+    assert_eq!(read.role, Role::PasswordInput);
+    // A bullet a grapheme: its length, never its text.
+    assert_eq!(read.value.as_deref(), Some("•••••"));
+    assert_eq!((read.utf16_len, read.selection), (5, (5, 5)));
+    // Nowhere in the tree: no node's value, label or run holds it.
+    let tree = a11y_tests::load(&line);
+    let state = tree.state();
+    for node in [state.root(), state.focus().unwrap()]
+        .into_iter()
+        .chain(state.focus().unwrap().children())
+    {
+        for text in [node.value(), node.label()].into_iter().flatten() {
+            assert!(!text.contains("pa") && !text.contains('😀'), "{text:?}");
+        }
+    }
+
+    // A screen reader's selection is of graphemes: the third is the emoji.
+    set_a11y_selection(&host, 2, 3, cx);
+    assert_eq!(selected(&host, cx), "😀");
+    assert_eq!(a11y(&host, cx).selected, "•");
+    cx.simulate_input("A");
+    assert_eq!(value(&host, cx), "paAss");
+    assert_eq!(a11y(&host, cx).value.as_deref(), Some("•••••"));
+}
+
+#[gpui::test]
+fn a_search_field_says_so(cx: &mut TestAppContext) {
+    let (_, cx) = open("", false, cx);
+    let line = cx.update(|window, cx| {
+        let field = cx.new(|cx| TextField::new(window, cx).search());
+        field.read(cx).a11y_line()
+    });
+    assert_eq!(line.role, Role::SearchInput);
+    let masked = cx.update(|window, cx| {
+        let field = cx.new(|cx| TextField::new(window, cx).search().masked(true));
+        field.read(cx).a11y_line()
+    });
+    assert_eq!(masked.role, Role::PasswordInput, "masked wins");
+}
+
+#[gpui::test]
+fn the_recorder_sees_the_fields_role_and_name(cx: &mut TestAppContext) {
+    let (_, cx) = open("", false, cx);
+    cx.update(|window, cx| {
+        let nodes = crate::nodes(window, cx);
+        let node = (nodes.iter())
+            .find(|node| node.id == "text-field".into())
+            .expect("recorded");
+        assert_eq!(node.role, Role::TextInput);
+        assert_eq!(node.label, "Find");
+    });
 }
