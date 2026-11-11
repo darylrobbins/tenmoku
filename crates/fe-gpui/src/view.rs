@@ -1325,6 +1325,26 @@ impl EditorView {
         &self.lens_providers
     }
 
+    /// The lens items over the caret's row, in the order its lens row
+    /// shows them: what `lsp.run_lens` offers to pick from when it's run
+    /// with no lens, as from the palette.
+    pub fn lens_items_at_caret(&self) -> Vec<crate::LensItem> {
+        let primary = self.model.primary_selection();
+        let head = if primary.reversed {
+            primary.range.start
+        } else {
+            primary.range.end
+        };
+        let row = self.model.text().offset_to_point(head).row;
+        let snapshot = self.model.snapshot();
+        let all = (self.lens_providers.iter())
+            .flat_map(|provider| provider.borrow_mut().lenses(snapshot));
+        (crate::lens::join(all).into_iter())
+            .filter(|lens| lens.row == row)
+            .flat_map(|lens| lens.items)
+            .collect()
+    }
+
     /// What a click with `modifiers` held runs here: the command its
     /// keystroke, such as `cmd-click`, is bound to in the view's context
     /// ([`EditorView::context_stack`]).

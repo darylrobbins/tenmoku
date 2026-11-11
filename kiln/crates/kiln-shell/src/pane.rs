@@ -6,8 +6,9 @@
 //! [`PaneState`] is the pane's items and layout, for the view that holds
 //! and draws it, a [`PaneView`]. Its provided methods are the pane's
 //! operations ([`PaneView::activate_item`], `cycle_items`, `take_item`,
-//! `insert_item`, `reorder_item`, `close_active_item`), and its hooks
-//! ([`PaneView::activated`], [`PaneView::items_changed`]) let a host keep
+//! `insert_item`, `reorder_item`, `reorder_active_item`,
+//! `close_active_item`), and its hooks ([`PaneView::activated`],
+//! [`PaneView::items_changed`]) let a host keep
 //! its own state in step: a placeholder shown while a file is read, say.
 //! [`ItemPane`] is kiln's own pane view.
 //!
@@ -985,6 +986,31 @@ pub trait PaneView:
         self.activate_item(to, window, cx);
         self.items_changed(cx);
         cx.notify(self.pane().id);
+    }
+
+    /// Moves the active item one place along the strip, right or with
+    /// `back` left, as dragging its tab past its neighbour does, and keeps
+    /// it shown and focused. It stays on its side of the pinned items'
+    /// boundary. False, doing nothing, at that end of its side, or with no
+    /// item.
+    fn reorder_active_item(&mut self, back: bool, window: &mut Window, cx: &mut App) -> bool {
+        let state = self.pane();
+        let (ix, count) = (state.active, state.items.len());
+        if ix >= count {
+            return false;
+        }
+        let pinned = state.pinned_count();
+        let (first, last) = if state.is_pinned(ix) {
+            (0, pinned - 1)
+        } else {
+            (pinned, count - 1)
+        };
+        match back {
+            true if ix > first => self.reorder_item(ix, Some(ix - 1), window, cx),
+            false if ix < last => self.reorder_item(ix, Some(ix + 2), window, cx),
+            _ => return false,
+        }
+        true
     }
 
     /// Closes the active item and activates its right neighbour, or the

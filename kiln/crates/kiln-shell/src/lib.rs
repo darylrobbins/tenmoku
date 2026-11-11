@@ -105,15 +105,18 @@ pub fn init(cx: &mut App) {
 pub fn register(cx: &mut App) {
     menu_bar::register(cx);
     command_palette::register(cx);
+    view_stack::register(cx);
     picker::init(cx);
 }
 
 /// The shell's commands, to check keymap bindings against without an app:
-/// `menu_bar.open`, `command_palette.toggle`, and the picker's.
+/// `menu_bar.open`, `command_palette.toggle`, the view stack's and the
+/// picker's.
 pub fn catalog() -> Box<dyn CommandCatalog> {
     Box::new(Catalog(vec![
         menu_bar::catalog(),
         command_palette::catalog(),
+        view_stack::catalog(),
         picker::catalog(),
     ]))
 }

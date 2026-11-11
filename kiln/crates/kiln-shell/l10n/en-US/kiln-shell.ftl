@@ -5,6 +5,10 @@
 command-command_palette-toggle = Show All Commands
 command-menu_bar-open = Open Menu Bar
 
+command-view_stack-toggle_section = Toggle Section
+command-view_stack-focus_next_section = Focus Next Section
+command-view_stack-focus_previous_section = Focus Previous Section
+
 command-picker-select_prev = Select Previous
 command-picker-select_next = Select Next
 command-picker-confirm = Confirm

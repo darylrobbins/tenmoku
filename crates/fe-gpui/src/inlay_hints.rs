@@ -354,11 +354,62 @@ impl EditorView {
         false
     }
 
+    /// `editor.apply_inlay_hint`: applies the edits of the hint at or
+    /// nearest the caret on the caret's line, as a double-click on it does:
+    /// at once if they're in hand, else once the host has resolved it. Of
+    /// hints as near, the first; a hint resolved with no edits is passed
+    /// over. Whether a hint was found to apply. A read-only editor refuses
+    /// it, as it does any edit.
+    pub fn apply_inlay_hint_at_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.read_only {
+            self.refuse_edit(cx);
+            return false;
+        }
+        self.sync_inlay_hints();
+        let primary = self.model.primary_selection();
+        let head = if primary.reversed {
+            primary.range.start
+        } else {
+            primary.range.end
+        };
+        let text = self.model.text();
+        let row = text.offset_to_point(head).row;
+        let start = text.row_start(row);
+        let line = start..=start + text.row_len(row) as usize;
+        let hints = &self.inlay_hints;
+        let host = self.inlay_hint_host.is_some();
+        let mut near: Vec<usize> = (0..hints.hints.len())
+            .filter(|&ix| line.contains(&hints.hints[ix].offset))
+            .filter(|&ix| {
+                let resolved = !host || hints.states[ix] == State::Resolved;
+                !resolved || !hints.hints[ix].edits.is_empty()
+            })
+            .collect();
+        near.sort_by_key(|&ix| hints.hints[ix].offset.abs_diff(head));
+        let Some(&ix) = near.first() else {
+            return false;
+        };
+        let id = hints.ids[ix];
+        if !host || hints.states[ix] == State::Resolved {
+            if self.accept_inlay_hint(id, cx) {
+                self.changed(cx);
+            }
+        } else {
+            self.request_inlay_hint(id, true, cx);
+        }
+        true
+    }
+
     /// Applies the edits of hint `id`, if it has any, as one user
     /// transaction, mapped from the version the hints were given at, and
     /// the hint goes. Whether it did. Nothing is applied if the text an edit
-    /// replaces has changed since.
+    /// replaces has changed since, or while the editor is read-only, which
+    /// it may have become while the hint was being resolved.
     pub(crate) fn accept_inlay_hint(&mut self, id: u64, cx: &mut Context<Self>) -> bool {
+        if self.read_only {
+            self.refuse_edit(cx);
+            return false;
+        }
         let Some(ix) = self.inlay_hint_ix(id) else {
             return false;
         };

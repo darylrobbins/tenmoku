@@ -21,9 +21,11 @@ pub const PROMPT_WIDTH: gpui::Pixels = px(420.);
 /// alerts as GPUI draws them: Enter answers with the default button, the
 /// first that isn't a cancel button; Escape with the cancel button, or
 /// without one a button titled "Cancel", as AppKit gives that title Escape,
-/// or titled `kiln-ui-cancel` in the active locale. So
+/// or titled `kiln-ui-cancel` in the locale active when it opens. So
 /// `[ok(tr!("kiln-ui-cancel")), new("Discard")]` makes Cancel the default
-/// for both, in any locale.
+/// for both, in any locale. Tab and Shift-Tab move focus between the
+/// buttons, from the default one, and Enter or Space then presses the
+/// focused one, which draws a focus ring.
 pub fn prompt_renderer(
     level: PromptLevel,
     message: &str,
@@ -33,13 +35,7 @@ pub fn prompt_renderer(
     window: &mut Window,
     cx: &mut App,
 ) -> RenderablePromptHandle {
-    let prompt = cx.new(|cx| Prompt {
-        level,
-        message: message.to_owned().into(),
-        detail: detail.map(|detail| detail.to_owned().into()),
-        buttons: buttons.to_vec(),
-        focus: cx.focus_handle(),
-    });
+    let prompt = cx.new(|cx| Prompt::new(level, message, detail, buttons, cx));
     handle.with_view(prompt, window, cx)
 }
 
@@ -49,10 +45,60 @@ pub struct Prompt {
     message: SharedString,
     detail: Option<SharedString>,
     buttons: Vec<PromptButton>,
+    /// The button Escape presses, resolved when the prompt opens: a locale
+    /// change while it's open leaves the labels it was given, so it must
+    /// not change which of them is Cancel.
+    cancel: Option<usize>,
+    /// The button Enter presses: the default until Tab moves it.
+    focused: Option<usize>,
+    /// Whether Tab or Shift-Tab has moved focus, so the focused button
+    /// draws a ring.
+    moved: bool,
     focus: FocusHandle,
 }
 
 impl Prompt {
+    fn new(
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        buttons: &[PromptButton],
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            level,
+            message: message.to_owned().into(),
+            detail: detail.map(|detail| detail.to_owned().into()),
+            cancel: Self::cancel_button(buttons),
+            focused: Self::default_button(buttons).or_else(|| (!buttons.is_empty()).then_some(0)),
+            moved: false,
+            buttons: buttons.to_vec(),
+            focus: cx.focus_handle(),
+        }
+    }
+
+    /// The button Enter and Space press now: the default, or the one Tab
+    /// or Shift-Tab moved to.
+    pub fn focused_button(&self) -> Option<usize> {
+        self.focused
+    }
+
+    /// Moves focus to the next button, or with `back` the previous one,
+    /// wrapping at the ends.
+    fn move_focus(&mut self, back: bool) {
+        let count = self.buttons.len();
+        if count == 0 {
+            return;
+        }
+        let at = self.focused.unwrap_or(0);
+        self.focused = Some(if back {
+            (at + count - 1) % count
+        } else {
+            (at + 1) % count
+        });
+        self.moved = true;
+    }
+
     /// The button Enter presses: the first that isn't a cancel button.
     pub fn default_button(buttons: &[PromptButton]) -> Option<usize> {
         buttons.iter().position(|button| !button.is_cancel())
@@ -75,12 +121,19 @@ impl Prompt {
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
-        if keystroke.modifiers.modified() {
+        let modifiers = &keystroke.modifiers;
+        if keystroke.key == "tab" && !(modifiers.control || modifiers.alt || modifiers.platform) {
+            self.move_focus(modifiers.shift);
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if modifiers.modified() {
             return;
         }
         let answer = match keystroke.key.as_str() {
-            "enter" => Self::default_button(&self.buttons),
-            "escape" => Self::cancel_button(&self.buttons),
+            "enter" | "space" => self.focused,
+            "escape" => self.cancel,
             _ => None,
         };
         if let Some(ix) = answer {
@@ -102,6 +155,8 @@ impl Render for Prompt {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let default = Self::default_button(&self.buttons);
+        let ring = self.moved.then_some(self.focused).flatten();
+        let ring_color = colors.state.focus_ring;
         let accent = match self.level {
             PromptLevel::Critical => colors.status.error,
             PromptLevel::Info | PromptLevel::Warning => colors.accent.base,
@@ -129,6 +184,9 @@ impl Render for Prompt {
                             .text_color(colors.text.primary)
                             .hover(move |style| style.bg(hover))
                     }
+                })
+                .when(Some(ix) == ring, |div| {
+                    div.border_2().border_color(ring_color)
                 })
                 .child(button.label().clone())
                 .on_click(cx.listener(move |_, _, _, cx| {

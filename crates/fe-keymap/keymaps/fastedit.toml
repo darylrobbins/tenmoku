@@ -1624,6 +1624,24 @@ command = "toast.dismiss_all"
 context = "workbench && !(editor && vim.enabled)"
 platform = "!macos"
 
+# In a toast given focus by toast.focus: Tab and Shift-Tab move between its
+# buttons, as they do between a prompt's, and Escape dismisses it. Enter and
+# Space press the focused button, as they do any focused button.
+[[bindings]]
+keys = "tab"
+command = "toast.next_button"
+context = "toast"
+
+[[bindings]]
+keys = "shift-tab"
+command = "toast.previous_button"
+context = "toast"
+
+[[bindings]]
+keys = "escape"
+command = "toast.dismiss"
+context = "toast"
+
 # Vim's layer, last so that it wins over the plain editor's bindings in the
 # same frame. In normal and visual mode the arrows are vim's motions
 # (`h l k j`), and the editing keys are vim's (`vim.key` hands the keystroke

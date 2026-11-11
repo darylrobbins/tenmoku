@@ -11,7 +11,7 @@ use gpui::{App, Context, Window};
 use kiln::Cx;
 use kiln_l10n::{tr, verbatim};
 
-use kiln_shell::DockPosition;
+use kiln_shell::{DockPosition, PaneView as _};
 
 use crate::{
     Axis, Direction, Pane, ReferencesPanel, Workbench,
@@ -289,6 +289,22 @@ impl Workbench {
     fn move_tab_right(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.move_tab(Direction::Right, cx.window, cx.cx);
+    }
+
+    /// Reorder Tab Left
+    #[command(id = "pane.reorder_tab_left")]
+    fn reorder_tab_left(&mut self, cx: &mut Cx<Self>) {
+        self.on_active_pane(cx, |pane, window, cx| {
+            pane.reorder_active_item(true, window, cx);
+        });
+    }
+
+    /// Reorder Tab Right
+    #[command(id = "pane.reorder_tab_right")]
+    fn reorder_tab_right(&mut self, cx: &mut Cx<Self>) {
+        self.on_active_pane(cx, |pane, window, cx| {
+            pane.reorder_active_item(false, window, cx);
+        });
     }
 
     /// Move Tab Up
@@ -1046,11 +1062,59 @@ impl Workbench {
             .update(cx.cx, |toasts, cx| toasts.dismiss_all(cx));
     }
 
+    /// Toast: Focus
+    #[command(id = "toast.focus")]
+    fn focus_toast(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let window = &mut *cx.window;
+        (self.toasts).update(cx.cx, |toasts, cx| toasts.focus_newest(window, cx));
+    }
+
+    /// Next Notification Button
+    #[command(id = "toast.next_button", context = "toast", palette = false)]
+    fn next_toast_button(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let window = &mut *cx.window;
+        (self.toasts).update(cx.cx, |toasts, cx| toasts.move_focus(false, window, cx));
+    }
+
+    /// Previous Notification Button
+    #[command(id = "toast.previous_button", context = "toast", palette = false)]
+    fn previous_toast_button(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let window = &mut *cx.window;
+        (self.toasts).update(cx.cx, |toasts, cx| toasts.move_focus(true, window, cx));
+    }
+
+    /// Dismiss Notification
+    #[command(id = "toast.dismiss", context = "toast", palette = false)]
+    fn dismiss_focused_toast(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let window = &mut *cx.window;
+        (self.toasts).update(cx.cx, |toasts, cx| toasts.dismiss_focused(window, cx));
+    }
+
     /// Show Config Problems
     #[command(id = "workbench.show_config_problems")]
     fn show_config_problems_command(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.show_config_problems(cx.window, cx.cx);
+    }
+
+    /// Breadcrumbs: Pick from Folder
+    #[command(id = "workbench.pick_breadcrumb_path")]
+    fn pick_breadcrumb_path(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let Cx { window, cx } = cx;
+        (self.pane().clone()).update(*cx, |pane, cx| pane.pick_breadcrumb_path(window, cx));
+    }
+
+    /// Breadcrumbs: Pick Symbol
+    #[command(id = "workbench.pick_breadcrumb_symbol")]
+    fn pick_breadcrumb_symbol(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let Cx { window, cx } = cx;
+        (self.pane().clone()).update(*cx, |pane, cx| pane.pick_breadcrumb_symbol(window, cx));
     }
 
     /// Toggle Breadcrumbs
@@ -1191,6 +1255,20 @@ impl Workbench {
     #[command(id = "peek.open", context = "peek")]
     fn open_from_peek_command(&mut self, cx: &mut Cx<Self>) {
         self.in_context(crate::peek::KEY_CONTEXT, cx, Self::open_from_peek);
+    }
+
+    /// Apply Inlay Hint
+    ///
+    /// Applies the edits of the inlay hint at or nearest the caret on its
+    /// line, as a double-click on the hint does.
+    #[command(id = "editor.apply_inlay_hint", context = "editor")]
+    fn apply_inlay_hint(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.in_editor(cx, |this, _, cx| {
+            if let Some(editor) = this.active_editor(cx).cloned() {
+                editor.update(cx, |editor, cx| editor.apply_inlay_hint_at_caret(cx));
+            }
+        });
     }
 
     /// Open Link
@@ -1556,15 +1634,17 @@ impl Workbench {
         self.code_actions_of("source", false, cx);
     }
 
-    /// Run Code Lens
-    #[command(id = "lsp.run_lens", context = "editor", palette = false)]
+    /// Code Lens: Run…
+    ///
+    /// A click on a lens runs it with its `lens`; with none, as from the
+    /// palette, it lists the lenses over the caret's row to pick one from.
+    #[command(id = "lsp.run_lens", context = "editor")]
     fn run_code_lens(&mut self, cx: &mut Cx<Self>) {
         let id = kiln::current_invocation(cx.cx)
             .and_then(|invocation| invocation.args.get("lens")?.as_u64());
-        self.in_editor(cx, |this, _, cx| {
-            if let Some(id) = id {
-                this.run_lens(id, cx);
-            }
+        self.in_editor(cx, |this, window, cx| match id {
+            Some(id) => this.run_lens(id, cx),
+            None => this.pick_lens(window, cx),
         });
     }
 
@@ -2013,4 +2093,127 @@ fn svg_tab(
     };
     let path = tab.path.clone()?;
     (shown && crate::loader::is_svg(&path)).then_some(path)
+}
+
+/// `lsp.run_lens` from the keyboard: the lenses over the active editor's
+/// caret row, as a picker in the modal layer. Choosing one runs it from the
+/// editor, as a click on it does; dismissing it focuses the editor.
+mod lens_picker {
+    use fe_command::Source;
+    use fe_gpui::{EditorView, LensItem, commands::RunCommand};
+    use gpui::{
+        AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
+        ParentElement as _, SharedString, WeakEntity, Window, div,
+    };
+    use kiln_l10n::text;
+    use kiln_shell::ModalId;
+
+    use crate::{
+        Workbench,
+        picker::{Picker, PickerDelegate},
+        toolbar_picker::subsequence,
+    };
+
+    /// The modal layer's id for the picker.
+    pub(crate) const LENS_PICKER: ModalId = ModalId("lens_picker");
+
+    pub(crate) struct LensPicker {
+        items: Vec<LensItem>,
+        editor: WeakEntity<EditorView>,
+        /// The items matching the query, as indices into `items`.
+        matches: Vec<usize>,
+    }
+
+    impl LensPicker {
+        fn focus_editor(&self, window: &mut Window, cx: &mut App) -> Option<Entity<EditorView>> {
+            let editor = self.editor.upgrade()?;
+            window.focus(&editor.focus_handle(cx), cx);
+            Some(editor)
+        }
+    }
+
+    impl PickerDelegate for LensPicker {
+        fn update_matches(&mut self, query: String, cx: &mut Context<Picker<Self>>) {
+            let query: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+            self.matches = (self.items.iter().enumerate())
+                .filter(|(_, item)| subsequence(&query, &item.title).is_some())
+                .map(|(ix, _)| ix)
+                .collect();
+            cx.notify();
+            let picker = cx.entity();
+            // `Picker::matches_updated` borrows the picker, which is being
+            // updated now.
+            cx.defer(move |cx| picker.update(cx, |picker, cx| picker.matches_updated(true, cx)));
+        }
+
+        fn match_count(&self) -> usize {
+            self.matches.len()
+        }
+
+        fn match_id(&self, ix: usize) -> SharedString {
+            self.matches[ix].to_string().into()
+        }
+
+        fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+            div()
+                .child(self.items[self.matches[ix]].title.clone())
+                .into_any_element()
+        }
+
+        fn match_label(&self, ix: usize, _: &App) -> SharedString {
+            self.items[self.matches[ix]].title.clone()
+        }
+
+        /// Focuses the editor and runs the lens there, as a click on it
+        /// does. An editor closed by now only dismisses.
+        fn confirm(
+            &mut self,
+            ix: usize,
+            window: &mut Window,
+            cx: &mut Context<Picker<Self>>,
+        ) -> bool {
+            let invocation = self.items[self.matches[ix]].invocation.clone();
+            if let Some(editor) = self.focus_editor(window, cx) {
+                let run = RunCommand(invocation.source(Source::Keyboard));
+                editor.focus_handle(cx).dispatch_action(&run, window, cx);
+            }
+            true
+        }
+
+        fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+            self.focus_editor(window, cx);
+        }
+    }
+
+    impl Workbench {
+        /// Lists the lenses over the active editor's caret row, in place of
+        /// any palette. Nothing without an editor, or a lens on its row.
+        pub(crate) fn pick_lens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+            let Some(editor) = self.active_editor(cx).cloned() else {
+                return;
+            };
+            let items = editor.read(cx).lens_items_at_caret();
+            if items.is_empty() {
+                return;
+            }
+            let delegate = LensPicker {
+                matches: (0..items.len()).collect(),
+                items,
+                editor: editor.downgrade(),
+            };
+            self.dismiss_palette(window, cx);
+            let picker = cx.new(|cx| {
+                Picker::new(
+                    delegate,
+                    text!("command-lsp-run_lens"),
+                    fe_ui::ui_theme(cx),
+                    cx,
+                )
+            });
+            picker.update(cx, |picker, cx| picker.show(window, cx));
+            (self.shell().clone()).update(cx, |shell, cx| {
+                shell.show_modal(LENS_PICKER, picker, window, cx)
+            });
+        }
+    }
 }

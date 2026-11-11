@@ -138,9 +138,15 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
         let keys = fe_keymap::KeySequence::parse(keys).unwrap().to_string();
         (keys, command, true)
     });
-    // The git keys outside `editor`: the Changes panel's, and the diff view's.
+    // A focused toast's keys (A11Y-16a), then the git keys outside
+    // `editor`: the Changes panel's, and the diff view's.
     let context_free: Vec<_> = context_free
         .into_iter()
+        .chain([
+            ("tab".to_string(), "toast.next_button", false),
+            ("shift-tab".to_string(), "toast.previous_button", false),
+            ("escape".to_string(), "toast.dismiss", false),
+        ])
         .chain([
             ("ctrl-shift-g".to_string(), "git.show_changes", true),
             ("f7".to_string(), "diff.next_change", false),

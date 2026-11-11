@@ -739,3 +739,41 @@ fn go_to_last_edit_location_has_its_id_and_title() {
         Some("Go to Last Edit Location")
     );
 }
+
+/// The keyboard reach commands of A11Y-16a are in the catalog, and the
+/// palette lists those for the editor and the window's chrome with the
+/// editor focused; a toast's own keys' commands are for its context and
+/// not the palette's.
+#[gpui::test]
+fn the_keyboard_reach_commands_are_cataloged_and_listed(cx: &mut TestAppContext) {
+    let listed_ids = [
+        "editor.apply_inlay_hint",
+        "lsp.run_lens",
+        "pane.reorder_tab_left",
+        "pane.reorder_tab_right",
+        "toast.focus",
+        "workbench.pick_breadcrumb_path",
+        "workbench.pick_breadcrumb_symbol",
+    ];
+    let in_toast = [
+        "toast.next_button",
+        "toast.previous_button",
+        "toast.dismiss",
+    ];
+    let catalog = crate::command_catalog();
+    for id in listed_ids.iter().chain(&in_toast) {
+        let command = CommandId::parse(id).unwrap();
+        assert_eq!(catalog.check(&command, &Value::Null), Ok(()), "{id}");
+    }
+    let (_dir, workbench, cx) = opened(cx);
+    let in_editor = listed(&workbench, cx);
+    for id in listed_ids {
+        assert!(
+            in_editor.iter().any(|listed| listed == id),
+            "{id} is listed"
+        );
+    }
+    for id in in_toast {
+        assert!(!in_editor.iter().any(|listed| listed == id), "{id} isn't");
+    }
+}

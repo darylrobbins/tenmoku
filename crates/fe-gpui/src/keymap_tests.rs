@@ -396,6 +396,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                         | "zen_mode"
                         | "terminal"
                         | "picker"
+                        | "toast"
                         | "text_input"
                         | "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit || vim_line || git_log_panel) && text_input"
                         | "search_panel"

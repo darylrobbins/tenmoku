@@ -625,3 +625,87 @@ fn every_default_binding_is_listed() {
         }
     }
 }
+
+/// The keyboard reach of A11Y-16a in the default keymap, on each platform:
+/// a toast given focus by `toast.focus` moves between its buttons with Tab
+/// and Shift-Tab and is dismissed by Escape, in its own context, where they
+/// clash with nothing; the commands with no key of their own (section 7:
+/// bound only where a sibling surface binds one) are rows to bind them
+/// from, found by title.
+#[test]
+fn keyboard_reach_commands_are_rows_and_toast_keys_are_bound() {
+    let reach = [
+        command("toast.focus", "Toast: Focus"),
+        command("toast.next_button", "Next Notification Button"),
+        command("toast.previous_button", "Previous Notification Button"),
+        command("toast.dismiss", "Dismiss Notification"),
+        command("lsp.run_lens", "Code Lens: Run…"),
+        command("editor.apply_inlay_hint", "Apply Inlay Hint"),
+        command(
+            "workbench.pick_breadcrumb_path",
+            "Breadcrumbs: Pick from Folder",
+        ),
+        command(
+            "workbench.pick_breadcrumb_symbol",
+            "Breadcrumbs: Pick Symbol",
+        ),
+        command("pane.reorder_tab_left", "Reorder Tab Left"),
+        command("pane.reorder_tab_right", "Reorder Tab Right"),
+        command("view_stack.toggle_section", "Toggle Section"),
+        command("view_stack.focus_next_section", "Focus Next Section"),
+        command(
+            "view_stack.focus_previous_section",
+            "Focus Previous Section",
+        ),
+    ];
+    for (source, os) in [(DEFAULT_LINUX, Os::Linux), (DEFAULT_MACOS, Os::MacOs)] {
+        let (layer, diagnostics) =
+            KeymapLayer::parse_for(Path::new(DEFAULT_KEYMAP_PATH), source, None, os);
+        assert_eq!(diagnostics, [], "{os:?}");
+        let model = ShortcutsModel::from_layers(&[layer.unwrap()], &reach, os);
+
+        // The toast's keys, each in the toast's context alone.
+        for (id, key) in [
+            ("toast.next_button", "tab"),
+            ("toast.previous_button", "shift-tab"),
+            ("toast.dismiss", "escape"),
+        ] {
+            let bound = row(model.rows(), id);
+            let keys: Vec<(String, Option<&str>)> = (bound.bindings.iter())
+                .map(|binding| (binding.keys.to_string(), binding.when.as_deref()))
+                .collect();
+            assert_eq!(keys, [(key.to_owned(), Some("toast"))], "{os:?} {id}");
+            assert!(
+                !(bound.bindings[0].issues.iter())
+                    .any(|issue| matches!(issue, ShortcutIssue::Conflict { .. })),
+                "{os:?} {id}: {:?}",
+                bound.bindings[0].issues
+            );
+            // Typed into the editor's search, the key finds it.
+            let found = search(&model, &format!("@keybinding:{key}"), true);
+            assert!(
+                found
+                    .iter()
+                    .any(|line| line.starts_with(&format!("{id}: "))),
+                "{os:?} {key}: {found:?}"
+            );
+        }
+
+        // The rest have no key: rows to bind them from, found by title.
+        for info in &reach[..] {
+            let listed = row(model.rows(), &info.id);
+            assert!(listed.known, "{os:?} {}", info.id);
+            if !info.id.starts_with("toast.") || info.id == "toast.focus" {
+                assert_eq!(listed.bindings.len(), 0, "{os:?} {}", info.id);
+            }
+            let found = search(&model, &info.title, false);
+            assert!(
+                found
+                    .iter()
+                    .any(|line| line.starts_with(&format!("{}: ", info.id))),
+                "{os:?} {}: {found:?}",
+                info.id
+            );
+        }
+    }
+}

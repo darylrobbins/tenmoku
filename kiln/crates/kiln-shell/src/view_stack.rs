@@ -22,6 +22,17 @@
 //! show a detail after its title ([`StackedView::detail`]), such as the
 //! symbol under the caret in an outline's.
 //!
+//! From the keyboard, in the stack's key context `view_stack`:
+//! `view_stack.toggle_section` ([`ToggleSection`]) collapses or expands
+//! the section holding focus, its header or its view, leaving focus on its
+//! header; `view_stack.focus_next_section` and
+//! `view_stack.focus_previous_section` ([`FocusNextSection`],
+//! [`FocusPreviousSection`]) focus the header of the section below or
+//! above the one holding focus, wrapping, past the lead, which has none.
+//! The headers draw the focus ring while focused from the keyboard. The
+//! dividers aren't reached from the keyboard. [`register`] records the
+//! commands.
+//!
 //! [`ViewStack::save`] keeps each view's collapse and weight by its
 //! [`ViewId`], for a saved layout, and [`ViewStack::restore`] puts them
 //! back.
@@ -43,8 +54,54 @@ use gpui::{
     Point, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
     Transformation, Window, div, prelude::FluentBuilder as _, px, radians, svg,
 };
-use kiln_command::Value;
+use kiln_command::{CommandId, Value};
+use kiln_core::{CatalogError, CommandCatalog};
+use kiln_platform::command_actions::Command as _;
 use kiln_ui::{CHEVRON_WIDTH, Icon, ui_theme};
+
+kiln_platform::commands!(
+    view_stack,
+    [
+        /// Toggle Section
+        #[command(context = "view_stack")]
+        ToggleSection,
+        /// Focus Next Section
+        #[command(context = "view_stack")]
+        FocusNextSection,
+        /// Focus Previous Section
+        #[command(context = "view_stack")]
+        FocusPreviousSection,
+    ]
+);
+
+/// The stack's key context, which its commands need.
+pub const KEY_CONTEXT: &str = "view_stack";
+
+/// The stack's commands, to check keymap bindings against without an app:
+/// `view_stack.toggle_section`, `view_stack.focus_next_section` and
+/// `view_stack.focus_previous_section`.
+pub fn catalog() -> Box<dyn CommandCatalog> {
+    Box::new(Catalog)
+}
+
+struct Catalog;
+
+impl CommandCatalog for Catalog {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        let build = if *command == ToggleSection::id() {
+            <ToggleSection as gpui::Action>::build
+        } else if *command == FocusNextSection::id() {
+            <FocusNextSection as gpui::Action>::build
+        } else if *command == FocusPreviousSection::id() {
+            <FocusPreviousSection as gpui::Action>::build
+        } else {
+            return Err(CatalogError::UnknownCommand);
+        };
+        build(args.clone())
+            .map(drop)
+            .map_err(|error| CatalogError::BadArgs(error.to_string()))
+    }
+}
 
 /// A view header's height, its bottom border included.
 pub const VIEW_HEADER_HEIGHT: Pixels = px(22.);
@@ -531,6 +588,51 @@ impl ViewStack {
         self.toggle(view, cx);
     }
 
+    /// `view_stack.focus_next_section`, or with `back`
+    /// `view_stack.focus_previous_section`, from `view`'s section, which
+    /// holds focus: focuses the header of the next section below it with
+    /// one, or above it, wrapping round, itself if it's the only one.
+    /// False, doing nothing, if no section has a header.
+    pub fn focus_section(
+        &mut self,
+        view: ViewId,
+        back: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(at) = self.position(view) else {
+            return false;
+        };
+        let count = self.views.len();
+        let steps = (1..=count).map(|step| match back {
+            true => (at + count - step % count) % count,
+            false => (at + step) % count,
+        });
+        let Some(to) = steps.into_iter().find(|&ix| !self.headless_at(ix)) else {
+            return false;
+        };
+        window.focus(&self.views[to].focus, cx);
+        cx.notify();
+        true
+    }
+
+    /// `view_stack.toggle_section` in `view`'s section, which holds focus:
+    /// as a click on its header, it focuses the header, which stays when
+    /// its view collapses, and collapses or expands it. False, doing
+    /// nothing, for a view without a header.
+    pub fn toggle_section(
+        &mut self,
+        view: ViewId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.is_headless(view) != Some(false) {
+            return false;
+        }
+        self.header_clicked(view, window, cx);
+        true
+    }
+
     /// `ix`'s header, unless it has none, then its body if expanded.
     /// Expanded, it grows from its header's height by its share of
     /// `weights`, the expanded views' total, so the bodies fill what the
@@ -645,6 +747,19 @@ impl ViewStack {
                     .overflow_hidden(),
             })
             .track_scroll(&entry.drawn)
+            // The section holding focus, its header or its view, is the
+            // one its commands act on: they reach it on focus's path.
+            .on_action(cx.listener(move |stack, _: &ToggleSection, window, cx| {
+                stack.toggle_section(id, window, cx);
+            }))
+            .on_action(cx.listener(move |stack, _: &FocusNextSection, window, cx| {
+                stack.focus_section(id, false, window, cx);
+            }))
+            .on_action(
+                cx.listener(move |stack, _: &FocusPreviousSection, window, cx| {
+                    stack.focus_section(id, true, window, cx);
+                }),
+            )
             .when(!headless, |section| section.child(header))
             .children(body)
             .children(divider)
@@ -663,6 +778,7 @@ impl Render for ViewStack {
             .collect();
         div()
             .id("view-stack")
+            .key_context(KEY_CONTEXT)
             .size_full()
             .flex()
             .flex_col()

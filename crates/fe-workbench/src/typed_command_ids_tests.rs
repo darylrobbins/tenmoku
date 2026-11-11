@@ -286,7 +286,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("inline_edit.submit", "Send Inline Edit", "inline_edit"),
     ("inline_edit.cancel", "Cancel Inline Edit", "inline_edit"),
     ("lsp.code_actions", "Code Actions…", "editor"),
-    ("lsp.run_lens", "Run Code Lens", "editor"),
+    ("lsp.run_lens", "Code Lens: Run…", "editor"),
     ("lsp.organize_imports", "Organize Imports", "editor"),
     ("lsp.fix_all", "Fix All", "editor"),
     ("lsp.refactor", "Refactor…", "editor"),

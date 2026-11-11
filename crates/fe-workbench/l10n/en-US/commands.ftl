@@ -46,6 +46,7 @@ command-dock-show_project = Show Project
 command-dock-shrink = Shrink Dock
 command-dock-toggle = Toggle Dock
 
+command-editor-apply_inlay_hint = Apply Inlay Hint
 command-editor-open_link = Open Link
 command-editor-peek_definition = Peek Definition
 command-editor-peek_references = Peek References
@@ -145,7 +146,7 @@ command-lsp-organize_imports = Organize Imports
 command-lsp-refactor = Refactor…
 command-lsp-rename = Rename Symbol…
 command-lsp-restart = Restart Language Server
-command-lsp-run_lens = Run Code Lens
+command-lsp-run_lens = Code Lens: Run…
 command-lsp-show_log = Language Server Log
 command-lsp-source_action = Source Action…
 
@@ -191,6 +192,8 @@ command-pane-move_tab_down = Move Tab Down
 command-pane-move_tab_left = Move Tab Left
 command-pane-move_tab_right = Move Tab Right
 command-pane-move_tab_up = Move Tab Up
+command-pane-reorder_tab_left = Reorder Tab Left
+command-pane-reorder_tab_right = Reorder Tab Right
 command-pane-shrink_height = Shrink Pane Height
 command-pane-shrink_width = Shrink Pane Width
 command-pane-split_down = Split Down
@@ -312,7 +315,11 @@ command-text_input-submit = Submit
 
 command-theme-select = Change Color Theme…
 
+command-toast-dismiss = Dismiss Notification
 command-toast-dismiss_all = Dismiss Notifications
+command-toast-focus = Toast: Focus
+command-toast-next_button = Next Notification Button
+command-toast-previous_button = Previous Notification Button
 
 command-todo-list = Search TODO Comments
 command-todo-next = Next TODO Comment
@@ -374,6 +381,8 @@ command-workbench-open_path = Open Path
 command-workbench-open_recent = Open Recent…
 command-workbench-open_settings = Open Settings (JSON)
 command-workbench-open_settings_ui = Open Settings (UI)
+command-workbench-pick_breadcrumb_path = Breadcrumbs: Pick from Folder
+command-workbench-pick_breadcrumb_symbol = Breadcrumbs: Pick Symbol
 command-workbench-pin_tab = Pin Tab
 command-workbench-previous_tab = Previous Tab
 command-workbench-reopen_closed_editor = Reopen Closed Editor

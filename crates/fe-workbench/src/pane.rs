@@ -2942,23 +2942,7 @@ impl Pane {
     /// the item's own crumbs, then the symbol chain if it's of the editor
     /// shown.
     fn crumbs(&self, cx: &mut Context<Self>) -> Vec<Crumb> {
-        let path = match (&self.opening, &self.error) {
-            (Some(path), _) | (None, Some((path, _))) => Some(Some(path.clone())),
-            (None, None) => self.state.active_item().map(|item| {
-                let diff = item.downcast_ref::<DiffView>();
-                item.path(cx).or_else(|| {
-                    diff.and_then(|diff| {
-                        diff.read(cx)
-                            .right()
-                            .read(cx)
-                            .model()
-                            .path()
-                            .map(Path::to_owned)
-                    })
-                })
-            }),
-        };
-        let Some(path) = path else {
+        let Some(path) = self.crumb_path(cx) else {
             return Vec::new();
         };
         let path = path.as_deref();
@@ -2997,14 +2981,9 @@ impl Pane {
                     if crumb.file {
                         element = element.icon(file_icon_ref(&crumb.label));
                     }
-                    let Some(dir) = crumb.dir else {
+                    let Some(request) = entries_request(&crumb, path) else {
                         return element;
                     };
-                    let select = crumb
-                        .file
-                        .then(|| path.and_then(Path::file_name).map(ToOwned::to_owned))
-                        .flatten();
-                    let request = ToolbarRequest::Entries { dir, select };
                     element.on_click(cx.listener(move |pane, _, window, cx| {
                         pane.request(request.clone(), window, cx)
                     }))
@@ -3057,6 +3036,65 @@ impl Pane {
         crumbs
     }
 
+    /// The path the crumbs start from: the file being read or that failed
+    /// to be read, or else the active item's, which is `Some(None)` for an
+    /// item with none (untitled, Settings). None with no item.
+    fn crumb_path(&self, cx: &App) -> Option<Option<PathBuf>> {
+        match (&self.opening, &self.error) {
+            (Some(path), _) | (None, Some((path, _))) => Some(Some(path.clone())),
+            (None, None) => self.state.active_item().map(|item| {
+                let diff = item.downcast_ref::<DiffView>();
+                item.path(cx).or_else(|| {
+                    diff.and_then(|diff| {
+                        diff.read(cx)
+                            .right()
+                            .read(cx)
+                            .model()
+                            .path()
+                            .map(Path::to_owned)
+                    })
+                })
+            }),
+        }
+    }
+
+    /// `workbench.pick_breadcrumb_path`: opens the picker the file's crumb
+    /// opens, its folder's entries with the file selected, whether or not
+    /// the breadcrumbs show. False, doing nothing, if the active item has
+    /// no file.
+    pub(crate) fn pick_breadcrumb_path(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(Some(path)) = self.crumb_path(cx) else {
+            return false;
+        };
+        let crumbs = pane_toolbar::path_crumbs(Some(&path), self.toolbar.root.as_deref());
+        let request = (crumbs.iter().rev()).find_map(|crumb| entries_request(crumb, Some(&path)));
+        let Some(request) = request else {
+            return false;
+        };
+        self.request(request, window, cx);
+        true
+    }
+
+    /// `workbench.pick_breadcrumb_symbol`: opens the picker a symbol crumb
+    /// opens, Structure's quick outline of the pane's editor, whether or
+    /// not the breadcrumbs show. False, doing nothing, if the pane shows no
+    /// editor.
+    pub(crate) fn pick_breadcrumb_symbol(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.opening.is_some() || self.error.is_some() || self.active_editor().is_none() {
+            return false;
+        }
+        self.open_quick_outline(window, cx);
+        true
+    }
+
     /// A symbol crumb's click: Structure's quick outline
     /// ([`pane_toolbar::QUICK_OUTLINE`]) for the pane's editor, focused first
     /// so the outline lists its symbols and focus goes back to it once the
@@ -3083,6 +3121,20 @@ impl Pane {
     pub(crate) fn menu_context(&self) -> ContextStack {
         (self.menu_context.clone()).unwrap_or_else(pane_toolbar::editor_context)
     }
+}
+
+/// What a click on path crumb `crumb` asks for: its folder's entries, the
+/// file selected if it's the file's crumb, `path` being the file's. None
+/// for a crumb with no folder.
+fn entries_request(
+    crumb: &kiln_shell::crumbs::PathCrumb,
+    path: Option<&Path>,
+) -> Option<ToolbarRequest> {
+    let dir = crumb.dir.clone()?;
+    let select = (crumb.file)
+        .then(|| path.and_then(Path::file_name).map(ToOwned::to_owned))
+        .flatten();
+    Some(ToolbarRequest::Entries { dir, select })
 }
 
 #[cfg(test)]
