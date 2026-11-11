@@ -843,7 +843,6 @@ fn a_dismissed_prompt_is_not_reopened_in_its_window(cx: &mut TestAppContext) {
 /// A plugin whose `run-command` spawns the program its args name, with no
 /// args or stdin, and logs what it wrote to stdout; the command fails with
 /// the spawn's error.
-#[cfg(unix)]
 const SPAWN: &str = r#"
 (component $C
   (import "kiln:extension/types@1.0.0" (instance $types
@@ -972,15 +971,12 @@ const SPAWN: &str = r#"
 "#;
 
 #[gpui::test]
-#[cfg(unix)]
 fn a_granted_program_runs_and_an_ungranted_one_is_denied(cx: &mut TestAppContext) {
-    use std::os::unix::fs::PermissionsExt as _;
     let plugins = start(cx);
     let bin = tempfile::tempdir().unwrap();
     for (name, said) in [("greet", "hi"), ("other", "no")] {
-        let path = bin.path().join(name);
-        fs::write(&path, format!("#!/bin/sh\necho {said}\n")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        let echo = format!("echo {said}");
+        write_script(bin.path(), name, &echo, &echo);
     }
     let greet = resolve_program("greet", bin.path().as_os_str()).unwrap();
     let requested: Grants = grants(&["process.spawn:greet"]);
@@ -1006,7 +1002,7 @@ fn a_granted_program_runs_and_an_ungranted_one_is_denied(cx: &mut TestAppContext
     assert_eq!(call("greet"), Ok(Reply::RunCommand(Ok(()))));
     assert_eq!(
         logged(cx),
-        [format!("log {SPAWNER} on plugin {SPAWNER}: hi\n")]
+        [format!("log {SPAWNER} on plugin {SPAWNER}: hi{LINE_END}")]
     );
     // Not granted: denied, and nothing runs.
     let denied = call("other");
@@ -1191,19 +1187,45 @@ fn a_prompt_for_a_replaced_request_records_nothing(cx: &mut TestAppContext) {
     assert!(detail.contains("status"), "{detail}");
 }
 
-/// An executable script `name` in `dir` running `body`, bound as a grant
-/// would bind it.
-#[cfg(unix)]
-fn script(dir: &Path, name: &str, body: &str) -> kiln_plugin::grants::ProgramIdentity {
-    use std::os::unix::fs::PermissionsExt as _;
-    let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+/// Writes the script `name` into `dir`: `sh` after a `#!/bin/sh` line, made executable, on
+/// Unix; `name.cmd` with `cmd` after `@echo off`, with Windows' line ends, on Windows.
+fn write_script(dir: &Path, name: &str, sh: &str, cmd: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = cmd;
+        let path = dir.join(name);
+        fs::write(&path, format!("#!/bin/sh\n{sh}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        let _ = sh;
+        let body: String = cmd.lines().map(|line| format!("{line}\r\n")).collect();
+        fs::write(
+            dir.join(format!("{name}.cmd")),
+            format!("@echo off\r\n{body}"),
+        )
+        .unwrap();
+    }
+}
+
+/// An executable script `name` in `dir`, bound as a grant would bind it.
+fn script(dir: &Path, name: &str, sh: &str, cmd: &str) -> kiln_plugin::grants::ProgramIdentity {
+    write_script(dir, name, sh, cmd);
     resolve_program(name, dir.as_os_str()).unwrap()
 }
 
+/// What a script's `echo` ends its line with.
+const LINE_END: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+/// A `.cmd` sleep of `seconds`: Windows has no `sleep` that runs without a console, so it pings
+/// this machine, a second apart, the first at once.
+fn ping_nap(seconds: u32) -> String {
+    format!("ping -n {} 127.0.0.1 >nul", seconds + 1)
+}
+
 /// The spawning plugin, granted `program`, running.
-#[cfg(unix)]
 fn spawner(
     cx: &mut TestAppContext,
     plugins: &Plugins,
@@ -1226,10 +1248,8 @@ fn spawner(
     loaded_plugin(cx, SPAWNER)
 }
 
-#[cfg(unix)]
 const SPAWNER: &str = "acme.spawn";
 
-#[cfg(unix)]
 fn loaded_plugin(
     cx: &mut TestAppContext,
     id: &str,
@@ -1240,7 +1260,6 @@ fn loaded_plugin(
     })
 }
 
-#[cfg(unix)]
 fn spawn(
     plugin: &std::sync::Mutex<super::HostedPlugin>,
     program: &str,
@@ -1252,29 +1271,36 @@ fn spawn(
 }
 
 #[gpui::test]
-#[cfg(unix)]
 fn a_granted_program_that_outlasts_the_call_deadline_completes(cx: &mut TestAppContext) {
     let plugins = start_with_call_deadline(cx, CALL_DEADLINE);
     let bin = tempfile::tempdir().unwrap();
     let plugin = spawner(
         cx,
         &plugins,
-        script(bin.path(), "slow", "sleep 0.3\necho hi"),
+        script(
+            bin.path(),
+            "slow",
+            "sleep 0.3\necho hi",
+            &format!("{}\necho hi", ping_nap(1)),
+        ),
     );
     // The run is longer than the call's 100ms deadline, which doesn't count it.
     assert_eq!(spawn(&plugin, "slow"), Ok(Reply::RunCommand(Ok(()))));
     assert_eq!(
         logged(cx),
-        [format!("log {SPAWNER} on plugin {SPAWNER}: hi\n")]
+        [format!("log {SPAWNER} on plugin {SPAWNER}: hi{LINE_END}")]
     );
 }
 
 #[gpui::test]
-#[cfg(unix)]
 fn a_spawn_in_flight_ends_before_the_plugin_unloads(cx: &mut TestAppContext) {
     let plugins = start(cx);
     let bin = tempfile::tempdir().unwrap();
-    let plugin = spawner(cx, &plugins, script(bin.path(), "nap", "exec sleep 1"));
+    let plugin = spawner(
+        cx,
+        &plugins,
+        script(bin.path(), "nap", "exec sleep 1", &ping_nap(1)),
+    );
 
     // A preview turned off mid-spawn unloads the plugin once the run ends.
     let started = Instant::now();
@@ -1293,16 +1319,19 @@ fn a_spawn_in_flight_ends_before_the_plugin_unloads(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg(unix)]
 fn a_reauthorized_program_reloads_the_plugin(cx: &mut TestAppContext) {
     let plugins = start(cx);
     let bin = tempfile::tempdir().unwrap();
-    let plugin = spawner(cx, &plugins, script(bin.path(), "greet", "echo hi"));
+    let plugin = spawner(
+        cx,
+        &plugins,
+        script(bin.path(), "greet", "echo hi", "echo hi"),
+    );
     assert_eq!(spawn(&plugin, "greet"), Ok(Reply::RunCommand(Ok(()))));
 
     // The program changes: its grant is suspended, and the plugin asks
     // again, still running.
-    let changed = script(bin.path(), "greet", "echo hello there");
+    let changed = script(bin.path(), "greet", "echo hello there", "echo hello there");
     let refused = spawn(&plugin, "greet");
     assert!(
         matches!(&refused, Ok(Reply::RunCommand(Err(Error::Denied(_))))),
@@ -1331,19 +1360,17 @@ fn a_reauthorized_program_reloads_the_plugin(cx: &mut TestAppContext) {
     assert_eq!(spawn(&plugin, "greet"), Ok(Reply::RunCommand(Ok(()))));
     assert_eq!(
         logged(cx).last().unwrap(),
-        &format!("log {SPAWNER} on plugin {SPAWNER}: hello there\n")
+        &format!("log {SPAWNER} on plugin {SPAWNER}: hello there{LINE_END}")
     );
 }
 
 /// The napping plugin's id.
-#[cfg(unix)]
 const NAPPER: &str = "acme.napper";
 
 /// A plugin that subscribes to `buffer-opened` in its `init`. Its handler
 /// runs the granted program `nap`, then reads the opened buffer, logging its
 /// text, and edits it to put an `X` first, logging `edited`; a failed step
 /// logs `failed` at `error` and stops.
-#[cfg(unix)]
 const NAPPER_WAT: &str = r#"
 (component $C
   (import "kiln:extension/types@1.0.0" (instance $types
@@ -1534,8 +1561,7 @@ const NAPPER_WAT: &str = r#"
 /// An event handler's call deadline doesn't count the time its program
 /// ran, on the buffers either: after a process longer than the deadline it
 /// reads its buffer and edits it.
-// Its program is a `/bin/sh` script, as `script` writes one.
-#[cfg(unix)]
+// Its program is a script, as `script` writes one.
 #[gpui::test]
 fn an_event_handler_edits_its_buffer_after_a_slow_process(cx: &mut TestAppContext) {
     // The deadline only has to be shorter than the process. It also bounds
@@ -1545,7 +1571,7 @@ fn an_event_handler_edits_its_buffer_after_a_slow_process(cx: &mut TestAppContex
     let call_deadline = Duration::from_secs(2);
     let plugins = start_with_call_deadline(cx, call_deadline);
     let bin = tempfile::tempdir().unwrap();
-    let nap = script(bin.path(), "nap", "sleep 2.5");
+    let nap = script(bin.path(), "nap", "sleep 2.5", &ping_nap(3));
     let capabilities = ["process.spawn:nap", "buffer.read", "buffer.write"];
     plugins
         .store()
