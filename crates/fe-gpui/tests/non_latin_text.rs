@@ -548,7 +548,7 @@ fn rtl_hit_testing_a_mixed_row_lands_on_char_boundaries() {
             let full = format!("{RUST_RTL}\nnext");
             let (view, cx) = editor(&full, &[0], false, cx);
             let left = caret_x(&view, 0, cx);
-            let right = caret_x(&view, RUST_RTL.len(), cx);
+            let right = left + line_width(RUST_RTL, cx);
             let mut x = left - 10.;
             let mut step = 0;
             while x < right + 20. {
