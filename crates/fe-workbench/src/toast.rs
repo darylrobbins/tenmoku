@@ -479,9 +479,9 @@ impl ToastLayer {
         let close = IconButton::new(
             SharedString::from(format!("toast-close-{ix}")),
             Icon::X,
+            "Dismiss",
             &fe_ui::ui_theme(cx),
         )
-        .name("Dismiss")
         .on_click({
             let layer = layer.clone();
             move |_, _, cx| {

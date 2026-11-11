@@ -5,13 +5,13 @@ use std::sync::Arc;
 use gpui::{
     AnyElement, App, AppContext as _, ClickEvent, Context, ElementId, Entity, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, RenderOnce, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
-    svg,
+    StatefulInteractiveElement, Styled as _, Window, div, prelude::FluentBuilder as _, px, svg,
 };
+use kiln_l10n::tr;
 
 use crate::{
-    ActiveTheme as _, ClickHandler, Icon, Tokens, Tooltip, UI_LABEL, UiTheme, height, radius,
-    space, ui_theme,
+    ActiveTheme as _, ClickHandler, Icon, Role, Tokens, Tooltip, UI_LABEL, UiTheme, height, node,
+    radius, space, ui_theme,
 };
 
 /// What a status bar entry's icon says, which picks its colour: the
@@ -83,7 +83,8 @@ const PILL_HEIGHT: gpui::Pixels = px(16.);
 /// The status bar: a full-width row along the window's bottom edge,
 /// [`height::STATUS_BAR`] tall on `surface.chrome` with a 1 px line on top,
 /// its text the UI label role (12/16, 500), its left children from the left
-/// edge and its right children against the right edge.
+/// edge and its right children against the right edge. It's the window's
+/// [`StatusBarFrame::region`].
 #[derive(IntoElement)]
 pub struct StatusBarFrame {
     left: Vec<AnyElement>,
@@ -100,6 +101,18 @@ impl StatusBarFrame {
         }
     }
 
+    /// `element`, whatever stands in the status bar's place, as the
+    /// window's `Region` landmark "Status bar": a `Region`, not a `Status`,
+    /// because macOS lists only landmark subroles in VoiceOver's Landmarks
+    /// rotor, and a `Status` is none. The element needs an id.
+    pub fn region<E: StatefulInteractiveElement + gpui::Element>(
+        element: E,
+        window: &Window,
+        cx: &mut App,
+    ) -> E {
+        node(element, window, cx, Role::Region, tr!("kiln-ui-status-bar"))
+    }
+
     pub fn left(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self {
         self.left
             .extend(children.into_iter().map(IntoElement::into_any_element));
@@ -114,10 +127,11 @@ impl StatusBarFrame {
 }
 
 impl RenderOnce for StatusBarFrame {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let colors = &cx.theme().colors;
         let side = || div().flex().items_center().h_full();
-        div()
+        let bar = div()
+            .id("status-bar")
             .debug_selector(|| "status-bar".into())
             .flex()
             .flex_none()
@@ -134,7 +148,8 @@ impl RenderOnce for StatusBarFrame {
             .line_height(UI_LABEL.line_height)
             .font_weight(FontWeight(f32::from(UI_LABEL.weight)))
             .child(side().min_w_0().overflow_hidden().children(self.left))
-            .child(side().flex_none().children(self.right))
+            .child(side().flex_none().children(self.right));
+        Self::region(bar, window, cx)
     }
 }
 

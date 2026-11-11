@@ -3,10 +3,14 @@
 use gpui::{
     AnyView, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
     Pixels, RenderOnce, Role, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Toggled, Window, deferred, div, prelude::FluentBuilder as _, px, svg,
+    Styled as _, Window, deferred, div, prelude::FluentBuilder as _, px, svg,
 };
+use kiln_l10n::tr;
 
-use crate::{ActiveTheme as _, BADGE_OVERHANG, BADGE_RING, Badge, ClickHandler, Icon, UiTheme};
+use crate::{
+    ActiveTheme as _, BADGE_OVERHANG, BADGE_RING, Badge, ClickHandler, Icon, States, UiTheme,
+    controls::assert_named, node, node_with,
+};
 
 /// The activity rail's width, and each of its buttons' width.
 pub const RAIL_WIDTH: Pixels = px(42.);
@@ -35,7 +39,8 @@ type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView>;
 /// A full-height vertical strip of [`RailButton`]s, a top group and a
 /// bottom one, on the window's chrome, with a 1 px line on the edge facing
 /// its panel: its right on the window's left edge
-/// ([`ActivityRail::on_left`]), else its left.
+/// ([`ActivityRail::on_left`]), else its left. A screen reader finds it as
+/// the `Navigation` landmark "Activity bar".
 #[derive(IntoElement)]
 pub struct ActivityRail {
     id: ElementId,
@@ -89,7 +94,7 @@ impl ActivityRail {
 }
 
 impl RenderOnce for ActivityRail {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let colors = &cx.theme().colors;
         let on_left = self.on_left;
         // Drawn under the buttons, so the highlight's bar covers it.
@@ -107,7 +112,7 @@ impl RenderOnce for ActivityRail {
             .w(px(1.))
             .bg(colors.border.default);
         let side = move |button: RailButton| button.on_left(on_left);
-        div()
+        let rail = div()
             .id(self.id)
             .relative()
             .flex_none()
@@ -129,7 +134,14 @@ impl RenderOnce for ActivityRail {
                             .child(div().flex_1().min_h_0())
                             .children(self.footer.into_iter().map(side))
                     }),
-            )
+            );
+        node(
+            rail,
+            window,
+            cx,
+            Role::Navigation,
+            tr!("kiln-ui-activity-bar"),
+        )
     }
 }
 
@@ -138,6 +150,11 @@ impl RenderOnce for ActivityRail {
 /// `tab.active_text` on a tinted tab that runs to the rail's panel-facing
 /// edge, with a 2 px `accent.base` bar on that edge. A [`Badge`] marks its
 /// icon's bottom-right corner.
+///
+/// A screen reader hears it as a toggle `Button` named by
+/// [`RailButton::name`], on while highlighted, with its
+/// [`RailButton::shortcut`]. Every rail button needs a name: drawing one
+/// without is a debug assertion.
 #[derive(IntoElement)]
 pub struct RailButton {
     id: ElementId,
@@ -145,6 +162,7 @@ pub struct RailButton {
     highlighted: bool,
     on_left: bool,
     name: Option<SharedString>,
+    shortcut: Option<SharedString>,
     badge: Option<Badge>,
     on_click: Option<ClickHandler>,
     tooltip: Option<TooltipBuilder>,
@@ -163,6 +181,7 @@ impl RailButton {
             highlighted: false,
             on_left: false,
             name: None,
+            shortcut: None,
             badge: None,
             on_click: None,
             tooltip: None,
@@ -185,6 +204,13 @@ impl RailButton {
     /// Its accessible name, such as the panel it shows.
     pub fn name(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// The key that shows its panel, as a label such as `⌘1`, told to a
+    /// screen reader.
+    pub fn shortcut(mut self, shortcut: impl Into<SharedString>) -> Self {
+        self.shortcut = Some(shortcut.into());
         self
     }
 
@@ -211,7 +237,8 @@ impl RailButton {
 }
 
 impl RenderOnce for RailButton {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        assert_named(self.name.as_ref(), kiln_l10n::verbatim!("RailButton::new"));
         let colors = &cx.theme().colors;
         let color = if self.highlighted {
             colors.tab.active_text
@@ -276,11 +303,9 @@ impl RenderOnce for RailButton {
                 .child(badge.surface(surface));
             deferred(host)
         });
-        div()
+        let button = div()
             .id(self.id)
-            .role(Role::Button)
-            .aria_toggled(Toggled::from(self.highlighted))
-            .when_some(self.name, |button, name| button.aria_label(name))
+            .when_some(self.shortcut, |button, key| button.aria_keyshortcuts(key))
             .relative()
             .flex()
             .flex_none()
@@ -308,6 +333,12 @@ impl RenderOnce for RailButton {
             .when_some(self.on_click, |button, on_click| button.on_click(on_click))
             .when_some(self.tooltip, |button, tooltip| {
                 button.tooltip(move |window, cx| tooltip(window, cx))
-            })
+            });
+        let states = States {
+            toggled: Some(self.highlighted),
+            ..States::default()
+        };
+        let name = self.name.unwrap_or_default();
+        node_with(button, window, cx, Role::Button, name, states)
     }
 }

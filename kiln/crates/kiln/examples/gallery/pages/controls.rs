@@ -239,8 +239,7 @@ impl ControlsPage {
             .gap_1()
             .items_center()
             .child(
-                ToggleButton::new("match-case", "Aa", &ui)
-                    .name("Match Case")
+                ToggleButton::new("match-case", "Aa", "Match Case", &ui)
                     .shortcut("⌥⌘C")
                     .on(self.match_case)
                     .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
@@ -249,8 +248,7 @@ impl ControlsPage {
                     })),
             )
             .child(
-                ToggleButton::new("whole-word", "ab", &ui)
-                    .name("Whole Word")
+                ToggleButton::new("whole-word", "ab", "Whole Word", &ui)
                     .on(self.whole_word)
                     .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
                         page.whole_word = !page.whole_word;
@@ -258,16 +256,11 @@ impl ControlsPage {
                     })),
             )
             .child(
-                ToggleButton::new("regex-disabled-on", ".*", &ui)
-                    .name("Regex")
+                ToggleButton::new("regex-disabled-on", ".*", "Regex", &ui)
                     .on(true)
                     .disabled(true),
             )
-            .child(
-                ToggleButton::new("regex-disabled-off", ".*", &ui)
-                    .name("Regex")
-                    .disabled(true),
-            )
+            .child(ToggleButton::new("regex-disabled-off", ".*", "Regex", &ui).disabled(true))
     }
 
     fn segmented(&self, cx: &mut Context<Self>) -> Div {

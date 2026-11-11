@@ -722,8 +722,7 @@ impl DiffView {
             None => tr!("gpui-diff-changes", count = count),
         });
         let button = |id: &'static str, icon, title: SharedString, command: &'static str| {
-            IconButton::new(id, icon, &ui)
-                .name(title.clone())
+            IconButton::new(id, icon, title.clone(), &ui)
                 .disabled(count == 0)
                 .tooltip(move |_, cx| {
                     let shortcut = key_label(command, cx);

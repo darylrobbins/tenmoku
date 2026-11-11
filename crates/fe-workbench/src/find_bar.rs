@@ -784,8 +784,7 @@ impl FindBar {
                 div()
                     .debug_selector(move || format!("find-toggle:{ix}"))
                     .child(
-                        ToggleButton::icon_only(("find-option", ix), icon)
-                            .name(name)
+                        ToggleButton::icon_only(("find-option", ix), icon, name)
                             .on(on)
                             .on_click(cx.listener(move |pane, _, window, cx| {
                                 pane.run_find(op, window, cx)
@@ -793,12 +792,15 @@ impl FindBar {
                     )
             });
         let in_selection = div().debug_selector(|| "find-in-selection".into()).child(
-            ToggleButton::icon_only("find-in-selection", Icon::SquareDashedText)
-                .name(tr!("workbench-find-in-selection"))
-                .on(self.scope.is_some())
-                .on_click(cx.listener(|pane, _, window, cx| {
-                    pane.run_find(FindOp::ToggleInSelection, window, cx)
-                })),
+            ToggleButton::icon_only(
+                "find-in-selection",
+                Icon::SquareDashedText,
+                tr!("workbench-find-in-selection"),
+            )
+            .on(self.scope.is_some())
+            .on_click(cx.listener(|pane, _, window, cx| {
+                pane.run_find(FindOp::ToggleInSelection, window, cx)
+            })),
         );
         let steps = [
             (
@@ -816,7 +818,7 @@ impl FindBar {
         ]
         .map(|(op, icon, id, name)| {
             div().debug_selector(move || id.into()).child(
-                IconButton::new(id, icon, ui).name(name).on_click(
+                IconButton::new(id, icon, name, ui).on_click(
                     cx.listener(move |pane, _, window, cx| pane.run_find(op, window, cx)),
                 ),
             )
@@ -849,9 +851,9 @@ impl FindBar {
                     } else {
                         Icon::ChevronRight
                     },
+                    tr!("workbench-find-toggle-replace"),
                     ui,
                 )
-                .name(tr!("workbench-find-toggle-replace"))
                 .selected(self.replacing)
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.run_find(FindOp::ToggleReplace, window, cx)
@@ -891,13 +893,17 @@ impl FindBar {
             .children(vim_command);
         let replace_row = self.replacing.then(|| {
             let preserve_case = div().debug_selector(|| "find-preserve-case".into()).child(
-                ToggleButton::new("find-preserve-case", verbatim_label("AB"), ui)
-                    .name(tr!("workbench-find-preserve-case"))
-                    .on(self.preserve_case)
-                    .on_click(cx.listener(|pane, _, _, cx| {
-                        pane.update_find(|bar, _, _| bar.toggle_preserve_case(), cx);
-                        cx.notify();
-                    })),
+                ToggleButton::new(
+                    "find-preserve-case",
+                    verbatim_label("AB"),
+                    tr!("workbench-find-preserve-case"),
+                    ui,
+                )
+                .on(self.preserve_case)
+                .on_click(cx.listener(|pane, _, _, cx| {
+                    pane.update_find(|bar, _, _| bar.toggle_preserve_case(), cx);
+                    cx.notify();
+                })),
             );
             let buttons = [
                 (

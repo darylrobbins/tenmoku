@@ -462,8 +462,7 @@ impl RunWidget {
         };
         #[cfg(test)]
         crate::title_bar::DRAWN.with_borrow_mut(|drawn| drawn.push((id, title.clone())));
-        let action = IconButton::new(id, icon, &fe_ui::ui_theme(cx))
-            .name(title.clone())
+        let action = IconButton::new(id, icon, title.clone(), &fe_ui::ui_theme(cx))
             .tooltip(tooltip(title, None))
             .on_click(move |_, window, cx| {
                 widget

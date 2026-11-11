@@ -878,11 +878,15 @@ impl ProblemsPanel {
             );
         let filters = Filter::ALL.map(|filter| {
             let (count, severity) = (counts[filter as usize], filter.severity());
-            let toggle = ToggleButton::new((FILTER_ID, filter as usize), count.to_string(), &ui)
-                .glyph(severity_glyph(severity), self.color(severity))
-                .name(filter.name(count))
-                .on(!self.off[filter as usize])
-                .on_click(cx.listener(move |panel, _, _, cx| panel.toggle_filter(filter, cx)));
+            let toggle = ToggleButton::new(
+                (FILTER_ID, filter as usize),
+                count.to_string(),
+                filter.name(count),
+                &ui,
+            )
+            .glyph(severity_glyph(severity), self.color(severity))
+            .on(!self.off[filter as usize])
+            .on_click(cx.listener(move |panel, _, _, cx| panel.toggle_filter(filter, cx)));
             div()
                 .flex_none()
                 .debug_selector(move || filter_selector(filter))

@@ -16,15 +16,18 @@ use gpui::{
     Action, App, AppContext as _, Bounds, ClickEvent, CursorStyle, Div, Element, ElementId,
     FocusHandle, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, Interactivity,
     IntoElement, LayoutId, MouseButton, ParentElement as _, Pixels, Refineable as _, RenderOnce,
-    Role, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Toggled,
-    Window, accesskit, div, prelude::FluentBuilder as _, px, svg,
+    Role, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Window,
+    accesskit, div, prelude::FluentBuilder as _, px, svg,
 };
 
 use kiln_command::Source;
 use kiln_l10n::Text;
 use kiln_platform::action_dispatch::dispatch_action;
 
-use crate::{ActiveTheme as _, FOCUS_RING, Icon, Tokens, Tooltip, height, radius, ui_theme};
+use crate::{
+    ActiveTheme as _, FOCUS_RING, Icon, States, Tokens, Tooltip, height, node_with, radius,
+    ui_theme,
+};
 
 type ChangeHandler<T> = Rc<dyn Fn(&T, &mut Window, &mut App)>;
 type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -255,6 +258,26 @@ pub(crate) fn assert_named(name: Option<&SharedString>, what: &str) {
         name.is_some_and(|name| !name.trim().is_empty()),
         "an icon-only button needs a name: {what}(..).name(..)"
     );
+}
+
+/// A control's `base` with its `role` and `states`, and its `name` if it
+/// has one ([`node_with`]). Without one, the role and states alone, so a
+/// label the caller gave through `aria_label` stands: GPUI keeps it where
+/// the control can't read it.
+fn named(
+    base: Stateful<Div>,
+    window: &Window,
+    cx: &mut App,
+    role: Role,
+    name: Option<SharedString>,
+    states: States,
+) -> Stateful<Div> {
+    match name {
+        Some(name) => node_with(base, window, cx, role, name, states),
+        None => base
+            .role(role)
+            .when_some(states.toggled, |base, on| base.aria_toggled(on.into())),
+    }
 }
 
 /// Applies `own` (the control's look) to `base`, then the styles the
@@ -583,8 +606,6 @@ impl Button {
                         .active(move |style| style.bg(look.pressed))
                 })
         })
-        .role(Role::Button)
-        .when_some(name, |base, name| base.aria_label(name))
         .when_some(self.shortcut, |base, key| base.aria_keyshortcuts(key))
         .when_some(tooltip, |base, tooltip| base.tooltip(tooltip))
         .children(self.icon.map(|icon| {
@@ -603,8 +624,9 @@ impl Button {
         .when_some(self.on_click.filter(|_| !disabled), |base, on_click| {
             base.on_click(move |event, window, cx| on_click(event, window, cx))
         });
+        let base = with_key_focus(base, focus, look.radius, px(1.), &c);
         Control::new(
-            with_key_focus(base, focus, look.radius, px(1.), &c),
+            named(base, window, cx, Role::Button, name, States::default()),
             disabled,
         )
     }
@@ -712,7 +734,8 @@ impl Checkbox {
                 )
             });
         ToggleRow {
-            base: self.base.role(Role::CheckBox),
+            base: self.base,
+            role: Role::CheckBox,
             label: self.label,
             name: self.name,
             value: checked,
@@ -820,7 +843,8 @@ impl Switch {
             .when(on, |track| track.justify_end())
             .child(div().size(px(12.)).rounded_full().bg(thumb));
         ToggleRow {
-            base: self.base.role(Role::Switch),
+            base: self.base,
+            role: Role::Switch,
             label: self.label,
             name: self.name,
             value: on,
@@ -835,6 +859,7 @@ impl Switch {
 /// row clickable.
 struct ToggleRow {
     base: Stateful<Div>,
+    role: Role,
     label: Option<SharedString>,
     name: Option<SharedString>,
     value: bool,
@@ -865,16 +890,16 @@ impl ToggleRow {
                 .when(disabled, |base| base.opacity(DISABLED_OPACITY))
                 .when(!disabled, |base| base.cursor(CursorStyle::PointingHand))
         })
-        .aria_toggled(Toggled::from(value))
-        .when_some(name, |base, name| base.aria_label(name))
         .child(control)
         .children(self.label)
         .when_some(self.on_change.filter(|_| !disabled), |base, on_change| {
             base.on_click(move |_, window, cx| on_change(&!value, window, cx))
         });
-        Control::new(
-            with_key_focus(base, focus, radius::CONTROL, px(0.), c),
-            disabled,
-        )
+        let base = with_key_focus(base, focus, radius::CONTROL, px(0.), c);
+        let states = States {
+            toggled: Some(value),
+            ..States::default()
+        };
+        Control::new(named(base, window, cx, self.role, name, states), disabled)
     }
 }

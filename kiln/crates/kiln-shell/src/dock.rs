@@ -58,11 +58,11 @@ use std::{
 
 use gpui::{
     Anchor, AnyElement, AnyEntity, AnyView, App, AppContext as _, Bounds, Context, CursorStyle,
-    DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
+    Div, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    ParentElement as _, Pixels, Point, Render, ScrollHandle, SharedString, Size,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, WindowId, anchored, canvas,
-    deferred, div, prelude::FluentBuilder as _, px,
+    ParentElement as _, Pixels, Point, Render, RenderOnce, ScrollHandle, SharedString, Size,
+    Stateful, StatefulInteractiveElement as _, Styled as _, Subscription, Window, WindowId,
+    anchored, canvas, deferred, div, prelude::FluentBuilder as _, px,
 };
 use kiln_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
 use kiln_core::{shortcut_label, shortcuts};
@@ -70,7 +70,7 @@ use kiln_l10n::tr;
 use kiln_platform::{command_actions::dispatch_invocation, keys};
 use kiln_ui::{
     ActiveTheme as _, ActivityRail, Badge, BadgeTone, Icon, IconButton, MenuEntry, MenuPanel,
-    RAIL_WIDTH, RailButton, TAB_HEIGHT, Tab, TabBar, Tooltip, UI_HEADING, ui_theme,
+    RAIL_WIDTH, RailButton, Role, TAB_HEIGHT, Tab, TabBar, Tooltip, UI_HEADING, ui_theme,
 };
 
 use crate::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
@@ -1319,14 +1319,14 @@ impl DockState {
         let contexts = self.shortcut_contexts.clone();
         let last_tooltip = self.drawn.tooltip.clone();
         let title = name.clone();
-        IconButton::new(SharedString::from(id.to_owned()), icon, &ui_theme(cx))
-            .name(name)
-            .tooltip(move |_, cx| {
+        IconButton::new(SharedString::from(id.to_owned()), icon, name, &ui_theme(cx)).tooltip(
+            move |_, cx| {
                 let shortcut = command.and_then(|command| Self::shortcut(&contexts, command, cx));
                 let tooltip = Tooltip::new(title.clone(), shortcut, &ui_theme(cx));
                 last_tooltip.replace(Some(tooltip.text()));
                 cx.new(|_| tooltip).into()
-            })
+            },
+        )
     }
 
     /// The title row's pane controls, right-aligned: `panel`'s actions, ⋯
@@ -1543,8 +1543,10 @@ impl DockState {
         });
         let contexts = self.shortcut_contexts.clone();
         let last_tooltip = self.drawn.tooltip.clone();
+        let shortcut = Self::shortcut(&self.shortcut_contexts, command, cx);
         RailButton::new(("dock-rail-action", ix), action.icon, &ui_theme(cx))
             .name(action.title.clone())
+            .when_some(shortcut, RailButton::shortcut)
             .highlighted(highlighted)
             .when_some(badge, RailButton::badge)
             .on_click(cx.listener(move |view, _, window, cx| {
@@ -1573,8 +1575,11 @@ impl DockState {
         });
         let contexts = self.shortcut_contexts.clone();
         let last_tooltip = self.drawn.tooltip.clone();
+        let shortcut =
+            command.and_then(|command| Self::shortcut(&self.shortcut_contexts, command, cx));
         RailButton::new(("dock-rail", ix), icon, &ui_theme(cx))
             .name(title.clone())
+            .when_some(shortcut, RailButton::shortcut)
             .highlighted(self.rail_highlighted() == Some(id))
             .when_some(badge, RailButton::badge)
             .on_click(cx.listener(move |view, _, window, cx| view.rail_clicked(id, window, cx)))
@@ -1625,12 +1630,13 @@ impl DockState {
         self.drawn.tabs.borrow_mut().clear();
         // A tabbed dock's header is its tab strip and the controls, whole.
         let body = active.filter(|_| self.visible).map(|panel| {
+            let title = panel.title(cx);
             let controls = self.controls(panel, cx);
             let header = match self.tabs {
                 true => Header::Tabs(self.tab_row(panel, controls, cx)),
-                false => Header::Title(Self::heading(panel.title(cx), cx), controls),
+                false => Header::Title(Self::heading(title.clone(), cx), controls),
             };
-            (panel.to_any_view(), header)
+            (panel.to_any_view(), title, header)
         });
         let ui = &ui_theme(cx);
         // The panel's one heading, then its pane controls.
@@ -1673,7 +1679,7 @@ impl DockState {
                 .flex()
                 .flex_col()
                 .track_scroll(&self.drawn.layout);
-            let Some((view, header)) = body else {
+            let Some((view, _, header)) = body else {
                 return match self.rail_hidden {
                     true => dock.flex_none().into_any_element(),
                     false => dock.flex_none().child(rail).into_any_element(),
@@ -1717,6 +1723,11 @@ impl DockState {
                 .child(title)
                 .child(div().flex_1().min_h_0().flex().child(view))
                 .child(self.edge_handle(cx));
+            let column = Landmark {
+                element: column,
+                role: Role::Region,
+                label: tr!("kiln-shell-dock-panel"),
+            };
             return dock
                 .flex_shrink(1.)
                 .min_h(min)
@@ -1737,7 +1748,7 @@ impl DockState {
             .children(buttons)
             .footer(actions)
             .track(&self.drawn.rail);
-        let column = body.map(|(view, header)| {
+        let column = body.map(|(view, label, header)| {
             let title = match header {
                 Header::Tabs(tabs) => tabs,
                 Header::Title(heading, controls) => title_row(heading, controls),
@@ -1749,7 +1760,7 @@ impl DockState {
                     row.border_l_1()
                 }
             });
-            div()
+            let column = div()
                 .id("dock-column")
                 .relative()
                 .w(size)
@@ -1761,7 +1772,12 @@ impl DockState {
                 .track_scroll(&self.drawn.column)
                 .child(title)
                 .child(div().flex_1().min_h_0().flex().child(view))
-                .child(self.edge_handle(cx))
+                .child(self.edge_handle(cx));
+            Landmark {
+                element: column,
+                role: Role::Complementary,
+                label,
+            }
         });
         let id = if left { "dock-left" } else { "dock" };
         let shown = column.is_some();
@@ -1783,6 +1799,22 @@ impl DockState {
             .children(column)
             .when(!self.rail_hidden, |dock| dock.child(rail))
             .into_any_element()
+    }
+}
+
+/// A dock's panel column as a landmark: `element` with `role` and `label`
+/// ([`kiln_ui::node`]), which needs the window that [`DockState::render`]
+/// isn't given.
+#[derive(IntoElement)]
+struct Landmark {
+    element: Stateful<Div>,
+    role: Role,
+    label: SharedString,
+}
+
+impl RenderOnce for Landmark {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        kiln_ui::node(self.element, window, cx, self.role, self.label)
     }
 }
 

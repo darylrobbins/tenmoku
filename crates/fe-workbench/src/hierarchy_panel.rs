@@ -799,8 +799,7 @@ impl Render for HierarchyPanel {
                 .px_2()
                 .py_1()
                 .child(
-                    IconButton::new("call-hierarchy-direction", icon, &ui)
-                        .name(mode.other_label())
+                    IconButton::new("call-hierarchy-direction", icon, mode.other_label(), &ui)
                         .on_click(
                             cx.listener(|panel, _, window, cx| panel.toggle_direction(window, cx)),
                         ),

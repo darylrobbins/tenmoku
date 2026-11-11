@@ -38,9 +38,10 @@ use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
 use fe_gpui::{EditorView, commands::RunCommand, pane_item::status as built_in};
+use fe_ui::StatusBarFrame;
 use gpui::{
-    App, Context, Entity, Global, IntoElement, Render, SharedString, Subscription, WeakEntity,
-    Window,
+    App, Context, Entity, Global, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Subscription, WeakEntity, Window, div,
 };
 use kiln_l10n::{tr, verbatim};
 use kiln_shell::{
@@ -232,14 +233,16 @@ impl StatusBar {
 }
 
 impl Render for StatusBar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(line) = self.render_line(cx) {
             #[cfg(test)]
             {
                 self.renders += 1;
                 self.drawn.clear();
             }
-            return line.into_any_element();
+            // In the bar's place, so in its landmark.
+            let line = div().id("status-bar-line").w_full().child(line);
+            return StatusBarFrame::region(line, window, cx).into_any_element();
         }
         let items = self.items(cx);
         #[cfg(test)]

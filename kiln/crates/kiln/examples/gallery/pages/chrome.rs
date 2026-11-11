@@ -122,6 +122,7 @@ impl Render for ChromePage {
 
         let rail_buttons = RAIL.iter().enumerate().map(|(ix, (icon, label))| {
             RailButton::new(("rail", ix), *icon, &theme)
+                .name(*label)
                 .highlighted(ix == self.rail)
                 .tooltip(tooltip(label, None))
                 .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
@@ -145,20 +146,17 @@ impl Render for ChromePage {
             .gap_2()
             .items_center()
             .child(
-                IconButton::new("back", Icon::ArrowLeft, &theme)
-                    .name("Back")
+                IconButton::new("back", Icon::ArrowLeft, "Back", &theme)
                     .tooltip(tooltip("Back", Some("Alt+Left")))
                     .on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.did("Back", cx))),
             )
             .child(
-                IconButton::new("forward", Icon::ArrowRight, &theme)
-                    .name("Forward")
+                IconButton::new("forward", Icon::ArrowRight, "Forward", &theme)
                     .disabled(true)
                     .tooltip(tooltip("Forward (disabled)", None)),
             )
             .child(
-                IconButton::new("split", Icon::Columns2, &theme)
-                    .name("Split Right")
+                IconButton::new("split", Icon::Columns2, "Split Right", &theme)
                     .tooltip(tooltip("Split Right", None))
                     .on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.did("Split", cx))),
             )
@@ -176,7 +174,7 @@ impl Render for ChromePage {
         let toggles = h_flex()
             .gap_2()
             .child(
-                ToggleButton::new("match-case", "Aa", &theme)
+                ToggleButton::new("match-case", "Aa", "Match Case", &theme)
                     .on(self.match_case)
                     .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
                         page.match_case = !page.match_case;
@@ -184,7 +182,7 @@ impl Render for ChromePage {
                     })),
             )
             .child(
-                ToggleButton::new("whole-word", "ab", &theme)
+                ToggleButton::new("whole-word", "ab", "Whole Word", &theme)
                     .on(self.whole_word)
                     .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
                         page.whole_word = !page.whole_word;

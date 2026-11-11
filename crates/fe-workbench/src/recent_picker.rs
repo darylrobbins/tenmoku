@@ -382,26 +382,30 @@ impl PickerDelegate for RecentPicker {
         let new_window = (row.folder).then(|| {
             let picker = self.picker.clone();
             let id = SharedString::from(format!("recent-new-window-{ix}"));
-            let button = IconButton::new(id, Icon::Copy, &ui)
-                .name(tr!("workbench-navigation-recent-open-in-new-window"))
-                .tooltip(move |_, cx| {
-                    let tooltip = Tooltip::new(
-                        tr!("workbench-navigation-recent-open-in-new-window"),
-                        None::<SharedString>,
-                        &fe_ui::ui_theme(cx),
-                    );
-                    cx.new(|_| tooltip).into()
-                })
-                .on_click(move |_, window, cx| {
-                    // Not the row's click, which would re-root this window.
-                    cx.stop_propagation();
-                    let Some(picker) = picker.as_ref().and_then(WeakEntity::upgrade) else {
-                        return;
-                    };
-                    picker.update(cx, |picker, cx| {
-                        picker.delegate.open_in_new_window(ix, window, cx)
-                    });
+            let button = IconButton::new(
+                id,
+                Icon::Copy,
+                tr!("workbench-navigation-recent-open-in-new-window"),
+                &ui,
+            )
+            .tooltip(move |_, cx| {
+                let tooltip = Tooltip::new(
+                    tr!("workbench-navigation-recent-open-in-new-window"),
+                    None::<SharedString>,
+                    &fe_ui::ui_theme(cx),
+                );
+                cx.new(|_| tooltip).into()
+            })
+            .on_click(move |_, window, cx| {
+                // Not the row's click, which would re-root this window.
+                cx.stop_propagation();
+                let Some(picker) = picker.as_ref().and_then(WeakEntity::upgrade) else {
+                    return;
+                };
+                picker.update(cx, |picker, cx| {
+                    picker.delegate.open_in_new_window(ix, window, cx)
                 });
+            });
             div().ml_auto().child(button)
         });
         div()

@@ -23,6 +23,7 @@ use gpui::{
     MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity, Window,
     div, px,
 };
+use kiln_l10n::tr;
 
 use crate::{
     TerminalPanel,
@@ -260,13 +261,23 @@ impl TerminalFind {
         }
         let label = self.label(view.map(|view| view.read(cx)));
         let toggles = [
-            (FindOp::ToggleCase, "Aa", self.match_case),
-            (FindOp::ToggleRegex, ".*", self.regex),
+            (
+                FindOp::ToggleCase,
+                "Aa",
+                tr!("workbench-find-match-case"),
+                self.match_case,
+            ),
+            (
+                FindOp::ToggleRegex,
+                ".*",
+                tr!("workbench-find-regex"),
+                self.regex,
+            ),
         ]
         .into_iter()
         .enumerate()
-        .map(|(ix, (op, text, on))| {
-            ToggleButton::new(("terminal-find-option", ix), text, ui)
+        .map(|(ix, (op, text, name, on))| {
+            ToggleButton::new(("terminal-find-option", ix), text, name, ui)
                 .on(on)
                 .on_click(cx.listener(move |panel, _, window, cx| panel.run_find(op, window, cx)))
         });

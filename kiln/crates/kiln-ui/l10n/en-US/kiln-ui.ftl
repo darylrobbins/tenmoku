@@ -16,3 +16,10 @@ kiln-ui-tab-pinned-tooltip = { $label } — { $description }
 # A tooltip's label, then the shortcut that does the same, such as
 # `Search ⇧⌘F`.
 kiln-ui-tooltip-with-shortcut = { $label } { $shortcut }
+
+## Landmarks: the names a screen reader gives the window's regions.
+
+# The activity rail, the strip of buttons that show the panels.
+kiln-ui-activity-bar = Activity bar
+# The status bar along the window's bottom edge.
+kiln-ui-status-bar = Status bar

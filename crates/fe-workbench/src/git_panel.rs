@@ -1018,16 +1018,20 @@ impl GitPanel {
             .children(actions.iter().map(|&action| {
                 let panel = panel.clone();
                 let tooltip = action.tooltip(target);
-                IconButton::new(self.button_id(at, action), action.icon(), &ui)
-                    .name(tooltip.clone())
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| Tooltip::new(tooltip.clone(), None::<&str>, &ui))
-                            .into()
-                    })
-                    .on_click(move |_, window, cx| {
-                        cx.stop_propagation();
-                        (panel.update(cx, |panel, cx| panel.run(target, action, window, cx))).ok();
-                    })
+                IconButton::new(
+                    self.button_id(at, action),
+                    action.icon(),
+                    tooltip.clone(),
+                    &ui,
+                )
+                .tooltip(move |_, cx| {
+                    cx.new(|_| Tooltip::new(tooltip.clone(), None::<&str>, &ui))
+                        .into()
+                })
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    (panel.update(cx, |panel, cx| panel.run(target, action, window, cx))).ok();
+                })
             }))
     }
 

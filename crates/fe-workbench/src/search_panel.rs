@@ -1268,23 +1268,29 @@ impl SearchPanel {
                             .flex_none()
                             .debug_selector(move || format!("search-replace-file:{ix}"))
                             .child(
-                                ToggleButton::new(("search-replace-file", ix), "Replace", &ui)
-                                    .on_click(cx.listener(move |panel, _, _, cx| {
+                                ToggleButton::new(
+                                    ("search-replace-file", ix),
+                                    "Replace",
+                                    kiln_l10n::tr!("workbench-find-replace"),
+                                    &ui,
+                                )
+                                .on_click(cx.listener(
+                                    move |panel, _, _, cx| {
                                         cx.stop_propagation();
                                         on_replace(panel, cx)
-                                    })),
+                                    },
+                                )),
                             )
                     });
                     let dismiss = div()
                         .flex_none()
                         .debug_selector(move || format!("search-dismiss:{ix}"))
                         .child(
-                            ToggleButton::new(("search-dismiss", ix), "×", &ui).on_click(
-                                cx.listener(move |panel, _, _, cx| {
+                            ToggleButton::new(("search-dismiss", ix), "×", "Dismiss", &ui)
+                                .on_click(cx.listener(move |panel, _, _, cx| {
                                     cx.stop_propagation();
                                     on_dismiss(panel, cx)
-                                }),
-                            ),
+                                })),
                         );
                     let chevron = svg()
                         .path(if expanded {
@@ -2016,8 +2022,7 @@ impl SearchPanel {
             .toolbar_buttons(cx)
             .map(|(id, icon, tooltip, enabled, act)| {
                 div().flex_none().debug_selector(move || id.into()).child(
-                    IconButton::new(id, icon, &ui)
-                        .name(tooltip)
+                    IconButton::new(id, icon, tooltip, &ui)
                         .disabled(!enabled)
                         .tooltip(move |_, cx| {
                             cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
@@ -2047,19 +2052,34 @@ impl Render for SearchPanel {
         }
         let ui = fe_ui::ui_theme(cx);
         let toggles = [
-            (SearchOption::Regex, ".*", self.regex),
-            (SearchOption::MatchCase, "Aa", self.match_case),
-            (SearchOption::WholeWord, "ab", self.whole_word),
+            (
+                SearchOption::Regex,
+                ".*",
+                kiln_l10n::tr!("workbench-find-regex"),
+                self.regex,
+            ),
+            (
+                SearchOption::MatchCase,
+                "Aa",
+                kiln_l10n::tr!("workbench-find-match-case"),
+                self.match_case,
+            ),
+            (
+                SearchOption::WholeWord,
+                "ab",
+                kiln_l10n::tr!("workbench-find-whole-word"),
+                self.whole_word,
+            ),
         ]
-        .map(|(option, label, on)| {
-            ToggleButton::new(("search-option", option as usize), label, &ui)
+        .map(|(option, label, name, on)| {
+            ToggleButton::new(("search-option", option as usize), label, name, &ui)
                 .on(on)
                 .on_click(cx.listener(move |panel, _, _, cx| panel.toggle(option, cx)))
         });
         let details_toggle = div()
             .debug_selector(|| "search-details-toggle".into())
             .child(
-                ToggleButton::new("search-details-toggle", "...", &ui)
+                ToggleButton::new("search-details-toggle", "...", "Toggle Search Details", &ui)
                     .on(self.details_shown)
                     .on_click(cx.listener(|panel, _, window, cx| panel.toggle_details(window, cx))),
             );
@@ -2095,9 +2115,9 @@ impl Render for SearchPanel {
                     } else {
                         Icon::ChevronRight
                     },
+                    "Toggle Replace",
                     &ui,
                 )
-                .name("Toggle Replace")
                 .selected(self.replace_shown)
                 .on_click(cx.listener(|panel, _, window, cx| {
                     // Showing replace from the chevron keeps focus where it was.
@@ -2122,11 +2142,16 @@ impl Render for SearchPanel {
                         .pr_1()
                         .debug_selector(|| "search-preserve-case".into())
                         .child(
-                            ToggleButton::new("search-preserve-case", "AB", &ui)
-                                .on(self.preserve_case)
-                                .on_click(
-                                    cx.listener(|panel, _, _, cx| panel.toggle_preserve_case(cx)),
-                                ),
+                            ToggleButton::new(
+                                "search-preserve-case",
+                                "AB",
+                                kiln_l10n::tr!("workbench-find-preserve-case"),
+                                &ui,
+                            )
+                            .on(self.preserve_case)
+                            .on_click(
+                                cx.listener(|panel, _, _, cx| panel.toggle_preserve_case(cx)),
+                            ),
                         ),
                 )
                 .child(
@@ -2134,11 +2159,15 @@ impl Render for SearchPanel {
                         .flex_none()
                         .debug_selector(|| "search-replace-all".into())
                         .child(
-                            ToggleButton::new("search-replace-all", "Replace All", &ui).on_click(
-                                cx.listener(|panel, _, window, cx| {
-                                    panel.confirm_replace_all(window, cx)
-                                }),
-                            ),
+                            ToggleButton::new(
+                                "search-replace-all",
+                                "Replace All",
+                                "Replace All",
+                                &ui,
+                            )
+                            .on_click(cx.listener(
+                                |panel, _, window, cx| panel.confirm_replace_all(window, cx),
+                            )),
                         ),
                 )
         });

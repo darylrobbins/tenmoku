@@ -2915,15 +2915,13 @@ impl Pane {
     ) -> IconButton {
         #[cfg(test)]
         let last_tooltip = self.last_tooltip.clone();
-        IconButton::new(id, icon, ui)
-            .name(tr!(title))
-            .tooltip(move |_, cx| {
-                let shortcut = command.and_then(|command| pane_toolbar::shortcut(command, cx));
-                let tooltip = Tooltip::new(tr!(title), shortcut, &fe_ui::ui_theme(cx));
-                #[cfg(test)]
-                last_tooltip.replace(Some(tooltip.text()));
-                cx.new(|_| tooltip).into()
-            })
+        IconButton::new(id, icon, tr!(title), ui).tooltip(move |_, cx| {
+            let shortcut = command.and_then(|command| pane_toolbar::shortcut(command, cx));
+            let tooltip = Tooltip::new(tr!(title), shortcut, &fe_ui::ui_theme(cx));
+            #[cfg(test)]
+            last_tooltip.replace(Some(tooltip.text()));
+            cx.new(|_| tooltip).into()
+        })
     }
 
     /// The path crumbs of the file being read or that failed to be read,

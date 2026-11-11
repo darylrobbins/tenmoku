@@ -839,14 +839,18 @@ impl TerminalPanel {
                 #[cfg(test)]
                 self.drawn_tabs.push((label.clone(), bg));
                 let group = SharedString::from(format!("terminal-tab-{id}"));
-                let kill = IconButton::new(format!("terminal-tab-close-{id}"), Icon::X, &ui)
-                    .name("Kill Terminal")
-                    .on_click(cx.listener(move |panel, _, window, cx| {
-                        cx.stop_propagation();
-                        if let Some(ix) = panel.position(id) {
-                            panel.remove(ix, window, cx);
-                        }
-                    }));
+                let kill = IconButton::new(
+                    format!("terminal-tab-close-{id}"),
+                    Icon::X,
+                    "Kill Terminal",
+                    &ui,
+                )
+                .on_click(cx.listener(move |panel, _, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(ix) = panel.position(id) {
+                        panel.remove(ix, window, cx);
+                    }
+                }));
                 div()
                     .id(ElementId::NamedInteger("terminal-tab".into(), id.as_u64()))
                     .group(group.clone())
@@ -956,8 +960,7 @@ impl TerminalPanel {
                     ),
             )
             .child(
-                IconButton::new("terminal-kill", Icon::X, &ui)
-                    .name("Kill Terminal")
+                IconButton::new("terminal-kill", Icon::X, "Kill Terminal", &ui)
                     .tooltip(tip("Kill Terminal", "terminal.close"))
                     .on_click(|_, window, cx| {
                         pane_toolbar::dispatch("terminal.close", Source::Mouse, window, cx);

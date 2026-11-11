@@ -13,8 +13,9 @@ use gpui::{
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, SharedString,
     StyleRefinement, Styled as _, Subscription, Tiling, Window, div, prelude::FluentBuilder as _,
 };
+use kiln_l10n::tr;
 use kiln_platform::{Capabilities, focus};
-use kiln_ui::{ROW_HEIGHT, ui_theme};
+use kiln_ui::{ROW_HEIGHT, Role, ui_theme};
 
 use crate::{
     Closing, DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar, TitleBarItems,
@@ -358,13 +359,15 @@ impl Render for Shell {
                     .flex()
                     .flex_col()
                     .children(self.center().cloned().map(|center| {
-                        div()
+                        let centre = div()
+                            .id("shell-centre")
                             .relative()
                             .flex_1()
                             .min_h(MIN_PANE_HEIGHT)
                             .flex()
                             .child(center)
-                            .child(dock::track_centre())
+                            .child(dock::track_centre());
+                        kiln_ui::node(centre, window, cx, Role::Main, tr!("kiln-shell-editor"))
                     }))
                     .children(self.docks_at(DockPosition::Bottom)),
             )

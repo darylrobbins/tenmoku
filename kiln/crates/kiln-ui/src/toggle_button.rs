@@ -2,28 +2,28 @@
 
 use gpui::{
     App, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
-    RenderOnce, Role, SharedString, StatefulInteractiveElement as _, Styled as _, Toggled, Window,
-    div, prelude::FluentBuilder as _, px, svg,
+    RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px, svg,
 };
 
 use crate::{
-    ActiveTheme as _, ClickHandler, Icon, Tokens, UiTheme,
+    ActiveTheme as _, ClickHandler, Icon, Role, States, Tokens, UiTheme,
     controls::{
         Control, DISABLED_OPACITY, TOGGLE_ON_ALPHA, assert_named, key_focus, name_tooltip,
         with_alpha, with_key_focus,
     },
-    radius,
+    node_with, radius,
 };
 
 /// A small button that is on or off, such as a search option: on, it sits
 /// on a tint of the accent (the accent at alpha [`TOGGLE_ON_ALPHA`], not a
 /// solid fill); off, its label is muted.
 ///
-/// Its label is its accessible name unless [`ToggleButton::name`] gives a
-/// fuller one, as a search option labelled `Aa` needs ("Match Case"); a
-/// named toggle shows its name, and its key if it has one, in a tooltip.
-/// One showing an icon in place of a label ([`ToggleButton::icon_only`])
-/// must be given a name: drawing one without is a debug assertion.
+/// Its constructors require its accessible name, which a screen reader
+/// reads, apart from the caption it shows: a search option captioned `Aa`
+/// is named "Match Case". One whose name isn't its caption shows the name,
+/// and its key if it has one, in a tooltip. Drawing one whose name is
+/// blank is a debug assertion.
 #[derive(IntoElement)]
 pub struct ToggleButton {
     id: ElementId,
@@ -31,7 +31,7 @@ pub struct ToggleButton {
     icon: Option<Icon>,
     /// An icon before the label, and its colour while on.
     glyph: Option<(Icon, Hsla)>,
-    name: Option<SharedString>,
+    name: SharedString,
     shortcut: Option<SharedString>,
     on: bool,
     disabled: bool,
@@ -52,15 +52,22 @@ pub(crate) fn toggle_colors(on: bool, c: &Tokens<Hsla>) -> (Option<Hsla>, Hsla) 
 }
 
 impl ToggleButton {
-    /// Its colours come from `cx.theme()` as it renders. `_theme` is
-    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, _theme: &UiTheme) -> Self {
+    /// A toggle showing `label`, named `name` for a screen reader: the same
+    /// text, unless the label is a symbol such as `Aa`. Its colours come
+    /// from `cx.theme()` as it renders. `_theme` is ignored: deprecated,
+    /// kept so callers that pass a [`UiTheme`] build.
+    pub fn new(
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        name: impl Into<SharedString>,
+        _theme: &UiTheme,
+    ) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
             icon: None,
             glyph: None,
-            name: None,
+            name: name.into(),
             shortcut: None,
             on: false,
             disabled: false,
@@ -69,14 +76,14 @@ impl ToggleButton {
     }
 
     /// A toggle showing only `icon`, 16 px, in the toggle's text colour
-    /// (muted while off). Give it a [`ToggleButton::name`].
-    pub fn icon_only(id: impl Into<ElementId>, icon: Icon) -> Self {
+    /// (muted while off), named `name` for a screen reader and its tooltip.
+    pub fn icon_only(id: impl Into<ElementId>, icon: Icon, name: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
             label: SharedString::default(),
             icon: Some(icon),
             glyph: None,
-            name: None,
+            name: name.into(),
             shortcut: None,
             on: false,
             disabled: false,
@@ -89,11 +96,9 @@ impl ToggleButton {
         self.icon
     }
 
-    /// Its accessible name: [`ToggleButton::name`]'s, else its label.
-    pub fn accessible_name(&self) -> Option<&SharedString> {
-        self.name
-            .as_ref()
-            .or(Some(&self.label).filter(|label| !label.is_empty()))
+    /// Its accessible name, which a screen reader reads.
+    pub fn accessible_name(&self) -> &SharedString {
+        &self.name
     }
 
     /// Draws `icon`, 14 px, before the label: in `color` while on, such as a
@@ -106,13 +111,6 @@ impl ToggleButton {
 
     pub fn on(mut self, on: bool) -> Self {
         self.on = on;
-        self
-    }
-
-    /// Its accessible name, read by a screen reader and shown in its
-    /// tooltip: the label unless this sets one.
-    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
-        self.name = Some(name.into());
         self
     }
 
@@ -151,26 +149,18 @@ impl ToggleButton {
     /// Space while focused, with the focus ring while focused from the
     /// keyboard.
     pub(crate) fn element(self, window: &mut Window, cx: &mut App) -> Control {
-        if self.icon.is_some() {
-            assert_named(
-                self.name.as_ref(),
-                kiln_l10n::verbatim!("ToggleButton::icon_only"),
-            );
-        }
+        assert_named(Some(&self.name), kiln_l10n::verbatim!("ToggleButton::new"));
         let colors = cx.theme().colors;
         let hover = colors.state.hover;
         let (background, text) = toggle_colors(self.on, &colors);
-        let tooltip = (self.name.is_some() || self.shortcut.is_some()).then(|| {
-            let name = self.name.clone().unwrap_or_else(|| self.label.clone());
-            name_tooltip(name, self.shortcut.clone())
-        });
+        // A caption that says its name needs no tooltip to repeat it.
+        let tooltip = (self.name != self.label || self.shortcut.is_some())
+            .then(|| name_tooltip(self.name.clone(), self.shortcut.clone()));
         let disabled = self.disabled;
         let focus = key_focus(Some(self.id.clone()), None, disabled, window, cx);
+        let name = self.name;
         let button = div()
             .id(self.id)
-            .role(Role::Button)
-            .aria_label(self.name.unwrap_or_else(|| self.label.clone()))
-            .aria_toggled(Toggled::from(self.on))
             .when_some(self.shortcut, |button, key| button.aria_keyshortcuts(key))
             .relative()
             .flex()
@@ -210,8 +200,13 @@ impl ToggleButton {
             .when_some(self.on_click.filter(|_| !disabled), |button, on_click| {
                 button.on_click(on_click)
             });
+        let button = with_key_focus(button, focus, radius::CONTROL, px(0.), &colors);
+        let states = States {
+            toggled: Some(self.on),
+            ..States::default()
+        };
         Control::new(
-            with_key_focus(button, focus, radius::CONTROL, px(0.), &colors),
+            node_with(button, window, cx, Role::Button, name, states),
             disabled,
         )
     }
@@ -222,26 +217,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_icon_toggle_is_named_by_its_name_a_labelled_one_by_its_label() {
+    fn a_toggle_is_named_by_its_name_not_its_caption() {
         let theme = UiTheme::default();
-        let icon = ToggleButton::icon_only("regex", Icon::Regex);
+        let icon = ToggleButton::icon_only("regex", Icon::Regex, "Use Regular Expression");
         assert_eq!(icon.icon(), Some(Icon::Regex));
-        assert_eq!(icon.accessible_name(), None);
-        let icon = icon.name("Use Regular Expression");
-        assert_eq!(
-            icon.accessible_name().map(SharedString::as_ref),
-            Some("Use Regular Expression")
-        );
-        let labelled = ToggleButton::new("case", "Aa", &theme);
-        assert_eq!(labelled.icon(), None);
-        assert_eq!(
-            labelled.accessible_name().map(SharedString::as_ref),
-            Some("Aa")
-        );
-        let named = labelled.name("Match Case");
-        assert_eq!(
-            named.accessible_name().map(SharedString::as_ref),
-            Some("Match Case")
-        );
+        assert_eq!(icon.accessible_name().as_ref(), "Use Regular Expression");
+        let captioned = ToggleButton::new("case", "Aa", "Match Case", &theme);
+        assert_eq!(captioned.icon(), None);
+        assert_eq!(captioned.accessible_name().as_ref(), "Match Case");
     }
 }

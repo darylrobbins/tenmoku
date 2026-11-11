@@ -40,3 +40,11 @@ kiln-shell-trust-dont = Don't Trust
 kiln-shell-dock-more = More actions
 # Hides the dock.
 kiln-shell-dock-hide = Hide
+
+## Landmarks: the names a screen reader gives the window's regions. A side
+## dock's is its panel's title.
+
+# The shell's centre, where the editors are.
+kiln-shell-editor = Editor
+# The bottom dock's panel, such as the terminal.
+kiln-shell-dock-panel = Panel

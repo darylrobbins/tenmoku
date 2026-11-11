@@ -230,8 +230,7 @@ fn icon_button(
     #[cfg(test)]
     DRAWN.with_borrow_mut(|drawn| drawn.push((id, name.clone())));
     let ui = fe_ui::ui_theme(cx);
-    let button = IconButton::new(id, icon, &ui)
-        .name(name.clone())
+    let button = IconButton::new(id, icon, name.clone(), &ui)
         .disabled(disabled)
         .tooltip(tooltip(name, command))
         .on_click(move |_, window, cx| run(command, window, cx));

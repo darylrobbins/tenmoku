@@ -711,9 +711,13 @@ impl Render for CommitCard {
                 .child(div().text_color(colors.deleted).child(removed));
             parts.push(("totals", totals.into_any_element()));
         }
-        let copy = IconButton::new("commit-card-copy", self.copy_icon(), &ui)
-            .name("Copy Commit Hash")
-            .on_click(cx.listener(|card, _, _, cx| card.copy(cx)));
+        let copy = IconButton::new(
+            "commit-card-copy",
+            self.copy_icon(),
+            "Copy Commit Hash",
+            &ui,
+        )
+        .on_click(cx.listener(|card, _, _, cx| card.copy(cx)));
         let footer = (div().flex_none().flex().items_center().gap_1())
             .child(
                 div()
@@ -2445,8 +2449,7 @@ impl Render for GitLogPanel {
         .child(div().flex_1().min_w_0().child(self.filter_input.clone()))
         .when(filtering, |row| {
             row.child(
-                IconButton::new(FILTER_CLEAR, Icon::X, &ui)
-                    .name("Clear Filter")
+                IconButton::new(FILTER_CLEAR, Icon::X, "Clear Filter", &ui)
                     .on_click(cx.listener(|panel, _, _, cx| panel.clear_filter(cx))),
             )
         });

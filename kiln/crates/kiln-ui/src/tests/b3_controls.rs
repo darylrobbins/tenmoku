@@ -62,7 +62,12 @@ impl Render for Buttons {
                     .ghost()
                     .debug_selector(|| "icon".into()),
             )
-            .child(IconButton::new("close", Icon::X, &UiTheme::default()).name("Close"))
+            .child(IconButton::new(
+                "close",
+                Icon::X,
+                "Close",
+                &UiTheme::default(),
+            ))
     }
 }
 
@@ -296,7 +301,7 @@ struct UnnamedIcon;
 
 impl Render for UnnamedIcon {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().child(IconButton::new("close", Icon::X, &UiTheme::default()))
+        div().child(IconButton::new("close", Icon::X, "", &UiTheme::default()))
     }
 }
 

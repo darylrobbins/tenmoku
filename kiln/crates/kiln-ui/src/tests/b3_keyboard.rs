@@ -62,8 +62,7 @@ impl Render for Form {
             ),
             (
                 "toggle",
-                ToggleButton::new("toggle", "Aa", &ui)
-                    .name("Match Case")
+                ToggleButton::new("toggle", "Aa", "Match Case", &ui)
                     .on(true)
                     .disabled(d)
                     .on_click(click("toggle", cx))
@@ -71,8 +70,7 @@ impl Render for Form {
             ),
             (
                 "icon",
-                IconButton::new("icon", Icon::X, &ui)
-                    .name("Close")
+                IconButton::new("icon", Icon::X, "Close", &ui)
                     .disabled(d)
                     .on_click(click("icon", cx))
                     .element(window, cx),
