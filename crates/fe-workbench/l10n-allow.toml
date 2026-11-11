@@ -66,6 +66,10 @@ migrated = [
     # The sidebar's dock and its rail in B3 (T1540).
     "src/dock.rs",
     "src/dock_layout.rs",
+    # Changes and commit in B3 (T345): the Changes panel and its commit box.
+    "src/git_panel.rs",
+    "src/git_commit.rs",
+    "src/source_control.rs",
     # The sidebar in B3 (T1541): the project tree and Structure.
     "src/project_panel.rs",
     "src/project_panel_filter.rs",
@@ -344,3 +348,55 @@ reason = "A list editor's Add Item button's element id"
 file = "src/settings_editor_controls.rs"
 text = "setting-edit"
 reason = "A table's Edit in settings.toml button's element id"
+
+# The Changes panel's ids and debug selectors (T345), and its dock name.
+
+[[literal]]
+file = "src/source_control.rs"
+text = "Changes"
+reason = "The dock's English name for the panel (SidebarPanel::name, a &'static str every panel gives until the dock's names move); where source_control.rs shows it, it's workbench-changes-title"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "change-{}-{}-{at}"
+reason = "A row's or header's button's element id"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "change-{}-check-{at}"
+reason = "A row's or header's checkbox's element id"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "change-{}"
+reason = "The list's rows' element id prefix"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "{name}-row-{at}"
+reason = "A row's hover group name"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "change-icon:{name_text}:{path}"
+reason = "A row icon's debug selector"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "change-checkbox:{id}"
+reason = "A checkbox's debug selector"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "commit-button"
+reason = "The Commit button's element id"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "commit-and-push"
+reason = "The and push button's element id"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "change-letter:{at}"
+reason = "A row's status letter's debug selector"

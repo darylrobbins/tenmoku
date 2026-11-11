@@ -22,6 +22,8 @@
 //! file and the demo folders it opens are recorded in a throwaway
 //! `recent.toml`.
 
+#[path = "audit/changes.rs"]
+mod changes;
 #[path = "audit/chrome.rs"]
 mod chrome;
 #[path = "audit/command_palette.rs"]
@@ -34,8 +36,6 @@ mod find_bar;
 mod git_log;
 #[path = "audit/git_log_card.rs"]
 mod git_log_card;
-#[path = "audit/git_panel.rs"]
-mod git_panel;
 #[path = "audit/hover.rs"]
 mod hover;
 #[path = "audit/problems_panel.rs"]
@@ -94,7 +94,7 @@ const SURFACES: &[&Surface] = &[
     &find_bar::SURFACE,
     &search_panel::SURFACE,
     &toast::SURFACE,
-    &git_panel::SURFACE,
+    &changes::SURFACE,
     &git_log::SURFACE,
     &problems_panel::SURFACE,
     &hover::SURFACE,

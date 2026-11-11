@@ -1,21 +1,20 @@
-//! Committing from the Changes panel's message box: the hints, Amend, the
-//! stage-all question, a failing hook, and vim's keys and ex commands in
-//! the box, on repositories built with the `git` CLI in temporary
-//! directories.
+//! Committing from the Changes panel's message box: the placeholder and
+//! counter, Amend, the stage-all question, a failing hook, and vim's keys
+//! and ex commands in the box, on repositories built with the `git` CLI in
+//! temporary directories.
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::{fs, path::Path, process::Command};
 
 use fe_command::{ContextFrame, ContextStack, Invocation};
-use fe_editor::decorations::Tint;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, commands::RunCommand, set_vim_enabled};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
-use super::STAGE_ALL_AND_COMMIT;
+use super::stage_all_and_commit;
 use crate::{
     GitPanel, Launch, Workbench,
-    git_panel::{COMMIT_COMMAND, COMMIT_KEY, HINT_ROOM, set_box_text},
+    git_panel::{COMMIT_COMMAND, HINT_ROOM, set_box_text},
 };
 
 /// Runs `git` in `dir`, with the developer's own config shut out; its
@@ -178,6 +177,15 @@ fn set_text(commit_box: &Entity<EditorView>, text: &str, cx: &mut VisualTestCont
     draw(cx);
 }
 
+/// Puts the box's caret at `offset`.
+fn set_caret(commit_box: &Entity<EditorView>, offset: usize, cx: &mut VisualTestContext) {
+    commit_box.update(cx, |editor, cx| {
+        editor.model_mut().set_cursor(offset);
+        cx.notify();
+    });
+    draw(cx);
+}
+
 fn focused(commit_box: &Entity<EditorView>, cx: &mut VisualTestContext) -> bool {
     cx.update(|window, cx| commit_box.focus_handle(cx).is_focused(window))
 }
@@ -202,7 +210,7 @@ fn commit_count(root: &Path) -> usize {
 }
 
 /// Each group's title and count, as the panel shows them.
-fn groups(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) -> Vec<(&'static str, usize)> {
+fn groups(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) -> Vec<(String, usize)> {
     panel.read_with(cx, |panel, _| {
         (panel.groups().into_iter())
             .map(|(title, count, _)| (title, count))
@@ -215,21 +223,23 @@ fn commits(cx: &mut TestAppContext) {
     let dir = fixture();
     let root = dir.path();
     let (workbench, panel, commit_box, cx) = open(cx, root);
-    assert_eq!(groups(&panel, cx), [("Staged Changes", 1), ("Changes", 0)]);
+    assert_eq!(
+        groups(&panel, cx),
+        [("Staged Changes".to_owned(), 1), ("Changes".to_owned(), 0)]
+    );
 
-    // Empty, the box names the branch, and the button's off.
-    let placeholder = format!("Message ({COMMIT_KEY} to commit on \"main\")");
-    let hints = panel.read_with(cx, |panel, cx| panel.commit_hints(cx));
-    assert_eq!(hints, [(0, placeholder, Tint::Muted)]);
-    let button = panel.read_with(cx, |panel, cx| panel.commit_button_state(cx));
-    assert_eq!(button, Some(("Commit", false)));
+    // Empty, the box shows its placeholder, and the button's off.
+    let placeholder = panel.read_with(cx, |panel, cx| panel.commit_placeholder(cx));
+    assert_eq!(placeholder, Some(("Message".into(), false)));
+    let button = panel.read_with(cx, button_state);
+    assert_eq!(button, Some(("Commit 1 file".to_owned(), false)));
 
     focus_box(&panel, cx);
     cx.simulate_input("Fix it");
     draw(cx);
     assert_eq!(text(&commit_box, cx), "Fix it");
-    let button = panel.read_with(cx, |panel, cx| panel.commit_button_state(cx));
-    assert_eq!(button, Some(("Commit", true)));
+    let button = panel.read_with(cx, button_state);
+    assert_eq!(button, Some(("Commit 1 file".to_owned(), true)));
 
     commit(&commit_box, cx);
     assert_eq!(head_message(root), "Fix it");
@@ -240,28 +250,29 @@ fn commits(cx: &mut TestAppContext) {
     let message = panel.read_with(cx, |panel, _| panel.message_text());
     assert_eq!(message.as_deref(), Some("No changes"));
 
-    // The subject's length shows over 50, muted, and warns over 72.
+    // The caret's row's length shows, and warns over 72.
     set_text(&commit_box, &"s".repeat(55), cx);
-    let hints = panel.read_with(cx, |panel, cx| panel.commit_hints(cx));
-    assert_eq!(hints, [(0, "55/50".to_owned(), Tint::Muted)]);
+    set_caret(&commit_box, 55, cx);
+    let counter = panel.read_with(cx, |panel, cx| panel.commit_counter(cx));
+    assert_eq!(counter, Some((55, false)));
     set_text(&commit_box, &"s".repeat(80), cx);
-    let hints = panel.read_with(cx, |panel, cx| panel.commit_hints(cx));
-    assert_eq!(hints, [(0, "80/50".to_owned(), Tint::Warning)]);
-    set_text(&commit_box, &"s".repeat(50), cx);
-    let hints = panel.read_with(cx, |panel, cx| panel.commit_hints(cx));
-    assert_eq!(hints, []);
-    // A body row over 72, after the first blank row, warns.
-    let message = format!(
-        "Subject\n{}\n\n{}\n{}",
-        "x".repeat(80),
-        "b".repeat(73),
-        "c".repeat(72)
-    );
+    set_caret(&commit_box, 80, cx);
+    let counter = panel.read_with(cx, |panel, cx| panel.commit_counter(cx));
+    assert_eq!(counter, Some((80, true)));
+    set_text(&commit_box, "", cx);
+    let counter = panel.read_with(cx, |panel, cx| panel.commit_counter(cx));
+    assert_eq!(counter, None);
+    // A body row over 72 warns while the caret's on it.
+    let message = format!("Subject\n\n{}\n{}", "b".repeat(73), "c".repeat(72));
     set_text(&commit_box, &message, cx);
-    let hints = panel.read_with(cx, |panel, cx| panel.commit_hints(cx));
-    assert_eq!(hints, [(3, "73/72".to_owned(), Tint::Warning)]);
+    set_caret(&commit_box, "Subject\n\n".len() + 1, cx);
+    let counter = panel.read_with(cx, |panel, cx| panel.commit_counter(cx));
+    assert_eq!(counter, Some((73, true)));
+    set_caret(&commit_box, message.len(), cx);
+    let counter = panel.read_with(cx, |panel, cx| panel.commit_counter(cx));
+    assert_eq!(counter, Some((72, false)));
 
-    // Soft wrap leaves room after a row for its length hint.
+    // Soft wrap leaves room after a row for the counter.
     let reserve = commit_box.read_with(cx, |editor, _| editor.wrap_reserve());
     assert_eq!(reserve, HINT_ROOM);
 
@@ -296,8 +307,8 @@ fn amend(cx: &mut TestAppContext) {
     check_amend(&panel, true, cx);
     draw(cx);
     assert_eq!(text(&commit_box, cx), "Second\n\nIts body");
-    let button = panel.read_with(cx, |panel, cx| panel.commit_button_state(cx));
-    assert_eq!(button, Some(("Amend", true)));
+    let button = panel.read_with(cx, button_state);
+    assert_eq!(button, Some(("Amend".to_owned(), true)));
     check_amend(&panel, false, cx);
     draw(cx);
     assert_eq!(text(&commit_box, cx), "");
@@ -352,7 +363,7 @@ fn failures(cx: &mut TestAppContext) {
 
     commit(&commit_box, cx);
     assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer(STAGE_ALL_AND_COMMIT);
+    cx.simulate_prompt_answer(&stage_all_and_commit());
     draw(cx);
     assert_eq!(commit_count(root), 3);
     assert_eq!(head_message(root), "Everything");
@@ -374,23 +385,19 @@ fn failures(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(commit_count(root), 3);
     assert_eq!(text(&commit_box, cx), "Lint me");
-    let button = panel.read_with(cx, |panel, cx| panel.commit_button_state(cx));
-    assert_eq!(button, Some(("Commit", true)));
+    let button = panel.read_with(cx, button_state);
+    assert_eq!(button, Some(("Commit 1 file".to_owned(), true)));
 
     // An empty message is asked for in the placeholder.
     set_text(&commit_box, "", cx);
     commit(&commit_box, cx);
     assert!(!cx.has_pending_prompt());
-    let hints = panel.read_with(cx, |panel, cx| panel.commit_hints(cx));
-    assert_eq!(
-        hints,
-        [(0, "Enter a commit message".to_owned(), Tint::Warning)]
-    );
+    let placeholder = panel.read_with(cx, |panel, cx| panel.commit_placeholder(cx));
+    assert_eq!(placeholder, Some(("Enter a commit message".into(), true)));
     set_text(&commit_box, "Typed", cx);
     set_text(&commit_box, "", cx);
-    let hints = panel.read_with(cx, |panel, cx| panel.commit_hints(cx));
-    let placeholder = format!("Message ({COMMIT_KEY} to commit on \"main\")");
-    assert_eq!(hints, [(0, placeholder, Tint::Muted)]);
+    let placeholder = panel.read_with(cx, |panel, cx| panel.commit_placeholder(cx));
+    assert_eq!(placeholder, Some(("Message".into(), false)));
 
     // One of only blanks or comments is asked for under the box, until
     // the box is edited.
@@ -400,9 +407,13 @@ fn failures(cx: &mut TestAppContext) {
         assert!(!cx.has_pending_prompt(), "{message:?}");
         assert_eq!(commit_count(root), 3, "{message:?}");
         let warning = panel.read_with(cx, |panel, cx| panel.commit_warning(cx));
-        assert_eq!(warning, Some("Enter a commit message"), "{message:?}");
-        let hints = panel.read_with(cx, |panel, cx| panel.commit_hints(cx));
-        assert_eq!(hints, [], "{message:?}");
+        assert_eq!(
+            warning,
+            Some("Enter a commit message".into()),
+            "{message:?}"
+        );
+        let placeholder = panel.read_with(cx, |panel, cx| panel.commit_placeholder(cx));
+        assert_eq!(placeholder, None, "{message:?}");
         set_text(&commit_box, &format!("{message}."), cx);
         let warning = panel.read_with(cx, |panel, cx| panel.commit_warning(cx));
         assert_eq!(warning, None, "{message:?}");
@@ -538,8 +549,8 @@ fn edits_while_committing(cx: &mut TestAppContext) {
     set_text(&commit_box, "Slow", cx);
     check_amend(&panel, true, cx);
     commit(&commit_box, cx);
-    let button = panel.read_with(cx, |panel, cx| panel.commit_button_state(cx));
-    assert_eq!(button, Some(("Committing…", false)));
+    let button = panel.read_with(cx, button_state);
+    assert_eq!(button, Some(("Committing…".to_owned(), false)));
     set_text(&commit_box, "Next", cx);
     assert_eq!(cx.update(|_, cx| Workbench::git_work_held(cx)), 1);
     cx.update(|_, cx| Workbench::release_git_work(0, cx));
@@ -547,8 +558,8 @@ fn edits_while_committing(cx: &mut TestAppContext) {
     assert_eq!(head_message(root), "Slow");
     assert_eq!(text(&commit_box, cx), "Next");
     assert!(!panel.read_with(cx, |panel, _| panel.amend_checked()));
-    let button = panel.read_with(cx, |panel, cx| panel.commit_button_state(cx));
-    assert_eq!(button, Some(("Commit", true)));
+    let button = panel.read_with(cx, button_state);
+    assert_eq!(button, Some(("Commit".to_owned(), true)));
 
     // An empty message replaced while it's refused isn't asked for.
     set_text(&commit_box, "  ", cx);
@@ -579,7 +590,7 @@ fn stage_all_commits_what_was_submitted(cx: &mut TestAppContext) {
     draw(cx);
     let (question, _) = cx.pending_prompt().expect("a question");
     assert_eq!(question, "There are no staged changes to commit.");
-    cx.simulate_prompt_answer(STAGE_ALL_AND_COMMIT);
+    cx.simulate_prompt_answer(&stage_all_and_commit());
     draw(cx);
     cx.update(|_, cx| Workbench::release_git_work(0, cx));
     draw(cx);
@@ -612,7 +623,7 @@ fn stage_all_stays_in_its_root(cx: &mut TestAppContext) {
     commit(&commit_box, cx);
     assert!(cx.has_pending_prompt());
     set_root(b, cx);
-    cx.simulate_prompt_answer(STAGE_ALL_AND_COMMIT);
+    cx.simulate_prompt_answer(&stage_all_and_commit());
     draw(cx);
     assert_eq!((commit_count(a), commit_count(b)), (2, 1));
     assert_eq!(git(a, &["status", "--porcelain"]), "M a.rs");
@@ -651,7 +662,7 @@ fn commits_wait_for_earlier_staging(cx: &mut TestAppContext) {
     assert_eq!(cx.update(|_, cx| Workbench::git_work_held(cx)), 1);
     assert_eq!(commit_count(root), 1);
     let button = panel_button(&workbench, cx);
-    assert_eq!(button, Some(("Committing…", false)));
+    assert_eq!(button, Some(("Committing…".to_owned(), false)));
 
     // Once the staging's done, the commit starts, and commits its index.
     cx.update(|_, cx| Workbench::release_git_work(0, cx));
@@ -670,15 +681,20 @@ fn commits_wait_for_earlier_staging(cx: &mut TestAppContext) {
     assert_eq!(text(&commit_box, cx), "");
 }
 
+/// The Commit button's label and whether it's enabled, in `panel`.
+fn button_state(panel: &GitPanel, cx: &gpui::App) -> Option<(String, bool)> {
+    (panel.commit_button_state(cx)).map(|(label, enabled)| (label.into(), enabled))
+}
+
 /// The Commit button's label and whether it's enabled, in `workbench`'s
 /// Changes panel.
 fn panel_button(
     workbench: &Entity<Workbench>,
     cx: &mut VisualTestContext,
-) -> Option<(&'static str, bool)> {
+) -> Option<(String, bool)> {
     workbench.read_with(cx, |workbench, cx| {
         let changes = workbench.dock().read(cx).changes().clone();
-        changes.read(cx).commit_button_state(cx)
+        (changes.read(cx).commit_button_state(cx)).map(|(label, enabled)| (label.into(), enabled))
     })
 }
 

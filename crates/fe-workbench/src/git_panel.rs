@@ -4,7 +4,8 @@
 //! differs from HEAD, shown only when there are any) and "Changes" (how the
 //! working tree differs from the index, untracked files too, as `U`), each
 //! header with its count. A file staged and changed again is in both. Each
-//! row has a one-letter status, its name and its directory, sorted by path
+//! row has a checkbox, its file's icon, name and directory, and a one-letter
+//! status in its `vcs.*` colour, so hue is never the only cue, sorted by path
 //! within its group. A conflicted file is only in "Merge Changes", above
 //! both and shown only when it has rows, still lettered `C`.
 //!
@@ -15,13 +16,15 @@
 //! row's "Open File" button, opens the file itself, which a deleted one
 //! can't.
 //!
-//! The selected row's buttons show, and any row's under the pointer, as VS
-//! Code's do: a Changes row's "Open File", "Discard Changes" and "Stage
-//! Changes", a Staged row's "Open File" and "Unstage Changes", a Merge row's
-//! "Open File" and "Stage Changes" (no discard). The headers' are "Stage All
-//! Merge Changes" on Merge Changes, "Unstage All Changes" on Staged
-//! Changes, "Discard All Changes" and "Stage All Changes" on Changes. The workbench runs them (`git_stage`),
-//! asking before it discards.
+//! A row's checkbox is checked when it's staged: a Staged row's, checked,
+//! unstages its file, and a Changes or Merge row's stages it. A header's
+//! checks or unchecks its whole group the same way: Staged Changes'
+//! unstages all, Changes' stages all, Merge Changes' stages every conflicted
+//! file. The workbench runs them (`git_stage`), asking first about
+//! conflicted files still holding markers. The selected row's buttons show,
+//! and any row's under the pointer: "Open File" on a row whose file is
+//! there, "Discard Changes" on a Changes row, and "Discard All Changes" on
+//! the Changes header, which ask first.
 //!
 //! With vim on, the panel takes the keys of fugitive's `:Git` status
 //! window: `j` and `k` move, `s` stages the selected file, `u` unstages it,
@@ -49,13 +52,15 @@
 //! workbench gives the panel once it's first drawn (`git_commit`): not a
 //! tab, so nothing saves, backs up or remembers it. It has no gutter,
 //! soft-wraps at its width and grows from 3 to 10 rows with its text, as VS
-//! Code's SCM input does from 1 to 10. While it's empty its placeholder
-//! names the branch, VS Code's `Message (ctrl-enter to commit on "main")`.
-//! Once its first row is over 50 characters, `<n>/50` shows after it,
-//! muted, in the warning colour over 72; a body row (after the first blank
-//! row) over 72 shows `<n>/72` in the warning colour. Below it are an
-//! "Amend" checkbox and a "Commit" button ("Amend" while checked),
-//! disabled while the message is blank and Amend isn't checked, and
+//! Code's SCM input does from 1 to 10. While it's empty its placeholder,
+//! "Message", shows over it in the UI font. Once it has text, one counter
+//! at its lower right, `<n>/72`, counts the caret's row, as VS Code's input
+//! validation does: faint, in the error colour once the row is over 72.
+//! Below it are an "Amend" checkbox and the "Commit 1 file" button, with the
+//! staged count and the key that commits from the box ("Commit" with
+//! nothing staged, "Amend" while checked), and its split part "and push",
+//! which pushes the branch (`git.push`) once the commit is made. They're
+//! disabled while the message is blank and Amend isn't checked, and say
 //! "Committing…" while a commit runs. Checking Amend into an empty box
 //! fills it with HEAD's message; unchecking it while that's untouched
 //! empties it again. `git.commit_box.commit` (a key in the box) commits as
@@ -69,20 +74,17 @@
 //! the box, and `ca` does with Amend checked, as fugitive's keys do.
 
 use std::{
-    cell::RefCell,
     ops::Range,
     path::{Path, PathBuf},
-    rc::Rc,
 };
 
-use fe_buffer::{BufferSnapshot, Origin, Version};
-use fe_command::{Invocation, Value};
-use fe_editor::decorations::{Decoration, DecorationKind, DecorationProvider, Tint, overlaps};
-use fe_git::{ChangeKind, FileStatus, GitError, Head, Repo, SplitStatus};
+use fe_buffer::{Origin, Version};
+use fe_command::{CommandId, ContextFrame, ContextStack, Invocation, Value};
+use fe_git::{ChangeKind, FileStatus, GitError, Repo, SplitStatus};
 use fe_gpui::{EditorView, commands::RunCommand};
-use fe_text::Text;
 use fe_ui::{
-    Button, Checkbox, Icon, IconButton, ROW_HEIGHT, TextInput, Tooltip, UiTheme, file_icon_ref,
+    ActiveTheme as _, Button, Checkbox, FamilySlot, FontFamilies, Icon, IconButton, ROW_HEIGHT,
+    TextInput, Tooltip, file_icon_ref,
 };
 use fe_vim::{CommandLineKind, Mode};
 use gpui::{
@@ -92,10 +94,12 @@ use gpui::{
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px, uniform_list,
 };
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
     git::GitState,
+    pane_toolbar,
     picker::{self, PaletteOp},
 };
 
@@ -107,26 +111,20 @@ pub(crate) const KEY_CONTEXT: &str = "git_panel";
 /// box, an editor, keeps vim's own keys.
 const VIM_FLAG: &str = "vim";
 
-/// The hue of added and untracked files' letters: the accent's, turned
-/// green.
-const ADDED_HUE: f32 = 130. / 360.;
-
 /// What commits from the box, as its button does.
 pub(crate) const COMMIT_COMMAND: &str = "git.commit_box.commit";
 
-/// How long the first row of a message may be before its hint shows, and
-/// how long any row may be before it warns: VS Code's
-/// `git.inputValidationSubjectLength` and `git.inputValidationLength`.
-const SUBJECT_LENGTH: usize = 50;
-const LINE_LENGTH: usize = 72;
+/// How long a row of a message may be before its counter warns: VS Code's
+/// `git.inputValidationLength`.
+pub(crate) const LINE_LENGTH: usize = 72;
 
 /// The fewest rows the box shows, room to start a message in.
 const BOX_MIN_ROWS: u32 = 3;
 /// The most rows the box grows to.
 const BOX_ROWS: u32 = 10;
 
-/// The ems the box's soft wrap leaves free, beyond its margin, for a
-/// length hint after a wrapped row: its gap and up to 7 characters.
+/// The ems the box's soft wrap leaves free, beyond its margin, so its text
+/// stays clear of the counter in its corner: a gap and up to 7 characters.
 pub(crate) const HINT_ROOM: f32 = 6.;
 
 /// The key context of the box's command line, so the vim line's keys
@@ -136,17 +134,6 @@ const LINE_CONTEXT: &str = "vim_line";
 const LINE_CANCEL: &str = "vim_line.cancel";
 /// What Enter runs in the line's input.
 const LINE_SUBMIT: &str = "text_input.submit";
-
-/// The key that commits from the box, in its placeholder.
-pub(crate) const COMMIT_KEY: &str = if cfg!(target_os = "macos") {
-    "⌘⏎"
-} else {
-    "ctrl-enter"
-};
-
-/// What the placeholder says after a commit was refused for an empty
-/// message.
-const ENTER_A_MESSAGE: &str = "Enter a commit message";
 
 /// What the panel asks of the workbench.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,12 +159,17 @@ pub(crate) enum Group {
 
 impl Group {
     /// Its header's title.
-    pub(crate) fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> SharedString {
         match self {
-            Group::Merge => "Merge Changes",
-            Group::Staged => "Staged Changes",
-            Group::Changes => "Changes",
+            Group::Merge => tr!("workbench-changes-group-merge"),
+            Group::Staged => tr!("workbench-changes-group-staged"),
+            Group::Changes => tr!("workbench-changes-group-changes"),
         }
+    }
+
+    /// Whether its files are staged: what their checkboxes show.
+    fn staged(self) -> bool {
+        self == Group::Staged
     }
 }
 
@@ -231,7 +223,7 @@ enum Row {
     File(usize),
 }
 
-/// What a row's or a header's button does.
+/// What a row's or a header's button or checkbox does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     OpenFile,
@@ -241,27 +233,40 @@ pub(crate) enum Action {
 }
 
 impl Action {
-    /// Its tooltip on a row, and on a header.
-    fn tooltip(self, header: bool) -> &'static str {
+    /// Its tooltip and accessible name on `target`, a row or a header.
+    fn tooltip(self, target: Row) -> SharedString {
+        let header = matches!(target, Row::Header(_));
         match (self, header) {
-            (Action::OpenFile, _) => "Open File",
-            (Action::Discard, false) => "Discard Changes",
-            (Action::Discard, true) => "Discard All Changes",
-            (Action::Stage, false) => "Stage Changes",
-            (Action::Stage, true) => "Stage All Changes",
-            (Action::Unstage, false) => "Unstage Changes",
-            (Action::Unstage, true) => "Unstage All Changes",
+            (Action::OpenFile, _) => tr!("workbench-changes-open-file"),
+            (Action::Discard, false) => tr!("workbench-changes-discard"),
+            (Action::Discard, true) => tr!("workbench-changes-discard-all"),
+            (Action::Stage, false) => tr!("workbench-changes-stage"),
+            (Action::Stage, true) if target == Row::Header(Group::Merge) => {
+                tr!("workbench-changes-stage-all-merge")
+            }
+            (Action::Stage, true) => tr!("workbench-changes-stage-all"),
+            (Action::Unstage, false) => tr!("workbench-changes-unstage"),
+            (Action::Unstage, true) => tr!("workbench-changes-unstage-all"),
         }
     }
 
-    /// Its icon: the set has no plus or undo arrow, so staging is a check
-    /// and discarding an arrow back.
+    /// Its button's icon: the set has no undo arrow, so discarding is an
+    /// arrow back. Staging is a checkbox, not a button.
     fn icon(self) -> Icon {
         match self {
             Action::OpenFile => Icon::File,
             Action::Discard => Icon::ArrowLeft,
             Action::Stage => Icon::Check,
             Action::Unstage => Icon::Minus,
+        }
+    }
+
+    /// What a checkbox of `group`'s does: unstage if its files are
+    /// staged, else stage.
+    fn toggle(group: Group) -> Action {
+        match group.staged() {
+            true => Action::Unstage,
+            false => Action::Stage,
         }
     }
 
@@ -276,25 +281,23 @@ impl Action {
     }
 }
 
-/// The buttons a row of `group` has, in order: "Open File" only for a file
-/// that's there.
+/// The buttons a row of `group` has beside its checkbox, in order: "Open
+/// File" only for a file that's there, "Discard Changes" only on a Changes
+/// row.
 fn row_actions(group: Group, deleted: bool) -> &'static [Action] {
     match (group, deleted) {
-        (Group::Merge, false) => &[Action::OpenFile, Action::Stage],
-        (Group::Merge, true) => &[Action::Stage],
-        (Group::Changes, false) => &[Action::OpenFile, Action::Discard, Action::Stage],
-        (Group::Changes, true) => &[Action::Discard, Action::Stage],
-        (Group::Staged, false) => &[Action::OpenFile, Action::Unstage],
-        (Group::Staged, true) => &[Action::Unstage],
+        (Group::Changes, false) => &[Action::OpenFile, Action::Discard],
+        (Group::Changes, true) => &[Action::Discard],
+        (Group::Merge | Group::Staged, false) => &[Action::OpenFile],
+        (Group::Merge | Group::Staged, true) => &[],
     }
 }
 
-/// The buttons a header of `group` has, in order.
+/// The buttons a header of `group` has beside its checkbox.
 fn header_actions(group: Group) -> &'static [Action] {
     match group {
-        Group::Merge => &[Action::Stage],
-        Group::Changes => &[Action::Discard, Action::Stage],
-        Group::Staged => &[Action::Unstage],
+        Group::Changes => &[Action::Discard],
+        Group::Merge | Group::Staged => &[],
     }
 }
 
@@ -324,8 +327,6 @@ pub(crate) fn combined(status: &SplitStatus) -> Option<ChangeKind> {
 /// The commit message box and what goes with it.
 struct CommitBox {
     editor: Entity<EditorView>,
-    /// Its placeholder and length hints, which its model paints.
-    hints: Rc<RefCell<CommitHints>>,
     amend: bool,
     /// What the box held before checking Amend filled it, and what it was
     /// filled with: put back on unchecking if the text is still that.
@@ -352,79 +353,29 @@ struct CommitBox {
 }
 
 /// What the workbench commits: the box's message, in the repository
-/// containing `root`.
+/// containing `root`, then pushing the branch if `push`.
 pub(crate) struct CommitRequest {
     pub(crate) root: PathBuf,
     pub(crate) message: String,
     pub(crate) amend: bool,
+    pub(crate) push: bool,
     /// The box's version the message was taken at.
     pub(crate) version: Version,
 }
 
-/// The box's after-line text: while it's empty, its placeholder, or after
-/// a commit refused for an empty message the warning asking for one; else
-/// the rows over their length.
-struct CommitHints {
-    placeholder: String,
-    refused: bool,
-}
-
-impl DecorationProvider for CommitHints {
-    fn decorations(
-        &self,
-        snapshot: &BufferSnapshot,
-        range: Range<usize>,
-        out: &mut Vec<Decoration>,
-    ) {
-        let text = snapshot.text();
-        if text.is_empty() {
-            let (hint, tint) = match self.refused {
-                true => (ENTER_A_MESSAGE, Tint::Warning),
-                false => (self.placeholder.as_str(), Tint::Muted),
-            };
-            let kind = DecorationKind::AfterLine(hint.into());
-            out.push(Decoration::new(0..text.row_len(0) as usize, kind, tint));
-            return;
-        }
-        for (row, hint, tint) in length_hints(text) {
-            let start = text.row_start(row);
-            let row_range = start..start + text.row_len(row) as usize;
-            if overlaps(&row_range, &range) {
-                let kind = DecorationKind::AfterLine(hint.into());
-                out.push(Decoration::new(row_range, kind, tint));
-            }
-        }
+/// The box's counter: how many characters the caret's row has, and whether
+/// that's over [`LINE_LENGTH`]. None while the box is empty.
+fn counter(editor: &EditorView) -> Option<(usize, bool)> {
+    let model = editor.model();
+    let text = model.text();
+    if text.is_empty() {
+        return None;
     }
-}
-
-/// Each row of a message over its length, with its hint and tint: the
-/// first over [`SUBJECT_LENGTH`], muted until it's over [`LINE_LENGTH`],
-/// and each after the first blank row over [`LINE_LENGTH`].
-fn length_hints(text: &Text) -> Vec<(u32, String, Tint)> {
-    let mut hints = Vec::new();
-    let mut body = false;
-    for row in 0..text.row_count() {
-        let start = text.row_start(row);
-        let end = start + text.row_len(row) as usize;
-        let chars = text.offset_to_char(end) - text.offset_to_char(start);
-        if row == 0 {
-            if chars > SUBJECT_LENGTH {
-                let tint = if chars > LINE_LENGTH {
-                    Tint::Warning
-                } else {
-                    Tint::Muted
-                };
-                hints.push((row, format!("{chars}/{SUBJECT_LENGTH}"), tint));
-            }
-        } else if body {
-            if chars > LINE_LENGTH {
-                hints.push((row, format!("{chars}/{LINE_LENGTH}"), Tint::Warning));
-            }
-        } else if text.row_to_string(row).trim().is_empty() {
-            body = true;
-        }
-    }
-    hints
+    let row = text.offset_to_point(pane_toolbar::caret(editor)).row;
+    let start = text.row_start(row);
+    let end = start + text.row_len(row) as usize;
+    let chars = text.offset_to_char(end) - text.offset_to_char(start);
+    Some((chars, chars > LINE_LENGTH))
 }
 
 /// The panel element's key context: [`KEY_CONTEXT`], with the `vim` flag
@@ -499,10 +450,6 @@ pub struct GitPanel {
     commit: Option<CommitBox>,
     /// Whether the workbench has been asked for the box.
     box_asked: bool,
-    /// Where HEAD points, for the box's placeholder, once read.
-    head: Option<Head>,
-    /// Reads of where HEAD points started, the last the only one shown.
-    head_reads: u64,
     /// With vim on, `c` was pressed: `c` or `a` follows.
     pending_c: bool,
     /// With vim on, `g` was pressed: `g` follows for the first row, and any
@@ -512,6 +459,13 @@ pub struct GitPanel {
     focus_out: Option<Subscription>,
     #[cfg(test)]
     test: std::rc::Rc<std::cell::RefCell<TestHooks>>,
+    /// The placeholder last drawn over the box, and the family it was set
+    /// in.
+    #[cfg(test)]
+    drawn_placeholder: std::cell::RefCell<Option<(SharedString, SharedString)>>,
+    /// The counter last drawn in the box's corner, its colour and family.
+    #[cfg(test)]
+    drawn_counter: std::cell::RefCell<Option<(SharedString, Hsla, SharedString)>>,
 }
 
 impl GitPanel {
@@ -542,13 +496,15 @@ impl GitPanel {
             focus: cx.focus_handle(),
             commit: None,
             box_asked: false,
-            head: None,
-            head_reads: 0,
             pending_c: false,
             pending_g: false,
             focus_out: None,
             #[cfg(test)]
             test: Default::default(),
+            #[cfg(test)]
+            drawn_placeholder: Default::default(),
+            #[cfg(test)]
+            drawn_counter: Default::default(),
         }
     }
 
@@ -600,7 +556,6 @@ impl GitPanel {
             Ok(Some((located, statuses))) => {
                 self.located = Some(located);
                 self.show(seq, statuses, cx);
-                self.read_head(cx);
             }
             Ok(None) => {
                 self.located = None;
@@ -813,9 +768,9 @@ impl GitPanel {
     fn message(&self) -> Option<String> {
         Some(match &self.status {
             Status::Reading => return None,
-            Status::NotARepository => "Not a git repository".into(),
+            Status::NotARepository => tr!("workbench-changes-not-a-repository").into(),
             Status::Failed(message) => message.clone(),
-            Status::Listed if self.entries.is_empty() => "No changes".into(),
+            Status::Listed if self.entries.is_empty() => tr!("workbench-changes-none").into(),
             Status::Listed => return None,
         })
     }
@@ -1041,6 +996,11 @@ impl GitPanel {
         format!("change-{}-{}-{at}", self.shown, action.name())
     }
 
+    /// The ID of row `at`'s checkbox in the list shown.
+    fn checkbox_id(&self, at: usize) -> String {
+        format!("change-{}-check-{at}", self.shown)
+    }
+
     /// `actions`' buttons on row `at`: on file `ix`'s, or on a header's.
     fn buttons(
         &self,
@@ -1050,7 +1010,6 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let ui = fe_ui::ui_theme(cx);
-        let header = matches!(target, Row::Header(_));
         let panel = cx.weak_entity();
         div()
             .flex_none()
@@ -1058,24 +1017,53 @@ impl GitPanel {
             .items_center()
             .children(actions.iter().map(|&action| {
                 let panel = panel.clone();
-                let tooltip = match (target, action) {
-                    (Row::Header(Group::Merge), Action::Stage) => "Stage All Merge Changes",
-                    _ => action.tooltip(header),
-                };
+                let tooltip = action.tooltip(target);
                 IconButton::new(self.button_id(at, action), action.icon(), &ui)
-                    .name(tooltip)
+                    .name(tooltip.clone())
                     .tooltip(move |_, cx| {
-                        cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
+                        cx.new(|_| Tooltip::new(tooltip.clone(), None::<&str>, &ui))
+                            .into()
                     })
                     .on_click(move |_, window, cx| {
                         cx.stop_propagation();
-                        (panel.update(cx, |panel, cx| match target {
-                            Row::File(ix) => panel.act(ix, action, window, cx),
-                            Row::Header(group) => panel.act_on_all(group, action, window, cx),
-                        }))
-                        .ok();
+                        (panel.update(cx, |panel, cx| panel.run(target, action, window, cx))).ok();
                     })
             }))
+    }
+
+    /// Row `at`'s checkbox, `target` a file's or a header's of `group`:
+    /// checked if its files are staged, and toggling stages or unstages
+    /// them.
+    fn checkbox(&self, at: usize, target: Row, group: Group, cx: &mut Context<Self>) -> Checkbox {
+        let ui = fe_ui::ui_theme(cx);
+        let panel = cx.weak_entity();
+        let action = Action::toggle(group);
+        let tooltip = action.tooltip(target);
+        let id = self.checkbox_id(at);
+        let selector = checkbox_selector(&id);
+        Checkbox::new(SharedString::from(id))
+            .checked(group.staged())
+            .name(tooltip.clone())
+            .debug_selector(move || selector)
+            .flex_none()
+            .tooltip(move |_, cx| {
+                cx.new(|_| Tooltip::new(tooltip.clone(), None::<&str>, &ui))
+                    .into()
+            })
+            .on_change(move |_, window, cx| {
+                // Not a click on the row, which opens its diff.
+                cx.stop_propagation();
+                (panel.update(cx, |panel, cx| panel.run(target, action, window, cx))).ok();
+            })
+    }
+
+    /// Runs `action` on `target`: a file's row, or every file of a header's
+    /// group.
+    fn run(&mut self, target: Row, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        match target {
+            Row::File(ix) => self.act(ix, action, window, cx),
+            Row::Header(group) => self.act_on_all(group, action, window, cx),
+        }
     }
 
     fn render_rows(
@@ -1112,8 +1100,10 @@ impl GitPanel {
                 let element = match row {
                     Row::Header(group) => {
                         let count = self.group_range(group).len();
+                        let checkbox = self.checkbox(at, row, group, cx);
                         let buttons = self.buttons(at, row, header_actions(group), cx);
                         base.font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(checkbox)
                             .child(div().flex_1().min_w_0().child(group.title()))
                             .child(
                                 div()
@@ -1146,6 +1136,7 @@ impl GitPanel {
                         let deleted = entry.kind == ChangeKind::Deleted;
                         let selected = self.selected == Some(ix);
                         let (kind, group) = (entry.kind, entry.group);
+                        let checkbox = self.checkbox(at, row, group, cx);
                         let buttons = self.buttons(at, row, row_actions(group, deleted), cx);
                         let icon = file_icon_ref(&name_text);
                         let path = icon.path();
@@ -1160,15 +1151,18 @@ impl GitPanel {
                             .on_click(cx.listener(move |panel, _, window, cx| {
                                 panel.open_diff(ix, window, cx)
                             }))
+                            .child(checkbox)
+                            .child(icon)
+                            // A long name ends in an ellipsis rather than
+                            // pushing the letter out of the row.
                             .child(
                                 div()
-                                    .flex_none()
-                                    .w(px(10.))
-                                    .text_color(letter_color(kind, &ui))
-                                    .child(letter(kind)),
+                                    .flex_shrink(1.)
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(name_text),
                             )
-                            .child(icon)
-                            .child(div().flex_none().child(name_text))
                             .child(
                                 div()
                                     .flex_1()
@@ -1180,12 +1174,23 @@ impl GitPanel {
                             )
                             .child(
                                 div()
+                                    .flex_none()
                                     .when(!selected, |buttons| {
                                         buttons
                                             .invisible()
                                             .group_hover(hover, |style| style.visible())
                                     })
                                     .child(buttons),
+                            )
+                            // Its letter, in its colour: hue is never the
+                            // only cue.
+                            .child(
+                                div()
+                                    .debug_selector(move || format!("change-letter:{at}"))
+                                    .flex_none()
+                                    .w(px(10.))
+                                    .text_color(letter_color(kind, cx))
+                                    .child(letter(kind)),
                             )
                     }
                 };
@@ -1197,6 +1202,17 @@ impl GitPanel {
 
 /// The commit message box: see the module docs.
 impl GitPanel {
+    /// How many files a commit would take: those staged anywhere in the
+    /// repository, not only under the root, as a commit takes the whole
+    /// index. A conflicted file isn't counted; a commit refuses it.
+    fn staged_in_repository(&self) -> usize {
+        (self.listed.iter())
+            .filter(|status| {
+                status.staged.is_some() && combined(status) != Some(ChangeKind::Conflicted)
+            })
+            .count()
+    }
+
     /// Whether the root's known not to be in a repository, or there's no
     /// root.
     pub(crate) fn not_a_repository(&self) -> bool {
@@ -1209,22 +1225,15 @@ impl GitPanel {
     }
 
     /// Takes `editor`, the commit box the workbench made, and shows it with
-    /// its placeholder and length hints.
+    /// its placeholder and counter, leaving room for the counter after its
+    /// rows.
     pub(crate) fn set_commit_box(
         &mut self,
         editor: Entity<EditorView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hints = Rc::new(RefCell::new(CommitHints {
-            placeholder: placeholder(None),
-            refused: false,
-        }));
-        let provider: Rc<RefCell<dyn DecorationProvider>> = hints.clone();
-        editor.update(cx, |editor, cx| {
-            editor.model_mut().add_decoration_provider(provider);
-            editor.set_wrap_reserve(HINT_ROOM, cx);
-        });
+        editor.update(cx, |editor, cx| editor.set_wrap_reserve(HINT_ROOM, cx));
         let focus = editor.focus_handle(cx);
         let subscriptions = vec![
             cx.observe_in(&editor, window, Self::box_changed),
@@ -1232,7 +1241,6 @@ impl GitPanel {
         ];
         self.commit = Some(CommitBox {
             editor,
-            hints,
             amend: false,
             filled: None,
             fills: 0,
@@ -1244,7 +1252,6 @@ impl GitPanel {
             line_open: None,
             _subscriptions: subscriptions,
         });
-        self.read_head(cx);
         cx.notify();
     }
 
@@ -1299,11 +1306,11 @@ impl GitPanel {
         self.open_mode(window, cx);
     }
 
-    /// Has the workbench commit the box's message: the button and
-    /// [`COMMIT_COMMAND`].
-    fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.with_workbench(window, cx, |workbench, window, cx| {
-            workbench.commit_from_box(window, cx)
+    /// Has the workbench commit the box's message, then push the branch if
+    /// `push`: the button, its "and push" and [`COMMIT_COMMAND`].
+    fn commit(&mut self, push: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.with_workbench(window, cx, move |workbench, window, cx| {
+            workbench.commit_from_box(push, window, cx)
         });
     }
 
@@ -1315,9 +1322,13 @@ impl GitPanel {
             .or_else(|| self.root.clone())
     }
 
-    /// Starts committing the box's message: what to commit, unless a
-    /// commit is running or there's no box.
-    pub(crate) fn begin_commit(&mut self, cx: &mut Context<Self>) -> Option<CommitRequest> {
+    /// Starts committing the box's message, then pushing if `push`: what to
+    /// commit, unless a commit is running or there's no box.
+    pub(crate) fn begin_commit(
+        &mut self,
+        push: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<CommitRequest> {
         let root = self.repo_root()?;
         let commit = self
             .commit
@@ -1332,6 +1343,7 @@ impl GitPanel {
             root,
             message,
             amend: commit.amend,
+            push,
             version,
         })
     }
@@ -1356,9 +1368,8 @@ impl GitPanel {
         true
     }
 
-    /// The commit started has been made: Amend is unchecked, the box
-    /// empties unless it was edited meanwhile, which keeps what was typed,
-    /// and where HEAD points is read again.
+    /// The commit started has been made: Amend is unchecked, and the box
+    /// empties unless it was edited meanwhile, which keeps what was typed.
     pub(crate) fn committed(&mut self, cx: &mut Context<Self>) {
         let Some(commit) = &mut self.commit else {
             return;
@@ -1373,8 +1384,6 @@ impl GitPanel {
             commit.fills += 1;
             cx.notify();
         }
-        self.sync_hints(cx);
-        self.read_head(cx);
     }
 
     /// The commit started was refused, `empty` if for an empty message:
@@ -1389,7 +1398,6 @@ impl GitPanel {
         if empty && submitted == Some(version) {
             commit.refused_at = Some(version);
         }
-        self.sync_hints(cx);
         cx.notify();
     }
 
@@ -1471,51 +1479,6 @@ impl GitPanel {
         }
     }
 
-    /// Reads where HEAD points in the background, for the placeholder.
-    fn read_head(&mut self, cx: &mut Context<Self>) {
-        if self.commit.is_none() {
-            return;
-        }
-        let Some(root) = self.repo_root() else {
-            return;
-        };
-        self.head_reads += 1;
-        let read = self.head_reads;
-        let head = cx.background_spawn(async move {
-            Repo::discover(&root).ok().flatten()?.current_branch().ok()
-        });
-        cx.spawn(async move |panel, cx| {
-            let head = head.await;
-            (panel.update(cx, |panel, cx| {
-                if panel.head_reads == read {
-                    panel.head = head;
-                    panel.sync_hints(cx);
-                }
-            }))
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Has the box's placeholder name where HEAD points, and the box ask
-    /// for a message while an empty one's refusal stands.
-    fn sync_hints(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = &self.commit else {
-            return;
-        };
-        let placeholder = placeholder(self.head.as_ref());
-        let refused = commit.refused_at.is_some();
-        let mut hints = commit.hints.borrow_mut();
-        if hints.placeholder != placeholder || hints.refused != refused {
-            *hints = CommitHints {
-                placeholder,
-                refused,
-            };
-            drop(hints);
-            commit.editor.update(cx, |_, cx| cx.notify());
-        }
-    }
-
     /// The box notified: a host command its vim left (`:wq`, `ZZ`) goes to
     /// the workbench, its command line opens or closes, a refused empty
     /// message is forgotten once the box is edited, and the panel redraws
@@ -1539,7 +1502,6 @@ impl GitPanel {
             && commit.refused_at.is_some_and(|at| at != version)
         {
             commit.refused_at = None;
-            self.sync_hints(cx);
         }
         cx.notify();
     }
@@ -1722,33 +1684,81 @@ impl GitPanel {
     /// [`COMMIT_COMMAND`] commits; others go on.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         if run.0.command.as_str() == COMMIT_COMMAND && self.commit.is_some() {
-            self.commit(window, cx);
+            self.commit(false, window, cx);
         } else {
             cx.propagate();
         }
     }
 
-    /// The box, its command line or vim's message, and its Amend checkbox
-    /// and Commit button; nothing without a repository.
+    /// The box with its placeholder or counter, its command line or vim's
+    /// message, its Amend checkbox and its Commit button with "and push";
+    /// nothing without a repository.
     fn render_commit_box(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.status == Status::NotARepository {
             return None;
         }
         let commit = self.commit.as_ref()?;
         let ui = fe_ui::ui_theme(cx);
+        let colors = cx.theme().colors;
+        let family = ui_family(cx);
         let editor = commit.editor.read(cx);
         let theme = editor.theme();
-        let warning = theme.warning;
         let line_height = (theme.font_size * theme.line_height).round();
+        // Where the box's text starts: half an em in, with no gutter.
+        let text_left = theme.font_size * EM_PER_FONT_SIZE * NO_GUTTER_LEFT_EMS;
         let rows = editor.model().display().row_count().clamp(1, BOX_ROWS);
         let height = line_height * box_rows(rows) + px(1.);
         let message = (editor.vim_state())
             .and_then(|state| state.message())
             .map(str::to_owned);
-        let (label, enabled) = commit_button(commit, cx);
+        let placeholder = commit_placeholder(commit, cx).map(|(text, refused)| {
+            let color = match refused {
+                true => colors.status.warning,
+                false => colors.text.faint,
+            };
+            #[cfg(test)]
+            self.drawn_placeholder
+                .replace(Some((text.clone(), family.clone())));
+            div()
+                .debug_selector(|| "commit-placeholder".into())
+                .absolute()
+                .top_0()
+                .left(text_left)
+                .h(line_height)
+                .flex()
+                .items_center()
+                .font_family(family.clone())
+                .text_color(color)
+                .child(text)
+        });
+        let counter = counter(editor).map(|(chars, over)| {
+            let color = match over {
+                true => colors.status.error,
+                false => colors.text.faint,
+            };
+            let text = tr!(
+                "workbench-changes-counter",
+                count = chars,
+                limit = LINE_LENGTH
+            );
+            #[cfg(test)]
+            self.drawn_counter
+                .replace(Some((text.clone(), color, family.clone())));
+            div()
+                .debug_selector(|| "commit-counter".into())
+                .absolute()
+                .bottom(px(2.))
+                .right(px(6.))
+                .font_family(family.clone())
+                .text_size(px(11.))
+                .text_color(color)
+                .child(text)
+        });
+        let button = commit_button(commit, self.staged_in_repository(), cx);
         let line = commit.line_open.zip(commit.line.clone());
         let (amend, committing) = (commit.amend, commit.committing.is_some());
-        let (checkbox_panel, button_panel) = (cx.weak_entity(), cx.weak_entity());
+        let (checkbox_panel, button_panel, push_panel) =
+            (cx.weak_entity(), cx.weak_entity(), cx.weak_entity());
         let below = match (line, message) {
             (Some((prefix, input)), _) => Some(
                 div()
@@ -1776,14 +1786,31 @@ impl GitPanel {
                 )
             }
             // Blanks or comments refused: wider than the room after a row.
-            (None, None) if commit_warning(commit, cx).is_some() => Some(
+            (None, None) => commit_warning(commit, cx).map(|warning| {
                 div()
                     .debug_selector(|| "commit-message".into())
-                    .text_color(warning)
-                    .child(ENTER_A_MESSAGE)
-                    .into_any_element(),
-            ),
-            (None, None) => None,
+                    .text_color(colors.status.warning)
+                    .child(warning)
+                    .into_any_element()
+            }),
+        };
+        let commit_button = Button::new("commit-button", button.text())
+            .debug_selector(|| "commit-button".into())
+            .name(button.label.clone())
+            .primary()
+            .small()
+            // In a narrow sidebar its label ends in an ellipsis; its
+            // tooltip still has the key.
+            .flex_shrink(1.)
+            .min_w_0()
+            .rounded_r_none()
+            .disabled(!button.enabled)
+            .on_click(move |_, window, cx| {
+                (button_panel.update(cx, |panel, cx| panel.commit(false, window, cx))).ok();
+            });
+        let commit_button = match button.key.clone() {
+            Some(key) => commit_button.shortcut(key),
+            None => commit_button,
         };
         let element = div()
             .flex_none()
@@ -1797,43 +1824,79 @@ impl GitPanel {
             .child(
                 div()
                     .debug_selector(|| "commit-box".into())
+                    .relative()
                     .w_full()
                     .h(height)
                     .overflow_hidden()
                     .border_1()
                     .border_color(ui.border)
-                    .child(commit.editor.clone()),
+                    .child(commit.editor.clone())
+                    .children(placeholder)
+                    .children(counter),
             )
             .children(below)
             .child(
+                // The buttons go under Amend where the sidebar is too narrow
+                // for both.
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .justify_between()
+                    .gap_x_2()
+                    .gap_y_1()
                     .child(
                         Checkbox::new("commit-amend")
                             .checked(amend)
                             .disabled(committing)
-                            .label("Amend")
+                            .label(tr!("workbench-changes-amend"))
                             .on_change(move |checked, window, cx| {
                                 (checkbox_panel
                                     .update(cx, |panel, cx| panel.set_amend(*checked, window, cx)))
                                 .ok();
                             }),
                     )
+                    // The button and its split part, "and push".
                     .child(
-                        Button::new("commit-button", label)
-                            .primary()
-                            .small()
-                            .disabled(!enabled)
-                            .on_click(move |_, window, cx| {
-                                (button_panel.update(cx, |panel, cx| panel.commit(window, cx)))
-                                    .ok();
-                            }),
+                        div()
+                            .flex()
+                            .flex_auto()
+                            .min_w_0()
+                            .justify_end()
+                            .items_center()
+                            .gap(px(1.))
+                            .child(commit_button)
+                            .child(
+                                Button::new("commit-and-push", tr!("workbench-changes-and-push"))
+                                    .debug_selector(|| "commit-and-push".into())
+                                    .primary()
+                                    .small()
+                                    .rounded_l_none()
+                                    .disabled(!button.enabled)
+                                    .on_click(move |_, window, cx| {
+                                        (push_panel.update(cx, |panel, cx| {
+                                            panel.commit(true, window, cx)
+                                        }))
+                                        .ok();
+                                    }),
+                            ),
                     ),
             );
         Some(element.into_any_element())
     }
+}
+
+/// How many pixels an em of a monospace font is per pixel of its size, near
+/// enough to place the placeholder where the box's text starts.
+const EM_PER_FONT_SIZE: f32 = 0.6;
+
+/// Where the box's text starts, in ems: an editor's with no gutter.
+const NO_GUTTER_LEFT_EMS: f32 = 0.5;
+
+/// The UI's font family, which the placeholder and counter are set in
+/// rather than the box's editor font.
+fn ui_family(cx: &App) -> SharedString {
+    (cx.try_global::<FontFamilies>().cloned().unwrap_or_default()).family(FamilySlot::Ui, cx)
 }
 
 /// How many rows tall the box is to show `rows` of text unscrolled with
@@ -1848,36 +1911,85 @@ fn box_rows(rows: u32) -> f32 {
         .min(BOX_ROWS as f32)
 }
 
+/// The empty box's placeholder, and whether it's the warning a commit
+/// refused for an empty message leaves until the box is edited. None once
+/// the box has text.
+fn commit_placeholder(commit: &CommitBox, cx: &App) -> Option<(SharedString, bool)> {
+    if !commit.editor.read(cx).model().text().is_empty() {
+        return None;
+    }
+    Some(match commit.refused_at.is_some() {
+        true => (tr!("workbench-changes-enter-a-message"), true),
+        false => (tr!("workbench-changes-message"), false),
+    })
+}
+
 /// The warning under the box after a commit was refused for a message of
 /// only blanks or comments, until the box is edited; the warning for an
 /// empty box is its placeholder.
-fn commit_warning(commit: &CommitBox, cx: &App) -> Option<&'static str> {
+fn commit_warning(commit: &CommitBox, cx: &App) -> Option<SharedString> {
     let empty = commit.editor.read(cx).model().text().is_empty();
-    (commit.refused_at.is_some() && !empty).then_some(ENTER_A_MESSAGE)
+    (commit.refused_at.is_some() && !empty).then(|| tr!("workbench-changes-enter-a-message"))
 }
 
-/// The Commit button's label, and whether it's enabled: not while the
+/// The Commit button as drawn: its label, the key that commits from the
+/// box, if bound, and whether it's enabled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CommitButton {
+    pub(crate) label: SharedString,
+    pub(crate) key: Option<SharedString>,
+    pub(crate) enabled: bool,
+}
+
+impl CommitButton {
+    /// Its text: its label, and its key after it while it can commit.
+    pub(crate) fn text(&self) -> SharedString {
+        match (&self.key, self.enabled) {
+            (Some(key), true) => tr!(
+                "workbench-changes-commit-with-key",
+                label = self.label.to_string(),
+                key = key.to_string()
+            ),
+            _ => self.label.clone(),
+        }
+    }
+}
+
+/// The Commit button with `staged` files staged in the repository:
+/// "Commit 1 file" ("Commit" with none, as committing then asks to stage
+/// everything; "Amend" while Amend is checked; "Committing…" while a commit
+/// runs), with the key that commits from the box. Not enabled while the
 /// message is blank and Amend isn't checked, nor while committing.
-fn commit_button(commit: &CommitBox, cx: &App) -> (&'static str, bool) {
+fn commit_button(commit: &CommitBox, staged: usize, cx: &App) -> CommitButton {
     let blank = box_text(commit.editor.read(cx)).trim().is_empty();
     let committing = commit.committing.is_some();
     let enabled = !committing && (commit.amend || !blank);
     let label = match (committing, commit.amend) {
-        (true, _) => "Committing…",
-        (false, true) => "Amend",
-        (false, false) => "Commit",
+        (true, _) => tr!("workbench-changes-committing"),
+        (false, true) => tr!("workbench-changes-commit-amend"),
+        (false, false) => tr!("workbench-changes-commit", count = staged),
     };
-    (label, enabled)
+    CommitButton {
+        label,
+        key: commit_key(cx).map(SharedString::from),
+        enabled,
+    }
 }
 
-/// The box's placeholder, naming where `head` points if on a branch.
-fn placeholder(head: Option<&Head>) -> String {
-    match head {
-        Some(Head::Branch(name) | Head::Unborn(name)) => {
-            format!("Message ({COMMIT_KEY} to commit on \"{name}\")")
-        }
-        _ => format!("Message ({COMMIT_KEY} to commit)"),
-    }
+/// The key that commits from the box, as this platform prints it: the
+/// first single key the keymap binds to [`COMMIT_COMMAND`] in the box, read
+/// now so it follows reloads.
+fn commit_key(cx: &App) -> Option<String> {
+    let command = CommandId::parse(COMMIT_COMMAND).ok()?;
+    let stack: ContextStack = [crate::KEY_CONTEXT, KEY_CONTEXT, fe_gpui::KEY_CONTEXT]
+        .into_iter()
+        .map(ContextFrame::new)
+        .collect();
+    let keymap = fe_gpui::current_keymap(cx);
+    fe_keymap::shortcuts(&keymap, &command, &Value::Null, &stack)
+        .iter()
+        .find(|keys| keys.keystrokes().len() == 1)
+        .map(fe_keymap::shortcut_label)
 }
 
 /// Where `root` is in the working tree at `workdir`, through symlinks and
@@ -1924,17 +2036,22 @@ pub(crate) fn letter(kind: ChangeKind) -> &'static str {
     }
 }
 
-/// A status letter's colour: deletions and conflicts in the error colour,
-/// modifications in the accent, additions in the accent turned green.
-pub(crate) fn letter_color(kind: ChangeKind, ui: &UiTheme) -> Hsla {
+/// A status letter's colour, the theme's `vcs.*` for its kind: never the
+/// accent, which is selection and focus.
+pub(crate) fn letter_color(kind: ChangeKind, cx: &App) -> Hsla {
+    let vcs = cx.theme().colors.vcs;
     match kind {
-        ChangeKind::Deleted | ChangeKind::Conflicted => ui.error_text,
-        ChangeKind::Modified => ui.accent,
-        ChangeKind::Added | ChangeKind::Untracked => Hsla {
-            h: ADDED_HUE,
-            ..ui.accent
-        },
+        ChangeKind::Modified => vcs.modified,
+        ChangeKind::Added => vcs.added,
+        ChangeKind::Deleted => vcs.deleted,
+        ChangeKind::Untracked => vcs.untracked,
+        ChangeKind::Conflicted => vcs.conflict,
     }
+}
+
+/// The debug selector of the checkbox whose element ID is `id`.
+fn checkbox_selector(id: &str) -> String {
+    format!("change-checkbox:{id}")
 }
 
 impl EventEmitter<GitPanelEvent> for GitPanel {}
@@ -2068,7 +2185,7 @@ impl TestHooks {
 /// A group as shown: its title, its count, and its rows' letters and paths
 /// from the root.
 #[cfg(test)]
-pub(crate) type ShownGroup = (&'static str, usize, Vec<(&'static str, String)>);
+pub(crate) type ShownGroup = (String, usize, Vec<(&'static str, String)>);
 
 /// A row as shown: its letter, name and directory, and whether it's dimmed.
 #[cfg(test)]
@@ -2144,13 +2261,14 @@ impl GitPanel {
                         (letter(entry.kind), shown)
                     })
                     .collect();
-                (group.title(), range.len(), rows)
+                (group.title().to_string(), range.len(), rows)
             })
             .collect()
     }
 
     /// The debug selector of the button for `action` on file `ix`'s row, or
-    /// with `ix` `None` on `group`'s header.
+    /// with `ix` `None` on `group`'s header: for staging or unstaging, the
+    /// row's checkbox.
     pub(crate) fn button_selector(
         &self,
         ix: Option<usize>,
@@ -2163,7 +2281,30 @@ impl GitPanel {
                 .find(|at| self.row(*at) == Some(Row::Header(group)))
                 .unwrap_or(usize::MAX),
         };
-        format!("icon-button:{}", self.button_id(at, action))
+        match action {
+            Action::Stage | Action::Unstage => checkbox_selector(&self.checkbox_id(at)),
+            Action::OpenFile | Action::Discard => {
+                format!("icon-button:{}", self.button_id(at, action))
+            }
+        }
+    }
+
+    /// Whether file `ix`'s checkbox, or with `ix` `None` `group`'s header's,
+    /// is checked.
+    pub(crate) fn checked(&self, ix: Option<usize>, group: Group) -> bool {
+        match ix {
+            Some(ix) => (self.entries.get(ix)).is_some_and(|entry| entry.group.staged()),
+            None => group.staged(),
+        }
+    }
+
+    /// The buttons a row of file `ix`, or `group`'s header, has beside its
+    /// checkbox.
+    pub(crate) fn row_buttons(&self, ix: Option<usize>, group: Group) -> Vec<Action> {
+        match ix.and_then(|ix| self.entries.get(ix)) {
+            Some(entry) => row_actions(entry.group, entry.kind == ChangeKind::Deleted).to_vec(),
+            None => header_actions(group).to_vec(),
+        }
     }
 
     /// The paths a row would open, in row order.
@@ -2174,26 +2315,32 @@ impl GitPanel {
             .collect()
     }
 
-    /// The commit box's after-line text: each row's, with its tint.
-    pub(crate) fn commit_hints(&self, cx: &App) -> Vec<(u32, String, Tint)> {
-        let Some(commit) = &self.commit else {
-            return Vec::new();
-        };
-        let model = commit.editor.read(cx).model();
-        let text = model.text();
-        (model.decorations(0..text.len()).into_iter())
-            .filter_map(|decoration| match decoration.kind {
-                DecorationKind::AfterLine(hint) => {
-                    let row = text.offset_to_point(decoration.range.start).row;
-                    Some((row, hint.to_string(), decoration.tint))
-                }
-                _ => None,
-            })
-            .collect()
+    /// The box's placeholder, and whether it's the warning a refused empty
+    /// message leaves, if it has one.
+    pub(crate) fn commit_placeholder(&self, cx: &App) -> Option<(SharedString, bool)> {
+        commit_placeholder(self.commit.as_ref()?, cx)
+    }
+
+    /// The placeholder last drawn over the box, and its font family; and
+    /// forgets it, so the next draw's is seen.
+    pub(crate) fn take_drawn_placeholder(&self) -> Option<(SharedString, SharedString)> {
+        self.drawn_placeholder.take()
+    }
+
+    /// The counter last drawn in the box's corner, its colour and family;
+    /// and forgets it, so the next draw's is seen.
+    pub(crate) fn take_drawn_counter(&self) -> Option<(SharedString, Hsla, SharedString)> {
+        self.drawn_counter.take()
+    }
+
+    /// The box's counter: the caret row's characters, and whether that's
+    /// over the limit.
+    pub(crate) fn commit_counter(&self, cx: &App) -> Option<(usize, bool)> {
+        counter(self.commit.as_ref()?.editor.read(cx))
     }
 
     /// The warning under the box, if any.
-    pub(crate) fn commit_warning(&self, cx: &App) -> Option<&'static str> {
+    pub(crate) fn commit_warning(&self, cx: &App) -> Option<SharedString> {
         commit_warning(self.commit.as_ref()?, cx)
     }
 
@@ -2203,8 +2350,18 @@ impl GitPanel {
     }
 
     /// The Commit button's label and whether it's enabled.
-    pub(crate) fn commit_button_state(&self, cx: &App) -> Option<(&'static str, bool)> {
-        Some(commit_button(self.commit.as_ref()?, cx))
+    pub(crate) fn commit_button_state(&self, cx: &App) -> Option<(SharedString, bool)> {
+        let button = self.commit_button(cx)?;
+        Some((button.label, button.enabled))
+    }
+
+    /// The Commit button as it's drawn.
+    pub(crate) fn commit_button(&self, cx: &App) -> Option<CommitButton> {
+        Some(commit_button(
+            self.commit.as_ref()?,
+            self.staged_in_repository(),
+            cx,
+        ))
     }
 
     /// Whether the box's command line is open.
@@ -2225,6 +2382,11 @@ impl GitPanel {
 
     pub(crate) fn selected(&self) -> Option<usize> {
         self.selected
+    }
+
+    /// The debug selector of file `ix`'s status letter.
+    pub(crate) fn letter_selector(&self, ix: usize) -> String {
+        format!("change-letter:{}", self.row_of(ix))
     }
 
     /// Where file `ix`'s row was laid out in the last frame, from the list's

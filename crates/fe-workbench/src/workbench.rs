@@ -901,11 +901,10 @@ impl Workbench {
         let tints: HashMap<PathBuf, ChangeKind> = (changes.read(cx).changed_paths())
             .map(|(path, kind)| (resolved(path), kind))
             .collect();
-        let ui = fe_ui::ui_theme(cx);
         for editor in self.open_editors(cx) {
             let tint = editor.read(cx).model().path().and_then(|path| {
                 let kind = tints.get(&resolved(path))?;
-                Some(git_panel::letter_color(*kind, &ui))
+                Some(git_panel::letter_color(*kind, cx))
             });
             editor.update(cx, |editor, cx| editor.set_tab_tint(tint, cx));
         }

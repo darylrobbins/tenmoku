@@ -577,6 +577,7 @@ impl Dock {
             explorer.set_actions(crate::project_panel::FOLDERS, actions, cx);
             explorer.add_view(outline, cx);
         });
+        source_control::follow_locale(&self.source_control, &self.changes, cx);
         let (changed_files, errors) = (self.changed_files, self.errors);
         self.set_changed_files(changed_files, cx);
         self.set_errors(errors, cx);

@@ -37,8 +37,10 @@ use fe_git::{CommitError, GitError, Repo};
 use fe_gpui::EditorView;
 use fe_vim::HostCommand;
 use gpui::{
-    App, AppContext as _, Context, Entity, Focusable as _, PromptButton, PromptLevel, Window,
+    App, AppContext as _, Context, Entity, Focusable as _, PromptButton, PromptLevel, SharedString,
+    Window,
 };
+use kiln_l10n::tr;
 
 use super::{
     Workbench,
@@ -48,26 +50,34 @@ use super::{
 use crate::{GitPanel, dock::DockOp, git::GitState, git_panel::CommitRequest};
 
 /// What `:w` in the box answers.
-const KEPT: &str = "Message kept; :wq commits";
+fn kept() -> SharedString {
+    tr!("workbench-changes-message-kept")
+}
 
 /// What `:q` on a box with a message answers.
-const E37: &str = "E37: No write since last change (add ! to override)";
+fn e37() -> SharedString {
+    tr!("workbench-changes-e37")
+}
 
 /// What a diff command typed in the box answers.
-const E99: &str = "E99: Current buffer is not in diff mode";
+fn e99() -> SharedString {
+    tr!("workbench-changes-e99")
+}
 
 /// What a command the box has no use for answers.
-const NOT_IN_THE_BOX: &str = "Not supported in the commit box";
+fn not_in_the_box() -> SharedString {
+    tr!("workbench-changes-not-in-the-box")
+}
 
 /// What committing outside a repository says.
-const NO_REPO: &str = "Not in a git repository";
-
-/// The question when nothing is staged, and its detail: VS Code's.
-const NOTHING_STAGED: &str = "There are no staged changes to commit.";
-const STAGE_ALL_DETAIL: &str = "Would you like to stage all your changes and commit them directly?";
+fn no_repo() -> SharedString {
+    tr!("workbench-changes-no-repository")
+}
 
 /// The button that stages everything and commits.
-pub(crate) const STAGE_ALL_AND_COMMIT: &str = "Stage All and Commit";
+pub(crate) fn stage_all_and_commit() -> SharedString {
+    tr!("workbench-changes-stage-all-and-commit")
+}
 
 /// The most of a failed hook's output its warning shows.
 const HOOK_OUTPUT: usize = 2000;
@@ -83,7 +93,7 @@ pub(super) fn run(
 ) {
     let changes = workbench.dock.read(cx).changes().clone();
     if changes.read(cx).not_a_repository() {
-        return workbench.answer_git_op(&op, NO_REPO.to_owned(), cx);
+        return workbench.answer_git_op(&op, no_repo().into(), cx);
     }
     let amend = op.command == GitCommand::CommitAmend;
     workbench.focus_commit_box(amend, window, cx);
@@ -101,16 +111,16 @@ pub(super) fn host_command(
         editor.update(cx, |editor, cx| editor.set_vim_message(text, cx))
     };
     match command {
-        HostCommand::Write { path: None, .. } => message(&editor, KEPT, cx),
+        HostCommand::Write { path: None, .. } => message(&editor, &kept(), cx),
         // The box has no file to save as, nor a copy to write.
         HostCommand::Write { path: Some(_), .. } | HostCommand::SaveAs { .. } => {
-            message(&editor, NOT_IN_THE_BOX, cx)
+            message(&editor, &not_in_the_box(), cx)
         }
-        HostCommand::WriteQuit { .. } => workbench.commit_from_box(window, cx),
+        HostCommand::WriteQuit { .. } => workbench.commit_from_box(false, window, cx),
         HostCommand::Quit { force } => {
             let blank = editor.read(cx).model().text().to_string().trim().is_empty();
             if !force && !blank {
-                return message(&editor, E37, cx);
+                return message(&editor, &e37(), cx);
             }
             let changes = workbench.dock.read(cx).changes().clone();
             changes.update(cx, |changes, cx| {
@@ -139,7 +149,7 @@ pub(super) fn host_command(
             }
             Err(answer) => message(&editor, &answer, cx),
         },
-        HostCommand::DiffGet { .. } | HostCommand::DiffPut { .. } => message(&editor, E99, cx),
+        HostCommand::DiffGet { .. } | HostCommand::DiffPut { .. } => message(&editor, &e99(), cx),
         HostCommand::Edit { .. } | HostCommand::WriteAll | HostCommand::QuitAll { .. } => {
             match workbench.active_editor(cx).cloned() {
                 Some(active) => {
@@ -147,13 +157,13 @@ pub(super) fn host_command(
                     changes.update(cx, |changes, _| changes.leave_box());
                     workbench.run_vim_host_command(&active.downgrade(), command, window, cx)
                 }
-                None => message(&editor, NOT_IN_THE_BOX, cx),
+                None => message(&editor, &not_in_the_box(), cx),
             }
         }
         HostCommand::DiffSplit { .. }
         | HostCommand::Read { .. }
         | HostCommand::Filter { .. }
-        | HostCommand::ReadCommand { .. } => message(&editor, NOT_IN_THE_BOX, cx),
+        | HostCommand::ReadCommand { .. } => message(&editor, &not_in_the_box(), cx),
         HostCommand::Explore
         | HostCommand::OldFiles
         | HostCommand::ReplaceInFiles { .. }
@@ -222,10 +232,16 @@ impl Workbench {
     }
 
     /// Commits the commit box's message in the background, unless a commit
-    /// is running; then shows how it went.
-    pub(crate) fn commit_from_box(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// is running; then shows how it went, and once it's made pushes the
+    /// branch if `push` (the button's "and push").
+    pub(crate) fn commit_from_box(
+        &mut self,
+        push: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let changes = self.dock.read(cx).changes().clone();
-        let Some(request) = changes.update(cx, |changes, cx| changes.begin_commit(cx)) else {
+        let Some(request) = changes.update(cx, |changes, cx| changes.begin_commit(push, cx)) else {
             return;
         };
         self.run_commit(changes, request, false, window, cx);
@@ -274,9 +290,10 @@ impl Workbench {
     }
 
     /// `request`, a commit from `changes`' box, has landed: the box
-    /// empties once it's made; otherwise the message stays and the failure
-    /// shows. Either way the git state is read again, a hook having maybe
-    /// staged files. Once the root has changed, nothing shows.
+    /// empties once it's made, and `git.push` runs if the request asked to
+    /// push; otherwise the message stays and the failure shows. Either way
+    /// the git state is read again, a hook having maybe staged files. Once
+    /// the root has changed, nothing shows and nothing is pushed.
     fn committed(
         &mut self,
         changes: Entity<GitPanel>,
@@ -291,12 +308,16 @@ impl Workbench {
             Err(_) => changes.commit_refused(empty, cx),
         });
         self.git.update(cx, GitState::refresh);
-        let Err(error) = committed else {
-            return;
-        };
         if !self.is_changes(&changes, cx) {
             return;
         }
+        let error = match committed {
+            Ok(_) if request.push => {
+                return self.run_git_command(GitCommand::Push, window, cx);
+            }
+            Ok(_) => return,
+            Err(error) => error,
+        };
         let (level, message, detail) = match error {
             CommitError::EmptyMessage => return,
             CommitError::NothingStaged => {
@@ -304,22 +325,23 @@ impl Workbench {
             }
             CommitError::HookFailed { hook, output } => (
                 PromptLevel::Warning,
-                format!("Git: {hook} hook failed"),
+                tr!("workbench-changes-hook-failed", hook = hook),
                 truncated(&output, HOOK_OUTPUT),
             ),
             CommitError::Failed { output, .. } => (
                 PromptLevel::Critical,
-                "Git: commit failed".to_owned(),
+                tr!("workbench-changes-commit-failed"),
                 output,
             ),
             CommitError::Git(error) => (
                 PromptLevel::Critical,
-                "Git: commit failed".to_owned(),
+                tr!("workbench-changes-commit-failed"),
                 error.to_string(),
             ),
         };
         let detail = Some(detail.as_str()).filter(|detail| !detail.is_empty());
-        drop(window.prompt(level, &message, detail, &[PromptButton::ok("OK")], cx));
+        let ok = [PromptButton::ok(tr!("workbench-changes-ok"))];
+        drop(window.prompt(level, &message, detail, &ok, cx));
     }
 
     /// Asks whether to stage every change and commit `request`, refused
@@ -334,13 +356,13 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let buttons = [
-            PromptButton::ok(STAGE_ALL_AND_COMMIT),
-            PromptButton::cancel("Cancel"),
+            PromptButton::ok(stage_all_and_commit()),
+            PromptButton::cancel(tr!("workbench-changes-cancel")),
         ];
         let answer = window.prompt(
             PromptLevel::Warning,
-            NOTHING_STAGED,
-            Some(STAGE_ALL_DETAIL),
+            &tr!("workbench-changes-nothing-staged"),
+            Some(&tr!("workbench-changes-stage-all-detail")),
             &buttons,
             cx,
         );
@@ -371,7 +393,7 @@ fn commit(request: &CommitRequest, stage_all: bool) -> Result<String, CommitErro
         amend,
         ..
     } = request;
-    let repo = Repo::discover(root)?.ok_or_else(|| GitError::Io(NO_REPO.to_owned()))?;
+    let repo = Repo::discover(root)?.ok_or_else(|| GitError::Io(no_repo().into()))?;
     if stage_all {
         let changed: Vec<PathBuf> = (repo.status_split()?.into_iter())
             .filter(|status| status.unstaged.is_some())

@@ -153,9 +153,9 @@ fn rows(staged: &[(&'static str, &str)], changes: &[(&'static str, &str)]) -> Ve
     };
     let mut shown = Vec::new();
     if !staged.is_empty() {
-        shown.push(("Staged Changes", staged.len(), rows(staged)));
+        shown.push(("Staged Changes".to_owned(), staged.len(), rows(staged)));
     }
-    shown.push(("Changes", changes.len(), rows(changes)));
+    shown.push(("Changes".to_owned(), changes.len(), rows(changes)));
     shown
 }
 

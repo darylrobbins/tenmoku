@@ -56,7 +56,7 @@ fn group(title: &'static str, rows: &[(&'static str, &str)]) -> ShownGroup {
     let rows = (rows.iter())
         .map(|(letter, path)| (*letter, (*path).to_owned()))
         .collect();
-    (title, count, rows)
+    (title.to_owned(), count, rows)
 }
 
 #[gpui::test]
@@ -101,7 +101,7 @@ fn staging_a_file_with_markers_asks_first(cx: &mut TestAppContext) {
     draw(cx);
     assert!(unmerged(root).is_empty());
     let shown = shown_groups(&panel, cx);
-    let titles: Vec<_> = shown.iter().map(|group| group.0).collect();
+    let titles: Vec<_> = shown.iter().map(|group| group.0.as_str()).collect();
     assert_eq!(titles, ["Staged Changes", "Changes"]);
     assert_eq!(shown[0].2, [("M", "a.rs".to_owned())]);
     assert!(index_text(root, "a.rs").unwrap().contains("<<<<<<<"));

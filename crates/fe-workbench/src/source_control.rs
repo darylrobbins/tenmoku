@@ -10,13 +10,16 @@
 //! collapse and weights are the dock's saved state, as the Explorer's are.
 
 use gpui::{App, AppContext as _, Context, Entity};
+use kiln_l10n::tr;
 use kiln_shell::{ViewContainer, ViewId, ViewSpec};
 
 use super::Dock;
 use crate::{GitLogPanel, GitPanel};
 
 /// The Source Control container in the sidebar: focused when shown, as
-/// its views' rows take keys (the dock focuses the view it shows).
+/// its views' rows take keys (the dock focuses the view it shows). Its
+/// name is the dock's, which every panel's `SIDEBAR` gives as English for
+/// now; where this module shows it, it's `workbench-changes-title`.
 pub(crate) const SIDEBAR: super::SidebarPanel = super::SidebarPanel {
     panel: crate::DockPanel::new("scm"),
     name: "Changes",
@@ -42,19 +45,38 @@ pub(super) fn container(
 ) -> Entity<ViewContainer> {
     let graph = graph(git_log, cx);
     cx.new(|cx| {
-        let mut container = ViewContainer::new(SIDEBAR.panel.id(), SIDEBAR.name, SIDEBAR.icon, cx)
-            .show_command(SIDEBAR.show_command);
+        let mut container = ViewContainer::new(
+            SIDEBAR.panel.id(),
+            tr!("workbench-changes-title"),
+            SIDEBAR.icon,
+            cx,
+        )
+        .show_command(SIDEBAR.show_command);
         container.add_view(changes_view(changes), cx);
         container.add_view(graph, cx);
         container
     })
 }
 
+/// Retitles `container`, Source Control, and its Changes view, `changes`,
+/// in the language now active. The view keeps its collapse and weight.
+pub(super) fn follow_locale(
+    container: &Entity<ViewContainer>,
+    changes: &Entity<GitPanel>,
+    cx: &mut Context<Dock>,
+) {
+    let view = changes_view(changes);
+    container.update(cx, |container, cx| {
+        container.set_title(tr!("workbench-changes-title"), cx);
+        container.add_view(view, cx);
+    });
+}
+
 /// The Changes view: `changes`.
 pub(super) fn changes_view(changes: &Entity<GitPanel>) -> ViewSpec {
     ViewSpec {
         id: CHANGES,
-        title: "Changes".into(),
+        title: tr!("workbench-changes-title"),
         order: 10,
         default_collapsed: false,
         view: changes.clone().into(),

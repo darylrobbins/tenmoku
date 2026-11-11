@@ -251,6 +251,11 @@ impl ViewStack {
         self.views.iter().map(|entry| entry.view.id).collect()
     }
 
+    /// `view`'s header's title, if it's in the stack.
+    pub fn title(&self, view: ViewId) -> Option<SharedString> {
+        Some(self.entry(view)?.view.title.clone())
+    }
+
     /// Whether `view` is collapsed, if it's in the stack: never a view
     /// without a header ([`ViewStack::is_headless`]).
     pub fn is_collapsed(&self, view: ViewId) -> Option<bool> {
