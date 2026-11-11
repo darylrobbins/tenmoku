@@ -142,6 +142,11 @@ impl PickerDelegate for GoToLine {
         div().child(self.label()).into_any_element()
     }
 
+    /// The row's text.
+    fn match_label(&self, _: usize, _: &App) -> SharedString {
+        self.label().into()
+    }
+
     /// Moves the editor to a single caret at the target, clamped, after
     /// recording where it was for back, and focuses it. If the editor has
     /// closed, the pick only dismisses the picker.

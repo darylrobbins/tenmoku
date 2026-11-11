@@ -419,6 +419,11 @@ impl PickerDelegate for RecentPicker {
             .into_any_element()
     }
 
+    /// The path, as the row shows it.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        self.row(ix).label.clone().into()
+    }
+
     /// A folder re-roots the window, focus going back where it was first; a
     /// file opens in the active pane, as a tree click does, in vim's normal
     /// mode if it's on.

@@ -200,6 +200,17 @@ impl PickerDelegate for InsertSnippetPicker {
             .into_any_element()
     }
 
+    /// The snippet's name, then its prefixes and detail, as the row shows them.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = &self.rows[self.matches[ix]];
+        let parts = [&row.name, &row.prefixes, &row.detail];
+        let parts: Vec<&str> = (parts.into_iter())
+            .map(|part| part.as_str())
+            .filter(|part| !part.is_empty())
+            .collect();
+        parts.join(", ").into()
+    }
+
     /// Inserts the row's snippet in place of the editor's primary
     /// selection, then focuses it.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
@@ -286,6 +297,14 @@ impl ConfigureSnippetsPicker {
             None => self.dir.join(GLOBAL_SNIPPETS_FILE),
         }
     }
+
+    /// What `row` notes after its label: that its file exists, if it does.
+    fn exists_note(&self, row: &ConfigureRow) -> Option<String> {
+        let file = self.file(row);
+        let name = (file.file_name()).map(|name| name.to_string_lossy().into_owned());
+        row.exists
+            .then(|| format!("{} exists", name.unwrap_or_default()))
+    }
 }
 
 #[cfg(test)]
@@ -343,13 +362,8 @@ impl PickerDelegate for ConfigureSnippetsPicker {
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let ui = fe_ui::ui_theme(cx);
         let row = &self.rows[self.matches[ix]];
-        let file = self.file(row);
-        let name = (file.file_name()).map(|name| name.to_string_lossy().into_owned());
-        let exists = row.exists.then(|| {
-            div()
-                .text_color(ui.muted_text)
-                .child(format!("{} exists", name.unwrap_or_default()))
-        });
+        let exists =
+            (self.exists_note(row)).map(|note| div().text_color(ui.muted_text).child(note));
         div()
             .flex()
             .flex_1()
@@ -358,6 +372,15 @@ impl PickerDelegate for ConfigureSnippetsPicker {
             .child(row.label.clone())
             .children(exists)
             .into_any_element()
+    }
+
+    /// The row's label, then whether its file exists, as the row shows them.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = &self.rows[self.matches[ix]];
+        match self.exists_note(row) {
+            Some(note) => format!("{}, {note}", row.label).into(),
+            None => row.label.clone(),
+        }
     }
 
     /// Creates the row's file if it's missing, then opens it in a tab.

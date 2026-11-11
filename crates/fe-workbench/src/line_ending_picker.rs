@@ -15,6 +15,7 @@ use gpui::{
 };
 use kiln_l10n::{text, tr};
 use kiln_shell::ModalId;
+use kiln_shell::picker::joined_label;
 
 use crate::{
     Workbench,
@@ -89,6 +90,13 @@ impl PickerDelegate for LineEndingPicker {
             .child(label)
             .children(current)
             .into_any_element()
+    }
+
+    /// The ending's label, then current if it's the editor's.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let (label, ending, _) = OFFERED[self.matches[ix]];
+        let current = (ending == self.current).then(|| tr!("workbench-setup-current"));
+        joined_label([Some(label.into()), current].into_iter().flatten())
     }
 
     /// Converts the editor to the ending, then focuses it. If the editor

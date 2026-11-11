@@ -486,6 +486,17 @@ impl PickerDelegate for CodeActionsPicker {
             .into_any_element()
     }
 
+    /// The action's title, then its kind and why it's disabled, if shown.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let action = &self.actions[self.matches[ix].0];
+        let mut label = action.title.to_string();
+        for detail in [&action.kind, &action.disabled].into_iter().flatten() {
+            label.push_str(", ");
+            label.push_str(detail);
+        }
+        label.into()
+    }
+
     /// Applies the action, and keeps the picker up until it's done.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         if self.running.is_some() {

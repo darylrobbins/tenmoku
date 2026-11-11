@@ -833,6 +833,22 @@ impl PickerDelegate for HarpoonPicker {
             .into_any_element()
     }
 
+    /// The file's name, then its folder, and missing if it is.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = &self.rows[self.matches[ix].0];
+        let mut parts =
+            vec![(row.rel.file_name().unwrap_or_default().to_string_lossy()).into_owned()];
+        parts.extend(
+            (row.rel.parent())
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(shown),
+        );
+        if row.missing {
+            parts.push(tr!("workbench-navigation-harpoon-row-missing").to_string());
+        }
+        parts.join(", ").into()
+    }
+
     /// Opens the row's file, as a jump does, then closes; a missing one is
     /// said, its row flagged, and the picker stays. Never taken at once:
     /// the disk is read first, off the UI thread.

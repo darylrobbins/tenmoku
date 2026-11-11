@@ -551,6 +551,11 @@ impl PickerDelegate for TaskChoice {
         div().truncate().child(label).into_any_element()
     }
 
+    /// The task's label, as the row shows it.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        self.labels[self.matches[ix]].clone().into()
+    }
+
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let label = self.labels[self.matches[ix]].clone();
         self.restore_focus(window, cx);

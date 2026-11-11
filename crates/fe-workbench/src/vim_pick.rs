@@ -108,6 +108,16 @@ impl PickerDelegate for VimPicker {
             .into_any_element()
     }
 
+    /// The row's cells, in order, as it shows them.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = &self.pick.rows[self.matches[ix]];
+        let cells: Vec<&str> = (row.cells.iter())
+            .map(|cell| cell.trim())
+            .filter(|cell| !cell.is_empty())
+            .collect();
+        cells.join(", ").into()
+    }
+
     /// Focuses the editor and runs the row's `then` in it. An editor closed
     /// by now only dismisses.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {

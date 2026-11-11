@@ -113,6 +113,17 @@ impl ThemePicker {
         self.current == Some(self.matches[ix])
     }
 
+    /// What the row at `ix` notes after its title: its appearance, then
+    /// whether it's current.
+    fn notes(&self, ix: usize) -> impl Iterator<Item = &'static str> {
+        let appearance = match self.row(ix).appearance {
+            Appearance::Dark => "dark",
+            Appearance::Light => "light",
+        };
+        let current = self.is_current(ix).then_some("current");
+        std::iter::once(appearance).chain(current)
+    }
+
     fn restore_focus(&mut self, window: &mut Window, cx: &mut App) {
         if let Some(focus) = self.previous_focus.take() {
             window.focus(&focus, cx);
@@ -280,20 +291,24 @@ impl PickerDelegate for ThemePicker {
 
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let row = self.row(ix);
-        let appearance = match row.appearance {
-            Appearance::Dark => "dark",
-            Appearance::Light => "light",
-        };
         let muted_text = fe_ui::ui_theme(cx).muted_text;
         let muted = |text: &'static str| div().ml_2().text_color(muted_text).child(text);
-        let current = self.is_current(ix).then(|| muted("current"));
         div()
             .flex()
             .items_center()
             .child(row.title.clone())
-            .child(muted(appearance))
-            .children(current)
+            .children(self.notes(ix).map(muted))
             .into_any_element()
+    }
+
+    /// The theme's title, then its appearance and whether it's current.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let mut label = self.row(ix).title.to_string();
+        for note in self.notes(ix) {
+            label.push_str(", ");
+            label.push_str(note);
+        }
+        label.into()
     }
 
     /// Writes the row's theme to `settings.toml`, whose reload applies it,

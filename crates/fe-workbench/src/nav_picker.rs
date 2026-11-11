@@ -93,6 +93,17 @@ impl PickerDelegate for DefinitionsPicker {
         row(label, place(&item.location), container, &ui)
     }
 
+    /// The name, then where it is and what holds it, as the row shows them.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let item = &self.items[ix];
+        let mut label = format!("{}, {}", item.name, place(&item.location));
+        if let Some(container) = item.container.as_deref().filter(|c| !c.is_empty()) {
+            label.push_str(", ");
+            label.push_str(container);
+        }
+        label.into()
+    }
+
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let location = self.items[ix].location.clone();
         self.previous_focus = None;
@@ -313,6 +324,20 @@ impl PickerDelegate for SymbolsPicker {
             place(&found.location),
             &fe_ui::ui_theme(cx),
         )
+    }
+
+    /// The name, then its kind and where it is, as the row shows them.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let Some(found) = self.matches.get(ix) else {
+            return SharedString::default();
+        };
+        format!(
+            "{}, {}, {}",
+            found.name,
+            kind_word(found.kind),
+            place(&found.location)
+        )
+        .into()
     }
 
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {

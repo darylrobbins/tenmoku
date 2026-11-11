@@ -341,6 +341,17 @@ impl PickerDelegate for KeymapsPicker {
             .into_any_element()
     }
 
+    /// The entry's keys, then its title and context.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = &self.rows[self.matches[ix].0];
+        let parts = [&row.keys, &row.title, &row.context];
+        let parts: Vec<&str> = (parts.into_iter())
+            .map(String::as_str)
+            .filter(|part| !part.is_empty())
+            .collect();
+        parts.join(", ").into()
+    }
+
     /// Gives focus back to where it was, then runs the row's command there,
     /// once the picker has gone. A map of keys types them in the editor its
     /// row is listed from, focused, back in normal mode first if it's in

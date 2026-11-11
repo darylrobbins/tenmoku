@@ -23,6 +23,7 @@
 //! The encodings are `encoding_rs`'s, which follow the WHATWG Encoding
 //! Standard. Its ISO-8859-1 is windows-1252, so there's no row of its own.
 
+use kiln_shell::picker::joined_label;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -321,6 +322,13 @@ impl PickerDelegate for EncodingPicker {
             .children(name)
             .children(current)
             .into_any_element()
+    }
+
+    /// The row's label, then current if it's the editor's encoding.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let (label, _) = self.row(self.matches[ix]);
+        let current = self.is_current(ix).then(|| tr!("workbench-setup-current"));
+        joined_label([Some(label), current].into_iter().flatten())
     }
 
     /// An action lists the encodings for it, in a picker of their own; an

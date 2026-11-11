@@ -18,6 +18,7 @@
 //! editor, a jump that back returns from. A row the text no longer has
 //! (edited meanwhile) clamps to the text's end.
 
+use kiln_shell::picker::joined_label;
 use std::ops::{Range, RangeInclusive};
 
 use fe_buffer::{ResolvedSelection, Version};
@@ -344,6 +345,15 @@ impl PickerDelegate for BufferLinesPicker {
                     .child(label),
             )
             .into_any_element()
+    }
+
+    /// The line's text as the row shows it, then its number.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let (line, highlights) = &self.matches[ix];
+        let line = &self.lines[*line];
+        let (text, _) = excerpt(&line.text, highlights);
+        let number = line.row + 1;
+        joined_label([text.trim(), number.to_string().as_str()])
     }
 
     /// Puts the caret at the row's first char that isn't whitespace and

@@ -298,6 +298,11 @@ impl PickerDelegate for RenamePicker {
         div().child(self.label()).into_any_element()
     }
 
+    /// The row's text: the rename it asks for.
+    fn match_label(&self, _: usize, _: &App) -> SharedString {
+        self.label().into()
+    }
+
     /// Asks for the rename; the picker stays until it's answered.
     fn confirm(&mut self, _: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         if self.running.is_some() {

@@ -264,6 +264,18 @@ impl PickerDelegate for DiagnosticsPicker {
             .into_any_element()
     }
 
+    /// The problem's message, then its file and line.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = &self.rows[self.matches[ix].0];
+        format!(
+            "{}, {}:{}",
+            row.message,
+            row.file,
+            row.listed.problem.row + 1
+        )
+        .into()
+    }
+
     /// Opens the problem as the Problems panel does.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let Some(&(row, _)) = self.matches.get(ix) else {

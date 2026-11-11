@@ -45,6 +45,7 @@
 //! question from before it does nothing, so nothing done in one repository
 //! was asked about in another.
 
+use kiln_shell::picker::joined_label;
 use std::{
     cell::Cell,
     path::{Path, PathBuf},
@@ -795,6 +796,19 @@ impl PickerDelegate for BranchPicker {
             .into_any_element()
     }
 
+    /// The branch's name, then current if it's checked out; the first row's
+    /// text for the first row.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let Some(branch) = self.branch(ix) else {
+            return create_row();
+        };
+        let current = branch
+            .is_current
+            .then(|| tr!("workbench-chrome-branch-current"));
+        let name = SharedString::from(branch.name.clone());
+        joined_label([Some(name), current].into_iter().flatten())
+    }
+
     /// Switches to the row's branch, or asks for a new one's name.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let workbench = self.workbench.clone();
@@ -881,6 +895,11 @@ impl PickerDelegate for NamePicker {
 
     fn render_match(&self, _: usize, _: bool, _: &App) -> AnyElement {
         div().child(self.label()).into_any_element()
+    }
+
+    /// The row's text.
+    fn match_label(&self, _: usize, _: &App) -> SharedString {
+        self.label().into()
     }
 
     /// Creates the branch and switches to it.

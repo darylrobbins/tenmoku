@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! List: a delegate's rows, selected by click and keys, confirmed by a
-//! double click or `enter`, its events read with `cx.subscribe_in`.
+//! double click or `enter`, its events read with `cx.subscribe_in`; and
+//! what a screen reader sees of it, a `ListBox` of `ListBoxOption`s whose
+//! selected row is the active descendant while the list has focus, as in
+//! a [`PaletteFrame`] that holds focus.
 
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _,
-    IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement as _, Render,
-    Styled as _, Subscription, TestAppContext, VisualTestContext, Window, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable as _,
+    InteractiveElement as _, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
+    ParentElement as _, Pixels, Render, SharedString, Styled as _, Subscription, TestAppContext,
+    VisualTestContext, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
-use crate::{ActiveTheme as _, List, ListDelegate, ListEvent, ROW_HEIGHT, RowState};
+use crate::{
+    ActiveTheme as _, List, ListDelegate, ListEvent, Node, PaletteFrame, ROW_HEIGHT, Role,
+    RowState, UiTheme, nodes,
+};
 
 struct Numbers(usize);
 
@@ -34,6 +40,14 @@ impl ListDelegate for Numbers {
             .when(state.hovered, |row| row.bg(list.row_hover))
             .child(format!("Row {ix}"))
             .into_any_element()
+    }
+
+    fn accessible_name(&self, _: &App) -> SharedString {
+        "Numbers".into()
+    }
+
+    fn row_name(&self, ix: usize, _: &App) -> SharedString {
+        format!("Row {ix}").into()
     }
 }
 
@@ -275,5 +289,194 @@ fn list_rows_show_their_state() {
     assert_eq!(
         state(true, false, false).colors(c),
         (Some(list.row_selected_inactive), None)
+    );
+}
+
+/// What the recorder saw in a frame that drew every view afresh.
+fn drawn(cx: &mut VisualTestContext) -> Vec<Node> {
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+        nodes(window, cx)
+    })
+}
+
+/// The recorded options, as (label, selected).
+fn options(nodes: &[Node]) -> Vec<(String, bool)> {
+    (nodes.iter())
+        .filter(|n| n.role == Role::ListBoxOption)
+        .map(|n| (n.label.to_string(), n.states.selected == Some(true)))
+        .collect()
+}
+
+/// Where the row the active descendant is drawn, if one is.
+fn active(cx: &mut VisualTestContext) -> Option<Bounds<Pixels>> {
+    cx.debug_bounds(RowState::ACTIVE_DESCENDANT)
+}
+
+/// Whether `active` is where `row` (the delegate's element) was drawn.
+fn is_row(active: Option<Bounds<Pixels>>, row: &'static str, cx: &mut VisualTestContext) -> bool {
+    let row = cx
+        .debug_bounds(row)
+        .unwrap_or_else(|| panic!("{row} drawn"));
+    active.is_some_and(|active| active.top() == row.top() && active.bottom() == row.bottom())
+}
+
+#[gpui::test]
+fn the_list_is_a_named_listbox_of_named_options(cx: &mut TestAppContext) {
+    let (host, cx) = host(3, cx);
+    focus(&host, cx);
+    press("down down", cx);
+    let nodes = drawn(cx);
+    let list = (nodes.iter())
+        .find(|n| n.role == Role::ListBox)
+        .expect("the list is a ListBox");
+    assert_eq!(list.label, "Numbers");
+    assert_eq!(
+        options(&nodes),
+        [
+            ("Row 0".into(), false),
+            ("Row 1".into(), true),
+            ("Row 2".into(), false)
+        ]
+    );
+}
+
+#[gpui::test]
+fn the_active_descendant_follows_the_selection(cx: &mut TestAppContext) {
+    let (host, cx) = host(50, cx);
+    focus(&host, cx);
+    drawn(cx);
+    assert_eq!(active(cx), None, "nothing selected, nothing active");
+
+    press("down", cx);
+    drawn(cx);
+    assert!(is_row(active(cx), "row-0", cx), "down: the first row");
+    press("down down", cx);
+    drawn(cx);
+    assert!(is_row(active(cx), "row-2", cx));
+    press("end", cx);
+    let nodes = drawn(cx);
+    assert!(is_row(active(cx), "row-49", cx), "scrolled to the last");
+    assert_eq!(
+        options(&nodes)
+            .into_iter()
+            .filter(|(_, s)| *s)
+            .collect::<Vec<_>>(),
+        [("Row 49".to_string(), true)],
+        "only the active row is selected"
+    );
+
+    // The rows change under the selection, as a filter would: it is kept
+    // in range, and the active descendant goes with it.
+    let list = host.read_with(cx, |host, _| host.list.clone());
+    list.update(cx, |list, cx| {
+        list.delegate_mut().0 = 5;
+        list.rows_changed(cx);
+    });
+    drawn(cx);
+    assert!(is_row(active(cx), "row-4", cx), "clamped to the last row");
+    list.update(cx, |list, cx| list.set_selected(Some(1), cx));
+    drawn(cx);
+    assert!(is_row(active(cx), "row-1", cx), "the owner's selection too");
+
+    // Without focus the list's rows aren't where a screen reader is.
+    cx.update(|window, cx| window.blur(cx));
+    drawn(cx);
+    assert_eq!(active(cx), None, "unfocused, no active descendant");
+    assert!(
+        options(&drawn(cx)).contains(&("Row 1".into(), true)),
+        "still selected"
+    );
+}
+
+/// A palette holding focus itself, as a tab switcher does, over `count`
+/// rows of which `selected` is selected.
+struct Switcher {
+    focus: FocusHandle,
+    selected: usize,
+    count: usize,
+}
+
+impl Switcher {
+    fn rows(
+        &mut self,
+        range: std::ops::Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let focused = self.focus.is_focused(window);
+        range
+            .map(|ix| {
+                let state = RowState {
+                    selected: ix == self.selected,
+                    hovered: false,
+                    focused,
+                };
+                let name = format!("Tab {ix}");
+                state
+                    .option(div().id(ix), name, (ix, self.count), window, cx)
+                    .h(ROW_HEIGHT)
+                    .debug_selector(move || format!("tab-{ix}"))
+                    .into_any_element()
+            })
+            .collect()
+    }
+}
+
+impl Render for Switcher {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let list = uniform_list(
+            "switcher-rows",
+            self.count,
+            cx.processor(|switcher, range, window, cx| switcher.rows(range, window, cx)),
+        )
+        .h(ROW_HEIGHT * self.count as f32);
+        div().size_full().child(
+            PaletteFrame::new(&UiTheme::default_dark())
+                .name("Switch Tab")
+                .track_focus(&self.focus)
+                .list(list),
+        )
+    }
+}
+
+#[gpui::test]
+fn a_palette_holding_focus_is_a_dialog_over_its_active_row(cx: &mut TestAppContext) {
+    let (switcher, cx) = cx.add_window_view(|_, cx| Switcher {
+        focus: cx.focus_handle(),
+        selected: 1,
+        count: 3,
+    });
+    let focus = switcher.read_with(cx, |s, _| s.focus.clone());
+    cx.update(|window, cx| window.focus(&focus, cx));
+    let nodes = drawn(cx);
+    let roles: Vec<_> = (nodes.iter())
+        .filter(|n| matches!(n.role, Role::Dialog | Role::ListBox))
+        .map(|n| (n.role, n.label.to_string()))
+        .collect();
+    assert_eq!(
+        roles,
+        [
+            (Role::Dialog, "Switch Tab".into()),
+            (Role::ListBox, "Switch Tab".into())
+        ]
+    );
+    assert!(is_row(active(cx), "tab-1", cx));
+
+    switcher.update(cx, |s, cx| {
+        s.selected = 2;
+        cx.notify();
+    });
+    let nodes = drawn(cx);
+    assert!(is_row(active(cx), "tab-2", cx), "follows the selection");
+    assert_eq!(
+        options(&nodes),
+        [
+            ("Tab 0".into(), false),
+            ("Tab 1".into(), false),
+            ("Tab 2".into(), true)
+        ]
     );
 }

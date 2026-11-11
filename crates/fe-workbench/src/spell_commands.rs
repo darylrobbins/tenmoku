@@ -197,6 +197,11 @@ impl PickerDelegate for SpellPicker {
             .into_any_element()
     }
 
+    /// The suggestion, as the row shows it.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        self.suggestions[self.matches[ix].0].clone().into()
+    }
+
     /// Replaces the word, as one edit, focus going back to where it was first.
     /// If the word isn't where it was any more, nothing is replaced, and it says so.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {

@@ -234,6 +234,17 @@ impl PickerDelegate for CommandPalette {
             .into()
     }
 
+    /// The command's title, not its id.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        self.entries[self.matches[ix].0].title.clone()
+    }
+
+    /// The command that shows it: "Show All Commands".
+    fn title(&self, _: &App) -> Option<SharedString> {
+        let id = Toggle::id();
+        Some(kiln_command::command_label(id.as_str(), id.as_str()))
+    }
+
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let (entry, highlights) = &self.matches[ix];
         let title = self.entries[*entry].title.clone();

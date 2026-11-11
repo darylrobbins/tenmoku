@@ -10,20 +10,28 @@
 //! actions, so a list works with no keymap: `up`, `down`, `home`, `end`,
 //! `pageup` and `pagedown` move the selection and `enter` confirms it. A
 //! key with a modifier, and any other key, goes on to the app's bindings.
+//!
+//! To a screen reader the list is a `ListBox` named by
+//! [`ListDelegate::accessible_name`], and each row a `ListBoxOption` named
+//! by [`ListDelegate::row_name`], with its place in the list and whether
+//! it's selected ([`RowState::option`]). Focus is on the list, so the
+//! selected row is its active descendant: the screen reader's focus
+//! follows the selection while the list has focus.
 
 use std::{cell::Cell, ops::Range, rc::Rc};
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, EventEmitter, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
-    Refineable as _, Render, RenderOnce, ScrollStrategy, StatefulInteractiveElement as _,
+    Refineable as _, Render, RenderOnce, ScrollStrategy, SharedString, StatefulInteractiveElement,
     StyleRefinement, Styled, UniformListScrollHandle, Window, div, prelude::FluentBuilder as _,
     uniform_list,
 };
 
 use crate::{
-    ActiveTheme as _, ROW_HEIGHT, Tokens,
+    ActiveTheme as _, ROW_HEIGHT, Role, States, Tokens,
     nav::{NavKey, nav_key, page_rows},
+    node, node_with,
     scroll_area::scrollbar,
     tree_row::{selection_colors, selection_edge},
 };
@@ -39,6 +47,46 @@ pub struct RowState {
 }
 
 impl RowState {
+    /// The debug selector, in a test build or one with `test-support`, of
+    /// a marker over the row [`RowState::option`] made the active
+    /// descendant, for tests: the row keeps any selector of its own.
+    pub const ACTIVE_DESCENDANT: &str = "kiln-ui-active-descendant";
+
+    /// `element` as a screen reader sees a row of a list: a
+    /// `ListBoxOption` named `name`, row `ix` (from 0) of `count`, and
+    /// selected or not. A selected row in a focused list (`focused`) is
+    /// also the active descendant, where the screen reader's focus is,
+    /// which only works while the focused element is an ancestor of the
+    /// row: [`List`]'s own rows, or a list such as a tab switcher that
+    /// holds focus itself. A picker whose query has focus leaves `focused`
+    /// off, as the query is the rows' sibling. The element needs an id,
+    /// and is made `relative`.
+    pub fn option<E>(
+        self,
+        element: E,
+        name: impl Into<SharedString>,
+        (ix, count): (usize, usize),
+        window: &Window,
+        cx: &mut App,
+    ) -> E
+    where
+        E: StatefulInteractiveElement + gpui::Element + ParentElement + Styled,
+    {
+        let states = States {
+            selected: Some(self.selected),
+            ..States::default()
+        };
+        let active = self.selected && self.focused;
+        node_with(element, window, cx, Role::ListBoxOption, name, states)
+            .aria_position_in_set(ix + 1)
+            .aria_size_of_set(count)
+            .relative()
+            .when(active, |row| {
+                row.aria_active_descendant()
+                    .children(active_descendant_marker())
+            })
+    }
+
     /// The row's (background, edge) in the theme's list colours: hovered,
     /// selected in a focused list (tinted, with an accent edge down its
     /// left), or selected in one without focus (tinted).
@@ -52,6 +100,21 @@ impl RowState {
             (false, false) => (None, None),
         }
     }
+}
+
+/// The marker over an active descendant that tests find by
+/// [`RowState::ACTIVE_DESCENDANT`]; none outside tests.
+fn active_descendant_marker() -> Option<Div> {
+    #[cfg(any(test, feature = "test-support"))]
+    let marker = Some(
+        div()
+            .absolute()
+            .inset_0()
+            .debug_selector(|| RowState::ACTIVE_DESCENDANT.into()),
+    );
+    #[cfg(not(any(test, feature = "test-support")))]
+    let marker = None;
+    marker
 }
 
 /// A list row's usual look for its [`RowState`], in the theme's list
@@ -122,6 +185,18 @@ pub trait ListDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<List<Self>>,
     ) -> AnyElement;
+
+    /// The list's name to a screen reader, such as "Problems". Unnamed by
+    /// default.
+    fn accessible_name(&self, _cx: &App) -> SharedString {
+        SharedString::default()
+    }
+
+    /// Row `ix`'s name to a screen reader: what its row says, such as a
+    /// file's name. Unnamed by default.
+    fn row_name(&self, _ix: usize, _cx: &App) -> SharedString {
+        SharedString::default()
+    }
 }
 
 /// What a [`List`] tells its subscribers.
@@ -247,6 +322,7 @@ impl<D: ListDelegate> List<D> {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let focused = self.focus.is_focused(window);
+        let count = self.delegate.count();
         range
             .map(|ix| {
                 let state = RowState {
@@ -255,8 +331,9 @@ impl<D: ListDelegate> List<D> {
                     focused,
                 };
                 let row = self.delegate.render_row(ix, state, window, cx);
-                div()
-                    .id(ix)
+                let name = self.delegate.row_name(ix, cx);
+                state
+                    .option(div().id(ix), name, (ix, count), window, cx)
                     .w_full()
                     .on_hover(cx.listener(move |list, hovered: &bool, _, cx| {
                         let now = if *hovered {
@@ -286,10 +363,13 @@ impl<D: ListDelegate> Focusable for List<D> {
 }
 
 impl<D: ListDelegate> Render for List<D> {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus = self.focus.clone();
         let handle = self.scroll.0.borrow().base_handle.clone();
-        div()
+        // The focused node, so the selected row can be its active
+        // descendant.
+        let name = self.delegate.accessible_name(cx);
+        node(div().id("kiln-list"), window, cx, Role::ListBox, name)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {

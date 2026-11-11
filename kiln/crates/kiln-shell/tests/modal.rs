@@ -236,6 +236,10 @@ impl PickerDelegate for Words {
         div().child(ix.to_string()).into_any_element()
     }
 
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        ix.to_string().into()
+    }
+
     fn confirm(&mut self, _: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
         true
     }

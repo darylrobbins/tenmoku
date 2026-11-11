@@ -13,18 +13,24 @@
 //! picker's escape goes to normal mode. Escape is read by the list's own key
 //! listener, not a binding, since ctrl being held makes it `ctrl-escape`.
 //!
+//! To a screen reader it's a `Dialog` named for the command ("Switch Tab")
+//! holding a `ListBox` of the tabs, each a `ListBoxOption` named by its
+//! title, its folder the description. Focus is on the dialog, so the
+//! selected row is the active descendant and the screen reader's focus
+//! follows each press.
+//!
 //! The commands run without ctrl held, as from the menu, the palette or a
 //! key bound without ctrl, have no release to wait for: they go straight to
 //! the tab the list would select. So does a sole tab, there being no list to
 //! choose from, as [`crate::Pane::cycle`] activates it.
 
-use fe_ui::ActiveTheme as _;
+use fe_ui::{ActiveTheme as _, RowState};
 use gpui::{
     AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, KeyDownEvent, ModifiersChangedEvent,
-    ParentElement as _, Render, ScrollStrategy, SharedString, Styled as _, Subscription,
-    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px, svg,
-    uniform_list,
+    ParentElement as _, Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px, svg, uniform_list,
 };
 use kiln_shell::{ModalId, ModalView, PaneView as _, picker::VISIBLE_ROWS};
 
@@ -35,6 +41,10 @@ const TAB_SWITCHER: ModalId = ModalId("tab_switcher");
 
 /// The key context the list's element sets.
 const KEY_CONTEXT: &str = "tab_switcher";
+
+/// The command that shows the list, whose title names it to a screen
+/// reader.
+const SHOW: &str = "workbench.tab_switcher_next";
 
 /// A pane's tabs that have been shown, the latest first.
 #[derive(Debug, Default)]
@@ -207,11 +217,15 @@ impl TabSwitcher {
     fn render_rows(
         &mut self,
         range: std::ops::Range<usize>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let ui = fe_ui::ui_theme(cx);
         let icon_color = cx.theme().colors.list.icon;
         let rows = self.rows(cx);
+        let count = rows.len();
+        // The dialog holds focus, over the rows.
+        let focused = self.focus.is_focused(window);
         range
             .filter_map(|ix| {
                 let row = rows.get(ix)?;
@@ -229,8 +243,18 @@ impl TabSwitcher {
                         .text_color(icon_color)
                 });
                 let title = row.title.clone();
+                let state = RowState {
+                    selected: ix == self.selected,
+                    hovered: false,
+                    focused,
+                };
+                let option = state
+                    .option(div().id(ix), row.title.clone(), (ix, count), window, cx)
+                    .when_some(row.description.clone(), |row, description| {
+                        row.aria_description(description)
+                    });
                 Some(
-                    div()
+                    option
                         .debug_selector(move || format!("tab-switcher-row:{title}"))
                         .h(fe_ui::ROW_HEIGHT)
                         .w_full()
@@ -259,18 +283,21 @@ impl Render for TabSwitcher {
         let list = uniform_list(
             "tab-switcher-rows",
             count,
-            cx.processor(|switcher, range, _, cx| switcher.render_rows(range, cx)),
+            cx.processor(|switcher, range, window, cx| switcher.render_rows(range, window, cx)),
         )
         .track_scroll(&self.scroll)
         .h(fe_ui::ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32);
+        let frame = fe_ui::PaletteFrame::new(&ui)
+            .name(fe_command::l10n::command_label(SHOW, SHOW))
+            .track_focus(&self.focus)
+            .list(list);
         div()
             .key_context(KEY_CONTEXT)
-            .track_focus(&self.focus)
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_key_down(cx.listener(Self::on_key_down))
             .absolute()
             .inset_0()
-            .child(fe_ui::PaletteFrame::new(&ui).list(list))
+            .child(frame)
     }
 }
 

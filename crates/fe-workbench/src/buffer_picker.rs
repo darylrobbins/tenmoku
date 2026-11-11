@@ -268,6 +268,20 @@ impl PickerDelegate for BufferPicker {
             .into_any_element()
     }
 
+    /// The file's name, then its folder, and current if it's the active tab.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = self.row(ix);
+        let folder = Some(row.folder.as_str()).filter(|folder| !folder.is_empty());
+        let current = row.current.then(|| tr!("workbench-setup-current"));
+        let parts = [Some(row.name.as_str()), folder, current.as_deref()];
+        parts
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ")
+            .into()
+    }
+
     /// Activates the row's tab in the active pane, or opens its file there;
     /// an untitled buffer of another pane is activated in its own.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {

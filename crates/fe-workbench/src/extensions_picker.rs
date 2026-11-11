@@ -614,6 +614,12 @@ impl PickerDelegate for ExtensionsPicker {
             .into_any_element()
     }
 
+    /// The extension's name and version, then its state.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = self.row(ix);
+        format!("{} {}, {}", row.name, row.version, row.label()).into()
+    }
+
     /// On a row waiting or declined, asks about each of its servers that
     /// waits now, those undecided first, through the consent prompt; if
     /// one's being asked about already, or none waits now, nothing. On a

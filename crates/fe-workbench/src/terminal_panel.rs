@@ -1332,6 +1332,11 @@ impl PickerDelegate for RenameTerminal {
         gpui::div().child(self.label()).into_any_element()
     }
 
+    /// The row's text: the name it gives the shell.
+    fn match_label(&self, _: usize, _: &App) -> gpui::SharedString {
+        self.label().into()
+    }
+
     fn confirm(&mut self, _: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         if let Some(terminal) = self.terminal.upgrade() {
             let (id, name) = (self.id, self.name.clone());

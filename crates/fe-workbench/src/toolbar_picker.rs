@@ -11,6 +11,7 @@
 //!
 //! Rows match the query by subsequence, ignoring case, in list order.
 
+use kiln_shell::picker::joined_label;
 use std::{
     ffi::OsString,
     fs, io,
@@ -581,6 +582,18 @@ impl PickerDelegate for ToolbarPicker {
             .children(description)
             .children(shortcut)
             .into_any_element()
+    }
+
+    /// The row's label, then a tab's description, as the row shows them.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = self.matches[ix].0;
+        let label = self.label(row);
+        match &self.list {
+            List::Tabs(rows) if let Some(description) = &rows[row].description => {
+                joined_label([label, description.as_ref()])
+            }
+            _ => label.to_owned().into(),
+        }
     }
 
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {

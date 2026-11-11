@@ -617,6 +617,19 @@ impl PickerDelegate for TodoPicker {
             .into_any_element()
     }
 
+    /// The keyword, the text after it and where it is, as the row shows them.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let row = &self.rows[self.matches[ix].0];
+        format!(
+            "{}, {}, {}:{}",
+            row.keyword,
+            row.text,
+            row.file,
+            row.row + 1
+        )
+        .into()
+    }
+
     /// Opens the row's file at the keyword.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let Some(&(row, _)) = self.matches.get(ix) else {

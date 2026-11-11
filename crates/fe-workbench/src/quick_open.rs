@@ -375,6 +375,11 @@ impl PickerDelegate for QuickOpen {
         )
     }
 
+    /// The file's path, as the row shows it.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        self.label(ix).map(|label| label.text).unwrap_or_default()
+    }
+
     /// Opens the file as a tree click does: in a focused tab, or by
     /// activating its tab if it's open; or hands it to the pick set. Refused
     /// while the rows are another query's than the input's.

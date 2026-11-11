@@ -27,6 +27,7 @@
 //! dismisses the pickers, and a pick, or git landing, from before it does
 //! nothing.
 
+use kiln_shell::picker::joined_label;
 use std::{
     cell::Cell,
     path::{Path, PathBuf},
@@ -565,6 +566,11 @@ impl PickerDelegate for MessagePicker {
         div().child(self.label()).into_any_element()
     }
 
+    /// The row's text.
+    fn match_label(&self, _: usize, _: &App) -> SharedString {
+        self.label().into()
+    }
+
     /// Stashes, with the message typed, if any.
     fn confirm(&mut self, _: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let work = Work::Push {
@@ -662,6 +668,15 @@ impl PickerDelegate for StashPicker {
             .child(div().flex_1().min_w_0().truncate().child(label(entry)))
             .children(branch)
             .into_any_element()
+    }
+
+    /// The entry's row text, then its branch.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let Some(entry) = self.entry(ix) else {
+            return SharedString::default();
+        };
+        let branch = entry.branch.as_deref().unwrap_or_default();
+        joined_label([label(entry).as_ref(), branch])
     }
 
     /// Pops or applies the row's entry.

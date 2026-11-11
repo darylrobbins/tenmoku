@@ -61,6 +61,10 @@ impl PickerDelegate for Words {
         div().child(self.matches[ix]).into_any_element()
     }
 
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        self.matches[ix].into()
+    }
+
     fn confirm(&mut self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
         let word = self.matches[ix];
         if self.refuse.contains(&word) {

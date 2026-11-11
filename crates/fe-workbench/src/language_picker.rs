@@ -6,6 +6,7 @@ use gpui::{
     AnyElement, App, Context, Focusable as _, IntoElement as _, ParentElement as _, SharedString,
     Styled as _, WeakEntity, Window, div,
 };
+use kiln_shell::picker::joined_label;
 
 use kiln_l10n::tr;
 
@@ -129,6 +130,13 @@ impl PickerDelegate for LanguagePicker {
             .child(label)
             .children(current)
             .into_any_element()
+    }
+
+    /// The language's label, then current if it's the editor's.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let label = self.row(ix).1.clone();
+        let current = self.is_current(ix).then(|| tr!("workbench-setup-current"));
+        joined_label([Some(label), current].into_iter().flatten())
     }
 
     /// Sets the editor's language to the row's, then focuses it. If the

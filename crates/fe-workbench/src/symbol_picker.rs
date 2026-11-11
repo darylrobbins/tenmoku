@@ -341,6 +341,17 @@ impl PickerDelegate for SymbolPicker {
             .into_any_element()
     }
 
+    /// The symbol's name, then its detail and what holds it, as shown.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let item = &self.items[self.matches[ix].0];
+        let chain = self.chain(item);
+        let parts = [item.name.as_str(), item.detail.as_str(), chain.as_str()];
+        let parts: Vec<&str> = (parts.into_iter())
+            .filter(|part| !part.is_empty())
+            .collect();
+        parts.join(", ").into()
+    }
+
     /// Selects the symbol's name and focuses its editor, unless the outline
     /// changed since it was listed, or is behind the editor's text (edited
     /// since, its outline still to land): then it's listed again and the pick

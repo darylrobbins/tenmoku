@@ -305,6 +305,11 @@ impl PickerDelegate for GitFilesPicker {
             .into_any_element()
     }
 
+    /// The file's path, as the row shows it.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        self.row(ix).label.clone().into()
+    }
+
     /// Opens the file in the active pane, as a tree click does.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let Some(workbench) = self.workbench.upgrade() else {

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use gpui::{
-    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
-    SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _,
+    RenderOnce, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 
-use crate::{ActiveTheme as _, UiTheme};
+use crate::{ActiveTheme as _, Role, UiTheme, node};
 
 /// The palette's width, or the window's less a margin if that's narrower.
 pub const PALETTE_WIDTH: gpui::Pixels = px(600.);
@@ -13,8 +13,17 @@ pub const PALETTE_WIDTH: gpui::Pixels = px(600.);
 /// A palette over the window: a box centred near the top with an input, a
 /// status line and a list. It fills its positioned parent, catching mouse
 /// events only on the box.
+///
+/// To a screen reader the box is a `Dialog` and the list a `ListBox`, both
+/// named by [`PaletteFrame::name`]; the list's rows are its options
+/// ([`crate::RowState::option`]). A palette without a query, such as a
+/// tab switcher, puts focus on the box itself
+/// ([`PaletteFrame::track_focus`]), so its selected row can be the active
+/// descendant.
 #[derive(IntoElement)]
 pub struct PaletteFrame {
+    name: SharedString,
+    focus: Option<FocusHandle>,
     input: Option<AnyElement>,
     status: Option<SharedString>,
     list: Option<AnyElement>,
@@ -25,10 +34,26 @@ impl PaletteFrame {
     /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
     pub fn new(_theme: &UiTheme) -> Self {
         Self {
+            name: SharedString::default(),
+            focus: None,
             input: None,
             status: None,
             list: None,
         }
+    }
+
+    /// Its name to a screen reader: the palette's title, or its query's
+    /// placeholder ("Go to file…").
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    /// Makes the box the element that tracks `focus`, for a palette whose
+    /// keys go to the box rather than to an input in it.
+    pub fn track_focus(mut self, focus: &FocusHandle) -> Self {
+        self.focus = Some(focus.clone());
+        self
     }
 
     pub fn input(mut self, input: impl IntoElement) -> Self {
@@ -48,10 +73,17 @@ impl PaletteFrame {
 }
 
 impl RenderOnce for PaletteFrame {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let colors = &cx.theme().colors;
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = cx.theme().colors;
         let (border, muted) = (colors.border.default, colors.text.muted);
-        let palette = div()
+        let name = self.name.clone();
+        let dialog = node(div().id("kiln-palette"), window, cx, Role::Dialog, name);
+        let list = self.list.map(|list| {
+            let id = div().id("kiln-palette-list");
+            node(id, window, cx, Role::ListBox, self.name).child(list)
+        });
+        let palette = dialog
+            .when_some(self.focus, |palette, focus| palette.track_focus(&focus))
             .occlude()
             .w(PALETTE_WIDTH)
             .max_w_full()
@@ -71,7 +103,7 @@ impl RenderOnce for PaletteFrame {
             .when_some(self.status, |palette, status| {
                 palette.child(div().px_3().py_1().text_color(muted).child(status))
             })
-            .when_some(self.list, |palette, list| palette.child(list));
+            .when_some(list, |palette, list| palette.child(list));
         div()
             .absolute()
             .inset_0()

@@ -268,6 +268,11 @@ impl PickerDelegate for LocalHistoryPicker {
             .into_any_element()
     }
 
+    /// The entry's label, as the row shows it.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        self.rows[self.matches[ix]].label.resolve()
+    }
+
     /// Opens the entry's diff. If the editor has closed, a pick only
     /// dismisses the picker.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {

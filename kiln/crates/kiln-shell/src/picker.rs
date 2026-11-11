@@ -39,6 +39,23 @@
 //!
 //! While the switch is on, the picker's key context also sets `vim_mode` to
 //! `insert` or `normal`, so a host keymap can bind more keys in either.
+//!
+//! ## Screen readers
+//!
+//! The picker is a `Dialog` named by [`PickerDelegate::title`] (its
+//! query's placeholder unless the delegate has a title), its query a
+//! `SearchInput` and its matches a `ListBox` of `ListBoxOption`s, each
+//! named by [`PickerDelegate::match_label`], with its place among the
+//! matches and the selected one selected. Focus stays in the query, the
+//! rows' sibling, so the selected row can't be the active descendant: GPUI
+//! honours that only under the focused element (design
+//! `docs/decisions/qenw9xxdzk-accessibility-design.md`, section 6 and its
+//! Q2). The picker says the selected match's label politely instead
+//! ([`kiln_ui::announce`]) each time the selection moves to another match,
+//! as the query refilters or a key moves it. It speaks only as it draws,
+//! while it shows with its query focused in the active window: a picker
+//! kept hidden after dismissal, whose matches still arrive, says nothing,
+//! and one shown again says its selection afresh.
 
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
@@ -56,7 +73,10 @@ use kiln_command::{
 use kiln_core::CommandCatalog;
 use kiln_l10n::Text;
 use kiln_platform::{commands::RunCommand, locale::ActiveLocale};
-use kiln_ui::{PaletteFrame, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, ui_theme};
+use kiln_ui::{
+    PaletteFrame, Politeness, ROW_HEIGHT, RowState, TextInput, TextInputEvent, UiTheme, announce,
+    ui_theme,
+};
 
 /// The key context a picker's element sets.
 pub const KEY_CONTEXT: &str = "picker";
@@ -83,6 +103,18 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn render_match(&self, ix: usize, selected: bool, cx: &App) -> AnyElement;
 
+    /// Match `ix`'s name to a screen reader, which it's announced by when
+    /// selected: the text its row shows, such as a command's title or a
+    /// file's path, never its [`PickerDelegate::match_id`] unless that is
+    /// what the row shows. Required, so no picker's rows go unnamed.
+    fn match_label(&self, ix: usize, cx: &App) -> SharedString;
+
+    /// The picker's name to a screen reader, such as "Show All Commands".
+    /// `None`, the default, names it by its query's placeholder.
+    fn title(&self, _cx: &App) -> Option<SharedString> {
+        None
+    }
+
     /// Match `ix` was picked: whether it's taken, the picker then being
     /// dismissed. A refused pick leaves the picker open.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool;
@@ -100,6 +132,18 @@ pub trait PickerDelegate: Sized + 'static {
     fn status(&self) -> Option<SharedString> {
         None
     }
+}
+
+/// A [`PickerDelegate::match_label`] of a row's `parts` in the order it
+/// shows them, the empty ones left out, each a pause apart to a screen
+/// reader.
+pub fn joined_label<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString {
+    let parts: Vec<S> = parts.into_iter().collect();
+    let parts: Vec<&str> = (parts.iter())
+        .map(|part| part.as_ref().trim())
+        .filter(|part| !part.is_empty())
+        .collect();
+    parts.join(", ").into()
 }
 
 /// A picker's vim mode: see the module docs.
@@ -151,6 +195,8 @@ pub struct Picker<D: PickerDelegate> {
     scroll: UniformListScrollHandle,
     /// Where each row was painted in the last frame it was, for tests.
     painted: Rc<RefCell<HashMap<usize, Bounds<gpui::Pixels>>>>,
+    /// The match the selection was last announced on, by its id.
+    announced: Option<SharedString>,
     _input: Subscription,
 }
 
@@ -169,7 +215,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> Self {
         let placeholder = placeholder.into();
-        let input = cx.new(|cx| TextInput::new(placeholder, &ui_theme(cx), cx));
+        let input = cx.new(|cx| TextInput::new(placeholder, &ui_theme(cx), cx).search());
         // The input resolves its placeholder as it renders: draw it again
         // in a new locale.
         cx.observe_global::<ActiveLocale>(|picker, cx| {
@@ -191,6 +237,7 @@ impl<D: PickerDelegate> Picker<D> {
             pending_g: false,
             scroll: UniformListScrollHandle::new(),
             painted: Rc::default(),
+            announced: None,
             _input: changed,
         }
     }
@@ -214,6 +261,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.input.update(cx, |input, cx| input.set_text("", cx));
         self.set_mode(Mode::Insert, cx);
         self.selected = 0;
+        self.announced = None;
         window.focus(&self.input.focus_handle(cx), cx);
         self.delegate.update_matches(String::new(), cx);
         cx.notify();
@@ -233,6 +281,31 @@ impl<D: PickerDelegate> Picker<D> {
         self.scroll
             .scroll_to_item(self.selected, ScrollStrategy::Nearest);
         cx.notify();
+    }
+
+    /// Says the selected match's label to a screen reader if the
+    /// selection is on another match than when it last spoke, as it draws:
+    /// see the module docs. Matches arriving again with the same one
+    /// selected say nothing; nor does a picker whose query hasn't focus in
+    /// the active window.
+    fn announce_selection(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let shown = window.is_window_active() && self.input.focus_handle(cx).is_focused(window);
+        if !shown {
+            return;
+        }
+        let Some(ix) = Some(self.selected).filter(|&ix| ix < self.delegate.match_count()) else {
+            self.announced = None;
+            return;
+        };
+        let id = self.delegate.match_id(ix);
+        if self.announced.as_ref() == Some(&id) {
+            return;
+        }
+        self.announced = Some(id);
+        let label = self.delegate.match_label(ix, cx);
+        if !label.is_empty() {
+            announce(cx, label, Politeness::Polite);
+        }
     }
 
     pub fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -351,17 +424,32 @@ impl<D: PickerDelegate> Picker<D> {
         cx.stop_propagation();
     }
 
-    fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_rows(
+        &mut self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let ui = ui_theme(cx);
         let painted = self.painted.clone();
         let fill = self.delegate.rows_fill_width();
+        let count = self.delegate.match_count();
         range
             .map(|ix| {
                 let selected = ix == self.selected;
                 let painted = painted.clone();
                 let id = self.delegate.match_id(ix);
-                div()
-                    .id(ElementId::Name(id.clone()))
+                // Focus is in the query, not over the rows: see the module
+                // docs.
+                let state = RowState {
+                    selected,
+                    hovered: false,
+                    focused: false,
+                };
+                let name = self.delegate.match_label(ix, cx);
+                let row = div().id(ElementId::Name(id.clone()));
+                state
+                    .option(row, name, (ix, count), window, cx)
                     .h(ROW_HEIGHT)
                     .relative()
                     .when(fill, |row| row.w_full())
@@ -410,8 +498,9 @@ impl<D: PickerDelegate> Focusable for Picker<D> {
 }
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_mode(cx);
+        self.announce_selection(window, cx);
         let mut context = KeyContext::default();
         context.add(KEY_CONTEXT);
         if vim_keys(cx) {
@@ -422,12 +511,15 @@ impl<D: PickerDelegate> Render for Picker<D> {
             uniform_list(
                 "picker-rows",
                 count,
-                cx.processor(|picker, range, _, cx| picker.render_rows(range, cx)),
+                cx.processor(|picker, range, window, cx| picker.render_rows(range, window, cx)),
             )
             .track_scroll(&self.scroll)
             .h(ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32)
         });
+        let name =
+            (self.delegate.title(cx)).unwrap_or_else(|| self.input.read(cx).accessible_name());
         let frame = PaletteFrame::new(&ui_theme(cx))
+            .name(name)
             .input(self.input.clone())
             .when_some(self.delegate.status(), PaletteFrame::status)
             .when_some(list, PaletteFrame::list);

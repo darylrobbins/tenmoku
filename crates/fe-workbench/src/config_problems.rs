@@ -344,6 +344,12 @@ impl PickerDelegate for ConfigProblemsPicker {
             .into_any_element()
     }
 
+    /// The problem's message, then its severity and place.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        let problem = self.row(ix);
+        format!("{}, {}", problem.message, detail(problem)).into()
+    }
+
     /// Opens the row's file in the active pane, the caret at the problem,
     /// once it's read off the main thread ([`read`]): see
     /// [`ConfigProblemsPicker::open`].

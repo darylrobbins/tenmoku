@@ -37,7 +37,13 @@
 //! count, Find Previous, Find Next and Find in Selection; the replace row's
 //! field holds Preserve Case, then Replace and Replace All. With vim on, the
 //! equivalent Vim command shows faintly at the row's right end
-//! ([`FindBar::vim_command`]), and a click copies it.
+//! ([`FindBar::vim_command`]), and a click copies it, as Enter or Space
+//! does once the keyboard has moved focus to it: it's in the tab order.
+//!
+//! To a screen reader the bar is a `Search` landmark named "Find", its
+//! query a `SearchInput` and its replacement a `TextInput`, each named by
+//! its placeholder; its toggles and buttons are named by their tooltips,
+//! and the Vim command is a button.
 //!
 //! The commands are the pane's typed commands ([`crate::find_commands`]),
 //! which its root runs ([`crate::Pane::run_find`]). The bar's element sets
@@ -51,17 +57,17 @@ use fe_editor::Movement;
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_ui::{
     ActiveTheme as _, Button, FamilySlot, FontFamilies, Icon, IconButton, TextInput,
-    TextInputEvent, ToggleButton, Tooltip, UiTheme, focus_ring, radius,
+    TextInputEvent, ToggleButton, Tooltip, UiTheme, focus_ring, node, radius,
 };
 use fe_vim::search::{
     Deadline, FindQuery, Interrupted, Pattern, PatternError, matches_reaching_until,
     replace::{Replacement, replace_all, replace_where},
 };
 use gpui::{
-    AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable as _,
-    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, RenderOnce, Role,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, WeakEntity, Window,
-    div, px,
+    AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Entity, FocusHandle,
+    Focusable as _, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    RenderOnce, Role, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use kiln_l10n::{text, tr};
 
@@ -149,13 +155,16 @@ pub(crate) struct FindBar {
     left_all: Option<(BufferId, Vec<Range<Anchor>>)>,
     /// The editor the bar set its pattern on, while it's open.
     editor: Option<WeakEntity<EditorView>>,
+    /// The Vim command's, kept across frames so the keyboard can move
+    /// focus to it.
+    vim_command_focus: FocusHandle,
     _input: Subscription,
 }
 
 impl FindBar {
     pub(crate) fn new(ui: &UiTheme, cx: &mut Context<Pane>) -> Self {
         // A placeholder is resolved once, as a picker's is.
-        let input = cx.new(|cx| TextInput::new(tr!("workbench-find-placeholder"), ui, cx));
+        let input = cx.new(|cx| TextInput::new(tr!("workbench-find-placeholder"), ui, cx).search());
         let replace_input =
             cx.new(|cx| TextInput::new(tr!("workbench-find-replace-placeholder"), ui, cx));
         let changed = cx.subscribe(&input, |pane, _, event, cx| {
@@ -181,6 +190,7 @@ impl FindBar {
             left: None,
             left_all: None,
             editor: None,
+            vim_command_focus: cx.focus_handle().tab_stop(true),
             _input: changed,
         }
     }
@@ -862,7 +872,10 @@ impl FindBar {
         let vim_command = (fe_gpui::vim_enabled(cx))
             .then(|| self.vim_command(cx))
             .flatten()
-            .map(|command| vim_command_element(command, cx));
+            .map(|command| VimCommand {
+                command,
+                focus: self.vim_command_focus.clone(),
+            });
         let find_row = div()
             .flex()
             .items_center()
@@ -966,7 +979,18 @@ impl FindBar {
             .debug_selector(|| "pane-find-bar".into())
             .child(find_row)
             .children(replace_row);
-        Some(bar)
+        Some(SearchLandmark(bar))
+    }
+}
+
+/// The bar as a screen reader's `Search` landmark, named "Find".
+#[derive(IntoElement)]
+struct SearchLandmark(Div);
+
+impl RenderOnce for SearchLandmark {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let name = tr!("workbench-find-placeholder");
+        node(self.0.id("pane-find-bar"), window, cx, Role::Search, name)
     }
 }
 
@@ -1041,35 +1065,64 @@ impl RenderOnce for FieldRing {
     }
 }
 
-/// The Vim command, faint, in the code font, which a click copies.
-fn vim_command_element(command: String, cx: &App) -> impl IntoElement + use<> {
-    let colors = cx.theme().colors;
-    let family =
-        (cx.try_global::<FontFamilies>().cloned().unwrap_or_default()).family(FamilySlot::Code, cx);
-    let name = tr!("workbench-find-vim-command", command = command.clone());
-    let tooltip = tr!("workbench-find-vim-command-tooltip");
-    let copied = command.clone();
-    div()
-        .id("find-vim-command")
-        .debug_selector(|| "find-vim-command".into())
-        .role(Role::Button)
-        .aria_label(name)
-        .flex_shrink(1.)
-        .min_w_0()
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_ellipsis()
-        .font_family(family)
-        .text_color(colors.text.faint)
-        .cursor_pointer()
-        .tooltip(move |_, cx| {
-            let tooltip = Tooltip::new(tooltip.clone(), None::<SharedString>, &fe_ui::ui_theme(cx));
-            cx.new(|_| tooltip).into()
-        })
-        // Copying leaves focus where it was.
-        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone())))
-        .child(command)
+/// The Vim command, faint, in the code font, which a click copies, as
+/// Enter or Space does while it has focus. A click leaves focus where it
+/// was; the keyboard moves focus to it (it's a tab stop), and it shows the
+/// focus ring while focused from the keyboard.
+#[derive(IntoElement)]
+struct VimCommand {
+    command: String,
+    focus: FocusHandle,
+}
+
+impl RenderOnce for VimCommand {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = cx.theme().colors;
+        let family = (cx.try_global::<FontFamilies>().cloned().unwrap_or_default())
+            .family(FamilySlot::Code, cx);
+        let name = tr!("workbench-find-vim-command", command = self.command.clone());
+        let tooltip = tr!("workbench-find-vim-command-tooltip");
+        let copied = self.command.clone();
+        let ring = self.focus.is_focused(window) && window.last_input_was_keyboard();
+        let button = div().id("find-vim-command");
+        node(button, window, cx, Role::Button, name)
+            .debug_selector(|| "find-vim-command".into())
+            .track_focus(&self.focus)
+            .relative()
+            .flex()
+            .flex_shrink(1.)
+            .min_w_0()
+            .cursor_pointer()
+            .tooltip(move |_, cx| {
+                let tooltip =
+                    Tooltip::new(tooltip.clone(), None::<SharedString>, &fe_ui::ui_theme(cx));
+                cx.new(|_| tooltip).into()
+            })
+            // Copying leaves focus where it was: this runs before GPUI's
+            // own focus on a mouse down, which a prevented default skips.
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
+            })
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_shrink(1.)
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .font_family(family)
+                    .text_color(colors.text.faint)
+                    .child(self.command),
+            )
+            // Outside the clipped text, so it isn't cut off.
+            .when(ring, |button| {
+                button.child(
+                    focus_ring(radius::CONTROL, px(0.), &colors)
+                        .debug_selector(|| "find-vim-command-focus-ring".into()),
+                )
+            })
+    }
 }
 
 /// The match the primary selection is in `editor`, or with vim on the one
@@ -1314,3 +1367,80 @@ mod preserve_case_tests;
 #[cfg(test)]
 #[path = "find_in_selection_tests.rs"]
 mod in_selection_tests;
+
+/// The Vim command from the keyboard: it's a tab stop, and Enter or Space
+/// copies it while it has focus (T557 F6).
+#[cfg(test)]
+mod vim_command_keys {
+    use fe_gpui::{set_vim_enabled, set_vim_search_case};
+    use gpui::{Focusable as _, TestAppContext, VisualTestContext};
+
+    use crate::tests::find_bar::{draw, input_focused, opened, pane, run};
+
+    fn copied(cx: &mut VisualTestContext) -> Option<String> {
+        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+    }
+
+    /// Presses and releases `key`: GPUI clicks a focused element when
+    /// Enter or Space is released.
+    fn press(key: &str, cx: &mut VisualTestContext) {
+        cx.simulate_keystrokes(key);
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+        draw(cx);
+    }
+
+    #[gpui::test]
+    fn the_keyboard_reaches_and_presses_the_vim_command(cx: &mut TestAppContext) {
+        let (_dir, workbench, cx) = opened(cx, &[("a.txt", "dirty\n")]);
+        let pane = pane(&workbench, cx);
+        cx.update(|_, cx| {
+            set_vim_enabled(cx, true);
+            set_vim_search_case(cx, true, true);
+        });
+        run("find.show", cx);
+        cx.simulate_input("dirty");
+        draw(cx);
+        assert!(input_focused(&pane, cx));
+        let (input, command) = pane.read_with(cx, |pane, cx| {
+            let bar = pane.find_bar().unwrap();
+            (bar.input().focus_handle(cx), bar.vim_command_focus.clone())
+        });
+
+        // Tabbing on from the query comes to it.
+        let mut reached = false;
+        for _ in 0..16 {
+            cx.update(|window, cx| window.focus_next(cx));
+            draw(cx);
+            if cx.update(|window, _| command.is_focused(window)) {
+                reached = true;
+                break;
+            }
+        }
+        assert!(reached, "the Vim command is in the tab order");
+        assert!(
+            cx.debug_bounds("find-vim-command-focus-ring").is_some(),
+            "focused from the keyboard, it shows the ring"
+        );
+
+        press("enter", cx);
+        assert_eq!(copied(cx).as_deref(), Some("/dirty"), "enter copies it");
+        cx.update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(String::new())));
+        press("space", cx);
+        assert_eq!(copied(cx).as_deref(), Some("/dirty"), "space copies it");
+        assert!(
+            cx.update(|window, _| command.is_focused(window)),
+            "focus stays on it"
+        );
+
+        // A click still leaves focus where it was, with no ring.
+        cx.update(|window, cx| window.focus(&input, cx));
+        draw(cx);
+        let at = cx.debug_bounds("find-vim-command").unwrap().center();
+        cx.simulate_click(at, gpui::Modifiers::none());
+        draw(cx);
+        assert!(input_focused(&pane, cx));
+        assert!(cx.debug_bounds("find-vim-command-focus-ring").is_none());
+    }
+}

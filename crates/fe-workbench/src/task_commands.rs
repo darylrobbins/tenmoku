@@ -12,6 +12,7 @@
 //! [`Workbench::run_task`], which holds the root's trust: an untrusted root
 //! can list its tasks but not run them.
 
+use kiln_shell::picker::joined_label;
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -313,6 +314,14 @@ impl PickerDelegate for TaskPicker {
                 .child(div().min_w_0().truncate().child(text.clone())),
         }
         .into_any_element()
+    }
+
+    /// The task's label and detail, or the row's note, as shown.
+    fn match_label(&self, ix: usize, _: &App) -> SharedString {
+        match &self.rows[self.matches[ix].0] {
+            Row::Task { task, detail } => joined_label([task.label.as_str(), detail.as_str()]),
+            Row::Empty(text) | Row::Warning(text) => text.clone().into(),
+        }
     }
 
     /// Runs a task, focus going back where it was first for a run that's

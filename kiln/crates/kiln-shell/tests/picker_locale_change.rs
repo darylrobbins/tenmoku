@@ -30,6 +30,10 @@ impl PickerDelegate for Nothing {
         div().into_any_element()
     }
 
+    fn match_label(&self, _: usize, _: &App) -> SharedString {
+        "match".into()
+    }
+
     fn confirm(&mut self, _: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
         true
     }
