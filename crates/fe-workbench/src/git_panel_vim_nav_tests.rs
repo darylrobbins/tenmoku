@@ -118,8 +118,9 @@ fn vim(on: bool, cx: &mut VisualTestContext) {
 fn first_last(cx: &mut TestAppContext) {
     let dir = fixture(true);
     let (panel, cx) = open(cx, dir.path());
-    // Too short for the five rows (two headers, three files).
-    cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(400.)));
+    // Too short for the five rows (two headers, three files), but tall
+    // enough for a whole row: the list gets about two of them.
+    cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(440.)));
     draw(cx);
     vim(true, cx);
     focus(&panel, cx);
