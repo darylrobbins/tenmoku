@@ -208,8 +208,8 @@ reason = "A tab icon's debug selector"
 
 [[literal]]
 file = "src/tab_bar.rs"
-text = "tab-pin:{label}"
-reason = "A tab's pin's debug selector"
+text = "tab-accent:{label}"
+reason = "A tab's accent line's debug selector"
 
 [[literal]]
 file = "src/tab_bar.rs"

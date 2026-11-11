@@ -1,28 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use gpui::{
-    App, AppContext as _, ClickEvent, Div, ElementId, Entity, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Point, Render, RenderOnce, ScrollHandle, SharedString,
-    Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    App, AppContext as _, ClickEvent, Div, ElementId, Entity, FocusHandle, Hsla,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, RenderOnce,
+    ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement,
+    Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 
 use kiln_l10n::tr;
 
 use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, Tooltip, UiTheme};
 
-pub const TAB_HEIGHT: gpui::Pixels = px(30.);
+/// The tab strip's height, which panels' tab strips and headers match
+/// (`docs/design/design-system.md`, Measure).
+pub const TAB_HEIGHT: gpui::Pixels = px(34.);
+/// The accent line along the top of the focused pane's active tab.
+const TAB_ACCENT_HEIGHT: Pixels = px(2.);
 /// A tab's icon, square.
 const TAB_ICON_SIZE: Pixels = px(14.);
-/// The pin glyph, or dirty dot, in a pinned tab's corner, square.
+/// The dirty dot in a pinned tab's corner, square.
 const PIN_GLYPH_SIZE: Pixels = px(8.);
+/// The close mark, and the box it's centred in, which a hover fills.
+const CLOSE_ICON_SIZE: Pixels = px(12.);
+const CLOSE_BOX_SIZE: Pixels = px(16.);
 
-/// A row of [`Tab`]s that scrolls sideways when they don't fit.
+/// A row of [`Tab`]s that scrolls sideways when they don't fit, on the
+/// window's chrome.
 #[derive(IntoElement)]
 pub struct TabBar {
     id: ElementId,
     tabs: Vec<Tab>,
     scroll: Option<ScrollHandle>,
+    focus: Option<FocusHandle>,
     drag: DragHooks,
 }
 
@@ -43,8 +52,17 @@ impl TabBar {
             id: id.into(),
             tabs: Vec::new(),
             scroll: None,
+            focus: None,
             drag: Vec::new(),
         }
+    }
+
+    /// Marks the active tab with the accent line along its top while
+    /// `focus`, the pane's, is focused or contains what is: only the
+    /// focused pane's active tab has it.
+    pub fn focus_within(mut self, focus: &FocusHandle) -> Self {
+        self.focus = Some(focus.clone());
+        self
     }
 
     /// Called when a `T` is dropped on the bar outside its tabs (or on a tab
@@ -80,8 +98,14 @@ impl TabBar {
 }
 
 impl RenderOnce for TabBar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Without a handle to follow, each tab keeps its own `focused`.
+        let focused = (self.focus.as_ref()).map(|focus| focus.contains_focused(window, cx));
         let colors = &cx.theme().colors;
+        let tabs = (self.tabs.into_iter()).map(|tab| match focused {
+            Some(focused) => tab.focused(focused),
+            None => tab,
+        });
         div()
             .id(self.id)
             .flex()
@@ -89,12 +113,12 @@ impl RenderOnce for TabBar {
             .h(TAB_HEIGHT)
             .w_full()
             .overflow_x_scroll()
-            .bg(colors.surface.panel)
+            .bg(colors.surface.chrome)
             .border_b_1()
             .border_color(colors.border.default)
             .when_some(self.scroll, |bar, scroll| bar.track_scroll(&scroll))
             .map(|bar| apply(bar, self.drag))
-            .children(self.tabs)
+            .children(tabs)
     }
 }
 
@@ -102,12 +126,14 @@ impl RenderOnce for TabBar {
 /// if it has unsaved changes or else a close button. A preview tab's label
 /// and description are in italics. An inactive tab's
 /// close button shows only while the pointer is over the tab, as VS Code's
-/// does; its dirty dot always shows.
+/// does; its dirty dot always shows. The pointer over a tab fills it with
+/// the hover state; the active tab of the focused pane ([`Tab::focused`])
+/// has a 2 px accent line along its top.
 ///
-/// A pinned tab ([`Tab::pinned`]) is drawn compact, as VS Code's are: its
-/// icon alone, [`Tab::PINNED_WIDTH`] wide, a pin glyph in its corner (or
-/// its dirty dot), and its label and description in its tooltip. It has
-/// no close button; a middle click still closes it.
+/// A pinned tab ([`Tab::pinned`]) is drawn compact: its icon alone,
+/// [`Tab::PINNED_WIDTH`] wide, its dirty dot in its corner if it has one,
+/// and its label and description in its tooltip. It has no close button; a
+/// middle click still closes it.
 #[derive(IntoElement)]
 pub struct Tab {
     id: ElementId,
@@ -117,6 +143,7 @@ pub struct Tab {
     label_color: Option<Hsla>,
     dirty: bool,
     active: bool,
+    focused: bool,
     preview: bool,
     pinned: bool,
     on_click: Option<ClickHandler>,
@@ -137,6 +164,7 @@ impl Tab {
             label_color: None,
             dirty: false,
             active: false,
+            focused: false,
             preview: false,
             pinned: false,
             on_click: None,
@@ -203,6 +231,19 @@ impl Tab {
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
+    }
+
+    /// Whether the tab's pane is the focused one, whose active tab has the
+    /// accent line. [`TabBar::focus_within`] sets it for its tabs.
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
+    }
+
+    /// Whether the tab is drawn with the accent line along its top: the
+    /// active tab of the focused pane.
+    pub fn is_marked(&self) -> bool {
+        self.active && self.focused
     }
 
     /// Draws the label and description in italics: a preview tab, which
@@ -318,20 +359,49 @@ fn tab_label_color(active: bool, tint: Option<Hsla>, cx: &App) -> Hsla {
 /// The group an inactive tab's close button shows on hovering.
 const TAB_GROUP: &str = "kiln-tab";
 
+impl Tab {
+    /// Under the tab's content, the hover fill over its own; along its
+    /// top, the accent line if it's marked ([`Tab::is_marked`]). Neither
+    /// takes space.
+    fn under_content(&self, cx: &App) -> Vec<Div> {
+        let colors = &cx.theme().colors;
+        let hover = colors.state.hover;
+        let fill = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .group_hover(TAB_GROUP, move |style| style.bg(hover));
+        let label = self.label.clone();
+        let accent = self.is_marked().then(|| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .h(TAB_ACCENT_HEIGHT)
+                .bg(colors.accent.base)
+                .debug_selector(|| format!("tab-accent:{label}"))
+        });
+        std::iter::once(fill).chain(accent).collect()
+    }
+}
+
 impl RenderOnce for Tab {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         if self.pinned {
             return self.render_pinned(window, cx).into_any_element();
         }
         let title_color = self.title_color(cx);
+        let under = self.under_content(cx);
         let colors = &cx.theme().colors;
-        let (hover, muted) = (colors.list.row_hover, colors.text.muted);
+        let (hover, muted) = (colors.state.hover, colors.text.muted);
         let label = self.label.clone();
         // Hidden, it keeps its place, so the tab doesn't change width.
         let hidden_at_rest = !self.active && !self.dirty;
         let close = div()
             .id("close")
-            .size(px(14.))
+            .size(CLOSE_BOX_SIZE)
             .flex()
             .flex_none()
             .items_center()
@@ -353,10 +423,12 @@ impl RenderOnce for Tab {
                             .debug_selector(|| format!("tab-dirty:{label}")),
                     )
                 } else {
-                    close.text_color(muted).child(
+                    close.child(
                         div()
-                            .child("×")
-                            .debug_selector(|| format!("tab-close:{label}")),
+                            .size(CLOSE_ICON_SIZE)
+                            .flex_none()
+                            .debug_selector(|| format!("tab-close:{label}"))
+                            .child(IconRef::Bundled(Icon::X).element(CLOSE_ICON_SIZE, muted)),
                     )
                 }
             })
@@ -369,6 +441,7 @@ impl RenderOnce for Tab {
         div()
             .id(self.id)
             .group(TAB_GROUP)
+            .relative()
             .flex()
             .flex_none()
             .h_full()
@@ -385,6 +458,7 @@ impl RenderOnce for Tab {
                     tab.bg(colors.tab.inactive)
                 }
             })
+            .children(under)
             .when_some(self.icon.clone(), |tab, icon| {
                 tab.child(
                     div()
@@ -421,37 +495,32 @@ impl RenderOnce for Tab {
 }
 
 impl Tab {
-    /// A pinned tab: its icon centred at [`Tab::PINNED_WIDTH`], the pin
-    /// glyph, or its dirty dot, in its top right corner, and its label in a
-    /// tooltip.
+    /// A pinned tab: its icon alone centred at [`Tab::PINNED_WIDTH`], its
+    /// dirty dot if it has one in its top right corner, and its label in a
+    /// tooltip. A tab with no icon of its own shows the pin.
     fn render_pinned(self, _: &mut Window, cx: &mut App) -> Stateful<Div> {
+        let under = self.under_content(cx);
         let colors = &cx.theme().colors;
         let tip = self.tooltip_text().unwrap_or_else(|| self.label.clone());
         let label = self.label.clone();
         let icon = self.icon.clone().unwrap_or(IconRef::Bundled(Icon::Pin));
-        let corner = div()
-            .absolute()
-            .top(px(4.))
-            .right(px(4.))
-            .size(PIN_GLYPH_SIZE)
-            .flex()
-            .items_center()
-            .justify_center()
-            .map(|corner| {
-                if self.dirty {
-                    corner.child(
-                        div()
-                            .size(px(6.))
-                            .rounded_full()
-                            .bg(colors.state.dirty)
-                            .debug_selector(|| format!("tab-dirty:{label}")),
-                    )
-                } else {
-                    corner.debug_selector(|| format!("tab-pin:{label}")).child(
-                        IconRef::Bundled(Icon::Pin).element(PIN_GLYPH_SIZE, colors.text.muted),
-                    )
-                }
-            });
+        let corner = self.dirty.then(|| {
+            div()
+                .absolute()
+                .top(px(4.))
+                .right(px(4.))
+                .size(PIN_GLYPH_SIZE)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .size(px(6.))
+                        .rounded_full()
+                        .bg(colors.state.dirty)
+                        .debug_selector(|| format!("tab-dirty:{label}")),
+                )
+        });
         div()
             .id(self.id)
             .group(TAB_GROUP)
@@ -469,6 +538,7 @@ impl Tab {
             } else {
                 colors.tab.inactive
             })
+            .children(under)
             .child(
                 div()
                     .size(TAB_ICON_SIZE)
@@ -476,7 +546,7 @@ impl Tab {
                     .debug_selector(|| format!("tab-icon:{}:{}", self.label, icon.name()))
                     .child(icon.element(TAB_ICON_SIZE, colors.list.icon)),
             )
-            .child(corner)
+            .children(corner)
             .tooltip(move |_, cx| {
                 let text = tip.clone();
                 cx.new(|cx| PinnedTip {

@@ -342,9 +342,9 @@ fn a_pinned_tab_lays_out_at_icon_width(cx: &mut TestAppContext) {
 
     pin(&pane, "c.txt", cx);
     assert_eq!(width(0, cx), fe_ui::Tab::PINNED_WIDTH);
-    // Drawn as its icon and the pin, its title in a tooltip only.
+    // Drawn as its icon alone, its title in a tooltip only.
     assert!(cx.debug_bounds("tab-icon:c.txt:file-text").is_some());
-    assert!(cx.debug_bounds("tab-pin:c.txt").is_some());
+    assert!(cx.debug_bounds("tab-pin:c.txt").is_none());
     assert!(cx.debug_bounds("tab-close:c.txt").is_none());
     assert!(cx.debug_bounds("tab-pin:a.txt").is_none());
     let tab = pane.read_with(cx, |pane, _| pane.tab_bounds(0)).unwrap();

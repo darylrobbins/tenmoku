@@ -95,6 +95,7 @@ mod outline_kind_icons;
 mod outline_panel;
 mod outline_panel_followups;
 mod palette_recent;
+mod pane_controls_b3;
 mod pane_cycle;
 mod pane_drag;
 mod pane_toolbar;

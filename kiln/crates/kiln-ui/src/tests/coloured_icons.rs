@@ -87,8 +87,12 @@ impl Surface {
             Surface::Row => row().into_any_element(),
             Surface::IgnoredRow => row().ignored(true).into_any_element(),
             Surface::ErrorRow => row().error(true).into_any_element(),
+            // Dirty, it shows its dot rather than its close mark, so its
+            // icon is the one icon painted.
             Surface::Tab => TabBar::new("tabs", &theme)
-                .children([Tab::new("tab", "a.rs", &theme).icon(Some(icon.clone()))])
+                .children([Tab::new("tab", "a.rs", &theme)
+                    .icon(Some(icon.clone()))
+                    .dirty(true)])
                 .into_any_element(),
             Surface::Crumb => div()
                 .h(px(24.))

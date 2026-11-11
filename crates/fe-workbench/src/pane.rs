@@ -26,16 +26,17 @@ use fe_gpui::{
 };
 use fe_keymap::{KeyOutcome, Keymap, Matcher};
 use fe_ui::{
-    Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
-    UiTheme, file_icon_ref,
+    ActiveTheme as _, Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT,
+    TabBar, Tooltip, UiTheme, file_icon_ref,
 };
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, Pixels, PromptLevel, Render, Styled as _, Subscription, Task, WeakEntity,
-    Window, div, prelude::FluentBuilder as _,
+    ParentElement as _, Pixels, PromptLevel, Render, SharedString, Styled as _, Subscription, Task,
+    WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 use kiln::ViewCommands as _;
+use kiln_l10n::{Text, text, tr};
 pub use kiln_shell::PaneEvent;
 use kiln_shell::{ItemHandle, ItemId, PaneState, PaneView};
 
@@ -138,7 +139,7 @@ pub struct Pane {
     place_after: HashMap<PathBuf, usize>,
     /// The file opened last and why it couldn't be read, shown in the
     /// active tab's place until another tab is shown.
-    error: Option<(PathBuf, String)>,
+    error: Option<(PathBuf, Text)>,
     /// What to select in the file opened last once its editor exists.
     reveal: Option<(PathBuf, Reveal)>,
     /// Bumped by every [`Pane::open_at`], so the open last made can be told
@@ -177,6 +178,9 @@ pub struct Pane {
     /// theme later ones open with.
     _palette: Subscription,
     toolbar: Toolbar,
+    /// The focused element's context as a click on "…" focused the active
+    /// item, which the pane menu reads its keys in.
+    menu_context: Option<ContextStack>,
     /// Made by the first `find.show`.
     find: Option<FindBar>,
     /// The Peek Definition widget open in one of the pane's editors, drawn
@@ -218,6 +222,9 @@ pub struct Pane {
     /// The crumbs the last frame drew: label, kind and icon.
     #[cfg(test)]
     drawn_crumbs: Vec<(String, CrumbKind, Option<Icon>)>,
+    /// The colours the last frame drew the crumbs' labels in.
+    #[cfg(test)]
+    crumb_colors: Vec<gpui::Hsla>,
     #[cfg(test)]
     last_tooltip: Rc<std::cell::RefCell<Option<String>>>,
 }
@@ -329,6 +336,7 @@ impl Pane {
             settings,
             _palette: cx.observe_global::<fe_gpui::ActivePalette>(Self::follow_palette),
             toolbar: Toolbar::default(),
+            menu_context: None,
             find: None,
             peek: None,
             window: None,
@@ -348,6 +356,8 @@ impl Pane {
             drawn_actions: Vec::new(),
             #[cfg(test)]
             drawn_crumbs: Vec::new(),
+            #[cfg(test)]
+            crumb_colors: Vec::new(),
             #[cfg(test)]
             last_tooltip: Rc::default(),
         }
@@ -577,7 +587,7 @@ impl Pane {
     /// unsaved changes.
     pub fn title(&self, cx: &App) -> String {
         if let Some(path) = &self.opening {
-            return format!("{} — loading", file_name(Some(path)));
+            return tr!("workbench-pane-title-loading", name = file_name(Some(path))).into();
         }
         match self.state.active_item() {
             Some(item) => item.window_title(cx).into(),
@@ -794,14 +804,14 @@ impl Pane {
         }
         viewer.update(cx, |viewer, cx| viewer.set_converting(true, cx));
         let name = file_name(Some(view.path()));
+        let question = tr!("workbench-pane-edit-question", name = name);
+        let detail = tr!("workbench-pane-edit-detail", size = size_text(view.len()));
+        let (edit, cancel) = (tr!("workbench-pane-edit"), tr!("workbench-pane-cancel"));
         let answer = window.prompt(
             PromptLevel::Warning,
-            &format!("Edit {name}?"),
-            Some(&format!(
-                "It loads all {} into memory, which takes several seconds and about 1.5 times its size.",
-                size_text(view.len())
-            )),
-            &["Edit", "Cancel"],
+            &question,
+            Some(&detail),
+            &[edit.as_ref(), cancel.as_ref()],
             cx,
         );
         let viewer = viewer.clone();
@@ -837,7 +847,7 @@ impl Pane {
         let name = file_name(Some(view.path()));
         viewer.update(cx, |viewer, cx| {
             viewer.set_converting(true, cx);
-            viewer.set_banner(format!("Loading {name} for editing…"), cx);
+            viewer.set_banner(tr!("workbench-pane-loading-for-editing", name = name), cx);
         });
         let read = cx.background_spawn({
             let path = view.path().to_owned();
@@ -884,7 +894,12 @@ impl Pane {
                 let name = file_name(Some(view.path()));
                 viewer.update(cx, |viewer, cx| {
                     viewer.set_converting(false, cx);
-                    viewer.set_banner(format!("Cannot read {name}: {error}"), cx);
+                    let banner = tr!(
+                        "workbench-pane-cannot-read",
+                        name = name,
+                        error = error.to_string()
+                    );
+                    viewer.set_banner(banner, cx);
                 });
                 return;
             }
@@ -1016,8 +1031,11 @@ impl Pane {
                 let name = path.file_name().unwrap_or(path.as_os_str());
                 toast::show(
                     cx,
-                    Toast::error(format!("Can't open {}", name.to_string_lossy()))
-                        .detail(error.to_string()),
+                    Toast::error(tr!(
+                        "workbench-pane-cant-open",
+                        name = name.to_string_lossy()
+                    ))
+                    .detail(error.to_string()),
                 );
                 return;
             }
@@ -1071,10 +1089,7 @@ impl Pane {
             return;
         }
         if self.tabs[ix].item().is_dirty(cx) {
-            toast::show(
-                cx,
-                Toast::error("Save the file before opening it as an image"),
-            );
+            toast::show(cx, Toast::error(tr!("workbench-pane-save-before-image")));
             return;
         }
         let zoom = self
@@ -1461,11 +1476,18 @@ impl Pane {
                 let name = path.file_name().unwrap_or(path.as_os_str());
                 toast::show(
                     cx,
-                    Toast::error(format!("Can't open {}", name.to_string_lossy()))
-                        .detail(error.to_string()),
+                    Toast::error(tr!(
+                        "workbench-pane-cant-open",
+                        name = name.to_string_lossy()
+                    ))
+                    .detail(error.to_string()),
                 );
                 if last {
-                    let message = format!("Cannot open {}: {error}", path.display());
+                    let message = text!(
+                        "workbench-pane-cannot-open",
+                        path = path.display().to_string(),
+                        error = error.to_string()
+                    );
                     self.error = Some((path.clone(), message));
                     window.focus(self.state.focus(), cx);
                     cx.emit(PaneEvent::Activated);
@@ -1874,13 +1896,13 @@ impl Pane {
         index: Arc<LineIndex>,
         cx: &mut Context<Self>,
     ) -> Entity<FileViewer> {
-        let banner = format!(
-            "Read-only: {} is over {}.",
-            size_text(view.len()),
-            size_text(loader::LARGE_FILE_BYTES)
+        let banner = tr!(
+            "workbench-pane-read-only-large",
+            size = size_text(view.len()),
+            limit = size_text(loader::LARGE_FILE_BYTES)
         );
         let theme = self.theme.clone();
-        cx.new(|cx| FileViewer::new(view, index, banner.into(), theme, cx))
+        cx.new(|cx| FileViewer::new(view, index, banner, theme, cx))
     }
 
     /// A viewer of the image file `path`, which decodes it off the main
@@ -1902,7 +1924,7 @@ impl Pane {
         cx.new(|cx| ImageViewer::in_workspace(path, zoom, root, theme, cx))
     }
 
-    fn message(&self, text: String, cx: &App) -> gpui::AnyElement {
+    fn message(&self, text: SharedString, cx: &App) -> gpui::AnyElement {
         let selector = format!("pane-message:{text}");
         div()
             .debug_selector(|| selector)
@@ -2448,6 +2470,11 @@ impl Pane {
         &self.drawn_crumbs
     }
 
+    /// The colours the last frame drew the crumbs' labels in, in order.
+    pub(crate) fn crumb_colors(&self) -> &[gpui::Hsla] {
+        &self.crumb_colors
+    }
+
     /// The text of the last tooltip built.
     pub(crate) fn last_tooltip(&self) -> Option<String> {
         self.last_tooltip.borrow().clone()
@@ -2558,9 +2585,12 @@ impl Render for Pane {
         self.state.end_hover(cx);
         let tab_bar = self.state.tab_bar(cx);
         let body = if let Some(path) = &self.opening {
-            self.message(format!("Loading {}…", file_name(Some(path))), cx)
+            self.message(
+                tr!("workbench-pane-loading", name = file_name(Some(path))),
+                cx,
+            )
         } else if let Some((_, error)) = &self.error {
-            self.message(error.clone(), cx)
+            self.message(error.resolve(), cx)
         } else if let Some((tab, preview)) =
             (self.active_tab()).and_then(|tab| Some((tab, tab.preview()?)))
         {
@@ -2592,7 +2622,7 @@ impl Render for Pane {
         } else if let Some(page) = self.shown_start_page() {
             page.clone().into_any_element()
         } else {
-            self.message("No open files".into(), cx)
+            self.message(tr!("workbench-pane-no-open-files"), cx)
         };
         // The Start page tracks the pane's focus in its place, so that its
         // keys and commands are on the focus path.
@@ -2706,10 +2736,13 @@ impl Pane {
 
 /// The tab bar's buttons and the toolbar: see [`crate::pane_toolbar`].
 impl Pane {
-    /// The tab bar, then a Markdown tab's preview buttons, the split and
-    /// "…" buttons, which stay put as the tabs scroll, drawn as one bar.
+    /// The tab bar, then a Markdown tab's preview buttons, the tab list,
+    /// split right and "…", which stay put as the tabs scroll, drawn as
+    /// one bar on the window's chrome
+    /// (`docs/design/design-system.md#workbench-anatomy`).
     fn tab_row(&mut self, tab_bar: TabBar, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
+        let chrome = cx.theme().colors.surface.chrome;
         let markdown = self.markdown_shown(cx);
         // Invoked in the editor, or in the preview shown in its place,
         // which their handlers check.
@@ -2719,8 +2752,16 @@ impl Pane {
         };
         let toggle = markdown.map(|shown| {
             let (icon, title, frame) = match shown {
-                MarkdownShown::Source => (Icon::Eye, "Open Preview", fe_editor::commands::CONTEXT),
-                MarkdownShown::Preview => (Icon::Code, "Show Source", MARKDOWN_PREVIEW_CONTEXT),
+                MarkdownShown::Source => (
+                    Icon::Eye,
+                    "workbench-pane-open-preview",
+                    fe_editor::commands::CONTEXT,
+                ),
+                MarkdownShown::Preview => (
+                    Icon::Code,
+                    "workbench-pane-show-source",
+                    MARKDOWN_PREVIEW_CONTEXT,
+                ),
             };
             markdown_button("markdown-toggle", icon, title, TOGGLE_PREVIEW, frame)
         });
@@ -2728,7 +2769,7 @@ impl Pane {
             markdown_button(
                 "markdown-side",
                 Icon::PanelRightOpen,
-                "Open Preview to the Side",
+                "workbench-pane-open-preview-to-side",
                 "markdown.show_preview_to_side",
                 fe_editor::commands::CONTEXT,
             )
@@ -2736,36 +2777,49 @@ impl Pane {
         #[cfg(test)]
         {
             self.drawn_actions = match markdown {
-                Some(MarkdownShown::Source) => {
-                    vec![
-                        ("markdown-toggle", Icon::Eye),
-                        ("markdown-side", Icon::PanelRightOpen),
-                    ]
-                }
+                Some(MarkdownShown::Source) => vec![
+                    ("markdown-toggle", Icon::Eye),
+                    ("markdown-side", Icon::PanelRightOpen),
+                ],
                 Some(MarkdownShown::Preview) => vec![("markdown-toggle", Icon::Code)],
                 None => Vec::new(),
             };
             self.drawn_actions.extend([
+                ("tab-list", Icon::ChevronDown),
                 ("split-right", Icon::Columns2),
-                ("split-down", Icon::Rows2),
                 ("pane-menu", Icon::Ellipsis),
             ]);
         }
-        let split = |id, icon, title, command: &'static str| {
-            self.button(id, icon, title, Some(command), &ui)
-                .on_click(move |_, window, cx| {
-                    pane_toolbar::dispatch(command, Source::Mouse, window, cx)
-                })
-        };
-        let split_right = split(
-            "split-right",
-            Icon::Columns2,
-            "Split Right",
-            "pane.split_right",
-        );
-        let split_down = split("split-down", Icon::Rows2, "Split Down", "pane.split_down");
+        let tab_list = self
+            .button(
+                "tab-list",
+                Icon::ChevronDown,
+                "workbench-pane-tab-list",
+                None,
+                &ui,
+            )
+            .on_click(
+                cx.listener(|pane, _, window, cx| pane.request(ToolbarRequest::Tabs, window, cx)),
+            );
+        let split_right = self
+            .button(
+                "split-right",
+                Icon::Columns2,
+                "workbench-pane-split-right",
+                Some("pane.split_right"),
+                &ui,
+            )
+            .on_click(move |_, window, cx| {
+                pane_toolbar::dispatch("pane.split_right", Source::Mouse, window, cx)
+            });
         let more = self
-            .button("pane-menu", Icon::Ellipsis, "More Actions", None, &ui)
+            .button(
+                "pane-menu",
+                Icon::Ellipsis,
+                "workbench-pane-more-actions",
+                None,
+                &ui,
+            )
             .on_click(cx.listener(|pane, _, window, cx| {
                 pane.request(ToolbarRequest::PaneCommands, window, cx)
             }));
@@ -2777,13 +2831,13 @@ impl Pane {
             .gap(gpui::px(2.))
             .px_1()
             .h(TAB_HEIGHT)
-            .bg(ui.panel_background)
+            .bg(chrome)
             .border_b_1()
             .border_color(ui.border)
             .children(toggle)
             .children(side)
+            .child(tab_list)
             .child(split_right)
-            .child(split_down)
             .child(more);
         #[cfg(test)]
         let strip = gpui::StatefulInteractiveElement::track_scroll(strip, &self.actions);
@@ -2808,7 +2862,10 @@ impl Pane {
     /// bar's.
     fn toolbar_row(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         #[cfg(test)]
-        self.drawn_crumbs.clear();
+        {
+            self.drawn_crumbs.clear();
+            self.crumb_colors.clear();
+        }
         if !self.toolbar.visible {
             return None;
         }
@@ -2825,6 +2882,7 @@ impl Pane {
                     (crumb.label.to_string(), crumb.kind, icon)
                 })
                 .collect();
+            self.crumb_colors = crumbs.iter().map(|crumb| crumb.label_color(cx)).collect();
         }
         let toolbar = div()
             .flex_none()
@@ -2845,7 +2903,8 @@ impl Pane {
         Some(toolbar)
     }
 
-    /// A button with a tooltip of `title` and `command`'s key.
+    /// A button named, with a tooltip saying so, by the message `title`,
+    /// the tooltip with `command`'s key.
     fn button(
         &self,
         id: &'static str,
@@ -2857,10 +2916,10 @@ impl Pane {
         #[cfg(test)]
         let last_tooltip = self.last_tooltip.clone();
         IconButton::new(id, icon, ui)
-            .name(title)
+            .name(tr!(title))
             .tooltip(move |_, cx| {
                 let shortcut = command.and_then(|command| pane_toolbar::shortcut(command, cx));
-                let tooltip = Tooltip::new(title, shortcut, &fe_ui::ui_theme(cx));
+                let tooltip = Tooltip::new(tr!(title), shortcut, &fe_ui::ui_theme(cx));
                 #[cfg(test)]
                 last_tooltip.replace(Some(tooltip.text()));
                 cx.new(|_| tooltip).into()
@@ -2966,25 +3025,31 @@ impl Pane {
             .active_editor()
             .filter(|editor| chain.editor == Some(editor.entity_id()));
         if let Some(editor) = editor {
-            let mut names = Vec::new();
-            for (item, name, kind) in &chain.items {
-                names.push(name.clone());
-                let request = ToolbarRequest::Symbols {
-                    editor: editor.downgrade(),
-                    generation: chain.generation,
-                    item: *item,
-                    names: names.clone(),
-                };
+            let shown = editor.read(cx);
+            let colors: Vec<_> = (chain.items.iter())
+                .map(|(_, _, kind)| pane_toolbar::symbol_color(*kind, shown))
+                .collect();
+            for ((_, name, kind), color) in chain.items.iter().zip(colors) {
                 crumbs.push(
                     Crumb::new(name.clone(), CrumbKind::Symbol)
                         .icon(crate::outline_panel::symbol_icon(*kind))
-                        .on_click(cx.listener(move |pane, _, window, cx| {
-                            pane.request(request.clone(), window, cx)
-                        })),
+                        .color(color)
+                        .on_click(
+                            cx.listener(|pane, _, window, cx| pane.open_quick_outline(window, cx)),
+                        ),
                 );
             }
         }
         crumbs
+    }
+
+    /// A symbol crumb's click: Structure's quick outline
+    /// ([`pane_toolbar::QUICK_OUTLINE`]) for the pane's editor, focused first
+    /// so the outline lists its symbols and focus goes back to it once the
+    /// outline is dismissed.
+    fn open_quick_outline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus_target(cx), cx);
+        pane_toolbar::dispatch(pane_toolbar::QUICK_OUTLINE, Source::Mouse, window, cx);
     }
 
     /// A toolbar click asks the workbench for `request`, the active editor
@@ -2992,7 +3057,17 @@ impl Pane {
     /// dismissed.
     fn request(&mut self, request: ToolbarRequest, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus_target(cx), cx);
+        if matches!(request, ToolbarRequest::PaneCommands) {
+            let stack = kiln::platform::keys::context_stack(&window.context_stack(), cx);
+            self.menu_context = Some(stack);
+        }
         cx.emit(request);
+    }
+
+    /// The context the pane menu reads its keys in: the focused element's
+    /// as "…" was last clicked, else the workbench's editor's.
+    pub(crate) fn menu_context(&self) -> ContextStack {
+        (self.menu_context.clone()).unwrap_or_else(pane_toolbar::editor_context)
     }
 }
 

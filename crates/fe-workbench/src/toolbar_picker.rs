@@ -1,15 +1,13 @@
-//! The toolbar's picker: what a click on a crumb or the "…" button lists,
-//! hosted by the workbench in the palette's place, as quick open is. It
-//! picks for the pane it was opened from.
+//! The toolbar's picker: what a click on a crumb, the tab list or the "…"
+//! button lists, hosted by the workbench in the palette's place, as quick
+//! open is. It picks for the pane it was opened from.
 //!
 //! - A directory's entries, read off the main thread, directories first,
 //!   each sorted ignoring case. A file opens in the pane; a directory lists
 //!   its own entries.
-//! - A symbol's siblings in the outline. A pick is checked against the
-//!   outline it was listed from: if the outline changed since, the list is
-//!   rebuilt for the same crumb, by its chain of names, and the pick
-//!   refused, so it never lands on a moved symbol.
-//! - The pane commands, each dispatched as a key would, in the pane.
+//! - The pane commands, each dispatched as a key would, in the pane, with
+//!   the key that runs it where the pane's item has focus.
+//! - The pane's tabs, in the strip's order; a pick shows one.
 //!
 //! Rows match the query by subsequence, ignoring case, in list order.
 
@@ -21,34 +19,69 @@ use std::{
 };
 
 use fe_command::Source;
-use fe_gpui::EditorView;
-use fe_syntax::Outline;
-use fe_ui::{HighlightedLabel, char_ranges, file_icon_ref, folder_icon_ref};
+use fe_ui::{HighlightedLabel, IconRef, char_ranges, file_icon_ref, folder_icon_ref};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, FocusHandle, Focusable as _,
-    InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString, Styled as _, Task,
-    WeakEntity, Window, div, px,
+    AnyElement, App, AppContext as _, Context, FocusHandle, InteractiveElement as _,
+    IntoElement as _, ParentElement as _, SharedString, Styled as _, Task, WeakEntity, Window, div,
+    px,
 };
 
+use kiln_l10n::tr;
+use kiln_shell::PaneView as _;
+
 use crate::{
-    OutlinePanel, Pane, PaneEvent, Workbench,
+    Pane, PaneEvent, Workbench,
+    pane::TabId,
     pane_toolbar::{self, ToolbarRequest},
     picker::{Picker, PickerDelegate},
 };
 
-/// The pane commands "…" lists, as `(command, title)`.
-const PANE_COMMANDS: [(&str, &str); 10] = [
-    ("workbench.close_tab", "Close Tab"),
-    ("workbench.close_other_tabs", "Close Other Tabs"),
-    ("pane.close", "Close Pane"),
-    ("pane.split_right", "Split Right"),
-    ("pane.split_down", "Split Down"),
-    ("pane.move_tab_left", "Move Tab Left"),
-    ("pane.move_tab_right", "Move Tab Right"),
-    ("pane.move_tab_up", "Move Tab Up"),
-    ("pane.move_tab_down", "Move Tab Down"),
-    ("view.toggle_breadcrumbs", "Toggle Breadcrumbs"),
+/// The pane commands "…" lists, as `(command, title)`, the title a message:
+/// the design's (`docs/design/design-system.md`, Pane controls), in its
+/// order, then the rest. [`PIN_TAB`] is in its place.
+const PANE_COMMANDS: [(&str, &str); 13] = [
+    ("pane.split_right", "workbench-pane-action-split-right"),
+    ("pane.split_down", "workbench-pane-action-split-down"),
+    PIN_TAB,
+    (
+        "workbench.close_other_tabs",
+        "workbench-pane-action-close-other-tabs",
+    ),
+    (
+        "workbench.reopen_closed_editor",
+        "workbench-pane-action-reopen-closed-tab",
+    ),
+    ("workbench.close_tab", "workbench-pane-action-close-tab"),
+    ("pane.close", "workbench-pane-action-close-pane"),
+    ("pane.move_tab_left", "workbench-pane-action-move-tab-left"),
+    (
+        "pane.move_tab_right",
+        "workbench-pane-action-move-tab-right",
+    ),
+    ("pane.move_tab_up", "workbench-pane-action-move-tab-up"),
+    ("pane.move_tab_down", "workbench-pane-action-move-tab-down"),
+    (
+        "view.toggle_breadcrumbs",
+        "workbench-pane-action-toggle-breadcrumbs",
+    ),
+    // Listed only while the active tab is pinned, in [`PIN_TAB`]'s place.
+    UNPIN_TAB,
 ];
+
+/// Pins the active tab; while it's pinned, [`UNPIN_TAB`] is listed instead.
+const PIN_TAB: (&str, &str) = ("workbench.pin_tab", "workbench-pane-action-pin-tab");
+const UNPIN_TAB: (&str, &str) = ("workbench.unpin_tab", "workbench-pane-action-unpin-tab");
+
+/// A pane command's row: its command, title and key.
+type CommandRow = (&'static str, SharedString, Option<String>);
+
+/// A tab's row: its tab, title, folder (when tabs share a title) and icon.
+struct TabRow {
+    id: TabId,
+    title: SharedString,
+    description: Option<SharedString>,
+    icon: Option<IconRef>,
+}
 
 /// A directory entry: a symlink isn't followed, so it's a file.
 struct Entry {
@@ -57,33 +90,20 @@ struct Entry {
     dir: bool,
 }
 
-/// A symbol: its index in the outline's items, its name and where its
-/// name starts.
-type Symbol = (u32, SharedString, usize);
-
 enum List {
     Entries {
         dir: PathBuf,
         /// `None` while it's read.
         entries: Option<io::Result<Vec<Entry>>>,
     },
-    Symbols {
-        editor: WeakEntity<EditorView>,
-        /// The clicked crumb's chain of names, from the top level.
-        names: Vec<SharedString>,
-        /// The outline's generation they're listed from: `None` if no
-        /// outline showed for the editor then.
-        generation: Option<u64>,
-        symbols: Vec<Symbol>,
-    },
-    Commands(Vec<(&'static str, &'static str, Option<String>)>),
+    Commands(Vec<CommandRow>),
+    Tabs(Vec<TabRow>),
 }
 
 pub(crate) struct ToolbarPicker {
     pane: WeakEntity<Pane>,
     /// Records the caret before a pick jumps.
     workbench: WeakEntity<Workbench>,
-    outline: WeakEntity<OutlinePanel>,
     root: Option<PathBuf>,
     list: List,
     /// The row to select once the list is in, for an empty query.
@@ -103,11 +123,10 @@ pub(crate) struct ToolbarPicker {
 }
 
 impl ToolbarPicker {
-    pub(crate) fn new(outline: WeakEntity<OutlinePanel>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             pane: WeakEntity::new_invalid(),
             workbench: WeakEntity::new_invalid(),
-            outline,
             root: None,
             list: List::Commands(Vec::new()),
             select: None,
@@ -141,20 +160,57 @@ impl ToolbarPicker {
         self.query.clear();
         match request {
             ToolbarRequest::Entries { dir, select } => self.list_entries(dir, select, cx),
-            ToolbarRequest::Symbols {
-                editor,
-                generation,
-                item,
-                names,
-            } => self.list_symbols(editor, names, Some((generation, item)), cx),
             ToolbarRequest::PaneCommands => {
-                let rows = PANE_COMMANDS
-                    .iter()
-                    .map(|&(id, title)| (id, title, pane_toolbar::shortcut(id, cx)))
-                    .collect();
+                let rows = self.command_rows(cx);
                 self.set_list(List::Commands(rows), None);
             }
+            ToolbarRequest::Tabs => {
+                let (rows, active) = self.tab_rows(cx);
+                self.set_list(List::Tabs(rows), active);
+            }
         }
+    }
+
+    /// The pane commands' rows, each with the key that runs it where the
+    /// pane's item had focus; Pin Tab is Unpin Tab while the active tab is
+    /// pinned.
+    fn command_rows(&self, cx: &App) -> Vec<CommandRow> {
+        let pane = self.pane.upgrade();
+        let pinned = pane.as_ref().is_some_and(|pane| {
+            let state = pane.read(cx).pane();
+            state.active().is_some_and(|ix| state.is_pinned(ix))
+        });
+        let stack = pane.map_or_else(pane_toolbar::editor_context, |pane| {
+            pane.read(cx).menu_context()
+        });
+        (PANE_COMMANDS.iter())
+            .filter(|&&row| row != UNPIN_TAB)
+            .map(|&row| {
+                if row == PIN_TAB && pinned {
+                    UNPIN_TAB
+                } else {
+                    row
+                }
+            })
+            .map(|(id, title)| (id, tr!(title), pane_toolbar::menu_shortcut(id, &stack, cx)))
+            .collect()
+    }
+
+    /// The pane's tabs as its strip draws them, and the active one's row.
+    fn tab_rows(&self, cx: &App) -> (Vec<TabRow>, Option<usize>) {
+        let Some(pane) = self.pane.upgrade() else {
+            return (Vec::new(), None);
+        };
+        let state = pane.read(cx).pane();
+        let rows = (state.tabs(cx).into_iter().zip(state.items()))
+            .map(|(tab, item)| TabRow {
+                id: item.id(),
+                title: item.tab_title(cx),
+                description: tab.description_text().cloned(),
+                icon: tab.icon_ref().cloned(),
+            })
+            .collect();
+        (rows, state.active())
     }
 
     fn set_list(&mut self, list: List, select: Option<usize>) {
@@ -214,75 +270,6 @@ impl ToolbarPicker {
         }));
     }
 
-    /// Lists the siblings of the item at the end of the chain `names`, from
-    /// the outline now shown for `editor`: of item `known.1` if that
-    /// outline is still of generation `known.0`, else found by its names.
-    fn list_symbols(
-        &mut self,
-        editor: WeakEntity<EditorView>,
-        names: Vec<SharedString>,
-        known: Option<(u64, u32)>,
-        cx: &App,
-    ) {
-        let outline = self.outline.upgrade();
-        let shown = outline
-            .as_ref()
-            .and_then(|outline| outline.read(cx).shown_for(editor.entity_id()).flatten());
-        let (generation, item) = match shown {
-            Some((outline, generation)) => {
-                let item = match known {
-                    Some((known, item)) if known == generation => Some(item as usize),
-                    _ => find(outline, &names),
-                };
-                (Some(generation), item.map(|item| (outline, item)))
-            }
-            None => (None, None),
-        };
-        let symbols: Vec<Symbol> = item.map_or_else(Vec::new, |(outline, item)| {
-            let parent = outline.items[item].parent;
-            let items = outline.items.iter().enumerate();
-            items
-                .filter(|(_, sibling)| sibling.parent == parent)
-                .map(|(ix, sibling)| {
-                    let name = SharedString::from(sibling.name.clone());
-                    (ix as u32, name, sibling.name_range.start)
-                })
-                .collect()
-        });
-        let select =
-            item.and_then(|(_, item)| symbols.iter().position(|(ix, ..)| *ix as usize == item));
-        let list = List::Symbols {
-            editor,
-            names,
-            generation,
-            symbols,
-        };
-        self.set_list(list, select);
-    }
-
-    /// The outline changed: a symbol list made while no outline showed for
-    /// its editor, such as an inactive pane's crumb's, is made again.
-    pub(crate) fn outline_changed(&mut self, cx: &mut Context<Picker<Self>>) {
-        let List::Symbols {
-            editor,
-            names,
-            generation: None,
-            ..
-        } = &self.list
-        else {
-            return;
-        };
-        let (editor, names) = (editor.clone(), names.clone());
-        self.list_symbols(editor, names, None, cx);
-        if let List::Symbols {
-            generation: Some(_),
-            ..
-        } = self.list
-        {
-            self.refilter(true, cx);
-        }
-    }
-
     fn row_count(&self) -> usize {
         match &self.list {
             List::Entries {
@@ -290,8 +277,8 @@ impl ToolbarPicker {
                 ..
             } => entries.len(),
             List::Entries { .. } => 0,
-            List::Symbols { symbols, .. } => symbols.len(),
             List::Commands(rows) => rows.len(),
+            List::Tabs(rows) => rows.len(),
         }
     }
 
@@ -302,8 +289,8 @@ impl ToolbarPicker {
                 ..
             } => &entries[row].label,
             List::Entries { .. } => "",
-            List::Symbols { symbols, .. } => &symbols[row].1,
-            List::Commands(rows) => rows[row].1,
+            List::Commands(rows) => &rows[row].1,
+            List::Tabs(rows) => &rows[row].title,
         }
     }
 
@@ -393,50 +380,6 @@ impl ToolbarPicker {
         true
     }
 
-    /// Selects the symbol's name start and focuses its editor, unless the
-    /// outline changed since it was listed, or is behind the editor's text
-    /// (edited since, its outline still to land): then it's listed again
-    /// and the pick refused.
-    fn pick_symbol(
-        &mut self,
-        row: usize,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> bool {
-        let List::Symbols {
-            editor,
-            names,
-            generation,
-            symbols,
-        } = &self.list
-        else {
-            return false;
-        };
-        // Its editor closed meanwhile: nothing to select in.
-        let Some(editor) = editor.upgrade() else {
-            return true;
-        };
-        let version = editor.read(cx).model().snapshot().version();
-        let current = self.outline.upgrade().and_then(|outline| {
-            let shown = outline.read(cx).shown_for(editor.entity_id()).flatten();
-            shown
-                .filter(|(outline, _)| outline.version == version)
-                .map(|(_, generation)| generation)
-        });
-        if current.is_none() || current != *generation {
-            let (editor, names) = (editor.downgrade(), names.clone());
-            self.list_symbols(editor, names, None, cx);
-            self.refilter(true, cx);
-            return false;
-        }
-        let start = symbols[row].2;
-        self.push_history(cx);
-        editor.update(cx, |editor, cx| editor.select_and_reveal(start..start, cx));
-        window.focus(&editor.focus_handle(cx), cx);
-        self.previous_focus = None;
-        true
-    }
-
     /// Activates the pane, then dispatches the command there as a key
     /// would.
     fn pick_command(
@@ -460,6 +403,33 @@ impl ToolbarPicker {
         pane_toolbar::dispatch(command, Source::Palette, window, cx);
         true
     }
+
+    /// Activates the pane and shows the tab, if it's still there.
+    fn pick_tab(
+        &mut self,
+        row: usize,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        let List::Tabs(rows) = &self.list else {
+            return false;
+        };
+        let tab = rows[row].id;
+        // Its pane closed meanwhile: nothing to show.
+        let Some(pane) = self.pane.upgrade() else {
+            return true;
+        };
+        self.previous_focus = None;
+        pane.update(cx, |pane, cx| {
+            match pane.pane().position(tab) {
+                Some(ix) => pane.activate_at(ix, window, cx),
+                None => window.focus(&pane.focus_target(cx), cx),
+            }
+            cx.emit(PaneEvent::Activated);
+            cx.notify();
+        });
+        true
+    }
 }
 
 /// The char indices of `text` matching `query`'s chars, lowercase, in
@@ -476,21 +446,6 @@ pub(crate) fn subsequence(query: &[char], text: &str) -> Option<Vec<usize>> {
         }
     }
     wanted.peek().is_none().then_some(indices)
-}
-
-/// The item at the end of the chain `names` from the top level.
-fn find(outline: &Outline, names: &[SharedString]) -> Option<usize> {
-    let mut parent = None;
-    let mut found = None;
-    for name in names {
-        let ix = outline
-            .items
-            .iter()
-            .position(|item| item.parent == parent && item.name == name.as_ref())?;
-        found = Some(ix);
-        parent = Some(ix as u32);
-    }
-    found
 }
 
 /// `dir`'s entries, directories first, each sorted ignoring case.
@@ -516,6 +471,15 @@ impl ToolbarPicker {
     pub(crate) fn labels(&self) -> Vec<String> {
         let rows = self.matches.iter();
         rows.map(|(row, _)| self.label(*row).to_owned()).collect()
+    }
+
+    /// The matching pane commands' IDs.
+    pub(crate) fn commands(&self) -> Vec<&'static str> {
+        let List::Commands(rows) = &self.list else {
+            return Vec::new();
+        };
+        let matches = self.matches.iter();
+        matches.map(|(row, _)| rows[*row].0).collect()
     }
 
     /// The matching pane commands' shortcuts.
@@ -568,6 +532,11 @@ impl PickerDelegate for ToolbarPicker {
                 entry if entry.dir => (&entry.label, folder_icon_ref(false)),
                 entry => (&entry.label, file_icon_ref(&entry.label)),
             }),
+            List::Tabs(rows) => (rows[*row].icon.clone()).map(|icon| (&rows[*row].title, icon)),
+            _ => None,
+        };
+        let description = match &self.list {
+            List::Tabs(rows) => rows[*row].description.clone(),
             _ => None,
         };
         let shortcut = match &self.list {
@@ -584,6 +553,13 @@ impl PickerDelegate for ToolbarPicker {
         });
         let shortcut =
             shortcut.map(|shortcut| div().ml_auto().text_color(ui.muted_text).child(shortcut));
+        let description = description.map(|description| {
+            div()
+                .min_w_0()
+                .truncate()
+                .text_color(ui.muted_text)
+                .child(description)
+        });
         div()
             .flex()
             .flex_1()
@@ -591,6 +567,7 @@ impl PickerDelegate for ToolbarPicker {
             .gap_2()
             .children(icon)
             .child(label)
+            .children(description)
             .children(shortcut)
             .into_any_element()
     }
@@ -601,8 +578,8 @@ impl PickerDelegate for ToolbarPicker {
         };
         match self.list {
             List::Entries { .. } => self.pick_entry(row, window, cx),
-            List::Symbols { .. } => self.pick_symbol(row, window, cx),
             List::Commands(_) => self.pick_command(row, window, cx),
+            List::Tabs(_) => self.pick_tab(row, window, cx),
         }
     }
 
@@ -612,12 +589,17 @@ impl PickerDelegate for ToolbarPicker {
     }
 
     /// The directory listed, relative to the root, or why it couldn't be
-    /// read; "No symbols" for a crumb no longer in the outline.
+    /// read.
     fn status(&self) -> Option<SharedString> {
         match &self.list {
             List::Entries { dir, entries } => {
                 if let Some(Err(error)) = entries {
-                    return Some(format!("Cannot read {}: {error}", dir.display()).into());
+                    let (dir, error) = (dir.display().to_string(), error.to_string());
+                    return Some(tr!(
+                        "workbench-pane-cannot-read-dir",
+                        dir = dir,
+                        error = error
+                    ));
                 }
                 let root = self.root.as_deref();
                 let relative = root.and_then(|root| dir.strip_prefix(root).ok());
@@ -630,8 +612,7 @@ impl PickerDelegate for ToolbarPicker {
                 };
                 Some(shown.into())
             }
-            List::Symbols { symbols, .. } if symbols.is_empty() => Some("No symbols".into()),
-            List::Symbols { .. } | List::Commands(_) => None,
+            List::Commands(_) | List::Tabs(_) => None,
         }
     }
 }

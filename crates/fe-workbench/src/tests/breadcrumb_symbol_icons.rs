@@ -81,13 +81,15 @@ fn symbol_crumbs_carry_their_kinds_icon(cx: &mut TestAppContext) {
     assert_ne!(symbols[0].2, symbols[1].2);
     assert!(symbols.iter().all(|(.., icon)| icon.is_some()));
 
-    // Clicking a symbol crumb still lists its siblings.
+    // Clicking a symbol crumb opens the quick outline, whose rows carry the
+    // same icons.
     let crumb = cx.debug_bounds("crumb:4:b").expect("drawn");
     cx.simulate_click(crumb.center(), Modifiers::none());
     settle(cx);
-    let rows = workbench.read_with(cx, |workbench, cx| {
-        let picker = workbench.toolbar_picker()?;
-        Some(picker.read(cx).delegate.labels())
-    });
-    assert_eq!(rows.unwrap(), ["a", "b"]);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.toolbar_picker().is_none()));
+    let icon = symbol_icon(OutlineKind::Function).path();
+    assert!(
+        cx.debug_bounds(format!("symbol-picker-icon:b:{icon}").leak())
+            .is_some()
+    );
 }

@@ -1,4 +1,6 @@
-//! A breadcrumb pick drops a go-to-definition still waiting for its answer.
+//! A breadcrumb pick, in the quick outline a symbol crumb opens or in a
+//! path crumb's entries, drops a go-to-definition still waiting for its
+//! answer.
 
 use fe_ui::CrumbKind;
 use gpui::{Entity, TestAppContext, VisualTestContext};
@@ -33,10 +35,11 @@ fn a_symbol_pick_drops_a_running_goto_definition(cx: &mut TestAppContext) {
     let (origin, release) = hold_goto(&workbench, cx);
 
     click_crumb(&pane, CrumbKind::Symbol, "b", cx);
-    cx.simulate_keystrokes("up enter");
+    cx.simulate_keystrokes("a enter");
     settle(cx);
     let picked = at(&workbench, cx);
-    assert_eq!(picked, (main.clone(), MAIN.find("a()").unwrap()));
+    let a = MAIN.find("a()").unwrap() + "a".len();
+    assert_eq!(picked, (main.clone(), a));
     let before = pushes(&workbench, cx);
 
     drop(release);

@@ -540,7 +540,7 @@ impl Workbench {
             Picker::new(delegate, "Line or line:column…", fe_ui::ui_theme(cx), cx)
         });
         let toolbar_picker = cx.new(|cx| {
-            let delegate = ToolbarPicker::new(outline.downgrade());
+            let delegate = ToolbarPicker::new();
             Picker::new(delegate, "Filter…", fe_ui::ui_theme(cx), cx)
         });
         let recent = cx.weak_entity();
@@ -727,13 +727,7 @@ impl Workbench {
             nav: NavButtons::default(),
             title_branch: None,
             chain_key: None,
-            _outline: cx.observe(&outline, |workbench, _, cx| {
-                if workbench.palette == Some(Palette::Toolbar) {
-                    let picker = workbench.toolbar_picker.clone();
-                    picker.update(cx, |picker, cx| picker.delegate.outline_changed(cx));
-                }
-                cx.notify()
-            }),
+            _outline: cx.observe(&outline, |_, _, cx| cx.notify()),
             #[cfg(test)]
             chains_computed: 0,
             #[cfg(test)]

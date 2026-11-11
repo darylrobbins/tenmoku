@@ -154,6 +154,14 @@ fn picker_rows(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Opt
     })
 }
 
+/// Whether the quick outline, Go to Symbol in File, shows.
+fn quick_outline_shows(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+    workbench.read_with(cx, |workbench, cx| {
+        let layer = workbench.shell().read(cx).modals().read(cx);
+        layer.modal() == Some(crate::workbench::Palette::DocumentSymbols.id())
+    })
+}
+
 fn picker_selected(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
     workbench.read_with(cx, |workbench, cx| {
         workbench
@@ -248,10 +256,7 @@ fn layout_and_buttons(cx: &mut TestAppContext) {
     let actions: Vec<_> = (0..3).map(|ix| action(&pane, ix, cx)).collect();
     let end = pane_bounds.right() - actions[2].right();
     assert!(end >= px(0.) && end <= px(4.), "{end:?} from the end");
-    for (button, id) in actions
-        .iter()
-        .zip(["split-right", "split-down", "pane-menu"])
-    {
+    for (button, id) in actions.iter().zip(["tab-list", "split-right", "pane-menu"]) {
         assert!(button.top() >= pane_bounds.top(), "{id}");
         assert!(button.bottom() <= pane_bounds.top() + TAB_HEIGHT, "{id}");
         assert_eq!(bounds(format!("icon-button:{id}"), cx), Some(*button));
@@ -446,68 +451,44 @@ fn path_crumbs_open_entry_pickers(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn symbol_crumbs_open_sibling_pickers(cx: &mut TestAppContext) {
+fn a_symbol_crumb_opens_its_pane_s_quick_outline(cx: &mut TestAppContext) {
     let dir = project();
     let (workbench, cx) = opened(cx, &dir);
-    let pane = active(&workbench, cx);
+    let left = active(&workbench, cx);
     let editor = editor(&workbench, cx);
     caret_at(&editor, "let x", 0, cx);
 
-    click_crumb(5, "b", cx);
-    assert_eq!(picker_rows(&workbench, cx).unwrap(), ["a", "b"]);
-    assert_eq!(picker_selected(&workbench, cx), 1);
-    cx.simulate_keystrokes("up enter");
-    settle(cx);
-    assert_eq!(picker_rows(&workbench, cx), None);
-    assert_eq!(caret(&editor, cx), MOD_RS.find("a()").unwrap());
-    assert!(focused(&editor, cx));
-    assert_eq!(
-        crumbs(&pane, CrumbKind::Symbol, cx),
-        ["outer", "impl S", "a"]
-    );
-
-    // Split, then edit the shared buffer from the other pane while the
-    // picker is open: the pick is refused and the list rebuilt.
-    caret_at(&editor, "let x", 0, cx);
+    // Split: the right pane is active, with its own editor of the file.
     cx.simulate_keystrokes("cmd-\\");
     settle(cx);
     let right = active(&workbench, cx);
-    assert_ne!(right, pane);
+    assert_ne!(right, left);
     let split = self::editor(&workbench, cx);
-    caret_at(&split, "let x", 0, cx);
+    caret_at(&split, "fn main", 0, cx);
     assert_eq!(
-        crumbs(&right, CrumbKind::Symbol, cx),
-        ["outer", "impl S", "b"]
+        crumbs(&left, CrumbKind::Symbol, cx),
+        ["outer", "impl S", "b"],
+        "the inactive pane keeps its chain"
     );
+
+    // The left pane's crumb activates it, and its quick outline picks in
+    // its editor.
     let mut crumb = bounds("crumb:5:b".into(), cx).unwrap();
-    let (left_x, right_x) = (
-        pane.read_with(cx, |pane, _| pane.bounds().left()),
-        right.read_with(cx, |pane, _| pane.bounds().left()),
-    );
-    if crumb.left() < right_x {
-        crumb.origin.x += right_x - left_x;
+    let right_x = right.read_with(cx, |pane, _| pane.bounds().left());
+    if crumb.left() >= right_x {
+        let left_x = left.read_with(cx, |pane, _| pane.bounds().left());
+        crumb.origin.x -= right_x - left_x;
     }
     click(crumb, cx);
-    assert_eq!(picker_rows(&workbench, cx).unwrap(), ["a", "b"]);
-    cx.simulate_keystrokes("up");
-    editor.update(cx, |editor, cx| {
-        editor.model_mut().set_cursor(0);
-        editor.model_mut().insert("// moved\n");
-        cx.notify();
-    });
+    assert_eq!(active(&workbench, cx), left);
+    assert!(quick_outline_shows(&workbench, cx));
+    assert_eq!(picker_rows(&workbench, cx), None, "not the sibling list");
+    cx.simulate_keystrokes("a enter");
     settle(cx);
-    let jobs_before = jobs(&workbench, cx);
-    cx.simulate_keystrokes("enter");
-    settle(cx);
-    assert_eq!(picker_rows(&workbench, cx).unwrap(), ["a", "b"], "refused");
-    assert_eq!(picker_selected(&workbench, cx), 1, "rebuilt");
-    assert_eq!(jobs(&workbench, cx), jobs_before);
-    cx.simulate_keystrokes("up enter");
-    settle(cx);
-    assert_eq!(picker_rows(&workbench, cx), None);
-    let a = "// moved\n".len() + MOD_RS.find("a()").unwrap();
-    assert_eq!(caret(&split, cx), a);
-    assert!(focused(&split, cx));
+    assert!(!quick_outline_shows(&workbench, cx));
+    assert_eq!(caret(&editor, cx), MOD_RS.find("a()").unwrap() + "a".len());
+    assert!(focused(&editor, cx));
+    assert_eq!(caret(&split, cx), MOD_RS.find("fn main").unwrap());
 }
 
 #[gpui::test]
@@ -521,7 +502,7 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     assert_eq!(active(&workbench, cx), right);
 
     // Split Right in the inactive pane activates it and splits it.
-    click(action(&left, 0, cx), cx);
+    click(action(&left, 1, cx), cx);
     assert_eq!(panes(&workbench, cx).len(), 3);
     let new = active(&workbench, cx);
     assert_eq!(
@@ -530,20 +511,16 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     );
     assert_eq!(mouse_runs(&workbench, "pane.split_right", cx), 1);
 
-    // Split Down likewise.
-    click(action(&right, 1, cx), cx);
-    assert_eq!(panes(&workbench, cx).len(), 4);
-    assert_eq!(panes(&workbench, cx)[2], right);
-    assert_eq!(mouse_runs(&workbench, "pane.split_down", cx), 1);
-
     // "…" lists the pane commands with their keys.
     click(action(&left, 2, cx), cx);
     let titles = [
-        "Close Tab",
-        "Close Other Tabs",
-        "Close Pane",
         "Split Right",
         "Split Down",
+        "Pin Tab",
+        "Close Other Tabs",
+        "Reopen Closed Tab",
+        "Close Tab",
+        "Close Pane",
         "Move Tab Left",
         "Move Tab Right",
         "Move Tab Up",
@@ -572,7 +549,7 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     assert_eq!(shortcut("Split Right"), label("⌘\\", "Super+\\"));
     assert_eq!(shortcut("Close Tab"), label("⌘W", "Super+W"));
     assert_eq!(shortcut("Close Other Tabs"), None);
-    assert_eq!(shortcut("Close Pane"), None);
+    assert_eq!(shortcut("Close Pane"), label("⌘K ⌘W", "Super+K Super+W"));
     assert_eq!(shortcut("Toggle Breadcrumbs"), None);
 
     // Close Pane closes the pane whose "…" was clicked.
@@ -583,7 +560,7 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     settle(cx);
     assert_eq!(picker_rows(&workbench, cx), None);
     let open = panes(&workbench, cx);
-    assert_eq!(open.len(), 3);
+    assert_eq!(open.len(), 2);
     assert!(!open.contains(&left));
     let palette = invocations(&workbench, cx);
     let close = palette.last().unwrap();
@@ -593,7 +570,7 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     );
 
     // Tooltips show the title and key.
-    let split_right = action(&right, 0, cx);
+    let split_right = action(&right, 1, cx);
     cx.simulate_mouse_move(split_right.center(), None, Modifiers::none());
     cx.executor().advance_clock(Duration::from_millis(500));
     draw(cx);
@@ -672,10 +649,10 @@ fn crumbs_per_pane_and_root(cx: &mut TestAppContext) {
         "the inactive pane keeps its chain"
     );
 
-    // Its symbol crumb lists the siblings once the outline follows it.
+    // Its symbol crumb opens the quick outline for it.
     click_crumb(5, "b", cx);
     assert_eq!(active(&workbench, cx), left);
-    assert_eq!(picker_rows(&workbench, cx).unwrap(), ["a", "b"]);
+    assert!(quick_outline_shows(&workbench, cx));
     cx.simulate_keystrokes("escape");
     settle(cx);
 

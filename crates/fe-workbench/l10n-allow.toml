@@ -74,6 +74,10 @@ migrated = [
     "src/project_panel_clipboard.rs",
     "src/outline_panel.rs",
     "src/outline_panel_keys.rs",
+    # The tab strip, the breadcrumbs and the pane menu in B3 (T1542).
+    "src/pane.rs",
+    "src/pane_toolbar.rs",
+    "src/toolbar_picker.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -306,3 +310,15 @@ reason = "A hunk header's debug selector, never shown"
 file = "src/commit_diff_view.rs"
 text = "commit-diff-chevron:{ix}"
 reason = "A section chevron's debug selector, never shown"
+
+# The pane's and the toolbar picker's debug selectors (T1542).
+
+[[literal]]
+file = "src/pane.rs"
+text = "pane-message:{text}"
+reason = "What a pane shows in its tab's place's debug selector, for tests"
+
+[[literal]]
+file = "src/toolbar_picker.rs"
+text = "toolbar-picker-icon:{name}:{path}"
+reason = "A row icon's debug selector, for tests"

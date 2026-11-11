@@ -436,7 +436,7 @@ impl OutlinePanel {
 
 /// The highlight whose colour a symbol of `kind` is drawn in, as its name
 /// is in the code.
-fn symbol_highlight(kind: OutlineKind) -> &'static str {
+pub(crate) fn symbol_highlight(kind: OutlineKind) -> &'static str {
     match kind {
         OutlineKind::Module => "module",
         OutlineKind::Class

@@ -673,7 +673,9 @@ impl<V: PaneView> PaneState<V> {
 
     /// The tab strip: a tab per item, its title and dirty dot from the
     /// item, which a click activates, a double-click pins, the × closes,
-    /// and a drag carries.
+    /// and a drag carries. The active tab has the accent line while the
+    /// pane's focus handle ([`PaneState::focus`]) is focused or contains
+    /// what is, so the view must track it around its items.
     pub fn tab_bar(&self, cx: &mut Context<V>) -> TabBar {
         let pane = cx.entity().downgrade();
         let ui = ui_theme(cx);
@@ -722,6 +724,7 @@ impl<V: PaneView> PaneState<V> {
             .collect();
         TabBar::new("tabs", &ui)
             .track_scroll(&self.tab_scroll)
+            .focus_within(&self.focus)
             .on_drop(self.on_drop(cx))
             .children(tabs)
     }

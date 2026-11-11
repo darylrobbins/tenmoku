@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use gpui::{
-    App, ClickEvent, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    App, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
+    Pixels, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
     prelude::FluentBuilder as _, px, svg,
 };
 
@@ -27,6 +27,9 @@ pub struct Crumb {
     pub label: SharedString,
     pub icon: Option<IconRef>,
     pub kind: CrumbKind,
+    /// The label's colour, in place of its kind's: a symbol's syntax
+    /// colour, say.
+    pub color: Option<Hsla>,
     on_click: Option<ClickHandler>,
 }
 
@@ -36,8 +39,25 @@ impl Crumb {
             label: label.into(),
             icon: None,
             kind,
+            color: None,
             on_click: None,
         }
+    }
+
+    /// Draws the label in `color` instead of its kind's colour.
+    pub fn color(mut self, color: Option<Hsla>) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// The colour its label is drawn in: its own if it has one, else muted
+    /// for a directory and the primary text colour for a file or symbol.
+    pub fn label_color(&self, cx: &App) -> Hsla {
+        let text = &cx.theme().colors.text;
+        self.color.unwrap_or(match self.kind {
+            CrumbKind::Path => text.muted,
+            CrumbKind::File | CrumbKind::Symbol => text.primary,
+        })
     }
 
     /// A bundled [`Icon`] or an icon set's answer.
@@ -55,8 +75,8 @@ impl Crumb {
     }
 }
 
-/// Crumbs in a row, a chevron between each two, filling the space left in
-/// their row. Too narrow, directory crumbs shrink first, together, their
+/// Crumbs in a row, a faint chevron between each two, each label in its
+/// [`Crumb::label_color`], filling the space left in their row. Too narrow, directory crumbs shrink first, together, their
 /// labels ending in an ellipsis, down to nothing if that's what it takes for
 /// the file crumb to fit; the file and symbol crumbs keep their width and
 /// are clipped at the right edge. Each crumb has the debug selector
@@ -77,7 +97,7 @@ impl Breadcrumbs {
 impl RenderOnce for Breadcrumbs {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let colors = &cx.theme().colors;
-        let (hover, icon_color) = (colors.list.row_hover, colors.list.icon);
+        let (hover, icon_color, faint) = (colors.state.hover, colors.list.icon, colors.text.faint);
         let mut row = div()
             .flex()
             .flex_1()
@@ -92,11 +112,12 @@ impl RenderOnce for Breadcrumbs {
                         .path(Icon::ChevronRight.path())
                         .size(px(12.))
                         .flex_none()
-                        .text_color(colors.text.muted),
+                        .text_color(faint),
                 );
             }
             let shrinks = crumb.kind == CrumbKind::Path;
             let label = crumb.label.clone();
+            let label_color = crumb.label_color(cx);
             let element = div()
                 .id(ElementId::NamedInteger("crumb".into(), ix as u64))
                 .debug_selector(|| format!("crumb:{ix}:{label}"))
@@ -128,6 +149,7 @@ impl RenderOnce for Breadcrumbs {
                     div()
                         .min_w_0()
                         .whitespace_nowrap()
+                        .text_color(label_color)
                         .when(shrinks, |label| label.overflow_hidden().text_ellipsis())
                         .child(crumb.label),
                 )

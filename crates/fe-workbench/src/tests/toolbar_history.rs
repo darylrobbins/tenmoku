@@ -236,14 +236,15 @@ fn crumb_picks_push_history(cx: &mut TestAppContext) {
     let pane = active(&workbench, cx);
     let main = root.join("src/main.rs");
 
-    // A sibling symbol from the symbol crumb.
+    // A symbol from the quick outline the symbol crumb opens: its name
+    // selected.
     let in_b = caret_at(&workbench, "util::helper", 2, cx);
     assert_eq!(nav(&workbench, cx), (false, false));
     click_crumb(&pane, CrumbKind::Symbol, "b", cx);
-    cx.simulate_keystrokes("up enter");
+    cx.simulate_keystrokes("a enter");
     settle(cx);
     let (_, in_a) = at(&workbench, cx);
-    assert_eq!(in_a, MAIN.find("a()").unwrap());
+    assert_eq!(in_a, MAIN.find("a()").unwrap() + "a".len());
     assert_eq!(nav(&workbench, cx), (true, false));
     click_button(false, cx);
     assert_eq!(at(&workbench, cx), (main.clone(), in_b));

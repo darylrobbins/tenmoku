@@ -25,7 +25,7 @@ use crate::{
     workbench_commands::markdown_preview::{DELAY, MarkdownPreview},
 };
 
-const STANDARD: [&str; 3] = ["split-right", "split-down", "pane-menu"];
+const STANDARD: [&str; 3] = ["tab-list", "split-right", "pane-menu"];
 
 /// Forty paragraphs under a heading, so the editor has rows to scroll.
 fn readme() -> String {
