@@ -141,15 +141,16 @@ fn wait(
     workbench: &Entity<Workbench>,
     cx: &mut VisualTestContext,
     done: impl Fn(&[String], Option<&str>) -> bool,
-) -> (Vec<String>, Option<&'static str>) {
+) -> (Vec<String>, Option<String>) {
     let until = Instant::now() + Duration::from_secs(5);
     loop {
         draw(cx);
         let listing = workbench
             .read_with(cx, |workbench, cx| workbench.git_log_listing(cx))
             .expect("the dock has its Git Log");
-        let ready = !listing.0.is_empty() || listing.1 == Some("Not in a git repository");
-        if (ready && done(&listing.0, listing.1)) || Instant::now() > until {
+        let ready =
+            !listing.0.is_empty() || listing.1.as_deref() == Some("Not in a git repository");
+        if (ready && done(&listing.0, listing.1.as_deref())) || Instant::now() > until {
             return listing;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -207,5 +208,5 @@ fn an_unresolved_active_file_ends_at_not_a_repository(cx: &mut TestAppContext) {
     let (workbench, mut vcx) = window(None, Some(&entry), None, &mut app);
     let (summaries, message) = wait(&workbench, &mut vcx, |_, _| true);
     assert!(summaries.is_empty());
-    assert_eq!(message, Some("Not in a git repository"));
+    assert_eq!(message.as_deref(), Some("Not in a git repository"));
 }

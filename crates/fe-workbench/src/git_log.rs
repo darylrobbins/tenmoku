@@ -74,11 +74,12 @@
 //! typed. Running `git.log` again keeps the filter.
 
 #[cfg(test)]
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -89,16 +90,20 @@ use fe_git::{
     graph::{GraphLayout, GraphRow},
 };
 use fe_gpui::commands::RunCommand;
-use fe_ui::{Icon, IconButton, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, file_icon_ref};
-use gpui::{
-    AnyElement, App, AppContext as _, BorderStyle, Bounds, ClickEvent, ClipboardItem, Context, Div,
-    ElementId, Entity, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement as _,
-    PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy, ScrollWheelEvent,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Subscription,
-    UniformListScrollHandle, WeakEntity, Window, anchored, canvas, deferred, div, point,
-    prelude::FluentBuilder as _, px, quad, rgba, size, svg, transparent_black, uniform_list,
+use fe_ui::{
+    ActiveTheme as _, FamilySlot, FontFamilies, Icon, IconButton, ROW_HEIGHT, SHADOW_FLOAT,
+    TextInput, TextInputEvent, UiTheme, file_icon_ref,
 };
+use gpui::{
+    AnyElement, App, AppContext as _, BorderStyle, Bounds, BoxShadow, ClickEvent, ClipboardItem,
+    Context, Div, ElementId, Entity, FocusHandle, Focusable, FontWeight, Hsla,
+    InteractiveElement as _, IntoElement, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
+    ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy,
+    ScrollWheelEvent, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
+    Subscription, UniformListScrollHandle, WeakEntity, Window, anchored, canvas, deferred, div,
+    point, prelude::FluentBuilder as _, px, quad, rgba, size, svg, transparent_black, uniform_list,
+};
+use kiln_l10n::tr;
 
 use super::{
     super::git_blame,
@@ -126,26 +131,11 @@ pub(crate) const NEAR: usize = 20;
 /// The key context the panel's element sets.
 const KEY_CONTEXT: &str = "git_log_panel";
 
-/// What the panel and the command answer outside a repository.
-const NO_REPO: &str = "Not in a git repository";
-
-/// What the panel shows for an unborn HEAD.
-const NO_COMMITS: &str = "No commits yet";
-
-/// What the panel shows when the filter matches no commit.
-const NO_MATCHES: &str = "No commits match";
-
-/// What the filter box shows while it's empty.
-const FILTER_PLACEHOLDER: &str = "Filter by message, author or SHA";
-
 /// How long after the last edit of the filter box the list is read again.
 pub(crate) const FILTER_DELAY: Duration = Duration::from_millis(250);
 
 /// The filter box's clear button's id.
 const FILTER_CLEAR: &str = "git-log-filter-clear";
-
-/// What the last row says while a page is read.
-const LOADING: &str = "Loading…";
 
 /// The commit card's widest.
 const CARD_WIDTH: Pixels = px(480.);
@@ -178,9 +168,154 @@ const DOT: Pixels = px(7.);
 /// A lane's line width, and a merge's hollow dot's.
 const LINE: Pixels = px(1.5);
 
-/// The lanes' colours, by [`GraphRow::color`] modulo their number: VS
-/// Code's `scmGraph.foreground1` to `5` defaults.
-const GRAPH_COLORS: [u32; 5] = [0xFFB000, 0xDC267F, 0x994F00, 0x40B0A6, 0xB66DFF];
+/// A row's hash and date's text size: the design's code small.
+const CODE_SMALL: Pixels = px(12.);
+
+/// The widest a row's author is before it ends in an ellipsis.
+const AUTHOR_MAX: Pixels = px(140.);
+
+/// The editor's font family, which a row's hash and date are set in.
+fn code_family(cx: &App) -> SharedString {
+    (cx.try_global::<FontFamilies>().cloned().unwrap_or_default()).family(FamilySlot::Code, cx)
+}
+
+/// How long the pointer rests on a commit row before its card shows.
+pub(crate) const CARD_DELAY: Duration = Duration::from_millis(300);
+
+/// What the log draws in, read from the theme's roles (`docs/design/
+/// design-system.md#signals`): the lanes' colours, which are the signal
+/// roles and never the accent or the agent colour, which mean you and
+/// agents; the avatars' colours, from the same list; the surfaces and the
+/// three steps of text.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GraphColors {
+    /// The lanes' colours, by [`GraphRow::color`] modulo their number.
+    lanes: Rc<[Hsla]>,
+    /// `surface.raised`: the commit card's ground, HEAD's pill's fill.
+    pub(crate) raised: Hsla,
+    /// The theme's ground, under text on a lane colour.
+    background: Hsla,
+    pub(crate) ink: Hsla,
+    pub(crate) muted: Hsla,
+    pub(crate) faint: Hsla,
+    /// What an agent's commits are drawn in.
+    pub(crate) agent: Hsla,
+    /// The card's hairline.
+    pub(crate) border: Hsla,
+}
+
+impl GraphColors {
+    pub(crate) fn new(cx: &App) -> Self {
+        let colors = &cx.theme().colors;
+        let (status, vcs) = (&colors.status, &colors.vcs);
+        // The signal roles, in the order the lanes take them.
+        let signals = [
+            status.modified,
+            status.success,
+            status.warning,
+            status.error,
+            vcs.added,
+            vcs.deleted,
+            vcs.conflict,
+            vcs.untracked,
+            status.info,
+        ];
+        let lanes = lane_palette(&signals, colors.accent.base, colors.agent.base);
+        Self {
+            lanes: lanes.into(),
+            raised: colors.surface.raised,
+            background: colors.surface.background,
+            ink: colors.text.primary,
+            muted: colors.text.muted,
+            faint: colors.text.faint,
+            agent: colors.agent.base,
+            border: colors.border.default,
+        }
+    }
+
+    /// The colour of lane colour `color`.
+    pub(crate) fn lane(&self, color: usize) -> Hsla {
+        self.lanes[color % self.lanes.len()]
+    }
+
+    /// The avatar's colour for `email`: a lane colour picked by a hash of
+    /// it (FNV-1a, so the same in every run), any case and surrounding
+    /// space alike.
+    pub(crate) fn avatar(&self, email: &str) -> Hsla {
+        let email = email.trim().to_lowercase();
+        let hash = (email.bytes()).fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+        self.lanes[(hash % self.lanes.len() as u64) as usize]
+    }
+}
+
+/// The lanes' colours: the `signals` that are neither `accent` nor `agent`,
+/// each once, so always signal roles. A theme that makes every one of them
+/// the accent or the agent colour has none to give: the lanes are then
+/// drawn transparent, not in a colour that means something else.
+pub(crate) fn lane_palette(signals: &[Hsla], accent: Hsla, agent: Hsla) -> Vec<Hsla> {
+    let mut lanes: Vec<Hsla> = Vec::new();
+    for color in signals {
+        if *color != accent && *color != agent && !lanes.contains(color) {
+            lanes.push(*color);
+        }
+    }
+    if lanes.is_empty() {
+        lanes.push(transparent_black());
+    }
+    lanes
+}
+
+/// The float shadow under a card on `raised`: `SHADOW_FLOAT`, its darker
+/// opacity on a dark surface and its lighter on a light one.
+pub(crate) fn float_shadow(raised: Hsla) -> BoxShadow {
+    let alpha = if raised.l > 0.5 {
+        SHADOW_FLOAT.weak
+    } else {
+        SHADOW_FLOAT.strong
+    };
+    BoxShadow {
+        color: gpui::hsla(0., 0., 0., alpha),
+        offset: point(px(0.), SHADOW_FLOAT.y),
+        blur_radius: SHADOW_FLOAT.blur,
+        spread_radius: px(0.),
+        inset: false,
+    }
+}
+
+/// Whether `message` credits an agent: it ends in a trailer block, as `git
+/// interpret-trailers` reads one (a last paragraph, after the subject, of
+/// `Key: value` lines and their indented continuations, and nothing else),
+/// with a `Co-authored-by` trailer naming an agent's own address,
+/// `noreply@anthropic.com` (Claude) or `noreply@openai.com` (Codex).
+/// Nothing else says so: the author is the person, a person at the same
+/// company is a person, and a trailer-like line in prose isn't a trailer.
+pub(crate) fn is_agent_commit(message: &str) -> bool {
+    const AGENTS: [&str; 2] = ["noreply@anthropic.com", "noreply@openai.com"];
+    let message = message.trim_end();
+    let Some((_, block)) = message.rsplit_once("\n\n") else {
+        return false;
+    };
+    fn key(line: &str) -> Option<(&str, &str)> {
+        let (key, value) = line.split_once(':')?;
+        let token = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+        (token && !value.trim().is_empty()).then_some((key, value))
+    }
+    let trailers = block
+        .lines()
+        .all(|line| line.starts_with([' ', '\t']) || key(line).is_some());
+    trailers
+        && block.lines().filter_map(key).any(|(key, value)| {
+            let email = (value.trim().strip_suffix('>')).and_then(|value| value.rsplit_once('<'));
+            key.eq_ignore_ascii_case(TRAILERS[0])
+                && email.is_some_and(|(_, email)| {
+                    AGENTS
+                        .iter()
+                        .any(|agent| email.trim().eq_ignore_ascii_case(agent))
+                })
+        })
+}
 
 /// Runs `op`, `git.log` or `git.log_all`: see the module docs.
 pub(super) fn run(
@@ -190,11 +325,6 @@ pub(super) fn run(
     cx: &mut Context<Workbench>,
 ) {
     workbench.show_git_log(op, window, cx);
-}
-
-/// The colour of lane colour `color`.
-fn lane_color(color: usize) -> Hsla {
-    gpui::rgb(GRAPH_COLORS[color % GRAPH_COLORS.len()]).into()
 }
 
 /// How many lanes `row` reaches across.
@@ -243,7 +373,10 @@ fn body_lines(message: &str) -> Vec<&str> {
 }
 
 /// The trailers a commit card lists, by key in any case.
-const TRAILERS: [&str; 2] = ["Co-authored-by", "Signed-off-by"];
+const TRAILERS: [&str; 2] = [
+    kiln_l10n::verbatim!("Co-authored-by"),
+    kiln_l10n::verbatim!("Signed-off-by"),
+];
 
 /// A [`TRAILERS`] line of a message: its key as written and who it names,
 /// their email dropped.
@@ -306,34 +439,23 @@ fn initials(author: &str) -> String {
     }
 }
 
-/// The avatar's colour for `email`: a hue hashed from it (FNV-1a, so the
-/// same in every run), any case and surrounding space alike.
-fn avatar_color(email: &str) -> Hsla {
-    let email = email.trim().to_lowercase();
-    let hash = (email.bytes()).fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-    });
-    gpui::hsla((hash % 360) as f32 / 360., 0.5, 0.4, 1.)
-}
-
 /// A commit's totals as `git show --shortstat` words them: `N files
 /// changed`, `X insertions(+)` and `Y deletions(-)`, each singular for 1.
 fn totals_text(files: usize, added: u32, removed: u32) -> [String; 3] {
-    let plural = |count: u64| if count == 1 { "" } else { "s" };
     [
-        format!("{files} file{} changed", plural(files as u64)),
-        format!("{added} insertion{}(+)", plural(added.into())),
-        format!("{removed} deletion{}(-)", plural(removed.into())),
+        tr!("workbench-git-log-files-changed", count = files as u64).to_string(),
+        tr!("workbench-git-log-insertions", count = u64::from(added)).to_string(),
+        tr!("workbench-git-log-deletions", count = u64::from(removed)).to_string(),
     ]
 }
 
 /// What a commit card's web link says for `url`: the host's name where
 /// it's known.
-fn link_label(url: &str) -> &'static str {
+fn link_label(url: &str) -> SharedString {
     if url.starts_with("https://github.com/") {
-        "Open on GitHub"
+        tr!("workbench-git-log-link-github")
     } else {
-        "Open in Browser"
+        tr!("workbench-git-log-link-browser")
     }
 }
 
@@ -361,7 +483,6 @@ struct CommitCard {
     /// The lane colour index of its commit's row, which its ref pills take.
     lane: usize,
     initials: String,
-    avatar: Hsla,
     /// `<ago> (<date>)`.
     dates: String,
     body: Option<String>,
@@ -388,6 +509,10 @@ pub(crate) struct CardProbe {
     pub(crate) built: usize,
     pub(crate) initials: String,
     pub(crate) avatar: Option<Hsla>,
+    /// The ground it's drawn on and the shadow under it.
+    pub(crate) background: Option<Hsla>,
+    pub(crate) shadow: Vec<BoxShadow>,
+    pub(crate) border: Option<Hsla>,
     pub(crate) author: String,
     pub(crate) dates: String,
     /// The summary and body, joined with `\n`.
@@ -457,7 +582,6 @@ impl CommitCard {
             refs: entry.refs.clone(),
             lane,
             initials: initials(&commit.author),
-            avatar: avatar_color(&commit.email),
             dates: format!(
                 "{} ({})",
                 commit_rows::ago(now - commit.time),
@@ -555,10 +679,13 @@ impl CommitCard {
 
     /// Tells the probe what it shows.
     #[cfg(test)]
-    fn note(&self, colors: &FileColors) {
+    fn note(&self, colors: &FileColors, graph: &GraphColors) {
         let mut probe = self.probe.borrow_mut();
         probe.initials = self.initials.clone();
-        probe.avatar = Some(self.avatar);
+        probe.avatar = Some(graph.avatar(&self.commit.email));
+        probe.background = Some(graph.raised);
+        probe.shadow = vec![float_shadow(graph.raised)];
+        probe.border = Some(graph.border);
         probe.author = self.commit.author.clone();
         probe.dates = self.dates.clone();
         let message = [Some(&self.commit.summary), self.body.as_ref()];
@@ -581,7 +708,7 @@ impl CommitCard {
             None => Vec::new(),
         };
         probe.copy_icon = Some(self.copy_icon());
-        probe.link = (self.web.as_ref()).map(|url| (link_label(url).to_owned(), url.clone()));
+        probe.link = (self.web.as_ref()).map(|url| (link_label(url).to_string(), url.clone()));
         probe.scroll = Some(self.scroll.clone());
     }
 
@@ -599,27 +726,31 @@ impl Render for CommitCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
         let colors = FileColors::new(&ui, cx);
+        let graph = GraphColors::new(cx);
         #[cfg(test)]
-        self.note(&colors);
+        self.note(&colors, &graph);
         let avatar = (div()
             .flex_none()
             .size(AVATAR)
             .rounded_full()
-            .bg(self.avatar))
+            .bg(graph.avatar(&self.commit.email)))
         .flex()
         .items_center()
         .justify_center()
         .text_size(px(11.))
         .font_weight(FontWeight::BOLD)
-        .text_color(gpui::white())
+        .text_color(graph.background)
         .child(self.initials.clone());
         let who = (div().flex_1().min_w_0().flex().flex_col())
             .child(
                 div()
                     .font_weight(FontWeight::BOLD)
+                    .when(is_agent_commit(&self.commit.message), |author| {
+                        author.text_color(graph.agent)
+                    })
                     .child(self.commit.author.clone()),
             )
-            .child(div().text_color(ui.muted_text).child(self.dates.clone()));
+            .child(div().text_color(graph.muted).child(self.dates.clone()));
         let header = (div().flex_none().flex().items_center().gap_2())
             .child(avatar)
             .child(who);
@@ -654,7 +785,7 @@ impl Render for CommitCard {
             let refs = (div().flex().flex_wrap().gap_1()).children(
                 self.refs
                     .iter()
-                    .map(|label| ref_label(label, self.lane, &ui)),
+                    .map(|label| ref_label(label, self.lane, &graph)),
             );
             sections.push(("refs", refs.into_any_element()));
         }
@@ -714,7 +845,7 @@ impl Render for CommitCard {
         let copy = IconButton::new(
             "commit-card-copy",
             self.copy_icon(),
-            "Copy Commit Hash",
+            tr!("workbench-git-log-copy-hash"),
             &ui,
         )
         .on_click(cx.listener(|card, _, _, cx| card.copy(cx)));
@@ -755,11 +886,12 @@ impl Render for CommitCard {
             .px_2()
             .py_2()
             .rounded_md()
-            .bg(ui.panel_background)
+            .bg(graph.raised)
             .border_1()
-            .border_color(ui.border)
+            .border_color(graph.border)
+            .shadow(vec![float_shadow(graph.raised)])
             .text_size(CARD_TEXT)
-            .text_color(ui.text)
+            .text_color(graph.ink)
             .whitespace_normal()
             .children(parts.into_iter().map(|(_, part)| part));
         #[cfg(test)]
@@ -824,7 +956,7 @@ impl Workbench {
         let path = (op.editor.as_ref())
             .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
         let Some(at) = path.or_else(|| self.root.clone()) else {
-            return self.answer_git_op(&op, NO_REPO.to_owned(), cx);
+            return self.answer_git_op(&op, tr!("workbench-git-not-a-repository").to_string(), cx);
         };
         let panel =
             (self.dock.read(cx).git_log().cloned()).expect("the dock has its Git Log panel");
@@ -965,7 +1097,9 @@ pub struct GitLogPanel {
 impl GitLogPanel {
     pub(crate) fn new(workbench: WeakEntity<Workbench>, cx: &mut Context<Self>) -> Self {
         let ui = fe_ui::ui_theme(cx);
-        let filter_input = cx.new(|cx| TextInput::new(FILTER_PLACEHOLDER, &ui, cx).bordered());
+        let filter_input = cx.new(|cx| {
+            TextInput::new(tr!("workbench-git-log-filter-placeholder"), &ui, cx).bordered()
+        });
         let filter_subscription = cx.subscribe(&filter_input, |panel, _, event, cx| {
             if *event == TextInputEvent::Changed {
                 panel.filter_edited(cx);
@@ -1024,10 +1158,12 @@ impl GitLogPanel {
     /// (detached)` or `Graph: All Branches`.
     pub(crate) fn title(&self, _: &App) -> SharedString {
         match (self.scope, &self.head) {
-            (LogScope::All, _) => "Graph: All Branches".into(),
-            (_, Some(Head::Branch(name) | Head::Unborn(name))) => format!("Graph: {name}").into(),
-            (_, Some(Head::Detached(_))) => "Graph: HEAD (detached)".into(),
-            (_, None) => "Graph".into(),
+            (LogScope::All, _) => tr!("workbench-git-log-title-all"),
+            (_, Some(Head::Branch(name) | Head::Unborn(name))) => {
+                tr!("workbench-git-log-title-branch", name = name.as_str())
+            }
+            (_, Some(Head::Detached(_))) => tr!("workbench-git-log-title-detached"),
+            (_, None) => tr!("workbench-git-log-title"),
         }
     }
 
@@ -1202,7 +1338,11 @@ impl GitLogPanel {
                 self.not_repository = true;
                 if let (Some(op), Some(workbench)) = (op, self.workbench.upgrade()) {
                     workbench.update(cx, |workbench, cx| {
-                        workbench.answer_git_op(&op, NO_REPO.to_owned(), cx)
+                        workbench.answer_git_op(
+                            &op,
+                            tr!("workbench-git-not-a-repository").to_string(),
+                            cx,
+                        )
                     });
                 }
             }
@@ -1319,7 +1459,12 @@ impl GitLogPanel {
         };
         let dir = match &file.from {
             Some(from) if dir.is_empty() => format!("← {}", self.display_path(from)),
-            Some(from) => format!("{dir} ← {}", self.display_path(from)),
+            Some(from) => tr!(
+                "workbench-git-log-renamed-dir",
+                dir = dir.as_str(),
+                from = self.display_path(from)
+            )
+            .to_string(),
             None => dir,
         };
         let counts = match self.counts.get(&commit) {
@@ -1603,32 +1748,32 @@ impl GitLogPanel {
     }
 
     /// Each listed commit's summary, and what shows in place of the list.
-    pub(crate) fn listing(&self) -> (Vec<String>, Option<&'static str>) {
+    pub(crate) fn listing(&self) -> (Vec<String>, Option<String>) {
         let summaries = (self.commits.iter())
             .map(|entry| commit_rows::texts(&entry.commit, self.now)[0].clone())
             .collect();
-        (summaries, self.message())
+        (summaries, self.message().map(|message| message.to_string()))
     }
 
     /// What shows in place of the list, if anything.
-    fn message(&self) -> Option<&'static str> {
+    fn message(&self) -> Option<SharedString> {
         if self.not_repository {
-            Some(NO_REPO)
+            Some(tr!("workbench-git-not-a-repository"))
         } else if self.commits.is_empty() && self.tail == Tail::None && !self.filter.is_empty() {
-            Some(NO_MATCHES)
+            Some(tr!("workbench-git-log-no-matches"))
         } else if self.commits.is_empty() && self.tail == Tail::None {
-            Some(NO_COMMITS)
+            Some(tr!("workbench-git-log-no-commits"))
         } else {
             None
         }
     }
 
     /// The last row's text, after the commits, if there is one.
-    fn tail_text(&self) -> Option<&str> {
+    fn tail_text(&self) -> Option<SharedString> {
         match &self.tail {
             Tail::None => None,
-            Tail::Loading => Some(LOADING),
-            Tail::Failed(error) => Some(error),
+            Tail::Loading => Some(tr!("workbench-git-log-loading")),
+            Tail::Failed(error) => Some(error.clone().into()),
         }
     }
 
@@ -1739,6 +1884,8 @@ impl GitLogPanel {
         }
         let ui = fe_ui::ui_theme(cx);
         let colors = FileColors::new(&ui, cx);
+        let graph_colors = GraphColors::new(cx);
+        let code = code_family(cx);
         #[cfg(test)]
         {
             self.rows_seen.0.borrow_mut().muted = ui.muted_text;
@@ -1750,7 +1897,7 @@ impl GitLogPanel {
         };
         // Each list read has its own IDs, so a row pressed before the list
         // changed isn't clicked as the row that replaced it.
-        let name = SharedString::from(format!("git-log-{}", self.read));
+        let name = SharedString::from(format!("{}{}", kiln_l10n::verbatim!("git-log-"), self.read));
         range
             .filter_map(|ix| {
                 let line_id = self.lines.get(ix).map_or(u64::MAX, |line| line.id());
@@ -1776,8 +1923,15 @@ impl GitLogPanel {
                     }
                 };
                 let seen = self.rows_seen.clone();
-                let rail =
-                    |commit: usize| rail_cell(self.rail(commit), self.lanes, ix, seen.clone());
+                let rail = |commit: usize| {
+                    rail_cell(
+                        self.rail(commit),
+                        graph_colors.clone(),
+                        self.lanes,
+                        ix,
+                        seen.clone(),
+                    )
+                };
                 let row = match line {
                     Line::Commit(_) => row,
                     Line::File(commit, file) => {
@@ -1798,7 +1952,7 @@ impl GitLogPanel {
                     Line::Note(commit) => {
                         let (text, color) = match self.expanded.get(&commit) {
                             Some(Listing::Failed(error)) => (error.clone(), ui.error_text),
-                            _ => (LOADING.to_owned(), ui.muted_text),
+                            _ => (tr!("workbench-git-log-loading").to_string(), ui.muted_text),
                         };
                         return Some(
                             lettered(
@@ -1823,6 +1977,7 @@ impl GitLogPanel {
                 let lane = self.rows[ix_commit].color;
                 let graph = graph_cell(
                     self.rows[ix_commit].clone(),
+                    graph_colors.clone(),
                     merge,
                     self.lanes,
                     ix,
@@ -1830,9 +1985,36 @@ impl GitLogPanel {
                 );
                 let [summary, _] = commit_rows::texts(&entry.commit, self.now);
                 seen.texts(ix, &[&summary]);
+                // The hash and the date in faint code small, the subject in
+                // ink, the author in muted, or in the agent's colour for an
+                // agent's commit.
+                let agent = is_agent_commit(&entry.commit.message);
+                let by = if agent {
+                    graph_colors.agent
+                } else {
+                    graph_colors.muted
+                };
+                let small = |text: String, color: Hsla| {
+                    (div().flex_none().font_family(code.clone()))
+                        .text_size(CODE_SMALL)
+                        .text_color(color)
+                        .child(text)
+                };
                 let lead = (lead().child(graph))
-                    .children(ref_pills(&entry.refs, lane, &ui))
-                    .child(ellipsized(summary));
+                    .children(ref_pills(&entry.refs, lane, &graph_colors))
+                    .child(small(entry.commit.short.clone(), graph_colors.faint))
+                    .child(ellipsized(entry.commit.summary.clone()).text_color(graph_colors.ink))
+                    .child(
+                        (div().flex_shrink(1.).min_w_0().max_w(AUTHOR_MAX))
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .text_color(by)
+                            .child(entry.commit.author.clone()),
+                    )
+                    .child(small(
+                        commit_rows::ago(self.now - entry.commit.time),
+                        graph_colors.faint,
+                    ));
                 let shown_card = match &mut self.shown_card {
                     Some((shown, card)) if *shown == ix_commit => Some(
                         (card.get_or_insert_with(|| {
@@ -1860,6 +2042,7 @@ impl GitLogPanel {
                         let at = anchored().offset(point(px(1.), px(1.)));
                         row.child(deferred(at.child(card)))
                     })
+                    .tooltip_show_delay(CARD_DELAY)
                     .hoverable_tooltip(move |_, cx| {
                         let (repo, workbench) = (repo.clone(), workbench.clone());
                         let card = cx.new(|cx| {
@@ -1905,7 +2088,7 @@ fn menu_on(
 }
 
 /// `text` as a row's, ending in an ellipsis if it's too long for the row.
-fn ellipsized(text: String) -> impl IntoElement {
+fn ellipsized(text: String) -> Div {
     div()
         .flex_1()
         .min_w_0()
@@ -1954,23 +2137,28 @@ const MAX_PILLS: usize = 3;
 struct PillStyle {
     /// The text and border colour: the commit's lane colour.
     color: Hsla,
-    /// The fill: solid for HEAD's pill, a tint of `color` for the others.
+    /// The fill: `surface.raised` for HEAD's pill, a tint of `color` for the
+    /// others.
     fill: Hsla,
-    /// The text colour: the theme's background on HEAD's solid fill,
-    /// `color` itself on a tint.
+    /// The text colour: ink on HEAD's raised fill, `color` itself on a
+    /// tint.
     text: Hsla,
     /// A remote-tracking branch's cloud, a tag's tag.
     icon: Option<Icon>,
 }
 
 /// `label`'s pill on a commit of lane colour `lane`.
-fn pill_style(label: &RefLabel, lane: usize, ui: &UiTheme) -> PillStyle {
-    let color = lane_color(lane);
+fn pill_style(label: &RefLabel, lane: usize, graph: &GraphColors) -> PillStyle {
+    let color = graph.lane(lane);
     let head = label.is_head || label.kind == RefKind::Head;
     PillStyle {
         color,
-        fill: if head { color } else { color.opacity(0.18) },
-        text: if head { ui.background } else { color },
+        fill: if head {
+            graph.raised
+        } else {
+            color.opacity(0.18)
+        },
+        text: if head { graph.ink } else { color },
         icon: match label.kind {
             RefKind::Remote => Some(Icon::Cloud),
             RefKind::Tag => Some(Icon::Tag),
@@ -1992,16 +2180,16 @@ fn visible_pills(refs: &[RefLabel]) -> (&[RefLabel], usize) {
 
 /// A row's ref pills: the first few, then a muted `+N` for the rest, which
 /// the commit's card lists.
-fn ref_pills(refs: &[RefLabel], lane: usize, ui: &UiTheme) -> Vec<AnyElement> {
+fn ref_pills(refs: &[RefLabel], lane: usize, graph: &GraphColors) -> Vec<AnyElement> {
     let (shown, more) = visible_pills(refs);
     let mut pills: Vec<AnyElement> = (shown.iter())
-        .map(|label| ref_label(label, lane, ui).into_any_element())
+        .map(|label| ref_label(label, lane, graph).into_any_element())
         .collect();
     if more > 0 {
         let rest = div()
             .flex_none()
             .text_size(px(11.))
-            .text_color(ui.muted_text)
+            .text_color(graph.muted)
             .child(format!("+{more}"));
         pills.push(rest.into_any_element());
     }
@@ -2009,10 +2197,10 @@ fn ref_pills(refs: &[RefLabel], lane: usize, ui: &UiTheme) -> Vec<AnyElement> {
 }
 
 /// A ref pointing at a commit, as a small pill in its commit's lane colour:
-/// HEAD's filled and bold, the others tinted, a remote's after a cloud and a
+/// HEAD's on the raised surface and bold, the others tinted, a remote's after a cloud and a
 /// tag's after a tag.
-fn ref_label(label: &RefLabel, lane: usize, ui: &UiTheme) -> impl IntoElement {
-    let style = pill_style(label, lane, ui);
+fn ref_label(label: &RefLabel, lane: usize, graph: &GraphColors) -> impl IntoElement {
+    let style = pill_style(label, lane, graph);
     div()
         .flex_none()
         .flex()
@@ -2316,6 +2504,7 @@ struct FileParts {
 /// lane of `lanes`: a vertical line the row's height each.
 fn rail_cell(
     rail: Vec<(usize, usize)>,
+    graph: GraphColors,
     lanes: usize,
     ix: usize,
     probe: RowsProbe,
@@ -2327,7 +2516,7 @@ fn rail_cell(
             for &(column, color) in &rail {
                 let x = bounds.left() + LANE_WIDTH * (column as f32 + 0.5);
                 let (top, bottom) = (point(x, bounds.top()), point(x, bounds.bottom()));
-                probe.stroke(window, ix, top, bottom, lane_color(color));
+                probe.stroke(window, ix, top, bottom, graph.lane(color));
             }
         },
     )
@@ -2340,6 +2529,7 @@ fn rail_cell(
 /// lines and its dot, a ring for a merge.
 fn graph_cell(
     row: GraphRow,
+    graph: GraphColors,
     merge: bool,
     lanes: usize,
     ix: usize,
@@ -2347,7 +2537,7 @@ fn graph_cell(
 ) -> impl IntoElement {
     canvas(
         |_, _, _| {},
-        move |bounds, (), window, _| paint_graph(bounds, &row, merge, window, ix, &probe),
+        move |bounds, (), window, _| paint_graph(bounds, &row, &graph, merge, window, ix, &probe),
     )
     .flex_none()
     .w(LANE_WIDTH * lanes as f32)
@@ -2361,6 +2551,7 @@ fn graph_cell(
 fn paint_graph(
     bounds: Bounds<Pixels>,
     row: &GraphRow,
+    graph: &GraphColors,
     merge: bool,
     window: &mut Window,
     ix: usize,
@@ -2385,10 +2576,10 @@ fn paint_graph(
             if merge && half == 1 && line.from == row.column {
                 from = toward(center, to, radius);
             }
-            probe.stroke(window, ix, from, to, lane_color(line.color));
+            probe.stroke(window, ix, from, to, graph.lane(line.color));
         }
     }
-    let color = lane_color(row.color);
+    let color = graph.lane(row.color);
     let origin = point(center.x - radius, center.y - radius);
     let dot = Bounds::new(origin, size(DOT, DOT));
     let (fill, border) = if merge {
@@ -2449,8 +2640,13 @@ impl Render for GitLogPanel {
         .child(div().flex_1().min_w_0().child(self.filter_input.clone()))
         .when(filtering, |row| {
             row.child(
-                IconButton::new(FILTER_CLEAR, Icon::X, "Clear Filter", &ui)
-                    .on_click(cx.listener(|panel, _, _, cx| panel.clear_filter(cx))),
+                IconButton::new(
+                    FILTER_CLEAR,
+                    Icon::X,
+                    tr!("workbench-git-log-clear-filter"),
+                    &ui,
+                )
+                .on_click(cx.listener(|panel, _, _, cx| panel.clear_filter(cx))),
             )
         });
         let menu = self.render_menu(cx);
@@ -2497,7 +2693,7 @@ impl GitLogPanel {
         });
         let tail = self
             .tail_text()
-            .map(|text| (Vec::new(), vec![text.to_owned()]));
+            .map(|text| (Vec::new(), vec![text.to_string()]));
         commits.chain(tail).collect()
     }
 
@@ -2511,7 +2707,7 @@ impl GitLogPanel {
                 Line::File(ix, file) => self.file_text(ix, file).unwrap_or_default(),
                 Line::Note(ix) => match self.expanded.get(&ix) {
                     Some(Listing::Failed(error)) => error.clone(),
-                    _ => LOADING.to_owned(),
+                    _ => tr!("workbench-git-log-loading").to_string(),
                 },
             })
             .collect()
@@ -2529,8 +2725,8 @@ impl GitLogPanel {
     }
 
     /// What shows in place of the list, if anything.
-    pub(crate) fn shown_message(&self) -> Option<&'static str> {
-        self.message()
+    pub(crate) fn shown_message(&self) -> Option<String> {
+        self.message().map(|message| message.to_string())
     }
 
     pub(crate) fn selected(&self) -> Option<usize> {
@@ -2545,6 +2741,11 @@ impl GitLogPanel {
     /// What the tests see of the rows drawn.
     pub(crate) fn rows_seen(&self) -> Rc<RefCell<RowsSeen>> {
         self.rows_seen.0.clone()
+    }
+
+    /// The list's bounds as last drawn.
+    pub(crate) fn list_bounds(&self) -> Bounds<Pixels> {
+        self.scroll.0.borrow().base_handle.bounds()
     }
 
     /// What the tests see of the last commit card built.

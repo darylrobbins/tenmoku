@@ -47,6 +47,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
     uniform_list,
 };
+use kiln_l10n::tr;
 use kiln_shell::PaneView as _;
 
 use super::{
@@ -75,15 +76,6 @@ pub(crate) const LIMIT: usize = 1000;
 /// The key context the panel's element sets.
 const KEY_CONTEXT: &str = "history_panel";
 
-/// What the panel and the command answer outside a repository.
-const NO_REPO: &str = "Not in a git repository";
-
-/// What the command answers for an editor without a file.
-const NO_FILE: &str = "E32: No file name";
-
-/// What the panel shows until the list lands.
-const LOADING: &str = "Loading…";
-
 /// Runs `op`, `git.file_history`: see the module docs.
 pub(super) fn run(
     workbench: &mut Workbench,
@@ -95,7 +87,11 @@ pub(super) fn run(
         if let Some(command) = log_form(&op) {
             return git_log::run(workbench, GitOp { command, ..op }, window, cx);
         }
-        let text = format!("Not supported yet: :{}", typed_line(&op));
+        let text = tr!(
+            "workbench-git-not-supported-yet",
+            what = format!(":{}", typed_line(&op))
+        )
+        .to_string();
         return workbench.answer_git_op(&op, text, cx);
     }
     workbench.show_file_history(op, window, cx);
@@ -129,7 +125,7 @@ fn typed_line(op: &GitOp) -> String {
         Some(Range { start, end }) if *end == start + 1 => end.to_string(),
         Some(Range { start, end }) => format!("{},{end}", start + 1),
     };
-    let line = format!("{range}Gclog {}", op.args);
+    let line = [&range, kiln_l10n::verbatim!("Gclog "), op.args.as_str()].concat();
     line.trim_end().to_owned()
 }
 
@@ -242,7 +238,7 @@ impl Workbench {
         let path = (op.editor.as_ref())
             .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
         let Some(path) = path else {
-            return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
+            return self.answer_git_op(&op, tr!("workbench-git-no-file-name").to_string(), cx);
         };
         let panel = match self.dock.read(cx).history().cloned() {
             Some(panel) => panel,
@@ -497,8 +493,8 @@ impl HistoryPanel {
     /// The dock's title row: `History: <file name>`.
     pub(crate) fn title(&self, _: &App) -> SharedString {
         match &self.name {
-            Some(name) => format!("History: {name}").into(),
-            None => "History".into(),
+            Some(name) => tr!("workbench-git-log-history-title-file", name = name.as_str()),
+            None => tr!("workbench-git-log-history-title"),
         }
     }
 
@@ -541,7 +537,11 @@ impl HistoryPanel {
                 self.status = Status::NotARepository;
                 if let Some(workbench) = self.workbench.upgrade() {
                     workbench.update(cx, |workbench, cx| {
-                        workbench.answer_git_op(&op, NO_REPO.to_owned(), cx)
+                        workbench.answer_git_op(
+                            &op,
+                            tr!("workbench-git-not-a-repository").to_string(),
+                            cx,
+                        )
                     });
                 }
             }
@@ -553,15 +553,14 @@ impl HistoryPanel {
     /// What shows in place of the list, if anything.
     fn message(&self) -> Option<String> {
         Some(match &self.status {
-            Status::Reading => LOADING.to_owned(),
-            Status::NotARepository => NO_REPO.to_owned(),
+            Status::Reading => tr!("workbench-git-log-loading").to_string(),
+            Status::NotARepository => tr!("workbench-git-not-a-repository").to_string(),
             Status::Failed(error) => error.clone(),
-            Status::Listed if self.commits.is_empty() => {
-                format!(
-                    "No commits for {}",
-                    self.name.as_deref().unwrap_or_default()
-                )
-            }
+            Status::Listed if self.commits.is_empty() => tr!(
+                "workbench-git-log-history-no-commits",
+                name = self.name.as_deref().unwrap_or_default()
+            )
+            .to_string(),
             Status::Listed => return None,
         })
     }
@@ -586,12 +585,19 @@ impl HistoryPanel {
     /// for a rename `renamed from <old path>`; or the limit's row.
     fn row_texts(&self, ix: usize) -> Option<Vec<String>> {
         let Some(entry) = self.commits.get(ix) else {
-            return (self.limited() && ix == self.commits.len())
-                .then(|| vec![format!("Showing the newest {LIMIT} commits")]);
+            return (self.limited() && ix == self.commits.len()).then(|| {
+                vec![tr!("workbench-git-log-history-limit", limit = LIMIT as u64).to_string()]
+            });
         };
         let mut texts = commit_rows::texts(&entry.commit, self.now).to_vec();
         if let Some(from) = entry.from.as_deref().filter(|from| *from != entry.path) {
-            texts.push(format!("renamed from {}", self.display_path(from)));
+            texts.push(
+                tr!(
+                    "workbench-git-log-history-renamed-from",
+                    path = self.display_path(from)
+                )
+                .to_string(),
+            );
         }
         Some(texts)
     }
@@ -649,7 +655,7 @@ impl HistoryPanel {
         };
         // Each list read has its own IDs, so a row pressed before the list
         // changed isn't clicked as the row that replaced it.
-        let name = SharedString::from(format!("history-{}", self.read));
+        let name = SharedString::from(format!("{}{}", kiln_l10n::verbatim!("history-"), self.read));
         range
             .filter_map(|ix| {
                 let mut texts = self.row_texts(ix)?.into_iter();

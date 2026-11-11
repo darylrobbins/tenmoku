@@ -44,9 +44,9 @@ fn right_click(workbench: &Entity<Workbench>, ix: usize, cx: &mut VisualTestCont
 }
 
 /// The open menu's items, by title.
-fn menu(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<Vec<&'static str>> {
+fn menu(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<Vec<String>> {
     let items = panel(workbench, cx).read_with(cx, |panel, _| panel.menu_items());
-    items.map(|items| items.iter().map(|item| item.title()).collect())
+    items.map(|items| items.iter().map(|item| item.title().to_string()).collect())
 }
 
 /// Clicks the open menu's item titled `title`, as drawn.
@@ -89,7 +89,7 @@ fn file_item(
 ) {
     let row = file_row(&lines(workbench, cx), summary, file);
     right_click(workbench, row, cx);
-    choose(item.title(), cx);
+    choose(&item.title(), cx);
 }
 
 fn active_editor(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<EditorView> {
@@ -180,7 +180,9 @@ fn file_menu(cx: &mut TestAppContext) {
     let a = file_row(&rows, "edit", "M a.rs");
 
     right_click(&workbench, a, cx);
-    let expected: Vec<_> = FILE_ITEMS.iter().map(|item| item.title()).collect();
+    let expected: Vec<String> = (FILE_ITEMS.iter())
+        .map(|item| item.title().to_string())
+        .collect();
     assert_eq!(
         expected,
         [

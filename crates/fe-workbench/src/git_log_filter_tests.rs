@@ -11,7 +11,7 @@ use fe_gpui::commands::RunCommand;
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
 
 use super::{
-    FILTER_DELAY, GitLogPanel, NO_MATCHES,
+    FILTER_DELAY, GitLogPanel,
     git_log_open_tests::{draw, fixture, lines, panel, press, row_of, selected, window},
 };
 
@@ -133,7 +133,7 @@ fn box_no_matches_says_so(cx: &mut TestAppContext) {
     cx.simulate_input("no such commit");
     wait(FILTER_DELAY, cx);
     assert!(lines(&workbench, cx).is_empty());
-    assert_eq!(shown(cx), Some(NO_MATCHES));
+    assert_eq!(shown(cx), Some("No commits match".to_owned()));
     assert_eq!(selected(&workbench, cx), None);
 
     // By id prefix, any case; and the whole list again after.

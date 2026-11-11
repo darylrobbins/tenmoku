@@ -222,7 +222,7 @@ impl Workbench {
     /// What the Git Log lists, as each commit's summary, and what it shows
     /// in place of the list, for tests of the restored first listing.
     #[doc(hidden)]
-    pub fn git_log_listing(&self, cx: &App) -> Option<(Vec<String>, Option<&'static str>)> {
+    pub fn git_log_listing(&self, cx: &App) -> Option<(Vec<String>, Option<String>)> {
         let panel = self.dock.read(cx).git_log()?;
         Some(panel.read(cx).listing())
     }

@@ -32,10 +32,11 @@ use fe_gpui::EditorView;
 use fe_ui::{MenuEntry, MenuPanel};
 use gpui::{
     AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, EntityId, Focusable as _,
-    Global, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, WeakEntity,
-    Window, anchored, deferred, div,
+    Global, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, SharedString,
+    WeakEntity, Window, anchored, deferred, div,
 };
 use kiln::Cx;
+use kiln_l10n::tr;
 use kiln_shell::PaneView as _;
 
 use super::{GitCommand, GitLogPanel, GitOp, Line, Listing};
@@ -66,13 +67,13 @@ const FILE_ITEMS: &[MenuItem] = &[
 ];
 
 impl MenuItem {
-    pub(crate) fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> SharedString {
         match self {
-            MenuItem::CopyCommitHash => "Copy Commit Hash",
-            MenuItem::CopySubject => "Copy Subject",
-            MenuItem::OpenChanges => "Open Changes",
-            MenuItem::OpenFileAtRevision => "Open File at This Revision",
-            MenuItem::CompareWithWorkingTree => "Compare with Working Tree",
+            MenuItem::CopyCommitHash => tr!("workbench-git-log-copy-hash"),
+            MenuItem::CopySubject => tr!("workbench-git-log-menu-copy-subject"),
+            MenuItem::OpenChanges => tr!("workbench-git-log-menu-open-changes"),
+            MenuItem::OpenFileAtRevision => tr!("workbench-git-log-menu-open-file"),
+            MenuItem::CompareWithWorkingTree => tr!("workbench-git-log-menu-compare"),
         }
     }
 }
@@ -259,7 +260,7 @@ impl GitLogPanel {
         let items = menu.items;
         let entries = (items.iter())
             .map(|item| MenuEntry::Item {
-                title: item.title().into(),
+                title: item.title(),
                 shortcut: None,
             })
             .collect();
@@ -398,7 +399,12 @@ impl Workbench {
                 let text = match read {
                     Ok(Some(text)) => text,
                     Ok(None) => {
-                        let answer = format!("{} isn't in {}", file_name(&path), commit.short);
+                        let answer = tr!(
+                            "workbench-git-log-not-in-commit",
+                            name = file_name(&path),
+                            short = commit.short.as_str()
+                        )
+                        .to_string();
                         return workbench.answer_git_op(&clicked(), answer, cx);
                     }
                     Err(error) => {
@@ -444,7 +450,12 @@ impl Workbench {
         }
         let pane = pane.unwrap_or_else(|| self.active.clone());
         let name = file_name(&path);
-        let title = format!("{name} @ {}", commit.short);
+        let title = tr!(
+            "workbench-git-log-revision-title",
+            name = name.as_str(),
+            short = commit.short.as_str()
+        )
+        .to_string();
         let buffer = Buffer::from_file_contents(&text);
         let model = EditorModel::new(buffer, None);
         let (editor, ix) = pane.update(cx, |pane, cx| {

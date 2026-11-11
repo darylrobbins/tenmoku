@@ -121,7 +121,7 @@ fn contents(cx: &mut TestAppContext) {
     // Not before the delay.
     let row = row_center(&panel, 0, cx);
     cx.simulate_mouse_move(row, None, Modifiers::none());
-    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.executor().advance_clock(Duration::from_millis(250));
     draw(cx);
     assert_eq!(built(&panel, cx), 0, "not shown before the delay");
 

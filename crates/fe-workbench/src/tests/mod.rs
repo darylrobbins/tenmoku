@@ -67,6 +67,7 @@ mod file_icon_set_surfaces;
 pub(crate) mod find_bar;
 mod find_bar_b3;
 mod find_keys;
+mod git_log_b3;
 mod icon_theme_install;
 mod launch;
 pub(crate) mod lsp;

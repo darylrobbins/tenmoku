@@ -101,6 +101,10 @@ migrated = [
     # The terminal panel in B3 (T349): its tab strip and its find row.
     "src/terminal_panel.rs",
     "src/terminal_find.rs",
+    # The Git log in B3 (T348): the panel, its row menu and the History panel.
+    "src/git_log.rs",
+    "src/git_log_menu.rs",
+    "src/git_history.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -448,3 +452,12 @@ reason = "A row's status letter's debug selector"
 file = "src/terminal_panel.rs"
 text = "terminal-new-button"
 reason = "The New Terminal button's element id"
+
+# The History panel's name as its SidebarPanel const declares it, by which
+# the rail orders it and tests name it: its title row is
+# workbench-git-log-history-title (HistoryPanel::title).
+
+[[literal]]
+file = "src/git_history.rs"
+text = "History"
+reason = "The History panel's name in its SidebarPanel const, not shown: its title row is workbench-git-log-history-title"

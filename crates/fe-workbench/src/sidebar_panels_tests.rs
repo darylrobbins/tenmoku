@@ -359,7 +359,7 @@ mod git_log_rail_tests {
     fn log(
         workbench: &gpui::Entity<crate::Workbench>,
         cx: &mut VisualTestContext,
-    ) -> (Vec<String>, Option<&'static str>) {
+    ) -> (Vec<String>, Option<String>) {
         workbench.read_with(cx, |workbench, cx| {
             let panel = workbench.dock().read(cx).git_log().expect("made").read(cx);
             (panel.lines(), panel.shown_message())
@@ -449,7 +449,10 @@ mod git_log_rail_tests {
         });
         draw(cx);
         assert!(log_shown(&workbench, cx));
-        assert_eq!(log(&workbench, cx).1, Some("Not in a git repository"));
+        assert_eq!(
+            log(&workbench, cx).1.as_deref(),
+            Some("Not in a git repository")
+        );
         let layer = workbench.read_with(cx, |workbench, _| workbench.toasts().clone());
         let shown = layer.read_with(cx, |layer, _| layer.queue().shown().len());
         assert_eq!(shown, 0, "no toast");

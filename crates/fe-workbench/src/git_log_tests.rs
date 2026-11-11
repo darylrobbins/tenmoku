@@ -303,10 +303,7 @@ fn selected(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option
     panel(workbench, cx).read_with(cx, |panel, _| panel.selected())
 }
 
-fn panel_message(
-    workbench: &Entity<Workbench>,
-    cx: &mut VisualTestContext,
-) -> Option<&'static str> {
+fn panel_message(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<String> {
     panel(workbench, cx).read_with(cx, |panel, _| panel.shown_message())
 }
 
@@ -612,7 +609,7 @@ fn edges(cx: &mut TestAppContext) {
         message(&editor, cx).as_deref(),
         Some("Not in a git repository")
     );
-    let not_repo = Some("Not in a git repository");
+    let not_repo = Some("Not in a git repository".to_owned());
     assert_eq!(panel_message(&workbench, cx), not_repo);
     assert_eq!(rows(&workbench, cx), Rows::new());
     dispatch("git.log", cx);
@@ -626,7 +623,10 @@ fn edges(cx: &mut TestAppContext) {
     dispatch("git.log", cx);
     let shown = (true, "Graph: main".to_owned());
     assert_eq!(log_shown(&workbench, cx), shown);
-    assert_eq!(panel_message(&workbench, cx), Some("No commits yet"));
+    assert_eq!(
+        panel_message(&workbench, cx),
+        Some("No commits yet".to_owned())
+    );
     assert_eq!(rows(&workbench, cx), Rows::new());
 
     // The log is read in the background: a last row says so until it

@@ -18,7 +18,7 @@ pub(crate) const SURFACE: Surface = Surface {
 
 const PROBES: &[Probe] = &[
     // The card, over the sidebar, right of its copy button.
-    probe(250., 465., "surface.panel"),
+    probe(250., 465., "surface.raised"),
     // The Source Control panel, below the graph.
     probe(174., 540., "surface.panel"),
 ];
