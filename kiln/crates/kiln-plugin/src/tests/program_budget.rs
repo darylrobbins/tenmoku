@@ -5,8 +5,8 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
+use std::sync::RwLockReadGuard;
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Grants};
@@ -16,15 +16,17 @@ use crate::bindings::kiln::extension::process::Host as _;
 use crate::grants::{GrantRecord, resolve_program};
 use crate::limits::Limits;
 use crate::process::{SpawnError, State};
+use crate::tests::support;
 
-fn naps(name: &str) -> (PathBuf, GrantRecord) {
+/// `nap`, a script that sleeps for as long as its argument says, granted, in a directory of its
+/// own; with [`crate::tests::programs`], for as long as the test uses them.
+fn naps(name: &str) -> (PathBuf, GrantRecord, RwLockReadGuard<'static, ()>) {
+    let programs = crate::tests::programs();
     let dir =
         std::env::temp_dir().join(format!("kiln-plugin-budget-{}-{name}", std::process::id()));
     fs::remove_dir_all(&dir).ok();
     fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("nap");
-    fs::write(&path, "#!/bin/sh\nsleep \"$1\"\n").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    write_nap(&dir, false);
     let identity = resolve_program("nap", dir.as_os_str()).unwrap();
     let granted: Grants = [Capability::parse("process.spawn:nap").unwrap()]
         .into_iter()
@@ -35,16 +37,39 @@ fn naps(name: &str) -> (PathBuf, GrantRecord) {
         programs: BTreeMap::from([("nap".to_owned(), identity)]),
         ..GrantRecord::default()
     };
-    (dir, record)
+    (dir, record, programs)
 }
 
+/// Writes `nap` into `dir`, with a comment saying so if it's `changed`. Windows has no `sleep`
+/// that runs without a console, so there `nap` pings this machine, once a second, the number of
+/// times its argument says.
+fn write_nap(dir: &std::path::Path, changed: bool) {
+    let (sh, cmd) = if changed {
+        ("# changed\n", "rem changed\n")
+    } else {
+        ("", "")
+    };
+    support::script(
+        dir,
+        "nap",
+        &format!("{sh}sleep \"$1\""),
+        &format!("{cmd}ping -n %1 127.0.0.1 >nul"),
+    );
+}
+
+/// `nap`'s arguments for a sleep of `seconds`: on Windows, pings a second apart, the first at
+/// once, so a fraction of a second takes a second.
 fn nap(seconds: &str) -> Vec<String> {
-    vec![seconds.to_owned()]
+    #[cfg(unix)]
+    let argument = seconds.to_owned();
+    #[cfg(windows)]
+    let argument = (seconds.parse::<f64>().unwrap().ceil() as u32 + 1).to_string();
+    vec![argument]
 }
 
 #[test]
 fn a_calls_second_run_is_killed_at_what_the_first_left() {
-    let (dir, record) = naps("share");
+    let (dir, record, _programs) = naps("share");
     let mut host = HostState::new(Box::new(|_, _| {}));
     host.process = State::new(record, &Limits::default());
     // A sub-second share for the whole call.
@@ -73,7 +98,7 @@ fn a_calls_second_run_is_killed_at_what_the_first_left() {
 
 #[test]
 fn checking_the_program_comes_out_of_the_share() {
-    let (dir, record) = naps("checking");
+    let (dir, record, _programs) = naps("checking");
     let mut state = State::new(record, &Limits::default());
     let share = Some(Duration::from_millis(500));
 
@@ -93,7 +118,7 @@ fn checking_the_program_comes_out_of_the_share() {
 
 #[test]
 fn a_run_moves_the_calls_deadline_back_and_a_spent_budget_runs_nothing() {
-    let (dir, record) = naps("deadline");
+    let (dir, record, _programs) = naps("deadline");
     let mut host = HostState::new(Box::new(|_, _| {}));
     host.process = State::new(record, &Limits::default());
     host.program_runs.arm(Duration::from_secs(5));
@@ -120,10 +145,10 @@ fn a_run_moves_the_calls_deadline_back_and_a_spent_budget_runs_nothing() {
 
 #[test]
 fn a_spent_budget_refuses_before_the_program_is_checked() {
-    let (dir, record) = naps("spent");
+    let (dir, record, _programs) = naps("spent");
     let mut state = State::new(record, &Limits::default());
     // The program changes after its grant: checking it would suspend the grant.
-    fs::write(dir.join("nap"), "#!/bin/sh\n# changed\nsleep \"$1\"\n").unwrap();
+    write_nap(&dir, true);
     let refused = state.spawn_within("nap", &nap("0"), None, Some(Duration::ZERO));
     assert!(
         matches!(refused, Err(SpawnError::TimedOut { .. })),
@@ -164,7 +189,7 @@ fn the_time_a_call_excludes_from_its_deadline_is_capped_at_its_budget() {
     );
 
     // Through the host's import, the deadline moves back by no more than the share.
-    let (dir, record) = naps("cap");
+    let (dir, record, _programs) = naps("cap");
     let mut host = HostState::new(Box::new(|_, _| {}));
     host.process = State::new(record, &Limits::default());
     host.program_runs.arm(Duration::from_millis(300));
@@ -179,18 +204,16 @@ fn the_time_a_call_excludes_from_its_deadline_is_capped_at_its_budget() {
 
 #[test]
 fn a_share_that_ends_mid_check_refuses_without_suspending_the_grant() {
-    let (dir, mut record) = naps("big");
+    let (dir, mut record, _programs) = naps("big");
     // A program of 32 chunks, each of which a check reads slowly.
     const CHUNKS: usize = 32;
-    let path = dir.join("big");
-    fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+    let path = support::script(&dir, "big", "exit 0", "exit /b 0");
     fs::OpenOptions::new()
         .append(true)
         .open(&path)
         .unwrap()
         .set_len(u64::try_from(CHUNKS * (64 << 10)).unwrap())
         .unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     let identity = resolve_program("big", dir.as_os_str()).unwrap();
     record.granted = [Capability::parse("process.spawn:big").unwrap()]
         .into_iter()
@@ -223,7 +246,7 @@ fn a_share_that_ends_mid_check_refuses_without_suspending_the_grant() {
 
 #[test]
 fn a_share_that_expires_before_launch_refuses_and_a_held_store_lock_does_not_block_past_it() {
-    let (dir, record) = naps("launch");
+    let (dir, record, _programs) = naps("launch");
     let mut state = State::new(record, &Limits::default());
     // Read 1 ms of 1 ms ago: whatever the check and setup took, nothing is left to launch with.
     let entered = Instant::now() - Duration::from_millis(1);

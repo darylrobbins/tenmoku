@@ -8,8 +8,8 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::RwLockReadGuard;
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Grants};
@@ -20,7 +20,7 @@ use crate::grants::{
 };
 use crate::limits::Limits;
 use crate::process::{SpawnError, State};
-use crate::tests::{hash_probe, seams};
+use crate::tests::{hash_probe, seams, support};
 
 const ID: &str = "acme.tool";
 
@@ -35,9 +35,20 @@ const PATIENCE: Duration = Duration::from_secs(60);
 
 struct Fixture {
     dir: PathBuf,
+    /// The program, a script: `mark` on Unix, `mark.cmd` on Windows.
+    program: PathBuf,
     /// Created by the program, if it ever runs, from its only argument.
     marker: PathBuf,
     store: GrantStore,
+    _programs: Programs,
+}
+
+/// How a fixture holds [`crate::tests::programs`]: until it's dropped, never read.
+#[allow(dead_code)]
+enum Programs {
+    Beside(RwLockReadGuard<'static, ()>),
+    #[cfg(windows)]
+    Alone(std::sync::RwLockWriteGuard<'static, ()>),
 }
 
 impl Drop for Fixture {
@@ -48,28 +59,33 @@ impl Drop for Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
+        Self::holding(name, Programs::Beside(crate::tests::programs()))
+    }
+
+    /// A fixture for a test that changes what makes a file a program.
+    #[cfg(windows)]
+    fn alone(name: &str) -> Self {
+        Self::holding(name, Programs::Alone(crate::tests::programs_alone()))
+    }
+
+    fn holding(name: &str, programs: Programs) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "kiln-plugin-prelaunch-{}-{name}",
             std::process::id()
         ));
         fs::remove_dir_all(&dir).ok();
         fs::create_dir_all(&dir).unwrap();
-        let fixture = Self {
+        Self {
+            program: support::script(&dir, "mark", r#": > "$1""#, r#"type nul > "%~1""#),
             marker: dir.join("ran"),
             store: GrantStore::new(dir.join("state/plugin-grants.toml")),
             dir,
-        };
-        fixture.write_program("#!/bin/sh\n: > \"$1\"\n");
-        fixture
+            _programs: programs,
+        }
     }
 
-    fn program(&self) -> PathBuf {
-        self.dir.join("mark")
-    }
-
-    fn write_program(&self, script: &str) {
-        fs::write(self.program(), script).unwrap();
-        fs::set_permissions(self.program(), fs::Permissions::from_mode(0o755)).unwrap();
+    fn program(&self) -> &Path {
+        &self.program
     }
 
     /// Grants the program as it is now, through the store.
@@ -86,7 +102,12 @@ impl Fixture {
     /// A state recording suspensions in the store, for a grant of a program that has since changed.
     fn state_with_a_changed_program(&self) -> State {
         let record = self.grant();
-        self.write_program("#!/bin/sh\n# changed\n: > \"$1\"\n");
+        support::script(
+            &self.dir,
+            "mark",
+            "# changed\n: > \"$1\"",
+            "rem changed\ntype nul > \"%~1\"",
+        );
         State::new(record, &Limits::default()).recorded_in(self.store.clone(), ID)
     }
 
@@ -337,47 +358,97 @@ fn a_late_suspension_leaves_a_program_granted_anew_alone() {
 
 /// A file found wanting and then restored has the identity it was granted with, so a grant of it
 /// after that binds the same identity: the finding is about the earlier grant all the same.
+#[cfg(unix)]
 #[test]
 fn a_late_suspension_leaves_the_same_file_granted_again_alone() {
     let fixture = Fixture::new("granted-again");
-    let record = fixture.grant();
-    let mode = |mode| {
-        fs::set_permissions(fixture.program(), fs::Permissions::from_mode(mode)).unwrap();
-    };
-    mode(0o644);
-    let mut state =
-        State::new(record.clone(), &Limits::default()).recorded_in(fixture.store.clone(), ID);
-    fixture.seam(|store| store.held_until = Some(Instant::now() + HOLD));
-
-    let refused = state.spawn_within(
-        "mark",
-        &fixture.args(),
-        None,
-        Some(Duration::from_millis(5)),
-    );
-    assert!(
-        matches!(refused, Err(SpawnError::Suspended { .. })),
-        "{refused:?}"
-    );
-
-    mode(0o755);
-    let granted = fixture.grant();
-    assert_eq!(granted.programs, record.programs);
-    fixture.seam(|store| store.held_until = None);
-    assert!(eventually(|| fixture.seam(|_| {}).written == 1));
-    assert_eq!(fixture.store.get(ID).unwrap().unwrap(), granted);
+    late_suspension_of_a_restored_file(&fixture, false, |runnable| mode(&fixture, runnable));
 }
 
 /// Forgetting a plugin takes its record with it, so nothing kept in the record can tell a grant
 /// made after that from the one the finding was about.
+#[cfg(unix)]
 #[test]
 fn a_late_suspension_leaves_the_same_file_granted_after_a_forget_alone() {
     let fixture = Fixture::new("forgotten");
+    late_suspension_of_a_restored_file(&fixture, true, |runnable| mode(&fixture, runnable));
+}
+
+/// The program made no program by its mode, 0644, or a program again, 0755.
+#[cfg(unix)]
+fn mode(fixture: &Fixture, runnable: bool) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = if runnable { 0o755 } else { 0o644 };
+    fs::set_permissions(fixture.program(), fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// [`a_late_suspension_leaves_the_same_file_granted_again_alone`] where a file's mode doesn't
+/// make it a program: its extension drops out of `PATHEXT`, then comes back.
+#[cfg(windows)]
+#[test]
+fn a_late_suspension_leaves_the_same_file_granted_again_alone_by_pathext() {
+    let fixture = Fixture::alone("granted-again-pathext");
+    let mut pathext = None;
+    late_suspension_of_a_restored_file(&fixture, false, |runnable| {
+        pathext = (!runnable).then(Pathext::without_cmd);
+    });
+    drop(pathext);
+}
+
+/// [`a_late_suspension_leaves_the_same_file_granted_after_a_forget_alone`] where a file's mode
+/// doesn't make it a program: its extension drops out of `PATHEXT`, then comes back.
+#[cfg(windows)]
+#[test]
+fn a_late_suspension_leaves_the_same_file_granted_after_a_forget_alone_by_pathext() {
+    let fixture = Fixture::alone("forgotten-pathext");
+    let mut pathext = None;
+    late_suspension_of_a_restored_file(&fixture, true, |runnable| {
+        pathext = (!runnable).then(Pathext::without_cmd);
+    });
+    drop(pathext);
+}
+
+/// `PATHEXT` without `.CMD`, so the fixture's script is no program, until dropped: then it is
+/// as it was.
+#[cfg(windows)]
+struct Pathext(Option<std::ffi::OsString>);
+
+#[cfg(windows)]
+impl Pathext {
+    fn without_cmd() -> Self {
+        let was = std::env::var_os("PATHEXT");
+        // SAFETY: Windows keeps the environment behind a lock of its own, so nothing reading it
+        // meanwhile reads it torn; and the fixture holds `programs_alone`, so no other test
+        // resolves or checks a program while it's changed.
+        unsafe { std::env::set_var("PATHEXT", ".COM;.EXE;.BAT") };
+        Self(was)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Pathext {
+    fn drop(&mut self) {
+        // SAFETY: as in `without_cmd`.
+        unsafe {
+            match &self.0 {
+                Some(was) => std::env::set_var("PATHEXT", was),
+                None => std::env::remove_var("PATHEXT"),
+            }
+        }
+    }
+}
+
+/// The program is granted, then made no program by `runnable(false)`, which a call finds while
+/// the store is held; then made a program again by `runnable(true)` and granted again (after the
+/// plugin is forgotten, if `forget`). Its content never changes, so the grant binds the same
+/// identity, and the late suspension, about the earlier grant, leaves it alone.
+fn late_suspension_of_a_restored_file(
+    fixture: &Fixture,
+    forget: bool,
+    mut runnable: impl FnMut(bool),
+) {
     let record = fixture.grant();
-    let mode = |mode| {
-        fs::set_permissions(fixture.program(), fs::Permissions::from_mode(mode)).unwrap();
-    };
-    mode(0o644);
+    runnable(false);
     let mut state =
         State::new(record.clone(), &Limits::default()).recorded_in(fixture.store.clone(), ID);
     fixture.seam(|store| store.held_until = Some(Instant::now() + HOLD));
@@ -393,8 +464,10 @@ fn a_late_suspension_leaves_the_same_file_granted_after_a_forget_alone() {
         "{refused:?}"
     );
 
-    mode(0o755);
-    assert!(fixture.store.forget(ID).unwrap());
+    runnable(true);
+    if forget {
+        assert!(fixture.store.forget(ID).unwrap());
+    }
     let granted = fixture.grant();
     assert_eq!(granted.programs, record.programs);
     fixture.seam(|store| store.held_until = None);

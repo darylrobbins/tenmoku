@@ -155,7 +155,6 @@ fn internal_parent_traversal_is_allowed() {
     assert!(plugin.wasm.ends_with("p.wasm"));
 }
 
-#[cfg(unix)]
 #[test]
 fn a_symlink_leading_outside_is_rejected() {
     let outside = tempdir::Dir::new_named("outside");
@@ -167,7 +166,15 @@ fn a_symlink_leading_outside_is_rejected() {
             outside.path().join("o.wasm")
         };
         let dir = dir_with(&format!("[contributes.plugin]\nwasm = {wasm:?}\n"));
+        #[cfg(unix)]
         std::os::unix::fs::symlink(&target, dir.path().join(link)).unwrap();
+        // Windows tells a link to a folder from a link to a file.
+        #[cfg(windows)]
+        if link == "dir" {
+            std::os::windows::fs::symlink_dir(&target, dir.path().join(link)).unwrap();
+        } else {
+            std::os::windows::fs::symlink_file(&target, dir.path().join(link)).unwrap();
+        }
         let manifest = load(dir.path());
         let error = PluginManifest::from_extension(&manifest, ExtensionOrigin::User).unwrap_err();
         assert!(

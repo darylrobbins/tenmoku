@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-// Its programs are shell scripts made executable by mode.
-#![cfg(unix)]
 
 //! Spawning programs for a plugin: only by a grant, only the file recorded for it, with
 //! arguments as given, a minimal environment, and output and time capped. The programs are real
-//! ones from the system (`printf`, `env`, `sleep`), copied into temporary directories where
-//! their identity can be made to change.
+//! ones from the system, copied into temporary directories where their identity can be made to
+//! change, and scripts: on Unix `printf`, `env` and `sleep` from `/usr/bin` and `#!/bin/sh`
+//! scripts; on Windows, which has none of those three, `whoami`, `sort` and `ping` from
+//! `System32` and `.cmd` scripts, which run through `cmd.exe`.
+
+#[path = "support/script.rs"]
+mod support;
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -20,7 +22,9 @@ use kiln_plugin::grants::{
     resolve_program,
 };
 use kiln_plugin::limits::Limits;
-use kiln_plugin::process::{SYSTEM_PATH, SpawnError, State, minimal_environment};
+#[cfg(unix)]
+use kiln_plugin::process::SYSTEM_PATH;
+use kiln_plugin::process::{SpawnError, State, minimal_environment};
 
 const ID: &str = "acme.tool";
 
@@ -43,58 +47,62 @@ fn temp_dir(name: &str) -> PathBuf {
 /// The system's `name`, copied into `dir` under its own name (a multi-call binary picks what it
 /// runs as by that), and bound as a grant would bind it.
 fn copied(dir: &Path, name: &str) -> ProgramIdentity {
-    let system = std::env::split_paths(SYSTEM_PATH)
-        .map(|system| system.join(name))
-        .find(|path| path.is_file())
-        .unwrap_or_else(|| panic!("no {name} in {SYSTEM_PATH}"));
-    let copy = dir.join(name);
-    place(&system, &copy);
+    support::system_program(dir, name);
     resolve_program(name, dir.as_os_str()).unwrap()
 }
 
-#[cfg(not(target_os = "macos"))]
-fn place(system: &Path, copy: &Path) {
-    fs::copy(system, copy).unwrap();
+/// The script `name` in `dir`, `sh` on Unix and `cmd` on Windows, bound as a grant would bind it.
+fn script(dir: &Path, name: &str, sh: &str, cmd: &str) -> ProgramIdentity {
+    support::script(dir, name, sh, cmd);
+    resolve_program(name, dir.as_os_str()).unwrap()
 }
 
-/// macOS kills (SIGKILL at exec) a copied system binary: its signature is the platform's, which
-/// binds it to `/usr/bin` and `/bin`. Re-signing it ad hoc isn't enough everywhere: on
-/// macOS 15 (GitHub's runner) the copy is still killed, likely because its arm64e slice runs only
-/// under the platform's signature. So the copy is a program of our own, built by `cc` (which links every
-/// Rust program here): it execs the system binary in place, keeping its pid, arguments and
-/// environment as the call gave them.
-#[cfg(target_os = "macos")]
-fn place(system: &Path, copy: &Path) {
-    let source = copy.with_extension("c");
-    fs::write(
-        &source,
-        format!(
-            "#include <unistd.h>\n\
-             int main(int argc, char **argv) {{\n\
-             \x20   (void)argc;\n\
-             \x20   execv(\"{}\", argv);\n\
-             \x20   return 127;\n\
-             }}\n",
-            system.display()
-        ),
+/// `printf` in `dir`, bound: the system's on Unix. Windows has none, so there it is a script that
+/// writes each of its arguments on a line of its own, as `cmd.exe` was given it: in the quotes std
+/// put it in, with each `"` in it doubled, if it needed them.
+fn printf(dir: &Path) -> ProgramIdentity {
+    if cfg!(windows) {
+        let each = ":next\nif [%1]==[] exit /b 0\necho(%1\nshift\ngoto next";
+        script(dir, "printf", "", each)
+    } else {
+        copied(dir, "printf")
+    }
+}
+
+/// What [`printf`] writes given `word` alone: the word itself on Unix, a line on Windows.
+fn printed(word: &str) -> String {
+    if cfg!(windows) {
+        format!("{word}\r\n")
+    } else {
+        word.to_owned()
+    }
+}
+
+/// The system's `sleep` in `dir`, bound; Windows has none that runs without a console, so there
+/// it is `ping`, given [`nap`]'s arguments.
+fn sleeper(dir: &Path) -> ProgramIdentity {
+    copied(dir, if cfg!(windows) { "ping" } else { "sleep" })
+}
+
+/// [`sleeper`]'s arguments for a sleep of `seconds`: on Windows, pings of this machine a second
+/// apart, the first at once.
+fn nap(seconds: u32) -> Vec<String> {
+    if cfg!(windows) {
+        args(&["-n", &(seconds + 1).to_string(), "127.0.0.1"])
+    } else {
+        vec![seconds.to_string()]
+    }
+}
+
+/// The script `name` in `dir`, bound, that creates `marker` if it ever runs.
+fn marking(dir: &Path, name: &str, marker: &Path) -> ProgramIdentity {
+    let path = marker.display();
+    script(
+        dir,
+        name,
+        &format!("touch '{path}'"),
+        &format!(r#"type nul > "{path}""#),
     )
-    .unwrap();
-    let output = std::process::Command::new("cc")
-        .arg("-o")
-        .arg(copy)
-        .arg(&source)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    fs::remove_file(&source).unwrap();
-}
-
-/// An executable script `name` in `dir`, bound as a grant would bind it.
-fn script(dir: &Path, name: &str, body: &str) -> ProgramIdentity {
-    let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    resolve_program(name, dir.as_os_str()).unwrap()
 }
 
 /// A record granting `granted`, with `programs` bound.
@@ -124,24 +132,38 @@ fn stdout(state: &mut State, program: &str, arguments: &[&str]) -> String {
 fn a_granted_program_runs_by_its_recorded_path() {
     let _serial = serially();
     let dir = temp_dir("recorded");
-    let printf = copied(&dir, "printf");
-    assert_eq!(printf.path, dir.join("printf"));
-    let mut state = State::new(
-        record(&["process.spawn:printf"], &[&printf]),
-        &Limits::default(),
-    );
-    assert_eq!(stdout(&mut state, "printf", &["%s-%s", "a", "b"]), "a-b");
+    // A copy of the system's `printf`, given a format; Windows has none, so there `whoami`, which
+    // says what it says when run from `System32`.
+    let (name, arguments, says) = if cfg!(windows) {
+        let output = std::process::Command::new("whoami").output().unwrap();
+        ("whoami", vec![], String::from_utf8(output.stdout).unwrap())
+    } else {
+        ("printf", vec!["%s-%s", "a", "b"], "a-b".to_owned())
+    };
+    let granted = format!("process.spawn:{name}");
+    let copy = support::system_program(&dir, name);
+    let program = resolve_program(name, dir.as_os_str()).unwrap();
+    assert_eq!(program.path, copy);
+    let mut state = State::new(record(&[granted.as_str()], &[&program]), &Limits::default());
+    assert_eq!(stdout(&mut state, name, &arguments), says);
 
-    // A `printf` of its own that no PATH holds: a name looked up again would find the system's.
+    // A program of its own of that name, which no PATH holds: a name looked up again would find
+    // the system's.
     let shadow = temp_dir("recorded-shadow");
-    let recorded = script(&shadow, "printf", r#"echo "recorded: $0""#);
+    let recorded = script(
+        &shadow,
+        name,
+        r#"echo "recorded: $0""#,
+        "echo recorded: %~f0",
+    );
     let mut state = State::new(
-        record(&["process.spawn:printf"], &[&recorded]),
+        record(&[granted.as_str()], &[&recorded]),
         &Limits::default(),
     );
+    let line_end = if cfg!(windows) { "\r\n" } else { "\n" };
     assert_eq!(
-        stdout(&mut state, "printf", &["%s", "x"]),
-        format!("recorded: {}\n", shadow.join("printf").display())
+        stdout(&mut state, name, &["%s", "x"]),
+        format!("recorded: {}{line_end}", recorded.path.display())
     );
 
     // `process.spawn:*` runs a name bound to a program the same way.
@@ -149,16 +171,16 @@ fn a_granted_program_runs_by_its_recorded_path() {
         record(&["process.spawn:*"], &[&recorded]),
         &Limits::default(),
     );
-    assert!(stdout(&mut state, "printf", &[]).starts_with("recorded: "));
+    assert!(stdout(&mut state, name, &[]).starts_with("recorded: "));
 }
 
 #[test]
 fn an_ungranted_program_is_refused() {
     let _serial = serially();
     let dir = temp_dir("ungranted");
-    let printf = copied(&dir, "printf");
+    let printf = printf(&dir);
     let marker = dir.join("ran");
-    let tool = script(&dir, "tool", &format!("touch '{}'", marker.display()));
+    let tool = marking(&dir, "tool", &marker);
     let refused = |state: &mut State, program: &str| match state.spawn(program, &[], None) {
         Err(SpawnError::NotGranted { program: named }) => assert_eq!(named, program),
         other => panic!("{program} was not refused: {other:?}"),
@@ -194,7 +216,7 @@ fn a_changed_binary_suspends_the_grant_before_spawn() {
 /// spawn is refused, and the store's next decision on the same request asks about `printf`.
 fn changed_binary_suspends(case: &str, granted: &[&str]) {
     let dir = temp_dir(&format!("changed-{case}"));
-    let printf = copied(&dir, "printf");
+    let printf = printf(&dir);
     let marker = dir.join("ran");
     let requested = grants(granted);
     let store = GrantStore::new(dir.join("state/plugin-grants.toml"));
@@ -209,14 +231,14 @@ fn changed_binary_suspends(case: &str, granted: &[&str]) {
         .unwrap();
     let mut state = State::new(store.get(ID).unwrap().unwrap(), &Limits::default())
         .recorded_in(store.clone(), ID);
-    assert_eq!(stdout(&mut state, "printf", &["ok"]), "ok", "{case}");
+    assert_eq!(
+        stdout(&mut state, "printf", &["ok"]),
+        printed("ok"),
+        "{case}"
+    );
 
     // Overwritten in place: same path, same inode, different content.
-    fs::write(
-        &printf.path,
-        format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
-    )
-    .unwrap();
+    assert_eq!(marking(&dir, "printf", &marker).path, printf.path);
     for _ in 0..2 {
         match state.spawn("printf", &args(&["again"]), None) {
             Err(SpawnError::Suspended { program, suspended }) => {
@@ -250,7 +272,7 @@ fn changed_binary_suspends(case: &str, granted: &[&str]) {
 fn a_removed_binary_is_suspended_as_missing() {
     let _serial = serially();
     let dir = temp_dir("removed");
-    let printf = copied(&dir, "printf");
+    let printf = printf(&dir);
     let mut state = State::new(
         record(&["process.spawn:printf"], &[&printf]),
         &Limits::default(),
@@ -268,58 +290,140 @@ fn a_removed_binary_is_suspended_as_missing() {
 fn arguments_are_not_shell_parsed() {
     let _serial = serially();
     let dir = temp_dir("arguments");
-    let printf = copied(&dir, "printf");
+    let printf = printf(&dir);
     let mut state = State::new(
         record(&["process.spawn:printf"], &[&printf]),
         &Limits::default(),
     );
-    let literal = [
-        "; echo pwned",
-        "$(touch pwned)",
-        "`id`",
-        "a b",
-        "*",
-        "'\"",
-        "",
-    ];
-    let mut arguments = vec!["%s|"];
-    arguments.extend(literal);
-    assert_eq!(
-        stdout(&mut state, "printf", &arguments),
-        literal.map(|arg| format!("{arg}|")).concat()
-    );
+    #[cfg(unix)]
+    {
+        let literal = [
+            "; echo pwned",
+            "$(touch pwned)",
+            "`id`",
+            "a b",
+            "*",
+            "'\"",
+            "",
+        ];
+        let mut arguments = vec!["%s|"];
+        arguments.extend(literal);
+        assert_eq!(
+            stdout(&mut state, "printf", &arguments),
+            literal.map(|arg| format!("{arg}|")).concat()
+        );
+    }
+    // A batch file's arguments are read again by `cmd.exe`, the shell. Std quotes each that holds
+    // what `cmd.exe` would act on, and keeps a `%` from expanding, so each reaches the script
+    // whole, as written; none runs a command.
+    #[cfg(windows)]
+    {
+        let literal = [
+            "& echo pwned> pwned",
+            "| echo pwned",
+            "%PATH%",
+            "^",
+            "\"",
+            "a b",
+            "*",
+            "",
+        ];
+        let printed = stdout(&mut state, "printf", &literal);
+        let each: Vec<String> = printed.lines().map(unquoted).collect();
+        assert_eq!(each, literal, "{printed}");
+    }
     assert!(!Path::new("pwned").exists());
 
-    // Stdin is the plugin's bytes, as they are.
-    let cat = script(&dir, "cat", "exec /bin/cat");
-    let mut state = State::new(record(&["process.spawn:cat"], &[&cat]), &Limits::default());
-    let output = state
-        .spawn("cat", &[], Some(b"; echo pwned\n\0bytes"))
-        .unwrap();
-    assert_eq!(output.stdout, b"; echo pwned\n\0bytes");
+    // Stdin is the plugin's bytes, as they are. Windows has no `cat`: there `sort`, given one
+    // line, writes it as it was (text, though, without a NUL).
+    let (cat, bytes) = if cfg!(windows) {
+        (copied(&dir, "sort"), &b"; echo pwned & echo pwned\r\n"[..])
+    } else {
+        let cat = script(&dir, "cat", "exec /bin/cat", "");
+        (cat, &b"; echo pwned\n\0bytes"[..])
+    };
+    let granted = format!("process.spawn:{}", cat.name);
+    let mut state = State::new(record(&[granted.as_str()], &[&cat]), &Limits::default());
+    let output = state.spawn(&cat.name, &[], Some(bytes)).unwrap();
+    assert_eq!(output.stdout, bytes);
+}
+
+/// An argument as the Windows [`printf`] script writes it: out of std's quotes, if it is in them,
+/// with each `"` in it no longer doubled.
+#[cfg(windows)]
+fn unquoted(line: &str) -> String {
+    match line
+        .strip_prefix('"')
+        .and_then(|line| line.strip_suffix('"'))
+    {
+        Some(quoted) => quoted.replace("\"\"", "\""),
+        None => line.to_owned(),
+    }
 }
 
 #[test]
 fn the_environment_is_minimal() {
     let _serial = serially();
     let dir = temp_dir("environment");
-    let env = copied(&dir, "env");
+    // Windows has no `env`: there a script lists the environment with `cmd.exe`'s `set`.
+    let env = if cfg!(windows) {
+        script(&dir, "env", "", "set")
+    } else {
+        copied(&dir, "env")
+    };
     let mut state = State::new(record(&["process.spawn:env"], &[&env]), &Limits::default());
     let printed = stdout(&mut state, "env", &[]);
     let variables: BTreeMap<&str, &str> = printed
         .lines()
         .map(|line| line.split_once('=').unwrap())
         .collect();
-    for name in variables.keys() {
-        assert!(
-            matches!(*name, "PATH" | "HOME" | "LANG" | "TMPDIR" | "TERM")
-                || name.starts_with("LC_"),
-            "{name} reached the program:\n{printed}"
-        );
-    }
-    assert_eq!(variables["PATH"], SYSTEM_PATH);
+    #[cfg(unix)]
+    let (passed, path) = {
+        for name in variables.keys() {
+            assert!(
+                matches!(*name, "PATH" | "HOME" | "LANG" | "TMPDIR" | "TERM")
+                    || name.starts_with("LC_"),
+                "{name} reached the program:\n{printed}"
+            );
+        }
+        (["HOME", "LANG", "TERM"], SYSTEM_PATH.to_owned())
+    };
+    #[cfg(windows)]
+    let (passed, path) = {
+        // Besides what it's given, `cmd.exe` sets `PROMPT`, and `COMSPEC` to itself.
+        let given = [
+            "PATH",
+            "SystemRoot",
+            "windir",
+            "SystemDrive",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "TEMP",
+            "TMP",
+            "PATHEXT",
+            "ProgramData",
+            "NUMBER_OF_PROCESSORS",
+            "PROCESSOR_ARCHITECTURE",
+        ];
+        for name in variables.keys() {
+            assert!(
+                given
+                    .iter()
+                    .chain(&["COMSPEC", "PROMPT"])
+                    .any(|given| given.eq_ignore_ascii_case(name)),
+                "{name} reached the program:\n{printed}"
+            );
+        }
+        let path = kiln_core::platform::system_path();
+        (
+            ["SystemRoot", "USERPROFILE", "TEMP"],
+            path.into_string().unwrap(),
+        )
+    };
+    assert_eq!(variables["PATH"], path);
     // What does pass is the app's own value.
-    for name in ["HOME", "LANG", "TERM"] {
+    for name in passed {
         assert_eq!(
             variables.get(name).copied(),
             std::env::var(name).ok().as_deref(),
@@ -334,27 +438,22 @@ fn the_environment_is_minimal() {
 #[test]
 fn the_minimal_environment_keeps_only_its_variables() {
     let _serial = serially();
-    let app = [
-        ("PATH", "/home/me/bin:/usr/bin"),
-        ("HOME", "/home/me"),
-        ("LANG", "en_CA.UTF-8"),
-        ("LC_ALL", "C"),
-        ("LC_CTYPE", "C.UTF-8"),
-        ("TMPDIR", "/tmp/me"),
-        ("TERM", "xterm"),
-        ("SSH_AUTH_SOCK", "/tmp/agent"),
-        ("LD_PRELOAD", "/tmp/evil.so"),
-        ("DYLD_INSERT_LIBRARIES", "/tmp/evil.dylib"),
-        ("CLASS", "LC_X"),
-    ];
-    let minimal = minimal_environment(app.map(|(name, value)| (name.into(), value.into())));
-    let minimal: Vec<_> = minimal
-        .iter()
-        .map(|(name, value)| (name.to_str().unwrap(), value.to_str().unwrap()))
-        .collect();
-    assert_eq!(
-        minimal,
+    #[cfg(unix)]
+    let (app, kept) = (
         [
+            ("PATH", "/home/me/bin:/usr/bin"),
+            ("HOME", "/home/me"),
+            ("LANG", "en_CA.UTF-8"),
+            ("LC_ALL", "C"),
+            ("LC_CTYPE", "C.UTF-8"),
+            ("TMPDIR", "/tmp/me"),
+            ("TERM", "xterm"),
+            ("SSH_AUTH_SOCK", "/tmp/agent"),
+            ("LD_PRELOAD", "/tmp/evil.so"),
+            ("DYLD_INSERT_LIBRARIES", "/tmp/evil.dylib"),
+            ("CLASS", "LC_X"),
+        ],
+        vec![
             ("PATH", SYSTEM_PATH),
             ("HOME", "/home/me"),
             ("LANG", "en_CA.UTF-8"),
@@ -362,30 +461,74 @@ fn the_minimal_environment_keeps_only_its_variables() {
             ("LC_CTYPE", "C.UTF-8"),
             ("TMPDIR", "/tmp/me"),
             ("TERM", "xterm"),
-        ]
+        ],
     );
+    // Windows' own names, any case, of which Unix's mean nothing there.
+    #[cfg(windows)]
+    let (app, kept) = (
+        [
+            ("Path", r"C:\Users\me\bin;C:\Windows\System32"),
+            ("SYSTEMROOT", r"D:\Windows"),
+            ("USERPROFILE", r"C:\Users\me"),
+            ("temp", r"C:\Users\me\AppData\Local\Temp"),
+            ("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
+            ("HOME", r"C:\Users\me"),
+            ("LANG", "en_CA.UTF-8"),
+            ("SSH_AUTH_SOCK", r"\\.\pipe\openssh-ssh-agent"),
+            ("PSModulePath", r"C:\Users\me\Documents\PowerShell\Modules"),
+        ],
+        vec![
+            (
+                "PATH",
+                r"D:\Windows\System32;D:\Windows;D:\Windows\System32\Wbem",
+            ),
+            ("SystemRoot", r"D:\Windows"),
+            ("USERPROFILE", r"C:\Users\me"),
+            ("TEMP", r"C:\Users\me\AppData\Local\Temp"),
+            ("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
+        ],
+    );
+    let minimal = minimal_environment(app.map(|(name, value)| (name.into(), value.into())));
+    let minimal: Vec<_> = minimal
+        .iter()
+        .map(|(name, value)| (name.to_str().unwrap(), value.to_str().unwrap()))
+        .collect();
+    assert_eq!(minimal, kept);
 }
 
 #[test]
 fn output_over_the_cap_and_runs_over_the_deadline_are_killed() {
     let _serial = serially();
     let dir = temp_dir("limits");
-    let sleep = copied(&dir, "sleep");
-    let printf = copied(&dir, "printf");
+    let sleep = sleeper(&dir);
+    // A megabyte of zeros. `printf` reuses its format for each argument: a megabyte from a few
+    // hundred short ones, well inside any system's argument limit. On Windows a script writes
+    // lines of zeros until it's stopped, more than the cap at the first.
+    let (printf, flood) = if cfg!(windows) {
+        let lines = format!(":again\necho {}\ngoto again", "0".repeat(4096));
+        (script(&dir, "printf", "", &lines), Vec::new())
+    } else {
+        let mut arguments = vec!["%04096d"];
+        arguments.extend(["0"; 256]);
+        (copied(&dir, "printf"), args(&arguments))
+    };
     let limits = Limits {
         max_read_bytes: 16,
         ..Limits::default()
     };
+    let sleep_granted = format!("process.spawn:{}", sleep.name);
     let record = record(
-        &["process.spawn:sleep", "process.spawn:printf"],
+        &[sleep_granted.as_str(), "process.spawn:printf"],
         &[&sleep, &printf],
     );
-    let mut state = State::new(record.clone(), &limits).with_deadline(Duration::from_millis(300));
+    // The deadline, without the cap: Windows' sleeper, `ping`, writes more than 16 bytes at once.
+    let mut state =
+        State::new(record.clone(), &Limits::default()).with_deadline(Duration::from_millis(300));
 
     let started = Instant::now();
-    match state.spawn("sleep", &args(&["5"]), None) {
+    match state.spawn(&sleep.name, &nap(5), None) {
         Err(SpawnError::TimedOut { program, deadline }) => {
-            assert_eq!(program, "sleep");
+            assert_eq!(program, sleep.name);
             assert_eq!(deadline, Duration::from_millis(300));
         }
         other => panic!("not killed: {other:?}"),
@@ -399,11 +542,7 @@ fn output_over_the_cap_and_runs_over_the_deadline_are_killed() {
     // Output is cut at the cap. A megabyte fills the pipe and blocks: the program is killed at
     // the cap, not left to the deadline, which would fail the call.
     let mut state = State::new(record, &limits).with_deadline(Duration::from_millis(1500));
-    // The format is reused for each argument: a megabyte from a few hundred short ones, well
-    // inside any system's argument limit.
-    let mut arguments = vec!["%04096d"];
-    arguments.extend(["0"; 256]);
-    let output = state.spawn("printf", &args(&arguments), None).unwrap();
+    let output = state.spawn("printf", &flood, None).unwrap();
     assert_eq!(output.stdout, b"0000000000000000");
     assert_eq!(output.status, None);
 }
@@ -412,12 +551,13 @@ fn output_over_the_cap_and_runs_over_the_deadline_are_killed() {
 fn nothing_outlives_a_call_that_ends() {
     let _serial = serially();
     let dir = temp_dir("outlives");
-    let sleep = copied(&dir, "sleep");
-    let printf = copied(&dir, "printf");
+    let sleep = sleeper(&dir);
+    let printf = printf(&dir);
     // Leaves a program of its own holding stdout and stderr open after it exits.
     // The background program is far longer than the elapsed bound below, so a call that waited for
     // it would blow that bound. It is not the call's child, so the call's kill does not reach it:
-    // it records its pid and `Reaper` kills it when the test ends, however it ends.
+    // it records its pid and `Reaper` kills it when the test ends, however it ends. On Windows it
+    // is `ping`, in the call's job object, which ends with the call.
     let background_pid = dir.join("background.pid");
     let holder = script(
         &dir,
@@ -426,10 +566,12 @@ fn nothing_outlives_a_call_that_ends() {
             "sleep 30 &\necho $! > '{}'\necho started",
             background_pid.display()
         ),
+        "start \"\" /b ping -n 31 127.0.0.1\necho started",
     );
+    let sleep_granted = format!("process.spawn:{}", sleep.name);
     let record = record(
         &[
-            "process.spawn:sleep",
+            sleep_granted.as_str(),
             "process.spawn:printf",
             "process.spawn:holder",
         ],
@@ -444,7 +586,7 @@ fn nothing_outlives_a_call_that_ends() {
     let started = Instant::now();
     let held = state.spawn("holder", &[], None);
     assert!(matches!(held, Err(SpawnError::TimedOut { .. })), "{held:?}");
-    let ignored = state.spawn("sleep", &args(&["30"]), Some(&unread));
+    let ignored = state.spawn(&sleep.name, &nap(30), Some(&unread));
     assert!(
         matches!(ignored, Err(SpawnError::TimedOut { .. })),
         "{ignored:?}"
@@ -464,11 +606,11 @@ fn nothing_outlives_a_call_that_ends() {
     let output = state
         .spawn("printf", &args(&["ok"]), Some(&unread))
         .unwrap();
-    assert_eq!(output.stdout, b"ok");
+    assert_eq!(output.stdout, printed("ok").as_bytes());
     assert_eq!(threads(), before, "a call left a thread behind");
 }
 
-/// Kills the program a pid file names when dropped.
+/// Kills the program a pid file names when dropped, if there is one.
 struct Reaper(std::path::PathBuf);
 
 impl Drop for Reaper {
@@ -496,7 +638,7 @@ fn threads() -> Option<usize> {
 fn a_suspension_holds_until_the_program_is_granted_again() {
     let _serial = serially();
     let dir = temp_dir("suspension");
-    let printf = copied(&dir, "printf");
+    let printf = printf(&dir);
     let store = GrantStore::new(dir.join("state/plugin-grants.toml"));
     let path_var = dir.as_os_str();
     let both = grants(&["process.spawn:*", "process.spawn:printf"]);

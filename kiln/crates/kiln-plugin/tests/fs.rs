@@ -159,14 +159,35 @@ fn read_alone_cannot_write_and_write_can() {
     assert_eq!(guest.read(&written), Ok("from the guest".into()));
 }
 
+/// A symbolic link at `link` to `target`, a file, or a folder if `folder`: Windows tells the two
+/// apart.
+fn symlink(target: &Path, link: &Path, folder: bool) {
+    #[cfg(unix)]
+    {
+        let _ = folder;
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+    #[cfg(windows)]
+    if folder {
+        std::os::windows::fs::symlink_dir(target, link).unwrap();
+    } else {
+        std::os::windows::fs::symlink_file(target, link).unwrap();
+    }
+}
+
 #[test]
-#[cfg(unix)]
+#[cfg_attr(
+    windows,
+    ignore = "a root is preopened at its host path, which wasi-libc can't resolve on Windows"
+)]
 fn dotdot_and_symlinks_cannot_leave_the_root() {
     let dir = temp_dir("escape");
-    let secret = dir.join("outside/secret.txt");
-    std::os::unix::fs::symlink(&secret, dir.join("root/absolute")).unwrap();
-    std::os::unix::fs::symlink("../outside/secret.txt", dir.join("root/relative")).unwrap();
-    std::os::unix::fs::symlink(dir.join("outside"), dir.join("root/folder")).unwrap();
+    // Link targets in this OS's own separators: Windows reads a `/` in one as part of a name.
+    let secret = dir.join("outside").join("secret.txt");
+    symlink(&secret, &dir.join("root/absolute"), false);
+    let relative: PathBuf = ["..", "outside", "secret.txt"].iter().collect();
+    symlink(&relative, &dir.join("root/relative"), false);
+    symlink(&dir.join("outside"), &dir.join("root/folder"), true);
     // The widest grant: nothing it allows reaches outside the root either.
     let mut guest = Guest::load(&grants(&["fs.write:workspace"]), &workspace(&dir));
 

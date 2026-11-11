@@ -1,17 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The crate's unit tests, and the seams the code under test calls. The pre-launch and budget
-//! tests run shell scripts made executable by mode, so they are Unix's alone; the seams are
-//! built everywhere, so the code that calls them is the same on every OS.
+//! tests run scripts, `#!/bin/sh` on Unix and `.cmd` on Windows, written by the helper the
+//! integration tests share.
 
-// Their only readers are the Unix-only tests below.
-#[cfg_attr(not(unix), allow(dead_code))]
+use std::sync::{PoisonError, RwLock, RwLockReadGuard};
+
 pub(crate) mod hash_probe;
-#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) mod seams;
 
-// Their programs are shell scripts made executable by mode.
-#[cfg(unix)]
+#[path = "../../tests/support/script.rs"]
+mod support;
+
 mod prelaunch;
-#[cfg(unix)]
 mod program_budget;
+
+/// Held by every test that resolves or checks a program, against one that changes what makes a
+/// file a program while they run: on Windows that is `PATHEXT`, which is the process's.
+static PROGRAMS: RwLock<()> = RwLock::new(());
+
+/// For a test that resolves or checks programs, beside others that do.
+pub(crate) fn programs() -> RwLockReadGuard<'static, ()> {
+    PROGRAMS.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// For a test that changes what makes a file a program, while no other test resolves or checks
+/// one.
+#[cfg(windows)]
+pub(crate) fn programs_alone() -> std::sync::RwLockWriteGuard<'static, ()> {
+    PROGRAMS.write().unwrap_or_else(PoisonError::into_inner)
+}

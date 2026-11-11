@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-// Its programs are shell scripts made executable by mode.
-#![cfg(unix)]
 
 //! Plugin grants: the load, prompt or escalation decision, program
-//! identities, and the store, kept in temporary directories.
+//! identities, and the store, kept in temporary directories. The programs
+//! are scripts, `#!/bin/sh` on Unix and `.cmd` on Windows.
+
+#[path = "support/script.rs"]
+mod support;
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use kiln_command::capability::{Capability, Grants};
@@ -48,12 +49,9 @@ fn temp_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// Writes an executable script `name` into `dir`.
-fn program(dir: &Path, name: &str, content: &str) -> PathBuf {
-    let path = dir.join(name);
-    fs::write(&path, content).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path
+/// Writes an executable script `name` into `dir`, echoing `said`, and returns its path.
+fn program(dir: &Path, name: &str, said: &str) -> PathBuf {
+    support::script(dir, name, &format!("echo {said}"), &format!("echo {said}"))
 }
 
 fn path_var(dirs: &[&Path]) -> OsString {
@@ -134,7 +132,7 @@ fn requesting_less_applies_without_a_prompt() {
 
     // `process.spawn:*` narrowed to one program binds it, unasked.
     let dir = temp_dir("less-spawn");
-    program(&dir, "tool", "#!/bin/sh\n");
+    program(&dir, "tool", "tool");
     let mut any = installed((1, 0, 0), &["buffer.read", "process.spawn:*"]);
     any.wildcards_accepted = true;
     store.set(ID, any).unwrap();
@@ -291,8 +289,8 @@ fn a_spawn_grant_records_the_absolute_path_and_identity() {
     fs::create_dir_all(&second).unwrap();
     // Not executable, so passed over.
     fs::write(first.join("tool"), "data\n").unwrap();
-    let content = "#!/bin/sh\necho tool\n";
-    let tool = program(&second, "tool", content);
+    let tool = program(&second, "tool", "tool");
+    let content = fs::read(&tool).unwrap();
 
     let path = path_var(&[Path::new("relative"), &first, &second]);
     let identity = resolve_program("tool", &path).unwrap();
@@ -300,10 +298,7 @@ fn a_spawn_grant_records_the_absolute_path_and_identity() {
     assert_eq!(identity.path, tool);
     assert!(identity.path.is_absolute());
     assert_eq!(identity.size, content.len() as u64);
-    assert_eq!(
-        identity.sha256,
-        format!("{:x}", Sha256::digest(content.as_bytes()))
-    );
+    assert_eq!(identity.sha256, format!("{:x}", Sha256::digest(&content)));
     assert_eq!(check_program(&identity), Ok(()));
 
     assert!(resolve_program("missing", &path).is_err());
@@ -331,7 +326,7 @@ fn a_spawn_grant_records_the_absolute_path_and_identity() {
 #[test]
 fn a_changed_or_missing_program_suspends_the_grant() {
     let dir = temp_dir("suspend");
-    let tool = program(&dir, "tool", "#!/bin/sh\necho one\n");
+    let tool = program(&dir, "tool", "one");
     let identity = resolve_program("tool", &path_var(&[&dir])).unwrap();
     let store = GrantStore::new(dir.join("state").join("plugin-grants.toml"));
     let requested = grants(&["buffer.read", "process.spawn:tool"]);
@@ -350,7 +345,7 @@ fn a_changed_or_missing_program_suspends_the_grant() {
         Decision::Load(requested.clone())
     );
 
-    fs::write(&tool, "#!/bin/sh\necho two\n").unwrap();
+    assert_eq!(program(&dir, "tool", "two"), tool);
     assert_eq!(
         check_program(&identity).map_err(|suspended| suspended.reason),
         Err(SuspendReason::Changed)
@@ -398,7 +393,7 @@ fn a_changed_or_missing_program_suspends_the_grant() {
 fn the_store_round_trips_under_a_lock_and_forgets() {
     let dir = temp_dir("store");
     let path = dir.join("state").join("plugin-grants.toml");
-    program(&dir, "tool", "#!/bin/sh\n");
+    program(&dir, "tool", "tool");
     let identity = resolve_program("tool", &path_var(&[&dir])).unwrap();
     let mut record = installed((1, 2, 3), &["buffer.read", "net:*", "process.spawn:tool"]);
     record.programs.insert("tool".into(), identity);
@@ -448,14 +443,17 @@ fn the_store_round_trips_under_a_lock_and_forgets() {
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
+// A FIFO is a Unix file type, made with its mode by `mkfifo`. Windows' named pipes live under
+// `\\.\pipe\`, which no `PATH` reaches; its twin puts a folder in the program's place.
+#[cfg(unix)]
 #[test]
 fn a_fifo_in_place_of_the_program_is_passed_over_without_blocking() {
     let dir = temp_dir("fifo");
     let (first, second) = (dir.join("first"), dir.join("second"));
     fs::create_dir_all(&first).unwrap();
     fs::create_dir_all(&second).unwrap();
-    program(&second, "tool", "#!/bin/sh\n");
-    let tool = program(&first, "tool", "#!/bin/sh\n");
+    program(&second, "tool", "tool");
+    let tool = program(&first, "tool", "tool");
     let path = path_var(&[&first, &second]);
     let identity = resolve_program("tool", &path).unwrap();
     assert_eq!(identity.path, tool);
@@ -480,4 +478,28 @@ fn a_fifo_in_place_of_the_program_is_passed_over_without_blocking() {
         .expect("a FIFO blocked the check");
     assert_eq!(checked, Err(SuspendReason::Changed));
     assert_eq!(resolved.unwrap(), second.join("tool"));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_folder_in_place_of_the_program_is_passed_over() {
+    let dir = temp_dir("folder");
+    let (first, second) = (dir.join("first"), dir.join("second"));
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    program(&second, "tool", "tool");
+    let tool = program(&first, "tool", "tool");
+    let path = path_var(&[&first, &second]);
+    let identity = resolve_program("tool", &path).unwrap();
+    assert_eq!(identity.path, tool);
+
+    // `tool.cmd` is a folder now: its name still ends in an extension of `PATHEXT`'s.
+    fs::remove_file(&tool).unwrap();
+    fs::create_dir(&tool).unwrap();
+    assert_eq!(
+        check_program(&identity).map_err(|suspended| suspended.reason),
+        Err(SuspendReason::Changed)
+    );
+    let resolved = resolve_program("tool", &path).unwrap();
+    assert_eq!(resolved.path, second.join("tool.cmd"));
 }
