@@ -503,3 +503,30 @@ fn a_folder_in_place_of_the_program_is_passed_over() {
     let resolved = resolve_program("tool", &path).unwrap();
     assert_eq!(resolved.path, second.join("tool.cmd"));
 }
+
+#[test]
+fn get_waits_for_the_lock_a_change_holds() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let dir = temp_dir("get-under-lock");
+    let path = dir.join("grants.toml");
+    let store = GrantStore::new(&path);
+    store.set(ID, installed((1, 0, 0), &[])).unwrap();
+    let lock = fs::OpenOptions::new()
+        .write(true)
+        .open(dir.join("grants.toml.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        sender.send(store.get(ID)).unwrap();
+    });
+    assert!(
+        receiver.recv_timeout(Duration::from_millis(300)).is_err(),
+        "get returned while the lock was held"
+    );
+    lock.unlock().unwrap();
+    let got = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(got.unwrap(), Some(installed((1, 0, 0), &[])));
+    reader.join().unwrap();
+}

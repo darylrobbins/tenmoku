@@ -86,6 +86,24 @@ fn one_plugin_cannot_read_anothers() {
 }
 
 #[test]
+fn secret_over_the_cap_is_refused_on_every_os() {
+    let store = Arc::new(MemoryStore::new());
+    let secrets = plugin(&store, "a", &index_path("cap"));
+    let at_cap = "v".repeat(kiln_plugin::secrets::MAX_VALUE_LEN);
+    secrets.set("key", &at_cap).unwrap();
+    assert_eq!(secrets.get("key"), Ok(Some(at_cap.clone())));
+    let over = "v".repeat(kiln_plugin::secrets::MAX_VALUE_LEN + 1);
+    assert!(matches!(
+        secrets.set("key", &over),
+        Err(Error::InvalidArgument(_))
+    ));
+    // The refused value left the stored one alone.
+    assert_eq!(secrets.get("key"), Ok(Some(at_cap)));
+    // 4 KiB is over the cap: Credential Manager would refuse it.
+    assert!(secrets.set("key", &"v".repeat(4096)).is_err());
+}
+
+#[test]
 fn names_with_dots_or_bad_characters_are_refused() {
     let store = Arc::new(MemoryStore::new());
     let secrets = plugin(&store, "a", &index_path("names"));
@@ -348,4 +366,32 @@ fn a_delete_waits_for_a_set_in_flight() {
         assert_eq!(secrets.get("k"), Ok(None));
         assert_eq!(secrets.names().unwrap(), Vec::<String>::new());
     }
+}
+
+/// The real platform store on Windows, which is where the cap comes from: Credential Manager keeps
+/// a blob in 2560 bytes (UTF-16), so 4 KiB can't be stored there, while a value at the cap can.
+#[cfg(windows)]
+#[test]
+fn windows_credential_manager_refuses_4kib_and_keeps_a_value_at_the_cap() {
+    use kiln_core::secrets::KeychainStore;
+    let store = KeychainStore::new().unwrap();
+    let service = format!("com.example.kiln-cap-test-{}", std::process::id());
+    let account = "ext.cap.key";
+    /// Removes the credential even when an assertion fails.
+    struct Cleanup<'a>(&'a KeychainStore, &'a str, &'a str);
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            let _ = self.0.delete(self.1, self.2);
+        }
+    }
+    let _cleanup = Cleanup(&store, &service, account);
+    // What the host never sends: the platform store itself refuses 4 KiB.
+    assert!(store.set(&service, account, &"v".repeat(4096)).is_err());
+    let at_cap = "v".repeat(kiln_plugin::secrets::MAX_VALUE_LEN);
+    store.set(&service, account, &at_cap).unwrap();
+    let got = store
+        .get(&service, account)
+        .unwrap()
+        .map(Secret::into_string);
+    assert_eq!(got, Some(at_cap));
 }

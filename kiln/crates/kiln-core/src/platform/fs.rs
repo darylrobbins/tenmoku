@@ -109,6 +109,36 @@ pub fn sync_dir(dir: &Path) -> io::Result<()> {
     }
 }
 
+/// Renames `from` over `to`, replacing it. A plain rename on Unix. On Windows a target another
+/// process holds open (a scanner, an indexer) fails with a sharing violation or access denied, so
+/// those are retried for up to a second before the error is returned.
+pub fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(not(windows))]
+    {
+        fs::rename(from, to)
+    }
+    #[cfg(windows)]
+    {
+        use std::time::{Duration, Instant};
+        // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
+        const RETRIED: [i32; 3] = [5, 32, 33];
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match fs::rename(from, to) {
+                Err(error)
+                    if error
+                        .raw_os_error()
+                        .is_some_and(|code| RETRIED.contains(&code))
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                result => return result,
+            }
+        }
+    }
+}
+
 /// Whose a file this process creates is, learnt from one it just created ([`Owner::of`]), to
 /// check others against with [`owned_and_unshared`].
 #[derive(Clone, Debug, PartialEq, Eq)]

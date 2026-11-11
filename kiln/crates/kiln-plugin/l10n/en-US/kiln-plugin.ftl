@@ -178,6 +178,7 @@ kiln-plugin-net-bad-redirect = { $url } redirected to { $location }: { $reason }
 ## Plugins' secrets.
 
 kiln-plugin-secret-name = a secret's name is 1 to { $max } characters of a-z, 0-9, _ and -
+kiln-plugin-secret-value = a secret's value is at most { $max } bytes
 # `$path` is the secrets index.
 kiln-plugin-secrets-index = couldn't { $action ->
         [lock] lock

@@ -640,9 +640,22 @@ impl GrantStore {
         &self.path
     }
 
-    /// `id`'s record, if it has one.
+    /// `id`'s record, if it has one, read under the lock so a change in flight is never seen
+    /// half-made.
     pub fn get(&self, id: &str) -> Result<Option<GrantRecord>, GrantStoreError> {
-        Ok(self.read()?.plugins.remove(id))
+        let io_error = |source| GrantStoreError::Io {
+            path: self.path.clone(),
+            source,
+        };
+        // Nothing is created for a read: with no directory there is no file to read.
+        if self
+            .path
+            .parent()
+            .is_some_and(|dir| !dir.as_os_str().is_empty() && !dir.exists())
+        {
+            return Ok(None);
+        }
+        locked_by(&self.path, None, || Ok(self.read()?.plugins.remove(id))).map_err(io_error)?
     }
 
     /// Replaces `id`'s record with `record`.
@@ -1128,7 +1141,7 @@ fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
                 .open(&temporary)?;
         file.write_all(contents)?;
         file.sync_all()?;
-        fs::rename(&temporary, path)
+        kiln_core::platform::replace_file(&temporary, path)
     })();
     if written.is_err() {
         let _ = fs::remove_file(&temporary);

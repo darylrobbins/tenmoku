@@ -34,6 +34,11 @@ use crate::bindings::{Error, HostState, unimplemented};
 /// The longest name a plugin may give a secret.
 pub const MAX_NAME_LEN: usize = 64;
 
+/// The longest value, in bytes, on every OS. Windows Credential Manager keeps a credential's blob
+/// in 2560 bytes and the store writes it as UTF-16, so 1280 UTF-8 bytes (at least as many as
+/// UTF-16 units) always fit; one limit keeps a plugin's behaviour the same everywhere.
+pub const MAX_VALUE_LEN: usize = 1280;
+
 /// The secrets slice of [`HostState`]: the plugin's [`PluginSecrets`]. The default has none, and
 /// every import is unimplemented.
 #[derive(Debug, Default)]
@@ -110,6 +115,11 @@ impl PluginSecrets {
     /// the value, so a delete can't slip between the two.
     pub fn set(&self, name: &str, value: &str) -> Result<(), Error> {
         check_name(name)?;
+        if value.len() > MAX_VALUE_LEN {
+            return Err(Error::InvalidArgument(
+                tr!("kiln-plugin-secret-value", max = MAX_VALUE_LEN).to_string(),
+            ));
+        }
         let secret = Secret::new(value);
         let _lock = self.lock()?;
         let mut index = self.read_index()?;

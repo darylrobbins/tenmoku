@@ -135,7 +135,7 @@ impl ComponentCache {
             .write_all(key)
             .and_then(|()| file.write_all(&Sha256::digest(serialized)))
             .and_then(|()| file.write_all(serialized))
-            .and_then(|()| fs::rename(&temporary, path));
+            .and_then(|()| platform::replace_file(&temporary, path));
         if written.is_err() {
             drop(fs::remove_file(&temporary));
         }
