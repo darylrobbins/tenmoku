@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod a11y;
+mod a11y_lifecycle;
 mod active_theme;
 mod assets;
 mod b3_controls;

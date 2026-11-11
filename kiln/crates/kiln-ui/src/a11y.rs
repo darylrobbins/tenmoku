@@ -11,9 +11,8 @@
 //! `cfg(test)`, hence the `test-support` feature.
 
 use gpui::{
-    AnyElement, AnyWindowHandle, App, Context, Entity, InteractiveElement as _, IntoElement,
-    Render, SharedString, StatefulInteractiveElement, Styled as _, WeakEntity, Window, accesskit,
-    div,
+    AnyElement, AnyWindowHandle, App, Context, InteractiveElement as _, IntoElement, Render,
+    SharedString, StatefulInteractiveElement, Styled as _, WeakEntity, Window, accesskit, div,
 };
 
 #[cfg(any(test, feature = "test-support"))]
@@ -204,6 +203,36 @@ struct Announcers(Vec<(AnyWindowHandle, WeakEntity<Announcer>)>);
 
 impl gpui::Global for Announcers {}
 
+/// Whether a screen reader is listening to windows, as a test sets it:
+/// a test window never has one attached.
+#[cfg(any(test, feature = "test-support"))]
+struct ListeningForTests(bool);
+
+#[cfg(any(test, feature = "test-support"))]
+impl gpui::Global for ListeningForTests {}
+
+/// For tests: says whether a screen reader is listening to every window
+/// (it is, until a test says otherwise).
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_listening_for_tests(cx: &mut App, listening: bool) {
+    cx.set_global(ListeningForTests(listening));
+}
+
+/// Whether `window` has a screen reader listening right now, read from the
+/// window itself, never remembered from an earlier draw.
+fn listening(window: &Window, cx: &App) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        let _ = window;
+        cx.try_global::<ListeningForTests>().is_none_or(|l| l.0)
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        let _ = cx;
+        window.is_a11y_active()
+    }
+}
+
 /// The window's live region: a zero-size `Status` node whose live child
 /// carries the latest [`announce`]ment. Put one last in the window's root
 /// with [`Announcer::mount`].
@@ -213,9 +242,6 @@ pub struct Announcer {
     /// A new element id per message, so the same text twice is a node the
     /// platform sees added, and speaks.
     sequence: u64,
-    /// Whether the last draw was for a screen reader (always, in tests).
-    /// Messages made while it isn't are dropped, not replayed on activation.
-    listening: bool,
 }
 
 impl Announcer {
@@ -232,7 +258,6 @@ impl Announcer {
                     message: SharedString::default(),
                     politeness: Politeness::Polite,
                     sequence: 0,
-                    listening: cfg!(any(test, feature = "test-support")),
                 }
             })
             .into_any_element()
@@ -248,7 +273,11 @@ impl Announcer {
 
 impl Render for Announcer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.listening = window.is_a11y_active() || cfg!(any(test, feature = "test-support"));
+        // A message that outlived the listener is dropped, not kept for the
+        // next activation.
+        if !listening(window, cx) {
+            self.message = SharedString::default();
+        }
         let message = Some(self.message.clone()).filter(|m| !m.is_empty());
         let states = States {
             value: message.clone(),
@@ -271,7 +300,8 @@ impl Render for Announcer {
 
 /// Says `text` to a screen reader, from any view: in the active window, or
 /// in every window if none has an announcer. One message per frame is
-/// spoken, the last one made.
+/// spoken, the last one made. A window with no screen reader listening
+/// drops it.
 pub fn announce(cx: &mut App, text: impl Into<SharedString>, politeness: Politeness) {
     let text = text.into();
     let active = cx.active_window().map(|w| w.window_id());
@@ -280,24 +310,34 @@ pub fn announce(cx: &mut App, text: impl Into<SharedString>, politeness: Politen
     cx.default_global::<Announcers>().0 = all.clone();
     let any_active = all.iter().any(|(h, _)| Some(h.window_id()) == active);
     for (handle, weak) in all {
-        if (!any_active || Some(handle.window_id()) == active)
-            && let Some(entity) = weak.upgrade()
-            && listening(cx, handle, &entity)
-        {
-            entity.update(cx, |announcer, cx| {
-                announcer.set(text.clone(), politeness, cx)
-            });
+        if !any_active || Some(handle.window_id()) == active {
+            deliver(cx, handle, weak, text.clone(), politeness, true);
         }
     }
 }
 
-/// Whether `handle`'s window has a screen reader listening now. A window
-/// being drawn can't be asked; its last draw answers for it.
-fn listening(cx: &mut App, handle: AnyWindowHandle, entity: &Entity<Announcer>) -> bool {
-    if cfg!(any(test, feature = "test-support")) {
-        return true;
+/// Hands `text` to one window's announcer if that window is listening now.
+/// A window that is mid-update (a view announcing from its own render)
+/// can't be asked: the check waits until the update ends, then asks the
+/// live window.
+fn deliver(
+    cx: &mut App,
+    handle: AnyWindowHandle,
+    weak: WeakEntity<Announcer>,
+    text: SharedString,
+    politeness: Politeness,
+    may_wait: bool,
+) {
+    match handle.update(cx, |_, window, cx| listening(window, cx)) {
+        Ok(true) => {
+            if let Some(entity) = weak.upgrade() {
+                entity.update(cx, |announcer, cx| announcer.set(text, politeness, cx));
+            }
+        }
+        Ok(false) => {}
+        Err(_) if may_wait => {
+            cx.defer(move |cx| deliver(cx, handle, weak, text, politeness, false))
+        }
+        Err(_) => {}
     }
-    handle
-        .update(cx, |_, window, _| window.is_a11y_active())
-        .unwrap_or_else(|_| entity.read(cx).listening)
 }
