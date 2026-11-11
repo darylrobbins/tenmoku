@@ -112,7 +112,7 @@ fn active_path(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Opt
 }
 
 fn status(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) -> Option<String> {
-    panel.read_with(cx, |panel, _| panel.status_text().map(str::to_owned))
+    panel.read_with(cx, |panel, _| panel.status_text())
 }
 
 #[gpui::test]

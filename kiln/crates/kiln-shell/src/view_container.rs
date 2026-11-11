@@ -11,6 +11,11 @@
 //! the panel's id, as [`ViewStack::save`] gives them: `{"views": {..}}`.
 //! A saved view the container doesn't have is ignored.
 //!
+//! Its lead view ([`ViewContainer::lead`]), or its only one, has no header:
+//! the dock's names it, and carries its actions
+//! ([`ViewContainer::set_actions`], [`DockItem::actions`]). A view's
+//! [`ViewContainer::set_detail`] shows in its header while it's collapsed.
+//!
 //! ```ignore
 //! let explorer = cx.new(|cx| {
 //!     let mut explorer = ViewContainer::new(EXPLORER, "Explorer", Icon::Files, cx);
@@ -36,7 +41,7 @@ use gpui::{
 use kiln_command::Value;
 use kiln_ui::Icon;
 
-use crate::{DockItem, PanelId, StackedView, ViewId, ViewStack};
+use crate::{DockItem, PaneAction, PanelId, StackedView, ViewId, ViewStack};
 
 /// A view to add to a [`ViewContainer`].
 pub struct ViewSpec {
@@ -65,6 +70,13 @@ pub struct ViewContainer {
     stack: Entity<ViewStack>,
     /// Each view's order, by id.
     orders: HashMap<ViewId, i32>,
+    /// The view the dock's header names, drawn without one of its own.
+    lead: Option<ViewId>,
+    /// Each view's actions, by id: the lead's, or a lone view's, go in the
+    /// dock's header.
+    actions: HashMap<ViewId, Vec<PaneAction>>,
+    /// What a view's header shows after its title while it's collapsed.
+    details: HashMap<ViewId, AnyView>,
     focus: FocusHandle,
     /// The stack's changes are the container's, for the dock to hear.
     _stack_changed: Subscription,
@@ -88,6 +100,9 @@ impl ViewContainer {
             show_command: None,
             stack,
             orders: HashMap::new(),
+            lead: None,
+            actions: HashMap::new(),
+            details: HashMap::new(),
             focus: cx.focus_handle(),
             _stack_changed: stack_changed,
         }
@@ -97,6 +112,29 @@ impl ViewContainer {
     pub fn show_command(mut self, command: &'static str) -> Self {
         self.show_command = Some(command);
         self
+    }
+
+    /// Builds it with `view` as its lead, once added: the view the dock's
+    /// header names, drawn without a header, never collapsed, and whose
+    /// actions are the dock header's. Give it the lowest order.
+    pub fn lead(mut self, view: ViewId) -> Self {
+        self.lead = Some(view);
+        self
+    }
+
+    /// `view`'s actions, from now on: in the dock's header if it's the
+    /// lead, or the container's only view.
+    pub fn set_actions(&mut self, view: ViewId, actions: Vec<PaneAction>, cx: &mut Context<Self>) {
+        self.actions.insert(view, actions);
+        cx.notify();
+    }
+
+    /// Shows `detail` after `view`'s title while it's collapsed, now and
+    /// once added.
+    pub fn set_detail(&mut self, view: ViewId, detail: AnyView, cx: &mut Context<Self>) {
+        self.details.insert(view, detail.clone());
+        self.stack
+            .update(cx, |stack, cx| stack.set_detail(view, Some(detail), cx));
     }
 
     /// Adds `view` below the views of its order or less, above those of
@@ -111,15 +149,28 @@ impl ViewContainer {
             view,
         } = view;
         self.orders.insert(id, order);
+        let (lead, detail) = (self.lead == Some(id), self.details.get(&id).cloned());
         let orders = &self.orders;
         self.stack.update(cx, |stack, cx| {
             let ix = (stack.view_ids().into_iter())
                 .filter(|other| *other != id)
                 .take_while(|other| orders.get(other).is_none_or(|other| *other <= order))
                 .count();
-            let view = StackedView::new(id, title, view).collapsed(default_collapsed);
+            let mut view = StackedView::new(id, title, view)
+                .collapsed(default_collapsed)
+                .lead(lead);
+            if let Some(detail) = detail {
+                view = view.detail(detail);
+            }
             stack.insert(ix, view, cx);
         });
+    }
+
+    /// Titles it `title` from now on: its rail button's tooltip and the
+    /// dock's header.
+    pub fn set_title(&mut self, title: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.title = title.into();
+        cx.notify();
     }
 
     /// The views' ids, top to bottom.
@@ -164,6 +215,15 @@ impl DockItem for ViewContainer {
 
     fn show_command(&self) -> Option<&'static str> {
         self.show_command
+    }
+
+    /// The actions of the view its header names: the lead, or a lone view.
+    fn actions(&self, cx: &App) -> Vec<PaneAction> {
+        let stack = self.stack.read(cx);
+        (stack.view_ids().into_iter())
+            .find(|view| stack.is_headless(*view) == Some(true))
+            .and_then(|view| self.actions.get(&view).cloned())
+            .unwrap_or_default()
     }
 
     /// Its views' collapse and weight, as [`ViewStack::save`] gives them.

@@ -248,6 +248,11 @@ reason = "A tree badge's debug selector"
 
 [[literal]]
 file = "src/tree_row.rs"
+text = "tree-dot:{label}"
+reason = "A tree row dot's debug selector"
+
+[[literal]]
+file = "src/tree_row.rs"
 text = "tree-label:{label}"
 reason = "A tree label's debug selector"
 

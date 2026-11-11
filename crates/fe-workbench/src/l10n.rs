@@ -13,5 +13,6 @@ kiln_l10n::resources! {
         "../l10n/en-US/diff.ftl",
         "../l10n/en-US/run.ftl",
         "../l10n/en-US/dock.ftl",
+        "../l10n/en-US/project.ftl",
     ],
 }

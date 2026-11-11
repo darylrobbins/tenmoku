@@ -26,17 +26,21 @@ const CHEVRON_GAP: Pixels = px(2.);
 const ICON_GAP: Pixels = px(6.);
 const BADGE_GAP: Pixels = px(6.);
 const DETAIL_GAP: Pixels = px(6.);
-/// A coloured icon's opacity on an ignored row, as its colours can't be
-/// muted.
-pub(crate) const DIMMED_ICON_OPACITY: f32 = 0.5;
+/// The least width of the column at a row's right end that a badge is
+/// centred in, and a [`TreeRow::dot`]: wide enough for one capital, so
+/// letters and dots line up; a longer badge is as wide as its text.
+pub const BADGE_COLUMN: Pixels = px(14.);
+/// A [`TreeRow::dot`]'s diameter: the least a coloured mark reads at.
+pub const DOT_SIZE: Pixels = px(6.);
 
 /// One row of a file tree: indented by depth, with indent guides for its
 /// ancestors, a chevron for a directory, an optional icon, its name, and
 /// an optional dimmed detail right after the name, and an optional badge at
-/// its right end. The name is muted when ignored and
-/// in the error colour when it couldn't be read, else in its label colour
-/// if it has one. A masked icon is muted or in the error colour with it; a
-/// coloured icon keeps its colours, faded when ignored.
+/// its right end, a letter or a dot centred in the [`BADGE_COLUMN`]. The
+/// name is muted when ignored and in the error colour when it couldn't be
+/// read, else in its label colour if it has one. A masked icon is in the
+/// error colour with it; an ignored row's chevron and icon keep their full
+/// strength, so it reads as dim, not disabled.
 #[derive(IntoElement)]
 pub struct TreeRow {
     id: ElementId,
@@ -52,6 +56,8 @@ pub struct TreeRow {
     detail: Option<(SharedString, Hsla)>,
     /// A short text after the label, and its colour.
     badge: Option<(SharedString, Hsla)>,
+    /// Whether the badge is drawn as a dot rather than its text.
+    dot: bool,
     selected: bool,
     focused: bool,
     on_click: Option<ClickHandler>,
@@ -66,7 +72,7 @@ pub(crate) struct RowColors {
     pub label: Hsla,
     /// A masked icon's tint; a coloured icon ignores it.
     pub icon: Hsla,
-    /// The icon's opacity: below 1 for a coloured icon on an ignored row.
+    /// The icon's opacity: 1, ignored or not.
     pub icon_opacity: f32,
     pub chevron: Hsla,
     pub badge: Option<Hsla>,
@@ -116,6 +122,7 @@ impl TreeRow {
             label_color: None,
             detail: None,
             badge: None,
+            dot: false,
             selected: false,
             focused: false,
             on_click: None,
@@ -162,6 +169,16 @@ impl TreeRow {
     /// ellipsizes before it.
     pub fn badge(mut self, text: impl Into<SharedString>, color: Hsla) -> Self {
         self.badge = Some((text.into(), color));
+        self.dot = false;
+        self
+    }
+
+    /// A [`DOT_SIZE`] dot in `color` at the row's right end, centred where
+    /// a [`TreeRow::badge`]'s letter is: a folder's mark for the changes
+    /// beneath it. [`TreeRow::status`] reports it as the badge `•`.
+    pub fn dot(mut self, color: Hsla) -> Self {
+        self.badge = Some(("•".into(), color));
+        self.dot = true;
         self
     }
 
@@ -221,7 +238,12 @@ impl TreeRow {
         let (label, icon, chevron) = if self.error {
             (error, error, list.chevron)
         } else if self.ignored {
-            (text.muted, text.muted, text.muted)
+            // Dim, not disabled: the label alone is muted.
+            let icon = match self.expanded {
+                Some(_) => list.folder_icon,
+                None => list.icon,
+            };
+            (text.muted, icon, list.chevron)
         } else if self.expanded.is_some() {
             let label = self.label_color.unwrap_or(text.primary);
             (label, list.folder_icon, list.chevron)
@@ -229,12 +251,7 @@ impl TreeRow {
             let label = self.label_color.unwrap_or(text.primary);
             (label, list.icon, list.chevron)
         };
-        let coloured = self.icon.as_ref().is_some_and(IconRef::is_coloured);
-        let icon_opacity = if coloured && self.ignored && !self.error {
-            DIMMED_ICON_OPACITY
-        } else {
-            1.
-        };
+        let icon_opacity = 1.;
         RowColors {
             background,
             edge,
@@ -323,14 +340,30 @@ impl RenderOnce for TreeRow {
                 .debug_selector(|| format!("tree-detail:{label}"))
                 .child(text)
         });
+        let dot = self.dot;
         let badge = self.badge.zip(colors.badge).map(|((text, _), color)| {
-            div()
+            let column = div()
                 .flex_none()
                 .ml(BADGE_GAP)
-                .whitespace_nowrap()
-                .text_color(color)
-                .debug_selector(|| format!("tree-badge:{label}"))
-                .child(text)
+                .min_w(BADGE_COLUMN)
+                .flex()
+                .justify_center()
+                .items_center()
+                .whitespace_nowrap();
+            match dot {
+                true => column.child(
+                    div()
+                        .size(DOT_SIZE)
+                        .flex_none()
+                        .rounded_full()
+                        .bg(color)
+                        .debug_selector(|| format!("tree-dot:{label}")),
+                ),
+                false => column
+                    .text_color(color)
+                    .debug_selector(|| format!("tree-badge:{label}"))
+                    .child(text),
+            }
         });
         div()
             .id(self.id)

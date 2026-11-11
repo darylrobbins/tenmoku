@@ -7,6 +7,7 @@
 //! listed off the main thread. An [`Expansion`] queues the folders below
 //! each as its listing lands, until none it queued waits.
 
+use kiln_l10n::text;
 use std::{
     collections::{HashSet, VecDeque},
     path::PathBuf,
@@ -116,9 +117,8 @@ impl ProjectPanel {
             return;
         }
         if expansion.capped {
-            self.status = Some(format!(
-                "Expanded the first {EXPAND_ALL_LIMIT} folders: Expand All stops there"
-            ));
+            let count = EXPAND_ALL_LIMIT;
+            self.status = Some(text!("workbench-project-expand-all-capped", count = count));
         }
         self.expansion = None;
         cx.notify();
@@ -209,8 +209,10 @@ impl ProjectPanel {
 
     /// The panel's last word on an operation, if it has one.
     #[cfg(test)]
-    pub(crate) fn status_text(&self) -> Option<&str> {
-        self.status.as_deref()
+    pub(crate) fn status_text(&self) -> Option<String> {
+        self.status
+            .as_ref()
+            .map(|status| status.resolve().to_string())
     }
 }
 

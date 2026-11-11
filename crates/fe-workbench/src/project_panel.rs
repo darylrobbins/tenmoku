@@ -7,11 +7,16 @@
 //! [`KEY_CONTEXT`]) move it; [`ProjectPanel::reveal`] selects a file's row,
 //! expanding its collapsed ancestors.
 //!
+//! The tree's first row is the root, the folder's name in its own case;
+//! rows are 24 px, in UI body. The dock's header names the view
+//! ("Project") and carries its actions ([`pane_actions`]).
+//!
 //! Rows show git's status as the Changes panel lists it
-//! ([`ProjectPanel::set_git_statuses`]): a changed file's name in its
-//! status letter's colour with the letter at the row's end, and a folder
-//! holding changes, expanded or collapsed, in the colour of the
-//! highest-precedence status beneath it with a dot.
+//! ([`ProjectPanel::set_git_statuses`]), in the theme's `vcs.*` colours
+//! ([`vcs_color`]): a changed file's name in its status's colour with its
+//! letter at the row's end, and a folder holding changes, expanded or
+//! collapsed, in the colour of the highest-precedence status beneath it
+//! with a 6 px dot centred where a letter goes.
 //!
 //! The file operations on the selected row (new file and folder, rename,
 //! move to the Trash, duplicate, copy path) are in [`ops`]; expanding and
@@ -32,12 +37,16 @@ use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Reg
 use fe_git::ChangeKind;
 use fe_gpui::commands::RunCommand;
 use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
-use fe_ui::{Icon, ROW_HEIGHT, TreeRow, file_icon_ref, folder_icon_ref_named};
-use gpui::{
-    App, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, Global,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
-    Task, UniformListScrollHandle, Window, div, px, uniform_list,
+use fe_ui::{
+    ActiveTheme as _, Icon, ROW_HEIGHT, TreeRow, UI_BODY, file_icon_ref, folder_icon_ref_named,
 };
+use gpui::{
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    Global, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy,
+    Styled as _, Task, UniformListScrollHandle, Window, div, px, uniform_list,
+};
+use kiln_l10n::{Text, text, tr, verbatim};
+use kiln_shell::PaneAction;
 
 use crate::git_panel;
 use crate::workbench::toast::{self, Toast};
@@ -65,7 +74,59 @@ pub(crate) const KEY_CONTEXT: &str = "project_panel";
 
 /// [`KEY_CONTEXT`] with vim on, for its netrw and nvim-tree keys, unless
 /// the name field or the filter's box is open.
-const VIM_KEY_CONTEXT: &str = "project_panel vim";
+const VIM_KEY_CONTEXT: &str = verbatim!("project_panel vim");
+
+/// The workbench's command that selects the active editor's file.
+const REVEAL_ACTIVE: &str = verbatim!("project_panel.reveal_active");
+
+/// The root row's text's inset: where a depth-0 row's chevron starts, its
+/// selection box's inset and the row's padding.
+const ROOT_INSET: gpui::Pixels = px(10.);
+
+/// The colour of a row of git status `kind`: the theme's `vcs.*` token for
+/// it, never the accent, which is the user's focus.
+pub(crate) fn vcs_color(kind: ChangeKind, cx: &App) -> Hsla {
+    let vcs = &cx.theme().colors.vcs;
+    match kind {
+        ChangeKind::Added => vcs.added,
+        ChangeKind::Modified => vcs.modified,
+        ChangeKind::Deleted => vcs.deleted,
+        ChangeKind::Untracked => vcs.untracked,
+        ChangeKind::Conflicted => vcs.conflict,
+    }
+}
+
+/// The project tree's actions, in the dock's header before ⋯ and —:
+/// reveal the active file, and collapse every folder.
+pub(crate) fn pane_actions(panel: &Entity<ProjectPanel>) -> Vec<PaneAction> {
+    let reveal = REVEAL_ACTIVE;
+    let collapse = "project_panel.collapse_all";
+    let weak = panel.downgrade();
+    vec![
+        PaneAction {
+            id: "project-reveal",
+            icon: Icon::Target,
+            title: fe_command::l10n::command_label(reveal, ""),
+            command: Some(reveal),
+            run: Rc::new(move |window, cx| {
+                crate::pane_toolbar::dispatch(reveal, fe_command::Source::Mouse, window, cx)
+            }),
+        },
+        PaneAction {
+            id: "project-collapse",
+            icon: Icon::FoldVertical,
+            title: fe_command::l10n::command_label(collapse, ""),
+            command: Some(collapse),
+            // As its key does, dropping a reveal still waiting for a listing.
+            run: Rc::new(move |window, cx| {
+                (weak.update(cx, |panel, cx| {
+                    panel.run_op(PanelOp::CollapseAll, window, cx)
+                }))
+                .ok();
+            }),
+        },
+    ]
+}
 
 /// The sidebar's width as built. Its panels fill its column, however
 /// wide it's dragged.
@@ -111,7 +172,8 @@ enum State {
     Opening,
     Open(FileTree),
     /// The root couldn't be opened.
-    Failed(String),
+    /// Why, resolved as it's drawn.
+    Failed(Text),
 }
 
 pub struct ProjectPanel {
@@ -172,13 +234,17 @@ pub struct ProjectPanel {
     /// Each row the last frame built, by name, and the status it drew.
     #[cfg(test)]
     drawn_status: Vec<(String, DrawnStatus)>,
+    /// The root row's text the last frame drew, if it drew one.
+    #[cfg(test)]
+    drawn_root: Option<String>,
     /// Whether the tree lists ignored entries.
     show_ignored: bool,
     /// Folders being expanded as their parents' listings land: expand
     /// all's, or those expanded before the tree was opened again.
     expansion: Option<nav::Expansion>,
-    /// The panel's last word on an operation, under its rows.
-    status: Option<String>,
+    /// The panel's last word on an operation, under its rows, resolved as
+    /// it's drawn.
+    status: Option<Text>,
     /// The entry cut or copied, to paste.
     clipboard: clipboard::Clipboard,
     /// Each row the last frame drew dimmed as cut, by name.
@@ -187,6 +253,8 @@ pub struct ProjectPanel {
     /// The filter by name, while it's set.
     filter: Option<filter::Filter>,
     _watch: Option<Task<()>>,
+    /// Its text, and its open fields' placeholders, in a new language.
+    _locale: gpui::Subscription,
 }
 
 impl EventEmitter<PanelEvent> for ProjectPanel {}
@@ -226,6 +294,8 @@ impl ProjectPanel {
             drawn_selected: None,
             #[cfg(test)]
             drawn_status: Vec::new(),
+            #[cfg(test)]
+            drawn_root: None,
             show_ignored,
             expansion: None,
             status: None,
@@ -234,6 +304,7 @@ impl ProjectPanel {
             drawn_cut: Vec::new(),
             filter: None,
             _watch: None,
+            _locale: cx.observe_global::<kiln_platform::locale::ActiveLocale>(Self::follow_locale),
         };
         panel.start(show_ignored, cx);
         panel
@@ -290,6 +361,51 @@ impl ProjectPanel {
         self._watch = watch;
     }
 
+    /// Draws its text, resolved as it's drawn, in the language just chosen,
+    /// with the placeholders of the name field and the filter's box.
+    fn follow_locale(&mut self, cx: &mut Context<Self>) {
+        let inputs = (self.edit.as_ref().map(ops::NameEdit::input))
+            .into_iter()
+            .chain(self.filter_input());
+        for input in inputs.collect::<Vec<_>>() {
+            input.update(cx, |_, cx| cx.notify());
+        }
+        cx.notify();
+    }
+
+    /// The words it shows now, in the active locale, by what shows them:
+    /// `message` in place of the rows, `status` under them, and while open
+    /// the name field's `name-placeholder` and `name-error` and the filter
+    /// box's `filter-placeholder`. For tests outside the crate.
+    #[doc(hidden)]
+    pub fn shown_words(&self, cx: &App) -> Vec<(&'static str, String)> {
+        let message = match &self.state {
+            State::NoFolder => Some(tr!("workbench-project-no-folder")),
+            State::Failed(message) => Some(message.resolve()),
+            State::Open(_) if self.filtered().is_some_and(|view| view.is_empty()) => {
+                Some(filter::no_matches())
+            }
+            State::Open(_) | State::Opening => None,
+        };
+        let edit = self.edit.as_ref();
+        let words = [
+            ("message", message),
+            ("status", self.status.as_ref().map(Text::resolve)),
+            (
+                "name-placeholder",
+                edit.map(|edit| edit.input().read(cx).placeholder_text()),
+            ),
+            ("name-error", edit.and_then(ops::NameEdit::error)),
+            (
+                "filter-placeholder",
+                (self.filter_input()).map(|input| input.read(cx).placeholder_text()),
+            ),
+        ];
+        (words.into_iter())
+            .filter_map(|(what, words)| Some((what, words?.to_string())))
+            .collect()
+    }
+
     /// Whether the tree lists ignored entries.
     pub(crate) fn lists_ignored(&self) -> bool {
         self.show_ignored
@@ -341,12 +457,15 @@ impl ProjectPanel {
             Err(error) => {
                 let root = self.root.as_deref().unwrap_or(Path::new(""));
                 log::error!("cannot open {}: {error}", root.display());
-                toast::show(
-                    cx,
-                    Toast::error(format!("Can't open folder {}", root.display()))
-                        .detail(error.to_string()),
-                );
-                State::Failed(format!("Cannot open {}: {error}", root.display()))
+                let path = root.display().to_string();
+                let toast = tr!("workbench-project-cant-open-folder", path = &path);
+                toast::show(cx, Toast::error(toast).detail(error.to_string()));
+                let error = error.to_string();
+                State::Failed(text!(
+                    "workbench-project-cannot-open",
+                    path = path,
+                    error = error
+                ))
             }
         };
         // The entry to paste may be gone from the tree just opened.
@@ -803,47 +922,50 @@ impl ProjectPanel {
         if self.filter_focused(window, cx) {
             return self.run_in_filter(run, window, cx);
         }
-        let op = op(run, cx);
+        match op(run, cx) {
+            Some(op) => self.run_op(op, window, cx),
+            None => cx.propagate(),
+        }
+    }
+
+    /// Does `op`, from a key, a command or a button in the dock's header.
+    pub(crate) fn run_op(&mut self, op: PanelOp, window: &mut Window, cx: &mut Context<Self>) {
         // The user moved on. Toggling ignored entries carries a pending
         // reveal over to the new tree.
-        if op.is_some_and(|op| op != PanelOp::ToggleIgnored) {
+        if op != PanelOp::ToggleIgnored {
             self.cancel_reveal();
         }
         match op {
-            Some(PanelOp::SelectPrev) => self.move_selection(-1, cx),
-            Some(PanelOp::SelectNext) => self.move_selection(1, cx),
-            Some(PanelOp::CollapseOrParent) => self.collapse_or_parent(cx),
-            Some(PanelOp::ExpandOrFirstChild) => self.expand_or_first_child(cx),
-            Some(PanelOp::Open | PanelOp::Toggle) => self.open_selected(cx),
-            Some(PanelOp::SelectFirst) => self.select_end(false, cx),
-            Some(PanelOp::SelectLast) => self.select_end(true, cx),
-            Some(PanelOp::NewFile) => self.start_edit(EditKind::NewFile, window, cx),
-            Some(PanelOp::NewFolder) => self.start_edit(EditKind::NewFolder, window, cx),
-            Some(PanelOp::Rename) => self.start_edit(EditKind::Rename, window, cx),
-            Some(PanelOp::Delete) => self.delete_selected(window, cx),
-            Some(PanelOp::Duplicate) => self.duplicate_selected(window, cx),
-            Some(PanelOp::CopyPath) => self.copy_path(false, cx),
-            Some(PanelOp::CopyRelativePath) => self.copy_path(true, cx),
-            Some(PanelOp::ExpandAll) => self.expand_all(cx),
-            Some(PanelOp::CollapseAll) => self.collapse_all(cx),
-            Some(PanelOp::ToggleIgnored) => {
+            PanelOp::SelectPrev => self.move_selection(-1, cx),
+            PanelOp::SelectNext => self.move_selection(1, cx),
+            PanelOp::CollapseOrParent => self.collapse_or_parent(cx),
+            PanelOp::ExpandOrFirstChild => self.expand_or_first_child(cx),
+            PanelOp::Open | PanelOp::Toggle => self.open_selected(cx),
+            PanelOp::SelectFirst => self.select_end(false, cx),
+            PanelOp::SelectLast => self.select_end(true, cx),
+            PanelOp::NewFile => self.start_edit(EditKind::NewFile, window, cx),
+            PanelOp::NewFolder => self.start_edit(EditKind::NewFolder, window, cx),
+            PanelOp::Rename => self.start_edit(EditKind::Rename, window, cx),
+            PanelOp::Delete => self.delete_selected(window, cx),
+            PanelOp::Duplicate => self.duplicate_selected(window, cx),
+            PanelOp::CopyPath => self.copy_path(false, cx),
+            PanelOp::CopyRelativePath => self.copy_path(true, cx),
+            PanelOp::ExpandAll => self.expand_all(cx),
+            PanelOp::CollapseAll => self.collapse_all(cx),
+            PanelOp::ToggleIgnored => {
                 // The new tree's rows are other nodes: the filter goes
                 // first, so what's expanded carries over as it was.
                 self.clear_filter(window, cx);
                 self.toggle_ignored(cx)
             }
-            Some(PanelOp::Refresh) => self.refresh(cx),
-            Some(PanelOp::Cut) => self.clip(clipboard::ClipKind::Cut, cx),
-            Some(PanelOp::Copy) => self.clip(clipboard::ClipKind::Copy, cx),
-            Some(PanelOp::Paste) => self.paste(window, cx),
-            Some(PanelOp::Filter) => self.start_filter(window, cx),
-            Some(PanelOp::ClearFilter) => self.clear_filter(window, cx),
-            None => cx.propagate(),
+            PanelOp::Refresh => self.refresh(cx),
+            PanelOp::Cut => self.clip(clipboard::ClipKind::Cut, cx),
+            PanelOp::Copy => self.clip(clipboard::ClipKind::Copy, cx),
+            PanelOp::Paste => self.paste(window, cx),
+            PanelOp::Filter => self.start_filter(window, cx),
+            PanelOp::ClearFilter => self.clear_filter(window, cx),
         }
-        if matches!(
-            op,
-            Some(PanelOp::NewFile | PanelOp::NewFolder | PanelOp::Rename)
-        ) {
+        if matches!(op, PanelOp::NewFile | PanelOp::NewFolder | PanelOp::Rename) {
             self.scroll_to_field();
         }
     }
@@ -916,8 +1038,12 @@ impl ProjectPanel {
                     .then(|| self.git_status(tree, id, row.kind))
                     .flatten();
                 if let Some((kind, badge)) = status {
-                    let color = git_panel::letter_color(kind, &theme);
-                    element = element.label_color(color).badge(badge, color);
+                    let color = vcs_color(kind, cx);
+                    element = element.label_color(color);
+                    element = match badge {
+                        Some(letter) => element.badge(letter, color),
+                        None => element.dot(color),
+                    };
                 }
                 #[cfg(test)]
                 if cut == Some(id) {
@@ -956,20 +1082,20 @@ impl ProjectPanel {
 
     /// Node `id`'s git status, if it's a changed file or a folder holding
     /// changes (`kind` says which it is), and its badge: the file's status
-    /// letter, or a dot.
+    /// letter, or none for a folder's dot.
     fn git_status(
         &self,
         tree: &FileTree,
         id: NodeId,
         kind: EntryKind,
-    ) -> Option<(ChangeKind, &'static str)> {
+    ) -> Option<(ChangeKind, Option<&'static str>)> {
         let path = tree.path(id)?;
         let relative = path.strip_prefix(tree.root_path()).ok()?;
         match kind {
-            EntryKind::Dir => Some((*self.git_dirs.get(relative)?, "•")),
+            EntryKind::Dir => Some((*self.git_dirs.get(relative)?, None)),
             EntryKind::File | EntryKind::Symlink => {
                 let kind = *self.git_files.get(relative)?;
-                Some((kind, git_panel::letter(kind)))
+                Some((kind, Some(git_panel::letter(kind))))
             }
         }
     }
@@ -993,20 +1119,35 @@ impl Render for ProjectPanel {
             self.drawn_status.clear();
             self.drawn_cut.clear();
         }
-        let title = match &self.state {
+        // The root's row: the folder's name, as it's spelled.
+        let root = match &self.state {
             State::Open(tree) => tree.root_path().file_name(),
             _ => self.root.as_deref().and_then(Path::file_name),
         }
-        .map_or("PROJECT".into(), |name| {
-            name.to_string_lossy().to_uppercase()
+        .map(|name| name.to_string_lossy().into_owned());
+        #[cfg(test)]
+        {
+            self.drawn_root = root.clone();
+        }
+        let root = root.map(|name| {
+            div()
+                .debug_selector(|| "project-root".into())
+                .flex_none()
+                .h(ROW_HEIGHT)
+                .flex()
+                .items_center()
+                .pl(ROOT_INSET)
+                .pr_2()
+                .font_weight(FontWeight::MEDIUM)
+                .child(div().min_w_0().truncate().child(name))
         });
         let field = self.list_field().is_some();
         let body = match &self.state {
-            State::NoFolder => self.message("No folder open".into(), cx),
+            State::NoFolder => self.message(tr!("workbench-project-no-folder").into(), cx),
             State::Opening => div().into_any_element(),
-            State::Failed(message) => self.message(message.clone(), cx),
+            State::Failed(message) => self.message(message.resolve().into(), cx),
             State::Open(_) if self.filtered().is_some_and(|view| view.is_empty()) && !field => {
-                self.message(filter::NO_MATCHES.into(), cx)
+                self.message(filter::no_matches().into(), cx)
             }
             State::Open(_) => uniform_list(
                 "project-rows",
@@ -1041,11 +1182,14 @@ impl Render for ProjectPanel {
             .border_color(theme.border)
             .bg(theme.panel_background)
             .text_color(theme.text)
-            .text_size(px(12.))
-            .child(div().flex_none().px_3().py_2().child(title))
+            .text_size(UI_BODY.size)
+            .line_height(UI_BODY.line_height)
+            .children(root)
             .children(filter)
             .child(body)
-            .children((self.status.clone()).map(|status| self.message(status, cx)))
+            .children(
+                (self.status.as_ref()).map(|status| self.message(status.resolve().into(), cx)),
+            )
     }
 }
 
@@ -1127,121 +1271,63 @@ pub(crate) fn init(cx: &mut App) {
     cx.bind_keys(fe_ui::TextField::key_bindings(cfg!(target_os = "macos")));
 }
 
+/// The title command `id` registers with: its `command-<id>` message,
+/// which `label()` resolves again in the active locale wherever it's shown.
+fn command_title(id: &str) -> gpui::SharedString {
+    kiln_l10n::message(&fe_command::l10n::command_key(id))
+}
+
 pub(crate) fn registry() -> Registry<PanelCommands> {
     use PanelOp::*;
     let commands = [
-        (
-            "project_panel.select_prev",
-            "Select Previous",
-            KEY_CONTEXT,
-            SelectPrev,
-        ),
-        (
-            "project_panel.select_next",
-            "Select Next",
-            KEY_CONTEXT,
-            SelectNext,
-        ),
+        ("project_panel.select_prev", KEY_CONTEXT, SelectPrev),
+        ("project_panel.select_next", KEY_CONTEXT, SelectNext),
         (
             "project_panel.collapse_or_parent",
-            "Collapse or Select Parent",
             KEY_CONTEXT,
             CollapseOrParent,
         ),
         (
             "project_panel.expand_or_first_child",
-            "Expand or Select First Child",
             KEY_CONTEXT,
             ExpandOrFirstChild,
         ),
-        ("project_panel.open", "Open", KEY_CONTEXT, Open),
-        (
-            "project_panel.select_first",
-            "Select First",
-            KEY_CONTEXT,
-            SelectFirst,
-        ),
-        (
-            "project_panel.select_last",
-            "Select Last",
-            KEY_CONTEXT,
-            SelectLast,
-        ),
-        ("project_panel.new_file", "New File…", KEY_CONTEXT, NewFile),
-        (
-            "project_panel.new_folder",
-            "New Folder…",
-            KEY_CONTEXT,
-            NewFolder,
-        ),
-        ("project_panel.rename", "Rename…", KEY_CONTEXT, Rename),
-        ("project_panel.delete", "Move to Trash", KEY_CONTEXT, Delete),
-        (
-            "project_panel.duplicate",
-            "Duplicate",
-            KEY_CONTEXT,
-            Duplicate,
-        ),
-        (
-            "project_panel.copy_path",
-            "Copy Path",
-            KEY_CONTEXT,
-            CopyPath,
-        ),
+        ("project_panel.open", KEY_CONTEXT, Open),
+        ("project_panel.select_first", KEY_CONTEXT, SelectFirst),
+        ("project_panel.select_last", KEY_CONTEXT, SelectLast),
+        ("project_panel.new_file", KEY_CONTEXT, NewFile),
+        ("project_panel.new_folder", KEY_CONTEXT, NewFolder),
+        ("project_panel.rename", KEY_CONTEXT, Rename),
+        ("project_panel.delete", KEY_CONTEXT, Delete),
+        ("project_panel.duplicate", KEY_CONTEXT, Duplicate),
+        ("project_panel.copy_path", KEY_CONTEXT, CopyPath),
         (
             "project_panel.copy_relative_path",
-            "Copy Relative Path",
             KEY_CONTEXT,
             CopyRelativePath,
         ),
-        (
-            "project_panel.toggle",
-            "Toggle Folder or Open File",
-            KEY_CONTEXT,
-            Toggle,
-        ),
-        (
-            "project_panel.expand_all",
-            "Expand All Folders",
-            KEY_CONTEXT,
-            ExpandAll,
-        ),
-        (
-            "project_panel.collapse_all",
-            "Collapse All Folders",
-            KEY_CONTEXT,
-            CollapseAll,
-        ),
-        (
-            "project_panel.toggle_ignored",
-            "Toggle Ignored Files",
-            KEY_CONTEXT,
-            ToggleIgnored,
-        ),
-        ("project_panel.refresh", "Refresh", KEY_CONTEXT, Refresh),
-        ("project_panel.cut", "Cut", KEY_CONTEXT, Cut),
-        ("project_panel.copy", "Copy", KEY_CONTEXT, Copy),
-        ("project_panel.paste", "Paste", KEY_CONTEXT, Paste),
-        (
-            "project_panel.filter",
-            "Filter by Name…",
-            KEY_CONTEXT,
-            Filter,
-        ),
-        (
-            "project_panel.clear_filter",
-            "Clear Filter",
-            KEY_CONTEXT,
-            ClearFilter,
-        ),
+        ("project_panel.toggle", KEY_CONTEXT, Toggle),
+        ("project_panel.expand_all", KEY_CONTEXT, ExpandAll),
+        ("project_panel.collapse_all", KEY_CONTEXT, CollapseAll),
+        ("project_panel.toggle_ignored", KEY_CONTEXT, ToggleIgnored),
+        ("project_panel.refresh", KEY_CONTEXT, Refresh),
+        ("project_panel.cut", KEY_CONTEXT, Cut),
+        ("project_panel.copy", KEY_CONTEXT, Copy),
+        ("project_panel.paste", KEY_CONTEXT, Paste),
+        ("project_panel.filter", KEY_CONTEXT, Filter),
+        ("project_panel.clear_filter", KEY_CONTEXT, ClearFilter),
     ];
     let mut registry = Registry::new();
-    for (id, title, context, op) in commands {
+    for (id, context, op) in commands {
         registry
-            .register(id, title, move |target: &mut Option<PanelOp>, _: &Actor| {
-                *target = Some(op);
-                Ok(Dispatched::new(Effect::Notify))
-            })
+            .register(
+                id,
+                &command_title(id),
+                move |target: &mut Option<PanelOp>, _: &Actor| {
+                    *target = Some(op);
+                    Ok(Dispatched::new(Effect::Notify))
+                },
+            )
             .expect("project panel command IDs are valid and distinct")
             .context(ContextPredicate::identifier(context));
     }
@@ -1249,8 +1335,8 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
     // still, it names no op, so the panel passes it on.
     registry
         .register(
-            "project_panel.reveal_active",
-            "Reveal Active File in Project",
+            REVEAL_ACTIVE,
+            &command_title(REVEAL_ACTIVE),
             |_: &mut Option<PanelOp>, _: &Actor| Ok(Dispatched::new(Effect::Notify)),
         )
         .expect("project panel command IDs are valid and distinct")
@@ -1328,6 +1414,11 @@ impl ProjectPanel {
     /// Each row the last frame drew dimmed as cut, by name.
     pub(crate) fn drawn_cut(&self) -> Vec<String> {
         self.drawn_cut.clone()
+    }
+
+    /// The root row's text the last frame drew, if it drew one.
+    pub(crate) fn drawn_root(&self) -> Option<String> {
+        self.drawn_root.clone()
     }
 }
 

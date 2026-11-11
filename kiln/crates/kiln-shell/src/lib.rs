@@ -63,6 +63,8 @@ use kiln_platform::Capabilities;
 
 pub use close::{CloseKind, CloseRequest, Closing};
 pub use dock::{Dock, DockItem, DockPosition, DockState, DockView, PanelId, RailAction};
+// A dock title row's pane controls: a panel's own actions and the ⋯ menu.
+pub use dock::{DockMenuItem, PaneAction};
 // The frame-request watchdog, for a host whose windows aren't `Root`s.
 pub use item::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem};
 pub use kiln_platform::frame_watch::watch_frame_requests;

@@ -21,6 +21,7 @@
 //! the panel's selection and operations use, and the list's positions are
 //! mapped to them ([`ProjectPanel::list_pos`]).
 
+use kiln_l10n::{text, tr};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -46,7 +47,17 @@ use crate::picker::{self, PaletteOp};
 const FIELD_KEY_CONTEXT: &str = "text_input";
 
 /// The row the list shows when nothing matches.
-pub(super) const NO_MATCHES: &str = "No matches in listed folders";
+pub(super) fn no_matches() -> gpui::SharedString {
+    tr!("workbench-project-filter-no-matches")
+}
+
+impl ProjectPanel {
+    /// The filter's box, while it takes typing.
+    pub(super) fn filter_input(&self) -> Option<gpui::Entity<TextField>> {
+        let typing = self.filter.as_ref()?.typing.as_ref()?;
+        Some(typing.input.clone())
+    }
+}
 
 /// The filter, set.
 pub(super) struct Filter {
@@ -125,7 +136,7 @@ impl ProjectPanel {
         let query = filter.query.clone();
         let input = cx.new(|cx| {
             TextField::new(window, cx)
-                .placeholder("Filter by name")
+                .placeholder(text!("workbench-project-filter-placeholder"))
                 .text(&query)
         });
         let focus = input.focus_handle(cx);
@@ -554,11 +565,16 @@ impl ProjectPanel {
     pub(super) fn render_filter(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let filter = self.filter.as_ref()?;
         let Some(typing) = &filter.typing else {
+            let query = &filter.query;
             let text = match &filter.hidden {
-                Some(name) => format!("Filter: {} (hides “{name}”)", filter.query),
-                None => format!("Filter: {}", filter.query),
+                Some(name) => tr!(
+                    "workbench-project-filter-set-hiding",
+                    query = query,
+                    name = name
+                ),
+                None => tr!("workbench-project-filter-set", query = query),
             };
-            return Some(self.message(text, cx));
+            return Some(self.message(text.into(), cx));
         };
         Some(
             div()
@@ -667,9 +683,9 @@ impl ProjectPanel {
     }
 
     /// The message the list shows in place of its rows, if any.
-    pub(crate) fn list_message(&self) -> Option<&'static str> {
+    pub(crate) fn list_message(&self) -> Option<gpui::SharedString> {
         (self.filtered().is_some_and(|view| view.is_empty()) && self.field_row().is_none())
-            .then_some(NO_MATCHES)
+            .then(no_matches)
     }
 
     /// The hidden row the line above the rows mentions, if any.

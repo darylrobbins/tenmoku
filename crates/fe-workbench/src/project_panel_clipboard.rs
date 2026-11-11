@@ -25,6 +25,7 @@
 //! meanwhile, say) makes none of them. Once it's moved, there's nothing
 //! left to paste.
 
+use kiln_l10n::tr;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -152,16 +153,11 @@ impl ProjectPanel {
         };
         if dir.starts_with(&source) {
             let name = file_name(&source);
-            let what = match clip.kind {
-                ClipKind::Cut => "moved",
-                ClipKind::Copy => "copied",
+            let message = match clip.kind {
+                ClipKind::Cut => tr!("workbench-project-paste-into-itself-cut", name = name),
+                ClipKind::Copy => tr!("workbench-project-paste-into-itself-copy", name = name),
             };
-            return toast::show(
-                cx,
-                Toast::error(format!(
-                    "“{name}” can’t be {what} into itself or a folder inside it."
-                )),
-            );
+            return toast::show(cx, Toast::error(message));
         }
         match clip.kind {
             ClipKind::Copy => self.paste_copy(source, dir, root, window, cx),
@@ -221,7 +217,11 @@ impl ProjectPanel {
                             panel.reveal(copy, cx);
                         }
                     }
-                    Err(error) => failed(&format!("“{name}” couldn’t be pasted."), &error, cx),
+                    Err(error) => failed(
+                        &tr!("workbench-project-paste-failed", name = &name),
+                        &error,
+                        cx,
+                    ),
                 })
                 .ok();
             drop(running);
@@ -245,7 +245,7 @@ impl ProjectPanel {
         let name = match fs_ops::paste_name(&root, &source, &dir) {
             Ok(name) => name,
             Err(error) => {
-                let message = format!("“{}” couldn’t be moved.", file_name(&source));
+                let message = tr!("workbench-project-move-failed", name = file_name(&source));
                 return failed(&message, &error, cx);
             }
         };
@@ -302,9 +302,9 @@ impl ProjectPanel {
             },
         };
         let message = match busy {
-            Busy::Saving => format!("“{name}” is being saved. Paste it once it’s saved."),
-            Busy::Opening => format!("“{name}” is being opened. Paste it once it’s open."),
-            Busy::Working => format!("“{name}” is being worked on. Paste it once that’s done."),
+            Busy::Saving => tr!("workbench-project-paste-busy-saving", name = &name),
+            Busy::Opening => tr!("workbench-project-paste-busy-opening", name = &name),
+            Busy::Working => tr!("workbench-project-paste-busy-working", name = &name),
         };
         toast::show(cx, Toast::warning(message));
         true
@@ -334,9 +334,7 @@ impl ProjectPanel {
         if moving.identity.is_none() || ops::entry_identity(&moving.from) != moving.identity {
             return toast::show(
                 cx,
-                Toast::error(format!(
-                    "“{entry}” was moved or replaced while it was being pasted. Nothing was moved."
-                )),
+                Toast::error(tr!("workbench-project-paste-raced", name = &entry)),
             );
         }
         // Planned while every spelling of the old path still resolves.
@@ -352,7 +350,7 @@ impl ProjectPanel {
         let path = match moved {
             Ok(path) => path,
             Err(error) => {
-                let message = format!("“{entry}” couldn’t be moved.");
+                let message = tr!("workbench-project-move-failed", name = &entry);
                 return failed(&message, &error, cx);
             }
         };

@@ -3,8 +3,10 @@
 
 ## The Explorer's and Source Control's views (dock.rs)
 
+# The project tree's view, which the dock's header names: no header of its own.
 workbench-dock-folders = Folders
-workbench-dock-outline = Outline
+# The outline's view, collapsed at the foot of Project (T1541).
+workbench-dock-structure = Structure
 
 ## The rail's actions, at its foot: their tooltips and accessible names
 

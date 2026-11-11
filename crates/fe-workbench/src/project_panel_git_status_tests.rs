@@ -1,5 +1,5 @@
-//! Git status in the project tree: a changed file's name in its status
-//! letter's colour with the letter at the row's end, and a folder holding
+//! Git status in the project tree: a changed file's name in its status's
+//! `vcs.*` colour with the letter at the row's end, and a folder holding
 //! changes in the colour of the highest-precedence status beneath it with a
 //! dot, all from the Changes panel's list.
 
@@ -16,7 +16,7 @@ use fe_project::NodeId;
 use gpui::{Entity, Hsla, TestAppContext, VisualTestContext};
 
 use super::DrawnStatus;
-use crate::{DockPanel, GitPanel, Launch, ProjectPanel, Workbench, git_panel};
+use crate::{DockPanel, GitPanel, Launch, ProjectPanel, Workbench};
 
 thread_local! {
     /// Whether panels made from now on list ignored entries too.
@@ -104,23 +104,23 @@ fn drawn(panel: &Entity<ProjectPanel>, name: &str, cx: &mut VisualTestContext) -
 }
 
 /// What a row with status `kind` is built with: its badge, and label and
-/// badge in the Changes panel's colour for its letter.
+/// badge in the theme's `vcs.*` colour for it.
 fn shown(
     badge: &'static str,
     kind: ChangeKind,
     panel: &Entity<ProjectPanel>,
     cx: &mut VisualTestContext,
 ) -> DrawnStatus {
-    let color: Hsla = panel.read_with(cx, |_, cx| {
-        git_panel::letter_color(kind, &fe_ui::ui_theme(cx))
-    });
+    let color: Hsla = panel.read_with(cx, |_, cx| crate::project_panel::vcs_color(kind, cx));
     (Some(color), Some((badge.to_owned(), color)))
 }
 
-/// Whether row `name`'s badge was drawn.
+/// Whether row `name`'s badge was drawn: a file's letter or a folder's
+/// dot.
 fn badge_drawn(name: &str, cx: &mut VisualTestContext) -> bool {
-    let selector: &'static str = format!("tree-badge:{name}").leak();
-    cx.debug_bounds(selector).is_some()
+    let letter: &'static str = format!("tree-badge:{name}").leak();
+    let dot: &'static str = format!("tree-dot:{name}").leak();
+    cx.debug_bounds(letter).is_some() || cx.debug_bounds(dot).is_some()
 }
 
 /// Clicks directory `name`'s row, which expands it once listed.

@@ -89,6 +89,8 @@ pub use toggle_button::ToggleButton;
 pub use tooltip::Tooltip;
 pub use tree::{Tree, TreeEvent, TreeModel};
 pub use tree_row::{CHEVRON_WIDTH, ICON_SIZE, TREE_INDENT, TreeRow};
+// A tree row's badge column, and the dot a folder's mark is.
+pub use tree_row::{BADGE_COLUMN, DOT_SIZE};
 
 #[cfg(test)]
 mod tests;

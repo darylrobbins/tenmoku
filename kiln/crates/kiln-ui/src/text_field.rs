@@ -23,6 +23,7 @@
 //! motions, undo), horizontal scrolling that keeps the caret visible,
 //! double- and triple-click selection, events, focus ring and theme.
 
+use kiln_l10n::Text;
 use std::ops::Range;
 
 use gpui::{
@@ -98,7 +99,8 @@ const MASK: &str = "•";
 /// A single-line text field. See the [module docs](self).
 pub struct TextField {
     edit: TextEdit,
-    placeholder: SharedString,
+    /// Resolved as it's drawn, so a keyed one follows the locale.
+    placeholder: Text,
     /// Its accessible name; the placeholder stands in without one.
     name: Option<SharedString>,
     /// Whether each grapheme shows as [`MASK`], and copy and cut do nothing.
@@ -139,7 +141,7 @@ impl TextField {
         ];
         Self {
             edit: TextEdit::new(),
-            placeholder: SharedString::default(),
+            placeholder: Text::default(),
             name: None,
             masked: false,
             font_size: px(13.),
@@ -152,10 +154,17 @@ impl TextField {
         }
     }
 
-    /// Shown, dimmed, while the field is empty.
-    pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
+    /// Shown, dimmed, while the field is empty: a
+    /// [`text!`](kiln_l10n::text) one is resolved as it's drawn, in the
+    /// locale active then.
+    pub fn placeholder(mut self, placeholder: impl Into<Text>) -> Self {
         self.placeholder = placeholder.into();
         self
+    }
+
+    /// Its placeholder as it's drawn now, in the active locale.
+    pub fn placeholder_text(&self) -> SharedString {
+        self.placeholder.resolve()
     }
 
     /// Its accessible name, which a screen reader reads: the placeholder
@@ -617,7 +626,7 @@ impl Render for TextField {
         let name = self
             .name
             .clone()
-            .unwrap_or_else(|| self.placeholder.clone());
+            .unwrap_or_else(|| self.placeholder.resolve());
         div()
             .id("text-field")
             .role(if self.masked {
@@ -759,7 +768,7 @@ impl Element for TextLine {
         let edit = &field.edit;
         let style = window.text_style();
         let (text, color) = if edit.is_empty() {
-            (field.placeholder.clone(), self.placeholder_color)
+            (field.placeholder.resolve(), self.placeholder_color)
         } else {
             (field.shown_text(), style.color)
         };

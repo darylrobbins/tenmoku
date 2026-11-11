@@ -232,9 +232,11 @@ fn text(s: &Lsp, editor: &Entity<EditorView>) -> String {
 }
 
 /// The name field's note, while it's open.
-fn note(s: &Lsp) -> Option<&'static str> {
+fn note(s: &Lsp) -> Option<String> {
     let panel = s.workbench.read_with(&s.cx, |w, _| w.panel().clone());
-    panel.read_with(&s.cx, |panel, _| panel.name_field_note())
+    panel.read_with(&s.cx, |panel, _| {
+        panel.name_field_note().map(|note| note.to_string())
+    })
 }
 
 /// Where in what the fake got its first `method` is.
@@ -298,12 +300,12 @@ fn a_slow_participant_can_be_skipped(cx: &mut TestAppContext) {
             .any(|record| record.method() == "workspace/willRenameFiles")
     });
     s.draw();
-    assert_eq!(note(&s), Some("Renaming…"));
+    assert_eq!(note(&s).as_deref(), Some("Renaming…"));
     assert!(s.path("src/util.rs").is_file());
     // Enter again renames nothing more.
     s.cx.simulate_keystrokes("enter");
     s.draw();
-    assert_eq!(note(&s), Some("Renaming…"));
+    assert_eq!(note(&s).as_deref(), Some("Renaming…"));
 
     // Escape renames at once, without the edits.
     s.cx.simulate_keystrokes("escape");
@@ -421,7 +423,7 @@ fn start_held_rename(s: &mut Lsp) {
         .wait_for("willRenameFiles", |records| asked(records) > before);
     s.clock.wait_for_sleep(Duration::from_secs(5));
     s.draw();
-    assert_eq!(note(s), Some("Renaming…"));
+    assert_eq!(note(s).as_deref(), Some("Renaming…"));
 }
 
 /// Puts another file at `src/util.rs`, by renaming it over the one there,

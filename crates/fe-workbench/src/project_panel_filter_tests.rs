@@ -11,7 +11,6 @@ use std::{
 use fe_gpui::{EditorView, set_vim_enabled};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
-use super::filter::NO_MATCHES;
 use crate::{ProjectPanel, Workbench};
 
 /// The project the tests filter: `unlisted` is never expanded, so never
@@ -180,8 +179,13 @@ fn hides(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) -> Option<Str
     panel.read_with(cx, |panel, _| panel.filter_hides().map(str::to_owned))
 }
 
-fn message(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) -> Option<&'static str> {
-    panel.read_with(cx, |panel, _| panel.list_message())
+/// The row the list shows when nothing matches, in English.
+const NO_MATCHES: &str = "No matches in listed folders";
+
+fn message(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) -> Option<String> {
+    panel.read_with(cx, |panel, _| {
+        panel.list_message().map(|message| message.to_string())
+    })
 }
 
 /// The rows "main" leaves: the matches, and the folders above them.
@@ -228,7 +232,7 @@ fn live(cx: &mut TestAppContext) {
     press("k", cx);
     assert_eq!(filter_text(&panel, cx).as_deref(), Some("jk"));
     assert_eq!(list(&panel, cx), []);
-    assert_eq!(message(&panel, cx), Some(NO_MATCHES));
+    assert_eq!(message(&panel, cx).as_deref(), Some(NO_MATCHES));
     assert_eq!(drawn(&panel, cx), Vec::<String>::new());
     press("backspace backspace", cx);
     assert_eq!(filter_text(&panel, cx).as_deref(), Some(""));
@@ -271,7 +275,7 @@ fn live(cx: &mut TestAppContext) {
     // A name matching nowhere leaves the one row saying so.
     type_text("zz", cx);
     assert_eq!(list(&panel, cx), []);
-    assert_eq!(message(&panel, cx), Some(NO_MATCHES));
+    assert_eq!(message(&panel, cx).as_deref(), Some(NO_MATCHES));
     assert_eq!(drawn(&panel, cx), Vec::<String>::new());
     assert!(NO_MATCHES.starts_with("No matches"));
 }
@@ -428,7 +432,7 @@ fn ops(cx: &mut TestAppContext) {
     assert!(root.join("docs/intro.md").is_file());
     assert_eq!(filter_text(&panel, cx).as_deref(), Some("guide"));
     assert_eq!(list(&panel, cx), []);
-    assert_eq!(message(&panel, cx), Some(NO_MATCHES));
+    assert_eq!(message(&panel, cx).as_deref(), Some(NO_MATCHES));
     assert_eq!(drawn(&panel, cx), Vec::<String>::new());
     // The renamed row, hidden, isn't one the tree's keys act on; the line
     // above the rows names it.
@@ -506,7 +510,7 @@ fn ops_delete(cx: &mut TestAppContext) {
     in_test_trash(&last);
     assert_eq!(filter_text(&panel, cx), Some(format!("{unique}-")));
     assert_eq!(list(&panel, cx), []);
-    assert_eq!(message(&panel, cx), Some(NO_MATCHES));
+    assert_eq!(message(&panel, cx).as_deref(), Some(NO_MATCHES));
     assert_eq!(drawn(&panel, cx), Vec::<String>::new());
     // No row the list doesn't show is selected in its place.
     assert_eq!(selected(&panel, cx), None);
@@ -529,7 +533,7 @@ fn hidden_rows_take_no_ops(cx: &mut TestAppContext) {
     press("/", cx);
     type_text("zzz", cx);
     press("enter", cx);
-    assert_eq!(message(&panel, cx), Some(NO_MATCHES));
+    assert_eq!(message(&panel, cx).as_deref(), Some(NO_MATCHES));
     assert_eq!(selected(&panel, cx), None);
     for keys in ["o", "enter", "l"] {
         press(keys, cx);

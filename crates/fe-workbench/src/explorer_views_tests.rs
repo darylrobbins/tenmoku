@@ -1,9 +1,9 @@
 //! The Explorer: one rail button for a view container of two views, the
-//! project tree (Folders) over the outline, collapsed at first;
-//! `dock.show_project` shows it with the tree, `outline.show` with the
-//! outline, expanded; the views' collapse is saved with the layout, and a
-//! layout saved before the Explorer, which has none, loads with the views
-//! as built.
+//! project tree (Folders), its lead, without a header and never collapsed,
+//! over Structure, the outline, collapsed at first; `dock.show_project`
+//! shows it with the tree, `outline.show` with the outline, expanded; the
+//! views' collapse is saved with the layout, and a layout saved before the
+//! Explorer, which has none, loads with the views as built.
 
 use std::fs;
 
@@ -138,7 +138,8 @@ fn the_rail_has_one_explorer_of_folders_over_the_outline(cx: &mut TestAppContext
         (true, DockPanel::Explorer, "Project".to_owned())
     );
 
-    // Its views: the tree, drawn in its body, over the outline, collapsed.
+    // Its views: the tree, drawn in its body without a header, over the
+    // outline, collapsed.
     let (views, titles) = workbench.read_with(cx, |workbench, cx| {
         let explorer = workbench.dock().read(cx).explorer().read(cx);
         let stack = explorer.stack().read(cx);
@@ -149,8 +150,9 @@ fn the_rail_has_one_explorer_of_folders_over_the_outline(cx: &mut TestAppContext
     assert_eq!(views, [FOLDERS, OUTLINE]);
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(true)]);
     let ([folders, outline], [tree, no_outline]) = titles;
-    let (folders, outline, tree) = (folders.unwrap(), outline.unwrap(), tree.unwrap());
-    assert!(folders.bottom() <= tree.top() && tree.bottom() <= outline.top());
+    assert_eq!(folders, None);
+    let (outline, tree) = (outline.unwrap(), tree.unwrap());
+    assert!(tree.bottom() <= outline.top());
     assert_eq!(no_outline, None);
     let drawn = cx.debug_bounds("sidebar-panel").expect("the tree drawn");
     assert_eq!(drawn, tree);
@@ -165,7 +167,7 @@ fn the_rail_has_one_explorer_of_folders_over_the_outline(cx: &mut TestAppContext
         let explorer = workbench.dock().read(cx).explorer().read(cx);
         explorer.stack().read(cx).body_bounds(OUTLINE)
     });
-    assert!(outline_body.expect("drawn").top() >= folders.bottom());
+    assert!(outline_body.expect("drawn").top() > tree.top());
 
     // A new root's tree takes the old one's place, the views as they were.
     let root = tempfile::tempdir().unwrap();
@@ -204,10 +206,11 @@ fn show_project_and_outline_show_show_the_explorer(cx: &mut TestAppContext) {
     assert!(cx.update(|window, _| outline.is_focused(window)));
     assert!(!editor_focused(&workbench, cx));
 
-    // Both collapsed, and the dock hidden, it shows the outline again,
-    // leaving the tree collapsed.
+    // The tree, the lead, doesn't collapse. The outline collapsed, and
+    // the dock hidden, it shows the outline again.
     set_collapsed(&workbench, FOLDERS, true, cx);
     set_collapsed(&workbench, OUTLINE, true, cx);
+    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(true)]);
     dispatch("dock.toggle", cx);
     assert!(!shown(&workbench, cx).0);
     dispatch("outline.show", cx);
@@ -215,7 +218,7 @@ fn show_project_and_outline_show_show_the_explorer(cx: &mut TestAppContext) {
         shown(&workbench, cx),
         (true, DockPanel::Explorer, "Project".to_owned())
     );
-    assert_eq!(collapsed(&workbench, cx), [Some(true), Some(false)]);
+    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
     assert!(cx.update(|window, _| outline.is_focused(window)));
     assert!(!editor_focused(&workbench, cx));
 
@@ -235,7 +238,6 @@ fn show_project_and_outline_show_show_the_explorer(cx: &mut TestAppContext) {
 
     // The Explorer's button does as dock.show_project does.
     dispatch("search.show", cx);
-    set_collapsed(&workbench, FOLDERS, true, cx);
     let button = workbench.read_with(cx, |workbench, cx| {
         let dock = workbench.dock().read(cx);
         dock.rail_button_bounds(DockPanel::Explorer).expect("drawn")
@@ -312,7 +314,7 @@ fn a_layout_saved_with_the_outline_panel_loads_the_explorer_then_views_as_saved(
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(true)]);
 
     // Saved since, the views come back as they were saved, a view the
-    // Explorer doesn't have ignored.
+    // Explorer doesn't have ignored, the tree expanded whatever was saved.
     let views = json!({
         "visible": true,
         "active": "project",
@@ -323,8 +325,9 @@ fn a_layout_saved_with_the_outline_panel_loads_the_explorer_then_views_as_saved(
         }}},
     });
     restore(&workbench, &entry(views), cx);
-    assert_eq!(collapsed(&workbench, cx), [Some(true), Some(false)]);
+    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
     let saved = saved_views(&workbench, cx);
     assert_eq!(saved["outline"]["weight"], 2.0);
+    assert_eq!(saved["folders"]["collapsed"], false);
     assert_eq!(saved.get("timeline"), None);
 }

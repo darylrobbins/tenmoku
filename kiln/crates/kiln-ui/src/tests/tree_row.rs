@@ -22,12 +22,17 @@ fn colors_follow_state() {
             assert_eq!((colors.background, colors.edge), (None, None));
         }
 
-        for ignored in [row().ignored(true), row().directory(true).ignored(true)] {
-            let colors = ignored.colors(tokens);
-            assert_eq!(colors.label, theme.muted_text);
-            assert_eq!(colors.icon, theme.muted_text);
-            assert_eq!(colors.chevron, theme.muted_text);
-        }
+        // Dim, not disabled: the chevron and icon keep their strength.
+        let ignored = row().ignored(true).colors(tokens);
+        assert_eq!(
+            (ignored.label, ignored.icon),
+            (theme.muted_text, theme.icon)
+        );
+        let ignored = row().directory(true).ignored(true).colors(tokens);
+        assert_eq!(
+            (ignored.label, ignored.icon, ignored.chevron),
+            (theme.muted_text, theme.folder_icon, theme.chevron)
+        );
         for error in [row().error(true), row().directory(false).error(true)] {
             let colors = error.colors(tokens);
             assert_eq!(colors.label, theme.error_text);

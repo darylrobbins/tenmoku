@@ -66,7 +66,24 @@ migrated = [
     # The sidebar's dock and its rail in B3 (T1540).
     "src/dock.rs",
     "src/dock_layout.rs",
+    # The sidebar in B3 (T1541): the project tree and Structure.
+    "src/project_panel.rs",
+    "src/project_panel_filter.rs",
+    "src/project_panel_nav.rs",
+    "src/project_panel_ops.rs",
+    "src/project_panel_clipboard.rs",
+    "src/outline_panel.rs",
+    "src/outline_panel_keys.rs",
 ]
+
+# The Explorer's name as its SidebarPanel const declares it, by which the
+# rail orders it and tests name it: what the dock shows, its header and its
+# rail button's tooltip, is `workbench-project-title` (dock.rs).
+
+[[literal]]
+file = "src/project_panel.rs"
+text = "Project"
+reason = "The Explorer's name in its SidebarPanel const, not shown: the dock titles it workbench-project-title"
 
 # Ids and joins, not text: a picker row's element id, and the text a row's
 # query matches against.

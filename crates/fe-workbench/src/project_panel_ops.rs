@@ -36,6 +36,7 @@
 //! neither the edits nor the rename are made. With no server to ask, the
 //! rename is made at once, as before.
 
+use kiln_l10n::{Text, text, tr};
 use std::{
     future::Future,
     io,
@@ -76,12 +77,14 @@ const FIELD_KEY_CONTEXT: &str = "text_input";
 /// default, as [`fe_gpui::pane_item::DISCARD_BUTTONS`] makes it: GPUI gives
 /// Return to the first button, so Cancel is an ok button, which Escape
 /// finds by its title.
-const TRASH_BUTTONS: [PromptButton; 2] = [
-    PromptButton::Ok(SharedString::new_static("Cancel")),
-    PromptButton::Other(SharedString::new_static("Move to Trash")),
-];
+fn trash_buttons() -> [PromptButton; 2] {
+    [
+        PromptButton::Ok(tr!("workbench-project-cancel")),
+        PromptButton::Other(tr!("workbench-project-move-to-trash")),
+    ]
+}
 
-/// The answer to [`TRASH_BUTTONS`] that moves the entry.
+/// The answer to [`trash_buttons`] that moves the entry.
 const MOVE_TO_TRASH: usize = 1;
 
 /// What the name field names.
@@ -100,7 +103,7 @@ pub(super) struct NameEdit {
     pub(super) node: NodeId,
     input: Entity<TextField>,
     /// Why the last name given was refused, shown under the field.
-    error: Option<String>,
+    error: Option<Text>,
     /// Whether the operation is running: Enter waits for it.
     running: bool,
     /// The rename waiting for language servers' edits, which escape stops
@@ -112,7 +115,21 @@ pub(super) struct NameEdit {
 }
 
 /// The text under the field while a rename waits for language servers.
-const RENAMING: &str = "Renaming…";
+fn renaming() -> SharedString {
+    tr!("workbench-project-renaming")
+}
+
+impl NameEdit {
+    /// The field the name is typed in.
+    pub(super) fn input(&self) -> Entity<TextField> {
+        self.input.clone()
+    }
+
+    /// Why the last name given was refused, now, in the active locale.
+    pub(super) fn error(&self) -> Option<SharedString> {
+        self.error.as_ref().map(Text::resolve)
+    }
+}
 
 /// A rename waiting for language servers' edits.
 struct Waiting {
@@ -179,9 +196,9 @@ impl ProjectPanel {
             self.expand(node, cx);
         }
         let placeholder = match kind {
-            EditKind::NewFile => "File name",
-            EditKind::NewFolder => "Folder name",
-            EditKind::Rename => "New name",
+            EditKind::NewFile => text!("workbench-project-file-name"),
+            EditKind::NewFolder => text!("workbench-project-folder-name"),
+            EditKind::Rename => text!("workbench-project-new-name"),
         };
         let input = cx.new(|cx| {
             let mut input = TextField::new(window, cx)
@@ -340,7 +357,7 @@ impl ProjectPanel {
             _ => Ok(()),
         });
         if let Err(error) = valid {
-            edit.error = Some(capitalized(&error.to_string()));
+            edit.error = Some(Text::verbatim(capitalized(&error.to_string())));
             return cx.notify();
         }
         let Some(target) = tree.path(edit.node) else {
@@ -471,10 +488,8 @@ impl ProjectPanel {
     ) {
         if entry.is_none() || entry_identity(&naming.target) != entry {
             let old = naming.target.file_name().unwrap_or_default();
-            let error = format!(
-                "“{}” was moved or replaced while it was being renamed. Nothing was renamed.",
-                old.to_string_lossy()
-            );
+            let old = old.to_string_lossy();
+            let error = text!("workbench-project-rename-raced", name = old.into_owned());
             match (self.edit.as_mut()).filter(|edit| edit.serial == naming.serial) {
                 Some(edit) => edit.error = Some(error),
                 None => log::warn!("{error}"),
@@ -526,12 +541,11 @@ impl ProjectPanel {
             .file_name()
             .unwrap_or_default()
             .to_string_lossy();
+        let old = old.into_owned();
         let error = match busy {
-            Busy::Saving => format!("“{old}” is being saved. Rename it once it’s saved."),
-            Busy::Opening => format!("“{old}” is being opened. Rename it once it’s open."),
-            Busy::Working => {
-                format!("“{old}” is being worked on. Rename it once that’s done.")
-            }
+            Busy::Saving => text!("workbench-project-rename-busy-saving", name = old),
+            Busy::Opening => text!("workbench-project-rename-busy-opening", name = old),
+            Busy::Working => text!("workbench-project-rename-busy-working", name = old),
         };
         match self
             .edit
@@ -667,8 +681,9 @@ impl ProjectPanel {
         // at its path, isn't it.
         let asked = entry_identity(&path);
         let folder = path.symlink_metadata().is_ok_and(|meta| meta.is_dir());
-        let question = format!("Move “{name}” to the Trash?");
-        let answer = window.prompt(PromptLevel::Warning, &question, None, &TRASH_BUTTONS, cx);
+        let question = tr!("workbench-project-trash-question", name = &name);
+        let answer = window.prompt(PromptLevel::Warning, &question, None, &trash_buttons(), cx);
+        let moved = tr!("workbench-project-trash-moved-since");
         cx.spawn_in(window, async move |panel, cx| {
             if answer.await != Ok(MOVE_TO_TRASH) {
                 return;
@@ -681,7 +696,7 @@ impl ProjectPanel {
                     async move {
                         let _running = running;
                         if asked.is_none() || entry_identity(&path) != asked {
-                            let moved = "It was moved or replaced since you were asked.";
+                            let moved = moved.to_string();
                             return Err(io::Error::new(io::ErrorKind::NotFound, moved));
                         }
                         fs_ops::trash(&root, &[path])
@@ -695,7 +710,7 @@ impl ProjectPanel {
                         cx.emit(PanelEvent::Deleted(vec![(shown, folder)]));
                     }
                     Err(error) => {
-                        let message = format!("“{name}” couldn’t be moved to the Trash.");
+                        let message = tr!("workbench-project-trash-failed", name = &name);
                         failed(&message, &error, window, cx);
                     }
                 })
@@ -734,7 +749,7 @@ impl ProjectPanel {
                         }
                     }
                     Err(error) => {
-                        let message = format!("“{name}” couldn’t be duplicated.");
+                        let message = tr!("workbench-project-duplicate-failed", name = &name);
                         failed(&message, &error, window, cx);
                     }
                 })
@@ -823,9 +838,9 @@ impl ProjectPanel {
         let theme = fe_ui::ui_theme(cx);
         // The field draws its own border; an error's is red.
         let border = edit.error.is_some().then_some(theme.error_text);
-        let note = (edit.waiting.as_ref()).map(|_| (RENAMING.to_owned(), theme.text));
-        let error = (edit.error.clone())
-            .map(|error| (error, theme.error_text))
+        let note = (edit.waiting.as_ref()).map(|_| (renaming().to_string(), theme.text));
+        let error = (edit.error.as_ref())
+            .map(|error| (error.resolve().to_string(), theme.error_text))
             .or(note);
         let error = error.map(|(error, color)| {
             deferred(
@@ -899,12 +914,12 @@ pub(super) fn apply_edits(edits: Vec<FileEdits>, window: &Window, cx: &mut gpui:
 
 /// The message for a name the operation refused, `name` being the name
 /// typed.
-fn failure(error: &io::Error, name: &str) -> String {
+fn failure(error: &io::Error, name: &str) -> Text {
     match error.kind() {
         io::ErrorKind::AlreadyExists => {
-            format!("A file or folder “{name}” already exists here. Choose another name.")
+            text!("workbench-project-name-taken", name = name.to_owned())
         }
-        _ => capitalized(&error.to_string()),
+        _ => Text::verbatim(capitalized(&error.to_string())),
     }
 }
 
@@ -981,7 +996,7 @@ fn failed(message: &str, error: &io::Error, window: &mut Window, cx: &mut gpui::
         PromptLevel::Critical,
         message,
         Some(&detail),
-        &[PromptButton::ok("OK")],
+        &[PromptButton::ok(tr!("workbench-project-ok"))],
         cx,
     ));
 }
@@ -991,13 +1006,14 @@ impl ProjectPanel {
     /// The name field's text and error, while it's open.
     pub(crate) fn name_field(&self, cx: &gpui::App) -> Option<(String, Option<String>)> {
         let edit = self.edit.as_ref()?;
-        Some((edit.input.read(cx).value().to_owned(), edit.error.clone()))
+        let error = edit.error.as_ref().map(|error| error.resolve().to_string());
+        Some((edit.input.read(cx).value().to_owned(), error))
     }
 
     /// The note under the name field, while it's open and a rename waits
     /// for language servers.
-    pub(crate) fn name_field_note(&self) -> Option<&'static str> {
-        self.edit.as_ref()?.waiting.as_ref().map(|_| RENAMING)
+    pub(crate) fn name_field_note(&self) -> Option<SharedString> {
+        self.edit.as_ref()?.waiting.as_ref().map(|_| renaming())
     }
 
     /// The name field's input, while it's open.

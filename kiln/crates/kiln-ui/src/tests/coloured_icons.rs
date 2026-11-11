@@ -25,7 +25,6 @@ use gpui::{
 use crate::{
     ActiveTheme as _, Assets, Breadcrumbs, Crumb, CrumbKind, Icon, IconRef, IconSet, Tab, TabBar,
     Theme, Tokens, TreeRow, UiTheme, file_icon_ref, file_icons::rasterize_coloured, set_icon_set,
-    tree_row::DIMMED_ICON_OPACITY,
 };
 
 /// A two-colour square: red on the left half, blue on the right.
@@ -368,7 +367,8 @@ fn masked_asset_still_tinted() {
     type Tint = fn(&Tokens<Hsla>) -> Hsla;
     let cases: [(Surface, Tint); 5] = [
         (Surface::Row, |colors| colors.list.icon),
-        (Surface::IgnoredRow, |colors| colors.text.muted),
+        // Dim, not disabled: the label alone is muted.
+        (Surface::IgnoredRow, |colors| colors.list.icon),
         (Surface::ErrorRow, |colors| colors.status.error),
         (Surface::Tab, |colors| colors.list.icon),
         (Surface::Crumb, |colors| colors.list.icon),
@@ -385,23 +385,22 @@ fn masked_asset_still_tinted() {
     }
 }
 
+/// An ignored row reads as dim, not disabled: its coloured icon keeps its
+/// full strength, as its label alone is muted.
 #[test]
-fn ignored_row_dims_coloured_icon() {
+fn ignored_row_keeps_coloured_icon_at_full_strength() {
     register();
     let mut painter = Painter::new(IconRef::Coloured(COLOURED.into()), Surface::IgnoredRow);
     let side = painter.device(16.);
     let image = one_image(&painter.paint(), side, "ignored row");
-    assert!(image.opacity < 1., "{}", image.opacity);
-    assert_eq!(image.opacity, DIMMED_ICON_OPACITY);
-    assert!(red_and_blue(&image.bgra), "faded, not tinted");
+    assert_eq!(image.opacity, 1.);
+    assert!(red_and_blue(&image.bgra), "not tinted");
 
-    // An unreadable row isn't faded: its label shows the error.
     let theme = UiTheme::default_dark();
     let tokens = &Theme::from_ui_theme(&theme).colors;
     let row = TreeRow::new("row", "a.rs", &theme)
         .icon(IconRef::Coloured(COLOURED.into()))
-        .ignored(true)
-        .error(true);
+        .ignored(true);
     assert_eq!(row.colors(tokens).icon_opacity, 1.);
 }
 

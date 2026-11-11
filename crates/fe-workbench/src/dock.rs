@@ -9,10 +9,14 @@
 //! Terminal actions ([`rail_actions`]). Changes' button counts the changed
 //! files ([`Dock::set_changed_files`]), Problems' has a dot while there
 //! are errors ([`Dock::set_errors`]). The Explorer is a
-//! [`ViewContainer`] of two views, the project tree (Folders) over the
-//! outline (collapsed until shown or expanded), whose collapse and weights
-//! the dock's saved state keeps; `dock.show_project` shows it, and
-//! `outline.show` shows it with the outline expanded and focused. Source
+//! [`ViewContainer`] of two views, the project tree (Folders), its lead,
+//! which the dock's header names ("Project") and carries the actions of,
+//! over Structure, the outline (collapsed at the foot until shown or
+//! expanded, its header then showing the symbol under the caret), whose
+//! collapse and weights the dock's saved state keeps; `dock.show_project`
+//! shows it, and `outline.show` shows it with Structure expanded and
+//! focused. The header's ⋯ menu moves the sidebar to the other side
+//! ([`dock_menu`]); its — runs `dock.toggle`. Source
 //! Control is another, of the git changes (Changes) over the repository's
 //! log (Graph), both expanded ([`source_control`]): `git.show_changes`
 //! shows it with Changes expanded, `git.log` with Graph. The References, Problems,
@@ -41,14 +45,15 @@ use gpui::{
 use kiln_l10n::tr;
 use kiln_platform::locale::ActiveLocale;
 use kiln_shell::{
-    DockItem, DockPosition, DockState, DockView, PanelId, RailAction, ViewContainer, ViewSpec,
-    dock::RailBadge,
+    DockItem, DockMenuItem, DockPosition, DockState, DockView, PanelId, RailAction, ViewContainer,
+    ViewSpec, dock::RailBadge,
 };
 
 use crate::{
     ChatPanel, GitLogPanel, GitPanel, HierarchyPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH,
     ProjectPanel, ReferencesPanel,
     ai_changes_panel::AiChangesPanel,
+    outline_panel::CaretSymbol,
     search_panel::{self, SearchPanel},
 };
 
@@ -244,6 +249,24 @@ pub(crate) fn rail_actions() -> [RailAction; 2] {
     ]
 }
 
+/// The sidebar header's ⋯ menu at `position`: move it to the other side,
+/// titled as its command is. Grow Dock and Shrink Dock aren't on it: they
+/// resize whichever dock has focus, the terminal's maybe, not the sidebar.
+pub(crate) fn dock_menu(position: DockPosition) -> Vec<DockMenuItem> {
+    let command = match position {
+        DockPosition::Left => "dock.move_sidebar_right",
+        _ => "dock.move_sidebar_left",
+    };
+    vec![DockMenuItem {
+        title: fe_command::l10n::command_label(command, ""),
+        command,
+    }]
+}
+
+/// The command the sidebar header's — runs: the dock's toggle, which
+/// moves focus out of what it hides.
+const HIDE_COMMAND: &str = "dock.toggle";
+
 /// The edge `workbench.rail` puts the rail and the sidebar on.
 pub(crate) fn rail_position(side: RailSide) -> DockPosition {
     match side {
@@ -346,6 +369,12 @@ pub struct Dock {
     project: Entity<ProjectPanel>,
     search: Entity<SearchPanel>,
     outline: Entity<OutlinePanel>,
+    /// What Structure's header shows while it's collapsed, which the
+    /// Explorer draws: the tests' to read.
+    #[cfg_attr(not(test), allow(dead_code))]
+    caret_symbol: Entity<CaretSymbol>,
+    /// The side the header's ⋯ menu was last built for.
+    menu_side: DockPosition,
     /// The git changes and the repository's log, its views.
     source_control: Entity<ViewContainer>,
     changes: Entity<GitPanel>,
@@ -382,28 +411,36 @@ pub struct Dock {
     _locale: Subscription,
 }
 
-/// The Explorer: `project`'s tree over `outline`, collapsed at first.
+/// The Explorer: `project`'s tree, its lead, over `outline`, collapsed at
+/// first, its header showing `caret_symbol`.
 fn explorer(
     project: &Entity<ProjectPanel>,
     outline: &Entity<OutlinePanel>,
+    caret_symbol: &Entity<CaretSymbol>,
     cx: &mut Context<Dock>,
 ) -> Entity<ViewContainer> {
     let sidebar = crate::project_panel::SIDEBAR;
     cx.new(|cx| {
-        let mut explorer = ViewContainer::new(sidebar.panel.id(), sidebar.name, sidebar.icon, cx)
-            .show_command(sidebar.show_command);
+        let title = tr!("workbench-project-title");
+        let mut explorer = ViewContainer::new(sidebar.panel.id(), title, sidebar.icon, cx)
+            .show_command(sidebar.show_command)
+            .lead(crate::project_panel::FOLDERS);
         explorer.add_view(folders(project), cx);
+        let actions = crate::project_panel::pane_actions(project);
+        explorer.set_actions(crate::project_panel::FOLDERS, actions, cx);
+        let view = crate::outline_panel::VIEW;
+        explorer.set_detail(view, caret_symbol.clone().into(), cx);
         let outline = outline_view(outline, cx);
         explorer.add_view(outline, cx);
         explorer
     })
 }
 
-/// The Explorer's Outline view: `outline`, collapsed at first.
+/// The Explorer's Structure view: `outline`, collapsed at first.
 fn outline_view(outline: &Entity<OutlinePanel>, cx: &mut App) -> ViewSpec {
     ViewSpec {
         id: crate::outline_panel::VIEW,
-        title: tr!("workbench-dock-outline"),
+        title: tr!("workbench-dock-structure"),
         order: 20,
         default_collapsed: true,
         view: cx.new(|cx| Tracked::new(outline, cx)).into(),
@@ -469,8 +506,11 @@ impl Dock {
     ) -> Self {
         let mut state = DockState::new(position)
             .size(PANEL_WIDTH)
-            .shortcut_contexts([crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
-        let explorer = explorer(&project, &outline, cx);
+            .shortcut_contexts([crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT])
+            .hide_command(HIDE_COMMAND);
+        state.set_menu(dock_menu(position));
+        let caret_symbol = cx.new(|cx| CaretSymbol::new(&outline, cx));
+        let explorer = explorer(&project, &outline, &caret_symbol, cx);
         let explorer_changed = cx.observe(&explorer, |_, _, cx| cx.notify());
         state.add_panel(explorer.clone(), cx);
         state.add_panel(search.clone(), cx);
@@ -496,6 +536,8 @@ impl Dock {
             project,
             search,
             outline,
+            caret_symbol,
+            menu_side: position,
             source_control,
             graph_title: git_log.read(cx).title(cx),
             changes,
@@ -525,10 +567,14 @@ impl Dock {
         for action in rail_actions() {
             self.state.add_action(action);
         }
+        self.state.set_menu(dock_menu(self.menu_side));
         let outline = outline_view(&self.outline, cx);
         let folders = folders(&self.project);
+        let actions = crate::project_panel::pane_actions(&self.project);
         (self.explorer).update(cx, |explorer, cx| {
+            explorer.set_title(tr!("workbench-project-title"), cx);
             explorer.add_view(folders, cx);
+            explorer.set_actions(crate::project_panel::FOLDERS, actions, cx);
             explorer.add_view(outline, cx);
         });
         let (changed_files, errors) = (self.changed_files, self.errors);
@@ -545,7 +591,11 @@ impl Dock {
     /// root. The dock's visibility and active panel, and the Folders
     /// view's collapse, stay.
     pub(crate) fn set_project(&mut self, project: Entity<ProjectPanel>, cx: &mut Context<Self>) {
-        (self.explorer).update(cx, |explorer, cx| explorer.add_view(folders(&project), cx));
+        let actions = crate::project_panel::pane_actions(&project);
+        (self.explorer).update(cx, |explorer, cx| {
+            explorer.add_view(folders(&project), cx);
+            explorer.set_actions(crate::project_panel::FOLDERS, actions, cx);
+        });
         self.project = project;
         cx.notify();
     }
@@ -556,6 +606,12 @@ impl Dock {
 
     pub fn outline(&self) -> &Entity<OutlinePanel> {
         &self.outline
+    }
+
+    /// What Structure's header shows while it's collapsed.
+    #[cfg(test)]
+    pub(crate) fn caret_symbol(&self) -> &Entity<CaretSymbol> {
+        &self.caret_symbol
     }
 
     /// The Explorer, of the project tree and the outline.
@@ -964,6 +1020,12 @@ impl DockView for Dock {
 
 impl Render for Dock {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Moved, its menu offers the other side.
+        let side = self.state.position();
+        if side != self.menu_side {
+            self.menu_side = side;
+            self.state.set_menu(dock_menu(side));
+        }
         self.state.render(cx)
     }
 }

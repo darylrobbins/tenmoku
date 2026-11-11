@@ -13,6 +13,11 @@
 //! panel, and the host can badge a panel's button
 //! ([`DockState::set_badge`]).
 //!
+//! The title row is the panel's one heading: its name in the UI heading
+//! style, then the pane controls, right-aligned: the panel's own actions
+//! ([`DockItem::actions`]), ⋯ for the dock's menu ([`DockState::set_menu`]),
+//! and — to hide the dock ([`DockView::hide_clicked`]).
+//!
 //! [`DockState`] is the dock's state, for the view that draws it, a
 //! [`DockView`]: [`Dock`] is kiln's, and a host can hold the state in a
 //! view of its own to add to what a rail click does. Either way,
@@ -49,17 +54,20 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, AnyEntity, AnyView, App, AppContext as _, Bounds, Context, CursorStyle,
-    DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Global,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
-    Point, Render, ScrollHandle, SharedString, Size, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, WindowId, canvas, div, prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, AnyEntity, AnyView, App, AppContext as _, Bounds, Context, CursorStyle,
+    DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
+    ParentElement as _, Pixels, Point, Render, ScrollHandle, SharedString, Size,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, WindowId, anchored, canvas,
+    deferred, div, prelude::FluentBuilder as _, px,
 };
 use kiln_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
 use kiln_core::{shortcut_label, shortcuts};
+use kiln_l10n::tr;
 use kiln_platform::{command_actions::dispatch_invocation, keys};
 use kiln_ui::{
-    ActivityRail, Badge, BadgeTone, Icon, RAIL_WIDTH, RailButton, TAB_HEIGHT, Tooltip, ui_theme,
+    ActivityRail, Badge, BadgeTone, Icon, IconButton, MenuEntry, MenuPanel, RAIL_WIDTH, RailButton,
+    TAB_HEIGHT, Tooltip, UI_HEADING, ui_theme,
 };
 
 use crate::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
@@ -171,6 +179,12 @@ pub trait DockItem: Render + Focusable + 'static {
         false
     }
 
+    /// Its own actions, at the right of the dock's title row, before ⋯ and
+    /// —: none unless a panel has some.
+    fn actions(&self, _cx: &App) -> Vec<PaneAction> {
+        Vec::new()
+    }
+
     /// Its own state, for a saved layout: [`DockState::save`] keeps it
     /// under the panel's id. None, saving nothing, unless a panel has
     /// state to keep, as a [`ViewContainer`](crate::ViewContainer) keeps
@@ -195,6 +209,7 @@ trait PanelHandle {
     fn joins_rail_on_show(&self, cx: &App) -> bool;
     fn focus_on_show(&self, cx: &App) -> bool;
     fn on_rail_foot(&self, cx: &App) -> bool;
+    fn actions(&self, cx: &App) -> Vec<PaneAction>;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn save_state(&self, cx: &App) -> Option<Value>;
     fn restore_state(&self, saved: &Value, cx: &mut App);
@@ -244,6 +259,10 @@ impl<P: DockItem> PanelHandle for Panel<P> {
         self.entity.read(cx).on_rail_foot()
     }
 
+    fn actions(&self, cx: &App) -> Vec<PaneAction> {
+        self.entity.read(cx).actions(cx)
+    }
+
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.entity.focus_handle(cx)
     }
@@ -286,6 +305,52 @@ pub struct RailAction {
     /// The command a click runs, whose key the tooltip shows.
     pub command: &'static str,
 }
+
+/// One of a panel's own actions, in the dock's title row before ⋯ and —
+/// ([`DockItem::actions`]): an icon button, named by its title, that runs
+/// `run` when clicked.
+#[derive(Clone)]
+pub struct PaneAction {
+    /// Distinct among the panel's actions: its button's `icon-button:<id>`
+    /// selector.
+    pub id: &'static str,
+    pub icon: Icon,
+    /// Its accessible name and tooltip.
+    pub title: SharedString,
+    /// The command it does, whose key its tooltip shows, if it has one.
+    pub command: Option<&'static str>,
+    pub run: ActionHandler,
+}
+
+/// What a [`PaneAction`]'s click runs.
+pub type ActionHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+
+impl std::fmt::Debug for PaneAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (f.debug_struct("PaneAction"))
+            .field("id", &self.id)
+            .field("icon", &self.icon)
+            .field("title", &self.title)
+            .field("command", &self.command)
+            .finish_non_exhaustive()
+    }
+}
+
+/// An item of the dock's ⋯ menu ([`DockState::set_menu`]): it runs
+/// `command`, in the focused context, when clicked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DockMenuItem {
+    pub title: SharedString,
+    pub command: &'static str,
+}
+
+/// The key context of the open ⋯ menu, which has focus.
+pub const MENU_KEY_CONTEXT: &str = "dock_menu";
+
+/// The ids of the title row's own buttons, after the panel's actions:
+/// `icon-button:dock-more` and `icon-button:dock-hide`.
+pub const MORE_BUTTON: &str = "dock-more";
+pub const HIDE_BUTTON: &str = "dock-hide";
 
 /// A badge on a panel's rail button, which the host sets
 /// ([`DockState::set_badge`]) as what it counts changes: a count, or a dot
@@ -347,6 +412,11 @@ pub struct DrawnDock {
     /// The badges drawn, by their buttons' ids, top to bottom.
     badges: Rc<RefCell<Vec<(PanelId, RailBadge)>>>,
     tooltip: Rc<RefCell<Option<String>>>,
+    /// The title row's buttons, left to right: each one's id and
+    /// accessible name.
+    controls: Rc<RefCell<Vec<(String, SharedString)>>>,
+    /// The ⋯ button, whose own press doesn't close its menu: it toggles it.
+    more: ScrollHandle,
     /// The column's title row, its panel and its edge's handle.
     column: ScrollHandle,
     /// The handle's cursor, if drawn.
@@ -398,6 +468,13 @@ impl DrawnDock {
         (self.layout.children_count() == children)
             .then(|| self.layout.bounds_for_item(0))
             .flatten()
+    }
+
+    /// The title row's buttons the last frame drew, left to right, by id
+    /// and accessible name: the panel's actions, then [`MORE_BUTTON`] if the
+    /// dock has a menu, then [`HIDE_BUTTON`].
+    pub fn controls(&self) -> Vec<(String, SharedString)> {
+        self.controls.borrow().clone()
     }
 
     /// Where the column's title row was laid out, if it showed.
@@ -491,6 +568,16 @@ pub struct DockState {
     shortcut_contexts: Vec<SharedString>,
     /// Whether it draws no rail, at any position.
     rail_hidden: bool,
+    /// The ⋯ menu's items, whether it's open and the item highlighted.
+    menu: Vec<DockMenuItem>,
+    menu_open: bool,
+    menu_highlighted: Option<usize>,
+    /// The open menu's focus, made the first time it opens, and what had
+    /// focus before it, which it gives focus back to as it closes.
+    menu_focus: Option<FocusHandle>,
+    menu_return: Option<FocusHandle>,
+    /// The command — runs, if not hiding the dock itself.
+    hide_command: Option<&'static str>,
     drawn: DrawnDock,
 }
 
@@ -512,6 +599,12 @@ impl DockState {
             press: None,
             shortcut_contexts: Vec::new(),
             rail_hidden: false,
+            menu: Vec::new(),
+            menu_open: false,
+            menu_highlighted: None,
+            menu_focus: None,
+            menu_return: None,
+            hide_command: None,
             drawn: DrawnDock::default(),
         }
     }
@@ -521,6 +614,99 @@ impl DockState {
     /// command or by another dock's [`RailAction`]. A rail is the default.
     pub fn hide_rail(&mut self, hidden: bool) {
         self.rail_hidden = hidden;
+    }
+
+    /// The items of the title row's ⋯ menu: with none, the row has no ⋯.
+    pub fn set_menu(&mut self, items: Vec<DockMenuItem>) {
+        if items.is_empty() {
+            self.menu_open = false;
+        }
+        self.menu = items;
+    }
+
+    /// The ⋯ menu's items.
+    pub fn menu(&self) -> &[DockMenuItem] {
+        &self.menu
+    }
+
+    /// Whether the ⋯ menu is open.
+    pub fn is_menu_open(&self) -> bool {
+        self.menu_open
+    }
+
+    /// The ⋯ menu's highlighted item, while it's open.
+    pub fn menu_highlighted(&self) -> Option<usize> {
+        self.menu_highlighted.filter(|_| self.menu_open)
+    }
+
+    /// Whether the open ⋯ menu has focus, which its keys need.
+    pub fn menu_focused(&self, window: &Window) -> bool {
+        (self.menu_focus.as_ref()).is_some_and(|focus| self.menu_open && focus.is_focused(window))
+    }
+
+    /// Opens the ⋯ menu, if it has items, its first item highlighted and
+    /// focus in it, for its keys: Up and Down move the highlight, Enter or
+    /// Space runs the item, Escape closes it.
+    pub fn open_menu(&mut self, window: &mut Window, cx: &mut App) {
+        if self.menu.is_empty() {
+            return;
+        }
+        self.menu_open = true;
+        self.menu_highlighted = Some(0);
+        let focus = self
+            .menu_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        self.menu_return = window.focused(cx).filter(|focused| *focused != focus);
+        window.focus(&focus, cx);
+    }
+
+    /// Closes the ⋯ menu, giving focus back to what had it before, if the
+    /// menu still has it.
+    pub fn close_menu(&mut self, window: &mut Window, cx: &mut App) {
+        let focused = self.menu_focused(window);
+        self.menu_open = false;
+        self.menu_highlighted = None;
+        let back = self.menu_return.take();
+        if focused && let Some(back) = back {
+            window.focus(&back, cx);
+        }
+    }
+
+    /// The open menu's answer to `key`: whether it took it. Running an
+    /// item closes the menu first, so the command runs where focus was.
+    fn menu_key(&mut self, key: &str, window: &mut Window, cx: &mut App) -> bool {
+        let count = self.menu.len();
+        let at = self.menu_highlighted.unwrap_or(0);
+        match key {
+            "up" => self.menu_highlighted = Some((at + count - 1) % count),
+            "down" => self.menu_highlighted = Some((at + 1) % count),
+            "home" => self.menu_highlighted = Some(0),
+            "end" => self.menu_highlighted = Some(count - 1),
+            "enter" | "space" => {
+                let command = self.menu.get(at).map(|item| item.command);
+                self.close_menu(window, cx);
+                if let Some(command) = command {
+                    window.defer(cx, move |window, cx| run_action(command, window, cx));
+                }
+            }
+            "escape" => self.close_menu(window, cx),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Builds it with — running `command`, in the focused context, whose
+    /// key its tooltip shows, rather than hiding the dock itself: for a
+    /// host whose hide does more, such as moving focus.
+    pub fn hide_command(mut self, command: &'static str) -> Self {
+        self.hide_command = Some(command);
+        self
+    }
+
+    /// The command — runs, if it was built with one.
+    pub fn hide_command_id(&self) -> Option<&'static str> {
+        self.hide_command
     }
 
     /// Builds it without a rail: see [`DockState::hide_rail`].
@@ -995,6 +1181,174 @@ impl DockState {
         found.first().map(shortcut_label)
     }
 
+    /// A title-row button, `id`, named `name`: its tooltip shows the key
+    /// of `command`, if it has one, looked up as it shows.
+    fn control(
+        &self,
+        id: &str,
+        icon: Icon,
+        name: SharedString,
+        command: Option<&'static str>,
+        cx: &App,
+    ) -> IconButton {
+        self.drawn
+            .controls
+            .borrow_mut()
+            .push((id.to_owned(), name.clone()));
+        let contexts = self.shortcut_contexts.clone();
+        let last_tooltip = self.drawn.tooltip.clone();
+        let title = name.clone();
+        IconButton::new(SharedString::from(id.to_owned()), icon, &ui_theme(cx))
+            .name(name)
+            .tooltip(move |_, cx| {
+                let shortcut = command.and_then(|command| Self::shortcut(&contexts, command, cx));
+                let tooltip = Tooltip::new(title.clone(), shortcut, &ui_theme(cx));
+                last_tooltip.replace(Some(tooltip.text()));
+                cx.new(|_| tooltip).into()
+            })
+    }
+
+    /// The title row's pane controls, right-aligned: `panel`'s actions, ⋯
+    /// if the dock has a menu, with the menu under it while open, and —.
+    fn controls<V: DockView>(&self, panel: &dyn PanelHandle, cx: &mut Context<V>) -> AnyElement {
+        self.drawn.controls.borrow_mut().clear();
+        let actions: Vec<_> = (panel.actions(cx).into_iter())
+            .map(|action| {
+                let run = action.run.clone();
+                self.control(action.id, action.icon, action.title, action.command, cx)
+                    .on_click(move |_, window, cx| run(window, cx))
+            })
+            .collect();
+        let more = (!self.menu.is_empty()).then(|| {
+            let button = self
+                .control(
+                    MORE_BUTTON,
+                    Icon::Ellipsis,
+                    tr!("kiln-shell-dock-more"),
+                    None,
+                    cx,
+                )
+                .on_click(cx.listener(|view: &mut V, _, window, cx| {
+                    match view.dock().is_menu_open() {
+                        true => view.dock_mut().close_menu(window, cx),
+                        false => view.dock_mut().open_menu(window, cx),
+                    }
+                    cx.notify();
+                }));
+            let menu = self.menu_open.then(|| self.menu_panel(cx));
+            div()
+                .id("dock-more")
+                .relative()
+                .track_scroll(&self.drawn.more)
+                .child(button)
+                .children(menu)
+        });
+        let hide = self
+            .control(
+                HIDE_BUTTON,
+                Icon::Minus,
+                tr!("kiln-shell-dock-hide"),
+                self.hide_command,
+                cx,
+            )
+            .on_click(cx.listener(|view: &mut V, _, window, cx| view.hide_clicked(window, cx)));
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .children(actions)
+            .children(more)
+            .child(hide)
+            .into_any_element()
+    }
+
+    /// The open ⋯ menu, under its button's right end, over the window and
+    /// kept inside it: a click on an item runs its command, a press outside
+    /// closes it, and it takes the keys [`DockState::open_menu`] lists.
+    fn menu_panel<V: DockView>(&self, cx: &mut Context<V>) -> AnyElement {
+        let entries = (self.menu.iter())
+            .map(|item| MenuEntry::Item {
+                title: item.title.clone(),
+                shortcut: Self::shortcut(&self.shortcut_contexts, item.command, cx)
+                    .map(SharedString::from),
+            })
+            .collect();
+        let commands: Vec<_> = self.menu.iter().map(|item| item.command).collect();
+        let (clicked, hovered) = (cx.weak_entity(), cx.weak_entity());
+        let more = self.drawn.more.clone();
+        let panel = MenuPanel::new(entries, &ui_theme(cx))
+            .highlighted(self.menu_highlighted)
+            .on_click(move |ix, window, cx| {
+                (clicked.update(cx, |view, cx| {
+                    view.dock_mut().close_menu(window, cx);
+                    cx.notify();
+                }))
+                .ok();
+                if let Some(&command) = commands.get(ix) {
+                    window.defer(cx, move |window, cx| run_action(command, window, cx));
+                }
+            })
+            .on_hover(move |ix, _, cx| {
+                (hovered.update(cx, |view, cx| {
+                    if view.dock().menu_highlighted != Some(ix) {
+                        view.dock_mut().menu_highlighted = Some(ix);
+                        cx.notify();
+                    }
+                }))
+                .ok();
+            });
+        let mut menu = div()
+            .debug_selector(|| "dock-menu".into())
+            .key_context(MENU_KEY_CONTEXT)
+            .on_key_down(
+                cx.listener(|view: &mut V, event: &KeyDownEvent, window, cx| {
+                    let keystroke = &event.keystroke;
+                    if !keystroke.modifiers.modified()
+                        && view.dock_mut().menu_key(&keystroke.key, window, cx)
+                    {
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_down_out(cx.listener(
+                move |view: &mut V, event: &MouseDownEvent, window, cx| {
+                    if !more.bounds().contains(&event.position) {
+                        view.dock_mut().close_menu(window, cx);
+                        cx.notify();
+                    }
+                },
+            ))
+            .child(panel);
+        if let Some(focus) = &self.menu_focus {
+            menu = menu.track_focus(focus);
+        }
+        // Its top right under the button's bottom right, shifted to stay in
+        // the window, as a narrow sidebar on the left would push it out.
+        let below = self.drawn.more.bounds().bottom_right() + gpui::point(px(0.), px(2.));
+        let menu = anchored()
+            .position(below)
+            .anchor(Anchor::TopRight)
+            .snap_to_window_with_margin(px(4.))
+            .child(menu);
+        deferred(menu).with_priority(1).into_any_element()
+    }
+
+    /// The title row's heading: `title` in the UI heading style.
+    fn heading(title: SharedString, cx: &App) -> gpui::Div {
+        let ui = ui_theme(cx);
+        div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_size(UI_HEADING.size)
+            .line_height(UI_HEADING.line_height)
+            .font_weight(FontWeight(f32::from(UI_HEADING.weight)))
+            .text_color(ui.text)
+            .child(title)
+    }
+
     /// `action`'s button: a click runs its command as a key would, from
     /// the mouse.
     fn action_button<V: DockView>(
@@ -1085,22 +1439,29 @@ impl DockState {
                 }),
         );
         let active = self.active.and_then(|id| self.handle(id));
-        let body = active
-            .filter(|_| self.visible)
-            .map(|panel| (panel.to_any_view(), panel.title(cx)));
+        if active.is_none() || !self.visible {
+            self.drawn.controls.borrow_mut().clear();
+        }
+        let body = active.filter(|_| self.visible).map(|panel| {
+            let heading = Self::heading(panel.title(cx), cx);
+            (panel.to_any_view(), heading, self.controls(panel, cx))
+        });
         let ui = &ui_theme(cx);
-        let title_row = |title: SharedString| {
+        // The panel's one heading, then its pane controls.
+        let title_row = |heading, controls| {
             div()
                 .flex_none()
                 .flex()
                 .items_center()
+                .gap_2()
                 .h(TAB_HEIGHT)
-                .px_3()
+                .pl_3()
+                .pr_1()
                 .bg(ui.panel_background)
                 .border_b_1()
                 .border_color(ui.border)
-                .text_color(ui.muted_text)
-                .child(title)
+                .child(heading)
+                .child(controls)
         };
         if self.position == DockPosition::Bottom {
             // The rail's buttons in a row before the title, the panel below;
@@ -1126,7 +1487,7 @@ impl DockState {
                 .flex()
                 .flex_col()
                 .track_scroll(&self.drawn.layout);
-            let Some((view, title)) = body else {
+            let Some((view, heading, controls)) = body else {
                 return match self.rail_hidden {
                     true => dock.flex_none().into_any_element(),
                     false => dock.flex_none().child(rail).into_any_element(),
@@ -1137,12 +1498,14 @@ impl DockState {
                 .flex()
                 .items_center()
                 .h(row_height)
+                .pr_1()
+                .gap_2()
                 .bg(ui.panel_background)
                 .border_b_1()
                 .border_color(ui.border)
-                .text_color(ui.muted_text)
                 .when(!self.rail_hidden, |row| row.child(rail))
-                .child(div().px_3().child(title));
+                .child(div().flex_1().min_w_0().flex().pl_3().child(heading))
+                .child(controls);
             let column = div()
                 .id("dock-bottom-column")
                 .relative()
@@ -1178,8 +1541,8 @@ impl DockState {
             .children(buttons)
             .footer(actions)
             .track(&self.drawn.rail);
-        let column = body.map(|(view, title)| {
-            let title = title_row(title).map(|row| {
+        let column = body.map(|(view, heading, controls)| {
+            let title = title_row(heading, controls).map(|row| {
                 if left {
                     row.border_r_1()
                 } else {
@@ -1245,6 +1608,19 @@ pub trait DockView: Render + Sized {
     /// [`DockState::click_rail`] says.
     fn rail_clicked(&mut self, panel: PanelId, window: &mut Window, cx: &mut Context<Self>) {
         self.dock_mut().click_rail(panel, window, cx);
+        cx.notify();
+    }
+
+    /// The title row's — was clicked: by default, runs the dock's
+    /// [`DockState::hide_command`] once the click's update is over, or
+    /// else hides the dock.
+    fn hide_clicked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dock_mut().close_menu(window, cx);
+        match self.dock().hide_command_id() {
+            // Once this update is over: the command may update the view.
+            Some(command) => window.defer(cx, move |window, cx| run_action(command, window, cx)),
+            None => self.dock_mut().set_visible(false),
+        }
         cx.notify();
     }
 }
@@ -1393,6 +1769,20 @@ impl DockView for Dock {
 
     fn rail_clicked(&mut self, panel: PanelId, window: &mut Window, cx: &mut Context<Self>) {
         self.state.click_rail(panel, window, cx);
+        if self.state.hidden_panel_focused(window, cx) {
+            cx.emit(DockEvent::HidFocus);
+        }
+        cx.notify();
+    }
+
+    /// Hides it as [`DockView::hide_clicked`] does, then tells the host if
+    /// the panel it hid had focus.
+    fn hide_clicked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.close_menu(window, cx);
+        match self.state.hide_command_id() {
+            Some(command) => window.defer(cx, move |window, cx| run_action(command, window, cx)),
+            None => self.state.set_visible(false),
+        }
         if self.state.hidden_panel_focused(window, cx) {
             cx.emit(DockEvent::HidFocus);
         }

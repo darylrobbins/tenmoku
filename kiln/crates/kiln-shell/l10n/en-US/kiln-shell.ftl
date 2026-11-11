@@ -32,3 +32,11 @@ kiln-shell-palette-no-matches = No matching commands
 
 kiln-shell-trust-folder = Trust Folder
 kiln-shell-trust-dont = Don't Trust
+
+## A dock's title row: the pane controls after the panel's own actions,
+## their accessible names and tooltips.
+
+# Opens the dock's menu.
+kiln-shell-dock-more = More actions
+# Hides the dock.
+kiln-shell-dock-hide = Hide

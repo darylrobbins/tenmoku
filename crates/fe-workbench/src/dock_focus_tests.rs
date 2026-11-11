@@ -125,11 +125,12 @@ fn hide_sidebar(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
     assert!(!sidebar_visible(workbench, cx));
 }
 
-/// Shows the sidebar with each of the project tree, the outline (the
-/// tree collapsed over it), search and the Changes panel in turn and,
-/// from the editor, presses `keys`, which must focus it.
+/// Shows the sidebar with each of the project tree, Structure (the
+/// outline, expanded under the tree, which comes first), search and the
+/// Changes panel in turn and, from the editor, presses `keys`, which must
+/// focus the tree, the tree, search and Changes.
 fn each_view_answers(keys: &str, workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
-    let [project, outline, search, changes] = sidebar_views(workbench, cx);
+    let [project, _, search, changes] = sidebar_views(workbench, cx);
     let explorer = workbench.read_with(cx, |workbench, cx| {
         workbench
             .dock()
@@ -139,27 +140,26 @@ fn each_view_answers(keys: &str, workbench: &Entity<Workbench>, cx: &mut VisualT
             .stack()
             .clone()
     });
-    let collapse_folders = |collapsed: bool, cx: &mut VisualTestContext| {
+    // The tree is the Explorer's lead, which never collapses: what it
+    // shows comes first, Structure expanded under it or not.
+    let structure = |collapsed: bool, cx: &mut VisualTestContext| {
         explorer.update(cx, |stack, cx| {
-            stack.set_collapsed(crate::project_panel::FOLDERS, collapsed, cx);
+            stack.set_collapsed(crate::outline_panel::VIEW, collapsed, cx);
         });
         draw(cx);
     };
     for (show, view) in [
         ("dock.show_project", &project),
-        ("outline.show", &outline),
+        ("outline.show", &project),
         ("search.show", &search),
         ("git.show_changes", &changes),
     ] {
         run(show, cx);
-        if show == "outline.show" {
-            collapse_folders(true, cx);
-        }
         focus_editor(workbench, cx);
         press(keys, cx);
         assert!(focused(view, cx), "{keys} after {show}");
         if show == "outline.show" {
-            collapse_folders(false, cx);
+            structure(true, cx);
         }
     }
 }
@@ -233,7 +233,8 @@ fn hidden_and_inner(cx: &mut TestAppContext) {
     assert!(editor_focused(&workbench, cx));
     assert!(!terminal_visible(&workbench, cx));
 
-    // The Explorer with both its views collapsed has nothing to focus.
+    // The Explorer's tree, its lead, never collapses: with Structure
+    // collapsed it's still there to focus.
     run("dock.show_project", cx);
     let explorer = workbench.read_with(cx, |workbench, cx| {
         workbench
@@ -245,15 +246,14 @@ fn hidden_and_inner(cx: &mut TestAppContext) {
             .clone()
     });
     explorer.update(cx, |stack, cx| {
-        stack.set_collapsed(crate::project_panel::FOLDERS, true, cx);
+        assert!(!stack.set_collapsed(crate::project_panel::FOLDERS, true, cx));
         stack.set_collapsed(crate::outline_panel::VIEW, true, cx);
     });
     focus_editor(&workbench, cx);
     press("ctrl-w l", cx);
-    assert!(editor_focused(&workbench, cx), "all collapsed");
-    explorer.update(cx, |stack, cx| {
-        stack.set_collapsed(crate::project_panel::FOLDERS, false, cx);
-    });
+    let [tree, ..] = sidebar_views(&workbench, cx);
+    assert!(focused(&tree, cx), "the tree, Structure collapsed");
+    focus_editor(&workbench, cx);
 
     // A neighbour comes first.
     let [project, ..] = sidebar_views(&workbench, cx);

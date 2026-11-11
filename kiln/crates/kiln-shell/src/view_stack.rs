@@ -15,6 +15,13 @@
 //! of body each, and a double-click gives the pair equal weights. A
 //! collapsed view has no divider either side.
 //!
+//! The view the panel's own heading names goes without a header of its
+//! own: a lone view, the stack's only one, and a view built as the stack's
+//! lead ([`StackedView::lead`]), as a project tree is under a dock header
+//! that says "Project". Neither collapses. A collapsed view's header can
+//! show a detail after its title ([`StackedView::detail`]), such as the
+//! symbol under the caret in an outline's.
+//!
 //! [`ViewStack::save`] keeps each view's collapse and weight by its
 //! [`ViewId`], for a saved layout, and [`ViewStack::restore`] puts them
 //! back.
@@ -59,6 +66,8 @@ pub struct StackedView {
     title: SharedString,
     body: AnyView,
     actions: Option<AnyView>,
+    detail: Option<AnyView>,
+    lead: bool,
     collapsed: bool,
     weight: f32,
 }
@@ -70,9 +79,26 @@ impl StackedView {
             title: title.into(),
             body: body.into(),
             actions: None,
+            detail: None,
+            lead: false,
             collapsed: false,
             weight: 1.,
         }
+    }
+
+    /// Builds it as the stack's lead, or not: the view the panel's heading
+    /// names, drawn without a header and never collapsed. It belongs at the
+    /// top of the stack.
+    pub fn lead(mut self, lead: bool) -> Self {
+        self.lead = lead;
+        self
+    }
+
+    /// Draws `detail` after its title while it's collapsed, such as what
+    /// it would show at the caret.
+    pub fn detail(mut self, detail: impl Into<AnyView>) -> Self {
+        self.detail = Some(detail.into());
+        self
     }
 
     /// Builds it collapsed, or not.
@@ -225,14 +251,26 @@ impl ViewStack {
         self.views.iter().map(|entry| entry.view.id).collect()
     }
 
-    /// Whether `view` is collapsed, if it's in the stack.
+    /// Whether `view` is collapsed, if it's in the stack: never a view
+    /// without a header ([`ViewStack::is_headless`]).
     pub fn is_collapsed(&self, view: ViewId) -> Option<bool> {
-        Some(self.entry(view)?.view.collapsed)
+        let ix = self.position(view)?;
+        Some(self.collapsed_at(ix))
+    }
+
+    /// Whether `view` is drawn without a header, if it's in the stack: a
+    /// lone view, or the stack's lead ([`StackedView::lead`]). Its panel's
+    /// heading names it, and it doesn't collapse.
+    pub fn is_headless(&self, view: ViewId) -> Option<bool> {
+        Some(self.headless_at(self.position(view)?))
     }
 
     /// Collapses or expands `view`. False, doing nothing, if it isn't in
-    /// the stack.
+    /// the stack or has no header ([`ViewStack::is_headless`]).
     pub fn set_collapsed(&mut self, view: ViewId, collapsed: bool, cx: &mut Context<Self>) -> bool {
+        if self.is_headless(view) != Some(false) {
+            return false;
+        }
         let Some(entry) = self.entry_mut(view) else {
             return false;
         };
@@ -242,12 +280,32 @@ impl ViewStack {
     }
 
     /// Collapses `view` if expanded, else expands it, as a click on its
-    /// header does. False, doing nothing, if it isn't in the stack.
+    /// header does. False, doing nothing, if it isn't in the stack or has
+    /// no header.
     pub fn toggle(&mut self, view: ViewId, cx: &mut Context<Self>) -> bool {
+        if self.is_headless(view) != Some(false) {
+            return false;
+        }
         let Some(entry) = self.entry_mut(view) else {
             return false;
         };
         entry.view.collapsed = !entry.view.collapsed;
+        cx.notify();
+        true
+    }
+
+    /// Shows `detail` after `view`'s title while it's collapsed, or
+    /// nothing. False, doing nothing, if it isn't in the stack.
+    pub fn set_detail(
+        &mut self,
+        view: ViewId,
+        detail: Option<AnyView>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(entry) = self.entry_mut(view) else {
+            return false;
+        };
+        entry.view.detail = detail;
         cx.notify();
         true
     }
@@ -276,16 +334,23 @@ impl ViewStack {
         Some(self.entry(view)?.focus.clone())
     }
 
-    /// Where `view`'s header was last drawn.
+    /// Where `view`'s header was last drawn: none for a view without one.
     pub fn header_bounds(&self, view: ViewId) -> Option<Bounds<Pixels>> {
-        self.entry(view)?.drawn.bounds_for_item(0)
+        let ix = self.position(view)?;
+        let entry = &self.views[ix];
+        (!self.headless_at(ix) && entry.drawn.children_count() >= 1)
+            .then(|| entry.drawn.bounds_for_item(0))
+            .flatten()
     }
 
     /// Where `view`'s body was last drawn: none while collapsed.
     pub fn body_bounds(&self, view: ViewId) -> Option<Bounds<Pixels>> {
-        let entry = self.entry(view)?;
-        (entry.drawn.children_count() >= 2)
-            .then(|| entry.drawn.bounds_for_item(1))
+        let ix = self.position(view)?;
+        let entry = &self.views[ix];
+        // Its header, if it has one, then its body.
+        let at = usize::from(!self.headless_at(ix));
+        (!self.collapsed_at(ix) && entry.drawn.children_count() > at)
+            .then(|| entry.drawn.bounds_for_item(at))
             .flatten()
     }
 
@@ -297,10 +362,10 @@ impl ViewStack {
     /// Each view's collapse and weight by its id, for a saved layout:
     /// `{"views": {"<id>": {"collapsed": bool, "weight": number}}}`.
     pub fn save(&self) -> Value {
-        let views = self.views.iter().map(|entry| {
+        let views = self.views.iter().enumerate().map(|(ix, entry)| {
             let view = &entry.view;
             let state = Value::from_iter([
-                ("collapsed", Value::from(view.collapsed)),
+                ("collapsed", Value::from(self.collapsed_at(ix))),
                 ("weight", Value::from(f64::from(view.weight))),
             ]);
             (view.id.0, state)
@@ -335,9 +400,9 @@ impl ViewStack {
     /// The view above `view`, if both are expanded: the pair a divider
     /// between them resizes.
     fn divided_above(&self, view: ViewId) -> Option<ViewId> {
-        let ix = self.views.iter().position(|entry| entry.view.id == view)?;
-        let (above, below) = (&self.views[ix.checked_sub(1)?].view, &self.views[ix].view);
-        (!above.collapsed && !below.collapsed).then_some(above.id)
+        let ix = self.position(view)?;
+        let above = ix.checked_sub(1)?;
+        (!self.collapsed_at(above) && !self.collapsed_at(ix)).then_some(self.views[above].view.id)
     }
 
     /// A press on the divider above `divider.after`: the start of a drag,
@@ -429,6 +494,21 @@ impl ViewStack {
         Some(())
     }
 
+    fn position(&self, view: ViewId) -> Option<usize> {
+        self.views.iter().position(|entry| entry.view.id == view)
+    }
+
+    /// Whether the `ix`th view goes without a header: see
+    /// [`ViewStack::is_headless`].
+    fn headless_at(&self, ix: usize) -> bool {
+        self.views.len() == 1 || self.views[ix].view.lead
+    }
+
+    /// Whether the `ix`th view is collapsed: never one without a header.
+    fn collapsed_at(&self, ix: usize) -> bool {
+        self.views[ix].view.collapsed && !self.headless_at(ix)
+    }
+
     fn entry(&self, view: ViewId) -> Option<&Entry> {
         self.views.iter().find(|entry| entry.view.id == view)
     }
@@ -446,20 +526,23 @@ impl ViewStack {
         self.toggle(view, cx);
     }
 
-    /// `ix`'s header, then its body if expanded. Expanded, it grows from
-    /// its header's height by its share of `weights`, the expanded views'
-    /// total, so the bodies fill what the headers leave between them, by
-    /// weight; collapsed, it's its header alone.
+    /// `ix`'s header, unless it has none, then its body if expanded.
+    /// Expanded, it grows from its header's height by its share of
+    /// `weights`, the expanded views' total, so the bodies fill what the
+    /// headers leave between them, by weight; collapsed, it's its header
+    /// alone.
     fn section(&self, ix: usize, weights: f64, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let ui = ui_theme(cx);
         let entry = &self.views[ix];
         let view = &entry.view;
         let id = view.id;
+        let (headless, collapsed) = (self.headless_at(ix), self.collapsed_at(ix));
+        let header_height = if headless { px(0.) } else { VIEW_HEADER_HEIGHT };
         let chevron = svg()
             .path(Icon::ChevronRight.path())
             .size(CHEVRON_WIDTH)
             .flex_none()
-            .when(!view.collapsed, |chevron| {
+            .when(!collapsed, |chevron| {
                 chevron.with_transformation(Transformation::rotate(radians(FRAC_PI_2)))
             })
             .text_color(ui.chevron);
@@ -472,6 +555,16 @@ impl ViewStack {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(actions)
         });
+        // What it would show, after the title, while it shows nothing.
+        let detail = (view.detail.clone()).filter(|_| collapsed).map(|detail| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .flex()
+                .child(detail)
+        });
+        let has_detail = detail.is_some();
         let header = div()
             .id(("view-stack-header", ix))
             .track_focus(&entry.focus)
@@ -490,11 +583,13 @@ impl ViewStack {
             .child(chevron)
             .child(
                 div()
-                    .flex_1()
+                    .when(!has_detail, |title| title.flex_1())
+                    .flex_shrink_0()
                     .min_w_0()
                     .truncate()
                     .child(view.title.clone()),
             )
+            .children(detail)
             .children(actions);
         let divider = self.divided_above(id).map(|_| {
             let divider = Divider {
@@ -519,7 +614,7 @@ impl ViewStack {
                 )
                 .on_drag(divider, |_, _, _, cx| cx.new(|_| NoGhost))
         });
-        let body = (!view.collapsed).then(|| {
+        let body = (!collapsed).then(|| {
             div()
                 .flex_1()
                 .min_h_0()
@@ -533,11 +628,11 @@ impl ViewStack {
             .flex_col()
             .w_full()
             .relative()
-            .min_h(VIEW_HEADER_HEIGHT)
-            .map(|section| match view.collapsed {
+            .min_h(header_height)
+            .map(|section| match collapsed {
                 true => section.flex_none(),
                 false => section
-                    .flex_basis(VIEW_HEADER_HEIGHT)
+                    .flex_basis(header_height)
                     // Flex grows by less than the free space while the
                     // growths total under 1, so they're shares of 1.
                     .flex_grow((f64::from(view.weight) / weights) as f32)
@@ -545,7 +640,7 @@ impl ViewStack {
                     .overflow_hidden(),
             })
             .track_scroll(&entry.drawn)
-            .child(header)
+            .when(!headless, |section| section.child(header))
             .children(body)
             .children(divider)
     }
@@ -554,9 +649,9 @@ impl ViewStack {
 impl Render for ViewStack {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // In f64, which no number of f32 weights overflows.
-        let weights = (self.views.iter())
-            .filter(|entry| !entry.view.collapsed)
-            .map(|entry| f64::from(entry.view.weight))
+        let weights = (0..self.views.len())
+            .filter(|&ix| !self.collapsed_at(ix))
+            .map(|ix| f64::from(self.views[ix].view.weight))
             .sum();
         let sections: Vec<_> = (0..self.views.len())
             .map(|ix| self.section(ix, weights, cx))

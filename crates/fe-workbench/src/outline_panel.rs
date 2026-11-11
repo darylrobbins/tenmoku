@@ -1,5 +1,7 @@
-//! The outline, a view of the right dock's Explorer: the active editor's symbols, in pre-order
-//! and indented by depth, which jump to their name when clicked.
+//! The outline, Structure in the sidebar's Explorer, collapsed at the foot
+//! of Project: the active editor's symbols, in pre-order and indented by
+//! depth, which jump to their name when clicked. Collapsed, its header
+//! still shows the symbol under the caret ([`CaretSymbol`]).
 //!
 //! The workbench says which editor is active ([`OutlinePanel::set_editor`]);
 //! the panel observes it, and refreshes when its [`Syntax`] has a tree
@@ -17,6 +19,7 @@
 //! is still of its language: one set to another language and back meanwhile
 //! keeps the outline shown.
 
+use kiln_l10n::tr;
 use std::{collections::HashMap, ops::Range};
 
 use fe_gpui::EditorView;
@@ -29,8 +32,8 @@ use gpui::{
     uniform_list,
 };
 
-/// The outline's view in the sidebar's Explorer, under the project tree;
-/// `outline.show` shows the Explorer with it expanded.
+/// The outline's view in the sidebar's Explorer, Structure, under the
+/// project tree; `outline.show` shows the Explorer with it expanded.
 pub(crate) const VIEW: kiln_shell::ViewId = kiln_shell::ViewId("outline");
 
 /// What the panel says in place of, or under, the outline.
@@ -292,24 +295,40 @@ impl OutlinePanel {
 
     /// What shows in place of the items, if anything.
     fn message(&self) -> Option<String> {
-        Some(match self.status {
-            Status::NoFile => "No file open".into(),
-            Status::PlainText => "No outline for plain text".into(),
-            Status::Unsupported(language) => format!("No outline for {language}"),
-            Status::TooLarge => "File too large for an outline".into(),
+        let message = match self.status {
+            Status::NoFile => tr!("workbench-project-structure-no-file"),
+            Status::PlainText => tr!("workbench-project-structure-plain-text"),
+            Status::Unsupported(language) => {
+                tr!(
+                    "workbench-project-structure-unsupported",
+                    language = language
+                )
+            }
+            Status::TooLarge => tr!("workbench-project-structure-too-large"),
             Status::Outline => match self.current() {
-                None => "Parsing…".into(),
-                Some(outline) if outline.items.is_empty() => "No symbols".into(),
+                None => tr!("workbench-project-structure-parsing"),
+                Some(outline) if outline.items.is_empty() => {
+                    tr!("workbench-project-structure-no-symbols")
+                }
                 Some(_) => return None,
             },
-        })
+        };
+        Some(message.into())
     }
 
     /// The footer under a capped outline.
     fn footer(&self) -> Option<String> {
         let truncated = self.status == Status::Outline
             && self.current().is_some_and(|outline| outline.truncated);
-        truncated.then(|| format!("Showing the first {} symbols", thousands(MAX_OUTLINE_ITEMS)))
+        truncated.then(|| {
+            let (count, shown) = (MAX_OUTLINE_ITEMS, thousands(MAX_OUTLINE_ITEMS));
+            tr!(
+                "workbench-project-structure-capped",
+                count = count,
+                shown = shown
+            )
+            .into()
+        })
     }
 
     /// Selects item `ix`'s name start, if it's still `generation`'s, in the
@@ -359,6 +378,112 @@ impl OutlinePanel {
                 )
             })
             .collect()
+    }
+}
+
+/// The symbol under the active editor's caret, as Structure's header shows
+/// it while collapsed: its kind's icon, faint, and its name in its syntax
+/// colour. Nothing while no outline shows, the outline trails the text
+/// (until the next lands) or the caret is in no symbol.
+pub(crate) struct CaretSymbol {
+    outline: Entity<OutlinePanel>,
+    /// The name the last frame drew.
+    #[cfg(test)]
+    drawn: Option<String>,
+    _outline_changed: Subscription,
+}
+
+impl CaretSymbol {
+    /// Follows `outline`, which notifies as its editor does, the caret
+    /// moving included.
+    pub(crate) fn new(outline: &Entity<OutlinePanel>, cx: &mut Context<Self>) -> Self {
+        Self {
+            outline: outline.clone(),
+            #[cfg(test)]
+            drawn: None,
+            _outline_changed: cx.observe(outline, |_, _, cx| cx.notify()),
+        }
+    }
+
+    /// The name the last frame drew, if any.
+    #[cfg(test)]
+    pub(crate) fn drawn(&self) -> Option<String> {
+        self.drawn.clone()
+    }
+}
+
+impl OutlinePanel {
+    /// The innermost symbol of the outline shown that holds the editor's
+    /// caret, and the editor's colour for its kind. None while the outline
+    /// shown is of another version of the text than the editor's: its
+    /// ranges, kept on screen until the next one lands, may no longer be
+    /// where its symbols are.
+    fn caret_symbol(&self, cx: &gpui::App) -> Option<(&fe_syntax::OutlineItem, gpui::Hsla)> {
+        let editor = self.editor.as_ref()?.upgrade()?;
+        let editor = editor.read(cx);
+        let model = editor.model();
+        let caret = model.primary_selection().head();
+        let version = model.snapshot().version();
+        let outline = (self.current())
+            .filter(|outline| !self.items().is_empty() && outline.version == version)?;
+        let item = outline.items.get(outline.item_at(caret)?)?;
+        let color = (fe_syntax::Highlight::from_capture(symbol_highlight(item.kind)))
+            .and_then(|highlight| editor.theme().syntax_color(highlight))
+            .unwrap_or(cx.theme().colors.text.primary);
+        Some((item, color))
+    }
+}
+
+/// The highlight whose colour a symbol of `kind` is drawn in, as its name
+/// is in the code.
+fn symbol_highlight(kind: OutlineKind) -> &'static str {
+    match kind {
+        OutlineKind::Module => "module",
+        OutlineKind::Class
+        | OutlineKind::Struct
+        | OutlineKind::Enum
+        | OutlineKind::Interface
+        | OutlineKind::Trait
+        | OutlineKind::Impl
+        | OutlineKind::Type => "type",
+        OutlineKind::Function => "function",
+        OutlineKind::Method => "function.method",
+        OutlineKind::Constant => "constant",
+        OutlineKind::Macro => "function.macro",
+        OutlineKind::Table | OutlineKind::Field => "property",
+        OutlineKind::Heading(_) => "markup.heading",
+        OutlineKind::Variant => "constant.enum_member",
+        // `OutlineKind` is non-exhaustive.
+        _ => "variable",
+    }
+}
+
+impl Render for CaretSymbol {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let outline = self.outline.read(cx);
+        let symbol = outline
+            .caret_symbol(cx)
+            .map(|(item, color)| (item.name.clone(), item.kind, color));
+        #[cfg(test)]
+        {
+            self.drawn = symbol.as_ref().map(|(name, ..)| name.to_string());
+        }
+        let faint = cx.theme().colors.text.faint;
+        div()
+            .debug_selector(|| "structure-caret-symbol".into())
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap_1()
+            .when_some(symbol, |row, (name, kind, color)| {
+                let icon = gpui::svg()
+                    .path(symbol_icon(kind).path())
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(faint);
+                row.child(icon)
+                    .child(div().min_w_0().truncate().text_color(color).child(name))
+            })
     }
 }
 
