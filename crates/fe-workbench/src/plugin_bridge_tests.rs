@@ -31,7 +31,6 @@ use kiln_plugin::{
     runner::{Call, Reply},
 };
 
-#[cfg(unix)]
 use super::{Bridge, CallDeadline, serve};
 use super::{Handoff, buffer_id, snapshot};
 use crate::{
@@ -575,15 +574,36 @@ fn a_hand_off_running_past_its_deadline_stops_the_wait() {
     main.join().unwrap();
 }
 
+/// A stand-in program `dir/name`: on Unix `sh` after a `#!/bin/sh` line, made executable; on
+/// Windows `dir/name.cmd`, `cmd` after `@echo off` with Windows' line ends (`PATHEXT` makes it a
+/// program).
+fn script(dir: &Path, name: &str, sh: &str, cmd: &str) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = cmd;
+        let path = dir.join(name);
+        fs::write(&path, format!("#!/bin/sh\n{sh}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+    #[cfg(windows)]
+    {
+        let _ = sh;
+        let path = dir.join(format!("{name}.cmd"));
+        let body: String = cmd.lines().map(|line| format!("{line}\r\n")).collect();
+        fs::write(&path, format!("@echo off\r\n{body}")).unwrap();
+        path
+    }
+}
+
 /// A program a plugin's call runs moves the call's deadline back on the
 /// buffers too: the call reads its buffer after a run that outlasted the
 /// deadline it started with.
-// Its program is a `/bin/sh` script.
-#[cfg(unix)]
+// Its program is a `/bin/sh` script, or a `.cmd` one on Windows.
 #[gpui::test]
 fn a_program_run_leaves_the_call_its_time_on_the_buffers(cx: &mut TestAppContext) {
     use kiln_plugin::bindings::kiln::extension::process::Host as _;
-    use std::os::unix::fs::PermissionsExt as _;
 
     let dir = start(cx, "alpha\n", false);
     let shown = window(cx, Some((dir.path().join("a.txt"), "alpha\n")));
@@ -593,9 +613,7 @@ fn a_program_run_leaves_the_call_its_time_on_the_buffers(cx: &mut TestAppContext
     cx.update(|cx| serve(jobs, &commands, cx));
     let bin = dir.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
-    let nap = bin.join("nap");
-    fs::write(&nap, "#!/bin/sh\nexec sleep 0.5\n").unwrap();
-    fs::set_permissions(&nap, fs::Permissions::from_mode(0o755)).unwrap();
+    script(&bin, "nap", "exec sleep 0.5", "ping -n 2 127.0.0.1 >nul");
     let nap = kiln_plugin::grants::resolve_program("nap", bin.as_os_str()).unwrap();
     let record = kiln_plugin::grants::GrantRecord {
         version: Some((1, 0, 0)),

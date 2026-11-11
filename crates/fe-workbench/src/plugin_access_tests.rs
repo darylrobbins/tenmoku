@@ -331,6 +331,14 @@ fn open_path_stays_inside_the_workspace(cx: &mut TestAppContext) {
     assert!(!opened);
 }
 
+/// A symlink `link` to `target`, a file (not there yet, or itself a link).
+fn symlink_file(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(target, link).unwrap();
+}
+
 #[gpui::test]
 fn save_refuses_an_untitled_or_outside_buffer(cx: &mut TestAppContext) {
     let mut setup = setup(cx);
@@ -359,16 +367,15 @@ fn save_refuses_an_untitled_or_outside_buffer(cx: &mut TestAppContext) {
 
     // A symlink in the workspace to a file outside it not there yet, which
     // a save would create, directly and through a second link.
-    #[cfg(unix)]
     {
         let dangling = setup.root.path().join("dangling.txt");
         let missing = outside.path().join("missing.txt");
-        std::os::unix::fs::symlink(&missing, &dangling).unwrap();
+        symlink_file(&missing, &dangling);
         let chained = setup.root.path().join("chained.txt");
         let hop = setup.root.path().join("hop.txt");
         let missing_too = outside.path().join("missing_too.txt");
-        std::os::unix::fs::symlink(&missing_too, &hop).unwrap();
-        std::os::unix::fs::symlink(&hop, &chained).unwrap();
+        symlink_file(&missing_too, &hop);
+        symlink_file(&hop, &chained);
         for (link, target) in [(dangling, missing), (chained, missing_too)] {
             let mut model = EditorModel::new(Buffer::new(""), Some(link.clone()));
             model.buffer_mut().edit([(0..0, "plugin")], Origin::User);

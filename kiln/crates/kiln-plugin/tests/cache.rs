@@ -199,6 +199,31 @@ fn an_unwritable_cache_directory_still_loads() {
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+/// `an_unwritable_cache_directory_still_loads` on Windows: the directory's access list denies
+/// the current user writing (`icacls /deny`, by the name `%USERNAME%`), so storing fails.
+#[cfg(windows)]
+#[test]
+fn an_unwritable_cache_directory_still_loads_on_windows() {
+    let dir = temp_dir("readonly-dacl");
+    fs::create_dir_all(&dir).unwrap();
+    let user = std::env::var("USERNAME").unwrap();
+    let icacls = |args: &[&str]| {
+        let status = std::process::Command::new("icacls")
+            .arg(&dir)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "icacls {args:?} on {}", dir.display());
+    };
+    icacls(&["/deny", &format!("{user}:(WD,AD)")]);
+    let (cache, engine) = (ComponentCache::new(&dir), engine());
+    cache.load(&engine, &component(1)).unwrap();
+    cache.load(&engine, &component(1)).unwrap();
+    assert_eq!(cache.compiled(), 2);
+    icacls(&["/remove:d", &user]);
+}
+
 #[test]
 fn a_payload_changed_in_place_is_recompiled() {
     let dir = temp_dir("payload");
@@ -251,4 +276,18 @@ fn a_fifo_at_the_entry_is_a_miss() {
         .recv_timeout(Duration::from_secs(2))
         .expect("blocked on the FIFO");
     assert_eq!(compiled, 1);
+}
+
+/// `a_fifo_at_the_entry_is_a_miss` on Windows, which has no FIFOs in the file system: a
+/// directory at the entry path is a non-regular file, and loading is a miss.
+#[cfg(windows)]
+#[test]
+fn a_directory_at_the_entry_is_a_miss() {
+    let dir = temp_dir("entry-dir");
+    let (cache, engine) = (ComponentCache::new(&dir), engine());
+    let bytes = component(1);
+    let path = cache.entry_path(&engine, &bytes);
+    fs::create_dir_all(&path).unwrap();
+    cache.load(&engine, &bytes).unwrap();
+    assert_eq!(cache.compiled(), 1);
 }
