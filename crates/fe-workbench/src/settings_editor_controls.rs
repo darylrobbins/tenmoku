@@ -271,7 +271,11 @@ pub(super) struct Field {
     /// The file's value, as text, when the input last took it; `None` to
     /// take it again at the next render. Text that differs is typed.
     shown: Option<String>,
-    /// Why the typed text wasn't written.
+    /// The typed text that wasn't written, as it was committed.
+    rejected: Option<String>,
+    /// Why it wasn't ([`rejection`]), in the language as the files were
+    /// last read: found again as each read lands, a change of language's
+    /// among them ([`SettingsEditor::refresh_messages`]).
     message: Option<String>,
     /// A list's item that Add Item made, which isn't written while it's
     /// empty.
@@ -287,6 +291,7 @@ impl Field {
     /// Has the next render show the file's value, typed text or not.
     pub(super) fn forget_shown(&mut self) {
         self.shown = None;
+        self.rejected = None;
         self.message = None;
         self.edited.set(false);
     }
@@ -302,6 +307,9 @@ pub(super) struct ListField {
     /// again at the next render.
     shown: Option<Vec<String>>,
     items: Vec<Field>,
+    /// The items' sideways scroll, which keeps the item the keys moved to
+    /// in view.
+    scroll: ScrollHandle,
 }
 
 impl ListField {
@@ -392,6 +400,16 @@ pub(super) fn parse(entry: &SettingEntry, text: &str) -> Result<Option<Value>, S
     }
 }
 
+/// Why `text`, typed into `entry`'s input, isn't a value it takes, if it
+/// isn't: [`parse`]'s error, else the schema's [`problem`].
+fn rejection(entry: &SettingEntry, text: &str) -> Option<String> {
+    match parse(entry, text) {
+        Err(message) => Some(message),
+        Ok(Some(value)) => problem(entry, &value),
+        Ok(None) => None,
+    }
+}
+
 /// Why `entry` can't take `value`, as the config problems for a file
 /// setting it would say: out of the schema's range, say.
 pub(super) fn problem(entry: &SettingEntry, value: &Value) -> Option<String> {
@@ -473,15 +491,29 @@ impl SettingsEditor {
         self.fields.get(key)?.message.clone()
     }
 
+    /// Finds again why each input's refused text wasn't written, in the
+    /// language now, as the model just read has its settings.
+    pub(super) fn refresh_messages(&mut self) {
+        let Some(model) = &self.model else {
+            return;
+        };
+        for (key, field) in &mut self.fields {
+            let entry = model
+                .entries()
+                .iter()
+                .find(|entry| entry.key_path() == *key);
+            if let (Some(rejected), Some(entry)) = (&field.rejected, entry) {
+                field.message = rejection(entry, rejected);
+            }
+        }
+    }
+
     /// What the input of the setting at dotted `key` holds, and why it
     /// wasn't written, if it wasn't; `None` until the input is drawn.
     #[cfg(test)]
     pub(crate) fn field(&self, key: &str, cx: &App) -> Option<(String, Option<String>)> {
         let field = self.fields.get(key)?;
-        Some((
-            field.input.read(cx).text().to_owned(),
-            field.message.clone(),
-        ))
+        Some((field.input.read(cx).text().to_owned(), self.message(key)))
     }
 
     /// What the inputs of the list at dotted `key` hold.
@@ -543,6 +575,19 @@ impl SettingsEditor {
     /// Resets the setting at `key` to its default, dropping what's typed
     /// into its inputs, so that leaving them writes nothing after.
     pub(super) fn reset(&mut self, key: &[String], window: &mut Window, cx: &mut Context<Self>) {
+        let editing = self.editing(window, cx);
+        self.reset_keeping_focus(key, window, cx);
+        // A list item that had focus, gone with the items the default
+        // hasn't: focus goes to an item left, else the list of rows.
+        if let Some(Editing::Item(path, item)) = editing
+            && self.editing(window, cx).is_none()
+        {
+            self.focus_item_or_list(&path, item, window, cx);
+        }
+    }
+
+    /// [`SettingsEditor::reset`], leaving focus where it is.
+    fn reset_keeping_focus(&mut self, key: &[String], window: &mut Window, cx: &mut Context<Self>) {
         self.write(key, Change::Reset, cx);
         let path = key.join(".");
         let Some(entry) = self.entry(&path).cloned() else {
@@ -872,10 +917,11 @@ impl SettingsEditor {
                 }
             }
             SettingKind::TextList => {
-                let first = (self.lists.get(&path)).and_then(|list| list.items.first());
-                match first {
-                    Some(item) => window.focus(&item.input.focus_handle(cx), cx),
-                    None => self.add_item(&path, window, cx),
+                let empty = (self.lists.get(&path)).is_none_or(|list| list.items.is_empty());
+                match empty {
+                    // Scrolled back to it, wherever the keys left the list.
+                    false => self.focus_item_or_list(&path, 0, window, cx),
+                    true => self.add_item(&path, window, cx),
                 }
             }
             SettingKind::Other => self.edit_in_file(&entry.key, window, cx),
@@ -916,6 +962,7 @@ impl SettingsEditor {
         Field {
             input,
             shown: Some(text),
+            rejected: None,
             message: None,
             added: false,
             edited,
@@ -935,6 +982,7 @@ impl SettingsEditor {
         }
         (field.input).update(cx, |input, cx| input.set_text(text.to_owned(), cx));
         field.shown = Some(text.to_owned());
+        field.rejected = None;
         field.message = None;
         field.edited.set(false);
     }
@@ -1026,6 +1074,7 @@ impl SettingsEditor {
         let path = entry.key_path();
         self.sync_list(&path, list_items(value), window, cx);
         let list = &self.lists[&path];
+        let scroll = list.scroll.clone();
         let items: Vec<Entity<TextInput>> =
             (list.items.iter()).map(|item| item.input.clone()).collect();
         for input in &items {
@@ -1110,6 +1159,7 @@ impl SettingsEditor {
             .child(
                 div()
                     .id(("setting-list", ix))
+                    .track_scroll(&scroll)
                     .debug_selector(move || selector("setting-items", &path))
                     .flex_1()
                     .min_w_0()
@@ -1136,6 +1186,7 @@ impl SettingsEditor {
         let list = self.lists.entry(path.to_owned()).or_insert(ListField {
             shown: None,
             items: Vec::new(),
+            scroll: ScrollHandle::new(),
         });
         if list.shown.as_ref() == Some(&items) {
             return;
@@ -1190,11 +1241,10 @@ impl SettingsEditor {
         let mut item = self.new_item(path, String::new(), window, cx);
         item.added = true;
         window.focus(&item.input.focus_handle(cx), cx);
-        self.lists
-            .get_mut(path)
-            .expect("checked above")
-            .items
-            .push(item);
+        let list = self.lists.get_mut(path).expect("checked above");
+        list.items.push(item);
+        // In view, past the items already there.
+        list.scroll.scroll_to_item(list.items.len() - 1);
         cx.notify();
     }
 
@@ -1217,6 +1267,103 @@ impl SettingsEditor {
         list.shown = Some(items.clone());
         self.write(&entry.key, Change::Set(Value::List(items)), cx);
         cx.stop_propagation();
+    }
+
+    /// Up or Down in item `item` of the list at dotted `path`: focuses the
+    /// item after it, with `down`, else the one before, if there's one.
+    pub(super) fn focus_item(
+        &mut self,
+        path: &str,
+        item: usize,
+        down: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next = match down {
+            true => item.checked_add(1),
+            false => item.checked_sub(1),
+        };
+        let Some(list) = self.lists.get(path) else {
+            return;
+        };
+        if let Some(next) = next.filter(|next| *next < list.items.len()) {
+            window.focus(&list.items[next].input.focus_handle(cx), cx);
+            list.scroll.scroll_to_item(next);
+            cx.notify();
+        }
+    }
+
+    /// `settings.add_list_item`: Add Item on the list whose item has focus,
+    /// else on the selected row's list, unless its scope's file can't set
+    /// it.
+    pub(super) fn add_focused_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path = match self.editing(window, cx) {
+            Some(Editing::Item(path, _)) => path,
+            _ => match self.selected_entry() {
+                Some(entry) if entry.kind == SettingKind::TextList => entry.key_path(),
+                _ => return,
+            },
+        };
+        let entry = self.entry(&path).cloned();
+        if entry.is_some_and(|entry| !self.restricted(&entry)) {
+            self.add_item(&path, window, cx);
+        }
+    }
+
+    /// `settings.remove_list_item`: removes the list item that has focus,
+    /// as its remove button does, and focuses the item now in its place,
+    /// else the one before it, else the list.
+    pub(super) fn remove_focused_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Editing::Item(path, item)) = self.editing(window, cx) else {
+            return;
+        };
+        if (self.entry(&path).cloned()).is_none_or(|entry| self.restricted(&entry)) {
+            return;
+        }
+        self.remove_item(&path, item, cx);
+        self.focus_item_or_list(&path, item, window, cx);
+    }
+
+    /// Focuses item `item` of the list at dotted `path`, else its last,
+    /// scrolled into view, else the list of rows: where focus goes when the
+    /// item that had it is gone.
+    pub(super) fn focus_item_or_list(
+        &mut self,
+        path: &str,
+        item: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let list = self.lists.get(path);
+        let count = list.map_or(0, |list| list.items.len());
+        match (list, count.checked_sub(1)) {
+            (Some(list), Some(last)) => {
+                let item = item.min(last);
+                window.focus(&list.items[item].input.focus_handle(cx), cx);
+                list.scroll.scroll_to_item(item);
+            }
+            _ => window.focus(&self.focus, cx),
+        }
+        cx.notify();
+    }
+
+    /// Gives the open dropdown's options the text of the model just read,
+    /// in the language now: each of the options it opened with that the
+    /// setting still lists, by value, takes its description now.
+    pub(super) fn refresh_select(&mut self, cx: &App) {
+        let Some(select) = &self.select else {
+            return;
+        };
+        let Some(now) = (self.entry(&select.key)).and_then(|entry| options(entry, cx)) else {
+            return;
+        };
+        let select = self.select.as_mut().expect("checked above");
+        for option in select.options.iter_mut().flatten() {
+            let found = now.iter().flatten().find(|now| now.value == option.value);
+            if let Some(found) = found {
+                option.description = found.description.clone();
+            }
+        }
     }
 
     /// The row input that has focus, if one has.
@@ -1270,6 +1417,7 @@ impl SettingsEditor {
         };
         let text = field.input.read(cx).text().to_owned();
         if !always && !field.typed(cx) {
+            field.rejected = None;
             field.message = None;
             return cx.notify();
         }
@@ -1282,8 +1430,12 @@ impl SettingsEditor {
             },
         };
         match change {
-            Err(message) => field.message = Some(message),
+            Err(message) => {
+                field.rejected = Some(text);
+                field.message = Some(message);
+            }
             Ok(change) => {
+                field.rejected = None;
                 field.message = None;
                 field.shown = Some(text);
                 field.edited.set(false);

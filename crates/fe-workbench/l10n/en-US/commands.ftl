@@ -11,6 +11,11 @@ command-ai-changes_revert = Revert AI Turn
 command-ai-inline_edit = Inline Edit with AI
 command-ai-show_changes = Show AI Changes
 
+command-ai_changes-accept_file = AI Changes: Accept Selected File
+command-ai_changes-apply_preview = AI Changes: Apply Preview
+command-ai_changes-cancel_preview = AI Changes: Cancel Preview
+command-ai_changes-reject_file = AI Changes: Reject Selected File
+
 command-app-check_for_updates = Check for Updates…
 command-app-install_shell_command = Install 'tenmoku' Command in PATH
 command-app-set_up = Set Up Tenmoku…
@@ -25,6 +30,13 @@ command-chat-new = New Chat
 command-chat-open = Chat: Open
 command-chat-review_latest_changes = Review Latest Chat Changes
 command-chat-set_api_key = Chat: Set API Key…
+
+command-commit_diff-collapse_all = Commit Diff: Collapse All
+command-commit_diff-expand_all = Commit Diff: Expand All
+command-commit_diff-expand_hidden = Commit Diff: Show Hidden Lines
+command-commit_diff-next_change = Commit Diff: Next Change
+command-commit_diff-previous_change = Commit Diff: Previous Change
+command-commit_diff-toggle_section = Commit Diff: Toggle Section
 
 command-diagnostics-next = Go to Next Problem
 command-diagnostics-previous = Go to Previous Problem
@@ -113,8 +125,14 @@ command-git-unstage_hunk = Git: Undo Stage Change
 command-git_log-compare_with_working_tree = Git: Compare with Working Tree
 command-git_log-copy_commit_hash = Git: Copy Commit Hash
 command-git_log-copy_subject = Git: Copy Commit Subject
+command-git_log-focus_filter = Git: Focus Log Filter
 command-git_log-open_changes = Git: Open Changes
+command-git_log-open_commit_link = Git: Open Commit on Remote
 command-git_log-open_file_at_revision = Git: Open File at This Revision
+
+command-git_panel-discard_row = Git: Discard Selected Row
+command-git_panel-stage_row = Git: Stage Selected Row
+command-git_panel-unstage_row = Git: Unstage Selected Row
 
 command-go_to_line-toggle = Go to Line/Column…
 
@@ -257,12 +275,14 @@ command-search-buffer_lines = Search Lines in Buffer
 command-search-clear_results = Clear Search Results
 command-search-collapse_all = Collapse All
 command-search-collapse_or_parent = Collapse Result or Select Its File
+command-search-dismiss_file = Dismiss Selected File
 command-search-expand_all = Expand All
 command-search-expand_or_first_child = Expand Result or Select Its First Match
 command-search-focus_results = Focus Search Results
 command-search-open_selected = Open Selected Result
 command-search-refresh = Refresh
 command-search-replace_all = Replace All in Files
+command-search-replace_in_file = Replace in Selected File
 command-search-select_first = Select First Result
 command-search-select_last = Select Last Result
 command-search-select_next = Select Next Result
@@ -277,6 +297,15 @@ command-search-toggle_replace = Toggle Replace
 command-search-toggle_whole_word = Toggle Whole Word
 command-search-view_as_list = View as List
 command-search-view_as_tree = View as Tree
+
+command-settings-add_list_item = Settings: Add List Item
+command-settings-remove_list_item = Settings: Remove List Item
+command-settings-reset_to_default = Settings: Reset to Default
+command-settings-switch_scope = Settings: Switch Scope
+
+command-shortcuts-copy_command_id = Keyboard Shortcuts: Copy Command ID
+command-shortcuts-reset_binding = Keyboard Shortcuts: Reset Keybinding
+command-shortcuts-show_same_keybindings = Keyboard Shortcuts: Show Same Keybindings
 
 command-spell-add_word = Spelling: Add Word to Dictionary
 command-spell-ignore_word = Spelling: Ignore Word

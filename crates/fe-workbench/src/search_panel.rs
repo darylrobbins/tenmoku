@@ -12,8 +12,10 @@
 //! A replace field under the query (the chevron, `search.toggle_replace`
 //! or `search.show_replace` shows it) replaces the results' matches: all of
 //! them, after asking with the counts (`search.replace_all`), or one file's
-//! (its row's Replace button). Dismissing a file drops it from the results,
-//! so Replace All skips it. The files are matched again as they are then:
+//! (its row's Replace button, or `search.replace_in_file` on the selected
+//! row's file or folder). Dismissing a file (its ×, or
+//! `search.dismiss_file`) drops it from the results, so Replace All skips
+//! it. The files are matched again as they are then:
 //! see [`search_replace`]. Afterwards the status line says what was
 //! replaced, and the search runs again. With Preserve Case on
 //! (`search.toggle_preserve_case`, the `AB` toggle beside the field), each
@@ -864,6 +866,8 @@ impl SearchPanel {
             Some(SearchOp::ExpandAll) => return self.collapse_all(false, cx),
             Some(SearchOp::ViewAsTree) => return self.set_view_as_tree(true, cx),
             Some(SearchOp::ViewAsList) => return self.set_view_as_tree(false, cx),
+            Some(SearchOp::ReplaceInFile) => return self.replace_selected(cx),
+            Some(SearchOp::DismissFile) => return self.dismiss_selected(cx),
             None => None,
         };
         if let Some(option) = option {
@@ -1116,6 +1120,80 @@ impl SearchPanel {
         if layout == self.layout && folder < self.folders.len() {
             let files = self.files_under(folder).into_iter().collect();
             self.drop_files(files, cx);
+        }
+    }
+
+    /// The selected row's file, a line's file, or the selected folder: what
+    /// `search.replace_in_file` and `search.dismiss_file` act on, as the
+    /// row's buttons do.
+    fn selected_node(&self) -> Option<ResultRow> {
+        Some(match self.selected_row()?.1 {
+            ResultRow::Line(file, _) => ResultRow::File(file),
+            node => node,
+        })
+    }
+
+    /// `search.replace_in_file`: the selected file's Replace button, or its
+    /// folder's, while the replace field shows them.
+    fn replace_selected(&mut self, cx: &mut Context<Self>) {
+        if !self.replace_shown {
+            return;
+        }
+        let layout = self.layout;
+        match self.selected_node() {
+            Some(ResultRow::File(file)) => self.replace_in_file(layout, file, cx),
+            Some(ResultRow::Folder(folder)) => self.replace_in_folder(layout, folder, cx),
+            _ => {}
+        }
+    }
+
+    /// `search.dismiss_file`: the selected file's ×, or its folder's. The
+    /// row that takes its place is selected, so the next press dismisses
+    /// the next file.
+    fn dismiss_selected(&mut self, cx: &mut Context<Self>) {
+        let (Some(mut at), Some(node)) = (self.selected, self.selected_node()) else {
+            return;
+        };
+        // The dismissed node's own row, a selected line's file's.
+        while matches!(self.rows.get(at), Some(ResultRow::Line(..))) && at > 0 {
+            at -= 1;
+        }
+        // The node after it and what's under it, which survives it: found
+        // again by what it is, as folders left empty go too.
+        let depth = self.depths.get(at).copied().unwrap_or(0);
+        let next = (at + 1..self.rows.len())
+            .find(|ix| self.depths[*ix] <= depth)
+            .and_then(|ix| self.node_identity(self.rows[ix]));
+        let layout = self.layout;
+        match node {
+            ResultRow::File(file) => self.dismiss(layout, file, cx),
+            ResultRow::Folder(folder) => self.dismiss_folder(layout, folder, cx),
+            ResultRow::Line(..) => return,
+        }
+        let found = next.and_then(|next| {
+            (0..self.rows.len())
+                .find(|ix| self.node_identity(self.rows[*ix]).as_ref() == Some(&next))
+        });
+        // Else the dismissed rows' place, or the last row if they were
+        // last: on a line, the file row it's under.
+        let mut at = found.unwrap_or(at).min(self.rows.len().saturating_sub(1));
+        while matches!(self.rows.get(at), Some(ResultRow::Line(..))) && at > 0 {
+            at -= 1;
+        }
+        if at < self.rows.len() {
+            self.select(at, cx);
+        }
+    }
+
+    /// What node `row` is, to find it again after the rows change: a
+    /// file's path, or a folder's from the search root; none for a line.
+    /// Never a file's label, `rel`, which is lossy: two names not UTF-8
+    /// can share one.
+    fn node_identity(&self, row: ResultRow) -> Option<(bool, PathBuf)> {
+        match row {
+            ResultRow::File(file) => Some((false, self.files.get(file)?.path.clone())),
+            ResultRow::Folder(folder) => Some((true, self.folders.get(folder)?.path.clone())),
+            ResultRow::Line(..) => None,
         }
     }
 
@@ -2306,6 +2384,10 @@ pub(crate) enum SearchOp {
     ExpandAll,
     ViewAsTree,
     ViewAsList,
+    /// The selected file's Replace button.
+    ReplaceInFile,
+    /// The selected file's dismiss button.
+    DismissFile,
 }
 
 /// The [`CommandTarget`] of search panel commands: the op to do.
@@ -2420,6 +2502,18 @@ pub(crate) fn registry() -> Registry<SearchCommands> {
         ("search.expand_all", "Expand All", search, ExpandAll),
         ("search.view_as_tree", "View as Tree", search, ViewAsTree),
         ("search.view_as_list", "View as List", search, ViewAsList),
+        (
+            "search.replace_in_file",
+            "Replace in Selected File",
+            search,
+            ReplaceInFile,
+        ),
+        (
+            "search.dismiss_file",
+            "Dismiss Selected File",
+            search,
+            DismissFile,
+        ),
         (
             "text_input.submit",
             "Submit",

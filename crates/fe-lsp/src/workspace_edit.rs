@@ -98,6 +98,20 @@ pub struct FileEdits {
     pub operation: Option<OperationId>,
 }
 
+impl FileEdits {
+    /// Text edits of `path`, which no server has open, as a server sent
+    /// them: for tests outside the crate, which have no server to decode a
+    /// workspace edit (a refactor's preview, say).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn closed(path: PathBuf, edits: Vec<TextEdit>, encoding: PositionEncoding) -> Self {
+        Self {
+            path,
+            target: EditTarget::Closed { edits, encoding },
+            operation: None,
+        }
+    }
+}
+
 /// The identity of one file operation in a decoded workspace edit, which
 /// an [`EditTarget::Depends`] names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

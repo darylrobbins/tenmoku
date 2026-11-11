@@ -777,3 +777,45 @@ fn the_keyboard_reach_commands_are_cataloged_and_listed(cx: &mut TestAppContext)
         assert!(!in_editor.iter().any(|listed| listed == id), "{id} isn't");
     }
 }
+
+/// The keyboard reach commands of A11Y-16b are in the catalog, and none is
+/// listed with the editor focused: each is for its panel's context.
+#[gpui::test]
+fn the_panel_reach_commands_are_cataloged_for_their_panels(cx: &mut TestAppContext) {
+    let ids = [
+        "ai_changes.accept_file",
+        "ai_changes.apply_preview",
+        "ai_changes.cancel_preview",
+        "ai_changes.reject_file",
+        "commit_diff.collapse_all",
+        "commit_diff.expand_all",
+        "commit_diff.expand_hidden",
+        "commit_diff.next_change",
+        "commit_diff.previous_change",
+        "commit_diff.toggle_section",
+        "git_log.focus_filter",
+        "git_log.open_commit_link",
+        "git_panel.discard_row",
+        "git_panel.stage_row",
+        "git_panel.unstage_row",
+        "search.dismiss_file",
+        "search.replace_in_file",
+        "settings.add_list_item",
+        "settings.remove_list_item",
+        "settings.reset_to_default",
+        "settings.switch_scope",
+        "shortcuts.copy_command_id",
+        "shortcuts.reset_binding",
+        "shortcuts.show_same_keybindings",
+    ];
+    let catalog = crate::command_catalog();
+    for id in ids {
+        let command = CommandId::parse(id).unwrap();
+        assert_eq!(catalog.check(&command, &Value::Null), Ok(()), "{id}");
+    }
+    let (_dir, workbench, cx) = opened(cx);
+    let in_editor = listed(&workbench, cx);
+    for id in ids {
+        assert!(!in_editor.iter().any(|listed| listed == id), "{id} isn't");
+    }
+}

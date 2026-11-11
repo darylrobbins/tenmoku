@@ -38,12 +38,16 @@
 //!   watches every workbench's root's project file, not only the launch
 //!   root's.
 //! - Up and Down move the selected row, scrolling it into view; Down in
-//!   the search field moves into the list. `/` or secondary-f goes back to
+//!   the search field moves into the list, and in a list's item they move
+//!   to the item before or after it. `/` or secondary-f goes back to
 //!   the search, and Escape clears it. The search and the rows' inputs
 //!   take the text inputs' editing and caret keys (`text_input.backspace`,
 //!   `text_input.move_left` and the like). On the selected row, Space toggles a switch and Enter works
 //!   its control: it opens a dropdown, goes into an input, or opens
-//!   `settings.toml`.
+//!   `settings.toml`. The palette's `settings.add_list_item` and
+//!   `settings.remove_list_item` act on the list item with focus (adding
+//!   to the selected row's list with none), `settings.reset_to_default` on
+//!   the selected row, and `settings.switch_scope` switches the scope.
 //! - Only the rows in view are built: the list is a gpui `list`, its rows
 //!   as tall as they draw ([`layout`] has how they're laid out).
 //!
@@ -74,7 +78,10 @@ use gpui::{
     ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
     Subscription, Task, WeakEntity, Window, div, list, px,
 };
-use kiln::platform::config::{self, ChangedFiles};
+use kiln::platform::{
+    config::{self, ChangedFiles},
+    locale::ActiveLocale,
+};
 use kiln_l10n::{text, tr};
 use kiln_shell::{PaneItem, PaneView as _};
 
@@ -114,7 +121,11 @@ mod open_file_tests;
 #[path = "settings_editor_caret_tests.rs"]
 mod caret_tests;
 
-use controls::{Change, Field, ListField, Select};
+#[cfg(test)]
+#[path = "settings_editor_locale_tests.rs"]
+mod locale_tests;
+
+use controls::{Change, Editing, Field, ListField, Select};
 use layout::Section;
 #[cfg(test)]
 pub(crate) use layout::ThemeCard;
@@ -345,6 +356,15 @@ impl SettingsEditor {
                     this.refilter(cx);
                 }
             }),
+            // The model's help, headings and variants are resolved as it's
+            // read: read again in the language just set, keeping what's
+            // typed; an open dropdown takes the new text as it lands
+            // ([`SettingsEditor::show_read`]), and a row's message is
+            // resolved as it's drawn.
+            cx.observe_global::<ActiveLocale>(|this, cx| {
+                this.reload(cx);
+                cx.notify();
+            }),
             cx.subscribe(workbench, |this, _, RootChanged(root), cx| {
                 this.root = Some(root.clone());
                 // Uncommitted inputs were typed against the old root's
@@ -429,6 +449,8 @@ impl SettingsEditor {
         }
         self.shown_read = read;
         self.model = Some(model);
+        self.refresh_select(cx);
+        self.refresh_messages();
         self.refilter(cx);
     }
 
@@ -676,6 +698,17 @@ impl SettingsEditor {
         cx.notify();
     }
 
+    /// Shows `scope`'s values, as [`SettingsEditor::set_scope`] does; a
+    /// row's input that had focus, made again for the new scope, gives it
+    /// to the list of rows, where the keys go on from the selected row.
+    fn switch_to(&mut self, scope: Scope, window: &mut Window, cx: &mut Context<Self>) {
+        let editing = self.editing(window, cx).is_some();
+        self.set_scope(scope, cx);
+        if editing {
+            window.focus(&self.focus, cx);
+        }
+    }
+
     /// The model the rows show, once the files are read.
     #[cfg(test)]
     pub(crate) fn model(&self) -> Option<&SettingsModel> {
@@ -837,6 +870,12 @@ impl SettingsEditor {
             "up" | "down" if !m.modified() && listing && self.select.is_some() => {
                 self.move_highlight(keystroke.key == "down", cx);
             }
+            // In a list's item: to the item before or after it.
+            "up" | "down" if !m.modified() && matches!(editing, Some(Editing::Item(..))) => {
+                if let Some(Editing::Item(key, item)) = &editing {
+                    self.focus_item(key, *item, keystroke.key == "down", window, cx);
+                }
+            }
             "up" | "down" if !m.modified() && editing.is_none() => {
                 let down = keystroke.key == "down";
                 if searching && down {
@@ -927,9 +966,9 @@ impl SettingsEditor {
                 SegmentedControl::new("settings-scope", tr!("workbench-settings-scope"))
                     .segments(labels)
                     .selected(scopes.iter().position(|scope| *scope == shown).unwrap_or(0))
-                    .on_change(cx.listener(move |this, ix: &usize, _, cx| {
+                    .on_change(cx.listener(move |this, ix: &usize, window, cx| {
                         if let Some(scope) = scopes.get(*ix) {
-                            this.set_scope(*scope, cx);
+                            this.switch_to(*scope, window, cx);
                         }
                     })),
             );
@@ -1150,6 +1189,65 @@ fn title(name: &str) -> String {
         .join(" ")
 }
 
+/// The list editors' buttons, Reset to Default and the You / This
+/// project switch, by keyboard (A11Y-16b).
+#[kiln::command(context = "settings_editor")]
+impl SettingsEditor {
+    /// Settings: Add List Item
+    ///
+    /// Adds an item to the list whose item has focus, else the selected
+    /// row's list, as its Add Item button does, and focuses it.
+    #[command(id = "settings.add_list_item")]
+    fn add_list_item(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.add_focused_item(cx.window, cx.cx);
+    }
+
+    /// Settings: Remove List Item
+    ///
+    /// Removes the list item that has focus, as its remove button does,
+    /// and focuses the item after it, else the one before.
+    #[command(id = "settings.remove_list_item")]
+    fn remove_list_item(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.remove_focused_item(cx.window, cx.cx);
+    }
+
+    /// Settings: Reset to Default
+    ///
+    /// Removes the selected setting from the shown scope's file, as its
+    /// Reset button does.
+    #[command(id = "settings.reset_to_default")]
+    fn reset_to_default(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.reset_selected(cx.window, cx.cx);
+    }
+
+    /// Settings: Switch Scope
+    ///
+    /// Shows the other scope's values: This project's after You's, You's
+    /// after This project's, with a folder open.
+    #[command(id = "settings.switch_scope")]
+    fn switch_scope(&mut self, cx: &mut kiln::Cx<Self>) {
+        let scopes = self.scopes();
+        let at = scopes.iter().position(|scope| *scope == self.scope());
+        if let (Some(at), true) = (at, scopes.len() > 1) {
+            self.switch_to(scopes[(at + 1) % scopes.len()], cx.window, cx.cx);
+        }
+    }
+}
+
+impl SettingsEditor {
+    /// `settings.reset_to_default`: the selected row's Reset, where it
+    /// shows one: its scope's file sets it, and can.
+    fn reset_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.selected_entry().cloned() else {
+            return;
+        };
+        let modified = self.value(&entry, cx).is_some_and(|(_, set)| set);
+        if modified && !self.restricted(&entry) {
+            self.reset(&entry.key, window, cx);
+        }
+    }
+}
+
 impl Focusable for SettingsEditor {
     /// The search field's, so showing the tab focuses it.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -1213,7 +1311,7 @@ impl Render for SettingsEditor {
                 }),
             )
         });
-        div()
+        <Self as kiln::ViewCommands>::attach(div(), cx)
             .track_focus(&self.root_focus)
             .debug_selector(|| "settings-editor".into())
             .key_context(KEY_CONTEXT)

@@ -18,6 +18,9 @@ workbench-git-log-no-matches = No commits match
 workbench-git-log-filter-placeholder = Filter by message, author or SHA
 workbench-git-log-clear-filter = Clear Filter
 workbench-git-log-renamed-dir = { $dir } ← { $from }
+# What `git_log.open_commit_link` says for a commit whose remote's host has no
+# commit pages, or that has no remote.
+workbench-git-log-no-web-page = This commit's remote has no web page to open
 
 ## A commit's card
 

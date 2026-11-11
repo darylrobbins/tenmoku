@@ -58,6 +58,12 @@ fn diff_view() -> ContextStack {
     stack(vec![ContextFrame::new("DiffView"), editor(None)])
 }
 
+/// A commit's change to all its files, which binds a diff view's next and
+/// previous change keys too (A11Y-16b).
+fn commit_diff() -> ContextStack {
+    stack(vec![ContextFrame::new("CommitDiffView")])
+}
+
 fn plain_editor() -> ContextStack {
     stack(vec![editor(None)])
 }
@@ -76,6 +82,10 @@ fn card(os: Os) -> Vec<(&'static str, &'static str, ContextStack)> {
         ("shift-f7", "diff.previous_change", diff_view()),
         ("alt-f5", "diff.next_change", diff_view()),
         ("shift-alt-f5", "diff.previous_change", diff_view()),
+        ("f7", "diff.next_change", commit_diff()),
+        ("shift-f7", "diff.previous_change", commit_diff()),
+        ("alt-f5", "diff.next_change", commit_diff()),
+        ("shift-alt-f5", "diff.previous_change", commit_diff()),
         ("alt-f3", "git.next_change", plain_editor()),
         ("shift-alt-f3", "git.previous_change", plain_editor()),
         (

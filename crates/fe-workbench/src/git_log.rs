@@ -67,8 +67,11 @@
 //! graph is laid out over the rows listed: a commit's lane runs on to each
 //! parent listed, and ends at its dot where none is. Enter in the box reads
 //! at once and gives the keys back to the list; Escape, or the box's clear
-//! button, empties the box and lists every commit again. With vim on, `/`
-//! in the list focuses the box, its text selected. The box is a
+//! button, empties the box and lists every commit again, and Escape in an
+//! empty box gives the keys back to the list. With vim on, `/` in the list
+//! focuses the box, its text selected, as `git_log.focus_filter` does with
+//! vim off too. `git_log.open_commit_link` opens the selected commit's
+//! page, as its card's link does. The box is a
 //! [`TextInput`] in the `text_input` key context, and the panel drops its
 //! `vim` flag while the box has focus, so the list's keys don't take what's
 //! typed. Running `git.log` again keeps the filter.
@@ -115,6 +118,7 @@ use crate::{
     dock::DockOp,
     git,
     picker::{self, PaletteOp},
+    workbench::toast::{self, Toast},
 };
 
 /// The id the Git Log panel had on the sidebar, before it was Source
@@ -1280,7 +1284,31 @@ impl GitLogPanel {
         cx.notify();
     }
 
-    /// `/`: focuses the filter box, its text selected.
+    /// `git_log.open_commit_link`: opens the selected row's commit's page
+    /// on its remote's host, once found, as its card's link does; says so
+    /// if its remote has none.
+    fn open_selected_commit_link(&mut self, cx: &mut Context<Self>) {
+        let line = self.selected.and_then(|ix| self.lines.get(ix).copied());
+        let Some(entry) = line.and_then(|line| self.commits.get(line.commit())) else {
+            return;
+        };
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let id = entry.commit.id.clone();
+        let web = cx.background_spawn(async move { repo.commit_web_url(&id) });
+        cx.spawn(async move |_, cx| {
+            let web = web.await;
+            cx.update(|cx| match web {
+                Some(url) => cx.open_url(&url),
+                None => toast::show(cx, Toast::info(tr!("workbench-git-log-no-web-page"))),
+            });
+        })
+        .detach();
+    }
+
+    /// `/`, or `git_log.focus_filter`: focuses the filter box, its text
+    /// selected.
     fn focus_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.filter_input
             .update(cx, |input, cx| input.select_all(cx));
@@ -1294,7 +1322,8 @@ impl GitLogPanel {
     }
 
     /// Enter in the filter box reads the list at once and focuses it;
-    /// Escape empties the box, lists every commit and focuses the list.
+    /// Escape empties the box and lists every commit, and in an empty box
+    /// focuses the list.
     fn on_filter_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         if keystroke.modifiers.modified() {
@@ -1302,7 +1331,11 @@ impl GitLogPanel {
         }
         match keystroke.key.as_str() {
             "enter" => self.apply_filter(cx),
-            "escape" => self.clear_filter(cx),
+            "escape" if !self.filter_input.read(cx).text().is_empty() => {
+                cx.stop_propagation();
+                return self.clear_filter(cx);
+            }
+            "escape" => {}
             _ => return,
         }
         cx.stop_propagation();
@@ -1823,9 +1856,14 @@ impl GitLogPanel {
             return;
         }
         let keystroke = &event.keystroke;
-        if keystroke.key == "escape" && !keystroke.modifiers.modified() && self.menu.is_some() {
-            cx.stop_propagation();
-            return self.close_menu(cx);
+        if !keystroke.modifiers.modified() && self.menu.is_some() {
+            match keystroke.key.as_str() {
+                "escape" => self.close_menu(cx),
+                "up" | "down" => self.move_menu_highlight(keystroke.key == "down", cx),
+                "enter" => self.choose_menu_highlight(window, cx),
+                _ => return,
+            }
+            return cx.stop_propagation();
         }
         if keystroke.key == "/" && !keystroke.modifiers.modified() && fe_gpui::vim_enabled(cx) {
             cx.stop_propagation();
@@ -1903,6 +1941,7 @@ impl GitLogPanel {
                 let line_id = self.lines.get(ix).map_or(u64::MAX, |line| line.id());
                 let row = div()
                     .id(ElementId::NamedInteger(name.clone(), line_id))
+                    .debug_selector(move || format!("{}{ix}", kiln_l10n::verbatim!("git-log-row:")))
                     .h(ROW_HEIGHT)
                     .w_full()
                     .pl_2()

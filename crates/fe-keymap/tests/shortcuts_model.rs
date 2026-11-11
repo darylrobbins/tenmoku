@@ -709,3 +709,108 @@ fn keyboard_reach_commands_are_rows_and_toast_keys_are_bound() {
         }
     }
 }
+
+/// The keyboard reach of A11Y-16b in the default keymap, on each platform:
+/// a commit's change to all its files binds a diff view's next and
+/// previous change keys, F7 and Shift-F7 (and Alt-F5, Shift-Alt-F5), in its
+/// own context, where they clash with nothing; the panels' new commands
+/// have no key of their own (section 7: bound only where a sibling surface
+/// binds one), rows to bind them from, found by title.
+#[test]
+fn panel_reach_commands_are_rows_and_commit_diff_keys_are_bound() {
+    let reach = [
+        command("diff.next_change", "Next Change"),
+        command("diff.previous_change", "Previous Change"),
+        command("settings.add_list_item", "Settings: Add List Item"),
+        command("settings.remove_list_item", "Settings: Remove List Item"),
+        command("settings.reset_to_default", "Settings: Reset to Default"),
+        command("settings.switch_scope", "Settings: Switch Scope"),
+        command(
+            "shortcuts.copy_command_id",
+            "Keyboard Shortcuts: Copy Command ID",
+        ),
+        command(
+            "shortcuts.reset_binding",
+            "Keyboard Shortcuts: Reset Keybinding",
+        ),
+        command(
+            "shortcuts.show_same_keybindings",
+            "Keyboard Shortcuts: Show Same Keybindings",
+        ),
+        command("git_log.focus_filter", "Git: Focus Log Filter"),
+        command("git_log.open_commit_link", "Git: Open Commit on Remote"),
+        command("git_panel.stage_row", "Git: Stage Selected Row"),
+        command("git_panel.unstage_row", "Git: Unstage Selected Row"),
+        command("git_panel.discard_row", "Git: Discard Selected Row"),
+        command("commit_diff.next_change", "Commit Diff: Next Change"),
+        command(
+            "commit_diff.previous_change",
+            "Commit Diff: Previous Change",
+        ),
+        command("commit_diff.collapse_all", "Commit Diff: Collapse All"),
+        command("commit_diff.expand_all", "Commit Diff: Expand All"),
+        command("commit_diff.toggle_section", "Commit Diff: Toggle Section"),
+        command(
+            "commit_diff.expand_hidden",
+            "Commit Diff: Show Hidden Lines",
+        ),
+        command("ai_changes.apply_preview", "AI Changes: Apply Preview"),
+        command("ai_changes.cancel_preview", "AI Changes: Cancel Preview"),
+        command("ai_changes.accept_file", "AI Changes: Accept Selected File"),
+        command("ai_changes.reject_file", "AI Changes: Reject Selected File"),
+        command("search.replace_in_file", "Replace in Selected File"),
+        command("search.dismiss_file", "Dismiss Selected File"),
+    ];
+    for (source, os) in [(DEFAULT_LINUX, Os::Linux), (DEFAULT_MACOS, Os::MacOs)] {
+        let (layer, diagnostics) =
+            KeymapLayer::parse_for(Path::new(DEFAULT_KEYMAP_PATH), source, None, os);
+        assert_eq!(diagnostics, [], "{os:?}");
+        let model = ShortcutsModel::from_layers(&[layer.unwrap()], &reach, os);
+
+        // Next and previous change: a diff view's keys, and the same in a
+        // commit diff, which clash with nothing.
+        for (id, keys) in [
+            ("diff.next_change", ["f7", "alt-f5"]),
+            ("diff.previous_change", ["shift-f7", "alt-shift-f5"]),
+        ] {
+            let bound = row(model.rows(), id);
+            let in_commit_diff: Vec<_> = (bound.bindings.iter())
+                .filter(|binding| binding.when.as_deref() == Some("CommitDiffView"))
+                .collect();
+            let found: Vec<String> = (in_commit_diff.iter())
+                .map(|binding| binding.keys.to_string())
+                .collect();
+            assert_eq!(found, keys, "{os:?} {id}");
+            for binding in in_commit_diff {
+                assert!(
+                    !(binding.issues.iter())
+                        .any(|issue| matches!(issue, ShortcutIssue::Conflict { .. })),
+                    "{os:?} {id}: {:?}",
+                    binding.issues
+                );
+            }
+            let found = search(&model, "@keybinding:f7", true);
+            assert!(
+                found
+                    .iter()
+                    .any(|line| line.starts_with("diff.next_change: ")),
+                "{os:?}: {found:?}"
+            );
+        }
+
+        // The rest have no key: rows to bind them from, found by title.
+        for info in &reach[2..] {
+            let listed = row(model.rows(), &info.id);
+            assert!(listed.known, "{os:?} {}", info.id);
+            assert_eq!(listed.bindings.len(), 0, "{os:?} {}", info.id);
+            let found = search(&model, &info.title, false);
+            assert!(
+                found
+                    .iter()
+                    .any(|line| line.starts_with(&format!("{}: ", info.id))),
+                "{os:?} {}: {found:?}",
+                info.id
+            );
+        }
+    }
+}

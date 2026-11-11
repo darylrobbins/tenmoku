@@ -2191,6 +2191,28 @@ keys = "shift-alt-f5"
 command = "diff.previous_change"
 context = "DiffView"
 
+# The same keys, the same commands, in a commit's change to all its files
+# (A11Y-16b), whose toolbar has the same previous and next change buttons.
+[[bindings]]
+keys = "f7"
+command = "diff.next_change"
+context = "CommitDiffView"
+
+[[bindings]]
+keys = "shift-f7"
+command = "diff.previous_change"
+context = "CommitDiffView"
+
+[[bindings]]
+keys = "alt-f5"
+command = "diff.next_change"
+context = "CommitDiffView"
+
+[[bindings]]
+keys = "shift-alt-f5"
+command = "diff.previous_change"
+context = "CommitDiffView"
+
 # Next and previous change in an editor: VS Code's dirty-diff alt-f3 and
 # shift-alt-f3.
 [[bindings]]

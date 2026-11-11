@@ -89,11 +89,14 @@ fn box_typing_rereads_the_list(cx: &mut TestAppContext) {
     assert_eq!(filtered.iter().collect::<Vec<_>>(), order);
     assert_eq!(selected(&workbench, cx), Some(0));
 
-    // Escape in the box empties it and lists every commit, at once, with
-    // the keys back on the list.
+    // Escape in the box empties it and lists every commit, at once,
+    // leaving the keys in the box; Escape in the empty box gives them back
+    // to the list.
     press("escape", cx);
     assert_eq!(box_text(&panel, cx), "");
     assert_eq!(lines(&workbench, cx), all);
+    assert_eq!(focus(&panel, cx), (true, false));
+    press("escape", cx);
     assert_eq!(focus(&panel, cx), (false, true));
     press("j", cx);
     assert_eq!(selected(&workbench, cx), Some(1));
@@ -140,6 +143,7 @@ fn box_no_matches_says_so(cx: &mut TestAppContext) {
     let (_, edit) = ids.iter().find(|(summary, _)| *summary == "edit").unwrap();
     press("escape", cx);
     assert_eq!(shown(cx), None);
+    press("escape", cx);
     press("/", cx);
     let input = panel.read_with(cx, |panel, _| panel.filter_input.clone());
     input.update(cx, |input, cx| input.insert(&edit[..6].to_uppercase(), cx));
@@ -201,6 +205,10 @@ fn vim_slash_focuses_the_box_and_enter_returns(cx: &mut TestAppContext) {
     press("/", cx);
     press("escape", cx);
     assert_eq!(lines(&workbench, cx), all);
+    // The box empty, Escape gives the keys back to the list.
+    assert_eq!(focus(&panel, cx), (true, false));
+    press("escape", cx);
+    assert_eq!(focus(&panel, cx), (false, true));
 
     // With vim off, `/` is the list's no more.
     cx.update(|_, cx| fe_gpui::set_vim_enabled(cx, false));

@@ -19,7 +19,10 @@
 //!   Keybinding (below), Remove Keybinding (also Delete, or
 //!   secondary-backspace, on the selected line), Reset Keybinding on a
 //!   command with entries in the user's keymap, and Show Same
-//!   Keybindings, which searches for its keys. Adding, changing,
+//!   Keybindings, which searches for its keys. Up and Down move the
+//!   menu's highlight and Enter chooses it; on the selected line, the
+//!   palette's `shortcuts.copy_command_id`, `shortcuts.reset_binding` and
+//!   `shortcuts.show_same_keybindings` do what those items do. Adding, changing,
 //!   removing and resetting write the user's `keymap.toml`
 //!   ([`fe_keymap::write_keymap`]) off the main thread, a failure shown in
 //!   a toast; the watcher's reload of the file swaps the keymap in use,
@@ -71,7 +74,7 @@ use kiln::{
         locale::ActiveLocale,
     },
 };
-use kiln_l10n::{tr, verbatim};
+use kiln_l10n::{text, tr, verbatim};
 use kiln_shell::{PaneItem, PaneView as _};
 
 use self::recorder::Recorder;
@@ -151,6 +154,9 @@ struct LineMenu {
     items: Vec<MenuItem>,
     /// Those of `items` shown but refused, with [`reset_refused_hint`].
     disabled: Vec<MenuItem>,
+    /// The item Up and Down moved to, or the pointer is over, which Enter
+    /// chooses: none until either does.
+    highlighted: Option<MenuItem>,
     /// Where it was asked for, in the window.
     position: Point<Pixels>,
 }
@@ -188,8 +194,10 @@ pub(crate) struct ShortcutsEditor {
 impl ShortcutsEditor {
     fn new(cx: &mut Context<Self>) -> Self {
         let ui = fe_ui::ui_theme(cx);
-        let search = cx
-            .new(|cx| TextInput::new(tr!("workbench-setup-shortcuts-search"), &ui, cx).bordered());
+        // Keyed, so a change of language shows in it at once.
+        let search = cx.new(|cx| {
+            TextInput::new(text!("workbench-setup-shortcuts-search"), &ui, cx).bordered()
+        });
         let subscriptions = vec![
             cx.subscribe(&search, |this, _, event, cx| {
                 if *event == TextInputEvent::Changed {
@@ -288,6 +296,8 @@ impl ShortcutsEditor {
         };
         let (items, disabled) = self.menu_items_for(line, cx);
         if let Some(menu) = &mut self.menu {
+            // An item no longer offered, or now refused, isn't chosen.
+            (menu.highlighted).take_if(|item| !items.contains(item) || disabled.contains(item));
             menu.items = items;
             menu.disabled = disabled;
         }
@@ -529,6 +539,7 @@ impl ShortcutsEditor {
             line: ix,
             items,
             disabled,
+            highlighted: None,
             position,
         });
         window.focus(&self.focus, cx);
@@ -556,15 +567,74 @@ impl ShortcutsEditor {
             return;
         };
         cx.notify();
-        let Some((row, binding)) = self.line(menu.line) else {
+        self.run_line_item(menu.line, item, window, cx);
+    }
+
+    /// Moves the open menu's highlight to the next item it can choose, or
+    /// with `down` false the one before, wrapping; from none, the first or
+    /// the last.
+    fn move_highlight(&mut self, down: bool, cx: &mut Context<Self>) {
+        let Some(menu) = &mut self.menu else {
+            return;
+        };
+        let enabled: Vec<MenuItem> = (menu.items.iter())
+            .filter(|item| !menu.disabled.contains(item))
+            .copied()
+            .collect();
+        let Some(last) = enabled.len().checked_sub(1) else {
+            return;
+        };
+        let at = (menu.highlighted).and_then(|item| enabled.iter().position(|it| *it == item));
+        let next = match (at, down) {
+            (None, true) => 0,
+            (None, false) => last,
+            (Some(at), true) if at == last => 0,
+            (Some(at), true) => at + 1,
+            (Some(at), false) => at.checked_sub(1).unwrap_or(last),
+        };
+        menu.highlighted = Some(enabled[next]);
+        cx.notify();
+    }
+
+    /// Enter in the open menu: chooses the highlighted item, if any.
+    fn choose_highlighted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = self.menu.as_ref().and_then(|menu| menu.highlighted) {
+            self.run_menu_item(item, window, cx);
+        }
+    }
+
+    /// Runs `item` of the selected line's menu, as the menu would, if the
+    /// menu offers it there and doesn't refuse it: the palette's
+    /// `shortcuts.*` commands. Closes an open menu.
+    fn run_on_selected(&mut self, item: MenuItem, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.selected else {
+            return;
+        };
+        let (items, disabled) = self.menu_items_for(ix, cx);
+        if !items.contains(&item) || disabled.contains(&item) {
+            return;
+        }
+        self.close_menu(cx);
+        self.run_line_item(ix, item, window, cx);
+    }
+
+    /// Runs `item` on line `ix`.
+    fn run_line_item(
+        &mut self,
+        ix: usize,
+        item: MenuItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((row, binding)) = self.line(ix) else {
             return;
         };
         match item {
             MenuItem::CopyCommandId => {
                 cx.write_to_clipboard(ClipboardItem::new_string(row.command.clone()));
             }
-            MenuItem::AddKeybinding => self.start_recording(menu.line, true, window, cx),
-            MenuItem::RemoveKeybinding => self.remove(menu.line, cx),
+            MenuItem::AddKeybinding => self.start_recording(ix, true, window, cx),
+            MenuItem::RemoveKeybinding => self.remove(ix, cx),
             MenuItem::ResetKeybinding => {
                 let command = row.command.clone();
                 let guard = self.reset_guard(row, cx);
@@ -691,6 +761,12 @@ impl ShortcutsEditor {
             return cx.stop_propagation();
         }
         match keystroke.key.as_str() {
+            // The open menu's: Up and Down move its highlight, Enter
+            // chooses it.
+            "up" | "down" if !m.modified() && self.menu.is_some() => {
+                self.move_highlight(keystroke.key == "down", cx);
+            }
+            "enter" if !m.modified() && self.menu.is_some() => self.choose_highlighted(window, cx),
             "enter" if !m.modified() && !searching => {
                 if let Some(ix) = self.selected {
                     self.start_recording(ix, false, window, cx);
@@ -983,8 +1059,11 @@ impl ShortcutsEditor {
         let menu = self.menu.as_ref()?;
         let colors = cx.theme().colors;
         let hover = colors.list.row_hover;
+        let selected = colors.list.row_selected;
+        let selected_text = colors.tab.active_text;
         let rows = (menu.items.iter().enumerate()).map(|(ix, &item)| {
             let disabled = menu.disabled.contains(&item);
+            let highlighted = menu.highlighted == Some(item);
             let selector = format!("menu-item:{}", item.title());
             div()
                 .id(("shortcuts-menu-item", ix))
@@ -1005,6 +1084,19 @@ impl ShortcutsEditor {
                     ),
                     false => row
                         .hover(move |style| style.bg(hover))
+                        .when(highlighted, |row| {
+                            row.debug_selector(|| "shortcuts-menu-highlighted".into())
+                                .bg(selected)
+                                .text_color(selected_text)
+                        })
+                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                            if let Some(menu) = &mut this.menu
+                                && menu.highlighted != Some(item)
+                            {
+                                menu.highlighted = Some(item);
+                                cx.notify();
+                            }
+                        }))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.run_menu_item(item, window, cx);
@@ -1648,6 +1740,36 @@ pub(crate) fn create_keymap(path: &Path) -> io::Result<()> {
     file.write_all(KEYMAP_HEADER.as_bytes())
 }
 
+/// The selected line's menu items, by keyboard (A11Y-16b): each does what
+/// the item does in the line's menu, where the menu offers it.
+#[kiln::command(context = "shortcuts_editor")]
+impl ShortcutsEditor {
+    /// Keyboard Shortcuts: Copy Command ID
+    ///
+    /// Puts the selected line's command ID on the clipboard.
+    #[command(id = "shortcuts.copy_command_id")]
+    fn copy_command_id(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.run_on_selected(MenuItem::CopyCommandId, cx.window, cx.cx);
+    }
+
+    /// Keyboard Shortcuts: Reset Keybinding
+    ///
+    /// Removes the user's keymap entries for the selected line's command,
+    /// putting back its default keys.
+    #[command(id = "shortcuts.reset_binding")]
+    fn reset_binding(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.run_on_selected(MenuItem::ResetKeybinding, cx.window, cx.cx);
+    }
+
+    /// Keyboard Shortcuts: Show Same Keybindings
+    ///
+    /// Searches for the selected line's keys.
+    #[command(id = "shortcuts.show_same_keybindings")]
+    fn show_same_keybindings(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.run_on_selected(MenuItem::ShowSameKeybindings, cx.window, cx.cx);
+    }
+}
+
 impl Focusable for ShortcutsEditor {
     /// The search field's, so showing the tab focuses it.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -1677,7 +1799,7 @@ impl Render for ShortcutsEditor {
             .flex_1()
             .into_any_element()
         };
-        div()
+        <Self as kiln::ViewCommands>::attach(div(), cx)
             .key_context(KEY_CONTEXT)
             .on_key_down(cx.listener(Self::on_key_down))
             .size_full()

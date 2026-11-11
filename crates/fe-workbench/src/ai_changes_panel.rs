@@ -13,7 +13,10 @@
 //! commands `ai.changes_accept_all`, `ai.changes_reject_all` and
 //! `ai.changes_revert`; `ai.show_changes` shows the panel, and
 //! `ai.changes_next_file` and `ai.changes_previous_file` move the
-//! selection while the panel has focus ([`KEY_CONTEXT`]).
+//! selection while the panel has focus ([`KEY_CONTEXT`]). There,
+//! `ai_changes.accept_file` and `ai_changes.reject_file` press the
+//! selected row's buttons, and `ai_changes.apply_preview` and
+//! `ai_changes.cancel_preview` a refactor preview's Apply and Cancel.
 //!
 //! The workbench owns the changeset ([`Workbench::set_changeset`], one at a
 //! time) and lists it again into the panel after every decision. A
@@ -471,6 +474,122 @@ impl AiChangesPanel {
     }
 }
 
+impl AiChangesPanel {
+    /// Has the workbench run `f` once this command's update of the panel
+    /// is over: what it does lists into the panel again.
+    fn with_workbench(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
+    ) {
+        let workbench = self.workbench.clone();
+        window.defer(cx, move |window, cx| {
+            (workbench.update(cx, |workbench, cx| f(workbench, window, cx))).ok();
+        });
+    }
+
+    /// The preview's Apply or Cancel button, while a preview shows.
+    fn finish_preview(&mut self, apply: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.listing.preview.is_none() {
+            return;
+        }
+        self.with_workbench(window, cx, move |workbench, window, cx| match apply {
+            true => workbench.apply_refactor_preview(window, cx),
+            false => workbench.cancel_refactor_preview(window, cx),
+        });
+    }
+
+    /// The selected file row's Accept or Reject button, where the row has
+    /// them: not a whole-only preview's, nor a file operation's; Accept
+    /// only while something's left to decide.
+    fn decide_selected(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(file) = self.selected.and_then(|ix| self.listing.files.get(ix)) else {
+            return;
+        };
+        let whole = (self.listing.preview.as_ref()).is_some_and(|head| !head.decidable)
+            || file.operation.is_some();
+        let decided = file.counts.pending == 0 && file.counts.stale == 0;
+        if whole || (accept && decided) {
+            return;
+        }
+        let path = file.path.clone();
+        self.with_workbench(window, cx, move |workbench, window, cx| {
+            workbench.decide_ai_file(&path, accept, window, cx)
+        });
+    }
+}
+
+impl Workbench {
+    /// Shows `changeset` in the AI Changes panel, as a chat turn's
+    /// proposals are shown: for the tests outside the crate
+    /// (`tests/a11y_reach_panels.rs`), which have no turn to make one.
+    #[doc(hidden)]
+    pub fn show_ai_changeset(
+        &mut self,
+        changeset: Changeset,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_changeset(changeset, window, cx);
+    }
+
+    /// Previews `edits`, asked for in `source`, in the AI Changes panel
+    /// under `title`, as a refactor's are previewed, applying nothing more
+    /// once applied: for the tests outside the crate, which have no
+    /// language server to ask for one.
+    #[doc(hidden)]
+    pub fn preview_file_edits(
+        &mut self,
+        title: &str,
+        source: BufferId,
+        edits: Vec<fe_lsp::FileEdits>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let on_applied: OnApplied = Box::new(|_, _, _, _| {});
+        self.preview_or_apply(title, source, edits, on_applied, window, cx)
+    }
+}
+
+/// The header's and the selected row's buttons, by keyboard (A11Y-16b).
+#[kiln::command(context = "ai_changes")]
+impl AiChangesPanel {
+    /// AI Changes: Apply Preview
+    ///
+    /// Makes the refactor preview's kept edits, as its Apply button does.
+    #[command(id = "ai_changes.apply_preview")]
+    fn apply_preview(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.finish_preview(true, cx.window, cx.cx);
+    }
+
+    /// AI Changes: Cancel Preview
+    ///
+    /// Drops the refactor preview, as its Cancel button does.
+    #[command(id = "ai_changes.cancel_preview")]
+    fn cancel_preview(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.finish_preview(false, cx.window, cx.cx);
+    }
+
+    /// AI Changes: Accept Selected File
+    ///
+    /// Accepts every pending hunk of the selected file, as its Accept
+    /// button does.
+    #[command(id = "ai_changes.accept_file")]
+    fn accept_file(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.decide_selected(true, cx.window, cx.cx);
+    }
+
+    /// AI Changes: Reject Selected File
+    ///
+    /// Rejects every pending hunk of the selected file, as its Reject
+    /// button does.
+    #[command(id = "ai_changes.reject_file")]
+    fn reject_file(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.decide_selected(false, cx.window, cx.cx);
+    }
+}
+
 impl Focusable for AiChangesPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -493,8 +612,7 @@ impl Render for AiChangesPanel {
         )
         .track_scroll(&self.scroll)
         .flex_1();
-        div()
-            .track_focus(&self.focus)
+        <Self as kiln::ViewCommands>::attach(div().track_focus(&self.focus), cx)
             .key_context(self.key_context())
             .on_key_down(
                 cx.listener(|panel, event: &gpui::KeyDownEvent, window, cx| {

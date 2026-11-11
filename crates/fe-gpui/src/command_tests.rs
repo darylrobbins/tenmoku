@@ -139,7 +139,7 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
         (keys, command, true)
     });
     // A focused toast's keys (A11Y-16a), then the git keys outside
-    // `editor`: the Changes panel's, and the diff view's.
+    // `editor`: the Changes panel's, the diff view's and a commit diff's.
     let context_free: Vec<_> = context_free
         .into_iter()
         .chain([
@@ -149,6 +149,11 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
         ])
         .chain([
             ("ctrl-shift-g".to_string(), "git.show_changes", true),
+            ("f7".to_string(), "diff.next_change", false),
+            ("shift-f7".to_string(), "diff.previous_change", false),
+            ("alt-f5".to_string(), "diff.next_change", false),
+            ("alt-shift-f5".to_string(), "diff.previous_change", false),
+            // The same in a commit's change to all its files (A11Y-16b).
             ("f7".to_string(), "diff.next_change", false),
             ("shift-f7".to_string(), "diff.previous_change", false),
             ("alt-f5".to_string(), "diff.next_change", false),

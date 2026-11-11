@@ -241,8 +241,9 @@ impl ShortcutsEditor {
                 let ui = fe_ui::ui_theme(cx);
                 let context = row.context.clone().unwrap_or_default();
                 let input = cx.new(|cx| {
+                    // Keyed, so a change of language shows in it at once.
                     let mut input =
-                        TextInput::new(tr!("workbench-setup-shortcuts-column-when"), &ui, cx)
+                        TextInput::new(text!("workbench-setup-shortcuts-column-when"), &ui, cx)
                             .bordered();
                     input.set_text(context, cx);
                     input

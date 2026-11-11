@@ -30,7 +30,9 @@
 //! window: `j` and `k` move, `s` stages the selected file, `u` unstages it,
 //! `-` stages a Changes or Merge row or unstages a Staged row, `X` discards
 //! it (not a Merge row; `u` does nothing on one either),
-//! and `o` opens its diff as Enter does. With vim off they do nothing.
+//! and `o` opens its diff as Enter does. With vim off they do nothing,
+//! and the palette's `git_panel.stage_row`, `git_panel.unstage_row` and
+//! `git_panel.discard_row` do on the selected row what `s`, `u` and `X` do.
 //!
 //! The workbench's [`GitState`] reads the status of the repository
 //! containing the project root, its staged and unstaged halves apart, on
@@ -94,6 +96,7 @@ use gpui::{
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px, uniform_list,
 };
+use kiln::Cx;
 use kiln_l10n::tr;
 
 use crate::{
@@ -989,6 +992,18 @@ impl GitPanel {
             _ => return,
         }
         cx.stop_propagation();
+    }
+
+    /// Runs `action` on the selected row's file, as its button, its
+    /// checkbox or vim's key does; nothing with no row selected or the
+    /// commit box focused.
+    fn act_on_selected(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if self.box_focused(window, cx) {
+            return;
+        }
+        if let Some(ix) = self.selected {
+            self.act(ix, action, window, cx);
+        }
     }
 
     /// The ID of a button for `action` on row `at` of the list shown.
@@ -2058,6 +2073,39 @@ fn checkbox_selector(id: &str) -> String {
     format!("change-checkbox:{id}")
 }
 
+/// The selected row's buttons and checkbox, by keyboard with vim off
+/// (A11Y-16b): what fugitive's `s`, `u` and `X` do with vim on. A Merge
+/// row stages as its checkbox does, asking about markers first; it can't
+/// be unstaged or discarded. The header buttons' are `git.*` commands
+/// already (`git.stage_all` and the rest).
+#[kiln::command(context = "git_panel")]
+impl GitPanel {
+    /// Git: Stage Selected Row
+    ///
+    /// Stages the Changes panel's selected file, as its checkbox does.
+    #[command(id = "git_panel.stage_row")]
+    fn stage_row(&mut self, cx: &mut Cx<Self>) {
+        self.act_on_selected(Action::Stage, cx.window, cx.cx);
+    }
+
+    /// Git: Unstage Selected Row
+    ///
+    /// Unstages the Changes panel's selected file, as its checkbox does.
+    #[command(id = "git_panel.unstage_row")]
+    fn unstage_row(&mut self, cx: &mut Cx<Self>) {
+        self.act_on_selected(Action::Unstage, cx.window, cx.cx);
+    }
+
+    /// Git: Discard Selected Row
+    ///
+    /// Discards the changes to the Changes panel's selected file, as its
+    /// Discard Changes button does, asking first.
+    #[command(id = "git_panel.discard_row")]
+    fn discard_row(&mut self, cx: &mut Cx<Self>) {
+        self.act_on_selected(Action::Discard, cx.window, cx.cx);
+    }
+}
+
 impl EventEmitter<GitPanelEvent> for GitPanel {}
 
 impl Focusable for GitPanel {
@@ -2089,8 +2137,7 @@ impl Render for GitPanel {
         .track_scroll(&self.scroll)
         .flex_1();
         let error = matches!(self.status, Status::Failed(_));
-        div()
-            .track_focus(&self.focus)
+        <Self as kiln::ViewCommands>::attach(div().track_focus(&self.focus), cx)
             .key_context(key_context(cx))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_action(cx.listener(Self::on_run_command))

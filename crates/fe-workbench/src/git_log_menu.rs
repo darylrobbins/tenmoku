@@ -21,7 +21,8 @@
 //! items are the panel's typed commands too (`git_log.*`, in the
 //! `git_log_panel` context), so the palette lists them while the panel has
 //! focus; from there they act on the selected row: the commit's for a row
-//! under one, the file's for a file row (else they do nothing).
+//! under one, the file's for a file row (else they do nothing). Up and
+//! Down move the open menu's highlight, wrapping, and Enter chooses it.
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -83,6 +84,9 @@ pub(super) struct RowMenu {
     /// The row it's for, wherever that is by now.
     line: Line,
     items: &'static [MenuItem],
+    /// The item Up and Down moved to, or the pointer is over, which Enter
+    /// chooses: none until either does.
+    highlighted: Option<usize>,
     /// Where it was asked for, in the window.
     position: Point<Pixels>,
 }
@@ -131,6 +135,24 @@ impl GitLogPanel {
     fn compare_with_working_tree(&mut self, cx: &mut Cx<Self>) {
         self.run_menu_item(MenuItem::CompareWithWorkingTree, cx.window, cx.cx);
     }
+
+    /// Git: Focus Log Filter
+    ///
+    /// Focuses the Graph's filter box, its text selected, as `/` does with
+    /// vim on.
+    #[command(id = "git_log.focus_filter")]
+    fn focus_log_filter(&mut self, cx: &mut Cx<Self>) {
+        self.focus_filter(cx.window, cx.cx);
+    }
+
+    /// Git: Open Commit on Remote
+    ///
+    /// Opens the selected commit's page on its remote's host, as its
+    /// card's link does.
+    #[command(id = "git_log.open_commit_link")]
+    fn open_commit_link(&mut self, cx: &mut Cx<Self>) {
+        self.open_selected_commit_link(cx.cx);
+    }
 }
 
 /// The op the menu's answers are given as: in a toast.
@@ -174,10 +196,40 @@ impl GitLogPanel {
         self.menu = Some(RowMenu {
             line,
             items,
+            highlighted: None,
             position,
         });
         window.focus(&self.focus, cx);
         cx.notify();
+    }
+
+    /// Moves the open menu's highlight to the next item, or with `down`
+    /// false the one before, wrapping; from none, the first or the last.
+    pub(super) fn move_menu_highlight(&mut self, down: bool, cx: &mut Context<Self>) {
+        let Some(menu) = &mut self.menu else {
+            return;
+        };
+        let Some(last) = menu.items.len().checked_sub(1) else {
+            return;
+        };
+        menu.highlighted = Some(match (menu.highlighted, down) {
+            (None, true) => 0,
+            (None, false) => last,
+            (Some(at), true) if at >= last => 0,
+            (Some(at), true) => at + 1,
+            (Some(at), false) => at.checked_sub(1).unwrap_or(last),
+        });
+        cx.notify();
+    }
+
+    /// Enter in the open menu: runs the highlighted item, if any, as a
+    /// click on it does.
+    pub(super) fn choose_menu_highlight(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let menu = self.menu.as_ref();
+        let item = menu.and_then(|menu| menu.items.get(menu.highlighted?).copied());
+        if let Some(item) = item {
+            self.run_menu_item(item, window, cx);
+        }
     }
 
     /// Closes the open menu, if there's one.
@@ -265,13 +317,27 @@ impl GitLogPanel {
             })
             .collect();
         let panel = cx.entity().downgrade();
+        let hovered = panel.clone();
         let ui = fe_ui::ui_theme(cx);
-        let menu_panel = MenuPanel::new(entries, &ui).on_click(move |ix, window, cx| {
-            let Some(&item) = items.get(ix) else {
-                return;
-            };
-            (panel.update(cx, |panel, cx| panel.run_menu_item(item, window, cx))).ok();
-        });
+        let menu_panel = MenuPanel::new(entries, &ui)
+            .highlighted(menu.highlighted)
+            .on_click(move |ix, window, cx| {
+                let Some(&item) = items.get(ix) else {
+                    return;
+                };
+                (panel.update(cx, |panel, cx| panel.run_menu_item(item, window, cx))).ok();
+            })
+            .on_hover(move |ix, _, cx| {
+                (hovered.update(cx, |panel, cx| {
+                    if let Some(menu) = &mut panel.menu
+                        && menu.highlighted != Some(ix)
+                    {
+                        menu.highlighted = Some(ix);
+                        cx.notify();
+                    }
+                }))
+                .ok();
+            });
         let wrapper = div()
             .debug_selector(|| "git-log-menu".into())
             .on_mouse_down_out(cx.listener(|panel, _, _, cx| panel.close_menu(cx)))

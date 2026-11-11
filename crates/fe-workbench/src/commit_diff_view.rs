@@ -36,6 +36,12 @@
 //! expanding a collapsed section they land in (one not read yet is read,
 //! then its first hunk, or its last going back, is gone to, unless it's
 //! collapsed meanwhile); its other two collapse and expand every section.
+//! By keyboard (A11Y-16b): a diff view's `diff.next_change` and
+//! `diff.previous_change`, bound here too (F7 and Shift-F7), and from the
+//! palette `commit_diff.next_change` and `commit_diff.previous_change`,
+//! `commit_diff.collapse_all` and `commit_diff.expand_all`, and, where
+//! navigation went, else at the top of the view, `commit_diff.toggle_section`
+//! and `commit_diff.expand_hidden` (the nearest `N hidden lines` row).
 //! With the view open, a click (or Enter) on one of the commit's files in
 //! the Graph shows the tab scrolled to the file's section, expanded
 //! ([`CommitDiffView::reveal`]), once the files are read if they aren't
@@ -55,7 +61,7 @@ use std::{
 };
 
 use fe_git::{ChangeKind, LogCommit, Repo};
-use fe_gpui::EditorTheme;
+use fe_gpui::{EditorTheme, commands::RunCommand};
 use fe_ui::{Icon, IconButton, IconRef, ROW_HEIGHT, Tooltip, file_icon_ref};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Div, ElementId, Entity, FocusHandle, Focusable,
@@ -1323,6 +1329,130 @@ impl HeaderParts {
     }
 }
 
+impl CommitDiffView {
+    /// A diff view's next and previous change (F7, Shift-F7), bound here
+    /// too: the toolbar's buttons. Others go on.
+    fn on_run_command(&mut self, run: &RunCommand, _: &mut Window, cx: &mut Context<Self>) {
+        match run.0.command.as_str() {
+            fe_gpui::diff_view::NEXT_CHANGE => self.go_to_change(true, cx),
+            fe_gpui::diff_view::PREVIOUS_CHANGE => self.go_to_change(false, cx),
+            _ => cx.propagate(),
+        }
+    }
+
+    /// The row the keys act at: the change or section navigation last went
+    /// to, while it shows, else the top row shown.
+    fn current_row(&self) -> Option<usize> {
+        let at = self.at.and_then(|(section, hunk)| match hunk {
+            -1 => self.headers.get(section).copied(),
+            hunk => (self.stops.iter())
+                .find(|stop| stop.key() == (section, hunk))
+                .map(|stop| stop.row),
+        });
+        let shown = |row: &usize| self.viewport.contains(row);
+        at.filter(shown)
+            .or(Some(self.viewport.start))
+            .filter(|row| *row < self.rows.len())
+    }
+
+    /// `commit_diff.toggle_section`: collapses the current row's section,
+    /// or expands it, as a click on its header does, its header kept in
+    /// view and navigation's place there.
+    fn toggle_current_section(&mut self, cx: &mut Context<Self>) {
+        let Some(row) = self.current_row() else {
+            return;
+        };
+        let section = self.rows[row].section();
+        self.toggle(section, cx);
+        self.at = Some((section, -1));
+        if let Some(&header) = self.headers.get(section) {
+            self.scroll_to(header, ScrollStrategy::Nearest, cx);
+        }
+    }
+
+    /// `commit_diff.expand_hidden`: shows the rows of the current row's
+    /// section's first `N hidden lines` row from it down, else its last
+    /// above it, as a click on that row does.
+    fn expand_current_hidden(&mut self, cx: &mut Context<Self>) {
+        let Some(row) = self.current_row() else {
+            return;
+        };
+        let section = self.rows[row].section();
+        let hidden = |(ix, at): (usize, &ViewRow)| match *at {
+            ViewRow::Hidden { section: of, line } if of == section => Some((ix, line)),
+            _ => None,
+        };
+        let below = self.rows.iter().enumerate().skip(row).find_map(hidden);
+        let above = || self.rows[..row].iter().enumerate().rev().find_map(hidden);
+        if let Some((ix, line)) = below.or_else(above) {
+            self.unfold(section, line, cx);
+            self.scroll_to(
+                ix.min(self.rows.len().saturating_sub(1)),
+                ScrollStrategy::Nearest,
+                cx,
+            );
+        }
+    }
+}
+
+/// The toolbar's buttons, a section header's click and a fold's, by
+/// keyboard (A11Y-16b), for the palette. Next and previous change are also
+/// a diff view's own commands, with its keys ([`CommitDiffView::on_run_command`]).
+#[kiln::command(context = "CommitDiffView")]
+impl CommitDiffView {
+    /// Commit Diff: Next Change
+    ///
+    /// Goes to the next hunk across the commit's files, wrapping, as the
+    /// toolbar's button does.
+    #[command(id = "commit_diff.next_change")]
+    fn next_change(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.go_to_change(true, cx.cx);
+    }
+
+    /// Commit Diff: Previous Change
+    ///
+    /// Goes to the previous hunk across the commit's files, wrapping, as
+    /// the toolbar's button does.
+    #[command(id = "commit_diff.previous_change")]
+    fn previous_change(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.go_to_change(false, cx.cx);
+    }
+
+    /// Commit Diff: Collapse All
+    ///
+    /// Collapses every file's section.
+    #[command(id = "commit_diff.collapse_all")]
+    fn collapse_all_sections(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.collapse_all(cx.cx);
+    }
+
+    /// Commit Diff: Expand All
+    ///
+    /// Expands every file's section.
+    #[command(id = "commit_diff.expand_all")]
+    fn expand_all_sections(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.expand_all(cx.cx);
+    }
+
+    /// Commit Diff: Toggle Section
+    ///
+    /// Collapses or expands the file's section navigation is in, else the
+    /// one at the top of the view.
+    #[command(id = "commit_diff.toggle_section")]
+    fn toggle_section(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.toggle_current_section(cx.cx);
+    }
+
+    /// Commit Diff: Show Hidden Lines
+    ///
+    /// Shows the unchanged rows folded nearest below navigation's place in
+    /// its file's section, else nearest above it.
+    #[command(id = "commit_diff.expand_hidden")]
+    fn expand_hidden(&mut self, cx: &mut kiln::Cx<Self>) {
+        self.expand_current_hidden(cx.cx);
+    }
+}
+
 impl Render for CommitDiffView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
@@ -1351,9 +1481,10 @@ impl Render for CommitDiffView {
             .on_scroll_wheel(cx.listener(|view, _: &ScrollWheelEvent, _, _| view.let_go()))
             .into_any_element(),
         };
-        div()
+        <Self as kiln::ViewCommands>::attach(div(), cx)
             .key_context(key_context)
             .track_focus(&self.focus)
+            .on_action(cx.listener(Self::on_run_command))
             .size_full()
             .flex()
             .flex_col()
