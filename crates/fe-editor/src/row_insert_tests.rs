@@ -106,3 +106,22 @@ fn copy_up_keeps_selection_on_the_upper_copy() {
     assert_eq!(plain("a\nb|c", "editor.copy_rows_up"), "a\nb|c\nbc");
     assert_eq!(plain("a|\nb\nc|", "editor.copy_rows_up"), "a|\na\nb\nc|\nc");
 }
+
+#[test]
+fn redo_restores_the_carets_the_command_left() {
+    for (marked, command) in [
+        ("  fo|o", "editor.insert_line_above"),
+        ("a|b|\nc|", "editor.insert_line_above"),
+        ("|a\n  b", "editor.insert_line_above"),
+        ("a|b", "editor.copy_rows_up"),
+        ("a\nb[c\nd]e\nf", "editor.copy_rows_up"),
+        ("a|\nb\nc|", "editor.copy_rows_up"),
+    ] {
+        let mut model = parse(marked);
+        run(&mut model, &mut commands::HeadlessHost::new(), command);
+        let after = render(&model);
+        model.undo().unwrap();
+        model.redo().unwrap();
+        assert_eq!(render(&model), after, "{marked:?} {command}");
+    }
+}

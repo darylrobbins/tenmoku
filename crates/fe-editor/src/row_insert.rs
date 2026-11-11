@@ -12,7 +12,7 @@ use fe_buffer::ResolvedSelection;
 use fe_command::{Effect, Registry};
 
 use crate::{
-    EditorModel, caret,
+    EditorModel, RedoSelections, caret,
     commands::{Editor, add},
     rows::touched_rows,
 };
@@ -59,6 +59,7 @@ impl EditorModel {
         let text = self.text();
         let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
         let mut carets = Vec::new();
+        let mut redo = Vec::new();
         let mut delta = 0;
         for selection in self.selections() {
             let row = *touched_rows(text, &selection.range).start();
@@ -69,10 +70,14 @@ impl EditorModel {
             let span = self.row_span(start);
             let indent = text.slice_to_string(span.start..span.start + self.indent_len(&span));
             carets.push(caret(start + delta + indent.len()));
+            redo.push((edits.len(), indent.len()..indent.len(), false));
             delta += indent.len() + 1;
             edits.push((start..start, format!("{indent}\n")));
         }
-        self.apply_row_edits(edits, carets, Vec::new());
+        let count = edits.len();
+        if let Some(id) = self.apply_row_edits(edits, carets, Vec::new()) {
+            self.pick_redo_selections(id, RedoSelections { count, items: redo });
+        }
     }
 
     /// Inserts a copy of each block's rows above it, leaving its selections
@@ -84,6 +89,8 @@ impl EditorModel {
         let mut edits = Vec::new();
         // Each block's copy's length, with the row it's above.
         let mut copies = Vec::new();
+        // Each block's first row's start.
+        let mut starts = Vec::new();
         for block in &blocks {
             let first = *block.rows.start();
             let last = *block.rows.end();
@@ -91,6 +98,7 @@ impl EditorModel {
             let end = text.row_start(last) + text.row_len(last) as usize;
             let copy = text.slice_to_string(start..end);
             copies.push((last, copy.len() + 1));
+            starts.push(start);
             edits.push((start..start, format!("{copy}\n")));
         }
         let moved = self
@@ -109,7 +117,22 @@ impl EditorModel {
                 }
             })
             .collect();
-        self.apply_row_edits(edits, moved, Vec::new());
+        // Redone, each selection is on its block's copy, where it was.
+        let mut items = Vec::new();
+        for (index, block) in blocks.iter().enumerate() {
+            for selection in &self.selections()[block.selections.clone()] {
+                let range = &selection.range;
+                items.push((
+                    index,
+                    range.start - starts[index]..range.end - starts[index],
+                    selection.reversed,
+                ));
+            }
+        }
+        let count = edits.len();
+        if let Some(id) = self.apply_row_edits(edits, moved, Vec::new()) {
+            self.pick_redo_selections(id, RedoSelections { count, items });
+        }
     }
 }
 

@@ -12,7 +12,7 @@ use std::{
     rc::Rc,
 };
 
-use fe_buffer::{Bias, ResolvedSelection, Text};
+use fe_buffer::{Bias, ResolvedSelection, Text, TransactionId};
 use fe_command::{Effect, Registry};
 
 use crate::{
@@ -52,7 +52,7 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
 /// selections' indices.
 pub(crate) struct Block {
     pub(crate) rows: RangeInclusive<u32>,
-    selections: Range<usize>,
+    pub(crate) selections: Range<usize>,
 }
 
 impl Block {
@@ -354,19 +354,17 @@ impl EditorModel {
         edits: Vec<(Range<usize>, String)>,
         selections: Vec<ResolvedSelection>,
         folds: Vec<RangeInclusive<u32>>,
-    ) {
+    ) -> Option<TransactionId> {
         if edits.is_empty() {
-            return;
+            return None;
         }
         // Anchored before catching up, whose measuring may edit the buffer
         // through another model.
         let (edits, selections) = self.mirror_snippet_edits(edits, selections);
-        let (selections, version) = {
+        let (selections, version, id) = {
             let shared = Rc::clone(&self.buffer);
             let mut buffer = shared.borrow_mut();
-            let Some(id) = buffer.edit(edits, self.origin.clone()) else {
-                return;
-            };
+            let id = buffer.edit(edits, self.origin.clone())?;
             if let Some(transactions) = &mut self.transactions {
                 transactions.push(id);
             }
@@ -375,7 +373,7 @@ impl EditorModel {
             // Before catching up, which may make a newer edit elsewhere.
             self.note_edit(&selections);
             self.sync_snippet_mirrors(&mut buffer, Some(id));
-            (selections, snapshot.version())
+            (selections, snapshot.version(), id)
         };
         self.sync_display();
         self.goals.clear();
@@ -385,6 +383,7 @@ impl EditorModel {
         if !folds.is_empty() && self.snapshot.version() == version {
             self.display.fold_many(folds);
         }
+        Some(id)
     }
 
     /// Each block of selections, by row. With `whole_folds`, a block

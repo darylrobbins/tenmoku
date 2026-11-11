@@ -1543,7 +1543,7 @@ impl EditorModel {
         let pick = (self.caret_pick(&result).and_then(|pick| pick.undo))
             .or_else(|| self.change_start(&result));
         let starts = self.typing_starts(&result);
-        self.place_carets_after_history_change(EditKind::Undo, pick, starts);
+        self.place_carets_after_history_change(EditKind::Undo, pick, starts, None);
         self.produced(result)
     }
 
@@ -1554,7 +1554,8 @@ impl EditorModel {
         let result = self.buffer.borrow_mut().redo(|origin| origin == ours);
         let pick = (self.caret_pick(&result).and_then(|pick| pick.redo))
             .or_else(|| self.change_start(&result));
-        self.place_carets_after_history_change(EditKind::Redo, pick, None);
+        let selections = self.redo_selections(&result);
+        self.place_carets_after_history_change(EditKind::Redo, pick, None, selections);
         self.produced(result)
     }
 
@@ -1565,6 +1566,27 @@ impl EditorModel {
             return None;
         };
         self.history.borrow().caret_picks.get(id).copied()
+    }
+
+    /// The selections a redo of the transaction `result` redid restores, if
+    /// it was given them ([`EditorModel::pick_redo_selections`]).
+    fn redo_selections(
+        &self,
+        result: &Result<Option<TransactionId>, UndoError>,
+    ) -> Option<RedoSelections> {
+        let Ok(Some(id)) = result else {
+            return None;
+        };
+        self.history.borrow().redo_selections.get(id).cloned()
+    }
+
+    /// Has redoing transaction `id` restore `selections`, rather than a
+    /// caret at the end of each edit.
+    pub(crate) fn pick_redo_selections(&mut self, id: TransactionId, selections: RedoSelections) {
+        self.history
+            .borrow_mut()
+            .redo_selections
+            .insert(id, selections);
     }
 
     /// For a transaction [`EditorModel::put_carets_at_change_start`] named,
@@ -1662,6 +1684,7 @@ impl EditorModel {
         kind: EditKind,
         pick: Option<CaretAt>,
         starts: Option<Vec<usize>>,
+        selections: Option<RedoSelections>,
     ) {
         let last = self
             .events
@@ -1680,6 +1703,17 @@ impl EditorModel {
         // through another model.
         let carets = last.map(|edits| {
             let snapshot = self.buffer.borrow().snapshot();
+            if let Some(picked) = selections.filter(|picked| picked.count == edits.len()) {
+                let resolved = picked.items.iter().map(|(edit, range, reversed)| {
+                    let start = edits[*edit].new.start;
+                    ResolvedSelection {
+                        range: (start + range.start).min(edits[*edit].new.end)
+                            ..(start + range.end).min(edits[*edit].new.end),
+                        reversed: *reversed,
+                    }
+                });
+                return SelectionSet::from_resolved(&snapshot, resolved);
+            }
             let heads: Vec<usize> = match pick {
                 _ if starts.is_some() => starts.unwrap_or_default(),
                 Some(at)
@@ -1880,6 +1914,15 @@ pub(crate) struct CaretPick {
     pub(crate) redo: Option<CaretAt>,
 }
 
+/// The selections redoing a transaction of `count` edits restores, each as
+/// the index of the edit whose new text holds it, its range in bytes from
+/// the start of that text, and whether it's reversed.
+#[derive(Clone, Debug)]
+pub(crate) struct RedoSelections {
+    pub(crate) count: usize,
+    pub(crate) items: Vec<(usize, Range<usize>, bool)>,
+}
+
 /// A caret `offset` bytes into the text the `edit`th of a batch's `count`
 /// edits puts in.
 #[derive(Clone, Copy, Debug)]
@@ -2029,6 +2072,9 @@ struct History {
     /// given one: accepted completions. Kept while the buffer lives, a few
     /// words each: fe-buffer doesn't say when it drops a transaction.
     caret_picks: HashMap<TransactionId, CaretPick>,
+    /// The selections redoing a transaction restores, for those given
+    /// them: row insertions. Kept as `caret_picks` is.
+    redo_selections: HashMap<TransactionId, RedoSelections>,
     /// Transactions whose undo and redo put one caret at the start of the
     /// text they change ([`EditorModel::put_carets_at_change_start`]).
     change_start_carets: HashSet<TransactionId>,
@@ -2066,6 +2112,7 @@ impl History {
             batches: VecDeque::new(),
             models: Vec::new(),
             caret_picks: HashMap::new(),
+            redo_selections: HashMap::new(),
             change_start_carets: HashSet::new(),
             typing_starts: HashMap::new(),
             save_marks: 0,
