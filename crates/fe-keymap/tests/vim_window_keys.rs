@@ -43,6 +43,9 @@ const TABLE: &[(&str, &str)] = &[
     ("+", "pane.grow_height"),
     ("-", "pane.shrink_height"),
     ("=", "pane.equalize"),
+    ("z", "pane.toggle_maximize"),
+    ("x", "pane.exchange"),
+    ("ctrl-x", "pane.exchange"),
 ];
 
 fn keymap(source: &str, os: Os) -> Keymap {

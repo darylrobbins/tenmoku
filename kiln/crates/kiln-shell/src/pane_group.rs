@@ -7,6 +7,10 @@
 //!
 //! A tab moves between panes only through [`PaneGroup::move_tab`], for a
 //! key or a drop, which can split a new pane off for it.
+//!
+//! One pane can be zoomed ([`PaneGroup::zoom`]): drawn alone over the
+//! group's whole area while the others keep their items and ratios, until
+//! the tree changes or the zoom is ended.
 
 use std::{
     cell::RefCell,
@@ -509,6 +513,8 @@ pub struct PaneGroup<V> {
     generation: u64,
     /// Where the last frame laid each axis out, for [`PaneGroup::resize`].
     sizes: AxisSizes,
+    /// The pane drawn alone, and its bounds before it was.
+    zoomed: Option<(Entity<V>, Bounds<Pixels>)>,
 }
 
 impl<V: PaneView> PaneGroup<V> {
@@ -518,6 +524,7 @@ impl<V: PaneView> PaneGroup<V> {
             press: None,
             generation: 0,
             sizes: AxisSizes::default(),
+            zoomed: None,
         }
     }
 
@@ -525,9 +532,10 @@ impl<V: PaneView> PaneGroup<V> {
         &self.root
     }
 
-    /// Replaces the tree with `root`, as a saved layout is restored. It
-    /// must have a pane.
+    /// Replaces the tree with `root`, as a saved layout is restored, ending
+    /// a zoom. It must have a pane.
     pub fn set_root(&mut self, root: Member<V>) {
+        self.zoomed = None;
         self.generation += 1;
         self.press = None;
         self.sizes.borrow_mut().clear();
@@ -560,30 +568,101 @@ impl<V: PaneView> PaneGroup<V> {
         panes
     }
 
-    /// Puts `new` beside `old`, in `direction` from it.
+    /// Puts `new` beside `old`, in `direction` from it, ending a zoom.
     pub fn split(&mut self, old: &Entity<V>, new: Entity<V>, direction: Direction) {
+        self.zoomed = None;
         self.generation += 1;
         self.sizes.borrow_mut().clear();
         self.root.split(old, new, direction);
     }
 
-    /// Removes `pane`, unless it's the last.
+    /// Removes `pane`, unless it's the last, ending a zoom.
     pub fn remove(&mut self, pane: &Entity<V>) {
+        self.zoomed = None;
         self.generation += 1;
         self.sizes.borrow_mut().clear();
         self.root.remove(pane);
     }
 
-    /// The pane next to `from` in `direction`, by where they were laid out:
-    /// the nearest whose bounds overlap `from`'s on the other axis, the
-    /// longest overlap breaking a tie.
+    /// Draws `pane` alone, over the group's whole area, until the tree
+    /// changes or [`unzoom`](Self::unzoom): the others keep their items and
+    /// ratios. False, changing nothing, for a pane alone or not in the
+    /// group.
+    pub fn zoom(&mut self, pane: &Entity<V>, cx: &App) -> bool {
+        let panes = self.panes();
+        if panes.len() < 2 || !panes.contains(&pane) {
+            return false;
+        }
+        if self
+            .zoomed
+            .as_ref()
+            .is_some_and(|(zoomed, _)| zoomed == pane)
+        {
+            return true;
+        }
+        let bounds = self.bounds_of(pane, cx);
+        self.zoomed = Some((pane.clone(), bounds));
+        self.press = None;
+        true
+    }
+
+    /// Ends the zoom: every pane is laid out again at its ratios. False if
+    /// none was zoomed.
+    pub fn unzoom(&mut self) -> bool {
+        self.zoomed.take().is_some()
+    }
+
+    /// The pane drawn alone, if one is.
+    pub fn zoomed(&self) -> Option<&Entity<V>> {
+        self.zoomed.as_ref().map(|(pane, _)| pane)
+    }
+
+    /// Where `pane` was laid out: for the zoomed pane, where it was before
+    /// the zoom, as the panes it hides still are.
+    fn bounds_of(&self, pane: &Entity<V>, cx: &App) -> Bounds<Pixels> {
+        match &self.zoomed {
+            Some((zoomed, bounds)) if zoomed == pane => *bounds,
+            _ => pane.read(cx).pane().bounds(),
+        }
+    }
+
+    /// Swaps `pane` with its next sibling, or its previous one if it's
+    /// last, as vim's `<C-w>x`: the two trade places and ratios, so each
+    /// keeps its size, ending a zoom. Returns the other pane, now in
+    /// `pane`'s place; none, changing nothing, if that sibling is an axis or
+    /// `pane` is alone.
+    pub fn exchange(&mut self, pane: &Entity<V>) -> Option<Entity<V>> {
+        let path = self.path_of(pane)?;
+        let (&ix, parent) = path.split_last()?;
+        let (_, members) = self.root.axis_at(parent)?;
+        let other = if ix + 1 < members.len() {
+            ix + 1
+        } else {
+            ix.checked_sub(1)?
+        };
+        let Member::Pane(sibling) = &members[other] else {
+            return None;
+        };
+        let sibling = sibling.clone();
+        members.members.swap(ix, other);
+        members.ratios.swap(ix, other);
+        self.zoomed = None;
+        self.generation += 1;
+        self.press = None;
+        Some(sibling)
+    }
+
+    /// The pane next to `from` in `direction`, by where they were laid out
+    /// (the zoomed pane where it was before the zoom): the nearest whose
+    /// bounds overlap `from`'s on the other axis, the longest overlap
+    /// breaking a tie.
     pub fn neighbour(&self, from: &Entity<V>, direction: Direction, cx: &App) -> Option<Entity<V>> {
-        let origin = from.read(cx).pane().bounds();
+        let origin = self.bounds_of(from, cx);
         self.panes()
             .into_iter()
             .filter(|pane| *pane != from)
             .filter_map(|pane| {
-                let bounds = pane.read(cx).pane().bounds();
+                let bounds = self.bounds_of(pane, cx);
                 let (gap, overlap) = gap_and_overlap(&origin, &bounds, direction)?;
                 Some(((gap, -overlap), pane))
             })
@@ -591,14 +670,15 @@ impl<V: PaneView> PaneGroup<V> {
             .map(|(_, pane)| pane.clone())
     }
 
-    /// The pane nearest `from` by where they were laid out, other than it.
+    /// The pane nearest `from` by where they were laid out (the zoomed pane
+    /// where it was before the zoom), other than it.
     pub fn nearest(&self, from: &Entity<V>, cx: &App) -> Option<Entity<V>> {
-        let center = from.read(cx).pane().bounds().center();
+        let center = self.bounds_of(from, cx).center();
         self.panes()
             .into_iter()
             .filter(|pane| *pane != from)
             .map(|pane| {
-                let to = pane.read(cx).pane().bounds().center();
+                let to = self.bounds_of(pane, cx).center();
                 let (dx, dy) = (f32::from(to.x - center.x), f32::from(to.y - center.y));
                 (dx * dx + dy * dy, pane)
             })
@@ -676,9 +756,12 @@ impl<V: PaneView> PaneGroup<V> {
     /// nearest enclosing axis running `axis`, taking the space from, or
     /// giving it to, its next sibling (its previous one if it's last). Only
     /// those two ratios change, within the members' minimums as dragging
-    /// is. False, changing nothing, if there's no such axis, no room, or no
-    /// frame drawn yet.
+    /// is. False, changing nothing, if there's no such axis, no room, no
+    /// frame drawn yet, or a pane is zoomed.
     pub fn resize(&mut self, pane: &Entity<V>, axis: Axis, delta: Pixels) -> bool {
+        if self.zoomed.is_some() {
+            return false;
+        }
         let Some(path) = self.path_of(pane) else {
             return false;
         };
@@ -729,7 +812,7 @@ impl<V: PaneView> PaneGroup<V> {
         true
     }
 
-    /// Gives every axis's members equal ratios.
+    /// Gives every axis's members equal ratios, keeping a zoom.
     pub fn equalize(&mut self) {
         fn even<V>(member: &mut Member<V>) {
             if let Member::Axis { members, .. } = member {
@@ -846,7 +929,8 @@ impl<V: PaneView> PaneGroup<V> {
     /// Draws the tree for host `H`, which reaches the group through
     /// `group` when a divider is dragged. Its borders are the active
     /// theme's ([`ui_theme`]), so they follow a theme change; `_ui` is
-    /// unused, left for callers until a later API cleanup.
+    /// unused, left for callers until a later API cleanup. A zoomed pane is
+    /// drawn alone, with no borders.
     pub fn render<H: 'static>(
         &self,
         _ui: &UiTheme,
@@ -854,15 +938,16 @@ impl<V: PaneView> PaneGroup<V> {
         cx: &mut Context<H>,
     ) -> AnyElement {
         let ui = ui_theme(cx);
+        let tree = match &self.zoomed {
+            Some((pane, _)) => pane.clone().into_any_element(),
+            None => (self.root).render(&mut Vec::new(), &ui, &self.sizes, group, cx),
+        };
         div()
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
-            .child(
-                self.root
-                    .render(&mut Vec::new(), &ui, &self.sizes, group, cx),
-            )
+            .child(tree)
             .into_any_element()
     }
 }

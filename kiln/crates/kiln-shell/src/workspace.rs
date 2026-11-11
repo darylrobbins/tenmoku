@@ -456,9 +456,41 @@ impl<P: PaneView> Workspace<P> {
         if !self.group.panes().contains(&&pane) {
             return;
         }
-        self.active = pane;
+        self.set_active(pane);
         self.focus_active(window, cx);
         self.follow_active(window, cx);
+    }
+
+    /// Takes `pane` as the active pane: another one ends a zoom, which is
+    /// always the active pane's.
+    fn set_active(&mut self, pane: Entity<P>) {
+        if pane != self.active {
+            self.group.unzoom();
+        }
+        self.active = pane;
+    }
+
+    /// Zooms the active pane, drawing it alone over the panes' area
+    /// ([`PaneGroup::zoom`]), or ends the zoom. Nothing with one pane.
+    /// The zoom also ends as the tree changes or another pane is made
+    /// active. Returns whether a pane is zoomed now.
+    pub fn toggle_zoom(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.group.unzoom() {
+            self.group.zoom(&self.active, cx);
+        }
+        cx.notify();
+        self.group.zoomed().is_some()
+    }
+
+    /// Swaps the active pane with its next sibling, or its previous one if
+    /// it's last ([`PaneGroup::exchange`]), as vim's `<C-w>x`, ending a
+    /// zoom; the other pane, now in the active one's place, is made active,
+    /// so focus stays where it was on screen. Returns it, or none if
+    /// nothing moved.
+    pub fn exchange(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<P>> {
+        let other = self.group.exchange(&self.active)?;
+        self.activate(other.clone(), window, cx);
+        Some(other)
     }
 
     /// Moves item `item` from `source` to `destination`, as a tab dropped
@@ -481,7 +513,7 @@ impl<P: PaneView> Workspace<P> {
             self.watch(&pane, window, cx);
             cx.emit(WorkspaceEvent::PaneAdded(pane.clone()));
         }
-        self.active = pane.clone();
+        self.set_active(pane.clone());
         self.follow_active(window, cx);
         let emptied = source.update(cx, |source, _| source.pane_mut().take_emptied());
         if emptied && *source != pane {
@@ -516,7 +548,7 @@ impl<P: PaneView> Workspace<P> {
             window,
             |workspace, pane, _: &PaneEvent, window, cx| {
                 if workspace.active != *pane {
-                    workspace.active = pane.clone();
+                    workspace.set_active(pane.clone());
                     workspace.follow_active(window, cx);
                 }
             },

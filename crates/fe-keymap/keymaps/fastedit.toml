@@ -1200,6 +1200,13 @@ keys = "secondary-k secondary-w"
 command = "pane.close"
 context = "workbench"
 
+# VS Code's toggleMaximizeEditorGroup: secondary-k m is the language mode
+# picker's.
+[[bindings]]
+keys = "secondary-k secondary-m"
+command = "pane.toggle_maximize"
+context = "workbench"
+
 [[bindings]]
 keys = "secondary-k u"
 command = "workbench.close_saved"
@@ -2399,6 +2406,21 @@ context = "editor && vim.mode == normal"
 [[bindings]]
 keys = "ctrl-w ="
 command = "pane.equalize"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w z"
+command = "pane.toggle_maximize"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w x"
+command = "pane.exchange"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-x"
+command = "pane.exchange"
 context = "editor && vim.mode == normal"
 
 # The same keys back out of a dock, with vim on: from the sidebar's lists

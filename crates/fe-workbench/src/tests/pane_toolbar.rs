@@ -516,6 +516,8 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     let titles = [
         "Split Right",
         "Split Down",
+        "Maximize",
+        "Move to the Other Split",
         "Pin Tab",
         "Close Other Tabs",
         "Reopen Closed Tab",

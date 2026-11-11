@@ -661,6 +661,29 @@ impl Workbench {
         self.equalize_panes(cx);
     }
 
+    /// Toggle Maximized Pane
+    #[command(id = "pane.toggle_maximize")]
+    fn toggle_maximize(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        // The active pane, drawn alone until it's toggled back, the panes
+        // change or another is active ([`kiln_shell::Workspace::toggle_zoom`]).
+        (self.workspace().clone()).update(cx.cx, |workspace, cx| workspace.toggle_zoom(cx));
+        cx.cx.notify();
+    }
+
+    /// Exchange with Next Pane
+    #[command(id = "pane.exchange")]
+    fn exchange(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        // Vim's <C-w>x: the pane that takes the active one's place is
+        // active, so focus stays where it was on screen.
+        let Cx { window, cx } = cx;
+        let workspace = self.workspace().clone();
+        if let Some(other) = workspace.update(*cx, |workspace, cx| workspace.exchange(window, cx)) {
+            self.activate(other, window, cx);
+        }
+    }
+
     /// Focus Next Pane
     #[command(id = "pane.focus_next")]
     fn focus_next(&mut self, cx: &mut Cx<Self>) {

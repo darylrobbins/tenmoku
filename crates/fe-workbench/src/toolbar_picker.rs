@@ -38,10 +38,12 @@ use crate::{
 
 /// The pane commands "…" lists, as `(command, title)`, the title a message:
 /// the design's (`docs/design/design-system.md`, Pane controls), in its
-/// order, then the rest. [`PIN_TAB`] is in its place.
-const PANE_COMMANDS: [(&str, &str); 13] = [
+/// order, then the rest. [`MAXIMIZE`] and [`PIN_TAB`] are in their places.
+const PANE_COMMANDS: [(&str, &str); 16] = [
     ("pane.split_right", "workbench-pane-action-split-right"),
     ("pane.split_down", "workbench-pane-action-split-down"),
+    MAXIMIZE,
+    ("pane.exchange", "workbench-pane-action-exchange"),
     PIN_TAB,
     (
         "workbench.close_other_tabs",
@@ -66,7 +68,14 @@ const PANE_COMMANDS: [(&str, &str); 13] = [
     ),
     // Listed only while the active tab is pinned, in [`PIN_TAB`]'s place.
     UNPIN_TAB,
+    // Listed only while the pane is zoomed, in [`MAXIMIZE`]'s place.
+    RESTORE,
 ];
+
+/// Zooms the pane; while it's zoomed, [`RESTORE`] is listed instead, which
+/// runs the same command.
+const MAXIMIZE: (&str, &str) = ("pane.toggle_maximize", "workbench-pane-action-maximize");
+const RESTORE: (&str, &str) = ("pane.toggle_maximize", "workbench-pane-action-restore");
 
 /// Pins the active tab; while it's pinned, [`UNPIN_TAB`] is listed instead.
 const PIN_TAB: (&str, &str) = ("workbench.pin_tab", "workbench-pane-action-pin-tab");
@@ -117,6 +126,9 @@ pub(crate) struct ToolbarPicker {
     read: Option<Task<()>>,
     /// Focused before it opened, and again once it's dismissed.
     previous_focus: Option<FocusHandle>,
+    /// Whether the pane is zoomed, so its Maximize row reads Restore: set
+    /// by the workbench as it opens the picker, while it can't be read.
+    pub(crate) zoomed: bool,
     /// Directory reads, and those of them that ran off the main thread.
     #[cfg(test)]
     reads: std::sync::Arc<std::sync::Mutex<(usize, usize)>>,
@@ -135,6 +147,7 @@ impl ToolbarPicker {
             listing: 0,
             read: None,
             previous_focus: None,
+            zoomed: false,
             #[cfg(test)]
             reads: Default::default(),
         }
@@ -173,7 +186,7 @@ impl ToolbarPicker {
 
     /// The pane commands' rows, each with the key that runs it where the
     /// pane's item had focus; Pin Tab is Unpin Tab while the active tab is
-    /// pinned.
+    /// pinned, and Maximize is Restore while the pane is zoomed.
     fn command_rows(&self, cx: &App) -> Vec<CommandRow> {
         let pane = self.pane.upgrade();
         let pinned = pane.as_ref().is_some_and(|pane| {
@@ -184,13 +197,11 @@ impl ToolbarPicker {
             pane.read(cx).menu_context()
         });
         (PANE_COMMANDS.iter())
-            .filter(|&&row| row != UNPIN_TAB)
-            .map(|&row| {
-                if row == PIN_TAB && pinned {
-                    UNPIN_TAB
-                } else {
-                    row
-                }
+            .filter(|&&row| row != UNPIN_TAB && row != RESTORE)
+            .map(|&row| match row {
+                PIN_TAB if pinned => UNPIN_TAB,
+                MAXIMIZE if self.zoomed => RESTORE,
+                row => row,
             })
             .map(|(id, title)| (id, tr!(title), pane_toolbar::menu_shortcut(id, &stack, cx)))
             .collect()

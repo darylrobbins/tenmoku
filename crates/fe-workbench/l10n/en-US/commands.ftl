@@ -174,6 +174,7 @@ command-outline-show = Show Outline
 
 command-pane-close = Close Pane
 command-pane-equalize = Equalize Panes
+command-pane-exchange = Exchange with Next Pane
 command-pane-focus_down = Focus Pane Below
 command-pane-focus_group1 = Focus First Editor Group
 command-pane-focus_group2 = Focus Second Editor Group
@@ -194,6 +195,7 @@ command-pane-shrink_height = Shrink Pane Height
 command-pane-shrink_width = Shrink Pane Width
 command-pane-split_down = Split Down
 command-pane-split_right = Split Right
+command-pane-toggle_maximize = Toggle Maximized Pane
 
 command-peek-close = Close Peek
 command-peek-open = Open Peeked Definition

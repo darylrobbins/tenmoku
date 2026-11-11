@@ -294,10 +294,12 @@ impl Workbench {
         }
         let input = self.toolbar_picker.focus_handle(cx);
         let previous = window.focused(cx).filter(|focused| *focused != input);
+        let zoomed = self.pane_group(cx).zoomed() == Some(pane);
         let (pane, root) = (pane.downgrade(), self.root.clone());
         let workbench = cx.entity().downgrade();
         let picker = self.toolbar_picker.clone();
         picker.update(cx, |picker, cx| {
+            picker.delegate.zoomed = zoomed;
             picker
                 .delegate
                 .open(request, pane, workbench, root, previous, cx);

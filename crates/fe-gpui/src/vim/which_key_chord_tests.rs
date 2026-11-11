@@ -361,11 +361,11 @@ fn the_wheel_scrolls_the_popup_not_the_text(cx: &mut TestAppContext) {
     let entries = cx
         .debug_bounds("which-key-entries")
         .expect("its keys paint");
-    // `W`, sorted after `w`, is the last key.
+    // `z`, sorted after `w`, `W` and `x`, is the last key.
     let which = popup(&view, cx).unwrap();
-    assert_eq!(which.entries.last().unwrap().key, "W");
+    assert_eq!(which.entries.last().unwrap().key, "z");
     let last = |cx: &mut VisualTestContext| {
-        cx.debug_bounds("which-key-entry-W")
+        cx.debug_bounds("which-key-entry-z")
             .expect("the last key lays out")
     };
     let before = last(cx);

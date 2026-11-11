@@ -50,6 +50,9 @@ workbench-pane-more-actions = More Actions
 
 workbench-pane-action-split-right = Split Right
 workbench-pane-action-split-down = Split Down
+workbench-pane-action-maximize = Maximize
+workbench-pane-action-restore = Restore
+workbench-pane-action-exchange = Move to the Other Split
 workbench-pane-action-pin-tab = Pin Tab
 workbench-pane-action-unpin-tab = Unpin Tab
 workbench-pane-action-close-other-tabs = Close Other Tabs

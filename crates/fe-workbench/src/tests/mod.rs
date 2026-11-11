@@ -99,6 +99,7 @@ mod palette_recent;
 mod pane_controls_b3;
 mod pane_cycle;
 mod pane_drag;
+mod pane_maximize;
 mod pane_toolbar;
 mod pane_toolbar_no_path_item;
 mod project_panel;

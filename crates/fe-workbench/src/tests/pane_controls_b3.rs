@@ -313,6 +313,8 @@ fn pane_menu_lists_the_design_actions_with_their_keys(cx: &mut TestAppContext) {
     let design = [
         ("Split Right", keys("cmd-\\"), "pane.split_right"),
         ("Split Down", keys("cmd-k cmd-\\"), "pane.split_down"),
+        ("Maximize", keys("cmd-k cmd-m"), "pane.toggle_maximize"),
+        ("Move to the Other Split", None, "pane.exchange"),
         ("Pin Tab", None, "workbench.pin_tab"),
         ("Close Other Tabs", None, "workbench.close_other_tabs"),
         (
@@ -354,6 +356,8 @@ fn pane_menu_lists_the_design_actions_with_their_keys(cx: &mut TestAppContext) {
     let key = |id: &str| rows.iter().find(|row| row.2 == id).unwrap().1.clone();
     assert_eq!(key("pane.split_right"), keys("ctrl-w v"));
     assert_eq!(key("pane.split_down"), keys("ctrl-w s"));
+    assert_eq!(key("pane.toggle_maximize"), keys("ctrl-w z"));
+    assert_eq!(key("pane.exchange"), keys("ctrl-w x"));
     assert_eq!(key("workbench.pin_tab"), None);
     cx.simulate_keystrokes("escape");
     settle(cx);
@@ -365,7 +369,7 @@ fn pane_menu_lists_the_design_actions_with_their_keys(cx: &mut TestAppContext) {
     click(action(&pane, 2, cx), cx);
     let rows = menu(&workbench, cx).expect("shown");
     assert_eq!(
-        (rows[2].0.as_str(), rows[2].2),
+        (rows[4].0.as_str(), rows[4].2),
         ("Unpin Tab", "workbench.unpin_tab")
     );
     assert!(!rows.iter().any(|row| row.2 == "workbench.pin_tab"));
