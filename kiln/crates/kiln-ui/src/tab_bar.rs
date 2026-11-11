@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
 use gpui::{
     App, AppContext as _, ClickEvent, Div, ElementId, Entity, FocusHandle, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, RenderOnce,
     ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement,
-    Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    Styled as _, Window, accesskit::Orientation, div, prelude::FluentBuilder as _, px,
 };
 
 use kiln_l10n::tr;
 
-use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, Tooltip, UiTheme};
+use crate::{
+    ActiveTheme as _, ClickHandler, Icon, IconRef, Role, States, Tooltip, UiTheme, node, node_with,
+};
 
 /// The tab strip's height, which panels' tab strips and headers match
 /// (`docs/design/design-system.md`, Measure).
@@ -26,6 +30,10 @@ const CLOSE_BOX_SIZE: Pixels = px(16.);
 
 /// A row of [`Tab`]s that scrolls sideways when they don't fit, on the
 /// window's chrome.
+///
+/// To a screen reader it is a horizontal `TabList` "Tabs", which macOS
+/// shows as an `AXTabGroup`, and each tab one of its `Tab`s, a radio
+/// button there, with the active one selected and its place among them.
 #[derive(IntoElement)]
 pub struct TabBar {
     id: ElementId,
@@ -102,11 +110,15 @@ impl RenderOnce for TabBar {
         // Without a handle to follow, each tab keeps its own `focused`.
         let focused = (self.focus.as_ref()).map(|focus| focus.contains_focused(window, cx));
         let colors = &cx.theme().colors;
-        let tabs = (self.tabs.into_iter()).map(|tab| match focused {
-            Some(focused) => tab.focused(focused),
-            None => tab,
+        let count = self.tabs.len();
+        let tabs = (self.tabs.into_iter().enumerate()).map(|(ix, tab)| {
+            let tab = tab.in_set(ix + 1, count);
+            match focused {
+                Some(focused) => tab.focused(focused),
+                None => tab,
+            }
         });
-        div()
+        let bar = div()
             .id(self.id)
             .flex()
             .flex_none()
@@ -118,7 +130,9 @@ impl RenderOnce for TabBar {
             .border_color(colors.border.default)
             .when_some(self.scroll, |bar, scroll| bar.track_scroll(&scroll))
             .map(|bar| apply(bar, self.drag))
-            .children(tabs)
+            .children(tabs);
+        node(bar, window, cx, Role::TabList, tr!("kiln-ui-tab-bar"))
+            .aria_orientation(Orientation::Horizontal)
     }
 }
 
@@ -134,6 +148,11 @@ impl RenderOnce for TabBar {
 /// [`Tab::PINNED_WIDTH`] wide, its dirty dot in its corner if it has one,
 /// and its label and description in its tooltip. It has no close button; a
 /// middle click still closes it.
+///
+/// A screen reader hears its label and description, then "modified" if
+/// it has unsaved changes ([`Tab::a11y_label`]), and after that its other
+/// states ([`Tab::a11y_description`]). Its close button is the `Button`
+/// "Close" and its label.
 #[derive(IntoElement)]
 pub struct Tab {
     id: ElementId,
@@ -146,6 +165,8 @@ pub struct Tab {
     focused: bool,
     preview: bool,
     pinned: bool,
+    /// Its place in its [`TabBar`], from 1, and how many tabs that has.
+    in_set: Option<(usize, usize)>,
     on_click: Option<ClickHandler>,
     on_close: Option<ClickHandler>,
     on_middle_click: Option<ClickHandler>,
@@ -167,6 +188,7 @@ impl Tab {
             focused: false,
             preview: false,
             pinned: false,
+            in_set: None,
             on_click: None,
             on_close: None,
             on_middle_click: None,
@@ -286,6 +308,58 @@ impl Tab {
         })
     }
 
+    /// Its place among the tabs of its strip, from 1, and how many there
+    /// are, for a screen reader's "2 of 5". [`TabBar`] sets it for its tabs.
+    pub fn in_set(mut self, position: usize, count: usize) -> Self {
+        self.in_set = Some((position, count));
+        self
+    }
+
+    /// What a screen reader names the tab: its label, then its description
+    /// (the folder telling it apart) if it has one, then "modified" if it
+    /// has unsaved changes. Said every time the tab is, unlike
+    /// [`Tab::a11y_description`], which macOS gives as help.
+    pub fn a11y_label(&self) -> SharedString {
+        let named = match &self.description {
+            Some(description) => tr!(
+                "kiln-ui-tab-label-described",
+                label = &self.label,
+                description = description
+            ),
+            None => self.label.clone(),
+        };
+        match self.dirty {
+            true => tr!("kiln-ui-tab-label-modified", label = &named),
+            false => named,
+        }
+    }
+
+    /// The tab's states as a screen reader describes them: "modified",
+    /// "pinned" and "preview", as they apply, or `None`.
+    pub fn a11y_description(&self) -> Option<SharedString> {
+        let states: Vec<SharedString> = [
+            (self.dirty, tr!("kiln-ui-tab-state-modified")),
+            (self.pinned, tr!("kiln-ui-tab-state-pinned")),
+            (self.preview, tr!("kiln-ui-tab-state-preview")),
+        ]
+        .into_iter()
+        .filter_map(|(on, state)| on.then_some(state))
+        .collect();
+        (!states.is_empty()).then(|| states.join(", ").into())
+    }
+
+    /// The role, label and states a screen reader is given for the tab.
+    fn a11y_states(&self) -> (SharedString, States) {
+        let states = States {
+            selected: Some(self.active),
+            description: self.a11y_description(),
+            position_in_set: self.in_set.map(|(position, _)| position),
+            size_of_set: self.in_set.map(|(_, count)| count),
+            ..States::default()
+        };
+        (self.a11y_label(), states)
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -389,18 +463,26 @@ impl Tab {
 
 impl RenderOnce for Tab {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (a11y_label, a11y_states) = self.a11y_states();
         if self.pinned {
-            return self.render_pinned(window, cx).into_any_element();
+            let tab = self.render_pinned(window, cx);
+            return node_with(tab, window, cx, Role::Tab, a11y_label, a11y_states)
+                .into_any_element();
         }
         let title_color = self.title_color(cx);
         let under = self.under_content(cx);
-        let colors = &cx.theme().colors;
+        // Owned: the close button's node borrows `cx` while it's in use.
+        let colors = &cx.theme().colors.clone();
         let (hover, muted) = (colors.state.hover, colors.text.muted);
         let label = self.label.clone();
         // Hidden, it keeps its place, so the tab doesn't change width.
         let hidden_at_rest = !self.active && !self.dirty;
+        let close_label = tr!("kiln-ui-tab-close", label = &self.label);
+        // Its own id, not one under the tab's: a screen reader's node is
+        // told apart from the other tabs' close buttons by it.
+        let close_id = ElementId::NamedChild(Arc::new(self.id.clone()), "close".into());
         let close = div()
-            .id("close")
+            .id(close_id)
             .size(CLOSE_BOX_SIZE)
             .flex()
             .flex_none()
@@ -438,7 +520,8 @@ impl RenderOnce for Tab {
                     on_close(event, window, cx);
                 })
             });
-        div()
+        let close = node(close, window, cx, Role::Button, close_label);
+        let tab = div()
             .id(self.id)
             .group(TAB_GROUP)
             .relative()
@@ -489,8 +572,8 @@ impl RenderOnce for Tab {
                     }
                 })
             })
-            .map(|tab| apply(tab, self.drag))
-            .into_any_element()
+            .map(|tab| apply(tab, self.drag));
+        node_with(tab, window, cx, Role::Tab, a11y_label, a11y_states).into_any_element()
     }
 }
 

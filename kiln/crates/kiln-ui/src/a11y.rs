@@ -44,6 +44,15 @@ pub struct States {
     pub selected: Option<bool>,
     pub expanded: Option<bool>,
     pub toggled: Option<bool>,
+    /// What a screen reader says after the label, role and value, such as
+    /// a tab's "modified".
+    pub description: Option<SharedString>,
+    /// An outline row's depth, 1 for the top level.
+    pub level: Option<usize>,
+    /// Where it is among its siblings, from 1, and how many there are: of
+    /// the model, not of the rows a virtual list happens to draw.
+    pub position_in_set: Option<usize>,
+    pub size_of_set: Option<usize>,
     /// A live region's message.
     pub value: Option<SharedString>,
     /// A live region's politeness.
@@ -106,6 +115,18 @@ pub fn node_with<E: StatefulInteractiveElement + gpui::Element>(
     }
     if let Some(toggled) = states.toggled {
         element = element.aria_toggled(toggled.into());
+    }
+    if let Some(description) = states.description {
+        element = element.aria_description(description);
+    }
+    if let Some(level) = states.level {
+        element = element.aria_level(level);
+    }
+    if let Some(position) = states.position_in_set {
+        element = element.aria_position_in_set(position);
+    }
+    if let Some(size) = states.size_of_set {
+        element = element.aria_size_of_set(size);
     }
     if let Some(value) = states.value {
         element = element.aria_value(value);

@@ -11,6 +11,15 @@ workbench-project-cant-open-folder = Can't open folder { $path }
 # In place of the tree. $path is the folder, $error why it failed.
 workbench-project-cannot-open = Cannot open { $path }: { $error }
 workbench-project-no-folder = No folder open
+# What a screen reader calls the tree of files and folders.
+workbench-project-tree = Files
+# A row's git status, said after its name, as its letter (or a folder's
+# dot, for the changes beneath it) shows it.
+workbench-project-status-added = added
+workbench-project-status-modified = modified
+workbench-project-status-deleted = deleted
+workbench-project-status-untracked = untracked
+workbench-project-status-conflicted = conflicted
 
 ## Filtering the tree by name (project_panel_filter.rs)
 

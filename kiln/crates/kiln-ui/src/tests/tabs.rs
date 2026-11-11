@@ -110,3 +110,210 @@ fn clicking_tabs_shows_their_views_and_closing_asks_the_owner(cx: &mut TestAppCo
     assert_eq!((len, active), (2, 1), "the tab after the closed one shown");
     assert!(cx.debug_bounds("three").is_some());
 }
+
+/// A strip of tabs as a screen reader sees it: one tab active, and each
+/// tab's dirty, pinned and preview states and description as set.
+mod a11y {
+    use gpui::{
+        Context, ElementId, Entity, IntoElement, ParentElement as _, Render, SharedString,
+        TestAppContext, VisualTestContext, Window, div,
+    };
+
+    use crate::{Node, Role, Tab, TabBar, UiTheme, nodes};
+
+    #[derive(Clone, Default)]
+    struct Spec {
+        name: &'static str,
+        folder: Option<&'static str>,
+        dirty: bool,
+        pinned: bool,
+        preview: bool,
+    }
+
+    struct Strip {
+        tabs: Vec<Spec>,
+        active: usize,
+    }
+
+    impl Render for Strip {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let ui = UiTheme::default();
+            let tabs = self.tabs.iter().enumerate().map(|(ix, spec)| {
+                Tab::new(("tab", ix), spec.name, &ui)
+                    .description(spec.folder.map(SharedString::from))
+                    .dirty(spec.dirty)
+                    .pinned(spec.pinned)
+                    .preview(spec.preview)
+                    .active(ix == self.active)
+            });
+            div().child(TabBar::new("tabs", &ui).children(tabs))
+        }
+    }
+
+    fn named(name: &'static str) -> Spec {
+        Spec {
+            name,
+            ..Spec::default()
+        }
+    }
+
+    fn strip(tabs: Vec<Spec>, cx: &mut TestAppContext) -> (Entity<Strip>, &mut VisualTestContext) {
+        let (strip, cx) = cx.add_window_view(move |_, _| Strip { tabs, active: 0 });
+        cx.run_until_parked();
+        (strip, cx)
+    }
+
+    /// The nodes of a fresh draw.
+    fn drawn(cx: &mut VisualTestContext) -> Vec<Node> {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+            nodes(window, cx)
+        })
+    }
+
+    fn tabs(nodes: &[Node]) -> Vec<&Node> {
+        nodes.iter().filter(|n| n.role == Role::Tab).collect()
+    }
+
+    /// Each tab's label, whether it's selected, and its description.
+    fn summary(nodes: &[Node]) -> Vec<(String, Option<bool>, Option<String>)> {
+        tabs(nodes)
+            .into_iter()
+            .map(|n| {
+                let description = n.states.description.as_ref().map(|d| d.to_string());
+                (n.label.to_string(), n.states.selected, description)
+            })
+            .collect()
+    }
+
+    #[gpui::test]
+    fn the_strip_is_a_tab_list_of_tabs_in_order(cx: &mut TestAppContext) {
+        let specs = vec![named("a.rs"), named("b.rs"), named("c.rs")];
+        let (_, cx) = strip(specs, cx);
+        let got = drawn(cx);
+        let bar = got
+            .iter()
+            .find(|n| n.id == ElementId::from("tabs"))
+            .expect("the strip's node");
+        assert_eq!((bar.role, bar.label.as_ref()), (Role::TabList, "Tabs"));
+        assert_eq!(
+            summary(&got),
+            [
+                ("a.rs".into(), Some(true), None),
+                ("b.rs".into(), Some(false), None),
+                ("c.rs".into(), Some(false), None),
+            ]
+        );
+        let places: Vec<_> = tabs(&got)
+            .iter()
+            .map(|n| (n.states.position_in_set, n.states.size_of_set))
+            .collect();
+        assert_eq!(
+            places,
+            [(Some(1), Some(3)), (Some(2), Some(3)), (Some(3), Some(3))]
+        );
+        // Every tab's close button is a button named for its tab, the
+        // inactive ones' too, which show only on hovering.
+        let closes: Vec<_> = got
+            .iter()
+            .filter(|n| n.role == Role::Button)
+            .map(|n| n.label.to_string())
+            .collect();
+        assert_eq!(closes, ["Close a.rs", "Close b.rs", "Close c.rs"]);
+    }
+
+    #[gpui::test]
+    fn switching_tabs_moves_the_selection(cx: &mut TestAppContext) {
+        let specs = vec![named("a.rs"), named("b.rs"), named("c.rs")];
+        let (strip, cx) = strip(specs, cx);
+        strip.update(cx, |strip, cx| {
+            strip.active = 2;
+            cx.notify();
+        });
+        let selected: Vec<_> = summary(&drawn(cx))
+            .into_iter()
+            .map(|(label, selected, _)| (label, selected))
+            .collect();
+        assert_eq!(
+            selected,
+            [
+                ("a.rs".into(), Some(false)),
+                ("b.rs".into(), Some(false)),
+                ("c.rs".into(), Some(true)),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn a_dirty_tab_says_modified_in_its_label(cx: &mut TestAppContext) {
+        let specs = vec![named("a.rs"), named("b.rs")];
+        let (strip, cx) = strip(specs, cx);
+        assert_eq!(summary(&drawn(cx))[1], ("b.rs".into(), Some(false), None));
+
+        strip.update(cx, |strip, cx| {
+            strip.tabs[1].dirty = true;
+            cx.notify();
+        });
+        let got = drawn(cx);
+        assert_eq!(
+            summary(&got)[1],
+            (
+                "b.rs, modified".into(),
+                Some(false),
+                Some("modified".into())
+            )
+        );
+        // The close button keeps the tab's own name.
+        assert!(
+            got.iter()
+                .any(|n| n.role == Role::Button && n.label.as_ref() == "Close b.rs"),
+            "{got:#?}"
+        );
+
+        strip.update(cx, |strip, cx| {
+            strip.tabs[1].dirty = false;
+            cx.notify();
+        });
+        assert_eq!(summary(&drawn(cx))[1], ("b.rs".into(), Some(false), None));
+    }
+
+    #[gpui::test]
+    fn pinned_preview_and_folder_are_described(cx: &mut TestAppContext) {
+        let specs = vec![
+            Spec {
+                name: "mod.rs",
+                folder: Some("src/a"),
+                pinned: true,
+                dirty: true,
+                ..Spec::default()
+            },
+            Spec {
+                name: "mod.rs",
+                folder: Some("src/b"),
+                preview: true,
+                ..Spec::default()
+            },
+        ];
+        let (_, cx) = strip(specs, cx);
+        let got = drawn(cx);
+        assert_eq!(
+            summary(&got),
+            [
+                (
+                    "mod.rs, src/a, modified".into(),
+                    Some(true),
+                    Some("modified, pinned".into())
+                ),
+                ("mod.rs, src/b".into(), Some(false), Some("preview".into())),
+            ]
+        );
+        // A pinned tab has no close button.
+        let closes: Vec<_> = got
+            .iter()
+            .filter(|n| n.role == Role::Button)
+            .map(|n| n.label.to_string())
+            .collect();
+        assert_eq!(closes, ["Close mod.rs"]);
+    }
+}

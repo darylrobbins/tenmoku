@@ -38,12 +38,13 @@ use fe_git::ChangeKind;
 use fe_gpui::commands::RunCommand;
 use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
 use fe_ui::{
-    ActiveTheme as _, Icon, ROW_HEIGHT, TreeRow, UI_BODY, file_icon_ref, folder_icon_ref_named,
+    ActiveTheme as _, Icon, ROW_HEIGHT, Role, TreeRow, UI_BODY, file_icon_ref,
+    folder_icon_ref_named,
 };
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     Global, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy,
-    Styled as _, Task, UniformListScrollHandle, Window, div, px, uniform_list,
+    SharedString, Styled as _, Task, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use kiln_l10n::{Text, text, tr, verbatim};
 use kiln_shell::PaneAction;
@@ -94,6 +95,39 @@ pub(crate) fn vcs_color(kind: ChangeKind, cx: &App) -> Hsla {
         ChangeKind::Untracked => vcs.untracked,
         ChangeKind::Conflicted => vcs.conflict,
     }
+}
+
+/// A git status `kind` as a screen reader says it after a row's name: the
+/// word for the letter (or a folder's dot) the row shows.
+fn status_word(kind: ChangeKind) -> SharedString {
+    match kind {
+        ChangeKind::Added => tr!("workbench-project-status-added"),
+        ChangeKind::Modified => tr!("workbench-project-status-modified"),
+        ChangeKind::Deleted => tr!("workbench-project-status-deleted"),
+        ChangeKind::Untracked => tr!("workbench-project-status-untracked"),
+        ChangeKind::Conflicted => tr!("workbench-project-status-conflicted"),
+    }
+}
+
+/// Node `id`'s place among its folder's children in `tree`, from 1, and
+/// how many children that folder has: the model's, whatever rows the list
+/// draws or the filter hides. `hints` keeps, per folder, where the last
+/// node looked up was, so a draw's rows, which run in order, scan each
+/// folder's children about once.
+fn place_in_folder(
+    tree: &FileTree,
+    id: NodeId,
+    hints: &mut HashMap<NodeId, usize>,
+) -> Option<(usize, usize)> {
+    let path = tree.path(id)?;
+    let folder = tree.find(path.parent()?)?;
+    let siblings = tree.children(folder)?;
+    let hint = hints.get(&folder).map_or(0, |&at| at.min(siblings.len()));
+    let at = (siblings[hint..].iter().position(|&node| node == id))
+        .map(|ix| hint + ix)
+        .or_else(|| siblings[..hint].iter().position(|&node| node == id))?;
+    hints.insert(folder, at);
+    Some((at + 1, siblings.len()))
 }
 
 /// The project tree's actions, in the dock's header before ⋯ and —:
@@ -1004,6 +1038,7 @@ impl ProjectPanel {
         #[cfg(test)]
         let mut drawn_cut = Vec::new();
         let theme = fe_ui::ui_theme(cx);
+        let mut places = HashMap::new();
         let mut rows: Vec<gpui::AnyElement> = (shown.into_iter())
             .filter_map(|ix| Some((tree.rows(ix..ix + 1).next()?, ix)))
             .map(|(row, ix)| {
@@ -1033,13 +1068,18 @@ impl ProjectPanel {
                 if row.kind == EntryKind::Dir {
                     element = element.directory(row.expanded);
                 }
+                if let Some((position, count)) = place_in_folder(tree, id, &mut places) {
+                    element = element.in_set(position, count);
+                }
                 // An ignored row is left as it is.
                 let status = (git && !row.ignored)
                     .then(|| self.git_status(tree, id, row.kind))
                     .flatten();
                 if let Some((kind, badge)) = status {
                     let color = vcs_color(kind, cx);
-                    element = element.label_color(color);
+                    element = element
+                        .label_color(color)
+                        .a11y_description(status_word(kind));
                     element = match badge {
                         Some(letter) => element.badge(letter, color),
                         None => element.dot(color),
@@ -1111,7 +1151,7 @@ impl ProjectPanel {
 }
 
 impl Render for ProjectPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         {
             self.built.clear();
@@ -1168,7 +1208,8 @@ impl Render for ProjectPanel {
             KEY_CONTEXT
         };
         let theme = fe_ui::ui_theme(cx);
-        div()
+        let panel = div()
+            .id("project-tree")
             .track_focus(&self.focus)
             .key_context(context)
             .on_action(cx.listener(Self::on_run_command))
@@ -1189,7 +1230,11 @@ impl Render for ProjectPanel {
             .child(body)
             .children(
                 (self.status.as_ref()).map(|status| self.message(status.resolve().into(), cx)),
-            )
+            );
+        // To a screen reader the panel is the `Tree` "Files", its rows the
+        // tree's items (the list holds no node of its own). It's what takes
+        // focus, so the selected row can be its active descendant.
+        fe_ui::node(panel, window, cx, Role::Tree, tr!("workbench-project-tree"))
     }
 }
 
