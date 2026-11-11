@@ -842,7 +842,7 @@ mod shortcuts {
     /// Searches for `text`, then goes down into the list, its first line
     /// selected.
     fn find(text: &str, cx: &mut VisualTestContext) {
-        press("ctrl-f cmd-backspace", cx);
+        press("secondary-f cmd-backspace", cx);
         cx.simulate_input(text);
         press("down", cx);
     }
