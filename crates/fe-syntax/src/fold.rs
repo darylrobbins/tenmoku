@@ -749,16 +749,21 @@ impl Candidates<'_> {
     /// parent's children, if the first child after it with text is one
     /// and starts a row past `last`.
     fn closed_after(&self, node: Node, last: usize) -> Option<usize> {
-        let mut sibling = node.next_sibling();
-        while let Some(next) = sibling {
-            if !next.is_extra() && next.end_byte() > next.start_byte() {
-                let at = next.start_position();
-                let closes = self.class(next) == Class::Closer && at.row > last;
-                return (closes && self.starts_row(at)).then_some(at.row);
+        let mut node = node;
+        loop {
+            let mut sibling = node.next_sibling();
+            while let Some(next) = sibling {
+                if !next.is_extra() && next.end_byte() > next.start_byte() {
+                    let at = next.start_position();
+                    let closes = self.class(next) == Class::Closer && at.row > last;
+                    return (closes && self.starts_row(at)).then_some(at.row);
+                }
+                sibling = next.next_sibling();
             }
-            sibling = next.next_sibling();
+            // A final `else`/`elseif` body sits in a branch node, and the
+            // closer is a child of the statement owning that branch.
+            node = node.parent().filter(|parent| is_branch(*parent))?;
         }
-        None
     }
 
     /// Whether `node`'s row `last` starts with its closing delimiter.
@@ -847,6 +852,13 @@ fn header<'tree>(parent: Node<'tree>, node: Node<'tree>) -> Option<Node<'tree>> 
             return header;
         }
     }
+}
+
+/// Whether `node` is an `else`/`elseif` branch of a statement, such as Lua's
+/// `else_statement` or PHP's `else_if_clause`.
+fn is_branch(node: Node) -> bool {
+    let kind = node.kind();
+    kind.starts_with("else")
 }
 
 /// The last child of the cursor's node with any text, leaving the cursor on
