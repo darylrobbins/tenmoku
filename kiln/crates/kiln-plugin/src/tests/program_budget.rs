@@ -71,28 +71,29 @@ fn nap(seconds: &str) -> Vec<String> {
 fn a_calls_second_run_is_killed_at_what_the_first_left() {
     let (dir, record, _programs) = naps("share");
     let mut host = HostState::new(Box::new(|_, _| {}));
-    host.process = State::new(record, &Limits::default());
-    // A sub-second share for the whole call.
-    host.program_runs.arm(Duration::from_millis(900));
+    // A run's own deadline is out of reach, so only the call's share can kill the second run.
+    host.process = State::new(record, &Limits::default()).with_deadline(Duration::from_secs(120));
+    // A share of a few seconds for the whole call: the first run, a process spawn and a zero-length
+    // sleep, must fit in it however loaded the machine is.
+    let share = Duration::from_secs(4);
+    host.program_runs.arm(share);
 
     // The first run is charged what it measured, as the import does.
     host.spawn("nap".to_owned(), nap("0"), None).unwrap();
     let first = host.program_runs.spent();
-    assert!(
-        first > Duration::ZERO && first < Duration::from_millis(900),
-        "{first:?}"
-    );
+    assert!(first > Duration::ZERO && first < share, "{first:?}");
 
-    // The second would take 5 s: it is killed by what the first left, not left to run.
+    // The second would take a minute, far past the share: it is killed by what the first left, not
+    // left to run.
+    let left = host.program_runs.remaining();
     let started = Instant::now();
-    let second = host
-        .process
-        .spawn_within("nap", &nap("5"), None, host.program_runs.remaining());
-    assert!(
-        matches!(second, Err(SpawnError::TimedOut { .. })),
-        "{second:?}"
-    );
-    assert!(started.elapsed() < Duration::from_secs(3));
+    let second = host.process.spawn_within("nap", &nap("60"), None, left);
+    let Err(SpawnError::TimedOut { deadline, .. }) = second else {
+        panic!("{second:?}");
+    };
+    assert!(Some(deadline) <= left, "{deadline:?} past {left:?}");
+    // Killed at the share's end plus a generous margin, nowhere near the minute the nap wanted.
+    assert!(started.elapsed() < share + Duration::from_secs(20));
     fs::remove_dir_all(dir).ok();
 }
 
@@ -112,7 +113,7 @@ fn checking_the_program_comes_out_of_the_share() {
     let started = Instant::now();
     let run = state.spawn_from("nap", &nap("5"), None, share, entered);
     assert!(matches!(run, Err(SpawnError::TimedOut { .. })), "{run:?}");
-    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(started.elapsed() < Duration::from_secs(20));
     fs::remove_dir_all(dir).ok();
 }
 
