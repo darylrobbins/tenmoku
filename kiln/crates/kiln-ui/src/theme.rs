@@ -17,6 +17,8 @@ use gpui::{
     WindowId, px, rgb, rgba,
 };
 pub use kiln_core::theme::{Appearance, Color, ThemeData, Tokens};
+use kiln_core::theme::{Contrast, TOKEN_KEYS};
+use kiln_platform::system_a11y::system_a11y;
 
 /// Every list row's height: the project tree's, the outline's, the quick-open
 /// picker's and the search results', so uniform lists lay them out alike.
@@ -112,15 +114,24 @@ impl Global for ActiveUiTheme {}
 /// Makes `theme` the active chrome colours, notifying observers of
 /// [`ActiveUiTheme`]. The active [`Theme`] becomes one with these colours
 /// (over the base whose appearance the background suggests), so widgets
-/// that read `cx.theme()` match.
+/// that read `cx.theme()` match. At [`Contrast::High`] both are those
+/// colours through the high-contrast pass.
 pub fn set_ui_theme(cx: &mut App, theme: UiTheme) {
-    let active = Theme::from_ui_theme(&theme);
+    let plain = Theme::from_ui_theme(&theme);
+    let contrast = current_contrast(cx);
+    let active = plain.with_contrast(contrast);
     set_active(&active);
+    let ui = match contrast {
+        Contrast::Normal => theme,
+        Contrast::High => active.ui_theme(),
+    };
     cx.set_global(GlobalTheme {
         active,
+        plain,
         choice: None,
+        contrast,
     });
-    cx.set_global(ActiveUiTheme(theme));
+    cx.set_global(ActiveUiTheme(ui));
 }
 
 /// The active chrome colours: the last [`set_ui_theme`]'s, or the active
@@ -185,6 +196,31 @@ impl Theme {
     /// tables ([`ThemeData::extension`]).
     pub fn data(&self) -> &ThemeData {
         &self.data
+    }
+
+    /// The theme at `contrast`: itself at [`Contrast::Normal`], and at
+    /// [`Contrast::High`] with its tokens through the high-contrast pass
+    /// ([`ThemeData::high_contrast`]). A colour the pass leaves alone keeps
+    /// its GPUI colour exactly, as one [`Theme::from_ui_theme`] gave.
+    pub fn with_contrast(&self, contrast: Contrast) -> Theme {
+        if contrast == Contrast::Normal || self.data.contrast == Contrast::High {
+            return self.clone();
+        }
+        let data = self.data.high_contrast();
+        let mut colors = self.colors;
+        for key in TOKEN_KEYS {
+            let (before, after) = (self.data.tokens.get(key), data.tokens.get(key));
+            if let (Some(before), Some(&after)) = (before, after)
+                && *before != after
+            {
+                *colors.get_mut(key).expect("TOKEN_KEYS are tokens") = hsla(after);
+            }
+        }
+        Theme {
+            colors,
+            data: Arc::new(data),
+            ..self.clone()
+        }
     }
 
     /// The flat chrome colours that the first widgets take.
@@ -304,9 +340,14 @@ pub enum ThemeMode {
 /// `cx.observe_global::<GlobalTheme>`.
 #[derive(Clone, Debug)]
 pub struct GlobalTheme {
+    /// `plain` at `contrast`: what's drawn.
     active: Theme,
+    /// The theme set, or picked from `choice`, before the contrast.
+    plain: Theme,
     /// The mode and the dark and light pair, if [`set_themes`] set it.
     choice: Option<(ThemeMode, Theme, Theme)>,
+    /// The contrast every theme set is drawn at.
+    contrast: Contrast,
 }
 
 impl Global for GlobalTheme {}
@@ -326,6 +367,86 @@ impl GlobalTheme {
     pub fn themes(&self) -> Option<(&Theme, &Theme)> {
         self.choice.as_ref().map(|(_, dark, light)| (dark, light))
     }
+
+    /// The contrast the theme is drawn at ([`GlobalTheme::set_contrast`]).
+    pub fn contrast(&self) -> Contrast {
+        self.contrast
+    }
+
+    /// Draws the active theme, and every theme set after it, at
+    /// `contrast`, as an app does for the system's Increase Contrast
+    /// option or its own setting, redrawing every window if that changes
+    /// what's drawn. In [`ThemeMode::System`] it also picks the theme for
+    /// the system's appearance again, as that's read differently while
+    /// Increase Contrast is on ([`system_appearance`]): call it whenever
+    /// the system's options change, even with the contrast the same.
+    pub fn set_contrast(cx: &mut App, contrast: Contrast) {
+        let (plain, choice) = match cx.try_global::<GlobalTheme>() {
+            Some(global) => (global.plain.clone(), global.choice.clone()),
+            None => (Theme::dark(), None),
+        };
+        let plain = match &choice {
+            Some((ThemeMode::System, dark, light)) => {
+                let appearance = system_appearance(cx, App::window_appearance);
+                pick(ThemeMode::System, appearance, dark, light).clone()
+            }
+            _ => plain,
+        };
+        let unchanged = cx
+            .try_global::<GlobalTheme>()
+            .map_or(contrast == Contrast::Normal, |global| {
+                global.contrast == contrast && global.plain == plain
+            });
+        if !unchanged {
+            activate(cx, plain, choice, contrast);
+        }
+    }
+}
+
+/// The contrast themes are drawn at: [`Contrast::Normal`] until
+/// [`GlobalTheme::set_contrast`] says otherwise.
+fn current_contrast(cx: &App) -> Contrast {
+    cx.try_global::<GlobalTheme>()
+        .map_or(Contrast::Normal, |global| global.contrast)
+}
+
+/// Reads the system's appearance as plain dark or light for
+/// [`system_appearance`]: kiln-platform's reader, unless a test sets
+/// another.
+#[derive(Clone, Copy)]
+struct PlatformAppearance(fn() -> Option<Appearance>);
+
+impl Global for PlatformAppearance {}
+
+/// Has [`system_appearance`] read the platform's appearance with `read`.
+#[cfg(test)]
+pub(crate) fn set_platform_appearance(cx: &mut App, read: fn() -> Option<Appearance>) {
+    cx.set_global(PlatformAppearance(read));
+}
+
+/// The system's appearance, as [`ThemeMode::System`] follows it: GPUI's
+/// reading (`gpui`), except while the system's Increase Contrast option
+/// is on. Then GPUI's mapping sees a high-contrast appearance name it
+/// doesn't know, logs "unknown appearance" and answers light whatever the
+/// system is, so the platform's own reading
+/// ([`kiln_platform::system_a11y::appearance`]) is taken instead, and
+/// GPUI's isn't asked at all while that answers.
+pub(crate) fn system_appearance(
+    cx: &App,
+    gpui: impl FnOnce(&App) -> WindowAppearance,
+) -> WindowAppearance {
+    if system_a11y(cx).increase_contrast {
+        let read = cx.try_global::<PlatformAppearance>().map_or(
+            kiln_platform::system_a11y::appearance as fn() -> Option<Appearance>,
+            |platform| platform.0,
+        );
+        match read() {
+            Some(Appearance::Dark) => return WindowAppearance::Dark,
+            Some(Appearance::Light) => return WindowAppearance::Light,
+            None => {}
+        }
+    }
+    gpui(cx)
 }
 
 /// Reads the active theme: `cx.theme()`, from any `App` or `Context`.
@@ -345,14 +466,24 @@ impl ActiveTheme for App {
 /// notifying observers of [`GlobalTheme`] and [`ActiveUiTheme`] and
 /// redrawing every window.
 pub fn set_theme(cx: &mut App, theme: Theme) {
-    activate(cx, theme, None);
+    let contrast = current_contrast(cx);
+    activate(cx, theme, None, contrast);
 }
 
 /// Sets a dark and a light theme and which to use: `mode` picks one, or
-/// for [`ThemeMode::System`] the one matching the system's appearance now.
+/// for [`ThemeMode::System`] the one matching the system's appearance now
+/// ([`system_appearance`]).
 pub fn set_themes(cx: &mut App, mode: ThemeMode, dark: Theme, light: Theme) {
-    let active = pick(mode, cx.window_appearance(), &dark, &light).clone();
-    activate(cx, active, Some((mode, dark, light)));
+    let active = match mode {
+        ThemeMode::Dark => dark.clone(),
+        ThemeMode::Light => light.clone(),
+        ThemeMode::System => {
+            let appearance = system_appearance(cx, App::window_appearance);
+            pick(mode, appearance, &dark, &light).clone()
+        }
+    };
+    let contrast = current_contrast(cx);
+    activate(cx, active, Some((mode, dark, light)), contrast);
 }
 
 /// Switches to `mode` over the dark and light pair [`set_themes`] set, or
@@ -368,10 +499,13 @@ pub fn set_theme_mode(cx: &mut App, mode: ThemeMode) {
 
 /// Keeps the active theme matching `window`'s appearance while the mode is
 /// [`ThemeMode::System`], until the subscription is dropped. One window is
-/// enough: the appearance is the system's.
+/// enough: the appearance is the system's. While Increase Contrast is on,
+/// the appearance is the platform's own reading ([`system_appearance`]).
 pub fn observe_system_appearance(window: &Window) -> Subscription {
-    window
-        .observe_window_appearance(|window, cx| system_appearance_changed(cx, window.appearance()))
+    window.observe_window_appearance(|window, cx| {
+        let appearance = system_appearance(cx, |_| window.appearance());
+        system_appearance_changed(cx, appearance)
+    })
 }
 
 /// Keeps the theme following the system's dark or light appearance, as
@@ -418,9 +552,9 @@ pub fn system_appearance_changed(cx: &mut App, appearance: WindowAppearance) {
         return;
     };
     let theme = pick(ThemeMode::System, appearance, dark, light);
-    if *theme != global.active {
+    if *theme != global.plain {
         let (theme, choice) = (theme.clone(), global.choice.clone());
-        activate(cx, theme, choice);
+        activate(cx, theme, choice, global.contrast);
     }
 }
 
@@ -474,9 +608,21 @@ fn set_active(active: &Theme) {
     COLORS.set(Some(active.colors));
 }
 
-fn activate(cx: &mut App, active: Theme, choice: Option<(ThemeMode, Theme, Theme)>) {
+/// Makes `plain` at `contrast` the active theme.
+fn activate(
+    cx: &mut App,
+    plain: Theme,
+    choice: Option<(ThemeMode, Theme, Theme)>,
+    contrast: Contrast,
+) {
+    let active = plain.with_contrast(contrast);
     set_active(&active);
     cx.set_global(ActiveUiTheme(active.ui_theme()));
-    cx.set_global(GlobalTheme { active, choice });
+    cx.set_global(GlobalTheme {
+        active,
+        plain,
+        choice,
+        contrast,
+    });
     cx.refresh_windows();
 }

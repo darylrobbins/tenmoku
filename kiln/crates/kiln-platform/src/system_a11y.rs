@@ -48,6 +48,23 @@ pub fn read() -> SystemA11y {
     }
 }
 
+/// The system's appearance as plain dark or light, resolved by the platform
+/// itself rather than by GPUI: on macOS, the app's effective appearance's
+/// best match of Aqua and DarkAqua. That still answers while Increase
+/// Contrast makes the appearance a high-contrast variant, which GPUI maps
+/// to light (logging "unknown appearance"). `None` where the platform has
+/// no reader, or off the main thread.
+pub fn appearance() -> Option<kiln_core::theme::Appearance> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::appearance()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 /// The options the app last saw: the defaults before [`install`].
 pub fn system_a11y(cx: &App) -> SystemA11y {
     cx.try_global::<SystemA11y>().copied().unwrap_or_default()

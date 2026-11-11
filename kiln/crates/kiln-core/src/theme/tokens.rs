@@ -393,3 +393,219 @@ pub fn resolve<'a>(
     }
     tokens
 }
+
+/// How far a theme's tokens set things apart: as the theme has them, or
+/// raised by [`high_contrast`], as the system's Increase Contrast option
+/// asks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Contrast {
+    /// The theme's own colours.
+    #[default]
+    Normal,
+    /// The theme's colours through [`high_contrast`].
+    High,
+}
+
+/// Muted text's least contrast with each surface under [`Contrast::High`]:
+/// WCAG's AAA level for body text.
+pub const HIGH_CONTRAST_TEXT: f32 = 7.0;
+
+/// Faint text's least contrast with each surface under [`Contrast::High`]:
+/// WCAG's AA level, one step below muted text's.
+pub const HIGH_CONTRAST_FAINT: f32 = 4.5;
+
+/// The row backgrounds text is drawn on, over a surface: hovered,
+/// selected and inactive-selected rows, as the state tokens and the list's
+/// own say.
+pub const ROW_GROUNDS: [&str; 6] = [
+    "state.hover",
+    "state.selected",
+    "state.selected_inactive",
+    "list.row_hover",
+    "list.row_selected",
+    "list.row_selected_inactive",
+];
+
+/// The high-contrast pass over resolved tokens, for every theme alike
+/// rather than a high-contrast file per theme:
+///
+/// - the selections (`state.selected`, `state.selected_inactive`,
+///   `list.row_selected`, `list.row_selected_inactive`) at twice their
+///   alpha, up to opaque;
+/// - then every row background ([`ROW_GROUNDS`]) no stronger than leaves
+///   room for text at [`HIGH_CONTRAST_TEXT`] on it: where white or black
+///   (whichever stands further from the surfaces) can't reach that on the
+///   row over each surface, the row's alpha comes down until it can, below
+///   the theme's own if need be (an opaque mid-tone selection does);
+/// - `text.muted` at least [`HIGH_CONTRAST_TEXT`] against every ground
+///   it's drawn on ([`text_grounds`]: the surfaces and those rows over
+///   them), and `text.faint` at least [`HIGH_CONTRAST_FAINT`];
+/// - `text.primary` never weaker than that muted text;
+/// - the borders and dividers (`border.default`, `border.subtle`,
+///   `border.control`) at least as strong as the muted text against the
+///   background, so the muted text's colour unless a border is stronger
+///   already;
+/// - `state.focus_ring` and `list.row_focus_border` opaque (the ring's
+///   2 px is kiln-ui's `FOCUS_RING`).
+///
+/// Tokens derived from these follow them ([`RULES`]), as `vcs.ignored`
+/// follows `text.muted`; every other token keeps its colour.
+pub fn high_contrast(tokens: &Tokens) -> Tokens {
+    let doubled = |color: Color| color.with_alpha(color.a().saturating_mul(2));
+    let mut rows = *tokens;
+    for key in [
+        "state.selected",
+        "state.selected_inactive",
+        "list.row_selected",
+        "list.row_selected_inactive",
+    ] {
+        let slot = rows.get_mut(key).expect("selections are tokens");
+        *slot = doubled(*slot);
+    }
+    let surfaces = surface_grounds(tokens);
+    for key in ROW_GROUNDS {
+        let slot = rows.get_mut(key).expect("row grounds are tokens");
+        *slot = room_for_text(*slot, &surfaces, HIGH_CONTRAST_TEXT);
+    }
+
+    let grounds = text_grounds(&rows);
+    let muted = at_least(tokens.text.muted, &grounds, HIGH_CONTRAST_TEXT);
+    let faint = at_least(tokens.text.faint, &grounds, HIGH_CONTRAST_FAINT);
+    let primary = at_least(
+        tokens.text.primary,
+        &grounds,
+        least_contrast(muted, &grounds),
+    );
+    let background = surfaces[0];
+    let border = |color: Color| {
+        let strength = |color: Color| contrast_ratio(over(color, background), background);
+        if strength(color) >= strength(muted) {
+            color
+        } else {
+            muted
+        }
+    };
+    // The surfaces stay as they are, though `surface.raised` derives from
+    // `text.primary`: the text was fitted to them.
+    let mut set = vec![
+        ("surface.raised", tokens.surface.raised),
+        ("surface.chrome", tokens.surface.chrome),
+        ("text.primary", primary),
+        ("text.muted", muted),
+        ("text.faint", faint),
+        ("border.default", border(tokens.border.default)),
+        ("border.subtle", border(tokens.border.subtle)),
+        ("border.control", border(tokens.border.control)),
+        ("state.focus_ring", tokens.state.focus_ring.with_alpha(0xff)),
+        (
+            "list.row_focus_border",
+            tokens.list.row_focus_border.with_alpha(0xff),
+        ),
+    ];
+    set.extend(ROW_GROUNDS.map(|key| (key, *rows.get(key).expect("row grounds are tokens"))));
+    resolve(set, Some(tokens))
+}
+
+/// `row`, a background drawn over each of `surfaces` with text on it, as
+/// strong as it can be, at most as it is, while white or black (whichever
+/// stands further from `surfaces`) still reads at `ratio` on it: its alpha
+/// brought down, a step at a time, until it does. So text fitted to the
+/// row ([`at_least`]) can reach `ratio` on it at all.
+pub fn room_for_text(row: Color, surfaces: &[Color], ratio: f32) -> Color {
+    let extreme = extreme(surfaces);
+    let fits = |row: Color| {
+        let grounds: Vec<Color> = surfaces.iter().map(|&surface| over(row, surface)).collect();
+        least_contrast(extreme, &grounds) >= ratio
+    };
+    (0..=row.a())
+        .rev()
+        .map(|alpha| row.with_alpha(alpha))
+        .find(|&row| fits(row))
+        .unwrap_or(row.with_alpha(0))
+}
+
+/// White or black, whichever stands further from all of `grounds`.
+fn extreme(grounds: &[Color]) -> Color {
+    let (white, black) = (Color::rgb(0xffffff), Color::rgb(0));
+    if least_contrast(white, grounds) >= least_contrast(black, grounds) {
+        white
+    } else {
+        black
+    }
+}
+
+/// The surfaces text is drawn on, each as it looks over the window's
+/// background: `surface.background`, `panel`, `chrome` and `raised`. Not
+/// `overlay`, a scrim nothing is written on.
+pub fn surface_grounds(tokens: &Tokens) -> [Color; 4] {
+    let background = over(tokens.surface.background, Color::rgb(0));
+    let surface = &tokens.surface;
+    [
+        background,
+        over(surface.panel, background),
+        over(surface.chrome, background),
+        over(surface.raised, background),
+    ]
+}
+
+/// Every ground text is drawn on: the surfaces ([`surface_grounds`]),
+/// then each row background ([`ROW_GROUNDS`]) over each surface, as a
+/// hovered or selected row in a panel or a picker looks.
+pub fn text_grounds(tokens: &Tokens) -> Vec<Color> {
+    let surfaces = surface_grounds(tokens);
+    let rows = ROW_GROUNDS.map(|key| *tokens.get(key).expect("row grounds are tokens"));
+    let mut grounds = surfaces.to_vec();
+    for row in rows {
+        grounds.extend(surfaces.iter().map(|&surface| over(row, surface)));
+    }
+    grounds
+}
+
+/// `top` drawn over `under`, as one opaque colour when `under` is.
+pub fn over(top: Color, under: Color) -> Color {
+    let alpha = f32::from(top.a()) / 255.;
+    under.with_alpha(0xff).mix(top.with_alpha(0xff), alpha)
+}
+
+/// WCAG's relative luminance of an opaque colour.
+pub fn luminance(color: Color) -> f32 {
+    let linear = |channel: u8| {
+        let c = f32::from(channel) / 255.;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+}
+
+/// WCAG's contrast ratio of two opaque colours, 1 to 21.
+pub fn contrast_ratio(a: Color, b: Color) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// The least contrast `color`, drawn over each of `grounds`, has with it.
+pub fn least_contrast(color: Color, grounds: &[Color]) -> f32 {
+    (grounds.iter())
+        .map(|&ground| contrast_ratio(over(color, ground), ground))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// `color`, opaque over the first of `grounds`, moved the least way
+/// towards white or black (whichever stands further from `grounds`) for
+/// [`least_contrast`] with them to reach `ratio`; white or black itself if
+/// nothing short of it does. Opaque, so its contrast doesn't hang on what
+/// it's drawn over.
+pub fn at_least(color: Color, grounds: &[Color], ratio: f32) -> Color {
+    let Some(&first) = grounds.first() else {
+        return color;
+    };
+    let color = over(color, first);
+    let extreme = extreme(grounds);
+    (0..=u8::MAX)
+        .map(|step| color.mix(extreme, f32::from(step) / 255.))
+        .find(|&moved| least_contrast(moved, grounds) >= ratio)
+        .unwrap_or(extreme)
+}

@@ -182,6 +182,27 @@ fn apply_reduce_motion(cx: &mut App) {
     cx.set_reduce_motion(reduced);
 }
 
+/// Draws the theme at high contrast or not: `workbench.contrast` if it says
+/// `high` or `normal`, else the system's Increase Contrast option. It also
+/// has kiln pick the system mode's theme again, which kiln reads from the
+/// platform itself while Increase Contrast is on, as GPUI maps the
+/// high-contrast appearances to light.
+fn apply_contrast(cx: &mut App) {
+    let system = kiln::platform::system_a11y::system_a11y(cx).increase_contrast;
+    let contrast = match current_settings(cx).workbench.contrast.resolve(system) {
+        true => kiln::core::theme::Contrast::High,
+        false => kiln::core::theme::Contrast::Normal,
+    };
+    kiln::ui::GlobalTheme::set_contrast(cx, contrast);
+}
+
+/// Applies the system's accessibility options as the settings have them
+/// followed: Reduce Motion and Increase Contrast.
+fn apply_system_a11y(cx: &mut App) {
+    apply_reduce_motion(cx);
+    apply_contrast(cx);
+}
+
 /// Applies each settings reload of kiln's config service to every
 /// window: the theme mode and vim when the file changed them, then each
 /// workbench's editors, status bar and language servers, with its root's
@@ -191,9 +212,10 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         launch_root,
         ..Default::default()
     });
-    // Reduce Motion: the setting's choice, or the system's, from now on.
-    apply_reduce_motion(cx);
-    kiln::platform::system_a11y::observe_system_a11y(cx, apply_reduce_motion).detach();
+    // Reduce Motion and Increase Contrast: the settings' choices, or the
+    // system's, from now on.
+    apply_system_a11y(cx);
+    kiln::platform::system_a11y::observe_system_a11y(cx, apply_system_a11y).detach();
     cx.observe_global::<GlobalSettings<Settings>>(move |cx| {
         let global = cx.global::<GlobalSettings<Settings>>();
         // The settings as loaded, before any reload: nothing to apply.
@@ -202,6 +224,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         let (now, before) = (global.settings(), global.previous());
         let reduce_motion_changed = now.workbench.reduce_motion != before.workbench.reduce_motion;
+        let contrast_changed = now.workbench.contrast != before.workbench.contrast;
         let (jump_on_s, jump_style) = (now.vim.jump_on_s, now.vim.jump_style);
         let (ignorecase, smartcase, incsearch) =
             (now.vim.ignorecase, now.vim.smartcase, now.vim.incsearch);
@@ -224,6 +247,9 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         if reduce_motion_changed {
             apply_reduce_motion(cx);
+        }
+        if contrast_changed {
+            apply_contrast(cx);
         }
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
@@ -1012,6 +1038,9 @@ fn main() {
         kiln::init(cx, config(store).source(remaps));
         // The editor's colours, from kiln's theme from now on.
         theme::init(cx);
+        // At the contrast the settings and the system ask for, before the
+        // first window draws.
+        apply_contrast(cx);
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
         fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);

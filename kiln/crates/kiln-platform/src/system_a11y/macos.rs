@@ -8,6 +8,7 @@ use std::ptr::NonNull;
 
 use block2::RcBlock;
 use gpui::App;
+use kiln_core::theme::Appearance;
 use objc2::{class, msg_send, rc::Retained, rc::autoreleasepool, runtime::AnyObject};
 
 use super::{SystemA11y, set_system_a11y};
@@ -34,6 +35,52 @@ pub(super) fn read() -> SystemA11y {
                     accessibilityDisplayShouldDifferentiateWithoutColor
                 ],
             }
+        }
+    })
+}
+
+#[link(name = "AppKit", kind = "framework")]
+unsafe extern "C" {
+    static NSAppearanceNameAqua: *mut AnyObject;
+    static NSAppearanceNameDarkAqua: *mut AnyObject;
+    /// The shared application, nil until it's made.
+    static NSApp: *mut AnyObject;
+}
+
+/// The app's effective appearance as dark or light: AppKit's
+/// `bestMatchFromAppearancesWithNames:` of Aqua and DarkAqua (macOS 10.14+),
+/// which matches the high-contrast variants Increase Contrast reports to
+/// their plain ones. `None` off the main thread or before the app exists.
+pub(super) fn appearance() -> Option<Appearance> {
+    autoreleasepool(|_| {
+        // SAFETY: `NSApplication`'s appearance is read on the main thread
+        // only (checked first), from `NSApp` if it's been made (never making
+        // it); the names are AppKit's constant strings, and
+        // `arrayWithObjects:count:` copies the two pointers it's given.
+        unsafe {
+            let main: bool = msg_send![class!(NSThread), isMainThread];
+            if !main {
+                return None;
+            }
+            let app = NSApp.as_ref()?;
+            let effective: *mut AnyObject = msg_send![app, effectiveAppearance];
+            let effective = effective.as_ref()?;
+            let (aqua, dark) = (NSAppearanceNameAqua, NSAppearanceNameDarkAqua);
+            let names = [aqua, dark];
+            let names: *mut AnyObject = msg_send![
+                class!(NSArray),
+                arrayWithObjects: names.as_ptr(),
+                count: names.len()
+            ];
+            let best: *mut AnyObject =
+                msg_send![effective, bestMatchFromAppearancesWithNames: names];
+            let best = best.as_ref()?;
+            let is_dark: bool = msg_send![best, isEqualToString: dark];
+            Some(if is_dark {
+                Appearance::Dark
+            } else {
+                Appearance::Light
+            })
         }
     })
 }

@@ -22,7 +22,9 @@
 
 use std::{path::Path, sync::LazyLock};
 
-use kiln_core::theme::{Appearance, ThemeData, ThemeFile};
+use kiln_core::theme::{
+    Appearance, Contrast, HIGH_CONTRAST_TEXT, ThemeData, ThemeFile, at_least, over, room_for_text,
+};
 use toml::{Table, Value};
 
 pub use kiln_core::theme::Color;
@@ -316,7 +318,8 @@ impl EditorPalette {
     /// `syntax` tables laid over it. A key that isn't a colour key or a
     /// capture name, or a value that isn't a colour, is left out with a
     /// warning naming its dotted key. The tables carry no line numbers, so
-    /// the warnings don't either.
+    /// the warnings don't either. A theme at [`Contrast::High`] gets the
+    /// palette's high-contrast pass ([`EditorPalette::high_contrast`]).
     pub fn for_theme(theme: &ThemeData) -> (EditorPalette, Vec<String>) {
         let mut palette = Self::bundled(theme.appearance).clone();
         let warnings = palette.overlay(
@@ -324,7 +327,70 @@ impl EditorPalette {
             theme.extension("syntax"),
             theme.extension("terminal"),
         );
+        if theme.contrast == Contrast::High {
+            palette.high_contrast();
+        }
         (palette, warnings)
+    }
+
+    /// The editor's half of the high-contrast pass (kiln's
+    /// [`kiln_core::theme::high_contrast`] is the chrome's): the gutter's
+    /// colour, which draws the line numbers, inlay hints, ghost text and the
+    /// popovers' quieter text, and the caret line's number, each at least
+    /// [`HIGH_CONTRAST_TEXT`] against every ground they're drawn on
+    /// ([`EditorPalette::text_grounds`]), as the chrome's muted text is.
+    /// First the backgrounds that colour lies on over another (the caret's
+    /// line, the selection a completion row has, a diff's filler, sticky
+    /// scroll's hover) are brought down, by alpha, to where text can still
+    /// reach that on them ([`room_for_text`]), as the chrome's selected
+    /// rows are: a mid-tone selection, as Monokai's, can't host it.
+    pub fn high_contrast(&mut self) {
+        let editor = &mut self.editor;
+        let background = over(editor.background, Color::rgb(0));
+        let popover = over(editor.popover_background, background);
+        let sticky = over(editor.sticky_scroll_background, background);
+        editor.active_line = room_for_text(editor.active_line, &[background], HIGH_CONTRAST_TEXT);
+        editor.selection = room_for_text(editor.selection, &[popover], HIGH_CONTRAST_TEXT);
+        editor.diff_filler = room_for_text(editor.diff_filler, &[background], HIGH_CONTRAST_TEXT);
+        let filler = over(editor.diff_filler, background);
+        editor.sticky_scroll_hover = room_for_text(
+            editor.sticky_scroll_hover,
+            &[sticky, filler],
+            HIGH_CONTRAST_TEXT,
+        );
+        let grounds = self.text_grounds();
+        let editor = &mut self.editor;
+        editor.gutter_foreground = at_least(editor.gutter_foreground, &grounds, HIGH_CONTRAST_TEXT);
+        editor.gutter_active_foreground = at_least(
+            editor.gutter_active_foreground,
+            &grounds,
+            HIGH_CONTRAST_TEXT,
+        );
+    }
+
+    /// What the gutter's colour is drawn on, each as it looks over the
+    /// editor's background: the background; the caret's line; the popover
+    /// surface (an inlay hint's pill, hover, signature help, which-key) and
+    /// a selected row on it (a completion's detail and kind); sticky
+    /// scroll's band, plain and under the pointer (a pinned header's line
+    /// number); and a diff view's filler, plain and under the pointer (its
+    /// hunk headers and hidden-lines labels).
+    pub fn text_grounds(&self) -> [Color; 8] {
+        let editor = &self.editor;
+        let background = over(editor.background, Color::rgb(0));
+        let popover = over(editor.popover_background, background);
+        let sticky = over(editor.sticky_scroll_background, background);
+        let filler = over(editor.diff_filler, background);
+        [
+            background,
+            over(editor.active_line, background),
+            popover,
+            over(editor.selection, popover),
+            sticky,
+            over(editor.sticky_scroll_hover, sticky),
+            filler,
+            over(editor.sticky_scroll_hover, filler),
+        ]
     }
 
     /// The colour listed for the capture named exactly `name`.
@@ -425,5 +491,206 @@ fn color(value: &Value) -> Result<Color, String> {
     match value {
         Value::String(text) => text.parse(),
         _ => Err(kiln_l10n::tr!("config-theme-not-colour", found = value.type_str()).to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kiln_core::theme::{
+        Contrast, HIGH_CONTRAST_FAINT, HIGH_CONTRAST_TEXT, ThemeData, Tokens, contrast_ratio, over,
+    };
+
+    use super::{Color, EditorPalette};
+    use crate::themes::bundled_themes;
+
+    /// Every theme Tenmoku ships, as kiln resolves it.
+    fn shipped() -> Vec<(&'static str, ThemeData)> {
+        (bundled_themes().iter())
+            .map(|theme| (theme.title, ThemeData::from_file(&theme.file())))
+            .collect()
+    }
+
+    /// The least contrast `text` has drawn over each of `grounds`, with
+    /// the ground it's least on.
+    fn least(text: Color, grounds: &[(String, Color)]) -> (f32, String) {
+        (grounds.iter())
+            .map(|(name, ground)| (contrast_ratio(over(text, *ground), *ground), name.clone()))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .expect("grounds")
+    }
+
+    /// The chrome's grounds, worked out here: the surfaces over the
+    /// background, and each hovered or selected row over each surface.
+    fn chrome_grounds(tokens: &Tokens) -> Vec<(String, Color)> {
+        let background = over(tokens.surface.background, Color::rgb(0));
+        let surfaces = [
+            ("background", background),
+            ("panel", over(tokens.surface.panel, background)),
+            ("chrome", over(tokens.surface.chrome, background)),
+            ("raised", over(tokens.surface.raised, background)),
+        ];
+        let rows = [
+            ("state.hover", tokens.state.hover),
+            ("state.selected", tokens.state.selected),
+            ("state.selected_inactive", tokens.state.selected_inactive),
+            ("list.row_hover", tokens.list.row_hover),
+            ("list.row_selected", tokens.list.row_selected),
+            (
+                "list.row_selected_inactive",
+                tokens.list.row_selected_inactive,
+            ),
+        ];
+        let mut grounds: Vec<(String, Color)> = (surfaces.iter())
+            .map(|&(name, color)| (name.to_owned(), color))
+            .collect();
+        for (row, color) in rows {
+            for (surface, under) in surfaces {
+                grounds.push((format!("{row} over {surface}"), over(color, under)));
+            }
+        }
+        grounds
+    }
+
+    /// The chrome's token rule (kiln's `high_contrast`, tested in full in
+    /// kiln-ui's theme_tokens) holds for Tenmoku's themes too, whose
+    /// surfaces, rows and muted text kiln's tests can't see.
+    #[test]
+    fn high_contrast_tokens_hold_for_every_shipped_theme() {
+        for (name, theme) in shipped() {
+            let high = theme.high_contrast();
+            let tokens = &high.tokens;
+            let grounds = chrome_grounds(tokens);
+            let (muted, on) = least(tokens.text.muted, &grounds);
+            assert!(
+                muted >= HIGH_CONTRAST_TEXT,
+                "{name}: muted {muted:.2}:1 on {on}"
+            );
+            let (faint, on) = least(tokens.text.faint, &grounds);
+            assert!(
+                faint >= HIGH_CONTRAST_FAINT,
+                "{name}: faint {faint:.2}:1 on {on}"
+            );
+            let (primary, on) = least(tokens.text.primary, &grounds);
+            assert!(
+                primary >= muted - 0.01,
+                "{name}: primary {primary:.2}:1 on {on}"
+            );
+            assert_eq!(tokens.state.focus_ring.a(), 0xff, "{name}");
+            assert_eq!(tokens.list.row_focus_border.a(), 0xff, "{name}");
+            let background = &grounds[..1];
+            for border in [
+                tokens.border.default,
+                tokens.border.subtle,
+                tokens.border.control,
+            ] {
+                let (strength, _) = least(border, background);
+                assert!(
+                    strength >= least(tokens.text.muted, background).0 - 0.01,
+                    "{name}: border {border} {strength:.2}:1"
+                );
+            }
+        }
+    }
+
+    /// The editor's grounds for the gutter's colour, worked out here from
+    /// what draws it (`gutter_foreground` in fe-gpui): line numbers, ghost
+    /// text and lenses on the background and the caret's line; inlay pills,
+    /// hover, signature help and which-key on the popover surface; a
+    /// completion's detail and kind on its selected row (`selection` over the
+    /// popover); sticky scroll's line numbers on its band, plain and hovered;
+    /// a diff view's hunk headers and hidden-lines labels on its filler, and
+    /// their chevrons hovered.
+    fn editor_grounds(palette: &EditorPalette) -> Vec<(String, Color)> {
+        let editor = &palette.editor;
+        let background = over(editor.background, Color::rgb(0));
+        let popover = over(editor.popover_background, background);
+        let sticky = over(editor.sticky_scroll_background, background);
+        let filler = over(editor.diff_filler, background);
+        [
+            ("background", background),
+            ("active_line", over(editor.active_line, background)),
+            ("popover_background", popover),
+            ("selection over popover", over(editor.selection, popover)),
+            ("sticky_scroll_background", sticky),
+            (
+                "sticky_scroll_hover",
+                over(editor.sticky_scroll_hover, sticky),
+            ),
+            ("diff_filler", filler),
+            (
+                "sticky_scroll_hover over diff_filler",
+                over(editor.sticky_scroll_hover, filler),
+            ),
+        ]
+        .map(|(name, color)| (name.to_owned(), color))
+        .to_vec()
+    }
+
+    /// The editor's half: the gutter's colour (line numbers, inlay hints,
+    /// ghost text) and the caret line's number read at 7:1 on every ground
+    /// they're drawn on, in every shipped theme; normal contrast leaves the
+    /// palette as the theme has it.
+    #[test]
+    fn high_contrast_editor_palette_for_every_shipped_theme() {
+        for (name, theme) in shipped() {
+            let (normal, _) = EditorPalette::for_theme(&theme);
+            let high_theme = theme.high_contrast();
+            assert_eq!(high_theme.contrast, Contrast::High);
+            let (high, warnings) = EditorPalette::for_theme(&high_theme);
+            assert_eq!(warnings, [] as [String; 0], "{name}");
+            let grounds = editor_grounds(&high);
+            for (key, before, after) in [
+                (
+                    "gutter_foreground",
+                    normal.editor.gutter_foreground,
+                    high.editor.gutter_foreground,
+                ),
+                (
+                    "gutter_active_foreground",
+                    normal.editor.gutter_active_foreground,
+                    high.editor.gutter_active_foreground,
+                ),
+            ] {
+                let (ratio, on) = least(after, &grounds);
+                assert!(
+                    ratio >= HIGH_CONTRAST_TEXT,
+                    "{name}: {key} {ratio:.2}:1 on {on}"
+                );
+                assert!(ratio >= least(before, &grounds).0 - 0.01, "{name}: {key}");
+                assert_eq!(after.a(), 0xff, "{name}: {key}");
+            }
+            // The backgrounds under it keep their colour, at no more alpha
+            // than they had, and leave room for 7:1 text; nothing else in
+            // the palette moves.
+            let mut expected = high.clone();
+            expected.editor.gutter_foreground = normal.editor.gutter_foreground;
+            expected.editor.gutter_active_foreground = normal.editor.gutter_active_foreground;
+            let editor = |palette: &EditorPalette, key| palette.editor.get(key).expect("a key");
+            for key in [
+                "active_line",
+                "selection",
+                "diff_filler",
+                "sticky_scroll_hover",
+            ] {
+                let (before, after) = (editor(&normal, key), editor(&high, key));
+                assert_eq!(
+                    after.with_alpha(0xff),
+                    before.with_alpha(0xff),
+                    "{name}: {key}"
+                );
+                assert!(after.a() <= before.a(), "{name}: {key}");
+                if after != before {
+                    let grounds: Vec<_> = grounds.iter().map(|(_, color)| *color).collect();
+                    let room = kiln_core::theme::least_contrast;
+                    let (white, black) = (Color::rgb(0xffffff), Color::rgb(0));
+                    assert!(
+                        room(white, &grounds).max(room(black, &grounds)) >= HIGH_CONTRAST_TEXT,
+                        "{name}: {key}"
+                    );
+                }
+                *expected.editor.get_mut(key).expect("a key") = before;
+            }
+            assert_eq!(expected, normal, "{name}");
+        }
     }
 }

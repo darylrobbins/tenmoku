@@ -649,3 +649,92 @@ fn clicks_choose_and_write(cx: &mut TestAppContext) {
     assert!(settings(&user).vim.enabled);
     assert_eq!(s.stop(), Stop::Control(ControlId::Keyboard));
 }
+
+/// Under high contrast (the system's Increase Contrast, or
+/// `workbench.contrast = "high"`) the focused stop's ring is the design's
+/// 2 px, opaque, and every control stays where it was.
+#[gpui::test]
+fn high_contrast_ring_is_two_pixels_in_place(cx: &mut TestAppContext) {
+    use gpui::px;
+    use kiln::{core::theme::Contrast, ui::GlobalTheme};
+
+    let mut s = open(cx);
+    s.show();
+    let rings = |s: &mut Sheet<'_>| {
+        draw(s.cx);
+        let sheet = s.sheet();
+        sheet.read_with(s.cx, |sheet, _| sheet.rings())
+    };
+    let controls = [
+        "setup-radio-ThemeMode-0",
+        "setup-radio-ThemeMode-2",
+        "setup-primary",
+    ];
+    let bounds = |s: &mut Sheet<'_>| {
+        draw(s.cx);
+        controls.map(|selector| s.cx.debug_bounds(selector))
+    };
+
+    let normal = rings(&mut s);
+    assert!(normal.iter().any(|&(focused, _, _)| focused), "{normal:?}");
+    assert!(
+        normal
+            .iter()
+            .all(|&(_, border, padding)| (border, padding) == (px(1.), px(1.)))
+    );
+    let before = bounds(&mut s);
+    assert!(before.iter().all(Option::is_some), "{before:?}");
+
+    s.cx.update(|_, cx| GlobalTheme::set_contrast(cx, Contrast::High));
+    let high = rings(&mut s);
+    assert!(high.iter().any(|&(focused, _, _)| focused), "{high:?}");
+    assert!(
+        high.iter()
+            .all(|&(_, border, padding)| (border, padding) == (px(2.), px(0.)))
+    );
+    assert_eq!(bounds(&mut s), before, "a control moved");
+    let ring =
+        s.cx.update(|_, cx| fe_ui::ActiveTheme::theme(cx).colors.state.focus_ring);
+    assert_eq!(ring.a, 1., "the ring is opaque");
+
+    // Off again: back to 1 px.
+    s.cx.update(|_, cx| GlobalTheme::set_contrast(cx, Contrast::Normal));
+    assert_eq!(rings(&mut s), normal);
+}
+
+/// In a window too short for the Ready page, tabbing to Install scrolls
+/// it into the body's view, above the footer, ring and all, so Enter never
+/// presses a button that can't be seen (T1343 review F3).
+#[gpui::test]
+fn tabbing_to_install_reveals_it_in_a_short_window(cx: &mut TestAppContext) {
+    if !cfg!(target_os = "macos") {
+        // Install is the Mac's only.
+        return;
+    }
+    let mut s = open(cx);
+    s.cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(260.)));
+    draw(s.cx);
+    s.show();
+    for _ in [Step::Appearance, Step::Font, Step::Keyboard, Step::Editing] {
+        click("setup-primary", s.cx);
+    }
+    assert_eq!(s.step(), Step::Ready);
+    let visible = |s: &mut Sheet<'_>| {
+        draw(s.cx);
+        draw(s.cx);
+        let install =
+            s.cx.debug_bounds("setup-install-shell")
+                .expect("Install is drawn");
+        let card = s.cx.debug_bounds("setup-card").expect("the card is drawn");
+        let footer =
+            s.cx.debug_bounds("setup-primary")
+                .expect("the footer is drawn");
+        install.top() >= card.top() && install.bottom() <= footer.top()
+    };
+    // Short enough that it starts out of view, under the footer.
+    assert!(!visible(&mut s), "the window is too tall to test this");
+    while s.stop() != Stop::Install {
+        s.press("tab");
+    }
+    assert!(visible(&mut s), "Install has the ring but is out of view");
+}

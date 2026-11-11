@@ -303,6 +303,11 @@ settings-template-workbench-reduce_motion =
     Whether animation is reduced: "system" follows the system's Reduce Motion
     option, "on" and "off" decide it here, whatever the system says.
 
+settings-template-workbench-contrast =
+    Whether colours are drawn at high contrast: "system" follows the system's
+    Increase Contrast option, "high" and "normal" decide it here, whatever the
+    system says.
+
 settings-template-workbench-locale =
     The language of Tenmoku's own text: auto follows the system's preferred
     languages; a tag such as "de" or "pt-BR" picks a shipped one. Menus and

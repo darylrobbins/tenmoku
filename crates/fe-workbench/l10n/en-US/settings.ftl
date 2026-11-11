@@ -164,6 +164,7 @@ workbench-settings-label-vim-subword_motions = Subword Motions
 workbench-settings-label-vim-which_key = Which Key
 workbench-settings-label-vim-which_key_delay_ms = Which Key Delay Ms
 workbench-settings-label-vim-which_key_group = Which Key Group
+workbench-settings-label-workbench-contrast = Contrast
 workbench-settings-label-workbench-icon_theme = Icon Theme
 workbench-settings-label-workbench-locale = Locale
 workbench-settings-label-workbench-preview_tabs = Preview Tabs

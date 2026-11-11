@@ -626,6 +626,37 @@ pub struct WorkbenchSettings {
     /// Motion option (System Settings › Accessibility › Display), `on` and
     /// `off` decide it here, whatever the system says.
     pub reduce_motion: ReduceMotion,
+    /// Whether colours are drawn at high contrast: `system` follows the
+    /// system's Increase Contrast option (System Settings › Accessibility ›
+    /// Display), `high` and `normal` decide it here, whatever the system
+    /// says. High contrast strengthens every theme's borders, focus ring,
+    /// selections, muted text and the editor's line numbers.
+    pub contrast: ContrastSetting,
+}
+
+/// `workbench.contrast`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ContrastSetting {
+    /// As the system's Increase Contrast option is.
+    #[default]
+    System,
+    /// High contrast, whatever the system says.
+    High,
+    /// The theme's own contrast, whatever the system says.
+    Normal,
+}
+
+impl ContrastSetting {
+    /// Whether colours are drawn at high contrast, given the system's
+    /// Increase Contrast option.
+    pub fn resolve(self, system: bool) -> bool {
+        match self {
+            Self::System => system,
+            Self::High => true,
+            Self::Normal => false,
+        }
+    }
 }
 
 /// `workbench.reduce_motion`.
@@ -839,6 +870,7 @@ impl Default for WorkbenchSettings {
             start_page: true,
             rail: RailSide::default(),
             reduce_motion: ReduceMotion::default(),
+            contrast: ContrastSetting::default(),
             locale: LocaleSetting::default(),
         }
     }

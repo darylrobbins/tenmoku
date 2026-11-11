@@ -103,6 +103,26 @@
       },
       "type": "object"
     },
+    "ContrastSetting": {
+      "description": "`workbench.contrast`.",
+      "oneOf": [
+        {
+          "const": "system",
+          "description": "As the system's Increase Contrast option is.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "High contrast, whatever the system says.",
+          "type": "string"
+        },
+        {
+          "const": "normal",
+          "description": "The theme's own contrast, whatever the system says.",
+          "type": "string"
+        }
+      ]
+    },
     "DefaultColorDecorators": {
       "description": "`editor.default_color_decorators`, as VS Code's\n`editor.defaultColorDecorators`.",
       "oneOf": [
@@ -1424,6 +1444,11 @@
     "WorkbenchSettings": {
       "description": "Settings for the workbench.",
       "properties": {
+        "contrast": {
+          "$ref": "#/$defs/ContrastSetting",
+          "default": "system",
+          "description": "Whether colours are drawn at high contrast: `system` follows the\nsystem's Increase Contrast option (System Settings › Accessibility ›\nDisplay), `high` and `normal` decide it here, whatever the system\nsays. High contrast strengthens every theme's borders, focus ring,\nselections, muted text and the editor's line numbers."
+        },
         "icon_theme": {
           "$ref": "#/$defs/IconTheme",
           "default": "tenmoku",
@@ -1693,6 +1718,7 @@
     "workbench": {
       "$ref": "#/$defs/WorkbenchSettings",
       "default": {
+        "contrast": "system",
         "icon_theme": "tenmoku",
         "locale": "auto",
         "preview_tabs": true,

@@ -218,6 +218,10 @@ pub(crate) struct SetupWizard {
     /// Every tile passed in the last render, by its label.
     #[cfg(test)]
     tiles: std::cell::RefCell<Vec<(String, TileArt)>>,
+    /// Every ring drawn in the last render: whether it showed focus, and
+    /// its border and padding.
+    #[cfg(test)]
+    rings: std::cell::RefCell<Vec<(bool, Pixels, Pixels)>>,
     /// Holds focus here: anything else that takes it, an open from another
     /// process, say, would have keys typed under the sheet.
     _focus_out: gpui::Subscription,
@@ -274,6 +278,8 @@ impl SetupWizard {
             nodes: Default::default(),
             #[cfg(test)]
             tiles: Default::default(),
+            #[cfg(test)]
+            rings: Default::default(),
             _focus_out: focus_out,
         };
         this.enter_page(0);
@@ -602,13 +608,16 @@ impl SetupWizard {
     }
 
     /// Around what holds a tab stop: a ring when `focused`, else the card's
-    /// colour, so nothing moves.
+    /// colour, so nothing moves ([`ring_widths`]).
     fn ring(&self, focused: bool, child: impl IntoElement, cx: &App) -> gpui::Div {
         let colors = cx.theme().colors;
+        let (border, padding) = ring_widths(cx.theme().data().contrast);
+        #[cfg(test)]
+        self.rings.borrow_mut().push((focused, border, padding));
         div()
-            .p(px(1.))
+            .p(padding)
             .rounded_md()
-            .border_1()
+            .border(border)
             .border_color(if focused {
                 colors.state.focus_ring
             } else {
@@ -1228,6 +1237,13 @@ impl SetupWizard {
         self.nodes.borrow().clone()
     }
 
+    /// Every ring the last render drew: whether it showed focus, and its
+    /// border and padding.
+    #[cfg(test)]
+    pub(crate) fn rings(&self) -> Vec<(bool, Pixels, Pixels)> {
+        self.rings.borrow().clone()
+    }
+
     /// Every tile the last render passed, with its label.
     #[cfg(test)]
     pub(crate) fn tiles(&self) -> Vec<(String, TileArt)> {
@@ -1290,12 +1306,24 @@ fn quit(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// A tab stop's ring's border and padding at `contrast`: 1 px of each, or
+/// under high contrast the design's 2 px ring with no padding, so a control
+/// sits in the same place either way.
+pub(crate) fn ring_widths(contrast: kiln::core::theme::Contrast) -> (Pixels, Pixels) {
+    match contrast {
+        kiln::core::theme::Contrast::Normal => (px(1.), px(1.)),
+        kiln::core::theme::Contrast::High => (px(2.), px(0.)),
+    }
+}
+
 impl Render for SetupWizard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         self.nodes.borrow_mut().clear();
         #[cfg(test)]
         self.tiles.borrow_mut().clear();
+        #[cfg(test)]
+        self.rings.borrow_mut().clear();
         let colors = cx.theme().colors;
         let viewport = window.viewport_size();
         let mut context = KeyContext::default();

@@ -267,3 +267,25 @@ fn reduce_motion_follows_the_system_unless_overridden() {
     assert!(setting(&store).resolve(true));
     assert!(!setting(&store).resolve(false));
 }
+
+#[test]
+fn contrast_follows_the_system_unless_overridden() {
+    use crate::settings::ContrastSetting;
+
+    let dir = tempfile::tempdir().unwrap();
+    let user = write(&dir, "user.toml", "");
+    let mut store = SettingsStore::load(Some(user.clone()), None);
+    let setting = |store: &SettingsStore| store.settings().workbench.contrast;
+    assert_eq!(setting(&store), ContrastSetting::System);
+    assert!(setting(&store).resolve(true));
+    assert!(!setting(&store).resolve(false));
+
+    fs::write(&user, "[workbench]\ncontrast = \"normal\"\n").unwrap();
+    let event = store.reload(std::slice::from_ref(&user)).expect("a change");
+    assert_eq!(event.previous.workbench.contrast, ContrastSetting::System);
+    assert!(!setting(&store).resolve(true), "normal beats a system on");
+
+    fs::write(&user, "[workbench]\ncontrast = \"high\"\n").unwrap();
+    store.reload(std::slice::from_ref(&user)).expect("a change");
+    assert!(setting(&store).resolve(false), "high beats a system off");
+}

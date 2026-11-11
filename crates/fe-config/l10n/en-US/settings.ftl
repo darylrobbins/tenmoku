@@ -540,6 +540,16 @@ settings-vim-which_key_group =
 
 settings-workbench = The workbench: its panes and tabs.
 
+settings-workbench-contrast =
+    Whether colours are drawn at high contrast: `system` follows the
+    system's Increase Contrast option (System Settings › Accessibility ›
+    Display), `high` and `normal` decide it here, whatever the system
+    says. High contrast strengthens every theme's borders, focus ring,
+    selections, muted text and the editor's line numbers.
+    .system = As the system's Increase Contrast option is.
+    .high = High contrast, whatever the system says.
+    .normal = The theme's own contrast, whatever the system says.
+
 settings-workbench-icon_theme =
     The file and folder icons: `tenmoku` draws line icons tinted from the
     theme, by file type and folder role; `material` draws Material Icon

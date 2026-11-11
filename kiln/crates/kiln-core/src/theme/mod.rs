@@ -20,8 +20,10 @@ use std::{collections::BTreeMap, path::Path, sync::LazyLock};
 pub use color::Color;
 pub use file::{ALIAS_TABLE, ALIASES, THEME_VERSION, ThemeFile};
 pub use tokens::{
-    Accent, Agent, Border, List, RULES, Rule, SOFT, Scrollbar, State, Status, Surface,
-    TOKEN_GROUPS, TOKEN_KEYS, Tab, Text, Tokens, Vcs, resolve, rule,
+    Accent, Agent, Border, Contrast, HIGH_CONTRAST_FAINT, HIGH_CONTRAST_TEXT, List, ROW_GROUNDS,
+    RULES, Rule, SOFT, Scrollbar, State, Status, Surface, TOKEN_GROUPS, TOKEN_KEYS, Tab, Text,
+    Tokens, Vcs, at_least, contrast_ratio, high_contrast, least_contrast, luminance, over, resolve,
+    room_for_text, rule, surface_grounds, text_grounds,
 };
 use toml::Table;
 
@@ -47,6 +49,9 @@ pub struct ThemeData {
     pub tokens: Tokens,
     /// The file's app tables by name, as [`ThemeFile::extensions`].
     pub extensions: BTreeMap<String, Table>,
+    /// Whether [`ThemeData::high_contrast`] raised the tokens: an app's
+    /// own tables, such as an editor's colours, follow it.
+    pub contrast: Contrast,
 }
 
 static DARK: LazyLock<ThemeData> = LazyLock::new(|| bundled("dark.toml", DARK_SOURCE));
@@ -62,6 +67,7 @@ fn bundled(file_name: &str, source: &str) -> ThemeData {
         appearance: file.appearance.unwrap_or_default(),
         tokens: resolve(file.tokens.iter().map(|(key, color)| (*key, *color)), None),
         extensions: file.extensions,
+        contrast: Contrast::Normal,
     }
 }
 
@@ -115,6 +121,21 @@ impl ThemeData {
                 Some(&base.tokens),
             ),
             extensions,
+            contrast: Contrast::Normal,
+        }
+    }
+
+    /// The theme with its tokens through the high-contrast pass
+    /// ([`high_contrast`]), marked [`Contrast::High`]. A theme already
+    /// marked is returned as it is.
+    pub fn high_contrast(&self) -> ThemeData {
+        if self.contrast == Contrast::High {
+            return self.clone();
+        }
+        ThemeData {
+            tokens: high_contrast(&self.tokens),
+            contrast: Contrast::High,
+            ..self.clone()
         }
     }
 
