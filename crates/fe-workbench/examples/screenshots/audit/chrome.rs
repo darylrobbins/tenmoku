@@ -2,7 +2,7 @@
 //! rail and the status bar, with the demo's two files open. It's also the
 //! scene every bundled theme is captured in, so its probes hold for every
 //! theme. The title bar is `surface.chrome` (T1538), with no line under
-//! it; the tab strip, the rail and the status bar are still
+//! it, and so is the status bar (T1543); the tab strip is still
 //! `surface.panel`, which `surface.chrome` defaults to.
 
 use crate::{
@@ -35,5 +35,5 @@ const PROBES: &[Probe] = &[
     // The activity rail, between its buttons.
     probe(20., 400., "surface.chrome"),
     // The status bar, between its items.
-    probe(500., 590., "surface.panel"),
+    probe(500., 590., "surface.chrome"),
 ];

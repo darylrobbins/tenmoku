@@ -9,7 +9,10 @@ use gpui::{
     svg,
 };
 
-use crate::{ActiveTheme as _, ClickHandler, Icon, ROW_HEIGHT, Tokens, Tooltip, UiTheme, ui_theme};
+use crate::{
+    ActiveTheme as _, ClickHandler, Icon, Tokens, Tooltip, UI_LABEL, UiTheme, height, radius,
+    space, ui_theme,
+};
 
 /// What a status bar entry's icon says, which picks its colour: the
 /// matching `status.*` token, or the text's for `Default`.
@@ -23,8 +26,9 @@ pub enum StatusTone {
     Success,
 }
 
-/// A status bar entry drawn as a filled segment, as a vim mode is: its
-/// whole height in `background`, its label and icon in `foreground`.
+/// A status bar entry drawn as a pill, as a vim mode is: a rounded 16 px
+/// fill in `background` inside the entry's padding, its label and icon in
+/// `foreground`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StatusFill {
     pub background: Hsla,
@@ -72,9 +76,14 @@ pub fn status_entry_colors(
 /// The side length of an entry's icon.
 const ICON_SIZE: f32 = 14.;
 
-/// The status bar: a full-width row along the window's bottom edge, with a
-/// 1 px line on top, its left children from the left edge and its right
-/// children against the right edge.
+/// A filled entry's pill: the bar's height less a 4 px inset above and
+/// below.
+const PILL_HEIGHT: gpui::Pixels = px(16.);
+
+/// The status bar: a full-width row along the window's bottom edge,
+/// [`height::STATUS_BAR`] tall on `surface.chrome` with a 1 px line on top,
+/// its text the UI label role (12/16, 500), its left children from the left
+/// edge and its right children against the right edge.
 #[derive(IntoElement)]
 pub struct StatusBarFrame {
     left: Vec<AnyElement>,
@@ -115,20 +124,25 @@ impl RenderOnce for StatusBarFrame {
             .items_center()
             .justify_between()
             .w_full()
-            .h(ROW_HEIGHT)
+            .h(height::STATUS_BAR)
             .overflow_hidden()
-            .bg(colors.surface.panel)
+            .bg(colors.surface.chrome)
             .border_t_1()
             .border_color(colors.border.default)
             .text_color(colors.text.primary)
+            .text_size(UI_LABEL.size)
+            .line_height(UI_LABEL.line_height)
+            .font_weight(FontWeight(f32::from(UI_LABEL.weight)))
             .child(side().min_w_0().overflow_hidden().children(self.left))
             .child(side().flex_none().children(self.right))
     }
 }
 
-/// One status bar item: its label, padded, after its icon if it has one.
-/// With a click handler, it's highlighted on hover under a pointer cursor,
-/// unless filled. With a tooltip, hovering shows it.
+/// One status bar item: its label after its icon if it has one, 8 px of
+/// padding either side; filled, the two in a pill inside that padding
+/// ([`StatusEntry::fill`]). With a click handler, it's highlighted on hover
+/// under a pointer cursor, unless filled. With a tooltip, hovering shows
+/// it.
 #[derive(IntoElement)]
 pub struct StatusEntry {
     id: SharedString,
@@ -175,7 +189,10 @@ impl StatusEntry {
         self
     }
 
-    /// Draws the entry as a filled segment, its label at semibold weight.
+    /// Draws the entry's icon and label in a pill of `fill`'s background,
+    /// 16 px tall with 6 px inside either end and 4 px corners,
+    /// the label at semibold weight. In tests its bounds are those of the
+    /// debug selector `status-pill:{id}`.
     pub fn fill(mut self, fill: StatusFill) -> Self {
         self.fill = Some(fill);
         self
@@ -213,35 +230,44 @@ impl RenderOnce for StatusEntry {
             tooltip.update(cx, |tooltip, cx| tooltip.set_text(&text, cx));
             tooltip
         });
-        div()
+        let icon = self.icon.map(|icon| {
+            let id = id.clone();
+            svg()
+                .path(icon.path())
+                .size(px(ICON_SIZE))
+                .flex_none()
+                .text_color(colors.icon)
+                .debug_selector(move || format!("status-icon:{id}"))
+        });
+        // The icon and label, in a pill if filled.
+        let content = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .when(icon.is_some(), |content| content.gap_1())
+            .children(icon)
+            .child(self.label)
+            .when_some(colors.background, |pill, background| {
+                let id = id.clone();
+                pill.debug_selector(move || format!("status-pill:{id}"))
+                    .h(PILL_HEIGHT)
+                    .px(space::S6)
+                    .rounded(radius::CONTROL)
+                    .bg(background)
+                    .font_weight(FontWeight::SEMIBOLD)
+            });
+        let entry = div()
             .id(ElementId::Name(id.clone()))
             .debug_selector(|| format!("status-item:{id}"))
             .flex()
             .flex_none()
             .items_center()
             .h_full()
+            .px(space::S8)
             .whitespace_nowrap()
             .text_color(colors.text)
-            .map(|entry| match colors.background {
-                // Square, the whole height: a lualine or airline segment.
-                Some(background) => entry
-                    .px_3()
-                    .bg(background)
-                    .font_weight(FontWeight::SEMIBOLD),
-                None => entry.px_2(),
-            })
-            .when_some(self.icon, |entry, icon| {
-                let id = id.clone();
-                entry.gap_1().child(
-                    svg()
-                        .path(icon.path())
-                        .size(px(ICON_SIZE))
-                        .flex_none()
-                        .text_color(colors.icon)
-                        .debug_selector(move || format!("status-icon:{id}")),
-                )
-            })
-            .child(self.label)
+            .child(content);
+        entry
             .when_some(self.on_click, |entry, on_click| {
                 entry
                     .cursor_pointer()

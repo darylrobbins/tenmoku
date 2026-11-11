@@ -118,6 +118,7 @@ mod sidebar_b3;
 mod splits;
 mod splits_followups;
 mod status_bar;
+mod status_bar_b3;
 mod status_bar_go_to_line;
 mod status_bar_icons;
 mod tabs;

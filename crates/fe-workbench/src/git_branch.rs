@@ -1,15 +1,15 @@
 //! Switching to a branch and creating one: `git.switch_branch` and
 //! `git.create_branch`, with the branch typed after `:Git switch` in
-//! [`GitOp::args`], routed here by `git_commands`; and the status bar's
-//! branch item.
+//! [`GitOp::args`], routed here by `git_commands`; and what the title bar's
+//! branch widget shows.
 //!
-//! - **Item.** On the bar's left, before the vim mode: the git-branch icon
-//!   and HEAD's branch, or its short id when detached, then as VS Code's
-//!   does: `*` for working-tree or untracked changes, `+` for staged ones
-//!   and `!` while a merge or rebase is in progress, in that order; none outside a
-//!   repository. The git refresh
-//!   ([`crate::git`]) sets it each time it reads the status. A click runs
-//!   `git.switch_branch`.
+//! - **Branch.** The title bar's branch widget (`title_bar.rs`) shows
+//!   HEAD's branch, or its short id when detached, then as VS Code's status
+//!   item does: `*` for working-tree or untracked changes, `+` for staged
+//!   ones and `!` while a merge or rebase is in progress, in that order;
+//!   nothing outside a repository. The git refresh ([`crate::git`]) sets it
+//!   each time it reads the status. A click runs `git.switch_branch`. The
+//!   status bar shows no branch (the design's status bar row).
 //! - **Picker.** `git.switch_branch`, or `:Git switch` and `:Git checkout`
 //!   with no name, lists the branches in the background, then shows the
 //!   shared picker (kiln-shell's: `ctrl-n`/`ctrl-p`, up and down move):
@@ -59,7 +59,7 @@ use gpui::{
     Subscription, WeakEntity, Window, div,
 };
 use kiln_l10n::{text, tr};
-use kiln_shell::{Icon, ModalEvent, StatusItem, StatusSide};
+use kiln_shell::ModalEvent;
 
 use super::{
     Palette, RootChanged, Workbench,
@@ -70,12 +70,6 @@ use crate::{
     git::Marks,
     picker::{Picker, PickerDelegate},
 };
-
-/// The status item's id.
-pub(crate) const ITEM: &str = "git.branch";
-
-/// Its priority: before the vim mode's 0, leftmost.
-const PRIORITY: i32 = -100;
 
 /// The branch picker's first row, in en-US, for tests.
 #[cfg(test)]
@@ -210,16 +204,19 @@ enum Outcome {
 }
 
 impl Workbench {
-    /// Shows `branch` on the status bar: where HEAD points, and what
-    /// changed ([`Marks`]). None, outside a repository, hides the item.
-    /// The title bar's branch widget follows it.
-    pub(crate) fn set_branch_item(&mut self, branch: Option<(Head, Marks)>, cx: &mut App) {
-        self.title_branch = branch.as_ref().map(|(head, _)| head_name(head).into());
-        let bar = self.status_bar.clone();
-        bar.update(cx, |bar, cx| match branch {
-            Some((head, marks)) => bar.set_item(status_item(&head, marks), cx),
-            None => bar.remove_item(ITEM, cx),
-        });
+    /// Shows `branch` in the title bar's branch widget: where HEAD points,
+    /// and what changed ([`Marks`]). None, outside a repository, hides the
+    /// widget.
+    pub(crate) fn set_branch_item(
+        &mut self,
+        branch: Option<(Head, Marks)>,
+        cx: &mut Context<Self>,
+    ) {
+        let shown = branch.map(|(head, marks)| SharedString::from(branch_label(&head, marks)));
+        if shown != self.title_branch {
+            self.title_branch = shown;
+            cx.notify();
+        }
     }
 
     /// Lists the branches in the background, then shows the branch picker.
@@ -521,8 +518,8 @@ impl Workbench {
     }
 }
 
-/// The status item for `head`, with `*`, `+` and `!` as `marks` say.
-fn status_item(head: &Head, marks: Marks) -> StatusItem {
+/// `head`'s name, with `*`, `+` and `!` as `marks` say.
+fn branch_label(head: &Head, marks: Marks) -> String {
     let mut text = head_name(head).to_owned();
     for (set, mark) in [
         (marks.working, '*'),
@@ -533,11 +530,7 @@ fn status_item(head: &Head, marks: Marks) -> StatusItem {
             text.push(mark);
         }
     }
-    let switch = fe_command::Invocation::of("git.switch_branch").expect("a valid command ID");
-    StatusItem::new(ITEM, StatusSide::Left, PRIORITY, text)
-        .icon(Icon::GitBranch)
-        .tooltip(tr!("workbench-chrome-switch-branch"))
-        .command(switch)
+    text
 }
 
 /// HEAD's branch, or its short id when detached.

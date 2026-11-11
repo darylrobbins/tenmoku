@@ -1,6 +1,7 @@
 //! Switching and creating branches, on repositories built with the `git`
 //! CLI in temporary directories, each with a local bare `origin`: the
-//! status bar's branch item, the branch picker, creating a branch from its
+//! title bar's branch widget (the status bar has no branch item), the
+//! branch picker, creating a branch from its
 //! name's picker or the vim line, and the question when a switch would
 //! overwrite local changes.
 
@@ -10,9 +11,9 @@ use fe_gpui::{EditorSettings, EditorTheme, EditorView, set_vim_enabled};
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
 use kiln_shell::Picker;
 
-use super::{BranchPicker, CREATE_ROW, ITEM, NamePicker, OVERWRITE};
+use super::{BranchPicker, CREATE_ROW, NamePicker, OVERWRITE};
 use crate::{
-    Launch, StatusSide, Workbench,
+    Launch, Workbench,
     workbench::{Palette, git_commands::GitCommand},
 };
 
@@ -154,13 +155,10 @@ fn refresh(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
-/// The branch item's text, as the bar last drew it.
+/// What the title bar's branch widget shows.
 fn branch_item(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<String> {
-    let bar = workbench.read_with(cx, |workbench, _| workbench.status_bar().clone());
-    bar.read_with(cx, |bar, _| bar.drawn(StatusSide::Left))
-        .into_iter()
-        .find(|(id, _)| id == ITEM)
-        .map(|(_, text)| text.to_string())
+    let state = workbench.read_with(cx, |workbench, _| workbench.title_bar_state());
+    state.branch.map(|branch| branch.to_string())
 }
 
 /// The picker of type `D` showing as the branch pickers' modal, if one is.
@@ -232,12 +230,14 @@ pub(super) fn stashes(work: &Path) -> usize {
 }
 
 #[gpui::test]
-fn status_item(cx: &mut TestAppContext) {
+fn title_bar_branch(cx: &mut TestAppContext) {
     let dir = fixture();
     let work = dir.path().join("work");
     init(cx);
     let (workbench, mut vcx) = window(cx, &work);
     let wcx = &mut vcx;
+    workbench.update(wcx, |workbench, cx| workbench.set_title_bar(true, cx));
+    draw(wcx);
     assert_eq!(branch_item(&workbench, wcx).as_deref(), Some("main"));
 
     // An edit on disk marks it.
@@ -264,8 +264,8 @@ fn status_item(cx: &mut TestAppContext) {
     // A click opens the branch picker.
     assert!(modal::<BranchPicker>(&workbench, wcx).is_none());
     let bounds = wcx
-        .debug_bounds("status-item:git.branch")
-        .expect("the item is drawn");
+        .debug_bounds("title-branch")
+        .expect("the widget is drawn");
     wcx.simulate_click(bounds.center(), Modifiers::none());
     draw(wcx);
     let picker = modal::<BranchPicker>(&workbench, wcx).expect("the branch picker shows");
@@ -277,9 +277,9 @@ fn status_item(cx: &mut TestAppContext) {
     let ocx = &mut ocx;
     refresh(&other, ocx);
     assert_eq!(branch_item(&other, ocx), None);
-    let bar = other.read_with(ocx, |workbench, _| workbench.status_bar().clone());
-    let left = bar.read_with(ocx, |bar, _| bar.drawn(StatusSide::Left));
-    assert!(left.iter().all(|(id, _)| id != ITEM), "{left:?}");
+    other.update(ocx, |workbench, cx| workbench.set_title_bar(true, cx));
+    draw(ocx);
+    assert_eq!(ocx.debug_bounds("title-branch"), None);
 }
 
 #[gpui::test]

@@ -181,7 +181,7 @@ pub mod status {
         }
     }
 
-    /// The vim mode item's segment for a `vim.mode`, in `theme`'s colours:
+    /// The vim mode item's pill for a `vim.mode`, in `theme`'s colours:
     /// an operator waiting is still normal mode.
     pub(super) fn vim_mode_fill(mode: &str, theme: &EditorTheme) -> StatusFill {
         let background = match mode {

@@ -1,9 +1,13 @@
-//! The status bar along the window's bottom edge: the active item's
-//! items, for an editor its vim mode, with vim on, on the left (and
-//! `recording @a` beside it while a macro records), and its
-//! cursor, selections, indentation, encoding, line endings and language on
-//! the right ([`fe_gpui::pane_item::status`]); and whatever items a host
-//! sets.
+//! The status bar along the window's bottom edge, in B3
+//! (`docs/design/design-system.md`, Workbench anatomy): the active item's
+//! items, for an editor its vim mode, with vim on, on the left, as a pill
+//! in its mode's colour (and `recording @a` beside it while a macro
+//! records), and its cursor, selections, indentation, encoding, line
+//! endings and language on the right ([`fe_gpui::pane_item::status`]); and
+//! whatever items a host sets: on the left, after the mode, the error and
+//! warning counts, each with its glyph (`problems_panel.rs`);
+//! on the right, first, the language server's (`lsp.rs`). No branch:
+//! that is the title bar's (`git_branch.rs`).
 //!
 //! Items are data ([`StatusItem`], fastedit's name for kiln-shell's
 //! [`kiln_shell::StatusItem`], with the built-in items' ids), kept and
@@ -38,6 +42,7 @@ use gpui::{
     App, Context, Entity, Global, IntoElement, Render, SharedString, Subscription, WeakEntity,
     Window,
 };
+use kiln_l10n::{tr, verbatim};
 use kiln_shell::{
     ItemHandle, ItemId,
     status::{self, StatusItems},
@@ -94,7 +99,7 @@ impl StatusItem {
     pub const VIM_MODE: &str = built_in::VIM_MODE;
     /// `recording @a` while vim records a macro into register `a`: on the
     /// left, priority 5, beside the mode.
-    pub const VIM_RECORDING: &str = "vim_recording";
+    pub const VIM_RECORDING: &str = verbatim!("vim_recording");
     /// Vim's last message, such as `E486: Pattern not found: zzz`, until
     /// the next key in the editor: on the left, priority 10.
     pub const VIM_MESSAGE: &str = built_in::VIM_MESSAGE;
@@ -204,7 +209,10 @@ impl StatusBar {
                     id: StatusItem::VIM_RECORDING.into(),
                     side: StatusSide::Left,
                     priority: 5,
-                    text: format!("recording @{register}").into(),
+                    text: tr!(
+                        "workbench-status-recording",
+                        register = register.to_string()
+                    ),
                     command: None,
                 }
                 .into()
@@ -215,7 +223,7 @@ impl StatusBar {
                 if item.id == StatusItem::ENCODING && item.command.is_none() {
                     let change = Invocation::of(CHANGE_ENCODING).expect("a valid command ID");
                     item.command = Some(change);
-                    item.tooltip = Some("Select Encoding".into());
+                    item.tooltip = Some(tr!("workbench-status-select-encoding"));
                 }
             }
         }
@@ -289,7 +297,7 @@ pub(crate) fn registry() -> Registry<StatusCommands> {
     registry
         .register(
             vim_line::CANCEL,
-            "Cancel Command Line",
+            &kiln_l10n::message(&fe_command::l10n::command_key(vim_line::CANCEL)),
             |target: &mut bool, _: &Actor| {
                 *target = true;
                 Ok(Dispatched::new(Effect::Notify))

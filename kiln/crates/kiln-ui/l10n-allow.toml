@@ -188,6 +188,11 @@ reason = "A status icon's debug selector"
 
 [[literal]]
 file = "src/status_bar.rs"
+text = "status-pill:{id}"
+reason = "A filled status item's pill's debug selector"
+
+[[literal]]
+file = "src/status_bar.rs"
 text = "status-tooltip:{}:{}"
 reason = "A status tooltip's debug selector"
 

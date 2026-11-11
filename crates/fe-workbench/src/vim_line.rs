@@ -33,7 +33,10 @@ use std::collections::VecDeque;
 
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, commands::RunCommand, keymap::CHORD_TIMEOUT, vim_registers};
-use fe_ui::{ROW_HEIGHT, SettleEdit, Settled, TextInput, TextInputEvent, Typed};
+use fe_ui::{
+    ActiveTheme as _, SettleEdit, Settled, TextInput, TextInputEvent, Typed, UI_LABEL, height,
+    radius, space,
+};
 use fe_vim::{
     CommandLineKind, Ex, ExCommand, HistoryRecall, HostCommand, Mode, Registers, VimKey, VimState,
 };
@@ -42,6 +45,7 @@ use gpui::{
     InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke, ParentElement as _, Styled as _,
     Subscription, Task, WeakEntity, Window, div, px,
 };
+use kiln_l10n::{tr, verbatim};
 
 use super::StatusBar;
 use crate::{
@@ -65,7 +69,7 @@ fn is_substitute(line: &str) -> bool {
 pub(crate) const KEY_CONTEXT: &str = "vim_line";
 
 /// Cancels the line, as Vim's `Esc` does.
-pub(super) const CANCEL: &str = "vim_line.cancel";
+pub(super) const CANCEL: &str = verbatim!("vim_line.cancel");
 
 /// A file or window command (`:w`, `:q` …) submitted on the line, for the
 /// workbench to run for `editor`, the line's.
@@ -888,11 +892,11 @@ impl StatusBar {
         let (editor, prefix) = self.line.open.as_ref()?;
         let prefix = *prefix;
         let input = self.line.input.clone()?;
-        let ui = fe_ui::ui_theme(cx);
+        let colors = cx.theme().colors;
         let (background, foreground) =
             editor
                 .upgrade()
-                .map_or((ui.panel_background, ui.text), |editor| {
+                .map_or((colors.surface.panel, colors.text.primary), |editor| {
                     let theme = editor.read(cx).theme();
                     (theme.vim_mode_command, theme.vim_mode_foreground)
                 });
@@ -900,18 +904,28 @@ impl StatusBar {
         {
             self.line.drawn_mode = Some((background, foreground));
         }
+        // A pill, as the bar's vim mode is (kiln-ui's `StatusEntry::fill`),
+        // 8 px from the bar's left edge and 8 px before the prefix.
+        let pill = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(16.))
+            .px(space::S6)
+            .rounded(radius::CONTROL)
+            .bg(background)
+            .text_color(foreground)
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(tr!("workbench-status-command-line-mode"));
         let mode = div()
             .debug_selector(|| "vim-line-mode".into())
             .flex()
             .flex_none()
             .items_center()
             .h_full()
-            .px_3()
+            .pl(space::S8)
             .whitespace_nowrap()
-            .bg(background)
-            .text_color(foreground)
-            .font_weight(FontWeight::SEMIBOLD)
-            .child("COMMAND");
+            .child(pill);
         let line = div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_line_command))
@@ -922,18 +936,21 @@ impl StatusBar {
             .flex_none()
             .items_center()
             .w_full()
-            .h(ROW_HEIGHT)
+            .h(height::STATUS_BAR)
             .overflow_hidden()
-            .bg(ui.panel_background)
+            .bg(colors.surface.chrome)
             .border_t_1()
-            .border_color(ui.border)
-            .text_color(ui.text)
+            .border_color(colors.border.default)
+            .text_color(colors.text.primary)
+            .text_size(UI_LABEL.size)
+            .line_height(UI_LABEL.line_height)
+            .font_weight(FontWeight(f32::from(UI_LABEL.weight)))
             .child(mode)
             .child(
                 div()
                     .debug_selector(|| "vim-line-prefix".into())
                     .flex_none()
-                    .ml_2()
+                    .ml(space::S8)
                     .child(prefix.to_string()),
             )
             // The input pads its text; the line's follows the prefix, as

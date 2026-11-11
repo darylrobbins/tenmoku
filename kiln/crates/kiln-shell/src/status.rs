@@ -3,7 +3,9 @@
 //! The status bar's items: data a host and the active pane item contribute
 //! ([`StatusItem`]), the host's set of them over the item's
 //! ([`StatusItems`], [`StatusItems::items_for`]), and how they draw
-//! ([`status_bar`], [`status_entry`]).
+//! ([`status_bar`], [`status_entry`]): kiln-ui's bar, 24 px on the chrome
+//! surface in the UI label type, each entry with one 8 px padding either
+//! side, a filled one as a pill inside it.
 //!
 //! Items sort by side, then by priority, lower first, so left to right;
 //! ties keep the order they were given in, the active item's before the
@@ -45,7 +47,8 @@ pub struct StatusItem {
     pub icon: Option<Icon>,
     /// Colours the icon ([`kiln_ui::status_entry_colors`]).
     pub tone: StatusTone,
-    /// Draws the item as a filled segment.
+    /// Draws the item's text and icon in a pill of this fill, as a vim
+    /// mode is ([`kiln_ui::StatusEntry::fill`]).
     pub fill: Option<StatusFill>,
     /// Shown on hover.
     pub tooltip: Option<SharedString>,
@@ -92,7 +95,7 @@ impl StatusItem {
         self
     }
 
-    /// Draws the item as a segment filled with `fill`.
+    /// Draws the item in a pill filled with `fill`.
     pub fn fill(mut self, fill: StatusFill) -> Self {
         self.fill = Some(fill);
         self

@@ -87,6 +87,9 @@ migrated = [
     "src/settings_editor_layout.rs",
     "src/settings_editor_controls.rs",
     "src/settings_editor_choices.rs",
+    # The status bar in B3 (T1543): the bar and vim's command line.
+    "src/status_bar.rs",
+    "src/vim_line.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the

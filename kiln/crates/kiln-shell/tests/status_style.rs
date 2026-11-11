@@ -138,8 +138,8 @@ fn icon_and_tooltip_draw(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Bench { items });
     cx.run_until_parked();
 
-    // After the side padding, 12 px for a fill's segment.
-    for (id, padding) in [("errors", px(8.)), ("mode", px(12.))] {
+    // After the side padding, 8 px; a fill's pill pads 6 px more inside it.
+    for (id, padding) in [("errors", px(8.)), ("mode", px(14.))] {
         let item = bounds(format!("status-item:{id}"), cx).expect("drawn");
         let icon = bounds(format!("status-icon:{id}"), cx).expect("icon drawn");
         assert!(item.contains(&icon.origin), "{id}: {icon:?} in {item:?}");
