@@ -398,7 +398,7 @@ impl Decorations {
                             .text_system()
                             .layout_line(&label, theme.font_size, &[run], None);
                     let width: f32 = shaped.width.into();
-                    let line = Line::new(
+                    let line = Line::with_advances(
                         &label,
                         shaped,
                         vec![DecorationRun {
@@ -408,6 +408,9 @@ impl Decorations {
                             underline: None,
                             strikethrough: None,
                         }],
+                        |font_id, ch| {
+                            super::char_advance(window.text_system(), font_id, theme.font_size, ch)
+                        },
                     );
                     place(whole_row(row.row, *x, width), color, Some(line));
                     *x += width + em;

@@ -374,6 +374,61 @@ fn a_mark_left_of_its_base_does_not_move_its_edges() {
     assert_eq!(line.index_for_x(2. * EM + 1.), 6);
 }
 
+/// A mark that shares its base's cluster index, offset left of it, is told
+/// from the base by where the base's advance reaches, so the grapheme keeps
+/// the base's edges, as the same grapheme with no mark does.
+#[test]
+fn a_mark_sharing_its_bases_index_does_not_move_its_edges() {
+    // `x `, then shin (2..4) at 2 em with a qamats offset 2 left of it,
+    // both at byte 2, in either glyph order.
+    let text = "x \u{5e9}\u{5b8}";
+    let plain = painted("x \u{5e9}", &[(0, 0.), (1, EM), (2, 2. * EM)], 3. * EM);
+    let (base, mark) = ((2, 2. * EM), (2, 2. * EM - 2.));
+    for glyphs in [
+        [(0, 0.), (1, EM), base, mark],
+        [(0, 0.), (1, EM), mark, base],
+    ] {
+        let line = painted(text, &glyphs, 3. * EM);
+        for index in [0, 1, 2] {
+            assert_eq!(line.x_for_index(index), plain.x_for_index(index), "{index}");
+        }
+        // The trailing caret, and the block over the grapheme.
+        assert_eq!(line.x_for_index(6), 2. * EM);
+        assert_eq!(line.visual_ranges(2..6), [2. * EM..3. * EM]);
+        // The neighbour on the left keeps its full width.
+        assert_eq!(line.visual_ranges(1..2), [EM..2. * EM]);
+        for x in [EM + 1., 2. * EM - 1., 2. * EM + 1., 3. * EM - 1.] {
+            // The shin's end is byte 4 plain and 6 with its mark.
+            let end = |index| if index == 4 { 6 } else { index };
+            assert_eq!(line.index_for_x(x), end(plain.index_for_x(x)), "{x}");
+            assert_eq!(line.char_index_at(x), plain.char_index_at(x), "{x}");
+        }
+    }
+}
+
+/// Marked graphemes side by side: each mark lands on the next one's x, so
+/// a base is told by the chain from the line's end, not by any glyph's x.
+#[test]
+fn adjacent_marked_graphemes_keep_their_bases_edges() {
+    // `x `, then two shins (2..4, 6..8), each with a qamats 2 left of it.
+    let text = "x \u{5e9}\u{5b8}\u{5e9}\u{5b8}";
+    let (a, b) = (2. * EM, 3. * EM);
+    for glyphs in [
+        [(0, 0.), (1, EM), (2, a), (2, a - 2.), (6, b), (6, b - 2.)],
+        [(0, 0.), (1, EM), (2, a - 2.), (2, a), (6, b - 2.), (6, b)],
+    ] {
+        let line = painted(text, &glyphs, 4. * EM);
+        assert_eq!(line.x_for_index(6), a);
+        assert_eq!(line.x_for_index(10), b);
+        assert_eq!(line.visual_ranges(2..6), [a..b]);
+        assert_eq!(line.visual_ranges(6..10), [b..4. * EM]);
+        assert_eq!(line.visual_ranges(1..2), [EM..a]);
+        assert_eq!(line.index_for_x(a + 1.), 6);
+        assert_eq!(line.index_for_x(b + 1.), 10);
+        assert_eq!(line.char_index_at(a - 1.), Some(1));
+    }
+}
+
 /// Moving a line's glyphs moves its graphemes with them.
 #[test]
 fn moved_glyphs_carry_their_directions() {

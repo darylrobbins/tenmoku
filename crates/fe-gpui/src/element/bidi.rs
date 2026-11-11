@@ -9,9 +9,9 @@
 //! (docs/decisions/yzegn08wk2-non-latin-text-audit.md, "Bidi fix"). Other
 //! rows, found by a byte scan, keep GPUI's maths.
 
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
-use gpui::LineLayout;
+use gpui::{FontId, LineLayout};
 use unicode_bidi::{BidiClass, BidiInfo, bidi_class};
 use unicode_segmentation::UnicodeSegmentation as _;
 
@@ -39,6 +39,9 @@ struct Grapheme {
     /// its share of a ligature's; `None` where it has no glyph, as a bidi
     /// control.
     painted: Option<Range<f32>>,
+    /// The advance of its first char in the font of its glyph there, if it
+    /// has one; what tells a base from a mark sharing its glyph index.
+    advance: Option<f32>,
 }
 
 impl Grapheme {
@@ -71,12 +74,28 @@ pub(crate) fn has_rtl(text: &str) -> bool {
 impl Bidi {
     /// Of `text` shaped as `layout`, if it has right-to-left text. Its
     /// paragraph direction is its first strong char's, as the shaper's is.
-    pub(crate) fn new(text: &str, layout: &LineLayout) -> Option<Self> {
-        has_rtl(text).then(|| Self::of(text, layout))
+    /// `advance` is a char's advance in a font where the text system knows
+    /// it; without one, a mark sharing its base's glyph index is told from
+    /// it by the row's mean advance.
+    pub(crate) fn with_advances(
+        text: &str,
+        layout: &LineLayout,
+        advance: impl Fn(FontId, char) -> Option<f32>,
+    ) -> Option<Self> {
+        has_rtl(text).then(|| Self::with_advances_of(text, layout, advance))
     }
 
     /// Of `text` shaped as `layout`, whatever its chars.
+    #[cfg(test)]
     fn of(text: &str, layout: &LineLayout) -> Self {
+        Self::with_advances_of(text, layout, |_, _| None)
+    }
+
+    fn with_advances_of(
+        text: &str,
+        layout: &LineLayout,
+        advance: impl Fn(FontId, char) -> Option<f32>,
+    ) -> Self {
         let info = BidiInfo::new(text, None);
         // Each paragraph's levels as a line ends it, as the shaper lays out
         // one: trailing whitespace takes the paragraph's direction.
@@ -85,6 +104,12 @@ impl Bidi {
             let range = paragraph.range.clone();
             let line = info.reordered_levels(paragraph, range.clone());
             levels[range.clone()].copy_from_slice(&line[range]);
+        }
+        let mut fonts: HashMap<usize, FontId> = HashMap::new();
+        for run in &layout.runs {
+            for glyph in &run.glyphs {
+                fonts.entry(glyph.index).or_insert(run.font_id);
+            }
         }
         let graphemes = (text.grapheme_indices(true))
             .map(|(at, grapheme)| Grapheme {
@@ -109,6 +134,9 @@ impl Bidi {
                         )
                 }),
                 painted: None,
+                advance: (fonts.get(&at).copied())
+                    .zip(grapheme.chars().next())
+                    .and_then(|(font_id, ch)| advance(font_id, ch)),
             })
             .collect();
         let mut bidi = Self {
@@ -133,20 +161,47 @@ impl Bidi {
         let graphemes = &mut self.graphemes;
         // Each grapheme's x: of the glyphs of its first char, which a mark
         // offset left of its base doesn't move; failing those, of any of
-        // its glyphs.
-        let mut base: Vec<Option<f32>> = vec![None; graphemes.len()];
-        let mut any = base.clone();
+        // its glyphs. Where a mark shares its base's index, the base is the
+        // glyph whose first char's advance reaches the x of the cluster to
+        // its right, or the line's end, working from the right.
+        //
+        // Known limits, as GPUI gives no per-glyph advance: marks that
+        // overlap an adjacent grapheme, their offset past the advance, can't
+        // be told from geometry alone; and where `Line::new` gave no
+        // advances, the row's mean stands in for the base's, so a row of
+        // unequal widths may pick a mark.
+        let mut first: Vec<Vec<f32>> = vec![Vec::new(); graphemes.len()];
+        let mut any: Vec<Option<f32>> = vec![None; graphemes.len()];
         for glyph in layout.runs.iter().flat_map(|run| &run.glyphs) {
             let at = graphemes.partition_point(|grapheme| grapheme.bytes.end <= glyph.index);
             let Some(grapheme) = graphemes.get(at) else {
                 continue;
             };
             let x = f32::from(glyph.position.x);
-            let left = match glyph.index == grapheme.bytes.start {
-                true => &mut base[at],
-                false => &mut any[at],
-            };
-            *left = Some(left.map_or(x, |left| left.min(x)));
+            if glyph.index == grapheme.bytes.start {
+                first[at].push(x);
+            } else {
+                any[at] = Some(any[at].map_or(x, |left| left.min(x)));
+            }
+        }
+        let width: f32 = layout.width.into();
+        let mean = width / first.iter().filter(|xs| !xs.is_empty()).count().max(1) as f32;
+        let mut by_x: Vec<(usize, f32)> = (first.iter().enumerate())
+            .filter_map(|(at, xs)| Some((at, xs.iter().copied().min_by(f32::total_cmp)?)))
+            .collect();
+        by_x.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let mut base: Vec<Option<f32>> = vec![None; graphemes.len()];
+        let mut edge = width;
+        for &(at, min) in by_x.iter().rev() {
+            let xs = &first[at];
+            let advance = graphemes[at].advance.unwrap_or(mean);
+            let miss = |x: f32| (edge - x - advance).abs();
+            let chosen = (xs.iter().copied())
+                .min_by(|&a, &b| miss(a).total_cmp(&miss(b)).then(a.total_cmp(&b)))
+                .filter(|_| xs.len() > 1)
+                .unwrap_or(min);
+            base[at] = Some(chosen);
+            edge = chosen;
         }
         // A grapheme with a glyph for its first char and the visible
         // graphemes after it with none for theirs, which its glyph draws
@@ -167,7 +222,7 @@ impl Bidi {
             }
         }
         clusters.sort_by(|a, b| a.1.total_cmp(&b.1));
-        self.width = layout.width.into();
+        self.width = width;
         for grapheme in graphemes.iter_mut() {
             grapheme.painted = None;
         }

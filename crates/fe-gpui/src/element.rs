@@ -416,13 +416,25 @@ pub(crate) struct Line {
 
 impl Line {
     /// `text` as GPUI shaped it, coloured by `decorations`.
+    #[cfg(test)]
     pub(crate) fn new(
         text: &str,
         layout: Arc<LineLayout>,
         decorations: Vec<DecorationRun>,
     ) -> Self {
+        Self::with_advances(text, layout, decorations, |_, _| None)
+    }
+
+    /// As [`Self::new`], with a char's advance in a font from the text
+    /// system, which tells a base from a mark sharing its glyph index.
+    pub(crate) fn with_advances(
+        text: &str,
+        layout: Arc<LineLayout>,
+        decorations: Vec<DecorationRun>,
+        advance: impl Fn(FontId, char) -> Option<f32>,
+    ) -> Self {
         Self {
-            bidi: bidi::Bidi::new(text, &layout).map(Arc::new),
+            bidi: bidi::Bidi::with_advances(text, &layout, advance).map(Arc::new),
             layout,
             decorations,
         }
@@ -653,13 +665,25 @@ impl TextMeasure for Shaper {
             underline: None,
             strikethrough: None,
         }];
-        Line::new(
+        Line::with_advances(
             text,
             self.text_system
                 .layout_line(text, self.font_size, &whole, None),
             decoration_runs(runs),
+            |font_id, ch| char_advance(&self.text_system, font_id, self.font_size, ch),
         )
     }
+}
+
+/// A char's advance in pixels in a font.
+pub(crate) fn char_advance(
+    text_system: &WindowTextSystem,
+    font_id: FontId,
+    font_size: Pixels,
+    ch: char,
+) -> Option<f32> {
+    let advance = text_system.advance(font_id, font_size, ch).ok()?;
+    Some(advance.width.into())
 }
 
 /// Clusters [`GlyphWidths`] holds before it drops them all.
