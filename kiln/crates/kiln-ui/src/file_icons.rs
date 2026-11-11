@@ -151,6 +151,10 @@ icons! {
         CircleDot => "circle-dot",
         Diamond => "diamond",
         Variable => "variable",
+        Puzzle => "puzzle",
+        Blocks => "blocks",
+        Wand => "wand",
+        KeyRound => "key-round",
         // The AI chat panel's; not mapped from names.
         MessageSquare => "message-square",
         // The search view's results toolbar and file groups; not mapped from
@@ -269,6 +273,8 @@ icons! {
         BrandYarn => "brand-yarn",
         BrandDeno => "brand-deno",
         Markdown => "markdown",
+        // The outline's method kind; not mapped from names.
+        MathFunction => "math-function",
         LetterC => "letter-c",
         LetterE => "letter-e",
         LetterF => "letter-f",

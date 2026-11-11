@@ -29,5 +29,6 @@ mod tinted_language_icons;
 mod tinted_project_icons;
 mod tree;
 mod tree_row;
+mod tree_row_icon_color;
 mod tree_row_status;
 mod ui_theme_compat;

@@ -30,6 +30,10 @@ pub struct Crumb {
     /// The label's colour, in place of its kind's: a symbol's syntax
     /// colour, say.
     pub color: Option<Hsla>,
+    /// A masked icon's tint, in place of the list's icon colour, hovered
+    /// or not: a symbol's syntax colour, say. A coloured or tinted icon
+    /// ignores it.
+    pub icon_color: Option<Hsla>,
     on_click: Option<ClickHandler>,
 }
 
@@ -40,6 +44,7 @@ impl Crumb {
             icon: None,
             kind,
             color: None,
+            icon_color: None,
             on_click: None,
         }
     }
@@ -47,6 +52,12 @@ impl Crumb {
     /// Draws the label in `color` instead of its kind's colour.
     pub fn color(mut self, color: Option<Hsla>) -> Self {
         self.color = color;
+        self
+    }
+
+    /// Tints a masked icon `color` instead of the list's icon colour.
+    pub fn icon_color(mut self, color: Hsla) -> Self {
+        self.icon_color = Some(color);
         self
     }
 
@@ -118,6 +129,7 @@ impl RenderOnce for Breadcrumbs {
             let shrinks = crumb.kind == CrumbKind::Path;
             let label = crumb.label.clone();
             let label_color = crumb.label_color(cx);
+            let icon_tint = crumb.icon_color.unwrap_or(icon_color);
             let element = div()
                 .id(ElementId::NamedInteger("crumb".into(), ix as u64))
                 .debug_selector(|| format!("crumb:{ix}:{label}"))
@@ -142,7 +154,7 @@ impl RenderOnce for Breadcrumbs {
                             .size(CRUMB_ICON_SIZE)
                             .flex_none()
                             .debug_selector(|| selector)
-                            .child(icon.element(CRUMB_ICON_SIZE, icon_color)),
+                            .child(icon.element(CRUMB_ICON_SIZE, icon_tint)),
                     )
                 })
                 .child(

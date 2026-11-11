@@ -124,6 +124,7 @@ mod status_bar;
 mod status_bar_b3;
 mod status_bar_go_to_line;
 mod status_bar_icons;
+mod symbol_icon_tints;
 mod tabs;
 mod title_bar;
 mod title_bar_b3;

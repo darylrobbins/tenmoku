@@ -32,7 +32,7 @@ use kiln_l10n::{text, tr};
 
 use crate::{
     OutlinePanel, Workbench,
-    outline_panel::symbol_icon,
+    outline_panel::{symbol_icon, symbol_tint},
     picker::{Picker, PickerDelegate},
     toolbar_picker::subsequence,
     workbench::Palette,
@@ -313,6 +313,8 @@ impl PickerDelegate for SymbolPicker {
         let item = &self.items[*item];
         let label = HighlightedLabel::new(item.name.clone(), highlights.clone(), &ui);
         let path = symbol_icon(item.kind).path();
+        // The kind's syntax colour, selected or not.
+        let tint = symbol_tint(item.kind, &fe_gpui::editor_palette(cx)).unwrap_or(ui.icon);
         let muted = |text: String| {
             div()
                 .min_w_0()
@@ -333,7 +335,7 @@ impl PickerDelegate for SymbolPicker {
                     .path(path)
                     .size(px(14.))
                     .flex_none()
-                    .text_color(ui.icon),
+                    .text_color(tint),
             )
             .child(div().flex_none().child(label))
             .child(muted(item.detail.clone()))

@@ -22,6 +22,7 @@
 use kiln_l10n::tr;
 use std::{collections::HashMap, ops::Range};
 
+use fe_config::theme::EditorPalette;
 use fe_gpui::EditorView;
 use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineKind, Syntax};
 use fe_ui::{ActiveTheme as _, TreeRow};
@@ -361,6 +362,7 @@ impl OutlinePanel {
         let dim = cx.theme().colors.text.muted;
         let ui = fe_ui::ui_theme(cx);
         let (selected, focused) = (self.selection.row, self.focused);
+        let palette = fe_gpui::editor_palette(cx);
         let items = self.items();
         range
             .filter_map(|ix| {
@@ -369,6 +371,7 @@ impl OutlinePanel {
                     TreeRow::new(("outline-row", ix), item.name.clone(), &ui)
                         .depth(item.depth as usize)
                         .icon(symbol_icon(item.kind))
+                        .when_some(symbol_tint(item.kind, &palette), TreeRow::icon_color)
                         .detail(item.detail.clone(), dim)
                         .selected(selected == Some(ix))
                         .focused(focused)
@@ -434,6 +437,22 @@ impl OutlinePanel {
     }
 }
 
+/// The colour a symbol of `kind`'s icon is drawn in: that of the longest
+/// listed prefix of its [`symbol_highlight`] in `palette`'s syntax table,
+/// as [`fe_syntax::resolve_theme`] picks a capture's, so `function.method`
+/// takes `function`'s colour if the theme lists no method colour. `None`
+/// if the theme colours nothing for it: the icon keeps the list's colour.
+pub(crate) fn symbol_tint(kind: OutlineKind, palette: &EditorPalette) -> Option<gpui::Hsla> {
+    let name = symbol_highlight(kind);
+    (palette.syntax.iter())
+        .filter(|(prefix, _)| {
+            (name.strip_prefix(prefix.as_str()))
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        })
+        .max_by_key(|(prefix, _)| prefix.len())
+        .map(|(_, color)| gpui::rgba(color.to_rgba_u32()).into())
+}
+
 /// The highlight whose colour a symbol of `kind` is drawn in, as its name
 /// is in the code.
 pub(crate) fn symbol_highlight(kind: OutlineKind) -> &'static str {
@@ -495,16 +514,18 @@ pub(crate) fn symbol_icon(kind: OutlineKind) -> fe_ui::Icon {
         OutlineKind::Class => Icon::Component,
         OutlineKind::Struct => Icon::Braces,
         OutlineKind::Enum => Icon::List,
-        OutlineKind::Interface | OutlineKind::Trait => Icon::Plug,
-        OutlineKind::Impl => Icon::Link,
+        OutlineKind::Interface => Icon::Plug,
+        OutlineKind::Trait => Icon::Puzzle,
+        OutlineKind::Impl => Icon::Blocks,
         OutlineKind::Type => Icon::Type,
-        OutlineKind::Function | OutlineKind::Method => Icon::SquareFunction,
+        OutlineKind::Function => Icon::SquareFunction,
+        OutlineKind::Method => Icon::MathFunction,
         OutlineKind::Constant => Icon::Hash,
-        OutlineKind::Macro => Icon::Asterisk,
+        OutlineKind::Macro => Icon::Wand,
         OutlineKind::Table => Icon::Table,
         OutlineKind::Heading(_) => Icon::Heading,
-        OutlineKind::Field => Icon::CircleDot,
-        OutlineKind::Variant => Icon::Diamond,
+        OutlineKind::Field => Icon::KeyRound,
+        OutlineKind::Variant => Icon::CircleDot,
         OutlineKind::Variable => Icon::Variable,
         // `OutlineKind` is non-exhaustive.
         _ => Icon::Variable,

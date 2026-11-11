@@ -74,7 +74,7 @@ fn symbol_crumbs_carry_their_kinds_icon(cx: &mut TestAppContext) {
             (
                 "b".to_string(),
                 CrumbKind::Symbol,
-                Some(symbol_icon(OutlineKind::Function))
+                Some(symbol_icon(OutlineKind::Method))
             ),
         ]
     );
@@ -87,7 +87,7 @@ fn symbol_crumbs_carry_their_kinds_icon(cx: &mut TestAppContext) {
     cx.simulate_click(crumb.center(), Modifiers::none());
     settle(cx);
     assert!(workbench.read_with(cx, |workbench, _| workbench.toolbar_picker().is_none()));
-    let icon = symbol_icon(OutlineKind::Function).path();
+    let icon = symbol_icon(OutlineKind::Method).path();
     assert!(
         cx.debug_bounds(format!("symbol-picker-icon:b:{icon}").leak())
             .is_some()

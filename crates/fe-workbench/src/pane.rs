@@ -225,6 +225,9 @@ pub struct Pane {
     /// The colours the last frame drew the crumbs' labels in.
     #[cfg(test)]
     crumb_colors: Vec<gpui::Hsla>,
+    /// The colours the last frame tinted the crumbs' icons in.
+    #[cfg(test)]
+    crumb_icon_colors: Vec<Option<gpui::Hsla>>,
     #[cfg(test)]
     last_tooltip: Rc<std::cell::RefCell<Option<String>>>,
 }
@@ -358,6 +361,8 @@ impl Pane {
             drawn_crumbs: Vec::new(),
             #[cfg(test)]
             crumb_colors: Vec::new(),
+            #[cfg(test)]
+            crumb_icon_colors: Vec::new(),
             #[cfg(test)]
             last_tooltip: Rc::default(),
         }
@@ -2475,6 +2480,12 @@ impl Pane {
         &self.crumb_colors
     }
 
+    /// The colours the last frame tinted the crumbs' icons in, in order;
+    /// `None` for one in the list's icon colour (or a coloured icon).
+    pub(crate) fn crumb_icon_colors(&self) -> &[Option<gpui::Hsla>] {
+        &self.crumb_icon_colors
+    }
+
     /// The text of the last tooltip built.
     pub(crate) fn last_tooltip(&self) -> Option<String> {
         self.last_tooltip.borrow().clone()
@@ -2865,6 +2876,7 @@ impl Pane {
         {
             self.drawn_crumbs.clear();
             self.crumb_colors.clear();
+            self.crumb_icon_colors.clear();
         }
         if !self.toolbar.visible {
             return None;
@@ -2883,6 +2895,7 @@ impl Pane {
                 })
                 .collect();
             self.crumb_colors = crumbs.iter().map(|crumb| crumb.label_color(cx)).collect();
+            self.crumb_icon_colors = crumbs.iter().map(|crumb| crumb.icon_color).collect();
         }
         let toolbar = div()
             .flex_none()
@@ -3027,15 +3040,18 @@ impl Pane {
             let colors: Vec<_> = (chain.items.iter())
                 .map(|(_, _, kind)| pane_toolbar::symbol_color(*kind, shown))
                 .collect();
+            let palette = fe_gpui::editor_palette(cx);
             for ((_, name, kind), color) in chain.items.iter().zip(colors) {
-                crumbs.push(
-                    Crumb::new(name.clone(), CrumbKind::Symbol)
-                        .icon(crate::outline_panel::symbol_icon(*kind))
-                        .color(color)
-                        .on_click(
-                            cx.listener(|pane, _, window, cx| pane.open_quick_outline(window, cx)),
-                        ),
-                );
+                let mut crumb = Crumb::new(name.clone(), CrumbKind::Symbol)
+                    .icon(crate::outline_panel::symbol_icon(*kind))
+                    .color(color)
+                    .on_click(
+                        cx.listener(|pane, _, window, cx| pane.open_quick_outline(window, cx)),
+                    );
+                if let Some(tint) = crate::outline_panel::symbol_tint(*kind, &palette) {
+                    crumb = crumb.icon_color(tint);
+                }
+                crumbs.push(crumb);
             }
         }
         crumbs

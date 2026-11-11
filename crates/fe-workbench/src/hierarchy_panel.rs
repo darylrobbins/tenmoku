@@ -48,7 +48,7 @@ use gpui::{
 use crate::{
     Workbench,
     dock::{DockOp, SidebarPanel},
-    outline_panel::symbol_icon,
+    outline_panel::{symbol_icon, symbol_tint},
     pane::Reveal,
     workbench::toast::{self, Toast},
 };
@@ -737,6 +737,9 @@ impl HierarchyPanel {
                     .on_click(cx.listener(move |panel, _, window, cx| {
                         panel.clicked(target.clone(), window, cx)
                     }));
+                if let Some(tint) = symbol_tint(node.item.kind, &fe_gpui::editor_palette(cx)) {
+                    row = row.icon_color(tint);
+                }
                 if !node.recursive {
                     row = row.directory(node.expanded);
                 }

@@ -42,8 +42,9 @@ pub const DOT_SIZE: Pixels = px(6.);
 /// its right end, a letter or a dot centred in the [`BADGE_COLUMN`]. The
 /// name is muted when ignored and in the error colour when it couldn't be
 /// read, else in its label colour if it has one. A masked icon is in the
-/// error colour with it; an ignored row's chevron and icon keep their full
-/// strength, so it reads as dim, not disabled.
+/// error colour with it, else in its icon colour if it has one, selected or
+/// not; an ignored row's chevron and icon keep their full strength and
+/// colour, so it reads as dim, not disabled.
 ///
 /// To a screen reader it is a `TreeItem` (macOS: an `AXRow` of an
 /// `AXOutline`), named by its label, at its depth's level, expanded or
@@ -62,6 +63,7 @@ pub struct TreeRow {
     ignored: bool,
     error: bool,
     label_color: Option<Hsla>,
+    icon_color: Option<Hsla>,
     /// A dimmed text right after the label, and its colour.
     detail: Option<(SharedString, Hsla)>,
     /// A short text after the label, and its colour.
@@ -134,6 +136,7 @@ impl TreeRow {
             ignored: false,
             error: false,
             label_color: None,
+            icon_color: None,
             detail: None,
             badge: None,
             dot: false,
@@ -179,6 +182,21 @@ impl TreeRow {
     pub fn label_color(mut self, color: Hsla) -> Self {
         self.label_color = Some(color);
         self
+    }
+
+    /// A masked icon's tint, in place of the list's icon colour, selected
+    /// or not, unless the row is an error's (the error colour wins) or
+    /// ignored (its icon keeps the list's colour). A coloured or tinted
+    /// icon ignores it.
+    pub fn icon_color(mut self, color: Hsla) -> Self {
+        self.icon_color = Some(color);
+        self
+    }
+
+    /// What [`Self::icon_color`] set, for a host's tests to see what it
+    /// built.
+    pub fn icon_tint(&self) -> Option<Hsla> {
+        self.icon_color
     }
 
     /// A short text drawn in `color` at the row's right end; a long label
@@ -293,10 +311,11 @@ impl TreeRow {
             (text.muted, icon, list.chevron)
         } else if self.expanded.is_some() {
             let label = self.label_color.unwrap_or(text.primary);
-            (label, list.folder_icon, list.chevron)
+            let icon = self.icon_color.unwrap_or(list.folder_icon);
+            (label, icon, list.chevron)
         } else {
             let label = self.label_color.unwrap_or(text.primary);
-            (label, list.icon, list.chevron)
+            (label, self.icon_color.unwrap_or(list.icon), list.chevron)
         };
         let icon_opacity = 1.;
         RowColors {
