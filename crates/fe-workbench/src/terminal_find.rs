@@ -1,6 +1,6 @@
 //! The terminal panel's find row: a row above the active terminal, under the
 //! tab strip, that finds in its output and scrollback, with a query, match
-//! case and regex toggles, and the query's error or "No results".
+//! case and regex toggles, and the query's error or that nothing matches.
 //!
 //! `terminal.find` opens it with focus in its input. Each change to the
 //! query or a toggle sets the query on the active [`TerminalView`]
@@ -23,7 +23,7 @@ use gpui::{
     MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity, Window,
     div, px,
 };
-use kiln_l10n::tr;
+use kiln_l10n::{tr, verbatim};
 
 use crate::{
     TerminalPanel,
@@ -50,7 +50,7 @@ pub(crate) struct TerminalFind {
 
 impl TerminalFind {
     pub(crate) fn new(ui: &UiTheme, cx: &mut Context<TerminalPanel>) -> Self {
-        let input = cx.new(|cx| TextInput::new("Find", ui, cx));
+        let input = cx.new(|cx| TextInput::new(tr!("workbench-terminal-find-placeholder"), ui, cx));
         let changed = cx.subscribe(&input, |panel, _, event, cx| {
             if *event == TextInputEvent::Changed {
                 panel.update_find(|find, view, cx| find.search(view, cx), cx);
@@ -244,7 +244,9 @@ impl TerminalFind {
         }
         let query = view?.find_query()?;
         match view?.terminal()?.find_all_visible(query) {
-            Ok(matches) => matches.is_empty().then(|| ("No results".into(), false)),
+            Ok(matches) => matches
+                .is_empty()
+                .then(|| (tr!("workbench-terminal-find-no-results"), false)),
             Err(error) => Some((error.to_string().into(), true)),
         }
     }
@@ -263,7 +265,7 @@ impl TerminalFind {
         let toggles = [
             (
                 FindOp::ToggleCase,
-                "Aa",
+                verbatim!("Aa"),
                 tr!("workbench-find-match-case"),
                 self.match_case,
             ),

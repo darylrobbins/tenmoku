@@ -26,9 +26,13 @@ add the snippet for your shell below to its startup file.
   `CSI 3 J`) drops the marks that were in it. Programs on the alternate screen (vim, less)
   can't set marks.
 
-`133;B` (command start), `133;C` (output start) and `133;D;<status>`
-(command end) are read but not used yet. The snippets send them anyway so
-later features work without changing your setup.
+- **OSC 133, command output and end** (`133;C` where a command's output
+  starts, `133;D;<status>` where it ends). A terminal's tab in the panel
+  shows a spinner from a `133;C` until the `133;D` after it, and a red mark
+  while the last `133;D` had a status other than 0.
+
+`133;B` (command start) is read but not used yet. The snippets send it anyway
+so later features work without changing your setup.
 
 Each snippet checks `TERM_PROGRAM`, which Tenmoku sets to `tenmoku` in its
 terminals, so other terminals don't get these sequences.

@@ -898,6 +898,27 @@ mod tests {
     }
 
     #[test]
+    fn output_and_end_marks_track_the_command() {
+        use crate::shell::CommandStatus;
+        let (mut feeder, mut shell, mut term) = feeder();
+        let mut feed = |bytes: &[u8]| {
+            feeder.feed(&mut shell, &mut term, bytes, Instant::now());
+            shell.command()
+        };
+        assert_eq!(feed(b"\x1b]133;A\x07$ \x1b]133;B\x07"), CommandStatus::Idle);
+        assert_eq!(feed(b"make\r\n\x1b]133;C\x07"), CommandStatus::Running);
+        assert_eq!(feed(b"out\r\n"), CommandStatus::Running);
+        let failed = feed(b"\x1b]133;D;2\x07\x1b]133;A\x07$ ");
+        assert_eq!(failed, CommandStatus::Finished(Some(2)));
+        assert!(failed.failed());
+        assert_eq!(feed(b"\x1b]133;C\x07"), CommandStatus::Running);
+        let passed = feed(b"\x1b]133;D;0\x07");
+        assert_eq!(passed, CommandStatus::Finished(Some(0)));
+        assert!(!passed.failed());
+        assert!(!feed(b"\x1b]133;D\x07").failed());
+    }
+
+    #[test]
     fn a_repeated_start_renews_a_synchronized_update() {
         let (mut feeder, mut shell, mut term) = feeder();
         let start = Instant::now();

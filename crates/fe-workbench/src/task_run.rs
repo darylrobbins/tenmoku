@@ -244,8 +244,10 @@ impl Workbench {
         };
         let exited = cx.subscribe(
             &view,
-            move |workbench, view, TerminalViewEvent::Exited(_), cx| {
-                workbench.read_task_output(&view, &reader, cx);
+            move |workbench, view, event: &TerminalViewEvent, cx| {
+                if let TerminalViewEvent::Exited(_) = event {
+                    workbench.read_task_output(&view, &reader, cx);
+                }
             },
         );
         let closing = cx.observe(&terminal, |workbench, _, cx| {

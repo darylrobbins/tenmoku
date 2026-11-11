@@ -237,7 +237,7 @@ pub(crate) fn tab_bounds(
         .expect("the tab was drawn")
 }
 
-/// Whether tab `ix` shows whole in the list.
+/// Whether tab `ix` shows whole in the strip.
 pub(crate) fn tab_shown(
     workbench: &Entity<Workbench>,
     ix: usize,
@@ -246,7 +246,7 @@ pub(crate) fn tab_shown(
     let tab = tab_bounds(workbench, ix, cx);
     let strip = terminal(workbench, cx).read_with(cx, |terminal, _| terminal.strip_bounds());
     let slack = px(0.5);
-    tab.top() >= strip.top() - slack && tab.bottom() <= strip.bottom() + slack
+    tab.left() >= strip.left() - slack && tab.right() <= strip.right() + slack
 }
 
 #[gpui::test]
@@ -371,11 +371,11 @@ fn exit_drops_only_its_session(cx: &mut TestAppContext) {
 fn tab_strip(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
 
-    // One session: no list.
+    // One session: one tab.
     toggle(cx);
     let first = sessions(&workbench, cx)[0].clone();
     started(&first, cx);
-    assert!(drawn_tabs(&workbench, cx).is_empty());
+    assert_eq!(drawn_tabs(&workbench, cx), ["Terminal 1"]);
 
     // Two: a tab each, labelled in start order until a shell sets a title.
     let second = new_session(&workbench, cx);
@@ -400,21 +400,15 @@ fn tab_strip(cx: &mut TestAppContext) {
     assert!(active_and_focused(&workbench, 0, cx));
     assert!(focused(&first, cx));
 
-    // The active tab is drawn in the theme's selection colour, which isn't
-    // the editor tabs' active colour; the others as inactive tabs.
-    let (selected, tab_active, tab_inactive) = cx.update(|_, cx| {
+    // The active tab is drawn as an editor's active tab is; the others as
+    // inactive tabs.
+    let (tab_active, tab_inactive) = cx.update(|_, cx| {
         let colors = &cx.theme().colors;
-        (
-            colors.list.row_selected,
-            colors.tab.active,
-            colors.tab.inactive,
-        )
+        (colors.tab.active, colors.tab.inactive)
     });
-    assert_ne!(selected, tab_active);
-    assert_ne!(selected, tab_inactive);
-    assert_eq!(tab_backgrounds(&workbench, cx), [selected, tab_inactive]);
+    assert_eq!(tab_backgrounds(&workbench, cx), [tab_active, tab_inactive]);
     run("terminal.next", cx);
-    assert_eq!(tab_backgrounds(&workbench, cx), [tab_inactive, selected]);
+    assert_eq!(tab_backgrounds(&workbench, cx), [tab_inactive, tab_active]);
     run("terminal.next", cx);
 
     // Toggle hides the dock from the active session, then shows and
@@ -426,11 +420,11 @@ fn tab_strip(cx: &mut TestAppContext) {
     assert!(dock_shown(&workbench, cx));
     assert!(active_and_focused(&workbench, 0, cx));
 
-    // Back to one: the list goes.
+    // Back to one, its tab alone.
     run("terminal.next", cx);
     run("terminal.close", cx);
     assert_eq!(sessions(&workbench, cx).len(), 1);
-    assert!(drawn_tabs(&workbench, cx).is_empty());
+    assert_eq!(drawn_tabs(&workbench, cx), ["Terminal 1"]);
 }
 
 #[gpui::test]
@@ -458,14 +452,12 @@ fn clicks_follow_sessions(cx: &mut TestAppContext) {
     // A tab's close button closes its own session, the active one staying.
     let fourth = new_session(&workbench, cx).entity_id();
     // Its button shows under the pointer.
-    let row = cx
-        .debug_bounds(format!("terminal-tab-icon-{third}").leak())
-        .expect("the third's icon is drawn");
-    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    assert_eq!(drawn_tabs(&workbench, cx)[1], "Terminal 3");
+    let tab = tab_bounds(&workbench, 1, cx);
+    cx.simulate_mouse_move(tab.center(), None, Modifiers::none());
     draw(cx);
-    let selector = format!("icon-button:terminal-tab-close-{third}");
     let close = cx
-        .debug_bounds(selector.leak())
+        .debug_bounds("tab-close:Terminal 3")
         .expect("the third's close button is drawn");
     cx.simulate_click(close.center(), Modifiers::none());
     draw(cx);
@@ -477,7 +469,7 @@ fn clicks_follow_sessions(cx: &mut TestAppContext) {
 fn the_active_tab_scrolls_into_view(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     with_sessions(&workbench, 1, cx);
-    // New tabs until the first has scrolled out of the list, the newest
+    // New tabs until the first has scrolled out of the strip, the newest
     // shown each time.
     for _ in 0..60 {
         if !tab_shown(&workbench, 0, cx) {
@@ -488,7 +480,7 @@ fn the_active_tab_scrolls_into_view(cx: &mut TestAppContext) {
         assert!(active_and_focused(&workbench, last, cx));
         assert!(tab_shown(&workbench, last, cx), "tab {last} shows");
     }
-    assert!(!tab_shown(&workbench, 0, cx), "the tabs overflow the list");
+    assert!(!tab_shown(&workbench, 0, cx), "the tabs overflow the strip");
     let last = sessions(&workbench, cx).len() - 1;
 
     // Cycling past the end brings the first back, and back again the last.

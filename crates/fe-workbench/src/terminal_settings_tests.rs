@@ -190,23 +190,21 @@ fn a_reload_changing_the_shell_waits_for_the_next_session(cx: &mut TestAppContex
     });
 }
 
-/// Unset, the terminal's size is the design's small code size, 12 px, at
-/// its own line height, so rows are 15 px and box drawing still meets
-/// (T1515), whatever the editor's size.
+/// Unset, the terminal's font is the design's Code small, 12 px on 18 px
+/// rows (T349), whatever the editor's size.
 #[gpui::test]
-fn unset_size_is_code_small_with_15px_rows(cx: &mut TestAppContext) {
+fn unset_size_is_code_small(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     workbench.update(cx, |workbench, cx| {
         workbench.set_terminal_settings(&printing_shell(""), cx)
     });
     let view = start(&workbench, cx);
     let style = view.read_with(cx, |view, _| view.style().clone());
+    assert_eq!(style.font_size, fe_ui::CODE_SMALL.size);
     assert_eq!(style.font_size, px(12.));
-    assert_eq!(
-        style.line_height,
-        fe_terminal_view::TerminalStyle::LINE_HEIGHT
-    );
-    assert_eq!((style.font_size * style.line_height).round(), px(15.));
+    assert_eq!((style.font_size * style.line_height).round(), px(18.));
+    let cell = cx.update(|window, _| fe_terminal_view::cell_size(&style, window));
+    assert_eq!(cell.height, fe_ui::CODE_SMALL.line_height);
 }
 
 /// T1513's finding: a palette change with no settings reload (a theme

@@ -5,7 +5,9 @@
 //! ([`TerminalPanel::start`]) and keeps its sessions while the dock hides.
 //! `terminal.new` starts another after the last, `terminal.close` drops the
 //! active one, and `terminal.next` and `terminal.previous` cycle through
-//! them; with two or more a list of them shows on its right. A
+//! them. Each is a tab in the panel's own strip
+//! (`docs/design/design-system.md#terminal`), which marks one whose command
+//! is running or failed ([`TabMark`]). A
 //! new session starts where the active one's shell last said it was (OSC 7;
 //! docs/terminal-shell-integration.md), and `terminal.previous_prompt` and
 //! `terminal.next_prompt` scroll the active one between the prompts its
@@ -18,7 +20,7 @@
 //! above the active one ([`terminal_find`]).
 //!
 //! A project task runs in a tab of its own ([`TerminalPanel::add_task`]),
-//! named for it, always listed so the name shows. Unlike a shell's, its
+//! named for it. Unlike a shell's, its
 //! session stays when it exits, with its output: its name gains a check mark
 //! if it passed, and a toast says so if it didn't. Running its label again
 //! replaces a finished tab's session in place, or adds `label (2)` beside
@@ -32,14 +34,19 @@ use std::{
 use fe_command::Source;
 use fe_config::TerminalSettings;
 use fe_gpui::EditorTheme;
-use fe_terminal_view::{TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent};
-use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, TAB_HEIGHT, Tooltip};
+use fe_terminal_view::{
+    CommandStatus, TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent,
+};
+use fe_ui::{
+    ActiveTheme as _, Button, Icon, IconButton, IconRef, TAB_HEIGHT, Tab, TabBar, Tooltip,
+};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
     Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Window, div, prelude::FluentBuilder as _, px, svg,
+    Window, div, px,
 };
+use kiln_l10n::{tr, verbatim};
 use kiln_shell::{DockItem, PanelId};
 
 use crate::{
@@ -53,9 +60,6 @@ use terminal_find::TerminalFind;
 
 #[path = "terminal_find.rs"]
 mod terminal_find;
-
-/// The session list's width.
-const TAB_LIST_WIDTH: gpui::Pixels = px(160.);
 
 /// The panel's id in the bottom dock.
 pub(crate) const TERMINAL: PanelId = PanelId("terminal");
@@ -74,8 +78,8 @@ pub(crate) enum TerminalPanelEvent {
     /// The last session's shell exited, or it was closed, and the panel
     /// dropped it: none is left.
     Exited,
-    /// The user double-clicked the list row of the session with this view
-    /// id: the workbench asks for its new name.
+    /// The user double-clicked the tab of the session with this view id:
+    /// the workbench asks for its new name.
     RenameRequested(EntityId),
     /// A finished task's toast asked for its tab, now active: the workbench
     /// shows the dock.
@@ -92,8 +96,51 @@ struct Session {
     name: Option<SharedString>,
     /// The task it runs, if it's a task's tab.
     task: Option<TaskTab>,
-    /// To its shell exiting.
-    _exited: Subscription,
+    /// Its shell's foreground command, as its view last told.
+    status: CommandStatus,
+    /// To its view's events: its shell's exit and its command's status.
+    _events: Subscription,
+}
+
+impl Session {
+    /// What its tab shows before its label: a task's run, or its shell's
+    /// command as OSC 133 last marked it.
+    fn mark(&self) -> TabMark {
+        let (running, failed) = match &self.task {
+            Some(tab) => (tab.run == TaskRun::Running, tab.run == TaskRun::Failed),
+            None => (self.status == CommandStatus::Running, self.status.failed()),
+        };
+        if running {
+            TabMark::Running
+        } else if failed {
+            TabMark::Failed
+        } else {
+            TabMark::Idle
+        }
+    }
+}
+
+/// What a session's tab shows before its label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TabMark {
+    /// The terminal icon.
+    Idle,
+    /// A spinner: its task, or its shell's foreground command (an OSC 133;C
+    /// with no D after it), is still running.
+    Running,
+    /// The error mark, in the theme's error colour: its task, or its shell's
+    /// last command (an OSC 133;D), exited with a code other than 0.
+    Failed,
+}
+
+impl TabMark {
+    fn icon(self) -> IconRef {
+        match self {
+            Self::Idle => IconRef::Bundled(Icon::FileTerminal),
+            Self::Running => IconRef::Bundled(Icon::LoaderCircle),
+            Self::Failed => IconRef::Tinted(Icon::CircleX, "status.error"),
+        }
+    }
 }
 
 /// What makes a session a task's tab.
@@ -117,10 +164,14 @@ struct TaskTab {
 
 impl TaskTab {
     /// The tab's name, as its label and its toasts have it.
-    fn title(&self) -> String {
+    fn title(&self) -> SharedString {
         match self.ordinal {
-            1 => self.label.clone(),
-            ordinal => format!("{} ({ordinal})", self.label),
+            1 => self.label.clone().into(),
+            ordinal => tr!(
+                "workbench-terminal-task-numbered",
+                label = &self.label,
+                ordinal = ordinal
+            ),
         }
     }
 }
@@ -143,9 +194,9 @@ pub struct TerminalPanel {
     /// The number the next session's tab gets, from 1 again once none is
     /// left.
     next_number: usize,
-    /// The session list's scroll offset and its tabs' bounds.
+    /// The strip's scroll offset and its tabs' bounds.
     tabs: ScrollHandle,
-    /// Whether the list scrolls the active tab into view as it next draws.
+    /// Whether the strip scrolls the active tab into view as it next draws.
     reveal: bool,
     /// Where a session starts.
     cwd: PathBuf,
@@ -189,8 +240,7 @@ pub struct TerminalPanel {
     /// a test emits their exits itself.
     #[cfg(test)]
     pub(crate) fake_sessions: bool,
-    /// The tabs the last frame drew, none without a list: label and
-    /// background.
+    /// The tabs the last frame drew: label and background.
     #[cfg(test)]
     drawn_tabs: Vec<(SharedString, gpui::Hsla)>,
 }
@@ -335,7 +385,7 @@ impl TerminalPanel {
     /// shell or settings in it. The process runs until the session closes.
     #[doc(hidden)]
     pub fn open_with_session(&mut self, bytes: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let script = "printf '%s' \"$1\"; exec cat >/dev/null";
+        let script = verbatim!("printf '%s' \"$1\"; exec cat >/dev/null");
         let args = ["-c", script, "sh", bytes].map(str::to_owned).to_vec();
         let options = TerminalOptions {
             shell: Some(("/bin/sh".to_owned(), args)),
@@ -354,13 +404,14 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         let view = self.new_view(options, false, window, cx);
-        let exited = self.follow_exit(&view, window, cx);
+        let events = self.follow(&view, window, cx);
         self.sessions.push(Session {
             view,
             number: self.next_number,
             name: None,
             task: None,
-            _exited: exited,
+            status: CommandStatus::Idle,
+            _events: events,
         });
         self.next_number += 1;
         self.session_added(self.sessions.len() - 1, cx);
@@ -384,7 +435,8 @@ impl TerminalPanel {
         let options = match task_options(task, self.settings.scrollback) {
             Ok(options) => options,
             Err(error) => {
-                let toast = Toast::error(format!("Can't run {}", task.label));
+                let toast =
+                    Toast::error(tr!("workbench-terminal-task-cant-run", label = &task.label));
                 toast::show(cx, toast.detail(error.to_string()));
                 return false;
             }
@@ -402,7 +454,7 @@ impl TerminalPanel {
             (self.last_task_id, self.free_ordinal(&task.label))
         });
         let view = self.new_view(options, true, window, cx);
-        let exited = self.follow_exit(&view, window, cx);
+        let events = self.follow(&view, window, cx);
         self.runs_started += 1;
         let tab = TaskTab {
             id,
@@ -419,7 +471,8 @@ impl TerminalPanel {
                 let session = &mut self.sessions[ix];
                 session.view = view;
                 session.task = Some(tab);
-                session._exited = exited;
+                session.status = CommandStatus::Idle;
+                session._events = events;
                 ix
             }
             // Tasks don't count towards `Terminal <n>`.
@@ -429,7 +482,8 @@ impl TerminalPanel {
                     number: 0,
                     name: None,
                     task: Some(tab),
-                    _exited: exited,
+                    status: CommandStatus::Idle,
+                    _events: events,
                 });
                 self.sessions.len() - 1
             }
@@ -472,7 +526,7 @@ impl TerminalPanel {
                 let (mut options, style) = fallback;
                 options.cwd = PathBuf::from("/");
                 if task {
-                    options.shell = Some(sh_c("exit 127"));
+                    options.shell = Some(sh_c(verbatim!("exit 127")));
                     options.env.clear();
                 }
                 TerminalView::new(options, style, window, cx).expect("/ is a directory")
@@ -480,27 +534,30 @@ impl TerminalPanel {
         })
     }
 
-    /// Hears `view`'s session exit: a shell's tab goes, a task's stays.
-    fn follow_exit(
+    /// Hears `view`'s session exit, where a shell's tab goes and a task's
+    /// stays; and its shell's foreground command start or end, which its
+    /// tab shows.
+    fn follow(
         &self,
         view: &Entity<TerminalView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Subscription {
-        cx.subscribe_in(
-            view,
-            window,
-            |panel, view, TerminalViewEvent::Exited(code), window, cx| {
-                let Some(ix) = panel.sessions.iter().position(|s| &s.view == view) else {
-                    return;
-                };
-                if panel.sessions[ix].task.is_some() {
-                    panel.task_exited(ix, *code, window, cx);
-                } else {
-                    panel.remove(ix, window, cx);
+        cx.subscribe_in(view, window, |panel, view, event, window, cx| {
+            let Some(ix) = panel.sessions.iter().position(|s| &s.view == view) else {
+                return;
+            };
+            match *event {
+                TerminalViewEvent::CommandStatus(status) => {
+                    panel.sessions[ix].status = status;
+                    cx.notify();
                 }
-            },
-        )
+                TerminalViewEvent::Exited(code) if panel.sessions[ix].task.is_some() => {
+                    panel.task_exited(ix, code, window, cx);
+                }
+                TerminalViewEvent::Exited(_) => panel.remove(ix, window, cx),
+            }
+        })
     }
 
     /// Makes session `ix`, just started, active.
@@ -529,7 +586,8 @@ impl TerminalPanel {
         }
         let title = tab.title();
         if !started {
-            toast::show(cx, Toast::error(format!("Couldn't start {title}")));
+            let message = tr!("workbench-terminal-task-couldnt-start", title = &title);
+            toast::show(cx, Toast::error(message));
             self.remove(ix, window, cx);
             return;
         }
@@ -542,11 +600,16 @@ impl TerminalPanel {
         cx.notify();
         let message = match code {
             Some(0) => return,
-            Some(code) => format!("{title} failed (exit {code})"),
-            None => format!("{title} was killed"),
+            Some(code) => tr!(
+                "workbench-terminal-task-failed",
+                title = &title,
+                code = code
+            ),
+            None => tr!("workbench-terminal-task-killed", title = &title),
         };
         let (answer, answered) = futures::channel::oneshot::channel();
-        let toast = Toast::error(message).choices(vec!["Show".to_owned()], move |choice| {
+        let show = tr!("workbench-terminal-task-show").to_string();
+        let toast = Toast::error(message).choices(vec![show], move |choice| {
             answer.send(choice).ok();
         });
         toast::show(cx, toast);
@@ -783,7 +846,7 @@ impl TerminalPanel {
         let passed =
             (self.sessions[ix].task.as_ref()).is_some_and(|tab| tab.run == TaskRun::Passed);
         if passed {
-            format!("{label} \u{2713}").into()
+            tr!("workbench-terminal-task-passed", label = &label)
         } else {
             label
         }
@@ -797,161 +860,99 @@ impl TerminalPanel {
             return name.clone();
         }
         if let Some(tab) = &session.task {
-            return tab.title().into();
+            return tab.title();
         }
         match session.view.read(cx).title() {
             Some(title) => title.to_owned().into(),
-            None => format!("Terminal {}", session.number).into(),
+            None => tr!("workbench-terminal-numbered", number = session.number),
         }
     }
 
-    /// One row per session in a list on the panel's right, the active one
-    /// in the theme's selection colour: a terminal icon, the label and a
-    /// kill button, shown on the active row and under the pointer. The rows
-    /// scroll when they don't fit, the active one into view as it changes.
-    /// A row and its handlers name its session by its view's id, so a click
-    /// lands on the session that was drawn there or, if that's gone, on
-    /// nothing.
-    fn tab_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The panel's own strip, 34 px as the dock's: a tab per session in
+    /// start order, each with its [`TabMark`] before its label, the active
+    /// one with the accent line along its top while the panel has focus;
+    /// then, at the right, a `+` running `terminal.new` and a kill button
+    /// running `terminal.close`, whose tooltips carry the commands' keys. A
+    /// click on a tab activates and focuses its session, a double click
+    /// asks for its new name, and its close button or a middle click kills
+    /// it. The tabs scroll sideways when they don't fit, the active one into
+    /// view as it changes. A tab and its handlers name its session by its
+    /// view's id, so a click lands on the session that was drawn there or,
+    /// if that's gone, on nothing.
+    fn tab_strip(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let ui = fe_ui::ui_theme(cx);
         let colors = &cx.theme().colors;
-        let (panel, border, hover) = (
-            colors.surface.panel,
-            colors.border.default,
-            colors.list.row_hover,
-        );
-        let (inactive, selected) = (colors.tab.inactive, colors.list.row_selected);
-        let (text, active_text, icon) = (
-            colors.text.primary,
-            colors.tab.active_text,
-            colors.list.icon,
-        );
-        let rows: Vec<_> = (0..self.sessions.len())
+        let (chrome, border) = (colors.surface.chrome, colors.border.default);
+        #[cfg(test)]
+        let (tab_active, tab_inactive) = (colors.tab.active, colors.tab.inactive);
+        let tabs: Vec<_> = (0..self.sessions.len())
             .map(|ix| {
                 let id = self.sessions[ix].view.entity_id();
                 let label = self.label(ix, cx);
                 let active = ix == self.active;
-                let (bg, color) = if active {
-                    (selected, active_text)
-                } else {
-                    (inactive, text)
-                };
                 #[cfg(test)]
-                self.drawn_tabs.push((label.clone(), bg));
-                let group = SharedString::from(format!("terminal-tab-{id}"));
-                let kill = IconButton::new(
-                    format!("terminal-tab-close-{id}"),
-                    Icon::X,
-                    "Kill Terminal",
-                    &ui,
-                )
-                .on_click(cx.listener(move |panel, _, window, cx| {
-                    cx.stop_propagation();
+                self.drawn_tabs.push((
+                    label.clone(),
+                    if active { tab_active } else { tab_inactive },
+                ));
+                let kill = move |panel: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                     if let Some(ix) = panel.position(id) {
                         panel.remove(ix, window, cx);
                     }
-                }));
-                div()
-                    .id(ElementId::NamedInteger("terminal-tab".into(), id.as_u64()))
-                    .group(group.clone())
-                    .flex()
-                    .flex_none()
-                    .w_full()
-                    .h(TAB_HEIGHT)
-                    .items_center()
-                    .gap_1()
-                    .pl_2()
-                    .pr_1()
-                    .bg(bg)
-                    .text_color(color)
-                    .when(!active, |row| row.hover(move |style| style.bg(hover)))
-                    .child(
-                        svg()
-                            .path(Icon::FileTerminal.path())
-                            .size(px(16.))
-                            .flex_none()
-                            .text_color(icon)
-                            .debug_selector(|| format!("terminal-tab-icon-{id}")),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(label),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .when(!active, |kill_box| {
-                                kill_box
-                                    .invisible()
-                                    .group_hover(group, |style| style.visible())
-                            })
-                            .child(kill),
-                    )
-                    .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
-                        if event.click_count() >= 2 {
-                            cx.emit(TerminalPanelEvent::RenameRequested(id));
-                        } else if let Some(ix) = panel.position(id) {
-                            panel.activate(ix, window, cx);
-                        }
-                    }))
+                };
+                Tab::new(
+                    ElementId::NamedInteger("terminal-tab".into(), id.as_u64()),
+                    label,
+                    &ui,
+                )
+                .icon(Some(self.sessions[ix].mark().icon()))
+                .active(active)
+                .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
+                    if event.click_count() >= 2 {
+                        cx.emit(TerminalPanelEvent::RenameRequested(id));
+                    } else if let Some(ix) = panel.position(id) {
+                        panel.activate(ix, window, cx);
+                    }
+                }))
+                .on_close(cx.listener(move |panel, _, window, cx| kill(panel, window, cx)))
+                .on_middle_click(cx.listener(move |panel, _, window, cx| kill(panel, window, cx)))
             })
             .collect();
         if std::mem::take(&mut self.reveal) {
             self.tabs.scroll_to_item(self.active);
         }
-        div()
-            .id("terminal-tabs")
-            .flex()
-            .flex_col()
-            .flex_none()
-            .w(TAB_LIST_WIDTH)
-            .h_full()
-            .bg(panel)
-            .border_l_1()
-            .border_color(border)
-            .overflow_y_scroll()
+        let bar = TabBar::new("terminal-tabs", &ui)
             .track_scroll(&self.tabs)
-            .children(rows)
-    }
-
-    /// The actions row above the sessions and their list: a `+` running
-    /// `terminal.new` and a kill button running `terminal.close`, at the
-    /// right, with one session or several. Their tooltips carry the
-    /// commands' keys.
-    fn actions(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let ui = fe_ui::ui_theme(cx);
-        let colors = &cx.theme().colors;
-        let (panel, border) = (colors.surface.panel, colors.border.default);
-        let tip = move |title: &'static str, command: &'static str| {
+            .focus_within(&self.focus)
+            .children(tabs);
+        let tip = move |title: SharedString, command: &'static str| {
             move |_: &mut Window, cx: &mut App| {
                 let key = pane_toolbar::shortcut(command, cx);
-                cx.new(|_| Tooltip::new(title, key, &ui)).into()
+                cx.new(|_| Tooltip::new(title.clone(), key, &ui)).into()
             }
         };
-        div()
-            .flex()
+        let (new, kill) = (
+            tr!("workbench-terminal-new"),
+            tr!("workbench-terminal-kill"),
+        );
+        let actions = div()
             .flex_none()
+            .flex()
             .items_center()
-            .justify_end()
             .gap_1()
             .px_1()
-            .w_full()
             .h(TAB_HEIGHT)
-            .bg(panel)
+            .bg(chrome)
             .border_b_1()
             .border_color(border)
             .child(
                 div()
                     .id("terminal-new")
                     .debug_selector(|| "terminal-new".to_owned())
-                    .tooltip(tip("New Terminal", "terminal.new"))
+                    .tooltip(tip(new.clone(), "terminal.new"))
                     .child(
                         Button::new("terminal-new-button", "+")
+                            .name(new)
                             .ghost()
                             .small()
                             .on_click(|_, window, cx| {
@@ -960,12 +961,19 @@ impl TerminalPanel {
                     ),
             )
             .child(
-                IconButton::new("terminal-kill", Icon::X, "Kill Terminal", &ui)
-                    .tooltip(tip("Kill Terminal", "terminal.close"))
+                IconButton::new("terminal-kill", Icon::X, kill.clone(), &ui)
+                    .tooltip(tip(kill, "terminal.close"))
                     .on_click(|_, window, cx| {
                         pane_toolbar::dispatch("terminal.close", Source::Mouse, window, cx);
                     }),
-            )
+            );
+        div()
+            .flex_none()
+            .flex()
+            .w_full()
+            .h(TAB_HEIGHT)
+            .child(div().flex_1().min_w_0().child(bar))
+            .child(actions)
     }
 
     /// The task tabs behind the active one that haven't started, laid out
@@ -1015,16 +1023,18 @@ impl TerminalPanel {
 /// When its directory isn't one, or it names no program.
 pub(crate) fn task_options(task: &Task, scrollback: usize) -> io::Result<TerminalOptions> {
     if !std::fs::metadata(&task.cwd)?.is_dir() {
+        let path = task.cwd.display().to_string();
         return Err(io::Error::new(
             io::ErrorKind::NotADirectory,
-            format!("{} is not a directory", task.cwd.display()),
+            tr!("workbench-terminal-task-not-a-directory", path = path).to_string(),
         ));
     }
     let shell = match &task.command {
         TaskCommand::Shell(line) => sh_c(line),
         TaskCommand::Argv(argv) => {
             let Some((program, args)) = argv.split_first() else {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "no command"));
+                let error = tr!("workbench-terminal-task-no-command").to_string();
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, error));
             };
             (program.clone(), args.to_vec())
         }
@@ -1050,11 +1060,11 @@ fn sh_c(line: &str) -> (String, Vec<String>) {
 /// exits with `exit`'s code, else 1 if the last command failed.
 #[cfg(windows)]
 fn sh_c(line: &str) -> (String, Vec<String>) {
-    let root = std::env::var("SystemRoot")
+    let root = std::env::var(verbatim!("SystemRoot"))
         .ok()
         .filter(|root| !root.is_empty())
         .unwrap_or_else(|| r"C:\Windows".to_owned());
-    let program = format!(r"{root}\System32\WindowsPowerShell\v1.0\powershell.exe");
+    let program = root + verbatim!(r"\System32\WindowsPowerShell\v1.0\powershell.exe");
     let args = ["-NoLogo", "-NoProfile", "-Command", line].map(str::to_owned);
     (program, args.to_vec())
 }
@@ -1076,9 +1086,9 @@ fn start_dir(cwd: &Path) -> PathBuf {
 }
 
 /// The terminal's style: the editor's colours and, unless `settings` set
-/// them, its font and the design's small code size (12 px, at
-/// [`TerminalStyle::LINE_HEIGHT`] so box drawing still meets: 15 px rows),
-/// and ANSI colours from the theme's `[terminal]` table.
+/// them, its font and the design's Code small (12 px on 18 px rows), and
+/// ANSI colours from the theme's `[terminal]` table. A size the settings set
+/// keeps Code small's proportion: its rows are half as tall again.
 fn style(
     theme: &EditorTheme,
     terminal: &fe_config::TerminalColors,
@@ -1096,7 +1106,7 @@ fn style(
         font_size: settings
             .font_size
             .map_or(fe_ui::CODE_SMALL.size, |size| px(size as f32)),
-        line_height: TerminalStyle::LINE_HEIGHT,
+        line_height: fe_ui::CODE_SMALL.line_height / fe_ui::CODE_SMALL.size,
         background: or_editor(terminal.background, theme.background),
         foreground: or_editor(terminal.foreground, theme.foreground),
         cursor: or_editor(terminal.cursor, theme.cursor),
@@ -1129,7 +1139,10 @@ impl DockItem for TerminalPanel {
             return self.label(self.active, cx);
         }
         let title = self.view().and_then(|view| view.read(cx).title());
-        title.map_or_else(|| "Terminal".into(), |title| title.to_owned().into())
+        title.map_or_else(
+            || tr!("workbench-terminal-title"),
+            |title| title.to_owned().into(),
+        )
     }
 
     fn icon(&self, _: &App) -> Icon {
@@ -1170,10 +1183,7 @@ impl Render for TerminalPanel {
         self.update_find(|find, view, cx| find.settle(view, cx), cx);
         #[cfg(test)]
         self.drawn_tabs.clear();
-        // A task's tab is listed even alone, or nothing would name it.
-        let listed = self.sessions.len() > 1 || self.sessions.iter().any(|s| s.task.is_some());
-        let list = listed.then(|| self.tab_list(cx));
-        let actions = self.actions(cx);
+        let strip = self.tab_strip(cx);
         let view = self.view().cloned();
         let session = view.clone().map(IntoElement::into_any_element);
         #[cfg(test)]
@@ -1198,25 +1208,18 @@ impl Render for TerminalPanel {
             .flex()
             .flex_col()
             .bg(self.style.background)
-            .child(actions)
+            .child(strip)
             .children(find)
             .child(
                 div()
+                    .debug_selector(|| "terminal-session".to_owned())
                     .flex()
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .relative()
-                            .children(unstarted)
-                            .children(session),
-                    )
-                    .children(list),
+                    .relative()
+                    .children(unstarted)
+                    .children(session),
             )
     }
 }
@@ -1238,13 +1241,12 @@ impl TerminalPanel {
         self.shell = Some((shell.to_owned(), args));
     }
 
-    /// The tabs the last frame drew, none without a list: label and
-    /// background.
+    /// The tabs the last frame drew: label and background.
     pub(crate) fn drawn_tabs(&self) -> &[(SharedString, gpui::Hsla)] {
         &self.drawn_tabs
     }
 
-    /// Where tab `ix` was drawn in the last frame, as the list scrolled.
+    /// Where tab `ix` was drawn in the last frame, as the strip scrolled.
     pub(crate) fn tab_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
         let bounds = self.tabs.bounds_for_item(ix)?;
         Some(gpui::Bounds::new(
@@ -1302,9 +1304,9 @@ impl RenameTerminal {
 
     fn label(&self) -> String {
         if self.name.is_empty() {
-            "Use the shell's title".to_owned()
+            tr!("workbench-terminal-rename-clear").to_string()
         } else {
-            format!("Rename to {}", self.name)
+            tr!("workbench-terminal-rename-to", name = &self.name).to_string()
         }
     }
 }
@@ -1356,7 +1358,7 @@ impl PickerDelegate for RenameTerminal {
     }
 
     fn status(&self) -> Option<gpui::SharedString> {
-        Some("Enter to rename, Escape to cancel".into())
+        Some(tr!("workbench-terminal-rename-status"))
     }
 }
 

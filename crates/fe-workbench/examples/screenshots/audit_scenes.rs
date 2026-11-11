@@ -54,6 +54,8 @@ mod settings;
 mod shortcuts_editor;
 #[path = "audit/start_page.rs"]
 mod start_page;
+#[path = "audit/terminal.rs"]
+mod terminal;
 #[path = "audit/terminal_session.rs"]
 mod terminal_session;
 #[path = "audit/toast.rs"]
@@ -100,6 +102,7 @@ const SURFACES: &[&Surface] = &[
     &hover::SURFACE,
     &problems::SURFACE,
     &terminal_session::SURFACE,
+    &terminal::SURFACE,
     &git_log_card::SURFACE,
 ];
 

@@ -53,7 +53,6 @@ pub(crate) enum ShellEvent {
     /// OSC 133;C: the command's output starts.
     OutputStart,
     /// OSC 133;D, with the command's exit code if the shell gave one.
-    #[allow(dead_code, reason = "the code is for the card that marks output")]
     CommandEnd(Option<i32>),
 }
 
@@ -348,6 +347,25 @@ fn percent_decode(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(decoded)
 }
 
+/// Where the shell's foreground command is, as its OSC 133 marks say.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommandStatus {
+    /// No command has run yet, or the shell marks none.
+    #[default]
+    Idle,
+    /// Its output started (OSC 133;C) and it hasn't ended (OSC 133;D).
+    Running,
+    /// It ended (OSC 133;D), with its exit code if the shell gave one.
+    Finished(Option<i32>),
+}
+
+impl CommandStatus {
+    /// Whether it ended with a code other than 0.
+    pub fn failed(self) -> bool {
+        matches!(self, CommandStatus::Finished(Some(code)) if code != 0)
+    }
+}
+
 /// What a session knows of its shell, and the prompt marks' bookkeeping.
 #[derive(Debug)]
 pub(crate) struct ShellState {
@@ -356,6 +374,8 @@ pub(crate) struct ShellState {
     scrollback: usize,
     /// The directory OSC 7 last reported.
     cwd: Option<PathBuf>,
+    /// The foreground command's, as OSC 133;C and D last said.
+    command: CommandStatus,
     /// The prompt marks' absolute rows, ascending.
     marks: VecDeque<u64>,
     /// The mark the view last scrolled to, until it returns to the bottom.
@@ -397,6 +417,7 @@ impl ShellState {
         ShellState {
             scrollback,
             cwd: None,
+            command: CommandStatus::Idle,
             marks: VecDeque::new(),
             remembered: None,
             dropped: 0,
@@ -417,6 +438,10 @@ impl ShellState {
         self.cwd.clone()
     }
 
+    pub(crate) fn command(&self) -> CommandStatus {
+        self.command
+    }
+
     /// The absolute row of grid line 0.
     fn base<T>(&self, term: &Term<T>) -> u64 {
         self.dropped + term.grid().history_size() as u64
@@ -427,7 +452,9 @@ impl ShellState {
         match event {
             ShellEvent::Cwd(path) => self.cwd = Some(path),
             ShellEvent::PromptStart => self.mark(term),
-            ShellEvent::CommandStart | ShellEvent::OutputStart | ShellEvent::CommandEnd(_) => {}
+            ShellEvent::OutputStart => self.command = CommandStatus::Running,
+            ShellEvent::CommandEnd(code) => self.command = CommandStatus::Finished(code),
+            ShellEvent::CommandStart => {}
         }
     }
 

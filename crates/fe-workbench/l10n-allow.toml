@@ -98,6 +98,9 @@ migrated = [
     # language server's.
     "src/test_lens.rs",
     "src/lsp_lenses.rs",
+    # The terminal panel in B3 (T349): its tab strip and its find row.
+    "src/terminal_panel.rs",
+    "src/terminal_find.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -440,3 +443,8 @@ reason = "The and push button's element id"
 file = "src/git_panel.rs"
 text = "change-letter:{at}"
 reason = "A row's status letter's debug selector"
+
+[[literal]]
+file = "src/terminal_panel.rs"
+text = "terminal-new-button"
+reason = "The New Terminal button's element id"

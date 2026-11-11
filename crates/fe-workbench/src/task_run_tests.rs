@@ -220,7 +220,7 @@ fn run_opens_a_tab_named_for_the_task(cx: &mut TestAppContext) {
     run_task(&workbench, task.clone(), cx);
 
     assert_eq!(views(&workbench, cx).len(), 1);
-    assert_eq!(labels(&workbench, cx), [LABEL], "listed though it's alone");
+    assert_eq!(labels(&workbench, cx), [LABEL]);
     assert!(dock_shown(&workbench, cx));
     assert!(!editor_focused(&workbench, cx));
     let view = views(&workbench, cx).remove(0);
@@ -366,11 +366,7 @@ fn terminal_without_task_is_unchanged(cx: &mut TestAppContext) {
     assert_eq!(options.shell, None, "the login shell");
     assert_eq!(options.cwd, dir.path());
     assert!(options.env.is_empty());
-    assert_eq!(
-        labels(&workbench, cx),
-        [] as [SharedString; 0],
-        "one: no list"
-    );
+    assert_eq!(labels(&workbench, cx), ["Terminal 1"]);
 
     // A task doesn't take a terminal's number, or change how its shell ends.
     run_task(&workbench, shell_task(LABEL, dir.path()), cx);

@@ -23,7 +23,7 @@ use rustix_openpty::rustix::termios::Winsize;
 
 use crate::pty_loop::{LoopSender, Msg, PtyLoop, lock};
 use crate::search::{self, QueryError, TerminalMatch, TerminalQuery};
-use crate::shell::{ShellState, UNBOUNDED_HISTORY};
+use crate::shell::{CommandStatus, ShellState, UNBOUNDED_HISTORY};
 use crate::snapshot::{self, Snapshot};
 use crate::vi;
 
@@ -503,6 +503,12 @@ impl Terminal {
     /// over ssh reports the remote one.
     pub fn cwd(&self) -> Option<PathBuf> {
         lock(&self.shell).cwd()
+    }
+
+    /// Where the shell's foreground command is, as its OSC 133 marks last
+    /// said (docs/terminal-shell-integration.md): idle until one is marked.
+    pub fn command_status(&self) -> CommandStatus {
+        lock(&self.shell).command()
     }
 
     /// Scrolls the view to the previous or next prompt (`forward`) the shell

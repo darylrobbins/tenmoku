@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use fe_terminal::{
-    GridSize, Terminal, TerminalEvent, TerminalMatch, TerminalOptions, TerminalQuery,
+    CommandStatus, GridSize, Terminal, TerminalEvent, TerminalMatch, TerminalOptions, TerminalQuery,
 };
 use gpui::{
     App, Bounds, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -31,6 +31,10 @@ pub enum TerminalViewEvent {
     /// The shell exited, with its exit code (`None` when a signal ended it,
     /// the code is unknown, or the session couldn't start).
     Exited(Option<i32>),
+    /// The shell's foreground command started or ended, as its OSC 133
+    /// marks say ([`Terminal::command_status`]): told as the session's
+    /// output is read, whether or not the view is drawn.
+    CommandStatus(CommandStatus),
 }
 
 /// A terminal session drawn in a window. The session starts on the view's
@@ -45,6 +49,9 @@ pub struct TerminalView {
     /// The size last given to the session.
     size: Option<GridSize>,
     title: Option<String>,
+    /// The foreground command's status last told
+    /// ([`TerminalViewEvent::CommandStatus`]).
+    command_status: CommandStatus,
     /// Drains the session's events.
     events: Option<Task<()>>,
     /// A wakeup has notified since the last frame was laid out.
@@ -115,6 +122,7 @@ impl TerminalView {
             focus,
             size: None,
             title: None,
+            command_status: CommandStatus::Idle,
             events: None,
             notified: false,
             marked: None,
@@ -235,6 +243,12 @@ impl TerminalView {
     fn handle(&mut self, event: TerminalEvent, cx: &mut Context<Self>) {
         match event {
             TerminalEvent::Wakeup => {
+                let status = (self.terminal.as_ref())
+                    .map_or(CommandStatus::Idle, |terminal| terminal.command_status());
+                if status != self.command_status {
+                    self.command_status = status;
+                    cx.emit(TerminalViewEvent::CommandStatus(status));
+                }
                 if !self.notified {
                     self.notified = true;
                     cx.notify();

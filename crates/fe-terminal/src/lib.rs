@@ -16,6 +16,7 @@ mod vi;
 pub use links::{Link, LinkTarget, link_at};
 pub use search::{GridPoint, QueryError, TerminalMatch, TerminalQuery};
 pub use session::{GridSize, SelectionKind, Side, Terminal, TerminalEvent, TerminalOptions};
+pub use shell::CommandStatus;
 pub use snapshot::{
     Cell, CellFlags, Color, Cursor, CursorShape, Modes, SelectionSpan, Snapshot, indexed_rgb,
 };

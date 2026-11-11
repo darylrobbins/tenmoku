@@ -126,6 +126,7 @@ mod status_bar_go_to_line;
 mod status_bar_icons;
 mod symbol_icon_tints;
 mod tabs;
+mod terminal_b3;
 mod title_bar;
 mod title_bar_b3;
 mod toolbar_history;
