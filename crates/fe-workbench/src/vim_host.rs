@@ -424,7 +424,7 @@ impl Workbench {
                 editor
                     .update(cx, |editor, cx| {
                         if let Some(error) = failed {
-                            editor.set_vim_message(error, cx);
+                            editor.set_vim_error(error, cx);
                         }
                         if let Some(hold) = hold {
                             editor.finish_vim_host(hold, ok, cx);
@@ -533,7 +533,7 @@ impl Workbench {
             editor
                 .update(cx, |editor, cx| {
                     if let Some(failed) = first {
-                        editor.set_vim_message(failed, cx);
+                        editor.set_vim_error(failed, cx);
                     }
                     if let Some(hold) = hold {
                         editor.finish_vim_host(hold, ok, cx);
@@ -695,9 +695,10 @@ mod day_one_tests;
 #[path = "vim_ls_tests.rs"]
 mod vim_ls_tests;
 
-/// Leaves `text` as `editor`'s vim message.
+/// Leaves `text`, why a host command failed, as `editor`'s vim message: an
+/// error, which a screen reader is told at once.
 pub(super) fn message(editor: &Entity<EditorView>, text: impl Into<String>, cx: &mut App) {
-    editor.update(cx, |editor, cx| editor.set_vim_message(text, cx));
+    editor.update(cx, |editor, cx| editor.set_vim_error(text, cx));
 }
 
 /// Saves `editor` through its [`kiln_shell::PaneItem::save`], resolving to

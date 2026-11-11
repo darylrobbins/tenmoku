@@ -298,7 +298,6 @@ impl ToastQueue {
     }
 
     /// The toasts shown, oldest (top) first.
-    #[cfg(test)]
     pub(crate) fn shown(&self) -> &[Entry] {
         &self.shown
     }
@@ -461,6 +460,9 @@ pub(crate) struct ToastLayer {
     /// goes here.
     fallback: Option<WeakFocusHandle>,
     window: AnyWindowHandle,
+    /// The toasts shown when a screen reader was last told, each with its
+    /// count then: one not among them is new, or shown again.
+    announced: Vec<(ToastId, usize)>,
     _focus_in: Subscription,
     _focus_out: Subscription,
     _focus_lost: Subscription,
@@ -526,6 +528,7 @@ impl ToastLayer {
             buttons: Vec::new(),
             fallback: None,
             window: handle,
+            announced: Vec::new(),
             _focus_in: focus_in,
             _focus_out: focus_out,
             _focus_lost: focus_lost,
@@ -745,6 +748,7 @@ impl ToastLayer {
     fn changed(&mut self, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
         self.queue.expire(now);
+        self.announce_shown(cx);
         if let Some(focused) = &self.focused
             && self.queue.shown_entry(focused.id).is_none()
         {
@@ -768,7 +772,40 @@ impl ToastLayer {
         cx.notify();
     }
 
-    /// The card for `entry`.
+    /// Tells a screen reader each toast newly shown, or shown again as an
+    /// identical one counts it up: its message, then its detail, at once
+    /// for an error and after what it's saying otherwise. A waiting toast
+    /// is told once it shows, if its window is the active one then.
+    fn announce_shown(&mut self, cx: &mut App) {
+        let shown = self.queue.shown();
+        let mut said = Vec::new();
+        let mut error = false;
+        for entry in shown {
+            if self.announced.contains(&(entry.id, entry.count)) {
+                continue;
+            }
+            said.push(entry.toast.message.clone());
+            said.extend(entry.toast.detail.clone());
+            error |= entry.toast.level == Level::Error;
+        }
+        self.announced = (shown.iter())
+            .map(|entry| (entry.id, entry.count))
+            .collect();
+        // Only the active window's toasts are said: the announcer speaks in
+        // the active window, and one shown elsewhere isn't where the user
+        // is.
+        if said.is_empty() || cx.active_window() != Some(self.window) {
+            return;
+        }
+        let politeness = match error {
+            true => fe_ui::Politeness::Assertive,
+            false => fe_ui::Politeness::Polite,
+        };
+        fe_ui::announce(cx, said.join("\n"), politeness);
+    }
+
+    /// The card for `entry`: an `Alert` named by its message, its detail
+    /// the description, holding its buttons.
     fn render_toast(
         &self,
         entry: &Entry,
@@ -882,8 +919,13 @@ impl ToastLayer {
         });
         let hovered =
             cx.listener(move |layer, hovered: &bool, _, cx| layer.set_hovered(id, *hovered, cx));
-        div()
-            .id(("toast", ix))
+        let states = fe_ui::States {
+            description: entry.toast.detail.clone().map(SharedString::from),
+            ..fe_ui::States::default()
+        };
+        let card = div().id(("toast", ix));
+        let message = entry.toast.message.clone();
+        fe_ui::node_with(card, window, cx, fe_ui::Role::Alert, message, states)
             .debug_selector(move || format!("toast-{ix}"))
             .when(focused, |card| {
                 card.key_context("toast")

@@ -1040,6 +1040,8 @@ fn run_remap_command(
                         command = command,
                         error = error.to_string()
                     );
+                    // An error, which a screen reader is told at once.
+                    view.announced.host_message(message.to_string(), true);
                     state.set_host_message(message.to_string());
                 }
                 cx.notify();
@@ -3180,6 +3182,8 @@ impl EditorView {
             return None;
         };
         if let Some(state) = &mut self.vim {
+            // An error, which a screen reader is told at once.
+            self.announced.host_message(message.clone(), true);
             state.set_host_message(message);
         }
         cx.notify();

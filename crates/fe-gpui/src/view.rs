@@ -128,6 +128,14 @@ pub struct EditorView {
     /// while a screen reader is on and its node's synthetic children read
     /// ([`crate::element::a11y_text`]).
     pub(crate) a11y_text: crate::element::A11yTextCell,
+    /// What was last told a screen reader, for the next frame to compare
+    /// with ([`a11y_announce`]).
+    pub(crate) announced: a11y_announce::Announced,
+    /// Whether the last frame made the text area the focused node, its
+    /// own active descendant
+    /// ([`EditorView::text_area_active_descendant`]): whenever the editor
+    /// has focus, the completion menu open or not.
+    pub(crate) text_area_active: bool,
     drag: Option<Drag>,
     /// Text being composed by an input method ([`ime`]).
     composition: Option<ime::Composition>,
@@ -455,6 +463,8 @@ impl EditorView {
             scrolled_display_top: None,
             layout: None,
             a11y_text: Default::default(),
+            announced: Default::default(),
+            text_area_active: false,
             drag: None,
             composition: None,
             primary_selection: cfg!(target_os = "linux"),
@@ -1995,6 +2005,7 @@ impl Render for EditorView {
         if self.ghost_text_shown() {
             key_context.add(ghost_text::KEY_CONTEXT);
         }
+        self.announce_changes(window, cx);
         let editor = fe_ui::node(
             div().id("editor"),
             window,
@@ -2017,10 +2028,17 @@ impl Render for EditorView {
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_modifiers_changed(crate::element::modifiers_changed)
             .on_action(cx.listener(|view, run: &RunCommand, window, cx| {
+                // A key ends vim's message (a palette's command doesn't).
+                if run.0.source == Source::Keyboard {
+                    view.announced.key();
+                }
                 view.end_composition_for(&run.0, cx);
                 view.on_run_command(run, window, cx)
             }))
-            .on_key_down(cx.listener(Self::on_vim_key))
+            .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
+                view.announced.key();
+                Self::on_vim_key(view, event, window, cx)
+            }))
             .child(self.text_area(window, cx))
             .child(crate::hover::popover_layer(cx))
             .child(crate::completion_menu::menu_layer(cx))
@@ -2035,7 +2053,7 @@ impl EditorView {
     /// editor element only, named for the file, which stays the focused
     /// node while the editor is (the popovers beside it aren't focus
     /// targets) and holds the text runs the element's prepaint builds.
-    fn text_area(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn text_area(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let name = match &self.tab_title {
             Some((title, _)) => title.clone(),
             None => crate::pane_item::file_name(self.model.path()).into(),
@@ -2047,14 +2065,18 @@ impl EditorView {
             fe_ui::Role::MultilineTextInput,
             name,
         );
-        let area = match window.is_a11y_active() {
-            true => {
-                let focused = self.focus.is_focused(window);
-                crate::element::attach_a11y_text(area, self.a11y_text.clone(), focused, cx)
-            }
+        let watch = window.is_a11y_active();
+        let focused = self.focus.is_focused(window);
+        let area = self.text_area_active_descendant(area, focused);
+        // The view made it the active descendant above, with a screen
+        // reader or without, so the adapter needn't.
+        let area = match watch {
+            true => crate::element::attach_a11y_text(area, self.a11y_text.clone(), false, cx),
             false => area,
         };
-        area.child(EditorElement::new(cx.entity()))
+        // After the element, whose prepaint builds the text node it reads.
+        let watch = watch.then(|| self.clipped_selection_watch(cx));
+        area.child(EditorElement::new(cx.entity())).children(watch)
     }
 
     /// Takes a screen reader's selection, from `anchor` to `focus` (buffer
@@ -2105,6 +2127,7 @@ fn read_primary_text(_: &App) -> Option<String> {
     None
 }
 
+pub(crate) mod a11y_announce;
 mod change_bar;
 mod find;
 pub(crate) mod ghost_text;
@@ -2262,6 +2285,9 @@ pub use minimap::minimap_options;
 pub(crate) use proposal::ProposalButton;
 pub use proposal::ProposalEvent;
 pub(crate) use proposal_commands::{ProposalCommands, registry as proposal_registry};
+
+#[cfg(test)]
+mod a11y_announce_tests;
 
 #[cfg(test)]
 mod ime_tests;

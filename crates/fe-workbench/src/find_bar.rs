@@ -43,14 +43,19 @@
 //! To a screen reader the bar is a `Search` landmark named "Find", its
 //! query a `SearchInput` and its replacement a `TextInput`, each named by
 //! its placeholder; its toggles and buttons are named by their tooltips,
-//! and the Vim command is a button.
+//! and the Vim command is a button. The count is announced, politely:
+//! [`ANNOUNCE_DELAY`] after the last change to the query, and at once
+//! after Find Next, Find Previous or an option's toggle, as soon as it's
+//! counted ([`FindBar::announce_label`]). With the bar closed, Find Next
+//! and Previous still step with the last query, and the count of the match
+//! they reach is counted for the announcement alone.
 //!
 //! The commands are the pane's typed commands ([`crate::find_commands`]),
 //! which its root runs ([`crate::Pane::run_find`]). The bar's element sets
 //! [`KEY_CONTEXT`] and its inputs `text_input`, the replace input
 //! [`REPLACE_KEY_CONTEXT`] too, and none carries `vim.mode`, so with vim on keys typed there only type.
 
-use std::ops::Range;
+use std::{cell::Cell, ops::Range, time::Duration};
 
 use fe_buffer::{Anchor, BufferId, Origin, Text};
 use fe_editor::Movement;
@@ -64,10 +69,10 @@ use fe_vim::search::{
     replace::{Replacement, replace_all, replace_where},
 };
 use gpui::{
-    AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Entity, FocusHandle,
-    Focusable as _, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
-    RenderOnce, Role, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, AnyWindowHandle, App, AppContext as _, ClipboardItem, Context, Div, Entity,
+    FocusHandle, Focusable as _, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Task, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use kiln_l10n::{text, tr};
 
@@ -119,6 +124,10 @@ pub(crate) enum FindOp {
     ReplaceAll,
 }
 
+/// How long after the last change to the query the count is announced:
+/// a screen reader isn't told a count for every key.
+pub(crate) const ANNOUNCE_DELAY: Duration = Duration::from_millis(300);
+
 /// A pane's find bar: see the module docs.
 pub(crate) struct FindBar {
     open: bool,
@@ -158,6 +167,14 @@ pub(crate) struct FindBar {
     /// The Vim command's, kept across frames so the keyboard can move
     /// focus to it.
     vim_command_focus: FocusHandle,
+    /// The label is to be announced once it shows a count or an error.
+    announce: Cell<bool>,
+    /// Asks for the announcement [`ANNOUNCE_DELAY`] after the query's last
+    /// change: a newer change replaces it.
+    announce_after: Option<Task<()>>,
+    /// The window the bar was shown in, its pane's: its count is said only
+    /// while that's the active window.
+    window: Option<AnyWindowHandle>,
     _input: Subscription,
 }
 
@@ -170,6 +187,22 @@ impl FindBar {
         let changed = cx.subscribe(&input, |pane, _, event, cx| {
             if *event == TextInputEvent::Changed {
                 pane.update_find(|bar, editor, cx| bar.search(editor, cx), cx);
+                let after = cx.spawn(async |pane, cx| {
+                    cx.background_executor().timer(ANNOUNCE_DELAY).await;
+                    (pane.update(cx, |pane, cx| {
+                        pane.update_find(|bar, _, _| bar.announce.set(true), cx);
+                        cx.notify();
+                    }))
+                    .ok();
+                });
+                // A count owed for the query before waits for this one's.
+                pane.update_find(
+                    |bar, _, _| {
+                        bar.announce.set(false);
+                        bar.announce_after = Some(after);
+                    },
+                    cx,
+                );
                 cx.notify();
             }
         });
@@ -191,6 +224,9 @@ impl FindBar {
             left_all: None,
             editor: None,
             vim_command_focus: cx.focus_handle().tab_stop(true),
+            announce: Cell::new(false),
+            announce_after: None,
+            window: None,
             _input: changed,
         }
     }
@@ -259,6 +295,8 @@ impl FindBar {
             FindOp::Previous => self.step(false, editor, cx),
             FindOp::Close => {
                 self.open = false;
+                self.announce.set(false);
+                self.announce_after = None;
                 self.scope = None;
                 self.selected = None;
                 self.set_editor(None, cx);
@@ -285,6 +323,7 @@ impl FindBar {
         cx: &mut App,
     ) {
         self.open = true;
+        self.window = Some(window.window_handle());
         self.replacing |= replace;
         self.set_editor(editor, cx);
         if let Some(editor) = editor {
@@ -332,6 +371,7 @@ impl FindBar {
             }
         }
         self.search(editor, cx);
+        self.announce_now();
     }
 
     /// Before the bar moves the selection: if any selection has changed since
@@ -589,11 +629,11 @@ impl FindBar {
                 None => return,
             },
         };
-        editor.update(cx, |editor, cx| {
+        let closed = editor.update(cx, |editor, cx| {
             self.note_selections(editor);
             let transient = pattern.is_some();
             if transient {
-                editor.set_find(pattern, cx);
+                editor.set_find(pattern.clone(), cx);
             }
             if forward {
                 editor.find_next(cx);
@@ -604,7 +644,86 @@ impl FindBar {
                 editor.set_find(None, cx);
             }
             self.leave(editor, true);
+            let model = editor.model();
+            let selection = model.primary_selection();
+            // With vim on, the match is the one at the caret.
+            let at = match editor.vim_mode() {
+                Some(_) => selection.head()..selection.head(),
+                None => selection.range,
+            };
+            pattern.map(|pattern| (pattern, model.text().clone(), at))
         });
+        match closed {
+            None => self.announce_now(),
+            Some((pattern, text, at)) => {
+                let source = Source {
+                    editor: editor.downgrade(),
+                    window: cx.active_window(),
+                    version: editor.read(cx).model().snapshot().version(),
+                    at,
+                };
+                self.announce_closed_count(pattern, text, source, cx)
+            }
+        }
+    }
+
+    /// With the bar closed, the count isn't drawn: it's counted here for the
+    /// match Find Next or Previous left at `source`'s `at` (or, collapsed,
+    /// starting there), and announced once it's known, if it's still the
+    /// count of what the user is on ([`Source::stands`]). The next step
+    /// replaces it.
+    fn announce_closed_count(
+        &mut self,
+        pattern: Pattern,
+        text: Text,
+        source: Source,
+        cx: &mut App,
+    ) {
+        self.announce.set(false);
+        let at = source.at.clone();
+        let counting = cx.background_spawn(async move {
+            let (ranges, capped) = count_matches(&text, &pattern);
+            let current = ranges
+                .binary_search_by_key(&at.start, |range| range.start)
+                .ok()
+                .filter(|&ix| at.is_empty() || ranges[ix] == at);
+            (ranges.len(), current.map(|ix| ix + 1), capped)
+        });
+        self.announce_after = Some(cx.spawn(async move |cx| {
+            let (total, current, capped) = counting.await;
+            cx.update(|cx| {
+                if source.stands(cx) {
+                    let said = count_text(total, current, capped);
+                    fe_ui::announce(cx, said, fe_ui::Politeness::Polite);
+                }
+            });
+        }));
+    }
+
+    /// Has the label announced as soon as it shows a count, not after the
+    /// query's delay.
+    fn announce_now(&mut self) {
+        self.announce.set(true);
+        self.announce_after = None;
+    }
+
+    /// Tells a screen reader `label`, the count or the pattern's error, if
+    /// it's to be told ([`FindBar::announce`]) and is there: while the
+    /// matches are counted it waits for the count.
+    /// A count owed while another window is active is dropped: it would be
+    /// said there.
+    fn announce_label(&self, label: Option<&(SharedString, bool)>, cx: &mut App) {
+        if !self.announce.get() {
+            return;
+        }
+        if self.window.is_none() || cx.active_window() != self.window {
+            self.announce.set(false);
+            return;
+        }
+        if let Some((label, _)) = label {
+            self.announce.set(false);
+            fe_ui::announce(cx, label.clone(), fe_ui::Politeness::Polite);
+        }
     }
 
     /// Flips an option and finds again from the anchor.
@@ -617,6 +736,7 @@ impl FindBar {
         let flag = option(self);
         *flag = !*flag;
         self.search(editor, cx);
+        self.announce_now();
     }
 
     /// Follows the pane's active editor, `editor`, while the bar is open:
@@ -718,21 +838,7 @@ impl FindBar {
             return Some((error.to_string().into(), true));
         }
         let count = editor?.find_count()?;
-        let total = count.total;
-        let text = match (count.current, count.capped) {
-            _ if total == 0 => tr!("workbench-find-no-results"),
-            (Some(current), false) => tr!("workbench-find-count", current = current, total = total),
-            (Some(current), true) => {
-                tr!(
-                    "workbench-find-count-capped",
-                    current = current,
-                    total = total
-                )
-            }
-            (None, false) => tr!("workbench-find-count-unknown", total = total),
-            (None, true) => tr!("workbench-find-count-unknown-capped", total = total),
-        };
-        Some((text, false))
+        Some((count_text(count.total, count.current, count.capped), false))
     }
 
     /// The toggles inside the find field, in order: what each runs, its
@@ -789,6 +895,7 @@ impl FindBar {
             return None;
         }
         let label = self.label(editor.map(|editor| editor.read(cx)));
+        self.announce_label(label.as_ref(), cx);
         let toggles =
             (self.field_toggles().into_iter().enumerate()).map(|(ix, (op, icon, name, on))| {
                 div()
@@ -1178,6 +1285,85 @@ fn current_match(
 /// `text` with its line breaks made `\n`, as [`fe_buffer::Buffer::edit`]
 /// makes them, so the text a replace is planned against is the text it
 /// makes: a replacement can hold a lone `\r` pasted into its input.
+/// What a count with the bar closed is of: the editor Find Next or
+/// Previous stepped in, in which window, its text then and the match it
+/// left selected (or the caret at, with vim on).
+struct Source {
+    editor: WeakEntity<EditorView>,
+    window: Option<AnyWindowHandle>,
+    version: fe_buffer::Version,
+    at: Range<usize>,
+}
+
+impl Source {
+    /// Whether the count is still of what the user is on: the same text,
+    /// the match where the step left it, and the editor focused in the
+    /// active window. An edit, a move, a tab or window switch says no.
+    fn stands(&self, cx: &mut App) -> bool {
+        let Some(editor) = self.editor.upgrade() else {
+            return false;
+        };
+        let view = editor.read(cx);
+        let model = view.model();
+        let selection = model.primary_selection();
+        let at = match view.vim_mode() {
+            Some(_) => selection.head()..selection.head(),
+            None => selection.range,
+        };
+        if model.snapshot().version() != self.version || at != self.at {
+            return false;
+        }
+        let Some(window) = self
+            .window
+            .filter(|window| cx.active_window() == Some(*window))
+        else {
+            return false;
+        };
+        (window.update(cx, |_, window, cx| {
+            editor.focus_handle(cx).contains_focused(window, cx)
+        }))
+        .unwrap_or(false)
+    }
+}
+
+/// The count as the bar shows it: `2 of 5`, `No results`, or `5`
+/// matches with none selected, each with more past a cap of `total`.
+fn count_text(total: usize, current: Option<usize>, capped: bool) -> SharedString {
+    match (current, capped) {
+        _ if total == 0 => tr!("workbench-find-no-results"),
+        (Some(current), false) => tr!("workbench-find-count", current = current, total = total),
+        (Some(current), true) => {
+            tr!(
+                "workbench-find-count-capped",
+                current = current,
+                total = total
+            )
+        }
+        (None, false) => tr!("workbench-find-count-unknown", total = total),
+        (None, true) => tr!("workbench-find-count-unknown-capped", total = total),
+    }
+}
+
+/// The most matches a count with the bar closed counts, as the editor's
+/// does.
+const MAX_COUNTED: usize = 10_000;
+
+/// `pattern`'s matches in `text`, by start, the first [`MAX_COUNTED`], and
+/// whether there are more.
+fn count_matches(text: &Text, pattern: &Pattern) -> (Vec<Range<usize>>, bool) {
+    let rows = 0..text.row_count();
+    let mut ranges = fe_vim::search::matches_in_until(
+        text,
+        rows,
+        pattern,
+        MAX_COUNTED + 1,
+        &mut Deadline::never(),
+    );
+    let capped = ranges.len() > MAX_COUNTED;
+    ranges.truncate(MAX_COUNTED);
+    (ranges, capped)
+}
+
 fn normalize_newlines(text: String) -> String {
     match text.contains('\r') {
         true => text.replace("\r\n", "\n").replace('\r', "\n"),

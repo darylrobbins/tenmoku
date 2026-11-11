@@ -86,6 +86,10 @@ pub const SHOW_HOVER: &str = "editor.show_hover";
 /// around it ([`EditorView::go_to_bracket`]).
 pub const GO_TO_BRACKET: &str = "editor.go_to_bracket";
 
+/// Says the caret's line and column, and the file's lines, to a screen
+/// reader ([`EditorView::announce_position`]).
+pub const ANNOUNCE_POSITION: &str = "editor.announce_position";
+
 /// Saves the buffer: fe-editor's command, which the view runs off the main
 /// thread ([`EditorView::save_from_command`]).
 const SAVE: &str = "editor.save";
@@ -99,7 +103,12 @@ const SAVE: &str = "editor.save";
 fn editor_registry() -> Registry<Editor> {
     let mut registry = fe_editor::commands::registry();
     registry.set_plugin_policy(Arc::new(InstalledPolicy));
-    for id in [SHOW_HOVER, signature_help::SHOW, GO_TO_BRACKET] {
+    for id in [
+        SHOW_HOVER,
+        signature_help::SHOW,
+        GO_TO_BRACKET,
+        ANNOUNCE_POSITION,
+    ] {
         let title = crate::l10n::command_title(id);
         registry
             .register(id, &title, |_: &mut EditorTarget<'_>, _: &Actor| {
@@ -671,7 +680,9 @@ impl EditorView {
                         ),
                         // Edit nothing, or as typing does, so the session
                         // goes on.
-                        SHOW_HOVER | signature_help::SHOW => dispatch(&mut self.model),
+                        SHOW_HOVER | signature_help::SHOW | ANNOUNCE_POSITION => {
+                            dispatch(&mut self.model)
+                        }
                         // Accepting a suggestion types it, into the session.
                         command
                             if command == completion_menu::TRIGGER
@@ -709,6 +720,9 @@ impl EditorView {
         match self.dispatched(result, &invocation, mutates, cx) {
             Ok(()) if invocation.command.as_str() == SHOW_HOVER => self.show_hover(cx),
             Ok(()) if invocation.command.as_str() == GO_TO_BRACKET => self.go_to_bracket(cx),
+            Ok(()) if invocation.command.as_str() == ANNOUNCE_POSITION => {
+                self.announce_position(cx)
+            }
             Ok(()) if invocation.command.as_str() == signature_help::SHOW => {
                 self.ask_signature_help(signature_help::SignatureTrigger::Invoked, cx)
             }

@@ -181,6 +181,35 @@ pub mod status {
         }
     }
 
+    /// A `vim.mode` as a screen reader says it changed to ("Normal",
+    /// "Insert"), by the item's label: an operator waiting is still normal
+    /// mode. `None` for the command line, which takes focus and says its
+    /// own name ([`command_line_name`]).
+    pub(crate) fn vim_mode_spoken(mode: &str) -> Option<SharedString> {
+        Some(match mode {
+            "normal" | "operator_pending" => tr!("gpui-a11y-vim-mode-normal"),
+            "insert" => tr!("gpui-a11y-vim-mode-insert"),
+            "replace" => tr!("gpui-a11y-vim-mode-replace"),
+            "visual" => tr!("gpui-a11y-vim-mode-visual"),
+            "visual_line" => tr!("gpui-a11y-vim-mode-visual-line"),
+            "visual_block" => tr!("gpui-a11y-vim-mode-visual-block"),
+            "cmdline" => return None,
+            _ => vim_mode_label(mode),
+        })
+    }
+
+    /// The accessible name of vim's command line, by its prefix: `:` is
+    /// "Command", `/` "Search forward" and `?` "Search backward".
+    pub fn command_line_name(kind: fe_vim::CommandLineKind) -> SharedString {
+        match kind {
+            fe_vim::CommandLineKind::Ex => tr!("gpui-a11y-command-line-ex"),
+            fe_vim::CommandLineKind::SearchForward => tr!("gpui-a11y-command-line-search-forward"),
+            fe_vim::CommandLineKind::SearchBackward => {
+                tr!("gpui-a11y-command-line-search-backward")
+            }
+        }
+    }
+
     /// The vim mode item's pill for a `vim.mode`, in `theme`'s colours:
     /// an operator waiting is still normal mode.
     pub(super) fn vim_mode_fill(mode: &str, theme: &EditorTheme) -> StatusFill {
@@ -247,7 +276,19 @@ impl EditorView {
     /// key in the editor: the host's answer to a host command. Nothing
     /// with vim off.
     pub fn set_vim_message(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
+        self.set_host_vim_message(message.into(), false, cx);
+    }
+
+    /// [`EditorView::set_vim_message`] for an error, such as a write that
+    /// failed: a screen reader is told it at once, not after what it's
+    /// saying ([`crate::view::a11y_announce`]).
+    pub fn set_vim_error(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
+        self.set_host_vim_message(message.into(), true, cx);
+    }
+
+    fn set_host_vim_message(&mut self, message: String, error: bool, cx: &mut Context<Self>) {
         if let Some(vim) = &mut self.vim {
+            self.announced.host_message(message.clone(), error);
             vim.set_host_message(message);
             cx.notify();
         }

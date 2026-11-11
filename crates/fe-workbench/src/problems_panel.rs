@@ -1479,7 +1479,8 @@ impl Workbench {
     }
 
     /// Puts the active editor's caret at the start of the diagnostic after
-    /// its caret, or before it, wrapping, and reveals it.
+    /// its caret, or before it, wrapping, and reveals it. A screen reader
+    /// is told the diagnostics there at once.
     fn go_to_diagnostic(&mut self, forward: bool, cx: &mut Context<Self>) {
         let Some(editor) = self.active_editor(cx).cloned() else {
             return;
@@ -1490,7 +1491,8 @@ impl Workbench {
             return;
         };
         editor.update(cx, |editor, cx| {
-            editor.select_and_reveal(range.start..range.start, cx)
+            editor.select_and_reveal(range.start..range.start, cx);
+            editor.announce_caret_diagnostics(cx);
         });
     }
 

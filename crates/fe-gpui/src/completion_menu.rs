@@ -113,6 +113,25 @@ pub(crate) struct Menu {
     /// Vim's keyword completion this shows in place of an answer, if it
     /// does: its candidates are the rows, and the menu takes no keys.
     keyword: Option<KeywordCompletion>,
+    /// Counts the lists it has shown: each answer, and each refilter as the
+    /// text changes, makes a new one, for a screen reader to be told the
+    /// selection after ([`crate::view::a11y_announce`]).
+    list: u64,
+    /// The text's version and the caret it last filtered for: moving the
+    /// caret back within what was typed since the request refilters too.
+    filtered: Option<(Version, usize)>,
+}
+
+/// What a screen reader is told of the menu: see
+/// [`EditorView::completion_spoken`].
+pub(crate) struct CompletionSpoken<'a> {
+    /// Which list, as [`Menu::list`] counts them.
+    pub(crate) list: u64,
+    /// How many items match the word.
+    pub(crate) count: usize,
+    pub(crate) selected: Option<usize>,
+    /// The selected item's label, or the first match's with none selected.
+    pub(crate) label: &'a str,
 }
 
 /// Where the menu goes: by its word's start, below it or, with more room
@@ -157,6 +176,8 @@ impl Menu {
             place: None,
             laid_out: None,
             keyword,
+            list: 0,
+            filtered: None,
         }
     }
 }
@@ -178,6 +199,26 @@ impl EditorView {
     pub fn completion_shown(&self) -> bool {
         (self.completion.as_ref())
             .is_some_and(|menu| menu.keyword.is_none() && !menu.session.matches().is_empty())
+    }
+
+    /// What a screen reader is told of the menu while it shows
+    /// ([`crate::view::a11y_announce`]). `None` while it doesn't show, and
+    /// for vim's keyword completion, whose candidates are typed into the
+    /// text.
+    pub(crate) fn completion_spoken(&self) -> Option<CompletionSpoken<'_>> {
+        let menu = self
+            .completion
+            .as_ref()
+            .filter(|_| self.completion_shown())?;
+        let matches = menu.session.matches();
+        let selected = menu.session.selected();
+        let label = &menu.session.items()[selected.or(matches.first().copied())?].label;
+        Some(CompletionSpoken {
+            list: menu.list,
+            count: matches.len(),
+            selected,
+            label,
+        })
     }
 
     /// Asks the provider for completions at the caret, outside vim's
@@ -273,6 +314,11 @@ impl EditorView {
         menu.top = 0;
         menu.resolved.clear();
         menu.resolving = None;
+        menu.list += 1;
+        menu.filtered = Some((
+            self.model.snapshot().version(),
+            self.model.primary_selection().head(),
+        ));
         // Typed into while it was awaited: an incomplete list asks again.
         self.sync_completion(cx);
     }
@@ -304,6 +350,12 @@ impl EditorView {
             self.model.snapshot().version(),
             self.model.primary_selection().head(),
         );
+        // Typed into, or the caret moved within the word, it has
+        // refiltered.
+        if menu.filtered != Some(now) {
+            menu.filtered = Some(now);
+            menu.list += 1;
+        }
         if menu.asked != now && menu.session.is_incomplete() {
             self.trigger_completion(CompletionTrigger::Incomplete, cx);
         }

@@ -28,6 +28,49 @@ gpui-status-read-only = Read-only
 
 # The editor's group, around its text area (named for the file) and popovers.
 gpui-a11y-editor = Editor
+# Vim's command line, by what it's for: `:`, `/` and `?`.
+gpui-a11y-command-line-ex = Command
+gpui-a11y-command-line-search-forward = Search forward
+gpui-a11y-command-line-search-backward = Search backward
+
+## What the editor tells a screen reader (its announcements)
+
+# The vim mode it changed to.
+gpui-a11y-vim-mode-normal = Normal
+gpui-a11y-vim-mode-insert = Insert
+gpui-a11y-vim-mode-replace = Replace
+gpui-a11y-vim-mode-visual = Visual
+gpui-a11y-vim-mode-visual-line = Visual Line
+gpui-a11y-vim-mode-visual-block = Visual Block
+# Lines a fold command hid.
+gpui-a11y-folded = { $count ->
+        [one] Folded 1 line
+       *[other] Folded { $count } lines
+    }
+gpui-a11y-unfolded = Unfolded
+# More than one cursor, then one again.
+gpui-a11y-cursors = { $count } cursors
+gpui-a11y-one-cursor = One cursor
+# A selection bigger than the text a screen reader is given: how many lines
+# it really spans.
+gpui-a11y-lines-selected = { $count ->
+        [one] 1 line selected
+       *[other] { $count } lines selected
+    }
+# An inline suggestion (ghost text) appeared.
+gpui-a11y-suggestion-available = Suggestion available
+# The completion menu opened: how many items, then the selected one's label.
+gpui-a11y-suggestions = { $count ->
+        [one] 1 suggestion, { $label }
+       *[other] { $count } suggestions, { $label }
+    }
+# Editor: Announce Position. The caret's line and column, and the lines in the file.
+gpui-a11y-position = line { $line }, column { $column } of { $total }
+# A diagnostic the caret rests in, by severity.
+gpui-a11y-diagnostic-error = error: { $message }
+gpui-a11y-diagnostic-warning = warning: { $message }
+gpui-a11y-diagnostic-information = info: { $message }
+gpui-a11y-diagnostic-hint = hint: { $message }
 
 ## The vim mode item, as nvim's modes say it
 
@@ -170,6 +213,7 @@ gpui-substitute-preview-row = → { $row }
 command-editor-show_hover = Show Hover
 command-editor-show_signature_help = Show Signature Help
 command-editor-go_to_bracket = Go to Bracket
+command-editor-announce_position = Editor: Announce Position
 command-editor-trigger_completion = Trigger Completion
 command-completion-select_prev = Select Previous Completion
 command-completion-select_next = Select Next Completion

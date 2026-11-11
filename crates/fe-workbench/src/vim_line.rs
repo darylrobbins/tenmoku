@@ -32,7 +32,9 @@
 use std::collections::VecDeque;
 
 use fe_command::{Invocation, Value};
-use fe_gpui::{EditorView, commands::RunCommand, keymap::CHORD_TIMEOUT, vim_registers};
+use fe_gpui::{
+    EditorView, commands::RunCommand, keymap::CHORD_TIMEOUT, pane_item::status, vim_registers,
+};
 use fe_ui::{
     ActiveTheme as _, SettleEdit, Settled, TextInput, TextInputEvent, Typed, UI_LABEL, height,
     radius, space,
@@ -83,8 +85,12 @@ impl EventEmitter<VimHostCommand> for StatusBar {}
 /// The line's state in the bar.
 #[derive(Default)]
 pub(super) struct VimLine {
-    /// Made when a line first opens.
+    /// Made when a line first opens, and again when one opens with
+    /// another prefix: its accessible name is the prefix's
+    /// ([`status::command_line_name`]), "Command" or "Search forward".
     input: Option<Entity<TextInput>>,
+    /// The prefix the input is named for.
+    named: Option<char>,
     /// The editor whose line is open, and the line's prefix.
     open: Option<(WeakEntity<EditorView>, char)>,
     /// Where Up and Down are in the open line's history.
@@ -263,10 +269,13 @@ impl StatusBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let named = Some(prefix(kind));
         let input = match &self.line.input {
-            Some(input) => input.clone(),
-            None => {
-                let input = cx.new(|cx| TextInput::new("", &fe_ui::ui_theme(cx), cx));
+            Some(input) if self.line.named == named => input.clone(),
+            _ => {
+                let name = status::command_line_name(kind);
+                let input = cx.new(|cx| TextInput::new("", &fe_ui::ui_theme(cx), cx).name(name));
+                self.line.named = named;
                 let focus = input.focus_handle(cx);
                 self.line._blur = Some(cx.on_blur(&focus, window, Self::line_blurred));
                 // An edit makes what the line then holds the prefix the
