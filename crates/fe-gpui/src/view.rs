@@ -193,6 +193,13 @@ pub struct EditorView {
     /// A replay read the literal-next marker on the command line: the next character is
     /// literal text, not matched against the `c` maps.
     pub(crate) vim_line_literal: bool,
+    /// A replay suspended with a key held back for the keys before it, and
+    /// its line's lifetime: how many keys come after it, and whether the
+    /// line has closed ([`EditorView::replay_from`]).
+    pub(crate) vim_held_marker: Option<(usize, bool)>,
+    /// Keys the `c` maps hold on the host's line after a `<Cmd>`'s keys: its
+    /// bar resolves them, as it does keys it typed there.
+    pub(crate) vim_line_holds: bool,
     /// The text of the host's open line that a `<Cmd>`'s keys continue from
     /// is selected: the next `<BS>` or character replaces it, as the line's
     /// input does ([`EditorView::select_line_text`]).
@@ -475,6 +482,8 @@ impl EditorView {
             vim_line_echo: None,
             vim_line_end_expanded: false,
             vim_line_literal: false,
+            vim_held_marker: None,
+            vim_line_holds: false,
             vim_line_selected: false,
             vim_line_platform: String::new(),
             fold_column_hovered: false,

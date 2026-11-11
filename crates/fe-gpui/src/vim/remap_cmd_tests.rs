@@ -703,3 +703,35 @@ fn keys_during_a_command_wait_for_the_map(cx: &mut TestAppContext) {
     assert_eq!(text(&view, cx), "x\ntwo\nthree");
     assert_eq!(caret(&view, cx), Point::new(0, 0));
 }
+
+/// A held-back `<CR>` keeps its line's lifetime across a command that
+/// suspends the replay: the prefix's keys cancelled the line before it, so
+/// it's dropped once they've run, not read as a normal-mode key.
+#[gpui::test]
+fn a_held_back_key_is_dropped_across_a_suspension(cx: &mut TestAppContext) {
+    let cnoremap = |from: &str, to: &str| Remap {
+        modes: vec![RemapMode::CmdLine],
+        ..noremap(from, to)
+    };
+    let remaps = vec![
+        cnoremap("j", "<BS><Cmd>fe:test.ping<CR>"),
+        cnoremap("jk", "Z"),
+        noremap("<CR>", "x"),
+    ];
+    let (view, cx) = vim_editor(cx, text_model("aaa"), remaps);
+    register_ping(cx);
+    let shown = observed(PING, cx);
+    cx.update(|_, cx| {
+        let mut host = fe_editor::commands::HeadlessHost::new();
+        let register = fe_vim::Register::new(":j\r", false);
+        let registers = &mut cx.global_mut::<Vim>().registers;
+        let write = fe_vim::Write::Yank;
+        registers
+            .write(Some('a'), write, register, &mut host)
+            .unwrap();
+    });
+    cx.simulate_keystrokes("@ a");
+    cx.run_until_parked();
+    assert_eq!(shown.borrow().len(), 1);
+    assert_eq!(text(&view, cx), "aaa");
+}

@@ -639,3 +639,48 @@ fn a_cmd_s_reopened_line_keeps_its_text_when_a_command_fails(cx: &mut TestAppCon
     draw(cx);
     assert_eq!(line(&workbench, cx), Some(('/', "a".to_owned())));
 }
+
+/// The keys a `<Cmd>`'s tail leaves held for a longer map stay the bar's
+/// line's: they resolve against its input after `CHORD_TIMEOUT`, and a key
+/// typed meanwhile completes the longer map.
+#[gpui::test]
+fn a_cmd_tail_s_held_keys_resolve_in_the_line(cx: &mut TestAppContext) {
+    let maps = vec![
+        cmap("zz", "<Cmd>s/a/b/<CR>j"),
+        cnoremap("j", "J"),
+        cnoremap("jk", "Z"),
+    ];
+    let (_dir, workbench, editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/a/");
+    cx.simulate_keystrokes("z z");
+    draw(cx);
+    assert_eq!(text(&editor, cx), "baa");
+    assert_eq!(typed(&workbench, cx), "s/a/", "j is held");
+    time_out(cx);
+    assert_eq!(typed(&workbench, cx), "s/a/J");
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/a/");
+    cx.simulate_keystrokes("z z k");
+    draw(cx);
+    assert_eq!(typed(&workbench, cx), "s/a/Z");
+}
+
+/// The same when the tail closes the line and opens another: the held keys
+/// are the new line's.
+#[gpui::test]
+fn a_cmd_tail_s_held_keys_resolve_in_the_line_it_opened(cx: &mut TestAppContext) {
+    let maps = vec![
+        cmap("zz", "<Cmd>s/a/b/<CR><BS>/aj"),
+        cnoremap("j", "J"),
+        cnoremap("jk", "Z"),
+    ];
+    let (_dir, workbench, _editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(": z z");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), Some(('/', "a".to_owned())));
+    time_out(cx);
+    assert_eq!(line(&workbench, cx), Some(('/', "aJ".to_owned())));
+}

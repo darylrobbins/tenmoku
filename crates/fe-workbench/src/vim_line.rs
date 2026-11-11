@@ -678,6 +678,8 @@ impl StatusBar {
                 Some(kind) => {
                     self.open_line(kind, &editor, window, cx);
                     self.preview_line(cx);
+                    // Keys the tail left held wait on the new line.
+                    self.arm_remap_timer(&editor, window, cx);
                 }
                 None if focused => window.focus(&editor.focus_handle(cx), cx),
                 None => {}
@@ -685,6 +687,8 @@ impl StatusBar {
         } else if let Some(text) = editor.update(cx, |editor, cx| editor.take_line_text(cx)) {
             input.update(cx, |input, cx| input.set_text(text, cx));
             self.preview_line(cx);
+            // Keys the tail left held wait for the next, or resolve here.
+            self.arm_remap_timer(&editor, window, cx);
         }
         match editor.update(cx, |editor, cx| editor.line_continuing(cx)) {
             true => self.hold_line_keys(cx),

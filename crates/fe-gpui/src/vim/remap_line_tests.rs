@@ -431,3 +431,68 @@ fn a_held_prefix_that_recurses_stops_the_replay(cx: &mut TestAppContext) {
         "{message:?}"
     );
 }
+
+/// A held prefix's keys that cancel the line and open another leave the
+/// replay's `<CR>` or `<BS>` with the line it was typed on: dropped, not
+/// typed on the new one.
+#[gpui::test]
+fn a_held_back_key_is_dropped_when_the_prefix_reopens_a_line(cx: &mut TestAppContext) {
+    let maps = vec![cnoremap("j", "<BS>/a"), cnoremap("jk", "Z")];
+    let (view, cx) = vim_editor(cx, "aaa", maps);
+    for keys in [":j\r", ":j<BS>"] {
+        set_register('a', keys, cx);
+        cx.simulate_keystrokes("@ a");
+        assert_eq!(text(&view, cx), "aaa", "{keys:?}");
+        // The search line the map opened is still open: nothing submitted it.
+        let mode = view.read_with(cx, |view, _| view.vim_state().unwrap().mode());
+        assert!(matches!(mode, fe_vim::Mode::CmdLine(_)), "{keys:?}");
+        cx.simulate_keystrokes("escape");
+    }
+}
+
+/// A recording's `<BS>` takes out a grapheme, as a replay's does: one for a
+/// combining character taken out or replaced, with the common prefix taken
+/// by graphemes.
+#[gpui::test]
+fn a_recording_s_diffs_are_by_grapheme(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "aaa", vec![cnoremap("jk", "<CR>")]);
+    cx.simulate_keystrokes("q a :");
+    view.update(cx, |view, _| view.sync_line_text("s/a/b/g\u{e9}"));
+    view.update(cx, |view, _| view.sync_line_text("s/a/b/ge\u{301}"));
+    view.update(cx, |view, _| view.sync_line_text("s/a/b/g"));
+    view.update(cx, |view, _| view.sync_line_text("s/a/b/ge\u{301}"));
+    view.update(cx, |view, _| view.sync_line_text("s/a/b/ge\u{300}"));
+    submit(&view, "s/a/b/ge\u{300}", cx);
+    cx.simulate_keystrokes("q");
+    let m = '\u{F8FF}';
+    let recorded = register('a', cx).unwrap();
+    assert_eq!(
+        recorded,
+        format!(
+            ":{m}s{m}/{m}a{m}/{m}b{m}/{m}g{m}\u{e9}<BS>{m}e{m}\u{301}<BS>{m}e{m}\u{301}<BS>{m}e{m}\u{300}\r"
+        )
+    );
+}
+
+/// The keys a `<Cmd>`'s tail leaves held for a longer map stay the host
+/// line's, which resolves them against its input.
+#[gpui::test]
+fn a_cmd_tail_s_held_keys_stay_with_the_line(cx: &mut TestAppContext) {
+    let maps = vec![
+        cmap("zz", "<Cmd>s/a/b/<CR>j"),
+        cnoremap("j", "J"),
+        cnoremap("jk", "Z"),
+    ];
+    let (view, cx) = vim_editor(cx, "aaa", maps);
+    cx.simulate_keystrokes(":");
+    view.update(cx, |view, _| view.remap_line_key('z'));
+    let keys = view.update(cx, |view, _| view.remap_line_key('z')).unwrap();
+    view.update(cx, |view, cx| {
+        view.replay_line_rest(keys.rest, Some("s/a/".into()), false, cx)
+    });
+    assert!(view.read_with(cx, |view, _| view.remap_line_waiting()));
+    let shown = view.update(cx, |view, cx| view.take_line_text(cx));
+    assert_eq!(shown.as_deref(), Some("s/a/"));
+    let line = view.update(cx, |view, _| view.remap_line_timeout());
+    assert_eq!(line.typed, vec![(VimKey::Char('J'), true)]);
+}

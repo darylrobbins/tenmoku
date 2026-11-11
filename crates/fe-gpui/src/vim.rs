@@ -1883,15 +1883,10 @@ impl EditorView {
             return;
         }
         if let Some(echo) = echo {
-            let kept = echo
-                .chars()
-                .zip(text.chars())
-                .take_while(|(a, b)| a == b)
-                .count();
-            let taken = echo.chars().count() - kept;
+            let (taken, kept) = grapheme_diff(&echo, text);
             let typed: Vec<VimKey> = (0..taken)
                 .map(|_| VimKey::Backspace)
-                .chain(literal_keys(text.chars().skip(kept)))
+                .chain(literal_keys(text[kept..].chars()))
                 .chain((!expanded).then_some(end))
                 .collect();
             for key in typed {
@@ -1900,15 +1895,10 @@ impl EditorView {
             return;
         }
         let prefill = state.command_line_prefill();
-        let kept = prefill
-            .chars()
-            .zip(text.chars())
-            .take_while(|(a, b)| a == b)
-            .count();
-        let taken = prefill.chars().count() - kept;
+        let (taken, kept) = grapheme_diff(prefill, text);
         let typed: Vec<VimKey> = (0..taken)
             .map(|_| VimKey::Backspace)
-            .chain(text_keys(text.chars().skip(kept)))
+            .chain(text_keys(text[kept..].chars()))
             .chain([end])
             .collect();
         for key in typed {
@@ -1936,15 +1926,10 @@ impl EditorView {
         let echo = self
             .vim_line_echo
             .get_or_insert_with(|| state.command_line_prefill().to_owned());
-        let kept = echo
-            .chars()
-            .zip(text.chars())
-            .take_while(|(a, b)| a == b)
-            .count();
-        let taken = echo.chars().count() - kept;
+        let (taken, kept) = grapheme_diff(echo, text);
         let typed: Vec<VimKey> = (0..taken)
             .map(|_| VimKey::Backspace)
-            .chain(literal_keys(text.chars().skip(kept)))
+            .chain(literal_keys(text[kept..].chars()))
             .collect();
         *echo = text.to_owned();
         for key in typed {
@@ -1958,6 +1943,8 @@ impl EditorView {
         self.vim_line_echo = None;
         self.vim_line_end_expanded = false;
         self.vim_line_literal = false;
+        // Keys a continuation left held go on to the line it opened.
+        self.vim_line_holds &= self.vim.as_ref().is_some_and(VimState::remap_waiting);
         self.vim_line_selected = false;
         self.vim_line_platform.clear();
     }
@@ -1993,6 +1980,7 @@ impl EditorView {
         };
         state.remap_timeout();
         let rest = state.take_replay();
+        self.vim_line_holds = false;
         self.remapped_line_keys(rest.into())
     }
 
@@ -2050,6 +2038,7 @@ impl EditorView {
             self.suspend_for_host(rest.into(), line, None, cx);
             return;
         }
+        self.vim_held_marker = None;
         self.replay_from(rest.into(), line, None, cx);
     }
 
@@ -2127,6 +2116,8 @@ impl EditorView {
                 lines.insert(id, LiveLine::Done(LineContinued::Ended));
                 if let (Some(text), Some(state)) = (line.filter(|_| open), &mut self.vim) {
                     state.set_command_line_prefill(text);
+                    // Keys the tail left held are the new line's to resolve.
+                    self.vim_line_holds = state.remap_waiting();
                 }
                 return true;
             }
@@ -2135,6 +2126,9 @@ impl EditorView {
         let done = match line.filter(|_| open) {
             Some(text) => {
                 self.vim_line_echo = Some(text.to_owned());
+                // Keys the tail left held are the host's line's to resolve,
+                // against the input: they're typed there.
+                self.vim_line_holds = (self.vim.as_ref()).is_some_and(VimState::remap_waiting);
                 LineContinued::Shows(text.to_owned())
             }
             None => LineContinued::Ended,
@@ -2484,7 +2478,9 @@ impl EditorView {
                 (vim.remap_wait.as_ref()).is_some_and(|wait| wait.editor.entity_id() == id)
             });
             let editor = view.read(cx);
-            if waits || !editor.vim.as_ref().is_some_and(VimState::remap_waiting) {
+            // Keys held on the host's line wait there.
+            let on_line = editor.vim_line_holds && editor.vim_in_line();
+            if waits || on_line || !editor.vim.as_ref().is_some_and(VimState::remap_waiting) {
                 return;
             }
             let active = cx.active_window();
@@ -2833,6 +2829,7 @@ impl EditorView {
             return;
         }
         let origin = origin.or_else(|| last_origin(cx.entity_id(), cx));
+        self.vim_held_marker = None;
         self.replay_from(queue, None, origin, cx);
     }
 
@@ -2852,8 +2849,26 @@ impl EditorView {
         // run, if the line is still open, as the host's line drops it if
         // they closed it.
         let mut held_back: Option<(VimKey, usize)> = None;
+        // The line it was typed on closed since: a line open after is
+        // another's, and a suspension (which queues the key) keeps this.
+        let mut line_gone = false;
+        if let Some((after, gone)) = self.vim_held_marker.take()
+            && let Some(at) = queue.len().checked_sub(after + 1)
+            && let Some(key) = queue.remove(at)
+        {
+            held_back = Some((key, after));
+            line_gone = gone;
+        }
         let mut drained = false;
         loop {
+            if held_back.is_some()
+                && !self
+                    .vim
+                    .as_ref()
+                    .is_some_and(|s| matches!(s.mode(), fe_vim::Mode::CmdLine(_)))
+            {
+                line_gone = true;
+            }
             if let Some((key, after)) = held_back
                 && queue.len() <= after
             {
@@ -2862,14 +2877,14 @@ impl EditorView {
                     break;
                 };
                 match state.mode() {
-                    fe_vim::Mode::CmdLine(_) => queue.push_front(key),
+                    fe_vim::Mode::CmdLine(_) if !line_gone => queue.push_front(key),
                     // Read but not run: its place in the replay goes with
                     // it, so the next key isn't taken for the replay's.
                     _ => state.record_key(key),
                 }
             }
             if let Some(command) = self.vim.as_mut().and_then(VimState::take_remap_command) {
-                put_back(&mut queue, held_back);
+                self.mark_held_back(&mut queue, held_back, line_gone);
                 return self.run_remap_command_later(command, queue, line, origin, cx);
             }
             let Some(key) = queue.pop_front() else {
@@ -2890,6 +2905,7 @@ impl EditorView {
                     break;
                 }
                 held_back = Some((key, queue.len()));
+                line_gone = false;
                 for key in state.take_replay().into_iter().rev() {
                     queue.push_front(key);
                 }
@@ -2900,11 +2916,17 @@ impl EditorView {
                 self.live_line_closed(cx);
             }
             if !ok {
-                put_back(&mut queue, held_back.take());
+                if held_back.is_some() && !self.vim_in_line() {
+                    line_gone = true;
+                }
+                put_back(&mut queue, held_back);
                 // The host runs a file or window command after this update:
                 // what the map does after it waits for the host's report.
-                if handed.is_some() && self.wait_for_host(&mut queue, &mut line, &origin, cx) {
-                    return;
+                if handed.is_some() {
+                    let mark = held_back.map(|(_, after)| (after, line_gone));
+                    if self.wait_for_host(&mut queue, &mut line, &origin, mark, cx) {
+                        return;
+                    }
                 }
                 self.stop_map(!queue.is_empty(), handed);
                 break;
@@ -2954,6 +2976,25 @@ impl EditorView {
         cx.notify();
     }
 
+    /// Whether the editor is in a command line.
+    fn vim_in_line(&self) -> bool {
+        (self.vim.as_ref()).is_some_and(|s| matches!(s.mode(), fe_vim::Mode::CmdLine(_)))
+    }
+
+    /// The replay suspends with `held_back` in `queue`, back where it was:
+    /// kept to be held again once it goes on ([`EditorView::replay_from`]),
+    /// with whether its line has closed since.
+    fn mark_held_back(
+        &mut self,
+        queue: &mut VecDeque<VimKey>,
+        held_back: Option<(VimKey, usize)>,
+        line_gone: bool,
+    ) {
+        put_back(queue, held_back);
+        let gone = line_gone || !self.vim_in_line();
+        self.vim_held_marker = held_back.map(|(_, after)| (after, gone));
+    }
+
     /// Suspends the replay at the file or window command the last key left
     /// for the host, if keys follow it: they wait in `queue` and `line`
     /// until the host reports ([`EditorView::finish_vim_host`]), which
@@ -2965,6 +3006,7 @@ impl EditorView {
         queue: &mut VecDeque<VimKey>,
         line: &mut Option<String>,
         origin: &Option<ReplayOrigin>,
+        held: Option<(usize, bool)>,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(state) = self.vim.as_mut().filter(|state| state.has_host_command()) else {
@@ -2976,6 +3018,7 @@ impl EditorView {
         if queue.is_empty() && !state.has_remap_command() {
             return false;
         }
+        self.vim_held_marker = held;
         let token = self.suspend_for_host(std::mem::take(queue), line.take(), origin.clone(), cx);
         let view = cx.weak_entity();
         cx.defer(move |cx| {
@@ -3079,6 +3122,7 @@ impl EditorView {
     /// Drops the rest of a replay, `rest` whether keys were left of it, and
     /// says `handed` of them if any were.
     fn stop_map(&mut self, rest: bool, handed: Option<SharedString>) {
+        self.vim_held_marker = None;
         let Some(state) = &mut self.vim else {
             return;
         };
@@ -3772,6 +3816,23 @@ fn put_back(queue: &mut VecDeque<VimKey>, held_back: Option<(VimKey, usize)>) {
     if let Some((key, after)) = held_back {
         queue.insert(queue.len().saturating_sub(after), key);
     }
+}
+
+/// What it takes to turn `old`, a command line's text, into `new` as a
+/// replay does, which deletes a grapheme per `<BS>`: how many `<BS>`s, and
+/// the byte offset in `new` the graphemes the two share end at.
+fn grapheme_diff(old: &str, new: &str) -> (usize, usize) {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    let mut kept = 0;
+    let mut shared = 0;
+    for (a, b) in old.graphemes(true).zip(new.graphemes(true)) {
+        if a != b {
+            break;
+        }
+        kept += b.len();
+        shared += 1;
+    }
+    (old.graphemes(true).count() - shared, kept)
 }
 
 /// `chars` as the keys a recording holds for a line's text: each itself,
