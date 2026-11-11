@@ -165,6 +165,10 @@ fn an_agents_commit_is_told_by_a_vendor_trailer() {
     no("Co-authored-by: Claude <noreply@anthropic.com>");
     // A last paragraph of prose with an example in it is no trailer block.
     no("s\n\nIt reads like this:\nCo-authored-by: Claude <noreply@anthropic.com>\nand so on.");
+    // Prose quoting an address inline is no trailer; the same address in a
+    // real trailer after it is.
+    no("s\n\nUse Co-authored-by: Claude <noreply@anthropic.com> for agents.");
+    yes("s\n\nUse it for agents.\n\nCo-authored-by: Claude <noreply@anthropic.com>");
     yes("s\n\nbody\n\nSigned-off-by: A <a@b.c>\nCo-authored-by: Claude <noreply@anthropic.com>");
 }
 
