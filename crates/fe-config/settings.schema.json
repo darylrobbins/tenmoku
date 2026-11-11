@@ -839,6 +839,26 @@
         }
       ]
     },
+    "ReduceMotion": {
+      "description": "`workbench.reduce_motion`.",
+      "oneOf": [
+        {
+          "const": "system",
+          "description": "As the system's Reduce Motion option is.",
+          "type": "string"
+        },
+        {
+          "const": "on",
+          "description": "Reduced, whatever the system says.",
+          "type": "string"
+        },
+        {
+          "const": "off",
+          "description": "Not reduced, whatever the system says.",
+          "type": "string"
+        }
+      ]
+    },
     "RenderWhitespace": {
       "description": "`editor.render_whitespace`.",
       "oneOf": [
@@ -1428,6 +1448,11 @@
           "default": "left",
           "description": "Which edge of the window the activity rail is on, `left` or\n`right`. The sidebar opens beside it, so they move together, at\nonce."
         },
+        "reduce_motion": {
+          "$ref": "#/$defs/ReduceMotion",
+          "default": "system",
+          "description": "Whether animation is reduced: `system` follows the system's Reduce\nMotion option (System Settings › Accessibility › Display), `on` and\n`off` decide it here, whatever the system says."
+        },
         "start_page": {
           "default": true,
           "description": "Whether a window with no tabs open shows the Start page in its empty\npane: New File, Open File, Open Folder, the recent folders and files,\nand the settings, with LazyVim's dashboard keys while vim is on.\nOff, the pane says \"No open files\".",
@@ -1672,6 +1697,7 @@
         "locale": "auto",
         "preview_tabs": true,
         "rail": "left",
+        "reduce_motion": "system",
         "start_page": true,
         "zen_mode": {
           "center_layout": true,

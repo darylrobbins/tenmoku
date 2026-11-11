@@ -168,6 +168,7 @@ workbench-settings-label-workbench-icon_theme = Icon Theme
 workbench-settings-label-workbench-locale = Locale
 workbench-settings-label-workbench-preview_tabs = Preview Tabs
 workbench-settings-label-workbench-rail = Rail position
+workbench-settings-label-workbench-reduce_motion = Reduce motion
 workbench-settings-label-workbench-start_page = Start Page
 workbench-settings-label-workbench-zen_mode-center_layout = Center Layout
 workbench-settings-label-workbench-zen_mode-hide_status_bar = Hide Status Bar

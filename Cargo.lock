@@ -5408,6 +5408,7 @@ dependencies = [
 name = "kiln-platform"
 version = "0.1.3"
 dependencies = [
+ "block2 0.6.2",
  "gpui-pre",
  "gpui-pre-platform",
  "image",

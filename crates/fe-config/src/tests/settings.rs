@@ -234,3 +234,36 @@ fn schema_matches_golden() {
     assert_eq!(editor["font_family"]["minLength"], 1);
     assert!(editor["font_family"]["type"].to_string().contains("string"));
 }
+
+#[test]
+fn reduce_motion_follows_the_system_unless_overridden() {
+    use crate::settings::ReduceMotion;
+
+    let dir = tempfile::tempdir().unwrap();
+    let user = write(&dir, "user.toml", "");
+    let mut store = SettingsStore::load(Some(user.clone()), None);
+    // The default follows the system's value, either way.
+    let setting = |store: &SettingsStore| store.settings().workbench.reduce_motion;
+    assert_eq!(setting(&store), ReduceMotion::System);
+    assert!(setting(&store).resolve(true));
+    assert!(!setting(&store).resolve(false));
+
+    // An override wins over the system's value, in both directions, and the
+    // reload reports the change.
+    fs::write(&user, "[workbench]\nreduce_motion = \"off\"\n").unwrap();
+    let event = store.reload(std::slice::from_ref(&user)).expect("a change");
+    assert_eq!(event.previous.workbench.reduce_motion, ReduceMotion::System);
+    assert_eq!(setting(&store), ReduceMotion::Off);
+    assert!(!setting(&store).resolve(true), "off beats a system on");
+
+    fs::write(&user, "[workbench]\nreduce_motion = \"on\"\n").unwrap();
+    let event = store.reload(std::slice::from_ref(&user)).expect("a change");
+    assert_eq!(event.previous.workbench.reduce_motion, ReduceMotion::Off);
+    assert!(setting(&store).resolve(false), "on beats a system off");
+
+    // Back to `system`: the system's value applies again.
+    fs::write(&user, "").unwrap();
+    store.reload(std::slice::from_ref(&user)).expect("a change");
+    assert!(setting(&store).resolve(true));
+    assert!(!setting(&store).resolve(false));
+}

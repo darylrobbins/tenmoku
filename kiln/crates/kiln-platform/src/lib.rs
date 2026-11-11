@@ -36,6 +36,7 @@ pub mod locale;
 pub mod menus;
 #[cfg(feature = "test-support")]
 pub mod screenshots;
+pub mod system_a11y;
 pub mod window_options;
 
 pub use capabilities::Capabilities;

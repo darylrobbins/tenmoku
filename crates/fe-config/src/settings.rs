@@ -622,6 +622,34 @@ pub struct WorkbenchSettings {
     /// Applications). A language Tenmoku doesn't ship is skipped, with a
     /// warning naming the one used. A project file can't set it.
     pub locale: LocaleSetting,
+    /// Whether animation is reduced: `system` follows the system's Reduce
+    /// Motion option (System Settings › Accessibility › Display), `on` and
+    /// `off` decide it here, whatever the system says.
+    pub reduce_motion: ReduceMotion,
+}
+
+/// `workbench.reduce_motion`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ReduceMotion {
+    /// As the system's Reduce Motion option is.
+    #[default]
+    System,
+    /// Reduced, whatever the system says.
+    On,
+    /// Not reduced, whatever the system says.
+    Off,
+}
+
+impl ReduceMotion {
+    /// Whether motion is reduced, given the system's Reduce Motion option.
+    pub fn resolve(self, system: bool) -> bool {
+        match self {
+            Self::System => system,
+            Self::On => true,
+            Self::Off => false,
+        }
+    }
 }
 
 /// `workbench.icon_theme`.
@@ -810,6 +838,7 @@ impl Default for WorkbenchSettings {
             icon_theme: IconTheme::default(),
             start_page: true,
             rail: RailSide::default(),
+            reduce_motion: ReduceMotion::default(),
             locale: LocaleSetting::default(),
         }
     }

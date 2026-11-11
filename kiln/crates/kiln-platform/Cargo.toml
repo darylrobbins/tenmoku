@@ -26,6 +26,7 @@ image = { workspace = true, optional = true }
 # The frame-request watchdog's nudge and native state (src/frame_watch/macos.rs),
 # through the window's NSView; both already in the lock through gpui.
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
 objc2 = "0.6"
 raw-window-handle = "0.6"
 

@@ -572,6 +572,14 @@ settings-workbench-rail =
     .left = On the window's left edge, the sidebar to its right.
     .right = On the window's right edge, the sidebar to its left.
 
+settings-workbench-reduce_motion =
+    Whether animation is reduced: `system` follows the system's Reduce
+    Motion option (System Settings › Accessibility › Display), `on` and
+    `off` decide it here, whatever the system says.
+    .system = As the system's Reduce Motion option is.
+    .on = Reduced, whatever the system says.
+    .off = Not reduced, whatever the system says.
+
 settings-workbench-start_page =
     Whether a window with no tabs open shows the Start page in its empty
     pane: New File, Open File, Open Folder, the recent folders and files,

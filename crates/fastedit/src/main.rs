@@ -174,6 +174,14 @@ fn current_settings(cx: &App) -> Arc<Settings> {
         .unwrap_or_default()
 }
 
+/// Gives GPUI the Reduce Motion value: `workbench.reduce_motion` if it says
+/// `on` or `off`, else the system's option.
+fn apply_reduce_motion(cx: &mut App) {
+    let system = kiln::platform::system_a11y::system_a11y(cx).reduce_motion;
+    let reduced = current_settings(cx).workbench.reduce_motion.resolve(system);
+    cx.set_reduce_motion(reduced);
+}
+
 /// Applies each settings reload of kiln's config service to every
 /// window: the theme mode and vim when the file changed them, then each
 /// workbench's editors, status bar and language servers, with its root's
@@ -183,6 +191,9 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         launch_root,
         ..Default::default()
     });
+    // Reduce Motion: the setting's choice, or the system's, from now on.
+    apply_reduce_motion(cx);
+    kiln::platform::system_a11y::observe_system_a11y(cx, apply_reduce_motion).detach();
     cx.observe_global::<GlobalSettings<Settings>>(move |cx| {
         let global = cx.global::<GlobalSettings<Settings>>();
         // The settings as loaded, before any reload: nothing to apply.
@@ -190,6 +201,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
             return;
         }
         let (now, before) = (global.settings(), global.previous());
+        let reduce_motion_changed = now.workbench.reduce_motion != before.workbench.reduce_motion;
         let (jump_on_s, jump_style) = (now.vim.jump_on_s, now.vim.jump_style);
         let (ignorecase, smartcase, incsearch) =
             (now.vim.ignorecase, now.vim.smartcase, now.vim.incsearch);
@@ -209,6 +221,9 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         let diagnostics = global.diagnostics().to_vec();
         if let Some(mode) = mode {
             cx.set_theme_mode(theme::mode(mode));
+        }
+        if reduce_motion_changed {
+            apply_reduce_motion(cx);
         }
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
@@ -909,6 +924,8 @@ fn main() {
         } else {
             fe_workbench::SetupLaunch::Normal
         };
+        // The system's accessibility options, before any window draws.
+        kiln::platform::system_a11y::install(cx);
         fe_workbench::begin_setup(setup, cx);
         // Paths macOS handed the app before this point (a cold launch by
         // open-document event): the first is the launch's when argv gave
