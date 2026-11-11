@@ -1184,6 +1184,8 @@ impl Render for Workbench {
                 });
                 toasts
             })
+            // The window's live region, last.
+            .child(fe_ui::Announcer::mount(window, cx))
     }
 }
 

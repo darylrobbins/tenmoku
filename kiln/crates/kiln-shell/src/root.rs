@@ -10,7 +10,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use kiln_platform::{Capabilities, focus};
-use kiln_ui::{ActiveTheme as _, FontFamilies, follow_system_appearance};
+use kiln_ui::{ActiveTheme as _, Announcer, FontFamilies, follow_system_appearance};
 
 use crate::{
     MenuBarView, TitleBar,
@@ -160,6 +160,8 @@ impl Render for Root {
                 root.border_1().border_color(colors.border.default)
             })
             .children(tiling.into_iter().flat_map(window_frame::resize_handles))
+            // The window's live region, last.
+            .child(Announcer::mount(window, cx))
     }
 }
 

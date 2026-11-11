@@ -28,5 +28,10 @@ kiln-l10n = { workspace = true, features = ["lint"] }
 # The scene recorder's image type, in the coloured icon tests.
 image.workspace = true
 
+# The a11y recorder (a11y::nodes), for a dependent's tests: `cfg(test)` is
+# this crate's own.
+[features]
+test-support = []
+
 [lints]
 workspace = true

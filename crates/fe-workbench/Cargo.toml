@@ -110,6 +110,8 @@ fe-project = { workspace = true, features = ["test-support"] }
 fe-lsp = { workspace = true, features = ["test-support"] }
 lsp-types.workspace = true
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
+# The a11y recorder (a11y_announcer.rs).
+fe-ui = { workspace = true, features = ["test-support"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
 # The screenshots example's harness: settling, comparison and goldens.

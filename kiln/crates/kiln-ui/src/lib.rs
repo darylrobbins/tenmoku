@@ -13,6 +13,7 @@
 //! Apache-2.0 input example (see its header); none of gpui-kit is used in
 //! it.
 
+mod a11y;
 mod activity_rail;
 mod assets;
 mod badge;
@@ -45,6 +46,9 @@ mod tooltip;
 mod tree;
 mod tree_row;
 
+pub use a11y::{Announcer, Politeness, Role, States, announce, node, node_with};
+#[cfg(any(test, feature = "test-support"))]
+pub use a11y::{Node, clear_nodes, nodes};
 pub use activity_rail::{ActivityRail, RAIL_WIDTH, RailButton};
 pub use assets::Assets;
 pub use badge::{BADGE_OVERHANG, BADGE_RING, Badge, BadgeTone};
