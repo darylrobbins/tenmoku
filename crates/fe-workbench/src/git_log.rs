@@ -3,9 +3,8 @@
 //! `:Gclog`) lists HEAD's history and `git.log_all` ("Git: Log (All
 //! Branches)", `:Gclog --all`) every branch's, remote-tracking branch's and
 //! tag's, newest first in topo order ([`Repo::log`]), in the Git Log panel,
-//! the Graph view of the right dock's Source Control
-//! (`dock::source_control`), which they show expanded and focused. The
-//! repository is the active file's, else the root's.
+//! a tool window of the bottom panel (`dock::GIT_LOG_BUTTON`), which they
+//! show focused. The repository is the active file's, else the root's.
 //!
 //! The list is read on the background executor a page of [`PAGE`] commits
 //! at a time: the first when the command runs, the next once the selection
@@ -37,7 +36,8 @@
 //!
 //! The panel takes its keys as [`commit_rows`] says: up and down move the
 //! selection; with vim on, `j` and `k` move, `g g` and `G` go to the first
-//! and last row loaded and `q` hides the dock, focusing the active editor.
+//! and last row loaded and `q` hides the bottom panel, focusing the active
+//! editor.
 //! `G` reads no further page: none is read until the selection moves or the
 //! list is scrolled (by the wheel, even at its end, or to other rows).
 //!
@@ -1016,7 +1016,7 @@ impl GitLogPanel {
         cx.notify();
     }
 
-    /// Graph's header in Source Control: `Graph: <branch>`, `Graph: HEAD
+    /// Its tab in the bottom panel: `Graph: <branch>`, `Graph: HEAD
     /// (detached)` or `Graph: All Branches`.
     pub(crate) fn title(&self, _: &App) -> SharedString {
         match (self.scope, &self.head) {
@@ -1686,7 +1686,18 @@ impl GitLogPanel {
             return;
         };
         match key {
-            Key::Quit => commit_rows::leave(self.workbench.clone(), window, cx),
+            // Hides the bottom panel it's in, as `q` hides the sidebar
+            // from the History panel.
+            Key::Quit => {
+                let workbench = self.workbench.clone();
+                window.defer(cx, move |window, cx| {
+                    (workbench.update(cx, |workbench, cx| {
+                        workbench.hide_bottom_panel(cx);
+                        window.focus(&workbench.focus_handle(cx), cx);
+                    }))
+                    .ok();
+                });
+            }
             Key::Open => {
                 if let Some(ix) = self.selected {
                     self.open(ix, window, cx);

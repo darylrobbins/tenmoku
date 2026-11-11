@@ -271,16 +271,21 @@ fn panel(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<Gi
     })
 }
 
-/// Whether the dock shows, the panel it shows and its title row, or, for
-/// Source Control, its Graph's header.
+/// Whether the sidebar shows, the panel it shows and its title row.
 fn dock(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (bool, DockPanel, String) {
     workbench.read_with(cx, |workbench, cx| {
         let dock = workbench.dock().read(cx);
-        let title = match dock.active() {
-            DockPanel::SourceControl => dock.graph_title().to_string(),
-            _ => dock.state().title(cx).unwrap_or_default().to_string(),
-        };
+        let title = dock.state().title(cx).unwrap_or_default().to_string();
         (dock.is_visible(), dock.active(), title)
+    })
+}
+
+/// Whether the bottom panel shows the Git log, and its tab's title.
+fn log_shown(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (bool, String) {
+    workbench.read_with(cx, |workbench, cx| {
+        let dock = workbench.terminal_dock().read(cx).dock();
+        let shown = dock.rail_highlighted() == Some(kiln_shell::PanelId("git_log"));
+        (shown, dock.title(cx).unwrap_or_default().to_string())
     })
 }
 
@@ -349,34 +354,29 @@ fn lists(cx: &mut TestAppContext) {
         ("init", "tag v1"),
     ];
     let head_rows = expected(&head_log, &labels);
-    let shown = (true, DockPanel::SourceControl, "Graph: main".to_owned());
+    let shown = (true, "Graph: main".to_owned());
 
     dispatch("git.log", cx);
-    assert_eq!(dock(&workbench, cx), shown);
+    assert_eq!(log_shown(&workbench, cx), shown);
     assert_eq!(rows(&workbench, cx), head_rows);
     assert_eq!(graph(&workbench, cx), layout(&head_log));
     assert_eq!(panel_message(&workbench, cx), None);
     assert_eq!(selected(&workbench, cx), Some(0));
     assert!(panel_focused(&workbench, cx));
-    // On the rail once it has shown.
-    let on_rail = workbench.read_with(cx, |workbench, cx| {
-        let state = workbench.dock().read(cx).state();
-        state.on_rail(DockPanel::SourceControl.id(), cx)
+    // A tab of the bottom panel's.
+    let tabs = workbench.read_with(cx, |workbench, cx| {
+        workbench.terminal_dock().read(cx).dock().open_panels()
     });
-    assert!(on_rail);
+    assert!(tabs.contains(&kiln_shell::PanelId("git_log")), "{tabs:?}");
 
     // Every branch's.
     let all_log = cli_log(root, &["--branches", "--remotes", "--tags"]);
     assert_eq!(all_log.len(), 6);
     let labels = [labels.as_slice(), &[("side work", "side")]].concat();
     let all_rows = expected(&all_log, &labels);
-    let all = (
-        true,
-        DockPanel::SourceControl,
-        "Graph: All Branches".to_owned(),
-    );
+    let all = (true, "Graph: All Branches".to_owned());
     dispatch("git.log_all", cx);
-    assert_eq!(dock(&workbench, cx), all);
+    assert_eq!(log_shown(&workbench, cx), all);
     assert_eq!(rows(&workbench, cx), all_rows);
     assert_eq!(graph(&workbench, cx), layout(&all_log));
 
@@ -386,10 +386,10 @@ fn lists(cx: &mut TestAppContext) {
         ("Gclog --all", &all, &all_rows, &all_log),
     ] {
         focus_on(&editor_focus, cx);
-        dispatch("dock.toggle", cx);
-        assert!(!dock(&workbench, cx).0, ":{line}");
+        workbench.update(cx, |workbench, cx| workbench.hide_bottom_panel(cx));
+        assert!(!log_shown(&workbench, cx).0, ":{line}");
         ex(line, cx);
-        assert_eq!(&dock(&workbench, cx), shown, ":{line}");
+        assert_eq!(&log_shown(&workbench, cx), shown, ":{line}");
         assert_eq!(&rows(&workbench, cx), rows_shown, ":{line}");
         assert_eq!(graph(&workbench, cx), layout(log), ":{line}");
         assert!(panel_focused(&workbench, cx), ":{line}");
@@ -463,7 +463,7 @@ fn keys_and_pages(cx: &mut TestAppContext) {
     }
     assert_eq!(tab_count(&workbench, cx), 1);
     press("q", cx);
-    assert!(!dock(&workbench, cx).0);
+    assert!(!log_shown(&workbench, cx).0);
     assert!(focused(&editor_focus, cx));
 
     // With vim off, the letters do nothing.
@@ -473,7 +473,7 @@ fn keys_and_pages(cx: &mut TestAppContext) {
     assert!(panel_focused(&workbench, cx));
     press("j shift-g o q", cx);
     assert_eq!(selected(&workbench, cx), Some(0));
-    assert!(dock(&workbench, cx).0);
+    assert!(log_shown(&workbench, cx).0);
     assert!(panel_focused(&workbench, cx));
     press("down down", cx);
     assert_eq!(selected(&workbench, cx), Some(2));
@@ -546,10 +546,9 @@ fn keys_and_pages(cx: &mut TestAppContext) {
     press("shift-g", cx);
     assert_eq!(rows(&workbench, cx).len(), PAGE);
     let graph = workbench.read_with(cx, |workbench, cx| {
-        let container = workbench.dock().read(cx).source_control().read(cx);
-        (container.stack().read(cx)).body_bounds(crate::dock::source_control::GRAPH)
+        (workbench.terminal_dock().read(cx).dock().drawn()).column_bounds()
     });
-    let position = graph.expect("the dock showed the graph").center();
+    let position = graph.expect("the bottom panel showed the log").center();
     cx.simulate_event(gpui::ScrollWheelEvent {
         position,
         delta: gpui::ScrollDelta::Lines(gpui::point(0., -3.)),
@@ -625,8 +624,8 @@ fn edges(cx: &mut TestAppContext) {
     fs::write(unborn.path().join("c.rs"), "c\n").unwrap();
     open(&workbench, &unborn.path().join("c.rs"), cx);
     dispatch("git.log", cx);
-    let shown = (true, DockPanel::SourceControl, "Graph: main".to_owned());
-    assert_eq!(dock(&workbench, cx), shown);
+    let shown = (true, "Graph: main".to_owned());
+    assert_eq!(log_shown(&workbench, cx), shown);
     assert_eq!(panel_message(&workbench, cx), Some("No commits yet"));
     assert_eq!(rows(&workbench, cx), Rows::new());
 
@@ -638,21 +637,17 @@ fn edges(cx: &mut TestAppContext) {
     let loading = vec![(Vec::new(), vec!["Loading…".to_owned()])];
     assert_eq!(rows(&workbench, cx), loading);
     assert_eq!(panel_message(&workbench, cx), None);
-    assert_eq!(dock(&workbench, cx).2, "Graph");
+    assert_eq!(log_shown(&workbench, cx).1, "Graph");
     draw(cx);
     assert_eq!(rows(&workbench, cx).len(), 5);
     assert_eq!(panel_message(&workbench, cx), None);
-    assert_eq!(dock(&workbench, cx), shown);
+    assert_eq!(log_shown(&workbench, cx), shown);
 
     // A detached HEAD.
     git(repo.path(), &["checkout", "-q", "--detach", "HEAD~1"]);
     dispatch("git.log", cx);
-    let detached = (
-        true,
-        DockPanel::SourceControl,
-        "Graph: HEAD (detached)".to_owned(),
-    );
-    assert_eq!(dock(&workbench, cx), detached);
+    let detached = (true, "Graph: HEAD (detached)".to_owned());
+    assert_eq!(log_shown(&workbench, cx), detached);
     let first = rows(&workbench, cx).into_iter().next().unwrap();
     assert_eq!(first.0, ["HEAD"]);
     assert!(first.1[0].ends_with("  merge topic"), "{first:?}");
@@ -699,7 +694,10 @@ fn rails_clip_alike_when_narrow(cx: &mut TestAppContext) {
     let cx = &mut cx;
     dispatch("git.log_all", cx);
     workbench.update(cx, |workbench, cx| {
-        (workbench.dock()).update(cx, |dock, cx| {
+        // The log is the bottom panel's (T1548): moved to a side, at its
+        // least width.
+        workbench.move_terminal(kiln_shell::DockPosition::Right, cx);
+        (workbench.terminal_dock()).update(cx, |dock, cx| {
             dock.dock_mut().set_size(MIN_DOCK_WIDTH);
             cx.notify();
         })

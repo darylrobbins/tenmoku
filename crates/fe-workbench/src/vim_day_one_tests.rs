@@ -27,14 +27,23 @@ fn explore_and_problems(cx: &mut TestAppContext) {
     let panel = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
 
     // The tree, from the dock hidden: focused, with a.txt revealed and
-    // selected. `:cclose` leaves Problems, which isn't the quickfix list.
-    cx.update(|window, cx| dock.update(cx, |dock, cx| dock.show(DockPanel::Problems, window, cx)));
+    // selected. `:cclose` leaves Problems, which isn't the quickfix list,
+    // in the bottom panel (T1548).
+    let problems = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, cx| {
+            use kiln_shell::DockView as _;
+            workbench.terminal_dock().read(cx).dock().rail_highlighted()
+        })
+    };
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.show_bottom_panel(DockPanel::Problems.id(), window, cx)
+    });
     cx.update(|window, cx| window.focus(&a.focus_handle(cx), cx));
     draw(cx);
-    assert!(dock.read_with(cx, |dock, _| dock.is_visible()));
+    assert_eq!(problems(cx), Some(DockPanel::Problems.id()));
     ex("cclose", cx);
     draw(cx);
-    assert!(dock.read_with(cx, |dock, _| dock.is_visible()));
+    assert_eq!(problems(cx), Some(DockPanel::Problems.id()));
     cx.update(|window, cx| dock.update(cx, |dock, cx| dock.run(DockOp::Toggle, window, cx)));
     draw(cx);
     assert!(!dock.read_with(cx, |dock, _| dock.is_visible()));

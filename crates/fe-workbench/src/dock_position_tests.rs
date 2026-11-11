@@ -270,15 +270,16 @@ fn assert_panels_fill(width: Pixels, workbench: &Entity<Workbench>, cx: &mut Vis
         DockPanel::Search,
         DockPanel::SourceControl,
         DockPanel::References,
-        DockPanel::Problems,
     ] {
         workbench.update_in(cx, |workbench, window, cx| {
             (workbench.dock()).update(cx, |dock, cx| dock.show(panel, window, cx))
         });
         draw(cx);
-        let column = workbench.read_with(cx, |workbench, cx| {
-            workbench.dock().read(cx).state().drawn().column_bounds()
+        let (active, column) = workbench.read_with(cx, |workbench, cx| {
+            let dock = workbench.dock().read(cx);
+            (dock.active(), dock.state().drawn().column_bounds())
         });
+        assert_eq!(active, panel, "shown");
         let column = column.expect("shown");
         let drawn = cx.debug_bounds("sidebar-panel").expect("drawn");
         assert_eq!(column.size.width, width, "{panel:?}");
@@ -287,6 +288,68 @@ fn assert_panels_fill(width: Pixels, workbench: &Entity<Workbench>, cx: &mut Vis
             (column.left(), column.right()),
             "{panel:?}"
         );
+    }
+    // Problems is the bottom panel's: moved to a side, it fills it too.
+    assert_problems_fills_a_side(width, workbench, cx);
+}
+
+/// The bottom panel moved to the right with Problems shown, `width`
+/// across, the sidebar hidden: Problems fills its column as the sidebar's
+/// panels fill theirs (T1548). Puts the docks back as they were.
+pub(crate) fn assert_problems_fills_a_side(
+    width: Pixels,
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) {
+    let sidebar_shown =
+        workbench.read_with(cx, |workbench, cx| workbench.dock().read(cx).is_visible());
+    workbench.update_in(cx, |workbench, window, cx| {
+        (workbench.dock()).update(cx, |dock, cx| {
+            dock.dock_mut().set_visible(false);
+            cx.notify();
+        });
+        let at = workbench.terminal_dock().read(cx).dock().position();
+        workbench.move_terminal(kiln_shell::DockPosition::Right, cx);
+        workbench.show_bottom_panel(DockPanel::Problems.id(), window, cx);
+        (workbench.terminal_dock()).update(cx, |dock, cx| {
+            dock.dock_mut().set_size(width);
+            cx.notify();
+        });
+        at
+    });
+    draw_frames(cx);
+    let (active, column) = workbench.read_with(cx, |workbench, cx| {
+        let dock = workbench.terminal_dock().read(cx).dock();
+        (dock.rail_highlighted(), dock.drawn().column_bounds())
+    });
+    assert_eq!(active, Some(DockPanel::Problems.id()));
+    let column = column.expect("shown");
+    let drawn = cx.debug_bounds("sidebar-panel").expect("drawn");
+    assert_eq!(column.size.width, width, "Problems");
+    assert_eq!(
+        (drawn.left(), drawn.right()),
+        (column.left(), column.right()),
+        "Problems"
+    );
+    workbench.update(cx, |workbench, cx| {
+        workbench.move_terminal(kiln_shell::DockPosition::Bottom, cx);
+        workbench.hide_bottom_panel(cx);
+        (workbench.dock()).update(cx, |dock, cx| {
+            dock.dock_mut().set_visible(sidebar_shown);
+            cx.notify();
+        });
+    });
+    draw_frames(cx);
+}
+
+/// Draws a frame, then a few of those it asks for.
+fn draw_frames(cx: &mut VisualTestContext) {
+    for _ in 0..4 {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        if cx.update(|window, cx| window.simulate_next_frame(cx)) == 0 {
+            return;
+        }
     }
 }
 

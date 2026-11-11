@@ -1318,7 +1318,8 @@ fn ai_changes_shows_in_the_sidebar_on_changeset(cx: &mut TestAppContext) {
             dock.is_visible(),
             dock.active(),
             dock.state().position(),
-            dock.state().panel_ids().contains(&DockPanel::Problems.id()),
+            // Problems is the bottom panel's (T1548).
+            !dock.state().panel_ids().contains(&DockPanel::Problems.id()),
         )
     });
     assert_eq!(

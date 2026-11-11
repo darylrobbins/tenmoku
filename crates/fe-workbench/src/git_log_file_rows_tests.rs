@@ -432,7 +432,10 @@ fn narrow(cx: &mut TestAppContext) {
     // At the dock's least width the counts give way too, the letter never.
     let workbench = panel.read_with(cx, |panel, _| panel.workbench.upgrade().unwrap());
     workbench.update(cx, |workbench, cx| {
-        (workbench.dock()).update(cx, |dock, cx| {
+        // The log is the bottom panel's (T1548): moved to a side, at its
+        // least width.
+        workbench.move_terminal(kiln_shell::DockPosition::Right, cx);
+        (workbench.terminal_dock()).update(cx, |dock, cx| {
             dock.dock_mut().set_size(MIN_DOCK_WIDTH);
             cx.notify();
         })

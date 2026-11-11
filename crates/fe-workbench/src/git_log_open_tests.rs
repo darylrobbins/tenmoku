@@ -135,6 +135,16 @@ pub(super) fn window(
     draw(cx);
     cx.update(|_, cx| fe_gpui::set_vim_enabled(cx, true));
     send("git.log", cx);
+    // The log in the bottom panel (T1548) with the room Graph had in the
+    // sidebar, the editor above it with the room it had.
+    cx.simulate_resize(gpui::size(gpui::px(1920.), gpui::px(1600.)));
+    (workbench.read_with(cx, |workbench, _| workbench.terminal_dock().clone())).update(
+        cx,
+        |dock, cx| {
+            kiln_shell::DockView::dock_mut(dock).set_size(gpui::px(500.));
+            cx.notify();
+        },
+    );
     draw(cx);
     (workbench, vcx)
 }

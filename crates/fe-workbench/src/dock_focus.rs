@@ -6,7 +6,7 @@
 //! dock stays hidden, its show commands' to open, and with vim off the
 //! keys stop at the edge, as VS Code's do.
 
-use gpui::{Context, Focusable as _, Window};
+use gpui::{Context, Window};
 use kiln_shell::{DockPosition, DockView as _};
 
 use crate::{Direction, Workbench};
@@ -36,8 +36,10 @@ impl Workbench {
         if terminal.dock().position() != position || !terminal.is_visible() {
             return false;
         }
-        window.focus(&self.terminal().focus_handle(cx), cx);
-        true
+        // The tool window it shows: Problems, the terminal or the Git log,
+        // from the editor, so up goes back there.
+        self.bottom_from_sidebar = false;
+        self.focus_bottom_panel(window, cx)
     }
 }
 

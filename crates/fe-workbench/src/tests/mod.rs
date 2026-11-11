@@ -54,6 +54,7 @@ pub(crate) fn slashed(shown: impl Into<String>) -> String {
 
 mod activity_rail;
 mod after_frame;
+mod bottom_panel_b3;
 mod breadcrumb_symbol_icons;
 mod caret_keys_hosts;
 mod caret_keys_lines;

@@ -1,6 +1,7 @@
 //! The window shell: the editor panes, with the dock (the project panel,
-//! search, the outline, the git changes, references or the problems) on the
-//! right and the terminal below.
+//! search, the outline, the git changes or references) on the
+//! rail's side and the bottom panel (Problems, the terminal and the Git
+//! log) below.
 
 use std::{
     cell::{Cell, RefCell},
@@ -133,13 +134,21 @@ pub(crate) use crate::dock::TERMINAL_BUTTON;
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
     dock: Entity<Dock>,
-    /// The terminal's dock, at the bottom unless moved, hidden at launch.
+    /// The bottom panel, the terminal's dock: Problems, the terminal and
+    /// the Git log under its own tab strip, at the bottom unless moved,
+    /// hidden at launch.
     terminal_dock: Entity<kiln_shell::Dock>,
     terminal: Entity<TerminalPanel>,
-    /// To the terminal's shell exiting, to the bottom dock hiding it with
-    /// focus in it, and to the bottom dock showing or hiding, which the
-    /// sidebar's Terminal button follows.
+    /// To the terminal's shell exiting, to the bottom dock hiding a tool
+    /// window with focus in it, and to the bottom dock showing, hiding or
+    /// switching, which the sidebar's foot buttons follow.
     _terminal: [Subscription; 3],
+    /// Whether a window key brought focus to Problems or the Git log from
+    /// the sidebar, so up goes back there ([`crate::dock_leave`]): until
+    /// focus leaves them, which the subscriptions hear. The terminal keeps
+    /// its own.
+    pub(crate) bottom_from_sidebar: bool,
+    _bottom_tools: [Subscription; 2],
     /// Reads the recent list again for a shown Start page when it changes.
     _recents: Subscription,
     /// The window's shell around the panes, which it keeps in step: their
@@ -442,22 +451,34 @@ impl Workbench {
             _ => None,
         };
         let terminal = cx.new(|cx| TerminalPanel::new(terminal_dir(&launch), &theme, cx));
+        let problems = cx.weak_entity();
+        let problems = cx.new(|cx| ProblemsPanel::new(problems, &theme, cx));
+        let workbench = cx.weak_entity();
+        let git_log = cx.new(|cx| GitLogPanel::new(workbench, cx));
         let terminal_dock = cx.new(|cx| {
-            // Shown by the sidebar's Terminal action and `terminal.toggle`,
-            // so it draws no rail of its own.
+            // Its tool windows are shown by the sidebar's foot buttons and
+            // their commands, so it draws no rail of its own: its tabs, in
+            // the design's order (Runs, when it comes, after Problems).
             let state = DockState::new(DockPosition::Bottom)
                 .without_rail()
+                .with_tabs()
+                .size(crate::dock::BOTTOM_PANEL_HEIGHT)
                 .shortcut_contexts([KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
             let mut dock = kiln_shell::Dock::with_state(state);
+            dock.add_panel(problems.clone(), cx);
             dock.add_panel(terminal.clone(), cx);
+            dock.add_panel(git_log.clone(), cx);
             dock.dock_mut().set_visible(false);
             dock
         });
         let terminal_subscriptions = Self::follow_terminal(&terminal, &terminal_dock, window, cx);
+        let bottom_tools = [problems.focus_handle(cx), git_log.focus_handle(cx)].map(|focus| {
+            cx.on_focus_out(&focus, window, |workbench, _, _, _| {
+                workbench.bottom_from_sidebar = false;
+            })
+        });
         let panel =
             cx.new(|cx| ProjectPanel::new(launch.root, project_panel::show_ignored(cx), cx));
-        let problems = cx.weak_entity();
-        let problems = cx.new(|cx| ProblemsPanel::new(problems, &theme, cx));
         let owner = cx.entity_id();
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(theme, settings, cx);
@@ -478,8 +499,6 @@ impl Workbench {
         let changes = cx.new(|cx| GitPanel::new(root.clone(), cx));
         let references = cx.weak_entity();
         let references = cx.new(|cx| ReferencesPanel::new(references, cx));
-        let workbench = cx.weak_entity();
-        let git_log = cx.new(|cx| GitLogPanel::new(workbench, cx));
         // Its key is read when it first draws, not now.
         let chat = cx.new(|cx| ChatPanel::new(window, cx));
         // On the side `workbench.rail` names; the window's own settings,
@@ -502,7 +521,7 @@ impl Workbench {
                 cx,
             )
         });
-        // The Git log, and the terminal, whose button follows the bottom
+        // The bottom panel's tool windows, whose buttons follow the bottom
         // dock (`follow_terminal`), at the rail's foot.
         dock.update(cx, |dock, cx| {
             for action in crate::dock::rail_actions() {
@@ -511,13 +530,20 @@ impl Workbench {
         });
         let git = Self::new_git(root.clone(), &changes, cx);
         let quick_open = Self::new_quick_open(root, pane.downgrade(), cx);
-        // A rail click runs the op its panel's key would, or hides the dock.
+        // A rail click runs the op its panel's key would, or hides the dock;
+        // a foot button's, its tool window's command, or hides the bottom
+        // dock showing it.
         let rail = cx.subscribe_in(
             &dock,
             window,
-            |workbench, dock, DockEvent::Rail(panel), window, cx| {
-                let op = dock.read(cx).rail_op(*panel);
-                workbench.run_dock_op(op, window, cx);
+            |workbench, dock, event, window, cx| match *event {
+                DockEvent::Rail(panel) => {
+                    let op = dock.read(cx).rail_op(panel);
+                    workbench.run_dock_op(op, window, cx);
+                }
+                DockEvent::Action(id, command) => {
+                    workbench.bottom_button_clicked(id, command, window, cx)
+                }
             },
         );
         let root_subscription = Self::follow_root(&panel, window, cx);
@@ -653,6 +679,8 @@ impl Workbench {
             terminal_dock,
             terminal,
             _terminal: terminal_subscriptions,
+            bottom_from_sidebar: false,
+            _bottom_tools: bottom_tools,
             _recents: cx.observe_global::<recent_picker::Changes>(|workbench, cx| {
                 if workbench.start_page_shown {
                     workbench.start_page.update(cx, |page, cx| page.reload(cx));
@@ -1341,7 +1369,7 @@ mod dock_resize_tests;
 
 #[cfg(test)]
 #[path = "dock_position_tests.rs"]
-mod dock_position_tests;
+pub(crate) mod dock_position_tests;
 
 #[cfg(test)]
 #[path = "tab_git_status_tests.rs"]

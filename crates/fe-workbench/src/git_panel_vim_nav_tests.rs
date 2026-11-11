@@ -120,7 +120,7 @@ fn first_last(cx: &mut TestAppContext) {
     let (panel, cx) = open(cx, dir.path());
     // Too short for the five rows (two headers, three files), but tall
     // enough for a whole row: the list gets about two of them.
-    cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(440.)));
+    cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(260.)));
     draw(cx);
     vim(true, cx);
     focus(&panel, cx);

@@ -12,7 +12,7 @@ use fe_ui::Icon;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln_shell::PanelId;
 
-use super::{DockOp, DockPanel, PANELS, ProblemsOp, SidebarPanel, panel_icon};
+use super::{DockOp, DockPanel, PANELS, SidebarPanel, panel_icon};
 use crate::{Launch, Workbench, tests::open};
 
 /// Each panel as it was before its module declared it, with B3's names
@@ -25,7 +25,7 @@ fn base() -> [(
     Icon,
     &'static str,
     DockOp,
-); 10] {
+); 9] {
     [
         (
             DockPanel::Explorer,
@@ -66,14 +66,6 @@ fn base() -> [(
             Icon::FileSymlink,
             "nav.find_references",
             DockOp::ShowReferences,
-        ),
-        (
-            DockPanel::Problems,
-            "Problems",
-            "problems",
-            Icon::TriangleAlert,
-            "problems.show",
-            DockOp::Problems(ProblemsOp::Show),
         ),
         (
             DockPanel::History,
@@ -219,7 +211,8 @@ fn each_panel_keeps_its_base_name_id_icon_and_show_command() {
 }
 
 #[test]
-fn the_rail_always_has_the_base_five() {
+fn the_rail_always_has_the_base_four() {
+    // Problems is the bottom panel's now, a foot button (T1548).
     assert_eq!(
         DockPanel::ALL,
         [
@@ -227,7 +220,6 @@ fn the_rail_always_has_the_base_five() {
             DockPanel::Search,
             DockPanel::SourceControl,
             DockPanel::Chat,
-            DockPanel::Problems,
         ]
     );
     let on_rail: Vec<DockPanel> = (PANELS.iter())
@@ -248,7 +240,6 @@ fn the_rail_always_has_the_base_five() {
             DockPanel::Search,
             DockPanel::SourceControl,
             DockPanel::Chat,
-            DockPanel::Problems,
             DockPanel::History,
             DockPanel::AiChanges,
             DockPanel::CallHierarchy,
@@ -267,8 +258,8 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
         (DockPanel::SourceControl, Icon::GitBranch),
         (DockPanel::Chat, Icon::Bot),
     ];
-    // Problems is always at the foot.
-    let foot = [(DockPanel::Problems, Icon::TriangleAlert)];
+    // The foot's buttons are the bottom panel's (T1548), not panels.
+    let foot: [(DockPanel, Icon); 0] = [];
     let base = [top.as_slice(), &foot].concat();
     assert_eq!(rail(&workbench, cx), base);
     assert_eq!(
@@ -285,12 +276,10 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
     let both = [top.as_slice(), &[references], &foot].concat();
     assert_eq!(rail(&workbench, cx), both);
 
+    // The Git log shows in the bottom panel, the sidebar as it was.
     dispatch("git.log", cx);
     assert_eq!(rail(&workbench, cx), both);
-    assert_eq!(
-        shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Changes".to_owned())
-    );
+    assert_eq!(shown(&workbench, cx).1, DockPanel::References);
 
     dispatch("git.file_history", cx);
     let history = (DockPanel::History, Icon::FileDiff);
@@ -319,7 +308,6 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
         DockPanel::Explorer,
         DockPanel::SourceControl,
         DockPanel::References,
-        DockPanel::Problems,
         DockPanel::History,
         DockPanel::AiChanges,
         DockPanel::Chat,
@@ -341,12 +329,15 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
     assert_eq!(order.len() + 1, PANELS.len());
 }
 
-/// The Git Log, Source Control's Graph, listed by Source Control's button.
+/// The Git Log, the bottom panel's tool window, listed by the rail's Git
+/// log button.
 mod git_log_rail_tests {
     use std::collections::HashSet;
 
     use fe_ui::Icon;
     use gpui::{TestAppContext, VisualTestContext, Window};
+
+    use kiln_shell::{DockView as _, PanelId};
 
     use super::{DockPanel, dispatch, draw, opened, rail, repo, shown};
     use crate::{Launch, tests::open};
@@ -400,7 +391,6 @@ mod git_log_rail_tests {
                 DockPanel::Search,
                 DockPanel::SourceControl,
                 DockPanel::Chat,
-                DockPanel::Problems,
             ]
         );
         let icons = distinct(cx);
@@ -414,27 +404,36 @@ mod git_log_rail_tests {
         distinct(cx);
     }
 
+    /// Whether the bottom panel shows the Git log.
+    fn log_shown(workbench: &gpui::Entity<crate::Workbench>, cx: &mut VisualTestContext) -> bool {
+        workbench.read_with(cx, |workbench, cx| {
+            let dock = workbench.terminal_dock().read(cx).dock();
+            dock.rail_highlighted() == Some(GIT_LOG)
+        })
+    }
+
+    const GIT_LOG: PanelId = PanelId("git_log");
+
     #[gpui::test]
-    fn clicking_source_control_on_the_rail_lists_heads_log(cx: &mut TestAppContext) {
+    fn clicking_the_git_log_on_the_rail_lists_heads_log(cx: &mut TestAppContext) {
         let dir = repo();
         let (workbench, cx) = opened(cx, dir.path());
-        click(&workbench, DockPanel::SourceControl, cx);
+        click(&workbench, DockPanel::new(GIT_LOG.0), cx);
+        assert!(log_shown(&workbench, cx));
         assert_eq!(
             shown(&workbench, cx),
-            (true, DockPanel::SourceControl, "Changes".to_owned())
+            (true, DockPanel::Explorer, "Project".to_owned())
         );
         let (lines, message) = log(&workbench, cx);
         assert!(lines.iter().any(|line| line.contains("init")), "{lines:?}");
         assert_eq!(message, None);
 
-        click(&workbench, DockPanel::SourceControl, cx);
-        assert!(!shown(&workbench, cx).0);
+        click(&workbench, DockPanel::new(GIT_LOG.0), cx);
+        assert!(!log_shown(&workbench, cx));
     }
 
     #[gpui::test]
-    fn source_control_from_the_rail_outside_a_repository_says_so_without_a_toast(
-        cx: &mut TestAppContext,
-    ) {
+    fn the_git_log_outside_a_repository_says_so_without_a_toast(cx: &mut TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
         let launch = Launch {
             root: Some(dir.path().to_owned()),
@@ -443,8 +442,13 @@ mod git_log_rail_tests {
         let (workbench, cx, _) = open(cx, launch);
         cx.update(|window: &mut Window, _| window.activate_window());
         draw(cx);
-        click(&workbench, DockPanel::SourceControl, cx);
-        assert_eq!(shown(&workbench, cx).1, DockPanel::SourceControl);
+        // Shown by its tab, not its command, which would answer with a
+        // toast: it lists when first drawn.
+        workbench.update_in(cx, |workbench, window, cx| {
+            workbench.show_bottom_panel(GIT_LOG, window, cx)
+        });
+        draw(cx);
+        assert!(log_shown(&workbench, cx));
         assert_eq!(log(&workbench, cx).1, Some("Not in a git repository"));
         let layer = workbench.read_with(cx, |workbench, _| workbench.toasts().clone());
         let shown = layer.read_with(cx, |layer, _| layer.queue().shown().len());

@@ -134,8 +134,9 @@ impl Workbench {
             changed: unchanged,
         });
         self.layout_keys.zen_sidebar.set(Some(before.sidebar));
-        // Focus on a dock goes to the active editor.
-        if self.terminal.read(cx).is_focused(window, cx) {
+        // Focus on a dock goes to the active editor: on the bottom panel's
+        // tool windows here, the sidebar's below.
+        if self.bottom_panel_focused(window, cx) {
             window.focus(&self.focus_handle(cx), cx);
         }
         self.set_chrome(hid, cx);
@@ -159,8 +160,11 @@ impl Workbench {
         };
         self.layout_keys.zen_sidebar.set(None);
         let mut restored = noted.restored(self.chrome(cx));
-        // Not a terminal whose shell exited meanwhile, which hides it.
-        restored.terminal &= self.terminal.read(cx).view().is_some();
+        // Not a terminal whose shell exited meanwhile, which closes its
+        // tab; Problems or the Git log shown in the bottom panel come back.
+        let bottom = self.terminal_dock.read(cx).dock().active();
+        restored.terminal &= bottom != Some(crate::terminal_panel::TERMINAL)
+            || self.terminal.read(cx).view().is_some();
         self.set_chrome(restored, cx);
         self.set_rail_hidden(false, cx);
         self.zen.tabs_hidden = false;

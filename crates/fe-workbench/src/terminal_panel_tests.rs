@@ -204,7 +204,8 @@ fn exit_hides_the_panel(cx: &mut TestAppContext) {
     assert_eq!(count, 2);
 
     // An exit while another panel has focus hides the dock all the same,
-    // and the editor takes focus.
+    // the terminal being the only tool window open in it, and leaves focus
+    // there (T1548).
     let next_pid = started(&next, cx);
     let panel = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
     cx.update(|window, cx| window.focus(&panel.focus_handle(cx), cx));
@@ -216,7 +217,7 @@ fn exit_hides_the_panel(cx: &mut TestAppContext) {
     });
     assert_ne!(next_pid, pid);
     assert!(!dock_shown(&workbench, cx));
-    assert!(editor_focused(&workbench, cx));
+    assert!(cx.update(|window, cx| panel.focus_handle(cx).is_focused(window)));
 }
 
 fn keymap(source: &str) -> Keymap {

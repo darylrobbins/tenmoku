@@ -1,10 +1,9 @@
-//! Source Control: one rail button for a view container of two views, the
-//! git changes (Changes) over the repository's log (Graph), both expanded;
-//! `git.show_changes` shows it with Changes, `git.log` and `git.log_all`
-//! with Graph, expanded and focused; the views' collapse and weights are
-//! saved with the layout, and a layout saved with the Changes or Git Log
-//! panel active loads Source Control, on repositories built with the `git`
-//! CLI in temporary directories.
+//! Source Control: one rail button for a view container of the git
+//! changes (Changes) alone, which `git.show_changes` shows, focused; the
+//! repository's log is the bottom panel's Git log, which `git.log` and
+//! `git.log_all` show, focused, its tab naming what it lists (T1548); and a
+//! layout saved with the Changes or Git Log panel active still loads, on
+//! repositories built with the `git` CLI in temporary directories.
 
 use std::{fs, path::Path, process::Command};
 
@@ -13,13 +12,10 @@ use fe_command::{ContextFrame, ContextStack, Invocation, Value};
 use fe_gpui::commands::RunCommand;
 use fe_ui::Icon;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
-use kiln_shell::{PanelId, ViewId};
+use kiln_shell::{DockView as _, PanelId};
 use serde_json::json;
 
-use super::{
-    DockPanel,
-    source_control::{CHANGES, GRAPH},
-};
+use super::{DockPanel, source_control::CHANGES};
 use crate::{Launch, Workbench, tests::open};
 
 /// `git` in `dir`, with the developer's own config shut out.
@@ -102,52 +98,17 @@ fn shown(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (bool, Do
     })
 }
 
-/// Whether each of Source Control's views, Changes then Graph, is
-/// collapsed.
-fn collapsed(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> [Option<bool>; 2] {
+/// The tool window the bottom panel shows, if it shows, and its tab's
+/// title.
+fn bottom(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<(PanelId, String)> {
     workbench.read_with(cx, |workbench, cx| {
-        let container = workbench.dock().read(cx).source_control().read(cx);
-        let stack = container.stack().read(cx);
-        [stack.is_collapsed(CHANGES), stack.is_collapsed(GRAPH)]
+        let dock = workbench.terminal_dock().read(cx).dock();
+        let title = dock.title(cx).unwrap_or_default().to_string();
+        dock.rail_highlighted().map(|panel| (panel, title))
     })
 }
 
-/// The weight of each of Source Control's views, Changes then Graph.
-fn weights(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> [Option<f32>; 2] {
-    workbench.read_with(cx, |workbench, cx| {
-        let container = workbench.dock().read(cx).source_control().read(cx);
-        let stack = container.stack().read(cx);
-        [stack.weight(CHANGES), stack.weight(GRAPH)]
-    })
-}
-
-/// Source Control's view stack, to collapse or weigh its views.
-fn stack(
-    workbench: &Entity<Workbench>,
-    cx: &mut VisualTestContext,
-) -> Entity<kiln_shell::ViewStack> {
-    workbench.read_with(cx, |workbench, cx| {
-        (workbench.dock().read(cx).source_control().read(cx).stack()).clone()
-    })
-}
-
-fn set_collapsed(
-    workbench: &Entity<Workbench>,
-    view: ViewId,
-    collapsed: bool,
-    cx: &mut VisualTestContext,
-) {
-    let stack = stack(workbench, cx);
-    stack.update(cx, |stack, cx| stack.set_collapsed(view, collapsed, cx));
-    draw(cx);
-}
-
-/// What Graph's header says.
-fn graph_title(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> String {
-    workbench.read_with(cx, |workbench, cx| {
-        workbench.dock().read(cx).graph_title().to_string()
-    })
-}
+const GIT_LOG: PanelId = PanelId("git_log");
 
 /// The Git Log's rows.
 fn log(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
@@ -174,12 +135,6 @@ fn focused(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> [bool; 
     })
 }
 
-/// The views' saved state in the window's layout.
-fn saved_views(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Value {
-    let entry = workbench.read_with(cx, |workbench, cx| workbench.layout_entry(cx));
-    entry["dock"]["panels"]["scm"]["views"].clone()
-}
-
 #[gpui::test]
 fn the_rail_has_one_source_control_button(cx: &mut TestAppContext) {
     let dir = repo();
@@ -201,7 +156,6 @@ fn the_rail_has_one_source_control_button(cx: &mut TestAppContext) {
             DockPanel::Search.id(),
             DockPanel::SourceControl.id(),
             DockPanel::Chat.id(),
-            DockPanel::Problems.id(),
         ]
     );
     for old in ["changes", "git_log"] {
@@ -216,17 +170,12 @@ fn the_rail_has_one_source_control_button(cx: &mut TestAppContext) {
     assert_eq!(DockPanel::SourceControl.name(), "Changes");
     assert_eq!(tooltip_title, "Changes");
 
-    // Its views: the changes over the log, both expanded, Graph's header
-    // naming the branch its first draw listed.
+    // Its one view: the changes.
     let views = workbench.read_with(cx, |workbench, cx| {
         let container = workbench.dock().read(cx).source_control().read(cx);
         container.view_ids(cx)
     });
-    assert_eq!(views, [CHANGES, GRAPH]);
-    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
-    assert_eq!(graph_title(&workbench, cx), "Graph: main");
-    let lines = log(&workbench, cx);
-    assert!(lines.iter().any(|line| line.contains("init")), "{lines:?}");
+    assert_eq!(views, [CHANGES]);
 }
 
 #[gpui::test]
@@ -234,76 +183,35 @@ fn show_changes_and_git_log_show_their_view(cx: &mut TestAppContext) {
     let dir = repo();
     let (workbench, cx) = opened(cx, dir.path());
 
-    // Changes collapsed, the dock on the Explorer: git.show_changes shows
-    // Source Control with Changes expanded and focused.
-    dispatch("git.show_changes", cx);
-    set_collapsed(&workbench, CHANGES, true, cx);
+    // The dock on the Explorer: git.show_changes shows Source Control,
+    // the changes focused.
     dispatch("dock.show_project", cx);
     dispatch("git.show_changes", cx);
     assert_eq!(
         shown(&workbench, cx),
         (true, DockPanel::SourceControl, "Changes".to_owned())
     );
-    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
     assert_eq!(focused(&workbench, cx), [true, false]);
 
-    // Graph collapsed and weighed: git.log expands it, listing HEAD's
-    // commits, and focuses it.
-    set_collapsed(&workbench, GRAPH, true, cx);
-    let stack = stack(&workbench, cx);
-    stack.update(cx, |stack, cx| stack.set_weight(GRAPH, 3., cx));
+    // git.log shows the Git log in the bottom panel, listing HEAD's
+    // commits, focused, its tab naming the branch; the sidebar stays.
     dispatch("dock.show_project", cx);
     dispatch("git.log", cx);
     assert_eq!(
-        shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Changes".to_owned())
+        bottom(&workbench, cx),
+        Some((GIT_LOG, "Graph: main".to_owned()))
     );
-    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
-    assert_eq!(graph_title(&workbench, cx), "Graph: main");
+    assert_eq!(shown(&workbench, cx).1, DockPanel::Explorer);
     let lines = log(&workbench, cx);
     assert!(lines.iter().any(|line| line.contains("init")), "{lines:?}");
     assert_eq!(focused(&workbench, cx), [false, true]);
 
-    // git.log_all retitles it, its weight kept.
+    // git.log_all retitles it.
     dispatch("git.log_all", cx);
-    assert_eq!(graph_title(&workbench, cx), "Graph: All Branches");
-    assert_eq!(weights(&workbench, cx), [Some(1.), Some(3.)]);
-    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
-}
-
-#[gpui::test]
-fn views_collapse_and_weights_survive_a_restart(cx: &mut TestAppContext) {
-    let dir = repo();
-    let entry = {
-        let (workbench, cx) = opened(cx, dir.path());
-        dispatch("git.show_changes", cx);
-        set_collapsed(&workbench, CHANGES, true, cx);
-        // As dragging a divider does.
-        let stack = stack(&workbench, cx);
-        stack.update(cx, |stack, cx| stack.set_weight(GRAPH, 2.5, cx));
-        draw(cx);
-        assert_eq!(
-            saved_views(&workbench, cx),
-            json!({
-                "changes": {"collapsed": true, "weight": 1.0},
-                "graph": {"collapsed": false, "weight": 2.5},
-            })
-        );
-        workbench.read_with(cx, |workbench, cx| workbench.layout_entry(cx))
-    };
-
-    let (workbench, cx) = opened(cx, dir.path());
-    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
-    workbench.update_in(cx, |workbench, window, cx| {
-        workbench.restore_layout(&entry, window, cx)
-    });
-    draw(cx);
     assert_eq!(
-        shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Changes".to_owned())
+        bottom(&workbench, cx),
+        Some((GIT_LOG, "Graph: All Branches".to_owned()))
     );
-    assert_eq!(collapsed(&workbench, cx), [Some(true), Some(false)]);
-    assert_eq!(weights(&workbench, cx), [Some(1.), Some(2.5)]);
 }
 
 /// A layout entry of fastedit's keys alone, its sidebar as `dock`.
@@ -316,7 +224,7 @@ fn entry(dock: Value) -> Value {
 }
 
 #[gpui::test]
-fn an_old_layout_on_git_log_restores_the_graph(cx: &mut TestAppContext) {
+fn an_old_layout_on_git_log_restores_the_log(cx: &mut TestAppContext) {
     let dir = repo();
     let (workbench, cx) = opened(cx, dir.path());
     let restore = |active: &str, cx: &mut VisualTestContext| {
@@ -327,6 +235,10 @@ fn an_old_layout_on_git_log_restores_the_graph(cx: &mut TestAppContext) {
             "size": 300.0,
             "side_size": 300.0,
             "bottom_size": 240.0,
+            "panels": {"scm": {"views": {
+                "changes": {"collapsed": false, "weight": 1.0},
+                "graph": {"collapsed": true, "weight": 2.0},
+            }}},
         }));
         workbench.update_in(cx, |workbench, window, cx| {
             workbench.restore_layout(&saved, window, cx)
@@ -334,27 +246,27 @@ fn an_old_layout_on_git_log_restores_the_graph(cx: &mut TestAppContext) {
         draw(cx);
     };
 
-    // The Git Log panel was active: Source Control shows, Graph expanded
-    // and listing.
-    dispatch("git.show_changes", cx);
-    set_collapsed(&workbench, GRAPH, true, cx);
+    // The Git Log panel was active: the bottom panel shows it, listing.
     dispatch("search.show", cx);
     restore("git_log", cx);
     assert_eq!(
-        shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Changes".to_owned())
+        bottom(&workbench, cx).map(|(panel, _)| panel),
+        Some(GIT_LOG)
     );
-    assert_eq!(collapsed(&workbench, cx)[1], Some(false));
     let lines = log(&workbench, cx);
     assert!(lines.iter().any(|line| line.contains("init")), "{lines:?}");
 
-    // The Changes panel was: Source Control shows, its views as they were.
-    set_collapsed(&workbench, GRAPH, true, cx);
+    // The Changes panel was: Source Control shows, its one view, the
+    // saved Graph left out.
     dispatch("search.show", cx);
     restore("changes", cx);
     assert_eq!(
         shown(&workbench, cx),
         (true, DockPanel::SourceControl, "Changes".to_owned())
     );
-    assert_eq!(collapsed(&workbench, cx), [Some(false), Some(true)]);
+    let views = workbench.read_with(cx, |workbench, cx| {
+        let container = workbench.dock().read(cx).source_control().read(cx);
+        container.view_ids(cx)
+    });
+    assert_eq!(views, [CHANGES]);
 }

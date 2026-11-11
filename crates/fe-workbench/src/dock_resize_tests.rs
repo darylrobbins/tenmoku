@@ -23,8 +23,10 @@ use kiln_shell::{
 
 use crate::{Launch, Workbench, dock_layout::STEP, tests::open};
 
-/// The sidebar's and the terminal dock's sizes as built.
+/// The sidebar's size as built.
 const BUILT: Pixels = px(240.);
+/// The bottom panel's, the terminal's dock's, as built (T1548).
+const BOTTOM_BUILT: Pixels = px(250.);
 
 /// A workbench showing `a.rs` from a temporary project, its editor
 /// focused, whose terminal runs `/bin/sh`.
@@ -121,8 +123,8 @@ fn dragged_sizes_are_kept_in_the_layout(cx: &mut TestAppContext) {
     drag(&drawn, point(px(80.), px(0.)), cx);
     let (drawn, size, shown) = terminal_dock(&first, cx);
     assert!(shown);
-    assert_eq!(size, BUILT);
-    drag(&drawn, point(px(0.), px(-160.)), cx);
+    assert_eq!(size, BOTTOM_BUILT);
+    drag(&drawn, point(px(0.), px(-150.)), cx);
     assert_eq!(sidebar(&first, cx).1, px(320.));
     assert_eq!(terminal_dock(&first, cx).1, px(400.));
 
@@ -158,7 +160,7 @@ fn dragged_sizes_are_kept_in_the_layout(cx: &mut TestAppContext) {
     third.update_in(cx, |workbench, window, cx| {
         workbench.restore_layout(&old, window, cx)
     });
-    assert_eq!(terminal_dock(&third, cx).1, BUILT);
+    assert_eq!(terminal_dock(&third, cx).1, BOTTOM_BUILT);
 }
 
 #[gpui::test]
@@ -169,7 +171,7 @@ fn grow_and_shrink_size_the_focused_dock(cx: &mut TestAppContext) {
     assert_eq!(sidebar(&workbench, cx).1, BUILT + STEP);
     let (drawn, _) = sidebar(&workbench, cx);
     assert_eq!(column(&drawn).size.width, BUILT + STEP);
-    assert_eq!(terminal_dock(&workbench, cx).1, BUILT);
+    assert_eq!(terminal_dock(&workbench, cx).1, BOTTOM_BUILT);
     run("dock.shrink", cx);
     assert_eq!(sidebar(&workbench, cx).1, BUILT);
     // Hidden, it shows as it grows.
@@ -183,8 +185,8 @@ fn grow_and_shrink_size_the_focused_dock(cx: &mut TestAppContext) {
     run("terminal.toggle", cx);
     run("dock.grow", cx);
     let (drawn, size, _) = terminal_dock(&workbench, cx);
-    assert_eq!(size, BUILT + STEP);
-    assert_eq!(column(&drawn).size.height, BUILT + STEP);
+    assert_eq!(size, BOTTOM_BUILT + STEP);
+    assert_eq!(column(&drawn).size.height, BOTTOM_BUILT + STEP);
     assert_eq!(sidebar(&workbench, cx).1, BUILT + STEP);
     for _ in 0..10 {
         run("dock.shrink", cx);

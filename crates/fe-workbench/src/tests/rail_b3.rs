@@ -136,7 +136,7 @@ fn top_and_foot_groups_in_order(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx, tempfile::tempdir().unwrap());
     let dock = dock(&workbench, cx);
     let names: Vec<_> = (DockPanel::ALL.iter()).map(|panel| panel.name()).collect();
-    assert_eq!(names, ["Project", "Search", "Changes", "Chat", "Problems"]);
+    assert_eq!(names, ["Project", "Search", "Changes", "Chat"]);
     let top = [Icon::Files, Icon::Search, Icon::GitBranch, Icon::Bot];
     let foot = [Icon::TriangleAlert, Icon::GitGraph, Icon::FileTerminal];
     assert_eq!(icons(&dock, cx), [&top[..], &foot[..]].concat());
@@ -163,7 +163,8 @@ fn top_and_foot_groups_in_order(cx: &mut TestAppContext) {
     let joined = [&top[..], &[Icon::FileSymlink], &foot[..]].concat();
     assert_eq!(icons(&dock, cx), joined);
 
-    // The Git log action shows Source Control's log.
+    // The Git log action shows the log in the bottom panel (T1548), the
+    // sidebar as it was, the action lit.
     let log = button(&dock, GIT_LOG, cx);
     cx.simulate_click(log.center(), gpui::Modifiers::none());
     draw(cx);
@@ -171,8 +172,10 @@ fn top_and_foot_groups_in_order(cx: &mut TestAppContext) {
     assert_eq!(ops.last(), Some(&DockOp::ShowGitLog));
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.rail_highlighted()),
-        Some(DockPanel::SourceControl)
+        Some(DockPanel::References)
     );
+    let lit = dock.read_with(cx, |dock, _| dock.state().drawn().rail_highlighted());
+    assert!(lit.contains(&GIT_LOG), "{lit:?}");
 }
 
 /// The selection's tinted tab and its bar, as drawn.

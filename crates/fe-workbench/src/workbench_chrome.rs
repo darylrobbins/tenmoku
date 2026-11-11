@@ -1,5 +1,5 @@
 //! The window around the editors: the title bar, menu bar, window frame
-//! and status bar; the sidebar and the terminal's dock; the panes and
+//! and status bar; the sidebar and the bottom panel; the panes and
 //! their splits; and the window's saved layout.
 
 use std::{
@@ -13,12 +13,19 @@ use gpui::{AnyView, App, AppContext as _, Context, Entity, Focusable, Subscripti
 #[cfg(test)]
 use super::toast;
 use super::{Launch, LayoutKeys, TERMINAL_BUTTON, Workbench, active_diff_view};
+
+/// The rail's foot buttons, each its bottom tool window's id.
+const BOTTOM_BUTTONS: [&str; 3] = [
+    crate::dock::PROBLEMS_BUTTON,
+    crate::dock::GIT_LOG_BUTTON,
+    TERMINAL_BUTTON,
+];
 use crate::title_bar;
 #[path = "run_widget.rs"]
 mod run_widget;
 use crate::{
     Dock, MenuBarView, OutlinePanel, Pane, PaneGroup, ProjectPanel, StatusBar,
-    dock::DockOp,
+    dock::{DockOp, ProblemsOp},
     dock_layout,
     find_bar::FindOp,
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
@@ -31,7 +38,7 @@ use fe_command::Value;
 use kiln_l10n::text;
 use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
-    PaneView as _, Shell, Workspace, WorkspaceEvent,
+    PaneView as _, PanelId, Shell, Workspace, WorkspaceEvent,
     close::{self, Items, LiveItems},
     layout::{self, WindowLayout},
 };
@@ -132,7 +139,8 @@ impl Workbench {
             .update(cx, |terminal, cx| terminal.set_settings(settings, cx));
     }
 
-    /// The terminal's dock, at the bottom unless moved.
+    /// The bottom panel, the terminal's dock, which holds Problems and the
+    /// Git log too: at the bottom unless moved.
     pub fn terminal_dock(&self) -> &Entity<kiln_shell::Dock> {
         &self.terminal_dock
     }
@@ -155,12 +163,16 @@ impl Workbench {
                 terminal,
                 window,
                 |workbench, _, event, window, cx| match *event {
+                    // Its last shell exited: its tab closes, another tool
+                    // window open in the bottom panel showing in its place
+                    // if it was shown, else the panel hiding. Focus moves
+                    // to the editor only from what the close hid.
                     TerminalPanelEvent::Exited => {
                         workbench.terminal_dock.update(cx, |dock, cx| {
-                            dock.dock_mut().set_visible(false);
+                            dock.dock_mut().close_tab(TERMINAL);
                             cx.notify();
                         });
-                        window.focus(&workbench.focus_handle(cx), cx);
+                        workbench.leave_hidden_panel(window, cx);
                     }
                     TerminalPanelEvent::RenameRequested(id) => {
                         workbench.ask_terminal_name(Some(id), window, cx)
@@ -175,13 +187,99 @@ impl Workbench {
                 window.focus(&workbench.focus_handle(cx), cx);
             },
         );
+        // Each foot button is lit while the bottom dock shows its tool
+        // window.
         let shown = cx.observe(dock, |workbench, dock, cx| {
-            let shown = dock.read(cx).is_visible();
+            let shown = dock.read(cx).dock().rail_highlighted();
             workbench.dock.update(cx, |dock, cx| {
-                dock.set_action_highlighted(TERMINAL_BUTTON, shown, cx)
+                for id in BOTTOM_BUTTONS {
+                    dock.set_action_highlighted(id, shown == Some(PanelId(id)), cx)
+                }
             });
         });
         [exited, hid, shown]
+    }
+
+    /// Shows the bottom dock with the tool window `panel`, focused.
+    pub(crate) fn show_bottom_panel(
+        &mut self,
+        panel: PanelId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal_dock
+            .update(cx, |dock, cx| dock.show(panel, window, cx));
+    }
+
+    /// Focuses the tool window the bottom dock shows, wherever it is, true
+    /// if it shows one.
+    pub(crate) fn focus_bottom_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let dock = self.terminal_dock.read(cx);
+        let Some(panel) = dock.dock().rail_highlighted() else {
+            return false;
+        };
+        let focus = match panel.0 {
+            id if id == crate::dock::PROBLEMS_BUTTON => {
+                self.dock.read(cx).problems().focus_handle(cx)
+            }
+            id if id == crate::dock::GIT_LOG_BUTTON => match self.dock.read(cx).git_log() {
+                Some(git_log) => git_log.focus_handle(cx),
+                None => return false,
+            },
+            _ => self.terminal.focus_handle(cx),
+        };
+        window.focus(&focus, cx);
+        true
+    }
+
+    /// Hides the bottom dock. Focus in it stays: the caller moves it.
+    pub(crate) fn hide_bottom_panel(&mut self, cx: &mut Context<Self>) {
+        self.terminal_dock.update(cx, |dock, cx| {
+            dock.dock_mut().set_visible(false);
+            cx.notify();
+        });
+    }
+
+    /// Whether a tool window of the bottom dock has focus.
+    pub(crate) fn bottom_panel_focused(&self, window: &Window, cx: &App) -> bool {
+        let sidebar = self.dock.read(cx);
+        self.terminal.read(cx).is_focused(window, cx)
+            || sidebar
+                .problems()
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+            || (sidebar.git_log())
+                .is_some_and(|log| log.focus_handle(cx).contains_focused(window, cx))
+    }
+
+    /// A click on the rail's foot button `id`, which runs `command`: hides
+    /// the bottom dock if it shows that tool window, the active editor
+    /// taking focus if it was in it, else runs the command, as its key
+    /// would.
+    pub(crate) fn bottom_button_clicked(
+        &mut self,
+        id: &'static str,
+        command: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shown = self.terminal_dock.read(cx).dock().rail_highlighted();
+        if shown != Some(PanelId(id)) {
+            // Once this update is over: the command is the workbench's.
+            window.defer(cx, move |window, cx| {
+                kiln_shell::dock::run_action(command, window, cx)
+            });
+            return;
+        }
+        let focused = self.bottom_panel_focused(window, cx);
+        self.hide_bottom_panel(cx);
+        if focused {
+            window.focus(&self.focus_handle(cx), cx);
+        }
     }
 
     /// `terminal.toggle`: shows the bottom dock with the terminal, focused,
@@ -318,18 +416,31 @@ impl Workbench {
     /// the fallback focus: showing the project panel focuses it, showing
     /// search focuses its input, and showing the outline leaves focus where
     /// it is unless on a hidden panel.
+    /// `problems.show` and the Git log's show op show their tool windows
+    /// in the bottom dock.
     pub(crate) fn run_dock_op(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) {
         self.dock.update(cx, |dock, cx| dock.run(op, window, cx));
-        if op == DockOp::ShowProject {
-            window.focus(&self.panel.focus_handle(cx), cx);
+        match op {
+            DockOp::ShowProject => window.focus(&self.panel.focus_handle(cx), cx),
+            DockOp::Problems(ProblemsOp::Show) => {
+                self.show_bottom_panel(crate::DockPanel::Problems.id(), window, cx)
+            }
+            DockOp::ShowGitLog => {
+                self.show_bottom_panel(PanelId(crate::dock::GIT_LOG_BUTTON), window, cx)
+            }
+            _ => {}
         }
         self.leave_hidden_panel(window, cx);
     }
 
-    /// Focuses the active editor if a dock panel has focus but isn't
-    /// shown, the dock being hidden or showing another panel.
+    /// Focuses the active editor if a panel of the sidebar or a tool
+    /// window of the bottom panel has focus but isn't shown, its dock being
+    /// hidden or showing another.
     pub(super) fn leave_hidden_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dock.read(cx).hidden_panel_focused(window, cx) {
+        let bottom = self.terminal_dock.read(cx).dock();
+        if self.dock.read(cx).hidden_panel_focused(window, cx)
+            || bottom.hidden_panel_focused(window, cx)
+        {
             window.focus(&self.focus_handle(cx), cx);
         }
     }
@@ -347,15 +458,15 @@ impl Workbench {
         });
     }
 
-    /// `dock.grow` or `dock.shrink`: resizes the terminal's dock by `by`
-    /// while the terminal has focus, else the sidebar.
+    /// `dock.grow` or `dock.shrink`: resizes the bottom dock by `by` while
+    /// one of its tool windows has focus, else the sidebar.
     pub(crate) fn resize_focused_dock(
         &mut self,
         by: gpui::Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.terminal.read(cx).is_focused(window, cx) {
+        if self.bottom_panel_focused(window, cx) {
             self.terminal_dock.update(cx, |dock, cx| {
                 dock_layout::resize(dock.dock_mut(), by, window, cx);
                 cx.notify();
@@ -860,15 +971,29 @@ impl Workbench {
     }
 }
 
-/// The terminal's dock's sizes in its saved state ([`DockState::save`]),
-/// and nothing else: the dock comes back hidden, with no session.
-fn terminal_dock_sizes(saved: &Value) -> Value {
+/// The bottom panel's sizes in its saved state ([`DockState::save`]),
+/// and, as `"shown"`, the tool window it shows if that's Problems or the
+/// Git log: the terminal comes back hidden, with no session.
+fn terminal_dock_sizes(dock: &DockState, cx: &App) -> Value {
+    let saved = dock.save(cx);
     let size = |key: &'static str| Some((key, saved.get(key)?.clone()));
-    Value::from_iter(
+    let mut kept = Value::from_iter(
         ["size", "side_size", "bottom_size"]
             .into_iter()
             .filter_map(size),
-    )
+    );
+    if let Some(shown) = dock.rail_highlighted().and_then(restorable) {
+        kept["shown"] = Value::from(shown.0);
+    }
+    kept
+}
+
+/// `panel` if the bottom panel shows it again on a restore: Problems or
+/// the Git log, not the terminal, whose sessions end with the window.
+fn restorable(panel: PanelId) -> Option<PanelId> {
+    [crate::dock::PROBLEMS_BUTTON, crate::dock::GIT_LOG_BUTTON]
+        .contains(&panel.0)
+        .then_some(panel)
 }
 
 /// Puts back the terminal dock's sizes as [`terminal_dock_sizes`] kept
@@ -950,7 +1075,7 @@ impl LayoutKeys {
         let mut keys = vec![
             ("docks", docks),
             ("dock", dock),
-            ("terminal_dock", terminal_dock_sizes(&terminal.save(cx))),
+            ("terminal_dock", terminal_dock_sizes(terminal, cx)),
             ("breadcrumbs", Value::from(self.breadcrumbs.get())),
         ];
         if let Some(bounds) = self.bounds.get() {
@@ -971,8 +1096,10 @@ impl LayoutKeys {
 
     /// Puts back the terminal dock's place, if the saved places are two
     /// edges with the sidebar at a side, then the sidebar's state and the
-    /// terminal's dock's sizes (it stays hidden, with no session), and
-    /// notes the breadcrumbs. The sidebar stays on the rail's side, as
+    /// bottom panel's sizes (it stays hidden, with no session, unless it
+    /// was saved showing Problems or the Git log, or a layout saved before
+    /// it held them had one shown in the sidebar: it shows that), and notes
+    /// the breadcrumbs. The sidebar stays on the rail's side, as
     /// `workbench.rail` put it: the terminal's dock gives way if it was
     /// saved there ([`dock_layout::displaced`]).
     pub(super) fn restore(&self, entry: &Value, cx: &mut App) {
@@ -989,12 +1116,29 @@ impl LayoutKeys {
             let docks = (&self.sidebar, &self.terminal, &self.shell);
             place_docks(docks, sidebar, terminal, cx);
         }
-        if let Some(saved) = entry.get("dock") {
-            self.sidebar.update(cx, |dock, cx| dock.restore(saved, cx));
-        }
+        // Saved before the bottom panel held them, Problems or the Git log
+        // shown in the sidebar shows in the bottom panel, unfocused, as
+        // does the one the bottom panel saved shown.
+        let mut bottom = (entry.get("dock"))
+            .and_then(|saved| self.sidebar.update(cx, |dock, cx| dock.restore(saved, cx)));
         if let Some(saved) = entry.get("terminal_dock") {
             self.terminal.update(cx, |dock, cx| {
                 restore_terminal_dock_sizes(dock.dock_mut(), saved);
+                cx.notify();
+            });
+            let shown = saved.get("shown").and_then(Value::as_str);
+            let shown = [crate::dock::PROBLEMS_BUTTON, crate::dock::GIT_LOG_BUTTON]
+                .into_iter()
+                .find(|id| shown == Some(*id));
+            bottom = shown.map(PanelId).or(bottom);
+        }
+        if let Some(panel) = bottom {
+            self.terminal.update(cx, |dock, cx| {
+                let shown = Value::from_iter([
+                    ("visible", Value::from(true)),
+                    ("active", Value::from(panel.0)),
+                ]);
+                dock.dock_mut().restore(&shown, cx);
                 cx.notify();
             });
         }

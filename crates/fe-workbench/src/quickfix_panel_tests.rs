@@ -291,10 +291,10 @@ fn cclose_hides_the_panel(cx: &mut TestAppContext) {
 
     // Another panel shown: `:cclose` leaves it.
     focus_editor(&workbench, cx);
-    run("problems.show", cx);
+    run("dock.show_project", cx);
     focus_editor(&workbench, cx);
     ex("cclose", cx);
-    assert_eq!(shown(&workbench, cx).1, DockPanel::Problems);
+    assert_eq!(shown(&workbench, cx).1, DockPanel::Explorer);
     assert!(shown(&workbench, cx).0);
 }
 

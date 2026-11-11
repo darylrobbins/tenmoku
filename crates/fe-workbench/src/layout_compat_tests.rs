@@ -300,9 +300,9 @@ fn todays_entry_restores_and_saves_the_same(cx: &mut TestAppContext) {
             "folders": {"collapsed": false, "weight": 1.0},
             "outline": {"collapsed": true, "weight": 1.0},
         }},
+        // Changes alone: the Git log is the bottom panel's (T1548).
         "scm": {"views": {
             "changes": {"collapsed": false, "weight": 1.0},
-            "graph": {"collapsed": false, "weight": 1.0},
         }},
     });
     assert_eq!(saved(&project.store), std::slice::from_ref(&entry));

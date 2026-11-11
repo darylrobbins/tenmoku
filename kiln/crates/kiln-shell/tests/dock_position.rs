@@ -4,7 +4,10 @@
 //! window's edge with its column towards the centre, at the bottom its
 //! buttons in a row, keeping its panels, active panel, visibility and rail
 //! actions; and it keeps a width for the sides and a height for the
-//! bottom, each changed only there, both saved and restored.
+//! bottom, each changed only there, both saved and restored. A tabbed
+//! dock, a bottom panel's, has a 34 px tab strip for its title row, a tab
+//! per open panel, ending in the pane controls, wherever it is; and a rail
+//! action can carry a badge.
 
 use gpui::{
     AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable, IntoElement, Modifiers,
@@ -14,10 +17,10 @@ use gpui::{
 use kiln_command::Value;
 use kiln_shell::{
     Dock, DockItem, DockPosition, DockState, DockView as _, PanelId, RailAction,
-    dock::{DrawnDock, MIN_DOCK_HEIGHT, MIN_DOCK_WIDTH, track_centre},
+    dock::{DrawnDock, HIDE_BUTTON, MIN_DOCK_HEIGHT, MIN_DOCK_WIDTH, RailBadge, track_centre},
     pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH},
 };
-use kiln_ui::Icon;
+use kiln_ui::{BadgeTone, Icon, TAB_HEIGHT};
 
 /// The size the dock is built with.
 const BUILT: Pixels = px(200.);
@@ -164,6 +167,15 @@ impl Opened<'_> {
 /// A window with a dock at `position` holding two panels, the second
 /// shown, and an action, drawn.
 fn open(position: DockPosition, cx: &mut TestAppContext) -> Opened<'_> {
+    open_built(position, |state| state, cx)
+}
+
+/// [`open`], its dock's state as `build` makes it.
+fn open_built(
+    position: DockPosition,
+    build: fn(DockState) -> DockState,
+    cx: &mut TestAppContext,
+) -> Opened<'_> {
     let (host, cx) = cx.add_window_view(move |window, cx| {
         let panel = |id, icon, cx: &mut Context<Host>| {
             cx.new(|cx| Panel {
@@ -175,7 +187,7 @@ fn open(position: DockPosition, cx: &mut TestAppContext) -> Opened<'_> {
         let notes = panel(NOTES, Icon::Files, cx);
         let log = panel(LOG, Icon::ListTree, cx);
         let dock = cx.new(|cx| {
-            let state = DockState::new(position).size(BUILT);
+            let state = build(DockState::new(position).size(BUILT));
             let mut dock = Dock::with_state(state);
             dock.add_panel(notes, cx);
             dock.add_panel(log, cx);
@@ -366,4 +378,136 @@ fn both_sizes_are_saved_and_restored(cx: &mut TestAppContext) {
         assert_eq!(restored.bottom_size(), px(310.));
         assert_eq!(restored.side_size(), BUILT);
     });
+}
+
+#[gpui::test]
+fn a_tabbed_dock_has_a_tab_per_open_panel_ending_in_the_controls(cx: &mut TestAppContext) {
+    let build = |state: DockState| state.without_rail().with_tabs();
+    let mut s = open_built(DockPosition::Bottom, build, cx);
+    // Built shown, NOTES showed before LOG: both have tabs. Closing NOTES
+    // leaves the shown panel's tab alone.
+    assert_eq!(s.drawn().tabs(), [NOTES, LOG]);
+    s.dock
+        .update_in(s.cx, |dock, window, cx| dock.tab_closed(NOTES, window, cx));
+    s.draw();
+    assert_eq!(s.state().1, Some(LOG));
+    // The shown panel's tab alone: a 34 px strip, the controls at its end.
+    let drawn = s.drawn();
+    assert_eq!(drawn.tabs(), [LOG]);
+    let title = drawn.title_bounds().expect("shown");
+    assert_eq!(title.size.height, TAB_HEIGHT);
+    let controls = drawn.controls();
+    assert_eq!(controls.last().map(|(id, _)| id.as_str()), Some(HIDE_BUTTON));
+    let hide = (s.cx.debug_bounds("icon-button:dock-hide")).expect("drawn");
+    let log = drawn.tab_bounds(LOG).expect("drawn");
+    assert_eq!(log.left(), title.left());
+    assert!(log.right() < hide.left(), "{log:?} {hide:?}");
+    assert!(title.right() - hide.right() <= px(8.), "{hide:?} {title:?}");
+
+    // Another shown opens its tab, in the order the panels were added.
+    s.dock
+        .update_in(s.cx, |dock, window, cx| dock.show(NOTES, window, cx));
+    s.draw();
+    assert_eq!(s.drawn().tabs(), [NOTES, LOG]);
+    // A click on a tab shows its panel.
+    let log = s.drawn().tab_bounds(LOG).expect("drawn");
+    s.cx.simulate_click(log.center(), Modifiers::none());
+    s.draw();
+    assert_eq!(s.state().1, Some(LOG));
+
+    // Moved to a side, it keeps its strip.
+    s.move_to(DockPosition::Left);
+    let drawn = s.drawn();
+    assert_eq!(drawn.tabs(), [NOTES, LOG]);
+    assert_eq!(drawn.title_bounds().expect("shown").size.height, TAB_HEIGHT);
+    s.move_to(DockPosition::Bottom);
+
+    // Closing the shown tab shows the one before; closing the last hides
+    // the dock, its strip empty.
+    s.dock
+        .update_in(s.cx, |dock, window, cx| dock.tab_closed(LOG, window, cx));
+    s.draw();
+    assert_eq!(s.drawn().tabs(), [NOTES]);
+    assert_eq!(s.state().1, Some(NOTES));
+    s.dock
+        .update_in(s.cx, |dock, window, cx| dock.tab_closed(NOTES, window, cx));
+    s.draw();
+    assert!(!s.state().2);
+    assert!(s.drawn().tabs().is_empty());
+    // Shown again, the panel shown has its tab.
+    s.dock
+        .update_in(s.cx, |dock, window, cx| dock.show(LOG, window, cx));
+    s.draw();
+    assert_eq!(s.drawn().tabs(), [LOG]);
+}
+
+#[gpui::test]
+fn a_rail_action_carries_the_badge_set_on_its_id(cx: &mut TestAppContext) {
+    let mut s = open(DockPosition::Left, cx);
+    let badge = RailBadge::dot(BadgeTone::Error, "1 error");
+    s.dock.update(s.cx, |dock, cx| {
+        dock.dock_mut().set_badge(ACTION, Some(badge.clone()));
+        cx.notify();
+    });
+    s.draw();
+    assert_eq!(s.drawn().rail_badges(), [(ACTION, badge)]);
+    s.dock.update(s.cx, |dock, cx| {
+        dock.dock_mut().set_badge(ACTION, None);
+        cx.notify();
+    });
+    s.draw();
+    assert!(s.drawn().rail_badges().is_empty());
+}
+
+#[gpui::test]
+fn a_tabbed_docks_shown_panel_keeps_its_tab_however_it_came_to_show(cx: &mut TestAppContext) {
+    // Built shown, its first panel shows without a `show`: another shown,
+    // the first keeps its tab.
+    let (dock, cx) = cx.add_window_view(|_, cx| {
+        let panel = |id, icon, cx: &mut Context<Dock>| {
+            cx.new(|cx| Panel {
+                id,
+                icon,
+                focus: cx.focus_handle(),
+            })
+        };
+        let mut dock = Dock::with_state(DockState::new(DockPosition::Bottom).with_tabs());
+        let notes = panel(NOTES, Icon::Files, cx);
+        let log = panel(LOG, Icon::ListTree, cx);
+        dock.add_panel(notes, cx);
+        dock.add_panel(log, cx);
+        dock
+    });
+    let tabs = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        dock.read_with(cx, |dock, _| dock.dock().drawn().tabs())
+    };
+    assert_eq!(tabs(cx), [NOTES]);
+    dock.update_in(cx, |dock, window, cx| dock.show(LOG, window, cx));
+    assert_eq!(tabs(cx), [NOTES, LOG]);
+
+    // Restored shown on a panel, then another shown: both keep tabs.
+    dock.update(cx, |dock, cx| {
+        let state = dock.dock_mut();
+        state.close_tab(NOTES);
+        state.close_tab(LOG);
+        assert!(!state.is_visible());
+        let saved = Value::from_iter([
+            ("visible", Value::from(true)),
+            ("active", Value::from(LOG.0)),
+        ]);
+        state.restore(&saved, cx);
+    });
+    assert_eq!(tabs(cx), [LOG]);
+    dock.update_in(cx, |dock, window, cx| dock.show(NOTES, window, cx));
+    assert_eq!(tabs(cx), [NOTES, LOG]);
+
+    // Hidden then shown again by `set_visible`, the same.
+    dock.update(cx, |dock, _| {
+        let state = dock.dock_mut();
+        state.close_tab(LOG);
+        state.set_visible(false);
+        state.set_visible(true);
+    });
+    assert_eq!(tabs(cx), [NOTES]);
 }

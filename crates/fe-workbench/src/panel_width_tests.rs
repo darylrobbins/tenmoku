@@ -55,15 +55,16 @@ fn panels_follow_the_dock_width(cx: &mut TestAppContext) {
             DockPanel::Search,
             DockPanel::SourceControl,
             DockPanel::References,
-            DockPanel::Problems,
         ] {
             workbench.update_in(cx, |workbench, window, cx| {
                 (workbench.dock()).update(cx, |dock, cx| dock.show(panel, window, cx))
             });
             draw(cx);
-            let column = workbench.read_with(cx, |workbench, cx| {
-                workbench.dock().read(cx).state().drawn().column_bounds()
+            let (active, column) = workbench.read_with(cx, |workbench, cx| {
+                let dock = workbench.dock().read(cx);
+                (dock.active(), dock.state().drawn().column_bounds())
             });
+            assert_eq!(active, panel, "shown");
             let column = column.expect("the dock shows");
             let drawn = cx.debug_bounds("sidebar-panel").expect("drawn");
             let what = format!("{panel:?} at {width:?}");
@@ -78,5 +79,7 @@ fn panels_follow_the_dock_width(cx: &mut TestAppContext) {
                 "{what}: {drawn:?} outside the window"
             );
         }
+        // Problems, the bottom panel's (T1548), moved to a side.
+        crate::workbench::dock_position_tests::assert_problems_fills_a_side(width, &workbench, cx);
     }
 }

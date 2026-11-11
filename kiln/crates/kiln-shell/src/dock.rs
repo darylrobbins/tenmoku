@@ -16,7 +16,10 @@
 //! The title row is the panel's one heading: its name in the UI heading
 //! style, then the pane controls, right-aligned: the panel's own actions
 //! ([`DockItem::actions`]), ⋯ for the dock's menu ([`DockState::set_menu`]),
-//! and — to hide the dock ([`DockView::hide_clicked`]).
+//! and — to hide the dock ([`DockView::hide_clicked`]). A dock built
+//! [`DockState::with_tabs`], as a bottom panel of tool windows is, has a
+//! 34 px tab strip there instead, as the editor's: a tab for each panel
+//! open in it, the shown one active, then the same controls.
 //!
 //! [`DockState`] is the dock's state, for the view that draws it, a
 //! [`DockView`]: [`Dock`] is kiln's, and a host can hold the state in a
@@ -66,8 +69,8 @@ use kiln_core::{shortcut_label, shortcuts};
 use kiln_l10n::tr;
 use kiln_platform::{command_actions::dispatch_invocation, keys};
 use kiln_ui::{
-    ActivityRail, Badge, BadgeTone, Icon, IconButton, MenuEntry, MenuPanel, RAIL_WIDTH, RailButton,
-    TAB_HEIGHT, Tooltip, UI_HEADING, ui_theme,
+    ActiveTheme as _, ActivityRail, Badge, BadgeTone, Icon, IconButton, MenuEntry, MenuPanel,
+    RAIL_WIDTH, RailButton, TAB_HEIGHT, Tab, TabBar, Tooltip, UI_HEADING, ui_theme,
 };
 
 use crate::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
@@ -429,6 +432,10 @@ pub struct DrawnDock {
     /// Whether the column was drawn: a dock without a rail draws nothing
     /// hidden, which leaves its layout as it was.
     column_drawn: Rc<Cell<bool>>,
+    /// A tabbed dock's tabs, left to right, by their panels' ids.
+    tabs: Rc<RefCell<Vec<PanelId>>>,
+    /// Its tab strip, which tracks each tab's bounds.
+    tab_strip: ScrollHandle,
 }
 
 impl DrawnDock {
@@ -524,6 +531,18 @@ impl DrawnDock {
     pub fn handle_cursor(&self) -> Option<CursorStyle> {
         self.cursor.get()
     }
+
+    /// The tabs a tabbed dock's last frame drew, left to right, by their
+    /// panels' ids: none while it's hidden.
+    pub fn tabs(&self) -> Vec<PanelId> {
+        self.tabs.borrow().clone()
+    }
+
+    /// Where `panel`'s tab was laid out, if it was drawn.
+    pub fn tab_bounds(&self, panel: PanelId) -> Option<Bounds<Pixels>> {
+        let ix = self.tabs.borrow().iter().position(|id| *id == panel)?;
+        self.tab_strip.bounds_for_item(ix)
+    }
 }
 
 /// A drag of the handle on a dock's inner edge, which the dock at that
@@ -576,6 +595,12 @@ pub struct DockState {
     /// focus before it, which it gives focus back to as it closes.
     menu_focus: Option<FocusHandle>,
     menu_return: Option<FocusHandle>,
+    /// While the menu is open: to focus leaving it, which closes it.
+    menu_watch: Option<Subscription>,
+    /// Whether the title row is a tab strip of the open panels.
+    tabs: bool,
+    /// The panels open in a tabbed dock: shown since, and not closed.
+    opened: HashSet<PanelId>,
     /// The command — runs, if not hiding the dock itself.
     hide_command: Option<&'static str>,
     drawn: DrawnDock,
@@ -604,6 +629,9 @@ impl DockState {
             menu_highlighted: None,
             menu_focus: None,
             menu_return: None,
+            menu_watch: None,
+            tabs: false,
+            opened: HashSet::new(),
             hide_command: None,
             drawn: DrawnDock::default(),
         }
@@ -644,10 +672,12 @@ impl DockState {
         (self.menu_focus.as_ref()).is_some_and(|focus| self.menu_open && focus.is_focused(window))
     }
 
-    /// Opens the ⋯ menu, if it has items, its first item highlighted and
-    /// focus in it, for its keys: Up and Down move the highlight, Enter or
-    /// Space runs the item, Escape closes it.
-    pub fn open_menu(&mut self, window: &mut Window, cx: &mut App) {
+    /// Opens the ⋯ menu of `V`'s dock, if it has items, its first item
+    /// highlighted and focus in it, for its keys: Up and Down move the
+    /// highlight, Enter or Space runs the item, Escape closes it. Focus
+    /// moving elsewhere, as a key showing another panel moves it, closes
+    /// it, leaving focus there.
+    pub fn open_menu<V: DockView>(&mut self, window: &mut Window, cx: &mut Context<V>) {
         if self.menu.is_empty() {
             return;
         }
@@ -659,18 +689,40 @@ impl DockState {
             .clone();
         self.menu_return = window.focused(cx).filter(|focused| *focused != focus);
         window.focus(&focus, cx);
+        let watch = cx.on_focus_out(&focus, window, |view: &mut V, _, _, cx| {
+            if view.dock().menu_open {
+                view.dock_mut().dismiss_menu();
+                cx.notify();
+            }
+        });
+        self.menu_watch = Some(watch);
     }
 
     /// Closes the ⋯ menu, giving focus back to what had it before, if the
     /// menu still has it.
     pub fn close_menu(&mut self, window: &mut Window, cx: &mut App) {
         let focused = self.menu_focused(window);
-        self.menu_open = false;
-        self.menu_highlighted = None;
         let back = self.menu_return.take();
+        self.dismiss_menu();
         if focused && let Some(back) = back {
             window.focus(&back, cx);
         }
+    }
+
+    /// Closes the ⋯ menu, leaving focus where it is.
+    fn dismiss_menu(&mut self) {
+        self.menu_open = false;
+        self.menu_highlighted = None;
+        self.menu_return = None;
+        self.menu_watch = None;
+    }
+
+    /// Whether the menu's focus has focus while the menu isn't shown, as
+    /// when the dock hid with it open: its host then focuses something
+    /// shown, as for a hidden panel ([`DockState::hidden_panel_focused`]).
+    fn closed_menu_focused(&self, window: &Window) -> bool {
+        let shown = self.menu_open && self.visible;
+        !shown && (self.menu_focus.as_ref()).is_some_and(|focus| focus.is_focused(window))
     }
 
     /// The open menu's answer to `key`: whether it took it. Running an
@@ -713,6 +765,62 @@ impl DockState {
     pub fn without_rail(mut self) -> Self {
         self.rail_hidden = true;
         self
+    }
+
+    /// Builds it with a tab strip for its title row, at any position: a
+    /// tab for each panel open in it, in the order they were added, the
+    /// shown one active, then the pane controls. A panel opens as it shows
+    /// and closes by its tab's close button ([`DockState::close_tab`]).
+    pub fn with_tabs(mut self) -> Self {
+        self.tabs = true;
+        self
+    }
+
+    /// Whether its title row is a tab strip ([`DockState::with_tabs`]).
+    pub fn has_tabs(&self) -> bool {
+        self.tabs
+    }
+
+    /// The panels a tabbed dock has tabs for, in the order they were
+    /// added: those open in it, and the active one while the dock shows,
+    /// as a dock built shown shows its first panel.
+    pub fn open_panels(&self) -> Vec<PanelId> {
+        let shown = self.active.filter(|_| self.visible);
+        (self.panels.iter())
+            .map(|panel| panel.id())
+            .filter(|id| self.opened.contains(id) || shown == Some(*id))
+            .collect()
+    }
+
+    /// Opens the panel the dock shows, if it shows one, so it keeps its tab
+    /// when another shows: called as the shown panel or the dock's
+    /// visibility changes, however it changes. A dock hidden since it was
+    /// built opens none.
+    fn open_shown(&mut self) {
+        if let Some(active) = self.active.filter(|_| self.visible) {
+            self.opened.insert(active);
+        }
+    }
+
+    /// Closes `panel`'s tab. If it was the active panel, the next open
+    /// one shows in its place, else the one before; with none left open,
+    /// the dock hides. False if it had no tab.
+    pub fn close_tab(&mut self, panel: PanelId) -> bool {
+        let open = self.open_panels();
+        let Some(ix) = open.iter().position(|id| *id == panel) else {
+            return false;
+        };
+        self.opened.remove(&panel);
+        if self.active == Some(panel) {
+            let next = open
+                .get(ix + 1)
+                .or(ix.checked_sub(1).and_then(|ix| open.get(ix)));
+            match next {
+                Some(&next) => self.active = Some(next),
+                None => self.set_visible(false),
+            }
+        }
+        true
     }
 
     /// Builds it with its panel `size` across, its width at a side and its
@@ -876,8 +984,9 @@ impl DockState {
         }
     }
 
-    /// Puts `badge` on `panel`'s rail button, or takes its badge off. The
-    /// host sets it as what the badge counts changes, and redraws the dock.
+    /// Puts `badge` on `panel`'s rail button, or on the [`RailAction`]'s of
+    /// that id, or takes its badge off. The host sets it as what the badge
+    /// counts changes, and redraws the dock.
     pub fn set_badge(&mut self, panel: PanelId, badge: Option<RailBadge>) {
         match badge {
             Some(badge) => self.badges.insert(panel, badge),
@@ -940,8 +1049,11 @@ impl DockState {
         };
         let focus = handle.focus_on_show(cx).then(|| handle.focus_handle(cx));
         let joins = handle.joins_rail_on_show(cx);
+        // The one it showed keeps its tab.
+        self.open_shown();
         self.active = Some(panel);
         self.visible = true;
+        self.opened.insert(panel);
         if joins {
             self.joined.insert(panel);
         }
@@ -954,12 +1066,17 @@ impl DockState {
     /// Shows the dock if it's hidden, else hides it. Focus on a panel the
     /// dock hides stays there: see [`DockState::hidden_panel_focused`].
     pub fn toggle(&mut self) {
-        self.visible = !self.visible;
+        self.set_visible(!self.visible);
     }
 
-    /// Shows or hides the dock, keeping its active panel.
+    /// Shows or hides the dock, keeping its active panel. Hiding closes the
+    /// ⋯ menu: focus in it stays, as on a hidden panel.
     pub fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
+        self.open_shown();
+        if !visible && self.menu_open {
+            self.dismiss_menu();
+        }
     }
 
     /// What a click on `panel`'s rail button does: hides the dock if it's
@@ -973,13 +1090,15 @@ impl DockState {
     }
 
     /// Whether a panel that isn't showing, the dock being hidden or showing
-    /// another, has focus: its host then focuses something shown, such as
-    /// the active pane item.
+    /// another, has focus, or the ⋯ menu's focus does without the menu
+    /// showing: its host then focuses something shown, such as the active
+    /// pane item.
     pub fn hidden_panel_focused(&self, window: &Window, cx: &App) -> bool {
-        self.panels.iter().any(|panel| {
-            self.rail_highlighted() != Some(panel.id())
-                && panel.focus_handle(cx).contains_focused(window, cx)
-        })
+        self.closed_menu_focused(window)
+            || self.panels.iter().any(|panel| {
+                self.rail_highlighted() != Some(panel.id())
+                    && panel.focus_handle(cx).contains_focused(window, cx)
+            })
     }
 
     /// The panels not always on the rail that have joined it, by having
@@ -1068,6 +1187,8 @@ impl DockState {
         if let Some(active) = active {
             self.joined.insert(active);
         }
+        // Shown, its panel has its tab.
+        self.open_shown();
         let panels = saved.get("panels").and_then(Value::as_object);
         for panel in &self.panels {
             if let Some(state) = panels.and_then(|panels| panels.get(panel.id().0)) {
@@ -1335,6 +1456,56 @@ impl DockState {
         deferred(menu).with_priority(1).into_any_element()
     }
 
+    /// A tabbed dock's title row: a tab for each open panel, `active` the
+    /// one shown, then `controls` on the strip's ground, 34 px tall as the
+    /// editor's tab strip is.
+    fn tab_row<V: DockView>(
+        &self,
+        active: &dyn PanelHandle,
+        controls: AnyElement,
+        cx: &mut Context<V>,
+    ) -> gpui::Div {
+        let open = self.open_panels();
+        self.drawn.tabs.replace(open.clone());
+        let tabs: Vec<_> = (open.into_iter().enumerate())
+            .filter_map(|(ix, id)| {
+                let panel = self.handle(id)?;
+                let tab = Tab::new(("dock-tab", ix), panel.title(cx), &ui_theme(cx))
+                    .icon(Some(panel.icon(cx)))
+                    .active(id == active.id())
+                    .on_click(cx.listener(move |view: &mut V, _, window, cx| {
+                        view.tab_clicked(id, window, cx)
+                    }))
+                    .on_close(cx.listener(move |view: &mut V, _, window, cx| {
+                        view.tab_closed(id, window, cx)
+                    }));
+                Some(tab)
+            })
+            .collect();
+        let bar = TabBar::new("dock-tabs", &ui_theme(cx))
+            .track_scroll(&self.drawn.tab_strip)
+            .focus_within(&active.focus_handle(cx))
+            .children(tabs);
+        let colors = &cx.theme().colors;
+        let strip = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .h(TAB_HEIGHT)
+            .px_1()
+            .bg(colors.surface.chrome)
+            .border_b_1()
+            .border_color(colors.border.default)
+            .child(controls);
+        div()
+            .flex_none()
+            .flex()
+            .w_full()
+            .h(TAB_HEIGHT)
+            .child(div().flex_1().min_w_0().child(bar))
+            .child(strip)
+    }
+
     /// The title row's heading: `title` in the UI heading style.
     fn heading(title: SharedString, cx: &App) -> gpui::Div {
         let ui = ui_theme(cx);
@@ -1350,7 +1521,8 @@ impl DockState {
     }
 
     /// `action`'s button: a click runs its command as a key would, from
-    /// the mouse.
+    /// the mouse ([`DockView::action_clicked`]), and the badge the host set
+    /// on its id, if any.
     fn action_button<V: DockView>(
         &self,
         ix: usize,
@@ -1364,12 +1536,20 @@ impl DockState {
             self.drawn.highlighted.borrow_mut().push(PanelId(action.id));
         }
         let (title, command) = (action.title.clone(), action.command);
+        let id = PanelId(action.id);
+        let badge = self.badges.get(&id).map(|badge| {
+            self.drawn.badges.borrow_mut().push((id, badge.clone()));
+            badge.element(self.panels.len() + ix)
+        });
         let contexts = self.shortcut_contexts.clone();
         let last_tooltip = self.drawn.tooltip.clone();
         RailButton::new(("dock-rail-action", ix), action.icon, &ui_theme(cx))
             .name(action.title.clone())
             .highlighted(highlighted)
-            .on_click(move |_, window, cx| run_action(command, window, cx))
+            .when_some(badge, RailButton::badge)
+            .on_click(cx.listener(move |view, _, window, cx| {
+                view.action_clicked(id.0, command, window, cx)
+            }))
             .tooltip(move |_, cx| {
                 let shortcut = Self::shortcut(&contexts, command, cx);
                 let tooltip = Tooltip::new(title.clone(), shortcut, &ui_theme(cx));
@@ -1442,13 +1622,19 @@ impl DockState {
         if active.is_none() || !self.visible {
             self.drawn.controls.borrow_mut().clear();
         }
+        self.drawn.tabs.borrow_mut().clear();
+        // A tabbed dock's header is its tab strip and the controls, whole.
         let body = active.filter(|_| self.visible).map(|panel| {
-            let heading = Self::heading(panel.title(cx), cx);
-            (panel.to_any_view(), heading, self.controls(panel, cx))
+            let controls = self.controls(panel, cx);
+            let header = match self.tabs {
+                true => Header::Tabs(self.tab_row(panel, controls, cx)),
+                false => Header::Title(Self::heading(panel.title(cx), cx), controls),
+            };
+            (panel.to_any_view(), header)
         });
         let ui = &ui_theme(cx);
         // The panel's one heading, then its pane controls.
-        let title_row = |heading, controls| {
+        let title_row = |heading, controls| -> gpui::Div {
             div()
                 .flex_none()
                 .flex()
@@ -1487,25 +1673,35 @@ impl DockState {
                 .flex()
                 .flex_col()
                 .track_scroll(&self.drawn.layout);
-            let Some((view, heading, controls)) = body else {
+            let Some((view, header)) = body else {
                 return match self.rail_hidden {
                     true => dock.flex_none().into_any_element(),
                     false => dock.flex_none().child(rail).into_any_element(),
                 };
             };
-            let title = div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .h(row_height)
-                .pr_1()
-                .gap_2()
-                .bg(ui.panel_background)
-                .border_b_1()
-                .border_color(ui.border)
-                .when(!self.rail_hidden, |row| row.child(rail))
-                .child(div().flex_1().min_w_0().flex().pl_3().child(heading))
-                .child(controls);
+            let title = match header {
+                // The rail's buttons, if any, before the tabs.
+                Header::Tabs(tabs) => div()
+                    .flex_none()
+                    .flex()
+                    .h(TAB_HEIGHT)
+                    .bg(ui.panel_background)
+                    .when(!self.rail_hidden, |row| row.child(rail))
+                    .child(tabs.flex_1().min_w_0()),
+                Header::Title(heading, controls) => div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .h(row_height)
+                    .pr_1()
+                    .gap_2()
+                    .bg(ui.panel_background)
+                    .border_b_1()
+                    .border_color(ui.border)
+                    .when(!self.rail_hidden, |row| row.child(rail))
+                    .child(div().flex_1().min_w_0().flex().pl_3().child(heading))
+                    .child(controls),
+            };
             let column = div()
                 .id("dock-bottom-column")
                 .relative()
@@ -1541,8 +1737,12 @@ impl DockState {
             .children(buttons)
             .footer(actions)
             .track(&self.drawn.rail);
-        let column = body.map(|(view, heading, controls)| {
-            let title = title_row(heading, controls).map(|row| {
+        let column = body.map(|(view, header)| {
+            let title = match header {
+                Header::Tabs(tabs) => tabs,
+                Header::Title(heading, controls) => title_row(heading, controls),
+            };
+            let title = title.map(|row| {
                 if left {
                     row.border_r_1()
                 } else {
@@ -1586,8 +1786,17 @@ impl DockState {
     }
 }
 
-/// Runs `command` for a clicked [`RailAction`], in the focused context.
-fn run_action(command: &str, window: &mut Window, cx: &mut App) {
+/// A shown dock's header: its panel's heading and the controls, or a
+/// tabbed dock's tab row ([`DockState::tab_row`]), which has them.
+enum Header {
+    Title(gpui::Div, AnyElement),
+    Tabs(gpui::Div),
+}
+
+/// Runs `command` for a clicked [`RailAction`], in the focused context, from
+/// the mouse: for a host's [`DockView::action_clicked`] to run it as the
+/// default does.
+pub fn run_action(command: &str, window: &mut Window, cx: &mut App) {
     let Ok(invocation) = Invocation::of(command) else {
         return;
     };
@@ -1608,6 +1817,35 @@ pub trait DockView: Render + Sized {
     /// [`DockState::click_rail`] says.
     fn rail_clicked(&mut self, panel: PanelId, window: &mut Window, cx: &mut Context<Self>) {
         self.dock_mut().click_rail(panel, window, cx);
+        cx.notify();
+    }
+
+    /// The [`RailAction`] `id` was clicked, which runs `command`: by
+    /// default, runs it, in the focused context, as a key would, once the
+    /// click's update is over, as the command may update the view. A host
+    /// can do more, such as hiding what a highlighted action shows.
+    fn action_clicked(
+        &mut self,
+        id: &'static str,
+        command: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let _ = id;
+        window.defer(cx, move |window, cx| run_action(command, window, cx));
+    }
+
+    /// `panel`'s tab was clicked: by default, shows it, as
+    /// [`DockState::show`] does.
+    fn tab_clicked(&mut self, panel: PanelId, window: &mut Window, cx: &mut Context<Self>) {
+        self.dock_mut().show(panel, window, cx);
+        cx.notify();
+    }
+
+    /// `panel`'s tab's close button was clicked: by default, closes it, as
+    /// [`DockState::close_tab`] does.
+    fn tab_closed(&mut self, panel: PanelId, _: &mut Window, cx: &mut Context<Self>) {
+        self.dock_mut().close_tab(panel);
         cx.notify();
     }
 
@@ -1769,6 +2007,25 @@ impl DockView for Dock {
 
     fn rail_clicked(&mut self, panel: PanelId, window: &mut Window, cx: &mut Context<Self>) {
         self.state.click_rail(panel, window, cx);
+        if self.state.hidden_panel_focused(window, cx) {
+            cx.emit(DockEvent::HidFocus);
+        }
+        cx.notify();
+    }
+
+    /// Shows the tab's panel, then tells the host if the one it hid had
+    /// focus.
+    fn tab_clicked(&mut self, panel: PanelId, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.show(panel, window, cx);
+        if self.state.hidden_panel_focused(window, cx) {
+            cx.emit(DockEvent::HidFocus);
+        }
+        cx.notify();
+    }
+
+    /// Closes the tab, then tells the host if the panel it hid had focus.
+    fn tab_closed(&mut self, panel: PanelId, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.close_tab(panel);
         if self.state.hidden_panel_focused(window, cx) {
             cx.emit(DockEvent::HidFocus);
         }

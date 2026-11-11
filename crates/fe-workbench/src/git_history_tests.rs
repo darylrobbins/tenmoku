@@ -307,8 +307,12 @@ fn lists(cx: &mut TestAppContext) {
     focus_on(&editor_focus, cx);
     ex("Gclog", cx);
     assert_eq!(message(&editor, cx), None);
-    let log = (true, DockPanel::SourceControl, "Changes".to_owned());
-    assert_eq!(dock(&workbench, cx), log);
+    // In the bottom panel (T1548).
+    let log = workbench.read_with(cx, |workbench, cx| {
+        use kiln_shell::DockView as _;
+        workbench.terminal_dock().read(cx).dock().rail_highlighted()
+    });
+    assert_eq!(log, Some(kiln_shell::PanelId("git_log")));
     for (line, answer) in [
         ("3Gclog", "Not supported yet: :3Gclog"),
         ("Gclog main", "Not supported yet: :Gclog main"),

@@ -174,10 +174,13 @@ fn panel_focused(s: &mut Lsp) -> bool {
 }
 
 /// The dock's visibility and active panel.
+/// Whether the bottom panel, Problems' dock (T1548), shows, and the tool
+/// window it shows, by its id.
 fn dock(s: &mut Lsp) -> (bool, DockPanel) {
     s.workbench.read_with(&s.cx, |w, cx| {
-        let dock = w.dock().read(cx);
-        (dock.is_visible(), dock.active())
+        let dock = w.terminal_dock().read(cx);
+        let active = dock.active().map_or("", |id| id.0);
+        (dock.is_visible(), DockPanel::new(active))
     })
 }
 
@@ -336,7 +339,8 @@ fn next_previous(cx: &mut TestAppContext) {
 fn status(cx: &mut TestAppContext) {
     let mut s = setup(cx);
     assert_eq!(item(&mut s).as_deref(), Some("1"));
-    assert_ne!(dock(&mut s).1, DockPanel::Problems);
+    // The bottom panel hidden at launch.
+    assert!(!dock(&mut s).0);
 
     // A click runs `problems.show`: the dock shows the panel, focused.
     let bounds =
@@ -352,7 +356,13 @@ fn status(cx: &mut TestAppContext) {
     assert!(ran);
 
     // Hidden, the item still shows it.
-    s.run("dock.toggle");
+    // Hidden as its rail button hides it, the editor taking focus.
+    let workbench = s.workbench.clone();
+    s.cx.update(|window, cx| {
+        workbench.update(cx, |w, cx| w.hide_bottom_panel(cx));
+        window.focus(&gpui::Focusable::focus_handle(&workbench, cx), cx);
+    });
+    s.draw();
     assert!(!dock(&mut s).0);
     let bounds =
         s.cx.debug_bounds("status-item:problems")
