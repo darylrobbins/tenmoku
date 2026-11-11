@@ -5,6 +5,8 @@
 //! operating system (kiln's `docs/framework.md` §4); everything else
 //! asks [`Os`], so it can be tested "as Linux" on any host.
 
+#[cfg(windows)]
+mod acl;
 pub(crate) mod env;
 pub(crate) mod fs;
 
@@ -14,8 +16,9 @@ pub use env::{
 };
 
 pub use fs::{
-    canonicalize, create_private_dir, file_identity, is_executable, modified_parts,
-    open_for_reading, owned_and_unshared, path_identity, private, program_candidates, sync_dir,
+    Owner, canonicalize, create_private_dir, file_identity, is_executable, modified_parts,
+    open_dir, open_for_reading, owned_and_unshared, path_identity, private, program_candidates,
+    sync_dir,
 };
 pub(crate) mod keychain;
 pub(crate) mod process_tree;

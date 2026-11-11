@@ -12,7 +12,7 @@
 
 use std::{
     collections::hash_map::DefaultHasher,
-    fs::{self, File, Metadata, OpenOptions},
+    fs::{self, File, OpenOptions},
     hash::{Hash, Hasher},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -36,9 +36,9 @@ const EXTENSION: &str = "cwasm";
 /// Serialized compiled components in one directory.
 pub struct ComponentCache {
     dir: PathBuf,
-    /// The user id that owns what we create here, learnt by creating a file. `None` when the
-    /// directory is not writable: then nothing in it is trusted.
-    owner: Option<Metadata>,
+    /// Who owns what we create here, learnt by creating a file. `None` when the directory is
+    /// not writable: then nothing in it is trusted.
+    owner: Option<platform::Owner>,
     compiled: AtomicUsize,
 }
 
@@ -90,19 +90,18 @@ impl ComponentCache {
 
     fn cached(&self, engine: &Engine, path: &Path, key: &[u8; 32]) -> Option<Component> {
         let owner = self.owner.as_ref()?;
-        if !platform::owned_and_unshared(&fs::metadata(&self.dir).ok()?, owner) {
+        if !platform::owned_and_unshared(&platform::open_dir(&self.dir).ok()?, owner) {
             return None;
         }
         // Without blocking: a FIFO put at the path is a miss, not a hang.
         let mut file = platform::open_for_reading(path).ok()?;
         // The opened file, so a swap after the check changes nothing.
-        let metadata = file.metadata().ok()?;
-        if !metadata.is_file() || !platform::owned_and_unshared(&metadata, owner) {
+        if !file.metadata().ok()?.is_file() || !platform::owned_and_unshared(&file, owner) {
             return None;
         }
         let mut entry = Vec::new();
         file.read_to_end(&mut entry).ok()?;
-        // The envelope: this entry's key, then the digest of the payload. Ownership and modes
+        // The envelope: this entry's key, then the digest of the payload. Ownership and access
         // say who wrote the file, not that it is whole, and wasmtime's checks on the payload
         // are of its format, not its code.
         let (header, serialized) = entry.split_at_checked(HEADER)?;
@@ -126,7 +125,7 @@ impl ComponentCache {
             .owner
             .as_ref()
             .ok_or_else(|| io::Error::other("directory not writable"))?;
-        if !platform::owned_and_unshared(&fs::metadata(&self.dir)?, owner) {
+        if !platform::owned_and_unshared(&platform::open_dir(&self.dir)?, owner) {
             return Err(io::Error::other("directory is writable by others"));
         }
         // A name of its own, removed only once created, so overlapping stores never share or
@@ -168,11 +167,12 @@ impl ComponentCache {
 }
 
 /// A file made in `dir`, which says whose files are ours there.
-fn probe(dir: &Path) -> io::Result<Metadata> {
+fn probe(dir: &Path) -> io::Result<platform::Owner> {
     let (path, file) = create_unique(dir, ".probe")?;
-    let metadata = file.metadata();
+    let owner = platform::Owner::of(&file);
+    drop(file);
     drop(fs::remove_file(path));
-    metadata
+    owner
 }
 
 /// Creates a new private file in `dir` under a name no other call, in this process or another,

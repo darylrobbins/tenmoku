@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The component cache compiles once per component, and trusts only entries that are ours.
-//!
-//! Unix only: on Windows nothing is trusted (`platform::owned_and_unshared`
-//! has no modes to check there), so every load compiles.
-#![cfg(unix)]
+//! The component cache compiles once per component, and trusts only entries that are ours:
+//! on Unix by owner and mode, on Windows by owner SID and access list.
 
 use std::{
     fs::{self, File},
@@ -124,6 +121,45 @@ fn a_group_writable_directory_or_file_is_not_trusted() {
     cache.load(&engine, &bytes).unwrap();
     assert_eq!(cache.compiled(), 3);
     chmod(&dir, 0o700);
+}
+
+/// `a_group_writable_directory_or_file_is_not_trusted` on Windows: an access entry that lets
+/// Everyone write (`*S-1-1-0`, by SID, as its name is translated), on the entry and then on the
+/// directory.
+#[cfg(windows)]
+#[test]
+fn a_directory_or_file_others_can_write_is_not_trusted() {
+    let dir = temp_dir("dacl");
+    let (cache, engine) = (ComponentCache::new(&dir), engine());
+    let bytes = component(1);
+    let icacls = |path: &Path, args: &[&str]| {
+        let status = std::process::Command::new("icacls")
+            .arg(path)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "icacls {args:?} on {}", path.display());
+    };
+    cache.load(&engine, &bytes).unwrap();
+    cache.load(&engine, &bytes).unwrap();
+    // Trusted as it was made, so the second load deserialized.
+    assert_eq!(cache.compiled(), 1);
+    let path = cache.entry_path(&engine, &bytes);
+
+    icacls(&path, &["/grant", "*S-1-1-0:(W)"]);
+    cache.load(&engine, &bytes).unwrap();
+    assert_eq!(cache.compiled(), 2);
+    // The entry was replaced by one only we can write.
+    cache.load(&engine, &bytes).unwrap();
+    assert_eq!(cache.compiled(), 2);
+
+    icacls(&dir, &["/grant", "*S-1-1-0:(W)"]);
+    cache.load(&engine, &bytes).unwrap();
+    assert_eq!(cache.compiled(), 3);
+    icacls(&dir, &["/remove:g", "*S-1-1-0"]);
+    cache.load(&engine, &bytes).unwrap();
+    assert_eq!(cache.compiled(), 3);
 }
 
 #[test]

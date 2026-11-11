@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! File operations whose safe form differs by operating system: opening an
-//! untrusted file without blocking on a FIFO, and creating private
-//! directories and files (owner-only on Unix; Windows keeps its defaults,
-//! which a user's profile directory already restricts). And a file's
+//! untrusted file without blocking on a FIFO, creating private directories
+//! and files (owner-only modes on Unix, a protected access list on Windows),
+//! and telling whether what is in one is still ours alone. And a file's
 //! [`FileStamp`], as finely as the OS reports what changed.
 
 use std::{
@@ -22,13 +22,64 @@ pub fn open_for_reading(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
-/// Creates `dir` and its missing ancestors, readable by the owner alone.
+/// Creates `dir` and its missing ancestors, readable by the owner alone: mode 0700 on Unix; on
+/// Windows owned by the current user, with a protected access list (none of the parent's
+/// inherited) that gives full control to that user and `SYSTEM`, which what is created inside
+/// inherits. A directory that already exists is left as it is.
 pub fn create_private_dir(dir: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
     #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
+    {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(dir)
+    }
+    #[cfg(windows)]
+    {
+        // As `DirBuilder::recursive` does it: the directory, else its parent first.
+        if dir.as_os_str().is_empty() {
+            return Ok(());
+        }
+        match super::acl::create_private_dir(dir) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) if dir.is_dir() => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        match dir.parent() {
+            Some(parent) => create_private_dir(parent)?,
+            None => return Err(io::ErrorKind::NotFound.into()),
+        }
+        match super::acl::create_private_dir(dir) {
+            Ok(()) => Ok(()),
+            Err(_) if dir.is_dir() => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// Opens directory `dir` to check it with [`owned_and_unshared`], following a symlink as
+/// [`fs::metadata`] does. Not a directory is an error.
+pub fn open_dir(dir: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    let file = open_for_reading(dir)?;
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, READ_CONTROL,
+        };
+        // Its security descriptor and attributes alone; a folder opens only with backup
+        // semantics.
+        OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)?
+    };
+    if !file.metadata()?.is_dir() {
+        return Err(io::ErrorKind::NotADirectory.into());
+    }
+    Ok(file)
 }
 
 /// `options` with new files readable and writable by the owner alone.
@@ -58,18 +109,71 @@ pub fn sync_dir(dir: &Path) -> io::Result<()> {
     }
 }
 
-/// Whether `metadata` is of something owned by the user `reference` is owned by (a file just
-/// created) that no one else can write. Never on Windows, which has no such modes to check.
-pub fn owned_and_unshared(metadata: &fs::Metadata, reference: &fs::Metadata) -> bool {
+/// Whose a file this process creates is, learnt from one it just created ([`Owner::of`]), to
+/// check others against with [`owned_and_unshared`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Owner {
+    #[cfg(unix)]
+    uid: u32,
+    /// The current user, then the token's default owner if that differs (`Administrators` in
+    /// some elevated processes): either may own what this process made.
+    #[cfg(windows)]
+    sids: Vec<super::acl::Sid>,
+}
+
+impl Owner {
+    /// The owner of `file`, one this process just created: on Unix its user id; on Windows the
+    /// current user from the process token, and an error if `file` is owned by anyone else.
+    pub fn of(file: &File) -> io::Result<Owner> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Ok(Owner {
+                uid: file.metadata()?.uid(),
+            })
+        }
+        #[cfg(windows)]
+        {
+            use super::acl;
+            let mut sids = vec![acl::current_user()?];
+            let default = acl::default_owner()?;
+            if default != sids[0] {
+                sids.push(default);
+            }
+            let owner = acl::security(file)?.owner;
+            if !owner.is_some_and(|owner| sids.contains(&owner)) {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            Ok(Owner { sids })
+        }
+    }
+}
+
+/// Whether open file or directory `file` is `owner`'s, and no one else can write it. On Unix:
+/// its user id is the owner's and it has no group or other write bit. On Windows: its owner SID
+/// is the current user (or the default owner `owner` holds), and its access list grants a
+/// write right to no one but that user, `SYSTEM` and `Administrators`; a null list, or an entry
+/// of a kind not read, fails. A directory is opened with [`open_dir`].
+pub fn owned_and_unshared(file: &File, owner: &Owner) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        metadata.uid() == reference.uid() && metadata.mode() & 0o022 == 0
+        file.metadata()
+            .is_ok_and(|metadata| metadata.uid() == owner.uid && metadata.mode() & 0o022 == 0)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = (metadata, reference);
-        false
+        use super::acl::{ADMINISTRATORS, SYSTEM, security};
+        let Ok(security) = security(file) else {
+            return false;
+        };
+        let ours = |sid: &super::acl::Sid| owner.sids.contains(sid);
+        security.owner.as_ref().is_some_and(ours)
+            && security.writers.is_some_and(|writers| {
+                writers
+                    .iter()
+                    .all(|sid| ours(sid) || sid.is(SYSTEM) || sid.is(ADMINISTRATORS))
+            })
     }
 }
 
@@ -112,21 +216,7 @@ pub fn file_identity(file: &File) -> io::Result<(u64, u64)> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-        };
-        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-        // SAFETY: `file` is an open handle and `info` is valid for writes.
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: the call succeeded, so it filled `info`.
-        let info = unsafe { info.assume_init() };
-        Ok((
-            u64::from(info.dwVolumeSerialNumber),
-            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-        ))
+        super::acl::file_identity(file)
     }
 }
 

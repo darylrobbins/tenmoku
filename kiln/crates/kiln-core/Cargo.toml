@@ -34,14 +34,18 @@ security-framework.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store.workspace = true
-# A file's volume and index, its identity (src/platform/fs.rs); a job object
-# per process tree, its thread resumed once assigned (src/platform/process_tree.rs).
+# A file's volume and index, its identity, and private directories' access
+# lists, owners and the process token's user (src/platform/acl.rs); a job
+# object per process tree, its thread resumed once assigned
+# (src/platform/process_tree.rs).
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_JobObjects",
+    "Win32_System_SystemServices",
     "Win32_System_Threading",
 ] }
 
