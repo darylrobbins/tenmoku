@@ -134,32 +134,24 @@ fn button_follows_scope(cx: &mut TestAppContext) {
 fn no_folder_has_no_workspace_scope(cx: &mut TestAppContext) {
     let dirs = Dirs::new();
     let (_, editor, cx) = open_settings(cx, &dirs, false, Scope::Workspace);
-    assert!(!drawn("settings-scope-workspace", cx));
-    let (name, file) = editor.read_with(cx, |editor, cx| editor.open_file_target(cx));
-    assert_eq!((name, file), ("User", Some(dirs.user())));
+    assert!(!drawn("segment:This project", cx));
+    let file = editor.read_with(cx, |editor, cx| editor.open_file_target(cx));
+    assert_eq!(file, Some(dirs.user()));
 }
 
+/// The Open button opens the selected scope's file, as its tooltip shows:
+/// the switch beside it names the scope.
 #[gpui::test]
-fn label_names_the_scope(cx: &mut TestAppContext) {
+fn button_shows_the_scope_file(cx: &mut TestAppContext) {
     let dirs = Dirs::new();
     let (_, editor, cx) = open_settings(cx, &dirs, true, Scope::User);
     let target = |editor: &Entity<SettingsEditor>, cx: &mut VisualTestContext| {
         editor.read_with(cx, |editor, cx| editor.open_file_target(cx))
     };
-    let (name, file) = target(&editor, cx);
-    assert_eq!(
-        format!("Open {name} settings.toml"),
-        "Open User settings.toml"
-    );
-    assert_eq!(file, Some(dirs.user()), "the tooltip's path");
+    assert_eq!(target(&editor, cx), Some(dirs.user()), "the tooltip's path");
     editor.update(cx, |editor, cx| editor.set_scope(Scope::Workspace, cx));
     draw(cx);
-    let (name, file) = target(&editor, cx);
-    assert_eq!(
-        format!("Open {name} settings.toml"),
-        "Open Workspace settings.toml"
-    );
-    assert_eq!(file, Some(dirs.workspace()));
+    assert_eq!(target(&editor, cx), Some(dirs.workspace()));
 }
 
 #[gpui::test]

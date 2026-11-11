@@ -24,11 +24,14 @@ use kiln::{
     platform::config::{BatchSender, batch_channel},
 };
 
-use super::{
-    Scope, SettingsEditor, choices,
-    controls::{self, DEFAULT_CHOICE, NOT_INSTALLED},
-};
+use super::{Scope, SettingsEditor, choices, controls};
 use crate::{Launch, Workbench, open::ConfigDirOverride};
+
+/// What a choice unset by default shows, in English.
+const DEFAULT_CHOICE: &str = "Default (built-in)";
+
+/// What a choice whose value isn't listed shows beside it, in English.
+const NOT_INSTALLED: &str = "not installed";
 
 /// The variable naming the [`Dirs`] base that a test run again in a
 /// process of its own works in.
@@ -284,7 +287,7 @@ pub(super) fn label(
     editor: &Entity<SettingsEditor>,
     key: &str,
     cx: &mut VisualTestContext,
-) -> (String, Option<&'static str>) {
+) -> (String, Option<gpui::SharedString>) {
     editor.read_with(cx, |editor, cx| {
         let entry = editor.entry(key).unwrap();
         let options = controls::options(entry, cx).unwrap();
@@ -426,7 +429,7 @@ fn unknown_value_still_shows(cx: &mut TestAppContext) {
     // The value, as the file has it, with a hint, and left alone.
     let key = "theme.dark";
     let editor = open_settings(&workbench, Scope::User, key, cx);
-    let gone = ("acme.gone/old".to_owned(), Some(NOT_INSTALLED));
+    let gone = ("acme.gone/old".to_owned(), Some(NOT_INSTALLED.into()));
     assert_eq!(label(&editor, key, cx), gone);
     assert!(drawn(&format!("setting-hint-{key}"), cx));
     click(&format!("setting-select-{key}"), cx);
@@ -514,7 +517,7 @@ fn theme_name_aliases_are_known(cx: &mut TestAppContext) {
         let shown = controls::select_label(entry, &options, &gone);
         assert_eq!(
             shown.1,
-            Some(NOT_INSTALLED),
+            Some(NOT_INSTALLED.into()),
             "an installed one isn't a name"
         );
     });

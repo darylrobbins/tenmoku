@@ -14,6 +14,7 @@
 use fe_config::{ChoiceSource, EnumVariant, chat_models, themes};
 use gpui::App;
 use kiln::core::theme::Appearance;
+use kiln_l10n::tr;
 
 use crate::theme_picker::{self, Source};
 
@@ -87,7 +88,7 @@ fn themes(appearance: Option<Appearance>, cx: &App) -> Vec<EnumVariant> {
             .filter_map(|row| match row.source {
                 Source::Bundled(theme) => Some(EnumVariant {
                     value: theme.title.to_owned(),
-                    description: appearance_name(theme.appearance).to_owned(),
+                    description: appearance_name(theme.appearance).to_string(),
                 }),
                 Source::Installed(_) => None,
             })
@@ -95,9 +96,10 @@ fn themes(appearance: Option<Appearance>, cx: &App) -> Vec<EnumVariant> {
     }
 }
 
-fn appearance_name(appearance: Appearance) -> &'static str {
+/// A bundled theme's appearance, as `theme.name`'s list describes it.
+fn appearance_name(appearance: Appearance) -> gpui::SharedString {
     match appearance {
-        Appearance::Dark => "dark",
-        Appearance::Light => "light",
+        Appearance::Dark => tr!("workbench-settings-appearance-dark"),
+        Appearance::Light => tr!("workbench-settings-appearance-light"),
     }
 }

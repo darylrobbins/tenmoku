@@ -1,19 +1,25 @@
-//! The Settings editor, as VS Code's (`workbench.action.openSettings2`):
-//! a tab, opened by `workbench.open_settings_ui`, that lists every setting
-//! [`SettingsModel`] knows, grouped as the schema nests them, with its
-//! description and its value, which it edits in place: a switch, a
-//! dropdown, an input or a list editor by the setting's kind, or a link to
+//! The Settings editor (`docs/design/design-system.md`, "Settings"): a tab,
+//! opened by `workbench.open_settings_ui`, that lists every setting
+//! [`SettingsModel`] knows, grouped as the schema nests them, with one line
+//! of help and its value, which it edits in place: a switch, a dropdown, an
+//! input or a list editor by the setting's kind, or a button to open
 //! `settings.toml` for a table ([`controls`]).
 //!
-//! - A search field on top, focused when the tab opens, filters the list
-//!   as it's typed ([`SettingsModel::search`]); a group with nothing found
-//!   loses its heading, and nothing found at all says so.
-//! - Beside it, the User and Workspace scopes, as VS Code's tabs: a row
-//!   shows the selected scope's file's value, else what it inherits, and
-//!   a 2px accent bar at its left edge if that file sets it. Workspace
-//!   shows only with a folder open, and dims the rows a project's file
-//!   can't set ([`SettingsModel::workspace_allowed`]), whose controls are
-//!   off.
+//! - On top, the page title, Settings, in the serif (the page title role,
+//!   Instrument Serif 30/36), the You / This project switch beside it, and
+//!   under them a search field, focused when the tab opens, that filters
+//!   the list as it's typed ([`SettingsModel::search`]), by a setting's key
+//!   (`editor.font`) as well as its words; a group with nothing found loses
+//!   its heading, and nothing found at all says so.
+//! - With nothing searched for, the Common section comes first: the theme
+//!   cards, then the settings in [`COMMON`], which then show there and not
+//!   in their own groups ([`layout`]).
+//! - The switch picks the scope, You (the user's file) or This project (the
+//!   root's): a row shows the selected scope's file's value, else what it
+//!   inherits, and an accent dot and Reset if that file sets it. This
+//!   project shows only with a folder open, and dims the rows a project's
+//!   file can't set ([`SettingsModel::workspace_allowed`]), whose controls
+//!   are off.
 //! - A change is written to the selected scope's file
 //!   ([`fe_config::set_setting`], [`fe_config::reset_setting`]), keeping
 //!   its comments and key order, off the main thread and after the writes
@@ -45,8 +51,10 @@
 //! layouts, and closes as any tab does.
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -56,19 +64,24 @@ use std::{
 use fe_command::Value as Json;
 use fe_config::{SettingEditError, SettingEntry, SettingsModel};
 use fe_gpui::commands::RunCommand;
-use fe_ui::{Icon, TextInput, TextInputEvent, Tooltip, ui_theme};
+use fe_ui::{
+    Button, FamilySlot, FontFamilies, Icon, PAGE_TITLE, SegmentedControl, TextInput,
+    TextInputEvent, TextRole, height, ui_theme,
+};
 use gpui::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, Global, InteractiveElement as _,
     IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState, MouseButton,
     ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, WeakEntity, Window, div, list, px, svg,
+    Subscription, Task, WeakEntity, Window, div, list, px,
 };
 use kiln::platform::config::{self, ChangedFiles};
+use kiln_l10n::{text, tr};
 use kiln_shell::{PaneItem, PaneView as _};
 
 use crate::{
     RootChanged, Workbench, open,
     picker::{self, PaletteOp},
+    setup_wizard_preview::Swatches,
     workbench::toast::{self, Toast},
 };
 
@@ -103,27 +116,60 @@ mod caret_tests;
 
 use controls::{Change, Field, ListField, Select};
 use layout::Section;
+#[cfg(test)]
+pub(crate) use layout::ThemeCard;
 
 /// The key context the editor's element sets.
 pub(crate) const KEY_CONTEXT: &str = "settings_editor";
 
-/// The height of a setting's title line, and of a switch's or a link's
-/// line.
-const LINE_HEIGHT: Pixels = px(18.);
+/// The height of a setting's title line: its label, its key and Reset.
+const LINE_HEIGHT: Pixels = px(22.);
 
-/// The height of the control's line: a text input's.
-const CONTROL_HEIGHT: Pixels = px(30.);
+/// The height of every row's control: the design's control, 26 px.
+pub(crate) const CONTROL_HEIGHT: Pixels = height::CONTROL;
+
+/// The page title's style: the design's page title, Instrument Serif 30/36.
+pub(crate) const TITLE_ROLE: TextRole = PAGE_TITLE;
 
 /// How far past the list's ends it lays rows out, so the rows next to the
 /// view are measured before Up or Down reaches them.
 const OVERDRAW: Pixels = px(240.);
 
-/// What a workspace-restricted row says under the Workspace scope, as VS
-/// Code's.
-pub(crate) const WORKSPACE_RESTRICTED: &str = "This setting cannot be changed in a workspace";
+/// The settings the Common section shows under the theme cards, in order,
+/// by dotted key. With nothing searched for, they show there and not in
+/// their own groups.
+pub(crate) const COMMON: [&str; 4] = [
+    "workbench.rail",
+    "editor.font_family",
+    "editor.font_size",
+    "vim.enabled",
+];
 
-/// What the list says when the search finds nothing.
-pub(crate) const NOTHING_FOUND: &str = "No settings found";
+/// The top-level tables in the order the page lists them after the Common
+/// section, the most often changed first (the UI audit's SE1); any other
+/// after them, in the schema's order.
+const SECTION_ORDER: [&str; 11] = [
+    "editor",
+    "theme",
+    "workbench",
+    "vim",
+    "terminal",
+    "lsp",
+    "tree",
+    "status_bar",
+    "chat",
+    "extensions",
+    "update",
+];
+
+/// The setting the Common section's theme cards set.
+pub(crate) const THEME_MODE: &str = "theme.mode";
+
+/// The theme settings a theme card removes where they'd show another theme
+/// than the card's ([`SettingsEditor::pick_theme_card`]).
+const THEME_DARK: &str = "theme.dark";
+const THEME_LIGHT: &str = "theme.light";
+const THEME_NAME: &str = "theme.name";
 
 /// Which settings file the editor shows values from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -203,6 +249,15 @@ pub(crate) struct SettingsEditor {
     model: Option<SettingsModel>,
     /// What the search finds, with its groups' headings.
     rows: Vec<Row>,
+    /// How many of the rows, from the first, are the Common section's: its
+    /// heading, with the theme cards, and its settings. None while
+    /// searching.
+    common: usize,
+    /// The theme cards' colours, each theme's own, read once.
+    swatches: Swatches,
+    /// Where each theme card was drawn in the last frame, `None` for one
+    /// that wasn't: what the keys scroll into view.
+    card_bounds: Rc<RefCell<[Option<gpui::Bounds<Pixels>>; 3]>>,
     /// The top-level groups the rows show settings of, as the category
     /// navigation lists them.
     sections: Vec<Section>,
@@ -266,7 +321,8 @@ impl SettingsEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let ui = ui_theme(cx);
-        let search = cx.new(|cx| TextInput::new("Search settings", &ui, cx).bordered());
+        let search =
+            cx.new(|cx| TextInput::new(text!("workbench-settings-search"), &ui, cx).bordered());
         let root_focus = cx.focus_handle();
         let subscriptions = vec![
             // Back from another tab or app: in case the watcher missed a
@@ -311,6 +367,9 @@ impl SettingsEditor {
             root,
             model: None,
             rows: Vec::new(),
+            common: 0,
+            swatches: Swatches::load(),
+            card_bounds: Rc::default(),
             sections: Vec::new(),
             anchor: None,
             pinned: false,
@@ -461,7 +520,8 @@ impl SettingsEditor {
                 cx.update(|cx| {
                     toast::show(
                         cx,
-                        Toast::error(format!("Can't change {dotted}")).detail(error.to_string()),
+                        Toast::error(tr!("workbench-settings-cant-change", key = dotted.as_str()))
+                            .detail(error.to_string()),
                     )
                 });
             }
@@ -512,9 +572,10 @@ impl SettingsEditor {
     /// rows, read again, are measured again where they are.
     fn refilter(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_setting();
-        let rows = match &self.model {
+        let cards = self.cards_selected();
+        let (rows, common) = match &self.model {
             Some(model) => rows(model, self.search.read(cx).text()),
-            None => Vec::new(),
+            None => (Vec::new(), 0),
         };
         if rows == self.rows {
             self.list.remeasure();
@@ -527,12 +588,14 @@ impl SettingsEditor {
             self.hovered = None;
         }
         self.rows = rows;
+        self.common = common;
         self.sections = match &self.model {
-            Some(model) => layout::sections(model, &self.rows),
+            Some(model) => layout::sections(model, &self.rows, common),
             None => Vec::new(),
         };
         self.selected = selected
-            .and_then(|entry| (self.rows.iter()).position(|row| *row == Row::Setting(entry)));
+            .and_then(|entry| (self.rows.iter()).position(|row| *row == Row::Setting(entry)))
+            .or((cards && common > 0).then_some(0));
         cx.notify();
     }
 
@@ -664,9 +727,10 @@ impl SettingsEditor {
     /// Selects the setting below the selected one, or with `down` false the
     /// one above, skipping headings, or the first with none selected, and
     /// scrolls it into view.
-    fn move_selection(&mut self, down: bool, cx: &mut Context<Self>) {
+    fn move_selection(&mut self, down: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // The settings, and the Common section's heading, its theme cards.
         let settings: Vec<usize> = (self.rows.iter().enumerate())
-            .filter(|(_, row)| matches!(row, Row::Setting(_)))
+            .filter(|(ix, row)| matches!(row, Row::Setting(_)) || (*ix == 0 && self.common > 0))
             .map(|(ix, _)| ix)
             .collect();
         let at = self
@@ -683,14 +747,19 @@ impl SettingsEditor {
         self.selected = Some(next);
         self.select = None;
         self.pinned = false;
-        self.reveal(next, down);
+        // The theme cards' row: its ringed card, which a short or narrow
+        // list may not show with the heading at its top.
+        match next == 0 && self.common > 0 {
+            true => self.reveal_cards(window, cx),
+            false => self.reveal(next, down),
+        }
         cx.notify();
     }
 
     /// Scrolls row `ix`, just selected going `down` or up, into view, as
     /// little as it takes. Going up to a group's first setting, its heading
-    /// comes into view with it, the heading at the top, if both fit and
-    /// either is out of view. A row below the view that the list hasn't
+    /// comes into view with it, the heading at the top, if both fit, at the
+    /// heights they were drawn, and either is out of view. A row below the view that the list hasn't
     /// measured yet (keys pressed faster than it draws) comes to the top.
     fn reveal(&self, ix: usize, down: bool) {
         let list = &self.list;
@@ -701,9 +770,16 @@ impl SettingsEditor {
         };
         // Unmeasured, a setting is taken to be a tall one's height.
         let height = (list.bounds_for_item(ix)).map_or(px(120.), |row| row.size.height);
+        // A heading as tall as it was drawn; unmeasured, as tall as it can
+        // be: the Common section's, with its cards, is taller than others.
+        let heading_height = |heading: usize| match list.bounds_for_item(heading) {
+            Some(bounds) => bounds.size.height,
+            None if heading == 0 && self.common > 0 => layout::COMMON_HEADING_HEIGHT,
+            None => layout::HEADING_HEIGHT,
+        };
         let heading = (ix.checked_sub(1)).filter(|heading| {
             !down
-                && view.size.height >= layout::HEADING_HEIGHT + height
+                && view.size.height >= heading_height(*heading) + height
                 && matches!(self.rows[*heading], Row::Group(_))
         });
         let top = |item_ix| ListOffset {
@@ -753,6 +829,11 @@ impl SettingsEditor {
         let editing = self.editing(window, cx);
         let listing = self.focus.is_focused(window);
         match keystroke.key.as_str() {
+            "left" | "right" | "home" | "end" | "enter" | "space"
+                if !m.modified() && listing && self.cards_selected() =>
+            {
+                self.step_theme_card(keystroke.key.as_str(), window, cx);
+            }
             "up" | "down" if !m.modified() && listing && self.select.is_some() => {
                 self.move_highlight(keystroke.key == "down", cx);
             }
@@ -761,7 +842,7 @@ impl SettingsEditor {
                 if searching && down {
                     window.focus(&self.focus, cx);
                 }
-                self.move_selection(down, cx);
+                self.move_selection(down, window, cx);
             }
             "enter" if !m.modified() && editing.is_some() => {
                 if let Some(editing) = editing {
@@ -798,119 +879,114 @@ impl SettingsEditor {
         cx.stop_propagation();
     }
 
-    /// The Reset to Default button of row `ix`, `entry`'s.
+    /// The Reset button of row `ix`, `entry`'s, which puts back its default.
     fn reset_button(
         &self,
         ix: usize,
         entry: &SettingEntry,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let ui = ui_theme(cx);
         let key = entry.key.clone();
         let path = entry.key_path();
-        div()
-            .id(("setting-reset", ix))
-            .debug_selector(move || format!("setting-reset-{path}"))
-            .flex_none()
-            .self_center()
-            .size(LINE_HEIGHT)
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_sm()
-            .cursor_pointer()
-            .hover(move |style| style.bg(ui.row_hover))
-            .child(
-                svg()
-                    .path(Icon::RotateCcw.path())
-                    .size(px(12.))
-                    .text_color(ui.muted_text),
-            )
-            .tooltip(move |_, cx| {
-                cx.new(|_| Tooltip::new("Reset to Default", None::<&str>, &ui))
-                    .into()
-            })
-            .on_click(cx.listener(move |this, _, window, cx| this.reset(&key, window, cx)))
+        div().flex_none().child(
+            Button::new(("setting-reset", ix), text!("workbench-settings-reset"))
+                .name(tr!("workbench-settings-reset-tooltip"))
+                .ghost()
+                .small()
+                .debug_selector(move || selector("setting-reset", &path))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.reset(&key, window, cx);
+                    cx.stop_propagation();
+                })),
+        )
     }
 
-    /// The selected scope's name and settings file, as the Open button
-    /// labels and shows them.
-    fn open_file_target(&self, cx: &App) -> (&'static str, Option<PathBuf>) {
-        let (user, project) = self.files(cx);
-        match self.scope() {
-            Scope::User => ("User", user),
-            Scope::Workspace => ("Workspace", project),
-        }
+    /// The selected scope's settings file, as the Open button shows it.
+    pub(crate) fn open_file_target(&self, cx: &App) -> Option<PathBuf> {
+        Self::target(self.scope(), &self.files(cx))
     }
 
-    /// The search, the User and Workspace tabs and the Open button, on one
-    /// line where they fit.
+    /// The page's top: the serif title, the You / This project switch and
+    /// the Open button on one line, and the search under them.
     fn header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let ui = ui_theme(cx);
-        let shown = self.scope();
-        let (name, file) = self.open_file_target(cx);
-        let tip = file.map_or_else(
-            || "There's no config directory".to_owned(),
+        let tip = self.open_file_target(cx).map_or_else(
+            || tr!("workbench-settings-no-config-dir").to_string(),
             |path| path.display().to_string(),
         );
-        let tabs = div()
-            .flex()
-            .gap_4()
-            .children(self.scopes().iter().map(|&scope| {
-                let (label, selector) = match scope {
-                    Scope::User => ("User", "settings-scope-user"),
-                    Scope::Workspace => ("Workspace", "settings-scope-workspace"),
-                };
-                let selected = scope == shown;
-                div()
-                    .id(selector)
-                    .debug_selector(move || selector.into())
-                    .py_1p5()
-                    .border_b_2()
-                    .border_color(if selected {
-                        ui.accent
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .text_color(if selected { ui.text } else { ui.muted_text })
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_scope(scope, cx)))
-                    .child(label)
-            }));
+        let shown = self.scope();
+        let scopes = self.scopes();
+        let labels = scopes.iter().map(|scope| match scope {
+            Scope::User => tr!("workbench-settings-scope-user"),
+            Scope::Workspace => tr!("workbench-settings-scope-project"),
+        });
+        let switch = div()
+            .debug_selector(|| "settings-scope".into())
+            .flex_none()
+            .child(
+                SegmentedControl::new("settings-scope", tr!("workbench-settings-scope"))
+                    .segments(labels)
+                    .selected(scopes.iter().position(|scope| *scope == shown).unwrap_or(0))
+                    .on_change(cx.listener(move |this, ix: &usize, _, cx| {
+                        if let Some(scope) = scopes.get(*ix) {
+                            this.set_scope(*scope, cx);
+                        }
+                    })),
+            );
         let open = div()
             .id("setting-open-file")
             .debug_selector(|| "setting-open-file".into())
-            .py_1p5()
+            .flex_none()
             .text_color(ui.accent)
             .cursor_pointer()
             .hover(|style| style.underline())
-            .child(format!("Open {name} settings.toml"))
+            .child(tr!("workbench-settings-open-file"))
             .tooltip(move |_, cx| {
-                cx.new(|_| Tooltip::new(tip.clone(), None::<&str>, &ui))
+                cx.new(|_| fe_ui::Tooltip::new(tip.clone(), None::<&str>, &ui))
                     .into()
             })
             .on_click(cx.listener(|this, _, window, cx| this.edit_in_file(&[], window, cx)));
+        let role = TITLE_ROLE;
+        let family = (cx.try_global::<FontFamilies>().cloned().unwrap_or_default())
+            .family(FamilySlot::Title, cx);
+        let title = div()
+            .debug_selector(|| "settings-title".into())
+            .flex_none()
+            .font_family(family)
+            .text_size(role.size)
+            .line_height(role.line_height)
+            .font_weight(gpui::FontWeight(f32::from(role.weight)))
+            .text_color(ui.text)
+            .child(tr!("workbench-settings-title"));
         div()
             .flex_none()
             .flex()
-            .flex_wrap()
-            .items_end()
-            .gap_x_6()
+            .flex_col()
+            .gap_3()
             .px_6()
-            .pt_3()
+            .pt_4()
+            .pb_3()
             .border_b_1()
             .border_color(ui.border)
             .child(
                 div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_x_6()
+                    .gap_y_2()
+                    .child(title)
+                    .child(div().flex_1())
+                    .child(switch)
+                    .child(open),
+            )
+            .child(
+                div()
                     .debug_selector(|| "settings-search".into())
-                    .flex_grow(1.)
-                    .flex_basis(px(240.))
-                    .min_w_0()
-                    .pb_2()
+                    .w_full()
+                    .max_w(layout::COLUMN_WIDTH)
                     .child(self.search.clone()),
             )
-            .child(tabs)
-            .child(open)
     }
 }
 
@@ -943,11 +1019,21 @@ fn read_settings(path: &Path) -> Option<String> {
     }
 }
 
-/// The rows `query` finds in `model`: the top level's settings, then each
-/// group's under its heading, in the schema's order, leaving out the
-/// groups it finds nothing in.
-pub(crate) fn rows(model: &SettingsModel, query: &str) -> Vec<Row> {
+/// The rows `query` finds in `model`: with nothing searched for, the
+/// Common section first, its heading and its settings ([`COMMON`]); then
+/// the top level's settings, then each group's under its heading, the
+/// top-level tables in [`SECTION_ORDER`], each with its nested groups in
+/// the schema's order, leaving out the groups it finds nothing in and the
+/// settings the Common section shows. With them, how many rows are the
+/// Common section's.
+pub(crate) fn rows(model: &SettingsModel, query: &str) -> (Vec<Row>, usize) {
     let entries = model.entries();
+    let common: Vec<usize> = match query.trim().is_empty() {
+        true => (COMMON.iter())
+            .filter_map(|key| entries.iter().position(|entry| entry.key_path() == *key))
+            .collect(),
+        false => Vec::new(),
+    };
     let mut found = model.search(query).into_iter().peekable();
     // The search keeps the schema's order.
     let matched: Vec<bool> = (entries.iter())
@@ -961,19 +1047,35 @@ pub(crate) fn rows(model: &SettingsModel, query: &str) -> Vec<Row> {
         .collect();
     let in_group = |key: &[String]| -> Vec<Row> {
         (entries.iter().enumerate())
-            .filter(|(ix, entry)| matched[*ix] && entry.key[..entry.key.len() - 1] == *key)
+            .filter(|(ix, entry)| {
+                matched[*ix] && !common.contains(ix) && entry.key[..entry.key.len() - 1] == *key
+            })
             .map(|(ix, _)| Row::Setting(ix))
             .collect()
     };
-    let mut rows = in_group(&[]);
-    for group in model.groups() {
+    let mut rows = Vec::new();
+    if !common.is_empty() {
+        rows.push(Row::Group(tr!("workbench-settings-common").to_string()));
+        rows.extend(common.iter().map(|ix| Row::Setting(*ix)));
+    }
+    let common = rows.len();
+    rows.extend(in_group(&[]));
+    // Stable, so a table's nested groups stay after it.
+    let mut groups: Vec<_> = model.groups().iter().collect();
+    groups.sort_by_key(|group| {
+        let top = group.key.first().map(String::as_str);
+        (SECTION_ORDER.iter())
+            .position(|name| Some(*name) == top)
+            .unwrap_or(SECTION_ORDER.len())
+    });
+    for group in groups {
         let settings = in_group(&group.key);
         if !settings.is_empty() {
             rows.push(Row::Group(group.title.clone()));
             rows.extend(settings);
         }
     }
-    rows
+    (rows, common)
 }
 
 /// `entry`'s value as `scope` shows it: its file's, else, or if `reset`,
@@ -1011,11 +1113,23 @@ fn as_text((value, modified): (Json, bool)) -> (String, bool) {
     (text, modified)
 }
 
+/// [`layout::help_line`]: the one line of help a row shows of `text`.
+#[cfg(test)]
+pub(crate) fn help_line_for_tests(text: &str) -> String {
+    layout::help_line(text)
+}
+
 /// [`controls::table_row`], of a dotted key.
 #[cfg(test)]
 pub(crate) fn table_row_for_tests(text: &str, key: &str) -> Option<u32> {
     let key: Vec<String> = key.split('.').map(str::to_owned).collect();
     controls::table_row(text, &key)
+}
+
+/// A debug selector or element id of a row's part: `name`, a dash and
+/// `key`, the setting's dotted key, say, as in `settings-row-editor.tab_size`.
+pub(crate) fn selector(name: &str, key: &str) -> String {
+    format!("{name}-{key}")
 }
 
 /// `name` as a title, as the model titles groups: `status_bar` is `Status
@@ -1046,6 +1160,8 @@ impl Focusable for SettingsEditor {
 impl Render for SettingsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = ui_theme(cx);
+        // The cards drawn in this frame record themselves again.
+        *self.card_bounds.borrow_mut() = [None; 3];
         let errors = (self.model.iter())
             .flat_map(|model| model.errors())
             .map(|error| {
@@ -1063,7 +1179,7 @@ impl Render for SettingsEditor {
                 .px_6()
                 .py_4()
                 .text_color(ui.muted_text)
-                .child(NOTHING_FOUND)
+                .child(tr!("workbench-settings-nothing-found"))
                 .into_any_element()
         } else {
             list(
@@ -1147,7 +1263,7 @@ impl PaneItem for SettingsEditor {
     const KIND: &'static str = "fastedit.settings_editor";
 
     fn tab_title(&self, _: &App) -> SharedString {
-        "Settings".into()
+        tr!("workbench-settings-title")
     }
 
     fn tab_icon(&self, _: &App) -> Option<Icon> {

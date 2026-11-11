@@ -28,8 +28,11 @@ use super::{
         bounds, click, draw, drawn, in_own_process_of, open_list, open_settings, option, press,
         read, search_for, workbench,
     },
-    controls::{self, DEFAULT_CHOICE},
+    controls,
 };
+
+/// What a choice unset by default shows, in English.
+const DEFAULT_CHOICE: &str = "Default (built-in)";
 
 /// The fonts the text system has, out of order and twice over.
 const FONTS: &[&str] = &["Menlo", "Fira Code", "Menlo", "Iosevka", "Fira Code"];
@@ -117,7 +120,7 @@ fn label(
     editor: &gpui::Entity<SettingsEditor>,
     key: &str,
     cx: &mut VisualTestContext,
-) -> (String, Option<&'static str>) {
+) -> (String, Option<gpui::SharedString>) {
     editor.read_with(cx, |editor, cx| {
         let entry = editor.entry(key).unwrap();
         let (value, _) = editor.value(entry, cx).unwrap();

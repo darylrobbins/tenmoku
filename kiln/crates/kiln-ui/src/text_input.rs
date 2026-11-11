@@ -105,6 +105,8 @@ pub struct TextInput {
     name: Option<SharedString>,
     focus: FocusHandle,
     bordered: bool,
+    /// Its height: see [`TextInput::height`].
+    height: Pixels,
     /// Whether typed text goes in: see [`TextInput::set_typing`].
     typing: bool,
     /// The composition at the caret, and the selected bytes within it.
@@ -144,6 +146,7 @@ impl TextInput {
             name: None,
             focus: cx.focus_handle(),
             bordered: false,
+            height: px(30.),
             typing: true,
             marked: None,
             selected: false,
@@ -225,6 +228,13 @@ impl TextInput {
     /// [`crate::focus_ring`]) outside it while it has focus.
     pub fn bordered(mut self) -> Self {
         self.bordered = true;
+        self
+    }
+
+    /// Draws it `height` tall, rather than 30 px: the design's 26 px
+    /// control ([`crate::height::CONTROL`]) in a row of other controls.
+    pub fn height(mut self, height: Pixels) -> Self {
+        self.height = height;
         self
     }
 
@@ -846,7 +856,7 @@ impl Render for TextInput {
             .relative()
             .flex()
             .items_center()
-            .h(px(30.))
+            .h(self.height)
             .px_3()
             .text_color(text)
             .when_some(styled, |row, styled| {

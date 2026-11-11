@@ -111,6 +111,7 @@ mod run_widget_b3;
 mod search_panel;
 mod search_panel_cancel;
 mod search_panel_followups;
+mod settings_b3;
 mod settings_caret;
 mod sidebar_b3;
 mod splits;

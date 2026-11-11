@@ -78,6 +78,11 @@ migrated = [
     "src/pane.rs",
     "src/pane_toolbar.rs",
     "src/toolbar_picker.rs",
+    # The Settings page in B3 (T569).
+    "src/settings_editor.rs",
+    "src/settings_editor_layout.rs",
+    "src/settings_editor_controls.rs",
+    "src/settings_editor_choices.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -322,3 +327,20 @@ reason = "What a pane shows in its tab's place's debug selector, for tests"
 file = "src/toolbar_picker.rs"
 text = "toolbar-picker-icon:{name}:{path}"
 reason = "A row icon's debug selector, for tests"
+
+# The Settings page (T569): its buttons' element ids.
+
+[[literal]]
+file = "src/settings_editor.rs"
+text = "setting-reset"
+reason = "A row's Reset button's element id"
+
+[[literal]]
+file = "src/settings_editor_controls.rs"
+text = "setting-add"
+reason = "A list editor's Add Item button's element id"
+
+[[literal]]
+file = "src/settings_editor_controls.rs"
+text = "setting-edit"
+reason = "A table's Edit in settings.toml button's element id"

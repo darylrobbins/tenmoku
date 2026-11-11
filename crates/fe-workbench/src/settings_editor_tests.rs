@@ -20,7 +20,7 @@ use kiln_shell::{PaneItem as _, layout::LayoutStore, layout::WindowLayout};
 use crate::{
     Launch, Workbench,
     open::ConfigDirOverride,
-    settings_editor::{NOTHING_FOUND, Row, Scope, SettingsEditor},
+    settings_editor::{COMMON, Row, Scope, SettingsEditor},
 };
 
 /// A workbench on `root`, or on no folder, whose user settings are
@@ -302,14 +302,18 @@ fn lists_every_group(cx: &mut TestAppContext) {
     let editor = open_settings(&workbench, cx);
     let model = SettingsModel::new(None, None);
     let rows = row_texts(&editor, cx);
+    // The Common section first, its settings under its heading.
+    let mut common = vec!["# Common".to_owned()];
+    common.extend(COMMON.map(str::to_owned));
+    assert_eq!(rows[..common.len()], common);
     // Every setting once, and a heading for every group with settings,
-    // before them.
+    // before them, but the Common section's.
     for entry in model.entries() {
         let key = entry.key_path();
         let at = rows.iter().position(|row| *row == key);
         let at = at.unwrap_or_else(|| panic!("{key} is listed"));
         assert_eq!(rows.iter().filter(|row| **row == key).count(), 1, "{key}");
-        if !entry.group.is_empty() {
+        if !entry.group.is_empty() && !COMMON.contains(&key.as_str()) {
             let heading = format!("# {}", entry.group);
             let group = rows[..at].iter().rposition(|row| row.starts_with("# "));
             assert_eq!(group.map(|ix| &rows[ix]), Some(&heading), "{key}");
@@ -323,7 +327,7 @@ fn lists_every_group(cx: &mut TestAppContext) {
     assert!(rows.contains(&"# Editor > Minimap".to_owned()));
     assert_eq!(
         rows.len(),
-        model.entries().len() + model.groups().iter().filter(|g| g.count > 0).count()
+        model.entries().len() + model.groups().iter().filter(|g| g.count > 0).count() + 1
     );
     // The first rows are drawn: a heading, and a setting's row under it.
     let first_group = rows.iter().find(|row| row.starts_with("# ")).unwrap();
@@ -369,7 +373,10 @@ fn empty_result_message(cx: &mut TestAppContext) {
     search("zzqqxyzzy", cx);
     assert!(row_texts(&editor, cx).is_empty());
     assert!(drawn("settings-empty", cx));
-    assert_eq!(NOTHING_FOUND, "No settings found");
+    assert_eq!(
+        kiln_l10n::tr!("workbench-settings-nothing-found"),
+        "No settings found"
+    );
     assert!(!drawn("settings-group-Editor", cx));
 }
 
@@ -378,8 +385,8 @@ fn scope_bar_hidden_without_folder(cx: &mut TestAppContext) {
     let dirs = Dirs::new();
     let (workbench, cx) = workbench(cx, None, &dirs.config);
     let editor = open_settings(&workbench, cx);
-    assert!(drawn("settings-scope-user", cx));
-    assert!(!drawn("settings-scope-workspace", cx));
+    assert!(drawn("segment:You", cx));
+    assert!(!drawn("segment:This project", cx));
     // Asked for Workspace anyway, it shows the user's values.
     set_scope(&editor, Scope::Workspace, cx);
     assert_eq!(
@@ -392,8 +399,8 @@ fn scope_bar_hidden_without_folder(cx: &mut TestAppContext) {
         workbench.set_root(dirs.root.clone(), window, cx)
     });
     draw(cx);
-    assert!(drawn("settings-scope-user", cx));
-    assert!(drawn("settings-scope-workspace", cx));
+    assert!(drawn("segment:You", cx));
+    assert!(drawn("segment:This project", cx));
 }
 
 #[gpui::test]
@@ -520,19 +527,23 @@ fn keys_move_the_selection_and_reach_the_search(cx: &mut TestAppContext) {
     let editor = open_settings(&workbench, cx);
     let settings_at = |editor: &Entity<SettingsEditor>, cx: &mut VisualTestContext| {
         editor.read_with(cx, |editor, _| {
+            // The settings, and first the Common section's heading, whose
+            // theme cards the keys select too.
             (editor.rows().iter().enumerate())
-                .filter(|(_, row)| matches!(row, Row::Setting(_)))
+                .filter(|(ix, row)| matches!(row, Row::Setting(_)) || *ix == 0)
                 .map(|(ix, _)| ix)
                 .collect::<Vec<_>>()
         })
     };
     let settings = settings_at(&editor, cx);
+    assert_eq!(settings[0], 0);
     let selected = |cx: &mut VisualTestContext| editor.read_with(cx, |editor, _| editor.selected());
     let list_focused = |cx: &mut VisualTestContext| {
         cx.update(|window, cx| editor.read(cx).list_focus().is_focused(window))
     };
 
-    // Down from the search selects the first setting, in the list.
+    // Down from the search selects the first row, the theme cards', in the
+    // list.
     cx.simulate_keystrokes("down");
     draw(cx);
     assert_eq!(selected(cx), Some(settings[0]));
@@ -644,11 +655,11 @@ fn bounds(selector: &str, cx: &mut VisualTestContext) -> gpui::Bounds<gpui::Pixe
     found.unwrap_or_else(|| panic!("{selector} is drawn"))
 }
 
-/// A setting whose description wraps to three lines and more keeps its
-/// title, three lines and its value inside its row, each at its full
-/// height.
+/// A setting whose description would wrap shows one line of it, cut
+/// short, and keeps it and its 26 px control inside its row, each at its
+/// full height.
 #[gpui::test]
-fn rows_fit_a_wrapped_description_and_the_value(cx: &mut TestAppContext) {
+fn rows_fit_a_long_description_and_the_value(cx: &mut TestAppContext) {
     let dirs = Dirs::new();
     let (workbench, cx) = workbench(cx, Some(&dirs.root), &dirs.config);
     let editor = open_settings(&workbench, cx);
@@ -667,8 +678,8 @@ fn rows_fit_a_wrapped_description_and_the_value(cx: &mut TestAppContext) {
     let value = bounds(&format!("settings-value-{key}"), cx);
     assert!(within(text, row), "{text:?} in {row:?}");
     assert!(within(value, row), "{value:?} in {row:?}");
-    assert_eq!(text.size.height, gpui::px(48.), "three lines");
-    assert_eq!(value.size.height, gpui::px(18.));
+    assert_eq!(text.size.height, gpui::px(14.), "one line");
+    assert_eq!(value.size.height, gpui::px(26.));
     assert!(value.top() >= text.bottom());
 }
 
@@ -688,18 +699,22 @@ fn the_selected_row_shows_in_a_short_list(cx: &mut TestAppContext) {
     draw(cx);
     let list = bounds("settings-list", cx);
     assert!(list.size.height < gpui::px(168.), "{list:?}");
-    let selected_key = |cx: &mut VisualTestContext| {
+    // A setting's row, or the Common section's theme cards.
+    let selected_row = |cx: &mut VisualTestContext| {
         editor.read_with(cx, |editor, _| {
             match &editor.rows()[editor.selected().unwrap()] {
-                Row::Setting(ix) => editor.model().unwrap().entries()[*ix].key_path(),
-                Row::Group(_) => unreachable!(),
+                Row::Setting(ix) => format!(
+                    "settings-row-{}",
+                    editor.model().unwrap().entries()[*ix].key_path()
+                ),
+                Row::Group(_) => "settings-theme-cards".to_owned(),
             }
         })
     };
     let assert_shown = |cx: &mut VisualTestContext| {
         draw(cx);
-        let key = selected_key(cx);
-        let row = bounds(&format!("settings-row-{key}"), cx);
+        let key = selected_row(cx);
+        let row = bounds(&key, cx);
         assert!(within(row, list), "{key}: {row:?} in {list:?}");
     };
     cx.simulate_keystrokes("down");
@@ -712,13 +727,8 @@ fn the_selected_row_shows_in_a_short_list(cx: &mut TestAppContext) {
         cx.simulate_keystrokes("up");
         assert_shown(cx);
     }
-    let first = editor.read_with(cx, |editor, _| {
-        editor
-            .rows()
-            .iter()
-            .position(|row| matches!(row, Row::Setting(_)))
-    });
-    assert_eq!(editor.read_with(cx, |editor, _| editor.selected()), first);
+    // Back at the first row: the Common section's theme cards.
+    assert_eq!(editor.read_with(cx, |editor, _| editor.selected()), Some(0));
 }
 
 /// Activating the tab, or focus coming back into it, reads the files
@@ -796,8 +806,9 @@ fn up_after_scrolling_away_shows_the_setting(cx: &mut TestAppContext) {
         });
         (rows, heading.expect("a group below the first screen"))
     });
-    let downs = (rows[..=heading + 2].iter())
-        .filter(|row| matches!(row, Row::Setting(_)))
+    // The settings, and the Common section's theme cards, first.
+    let downs = (rows[..=heading + 2].iter().enumerate())
+        .filter(|(ix, row)| matches!(row, Row::Setting(_)) || *ix == 0)
         .count();
     for _ in 0..downs {
         cx.simulate_keystrokes("down");

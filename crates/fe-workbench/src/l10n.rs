@@ -2,7 +2,7 @@
 //! § 3). Each area's card adds its own `l10n/en-US/<area>.ftl` to the list.
 
 kiln_l10n::resources! {
-    dynamic_prefixes = ["command-"];
+    dynamic_prefixes = ["command-", "workbench-settings-label-"];
     "en-US" => [
         "../l10n/en-US/commands.ftl",
         "../l10n/en-US/git.ftl",
@@ -15,5 +15,6 @@ kiln_l10n::resources! {
         "../l10n/en-US/dock.ftl",
         "../l10n/en-US/project.ftl",
         "../l10n/en-US/pane.ftl",
+        "../l10n/en-US/settings.ftl",
     ],
 }

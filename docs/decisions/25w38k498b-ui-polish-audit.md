@@ -48,8 +48,8 @@ settings; light is Tenmoku Light with `[theme] mode = "light"`.
 | `target/ui-audit/project_tree_git_light.png` | Project tree with Git status | Tenmoku Light |
 | `target/ui-audit/start_page_dark.png` | Start page (empty pane) | Tenmoku Dark |
 | `target/ui-audit/start_page_light.png` | Start page | Tenmoku Light |
-| `target/ui-audit/settings_editor_dark.png` | Settings tab (Chat page: text fields, a select, toggles) | Tenmoku Dark |
-| `target/ui-audit/settings_editor_light.png` | Settings tab | Tenmoku Light |
+| `target/ui-audit/settings_dark.png` | Settings page in B3 (T569: the Common section, its theme cards and a changed row; was `settings_editor_*.png`, the Chat page) | Tenmoku Dark |
+| `target/ui-audit/settings_light.png` | Settings page in B3 | Tenmoku Light |
 | `target/ui-audit/shortcuts_editor_dark.png` | Keyboard Shortcuts tab | Tenmoku Dark |
 | `target/ui-audit/shortcuts_editor_light.png` | Keyboard Shortcuts tab | Tenmoku Light |
 | `target/ui-audit/command_palette_dark.png` | Command palette open | Tenmoku Dark |

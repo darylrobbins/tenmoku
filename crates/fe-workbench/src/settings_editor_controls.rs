@@ -40,6 +40,10 @@
 //!   which opens the selected scope's file with the caret on the key's
 //!   table, if the file has it.
 //!
+//! Every control is the design's 26 px control ([`CONTROL_HEIGHT`]): a
+//! switch centred in that height, a dropdown's button, an input, a list's
+//! inputs and Add Item, and Edit in settings.toml as a button.
+//!
 //! An input keeps what's typed into it across renders, and the file's
 //! value replaces it only while it has no focus or holds nothing typed.
 //! Reset to Default drops what's typed, so leaving the input after writes
@@ -56,32 +60,37 @@ use fe_config::{
 use fe_ui::{Button, Icon, Switch, TextInput, TextInputEvent, ui_theme};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, ScrollHandle, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, anchored, deferred, div, prelude::FluentBuilder as _, px,
-    svg,
+    IntoElement, MouseButton, ParentElement as _, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, anchored, deferred, div,
+    prelude::FluentBuilder as _, px, svg,
 };
+use kiln_l10n::{text, tr};
 
-use super::{CONTROL_HEIGHT, LINE_HEIGHT, Scope, SettingsEditor, choices, read_settings};
+use super::{CONTROL_HEIGHT, Scope, SettingsEditor, choices, read_settings, selector};
 use crate::{
     open,
     pane::Reveal,
     workbench::toast::{self, Toast},
 };
 
-/// The height of a dropdown's button, and of each of its variants.
-const SELECT_HEIGHT: gpui::Pixels = px(24.);
+/// The height of a dropdown's button.
+const SELECT_HEIGHT: gpui::Pixels = CONTROL_HEIGHT;
+
+/// The least height of each of a dropdown's variants.
+const OPTION_HEIGHT: gpui::Pixels = px(24.);
 
 /// The tallest a dropdown's list gets, the window allowing.
 const MENU_HEIGHT: gpui::Pixels = px(400.);
 
 /// What the Default (built-in) option of a choice unset by default says.
-pub(super) const DEFAULT_CHOICE: &str = "Default (built-in)";
+pub(super) fn default_choice() -> SharedString {
+    tr!("workbench-settings-default-choice")
+}
 
 /// What a choice whose value isn't in its list says beside it.
-pub(super) const NOT_INSTALLED: &str = "not installed";
-
-/// What the option that swaps a dropdown for an input says.
-pub(super) const OTHER_CHOICE: &str = "Other…";
+pub(super) fn not_installed() -> SharedString {
+    tr!("workbench-settings-not-installed")
+}
 
 /// A dropdown's options for `entry`, `None` if it has none: an enum's
 /// variants, or the list a choice is one of now, after Default (built-in),
@@ -139,10 +148,10 @@ pub(super) fn select_label(
     entry: &SettingEntry,
     options: &[Option<EnumVariant>],
     value: &Json,
-) -> (String, Option<&'static str>) {
+) -> (String, Option<SharedString>) {
     let choice = matches!(entry.kind, SettingKind::Choice(_));
     if choice && value.is_null() {
-        return (DEFAULT_CHOICE.to_owned(), None);
+        return (default_choice().to_string(), None);
     }
     let text = value.as_str().unwrap_or_default().to_owned();
     let flags = match entry.kind {
@@ -150,7 +159,7 @@ pub(super) fn select_label(
         _ => false,
     };
     let missing = flags && option_of(entry, options, value).is_none();
-    (text, missing.then_some(NOT_INSTALLED))
+    (text, missing.then(not_installed))
 }
 
 /// A value a control writes.
@@ -246,7 +255,12 @@ fn writable(path: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io::Error::new(
             error.kind(),
-            format!("{} can't be written to: {error}", path.display()),
+            tr!(
+                "workbench-settings-cant-write",
+                path = path.display().to_string(),
+                error = error.to_string()
+            )
+            .to_string(),
         )),
     }
 }
@@ -369,11 +383,11 @@ pub(super) fn parse(entry: &SettingEntry, text: &str) -> Result<Option<Value>, S
     match entry.kind {
         SettingKind::Int { .. } => (trimmed.parse().ok())
             .map(|value| Some(Value::Int(value)))
-            .ok_or_else(|| "must be a whole number".to_owned()),
+            .ok_or_else(|| tr!("workbench-settings-not-whole-number").to_string()),
         SettingKind::Float { .. } => (trimmed.parse::<f64>().ok())
             .filter(|value| value.is_finite())
             .map(|value| Some(Value::Float(value)))
-            .ok_or_else(|| "must be a number".to_owned()),
+            .ok_or_else(|| tr!("workbench-settings-not-number").to_string()),
         _ => Ok(Some(Value::Str(text.to_owned()))),
     }
 }
@@ -419,12 +433,11 @@ impl SettingsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (control, height) = match &entry.kind {
-            SettingKind::Bool => (self.switch(entry, value, disabled, cx), LINE_HEIGHT),
-            SettingKind::Choice(_) if self.typing.contains(&entry.key_path()) => (
-                self.input(ix, entry, value, disabled, window, cx),
-                CONTROL_HEIGHT,
-            ),
+        let control = match &entry.kind {
+            SettingKind::Bool => self.switch(entry, value, disabled, cx),
+            SettingKind::Choice(_) if self.typing.contains(&entry.key_path()) => {
+                self.input(ix, entry, value, disabled, window, cx)
+            }
             SettingKind::Enum(_) | SettingKind::Choice(_) => {
                 // A list that flags no value isn't needed to draw the
                 // button: the fonts aren't listed at every render.
@@ -432,29 +445,22 @@ impl SettingsEditor {
                     SettingKind::Choice(source) if choices::takes_any(source) => Vec::new(),
                     _ => options(entry, cx).unwrap_or_default(),
                 };
-                (
-                    self.dropdown(ix, entry, &options, value, disabled, window, cx),
-                    SELECT_HEIGHT,
-                )
+                self.dropdown(ix, entry, &options, value, disabled, window, cx)
             }
-            SettingKind::Int { .. } | SettingKind::Float { .. } | SettingKind::Text { .. } => (
-                self.input(ix, entry, value, disabled, window, cx),
-                CONTROL_HEIGHT,
-            ),
-            SettingKind::TextList => (
-                self.list(ix, entry, value, disabled, window, cx),
-                CONTROL_HEIGHT,
-            ),
-            SettingKind::Other => (self.edit_link(ix, entry, cx), LINE_HEIGHT),
+            SettingKind::Int { .. } | SettingKind::Float { .. } | SettingKind::Text { .. } => {
+                self.input(ix, entry, value, disabled, window, cx)
+            }
+            SettingKind::TextList => self.list(ix, entry, value, disabled, window, cx),
+            SettingKind::Other => self.edit_link(ix, entry, cx),
         };
         let key = entry.key_path();
         let fills = entry.kind == SettingKind::TextList;
         div()
-            .debug_selector(move || format!("settings-value-{key}"))
+            .debug_selector(move || selector("settings-value", &key))
             // A list takes the line's width, scrolling its items in it.
             .when(fills, |line| line.flex_1().min_w_0())
             .when(!fills, |line| line.flex_none().max_w_full())
-            .h(height)
+            .h(CONTROL_HEIGHT)
             .flex()
             .items_center()
             .child(control)
@@ -496,7 +502,7 @@ impl SettingsEditor {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let path = entry.key_path();
-        let id = format!("setting-switch-{path}");
+        let id = selector("setting-switch", &path);
         Switch::new(gpui::SharedString::from(id.clone()))
             .debug_selector(move || id)
             .on(value.as_bool().unwrap_or(false))
@@ -578,7 +584,7 @@ impl SettingsEditor {
         let hint = hint.map(|hint| {
             let path = path.clone();
             div()
-                .debug_selector(move || format!("setting-hint-{path}"))
+                .debug_selector(move || selector("setting-hint", &path))
                 .min_w_0()
                 .truncate()
                 .text_color(ui.muted_text)
@@ -588,12 +594,12 @@ impl SettingsEditor {
         let margin = px(8.);
         let max_height = (window.viewport_size().height - margin * 2.)
             .min(MENU_HEIGHT)
-            .max(SELECT_HEIGHT);
+            .max(OPTION_HEIGHT);
         let button = div()
             .id(("setting-select", ix))
             .debug_selector({
                 let path = path.clone();
-                move || format!("setting-select-{path}")
+                move || selector("setting-select", &path)
             })
             .h(SELECT_HEIGHT)
             .min_w(px(120.))
@@ -635,19 +641,21 @@ impl SettingsEditor {
             let highlighted = select.highlighted;
             let options = select.options.iter().enumerate().map(|(option, variant)| {
                 let selector = match variant {
-                    Some(variant) => format!("setting-option-{path}-{}", variant.value),
-                    None => format!("setting-option-default-{path}"),
+                    Some(variant) => {
+                        selector("setting-option", &format!("{path}-{}", variant.value))
+                    }
+                    None => selector("setting-option-default", &path),
                 };
                 let key = entry.key.clone();
                 let picked = pick(variant);
                 let (value, description) = match variant {
                     Some(variant) => (variant.value.clone(), variant.description.clone()),
-                    None => (DEFAULT_CHOICE.to_owned(), String::new()),
+                    None => (default_choice().to_string(), String::new()),
                 };
                 div()
                     .id(("setting-option", option))
                     .debug_selector(move || selector)
-                    .min_h(SELECT_HEIGHT)
+                    .min_h(OPTION_HEIGHT)
                     .px_2()
                     .py_1()
                     .flex()
@@ -683,9 +691,9 @@ impl SettingsEditor {
                     .id(("setting-option", option))
                     .debug_selector({
                         let path = path.clone();
-                        move || format!("setting-option-other-{path}")
+                        move || selector("setting-option-other", &path)
                     })
-                    .min_h(SELECT_HEIGHT)
+                    .min_h(OPTION_HEIGHT)
                     .px_2()
                     .py_1()
                     .flex()
@@ -694,7 +702,7 @@ impl SettingsEditor {
                     .when(option == highlighted, |row| row.bg(ui.row_selected))
                     .hover(move |style| style.bg(ui.row_hover))
                     .text_color(ui.text)
-                    .child(OTHER_CHOICE)
+                    .child(tr!("workbench-settings-other-choice"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.select = None;
                         this.type_other(&path, window, cx);
@@ -705,7 +713,7 @@ impl SettingsEditor {
                 .id(("setting-menu", ix))
                 .debug_selector({
                     let path = path.clone();
-                    move || format!("setting-menu-{path}")
+                    move || selector("setting-menu", &path)
                 })
                 .occlude()
                 .w(px(360.))
@@ -879,15 +887,17 @@ impl SettingsEditor {
     fn new_field(
         &self,
         text: String,
-        placeholder: &str,
+        placeholder: Option<kiln_l10n::Text>,
         commit: impl Fn(&mut Self, &mut Context<Self>) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Field {
         let ui = ui_theme(cx);
-        let placeholder = placeholder.to_owned();
         let input = cx.new(|cx| {
-            let mut input = TextInput::new(placeholder, &ui, cx).bordered();
+            let placeholder = placeholder.unwrap_or_else(|| kiln_l10n::Text::from(""));
+            let mut input = TextInput::new(placeholder, &ui, cx)
+                .bordered()
+                .height(CONTROL_HEIGHT);
             input.set_text(text.clone(), cx);
             input
         });
@@ -942,11 +952,8 @@ impl SettingsEditor {
     ) -> &mut Field {
         let path = entry.key_path();
         if !self.fields.contains_key(&path) {
-            let placeholder = if entry.default.is_null() {
-                "Not set"
-            } else {
-                ""
-            };
+            let placeholder =
+                (entry.default.is_null()).then(|| text!("workbench-settings-not-set"));
             let commit = {
                 let path = path.clone();
                 move |this: &mut Self, cx: &mut Context<Self>| {
@@ -986,7 +993,7 @@ impl SettingsEditor {
             _ => px(96.),
         };
         div()
-            .debug_selector(move || format!("setting-input-{path}"))
+            .debug_selector(move || selector("setting-input", &path))
             .flex_none()
             .w(width)
             // In a narrow column, as wide as the column.
@@ -1029,7 +1036,7 @@ impl SettingsEditor {
             div()
                 .debug_selector({
                     let path = path.clone();
-                    move || format!("setting-item-{path}-{item}")
+                    move || selector("setting-item", &format!("{path}-{item}"))
                 })
                 .flex_none()
                 .flex()
@@ -1053,14 +1060,16 @@ impl SettingsEditor {
                         .id(("setting-remove", item))
                         .debug_selector({
                             let path = path.clone();
-                            move || format!("setting-remove-{path}-{item}")
+                            move || selector("setting-remove", &format!("{path}-{item}"))
                         })
                         .flex_none()
-                        .size(px(20.))
+                        .size(CONTROL_HEIGHT)
                         .flex()
                         .items_center()
                         .justify_center()
                         .rounded_sm()
+                        .role(gpui::Role::Button)
+                        .aria_label(tr!("workbench-settings-remove-item"))
                         .when(!disabled, |button| {
                             button
                                 .cursor_pointer()
@@ -1078,12 +1087,11 @@ impl SettingsEditor {
                 )
         });
         let items: Vec<_> = items.collect();
-        let add = Button::new(("setting-add", ix), "Add Item")
-            .small()
+        let add = Button::new(("setting-add", ix), text!("workbench-settings-add-item"))
             .disabled(disabled)
             .debug_selector({
                 let path = path.clone();
-                move || format!("setting-add-{path}")
+                move || selector("setting-add", &path)
             })
             .on_click(cx.listener({
                 let path = path.clone();
@@ -1102,7 +1110,7 @@ impl SettingsEditor {
             .child(
                 div()
                     .id(("setting-list", ix))
-                    .debug_selector(move || format!("setting-items-{path}"))
+                    .debug_selector(move || selector("setting-items", &path))
                     .flex_1()
                     .min_w_0()
                     .flex()
@@ -1170,7 +1178,7 @@ impl SettingsEditor {
                 this.commit(&Editing::Item(path.clone(), 0), false, cx)
             }
         };
-        self.new_field(text, "", commit, window, cx)
+        self.new_field(text, None, commit, window, cx)
     }
 
     /// Adds an empty item to the list at dotted `path`, focused; it's
@@ -1303,19 +1311,20 @@ impl SettingsEditor {
         cx.notify();
     }
 
-    /// Edit in settings.toml, for a table.
+    /// Edit in settings.toml, for a table: a button, which opens the file
+    /// even where the selected scope's file can't set the table.
     fn edit_link(&self, ix: usize, entry: &SettingEntry, cx: &mut Context<Self>) -> AnyElement {
-        let ui = ui_theme(cx);
         let (key, path) = (entry.key.clone(), entry.key_path());
-        div()
-            .id(("setting-edit", ix))
-            .debug_selector(move || format!("setting-edit-{path}"))
-            .text_color(ui.accent)
-            .cursor_pointer()
-            .hover(|style| style.underline())
-            .child("Edit in settings.toml")
-            .on_click(cx.listener(move |this, _, window, cx| this.edit_in_file(&key, window, cx)))
-            .into_any_element()
+        Button::new(
+            ("setting-edit", ix),
+            text!("workbench-settings-edit-in-file"),
+        )
+        .debug_selector(move || selector("setting-edit", &path))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.edit_in_file(&key, window, cx);
+            cx.stop_propagation();
+        }))
+        .into_any_element()
     }
 
     /// Opens the selected scope's settings file in the active pane, as
@@ -1336,7 +1345,8 @@ impl SettingsEditor {
         let Some(path) = path else {
             toast::show(
                 cx,
-                Toast::error("Can't open settings").detail("There's no config directory"),
+                Toast::error(tr!("workbench-settings-cant-open"))
+                    .detail(tr!("workbench-settings-no-config-dir")),
             );
             return;
         };
@@ -1372,8 +1382,11 @@ impl SettingsEditor {
                     cx.update(|_, cx| {
                         toast::show(
                             cx,
-                            Toast::error(format!("Can't create {}", path.display()))
-                                .detail(error.to_string()),
+                            Toast::error(tr!(
+                                "workbench-settings-cant-create",
+                                path = path.display().to_string()
+                            ))
+                            .detail(error.to_string()),
                         )
                     })
                     .ok();

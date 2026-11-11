@@ -48,8 +48,8 @@ mod project_tree_git;
 mod prompt;
 #[path = "audit/search_panel.rs"]
 mod search_panel;
-#[path = "audit/settings_editor.rs"]
-mod settings_editor;
+#[path = "audit/settings.rs"]
+mod settings;
 #[path = "audit/shortcuts_editor.rs"]
 mod shortcuts_editor;
 #[path = "audit/start_page.rs"]
@@ -87,7 +87,7 @@ const SURFACES: &[&Surface] = &[
     &chrome::SURFACE,
     &project_tree_git::SURFACE,
     &start_page::SURFACE,
-    &settings_editor::SURFACE,
+    &settings::SURFACE,
     &shortcuts_editor::SURFACE,
     &command_palette::SURFACE,
     &file_finder::SURFACE,

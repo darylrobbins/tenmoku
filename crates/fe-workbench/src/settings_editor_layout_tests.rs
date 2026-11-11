@@ -13,7 +13,7 @@ use gpui::{
 use crate::{
     Launch, Workbench,
     open::ConfigDirOverride,
-    settings_editor::{Row, Scope, SettingsEditor},
+    settings_editor::{COMMON, Row, Scope, SettingsEditor},
 };
 
 struct Dirs {
@@ -240,14 +240,18 @@ fn category_nav_scrolls_and_follows(cx: &mut TestAppContext) {
     for title in ["Editor", "Chat", "Terminal"] {
         assert!(titles.contains(&title), "{titles:?}");
     }
-    // Each top-level group once, with how many settings it has.
+    // The Common section first, then each top-level group once, with how
+    // many settings it has, less those the Common section shows.
     let model = SettingsModel::new(None, None);
-    for section in &sections {
+    assert_eq!(titles[0], "Common");
+    assert_eq!(sections[0].count, COMMON.len());
+    for section in &sections[1..] {
         assert!(drawn(&format!("settings-nav-{}", section.title), cx));
         let top = model.groups().iter().find(|g| g.title == section.title);
         let top = top.unwrap_or_else(|| panic!("{} is a group", section.title));
         let count = (model.entries().iter())
             .filter(|entry| entry.key.len() > 1 && entry.key[0] == top.key[0])
+            .filter(|entry| !COMMON.contains(&entry.key_path().as_str()))
             .count();
         assert_eq!(section.count, count, "{}", section.title);
     }
