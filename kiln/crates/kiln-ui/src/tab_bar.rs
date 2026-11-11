@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use gpui::{
     App, AppContext as _, ClickEvent, Div, ElementId, Entity, FocusHandle, Hsla,
@@ -14,6 +14,25 @@ use kiln_l10n::tr;
 use crate::{
     ActiveTheme as _, ClickHandler, Icon, IconRef, Role, States, Tooltip, UiTheme, node, node_with,
 };
+
+/// A click handler shared by a tab's mouse and screen reader paths.
+type Handler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// A screen reader's Click calls the handler directly, as a keyboard
+/// click (`click_count` 1, so it doesn't pin): GPUI's fallback is a mouse
+/// click at the node's centre, which misses hidden or offscreen nodes.
+fn on_a11y_click<E: gpui::InteractiveElement + gpui::StatefulInteractiveElement>(
+    element: E,
+    handler: Option<Handler>,
+) -> E {
+    match handler {
+        Some(handler) => element
+            .on_a11y_action(gpui::accesskit::Action::Click, move |_, window, cx| {
+                handler(&ClickEvent::default(), window, cx)
+            }),
+        None => element,
+    }
+}
 
 /// The tab strip's height, which panels' tab strips and headers match
 /// (`docs/design/design-system.md`, Measure).
@@ -167,8 +186,8 @@ pub struct Tab {
     pinned: bool,
     /// Its place in its [`TabBar`], from 1, and how many tabs that has.
     in_set: Option<(usize, usize)>,
-    on_click: Option<ClickHandler>,
-    on_close: Option<ClickHandler>,
+    on_click: Option<Handler>,
+    on_close: Option<Handler>,
     on_middle_click: Option<ClickHandler>,
     drag: DragHooks,
 }
@@ -364,7 +383,7 @@ impl Tab {
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_click = Some(Box::new(handler));
+        self.on_click = Some(Rc::new(handler));
         self
     }
 
@@ -374,7 +393,7 @@ impl Tab {
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_close = Some(Box::new(handler));
+        self.on_close = Some(Rc::new(handler));
         self
     }
 
@@ -490,35 +509,48 @@ impl RenderOnce for Tab {
             .justify_center()
             .rounded_sm()
             .hover(move |style| style.bg(hover))
-            .when(hidden_at_rest, |close| {
-                close
-                    .invisible()
-                    .group_hover(TAB_GROUP, |style| style.visible())
-            })
-            .map(|close| {
-                if self.dirty {
-                    close.child(
-                        div()
-                            .size(px(6.))
-                            .rounded_full()
-                            .bg(colors.state.dirty)
-                            .debug_selector(|| format!("tab-dirty:{label}")),
-                    )
-                } else {
-                    close.child(
-                        div()
-                            .size(CLOSE_ICON_SIZE)
-                            .flex_none()
-                            .debug_selector(|| format!("tab-close:{label}"))
-                            .child(IconRef::Bundled(Icon::X).element(CLOSE_ICON_SIZE, muted)),
-                    )
-                }
-            })
-            .when_some(self.on_close, |close, on_close| {
-                close.on_click(move |event, window, cx| {
+            .child(
+                // Only this content hides at rest: the wrapper stays
+                // painted, so its click and screen reader listeners
+                // register. The debug selectors sit below it, so their
+                // bounds still appear only when the mark is shown.
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(hidden_at_rest, |mark| {
+                        mark.invisible()
+                            .group_hover(TAB_GROUP, |style| style.visible())
+                    })
+                    .map(|mark| {
+                        if self.dirty {
+                            mark.child(
+                                div()
+                                    .size(px(6.))
+                                    .rounded_full()
+                                    .bg(colors.state.dirty)
+                                    .debug_selector(|| format!("tab-dirty:{label}")),
+                            )
+                        } else {
+                            mark.child(
+                                div()
+                                    .size(CLOSE_ICON_SIZE)
+                                    .flex_none()
+                                    .debug_selector(|| format!("tab-close:{label}"))
+                                    .child(
+                                        IconRef::Bundled(Icon::X).element(CLOSE_ICON_SIZE, muted),
+                                    ),
+                            )
+                        }
+                    }),
+            )
+            .when_some(self.on_close.clone(), |close, on_close| {
+                let on_a11y = on_close.clone();
+                let close = close.on_click(move |event, window, cx| {
                     cx.stop_propagation();
                     on_close(event, window, cx);
-                })
+                });
+                on_a11y_click(close, Some(on_a11y))
             });
         let close = node(close, window, cx, Role::Button, close_label);
         let tab = div()
@@ -564,7 +596,13 @@ impl RenderOnce for Tab {
                     }),
             )
             .child(close)
-            .when_some(self.on_click, |tab, on_click| tab.on_click(on_click))
+            .when_some(self.on_click, |tab, on_click| {
+                let tab = tab.on_click({
+                    let on_click = on_click.clone();
+                    move |event, window, cx| on_click(event, window, cx)
+                });
+                on_a11y_click(tab, Some(on_click))
+            })
             .when_some(self.on_middle_click, |tab, on_middle_click| {
                 tab.on_aux_click(move |event, window, cx| {
                     if event.is_middle_click() {
@@ -639,7 +677,13 @@ impl Tab {
                 })
                 .into()
             })
-            .when_some(self.on_click, |tab, on_click| tab.on_click(on_click))
+            .when_some(self.on_click, |tab, on_click| {
+                let tab = tab.on_click({
+                    let on_click = on_click.clone();
+                    move |event, window, cx| on_click(event, window, cx)
+                });
+                on_a11y_click(tab, Some(on_click))
+            })
             .when_some(self.on_middle_click, |tab, on_middle_click| {
                 tab.on_aux_click(move |event, window, cx| {
                     if event.is_middle_click() {

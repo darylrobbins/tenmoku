@@ -111,6 +111,43 @@ fn clicking_tabs_shows_their_views_and_closing_asks_the_owner(cx: &mut TestAppCo
     assert!(cx.debug_bounds("three").is_some());
 }
 
+/// A screen reader's Click on "Close c" falls back to a mouse down and up
+/// at the close box with no move first, so the box must take it unhovered.
+#[gpui::test]
+fn an_inactive_clean_tabs_close_button_closes_it_without_hovering(cx: &mut TestAppContext) {
+    let (host, cx) = cx.add_window_view(|window, cx| {
+        let pages = ["one", "two", "three"].map(|name| cx.new(|_| Page(name)));
+        let tabs = cx.new(|_| {
+            pages
+                .into_iter()
+                .zip(["One", "Two", "Three"])
+                .fold(Tabs::new(), |tabs, (page, label)| {
+                    tabs.with_tab(label, page)
+                })
+        });
+        let events = cx.subscribe_in(&tabs, window, |host: &mut Host, tabs, event, _, cx| {
+            host.events.push(*event);
+            if let TabsEvent::CloseRequested(ix) = *event {
+                tabs.update(cx, |tabs, cx| tabs.remove(ix, cx));
+            }
+        });
+        Host {
+            tabs,
+            events: Vec::new(),
+            _events: events,
+        }
+    });
+    draw(cx);
+    let three = tab_bounds(&host, 2, cx);
+    cx.simulate_click(
+        point(three.right() - px(15.), three.center().y),
+        Modifiers::none(),
+    );
+    draw(cx);
+    let events = host.update(cx, |host, _| std::mem::take(&mut host.events));
+    assert_eq!(events, [TabsEvent::CloseRequested(2)]);
+}
+
 /// A strip of tabs as a screen reader sees it: one tab active, and each
 /// tab's dirty, pinned and preview states and description as set.
 mod a11y {
