@@ -403,7 +403,7 @@ impl TextInput {
             return Some(range);
         };
         let old = self.utf16_len();
-        let settled = hook(&self.text.clone(), self.selected, platform, window, cx);
+        let settled = hook(&self.text.clone(), self.selected(), platform, window, cx);
         // The range in bytes, moved through each edit; an insertion at the
         // end stays at the end.
         let at_end = range
@@ -414,12 +414,12 @@ impl TextInput {
             let (deleted, inserted) = match &edit {
                 SettleEdit::Insert(text) => {
                     let line = text.lines().next().unwrap_or_default().len();
-                    match self.selected {
+                    match self.selected() {
                         true => (0..self.text.len(), line),
                         false => (self.caret..self.caret, line),
                     }
                 }
-                SettleEdit::Backspace => match self.selected {
+                SettleEdit::Backspace => match self.selected() {
                     true => (0..self.text.len(), 0),
                     false => (self.target(Motion::Left)..self.caret, 0),
                 },
