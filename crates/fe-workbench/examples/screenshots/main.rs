@@ -99,6 +99,12 @@ fn isolate() -> kiln_platform::screenshots::Result<Option<ExitCode>> {
     child
         .args(std::env::args_os().skip(1))
         .env(ISOLATION_ROOT, root.path());
+    // `audit --pseudo`: the pseudo-locale's one way in is its variable, so
+    // the child gets it before anything negotiates a language.
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|a| a == "audit") && args.iter().any(|a| a == "--pseudo") {
+        child.env(kiln_platform::locale::PSEUDO_ENV, "1");
+    }
     for (var, dir) in ISOLATED {
         let dir = root.path().join(dir);
         std::fs::create_dir_all(&dir)?;

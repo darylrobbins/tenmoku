@@ -163,15 +163,26 @@ pub(crate) fn fail(why: String) {
     FAILED.with(|failed| *failed.borrow_mut() = Some(why));
 }
 
-/// `audit <out-dir>`: renders the surfaces into `out-dir` and checks their
+/// `audit [--pseudo] <out-dir>`: renders the surfaces into `out-dir` and checks their
 /// probes. Returns whether every probe passed; fails before rendering
 /// anything if a surface has no probes.
 pub(crate) fn main(cx: &mut VisualTestAppContext, args: &[String]) -> Result<bool> {
-    let [out] = args else {
-        return Err("usage: screenshots audit <out-dir>".into());
+    // `--pseudo` is acted on by the launcher, which sets
+    // `TENMOKU_PSEUDO_LOCALE=1` for this run; the scenes are the same.
+    let pseudo = args.iter().any(|a| a == "--pseudo");
+    let args: Vec<&String> = args.iter().filter(|a| *a != "--pseudo").collect();
+    let [out] = args.as_slice() else {
+        return Err("usage: screenshots audit [--pseudo] <out-dir>".into());
     };
     if let Some(surface) = (SURFACES.iter().chain(LAST)).find(|surface| surface.probes.is_empty()) {
         return Err(format!("audit surface {} has no probes", surface.name).into());
+    }
+    if pseudo {
+        // `preferred` is where the variable puts `en-XA` first: the one
+        // selection, not a second path.
+        cx.update(|cx| {
+            kiln_platform::locale::set_locale(cx, &kiln_platform::locale::preferred());
+        });
     }
     let out = PathBuf::from(out);
     fs::create_dir_all(&out)?;
