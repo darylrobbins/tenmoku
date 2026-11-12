@@ -102,7 +102,6 @@ use kiln_plugin::{
     grants::{Decision, GrantRecord, GrantStore, ProgramIdentity, Prompt, resolve_program},
     limits::{Limits, PROGRAM_DEADLINE, StoreLimiter},
     manifest::{ExtensionOrigin, PluginManifest},
-    process::SYSTEM_PATH,
     runner::{Call, CallError, Diagnostic, LoadError, Reason, Reply},
     secrets::PluginSecrets,
 };
@@ -1027,7 +1026,8 @@ enum Outcome {
         bytes: Vec<u8>,
         record: Box<GrantRecord>,
     },
-    Ask(PluginAsk),
+    /// Ask about it, with what each program it wants resolves to.
+    Ask(PluginAsk, Vec<ProgramIdentity>),
     Declined,
 }
 
@@ -1066,7 +1066,7 @@ fn decide(
     found: &[Found],
     store: Option<&GrantStore>,
 ) -> Vec<(String, fe_command::Grants, Outcome)> {
-    let path_var = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(SYSTEM_PATH));
+    let path_var = search_path(std::env::var_os("PATH"));
     let record = |id: &str| {
         let record = store.map(|store| store.get(id));
         match record {
@@ -1112,14 +1112,20 @@ fn decide(
                     },
                     Err(message) => Outcome::Failed(StopReason::Load, message),
                 },
-                Ok(Decision::Prompt(Prompt::NewPlugin)) => Outcome::Ask(PluginAsk::Install),
+                Ok(Decision::Prompt(Prompt::NewPlugin)) => Outcome::Ask(
+                    PluginAsk::Install,
+                    resolved_programs(&plugin.capabilities, &path_var),
+                ),
                 Ok(Decision::Escalation {
                     added,
                     keep_running,
-                }) => Outcome::Ask(PluginAsk::Escalation {
-                    added,
-                    keep_running,
-                }),
+                }) => Outcome::Ask(
+                    PluginAsk::Escalation {
+                        added,
+                        keep_running,
+                    },
+                    resolved_programs(&plugin.capabilities, &path_var),
+                ),
                 Ok(Decision::Declined) => Outcome::Declined,
                 Err(error) => Outcome::Failed(StopReason::Grants, error.to_string()),
             };
@@ -1178,7 +1184,7 @@ fn apply(
         let Some(found) = found.get(id.as_str()) else {
             continue;
         };
-        let pending = |ask: PluginAsk| {
+        let pending = |ask: PluginAsk, programs: Vec<ProgramIdentity>| {
             let plugin = found.plugin.as_ref().ok()?;
             Some(PendingPluginGrant {
                 id: found.id.clone(),
@@ -1187,6 +1193,7 @@ fn apply(
                 license: found.license.clone(),
                 dir: found.dir.clone(),
                 requested: plugin.capabilities.clone(),
+                programs,
                 ask,
             })
         };
@@ -1218,11 +1225,11 @@ fn apply(
                 });
                 (Want::Load { identity, artifact }, None)
             }
-            Outcome::Ask(PluginAsk::Install) => (
+            Outcome::Ask(PluginAsk::Install, programs) => (
                 Want::Unload(PluginState::WaitingForGrant),
-                pending(PluginAsk::Install),
+                pending(PluginAsk::Install, programs),
             ),
-            Outcome::Ask(ask) => (Want::Keep, pending(ask)),
+            Outcome::Ask(ask, programs) => (Want::Keep, pending(ask, programs)),
             Outcome::Declined => (Want::Keep, None),
         };
         ids.push(id.clone());
@@ -2096,17 +2103,7 @@ fn answered(pending: PendingPluginGrant, answer: PluginAnswer, cx: &mut App) {
     let recorded = cx.background_spawn(async move {
         match answer {
             PluginAnswer::Allowed { accept_wildcards } => {
-                let programs = programs(&pending.requested)?;
-                store
-                    .grant(
-                        &pending.id,
-                        pending.version,
-                        &pending.requested,
-                        &programs,
-                        accept_wildcards,
-                    )
-                    .map(drop)
-                    .map_err(|error| error.to_string())
+                grant_shown(&store, &pending, accept_wildcards, std::env::var_os("PATH")).map(drop)
             }
             PluginAnswer::Declined => store
                 .decline(&pending.id, &pending.requested)
@@ -2141,13 +2138,68 @@ fn answered(pending: PendingPluginGrant, answer: PluginAnswer, cx: &mut App) {
     .detach();
 }
 
+/// Grants what `pending` asked for, binding its programs to what they
+/// resolve to on `path` now, if that is what the prompt showed. Resolving
+/// differently since (a program replaced or moved while the prompt was up)
+/// grants nothing, and the plugin is asked about again with the new
+/// identities: `Ok(false)`.
+fn grant_shown(
+    store: &GrantStore,
+    pending: &PendingPluginGrant,
+    accept_wildcards: bool,
+    path: Option<OsString>,
+) -> Result<bool, String> {
+    let programs = programs(&pending.requested, path)?;
+    if programs != pending.programs {
+        log::info!(
+            "not granting plugin {}: its programs changed since the prompt",
+            pending.id
+        );
+        return Ok(false);
+    }
+    store
+        .grant(
+            &pending.id,
+            pending.version,
+            &pending.requested,
+            &programs,
+            accept_wildcards,
+        )
+        .map(|_| true)
+        .map_err(|error| error.to_string())
+}
+
+/// The programs `requested` names that resolve on `path` now, for the
+/// prompt's warnings: one that doesn't is left out, not a reason to drop the rest.
+fn resolved_programs(
+    requested: &fe_command::Grants,
+    path: &std::ffi::OsStr,
+) -> Vec<ProgramIdentity> {
+    requested
+        .iter()
+        .filter_map(|capability| match capability {
+            Capability::ProcessSpawn(fe_command::capability::Target::Named(program)) => {
+                resolve_program(program, path).ok()
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// `PATH` as the environment has it, or this OS's system path when it is
+/// unset.
+fn search_path(path: Option<OsString>) -> OsString {
+    path.unwrap_or_else(kiln::core::platform::system_path)
+}
+
 /// The programs `requested`'s `process.spawn:<program>` name, as found on
-/// `PATH` now: what a grant binds them to.
+/// `path` now (the system path when that is unset): what a grant binds them to.
 fn programs(
     requested: &fe_command::Grants,
+    path: Option<OsString>,
 ) -> Result<Vec<kiln_plugin::grants::ProgramIdentity>, String> {
     use fe_command::capability::Target;
-    let path_var = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(SYSTEM_PATH));
+    let path_var = search_path(path);
     requested
         .iter()
         .filter_map(|capability| match capability {
@@ -2840,3 +2892,91 @@ mod plugin_host_paint_tests;
 #[cfg(test)]
 #[path = "plugin_host_tests.rs"]
 mod plugin_host_tests;
+
+#[cfg(test)]
+mod programs_tests {
+    use super::*;
+
+    #[test]
+    fn allow_grants_nothing_when_programs_resolve_differently_than_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = if cfg!(windows) { "tool.cmd" } else { "tool" };
+        let write = |body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        };
+        write("#!/bin/sh\necho one\n");
+        let requested: fe_command::Grants = [Capability::parse("process.spawn:tool").unwrap()]
+            .into_iter()
+            .collect();
+        let path = Some(dir.path().as_os_str().to_owned());
+        let pending = PendingPluginGrant {
+            id: "acme.tool".into(),
+            name: "Acme Tool".into(),
+            version: (1, 0, 0),
+            license: "MIT".into(),
+            dir: dir.path().to_owned(),
+            programs: programs(&requested, path.clone()).unwrap(),
+            requested,
+            ask: PluginAsk::Install,
+        };
+        let store = GrantStore::new(dir.path().join("grants.json"));
+
+        // Replaced after the prompt showed it: nothing is granted.
+        write("#!/bin/sh\necho two, which is longer\n");
+        assert_eq!(
+            grant_shown(&store, &pending, false, path.clone()),
+            Ok(false)
+        );
+        assert!(
+            store
+                .get("acme.tool")
+                .unwrap()
+                .is_none_or(|record| record.granted.is_empty())
+        );
+
+        // As shown, it is granted.
+        let pending = PendingPluginGrant {
+            programs: programs(&pending.requested, path.clone()).unwrap(),
+            ..pending
+        };
+        assert_eq!(grant_shown(&store, &pending, false, path), Ok(true));
+        assert!(!store.get("acme.tool").unwrap().unwrap().granted.is_empty());
+    }
+
+    #[test]
+    fn an_unresolved_program_does_not_drop_the_others() {
+        let requested: fe_command::Grants = [
+            Capability::parse("process.spawn:no-such-program-t1689").unwrap(),
+            Capability::parse(if cfg!(windows) {
+                "process.spawn:cmd"
+            } else {
+                "process.spawn:sh"
+            })
+            .unwrap(),
+        ]
+        .into_iter()
+        .collect();
+        let found = resolved_programs(&requested, &kiln::core::platform::system_path());
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn programs_fall_back_to_system_path_when_path_unset() {
+        let name = if cfg!(windows) { "cmd" } else { "sh" };
+        let requested: fe_command::Grants =
+            [Capability::parse(&format!("process.spawn:{name}")).unwrap()]
+                .into_iter()
+                .collect();
+        let found = programs(&requested, None).unwrap();
+        assert_eq!(found.len(), 1);
+        let system = kiln::core::platform::system_path();
+        let dir = found[0].path.parent().unwrap();
+        assert!(std::env::split_paths(&system).any(|entry| entry == dir));
+    }
+}

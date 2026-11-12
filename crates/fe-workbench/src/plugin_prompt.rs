@@ -16,7 +16,7 @@ use fe_command::capability::{Capability, Grants, Target};
 use gpui::{App, PromptLevel, SharedString, Task, Window};
 use kiln_l10n::tr;
 use kiln_plugin::{
-    grants::{Version, needs_wildcard_acceptance},
+    grants::{ProgramIdentity, Version, needs_wildcard_acceptance},
     warnings::{Warning, combination_warnings, describe},
 };
 
@@ -54,6 +54,9 @@ pub struct PendingPluginGrant {
     pub dir: PathBuf,
     /// Everything its manifest asks for.
     pub requested: Grants,
+    /// What each `process.spawn:<program>` it asks for resolves to now,
+    /// for the warning about one that runs through an interpreter.
+    pub programs: Vec<ProgramIdentity>,
     pub ask: PluginAsk,
 }
 
@@ -205,10 +208,12 @@ pub fn plugin_prompt_text(pending: &PendingPluginGrant) -> (String, String) {
     // The warnings are for everything it would hold, since what was
     // granted before can combine with what's added.
     let warnings = combination_warnings(&pending.requested);
-    if !warnings.is_empty() {
+    let batch = interpreter_warnings(&pending.programs);
+    if !warnings.is_empty() || !batch.is_empty() {
         detail.push('\n');
         push_line(&mut detail, tr!("workbench-extensions-plugin-warnings"));
         detail.push_str(&warnings_text(&warnings));
+        detail.push_str(&batch);
     }
     if pending.needs_full_access() {
         detail.push('\n');
@@ -294,6 +299,23 @@ fn wildcards_text(grants: &Grants) -> String {
         .cloned()
         .collect();
     capabilities_text(&wildcards)
+}
+
+/// A line for each of `programs` that runs through an interpreter
+/// (`cmd.exe` for a batch file), which reads its arguments again.
+fn interpreter_warnings(programs: &[ProgramIdentity]) -> String {
+    programs
+        .iter()
+        .filter_map(|program| {
+            let interpreter = program.interpreter.as_deref()?;
+            let line = tr!(
+                "workbench-extensions-plugin-warning-interpreter",
+                program = program.name.as_str(),
+                interpreter = interpreter
+            );
+            Some(format!("  {}\n", line))
+        })
+        .collect()
 }
 
 /// `warnings`, a line each.

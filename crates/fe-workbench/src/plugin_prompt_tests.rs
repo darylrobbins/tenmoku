@@ -23,6 +23,7 @@ fn install(requested: &[&str]) -> PendingPluginGrant {
         license: "MIT".into(),
         dir: "/ext/acme-tool".into(),
         requested: grants(requested),
+        programs: Vec::new(),
         ask: PluginAsk::Install,
     }
 }
@@ -202,4 +203,34 @@ async fn dont_allow_declines_and_closing_leaves_it_pending(cx: &mut TestAppConte
     second.run_until_parked();
     answer(second, "Allow Full Access");
     assert_eq!(answered.await, PluginAnswer::Pending);
+}
+
+fn program(name: &str, interpreter: Option<&str>) -> kiln_plugin::grants::ProgramIdentity {
+    kiln_plugin::grants::ProgramIdentity {
+        name: name.into(),
+        path: format!("/bin/{name}").into(),
+        device: 1,
+        inode: 2,
+        size: 3,
+        modified: (4, 5),
+        sha256: "00".into(),
+        interpreter: interpreter.map(str::to_owned),
+    }
+}
+
+#[test]
+fn prompt_flags_cmd_exe_interpreter() {
+    let mut pending = install(&["process.spawn:build", "process.spawn:tool"]);
+    pending.programs = vec![program("build", Some("cmd.exe")), program("tool", None)];
+    let (_, detail) = plugin_prompt_text(&pending);
+    assert!(
+        detail.contains("build runs through cmd.exe, which reads its arguments again."),
+        "{detail}"
+    );
+    assert!(!detail.contains("tool runs through"), "{detail}");
+
+    let mut plain = install(&["process.spawn:tool"]);
+    plain.programs = vec![program("tool", None)];
+    let (_, detail) = plugin_prompt_text(&plain);
+    assert!(!detail.contains("reads its arguments again"), "{detail}");
 }

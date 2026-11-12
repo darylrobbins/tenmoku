@@ -51,6 +51,7 @@ workbench-extensions-plugin-full-access-note = It asks for full access: after Al
 workbench-extensions-plugin-install-footer = It doesn't load until you allow it. Don't Allow keeps it from loading, and isn't asked again until it asks for something else.
 workbench-extensions-plugin-escalation-footer = The installed version keeps running with what you granted it until you allow this. Don't Allow keeps it running as it is, and isn't asked again until the request changes.
 workbench-extensions-plugin-escalation-footer-version = The installed version, { $version }, keeps running with what you granted it until you allow this. Don't Allow keeps it running as it is, and isn't asked again until the request changes.
+workbench-extensions-plugin-warning-interpreter = { $program } runs through { $interpreter }, which reads its arguments again.
 workbench-extensions-plugin-full-access-question = Give { $name } full access?
 workbench-extensions-plugin-full-access-asks-for = { $id } { $version } asks for:
 workbench-extensions-plugin-full-access-footer = Only Allow Full Access grants it. Don't Allow grants nothing it asks for.
