@@ -227,6 +227,8 @@ fn start(
 struct Setup {
     preview: bool,
     linked: bool,
+    /// The link is a junction, if `linked`.
+    junction: bool,
     /// The plugin's extension contributes a language server too.
     lsp: bool,
     /// [`OTHER`] is installed and granted too.
@@ -246,6 +248,7 @@ fn start_with(
     let Setup {
         preview,
         linked,
+        junction,
         lsp,
         other,
         unhosted,
@@ -256,13 +259,17 @@ fn start_with(
     let extensions = dir.path().join("extensions");
     let plugin_dir = extensions.join("tool");
     if linked {
-        let target = dir.path().join("elsewhere/tool");
+        let target = dir.path().join("elsewhere").join("tool");
         write_plugin(&target, ID, "Tool", lsp);
         fs::create_dir_all(&extensions).unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, &plugin_dir).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&target, &plugin_dir).unwrap();
+        if junction {
+            crate::plugin_dev::make_junction(&target, &plugin_dir).unwrap();
+        } else {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &plugin_dir).unwrap();
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_dir(&target, &plugin_dir).unwrap();
+        }
     } else {
         write_plugin(&plugin_dir, ID, "Tool", lsp);
     }
@@ -459,8 +466,14 @@ fn the_uninstall_confirmation_says_it_deletes_secrets(cx: &mut TestAppContext) {
 }
 
 /// Uninstalls the plugin, kiln finding it through a symlink if `linked`.
-fn uninstalls(cx: &mut TestAppContext, linked: bool) {
-    let (fixture, workbench, mut cx) = start(cx, true, linked);
+fn uninstalls(cx: &mut TestAppContext, linked: bool, junction: bool) {
+    let setup = Setup {
+        preview: true,
+        linked,
+        junction,
+        ..Setup::default()
+    };
+    let (fixture, workbench, mut cx) = start_with(cx, setup);
     let target = dunce::canonicalize(&fixture.plugin_dir).unwrap();
     pick_plugin("workbench.uninstall_plugin", &workbench, &mut cx);
     cx.simulate_prompt_answer("Uninstall");
@@ -485,12 +498,37 @@ fn uninstalls(cx: &mut TestAppContext, linked: bool) {
 
 #[gpui::test]
 fn confirming_uninstall_removes_everything(cx: &mut TestAppContext) {
-    uninstalls(cx, false);
+    uninstalls(cx, false, false);
 }
 
 #[gpui::test]
 fn confirming_uninstall_removes_only_a_symlinks_link(cx: &mut TestAppContext) {
-    uninstalls(cx, true);
+    uninstalls(cx, true, false);
+}
+
+#[gpui::test]
+fn uninstall_removes_a_junction_link_only(cx: &mut TestAppContext) {
+    uninstalls(cx, true, true);
+}
+
+#[gpui::test]
+fn links_to_recognises_a_junction(cx: &mut TestAppContext) {
+    let _ = cx;
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("elsewhere");
+    fs::create_dir_all(&target).unwrap();
+    let other = dir.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+    let at = dir.path().join("link");
+    crate::plugin_dev::make_junction(&target, &at).unwrap();
+    let target = dunce::canonicalize(&target).unwrap();
+    assert!(crate::plugin_dev::links_to(&at, &target));
+    assert!(!crate::plugin_dev::links_to(
+        &at,
+        &dunce::canonicalize(&other).unwrap()
+    ));
+    assert!(!crate::plugin_dev::links_to(&target, &target));
+    assert_eq!(crate::plugin_dev::linked_from(&at), Some(target));
 }
 
 #[gpui::test]

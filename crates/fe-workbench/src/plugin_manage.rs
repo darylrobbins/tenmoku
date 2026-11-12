@@ -472,7 +472,8 @@ fn check_still_installed(dir: &Path, id: &str) -> Result<(), String> {
     }
 }
 
-/// Removes the extension directory `dir`: the link only, if it's a symlink.
+/// Removes the extension directory `dir`: the link only, if it's a symlink
+/// or a junction (std reports both as symlinks).
 fn remove_extension_dir(dir: &Path) -> io::Result<()> {
     if fs::symlink_metadata(dir)?.file_type().is_symlink() {
         // A directory symlink is a directory on Windows.

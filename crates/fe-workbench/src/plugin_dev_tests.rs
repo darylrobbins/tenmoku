@@ -23,7 +23,7 @@ use kiln::{
 };
 use kiln_plugin::grants::GrantStore;
 
-use super::{link, linked_from};
+use super::{cmd_unsafe, is_network_path, link, link_with, linked_from, links_to};
 use crate::{
     GRANTS_FILE, InstallError, PluginAsk, PluginState, extension_install::check_api,
     pending_plugin_grants, plugin_host::PluginHost, plugin_kind, plugin_log, plugin_states,
@@ -65,6 +65,30 @@ fn refusal(result: Result<crate::Installed, InstallError>) -> String {
         Err(InstallError::Refused(reason)) => reason,
         other => panic!("not refused: {other:?}"),
     }
+}
+
+/// The fallback when symlinks aren't allowed: a junction, kept on a rerun.
+#[test]
+fn dev_link_falls_back_to_a_junction() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("tool");
+    write_plugin(&folder, "1.0.0", COMMANDS, &[]);
+    let extensions = dir.path().join("extensions");
+    let api = check_api(Vec::new());
+    let canonical = dunce::canonicalize(&folder).unwrap();
+    let installed = link_with(&folder, &extensions, &api, true).unwrap();
+    let at = installed.dir.clone();
+    assert!(links_to(&at, &canonical));
+    assert_eq!(linked_from(&at), Some(canonical.clone()));
+    assert!(at.join("extension.toml").is_file());
+    // Kept as it is, whichever way it's made.
+    assert_eq!(link(&folder, &extensions, &api).unwrap(), installed);
+    assert_eq!(
+        link_with(&folder, &extensions, &api, true).unwrap(),
+        installed
+    );
+    remove_link(&at);
+    assert!(folder.join("extension.toml").is_file());
 }
 
 #[test]
@@ -311,4 +335,33 @@ fn grants(capabilities: &[&str]) -> Grants {
     (capabilities.iter())
         .map(|capability| Capability::parse(capability).unwrap())
         .collect()
+}
+
+#[test]
+fn network_paths_are_recognised_in_both_forms() {
+    for network in [
+        r"\\server\share\tool",
+        r"\\?\UNC\server\share\tool",
+        r"\\?\unc\server\share",
+    ] {
+        assert!(is_network_path(Path::new(network)), "{network}");
+    }
+    for local in [
+        r"C:\dev\tool",
+        r"\\?\C:\dev\tool",
+        r"\\.\C:\dev",
+        "/home/tool",
+    ] {
+        assert!(!is_network_path(Path::new(local)), "{local}");
+    }
+}
+
+#[test]
+fn names_cmd_would_expand_are_unsafe() {
+    for name in ["C:\\a%PATH%b", "C:\\a^b", "C:\\a\"b", "C:\\a!b"] {
+        assert!(cmd_unsafe(Path::new(name)), "{name}");
+    }
+    for name in ["C:\\a&b", "C:\\a b", "/home/a b"] {
+        assert!(!cmd_unsafe(Path::new(name)), "{name}");
+    }
 }
