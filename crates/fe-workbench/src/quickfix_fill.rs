@@ -427,21 +427,37 @@ fn search(
         return Ok(None);
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
+    let Some(items) = items_of(root, &files, every, &cancel) else {
+        return Ok(None);
+    };
+    Ok(Some((items, summary.truncated)))
+}
+
+/// The items of `files` (sorted), as [`search`] makes them. None if `cancel`
+/// was set at any point before it returned.
+fn items_of(
+    root: &Path,
+    files: &[FileMatches],
+    every: bool,
+    cancel: &AtomicBool,
+) -> Option<Vec<QuickfixItem>> {
     let mut items = Vec::new();
-    for file in &files {
+    let mut poll = Poll::new(Phase::Items, cancel);
+    for file in files {
         for line in &file.lines {
             let ranges = match every {
                 true => &line.ranges[..],
                 false => &line.ranges[..line.ranges.len().min(1)],
             };
-            if cancel.load(Ordering::Relaxed) {
-                return Ok(None);
+            if poll.now() {
+                return None;
             }
             let starts: Vec<usize> = ranges.iter().map(|range| range.start).collect();
-            let Some(found) = line_columns(root, &file.path, line, &starts, &cancel) else {
-                return Ok(None);
-            };
+            let found = line_columns(root, &file.path, line, &starts, cancel)?;
             for &col in &found.columns {
+                if poll.step() {
+                    return None;
+                }
                 items.push(QuickfixItem {
                     path: file.path.clone(),
                     row: u32::try_from(line.line_number.saturating_sub(1)).unwrap_or(u32::MAX),
@@ -452,10 +468,85 @@ fn search(
             }
         }
     }
-    if cancel.load(Ordering::Relaxed) {
-        return Ok(None);
+    (!cancel.load(Ordering::Relaxed)).then_some(items)
+}
+
+/// Which traversal a [`Poll`] watches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// The lines and matches of the files.
+    Items,
+    /// The matches counted in a line's preview.
+    Preview,
+    /// The matches counted in the preview of a line gone from disk.
+    Fallback,
+}
+
+/// Checks `cancel` every 64 steps of a loop, and on demand.
+struct Poll<'a> {
+    cancel: &'a AtomicBool,
+    #[cfg_attr(not(test), allow(dead_code))]
+    phase: Phase,
+    steps: u32,
+}
+
+impl<'a> Poll<'a> {
+    fn new(phase: Phase, cancel: &'a AtomicBool) -> Self {
+        Poll {
+            cancel,
+            phase,
+            steps: 0,
+        }
     }
-    Ok(Some((items, summary.truncated)))
+
+    /// One step of the loop. True if the fill was cancelled.
+    fn step(&mut self) -> bool {
+        self.steps += 1;
+        #[cfg(test)]
+        POLL_HOOK.with_borrow_mut(|hook| hook.as_mut().map(|hook| hook(self.phase, self.steps)));
+        self.steps.is_multiple_of(64) && self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// A check now, which counts as a step. True if cancelled.
+    fn now(&mut self) -> bool {
+        self.steps += 1;
+        #[cfg(test)]
+        POLL_HOOK.with_borrow_mut(|hook| hook.as_mut().map(|hook| hook(self.phase, self.steps)));
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+type PollHook = Box<dyn FnMut(Phase, u32)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Called with the phase and its step count, at each step.
+    static POLL_HOOK: std::cell::RefCell<Option<PollHook>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+/// The chars of `text` before each of `ends` (ascending), in one pass. None
+/// if cancelled meanwhile.
+fn chars_before(text: &str, ends: &[usize], phase: Phase, cancel: &AtomicBool) -> Option<Vec<u32>> {
+    let mut poll = Poll::new(phase, cancel);
+    let mut chars = text.char_indices().peekable();
+    let mut count = 0u32;
+    let mut counts = Vec::with_capacity(ends.len());
+    for &end in ends {
+        while chars.next_if(|(ix, _)| *ix < end).is_some() {
+            count = count.saturating_add(1);
+            if poll.step() {
+                return None;
+            }
+        }
+        if poll.step() {
+            return None;
+        }
+        counts.push(count);
+    }
+    Some(counts)
 }
 
 /// The columns of one matching line's matches, as [`line_columns`] finds them.
@@ -494,25 +585,22 @@ fn columns_of(
     starts: &[usize],
     cancel: &AtomicBool,
 ) -> Option<LineColumns> {
-    let chars_before = |text: &str, end: usize| {
-        let before = text.char_indices().take_while(|(ix, _)| *ix < end).count();
-        u32::try_from(before).unwrap_or(u32::MAX)
-    };
     let bom =
         line.line_offset == 0 && line.preview_start == 0 && line.preview.starts_with('\u{feff}');
-    let in_preview = |start: usize| {
-        let chars = chars_before(&line.preview, start);
-        if bom && start >= '\u{feff}'.len_utf8() {
-            chars - 1
-        } else if bom {
-            0
-        } else {
-            chars
-        }
-    };
     let preview_len = line.preview.len();
     if line.preview_start == 0 && starts.iter().all(|&start| start <= preview_len) {
-        let columns = starts.iter().map(|&start| in_preview(start)).collect();
+        let counts = chars_before(&line.preview, starts, Phase::Preview, cancel)?;
+        let columns = (starts.iter().zip(counts))
+            .map(|(&start, chars)| {
+                if bom && start >= '\u{feff}'.len_utf8() {
+                    chars - 1
+                } else if bom {
+                    0
+                } else {
+                    chars
+                }
+            })
+            .collect();
         return Some(LineColumns { columns, reads: 0 });
     }
     let last = starts.iter().copied().max().unwrap_or(0);
@@ -525,11 +613,13 @@ fn columns_of(
         // Gone since: the preview's chars past its start, a byte each before.
         Err(_) => {
             let skipped = u32::try_from(line.preview_start).unwrap_or(u32::MAX);
-            let columns = (starts.iter())
-                .map(|&start| {
-                    let within = start.saturating_sub(line.preview_start);
-                    skipped.saturating_add(chars_before(&line.preview, within))
-                })
+            let within: Vec<usize> = (starts.iter())
+                .map(|&start| start.saturating_sub(line.preview_start))
+                .collect();
+            let counts = chars_before(&line.preview, &within, Phase::Fallback, cancel)?;
+            let columns = counts
+                .into_iter()
+                .map(|c| skipped.saturating_add(c))
                 .collect();
             Some(LineColumns { columns, reads: 0 })
         }
@@ -1042,5 +1132,113 @@ mod tests {
             super::STEP_HOOK.with_borrow_mut(|hook| *hook = None);
             assert!(found.is_none(), "cancelled after {after} chars");
         }
+    }
+
+    /// Runs `work` with `cancel` set once `phase` reaches step `after`, and
+    /// returns the last step each phase got to.
+    fn cancelled_in<T>(
+        phase: super::Phase,
+        after: u32,
+        work: impl FnOnce(&AtomicBool) -> T,
+    ) -> (T, std::collections::HashMap<String, u32>) {
+        use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+        let cancel = Arc::new(AtomicBool::new(false));
+        let seen: Rc<RefCell<HashMap<String, u32>>> = Rc::default();
+        let (flag, log) = (cancel.clone(), seen.clone());
+        super::POLL_HOOK.with_borrow_mut(|hook| {
+            *hook = Some(Box::new(move |at, step| {
+                log.borrow_mut().insert(format!("{at:?}"), step);
+                if at == phase && step == after {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }));
+        });
+        let out = work(&cancel);
+        super::POLL_HOOK.with_borrow_mut(|hook| *hook = None);
+        let seen = seen.borrow().clone();
+        (out, seen)
+    }
+
+    #[test]
+    fn a_fill_cancelled_in_the_preview_stops_counting() {
+        let dir = tempfile::tempdir().unwrap();
+        let preview = "x".repeat(500);
+        let starts: Vec<usize> = (0..500).collect();
+        let matched = line(0, vec![0..1], 0, &preview);
+        for after in [5, 70, 300] {
+            let (found, seen) = cancelled_in(super::Phase::Preview, after, |cancel| {
+                line_columns(
+                    dir.path(),
+                    &dir.path().join("a.txt"),
+                    &matched,
+                    &starts,
+                    cancel,
+                )
+            });
+            assert!(found.is_none(), "cancelled at step {after}");
+            assert!(seen["Preview"] < after + 128, "{seen:?}");
+        }
+    }
+
+    #[test]
+    fn a_fill_cancelled_in_the_fallback_stops_counting() {
+        let dir = tempfile::tempdir().unwrap();
+        let preview = "x".repeat(500);
+        let starts: Vec<usize> = (1000..1500).collect();
+        // Starts past the preview, and the file is gone: the fallback.
+        let matched = line(0, vec![1000..1001], 1000, &preview);
+        for after in [5, 70, 300] {
+            let (found, seen) = cancelled_in(super::Phase::Fallback, after, |cancel| {
+                line_columns(
+                    dir.path(),
+                    &dir.path().join("gone.txt"),
+                    &matched,
+                    &starts,
+                    cancel,
+                )
+            });
+            assert!(found.is_none(), "cancelled at step {after}");
+            assert!(seen["Fallback"] < after + 128, "{seen:?}");
+        }
+    }
+
+    #[test]
+    fn a_fill_cancelled_walking_the_items_stops_making_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        let files = vec![fe_project::FileMatches {
+            path,
+            rel: "a.txt".into(),
+            lines: (0..500)
+                .map(|n| {
+                    let mut matched = line(0, vec![0..1], 0, "x");
+                    matched.line_number = n + 1;
+                    matched
+                })
+                .collect(),
+        }];
+        for after in [5, 70, 300] {
+            let (items, seen) = cancelled_in(super::Phase::Items, after, |cancel| {
+                super::items_of(dir.path(), &files, true, cancel)
+            });
+            assert!(items.is_none(), "cancelled at step {after}");
+            assert!(seen["Items"] < after + 2, "{seen:?}");
+        }
+        // A line with many matches checks between them too.
+        let many = vec![fe_project::FileMatches {
+            path: dir.path().join("a.txt"),
+            rel: "a.txt".into(),
+            lines: vec![line(
+                0,
+                (0..500).map(|n| n..n + 1).collect(),
+                0,
+                &"x".repeat(500),
+            )],
+        }];
+        let (items, seen) = cancelled_in(super::Phase::Items, 100, |cancel| {
+            super::items_of(dir.path(), &many, true, cancel)
+        });
+        assert!(items.is_none());
+        assert!(seen["Items"] < 200, "{seen:?}");
     }
 }
