@@ -410,6 +410,8 @@ mod tab_index_commands_tests;
 #[cfg(test)]
 mod task_commands_tests;
 #[cfg(test)]
+mod task_defs_java_tests;
+#[cfg(test)]
 mod task_defs_tests;
 #[cfg(test)]
 mod task_problems_panel_tests;

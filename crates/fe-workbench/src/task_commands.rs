@@ -84,6 +84,8 @@ fn source_name(source: Source) -> &'static str {
         Source::File => "tasks.toml",
         Source::Cargo => "cargo",
         Source::Npm => "npm",
+        Source::Gradle => "gradle",
+        Source::Maven => "maven",
         Source::Make => "make",
         Source::Just => "just",
     }

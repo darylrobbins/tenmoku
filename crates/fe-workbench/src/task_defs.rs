@@ -36,6 +36,11 @@
 //!   for a package or a `[workspace]` alike, so it's only looked for.
 //! - `package.json`: each script, as `npm run <name>`, or by the lockfile
 //!   beside it `pnpm run <name>`, `yarn <name>` or `bun run <name>`.
+//! - `build.gradle`, `build.gradle.kts`, `settings.gradle` or
+//!   `settings.gradle.kts`: `build`, `test`, `run`, `clean` and `check`, as
+//!   `./gradlew <task>` when a `gradlew` is beside it, else `gradle <task>`.
+//! - `pom.xml`: `compile`, `test`, `package`, `verify` and `clean`, as
+//!   `./mvnw <goal>` when an `mvnw` is beside it, else `mvn <goal>`.
 //! - `GNUmakefile`, `makefile` or `Makefile`, the first of them as `make`
 //!   picks: each target as `make <target>`, by a scan of its lines.
 //! - `justfile` or `Justfile`: each public recipe as `just <recipe>`.
@@ -53,8 +58,8 @@
 //! File tasks come first, then detected ones, and a file task replaces the
 //! detected one with its label. Each of the groups has at most one default:
 //! the first marked, with a diagnostic for any later one. Failing that, the
-//! build and test groups fall to the first detected Cargo or npm task named
-//! so. `default` on a task with no group has nothing to apply to, so it's
+//! build and test groups fall to the first detected Cargo, npm, Gradle or Maven task named
+//! so, in that order, so Gradle's default beats Maven's when a root has both. `default` on a task with no group has nothing to apply to, so it's
 //! cleared with a diagnostic.
 
 use std::collections::{BTreeMap, HashSet};
@@ -176,6 +181,8 @@ pub enum Source {
     File,
     Cargo,
     Npm,
+    Gradle,
+    Maven,
     Make,
     Just,
 }
@@ -457,7 +464,11 @@ fn choose_defaults(tasks: &mut [Task], diagnostics: &mut Vec<TaskDiagnostic>) {
         }
         if marked.is_none() && group != Group::Run {
             let by_name = tasks.iter_mut().find(|task| {
-                task.group == Some(group) && matches!(task.source, Source::Cargo | Source::Npm)
+                task.group == Some(group)
+                    && matches!(
+                        task.source,
+                        Source::Cargo | Source::Npm | Source::Gradle | Source::Maven
+                    )
             });
             if let Some(task) = by_name {
                 task.default = true;
@@ -469,6 +480,8 @@ fn choose_defaults(tasks: &mut [Task], diagnostics: &mut Vec<TaskDiagnostic>) {
 fn detected_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
     let mut tasks = cargo_tasks(files, root);
     tasks.extend(npm_tasks(files, root));
+    tasks.extend(gradle_tasks(files, root));
+    tasks.extend(maven_tasks(files, root));
     if let Some(text) = first_readable(files, root, &MAKEFILES) {
         tasks.extend(
             make_targets(&text)
@@ -537,6 +550,58 @@ fn cargo_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
     ]
     .into_iter()
     .map(|(command, group)| detected(Source::Cargo, group, &["cargo", command], root))
+    .collect()
+}
+
+/// Gradle's fixed task list, by the wrapper when the root holds one.
+fn gradle_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
+    let marked = [
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+    ]
+    .iter()
+    .any(|name| files.exists(&root.join(name)));
+    if !marked {
+        return Vec::new();
+    }
+    let runner = if files.exists(&root.join("gradlew")) {
+        "./gradlew"
+    } else {
+        "gradle"
+    };
+    [
+        ("build", Some(Group::Build)),
+        ("test", Some(Group::Test)),
+        ("run", None),
+        ("clean", None),
+        ("check", None),
+    ]
+    .into_iter()
+    .map(|(task, group)| detected(Source::Gradle, group, &[runner, task], root))
+    .collect()
+}
+
+/// Maven's fixed goal list, by the wrapper when the root holds one.
+fn maven_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
+    if !files.exists(&root.join("pom.xml")) {
+        return Vec::new();
+    }
+    let runner = if files.exists(&root.join("mvnw")) {
+        "./mvnw"
+    } else {
+        "mvn"
+    };
+    [
+        ("compile", Some(Group::Build)),
+        ("test", Some(Group::Test)),
+        ("package", Some(Group::Build)),
+        ("verify", None),
+        ("clean", None),
+    ]
+    .into_iter()
+    .map(|(goal, group)| detected(Source::Maven, group, &[runner, goal], root))
     .collect()
 }
 
