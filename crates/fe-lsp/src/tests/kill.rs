@@ -14,7 +14,7 @@ use fe_buffer::Buffer;
 use futures::FutureExt;
 
 use super::{Events, ROOT, WAIT, manager};
-use crate::fake::{FakeLauncher, FakeServer, InitializeReply, Script};
+use crate::fake::{FakeLauncher, FakeLaunchers, FakeServer, InitializeReply, Script};
 use crate::{
     Clock, LaunchCancel, LocalLauncher, LoginPath, LspEvent, LspManager, ManualClock, ServerId,
     ServerIo, ServerLauncher, ServerSpec, ServerStatus, SystemClock,
@@ -536,36 +536,16 @@ fn kill_switch_spares_a_replaced_sessions_process() {
     assert_eq!(s.fake.kills(), 1);
 }
 
-/// Hands each launch to the fake its spec's name picks.
-struct Named(HashMap<&'static str, Arc<dyn ServerLauncher>>);
-
-impl ServerLauncher for Named {
-    fn launch(
-        &self,
-        spec: &ServerSpec,
-        root: &Path,
-        cancel: &LaunchCancel,
-    ) -> io::Result<ServerIo> {
-        self.0[spec.name.as_str()].launch(spec, root, cancel)
-    }
-}
-
 #[test]
 fn kill_switch_counts_servers_whose_threads_have_not_ended() {
     let (a, b) = (
         FakeServer::new(Script::default()),
         FakeServer::new(Script::default()),
     );
-    let launcher = Named(HashMap::from([
-        (
-            "a",
-            Arc::new(EndlessStderr(a.launcher())) as Arc<dyn ServerLauncher>,
-        ),
-        (
-            "b",
-            Arc::new(EndlessStderr(b.launcher())) as Arc<dyn ServerLauncher>,
-        ),
-    ]));
+    let launcher = FakeLaunchers::new([
+        ("a", Arc::new(EndlessStderr(a.launcher()))),
+        ("b", Arc::new(EndlessStderr(b.launcher()))),
+    ]);
     let (mut manager, events) = still(Arc::new(launcher));
     let switch = manager.kill_switch();
     assert_eq!(switch.unfinished(), 0);

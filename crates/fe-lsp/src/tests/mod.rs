@@ -8,6 +8,7 @@ mod completion;
 mod decode_cost;
 mod diagnostics;
 mod encoding;
+mod fake_launchers;
 mod hover;
 mod identity;
 mod kill;

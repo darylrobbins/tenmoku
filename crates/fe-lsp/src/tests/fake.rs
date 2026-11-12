@@ -982,6 +982,34 @@ impl Shared {
     }
 }
 
+/// Hands each launch to the launcher its spec's name picks, so one manager
+/// can run several fakes, each with its own script, records and launches.
+pub struct FakeLaunchers(HashMap<&'static str, Arc<dyn ServerLauncher>>);
+
+impl FakeLaunchers {
+    pub fn new<L: ServerLauncher + 'static>(
+        launchers: impl IntoIterator<Item = (&'static str, Arc<L>)>,
+    ) -> Self {
+        Self(
+            launchers
+                .into_iter()
+                .map(|(name, launcher)| (name, launcher as Arc<dyn ServerLauncher>))
+                .collect(),
+        )
+    }
+}
+
+impl ServerLauncher for FakeLaunchers {
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> io::Result<ServerIo> {
+        self.0[spec.name.as_str()].launch(spec, root, cancel)
+    }
+}
+
 /// Launches the fake: a new session per launch, all sharing one record.
 pub struct FakeLauncher {
     fake: FakeServer,
