@@ -272,3 +272,56 @@ fn the_card_is_the_raised_surface_with_the_float_shadow_after_300_ms(cx: &mut Te
     let avatar = probe.avatar.expect("an avatar");
     assert!((0..8).any(|lane| graph.lane(lane) == avatar));
 }
+
+/// The card's, a file row's and a ref pill's messages that were once built
+/// from fragments are whole catalogue messages, and read as they did.
+#[gpui::test]
+fn assembled_messages_are_whole_and_render_as_before(_cx: &mut TestAppContext) {
+    use kiln_l10n::tr;
+    let render = |text: gpui::SharedString| text.to_string();
+    assert_eq!(
+        render(tr!(
+            "workbench-git-log-card-dates",
+            ago = "2 days ago",
+            date = "Jan 1"
+        )),
+        "2 days ago (Jan 1)"
+    );
+    assert_eq!(
+        render(tr!(
+            "workbench-git-log-card-trailer",
+            key = "Co-Authored-By",
+            name = "Ann"
+        )),
+        "Co-Authored-By: Ann"
+    );
+    assert_eq!(
+        render(tr!("workbench-git-log-lines-added", added = 12u64)),
+        "+12"
+    );
+    assert_eq!(
+        render(tr!("workbench-git-log-lines-removed", removed = 3u64)),
+        "-3"
+    );
+    assert_eq!(
+        render(tr!("workbench-git-log-parent-rev", short = "abc1234")),
+        "abc1234^"
+    );
+    assert_eq!(
+        render(tr!(
+            "workbench-git-log-card-totals",
+            files = "1 file changed",
+            added = "2 insertions(+)",
+            removed = "1 deletion(-)"
+        )),
+        "1 file changed, 2 insertions(+), 1 deletion(-)"
+    );
+    assert_eq!(
+        render(tr!("workbench-git-log-renamed-from", from = "a")),
+        "← a"
+    );
+    assert_eq!(
+        render(tr!("workbench-git-log-refs-more", count = 3u64)),
+        "+3"
+    );
+}

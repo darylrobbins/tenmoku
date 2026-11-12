@@ -506,6 +506,31 @@ fn totals_text(files: usize, added: u32, removed: u32) -> [String; 3] {
     ]
 }
 
+/// A message with placeholders laid out as elements: `text` is the message
+/// rendered with each placeholder given the marker char at its index in
+/// `marks`; this gives the text before the first marker and, in the order
+/// the message has them, each marker's index with the text after it up to
+/// the next. The message stays whole in the catalogue, so a locale can
+/// reorder or reword it around the pieces the card styles apart.
+fn message_parts(text: &str, marks: &[char]) -> (String, Vec<(usize, String)>) {
+    let mut lead = String::new();
+    let mut parts: Vec<(usize, String)> = Vec::new();
+    for ch in text.chars() {
+        match marks.iter().position(|mark| *mark == ch) {
+            Some(ix) => parts.push((ix, String::new())),
+            None => parts
+                .last_mut()
+                .map_or(&mut lead, |(_, after)| after)
+                .push(ch),
+        }
+    }
+    (lead, parts)
+}
+
+/// The markers [`message_parts`] takes: private-use characters no message
+/// holds.
+const MARKS: [char; 3] = ['\u{e000}', '\u{e001}', '\u{e002}'];
+
 /// What a commit card's web link says for `url`: the host's name where
 /// it's known.
 fn link_label(url: &str) -> SharedString {
@@ -639,11 +664,12 @@ impl CommitCard {
             refs: entry.refs.clone(),
             lane,
             initials: initials(&commit.author),
-            dates: format!(
-                "{} ({})",
-                commit_rows::ago(now - commit.time),
-                git_blame::date(&commit)
-            ),
+            dates: tr!(
+                "workbench-git-log-card-dates",
+                ago = commit_rows::ago(now - commit.time),
+                date = git_blame::date(&commit)
+            )
+            .to_string(),
             body: (!body.is_empty()).then(|| body.join("\n")),
             trailers,
             totals: None,
@@ -700,9 +726,19 @@ impl CommitCard {
         let body = self.body.iter().flat_map(|body| body.lines());
         lines.extend(body.map(|line| normal(line.to_owned())));
         let trailers = self.trailers.iter();
-        lines.extend(trailers.map(|trailer| normal(format!("{}: {}", trailer.key, trailer.name))));
+        lines.extend(trailers.map(|trailer| {
+            let (key, name) = (trailer.key.as_str(), trailer.name.as_str());
+            normal(tr!("workbench-git-log-card-trailer", key = key, name = name).to_string())
+        }));
         if let Some((files, added, removed)) = self.totals {
-            lines.push(normal(totals_text(files, added, removed).join(", ")));
+            let [files, added, removed] = totals_text(files, added, removed);
+            let totals = tr!(
+                "workbench-git-log-card-totals",
+                files = files,
+                added = added,
+                removed = removed
+            );
+            lines.push(normal(totals.to_string()));
         }
         lines
     }
@@ -826,14 +862,27 @@ impl Render for CommitCard {
         }
         if !self.trailers.is_empty() {
             let rows = self.trailers.iter().map(|trailer| {
-                (div().flex().gap_1())
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(ui.muted_text)
-                            .child(format!("{}:", trailer.key)),
-                    )
-                    .child(div().min_w_0().child(trailer.name.clone()))
+                let (key, name) = (trailer.key.as_str(), trailer.name.as_str());
+                let message = tr!(
+                    "workbench-git-log-card-trailer",
+                    key = MARKS[0].to_string(),
+                    name = MARKS[1].to_string()
+                );
+                let (lead, parts) = message_parts(&message, &MARKS[..2]);
+                let mut row = div().flex().gap_1();
+                if !lead.trim().is_empty() {
+                    row = row.child(lead.trim().to_owned());
+                }
+                for (ix, after) in parts {
+                    row = if ix == 0 {
+                        let text = format!("{key}{}", after.trim_end());
+                        row.child(div().flex_none().text_color(ui.muted_text).child(text))
+                    } else {
+                        let text = format!("{name}{}", after.trim_end());
+                        row.child(div().min_w_0().child(text))
+                    };
+                }
+                row
             });
             let trailers = div().flex().flex_col().children(rows);
             sections.push(("trailers", trailers.into_any_element()));
@@ -869,9 +918,8 @@ impl Render for CommitCard {
         ];
         if let Some((files, added, removed)) = self.totals {
             let [files, added, removed] = totals_text(files, added, removed);
-            let comma = |part: AnyElement| div().flex().child(part).child(",");
             // The count opens the commit's change to all its files.
-            let files = match self.repo.clone() {
+            let files_part = |files: String| match self.repo.clone() {
                 Some(repo) => {
                     let (workbench, entry) = (self.workbench.clone(), self.entry.clone());
                     div()
@@ -888,15 +936,35 @@ impl Render for CommitCard {
                 }
                 None => div().child(files).into_any_element(),
             };
-            let totals = (div().flex_none().flex().flex_wrap().gap_1())
-                .child(comma(files))
-                .child(comma(
-                    div()
+            let message = tr!(
+                "workbench-git-log-card-totals",
+                files = MARKS[0].to_string(),
+                added = MARKS[1].to_string(),
+                removed = MARKS[2].to_string()
+            );
+            let (lead, laid) = message_parts(&message, &MARKS);
+            let mut totals = div().flex_none().flex().flex_wrap().gap_1();
+            if !lead.trim().is_empty() {
+                totals = totals.child(lead.trim().to_owned());
+            }
+            let mut pieces = [Some(files), Some(added), Some(removed)];
+            for (ix, after) in laid {
+                let Some(text) = pieces[ix].take() else {
+                    continue;
+                };
+                let part = match ix {
+                    0 => files_part(text),
+                    1 => div()
                         .text_color(colors.added)
-                        .child(added)
+                        .child(text)
                         .into_any_element(),
-                ))
-                .child(div().text_color(colors.deleted).child(removed));
+                    _ => div()
+                        .text_color(colors.deleted)
+                        .child(text)
+                        .into_any_element(),
+                };
+                totals = totals.child(div().flex().child(part).child(after.trim_end().to_owned()));
+            }
             parts.push(("totals", totals.into_any_element()));
         }
         let copy = IconButton::new(
@@ -1544,7 +1612,11 @@ impl GitLogPanel {
             (None, _) => 'M',
         };
         let dir = match &file.from {
-            Some(from) if dir.is_empty() => format!("← {}", self.display_path(from)),
+            Some(from) if dir.is_empty() => tr!(
+                "workbench-git-log-renamed-from",
+                from = self.display_path(from)
+            )
+            .to_string(),
             Some(from) => tr!(
                 "workbench-git-log-renamed-dir",
                 dir = dir.as_str(),
@@ -2212,6 +2284,20 @@ fn lettered(row: Stateful<Div>, lead: Div, ix: usize, probe: RowsProbe) -> State
     row.child(cell)
 }
 
+/// A file row's added-lines count, as `+N`.
+fn signed_added(added: u32) -> String {
+    tr!("workbench-git-log-lines-added", added = u64::from(added)).to_string()
+}
+
+/// A file row's removed-lines count, as `-N`.
+fn signed_removed(removed: u32) -> String {
+    tr!(
+        "workbench-git-log-lines-removed",
+        removed = u64::from(removed)
+    )
+    .to_string()
+}
+
 /// A ref label's text: a tag's prefixed `tag`.
 #[cfg(test)]
 fn label_text(label: &RefLabel) -> String {
@@ -2282,7 +2368,7 @@ fn ref_pills(refs: &[RefLabel], lane: usize, graph: &GraphColors) -> Vec<AnyElem
             .flex_none()
             .text_size(px(11.))
             .text_color(graph.muted)
-            .child(format!("+{more}"));
+            .child(tr!("workbench-git-log-refs-more", count = more as u64));
         pills.push(rest.into_any_element());
     }
     pills
@@ -2348,8 +2434,8 @@ fn file_cell(
     };
     let (added, removed) = parts.counts.unwrap_or_default();
     let counts = [
-        (added > 0).then(|| (format!("+{added}"), count(colors.added))),
-        (removed > 0).then(|| (format!("-{removed}"), count(colors.deleted))),
+        (added > 0).then(|| (signed_added(added), count(colors.added))),
+        (removed > 0).then(|| (signed_removed(removed), count(colors.deleted))),
     ];
     let mut letter =
         (div().flex_none().w(LETTER_WIDTH).text_right()).text_color(colors.letter(parts.kind));

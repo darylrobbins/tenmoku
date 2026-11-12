@@ -404,7 +404,10 @@ impl Workbench {
             return;
         }
         let short = &commit.commit.short;
-        let left = fixed_side(format!("{short}^"), &left);
+        let left = fixed_side(
+            tr!("workbench-git-log-parent-rev", short = short.as_str()),
+            &left,
+        );
         let right = fixed_side(short.clone(), &right);
         let name = file_name(&commit.path);
         let compared = commit.path.clone();
