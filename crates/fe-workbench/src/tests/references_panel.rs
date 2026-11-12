@@ -310,8 +310,8 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
 
     cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
-    let state = dock.read_with(cx, |dock, _| {
-        (dock.is_visible(), dock.active(), dock.title())
+    let state = dock.read_with(cx, |dock, cx| {
+        (dock.is_visible(), dock.active(), dock.title(cx))
     });
     assert_eq!(state, (true, DockPanel::References, "References".into()));
     let panel = references(&workbench, cx);

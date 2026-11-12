@@ -193,10 +193,10 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
 
     dispatch("git.show_changes", cx);
     assert_eq!(
-        dock.read_with(cx, |dock, _| (
+        dock.read_with(cx, |dock, cx| (
             dock.is_visible(),
             dock.active(),
-            dock.title()
+            dock.title(cx)
         )),
         (true, DockPanel::SourceControl, "Changes".into())
     );

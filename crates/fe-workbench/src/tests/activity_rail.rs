@@ -141,7 +141,7 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     let dock = dock(&workbench, cx);
     let highlighted = |cx: &mut VisualTestContext| {
-        dock.read_with(cx, |dock, _| (dock.rail_highlighted(), dock.title()))
+        dock.read_with(cx, |dock, cx| (dock.rail_highlighted(), dock.title(cx)))
     };
     assert_eq!(
         highlighted(cx),

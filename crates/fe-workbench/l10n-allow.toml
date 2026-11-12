@@ -506,7 +506,7 @@ text = "change-letter:{at}"
 reason = "A row's status letter's debug selector"
 
 # The Search panel's name as its SidebarPanel const declares it, by which the
-# rail orders it and tests name it: the dock shows it as it does any panel's.
+# rail orders it and tests name it (the dock's header is workbench-dock-search-title).
 
 [[literal]]
 file = "src/search_panel.rs"
@@ -678,7 +678,7 @@ reason = "A definition row's debug selector, for tests"
 [[literal]]
 file = "src/references_panel.rs"
 text = "References"
-reason = "The panel's name in its SidebarPanel const: dock.rs's dock_item! titles the dock with it, as it does Search's and Chat's, until dock.rs keys them"
+reason = "The panel's name in its SidebarPanel const, not shown: it names the panel for the rail's order and tests (the dock's header is workbench-dock-references-title)"
 
 [[literal]]
 file = "src/references_panel.rs"

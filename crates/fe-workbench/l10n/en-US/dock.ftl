@@ -25,3 +25,10 @@ workbench-dock-errors = { $count ->
     [one] { $count } error
    *[other] { $count } errors
 }
+
+## The panels' headers (dock.rs)
+
+workbench-dock-references-title = References
+workbench-dock-search-title = Search
+workbench-dock-chat-title = Chat
+workbench-dock-ai-changes-title = AI Changes

@@ -63,6 +63,7 @@ mod coloured_icon_surfaces;
 mod commit_diff_b3;
 mod default_fonts;
 mod default_keymaps;
+mod dock_titles_locale;
 mod file_icon_set_surfaces;
 pub(crate) mod find_bar;
 mod find_bar_b3;

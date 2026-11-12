@@ -295,33 +295,10 @@ pub(crate) fn rail_position(side: RailSide) -> DockPosition {
 }
 
 /// fastedit's panels in kiln-shell's dock: each is what its module's
-/// [`SidebarPanel`] declares. Its title row has its name, or what `$title`,
-/// a method of the panel's, gives.
+/// [`SidebarPanel`] declares. Its title row has what `$title` gives: a
+/// closure or method of the panel's, from the catalogue. `actions = …` and
+/// `off_rail` follow a `$title` too, so no panel is titled by its name.
 macro_rules! dock_item {
-    ($panel:ty, $sidebar:expr) => {
-        dock_item!($panel, $sidebar, |_: &$panel, _: &App| {
-            $sidebar.name.into()
-        });
-    };
-    // Its own header actions: `$actions` of the panel.
-    ($panel:ty, $sidebar:expr, actions = $actions:expr) => {
-        dock_item!(
-            $panel,
-            $sidebar,
-            |_: &$panel, _: &App| $sidebar.name.into(),
-            true,
-            $actions
-        );
-    };
-    // Shown by its command alone: never on the rail.
-    ($panel:ty, $sidebar:expr, off_rail) => {
-        dock_item!(
-            $panel,
-            $sidebar,
-            |_: &$panel, _: &App| $sidebar.name.into(),
-            false
-        );
-    };
     ($panel:ty, $sidebar:expr, $title:expr) => {
         dock_item!($panel, $sidebar, $title, true);
     };
@@ -371,13 +348,19 @@ macro_rules! dock_item {
     };
 }
 
-// Titled by its name; its header carries the results' actions.
+// Its header carries the results' actions.
 dock_item!(
     SearchPanel,
     search_panel::SIDEBAR,
-    actions = |panel: &SearchPanel, _: &App| panel.pane_actions()
+    |_: &SearchPanel, _: &App| tr!("workbench-dock-search-title"),
+    true,
+    |panel: &SearchPanel, _: &App| panel.pane_actions()
 );
-dock_item!(ReferencesPanel, crate::references_panel::SIDEBAR);
+dock_item!(
+    ReferencesPanel,
+    crate::references_panel::SIDEBAR,
+    |_: &ReferencesPanel, _: &App| tr!("workbench-dock-references-title")
+);
 /// The bottom panel's Problems tool window, titled from the catalogue.
 impl DockItem for ProblemsPanel {
     fn id(&self) -> PanelId {
@@ -424,14 +407,23 @@ impl DockItem for GitLogPanel {
         true
     }
 }
-dock_item!(AiChangesPanel, crate::ai_changes_panel::SIDEBAR, off_rail);
+dock_item!(
+    AiChangesPanel,
+    crate::ai_changes_panel::SIDEBAR,
+    |_: &AiChangesPanel, _: &App| tr!("workbench-dock-ai-changes-title"),
+    false
+);
 // Titled with the file it lists.
 dock_item!(
     HistoryPanel,
     crate::workbench::git_commands::git_history::SIDEBAR,
     HistoryPanel::title
 );
-dock_item!(ChatPanel, crate::chat_panel::SIDEBAR);
+dock_item!(
+    ChatPanel,
+    crate::chat_panel::SIDEBAR,
+    |_: &ChatPanel, _: &App| tr!("workbench-dock-chat-title")
+);
 // Titled with the symbol at its root.
 dock_item!(
     HierarchyPanel,
@@ -1033,9 +1025,16 @@ impl Dock {
 
 #[cfg(test)]
 impl Dock {
-    /// The title row's text: the active panel's name.
-    pub(crate) fn title(&self) -> SharedString {
-        self.active().name().into()
+    /// The title row's text: the active item's [`DockItem::title`], as the
+    /// header draws it.
+    pub(crate) fn title(&self, cx: &App) -> SharedString {
+        match self.active() {
+            DockPanel::Search => DockItem::title(self.search().read(cx), cx),
+            DockPanel::References => DockItem::title(self.references().read(cx), cx),
+            DockPanel::Explorer => DockItem::title(self.explorer().read(cx), cx),
+            DockPanel::SourceControl => DockItem::title(self.source_control().read(cx), cx),
+            other => other.name().into(),
+        }
     }
 
     /// Where the rail's button for `panel` was laid out in the last frame.
