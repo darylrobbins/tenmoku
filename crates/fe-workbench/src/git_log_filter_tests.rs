@@ -314,8 +314,8 @@ fn graph_lays_out_the_filtered_rows(cx: &mut TestAppContext) {
     assert_eq!(into_one.count(), 1, "{:?}", row(&one));
     assert!(row(&one).bottom.is_empty(), "no lane is left open below");
     // No lane waits on a commit that isn't listed.
-    let widest = panel.read_with(cx, |panel, _| panel.lanes);
-    assert_eq!(widest, 2);
+    let widest = panel.read_with(cx, |panel, _| panel.rows.iter().map(super::lanes).max());
+    assert_eq!(widest, Some(2));
     // It draws.
     draw(cx);
     let seen = panel.read_with(cx, |panel, _| panel.rows_seen());
@@ -339,7 +339,10 @@ fn graph_joins_a_parent_listed_by_a_later_page(cx: &mut TestAppContext) {
     let first = graph(&panel, cx);
     assert!(!goes_on(&first[0].1), "{:?}", first[0].1);
     assert!(!goes_on(&first[1].1), "{:?}", first[1].1);
-    assert_eq!(panel.read_with(cx, |panel, _| panel.lanes), 1);
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.rows.iter().map(super::lanes).max()),
+        Some(1)
+    );
 
     panel.update(cx, |panel, _| panel.append(vec![entry("b", &["a"])]));
     let second = graph(&panel, cx);
@@ -350,7 +353,10 @@ fn graph_joins_a_parent_listed_by_a_later_page(cx: &mut TestAppContext) {
     assert!(!goes_on(&second[1].1));
     assert_eq!(second[2].1.column, 0);
     assert!(second[2].1.bottom.is_empty());
-    assert_eq!(panel.read_with(cx, |panel, _| panel.lanes), 2);
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.rows.iter().map(super::lanes).max()),
+        Some(2)
+    );
     draw(cx);
 }
 

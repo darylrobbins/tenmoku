@@ -30,7 +30,10 @@
 //! ([`commit_diff_view`]), as its menu's Open Changes does.
 //! It's no taller than the window: a longer message scrolls under the
 //! mouse, the card staying open while the mouse is over it, the rest kept
-//! in view around it. Every row with a graph cell or a rail keeps a file
+//! in view around it. A graph cell is [`MIN_LANES`] lanes wide, or as many
+//! as its row reaches across if more, so a row with many branches pushes
+//! out its own summary and no other row's; an expanded commit's file rows
+//! and rail follow its width. Every row with a graph cell or a rail keeps a file
 //! row's letter's room at its right edge, so however narrow the list the
 //! lanes clip at the same place in every row.
 //!
@@ -389,6 +392,15 @@ fn lanes(row: &GraphRow) -> usize {
     let lines = row.top.iter().chain(&row.bottom);
     let widest = lines.map(|line| line.from.max(line.to)).max();
     widest.unwrap_or(0).max(row.column) + 1
+}
+
+/// The lanes every row has room for, however few it reaches across.
+const MIN_LANES: usize = 3;
+
+/// How many lanes `row`'s graph cell is wide: [`MIN_LANES`], or the more it
+/// reaches across, which pushes its own summary out and no other row's.
+fn cell_lanes(row: &GraphRow) -> usize {
+    lanes(row).max(MIN_LANES)
 }
 
 /// What a row of the list is: a commit (by its index), one of its files
@@ -1283,8 +1295,6 @@ pub struct GitLogPanel {
     rows: Vec<GraphRow>,
     /// The layout after the last row, which the next page goes on with.
     layout: GraphLayout,
-    /// The most lanes a row reaches across: the graph cells' width.
-    lanes: usize,
     tail: Tail,
     /// Whether the last page read was full, so there may be more.
     more: bool,
@@ -1358,7 +1368,6 @@ impl GitLogPanel {
             commits: Vec::new(),
             rows: Vec::new(),
             layout: GraphLayout::new(),
-            lanes: 0,
             tail: Tail::None,
             more: false,
             now: 0,
@@ -1450,7 +1459,6 @@ impl GitLogPanel {
         self.counts.clear();
         self.lines.clear();
         self.layout = GraphLayout::new();
-        self.lanes = 0;
         self.tail = Tail::Loading;
         self.more = false;
         self.selected = None;
@@ -1634,7 +1642,6 @@ impl GitLogPanel {
         } else {
             self.rows.clear();
             self.layout = GraphLayout::new();
-            self.lanes = 0;
             0
         };
         self.commits.extend(page);
@@ -1654,7 +1661,6 @@ impl GitLogPanel {
                 }
                 None => self.layout.push(&entry.commit.id, &entry.parents),
             };
-            self.lanes = self.lanes.max(lanes(&row));
             self.rows.push(row);
         }
         self.relayout();
@@ -2209,7 +2215,7 @@ impl GitLogPanel {
                     rail_cell(
                         self.rail(commit),
                         graph_colors.clone(),
-                        self.lanes,
+                        self.rows.get(commit).map_or(MIN_LANES, cell_lanes),
                         ix,
                         seen.clone(),
                     )
@@ -2261,7 +2267,7 @@ impl GitLogPanel {
                     self.rows[ix_commit].clone(),
                     graph_colors.clone(),
                     merge,
-                    self.lanes,
+                    cell_lanes(&self.rows[ix_commit]),
                     ix,
                     seen.clone(),
                 );
@@ -2684,6 +2690,8 @@ pub(crate) struct RowsSeen {
     /// The segments painted in a graph cell or a rail, as `(from, to,
     /// colour)`.
     pub(crate) segments: BTreeMap<usize, Vec<Segment>>,
+    /// The bounds of each row's graph cell or rail.
+    pub(crate) graph_cells: BTreeMap<usize, Bounds<Pixels>>,
     /// A file row's cells in order: text, text colour set on it and bounds.
     pub(crate) cells: BTreeMap<usize, Vec<CellSeen>>,
     /// A commit row's texts after its ref labels.
@@ -2712,10 +2720,13 @@ pub(crate) struct CellSeen {
 
 impl RowsProbe {
     /// Forgets the segments row `ix` painted last frame.
-    fn begin(&self, _ix: usize) {
+    fn begin(&self, _ix: usize, _cell: Bounds<Pixels>) {
         #[cfg(test)]
         {
-            self.0.borrow_mut().segments.remove(&_ix);
+            let mut seen = self.0.borrow_mut();
+            seen.segments.remove(&_ix);
+            seen.graph_cells.insert(_ix, _cell);
+            drop(seen);
             rail_hooks::begin(_ix);
         }
     }
@@ -2808,7 +2819,7 @@ fn rail_cell(
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
-            probe.begin(ix);
+            probe.begin(ix, bounds);
             for &(column, color) in &rail {
                 let x = bounds.left() + LANE_WIDTH * (column as f32 + 0.5);
                 let (top, bottom) = (point(x, bounds.top()), point(x, bounds.bottom()));
@@ -2853,7 +2864,7 @@ fn paint_graph(
     ix: usize,
     probe: &RowsProbe,
 ) {
-    probe.begin(ix);
+    probe.begin(ix, bounds);
     let x = |column: usize| bounds.left() + LANE_WIDTH * (column as f32 + 0.5);
     let middle = bounds.center().y;
     let radius = DOT / 2.;
