@@ -7,6 +7,18 @@
 //! [`KEY_CONTEXT`]) move it; [`ProjectPanel::reveal`] selects a file's row,
 //! expanding its collapsed ancestors.
 //!
+//! Several rows can be selected, as VS Code's explorer and JetBrains'
+//! project view select them: shift-click selects the rows the list shows
+//! from the anchor (the row last clicked alone or cmd-clicked) to the one
+//! clicked, cmd-click (ctrl-click off macOS) selects one more or one fewer,
+//! and shift-up and shift-down extend from the anchor a row at a time,
+//! each saying how many are selected to a screen reader. A plain click, or
+//! any other move, selects one again, and so does a filter. One of them is
+//! the primary, the row last clicked or moved to: the keys move from it,
+//! and what names one entry (rename, new file or folder, reveal) acts on it
+//! alone. Delete, cut, copy, duplicate and copy path act on every selected
+//! row the list shows ([`ProjectPanel::selection`]).
+//!
 //! The tree's first row is the root, the folder's name in its own case;
 //! rows are 24 px, in UI body. The dock's header names the view
 //! ("Project") and carries its actions ([`pane_actions`]).
@@ -44,7 +56,7 @@ use fe_ui::{
 };
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Global, Hsla, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    Global, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     ParentElement as _, Render, ScrollStrategy, SharedString, Styled as _, Task,
     UniformListScrollHandle, Window, div, px, uniform_list,
 };
@@ -235,7 +247,16 @@ pub struct ProjectPanel {
     /// Moves on when the tree is opened again, so a listing that started
     /// on the old one is dropped when it lands.
     generation: u64,
+    /// The primary selected row.
     selected: Option<NodeId>,
+    /// The rows selected with the primary, by shift- and cmd-clicks and
+    /// shift-arrows: they count only while they hold the primary and
+    /// another ([`Self::several`]), so whatever selects a row of its own
+    /// (the right-click menu, say) selects it alone.
+    multi: HashSet<NodeId>,
+    /// The row shift-clicks and shift-arrows extend the selection from,
+    /// while several are selected; the primary otherwise.
+    anchor: Option<NodeId>,
     /// Where the selected row was last seen, checked before searching the
     /// rows for it.
     selected_hint: usize,
@@ -267,6 +288,12 @@ pub struct ProjectPanel {
     /// The row the last frame drew selected.
     #[cfg(test)]
     drawn_selected: Option<usize>,
+    /// Every row the last frame drew selected, the primary's included.
+    #[cfg(test)]
+    drawn_selection: Vec<usize>,
+    /// What the panel last said to a screen reader of the selection.
+    #[cfg(test)]
+    announced: Option<String>,
     /// Each row the last frame built, by name, and the status it drew.
     #[cfg(test)]
     drawn_status: Vec<(String, DrawnStatus)>,
@@ -316,6 +343,8 @@ impl ProjectPanel {
             epoch: 0,
             generation: 0,
             selected: None,
+            multi: HashSet::new(),
+            anchor: None,
             selected_hint: 0,
             reveal: None,
             revealing: None,
@@ -330,6 +359,10 @@ impl ProjectPanel {
             built: Vec::new(),
             #[cfg(test)]
             drawn_selected: None,
+            #[cfg(test)]
+            drawn_selection: Vec::new(),
+            #[cfg(test)]
+            announced: None,
             #[cfg(test)]
             drawn_status: Vec::new(),
             #[cfg(test)]
@@ -471,6 +504,7 @@ impl ProjectPanel {
         self.listing.clear();
         self.failed.clear();
         self.selected = None;
+        self.select_one();
         self.selected_hint = 0;
         self.revealing = None;
         self.edit = None;
@@ -586,6 +620,10 @@ impl ProjectPanel {
         let live = |id: &NodeId| tree.row(*id).is_some() || *id == tree.root();
         self.expanded.retain(live);
         self.expanding.retain(live);
+        self.multi.retain(live);
+        if self.anchor.is_some_and(|id| !live(&id)) {
+            self.anchor = None;
+        }
         if self.edit.as_ref().is_some_and(|edit| !live(&edit.node)) {
             // What it named went: so does the field.
             self.edit = None;
@@ -624,16 +662,25 @@ impl ProjectPanel {
         self.shows(ix).then_some(ix)
     }
 
-    /// Selects row `ix` and scrolls it into view.
+    /// Selects row `ix` alone and scrolls it into view.
     fn select_row(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if self.make_primary(ix, cx) {
+            self.select_one();
+        }
+    }
+
+    /// Makes row `ix` the primary selected row, keeping the others, and
+    /// scrolls it into view. Whether there's such a row.
+    fn make_primary(&mut self, ix: usize, cx: &mut Context<Self>) -> bool {
         let Some(row) = self.tree().and_then(|tree| tree.rows(ix..ix + 1).next()) else {
-            return;
+            return false;
         };
         self.selected = Some(row.id);
         self.selected_hint = ix;
         self.scroll
             .scroll_to_item(self.list_pos(ix), ScrollStrategy::Nearest);
         cx.notify();
+        true
     }
 
     /// Selects the first row, or the last, for vim's `gg` and `G`: the
@@ -812,6 +859,7 @@ impl ProjectPanel {
         }
         self.cancel_reveal();
         self.selected = Some(file);
+        self.select_one();
         match self.selected_index() {
             Some(ix) => self.select_row(ix, cx),
             // The filter hides it: the line above the rows says so.
@@ -835,7 +883,28 @@ impl ProjectPanel {
     /// A mouse click on a row: [`ProjectPanel::click`], but a file's first
     /// click opens it for a look, in a preview tab, and the second of a
     /// double-click keeps it.
+    /// With shift held it extends the selection to the row instead, and
+    /// with cmd (ctrl off macOS) it selects the row too, or no longer
+    /// ([`Self::extend_to`], [`Self::toggle_selected`]): neither opens a
+    /// file or toggles a folder.
     fn clicked(&mut self, id: NodeId, event: &gpui::ClickEvent, cx: &mut Context<Self>) {
+        let modifiers = event.modifiers();
+        if modifiers.shift || modifiers.secondary() {
+            self.cancel_reveal();
+            let Some(ix) = self
+                .tree()
+                .and_then(|tree| Self::index_of(tree, Some(id), 0))
+            else {
+                return;
+            };
+            if modifiers.shift {
+                return self.extend_to(ix, cx);
+            }
+            return self.toggle_selected(ix, cx);
+        }
+        // A plain click selects its row alone.
+        self.multi.clear();
+        self.anchor = Some(id);
         self.click_row(id, event.click_count() == 1, cx);
     }
 
@@ -978,6 +1047,23 @@ impl ProjectPanel {
             self.cancel_reveal();
         }
         self.close_menu(cx);
+        // Moving the selection, or opening or toggling the primary's row
+        // as a click does, selects it alone first.
+        use PanelOp::*;
+        let moves = matches!(
+            op,
+            SelectPrev
+                | SelectNext
+                | SelectFirst
+                | SelectLast
+                | CollapseOrParent
+                | ExpandOrFirstChild
+                | Open
+                | Toggle
+        );
+        if moves {
+            self.select_one();
+        }
         match op {
             PanelOp::SelectPrev => self.move_selection(-1, cx),
             PanelOp::SelectNext => self.move_selection(1, cx),
@@ -1043,19 +1129,27 @@ impl ProjectPanel {
         #[cfg(test)]
         let mut drawn = Vec::new();
         let mut seen = None;
-        let cut = self.cut_node();
+        let cut = self.cut_nodes();
         #[cfg(test)]
         let mut drawn_cut = Vec::new();
         let theme = fe_ui::ui_theme(cx);
         let mut places = HashMap::new();
         let weak = cx.entity().downgrade();
+        let several = self.several();
+        #[cfg(test)]
+        let mut drawn_selection = Vec::new();
         let mut rows: Vec<gpui::AnyElement> = (shown.into_iter())
             .filter_map(|ix| Some((tree.rows(ix..ix + 1).next()?, ix)))
             .map(|(row, ix)| {
                 let id = row.id;
-                let selected = self.selected == Some(id);
-                if selected {
+                let primary = self.selected == Some(id);
+                if primary {
                     seen = Some(ix);
+                }
+                let selected = primary || several && self.multi.contains(&id);
+                #[cfg(test)]
+                if selected {
+                    drawn_selection.push(ix);
                 }
                 let name = row.name.to_string_lossy();
                 let icon = match row.kind {
@@ -1071,9 +1165,10 @@ impl ProjectPanel {
                     .icon(icon)
                     .focused(focused)
                     // A cut row is dimmed as an ignored one is.
-                    .ignored(row.ignored || cut == Some(id))
+                    .ignored(row.ignored || cut.contains(&id))
                     .error(row.error.is_some())
                     .selected(selected)
+                    .active(primary)
                     .on_click(cx.listener(move |panel, event, _, cx| panel.clicked(id, event, cx)))
                     .on_secondary_click({
                         let panel = weak.clone();
@@ -1105,7 +1200,7 @@ impl ProjectPanel {
                     };
                 }
                 #[cfg(test)]
-                if cut == Some(id) {
+                if cut.contains(&id) {
                     drawn_cut.push(row.name.to_string_lossy().into_owned());
                 }
                 #[cfg(test)]
@@ -1128,6 +1223,7 @@ impl ProjectPanel {
         {
             self.drawn_status.extend(drawn);
             self.drawn_cut.extend(drawn_cut);
+            self.drawn_selection.extend(drawn_selection);
         }
         if let Some(ix) = seen {
             self.selected_hint = ix;
@@ -1169,14 +1265,188 @@ impl ProjectPanel {
     }
 }
 
+/// Selecting several rows: see the module's docs.
+impl ProjectPanel {
+    /// Whether several rows are selected: those of `multi`, which holds the
+    /// primary and another.
+    fn several(&self) -> bool {
+        self.multi.len() > 1 && self.selected.is_some_and(|id| self.multi.contains(&id))
+    }
+
+    /// Selects the primary alone, which the selection extends from next.
+    fn select_one(&mut self) {
+        self.multi.clear();
+        self.anchor = self.selected;
+    }
+
+    /// The selected rows the list shows, in its order, as their tree
+    /// indices and nodes: the primary alone unless several are selected.
+    /// What acts on the selection acts on these.
+    pub(super) fn selection(&self) -> Vec<(usize, NodeId)> {
+        if !self.several() {
+            return (self.selected_index().zip(self.selected).into_iter()).collect();
+        }
+        let Some(tree) = self.tree() else {
+            return Vec::new();
+        };
+        (self.list_rows(0..self.list_count()).into_iter())
+            .filter_map(|ix| {
+                let id = tree.rows(ix..ix + 1).next()?.id;
+                self.multi.contains(&id).then_some((ix, id))
+            })
+            .collect()
+    }
+
+    /// The row selections extend from, if the list shows it: the anchor
+    /// while several rows are selected, else the primary.
+    fn anchor_index(&self) -> Option<usize> {
+        let tree = self.tree()?;
+        let anchor = if self.several() {
+            self.anchor
+        } else {
+            self.selected
+        };
+        let ix = Self::index_of(tree, anchor, 0)?;
+        self.shows(ix).then_some(ix)
+    }
+
+    /// Shift-click on tree row `ix`, and shift-up and shift-down: selects
+    /// the rows the list shows from the anchor to it, it the primary. With
+    /// no row selected it's selected alone.
+    fn extend_to(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(from) = self.anchor_index() else {
+            return self.select_row(ix, cx);
+        };
+        let Some(tree) = self.tree() else {
+            return;
+        };
+        let anchor = tree.rows(from..from + 1).next().map(|row| row.id);
+        let (low, high) = (from.min(ix), from.max(ix));
+        let rows = self.list_rows(0..self.list_count());
+        let multi = (rows.into_iter())
+            .filter(|row| (low..=high).contains(row))
+            .filter_map(|row| Some(tree.rows(row..row + 1).next()?.id))
+            .collect();
+        if !self.make_primary(ix, cx) {
+            return;
+        }
+        self.multi = multi;
+        self.anchor = anchor;
+        self.selected_count_changed(cx);
+    }
+
+    /// Cmd-click (ctrl-click off macOS) on tree row `ix`: selects it too,
+    /// the primary and the anchor, or, if it's selected, no longer, the
+    /// primary moving to the nearest still selected below it, or else
+    /// above, or with none left none selected.
+    fn toggle_selected(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(id) = self
+            .tree()
+            .and_then(|tree| tree.rows(ix..ix + 1).next().map(|row| row.id))
+        else {
+            return;
+        };
+        let mut multi: HashSet<NodeId> = (self.selection().into_iter()).map(|(_, id)| id).collect();
+        if multi.is_empty() {
+            return self.select_row(ix, cx);
+        }
+        if !multi.remove(&id) {
+            multi.insert(id);
+            self.make_primary(ix, cx);
+            self.multi = multi;
+            self.anchor = Some(id);
+            return self.selected_count_changed(cx);
+        }
+        if multi.is_empty() {
+            self.selected = None;
+            self.select_one();
+            cx.notify();
+            return self.selected_count_changed(cx);
+        }
+        if self.selected == Some(id) {
+            let left = self.selection();
+            let left = left.iter().filter(|(_, row)| multi.contains(row));
+            let below = left.clone().find(|(row, _)| *row > ix);
+            let Some(&(primary, _)) = below.or(left.clone().next_back()) else {
+                return;
+            };
+            self.make_primary(primary, cx);
+        }
+        self.multi = multi;
+        self.anchor = self.selected;
+        if self.multi.len() == 1 {
+            self.select_one();
+        }
+        cx.notify();
+        self.selected_count_changed(cx);
+    }
+
+    /// Shift-up and shift-down, `delta` -1 or 1: extends the selection from
+    /// the anchor to the row the list shows above or below the primary.
+    /// With no row selected, it moves the selection as up and down do.
+    fn extend_by(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(at) = self.selected_index() else {
+            return self.move_selection(delta, cx);
+        };
+        let rows = self.list_rows(0..self.list_count());
+        let Ok(pos) = rows.binary_search(&at) else {
+            return;
+        };
+        let Some(&next) = pos.checked_add_signed(delta).and_then(|pos| rows.get(pos)) else {
+            return;
+        };
+        self.extend_to(next, cx);
+    }
+
+    /// Shift-up and shift-down, which no binding names: they extend the
+    /// selection ([`Self::extend_by`]), unless the name field or the
+    /// filter's box has the keys, or the right-click menu is open.
+    fn on_extend_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        let only_shift = modifiers.shift
+            && !(modifiers.control || modifiers.alt || modifiers.platform || modifiers.function);
+        let delta = match keystroke.key.as_str() {
+            "up" if only_shift => -1,
+            "down" if only_shift => 1,
+            _ => return,
+        };
+        if self.menu.is_some() || self.field_focused(window, cx) || self.filter_focused(window, cx)
+        {
+            return;
+        }
+        self.cancel_reveal();
+        self.extend_by(delta, cx);
+        cx.stop_propagation();
+    }
+
+    /// Says how many rows are selected to a screen reader, as the
+    /// selection grows or shrinks by a click or a key.
+    fn selected_count_changed(&mut self, cx: &mut Context<Self>) {
+        let count = self.selection().len();
+        let said = tr!("workbench-project-selected-count", count = count);
+        #[cfg(test)]
+        {
+            self.announced = Some(said.to_string());
+        }
+        fe_ui::announce(cx, said, fe_ui::Politeness::Polite);
+    }
+}
+
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         {
             self.built.clear();
             self.drawn_selected = None;
+            self.drawn_selection.clear();
             self.drawn_status.clear();
             self.drawn_cut.clear();
+        }
+        // Something selected a row of its own (the right-click menu, say):
+        // the rows selected with the one before go.
+        if !self.several() && !self.multi.is_empty() {
+            self.multi.clear();
         }
         // The root's row: the folder's name, as it's spelled.
         let root = match &self.state {
@@ -1205,25 +1475,38 @@ impl Render for ProjectPanel {
             State::NoFolder => self.message(tr!("workbench-project-no-folder").into(), cx),
             State::Opening => div().into_any_element(),
             State::Failed(message) => self.message(message.resolve().into(), cx),
-            State::Open(_) if self.filtered().is_some_and(|view| view.is_empty()) && !field => {
-                self.message(filter::no_matches().into(), cx)
+            State::Open(_) => {
+                let rows = if self.filtered().is_some_and(|view| view.is_empty()) && !field {
+                    self.message(filter::no_matches().into(), cx)
+                } else {
+                    uniform_list(
+                        "project-rows",
+                        self.list_count() + usize::from(field),
+                        cx.processor(|panel, range, window, cx| {
+                            panel.render_rows(range, window, cx)
+                        }),
+                    )
+                    .track_scroll(&self.scroll)
+                    .flex_1()
+                    .into_any_element()
+                };
+                // The tree's empty space, below its rows or the line saying
+                // none match: a row's own right click takes its press.
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(rows)
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|panel, event: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            panel.open_menu(None, event.position, window, cx);
+                        }),
+                    )
+                    .into_any_element()
             }
-            State::Open(_) => uniform_list(
-                "project-rows",
-                self.list_count() + usize::from(field),
-                cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
-            )
-            .track_scroll(&self.scroll)
-            .flex_1()
-            // The empty space below the rows: a row's own takes its click.
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|panel, event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    panel.open_menu(None, event.position, window, cx);
-                }),
-            )
-            .into_any_element(),
         };
         let filter = self.render_filter(cx);
         // Vim's tree keys are off while the name field or the filter's box
@@ -1243,6 +1526,7 @@ impl Render for ProjectPanel {
             .key_context(context)
             .on_action(cx.listener(Self::on_run_command))
             .on_key_down(cx.listener(Self::on_menu_key))
+            .on_key_down(cx.listener(Self::on_extend_key))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
             .min_w_0()
@@ -1441,6 +1725,25 @@ impl ProjectPanel {
     /// The selected row's index, if it's shown.
     pub(crate) fn selected_row(&self) -> Option<usize> {
         self.selected_index()
+    }
+
+    /// Every selected row the list shows, by index, in order.
+    pub(crate) fn selected_rows(&self) -> Vec<usize> {
+        self.selection().into_iter().map(|(ix, _)| ix).collect()
+    }
+
+    /// Every row the last frame drew selected, the primary's included,
+    /// each once.
+    pub(crate) fn drawn_selection(&self) -> Vec<usize> {
+        let mut drawn = self.drawn_selection.clone();
+        drawn.sort_unstable();
+        drawn.dedup();
+        drawn
+    }
+
+    /// What the panel last said to a screen reader of the selection.
+    pub(crate) fn announced(&self) -> Option<String> {
+        self.announced.clone()
     }
 
     /// The row ranges the last frame built.

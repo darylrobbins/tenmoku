@@ -51,7 +51,8 @@ pub const DOT_SIZE: Pixels = px(6.);
 /// collapsed if it's a directory, selected if it is, with its place among
 /// its siblings ([`TreeRow::in_set`]) and a description
 /// ([`TreeRow::a11y_description`]). Its list should be a `Tree`. A selected
-/// row is its focused list's active descendant.
+/// row is its focused list's active descendant, unless the list selects
+/// several and says which one its keys act on ([`TreeRow::active`]).
 #[derive(IntoElement)]
 pub struct TreeRow {
     id: ElementId,
@@ -71,6 +72,9 @@ pub struct TreeRow {
     /// Whether the badge is drawn as a dot rather than its text.
     dot: bool,
     selected: bool,
+    /// Whether it's its list's active descendant, if not as `selected`
+    /// says.
+    active: Option<bool>,
     focused: bool,
     /// Its place among its siblings, from 1, and how many there are.
     in_set: Option<(usize, usize)>,
@@ -145,6 +149,7 @@ impl TreeRow {
             badge: None,
             dot: false,
             selected: false,
+            active: None,
             focused: false,
             in_set: None,
             a11y_description: None,
@@ -245,6 +250,15 @@ impl TreeRow {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Whether it's the row its list's keys act on, its active descendant
+    /// to a screen reader, in a list that selects several rows: one of
+    /// them is. A row is active as it's [`Self::selected`] unless this
+    /// says otherwise.
+    pub fn active(mut self, active: bool) -> Self {
+        self.active = Some(active);
         self
     }
 
@@ -449,7 +463,7 @@ impl RenderOnce for TreeRow {
                     .child(text),
             }
         });
-        let selected = self.selected;
+        let active = self.active.unwrap_or(self.selected);
         let row = div()
             .id(self.id)
             .relative()
@@ -490,7 +504,7 @@ impl RenderOnce for TreeRow {
                 })
             })
             // Honoured only while an ancestor, the list, has focus.
-            .when(selected, |row| row.aria_active_descendant());
+            .when(active, |row| row.aria_active_descendant());
         node_with(row, window, cx, Role::TreeItem, self.label, a11y_states)
     }
 }

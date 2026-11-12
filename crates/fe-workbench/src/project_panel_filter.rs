@@ -11,7 +11,9 @@
 //! matching rows only; the tree's other keys act on the selected row as
 //! they do unfiltered. Escape in the box, or shift-f, clears the filter,
 //! restoring the folders expanded and the row selected before it. Opening
-//! the tree again (`H`) clears it too.
+//! the tree again (`H`) clears it too. Opening the box, typing in it and
+//! clearing the filter each select one row again, the primary, of several
+//! selected.
 //!
 //! The box is the name field's kiln-ui [`TextField`], in the same
 //! `text_input` key context, and the panel drops its `vim` flag while the
@@ -121,6 +123,7 @@ impl ProjectPanel {
         if self.tree().is_none() {
             return;
         }
+        self.select_one();
         let filter = self.filter.get_or_insert_with(|| Filter {
             query: String::new(),
             lower: String::new(),
@@ -241,6 +244,7 @@ impl ProjectPanel {
             }
             Some(_) => {}
         }
+        self.select_one();
         if let Some(ix) = self.selected_index() {
             self.select_row(ix, cx);
         }
@@ -266,6 +270,7 @@ impl ProjectPanel {
         filter.view.replace(None);
         filter.seen.clear();
         filter.hidden = None;
+        self.select_one();
         self.open_matches(true, cx);
         if let Some(view) = self.filtered() {
             let selected = self.selected_index();

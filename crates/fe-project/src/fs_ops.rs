@@ -987,12 +987,30 @@ fn within(dir: &File, entry: Identity, root: &Root) -> io::Result<bool> {
 /// replace what's there. A paste into the folder the entry is in names a
 /// copy.
 pub fn paste_name(root: &Path, path: &Path, dir: &Path) -> io::Result<OsString> {
+    paste_name_besides(root, path, dir, &[])
+}
+
+/// [`paste_name`], passing over the names in `planned` too: those taken by
+/// pastes of the same batch that aren't made yet. They're compared ignoring
+/// case, as the file systems macOS and Windows use by default do, so two
+/// entries whose names differ only in case don't plan one path.
+pub fn paste_name_besides(
+    root: &Path,
+    path: &Path,
+    dir: &Path,
+    planned: &[OsString],
+) -> io::Result<OsString> {
     let root = Root::open(root)?;
     let target = root.resolve(path)?;
     let kind = listing::stat_at(&target.parent, target.name)?.kind;
     let dir = root.open_dir(&names_under(&root.path, dir)?)?;
+    let folded = |name: &OsStr| name.to_string_lossy().to_lowercase();
+    let planned: Vec<String> = planned.iter().map(|name| folded(name)).collect();
     for n in 0..10_000 {
         let name = paste_name_n(target.name, kind == EntryKind::Dir, n);
+        if planned.contains(&folded(&name)) {
+            continue;
+        }
         match listing::stat_at(&dir, &name) {
             Ok(_) => {}
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(name),

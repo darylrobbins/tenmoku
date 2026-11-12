@@ -57,11 +57,25 @@ impl Workbench {
     /// or a server fails or times out. Dropping the task cancels the
     /// requests.
     pub(crate) fn will_rename(&self, from: &Path, to: &Path, cx: &App) -> Task<Vec<FileEdits>> {
-        let (Some(manager), Some(moved)) = (&self.lsp.manager, renamed(from, to, from.is_dir()))
-        else {
+        self.will_rename_many(&[(from.to_owned(), to.to_owned())], cx)
+    }
+
+    /// [`Self::will_rename`] for several renames at once, `(from, to)`
+    /// each, asked in one request, so each server answers for them all
+    /// together, its edits to a file written against one text; renames
+    /// that don't resolve are left out.
+    pub(crate) fn will_rename_many(
+        &self,
+        renames: &[(PathBuf, PathBuf)],
+        cx: &App,
+    ) -> Task<Vec<FileEdits>> {
+        let moved: Vec<_> = (renames.iter())
+            .filter_map(|(from, to)| renamed(from, to, from.is_dir()))
+            .collect();
+        let Some(manager) = self.lsp.manager.as_ref().filter(|_| !moved.is_empty()) else {
             return Task::ready(Vec::new());
         };
-        let mut asked = Box::pin(lock(manager).will_rename_files(vec![moved]));
+        let mut asked = Box::pin(lock(manager).will_rename_files(moved));
         match asked.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
             Poll::Ready(edits) => Task::ready(joined(edits)),
             Poll::Pending => cx.background_spawn(async move { joined(asked.await) }),

@@ -1,5 +1,11 @@
 //! The project panel's file operations, on the selected row: a new file or
 //! folder, rename, move to the Trash, duplicate, and copying its path.
+//! With several rows selected, a new entry and a rename act on the primary
+//! alone; the rest act on every selected row ([`ProjectPanel::selection`]):
+//! one question names how many go to the Trash (a selected folder's
+//! selected entries go with it), one background job trashes or duplicates
+//! each in turn, and one toast names those that failed and why. Copy Path
+//! puts their paths a line apiece.
 //!
 //! A new entry and a rename are named in an inline field, VS Code style: a
 //! row of its own as the first in the folder (the selected one, or the
@@ -66,7 +72,10 @@ use super::{PanelEvent, PanelOp, ProjectPanel, ROW_HEIGHT, State, op};
 use crate::{
     Workbench,
     picker::{self, PaletteOp},
-    workbench::Busy,
+    workbench::{
+        Busy,
+        toast::{self, Toast},
+    },
 };
 
 /// The key context the name field sits in, for the `text_input.*`
@@ -103,7 +112,7 @@ pub(super) struct NameEdit {
     pub(super) node: NodeId,
     input: Entity<TextField>,
     /// Why the last name given was refused, shown under the field.
-    error: Option<Text>,
+    error: Option<FieldError>,
     /// Whether the operation is running: Enter waits for it.
     running: bool,
     /// The rename waiting for language servers' edits, which escape stops
@@ -127,7 +136,30 @@ impl NameEdit {
 
     /// Why the last name given was refused, now, in the active locale.
     pub(super) fn error(&self) -> Option<SharedString> {
-        self.error.as_ref().map(Text::resolve)
+        self.error.as_ref().map(FieldError::resolve)
+    }
+}
+
+/// Why a name was refused, kept as what it is until it's drawn, so it's
+/// said in the locale active then.
+enum FieldError {
+    Text(Text),
+    /// A name the checks refused, as fe-project words it, capitalised.
+    Name(NameError),
+}
+
+impl FieldError {
+    fn resolve(&self) -> SharedString {
+        match self {
+            FieldError::Text(text) => text.resolve(),
+            FieldError::Name(error) => capitalized(&error.to_string()).into(),
+        }
+    }
+}
+
+impl From<Text> for FieldError {
+    fn from(text: Text) -> Self {
+        FieldError::Text(text)
     }
 }
 
@@ -357,7 +389,7 @@ impl ProjectPanel {
             _ => Ok(()),
         });
         if let Err(error) = valid {
-            edit.error = Some(Text::verbatim(capitalized(&error.to_string())));
+            edit.error = Some(FieldError::Name(error));
             return cx.notify();
         }
         let Some(target) = tree.path(edit.node) else {
@@ -491,7 +523,7 @@ impl ProjectPanel {
             let old = old.to_string_lossy();
             let error = text!("workbench-project-rename-raced", name = old.into_owned());
             match (self.edit.as_mut()).filter(|edit| edit.serial == naming.serial) {
-                Some(edit) => edit.error = Some(error),
+                Some(edit) => edit.error = Some(error.into()),
                 None => log::warn!("{error}"),
             }
             return cx.notify();
@@ -552,7 +584,7 @@ impl ProjectPanel {
             .as_mut()
             .filter(|edit| edit.serial == naming.serial)
         {
-            Some(edit) => edit.error = Some(error),
+            Some(edit) => edit.error = Some(error.into()),
             None => log::warn!("not renamed: {error}"),
         }
         cx.notify();
@@ -671,7 +703,14 @@ impl ProjectPanel {
     /// asked about (by its device and inode, not followed through a
     /// symlink). Editors of it stay open with their buffers.
     pub(super) fn delete_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((path, root, name)) = self.selected_entry() else {
+        let Some((root, entries)) = self.selected_entries() else {
+            return;
+        };
+        let mut entries = topmost(entries);
+        if entries.len() > 1 {
+            return self.delete_many(root, entries, window, cx);
+        }
+        let Some((path, name)) = entries.pop() else {
             return;
         };
         let Some(shown) = self.shown(&path, &root) else {
@@ -720,10 +759,99 @@ impl ProjectPanel {
         .detach();
     }
 
+    /// Asks once whether to move `entries` (paths under the tree's `root`,
+    /// and names), none inside another, to the Trash, then moves each in
+    /// turn in one background job, unless the entry at its path is no
+    /// longer the one asked about. Those moved leave the tree together;
+    /// a toast names those that weren't, and why.
+    fn delete_many(
+        &mut self,
+        root: PathBuf,
+        entries: Vec<(PathBuf, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let asked: Vec<Asked> = (entries.into_iter())
+            .filter_map(|(path, name)| {
+                Some(Asked {
+                    shown: self.shown(&path, &root)?,
+                    identity: entry_identity(&path),
+                    folder: path.symlink_metadata().is_ok_and(|meta| meta.is_dir()),
+                    path,
+                    name,
+                })
+            })
+            .collect();
+        let count = asked.len();
+        let question = tr!("workbench-project-trash-question-many", count = count);
+        let answer = window.prompt(PromptLevel::Warning, &question, None, &trash_buttons(), cx);
+        let moved = tr!("workbench-project-trash-moved-since").to_string();
+        cx.spawn_in(window, async move |panel, cx| {
+            if answer.await != Ok(MOVE_TO_TRASH) {
+                return;
+            }
+            let running: Vec<_> = (asked.iter())
+                .map(|entry| Running::start(entry.path.clone()))
+                .collect();
+            let jobs: Vec<_> = (asked.iter())
+                .map(|entry| (entry.path.clone(), entry.identity))
+                .collect();
+            let trashed = cx
+                .background_spawn({
+                    let running = running.clone();
+                    async move {
+                        let _running = running;
+                        (jobs.into_iter())
+                            .map(|(path, asked)| {
+                                if asked.is_none() || entry_identity(&path) != asked {
+                                    let moved = moved.clone();
+                                    return Err(io::Error::new(io::ErrorKind::NotFound, moved));
+                                }
+                                fs_ops::trash(&root, &[path])
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                })
+                .await;
+            panel
+                .update(cx, |panel, cx| {
+                    let mut deleted = Vec::new();
+                    let mut failures = Vec::new();
+                    for (entry, trashed) in asked.into_iter().zip(trashed) {
+                        match trashed {
+                            Ok(()) => deleted.push((entry.shown, entry.folder)),
+                            Err(error) => failures.push(Failure::error(
+                                tr!("workbench-project-trash-failed", name = &entry.name),
+                                &error,
+                            )),
+                        }
+                    }
+                    if !deleted.is_empty() {
+                        let changes: Vec<FsChange> = (deleted.iter())
+                            .map(|(shown, _)| FsChange::Path(shown.clone()))
+                            .collect();
+                        panel.apply_fs_changes(&changes, cx);
+                        cx.emit(PanelEvent::Deleted(deleted));
+                    }
+                    report_failures(failures, Many::Trash, cx);
+                })
+                .ok();
+            drop(running);
+        })
+        .detach();
+    }
+
     /// Copies the selected entry next to itself (`name copy.ext`), in the
-    /// background, and selects the copy.
+    /// background, and selects the copy. With several selected, each is
+    /// copied in turn ([`Self::duplicate_many`]).
     pub(super) fn duplicate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((path, root, name)) = self.selected_entry() else {
+        let Some((root, mut entries)) = self.selected_entries() else {
+            return;
+        };
+        if entries.len() > 1 {
+            return self.duplicate_many(root, entries, window, cx);
+        }
+        let Some((path, name)) = entries.pop() else {
             return;
         };
         // The copy goes beside it, named once it's made.
@@ -759,30 +887,103 @@ impl ProjectPanel {
         .detach();
     }
 
-    /// Puts the selected entry's path on the clipboard: absolute, or from
-    /// the root with `/`s.
-    pub(super) fn copy_path(&mut self, relative: bool, cx: &mut Context<Self>) {
-        let Some(id) = self.selected_index().and(self.selected) else {
-            return;
-        };
-        let Some(path) = self.shown_path(id) else {
-            return;
-        };
-        let text = match (relative, self.root.as_deref()) {
-            (true, Some(root)) => fs_ops::relative_path(root, &path),
-            _ => path.to_string_lossy().into_owned(),
-        };
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    /// Copies each of `entries` (paths under the tree's `root`, and names)
+    /// next to itself, in turn, in one background job; the copies made
+    /// show together, the first selected, and a toast names those that
+    /// weren't made, and why.
+    fn duplicate_many(
+        &mut self,
+        root: PathBuf,
+        entries: Vec<(PathBuf, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Each copy goes beside its entry, named once it's made.
+        let running: Vec<_> = (entries.iter())
+            .map(|(path, _)| Running::start(path.parent().unwrap_or(path).to_owned()))
+            .collect();
+        let paths: Vec<PathBuf> = entries.iter().map(|(path, _)| path.clone()).collect();
+        let job = cx.background_spawn({
+            let running = running.clone();
+            let root = root.clone();
+            async move {
+                let _running = running;
+                (paths.iter())
+                    .map(|path| fs_ops::duplicate(&root, path))
+                    .collect::<Vec<_>>()
+            }
+        });
+        cx.spawn_in(window, async move |panel, cx| {
+            let copied = job.await;
+            panel
+                .update(cx, |panel, cx| {
+                    let mut made = Vec::new();
+                    let mut failures = Vec::new();
+                    for ((_, name), copied) in entries.iter().zip(copied) {
+                        match copied {
+                            Ok(copy) => made.extend(panel.shown(&copy, &root)),
+                            Err(error) => failures.push(Failure::error(
+                                tr!("workbench-project-duplicate-failed", name = name),
+                                &error,
+                            )),
+                        }
+                    }
+                    panel.made(made, cx);
+                    report_failures(failures, Many::Duplicate, cx);
+                })
+                .ok();
+            drop(running);
+        })
+        .detach();
     }
 
-    /// The selected entry's path under the tree's root, that root, and the
-    /// entry's name.
-    fn selected_entry(&self) -> Option<(PathBuf, PathBuf, String)> {
-        let id = self.selected_index().and(self.selected)?;
+    /// Takes in entries an operation made, as the panel hands paths out:
+    /// brings the tree up to date with them, says they were made, and
+    /// selects the first.
+    pub(super) fn made(&mut self, made: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(first) = made.first().cloned() else {
+            return;
+        };
+        let changes: Vec<FsChange> = made.iter().cloned().map(FsChange::Path).collect();
+        self.apply_fs_changes(&changes, cx);
+        let created = (made.into_iter())
+            .map(|path| {
+                let folder = path.symlink_metadata().is_ok_and(|meta| meta.is_dir());
+                (path, folder)
+            })
+            .collect();
+        cx.emit(PanelEvent::Created(created));
+        self.reveal(first, cx);
+    }
+
+    /// Puts the selected entries' paths on the clipboard, a line apiece in
+    /// the list's order: absolute, or from the root with `/`s.
+    pub(super) fn copy_path(&mut self, relative: bool, cx: &mut Context<Self>) {
+        let lines: Vec<String> = (self.selection().into_iter())
+            .filter_map(|(_, id)| self.shown_path(id))
+            .map(|path| match (relative, self.root.as_deref()) {
+                (true, Some(root)) => fs_ops::relative_path(root, &path),
+                _ => path.to_string_lossy().into_owned(),
+            })
+            .collect();
+        if lines.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(lines.join("\n")));
+    }
+
+    /// The tree's root, and each selected entry's path under it and name,
+    /// in the list's order; `None` with none selected.
+    pub(super) fn selected_entries(&self) -> Option<(PathBuf, Vec<(PathBuf, String)>)> {
         let tree = self.tree()?;
-        let path = tree.path(id)?;
-        let name = path.file_name()?.to_string_lossy().into_owned();
-        Some((path, tree.root_path().to_owned(), name))
+        let entries: Vec<(PathBuf, String)> = (self.selection().into_iter())
+            .filter_map(|(_, id)| {
+                let path = tree.path(id)?;
+                let name = path.file_name()?.to_string_lossy().into_owned();
+                Some((path, name))
+            })
+            .collect();
+        (!entries.is_empty()).then(|| (tree.root_path().to_owned(), entries))
     }
 
     /// `path`, under the tree's (canonical) `root`, as the panel hands it
@@ -897,6 +1098,115 @@ impl ProjectPanel {
     }
 }
 
+/// An entry asked about before a move to the Trash: its path under the
+/// tree's root, its name, its path as the panel hands it out, its device
+/// and inode ([`entry_identity`]), and whether it's a folder.
+struct Asked {
+    path: PathBuf,
+    name: String,
+    shown: PathBuf,
+    identity: Option<(u64, u64)>,
+    folder: bool,
+}
+
+/// `entries` (paths and names) less those inside another of them: what's
+/// in a folder goes with it.
+pub(super) fn topmost(entries: Vec<(PathBuf, String)>) -> Vec<(PathBuf, String)> {
+    let paths: Vec<PathBuf> = entries.iter().map(|(path, _)| path.clone()).collect();
+    (entries.into_iter())
+        .filter(|(path, _)| !(paths.iter()).any(|other| other != path && path.starts_with(other)))
+        .collect()
+}
+
+/// What failed of an operation on several entries.
+pub(super) struct Failure {
+    /// What's said of the entry, as for it alone.
+    message: SharedString,
+    /// Why, if the message doesn't say.
+    why: Option<String>,
+    /// Whether it waits for something else, which is a warning, not an
+    /// error.
+    busy: bool,
+}
+
+impl Failure {
+    /// `message`, and why, `error`.
+    pub(super) fn error(message: SharedString, error: &io::Error) -> Self {
+        Self {
+            message,
+            why: Some(capitalized(&error.to_string())),
+            busy: false,
+        }
+    }
+
+    /// `message`, which says why.
+    pub(super) fn said(message: SharedString) -> Self {
+        Self {
+            message,
+            why: None,
+            busy: false,
+        }
+    }
+
+    /// `message`, of an entry something else is busy with.
+    pub(super) fn busy(message: SharedString) -> Self {
+        Self {
+            message,
+            why: None,
+            busy: true,
+        }
+    }
+
+    /// Shows it in a toast, as for an operation on it alone.
+    pub(super) fn show(self, cx: &mut gpui::App) {
+        let toast = match (self.busy, self.why) {
+            (true, _) => Toast::warning(self.message),
+            (false, Some(why)) => Toast::error(self.message).detail(why),
+            (false, None) => Toast::error(self.message),
+        };
+        toast::show(cx, toast);
+    }
+
+    /// Its line in the detail of a toast about several.
+    fn line(&self) -> String {
+        match &self.why {
+            Some(why) => tr!(
+                "workbench-project-failed-why",
+                message = &self.message,
+                error = why
+            )
+            .to_string(),
+            None => self.message.to_string(),
+        }
+    }
+}
+
+/// Which operation on several entries failed for some.
+#[derive(Clone, Copy)]
+pub(super) enum Many {
+    Trash,
+    Duplicate,
+    Paste,
+}
+
+/// Shows what failed of an operation on several entries: one failure as
+/// for its entry alone, several in one toast, counted, its detail naming
+/// each and why, a line apiece.
+pub(super) fn report_failures(failures: Vec<Failure>, many: Many, cx: &mut gpui::App) {
+    if failures.len() <= 1 {
+        failures.into_iter().for_each(|failure| failure.show(cx));
+        return;
+    }
+    let count = failures.len();
+    let message = match many {
+        Many::Trash => tr!("workbench-project-trash-failed-many", count = count),
+        Many::Duplicate => tr!("workbench-project-duplicate-failed-many", count = count),
+        Many::Paste => tr!("workbench-project-paste-failed-many", count = count),
+    };
+    let lines: Vec<String> = failures.iter().map(Failure::line).collect();
+    toast::show(cx, Toast::error(message).detail(lines.join("\n")));
+}
+
 /// Makes `edits`, language servers' for a rename, in `window`'s workbench;
 /// edits that can't be made are logged, and the rename goes on.
 pub(super) fn apply_edits(edits: Vec<FileEdits>, window: &Window, cx: &mut gpui::App) {
@@ -913,13 +1223,17 @@ pub(super) fn apply_edits(edits: Vec<FileEdits>, window: &Window, cx: &mut gpui:
 }
 
 /// The message for a name the operation refused, `name` being the name
-/// typed.
-fn failure(error: &io::Error, name: &str) -> Text {
-    match error.kind() {
-        io::ErrorKind::AlreadyExists => {
-            text!("workbench-project-name-taken", name = name.to_owned())
-        }
-        _ => Text::verbatim(capitalized(&error.to_string())),
+/// typed: the name taken, or the name's own fault as the checks word it,
+/// each said in the locale active when it's drawn, or else the system's
+/// words as they came.
+fn failure(error: &io::Error, name: &str) -> FieldError {
+    if error.kind() == io::ErrorKind::AlreadyExists {
+        return text!("workbench-project-name-taken", name = name.to_owned()).into();
+    }
+    let refused = (error.get_ref()).and_then(|inner| inner.downcast_ref::<NameError>());
+    match refused {
+        Some(refused) => FieldError::Name(*refused),
+        None => Text::verbatim(capitalized(&error.to_string())).into(),
     }
 }
 

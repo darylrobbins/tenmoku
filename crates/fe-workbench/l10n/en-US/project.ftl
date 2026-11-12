@@ -20,6 +20,13 @@ workbench-project-status-modified = modified
 workbench-project-status-deleted = deleted
 workbench-project-status-untracked = untracked
 workbench-project-status-conflicted = conflicted
+# Said to a screen reader as shift-click or shift-arrows select more rows,
+# or cmd-click (ctrl-click) one more or one fewer. $count is how many rows
+# are selected.
+workbench-project-selected-count = { $count ->
+    [one] { $count } item selected
+   *[other] { $count } items selected
+}
 
 ## Filtering the tree by name (project_panel_filter.rs)
 
@@ -50,6 +57,25 @@ workbench-project-trash-question = Move “{ $name }” to the Trash?
 workbench-project-trash-moved-since = It was moved or replaced since you were asked.
 workbench-project-trash-failed = “{ $name }” couldn’t be moved to the Trash.
 workbench-project-duplicate-failed = “{ $name }” couldn’t be duplicated.
+# The question before moving several selected entries to the Trash. $count
+# is how many.
+workbench-project-trash-question-many = { $count ->
+    [one] Move { $count } item to the Trash?
+   *[other] Move { $count } items to the Trash?
+}
+# A toast when several of the selected entries failed: $count is how many.
+# Its detail names each, a line apiece.
+workbench-project-trash-failed-many = { $count ->
+    [one] { $count } item couldn’t be moved to the Trash.
+   *[other] { $count } items couldn’t be moved to the Trash.
+}
+workbench-project-duplicate-failed-many = { $count ->
+    [one] { $count } item couldn’t be duplicated.
+   *[other] { $count } items couldn’t be duplicated.
+}
+# A line of such a toast's detail: $message says which entry failed, as
+# for one alone, and $error why.
+workbench-project-failed-why = { $message } { $error }
 # Under the name field while a rename waits for language servers.
 workbench-project-renaming = Renaming…
 # The name field's placeholders.
@@ -74,6 +100,12 @@ workbench-project-paste-into-itself-cut = “{ $name }” can’t be moved into 
 workbench-project-paste-into-itself-copy = “{ $name }” can’t be copied into itself or a folder inside it.
 workbench-project-paste-failed = “{ $name }” couldn’t be pasted.
 workbench-project-move-failed = “{ $name }” couldn’t be moved.
+# A toast when several of the entries pasted failed: $count is how many.
+# Its detail names each, a line apiece.
+workbench-project-paste-failed-many = { $count ->
+    [one] { $count } item couldn’t be pasted.
+   *[other] { $count } items couldn’t be pasted.
+}
 # A paste of a file an editor is busy with. $name is the entry's.
 workbench-project-paste-busy-saving = “{ $name }” is being saved. Paste it once it’s saved.
 workbench-project-paste-busy-opening = “{ $name }” is being opened. Paste it once it’s open.
