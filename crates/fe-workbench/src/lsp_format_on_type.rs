@@ -31,7 +31,7 @@ use fe_buffer::{Origin, TransactionId, Version};
 use fe_editor::IndentStyle;
 use fe_gpui::{EditorView, commands::EditorInputEvent};
 use fe_lsp::{
-    LspError,
+    LspError, Unavailable,
     formatting::{Edits, FormatOptions},
 };
 use futures::FutureExt as _;
@@ -167,7 +167,7 @@ impl Workbench {
             let edits = match reply.await {
                 Ok(Some(edits)) => edits,
                 Ok(None) => return log::debug!("{}: no formatter", target.what()),
-                Err(LspError::Unavailable(why)) if why == "buffer changed" => return,
+                Err(LspError::Unavailable(Unavailable::BufferChanged)) => return,
                 Err(error) => return log::debug!("{}: {error}", target.what()),
             };
             let _ = this.update(cx, |workbench, cx| {

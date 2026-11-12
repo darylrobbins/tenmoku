@@ -25,9 +25,15 @@ fn every_completion_kind_has_a_label_that_is_not_its_key() {
 
 #[test]
 fn unavailable_reasons_and_server_failures_resolve_through_keys() {
-    assert_eq!(buffer_changed(), "buffer changed");
-    assert_eq!(too_large(), "too large for the language server");
-    assert_eq!(not_open(), "not open on a language server");
+    assert_eq!(buffer_changed().to_string(), "buffer changed");
+    assert_eq!(too_large().to_string(), "too large for the language server");
+    assert_eq!(not_open().to_string(), "not open on a language server");
+    // The error shows its reason as it is, a kind's text or free text.
+    assert_eq!(
+        LspError::Unavailable(not_open()).to_string(),
+        "not open on a language server"
+    );
+    assert_eq!(LspError::Unavailable("rename".into()).to_string(), "rename");
     assert_eq!(
         LspError::ServerDown.to_string(),
         "the language server isn't running"

@@ -228,7 +228,8 @@ impl LspManager {
                     "lsp-not-a-server-command",
                     command = command.command.as_str()
                 )
-                .to_string(),
+                .to_string()
+                .into(),
             );
             return async move { Err(err) }.boxed();
         }

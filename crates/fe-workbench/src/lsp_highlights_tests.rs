@@ -264,20 +264,3 @@ fn a_move_within_a_highlighted_word_keeps_the_words(cx: &mut TestAppContext) {
     move_caret(&mut s, &editor, 9);
     assert_eq!(shown(&mut s, &editor).len(), 3);
 }
-
-#[test]
-fn only_an_unserved_buffer_falls_back_to_the_words() {
-    use fe_lsp::LspError::Unavailable;
-    assert_eq!(
-        super::super::highlights::answer_of(Err(Unavailable(
-            "not open on a language server".into()
-        ))),
-        Some(None)
-    );
-    for why in ["buffer changed", "too large for the language server"] {
-        assert_eq!(
-            super::super::highlights::answer_of(Err(Unavailable(why.into()))),
-            None
-        );
-    }
-}

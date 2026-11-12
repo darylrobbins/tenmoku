@@ -291,16 +291,6 @@ fn block<T: 'static>(s: &mut Lsp, task: gpui::Task<T>) -> T {
     answer.take().unwrap()
 }
 
-#[test]
-fn a_changed_buffer_is_no_error() {
-    use fe_lsp::LspError;
-    let changed = LspError::Unavailable("buffer changed".into());
-    assert_eq!(super::failure(changed), Ok(FormatOutcome::Unchanged));
-    let other = LspError::Unavailable("too large for the language server".into());
-    assert!(super::failure(other).is_err());
-    assert!(super::failure(LspError::Timeout).is_err());
-}
-
 #[gpui::test]
 fn caught_up_options_and_one_step(cx: &mut TestAppContext) {
     let (mut s, editor) = setup(cx, formatter());

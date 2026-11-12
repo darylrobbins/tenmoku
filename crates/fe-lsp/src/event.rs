@@ -204,7 +204,7 @@ pub enum LspError {
     Cancelled,
     Timeout,
     /// The server can't answer this; something else should.
-    Unavailable(String),
+    Unavailable(Unavailable),
     /// The server says its answer would be stale (`ContentModified`,
     /// `ServerCancelled`): ask again.
     Retry,
@@ -226,7 +226,7 @@ impl std::fmt::Display for LspError {
             Self::ServerDown => f.write_str(&tr!("lsp-error-server-down")),
             Self::Cancelled => f.write_str(&tr!("lsp-error-cancelled")),
             Self::Timeout => f.write_str(&tr!("lsp-error-timeout")),
-            Self::Unavailable(why) => f.write_str(why),
+            Self::Unavailable(why) => why.fmt(f),
             Self::Retry => f.write_str(&tr!("lsp-error-retry")),
             Self::Server { code, message } => f.write_str(&tr!(
                 "lsp-error-server",
@@ -243,18 +243,72 @@ impl std::fmt::Display for LspError {
 
 impl std::error::Error for LspError {}
 
+/// Why [`LspError::Unavailable`]: one of a request on a document's kinds
+/// (§4.1), which callers match on, or free text (a feature the server
+/// doesn't provide, such as `"rename"`, or another reason). Each kind's
+/// text is resolved in the active locale when it's displayed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Unavailable {
+    /// The buffer moved on from the version the request was computed on.
+    BufferChanged,
+    /// The document is over the size limit, so the server doesn't have it.
+    TooLarge,
+    /// The document isn't open on a language server.
+    NotOpen,
+    /// Anything else, as it's shown.
+    Other(String),
+}
+
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BufferChanged => f.write_str(&tr!("lsp-unavailable-buffer-changed")),
+            Self::TooLarge => f.write_str(&tr!("lsp-unavailable-too-large")),
+            Self::NotOpen => f.write_str(&tr!("lsp-unavailable-not-open")),
+            Self::Other(why) => f.write_str(why),
+        }
+    }
+}
+
+impl From<&str> for Unavailable {
+    fn from(why: &str) -> Self {
+        Self::Other(why.to_owned())
+    }
+}
+
+impl From<String> for Unavailable {
+    fn from(why: String) -> Self {
+        Self::Other(why)
+    }
+}
+
+/// Free text equals its text; a kind equals no string, whatever the
+/// locale: match it.
+impl PartialEq<str> for Unavailable {
+    fn eq(&self, other: &str) -> bool {
+        matches!(self, Self::Other(why) if why == other)
+    }
+}
+
+impl PartialEq<&str> for Unavailable {
+    fn eq(&self, other: &&str) -> bool {
+        *self == **other
+    }
+}
+
 /// [`LspError::Unavailable`]'s reasons for a request on a document (§4.1).
 /// The buffer moved on from the version the request was computed on.
-pub(crate) fn buffer_changed() -> String {
-    tr!("lsp-unavailable-buffer-changed").to_string()
+pub(crate) fn buffer_changed() -> Unavailable {
+    Unavailable::BufferChanged
 }
 /// The document is over the size limit, so the server doesn't have it.
-pub(crate) fn too_large() -> String {
-    tr!("lsp-unavailable-too-large").to_string()
+pub(crate) fn too_large() -> Unavailable {
+    Unavailable::TooLarge
 }
 /// The document isn't open on a language server.
-pub(crate) fn not_open() -> String {
-    tr!("lsp-unavailable-not-open").to_string()
+pub(crate) fn not_open() -> Unavailable {
+    Unavailable::NotOpen
 }
 
 impl LspError {
@@ -302,5 +356,24 @@ impl LogRing {
             .position(|&b| b & 0xc0 != 0x80)
             .unwrap_or(bytes.len());
         String::from_utf8_lossy(&bytes[start..]).into_owned()
+    }
+}
+
+/// Here, not in `tests/`: these name the typed reason.
+#[cfg(test)]
+mod unavailable_tests {
+    use super::Unavailable;
+
+    #[test]
+    fn a_kind_is_matched_never_compared_with_its_text() {
+        assert_eq!(Unavailable::BufferChanged.to_string(), "buffer changed");
+        assert_ne!(Unavailable::BufferChanged, "buffer changed");
+        assert_ne!(Unavailable::NotOpen, "not open on a language server");
+        assert_eq!(Unavailable::from("rename"), "rename");
+        assert_eq!(Unavailable::from(String::from("rename")), *"rename");
+        assert_ne!(
+            Unavailable::from("buffer changed"),
+            Unavailable::BufferChanged
+        );
     }
 }

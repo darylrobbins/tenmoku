@@ -57,7 +57,7 @@ use fe_config::{FormatterPrefer, FormatterSettings, Settings};
 use fe_editor::IndentStyle;
 use fe_gpui::{EditorView, SaveHook};
 use fe_lsp::{
-    CodeAction, LspError,
+    CodeAction, LspError, Unavailable,
     formatting::{Edits, FormatOptions},
 };
 use gpui::{
@@ -499,7 +499,7 @@ const CHANGED: &str = verbatim!("the buffer changed");
 /// reply, not an error to show.
 fn failure(error: LspError) -> Result<FormatOutcome, String> {
     match error {
-        LspError::Unavailable(why) if why == "buffer changed" => Ok(FormatOutcome::Unchanged),
+        LspError::Unavailable(Unavailable::BufferChanged) => Ok(FormatOutcome::Unchanged),
         error => Err(error.to_string()),
     }
 }
@@ -694,6 +694,27 @@ fn rows_of(model: &fe_editor::EditorModel, range: Range<usize>) -> Range<usize> 
 #[cfg(test)]
 #[path = "lsp_format_tests.rs"]
 mod tests;
+
+/// Not in `lsp_format_tests.rs`: these name fe-lsp's typed reasons.
+#[cfg(test)]
+mod failure_tests {
+    use fe_lsp::{LspError, Unavailable};
+
+    use super::{FormatOutcome, failure};
+
+    #[test]
+    fn a_changed_buffer_is_no_error() {
+        let changed = LspError::Unavailable(Unavailable::BufferChanged);
+        assert_eq!(failure(changed), Ok(FormatOutcome::Unchanged));
+        for why in [Unavailable::TooLarge, Unavailable::NotOpen] {
+            assert!(failure(LspError::Unavailable(why)).is_err());
+        }
+        // The kind, whatever its text: free text saying the same isn't it.
+        let said = LspError::Unavailable("buffer changed".into());
+        assert!(failure(said).is_err());
+        assert!(failure(LspError::Timeout).is_err());
+    }
+}
 
 #[cfg(test)]
 #[path = "lsp_format_save_tests.rs"]

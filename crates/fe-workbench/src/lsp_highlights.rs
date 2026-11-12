@@ -18,7 +18,7 @@ use fe_editor::decorations::{
 };
 use fe_editor::occurrences::OccurrenceHighlights;
 use fe_gpui::EditorView;
-use fe_lsp::DocumentHighlight;
+use fe_lsp::{DocumentHighlight, LspError, Unavailable};
 use gpui::{App, Context, Entity, EntityId, Task};
 
 use crate::Workbench;
@@ -137,17 +137,10 @@ fn caret_of(editor: &Entity<EditorView>, cx: &App) -> Option<(Wanted, usize)> {
 /// `result` as an [`Answer`]: a buffer no server serves, or a server
 /// without the provider, falls back to the words; any other error shows
 /// nothing.
-pub(super) fn answer_of(
-    result: Result<Option<Vec<DocumentHighlight>>, fe_lsp::LspError>,
-) -> Answer {
+pub(super) fn answer_of(result: Result<Option<Vec<DocumentHighlight>>, LspError>) -> Answer {
     match result {
         Ok(found) => Some(found),
-        // What `fe_lsp` says of a buffer no server has open, in en-US: its
-        // `not_open` resolves it in the active locale, and it has no
-        // accessor to compare with.
-        Err(fe_lsp::LspError::Unavailable(why)) if why == "not open on a language server" => {
-            Some(None)
-        }
+        Err(LspError::Unavailable(Unavailable::NotOpen)) => Some(None),
         Err(error) => {
             log::debug!("no document highlights: {error}");
             None
@@ -300,5 +293,27 @@ impl Workbench {
             }
         }
         editor.update(cx, |_, cx| cx.notify());
+    }
+}
+
+/// Not in `lsp_highlights_tests.rs`: these name fe-lsp's typed reasons.
+#[cfg(test)]
+mod answer_tests {
+    use fe_lsp::{LspError, Unavailable};
+
+    use super::answer_of;
+
+    #[test]
+    fn only_an_unserved_buffer_falls_back_to_the_words() {
+        assert_eq!(
+            answer_of(Err(LspError::Unavailable(Unavailable::NotOpen))),
+            Some(None)
+        );
+        for why in [Unavailable::BufferChanged, Unavailable::TooLarge] {
+            assert_eq!(answer_of(Err(LspError::Unavailable(why))), None);
+        }
+        // The kind, whatever its text: free text saying the same isn't it.
+        let said = "not open on a language server".into();
+        assert_eq!(answer_of(Err(LspError::Unavailable(said))), None);
     }
 }

@@ -982,7 +982,9 @@ impl LspManager {
     ) -> Result<Option<ServerId>, LspError> {
         let uri = Url::from_file_path(path).map_err(|()| {
             LspError::Unavailable(
-                tr!("lsp-not-absolute", path = path.display().to_string()).to_string(),
+                tr!("lsp-not-absolute", path = path.display().to_string())
+                    .to_string()
+                    .into(),
             )
         })?;
         self.close(buffer);
@@ -1295,7 +1297,9 @@ impl LspManager {
     ) -> Result<(), LspError> {
         let uri = Url::from_file_path(path).map_err(|()| {
             LspError::Unavailable(
-                tr!("lsp-not-absolute", path = path.display().to_string()).to_string(),
+                tr!("lsp-not-absolute", path = path.display().to_string())
+                    .to_string()
+                    .into(),
             )
         })?;
         if !self.servers.contains_key(&server) {

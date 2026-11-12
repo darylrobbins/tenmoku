@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::{Started, answer};
 use crate::document::RING;
+use crate::event::{buffer_changed, not_open, too_large};
 use crate::fake::{Echo, InitializeReply, Record, Script};
 use crate::{Admitted, DEFAULT_MAX_FILE_BYTES, LspError, PositionEncoding};
 
@@ -21,8 +22,8 @@ fn echoes(s: &Started, marker: &str) -> usize {
         .count()
 }
 
-fn unavailable(why: &str) -> Result<(Value, Admitted), LspError> {
-    Err(LspError::Unavailable(why.into()))
+fn unavailable(error: LspError) -> Result<(Value, Admitted), LspError> {
+    Err(error)
 }
 
 #[test]
@@ -100,7 +101,7 @@ fn request_admission_by_version() {
     });
     assert_eq!(
         answer(reply).map(|_| ()),
-        unavailable("buffer changed").map(|_| ())
+        unavailable(LspError::Unavailable(buffer_changed())).map(|_| ())
     );
     s.barrier();
     assert_eq!(echoes(&s, "admitted"), 1);
@@ -124,7 +125,7 @@ fn large_documents_are_not_synced() {
     assert_eq!(s.manager.max_file_bytes(), 52_428_800);
     assert_eq!(DEFAULT_MAX_FILE_BYTES, 52_428_800);
     s.manager.set_max_file_bytes(16);
-    let too_large = || unavailable("too large for the language server").map(|_| ());
+    let unavailable_too_large = || unavailable(LspError::Unavailable(too_large())).map(|_| ());
 
     // Over the limit from the start: never opened, even after more edits.
     let mut big = Buffer::new("seventeen bytes!\n");
@@ -137,7 +138,7 @@ fn large_documents_are_not_synced() {
     let reply =
         s.manager
             .document_request::<Echo>(big.id(), big.version(), |_| json!({ "big": true }));
-    assert_eq!(answer(reply).map(|_| ()), too_large());
+    assert_eq!(answer(reply).map(|_| ()), unavailable_too_large());
 
     // Grown past it: closed, and not opened again until back under.
     let mut small = Buffer::new("small\n");
@@ -155,7 +156,7 @@ fn large_documents_are_not_synced() {
         small.version(),
         |_| json!({ "small": true }),
     );
-    assert_eq!(answer(reply).map(|_| ()), too_large());
+    assert_eq!(answer(reply).map(|_| ()), unavailable_too_large());
     small.edit([(0..3, "")], Origin::User).unwrap();
     s.manager.changed(small.id());
     s.barrier();
@@ -207,7 +208,7 @@ fn large_documents_are_not_synced() {
         ..Script::default()
     });
     s.manager.set_max_file_bytes(16);
-    let not_open = || unavailable("not open on a language server").map(|_| ());
+    let unavailable_not_open = || unavailable(LspError::Unavailable(not_open())).map(|_| ());
     let ask = |s: &Started, buffer: &Buffer| {
         answer(s.manager.document_request::<Echo>(
             buffer.id(),
@@ -218,16 +219,16 @@ fn large_documents_are_not_synced() {
     };
     let mut big = Buffer::new("seventeen bytes!\n");
     let big_uri = s.open(&mut big, "big.txt");
-    assert_eq!(ask(&s, &big), too_large());
+    assert_eq!(ask(&s, &big), unavailable_too_large());
     let mut small = Buffer::new("small\n");
     let small_uri = s.open(&mut small, "small.txt");
-    assert_eq!(ask(&s, &small), not_open());
+    assert_eq!(ask(&s, &small), unavailable_not_open());
     small
         .edit([(0..0, "now it's too long")], Origin::User)
         .unwrap();
-    assert_eq!(ask(&s, &small), too_large());
+    assert_eq!(ask(&s, &small), unavailable_too_large());
     big.edit([(0..10, "")], Origin::User).unwrap();
-    assert_eq!(ask(&s, &big), not_open());
+    assert_eq!(ask(&s, &big), unavailable_not_open());
     s.barrier();
     assert_eq!(echoes(&s, "unsynced"), 0);
     assert_eq!(s.methods(&big_uri), Vec::<String>::new());
