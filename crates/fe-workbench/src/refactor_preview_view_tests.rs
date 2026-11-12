@@ -154,7 +154,7 @@ fn header(s: &mut Lsp) -> String {
     panel.read_with(&s.cx, |panel, _| panel.header_text())
 }
 
-fn message_shown(s: &mut Lsp) -> Option<&'static str> {
+fn message_shown(s: &mut Lsp) -> Option<String> {
     let panel = panel(s);
     panel.read_with(&s.cx, |panel, _| panel.message_text())
 }
@@ -413,7 +413,7 @@ fn apply_makes_the_kept_edits_one_undo_per_buffer(cx: &mut TestAppContext) {
     assert!(!is_open(&mut s, &first));
     assert!(!is_open(&mut s, &review));
     assert_eq!(editors_of(&mut s, "src/lib.rs").len(), 1);
-    assert_eq!(message_shown(&mut s), Some("No pending changes"));
+    assert_eq!(message_shown(&mut s), Some("No pending changes".to_owned()));
     // The caret moved once it was applied, in the editor focused.
     let call = renamed.rfind("bar").unwrap();
     assert_eq!(caret(&mut s, &editor), call + "fo".len());
@@ -485,7 +485,7 @@ fn a_failure_after_part_was_made_ends_the_preview(cx: &mut TestAppContext) {
     // The open file's part was made: the preview can't be applied again.
     assert_eq!(text(&mut s, &editor), MAIN.replacen("foo", "bar", 1));
     assert_eq!(disk(&s, "src/locked/l.rs"), THIRD);
-    assert_eq!(message_shown(&mut s), Some("No pending changes"));
+    assert_eq!(message_shown(&mut s), Some("No pending changes".to_owned()));
 }
 
 #[gpui::test]
@@ -598,7 +598,7 @@ fn cancel_changes_nothing_and_runs_no_command(cx: &mut TestAppContext) {
     let (review, _) = review_tab(&mut s);
 
     click(&mut s, "ai-changes-cancel");
-    assert_eq!(message_shown(&mut s), Some("No pending changes"));
+    assert_eq!(message_shown(&mut s), Some("No pending changes".to_owned()));
     assert!(!is_open(&mut s, &review));
     s.draw();
     assert_eq!(asked(&s, ExecuteCommand::METHOD), 0);
@@ -813,7 +813,7 @@ fn a_write_through_a_symlink_then_a_failure_ends_the_preview(cx: &mut TestAppCon
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(message.ends_with("Part of the edit was made."), "{message}");
     assert_eq!(disk(&s, "src/real.rs"), THIRD.replacen("foo", "bar", 1));
-    assert_eq!(message_shown(&mut s), Some("No pending changes"));
+    assert_eq!(message_shown(&mut s), Some("No pending changes".to_owned()));
 }
 
 #[gpui::test]

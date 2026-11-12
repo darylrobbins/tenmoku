@@ -39,6 +39,7 @@ use gpui::{
     Task, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use kiln::platform::command_actions::typed_command;
+use kiln_l10n::tr;
 
 use crate::{
     Workbench, chat_panel,
@@ -48,12 +49,6 @@ use crate::{
 
 /// The key context the input's root sets.
 pub(crate) const KEY_CONTEXT: &str = "inline_edit";
-
-/// What the input says with no key in the chat.
-const NO_KEY: &str = "Set an API key in the chat";
-
-/// The input's placeholder.
-const PLACEHOLDER: &str = "Edit selected code, or describe code to insert";
 
 /// The inputs open, by their editor.
 #[derive(Default)]
@@ -118,7 +113,10 @@ impl Workbench {
             return open.update(cx, |open, cx| open.focus(window, cx));
         }
         if editor.read(cx).is_read_only() {
-            return toast::show(cx, Toast::info("This editor is read-only"));
+            return toast::show(
+                cx,
+                Toast::info(tr!("workbench-chat-inline-read-only").to_string()),
+            );
         }
         // The key may be in the keychain: read it while the instruction is
         // typed.
@@ -153,7 +151,10 @@ impl Workbench {
             return;
         }
         let Some((provider, settings)) = chat_panel::provider(self, cx) else {
-            return toast::show(cx, Toast::info(NO_KEY));
+            return toast::show(
+                cx,
+                Toast::info(tr!("workbench-chat-inline-no-key").to_string()),
+            );
         };
         let root = self.root().map(std::path::Path::to_owned);
         open.update(cx, |open, cx| {
@@ -179,7 +180,7 @@ fn focused(window: &Window, cx: &mut gpui::App) -> Option<Entity<InlineEdit>> {
 impl InlineEdit {
     fn new(editor: &Entity<EditorView>, cx: &mut Context<Self>) -> Self {
         let ui = ui_theme(cx);
-        let input = cx.new(|cx| TextInput::new(PLACEHOLDER, &ui, cx));
+        let input = cx.new(|cx| TextInput::new(tr!("workbench-chat-inline-placeholder"), &ui, cx));
         let model = editor.read(cx).model();
         let snapshot = model.snapshot();
         let selection = model.primary_selection().range;
@@ -286,7 +287,7 @@ impl InlineEdit {
             return;
         };
         let Some(range) = self.range(cx) else {
-            return self.discard("The selection was deleted: nothing edited", window, cx);
+            return self.discard(&tr!("workbench-chat-inline-deleted-nothing"), window, cx);
         };
         let model = editor.read(cx).model();
         let text = model.text();
@@ -333,7 +334,7 @@ impl InlineEdit {
                             true
                         }
                         InlineEditUpdate::NoCode => {
-                            this.fail("The reply had no code to apply".to_owned(), cx);
+                            this.fail(tr!("workbench-chat-inline-no-code").to_string(), cx);
                             true
                         }
                     })
@@ -363,15 +364,11 @@ impl InlineEdit {
             task.detach();
         }
         let (Some(editor), Some(range)) = (self.editor.upgrade(), self.range(cx)) else {
-            return self.discard(
-                "The selection was deleted: the edit is discarded",
-                window,
-                cx,
-            );
+            return self.discard(&tr!("workbench-chat-inline-deleted-discard"), window, cx);
         };
         let snapshot = editor.read(cx).model().buffer().snapshot();
         if snapshot.text().slice_to_string(range.clone()) != self.sent {
-            return self.discard("The selection changed: the edit is discarded", window, cx);
+            return self.discard(&tr!("workbench-chat-inline-changed"), window, cx);
         }
         let proposal = to_proposal(&snapshot, range, text, session);
         let Some(first) = proposal
@@ -380,7 +377,10 @@ impl InlineEdit {
             .map(|hunk| hunk.range.start)
         else {
             self.close(window, cx);
-            return toast::show(cx, Toast::info("The reply changes nothing"));
+            return toast::show(
+                cx,
+                Toast::info(tr!("workbench-chat-inline-no-change").to_string()),
+            );
         };
         editor.update(cx, |editor, cx| {
             let mut proposals = editor.proposals().to_vec();
@@ -495,7 +495,10 @@ impl Render for InlineEdit {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = ui_theme(cx);
         let status = match (self.phase, &self.message) {
-            (Phase::Generating, _) => Some(("Generating…  Cancel (Esc)".into(), ui.muted_text)),
+            (Phase::Generating, _) => Some((
+                tr!("workbench-chat-inline-generating").to_string().into(),
+                ui.muted_text,
+            )),
             (_, Some(message)) => Some((message.clone(), ui.text)),
             _ => None,
         };

@@ -26,6 +26,7 @@ use fe_editor::{EditorModel, diagnostics::Severity};
 use fe_gpui::EditorView;
 use gpui::{App, AppContext as _, Context, Entity, Focusable as _, Window};
 use kiln::command::{Capability, Grants};
+use kiln_l10n::tr;
 
 use super::ChatPanel;
 use crate::{
@@ -42,9 +43,6 @@ pub(crate) const MAX_FILE: usize = 1 << 20;
 
 /// How far into a file a NUL makes it binary.
 const BINARY_PROBE: usize = 8 << 10;
-
-/// The picker's placeholder.
-const ATTACH_FILE: &str = "Attach a file…";
 
 /// The automatic context: see the module docs. Empty without `buffer.read`.
 /// None comes from the active file unless it's at `vetted`, which [`open_vetted`]
@@ -167,7 +165,7 @@ fn diagnostics(path: &str, model: &EditorModel) -> Option<ContextItem> {
     let count = lines.len();
     Some(ContextItem {
         kind: ContextKind::Diagnostics,
-        label: format!("Problems ({count})"),
+        label: tr!("workbench-chat-context-problems", count = count).to_string(),
         text: lines.join("\n"),
     })
 }
@@ -190,14 +188,14 @@ fn open_editors(workbench: &Workbench, root: Option<&Path>, cx: &App) -> Option<
     let count = paths.len();
     Some(ContextItem {
         kind: ContextKind::OpenEditors,
-        label: format!("Open editors ({count})"),
+        label: tr!("workbench-chat-context-open-editors", count = count).to_string(),
         text: paths.join("\n"),
     })
 }
 
 /// `model`'s buffer's text, unsaved edits included, unless it's over
 /// [`MAX_FILE`], which it doesn't copy, or binary.
-fn attachable_text(model: &EditorModel) -> Result<String, &'static str> {
+fn attachable_text(model: &EditorModel) -> Result<String, String> {
     let buffer = model.buffer();
     let len = buffer.text().len();
     if let Some(reason) = unattachable(&[], len) {
@@ -213,32 +211,34 @@ fn attachable_text(model: &EditorModel) -> Result<String, &'static str> {
 /// Why the file at `path` is never attached, by its path alone: outside
 /// `root` (or with no root), under `.git/`, or named as a secret is:
 /// `.env*`, `*.pem`, `*.key` or `id_*`.
-pub(crate) fn refusal(root: Option<&Path>, path: &Path) -> Option<&'static str> {
+pub(crate) fn refusal(root: Option<&Path>, path: &Path) -> Option<String> {
     let relative = root.and_then(|root| path.strip_prefix(root).ok());
     let Some(relative) = relative.filter(|relative| {
         (relative.components()).all(|component| matches!(component, Component::Normal(_)))
     }) else {
-        return Some("it's outside the folder");
+        return Some(tr!("workbench-chat-why-outside").to_string());
     };
     if (relative.components()).any(|component| component.as_os_str() == ".git") {
-        return Some("it's in .git");
+        return Some(tr!("workbench-chat-why-in-git").to_string());
     }
     let name = relative.file_name()?.to_string_lossy();
     let secret = name.starts_with(".env")
         || name.starts_with("id_")
         || name.ends_with(".pem")
         || name.ends_with(".key");
-    secret.then_some("it may hold secrets")
+    secret.then(|| tr!("workbench-chat-why-secrets").to_string())
 }
 
 /// Why a file of `len` bytes, whose first bytes are `start`, is never
 /// attached: over [`MAX_FILE`], or binary, a NUL in its first 8 KiB.
-pub(crate) fn unattachable(start: &[u8], len: usize) -> Option<&'static str> {
+pub(crate) fn unattachable(start: &[u8], len: usize) -> Option<String> {
     if len > MAX_FILE {
-        return Some("it's over 1 MiB");
+        return Some(tr!("workbench-chat-why-too-big").to_string());
     }
     let probe = &start[..start.len().min(BINARY_PROBE)];
-    probe.contains(&0).then_some("it's binary")
+    probe
+        .contains(&0)
+        .then(|| tr!("workbench-chat-why-binary").to_string())
 }
 
 /// What a [`walk`] ends at.
@@ -260,19 +260,19 @@ pub(crate) enum Walked {
 /// past the deny list. A folder refuses.
 pub(crate) fn open_vetted(root: &Path, path: &Path) -> Result<(PathBuf, Walked), String> {
     if let Some(reason) = refusal(Some(root), path) {
-        return Err(reason.to_owned());
+        return Err(reason);
     }
     let real_root = match walk(root) {
         Ok((real, Walked::Folder)) => real,
-        Ok(_) => return Err("the folder isn't there".to_owned()),
+        Ok(_) => return Err(tr!("workbench-chat-why-no-folder-there").to_string()),
         Err(error) => return Err(error.to_string()),
     };
     let (real, walked) = walk(path).map_err(|error| error.to_string())?;
     if let Some(reason) = refusal(Some(&real_root), &real) {
-        return Err(reason.to_owned());
+        return Err(reason);
     }
     if matches!(walked, Walked::Folder) {
-        return Err("it's a folder".to_owned());
+        return Err(tr!("workbench-chat-why-folder").to_string());
     }
     Ok((real, walked))
 }
@@ -305,7 +305,8 @@ fn text_of(walked: &Walked, stamp: Option<&DiskStamp>) -> Result<(), String> {
         (Walked::Missing, None) => true,
         _ => false,
     };
-    ok.then_some(()).ok_or_else(|| NOT_ITS_TEXT.to_owned())
+    ok.then_some(())
+        .ok_or_else(|| tr!("workbench-chat-why-not-its-text").to_string())
 }
 
 /// How many links [`walk`] follows before giving up, as Linux does.
@@ -324,7 +325,7 @@ const MAX_LINKS: usize = 40;
 pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
     use std::os::unix::fs::MetadataExt as _;
 
-    let changed = || io::Error::other("it changed while it was read");
+    let changed = || io::Error::other(tr!("workbench-chat-why-changed").to_string());
     // The folders walked, `/` first, beside the path they make.
     let mut folders = vec![open_root()?];
     let mut resolved = PathBuf::from("/");
@@ -354,7 +355,7 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
             {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    "a link leads through a folder that doesn't exist",
+                    tr!("workbench-chat-why-link-missing").to_string(),
                 ));
             }
             Component::ParentDir => {
@@ -387,7 +388,9 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
         if kind == libc::S_IFLNK {
             links += 1;
             if links > MAX_LINKS {
-                return Err(io::Error::other("too many links"));
+                return Err(io::Error::other(
+                    tr!("workbench-chat-why-links").to_string(),
+                ));
             }
             // A relative target is from the link's folder, where the walk
             // still is.
@@ -397,7 +400,11 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
         let flags = match kind {
             libc::S_IFDIR => SEARCH | libc::O_DIRECTORY,
             libc::S_IFREG => libc::O_RDONLY | libc::O_NONBLOCK,
-            _ => return Err(io::Error::other("it isn't a regular file")),
+            _ => {
+                return Err(io::Error::other(
+                    tr!("workbench-chat-why-not-regular").to_string(),
+                ));
+            }
         };
         let opened = match open_at(folder, &name, flags | libc::O_NOFOLLOW | libc::O_CLOEXEC) {
             Ok(opened) => opened,
@@ -451,7 +458,9 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
             } else if meta.is_file() {
                 Ok((real, Walked::File(opened)))
             } else {
-                Err(io::Error::other("it isn't a regular file"))
+                Err(io::Error::other(
+                    tr!("workbench-chat-why-not-regular").to_string(),
+                ))
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -468,7 +477,7 @@ pub(crate) fn walk(path: &Path) -> io::Result<(PathBuf, Walked)> {
                     if !folder.metadata()?.is_dir() {
                         return Err(io::Error::new(
                             io::ErrorKind::NotADirectory,
-                            "a file where a folder should be",
+                            tr!("workbench-chat-why-file-for-folder").to_string(),
                         ));
                     }
                     let mut resolved = fe_project::beneath::opened_path(&folder)?;
@@ -496,7 +505,9 @@ fn open_following(path: &Path) -> io::Result<File> {
 
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn walk(_: &Path) -> io::Result<(PathBuf, Walked)> {
-    Err(io::Error::other("can't check it on this system"))
+    Err(io::Error::other(
+        tr!("workbench-chat-why-unsupported").to_string(),
+    ))
 }
 
 /// Where the absolute `path` really is, by [`walk`].
@@ -624,14 +635,14 @@ pub(crate) fn find_source_with(
     }
     let file = match walked {
         Walked::File(file) => file,
-        Walked::Unreadable(..) => return Err("it can't be read".to_owned()),
+        Walked::Unreadable(..) => return Err(tr!("workbench-chat-why-unreadable").to_string()),
         Walked::Folder | Walked::Missing => return Ok(Source::Disk(None)),
     };
     let mut bytes = Vec::new();
     // One past the limit, to tell a file over it.
     (file.take(MAX_FILE as u64 + 1).read_to_end(&mut bytes)).map_err(|error| error.to_string())?;
     if let Some(reason) = unattachable(&bytes, bytes.len()) {
-        return Err(reason.to_owned());
+        return Err(reason);
     }
     Ok(Source::Disk(Some(
         String::from_utf8_lossy(&bytes).into_owned(),
@@ -640,12 +651,6 @@ pub(crate) fn find_source_with(
 
 /// An open buffer's path, and its stamp from when it was read or saved.
 pub(crate) type OpenBuffer = (PathBuf, Option<DiskStamp>);
-
-/// Why a file whose text came from elsewhere is refused.
-const NOT_ITS_TEXT: &str = "its text isn't from this file";
-
-/// Why a file that changed while it was vetted and read is refused.
-const CHANGED: &str = "it changed while it was read";
 
 /// Whether `a` and `b` are of the same file: its device and inode, where
 /// there are such; else its size and time.
@@ -672,7 +677,10 @@ fn live_file_editors(this: &Workbench, cx: &App) -> Vec<Entity<EditorView>> {
 
 /// Toasts that `path` wasn't attached, and why.
 fn refused(path: &str, reason: &str, cx: &mut App) {
-    toast::show(cx, Toast::warning(format!("Can't attach {path}: {reason}")));
+    toast::show(
+        cx,
+        Toast::warning(tr!("workbench-chat-cant-attach", path = path, reason = reason).to_string()),
+    );
 }
 
 impl ChatPanel {
@@ -691,7 +699,7 @@ impl ChatPanel {
             let picker = cx.new(|cx| {
                 Picker::new(
                     QuickOpen::new(root, pane),
-                    ATTACH_FILE,
+                    tr!("workbench-chat-attach-placeholder").to_string(),
                     kiln::ui::ui_theme(cx),
                     cx,
                 )
@@ -733,7 +741,7 @@ impl ChatPanel {
         let root = workbench.root().map(Path::to_owned);
         let shown = shown_path(root.as_deref(), Some(&path));
         if let Some(reason) = refusal(root.as_deref(), &path) {
-            return refused(&shown, reason, cx);
+            return refused(&shown, &reason, cx);
         }
         let Some(root) = root else {
             return;
@@ -791,12 +799,14 @@ impl ChatPanel {
                             && model.path() == Some(path.as_path());
                         drop(buffer);
                         if same {
-                            attachable_text(model).map_err(str::to_owned)
+                            attachable_text(model)
                         } else {
-                            Err(CHANGED.to_owned())
+                            Err(tr!("workbench-chat-why-changed").to_string())
                         }
                     }
-                    Ok(Source::Disk(text)) => text.ok_or_else(|| "no such file".to_owned()),
+                    Ok(Source::Disk(text)) => {
+                        text.ok_or_else(|| tr!("workbench-chat-why-no-file").to_string())
+                    }
                 };
                 let item = match text {
                     Ok(text) => Some(ContextItem {

@@ -47,6 +47,7 @@ use gpui::{
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px, uniform_list,
 };
+use kiln_l10n::{tr, verbatim};
 
 use crate::{
     Pane, Workbench,
@@ -65,14 +66,11 @@ pub(crate) const KEY_CONTEXT: &str = "ai_changes";
 /// The command that shows the panel.
 pub(crate) const SHOW: &str = "ai.show_changes";
 
-/// What the panel shows when nothing is pending.
-const NO_CHANGES: &str = "No pending changes";
-
 /// The AI changes in the sidebar: never on the rail (see `dock_item!`);
 /// focused when shown, for its keys.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("ai_changes"),
-    name: "AI Changes",
+    name: verbatim!("AI Changes"),
     icon: Icon::FileDiff,
     show_command: SHOW,
     show_op: crate::dock::DockOp::ShowAiChanges,
@@ -257,7 +255,7 @@ impl AiChangesPanel {
     }
 
     /// What shows in place of the rows, if anything.
-    fn message(&self) -> Option<&'static str> {
+    fn message(&self) -> Option<String> {
         // A preview's rows stay, decided or not: Apply still makes what's
         // kept, its file operations too.
         if self.listing.preview.is_some() {
@@ -266,50 +264,45 @@ impl AiChangesPanel {
         let counts = &self.listing.summary.counts;
         (self.listing.files.is_empty()
             || (counts.pending == 0 && counts.accepted == 0 && counts.stale == 0))
-            .then_some(NO_CHANGES)
+            .then(|| tr!("workbench-chat-changes-none").to_string())
     }
 
     fn header(&self) -> String {
         if let Some(head) = &self.listing.preview {
-            let files = match head.files {
-                1 => "1 file".to_owned(),
-                n => format!("{n} files"),
-            };
-            let edits = match head.edits {
-                1 => "1 edit".to_owned(),
-                n => format!("{n} edits"),
-            };
-            return format!("{}: {files}, {edits}", head.title);
+            return tr!(
+                "workbench-chat-changes-preview-header",
+                title = head.title.as_str(),
+                files = head.files,
+                edits = head.edits,
+            )
+            .to_string();
         }
         let summary = &self.listing.summary;
-        let files = match summary.files {
-            1 => "1 file".to_owned(),
-            n => format!("{n} files"),
-        };
-        let hunks = match summary.counts.pending {
-            1 => "1 hunk".to_owned(),
-            n => format!("{n} hunks"),
-        };
-        format!("{files}, {hunks} pending")
+        tr!(
+            "workbench-chat-changes-header",
+            files = summary.files,
+            hunks = summary.counts.pending,
+        )
+        .to_string()
     }
 
     fn row_counts(counts: &Counts) -> String {
         let parts: Vec<String> = [
-            (counts.pending, "pending"),
-            (counts.accepted, "accepted"),
-            (counts.rejected, "rejected"),
-            (counts.stale, "stale"),
+            ("workbench-chat-changes-count-pending", counts.pending),
+            ("workbench-chat-changes-count-accepted", counts.accepted),
+            ("workbench-chat-changes-count-rejected", counts.rejected),
+            ("workbench-chat-changes-count-stale", counts.stale),
         ]
         .into_iter()
-        .filter(|(n, _)| *n > 0)
-        .map(|(n, what)| format!("{n} {what}"))
+        .filter(|(_, n)| *n > 0)
+        .map(|(key, n)| tr!(key, count = n).to_string())
         .collect();
         parts.join(", ")
     }
 
     fn header_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let can_revert = self.listing.summary.counts.accepted > 0;
-        let button = |id: &'static str, label: &'static str, command: &'static str, on: bool| {
+        let button = |id: &'static str, label: String, command: &'static str, on: bool| {
             div().flex_none().debug_selector(move || id.into()).child(
                 Button::new(id, label)
                     .small()
@@ -323,7 +316,7 @@ impl AiChangesPanel {
         let row = div().flex_none().flex().flex_wrap().items_center().gap_1();
         if self.listing.preview.is_some() {
             // Buttons, not commands: the preview's are its own.
-            let button = |id: &'static str, label: &'static str, apply: bool| {
+            let button = |id: &'static str, label: String, apply: bool| {
                 let workbench = self.workbench.clone();
                 div().flex_none().debug_selector(move || id.into()).child(
                     Button::new(id, label)
@@ -338,24 +331,32 @@ impl AiChangesPanel {
                 )
             };
             return row
-                .child(button("ai-changes-apply", "Apply", true))
-                .child(button("ai-changes-cancel", "Cancel", false));
+                .child(button(
+                    "ai-changes-apply",
+                    tr!("workbench-chat-changes-apply").to_string(),
+                    true,
+                ))
+                .child(button(
+                    "ai-changes-cancel",
+                    tr!("workbench-chat-changes-cancel").to_string(),
+                    false,
+                ));
         }
         row.child(button(
             "ai-changes-accept-all",
-            "Accept All",
+            tr!("workbench-chat-changes-accept-all").to_string(),
             "ai.changes_accept_all",
             true,
         ))
         .child(button(
             "ai-changes-reject-all",
-            "Reject All",
+            tr!("workbench-chat-changes-reject-all").to_string(),
             "ai.changes_reject_all",
             true,
         ))
         .child(button(
             "ai-changes-revert",
-            "Revert Turn",
+            tr!("workbench-chat-changes-revert-turn").to_string(),
             "ai.changes_revert",
             can_revert,
         ))
@@ -391,27 +392,38 @@ impl AiChangesPanel {
                 // decided with it.
                 let whole = (self.listing.preview.as_ref()).is_some_and(|head| !head.decidable)
                     || file.operation.is_some();
-                let buttons = [("accept", "Accept", true), ("reject", "Reject", false)]
-                    .into_iter()
-                    .map(|(what, label, accept)| {
-                        let selector = format!("ai-changes-{what}-{shown}");
-                        let id = SharedString::from(selector.clone());
-                        let workbench = self.workbench.clone();
-                        let path = file.path.clone();
-                        div().flex_none().debug_selector(move || selector).child(
-                            Button::new(id, label)
-                                .small()
-                                .disabled(!can_decide && what == "accept")
-                                .on_click(move |_, window, cx| {
-                                    cx.stop_propagation();
-                                    (workbench.update(cx, |workbench, cx| {
-                                        workbench.decide_ai_file(&path, accept, window, cx)
-                                    }))
-                                    .ok();
-                                }),
-                        )
-                    })
-                    .filter(|_| !whole);
+                let buttons = [
+                    (
+                        "accept",
+                        tr!("workbench-chat-changes-accept").to_string(),
+                        true,
+                    ),
+                    (
+                        "reject",
+                        tr!("workbench-chat-changes-reject").to_string(),
+                        false,
+                    ),
+                ]
+                .into_iter()
+                .map(|(what, label, accept)| {
+                    let selector = format!("ai-changes-{what}-{shown}");
+                    let id = SharedString::from(selector.clone());
+                    let workbench = self.workbench.clone();
+                    let path = file.path.clone();
+                    div().flex_none().debug_selector(move || selector).child(
+                        Button::new(id, label)
+                            .small()
+                            .disabled(!can_decide && what == "accept")
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                (workbench.update(cx, |workbench, cx| {
+                                    workbench.decide_ai_file(&path, accept, window, cx)
+                                }))
+                                .ok();
+                            }),
+                    )
+                })
+                .filter(|_| !whole);
                 let detail = match &file.operation {
                     Some(operation) => operation.clone(),
                     None => format!(
@@ -1051,15 +1063,19 @@ impl Workbench {
                 relative.unwrap_or(path).display().to_string()
             })
             .collect();
-        let detail = format!(
-            "These files were edited since the turn accepted its changes:\n{}\n\nRestoring them loses those edits.",
-            names.join("\n")
-        );
+        let detail = tr!(
+            "workbench-chat-changes-revert-detail",
+            files = names.join("\n")
+        )
+        .to_string();
         let answer = window.prompt(
             PromptLevel::Warning,
-            "Revert the turn's changes?",
+            &tr!("workbench-chat-changes-revert-title"),
             Some(&detail),
-            &[PromptButton::ok("Revert"), PromptButton::cancel("Cancel")],
+            &[
+                PromptButton::ok(tr!("workbench-chat-changes-revert").to_string()),
+                PromptButton::cancel(tr!("workbench-chat-changes-cancel").to_string()),
+            ],
             cx,
         );
         cx.spawn_in(window, async move |workbench, cx| {
@@ -1322,7 +1338,7 @@ impl AiChangesPanel {
         self.header()
     }
 
-    pub(crate) fn message_text(&self) -> Option<&'static str> {
+    pub(crate) fn message_text(&self) -> Option<String> {
         self.message()
     }
 

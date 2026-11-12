@@ -122,7 +122,7 @@ impl Setup<'_> {
         panel.read_with(self.cx, |panel, _| panel.header_text())
     }
 
-    fn message(&mut self) -> Option<&'static str> {
+    fn message(&mut self) -> Option<String> {
         let panel = self.panel();
         panel.read_with(self.cx, |panel, _| panel.message_text())
     }
@@ -386,7 +386,7 @@ fn resolved_changeset_message(cx: &mut TestAppContext) {
     let mut s = setup(cx);
     assert_eq!(s.message(), None);
     s.click("ai-changes-reject-all");
-    assert_eq!(s.message(), Some("No pending changes"));
+    assert_eq!(s.message(), Some("No pending changes".to_owned()));
     assert_eq!(s.header(), "2 files, 0 hunks pending");
 }
 

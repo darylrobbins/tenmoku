@@ -29,6 +29,7 @@ use fe_command::{Actor, CommandTarget, Dispatched, Effect, Invocation, Registry,
 use fe_editor::Changeset;
 use gpui::{App, AppContext as _, Context, Entity, Subscription, WeakEntity, Window};
 use kiln::{schemars, serde};
+use kiln_l10n::tr;
 
 use super::{AGENT, ChatPanel, Located, editor_at, lf, locate, origin_of, propose_whole, refused};
 use crate::{
@@ -63,14 +64,14 @@ pub(crate) fn registry() -> Registry<ReviewCommands> {
     registry
         .register_with_args(
             REVIEW_CHANGES,
-            "Review a Chat Reply's Changes",
+            &tr!("workbench-chat-review-title"),
             |target: &mut Option<(ReviewChanges, Actor)>, actor: &Actor, args: ReviewChanges| {
                 *target = Some((args, actor.clone()));
                 Ok(Dispatched::new(Effect::Nothing))
             },
         )
         .expect("the chat's command IDs are valid and distinct")
-        .description("Loads every file edit a chat reply proposes into one AI changeset.");
+        .description(&tr!("workbench-chat-review-description"));
     registry
 }
 
@@ -86,7 +87,7 @@ struct FileBlock {
 /// A block's file, found.
 struct Found {
     block: FileBlock,
-    located: Result<Located, &'static str>,
+    located: Result<Located, String>,
     /// Whether the file is there, and its folder if it isn't.
     exists: bool,
     folder: bool,
@@ -178,7 +179,7 @@ impl ChatPanel {
                         continue;
                     };
                     if blocks.iter().any(|seen| seen.rel == rel) {
-                        refused(&rel, "the reply has another block for it", cx);
+                        refused(&rel, &tr!("workbench-chat-why-another-block"), cx);
                         continue;
                     }
                     blocks.push(FileBlock {
@@ -187,7 +188,7 @@ impl ChatPanel {
                     });
                 }
                 Err(EditBlockError::Path(path)) => {
-                    refused(&path, "it's outside the folder", cx);
+                    refused(&path, &tr!("workbench-chat-why-outside"), cx);
                 }
                 Err(error @ EditBlockError::Malformed { .. }) => {
                     if let Some(file) = info_path(&info) {
@@ -203,7 +204,7 @@ impl ChatPanel {
         let root = workbench.read(cx).root().map(std::path::Path::to_owned);
         let Some(root) = root.filter(|_| !blocks.is_empty()) else {
             for block in &blocks {
-                refused(&block.rel, "no folder is open", cx);
+                refused(&block.rel, &tr!("workbench-chat-why-no-folder"), cx);
             }
             // Nothing to load: what an earlier Review put up still goes.
             let reviewed = self.applies.reviewed.clone();
@@ -310,27 +311,27 @@ impl ChatPanel {
             } = found;
             let located = match located {
                 Ok(located) if located.read_only => {
-                    refused(&block.rel, "it's read-only", cx);
+                    refused(&block.rel, &tr!("workbench-chat-why-read-only"), cx);
                     continue;
                 }
                 Ok(located) => located,
                 Err(why) => {
-                    refused(&block.rel, why, cx);
+                    refused(&block.rel, &why, cx);
                     continue;
                 }
             };
             // Two names for one file: the first is the one reviewed.
             if files.iter().any(|(path, _)| *path == located.path) {
-                refused(&block.rel, "the reply has another block for it", cx);
+                refused(&block.rel, &tr!("workbench-chat-why-another-block"), cx);
                 continue;
             }
             if exists {
                 pane.update(cx, |pane, cx| pane.open(located.path.clone(), window, cx));
                 files.push((located.path, Some(block)));
             } else if !folder {
-                refused(&block.rel, "its folder isn't there", cx);
+                refused(&block.rel, &tr!("workbench-chat-why-no-parent"), cx);
             } else if matches!(block.body, EditBody::Sections(_)) {
-                refused(&block.rel, "it isn't there to search", cx);
+                refused(&block.rel, &tr!("workbench-chat-why-nothing-to-search"), cx);
             } else {
                 files.push((located.path, Some(block)));
             }
@@ -395,7 +396,7 @@ fn load_changeset(load: Load, window: &mut Window, cx: &mut App) {
         };
         let Some(editor) = editor_at(&pane, &path, cx) else {
             if path.exists() {
-                refused(&rel, "it couldn't be opened in an editor", cx);
+                refused(&rel, &tr!("workbench-chat-why-not-opened"), cx);
             } else if let EditBody::Replace(text) = body {
                 entries.push(Entry::New(path, lf(&text)));
             }
@@ -406,7 +407,7 @@ fn load_changeset(load: Load, window: &mut Window, cx: &mut App) {
             Ok(proposal) => {
                 let snapshot = editor.read(cx).model().buffer().snapshot();
                 if proposal.hunks(&snapshot).is_empty() {
-                    let message = format!("The block changes nothing in {rel}");
+                    let message = tr!("workbench-chat-no-change", file = rel.as_str()).to_string();
                     toast::show(cx, Toast::info(message));
                     continue;
                 }

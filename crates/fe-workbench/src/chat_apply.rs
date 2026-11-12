@@ -88,6 +88,7 @@ use fe_gpui::{EditorView, ProposalEvent};
 use fe_markdown::{Block, BlockKind};
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, Window};
 use kiln::{schemars, serde};
+use kiln_l10n::tr;
 
 use super::ChatPanel;
 use crate::{
@@ -135,14 +136,14 @@ pub(crate) fn registry() -> Registry<ChatCommands> {
     registry
         .register_with_args(
             PROPOSE_EDIT,
-            "Propose a Chat Edit",
+            &tr!("workbench-chat-propose-edit-title"),
             |target: &mut Option<(ProposeEdit, Actor)>, actor: &Actor, args: ProposeEdit| {
                 *target = Some((args, actor.clone()));
                 Ok(Dispatched::new(Effect::Nothing))
             },
         )
         .expect("the chat's command IDs are valid and distinct")
-        .description("Proposes a chat reply's code block as a change in its file.");
+        .description(&tr!("workbench-chat-propose-edit-description"));
     registry
 }
 
@@ -420,16 +421,17 @@ fn real_path(path: &Path) -> Option<PathBuf> {
 /// Where `rel` is under `root`, really, unless that's outside it; opened
 /// by the path of an editor already on the same file, of `open`, so its
 /// buffer, unsaved edits and all, is the one used. Reads the disk.
-fn locate(root: &Path, rel: &str, open: &[PathBuf]) -> Result<Located, &'static str> {
-    const OUTSIDE: &str = "it's outside the folder";
+fn locate(root: &Path, rel: &str, open: &[PathBuf]) -> Result<Located, String> {
     if !within_root(rel) {
-        return Err(OUTSIDE);
+        return Err(tr!("workbench-chat-why-outside").to_string());
     }
     let full = root.join(rel);
-    let real_root = dunce::canonicalize(root).map_err(|_| "the folder can't be read")?;
-    let real = real_path(&full).ok_or("its path can't be resolved")?;
+    let real_root = dunce::canonicalize(root)
+        .map_err(|_| tr!("workbench-chat-why-folder-unreadable").to_string())?;
+    let real =
+        real_path(&full).ok_or_else(|| tr!("workbench-chat-why-unresolvable").to_string())?;
     if !real.starts_with(&real_root) {
-        return Err(OUTSIDE);
+        return Err(tr!("workbench-chat-why-outside").to_string());
     }
     let path = (open.iter())
         .find(|path| crate::open::file_identity(path).as_ref() == Some(&real))
@@ -489,39 +491,44 @@ fn resolve_sections(
     for (ix, (search, replace)) in sections.iter().enumerate() {
         let search = lf(search);
         let first = search.lines().next().unwrap_or_default().trim();
-        let which = format!("SEARCH {} (\"{first}\")", ix + 1);
+        let which = tr!(
+            "workbench-chat-search-which",
+            number = ix + 1,
+            first = first
+        )
+        .to_string();
         if search.is_empty() {
-            return Err(format!("{which} is empty"));
+            return Err(tr!("workbench-chat-search-empty", which = which.as_str()).to_string());
         }
         let mut found = text.match_indices(search.as_str()).map(|(at, _)| at);
         let Some(at) = found.next() else {
-            return Err(format!("{which} isn't in it"));
+            return Err(tr!("workbench-chat-search-absent", which = which.as_str()).to_string());
         };
         // Overlapping matches count too.
         let step = search.chars().next().map_or(1, char::len_utf8);
         if text[at + step..].contains(search.as_str()) {
-            return Err(format!("{which} is in it more than once"));
+            return Err(tr!("workbench-chat-search-repeated", which = which.as_str()).to_string());
         }
         edits.push((base + at..base + at + search.len(), lf(replace)));
     }
     let mut ranges: Vec<Range<usize>> = edits.iter().map(|(range, _)| range.clone()).collect();
     ranges.sort_by_key(|range| (range.start, range.end));
     if (ranges.windows(2)).any(|pair| pair[0].end > pair[1].start || pair[0] == pair[1]) {
-        return Err("two of its sections change the same text".to_owned());
+        return Err(tr!("workbench-chat-sections-overlap").to_string());
     }
     Ok(edits)
 }
 
 /// Why `editor` can't take a proposal, if it can't.
-fn refusal(editor: &EditorView) -> Option<&'static str> {
+fn refusal(editor: &EditorView) -> Option<String> {
     if editor.is_read_only() {
-        return Some("it's read-only");
+        return Some(tr!("workbench-chat-why-read-only").to_string());
     }
     let text = editor.model().buffer().text().clone();
     let probe = text.clip_offset(BINARY_PROBE.min(text.len()), Bias::Left);
     (text.slice_to_string(0..probe))
         .contains('\0')
-        .then_some("it's binary")
+        .then(|| tr!("workbench-chat-why-binary").to_string())
 }
 
 /// `body` proposed over `range` of `snapshot`, as `origin`: the step Apply
@@ -574,7 +581,7 @@ fn proposal_state(proposal: &ProposedChange) -> BlockState {
 fn refused(file: &str, why: &str, cx: &mut App) {
     toast::show(
         cx,
-        Toast::error(format!("Can't apply the block to {file}: {why}")),
+        Toast::error(tr!("workbench-chat-cant-apply", file = file, why = why).to_string()),
     );
 }
 
@@ -709,11 +716,14 @@ impl ChatPanel {
         let block = match parse_edit_block(&info, &code) {
             Ok(block) => block,
             Err(EditBlockError::Path(path)) => {
-                return self.refuse(attempt, &path, "it's outside the folder", cx);
+                return self.refuse(attempt, &path, &tr!("workbench-chat-why-outside"), cx);
             }
             Err(error @ EditBlockError::Malformed { .. }) => {
-                let file = info_path(&info).unwrap_or("the selection");
-                return self.refuse(attempt, file, &error.to_string(), cx);
+                let file = info_path(&info).map_or_else(
+                    || tr!("workbench-chat-the-selection").to_string(),
+                    str::to_owned,
+                );
+                return self.refuse(attempt, &file, &error.to_string(), cx);
             }
         };
         let origin = origin_of(actor);
@@ -730,13 +740,13 @@ impl ChatPanel {
             }
             None => {
                 let Some(label) = selection else {
-                    let message = "This block doesn't say which file it's for";
-                    self.set_state(attempt, Some(BlockState::Failed(message.to_owned())), cx);
+                    let message = tr!("workbench-chat-no-file").to_string();
+                    self.set_state(attempt, Some(BlockState::Failed(message.clone())), cx);
                     return toast::show(cx, Toast::warning(message));
                 };
                 let Some(sent) = self.applies.turns.get(&args.turn) else {
-                    let why = "the selection it was sent with was cut to fit, or isn't known";
-                    return self.refuse(attempt, &label, why, cx);
+                    let why = tr!("workbench-chat-why-selection-unknown").to_string();
+                    return self.refuse(attempt, &label, &why, cx);
                 };
                 let edit = Edit {
                     attempt,
@@ -763,7 +773,7 @@ impl ChatPanel {
             return;
         };
         let Some(root) = workbench.read(cx).root().map(Path::to_owned) else {
-            return self.refuse(edit.attempt, rel, "no folder is open", cx);
+            return self.refuse(edit.attempt, rel, &tr!("workbench-chat-why-no-folder"), cx);
         };
         let open = self.open_paths(&workbench, cx);
         let rel = rel.to_owned();
@@ -784,7 +794,12 @@ impl ChatPanel {
             .chain(workbench.read(cx).active_editor(cx).cloned())
             .find(|editor| editor.read(cx).model().buffer().id() == within.buffer);
         let Some(editor) = found else {
-            return self.refuse(edit.attempt, &edit.shown, "its file is closed", cx);
+            return self.refuse(
+                edit.attempt,
+                &edit.shown,
+                &tr!("workbench-chat-why-file-closed"),
+                cx,
+            );
         };
         let Some(path) = editor.read(cx).model().path().map(Path::to_owned) else {
             // Untitled: in the editor it's in.
@@ -808,7 +823,7 @@ impl ChatPanel {
     /// `edit` there, unless it's read-only or the chat has changed.
     fn when_located(
         &mut self,
-        located: Task<Result<Located, &'static str>>,
+        located: Task<Result<Located, String>>,
         edit: Edit,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -827,10 +842,13 @@ impl ChatPanel {
                     return;
                 }
                 match located {
-                    Err(why) => panel.refuse(edit.attempt, &edit.shown, why, cx),
-                    Ok(located) if located.read_only => {
-                        panel.refuse(edit.attempt, &edit.shown, "it's read-only", cx)
-                    }
+                    Err(why) => panel.refuse(edit.attempt, &edit.shown, &why, cx),
+                    Ok(located) if located.read_only => panel.refuse(
+                        edit.attempt,
+                        &edit.shown,
+                        &tr!("workbench-chat-why-read-only"),
+                        cx,
+                    ),
                     Ok(located) => panel.open_to_apply(located.path, edit, window, cx),
                 }
             }))
@@ -857,8 +875,8 @@ impl ChatPanel {
             return self.show(&editor, Some((&pane, &path)), edit, window, cx);
         }
         if !pane.read(cx).reading().any(|reading| reading == path) {
-            let why = "it couldn't be opened in an editor";
-            return self.refuse(edit.attempt, &edit.shown, why, cx);
+            let why = tr!("workbench-chat-why-not-opened").to_string();
+            return self.refuse(edit.attempt, &edit.shown, &why, cx);
         }
         let watch = cx.observe_in(&pane, window, Self::file_read);
         self.applies.waiting.push(Waiting {
@@ -896,8 +914,8 @@ impl ChatPanel {
                     cx,
                 ),
                 None => {
-                    let why = "it couldn't be opened in an editor";
-                    self.refuse(waiting.edit.attempt, &waiting.edit.shown, why, cx);
+                    let why = tr!("workbench-chat-why-not-opened").to_string();
+                    self.refuse(waiting.edit.attempt, &waiting.edit.shown, &why, cx);
                 }
             }
         }
@@ -1050,16 +1068,16 @@ fn show_proposal(
         shown,
     } = edit;
     if let Some(why) = refusal(editor.read(cx)) {
-        return refuse(&shown, why, cx);
+        return refuse(&shown, &why, cx);
     }
     let snapshot = editor.read(cx).model().buffer().snapshot();
     let range = match &within {
         None => 0..snapshot.len(),
         Some(within) if within.buffer != snapshot.id() => {
-            return refuse(&shown, "its file is closed", cx);
+            return refuse(&shown, &tr!("workbench-chat-why-file-closed"), cx);
         }
         Some(within) if within.range.start.version() < snapshot.oldest_version() => {
-            return refuse(&shown, "the selection it was sent with is lost", cx);
+            return refuse(&shown, &tr!("workbench-chat-why-selection-lost"), cx);
         }
         Some(within) => snapshot.resolve_range(&within.range),
     };
@@ -1072,7 +1090,7 @@ fn show_proposal(
         .first()
         .map(|hunk| hunk.range.start)
     else {
-        let message = format!("The block changes nothing in {shown}");
+        let message = tr!("workbench-chat-no-change", file = shown.as_str()).to_string();
         toast::show(cx, Toast::info(message));
         return Shown::NoChange;
     };

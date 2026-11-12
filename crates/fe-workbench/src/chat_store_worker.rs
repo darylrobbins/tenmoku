@@ -25,6 +25,7 @@ use std::{
 
 use fe_chat::{ChatId, ChatStore, ChatSummary, Conversation, StoreError};
 use gpui::{App, AppContext as _, Global};
+use kiln_l10n::tr;
 
 /// The folder a request is for: its canonical root and its chats'
 /// directory, fixed together when the target was made from the root: it is never worked out again
@@ -69,13 +70,20 @@ pub(crate) enum WorkerError {
     Diverged,
 }
 
+/// `title` for the copy of its chat: stored, so without the isolates the
+/// catalogue puts round the title.
+fn copy_title(title: &str) -> String {
+    let named = tr!("workbench-chat-copy-title", title = title);
+    kiln_l10n::strip_isolates(&named).into_owned()
+}
+
 impl fmt::Display for WorkerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WorkerError::Stale => f.write_str("the folder's trust changed"),
-            WorkerError::Closed => f.write_str("the app is quitting"),
+            WorkerError::Stale => f.write_str(&tr!("workbench-chat-why-trust-changed")),
+            WorkerError::Closed => f.write_str(&tr!("workbench-chat-why-quitting")),
             WorkerError::Store(error) => error.fmt(f),
-            WorkerError::Diverged => f.write_str("the chat was changed elsewhere"),
+            WorkerError::Diverged => f.write_str(&tr!("workbench-chat-why-changed-elsewhere")),
         }
     }
 }
@@ -451,7 +459,7 @@ impl Worker {
             let copy_of = |chat: Conversation| -> Result<Saved, StoreError> {
                 let mut copy = chat;
                 copy.id = ChatId::new();
-                copy.title = format!("{} (copy)", copy.title);
+                copy.title = copy_title(&copy.title);
                 let revision = store.save_if(&copy, 0)?;
                 let (id, title) = (copy.id, copy.title.clone());
                 *state.lock_copy() = Some(CopyOf {
@@ -610,5 +618,17 @@ mod tests {
         let result = futures::executor::block_on(blocked_read);
         assert!(matches!(result, Err(WorkerError::Stale)));
         worker.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod copy_title_tests {
+    use super::copy_title;
+
+    #[test]
+    fn a_copy_title_is_the_title_and_copy_and_nothing_else() {
+        assert_eq!(copy_title("first"), "first (copy)");
+        assert_eq!(copy_title("שלום"), "שלום (copy)");
+        assert_eq!(copy_title("مرحبا"), "مرحبا (copy)");
     }
 }

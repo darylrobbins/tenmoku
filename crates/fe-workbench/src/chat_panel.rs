@@ -71,6 +71,7 @@ use kiln::{
     platform::command_actions::{dispatch_invocation, dispatch_window, typed_command},
     ui::{Button, TextField, TextFieldEvent, h_flex, ui_theme, v_flex},
 };
+use kiln_l10n::{tr, verbatim};
 
 use crate::{
     DockPanel, RootChanged, TrustChanged, Workbench,
@@ -93,7 +94,7 @@ use chat_context::MAX_FILE;
 /// when shown, as the composer takes the keys.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("chat"),
-    name: "Chat",
+    name: verbatim!("Chat"),
     icon: fe_ui::Icon::Bot,
     show_command: "chat.open",
     show_op: DockOp::ShowChat,
@@ -289,21 +290,21 @@ pub(crate) struct HistoryRow {
 impl HistoryRow {
     fn label(&self) -> String {
         let title = if self.title.is_empty() {
-            "Untitled chat"
+            tr!("workbench-chat-untitled").to_string()
         } else {
-            &self.title
+            self.title.clone()
         };
         let ago = SystemTime::now()
             .duration_since(self.updated)
             .unwrap_or_default()
             .as_secs();
         let when = match ago {
-            0..60 => "just now".to_owned(),
-            60..3600 => format!("{}m ago", ago / 60),
-            3600..86400 => format!("{}h ago", ago / 3600),
-            _ => format!("{}d ago", ago / 86400),
+            0..60 => tr!("workbench-chat-ago-now").to_string(),
+            60..3600 => tr!("workbench-chat-ago-minutes", count = ago / 60).to_string(),
+            3600..86400 => tr!("workbench-chat-ago-hours", count = ago / 3600).to_string(),
+            _ => tr!("workbench-chat-ago-days", count = ago / 86400).to_string(),
         };
-        format!("{title}  ·  {when}")
+        tr!("workbench-chat-history-label", title = title, when = when).to_string()
     }
 }
 
@@ -787,16 +788,19 @@ impl ChatPanel {
                 self.note_copy(conversation, origin, at, title, revision);
                 toast::show(
                     cx,
-                    Toast::warning(
-                        "The chat was changed elsewhere; your turns were saved as a copy.",
-                    ),
+                    Toast::warning(tr!("workbench-chat-changed-elsewhere").to_string()),
                 );
             }
             Err(WorkerError::Store(error)) => {
                 log::warn!("chat: couldn't save chat {id}: {error}");
                 // Once a chat, not on every turn.
                 if self.save_failed.insert(id) {
-                    toast::show(cx, Toast::error(format!("Couldn't save the chat: {error}")));
+                    toast::show(
+                        cx,
+                        Toast::error(
+                            tr!("workbench-chat-cant-save", error = error.to_string()).to_string(),
+                        ),
+                    );
                 }
             }
             Err(WorkerError::Diverged) => {
@@ -967,7 +971,10 @@ impl ChatPanel {
                             Err(WorkerError::Store(error)) if local.is_none() => {
                                 toast::show(
                                     cx,
-                                    Toast::error(format!("Couldn't open the chat: {error}")),
+                                    Toast::error(
+                                        tr!("workbench-chat-cant-open", error = error.to_string())
+                                            .to_string(),
+                                    ),
                                 );
                             }
                             Err(_) => panel.open_chosen(local, id, window, cx),
@@ -1073,9 +1080,12 @@ impl ChatPanel {
         let origin = self.home.clone();
         let answer = window.prompt(
             PromptLevel::Warning,
-            "Delete this chat?",
-            Some(&format!("“{title}” will be deleted for good.")),
-            &["Delete", "Cancel"],
+            &tr!("workbench-chat-delete-title"),
+            Some(&tr!("workbench-chat-delete-detail", title = title.as_str())),
+            &[
+                tr!("workbench-chat-delete").to_string().as_str(),
+                tr!("workbench-chat-cancel").to_string().as_str(),
+            ],
             cx,
         );
         let handle = self.window;
@@ -1136,14 +1146,17 @@ impl ChatPanel {
                             log::warn!("chat: couldn't delete chat {id}: {error}");
                             error.to_string()
                         }
-                        Err(WorkerError::Stale) => "the folder isn't trusted any more".to_owned(),
+                        Err(WorkerError::Stale) => tr!("workbench-chat-untrusted").to_string(),
                         Err(_) => return,
                     };
                     panel
                         .update(cx, |_, cx| {
                             toast::show(
                                 cx,
-                                Toast::error(format!("Couldn't delete the chat: {failure}")),
+                                Toast::error(
+                                    tr!("workbench-chat-cant-delete", failure = failure.as_str())
+                                        .to_string(),
+                                ),
                             );
                         })
                         .ok();
@@ -1162,7 +1175,7 @@ impl ChatPanel {
             self.forms_made += 1;
             let field = cx.new(|cx| {
                 TextField::new(window, cx)
-                    .placeholder("Anthropic API key")
+                    .placeholder(tr!("workbench-chat-key-placeholder").to_string())
                     .masked(true)
             });
             let events = cx.subscribe_in(&field, window, |this, _, event, window, cx| {
@@ -1249,13 +1262,22 @@ impl ChatPanel {
                         }
                     }
                     Err(error) => {
-                        let what = if from.is_some() { "save" } else { "clear" };
+                        let saving = from.is_some();
                         if let Some(form) = this.key_form.as_mut().filter(|form| owns(form)) {
                             form.saving = false;
                         }
                         toast::show(
                             cx,
-                            Toast::error(format!("Couldn't {what} the API key: {error}")),
+                            Toast::error(match saving {
+                                true => {
+                                    tr!("workbench-chat-cant-save-key", error = error.to_string())
+                                        .to_string()
+                                }
+                                false => {
+                                    tr!("workbench-chat-cant-clear-key", error = error.to_string())
+                                        .to_string()
+                                }
+                            }),
                         );
                     }
                 }
@@ -1295,32 +1317,33 @@ impl ChatPanel {
             .gap_2()
             .p_2()
             .on_key_down(cx.listener(Self::on_form_key))
-            .child(div().child("Anthropic API key"))
+            .child(div().child(tr!("workbench-chat-key-placeholder").to_string()))
             .child(form.field.clone())
             .child(
                 h_flex()
                     .gap_2()
                     .child(
-                        Button::new("chat-key-save", "Save")
-                            .small()
-                            .debug_selector(|| "chat-key-save".into())
-                            .on_click(save),
+                        Button::new(
+                            verbatim!("chat-key-save"),
+                            tr!("workbench-chat-save").to_string(),
+                        )
+                        .small()
+                        .debug_selector(|| "chat-key-save".into())
+                        .on_click(save),
                     )
                     .child(
-                        Button::new("chat-key-cancel", "Cancel")
-                            .small()
-                            .debug_selector(|| "chat-key-cancel".into())
-                            .on_click(cancel),
+                        Button::new(
+                            verbatim!("chat-key-cancel"),
+                            tr!("workbench-chat-cancel").to_string(),
+                        )
+                        .small()
+                        .debug_selector(|| "chat-key-cancel".into())
+                        .on_click(cancel),
                     ),
             )
-            .child(note(
-                "The key is kept in the system keychain and only sent to api.anthropic.com."
-                    .to_owned(),
-            ))
+            .child(note(tr!("workbench-chat-key-note").to_string()))
             .children(env_wins.then(|| {
-                note(format!(
-                    "{KEY_VARIABLE} is set, and is used instead of the stored key."
-                ))
+                note(tr!("workbench-chat-key-env-wins", variable = KEY_VARIABLE).to_string())
             }))
     }
 
@@ -1335,13 +1358,17 @@ impl ChatPanel {
             .p_2()
             .overflow_y_scroll();
         if rows.is_empty() {
-            return list.child(div().text_color(ui.muted_text).child("No chats yet."));
+            return list.child(
+                div()
+                    .text_color(ui.muted_text)
+                    .child(tr!("workbench-chat-no-chats").to_string()),
+            );
         }
         list.children(rows.iter().enumerate().map(|(i, row)| {
             let id = row.id;
             let open =
                 cx.listener(move |this, _, window, cx| this.open_history_chat(id, window, cx));
-            Button::new(("chat-history-row", i), row.label())
+            Button::new((verbatim!("chat-history-row"), i), row.label())
                 .small()
                 .ghost()
                 .debug_selector(move || format!("chat-history-row-{i}"))
@@ -1619,7 +1646,11 @@ impl ChatPanel {
     /// The header's note of where the key comes from.
     fn key_note(&self) -> Option<SharedString> {
         match self.key {
-            Some((KeyOrigin::Environment, _)) => Some(format!("Key from {KEY_VARIABLE}").into()),
+            Some((KeyOrigin::Environment, _)) => Some(
+                tr!("workbench-chat-key-from-env", variable = KEY_VARIABLE)
+                    .to_string()
+                    .into(),
+            ),
             _ => None,
         }
     }
@@ -1813,13 +1844,16 @@ impl Render for ChatPanel {
             .border_color(ui.border)
             .child(div().flex_1().min_w_0().children(note))
             .child(
-                Button::new("chat-history", "History")
-                    .small()
-                    .debug_selector(|| "chat-history".into())
-                    .on_click(history),
+                Button::new(
+                    verbatim!("chat-history"),
+                    tr!("workbench-chat-history").to_string(),
+                )
+                .small()
+                .debug_selector(|| "chat-history".into())
+                .on_click(history),
             )
             .child(
-                Button::new("chat-new", "New Chat")
+                Button::new(verbatim!("chat-new"), tr!("workbench-chat-new").to_string())
                     .small()
                     .debug_selector(|| "chat-new".into())
                     .on_click(new_chat),

@@ -169,6 +169,16 @@ migrated = [
 
     # T1556: toasts.
     "src/toast.rs",
+
+    # W7: chat and AI (T331).
+    "src/chat_panel.rs",
+    "src/chat_apply.rs",
+    "src/chat_changeset.rs",
+    "src/chat_context.rs",
+    "src/chat_store_worker.rs",
+    "src/ai_changes_panel.rs",
+    "src/ai_changes_buffers.rs",
+    "src/inline_edit.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -741,3 +751,45 @@ reason = "A toast card's id and debug selector, not shown"
 file = "src/toast.rs"
 text = "toast-icon-{ix}"
 reason = "A toast icon's debug selector, not shown"
+
+# W7 (T331): element ids, and context text for the model.
+
+[[literal]]
+file = "src/ai_changes_panel.rs"
+text = "ai-changes-icon:{name}:{path}"
+reason = "A debug selector"
+
+[[literal]]
+file = "src/ai_changes_panel.rs"
+text = "ai-changes-{what}-{shown}"
+reason = "A button's element id"
+
+[[literal]]
+file = "src/ai_changes_panel.rs"
+text = "ai-changes-operation-{ix}-{shown}"
+reason = "A row's element id"
+
+[[literal]]
+file = "src/ai_changes_panel.rs"
+text = "ai-changes-row-{shown}"
+reason = "A row's element id"
+
+[[literal]]
+file = "src/chat_panel.rs"
+text = "chat-history-row-{i}"
+reason = "A debug selector"
+
+[[literal]]
+file = "src/inline_edit.rs"
+text = "inline-{}"
+reason = "A chat session's id"
+
+[[literal]]
+file = "src/chat_context.rs"
+text = "{path}:{row}: {severity}: {}"
+reason = "A diagnostic as the model is sent it, not shown"
+
+[[literal]]
+file = "src/chat_context.rs"
+text = " ({source})"
+reason = "A diagnostic's source as the model is sent it, not shown"
