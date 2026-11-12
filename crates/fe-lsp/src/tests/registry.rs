@@ -1402,27 +1402,56 @@ fn bare_commands_use_the_login_shell_path() {
         "printf %s \"$PATH\" > \"$PWD/server-path.txt\"; exec cat",
     );
     let login_path = format!("/nonexistent:{}:/bin:/usr/bin", bin.display());
-    let shell = dir.join("login-shell");
-    // What its profile and logout script print, lines that look like a
-    // PATH among it, isn't taken for its PATH.
-    login_shell(
-        &shell,
-        &format!(
-            "echo run >> '{}/runs'\necho 'profile chatter'\necho /usr/local/bin",
-            dir.display()
-        ),
-        &login_path,
-        "printf '/bin\\nbye'",
-    );
-
-    // Several launches of a bare command run the shell once.
-    let login = Arc::new(LoginPath::new(&shell));
+    // The shells below meant to succeed are starved of CPU on a loaded
+    // machine and may take over 2 s: that is not the behaviour under test,
+    // so such an attempt is run again with a fresh LoginPath. Counts the
+    // attempts run again; each logged once more, and may have recorded one
+    // more run in `files`.
+    let retries = std::cell::Cell::new(0usize);
+    let succeeding_with = |make: &dyn Fn(usize) -> PathBuf| -> Arc<LoginPath> {
+        let mut attempts = 1;
+        loop {
+            let login = Arc::new(LoginPath::new(make(attempts)));
+            let before = logs_from(&thread).len();
+            let found = login.path().is_some();
+            let starved = logs_from(&thread)
+                .get(before..)
+                .is_some_and(|new| new.iter().any(|log| log.contains("took over 2 s")));
+            if found || !starved || attempts >= 5 {
+                return login;
+            }
+            attempts += 1;
+            retries.set(retries.get() + 1);
+        }
+    };
+    let succeeding = |shell: &Path| succeeding_with(&|_| shell.to_owned());
+    // Several launches of a bare command run the shell once. Each attempt
+    // has its own `runs` file, as a timed-out one's worker may still write
+    // to its file after the next attempt starts.
+    let attempt = std::cell::Cell::new(1);
+    let login = succeeding_with(&|n| {
+        attempt.set(n);
+        let shell = dir.join(format!("login-shell-{n}"));
+        // What its profile and logout script print, lines that look like a
+        // PATH among it, isn't taken for its PATH.
+        login_shell(
+            &shell,
+            &format!(
+                "echo run >> '{}/runs-{n}'\necho 'profile chatter'\necho /usr/local/bin",
+                dir.display()
+            ),
+            &login_path,
+            "printf '/bin\\nbye'",
+        );
+        shell
+    });
+    let runs_file = dir.join(format!("runs-{}", attempt.get()));
     let launcher = LocalLauncher::with_login_path(login.clone());
     let spec = ServerSpec::new("test", "fe-test-server");
     for _ in 0..3 {
         ping(launcher.launch(&spec, &dir, &LaunchCancel::new()).unwrap());
     }
-    let runs = std::fs::read_to_string(dir.join("runs")).unwrap();
+    let runs = std::fs::read_to_string(&runs_file).unwrap();
     assert_eq!(runs.lines().count(), 1, "{runs}");
     assert_eq!(login.path(), Some(OsStr::new(&login_path)));
     assert_eq!(
@@ -1432,7 +1461,8 @@ fn bare_commands_use_the_login_shell_path() {
     // Only that PATH: `cat` on this process's PATH isn't on it.
     let only_bin = dir.join("only-bin-shell");
     login_shell(&only_bin, "", bin.to_str().unwrap(), "");
-    let narrow = LoginPath::new(&only_bin);
+    let narrow = succeeding(&only_bin);
+    assert!(narrow.path().is_some());
     assert_eq!(narrow.resolve(Path::new("cat"), None, &dir), None);
     // The server gets that PATH too.
     assert_eq!(
@@ -1475,7 +1505,12 @@ fn bare_commands_use_the_login_shell_path() {
         std::fs::read_to_string(dir.join("server-path.txt")).unwrap(),
         login_path
     );
-    assert_eq!(logs_from(&thread), Vec::<String>::new());
+    assert_eq!(
+        logs_from(&thread).len(),
+        retries.get(),
+        "{:#?}",
+        logs_from(&thread)
+    );
 
     // A leading `~` is the home directory, as bash has it, in a PATH entry
     // and in a command: never a directory named `~` under the root.
@@ -1529,9 +1564,6 @@ fn bare_commands_use_the_login_shell_path() {
     // Prints what looks like a PATH, but never runs the command.
     let chatty = dir.join("chatty-shell");
     shell_script(&chatty, "printf '/bin\\nbye'");
-    // Starved attempts that were run again; each logged once more, and may
-    // have recorded one more run in `files`.
-    let mut retries = 0;
     for (shell, why) in [
         (failing, "failed"),
         (slow, "took over 2 s"),
@@ -1557,7 +1589,7 @@ fn bare_commands_use_the_login_shell_path() {
                 break (login, logs);
             }
             attempts += 1;
-            retries += 1;
+            retries.set(retries.get() + 1);
         };
         assert!(
             logs.last().is_some_and(|log| log.contains(why)
@@ -1602,7 +1634,7 @@ fn bare_commands_use_the_login_shell_path() {
     );
     std::fs::create_dir(dir.join("elsewhere")).unwrap();
     script(&dir.join("elsewhere/fe-test-server"), "exit 1");
-    let login = Arc::new(LoginPath::new(&relative));
+    let login = succeeding(&relative);
     assert_eq!(login.path(), Some(OsStr::new(&relative_path)));
     // `bin` is passed over, and the absolute entry after it is found.
     assert_eq!(
@@ -1622,7 +1654,7 @@ fn bare_commands_use_the_login_shell_path() {
     // A PATH of relative entries only is a PATH too, and finds nothing.
     let relative_only = dir.join("relative-only-shell");
     login_shell(&relative_only, "", "bin", "");
-    let login = LoginPath::new(&relative_only);
+    let login = succeeding(&relative_only);
     assert_eq!(login.path(), Some(OsStr::new("bin")));
     assert_eq!(login.resolve(Path::new("fe-test-server"), None, &dir), None);
 
@@ -1630,7 +1662,7 @@ fn bare_commands_use_the_login_shell_path() {
     // process's PATH isn't searched.
     let empty = dir.join("empty-shell");
     login_shell(&empty, "", "", "");
-    let login = Arc::new(LoginPath::new(&empty));
+    let login = succeeding(&empty);
     assert_eq!(login.path(), Some(OsStr::new("")));
     assert_eq!(login.resolve(Path::new("cat"), None, &dir), None);
     assert_eq!(login.resolve(Path::new("fe-test-server"), None, &dir), None);
@@ -1685,7 +1717,7 @@ fn bare_commands_use_the_login_shell_path() {
             + ":/bin:/usr/bin";
         login_shell(&passing, "", &path, "");
         shells += 1;
-        let login = Arc::new(LoginPath::new(&passing));
+        let login = succeeding(&passing);
         assert_eq!(
             login.resolve(Path::new("fe-test-server"), None, &dir),
             Some(bin.join("fe-test-server"))
@@ -1699,16 +1731,19 @@ fn bare_commands_use_the_login_shell_path() {
     // Line breaks in it are kept, only the one after it is dropped.
     let newlines = dir.join("newlines-shell");
     login_shell(&newlines, "", "bin\n:/x\n", "");
-    let login = LoginPath::new(&newlines);
+    let login = succeeding(&newlines);
     assert_eq!(login.path(), Some(OsStr::new("bin\n:/x\n")));
     // Only the failing shells said anything.
-    assert_eq!(logs_from(&thread).len(), 3 + retries);
+    assert_eq!(logs_from(&thread).len(), 3 + retries.get());
 
     // Each run's file is gone, however it ended.
     let files = std::fs::read_to_string(dir.join("files")).unwrap();
     // A starved attempt may have been killed before it wrote its record.
     let recorded = files.lines().count();
-    assert!((shells..=shells + retries).contains(&recorded), "{files}");
+    assert!(
+        (shells..=shells + retries.get()).contains(&recorded),
+        "{files}"
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     for file in files.lines() {
         assert!(Path::new(file).is_absolute(), "{file}");
