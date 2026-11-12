@@ -85,8 +85,10 @@
 //! the box, and `ca` does with Amend checked, as fugitive's keys do.
 
 use std::{
+    cell::Cell,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use fe_buffer::{Origin, Version};
@@ -99,11 +101,11 @@ use fe_ui::{
 };
 use fe_vim::{CommandLineKind, Mode};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, KeyDownEvent, Modifiers,
-    ParentElement as _, Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px, uniform_list,
+    AnyElement, App, AppContext as _, Bounds, Context, CursorStyle, DragMoveEvent, ElementId,
+    Entity, EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement as _, IntoElement,
+    KeyContext, KeyDownEvent, Modifiers, ParentElement as _, Render, ScrollStrategy, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle,
+    WeakEntity, Window, canvas, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use kiln::Cx;
 use kiln_l10n::tr;
@@ -133,8 +135,14 @@ pub(crate) const LINE_LENGTH: usize = 72;
 
 /// The fewest rows the box shows, room to start a message in.
 const BOX_MIN_ROWS: u32 = 3;
-/// The most rows the box grows to.
+/// The most rows the box grows to by itself, where a long message scrolls.
 const BOX_ROWS: u32 = 10;
+/// The least the file list keeps, however tall the box is made: dragging
+/// the box's edge stops short of it, and a panel shorter than the box and
+/// this scrolls as a whole.
+const LIST_MIN_HEIGHT: f32 = 72.;
+/// The grab area of the box's bottom edge, over the border.
+const HANDLE_HEIGHT: f32 = 6.;
 
 /// The ems the box's soft wrap leaves free, beyond its margin, so its text
 /// stays clear of the counter in its corner: a gap and up to 7 characters.
@@ -476,6 +484,14 @@ pub struct GitPanel {
     /// Draws the sync header's buttons again as a fetch, pull or push
     /// starts or ends anywhere, once the panel's drawn.
     remote_watch: Option<Subscription>,
+    /// The rows the box was dragged to, if it was; this window's, and not
+    /// kept past it.
+    box_height: Option<u32>,
+    /// Where the box's resize handle has focus, for the arrow keys.
+    handle_focus: FocusHandle,
+    /// Where the panel's parts were last drawn, which a drag of the box's
+    /// edge measures against.
+    layout: Rc<PanelLayout>,
     #[cfg(test)]
     test: std::rc::Rc<std::cell::RefCell<TestHooks>>,
     /// The placeholder last drawn over the box, and the family it was set
@@ -520,6 +536,9 @@ impl GitPanel {
             focus_out: None,
             sync: None,
             remote_watch: None,
+            box_height: None,
+            handle_focus: cx.focus_handle(),
+            layout: Default::default(),
             #[cfg(test)]
             test: Default::default(),
             #[cfg(test)]
@@ -1810,7 +1829,7 @@ impl GitPanel {
     /// The box with its placeholder or counter, its command line or vim's
     /// message, its Amend checkbox and its Commit button with "and push";
     /// nothing without a repository.
-    fn render_commit_box(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_commit_box(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.status == Status::NotARepository {
             return None;
         }
@@ -1824,7 +1843,12 @@ impl GitPanel {
         // Where the box's text starts: half an em in, with no gutter.
         let text_left = theme.font_size * EM_PER_FONT_SIZE * NO_GUTTER_LEFT_EMS;
         let rows = editor.model().display().row_count().clamp(1, BOX_ROWS);
-        let height = line_height * box_rows(rows) + px(1.);
+        let rows = match self.box_height {
+            Some(rows) => rows.min(self.box_rows_limit(f32::from(line_height))) as f32,
+            None => box_rows(rows),
+        };
+        let height = line_height * rows + px(1.);
+        let edge_rows = rows as usize;
         let message = (editor.vim_state())
             .and_then(|state| state.message())
             .map(str::to_owned);
@@ -1848,6 +1872,7 @@ impl GitPanel {
                 .text_color(color)
                 .child(text)
         });
+        let trailing: Option<AnyElement> = None;
         let counter = counter(editor).map(|(chars, over)| {
             let color = match over {
                 true => colors.status.error,
@@ -1863,14 +1888,23 @@ impl GitPanel {
                 .replace(Some((text.clone(), color, family.clone())));
             div()
                 .debug_selector(|| "commit-counter".into())
-                .absolute()
-                .bottom(px(2.))
-                .right(px(6.))
                 .font_family(family.clone())
                 .text_size(px(11.))
                 .text_color(color)
                 .child(text)
         });
+        // The footer row in the box's corner: the counter, with room before
+        // it for a button.
+        let footer = div()
+            .debug_selector(|| "commit-footer".into())
+            .absolute()
+            .bottom(px(2.))
+            .right(px(6.))
+            .flex()
+            .items_center()
+            .gap_1()
+            .children(trailing)
+            .children(counter);
         let button = commit_button(commit, self.staged_in_repository(), cx);
         let line = commit.line_open.zip(commit.line.clone());
         let (amend, committing) = (commit.amend, commit.committing.is_some());
@@ -1929,7 +1963,37 @@ impl GitPanel {
             Some(key) => commit_button.shortcut(key),
             None => commit_button,
         };
+        let handle = fe_ui::node_with(
+            div().id("commit-box-edge"),
+            window,
+            cx,
+            fe_ui::Role::Splitter,
+            tr!("workbench-changes-resize-box"),
+            fe_ui::States {
+                value: Some(tr!("workbench-changes-resize-box-rows", rows = edge_rows)),
+                ..fe_ui::States::default()
+            },
+        )
+        .debug_selector(|| "commit-box-edge".into())
+        .absolute()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .h(px(HANDLE_HEIGHT))
+        .cursor(CursorStyle::ResizeUpDown)
+        .track_focus(&self.handle_focus)
+        .tab_stop(true)
+        // Over the box for presses, but not during a drag, so drops still
+        // reach what's under it.
+        .when(!cx.has_active_drag(), |handle| handle.occlude())
+        .on_drag(BoxEdgeDrag, |_, _, _, cx: &mut App| cx.new(|_| NoGhost))
+        .on_key_down(cx.listener(move |panel, event: &KeyDownEvent, _, cx| {
+            if panel.on_box_edge_key(event, cx) {
+                cx.stop_propagation();
+            }
+        }));
         let element = div()
+            .relative()
             .flex_none()
             .flex()
             .flex_col()
@@ -1949,8 +2013,11 @@ impl GitPanel {
                     .border_color(ui.border)
                     .child(commit.editor.clone())
                     .children(placeholder)
-                    .children(counter),
+                    .child(footer)
+                    .child(handle)
+                    .child(measure(&self.layout.editor)),
             )
+            .child(measure(&self.layout.area))
             .children(below)
             .child(
                 // The buttons go under Amend where the sidebar is too narrow
@@ -2229,6 +2296,119 @@ impl GitPanel {
     }
 }
 
+/// The bounds the panel's parts were last drawn at.
+#[derive(Default)]
+struct PanelLayout {
+    /// The panel as shown: its viewport.
+    panel: Rc<Cell<Bounds<gpui::Pixels>>>,
+    /// All its content, which is taller than the panel where it scrolls.
+    content: Rc<Cell<Bounds<gpui::Pixels>>>,
+    /// The box with what's under it, down to its buttons.
+    area: Rc<Cell<Bounds<gpui::Pixels>>>,
+    /// The box itself.
+    editor: Rc<Cell<Bounds<gpui::Pixels>>>,
+}
+
+/// An element that records its bounds in `cell` as it's laid out, to be
+/// read by the next frame's drag.
+fn measure(cell: &Rc<Cell<Bounds<gpui::Pixels>>>) -> AnyElement {
+    let cell = cell.clone();
+    canvas(move |bounds, _, _| cell.set(bounds), |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
+}
+
+/// The box's bottom edge, as dragged.
+#[derive(Clone, Copy)]
+struct BoxEdgeDrag;
+
+/// A drag of the box's edge draws nothing at the pointer.
+struct NoGhost;
+
+impl Render for NoGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+impl GitPanel {
+    /// The most rows the box can be made, as the panel is drawn: the room
+    /// it has less what's under it and the list's least, and never less
+    /// than [`BOX_MIN_ROWS`].
+    fn box_rows_limit(&self, line_height: f32) -> u32 {
+        let (panel, content) = (self.layout.panel.get(), self.layout.content.get());
+        let (area, editor) = (self.layout.area.get(), self.layout.editor.get());
+        if panel.size.height <= px(0.) || editor.size.height <= px(0.) {
+            return BOX_ROWS;
+        }
+        let above = f32::from(area.top() - content.top());
+        let below = f32::from(area.bottom() - editor.bottom());
+        let room = f32::from(panel.size.height) - above - below - LIST_MIN_HEIGHT;
+        ((room / line_height).floor().max(0.) as u32).max(BOX_MIN_ROWS)
+    }
+
+    /// Makes the box `rows` tall, as far as it can be.
+    fn set_box_rows(&mut self, rows: u32, line_height: f32, cx: &mut Context<Self>) {
+        let rows = rows.clamp(BOX_MIN_ROWS, self.box_rows_limit(line_height));
+        if self.box_height != Some(rows) {
+            self.box_height = Some(rows);
+            cx.notify();
+        }
+    }
+
+    fn on_box_edge_drag(
+        &mut self,
+        event: &DragMoveEvent<BoxEdgeDrag>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(line_height) = self.box_line_height(cx) else {
+            return;
+        };
+        let top = self.layout.editor.get().top();
+        let rows = f32::from(event.event.position.y - top) / line_height;
+        self.set_box_rows(rows.round().max(0.) as u32, line_height, cx);
+    }
+
+    /// The box's rows now, drawn or not, and its line height.
+    fn box_line_height(&self, cx: &App) -> Option<f32> {
+        let theme = self.commit.as_ref()?.editor.read(cx).theme();
+        Some(f32::from((theme.font_size * theme.line_height).round()))
+    }
+
+    /// Focuses the box's bottom edge, which the arrow keys then resize.
+    #[cfg(test)]
+    pub(crate) fn focus_box_edge(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.handle_focus.focus(window, cx);
+    }
+
+    /// The arrow keys, Home and End on the box's focused edge change its
+    /// height by a row, to the least, or to the most.
+    fn on_box_edge_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        let Some(line_height) = self.box_line_height(cx) else {
+            return false;
+        };
+        let editor = self.layout.editor.get();
+        let current = self.box_height.unwrap_or_else(|| {
+            (f32::from(editor.size.height) / line_height)
+                .round()
+                .max(0.) as u32
+        });
+        let rows = match event.keystroke.key.as_str() {
+            "down" => current + 1,
+            "up" => current.saturating_sub(1),
+            "end" => u32::MAX,
+            "home" => BOX_MIN_ROWS,
+            _ => return false,
+        };
+        self.set_box_rows(rows, line_height, cx);
+        true
+    }
+}
+
 impl EventEmitter<GitPanelEvent> for GitPanel {}
 
 impl Focusable for GitPanel {
@@ -2254,7 +2434,7 @@ impl Render for GitPanel {
             self.remote_watch = Some(cx.observe_global::<git_remote::Running>(|_, cx| cx.notify()));
         }
         let sync = self.render_sync(cx);
-        let commit_box = self.render_commit_box(cx);
+        let commit_box = self.render_commit_box(window, cx);
         let ui = fe_ui::ui_theme(cx);
         let list = uniform_list(
             "change-rows",
@@ -2262,23 +2442,19 @@ impl Render for GitPanel {
             cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
         )
         .track_scroll(&self.scroll)
-        .flex_1();
+        .debug_selector(|| "change-list".into())
+        .flex_1()
+        .min_h(px(LIST_MIN_HEIGHT));
         let error = matches!(self.status, Status::Failed(_));
-        <Self as kiln::ViewCommands>::attach(div().track_focus(&self.focus), cx)
-            .key_context(key_context(cx))
-            .on_key_down(cx.listener(Self::on_key_down))
-            .on_action(cx.listener(Self::on_run_command))
-            .debug_selector(|| "sidebar-panel".into())
-            .flex_1()
-            .min_w_0()
-            .h_full()
+        // The panel scrolls as a whole where the box and the list's least
+        // don't fit in it.
+        let content = div()
+            .relative()
+            .w_full()
+            .min_h_full()
             .flex()
             .flex_col()
-            .border_l_1()
-            .border_color(ui.border)
-            .bg(ui.panel_background)
-            .text_color(ui.text)
-            .text_size(px(12.))
+            .child(measure(&self.layout.content))
             .children(sync)
             .children(commit_box)
             .when_some(self.message(), |panel, message| {
@@ -2292,7 +2468,24 @@ impl Render for GitPanel {
                         .child(message),
                 )
             })
-            .child(list)
+            .child(list);
+        <Self as kiln::ViewCommands>::attach(div().id("changes-panel").track_focus(&self.focus), cx)
+            .key_context(key_context(cx))
+            .on_key_down(cx.listener(Self::on_key_down))
+            .on_action(cx.listener(Self::on_run_command))
+            .on_drag_move(cx.listener(Self::on_box_edge_drag))
+            .debug_selector(|| "sidebar-panel".into())
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .overflow_y_scroll()
+            .border_l_1()
+            .border_color(ui.border)
+            .bg(ui.panel_background)
+            .text_color(ui.text)
+            .text_size(px(12.))
+            .child(measure(&self.layout.panel))
+            .child(content)
     }
 }
 

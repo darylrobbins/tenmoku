@@ -77,3 +77,12 @@ workbench-changes-ok = OK
 # $hook is the hook's name, such as pre-commit.
 workbench-changes-hook-failed = Git: { $hook } hook failed
 workbench-changes-commit-failed = Git: commit failed
+
+## The commit box's bottom edge, which resizes it (git_panel.rs): its
+## accessible name and its value, the box's height.
+
+workbench-changes-resize-box = Resize Commit Message Box
+workbench-changes-resize-box-rows = { $rows ->
+    [one] { $rows } row
+   *[other] { $rows } rows
+}
