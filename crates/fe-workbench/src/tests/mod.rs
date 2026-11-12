@@ -77,6 +77,7 @@ mod lsp_aliases_reroute;
 mod lsp_completion;
 mod lsp_diagnostics;
 mod lsp_folds_single_request;
+mod lsp_fragments_locale;
 mod lsp_hover;
 mod lsp_message_request;
 mod lsp_nav;

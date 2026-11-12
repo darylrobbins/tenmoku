@@ -151,9 +151,16 @@ workbench-lsp-link-unsupported-scheme = Can't open link: unsupported scheme
 ## Code actions (lsp_code_actions.rs).
 
 workbench-lsp-code-actions-stale = The file changed; ask again
-# $kind is the kind asked for, from its id: organize imports for
-# source.organizeImports.
-workbench-lsp-code-actions-none-of-kind = No { $kind } actions available
+# $kind is the kind asked for: organize-imports (source.organizeImports),
+# fix-all (source.fixAll), refactor or source. Each variant is a whole message;
+# any other kind uses workbench-lsp-code-actions-none.
+workbench-lsp-code-actions-none-of-kind =
+    { $kind ->
+        [organize-imports] No organize imports actions available
+        [fix-all] No fix all actions available
+        [refactor] No refactor actions available
+       *[source] No source actions available
+    }
 workbench-lsp-code-actions-none = No code actions available
 workbench-lsp-code-actions-placeholder = Filter code actions…
 workbench-lsp-code-actions-window-closed = the window has closed

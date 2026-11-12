@@ -632,11 +632,6 @@ file = "src/update_check.rs"
 text = "Tenmoku/{}"
 reason = "The User-Agent header sent to GitHub"
 
-[[literal]]
-file = "src/extension_snippets.rs"
-text = "User snippet"
-reason = "USER_SNIPPET, the detail snippet_picker.rs (not yet migrated) still shows; extension_snippets.rs's own completions take workbench-extensions-user-snippet"
-
 # W6 (T1561): sidebar panels' names in their SidebarPanel consts, by which
 # the rail orders them and tests name them, and element ids.
 

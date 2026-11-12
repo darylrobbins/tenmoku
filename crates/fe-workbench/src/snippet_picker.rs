@@ -33,7 +33,7 @@ use kiln_shell::ModalId;
 
 use crate::{
     Workbench,
-    extension_snippets::{SnippetText, USER_SNIPPET, extension_offers},
+    extension_snippets::{SnippetText, extension_offers, user_snippet},
     picker::{Picker, PickerDelegate},
     status_bar::language_label,
     toolbar_picker::subsequence,
@@ -62,7 +62,7 @@ pub(crate) struct SnippetRow {
 
 /// The snippets for `language` (`None`: plain text): the user's by name,
 /// then extensions' by prefix. Their text is shared, not copied.
-fn snippet_rows(language: Option<&str>, cx: &mut App) -> Vec<SnippetRow> {
+pub(crate) fn snippet_rows(language: Option<&str>, cx: &mut App) -> Vec<SnippetRow> {
     // One read: each snippet with its own text.
     let set = user_snippet_set(cx);
     let mut user: Vec<SnippetRow> = (set.snippets.iter().zip(set.texts.iter()))
@@ -70,7 +70,7 @@ fn snippet_rows(language: Option<&str>, cx: &mut App) -> Vec<SnippetRow> {
         .map(|(snippet, text)| SnippetRow {
             name: snippet.name.clone(),
             prefixes: snippet.prefixes.join(", "),
-            detail: (snippet.description.clone()).unwrap_or_else(|| USER_SNIPPET.to_owned()),
+            detail: (snippet.description.clone()).unwrap_or_else(|| user_snippet().to_string()),
             text: text.clone(),
             user: true,
         })

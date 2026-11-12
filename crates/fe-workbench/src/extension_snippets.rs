@@ -364,7 +364,7 @@ pub(crate) struct Offer {
     pub(crate) text: Rc<SnippetText>,
     /// The languages it's offered in: every one if none.
     pub(crate) languages: Rc<[String]>,
-    /// Whose it is: the extension's name, or [`USER_SNIPPET`].
+    /// Whose it is: the extension's name, or [`user_snippet`].
     pub(crate) detail: Rc<str>,
     /// Whether it's the user's, which comes before an extension's that
     /// matches as well.
@@ -390,11 +390,8 @@ impl SnippetText {
     }
 }
 
-/// A user snippet's detail as Insert Snippet shows it (`snippet_picker.rs`,
-/// not yet migrated); a completion item's is [`user_snippet`].
-pub(crate) const USER_SNIPPET: &str = "User snippet";
-
-/// The detail of a user snippet's completion item.
+/// The detail of a user snippet without a description: its completion item's,
+/// and its row in Insert Snippet.
 pub(crate) fn user_snippet() -> SharedString {
     tr!("workbench-extensions-user-snippet")
 }

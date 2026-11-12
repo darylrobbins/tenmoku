@@ -187,7 +187,7 @@ impl Workbench {
             actions.retain(|action| !action.kind_is("source"));
         }
         if actions.is_empty() {
-            return match kind_name(&query) {
+            return match kind_key(&query) {
                 Some(kind) => tell(
                     &tr!("workbench-lsp-code-actions-none-of-kind", kind = kind),
                     window,
@@ -296,19 +296,16 @@ impl Workbench {
     }
 }
 
-/// What `query`'s kind is called in "No … actions available": `source.fixAll`
-/// is "fix all". `None` without a kind.
-fn kind_name(query: &CodeActionQuery) -> Option<String> {
-    let kind = query.only.as_ref()?.first()?;
-    let last = kind.rsplit('.').next()?;
-    let mut name = String::new();
-    for c in last.chars() {
-        if c.is_uppercase() {
-            name.push(' ');
-        }
-        name.extend(c.to_lowercase());
+/// The variant of "none of a kind" for `query`'s kind: `None` without a
+/// kind, or for one no command asks for.
+fn kind_key(query: &CodeActionQuery) -> Option<&'static str> {
+    match query.only.as_ref()?.first()?.as_str() {
+        "source.organizeImports" => Some("organize-imports"),
+        "source.fixAll" => Some("fix-all"),
+        "refactor" => Some("refactor"),
+        "source" => Some("source"),
+        _ => None,
     }
-    Some(name)
 }
 
 /// Whether a diagnostic's range is one `selection` is at: a caret is at
