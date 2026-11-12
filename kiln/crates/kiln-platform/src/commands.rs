@@ -52,6 +52,9 @@ type AppCommand = fn(&mut App);
 /// them; this builds the same set for checking keymaps without an app.
 pub fn app_commands(app_name: &str) -> Registry<AppCommands> {
     let mut app = Registry::new();
+    // Titles such as `command-app-hide = Hide { $app }` resolve through
+    // kiln-command's own arguments, which nothing else sets.
+    kiln_command::set_label_arg("app", app_name.to_owned());
     let hide = format!("Hide {app_name}");
     let commands: [(&str, &str, AppCommand); 8] = [
         ("app.quit", "Quit", quit),

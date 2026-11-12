@@ -95,6 +95,7 @@ impl Config {
     /// menus' whatever their table.
     pub(crate) fn name_the_app_in_menus(&self) {
         kiln_core::menu::set_label_arg("app", self.app_name.clone());
+        kiln_command::set_label_arg("app", self.app_name.clone());
     }
 
     /// The menu table the app shows and the path its diagnostics name: the

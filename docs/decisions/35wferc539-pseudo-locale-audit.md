@@ -52,3 +52,28 @@ not need to be mutable", "mismatched types…", "\"small\" is a weasel word" and
 language-server/linter data, not application text), and `yohen`, which stands for the bundled-theme
 captures: they render the same workbench, so they show the same en-XA chrome and the same status-bar
 and title-bar English listed above. Light captures use the same strings as their dark pair.
+
+## Follow-up (T588): owner or verdict per finding
+
+- **"Hide Tenmoku" (`app.hide`), palette and shortcuts editor**: fixed. `command-app-hide = Hide { $app }`
+  resolves through `kiln_command::command_label`, whose `$app` is `kiln_command::set_label_arg`; only
+  kiln-core's separate menu argument was ever set, so the message failed to format and the English
+  registry fallback showed. `kiln_platform::commands::app_commands` and kiln's `name_the_app_in_menus`
+  now set it; `app.hide_others`, `app.show_all`, `app.quit` and the `window.*` titles resolve through the
+  same path. Test: `crates/fe-workbench/tests/app_command_titles_pseudo.rs`.
+- **Status bar "LF" / "CRLF"**: verbatim. Technical names, now `kiln_l10n::verbatim!` in
+  `crates/fe-gpui/src/pane_item.rs`. **"UTF-8"** is `Encoding::label()` (a WHATWG name, verbatim);
+  **"Rust"** goes through `status::language_label`'s `verbatim!` table.
+- **Search panel title, "5 results in 1 file"**: T1546 (`search_panel.rs`, `search_replace.rs` to `search.ftl`).
+- **Toast "Couldn't save src/main.rs" / "Permission denied (os error 13)"**: T1556 (`toast.rs` and the audit
+  fixture `examples/screenshots/audit/toast.rs`, whose own literal the English is); the real save-failure
+  toasts, `save_commands.rs`: T1563.
+- **Trust prompt title and body** (`crates/fe-workbench/src/trust.rs`): T1560.
+- **File finder placeholder "Go to file…"** (`workbench_palettes.rs`, `Picker::new`): T1563.
+- **"Co-authored-by"**: data. A git trailer key, already `kiln_l10n::verbatim!` in
+  `crates/fe-workbench/src/git_log.rs`.
+- **Card date "2026-11-01 10:00 +0000"**: data. `git_blame::date`, a numeric ISO-like stamp already in
+  `crates/fe-workbench/l10n-allow.toml` ("not words").
+- **Shortcuts editor command ids and When expressions**: data. Keymap syntax.
+- **"Tenmoku", the branch chip, the "cargo build" run label, terminal output, language-server text**:
+  names or program data.

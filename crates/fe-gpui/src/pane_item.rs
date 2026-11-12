@@ -2472,8 +2472,8 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
     let cursor = status::cursor_label(row + 1, column, selected);
     let encoding = model.buffer().encoding().label();
     let line_ending = match model.buffer().line_ending() {
-        fe_buffer::LineEnding::Lf => "LF",
-        fe_buffer::LineEnding::CrLf => "CRLF",
+        fe_buffer::LineEnding::Lf => kiln_l10n::verbatim!("LF"),
+        fe_buffer::LineEnding::CrLf => kiln_l10n::verbatim!("CRLF"),
     };
     let language = match editor.syntax() {
         Some(syntax) => status::language_label(syntax.language().name()),
