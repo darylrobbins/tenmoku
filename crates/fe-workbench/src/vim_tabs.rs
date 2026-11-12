@@ -32,11 +32,12 @@ use fe_vim::TabCommand;
 use gpui::{Context, Entity, Window};
 use kiln_shell::PaneView as _;
 
-use super::message;
+use super::{Said, message};
 use crate::{Pane, Workbench};
+use kiln_l10n::tr;
 
-const E445: &str = "E445: Other tab page contains changes";
-const ONLY_ONE: &str = "Already only one tab page";
+const E445: Said = Said(|| tr!("workbench-workbench-vim-e445-tab"));
+const ONLY_ONE: Said = Said(|| tr!("workbench-workbench-vim-only-tab"));
 
 impl Workbench {
     /// Runs `command`, typed in `editor`: see the module docs. Every
@@ -109,7 +110,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         if pane.read(cx).pane().items().len() < 2 {
-            return Err(ONLY_ONE.to_owned());
+            return Err(String::from(ONLY_ONE));
         }
         let kept = pane.update(cx, |pane, cx| {
             let kept = pane.close_others(force, window, cx);
@@ -119,7 +120,7 @@ impl Workbench {
         self.track_editors(cx);
         match kept {
             0 => Ok(()),
-            _ => Err(E445.to_owned()),
+            _ => Err(String::from(E445)),
         }
     }
 }

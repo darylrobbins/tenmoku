@@ -37,13 +37,14 @@ use fe_vim::WindowCommand;
 use gpui::{Context, Entity, Window};
 use kiln_shell::{ItemId, PaneView as _};
 
-use super::message;
+use super::{Said, message};
 use crate::pane_group::{Destination, Direction};
 use crate::{Pane, Workbench};
+use kiln_l10n::tr;
 
-const E444: &str = "E444: Cannot close last window";
-const E445: &str = "E445: Other window contains changes";
-const ONLY_ONE: &str = "Already only one window";
+const E444: Said = Said(|| tr!("workbench-workbench-vim-e444"));
+const E445: Said = Said(|| tr!("workbench-workbench-vim-e445-window"));
+const ONLY_ONE: Said = Said(|| tr!("workbench-workbench-vim-only-window"));
 
 impl Workbench {
     /// Runs `command`, typed in `editor`: see the module docs. Every
@@ -111,7 +112,7 @@ impl Workbench {
         let (path, open) = self.vim_path(editor, &file, cx)?;
         let is_file = std::fs::metadata(&path).is_ok_and(|meta| !meta.is_dir());
         if !open && !is_file {
-            return Err(format!("E484: Can't open file {file}"));
+            return Err(tr!("workbench-workbench-vim-e484", file = file.as_str()).into());
         }
         self.vim_window(editor, window, cx);
         let (new, second) = self.split_alone(direction, window, cx);
@@ -240,7 +241,7 @@ impl Workbench {
         }
         self.track_editors(cx);
         match refused {
-            true => Err(E445.to_owned()),
+            true => Err(String::from(E445)),
             false => Ok(()),
         }
     }
@@ -254,7 +255,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         if self.panes(cx).len() < 2 {
-            return Err(E444.to_owned());
+            return Err(String::from(E444));
         }
         self.vim_window(editor, window, cx);
         self.close_active_pane(window, cx);

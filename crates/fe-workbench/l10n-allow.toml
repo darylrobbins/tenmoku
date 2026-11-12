@@ -1,185 +1,8 @@
 # fe-workbench's literal lint (docs/decisions/xte5e7hqsw-i18n-design.md § 8).
 #
-# While the crate migrates, only the files in `migrated` are checked: each
-# fe-workbench card (W1–W8) adds its files' lines, and W8 replaces the list
-# with `all = true`.
-migrated = [
-    # W1: the command titles and the commands' own text.
-    "src/workbench_commands.rs",
-    "src/find_commands.rs",
-    "src/spell_commands.rs",
-    "src/task_commands.rs",
-    "src/git_commands.rs",
-    "src/keymaps_picker.rs",
-    "src/git.rs",
-    "src/git_blame.rs",
-    "src/git_blame_column.rs",
-    "src/git_conflicts.rs",
-    "src/git_diff.rs",
-    "src/git_files_picker.rs",
-    "src/git_remote.rs",
-    "src/git_stage.rs",
-    "src/git_stash.rs",
-
-    # W3 (rest): navigation and the pickers.
-    "src/nav.rs",
-    "src/nav_picker.rs",
-    "src/symbol_picker.rs",
-    "src/go_to_line.rs",
-    "src/quick_open.rs",
-    "src/harpoon.rs",
-    "src/local_history_view.rs",
-    "src/workbench_files.rs",
-    "src/ignore_assist.rs",
-    "src/buffer_picker.rs",
-    "src/buffer_lines_picker.rs",
-    "src/recent_picker.rs",
-    "src/config_files_picker.rs",
-    # The find and replace row in B3 (T557).
-    "src/find_bar.rs",
-    # W4: the setup wizard, the start page, the shortcuts editor and the
-    # small pickers.
-    "src/setup_wizard.rs",
-    "src/setup_wizard_model.rs",
-    "src/setup_wizard_preview.rs",
-    "src/setup_launch.rs",
-    "src/start_page.rs",
-    "src/start_page_model.rs",
-    "src/shortcuts_editor.rs",
-    "src/shortcuts_recorder.rs",
-    "src/encoding_picker.rs",
-    "src/line_ending_picker.rs",
-    "src/language_picker.rs",
-    "src/theme_picker.rs",
-    "src/config_problems.rs",
-    # The title bar in B3 (T1538): the bar, the window chrome and the
-    # branch widget's pickers.
-    "src/title_bar.rs",
-    "src/workbench_chrome.rs",
-    "src/git_branch.rs",
-    # B3 diff views: the commit diff, and the commit lists' row texts.
-    "src/commit_diff_view.rs",
-    "src/commit_diff.rs",
-    "src/commit_rows.rs",
-    # The run widget in the title bar (T1539).
-    "src/run_widget.rs",
-    # The sidebar's dock and its rail in B3 (T1540).
-    "src/dock.rs",
-    "src/dock_layout.rs",
-    # Changes and commit in B3 (T345): the Changes panel and its commit box.
-    "src/git_panel.rs",
-    "src/git_commit.rs",
-    "src/source_control.rs",
-    # The sidebar in B3 (T1541): the project tree and Structure.
-    "src/project_panel.rs",
-    "src/project_panel_filter.rs",
-    "src/project_panel_nav.rs",
-    "src/project_panel_ops.rs",
-    "src/project_panel_clipboard.rs",
-    # The tree's right-click menu (T1750).
-    "src/project_panel_menu.rs",
-    "src/outline_panel.rs",
-    "src/outline_panel_keys.rs",
-    # The tab strip, the breadcrumbs and the pane menu in B3 (T1542).
-    "src/pane.rs",
-    "src/pane_toolbar.rs",
-    "src/toolbar_picker.rs",
-    # The Settings page in B3 (T569).
-    "src/settings_editor.rs",
-    "src/settings_editor_layout.rs",
-    "src/settings_editor_controls.rs",
-    "src/settings_editor_choices.rs",
-    # The status bar in B3 (T1543): the bar and vim's command line.
-    "src/status_bar.rs",
-    "src/vim_line.rs",
-    # The Problems panel in B3 (T1547).
-    "src/problems_panel.rs",
-    # The editor gutter in B3 (T1549): provenance's column and agent lane.
-    "src/provenance_column.rs",
-    # The Search panel in B3 (T322).
-    "src/search_panel.rs",
-    "src/search_replace.rs",
-    # Language-server annotations in B3 (T1550): the test lenses and a
-    # language server's.
-    "src/test_lens.rs",
-    "src/lsp_lenses.rs",
-    # The terminal panel in B3 (T349): its tab strip and its find row.
-    "src/terminal_panel.rs",
-    "src/terminal_find.rs",
-    # The Git log in B3 (T348): the panel, its row menu and the History panel.
-    "src/git_log.rs",
-    "src/git_log_menu.rs",
-    "src/git_history.rs",
-    # W5 (rest): extensions, plugins, updates and trust (T1560).
-    "src/extension_install.rs",
-    "src/extension_snippets.rs",
-    "src/extensions_picker.rs",
-    "src/plugin_bridge.rs",
-    "src/plugin_dev.rs",
-    "src/plugin_events.rs",
-    "src/plugin_host.rs",
-    "src/plugin_log.rs",
-    "src/plugin_manage.rs",
-    "src/plugin_paint.rs",
-    "src/plugin_prompt.rs",
-    "src/grammar_prompt.rs",
-    "src/update_check.rs",
-    "src/lsp_consent.rs",
-    "src/lsp_consent_prompt.rs",
-    "src/trust.rs",
-    "src/user_snippets.rs",
-    # W6 (rest): language servers, tasks, tests, quickfix and the reference
-    # panels (T1561).
-    "src/lsp.rs",
-    "src/lsp_code_actions.rs",
-    "src/lsp_colors.rs",
-    "src/lsp_file_operations.rs",
-    "src/lsp_folds.rs",
-    "src/lsp_format_on_type.rs",
-    "src/lsp_format.rs",
-    "src/lsp_highlights.rs",
-    "src/lsp_inlay_hints.rs",
-    "src/lsp_lightbulb.rs",
-    "src/lsp_linked_editing.rs",
-    "src/lsp_links.rs",
-    "src/lsp_markdown.rs",
-    "src/lsp_rename.rs",
-    "src/lsp_semantic_tokens.rs",
-    "src/lsp_symbols.rs",
-    "src/lsp_watched_files.rs",
-    "src/refactor_preview.rs",
-    "src/refactor_preview_view.rs",
-    "src/task_defs.rs",
-    "src/task_problems.rs",
-    "src/task_run.rs",
-    "src/test_commands.rs",
-    "src/test_runnables.rs",
-    "src/quickfix.rs",
-    "src/quickfix_commands.rs",
-    "src/quickfix_fill.rs",
-    "src/quickfix_panel.rs",
-    "src/hierarchy_panel.rs",
-    "src/references_panel.rs",
-    "src/references_panel/landing.rs",
-    "src/peek.rs",
-    "src/peek_references.rs",
-    "src/snippet_picker.rs",
-    "src/diagnostics_picker.rs",
-    "src/ignore_diagnostics.rs",
-
-    # T1556: toasts.
-    "src/toast.rs",
-
-    # W7: chat and AI (T331).
-    "src/chat_panel.rs",
-    "src/chat_apply.rs",
-    "src/chat_changeset.rs",
-    "src/chat_context.rs",
-    "src/chat_store_worker.rs",
-    "src/ai_changes_panel.rs",
-    "src/ai_changes_buffers.rs",
-    "src/inline_edit.rs",
-]
+# Every file is checked: the fe-workbench cards (W1–W8) migrated them all,
+# and W8 replaced their list with `all = true`.
+all = true
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
 # rail orders it and tests name it: what the dock shows, its header and its
@@ -793,3 +616,40 @@ reason = "A diagnostic as the model is sent it, not shown"
 file = "src/chat_context.rs"
 text = " ({source})"
 reason = "A diagnostic's source as the model is sent it, not shown"
+
+# W8 (T1563): ids, file and thread names, and debug selectors, not text.
+
+[[literal]]
+file = "src/lib.rs"
+text = "git.commit_box.commit"
+reason = "The commit box command's id (git_panel::COMMIT_COMMAND), registered under it"
+
+[[literal]]
+file = "src/open.rs"
+text = ".{}-{}.tmp"
+reason = "A temporary file's name beside the settings file it creates"
+
+[[literal]]
+file = "src/external_format.rs"
+text = "tenmoku-format-{}-{number}"
+reason = "A temporary directory's name, for a formatter's copy of a buffer"
+
+[[literal]]
+file = "src/plugin_format.rs"
+text = "format with {}"
+reason = "A formatter request's thread's name, shown only in debuggers"
+
+[[literal]]
+file = "src/plugin_format.rs"
+text = "asked {language}"
+reason = "A record of the request under test (#[cfg(test)]), never shown"
+
+[[literal]]
+file = "src/tab_switcher.rs"
+text = "tab-switcher-row:{title}"
+reason = "A row's debug selector, for tests"
+
+[[literal]]
+file = "src/todo_picker.rs"
+text = "todo-picker-badge:{keyword}:{text}"
+reason = "A row's keyword badge's debug selector, for tests"

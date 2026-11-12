@@ -216,11 +216,6 @@ pub struct TerminalPanel {
     /// hands focus to the active session as the panel draws, starting one
     /// if there's none.
     focus: FocusHandle,
-    /// Whether a window key moved focus here from the sidebar, and focus
-    /// has stayed in the panel since: `<C-w>` back out goes there.
-    pub(crate) from_sidebar: bool,
-    /// To focus leaving the panel, which forgets `from_sidebar`.
-    focus_out: Option<Subscription>,
     /// The task last run here, for a rerun. A new root forgets it.
     last_task: Option<Task>,
     /// The id the last task tab got.
@@ -268,8 +263,6 @@ impl TerminalPanel {
             _palette: cx.observe_global::<fe_gpui::ActivePalette>(Self::follow_palette),
             find: None,
             focus: cx.focus_handle(),
-            from_sidebar: false,
-            focus_out: None,
             last_task: None,
             last_task_id: 0,
             runs_started: 0,
@@ -1170,11 +1163,6 @@ impl Render for TerminalPanel {
         // takes focus. Shown with no session, as by a rail click after the
         // shell exited: start one.
         let focused = self.focus.is_focused(window);
-        if self.focus_out.is_none() {
-            self.focus_out = Some(cx.on_focus_out(&self.focus, window, |panel, _, _, _| {
-                panel.from_sidebar = false;
-            }));
-        }
         self.start(window, cx);
         if focused {
             self.focus_active(window, cx);

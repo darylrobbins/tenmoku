@@ -12,6 +12,7 @@ use fe_editor::auto_save::SaveReason;
 use fe_gpui::pane_item::{file_name, save_declined};
 use gpui::{App, Context, Task};
 use kiln::{Cx, platform::command_actions::dispatch_window};
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -108,7 +109,8 @@ fn report(name: &str, error: &(dyn std::error::Error + 'static), cx: &mut gpui::
     cx.update(|cx| {
         toast::show(
             cx,
-            Toast::error(format!("Can't save {name}")).detail(error.to_string()),
+            Toast::error(tr!("workbench-workbench-save-failed", name = name))
+                .detail(error.to_string()),
         );
     });
 }

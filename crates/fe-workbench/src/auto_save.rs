@@ -55,6 +55,7 @@ use gpui::{
     AnyWindowHandle, App, AppContext as _, Context, Entity, EntityId, Focusable as _, Subscription,
     Task, Window,
 };
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -480,11 +481,14 @@ impl Workbench {
                 self.auto_save.policy.save_failed(buffer, conflict);
                 let name = file_name(editor.read(cx).model().path());
                 if conflict {
-                    let message = format!("Auto save skipped: {name} changed on disk");
+                    let message = tr!(
+                        "workbench-workbench-auto-save-changed",
+                        name = name.as_str()
+                    );
                     toast::show(cx, Toast::warning(message));
                 } else {
                     log::warn!("can't auto-save {name}: {error:#}");
-                    let message = format!("Can't auto save {name}");
+                    let message = tr!("workbench-workbench-auto-save-failed", name = name.as_str());
                     toast::show(cx, Toast::error(message).detail(format!("{error:#}")));
                 }
             }

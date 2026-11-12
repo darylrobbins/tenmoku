@@ -23,6 +23,7 @@ use std::{
 use fe_buffer::{Buffer, BufferId, DecodedFile, DiskStamp, Encoding, FileEncoding};
 use fe_config::editorconfig::Charset;
 use fe_fileview::{FileView, LineIndex};
+use kiln_l10n::verbatim;
 
 /// Files this large or larger open read-only in a viewer, unread.
 pub const LARGE_FILE_BYTES: u64 = 512 * 1024 * 1024;
@@ -331,7 +332,7 @@ pub fn start(path: PathBuf) -> Reading {
     let (sender, done) = mpsc::sync_channel(1);
     let reader_path = path.clone();
     thread::Builder::new()
-        .name("read file".into())
+        .name(verbatim!("read file").into())
         .spawn(move || {
             let result = open(reader_path);
             sender

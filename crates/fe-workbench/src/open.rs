@@ -26,6 +26,7 @@ use std::{
 
 use fe_buffer::BufferId;
 use gpui::{App, Global, PathPromptOptions};
+use kiln_l10n::tr;
 
 /// What an open command asks for: its `#[kiln::command]` method runs it
 /// with `Workbench::prompt_open`.
@@ -63,7 +64,7 @@ impl OpenOp {
             files: !folder,
             directories: folder,
             multiple: false,
-            prompt: Some("Open".into()),
+            prompt: Some(tr!("workbench-workbench-open-button")),
         }
     }
 }
@@ -250,7 +251,7 @@ struct Held {
 }
 
 thread_local! {
-    /// The destinations held. GPUI runs on one thread.
+    // The destinations held. GPUI runs on one thread.
     static RESERVED: RefCell<Vec<Held>> = const { RefCell::new(Vec::new()) };
     static NEXT_RESERVATION: Cell<u64> = const { Cell::new(0) };
 }
@@ -451,10 +452,13 @@ fn initialize(path: &Path) -> io::Result<()> {
         (Err(error), Ok(())) => Err(error),
         (Err(error), Err(cleanup)) => Err(io::Error::new(
             error.kind(),
-            format!(
-                "{error} (and removing {} failed: {cleanup})",
-                temp.display()
-            ),
+            tr!(
+                "workbench-workbench-settings-cleanup-failed",
+                error = error.to_string(),
+                path = temp.display().to_string(),
+                cleanup = cleanup.to_string(),
+            )
+            .to_string(),
         )),
     }
 }

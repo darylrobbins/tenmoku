@@ -86,6 +86,7 @@ use fe_editor::EditorModel;
 use fe_lsp::{EditTarget, FileEdits, OperationId, decode_closed};
 use fe_project::fs_ops;
 use gpui::{App, Context, Entity};
+use kiln_l10n::tr;
 
 use crate::{
     Workbench, loader, lsp,
@@ -291,14 +292,27 @@ impl Workbench {
         let mut written: Vec<PathBuf> = Vec::new();
         for (path, mut model) in closed {
             if let Err(error) = model.save() {
-                let mut message = format!("can't write {}: {error}", path.display());
-                if !written.is_empty() {
-                    let names: Vec<_> = (written.iter())
-                        .map(|path| path.display().to_string())
-                        .collect();
-                    message += &format!(" ({} already written)", names.join(", "));
-                }
-                return Err(message);
+                let (path, error) = (path.display().to_string(), error.to_string());
+                let message = match written.is_empty() {
+                    true => tr!(
+                        "workbench-workbench-edit-cant-write",
+                        path = path,
+                        error = error
+                    ),
+                    false => {
+                        let names: Vec<_> = (written.iter())
+                            .map(|path| path.display().to_string())
+                            .collect();
+                        let written = names.join(", ");
+                        tr!(
+                            "workbench-workbench-edit-cant-write-after",
+                            path = path,
+                            error = error,
+                            written = written
+                        )
+                    }
+                };
+                return Err(message.into());
             }
             written.push(path);
         }
@@ -314,15 +328,26 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Result<Made, String> {
         let display = file.path.display().to_string();
-        let root = (self.root().and_then(|root| dunce::canonicalize(root).ok()))
-            .ok_or_else(|| format!("{display} isn't in the project"))?;
+        let root =
+            (self.root().and_then(|root| dunce::canonicalize(root).ok())).ok_or_else(|| {
+                String::from(tr!(
+                    "workbench-workbench-edit-outside",
+                    path = display.to_string()
+                ))
+            })?;
         // Resolved as the tree's operations take them: its folders, never
         // the entry itself, which may be a symlink.
         let in_project = |path: &Path| {
             let full = resolved(path);
             match full.strip_prefix(&root) {
                 Ok(rel) if !rel.as_os_str().is_empty() => Ok(full),
-                _ => Err(format!("{} isn't in the project", path.display())),
+                _ => {
+                    let path = path.display().to_string();
+                    Err(String::from(tr!(
+                        "workbench-workbench-edit-outside",
+                        path = path
+                    )))
+                }
             }
         };
         let missing = |error: &io::Error| error.kind() == io::ErrorKind::NotFound;
@@ -335,16 +360,35 @@ impl Workbench {
                 let existing = match fs::symlink_metadata(&path) {
                     Ok(meta) => Some(meta),
                     Err(error) if missing(&error) => None,
-                    Err(error) => return Err(format!("can't create {display}: {error}")),
+                    Err(error) => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-cant-create",
+                            path = display.to_string(),
+                            error = error.to_string()
+                        )));
+                    }
                 };
                 match &existing {
                     Some(_) if !overwrite && ignore_if_exists => return Ok(Made::Skipped),
-                    Some(_) if !overwrite => return Err(format!("{display} already exists")),
-                    Some(meta) if meta.is_dir() => return Err(format!("{display} is a folder")),
+                    Some(_) if !overwrite => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-exists",
+                            path = display.to_string()
+                        )));
+                    }
+                    Some(meta) if meta.is_dir() => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-is-folder",
+                            path = display.to_string()
+                        )));
+                    }
                     _ => {}
                 }
                 if self.shows_under(&path, others, cx) {
-                    return Err(format!("{display} is open"));
+                    return Err(String::from(tr!(
+                        "workbench-workbench-edit-is-open",
+                        path = display.to_string()
+                    )));
                 }
                 self.check_idle(&file.path, others, cx)?;
                 match existing {
@@ -353,8 +397,13 @@ impl Workbench {
                     // as the tree finds files. It isn't new, so servers
                     // aren't told it was created.
                     Some(meta) if meta.is_file() => {
-                        fs_ops::open_truncated(&root, &path)
-                            .map_err(|error| format!("can't overwrite {display}: {error}"))?;
+                        fs_ops::open_truncated(&root, &path).map_err(|error| {
+                            String::from(tr!(
+                                "workbench-workbench-edit-cant-overwrite",
+                                path = display.to_string(),
+                                error = error.to_string()
+                            ))
+                        })?;
                     }
                     // Anything else, as a symlink, which could lead out of
                     // the project, is moved to the Trash, and a file made in
@@ -363,15 +412,27 @@ impl Workbench {
                         let name = (path.strip_prefix(&root).ok())
                             .and_then(Path::to_str)
                             .ok_or_else(|| {
-                                format!("can't create {display}: its name isn't UTF-8")
+                                String::from(tr!(
+                                    "workbench-workbench-edit-not-utf8",
+                                    path = display.to_string()
+                                ))
                             })?;
                         if existing.is_some() {
                             fs_ops::trash(&root, &[&path]).map_err(|error| {
-                                format!("can't move {display} to the Trash: {error}")
+                                String::from(tr!(
+                                    "workbench-workbench-edit-cant-trash",
+                                    path = display.to_string(),
+                                    error = error.to_string()
+                                ))
                             })?;
                         }
-                        fs_ops::create_file(&root, &root, name)
-                            .map_err(|error| format!("can't create {display}: {error}"))?;
+                        fs_ops::create_file(&root, &root, name).map_err(|error| {
+                            String::from(tr!(
+                                "workbench-workbench-edit-cant-create",
+                                path = display.to_string(),
+                                error = error.to_string()
+                            ))
+                        })?;
                         self.lsp_files_created(&[(file.path.clone(), false)]);
                     }
                 }
@@ -385,8 +446,15 @@ impl Workbench {
                 let to_display = to.display();
                 let identity = |path: &Path| kiln::core::platform::path_identity(path, false);
                 let source = identity(&from).map_err(|error| match missing(&error) {
-                    true => format!("{display} doesn't exist"),
-                    false => format!("can't rename {display}: {error}"),
+                    true => String::from(tr!(
+                        "workbench-workbench-edit-missing",
+                        path = display.to_string()
+                    )),
+                    false => String::from(tr!(
+                        "workbench-workbench-edit-cant-rename",
+                        path = display.to_string(),
+                        error = error.to_string()
+                    )),
                 })?;
                 if from == target {
                     return Ok(Made::Nothing);
@@ -395,12 +463,22 @@ impl Workbench {
                     .then(|| target.file_name()?.to_str())
                     .flatten()
                     .ok_or_else(|| {
-                        format!("Tenmoku can't move {display} to another folder ({to_display})")
+                        String::from(tr!(
+                            "workbench-workbench-edit-other-folder",
+                            path = display.to_string(),
+                            to = to_display.to_string()
+                        ))
                     })?;
                 let existing = match fs::symlink_metadata(&target) {
                     Ok(meta) => Some(meta),
                     Err(error) if missing(&error) => None,
-                    Err(error) => return Err(format!("can't rename {display}: {error}")),
+                    Err(error) => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-cant-rename",
+                            path = display.to_string(),
+                            error = error.to_string()
+                        )));
+                    }
                 };
                 // The entry itself, under another case on a volume that
                 // ignores case: `fs_ops::rename` renames it.
@@ -408,27 +486,44 @@ impl Workbench {
                 let replaced = match existing {
                     Some(_) if itself => None,
                     Some(_) if !overwrite && ignore_if_exists => return Ok(Made::Skipped),
-                    Some(_) if !overwrite => return Err(format!("{to_display} already exists")),
+                    Some(_) if !overwrite => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-exists",
+                            path = to_display.to_string()
+                        )));
+                    }
                     other => other,
                 };
                 // There or not, an editor of it would share its path with
                 // the editors that follow.
                 if !itself && self.shows_under(&target, others, cx) {
-                    return Err(format!("{to_display} is open"));
+                    return Err(String::from(tr!(
+                        "workbench-workbench-edit-is-open",
+                        path = to_display.to_string()
+                    )));
                 }
                 self.check_idle(&file.path, others, cx)?;
                 self.check_idle(&to, others, cx)?;
                 if let Some(existing) = replaced {
                     fs_ops::trash(&root, &[&target]).map_err(|error| {
-                        format!("can't move {to_display} to the Trash: {error}")
+                        String::from(tr!(
+                            "workbench-workbench-edit-cant-trash",
+                            path = to_display.to_string(),
+                            error = error.to_string()
+                        ))
                     })?;
                     self.lsp_files_deleted(&[(to.clone(), existing.is_dir())]);
                 }
                 // Planned while every spelling of the old path still
                 // resolves.
                 let moves = self.plan_rename_here(&file.path, &to, others, cx);
-                fs_ops::rename(&root, &from, name)
-                    .map_err(|error| format!("can't rename {display}: {error}"))?;
+                fs_ops::rename(&root, &from, name).map_err(|error| {
+                    String::from(tr!(
+                        "workbench-workbench-edit-cant-rename",
+                        path = display.to_string(),
+                        error = error.to_string()
+                    ))
+                })?;
                 self.lsp_files_renamed(&file.path, &to);
                 self.follow_moves_everywhere(&moves, others, cx);
             }
@@ -443,21 +538,41 @@ impl Workbench {
                         return Ok(Made::Skipped);
                     }
                     Err(error) if missing(&error) => {
-                        return Err(format!("{display} doesn't exist"));
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-missing",
+                            path = display.to_string()
+                        )));
                     }
-                    Err(error) => return Err(format!("can't delete {display}: {error}")),
+                    Err(error) => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-cant-delete",
+                            path = display.to_string(),
+                            error = error.to_string()
+                        )));
+                    }
                 };
                 if folder && !recursive {
-                    return Err(format!(
-                        "{display} is a folder, and the edit doesn't delete what's in it"
-                    ));
+                    return Err(String::from(tr!(
+                        "workbench-workbench-edit-folder-contents",
+                        path = display.to_string()
+                    )));
                 }
                 self.check_idle(&file.path, others, cx)?;
-                fs_ops::trash(&root, &[&path])
-                    .map_err(|error| format!("can't move {display} to the Trash: {error}"))?;
+                fs_ops::trash(&root, &[&path]).map_err(|error| {
+                    String::from(tr!(
+                        "workbench-workbench-edit-cant-trash",
+                        path = display.to_string(),
+                        error = error.to_string()
+                    ))
+                })?;
                 self.lsp_files_deleted(&[(file.path.clone(), folder)]);
             }
-            _ => return Err(format!("{display}: an edit Tenmoku doesn't know")),
+            _ => {
+                return Err(String::from(tr!(
+                    "workbench-workbench-edit-unknown",
+                    path = display.to_string()
+                )));
+            }
         }
         Ok(Made::Done)
     }
@@ -473,9 +588,18 @@ impl Workbench {
         let display = path.display();
         match self.busy_under_here(path, others, cx) {
             None => Ok(()),
-            Some(Busy::Saving) => Err(format!("{display} is being saved")),
-            Some(Busy::Opening) => Err(format!("{display} is being opened")),
-            Some(Busy::Working) => Err(format!("{display} is being worked on")),
+            Some(Busy::Saving) => Err(String::from(tr!(
+                "workbench-workbench-edit-saving",
+                path = display.to_string()
+            ))),
+            Some(Busy::Opening) => Err(String::from(tr!(
+                "workbench-workbench-edit-opening",
+                path = display.to_string()
+            ))),
+            Some(Busy::Working) => Err(String::from(tr!(
+                "workbench-workbench-edit-working",
+                path = display.to_string()
+            ))),
         }
     }
 
@@ -514,7 +638,12 @@ impl Workbench {
                 // in another.
                 let editor = (self.and_others(others, cx))
                     .find_map(|workbench| workbench.editors_of(buffer, cx).into_iter().next())
-                    .ok_or_else(|| format!("{display} is no longer open"))?;
+                    .ok_or_else(|| {
+                        String::from(tr!(
+                            "workbench-workbench-edit-closed",
+                            path = display.to_string()
+                        ))
+                    })?;
                 let model = editor.read(cx).model();
                 let current = model.buffer().version();
                 let edits = match edited.get(&buffer) {
@@ -523,14 +652,25 @@ impl Workbench {
                     // past those.
                     Some(earlier) if earlier.server == version && earlier.now == current => {
                         rebase(edits, &earlier.runs).ok_or_else(|| {
-                            format!("{display}: its edits overlap the edit's earlier ones")
+                            String::from(tr!(
+                                "workbench-workbench-edit-overlap",
+                                path = display.to_string()
+                            ))
                         })?
                     }
-                    _ => return Err(format!("{display} has changed since")),
+                    _ => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-changed",
+                            path = display.to_string()
+                        )));
+                    }
                 };
                 let now = model.path().and_then(lsp::resolve);
                 if now.is_none() || now != lsp::resolve(path) {
-                    return Err(format!("{display} has been saved under another name since"));
+                    return Err(String::from(tr!(
+                        "workbench-workbench-edit-renamed",
+                        path = display.to_string()
+                    )));
                 }
                 Ok(Checked::Open {
                     editor,
@@ -539,32 +679,64 @@ impl Workbench {
                 })
             }
             EditTarget::Closed { edits, encoding } => {
-                let path = lsp::resolve(path).ok_or_else(|| format!("can't resolve {display}"))?;
+                let path = lsp::resolve(path).ok_or_else(|| {
+                    String::from(tr!(
+                        "workbench-workbench-edit-cant-resolve",
+                        path = display.to_string()
+                    ))
+                })?;
                 if opened.contains(&path) {
-                    return Err(format!("{display} has been opened since"));
+                    return Err(String::from(tr!(
+                        "workbench-workbench-edit-opened",
+                        path = display.to_string()
+                    )));
                 }
                 if !targets.insert(path.clone()) {
-                    return Err(format!("{display} is named twice, by another path"));
+                    return Err(String::from(tr!(
+                        "workbench-workbench-edit-named-twice",
+                        path = display.to_string()
+                    )));
                 }
                 let buffer = match loader::read(path.clone()) {
                     Ok(Some(buffer)) => buffer,
-                    Ok(None) => return Err(format!("{display} doesn't exist")),
-                    Err(error) => return Err(format!("can't read {display}: {error}")),
+                    Ok(None) => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-missing",
+                            path = display.to_string()
+                        )));
+                    }
+                    Err(error) => {
+                        return Err(String::from(tr!(
+                            "workbench-workbench-edit-cant-read",
+                            path = display.to_string(),
+                            error = error.to_string()
+                        )));
+                    }
                 };
                 let label = buffer.encoding().label();
                 // Unedited, it can be written back only if it read cleanly.
                 if let Err(error) = buffer.save_snapshot().write_to(io::sink()) {
-                    return Err(format!("{display} isn't valid {label}: {error}"));
+                    return Err(String::from(tr!(
+                        "workbench-workbench-edit-invalid",
+                        path = display.to_string(),
+                        encoding = label.to_string(),
+                        error = error.to_string()
+                    )));
                 }
                 let edits = decode_closed(buffer.text(), &edits, encoding)
-                    .map_err(|why| format!("{display}: {why}"))?;
+                    .map_err(|why| format!("{}: {}", display, why))?;
                 let mut model = EditorModel::new(buffer, Some(path.clone()));
                 model.buffer_mut().edit(edits, Origin::User);
                 // What the save will write, so one that would fail does
                 // before anything is changed.
                 let encoded = model.buffer().save_snapshot().write_to(io::sink());
                 if let Err(error) = encoded {
-                    return Err(format!("{display} can't be written as {label}: {error}"));
+                    return Err(String::from(tr!(
+                        "workbench-workbench-edit-cant-encode",
+                        path = display.to_string(),
+                        encoding = label.to_string(),
+                        error = error.to_string()
+                    )));
                 }
                 Ok(Checked::Closed {
                     path,
@@ -572,7 +744,10 @@ impl Workbench {
                 })
             }
             // Operations are made by `apply_operation`.
-            _ => Err(format!("{display}: an edit Tenmoku doesn't know")),
+            _ => Err(String::from(tr!(
+                "workbench-workbench-edit-unknown",
+                path = display.to_string()
+            ))),
         }
     }
 
@@ -623,7 +798,7 @@ fn resolve_depends(
         let was_skipped = (done.iter().rev())
             .find(|(operation, _)| *operation == Some(on))
             .map(|(_, skipped)| *skipped)
-            .ok_or("a file the edit depends on isn't one of its operations")?;
+            .ok_or_else(|| String::from(tr!("workbench-workbench-edit-depends")))?;
         let branch = if was_skipped { skipped } else { made };
         target = Arc::unwrap_or_clone(branch)?;
     }

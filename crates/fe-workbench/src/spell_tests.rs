@@ -7,7 +7,8 @@ use std::{
 };
 
 use crate::spell::{
-    Dictionary, MAX_SUGGESTIONS, NoSpeller, Speller, check_text, suggest, tokenize,
+    DICTIONARY_FILE, Dictionary, MAX_SUGGESTIONS, NoSpeller, Speller, check_text,
+    set_test_config_dir, suggest, tokenize,
 };
 
 /// Knows the words it was given, in any case, and remembers what it was asked.
@@ -412,13 +413,37 @@ fn dictionary_file_roundtrips() {
     assert!(dictionary.contains("Shino"));
     assert_eq!(dictionary.path(), None);
 
-    // The user's is in the config directory.
-    assert_eq!(
-        Dictionary::user().path(),
-        fe_config::paths::config_dir()
-            .map(|dir| dir.join("dictionary.txt"))
-            .as_deref()
-    );
+    // The user's is in the config directory: under test, one the test
+    // names, a temporary one here.
+    let config = tempfile::tempdir().unwrap();
+    set_test_config_dir(Some(config.path().to_owned()));
+    let mut user = Dictionary::user();
+    let file = config.path().join(DICTIONARY_FILE);
+    assert_eq!(user.path(), Some(file.as_path()));
+    user.add_word("tenmoku").unwrap();
+    assert!(Dictionary::user().contains("Tenmoku"));
+    set_test_config_dir(None);
+    assert_eq!(Dictionary::user().path(), None);
+}
+
+/// Under test, the user's dictionary isn't the one the environment names:
+/// without a test's own config directory it reads and writes no file, so
+/// the developer's dictionary is never touched.
+#[test]
+fn user_dictionary_ignores_the_environment_under_test() {
+    let env = tempfile::tempdir().unwrap();
+    let file = env.path().join(DICTIONARY_FILE);
+    fs::write(&file, "glaze\n").unwrap();
+    // SAFETY: nextest runs each test in a process of its own, and nothing
+    // else in this test reads the environment meanwhile.
+    unsafe { std::env::set_var("TENMOKU_CONFIG_DIR", env.path()) };
+    assert_eq!(fe_config::paths::config_dir().as_deref(), Some(env.path()));
+    let mut user = Dictionary::user();
+    assert_eq!(user.path(), None);
+    assert!(!user.contains("glaze"), "the environment's file isn't read");
+    user.add_word("celadon").unwrap();
+    assert!(user.contains("celadon"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "glaze\n", "nor written");
 }
 
 /// Writers that all find a word missing still write it once, and every

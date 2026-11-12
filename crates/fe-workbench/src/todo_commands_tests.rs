@@ -8,7 +8,7 @@ use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_gpui::{EditorView, commands::RunCommand};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
-use super::NO_MORE;
+use super::no_more;
 use crate::{Workbench, tests::open_root};
 
 fn draw(cx: &mut VisualTestContext) {
@@ -140,5 +140,5 @@ fn at_the_last_hit_next_toasts(cx: &mut TestAppContext) {
 
     run("todo.next", cx);
     assert_eq!(caret(&editor, cx), (160, 7, true));
-    assert_eq!(toasts(&workbench, cx), [NO_MORE]);
+    assert_eq!(toasts(&workbench, cx), [no_more()]);
 }

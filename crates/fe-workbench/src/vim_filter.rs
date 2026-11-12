@@ -86,39 +86,36 @@ use kiln_shell::ItemHandle as _;
 
 use super::super::git_diff::E21;
 use super::super::toast::{Toast, ToastId};
-use super::message;
+use super::{Said, message};
 use crate::Workbench;
+use kiln_l10n::{tr, verbatim};
 
 /// What a shell command in an untrusted folder, or for a file outside the
 /// root, says.
-pub(crate) const UNTRUSTED: &str = "Shell commands run only in a trusted folder";
+pub(crate) const UNTRUSTED: Said = Said(|| tr!("workbench-workbench-filter-untrusted"));
 /// What a shell command says while another runs in the same editor.
-pub(crate) const BUSY: &str = "A shell command is already running in this editor";
+pub(crate) const BUSY: Said = Said(|| tr!("workbench-workbench-filter-busy"));
 /// `%` in an untitled buffer, as nvim says it.
-pub(crate) const E499: &str = "E499: Empty file name for '%' or '#', only works with \":p:h\"";
+pub(crate) const E499: Said = Said(|| tr!("workbench-workbench-filter-e499"));
 /// `#`, with no alternate file: fastedit keeps none yet.
-pub(crate) const E194: &str = "E194: No alternate file name to substitute for '#'";
+pub(crate) const E194: Said = Said(|| tr!("workbench-workbench-filter-e194"));
 /// `%` or `#` with the Windows shell.
-pub(crate) const NO_NAMES_ON_WINDOWS: &str =
-    "% and # aren't put in a shell command on Windows: cmd.exe's quoting isn't safe to build";
+pub(crate) const NO_NAMES_ON_WINDOWS: Said =
+    Said(|| tr!("workbench-workbench-filter-no-names-on-windows"));
 /// `%` with a shell whose quoting fastedit doesn't build.
-pub(crate) const UNKNOWN_SHELL: &str =
-    "% goes in a shell command only for sh, bash, zsh, ksh, dash or fish: vim.shell names another";
+pub(crate) const UNKNOWN_SHELL: Said = Said(|| tr!("workbench-workbench-filter-unknown-shell"));
 /// `%` in a command whose text could put it inside quotes, an expansion,
 /// a comment or a here-document.
-pub(crate) const NO_NAME_HERE: &str = "% goes only in a command without quotes, backticks, $, \\, #, <<, (…) or {…}, and not after ~ or a leading =";
+pub(crate) const NO_NAME_HERE: Said = Said(|| tr!("workbench-workbench-filter-no-name-here"));
 /// `%` for a file whose name has a line break or another control
 /// character, which could end a comment or start a here-document's body.
-pub(crate) const UNNAMEABLE: &str =
-    "% can't name a file whose name has a line break or another control character";
+pub(crate) const UNNAMEABLE: Said = Said(|| tr!("workbench-workbench-filter-unnameable"));
 /// Vim was in another mode as the command ended.
-pub(crate) const NOT_NORMAL: &str =
-    "The shell command ended outside normal mode, so the text is kept as it was";
+pub(crate) const NOT_NORMAL: Said = Said(|| tr!("workbench-workbench-filter-not-normal"));
 /// The text changed while the command ran.
-pub(crate) const CHANGED: &str =
-    "The text changed while the shell command ran, so it's kept as it was";
+pub(crate) const CHANGED: Said = Said(|| tr!("workbench-workbench-filter-changed"));
 /// A cancel stopped it.
-pub(crate) const CANCELLED: &str = "Shell command cancelled: nothing changed";
+pub(crate) const CANCELLED: Said = Said(|| tr!("workbench-workbench-filter-cancelled"));
 /// The most stdout, or stderr, a command may write: fe-vim's put limit.
 pub(crate) const OUTPUT_LIMIT: usize = 64 << 20;
 /// How long a command runs before a toast offers to cancel it.
@@ -225,7 +222,7 @@ impl Shell {
         &self,
         command: &ShellCommand,
         current: Option<&str>,
-    ) -> Result<String, &'static str> {
+    ) -> Result<String, Said> {
         let names = (command.parts.iter()).any(|part| !matches!(part, ShellPart::Text(_)));
         if names && self.platform == Platform::Windows {
             return Err(NO_NAMES_ON_WINDOWS);
@@ -468,7 +465,14 @@ pub(crate) fn run(run: Run) -> Outcome {
     let mut child = match run.group.start(|| command.spawn()) {
         Some(Ok(child)) => child,
         Some(Err(error)) => {
-            return Outcome::Failed(format!("Can't run {}: {error}", run.shell.program));
+            let program = run.shell.program.as_str();
+            let error = error.to_string();
+            let failed = tr!(
+                "workbench-workbench-filter-cant-run",
+                program = program,
+                error = error
+            );
+            return Outcome::Failed(failed.into());
         }
         None => return Outcome::Cancelled,
     };
@@ -503,7 +507,11 @@ pub(crate) fn run(run: Run) -> Outcome {
                 Ok(status) => status
                     .code()
                     .unwrap_or_else(|| 128 + process_group::signal_of(&status).unwrap_or(0)),
-                Err(error) => return Outcome::Failed(format!("Can't wait for it: {error}")),
+                Err(error) => {
+                    let error = error.to_string();
+                    let failed = tr!("workbench-workbench-filter-cant-wait", error = error);
+                    return Outcome::Failed(failed.into());
+                }
             };
             let text = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).into_owned();
             return Outcome::Exited {
@@ -742,11 +750,7 @@ impl Workbench {
         let current = match current.as_deref().map(Path::to_str) {
             Some(Some(current)) => Some(current.to_string()),
             Some(None) if command.parts.contains(&ShellPart::CurrentFile) => {
-                return message(
-                    editor,
-                    "The file's name isn't UTF-8, so % can't name it",
-                    cx,
-                );
+                return message(editor, tr!("workbench-workbench-filter-not-utf8"), cx);
             }
             _ => None,
         };
@@ -796,10 +800,16 @@ impl Workbench {
         };
         let (sender, receiver) = async_channel::bounded(1);
         let spawned = thread::Builder::new()
-            .name("vim filter".into())
+            .name(verbatim!("vim filter").into())
             .spawn(move || drop(sender.send_blocking(self::run(run))));
         if let Err(error) = spawned {
-            return message(editor, format!("Can't run {line}: {error}"), cx);
+            let error = error.to_string();
+            let failed = tr!(
+                "workbench-workbench-filter-cant-run",
+                program = line.as_str(),
+                error = error
+            );
+            return message(editor, failed, cx);
         }
         let workbench = cx.entity_id();
         Running::of(cx).runs.insert(
@@ -814,7 +824,7 @@ impl Workbench {
         );
         let weak = editor.downgrade();
         let editor_id = editor.entity_id();
-        let offered = format!("Filtering through {line}…");
+        let offered = tr!("workbench-workbench-filter-running", line = line.as_str()).to_string();
         cx.spawn(async move |workbench, cx| {
             watch(workbench, weak, window, id, offered, cx).await;
         })
@@ -897,23 +907,33 @@ impl Workbench {
                 stderr,
             } => (stdout, stderr),
             Outcome::Exited { code, stderr, .. } => {
-                let mut failed = Toast::error(format!("{line} exited with {code}"));
+                let mut failed = Toast::error(tr!(
+                    "workbench-workbench-filter-exited",
+                    line = line.as_str(),
+                    code = code
+                ));
                 if !stderr.trim().is_empty() {
                     failed = failed.detail(stderr);
                 }
                 self.toasts.update(cx, |layer, cx| layer.push(failed, cx));
-                return message(&editor, format!("shell returned {code}"), cx);
+                return message(
+                    &editor,
+                    tr!("workbench-workbench-filter-shell-returned", code = code),
+                    cx,
+                );
             }
             Outcome::Failed(why) => return message(&editor, why, cx),
             Outcome::TimedOut => {
-                let said = format!(
-                    "{line} ran past {limit} ms (vim.filter_time_limit): stopped, nothing changed"
+                let said = tr!(
+                    "workbench-workbench-filter-timed-out",
+                    line = line.as_str(),
+                    limit = limit
                 );
                 return message(&editor, said, cx);
             }
             Outcome::Cancelled => return message(&editor, CANCELLED, cx),
             Outcome::TooMuch => {
-                let said = format!("{line} wrote more than 64 MiB: stopped, nothing changed");
+                let said = tr!("workbench-workbench-filter-too-much", line = line.as_str());
                 return message(&editor, said, cx);
             }
         };
@@ -924,7 +944,10 @@ impl Workbench {
             Some("normal") => {}
             Some(_) => return message(&editor, NOT_NORMAL, cx),
             None => {
-                let off = Toast::warning(format!("{line} ended with vim off: nothing changed"));
+                let off = Toast::warning(tr!(
+                    "workbench-workbench-filter-vim-off",
+                    line = line.as_str()
+                ));
                 self.toasts.update(cx, |layer, cx| layer.push(off, cx));
                 return;
             }
@@ -939,7 +962,11 @@ impl Workbench {
             )
         });
         if !stderr.trim().is_empty() {
-            let warned = Toast::warning(format!("{line} wrote to stderr")).detail(stderr);
+            let warned = Toast::warning(tr!(
+                "workbench-workbench-filter-stderr",
+                line = line.as_str()
+            ));
+            let warned = warned.detail(stderr);
             self.toasts.update(cx, |layer, cx| layer.push(warned, cx));
         }
     }
@@ -985,7 +1012,8 @@ async fn watch(
                             }
                         }
                     };
-                    let toast = Toast::info(offered.clone()).choices(vec!["Cancel".into()], reply);
+                    let toast = Toast::info(offered.clone())
+                        .choices(vec![tr!("workbench-workbench-filter-cancel").into()], reply);
                     let layer = workbench.upgrade()?.read(cx).toasts.clone();
                     let shown = layer.update(cx, |layer, cx| layer.push(toast, cx));
                     run_of(editor_id, id, cx)?.toast = Some(shown);

@@ -37,6 +37,7 @@ use fe_plugin::{
 };
 use futures::channel::oneshot;
 use gpui::{App, AsyncApp, Entity, FutureExt as _, Global};
+use kiln_l10n::tr;
 use kiln_plugin::commands::CommandHost;
 
 use crate::{lsp::routed_language, plugin_bridge, plugin_host};
@@ -235,15 +236,22 @@ impl PluginFormatter {
                 drop(send.send(reply));
             });
         if let Err(error) = spawned {
-            return self.failed(&format!("no thread to ask it on: {error}"));
+            let error = error.to_string();
+            return self.failed(&tr!(
+                "workbench-workbench-plugin-format-no-thread",
+                error = error
+            ));
         }
         let executor = cx.background_executor().clone();
         let reply = match answer.with_timeout(self.deadline, &executor).await {
             Ok(Ok(reply)) => reply,
-            Ok(Err(_)) => return self.failed("its request was dropped"),
+            Ok(Err(_)) => return self.failed(&tr!("workbench-workbench-plugin-format-dropped")),
             Err(_) => {
                 let waited = self.deadline.as_millis();
-                return self.failed(&format!("timed out after {waited} ms"));
+                return self.failed(&tr!(
+                    "workbench-workbench-plugin-format-timed-out",
+                    ms = waited
+                ));
             }
         };
         match reply {
@@ -259,7 +267,13 @@ impl PluginFormatter {
     /// A failure, on one line, naming the plugin.
     fn failed(&self, why: &str) -> PluginAnswer {
         let why = why.lines().next().unwrap_or_default();
-        PluginAnswer::Failed(format!("Plugin {}'s formatter failed: {why}", self.name))
+        let plugin = self.name.as_str();
+        let failed = tr!(
+            "workbench-workbench-plugin-format-failed",
+            plugin = plugin,
+            why = why
+        );
+        PluginAnswer::Failed(failed.into())
     }
 }
 

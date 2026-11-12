@@ -1,5 +1,5 @@
 //! fe-workbench's catalogue files (`docs/decisions/xte5e7hqsw-i18n-design.md`
-//! § 3). Each area's card adds its own `l10n/en-US/<area>.ftl` to the list.
+//! § 3), one `l10n/en-US/<area>.ftl` per area.
 
 kiln_l10n::resources! {
     dynamic_prefixes = ["command-", "workbench-settings-label-"];
@@ -28,5 +28,6 @@ kiln_l10n::resources! {
         "../l10n/en-US/lsp.ftl",
         "../l10n/en-US/toast.ftl",
         "../l10n/en-US/chat.ftl",
+        "../l10n/en-US/workbench.ftl",
     ],
 }

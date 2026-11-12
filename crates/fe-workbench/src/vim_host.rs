@@ -52,7 +52,8 @@ use std::path::{Path, PathBuf};
 use fe_editor::SaveError;
 use fe_gpui::EditorView;
 use fe_vim::{HostCommand, QuickfixAction, QuickfixCommand};
-use gpui::{App, Context, Entity, Task, WeakEntity, Window};
+use gpui::{App, Context, Entity, SharedString, Task, WeakEntity, Window};
+use kiln_l10n::tr;
 use kiln_shell::{ItemHandle, PaneView as _};
 
 use super::git_commands::{self, GitCommand, GitOp};
@@ -77,15 +78,48 @@ mod vim_tabs;
 #[path = "vim_filter.rs"]
 pub(super) mod vim_filter;
 
-const E32: &str = "E32: No file name";
-pub(crate) const E13: &str = "E13: File exists (add ! to override)";
-pub(super) const E37: &str = "E37: No write since last change (add ! to override)";
+/// A message of vim's, or the host's, such as [`E37`]: looked up in the
+/// active locale each time it's said. It converts to the `String` an
+/// editor's vim message takes, and compares by its text.
+#[derive(Clone, Copy)]
+pub(crate) struct Said(fn() -> SharedString);
+
+impl Said {
+    /// The message, in the active locale.
+    pub(crate) fn text(self) -> SharedString {
+        (self.0)()
+    }
+}
+
+impl From<Said> for String {
+    fn from(said: Said) -> Self {
+        said.text().into()
+    }
+}
+
+impl PartialEq for Said {
+    fn eq(&self, other: &Self) -> bool {
+        self.text() == other.text()
+    }
+}
+
+impl Eq for Said {}
+
+impl std::fmt::Debug for Said {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.text(), f)
+    }
+}
+
+const E32: Said = Said(|| tr!("workbench-workbench-vim-e32"));
+pub(crate) const E13: Said = Said(|| tr!("workbench-workbench-vim-e13"));
+pub(super) const E37: Said = Said(|| tr!("workbench-workbench-vim-e37"));
 /// What a filter or `:r !{cmd}` says in an editor shown outside the tabs
 /// (a diff view's side), which doesn't run shell commands.
-pub(super) const NO_SHELL: &str = "Not supported yet: shell commands";
-const E99: &str = "E99: Current buffer is not in diff mode";
-pub(super) const RELOAD: &str = "Not supported yet: reloading a file from disk";
-const NO_SEARCH: &str = "No search to replace";
+pub(super) const NO_SHELL: Said = Said(|| tr!("workbench-workbench-vim-no-shell"));
+const E99: Said = Said(|| tr!("workbench-workbench-vim-e99"));
+pub(super) const RELOAD: Said = Said(|| tr!("workbench-workbench-vim-no-reload"));
+const NO_SEARCH: Said = Said(|| tr!("workbench-workbench-vim-no-search"));
 
 impl Workbench {
     /// Runs `command`, typed on the line in `editor`: see the module docs.
@@ -131,13 +165,13 @@ impl Workbench {
         let what = match command {
             HostCommand::Quit { .. }
             | HostCommand::WriteQuit { .. }
-            | HostCommand::QuitAll { .. } => "a quit",
-            _ => "a command that finishes later",
+            | HostCommand::QuitAll { .. } => tr!("workbench-workbench-vim-what-quit"),
+            _ => tr!("workbench-workbench-vim-what-later"),
         };
         self.run_host_command(editor.clone(), command, window, cx);
         editor.update(cx, |editor, cx| match reports {
             true => editor.settle_vim_host(cx),
-            false => editor.end_vim_host(what, cx),
+            false => editor.end_vim_host(&what, cx),
         });
     }
 
@@ -332,7 +366,7 @@ impl Workbench {
         // A map waiting for the write goes on, or ends, once the tab is
         // closed too, with `quit`, which ends it either way.
         let hold = editor.update(cx, |editor, cx| editor.hold_vim_host(cx));
-        let saved = save(&editor, E32.to_owned(), window, cx);
+        let saved = save(&editor, E32.into(), window, cx);
         let editor = editor.downgrade();
         cx.spawn_in(window, async move |workbench, cx| {
             let failed = saved.await;
@@ -400,7 +434,7 @@ impl Workbench {
                 .is_some_and(|(holder, _)| holder != buffer);
             if held {
                 let name = resolved.file_name().unwrap_or_default().to_string_lossy();
-                let error = format!("“{name}” is being saved by another tab");
+                let error = tr!("workbench-workbench-vim-saved-by-other", name = name);
                 return message(&editor, error, cx);
             }
             let reservation = open::reserve(buffer, resolved.clone(), identity);
@@ -417,7 +451,7 @@ impl Workbench {
                     let exists = (error.get_ref())
                         .is_some_and(|inner| inner.downcast_ref::<SaveError>().is_some());
                     match exists {
-                        true => E13.to_owned(),
+                        true => E13.into(),
                         false => format!("{error:#}"),
                     }
                 });
@@ -489,7 +523,7 @@ impl Workbench {
                 .find(|tab| tab.is_dirty(cx));
             if let Some(dirty) = dirty {
                 let title = dirty.tab_title(cx);
-                let error = format!("E162: No write since last change for buffer \"{title}\"");
+                let error = tr!("workbench-workbench-vim-e162", title = title);
                 return message(editor, error, cx);
             }
         }
@@ -518,7 +552,7 @@ impl Workbench {
         let saves: Vec<_> = (saving.iter())
             .map(|tab| {
                 let title = tab.tab_title(cx);
-                let untitled = format!("E141: No file name for buffer \"{title}\"");
+                let untitled = tr!("workbench-workbench-vim-e141", title = title).into();
                 save(tab, untitled, window, cx)
             })
             .collect();
@@ -570,7 +604,11 @@ impl Workbench {
             .and_then(|resolved| std::fs::read(resolved).ok())
             .and_then(|bytes| String::from_utf8(bytes).ok());
         let Some(contents) = read else {
-            return message(editor, format!("E484: Can't open file {named}"), cx);
+            return message(
+                editor,
+                tr!("workbench-workbench-vim-e484", file = named.as_str()),
+                cx,
+            );
         };
         let lines: Vec<&str> = contents
             .strip_suffix('\n')
@@ -582,12 +620,22 @@ impl Workbench {
         } else {
             lines
         };
-        let noeol = if contents.is_empty() || contents.ends_with('\n') {
-            ""
+        let (file, count, bytes) = (named.as_str(), lines.len(), contents.len());
+        let report = if contents.is_empty() || contents.ends_with('\n') {
+            tr!(
+                "workbench-workbench-vim-read-report",
+                file = file,
+                lines = count,
+                bytes = bytes
+            )
         } else {
-            "[noeol] "
+            tr!(
+                "workbench-workbench-vim-read-report-noeol",
+                file = file,
+                lines = count,
+                bytes = bytes
+            )
         };
-        let report = format!("\"{named}\" {noeol}{}L, {}B", lines.len(), contents.len());
         editor.update(cx, |editor, cx| {
             if !lines.is_empty() {
                 let model = editor.model_mut();
@@ -726,7 +774,10 @@ pub(super) fn save(
 /// `..`, a `.` or a trailing slash must be a directory, or that is the
 /// error: only the final file may be missing.
 pub(super) fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, String> {
-    let cant = |why: &dyn std::fmt::Display| format!("Can't open {path}: {why}");
+    let cant = |why: &dyn std::fmt::Display| {
+        let why = why.to_string();
+        tr!("workbench-workbench-vim-cant-open", path = path, why = why).to_string()
+    };
     let joined = match path.strip_prefix('~') {
         Some("") => std::env::home_dir(),
         Some(rest) if rest.starts_with('/') => {
@@ -736,12 +787,18 @@ pub(super) fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, Stri
         _ => folder.map(|folder| folder.join(path)),
     };
     let Some(joined) = joined else {
-        return Err(cant(&"no folder to resolve it against"));
+        return Err(cant(&tr!("workbench-workbench-vim-no-folder")));
     };
     let directory = |at: &Path| match std::fs::metadata(at) {
         Ok(meta) if meta.is_dir() => Ok(()),
-        Ok(_) => Err(cant(&format!("{} is not a directory", at.display()))),
-        Err(error) => Err(cant(&format!("{}: {error}", at.display()))),
+        Ok(_) => {
+            let at = at.display().to_string();
+            Err(cant(&tr!(
+                "workbench-workbench-vim-not-a-directory",
+                path = at
+            )))
+        }
+        Err(error) => Err(cant(&format!("{}: {}", at.display(), error))),
     };
     walk_segments(&joined, directory, |error| cant(&error))
 }

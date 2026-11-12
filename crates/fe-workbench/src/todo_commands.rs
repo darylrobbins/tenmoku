@@ -25,8 +25,9 @@ use std::ops::Range;
 use fe_gpui::EditorView;
 use fe_syntax::Syntax;
 use fe_text::Text;
-use gpui::{Context, Div, InteractiveElement as _};
+use gpui::{Context, Div, InteractiveElement as _, SharedString};
 use kiln::Cx;
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -35,13 +36,9 @@ use crate::{
 };
 
 /// What the toast says at the last keyword, or the first.
-pub(crate) const NO_MORE: &str = "No more TODO comments";
-
-/// What the toast says while the buffer's comments aren't known.
-pub(crate) const NOT_YET: &str = "TODO comments aren't known yet: the file is still being parsed";
-
-/// What the toast says for a buffer too big to read the comments of.
-pub(crate) const TOO_BIG: &str = "This file is too big to look for TODO comments in";
+pub(crate) fn no_more() -> SharedString {
+    tr!("workbench-workbench-todo-no-more")
+}
 
 /// The commands' declaration: see the module's docs. They're handled by
 /// the workbench's root element, not here.
@@ -155,9 +152,11 @@ impl Workbench {
         let head = view.model().primary_selection().head();
         match next_keyword(view, head, forward) {
             Found::At(at) => editor.update(cx, |editor, cx| editor.select_and_reveal(at..at, cx)),
-            Found::None => toast::show(cx, Toast::info(NO_MORE)),
-            Found::NotYet => toast::show(cx, Toast::info(NOT_YET)),
-            Found::TooBig => toast::show(cx, Toast::info(TOO_BIG)),
+            Found::None => toast::show(cx, Toast::info(no_more())),
+            // While the buffer's comments aren't known.
+            Found::NotYet => toast::show(cx, Toast::info(tr!("workbench-workbench-todo-not-yet"))),
+            // A buffer too big to read the comments of.
+            Found::TooBig => toast::show(cx, Toast::info(tr!("workbench-workbench-todo-too-big"))),
         }
     }
 

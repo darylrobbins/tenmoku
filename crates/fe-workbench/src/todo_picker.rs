@@ -57,6 +57,7 @@ use gpui::{
     IntoElement as _, ParentElement as _, SharedString, Styled as _, Subscription, Task,
     WeakEntity, Window, div,
 };
+use kiln_l10n::{text, tr};
 
 use super::{
     buffer_lines_picker::RowPreview,
@@ -205,7 +206,7 @@ fn row_of(
     let keyword = tag.split(['(', ':']).next()?.to_owned();
     let kind = kind_of(&keyword)?;
     let text: String = after.trim().chars().take(MAX_TEXT_CHARS).collect();
-    let matched = format!("{text} {}", file.rel);
+    let matched = format!("{} {}", text, file.rel);
     Some(Row {
         path: file.path.clone(),
         file: file.rel.clone(),
@@ -669,35 +670,28 @@ impl PickerDelegate for TodoPicker {
         }
     }
 
+    /// What the status line says; of a search the cap stopped, that too:
+    /// there may be more beyond it.
     fn status(&self) -> Option<SharedString> {
+        let rows = || group(MAX_ROWS);
         if self.no_root {
-            Some("No folder open".into())
+            Some(tr!("workbench-workbench-todo-no-folder"))
         } else if self.search.is_some() {
-            Some("Searching…".into())
+            Some(tr!("workbench-workbench-todo-searching"))
         } else if self.rows.is_empty() {
-            Some(self.capped_note("No TODO comments").into())
+            Some(match self.capped {
+                true => tr!("workbench-workbench-todo-none-capped", rows = rows()),
+                false => tr!("workbench-workbench-todo-none"),
+            })
         } else if self.matches.is_empty() {
-            Some(self.capped_note("No matching TODO comments").into())
+            Some(match self.capped {
+                true => tr!("workbench-workbench-todo-no-match-capped", rows = rows()),
+                false => tr!("workbench-workbench-todo-no-match"),
+            })
         } else if self.capped {
-            Some(capped_text())
+            Some(tr!("workbench-workbench-todo-capped", rows = rows()))
         } else {
             None
-        }
-    }
-}
-
-/// What the status line says of a search the cap stopped.
-fn capped_text() -> SharedString {
-    format!("Stopped at the first {} matches", group(MAX_ROWS)).into()
-}
-
-impl TodoPicker {
-    /// `text`, with what the cap stopped said too if it stopped the search:
-    /// there may be more beyond it.
-    fn capped_note(&self, text: &str) -> String {
-        match self.capped {
-            true => format!("{text}: {}", capped_text().to_lowercase()),
-            false => text.to_owned(),
         }
     }
 }
@@ -737,8 +731,14 @@ impl Workbench {
             cx,
         );
         let root = self.root().map(Path::to_owned);
-        let picker =
-            cx.new(|cx| Picker::new(delegate, "Search TODO comments…", fe_ui::ui_theme(cx), cx));
+        let picker = cx.new(|cx| {
+            Picker::new(
+                delegate,
+                text!("workbench-workbench-todo-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
+        });
         picker.update(cx, |picker, cx| {
             picker.delegate.start(root, cx);
             picker.show(window, cx);

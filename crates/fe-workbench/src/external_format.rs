@@ -81,6 +81,7 @@ use fe_config::FormatterSettings;
 use fe_lsp::LoginPath;
 use futures::future::{Either, select};
 use gpui::BackgroundExecutor;
+use kiln_l10n::{tr, verbatim};
 
 /// What a command's words hold for the file.
 const FILE_PLACEHOLDER: &str = "{file}";
@@ -171,15 +172,26 @@ pub enum FormatError {
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FormatError::NotFound(program) => write!(f, "{program}: program not found"),
+            FormatError::NotFound(program) => {
+                let said = tr!("workbench-workbench-format-not-found", program = program);
+                f.write_str(&said)
+            }
             FormatError::Failed {
                 program,
                 stderr_line,
-            } => write!(f, "{program}: {stderr_line}"),
+            } => write!(f, "{}: {}", program, stderr_line),
             FormatError::TimedOut {
                 program,
                 timeout_ms,
-            } => write!(f, "{program}: timed out after {timeout_ms} ms"),
+            } => {
+                let ms = *timeout_ms;
+                let said = tr!(
+                    "workbench-workbench-format-timed-out",
+                    program = program,
+                    ms = ms
+                );
+                f.write_str(&said)
+            }
         }
     }
 }
@@ -200,7 +212,7 @@ pub async fn format_text(
     let Some(program) = settings.command.first() else {
         return Err(FormatError::Failed {
             program: String::new(),
-            stderr_line: "the formatter's command is empty".into(),
+            stderr_line: tr!("workbench-workbench-format-empty").into(),
         });
     };
     let failed = |stderr_line: String| FormatError::Failed {
@@ -215,7 +227,10 @@ pub async fn format_text(
             let copy = executor
                 .spawn(async move { TempCopy::new(&name, &bytes) })
                 .await
-                .map_err(|error| failed(format!("can't write a temporary copy: {error}")))?;
+                .map_err(|error| {
+                    let error = error.to_string();
+                    failed(tr!("workbench-workbench-format-cant-copy", error = error).into())
+                })?;
             Some(copy)
         }
         _ => None,
@@ -251,7 +266,10 @@ pub async fn format_text(
             Some(file) => executor
                 .spawn(async move { read_limited(&file) })
                 .await
-                .map_err(|error| failed(format!("can't read the temporary copy: {error}"))),
+                .map_err(|error| {
+                    let error = error.to_string();
+                    failed(tr!("workbench-workbench-format-cant-read-copy", error = error).into())
+                }),
             None => Ok(output.stdout),
         }
     });
@@ -267,10 +285,10 @@ pub async fn format_text(
     if formatted.len() > OUTPUT_LIMIT {
         return Err(failed(too_much_output()));
     }
-    let formatted =
-        String::from_utf8(formatted).map_err(|_| failed("its output isn't UTF-8".into()))?;
+    let formatted = String::from_utf8(formatted)
+        .map_err(|_| failed(tr!("workbench-workbench-format-not-utf8").into()))?;
     if formatted.is_empty() && !text.trim().is_empty() {
-        return Err(failed("it gave no output".into()));
+        return Err(failed(tr!("workbench-workbench-format-no-output").into()));
     }
     Ok(diff_to_edit(text, &formatted))
 }
@@ -329,13 +347,17 @@ fn failure_line(output: &RunOutput) -> String {
     let line = stderr.lines().map(str::trim).find(|line| !line.is_empty());
     match (line, output.code) {
         (Some(line), _) => line.to_owned(),
-        (None, Some(code)) => format!("exited with status {code}"),
-        (None, None) => "killed by a signal".to_owned(),
+        (None, Some(code)) => tr!("workbench-workbench-format-exited", code = code).into(),
+        (None, None) => tr!("workbench-workbench-format-killed").into(),
     }
 }
 
 fn too_much_output() -> String {
-    format!("it wrote more than {} MiB", OUTPUT_LIMIT >> 20)
+    tr!(
+        "workbench-workbench-format-too-much",
+        limit = OUTPUT_LIMIT >> 20
+    )
+    .into()
 }
 
 /// `file`, up to one byte past [`OUTPUT_LIMIT`], if it's a regular file. A tool
@@ -348,7 +370,8 @@ fn read_limited(file: &Path) -> io::Result<Vec<u8>> {
     options.custom_flags(libc::O_NONBLOCK);
     let file = options.open(file)?;
     if !file.metadata()?.is_file() {
-        return Err(io::Error::other("it isn't a regular file any more"));
+        let said = tr!("workbench-workbench-format-not-a-file");
+        return Err(io::Error::other(said.to_string()));
     }
     let mut read = Vec::new();
     file.take(OUTPUT_LIMIT as u64 + 1).read_to_end(&mut read)?;
@@ -390,7 +413,9 @@ impl TempCopy {
                 Err(error) => return Err(error),
             }
         }
-        Err(io::Error::other("every name is taken"))
+        Err(io::Error::other(
+            tr!("workbench-workbench-format-names-taken").to_string(),
+        ))
     }
 }
 
@@ -427,7 +452,7 @@ pub(crate) fn on_own_thread<T: Send + 'static>(
     let stopped = stop.0.clone();
     let (sender, answer) = async_channel::bounded(1);
     let thread = thread::Builder::new()
-        .name("external formatter".into())
+        .name(verbatim!("external formatter").into())
         .spawn(move || {
             // There's room for the one answer, and nobody to tell if it's
             // no longer wanted.
@@ -436,10 +461,10 @@ pub(crate) fn on_own_thread<T: Send + 'static>(
     Box::pin(async move {
         let _stop = stop;
         thread?;
-        answer
-            .recv()
-            .await
-            .unwrap_or_else(|_| Err(io::Error::other("its thread ended without an answer")))
+        answer.recv().await.unwrap_or_else(|_| {
+            let said = tr!("workbench-workbench-format-no-answer");
+            Err(io::Error::other(said.to_string()))
+        })
     })
 }
 
@@ -481,7 +506,10 @@ fn run_process(spec: RunSpec, stopped: &AtomicBool) -> io::Result<RunOutput> {
         // Spawning says the same of a directory that's gone as of a missing
         // program, which is the one thing NotFound may mean.
         Some(cwd) if error.kind() == io::ErrorKind::NotFound && !cwd.is_dir() => {
-            io::Error::other(format!("no such directory: {}", cwd.display()))
+            let path = cwd.display().to_string();
+            io::Error::other(
+                tr!("workbench-workbench-format-no-directory", path = path).to_string(),
+            )
         }
         _ => error,
     })?;
@@ -562,7 +590,7 @@ pub(crate) fn resolve_program(
     Err(match not_runnable {
         true => io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "it's on the PATH, but isn't a program this user may run",
+            tr!("workbench-workbench-format-not-runnable").to_string(),
         ),
         false => io::ErrorKind::NotFound.into(),
     })

@@ -252,6 +252,47 @@ fn between_docks(cx: &mut TestAppContext) {
     assert!(focused(&tree, cx), "the terminal is hidden");
 }
 
+/// Up from the bottom panel goes back to the sidebar only from the tool
+/// window a window key brought focus to from there: focus leaving one tool
+/// window forgets it for the others too.
+#[gpui::test]
+fn up_from_another_tool_window_goes_to_the_editor(cx: &mut TestAppContext) {
+    let (workbench, cx, _dir) = opened(cx);
+    let problems = workbench.read_with(cx, |workbench, cx| {
+        workbench.dock().read(cx).problems().focus_handle(cx)
+    });
+    let terminal = terminal(&workbench, cx);
+    let editor = workbench.read_with(cx, |workbench, cx| workbench.focus_handle(cx));
+
+    // Sidebar, then Problems, then the editor, then the terminal.
+    run("problems.show", cx);
+    let tree = focus_tree(&workbench, cx);
+    press("ctrl-w j", cx);
+    assert!(focused(&problems, cx), "Problems below the sidebar");
+    focus(&editor, cx);
+    run("terminal.toggle", cx);
+    assert!(focused(&terminal, cx));
+    press("ctrl-w k", cx);
+    assert!(
+        editor_focused(&workbench, cx),
+        "the terminal wasn't entered from the sidebar"
+    );
+
+    // Sidebar, then the terminal, then the editor, then Problems.
+    focus(&tree, cx);
+    press("ctrl-w j", cx);
+    assert!(focused(&terminal, cx), "the terminal below the sidebar");
+    focus(&editor, cx);
+    run("problems.show", cx);
+    focus(&problems, cx);
+    assert!(focused(&problems, cx));
+    press("ctrl-w k", cx);
+    assert!(
+        editor_focused(&workbench, cx),
+        "Problems wasn't entered from the sidebar"
+    );
+}
+
 #[gpui::test]
 fn escape(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);

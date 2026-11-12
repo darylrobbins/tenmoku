@@ -312,13 +312,16 @@ impl CommandTarget for CommitBoxCommands {
 /// The commit box's key, [`git_panel::COMMIT_COMMAND`], in the Changes
 /// panel's own context: the panel takes the [`fe_gpui::commands::RunCommand`]
 /// it sends, so it stays a registry command, here for the keymap and the
-/// palette. The workbench's git commands are typed.
+/// palette. The workbench's git commands are typed. Its title is its
+/// `command-<id>` message, which `label()` resolves again wherever it's
+/// shown.
 fn commit_box_registry() -> Registry<CommitBoxCommands> {
     let mut registry = Registry::new();
+    let title = kiln_l10n::message(&fe_command::l10n::command_key(git_panel::COMMIT_COMMAND));
     registry
         .register(
             git_panel::COMMIT_COMMAND,
-            "Commit from the Message Box",
+            &title,
             |_: &mut (), _: &Actor| Ok(Dispatched::new(Effect::Notify)),
         )
         .expect("the commit box's command ID is valid")

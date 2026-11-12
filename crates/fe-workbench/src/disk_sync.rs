@@ -24,13 +24,12 @@ use fe_buffer::{Buffer, BufferId, DecodedFile, DiskStamp, Text, local_history::R
 use fe_gpui::{EditorView, pane_item::file_name};
 use fe_project::FsChange;
 use gpui::{AppContext as _, Context, Entity, EntityId, PromptLevel, Subscription, Window};
+use kiln_l10n::tr;
 
 use crate::Workbench;
 
-/// The buttons of the prompt over a dirty buffer whose file changed.
-const RELOAD_BUTTONS: [&str; 2] = ["Reload", "Keep Mine"];
-
-/// The answers to [`RELOAD_BUTTONS`]. A prompt dismissed without either
+/// The answers to the prompt over a dirty buffer whose file changed, by
+/// its buttons' order: Reload, Keep Mine. A prompt dismissed without either
 /// (another prompt replaced it) changes nothing.
 const RELOAD: usize = 0;
 const KEEP_MINE: usize = 1;
@@ -457,11 +456,15 @@ impl Workbench {
                 self.finish_check(ask.check.buffer, window, cx);
                 continue;
             }
+            let buttons = [
+                tr!("workbench-workbench-disk-reload"),
+                tr!("workbench-workbench-disk-keep-mine"),
+            ];
             let answer = window.prompt(
                 PromptLevel::Warning,
-                &format!("“{name}” changed on disk."),
-                Some("Reload it and lose your unsaved changes?"),
-                &RELOAD_BUTTONS,
+                &tr!("workbench-workbench-disk-changed", name = name.as_str()),
+                Some(&tr!("workbench-workbench-disk-changed-detail")),
+                &[&*buttons[0], &*buttons[1]],
                 cx,
             );
             self.disk_sync.asking = true;

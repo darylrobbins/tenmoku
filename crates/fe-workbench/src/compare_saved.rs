@@ -12,30 +12,39 @@ use std::path::Path;
 use crate::workbench::toast::{self, Toast};
 use fe_buffer::Buffer;
 use gpui::{AppContext as _, Context, Window};
+use kiln_l10n::tr;
 
 use super::Workbench;
 use crate::loader;
-
-/// What a command for the active file answers when it has none.
-const NO_FILE: &str = "E32: No file name";
-
-/// What a file that's not on disk answers, before its path.
-const MISSING: &str = "File missing";
 
 /// The file at `path` as it is on disk: none if it's missing, an answer if
 /// it can't be read or is too large to compare.
 fn read_saved(path: &Path) -> Result<Option<Buffer>, String> {
     if loader::is_large(path) {
-        return Err(format!("Too large to compare: {}", path.display()));
+        return Err(tr!(
+            "workbench-workbench-compare-too-large",
+            path = path.display().to_string()
+        )
+        .into());
     }
-    loader::read(path.to_owned()).map_err(|error| format!("Can't open {}: {error}", path.display()))
+    loader::read(path.to_owned()).map_err(|error| {
+        let path = path.display().to_string();
+        tr!(
+            "workbench-workbench-compare-cant-open",
+            path = path,
+            error = error.to_string()
+        )
+        .into()
+    })
 }
 
 impl Workbench {
     /// Opens the active file's saved text against its buffer.
     pub(super) fn compare_saved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ask = match self.begin_saved_diff(window, cx) {
-            None => return toast::show(cx, Toast::info(NO_FILE)),
+            None => {
+                return toast::show(cx, Toast::info(tr!("workbench-workbench-compare-no-file")));
+            }
             Some(None) => return,
             Some(Some(ask)) => ask,
         };
@@ -47,7 +56,8 @@ impl Workbench {
                 .update_in(cx, |workbench, window, cx| match read {
                     Ok(Some(saved)) => workbench.finish_saved_diff(ask, saved, window, cx),
                     Ok(None) => {
-                        let missing = format!("{MISSING}: {}", ask.path().display());
+                        let path = ask.path().display().to_string();
+                        let missing = tr!("workbench-workbench-compare-missing", path = path);
                         toast::show(cx, Toast::info(missing))
                     }
                     Err(answer) => toast::show(cx, Toast::info(answer)),

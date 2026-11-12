@@ -57,19 +57,12 @@ impl Workbench {
             }
             Some(Neighbour::Terminal) => {
                 self.focus_bottom_panel(window, cx);
-                // Kept until focus leaves the tool window: the terminal's
-                // own, Problems' and the Git log's the workbench's.
-                (self.terminal().clone()).update(cx, |terminal, _| {
-                    terminal.from_sidebar = from == Focused::Sidebar;
-                });
+                // Kept until focus leaves the tool window, whichever it is.
                 self.bottom_from_sidebar = from == Focused::Sidebar;
             }
             Some(Neighbour::Back) => {
-                let from_sidebar = match self.terminal().read(cx).is_focused(window, cx) {
-                    true => self.terminal().read(cx).from_sidebar,
-                    false => self.bottom_from_sidebar,
-                };
-                if !(from_sidebar && self.focus_sidebar(window, cx)) {
+                let back = self.bottom_from_sidebar && self.focus_sidebar(window, cx);
+                if !back {
                     self.focus_editor_from_dock(window, cx);
                 }
             }

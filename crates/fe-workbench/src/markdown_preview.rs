@@ -45,6 +45,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable, Global, IntoElement,
     Render, SharedString, Subscription, Task, WeakEntity, Window,
 };
+use kiln_l10n::{tr, verbatim};
 use kiln_shell::{PaneItem, PaneView as _};
 
 use crate::{
@@ -357,13 +358,16 @@ fn style(editor: &EditorTheme, cx: &App) -> MarkdownStyle {
     }
 }
 
+/// An untitled source's file name, which links resolve beside: never shown.
+const UNTITLED: &str = verbatim!("Untitled");
+
 /// The file links resolve against: the source's, or an untitled one in
 /// the root folder.
 fn doc_path(path: Option<&Path>, root: Option<&Path>) -> PathBuf {
     match (path, root) {
         (Some(path), _) => path.to_owned(),
-        (None, Some(root)) => root.join("Untitled"),
-        (None, None) => PathBuf::from("Untitled"),
+        (None, Some(root)) => root.join(UNTITLED),
+        (None, None) => PathBuf::from(UNTITLED),
     }
 }
 
@@ -385,8 +389,11 @@ impl PaneItem for MarkdownPreview {
     /// `Preview README.md`, or `Preview Untitled`.
     fn tab_title(&self, _: &App) -> SharedString {
         match &self.path {
-            Some(path) => format!("Preview {}", file_name(Some(path))).into(),
-            None => "Preview Untitled".into(),
+            Some(path) => tr!(
+                "workbench-workbench-preview-title",
+                name = file_name(Some(path))
+            ),
+            None => tr!("workbench-workbench-preview-untitled"),
         }
     }
 

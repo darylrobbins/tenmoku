@@ -241,7 +241,7 @@ fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
     // Untrusted, nothing runs.
     ex("%!touch ran", cx);
     linger(cx);
-    assert_eq!(message(&workbench, cx).as_deref(), Some(UNTRUSTED));
+    assert_eq!(message(&workbench, cx).as_deref(), Some(&*UNTRUSTED.text()));
     assert!(!root.join("ran").exists());
     assert_eq!(text(&a, cx), unchanged);
 
@@ -276,7 +276,7 @@ fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
     assert_ne!(linked, a);
     ex(".!touch ran", cx);
     linger(cx);
-    assert_eq!(message(&workbench, cx).as_deref(), Some(UNTRUSTED));
+    assert_eq!(message(&workbench, cx).as_deref(), Some(&*UNTRUSTED.text()));
     assert!(!root.join("ran").exists() && !outside.join("ran").exists());
     assert_eq!(text(&linked, cx), "f\n");
     run("workbench.close_tab", cx);
@@ -306,7 +306,7 @@ fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("x");
     draw(cx);
     assert_eq!(text(&a, cx), "\na\nb\n");
-    until_message(&workbench, CHANGED, cx);
+    until_message(&workbench, &CHANGED.text(), cx);
     assert_eq!(text(&a, cx), "\na\nb\n");
     cx.simulate_keystrokes("u");
     draw(cx);
@@ -316,7 +316,7 @@ fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
     // insert's undo step: it changes nothing.
     ex("%!sleep 0.5; sort", cx);
     cx.simulate_keystrokes("i");
-    until_message(&workbench, vim_filter::NOT_NORMAL, cx);
+    until_message(&workbench, &vim_filter::NOT_NORMAL.text(), cx);
     assert_eq!(text(&a, cx), unchanged);
     cx.simulate_keystrokes("z escape u");
     draw(cx);
@@ -342,7 +342,7 @@ fn filter_refusals_keep_the_buffer(cx: &mut TestAppContext) {
     ex("%!sleep 5; sort", cx);
     linger(cx);
     run(vim_filter::CANCEL, cx);
-    until_message(&workbench, CANCELLED, cx);
+    until_message(&workbench, &CANCELLED.text(), cx);
     assert!(
         started.elapsed() < Duration::from_secs(4),
         "{:?}",
@@ -378,7 +378,7 @@ fn file_names_are_shell_escaped(cx: &mut TestAppContext) {
 
     ex(".!echo #", cx);
     linger(cx);
-    assert_eq!(message(&workbench, cx).as_deref(), Some(E194));
+    assert_eq!(message(&workbench, cx).as_deref(), Some(&*E194.text()));
     assert_eq!(text(&a, cx), format!("{name}\n"));
 
     // A name that is a command substitution stays a name, and % inside
@@ -403,7 +403,7 @@ fn file_names_are_shell_escaped(cx: &mut TestAppContext) {
         linger(cx);
         assert_eq!(
             message(&workbench, cx).as_deref(),
-            Some(NO_NAME_HERE),
+            Some(&*NO_NAME_HERE.text()),
             "{quoted}"
         );
     }
@@ -418,10 +418,16 @@ fn file_names_are_shell_escaped(cx: &mut TestAppContext) {
     let l = active(&workbench, cx);
     ex(".!echo \\# %", cx);
     linger(cx);
-    assert_eq!(message(&workbench, cx).as_deref(), Some(NO_NAME_HERE));
+    assert_eq!(
+        message(&workbench, cx).as_deref(),
+        Some(&*NO_NAME_HERE.text())
+    );
     ex(".!echo %", cx);
     linger(cx);
-    assert_eq!(message(&workbench, cx).as_deref(), Some(UNNAMEABLE));
+    assert_eq!(
+        message(&workbench, cx).as_deref(),
+        Some(&*UNNAMEABLE.text())
+    );
     assert_eq!(text(&l, cx), "row\n");
     assert!(!root.join("pwned").exists());
 
@@ -432,7 +438,7 @@ fn file_names_are_shell_escaped(cx: &mut TestAppContext) {
     ex(".!echo %", cx);
     linger(cx);
     let said: Option<SharedString> = message(&workbench, cx);
-    assert_eq!(said.as_deref(), Some(E499));
+    assert_eq!(said.as_deref(), Some(&*E499.text()));
     assert_eq!(text(&untitled, cx), "");
 }
 
@@ -475,7 +481,7 @@ fn filter_runs_through_cmd(cx: &mut TestAppContext) {
     linger(cx);
     assert_eq!(
         message(&workbench, cx).as_deref(),
-        Some(NO_NAMES_ON_WINDOWS)
+        Some(&*NO_NAMES_ON_WINDOWS.text())
     );
     assert_eq!(text(&a, cx), "c\na\nbb\n");
 }
@@ -816,7 +822,7 @@ fn a_stopped_commands_group_dies(cx: &mut TestAppContext) {
     let pid = pid_in(&root.join("pid"));
     assert!(alive(pid));
     run(vim_filter::CANCEL, cx);
-    until_message(&workbench, CANCELLED, cx);
+    until_message(&workbench, &CANCELLED.text(), cx);
     assert_eq!(text(&a, cx), "a\n");
     let deadline = Instant::now() + GRACE + Duration::from_secs(5);
     while alive(pid) {
@@ -978,7 +984,7 @@ fn toasts_show_in_the_commands_window(cx: &mut TestAppContext) {
     });
     assert_eq!(choices.titles(), ["Cancel"]);
     choices.choose(0);
-    until_message(&workbench, CANCELLED, &mut vcx);
+    until_message(&workbench, &CANCELLED.text(), &mut vcx);
     assert!(!offer(&toasts(&workbench, &mut vcx)));
     assert_eq!(text(&a, &mut vcx), "a\n");
 }
@@ -1048,7 +1054,7 @@ fn quitting_while_a_cancelled_command_stops_kills_it(cx: &mut TestAppContext) {
     let pid = pid_in(&root.join("pid"));
     // Cancelled, and said so, while its group still waits for SIGKILL.
     run(vim_filter::CANCEL, &mut vcx);
-    until_message(&workbench, CANCELLED, &mut vcx);
+    until_message(&workbench, &CANCELLED.text(), &mut vcx);
     assert!(alive(pid), "SIGTERM is ignored");
     cx.update(|cx| cx.shutdown());
     reaped(pid);

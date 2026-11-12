@@ -23,6 +23,7 @@ use gpui::{
     Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Subscription, WeakEntity, WeakFocusHandle, Window, WindowBounds, div, px,
 };
+use kiln_l10n::text;
 
 use self::recent_picker::RecentPicker;
 use self::workbench_chrome::terminal_dir;
@@ -143,12 +144,12 @@ pub struct Workbench {
     /// window with focus in it, and to the bottom dock showing, hiding or
     /// switching, which the sidebar's foot buttons follow.
     _terminal: [Subscription; 3],
-    /// Whether a window key brought focus to Problems or the Git log from
-    /// the sidebar, so up goes back there ([`crate::dock_leave`]): until
-    /// focus leaves them, which the subscriptions hear. The terminal keeps
-    /// its own.
+    /// Whether a window key brought focus to the bottom panel's tool
+    /// window (Problems, the terminal or the Git log) from the sidebar, so
+    /// up goes back there ([`crate::dock_leave`]): until focus leaves any
+    /// of them, which the subscriptions hear.
     pub(crate) bottom_from_sidebar: bool,
-    _bottom_tools: [Subscription; 2],
+    _bottom_tools: [Subscription; 3],
     /// Reads the recent list again for a shown Start page when it changes.
     _recents: Subscription,
     /// The window's shell around the panes, which it keeps in step: their
@@ -472,7 +473,12 @@ impl Workbench {
             dock
         });
         let terminal_subscriptions = Self::follow_terminal(&terminal, &terminal_dock, window, cx);
-        let bottom_tools = [problems.focus_handle(cx), git_log.focus_handle(cx)].map(|focus| {
+        let bottom_tools = [
+            problems.focus_handle(cx),
+            terminal.focus_handle(cx),
+            git_log.focus_handle(cx),
+        ];
+        let bottom_tools = bottom_tools.map(|focus| {
             cx.on_focus_out(&focus, window, |workbench, _, _, _| {
                 workbench.bottom_from_sidebar = false;
             })
@@ -551,7 +557,7 @@ impl Workbench {
         let language_picker = cx.new(|cx| {
             Picker::new(
                 LanguagePicker::new(),
-                "Select a language…",
+                text!("workbench-workbench-language-placeholder"),
                 fe_ui::ui_theme(cx),
                 cx,
             )
@@ -559,22 +565,37 @@ impl Workbench {
         let config_problems = cx.weak_entity();
         let config_problems = cx.new(|cx| {
             let delegate = ConfigProblemsPicker::new(config_problems);
-            Picker::new(delegate, "Filter config problems…", fe_ui::ui_theme(cx), cx)
+            Picker::new(
+                delegate,
+                text!("workbench-workbench-config-problems-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
         });
         let go_to_line = cx.new(|cx| {
             let delegate = GoToLine::new();
-            Picker::new(delegate, "Line or line:column…", fe_ui::ui_theme(cx), cx)
+            Picker::new(
+                delegate,
+                text!("workbench-workbench-go-to-line-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
         });
         let toolbar_picker = cx.new(|cx| {
             let delegate = ToolbarPicker::new();
-            Picker::new(delegate, "Filter…", fe_ui::ui_theme(cx), cx)
+            Picker::new(
+                delegate,
+                text!("workbench-workbench-toolbar-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
         });
         let recent = cx.weak_entity();
         let recent_picker = cx.new(|cx| {
             let delegate = RecentPicker::new(recent);
             Picker::new(
                 delegate,
-                "Open recent folder or file…",
+                text!("workbench-workbench-recent-placeholder"),
                 fe_ui::ui_theme(cx),
                 cx,
             )
@@ -582,7 +603,7 @@ impl Workbench {
         let theme_picker = cx.new(|cx| {
             Picker::new(
                 ThemePicker::new(),
-                "Select a color theme…",
+                text!("workbench-workbench-theme-placeholder"),
                 fe_ui::ui_theme(cx),
                 cx,
             )
@@ -590,7 +611,7 @@ impl Workbench {
         let extensions_picker = cx.new(|cx| {
             Picker::new(
                 ExtensionsPicker::new(),
-                "Filter installed extensions…",
+                text!("workbench-workbench-extensions-placeholder"),
                 fe_ui::ui_theme(cx),
                 cx,
             )

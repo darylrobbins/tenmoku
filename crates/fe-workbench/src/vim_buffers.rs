@@ -55,14 +55,15 @@ use gpui::{App, Context, Entity, EntityId, Global, Subscription, WeakEntity, Win
 use kiln_shell::ItemHandle;
 use kiln_shell::PaneView as _;
 
-use super::message;
+use super::{Said, message};
 use crate::{Pane, Workbench};
+use kiln_l10n::tr;
 
-const E16: &str = "E16: Invalid range";
-const E493: &str = "E493: Backwards range given";
-const E23: &str = "E23: No alternate file";
-const E85: &str = "E85: There is no listed buffer";
-const E516: &str = "E516: No buffers were deleted";
+const E16: Said = Said(|| tr!("workbench-workbench-vim-e16"));
+const E493: Said = Said(|| tr!("workbench-workbench-vim-e493"));
+const E23: Said = Said(|| tr!("workbench-workbench-vim-e23"));
+const E85: Said = Said(|| tr!("workbench-workbench-vim-e85"));
+const E516: Said = Said(|| tr!("workbench-workbench-vim-e516"));
 
 /// A tab transition a pane noted at its mutation site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -417,13 +418,13 @@ impl Workbench {
         listed.dedup();
         let last = buffers.numbered.len() as u32;
         let address = |address: BufferAddress| match address {
-            BufferAddress::Number(number) if number > last => Err(E16.to_owned()),
+            BufferAddress::Number(number) if number > last => Err(String::from(E16)),
             BufferAddress::Number(number) => Ok(number),
-            BufferAddress::Current => current.ok_or_else(|| E16.to_owned()),
+            BufferAddress::Current => current.ok_or_else(|| String::from(E16)),
             // The last buffer there is, listed or not: a deleted highest
             // one is still what `$` addresses.
             BufferAddress::Last if last > 0 => Ok(last),
-            BufferAddress::Last => Err(E16.to_owned()),
+            BufferAddress::Last => Err(String::from(E16)),
         };
         let address_of = address;
         // A range's buffers: backwards is E493 before an end past the last
@@ -434,12 +435,12 @@ impl Workbench {
                 address => address_of(address),
             };
             if loose(first)? > loose(last)? {
-                return Err(E493.to_owned());
+                return Err(String::from(E493));
             }
             Ok((address(first)?, address(last)?))
         };
         let alternate =
-            || (buffers.alternate(pane.entity_id(), current)).ok_or_else(|| E23.to_owned());
+            || (buffers.alternate(pane.entity_id(), current)).ok_or_else(|| String::from(E23));
         let root = self.root.clone();
         let named = |name: &str, deleting: bool| {
             let files = (buffers.numbered.iter().zip(1..))
@@ -490,7 +491,7 @@ impl Workbench {
                     BufferAddress::Last => lines,
                 };
                 if resolve(first) > resolve(end) {
-                    return Err(E493.to_owned());
+                    return Err(String::from(E493));
                 }
                 self.vim_buffer_command(editor, *command, window, cx)
             }
@@ -523,7 +524,7 @@ impl Workbench {
                         None => Path::new(""),
                     };
                     let name = match name.as_os_str().is_empty() {
-                        true => "[No Name]".to_owned(),
+                        true => tr!("workbench-workbench-vim-no-name").into(),
                         false => name.display().to_string(),
                     };
                     BufferRow {
@@ -545,7 +546,7 @@ impl Workbench {
                     BufferTarget::Current => return Ok(()),
                     BufferTarget::Alternate => alternate()?,
                     BufferTarget::Number(number) if number > last => {
-                        return Err(format!("E86: Buffer {number} does not exist"));
+                        return Err(tr!("workbench-workbench-vim-e86", number = number).into());
                     }
                     BufferTarget::Number(number) => number,
                     BufferTarget::Name(name) => named(&name, false)?,
@@ -556,7 +557,7 @@ impl Workbench {
             }
             BufferCommand::Next(count) | BufferCommand::Previous(count) => {
                 if listed.is_empty() {
-                    return Err(E85.to_owned());
+                    return Err(String::from(E85));
                 }
                 let next = matches!(command, BufferCommand::Next(_));
                 let len = listed.len();
@@ -572,7 +573,7 @@ impl Workbench {
             }
             BufferCommand::First | BufferCommand::Last => {
                 let ends = (listed.first().copied()).zip(listed.last().copied());
-                let (first, last) = ends.ok_or_else(|| E85.to_owned())?;
+                let (first, last) = ends.ok_or_else(|| String::from(E85))?;
                 let to = match command {
                     BufferCommand::First => first,
                     _ => last,
@@ -595,15 +596,13 @@ impl Workbench {
                     .filter(|number| listed.contains(number))
                     .collect();
                 if deleting.is_empty() {
-                    return Err(E516.to_owned());
+                    return Err(String::from(E516));
                 }
                 if !force {
                     let dirty = (deleting.iter())
                         .find(|&&n| tabs.iter().any(|tab| tab.number == n && tab.dirty));
                     if let Some(number) = dirty {
-                        return Err(format!(
-                            "E89: No write since last change for buffer {number} (add ! to override)"
-                        ));
+                        return Err(tr!("workbench-workbench-vim-e89", number = number).into());
                     }
                 }
                 // What this pane shows next, if it shows one going.
@@ -695,9 +694,7 @@ impl Workbench {
             let dirty =
                 (deleting.iter()).find(|&&n| tabs.iter().any(|tab| tab.number == n && tab.dirty));
             if let Some(number) = dirty {
-                let error = format!(
-                    "E89: No write since last change for buffer {number} (add ! to override)"
-                );
+                let error = tr!("workbench-workbench-vim-e89", number = number);
                 return message(editor, error, cx);
             }
         }
@@ -716,7 +713,10 @@ impl Workbench {
             window.focus(&focus, cx);
         }
         if deleting.len() > 1 {
-            let report = format!("{} buffers deleted", deleting.len());
+            let report = tr!(
+                "workbench-workbench-vim-buffers-deleted",
+                count = deleting.len()
+            );
             editor.update(cx, |editor, cx| editor.report_vim_message(report, cx));
         }
     }
@@ -740,7 +740,7 @@ impl Workbench {
         let mut tabs = self.buffer_tabs(cx);
         let entry = self.vim_buffers(&mut tabs, cx, |buffers| buffers.entry(number).cloned());
         let Some(entry) = entry else {
-            return Err(format!("E86: Buffer {number} does not exist"));
+            return Err(tr!("workbench-workbench-vim-e86", number = number).into());
         };
         let here = (tabs.iter()).find(|tab| tab.pane == *pane && tab.number == number);
         if let Some(tab) = here {
@@ -757,7 +757,7 @@ impl Workbench {
                 .find(|tab| tab.number == number)
                 .and_then(|tab| tab.pane.read(cx).tabs()[tab.ix].editor().cloned());
             let Some(other) = other else {
-                return Err(format!("E86: Buffer {number} does not exist"));
+                return Err(tr!("workbench-workbench-vim-e86", number = number).into());
             };
             let model = other.read(cx).model().split();
             pane.update(cx, |pane, cx| {
@@ -822,8 +822,8 @@ fn find_named(name: &str, rounds: &[&[(u32, &Path)]], root: Option<&Path>) -> Re
         }
     }
     Err(match several {
-        true => format!("E93: More than one match for {name}"),
-        false => format!("E94: No matching buffer for {name}"),
+        true => tr!("workbench-workbench-vim-e93", name = name).into(),
+        false => tr!("workbench-workbench-vim-e94", name = name).into(),
     })
 }
 

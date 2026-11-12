@@ -52,6 +52,32 @@ pub struct Word<'a> {
     pub text: &'a str,
 }
 
+/// The config directory [`Dictionary::user`] reads from.
+#[cfg(not(test))]
+fn user_config_dir() -> Option<PathBuf> {
+    fe_config::paths::config_dir()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The config directory a test named on this thread, if any.
+    static TEST_CONFIG_DIR: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Under test, the directory a test named on this thread, else none.
+#[cfg(test)]
+fn user_config_dir() -> Option<PathBuf> {
+    TEST_CONFIG_DIR.with(|dir| dir.borrow().clone())
+}
+
+/// Names the config directory [`Dictionary::user`] reads from on this
+/// thread, under test; `None` for none.
+#[cfg(test)]
+pub(crate) fn set_test_config_dir(dir: Option<PathBuf>) {
+    TEST_CONFIG_DIR.with(|cell| *cell.borrow_mut() = dir);
+}
+
 /// A word [`check_text`] found misspelled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Misspelling {
@@ -74,8 +100,11 @@ pub struct Dictionary {
 impl Dictionary {
     /// `<config dir>/`[`DICTIONARY_FILE`]; with no config directory, an
     /// empty dictionary that writes nothing. Reads the file, blocking.
+    /// Under test the config directory is only one a test names
+    /// ([`set_test_config_dir`]), never the environment's, so no test
+    /// reads or writes the developer's own dictionary.
     pub fn user() -> Self {
-        match fe_config::paths::config_dir() {
+        match user_config_dir() {
             Some(dir) => Self::load(dir.join(DICTIONARY_FILE)),
             None => Self::default(),
         }

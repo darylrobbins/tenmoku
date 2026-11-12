@@ -16,6 +16,7 @@ use fe_command::{
     Effect, FsScope, Invocation, PluginAccess, PluginDenied, PluginPolicy, Registry,
 };
 use gpui::{App, Focusable as _, Window};
+use kiln_l10n::tr;
 
 use crate::Workbench;
 use serde::Deserialize;
@@ -42,27 +43,28 @@ pub(crate) struct OpenPathArgs {
     pub(crate) column: Option<u32>,
 }
 
-/// The workbench commands open to plugins: their ids and titles, the
-/// capabilities they need beyond `commands`, and their path args.
-const PLUGIN_CALLABLE: [(&str, &str, &[Capability], &[&str]); 7] = [
+/// The workbench commands open to plugins: their ids, the capabilities
+/// they need beyond `commands`, and their path args. Each registers with
+/// its `command-<id>` message as its title ([`command_title`]).
+const PLUGIN_CALLABLE: [(&str, &[Capability], &[&str]); 7] = [
     (
         OPEN_PATH,
-        "Open Path",
         &[Capability::FsRead(FsScope::Workspace)],
         &["path"],
     ),
-    ("nav.back", "Go Back", &[], &[]),
-    ("nav.forward", "Go Forward", &[], &[]),
-    ("diagnostics.next", "Go to Next Problem", &[], &[]),
-    ("diagnostics.previous", "Go to Previous Problem", &[], &[]),
-    (
-        "project_panel.reveal_active",
-        "Reveal Active File in Project",
-        &[],
-        &[],
-    ),
-    ("problems.show", "Show Problems", &[], &[]),
+    ("nav.back", &[], &[]),
+    ("nav.forward", &[], &[]),
+    ("diagnostics.next", &[], &[]),
+    ("diagnostics.previous", &[], &[]),
+    ("project_panel.reveal_active", &[], &[]),
+    ("problems.show", &[], &[]),
 ];
+
+/// The title command `id` registers with: its `command-<id>` message,
+/// which `label()` resolves again in the active locale wherever it's shown.
+fn command_title(id: &str) -> gpui::SharedString {
+    kiln_l10n::message(&fe_command::l10n::command_key(id))
+}
 
 /// The [`CommandTarget`] of the plugin-facing entries: the window to run
 /// the typed command in.
@@ -93,7 +95,7 @@ impl Forward<'_> {
     fn run(&mut self) -> Result<Dispatched<()>, CommandError> {
         let command = &self.invocation.command;
         let typed = kiln::platform::command_actions::typed_command(command, self.cx)
-            .ok_or_else(|| CommandError::new("it isn't a workbench command"))?;
+            .ok_or_else(|| CommandError::new(tr!("workbench-workbench-plugin-not-a-command")))?;
         let action = typed
             .build(&self.invocation.args)
             .map_err(CommandError::new)?;
@@ -109,9 +111,9 @@ impl Forward<'_> {
             && self.window.is_action_available(&*action, self.cx)
             && ContextPredicate::identifier(crate::KEY_CONTEXT).eval(&context);
         if !reached {
-            return Err(CommandError::new(
-                "no workbench element is focused to run it",
-            ));
+            return Err(CommandError::new(tr!(
+                "workbench-workbench-plugin-no-focus"
+            )));
         }
         let invocation = self.invocation.clone().context(context);
         kiln::dispatch_invocation(invocation, self.window, self.cx)
@@ -133,7 +135,8 @@ impl Forward<'_> {
 /// plugin.
 pub(crate) fn registry() -> Registry<WorkbenchCommands> {
     let mut registry = Registry::new();
-    for (id, title, capabilities, path_args) in PLUGIN_CALLABLE {
+    for (id, capabilities, path_args) in PLUGIN_CALLABLE {
+        let title = &command_title(id);
         if id == OPEN_PATH {
             registry.register_with_args(
                 id,

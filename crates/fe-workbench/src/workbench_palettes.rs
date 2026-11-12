@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use fe_gpui::EditorView;
 use gpui::{AppContext as _, Context, Entity, Focusable, WeakEntity, Window};
+use kiln_l10n::text;
 use kiln_shell::ModalId;
 
 use super::recent_picker::RecentOp;
@@ -50,7 +51,12 @@ impl Workbench {
     ) -> Entity<Picker<QuickOpen>> {
         cx.new(|cx| {
             let delegate = QuickOpen::new(root, pane);
-            Picker::new(delegate, "Go to file…", fe_ui::ui_theme(cx), cx)
+            Picker::new(
+                delegate,
+                text!("workbench-workbench-quick-open-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
         })
     }
 
