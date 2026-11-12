@@ -519,9 +519,11 @@ fn links_to_recognises_a_junction(cx: &mut TestAppContext) {
     fs::create_dir_all(&target).unwrap();
     let other = dir.path().join("other");
     fs::create_dir_all(&other).unwrap();
+    // Linked to the canonical folder, as installs link: macOS's temp
+    // folder is under the /var symlink.
+    let target = dunce::canonicalize(&target).unwrap();
     let at = dir.path().join("link");
     crate::plugin_dev::make_junction(&target, &at).unwrap();
-    let target = dunce::canonicalize(&target).unwrap();
     assert!(crate::plugin_dev::links_to(&at, &target));
     assert!(!crate::plugin_dev::links_to(
         &at,
