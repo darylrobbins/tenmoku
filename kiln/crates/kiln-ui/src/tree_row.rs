@@ -3,9 +3,9 @@
 use std::f32::consts::FRAC_PI_2;
 
 use gpui::{
-    App, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
-    Pixels, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, Transformation,
-    Window, div, prelude::FluentBuilder as _, px, radians, svg,
+    App, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Transformation, Window, div, prelude::FluentBuilder as _, px, radians, svg,
 };
 
 use crate::{
@@ -77,7 +77,11 @@ pub struct TreeRow {
     /// What a screen reader says after the label, such as a git status.
     a11y_description: Option<SharedString>,
     on_click: Option<ClickHandler>,
+    on_secondary_click: Option<SecondaryClickHandler>,
 }
+
+/// What a right click on a row runs, given where it was in the window.
+type SecondaryClickHandler = Box<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
 
 /// A row's colours for its state; `None` draws nothing.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -145,6 +149,7 @@ impl TreeRow {
             in_set: None,
             a11y_description: None,
             on_click: None,
+            on_secondary_click: None,
         }
     }
 
@@ -286,6 +291,18 @@ impl TreeRow {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    /// What a right click on the row runs, given where it was pressed in
+    /// the window, as a context menu opens: on the press, which goes no
+    /// further, so neither the list's own right click nor its focus on a
+    /// press takes it. A left click is [`Self::on_click`]'s still.
+    pub fn on_secondary_click(
+        mut self,
+        handler: impl Fn(Point<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_secondary_click = Some(Box::new(handler));
         self
     }
 
@@ -466,6 +483,12 @@ impl RenderOnce for TreeRow {
             .children(detail)
             .children(badge)
             .when_some(self.on_click, |row, on_click| row.on_click(on_click))
+            .when_some(self.on_secondary_click, |row, on_secondary_click| {
+                row.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                    cx.stop_propagation();
+                    on_secondary_click(event.position, window, cx);
+                })
+            })
             // Honoured only while an ancestor, the list, has focus.
             .when(selected, |row| row.aria_active_descendant());
         node_with(row, window, cx, Role::TreeItem, self.label, a11y_states)

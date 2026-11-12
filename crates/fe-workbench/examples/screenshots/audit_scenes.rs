@@ -44,6 +44,8 @@ mod problems;
 mod problems_panel;
 #[path = "audit/project_tree_git.rs"]
 mod project_tree_git;
+#[path = "audit/project_tree_menu.rs"]
+mod project_tree_menu;
 #[path = "audit/prompt.rs"]
 mod prompt;
 #[path = "audit/search_panel.rs"]
@@ -104,6 +106,7 @@ const SURFACES: &[&Surface] = &[
     &terminal_session::SURFACE,
     &terminal::SURFACE,
     &git_log_card::SURFACE,
+    &project_tree_menu::SURFACE,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup

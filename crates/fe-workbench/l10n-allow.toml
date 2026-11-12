@@ -76,6 +76,8 @@ migrated = [
     "src/project_panel_nav.rs",
     "src/project_panel_ops.rs",
     "src/project_panel_clipboard.rs",
+    # The tree's right-click menu (T1750).
+    "src/project_panel_menu.rs",
     "src/outline_panel.rs",
     "src/outline_panel_keys.rs",
     # The tab strip, the breadcrumbs and the pane menu in B3 (T1542).

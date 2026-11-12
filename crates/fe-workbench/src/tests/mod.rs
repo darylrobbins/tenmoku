@@ -107,6 +107,7 @@ mod pane_maximize;
 mod pane_toolbar;
 mod pane_toolbar_no_path_item;
 mod problems_b3;
+mod project_menu;
 mod project_panel;
 pub(crate) mod quick_open;
 mod quick_open_races;

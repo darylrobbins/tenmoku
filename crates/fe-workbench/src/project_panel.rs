@@ -22,7 +22,8 @@
 //! move to the Trash, duplicate, copy path) are in [`ops`]; expanding and
 //! collapsing every folder, toggling ignored entries and refreshing are in
 //! [`nav`]; cutting, copying and pasting entries are in [`clipboard`];
-//! filtering the rows by name is in [`filter`].
+//! filtering the rows by name is in [`filter`]; the right-click menu that
+//! offers them is in [`menu`].
 
 use std::{
     cell::Cell,
@@ -43,8 +44,9 @@ use fe_ui::{
 };
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Global, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy,
-    SharedString, Styled as _, Task, UniformListScrollHandle, Window, div, px, uniform_list,
+    Global, Hsla, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement as _, Render, ScrollStrategy, SharedString, Styled as _, Task,
+    UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use kiln_l10n::{Text, text, tr, verbatim};
 use kiln_shell::PaneAction;
@@ -286,6 +288,8 @@ pub struct ProjectPanel {
     drawn_cut: Vec<String>,
     /// The filter by name, while it's set.
     filter: Option<filter::Filter>,
+    /// The right-click menu, while it's open.
+    menu: Option<menu::TreeMenu>,
     _watch: Option<Task<()>>,
     /// Its text, and its open fields' placeholders, in a new language.
     _locale: gpui::Subscription,
@@ -337,6 +341,7 @@ impl ProjectPanel {
             #[cfg(test)]
             drawn_cut: Vec::new(),
             filter: None,
+            menu: None,
             _watch: None,
             _locale: cx.observe_global::<kiln_platform::locale::ActiveLocale>(Self::follow_locale),
         };
@@ -470,6 +475,7 @@ impl ProjectPanel {
         self.revealing = None;
         self.edit = None;
         self.filter = None;
+        self.menu = None;
         self.clip_reopened();
         self.start(self.show_ignored, cx);
         cx.notify();
@@ -572,6 +578,8 @@ impl ProjectPanel {
     /// `selected`, clamped to the last row: in a filtered list the nearest
     /// match, or none with none left.
     fn removed(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
+        // The menu goes with its row.
+        self.close_gone_menu(cx);
         let State::Open(tree) = &self.state else {
             return;
         };
@@ -969,6 +977,7 @@ impl ProjectPanel {
         if op != PanelOp::ToggleIgnored {
             self.cancel_reveal();
         }
+        self.close_menu(cx);
         match op {
             PanelOp::SelectPrev => self.move_selection(-1, cx),
             PanelOp::SelectNext => self.move_selection(1, cx),
@@ -1039,6 +1048,7 @@ impl ProjectPanel {
         let mut drawn_cut = Vec::new();
         let theme = fe_ui::ui_theme(cx);
         let mut places = HashMap::new();
+        let weak = cx.entity().downgrade();
         let mut rows: Vec<gpui::AnyElement> = (shown.into_iter())
             .filter_map(|ix| Some((tree.rows(ix..ix + 1).next()?, ix)))
             .map(|(row, ix)| {
@@ -1064,7 +1074,16 @@ impl ProjectPanel {
                     .ignored(row.ignored || cut == Some(id))
                     .error(row.error.is_some())
                     .selected(selected)
-                    .on_click(cx.listener(move |panel, event, _, cx| panel.clicked(id, event, cx)));
+                    .on_click(cx.listener(move |panel, event, _, cx| panel.clicked(id, event, cx)))
+                    .on_secondary_click({
+                        let panel = weak.clone();
+                        move |position, window, cx| {
+                            (panel.update(cx, |panel, cx| {
+                                panel.open_menu(Some(id), position, window, cx)
+                            }))
+                            .ok();
+                        }
+                    });
                 if row.kind == EntryKind::Dir {
                     element = element.directory(row.expanded);
                 }
@@ -1196,13 +1215,23 @@ impl Render for ProjectPanel {
             )
             .track_scroll(&self.scroll)
             .flex_1()
+            // The empty space below the rows: a row's own takes its click.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|panel, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    panel.open_menu(None, event.position, window, cx);
+                }),
+            )
             .into_any_element(),
         };
         let filter = self.render_filter(cx);
         // Vim's tree keys are off while the name field or the filter's box
         // takes typing.
         let typing = self.edit.is_some() || self.filter_typing();
-        let context = if fe_gpui::vim_enabled(cx) && !typing {
+        let context = if self.menu.is_some() {
+            menu::MENU_KEY_CONTEXT
+        } else if fe_gpui::vim_enabled(cx) && !typing {
             VIM_KEY_CONTEXT
         } else {
             KEY_CONTEXT
@@ -1213,6 +1242,7 @@ impl Render for ProjectPanel {
             .track_focus(&self.focus)
             .key_context(context)
             .on_action(cx.listener(Self::on_run_command))
+            .on_key_down(cx.listener(Self::on_menu_key))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
             .min_w_0()
@@ -1230,7 +1260,8 @@ impl Render for ProjectPanel {
             .child(body)
             .children(
                 (self.status.as_ref()).map(|status| self.message(status.resolve().into(), cx)),
-            );
+            )
+            .children(self.render_menu(window, cx));
         // To a screen reader the panel is the `Tree` "Files", its rows the
         // tree's items (the list holds no node of its own). It's what takes
         // focus, so the selected row can be its active descendant.
@@ -1488,6 +1519,9 @@ mod project_panel_clipboard_tests;
 
 #[path = "project_panel_filter.rs"]
 mod filter;
+
+#[path = "project_panel_menu.rs"]
+mod menu;
 
 #[cfg(test)]
 #[path = "project_panel_filter_tests.rs"]

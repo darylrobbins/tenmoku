@@ -81,6 +81,12 @@ workbench-project-paste-busy-working = “{ $name }” is being worked on. Paste
 # A paste that found its entry changed under it. $name is the entry's.
 workbench-project-paste-raced = “{ $name }” was moved or replaced while it was being pasted. Nothing was moved.
 
+## The tree's right-click menu (project_panel_menu.rs)
+
+# What a screen reader calls the menu a right click on the tree opens. Its
+# items are the tree's commands, titled as the command palette lists them.
+workbench-project-menu = File actions
+
 ## Structure, the outline (outline_panel.rs)
 
 workbench-project-structure-no-file = No file open

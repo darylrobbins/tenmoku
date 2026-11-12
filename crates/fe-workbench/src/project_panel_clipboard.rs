@@ -382,6 +382,29 @@ impl ProjectPanel {
         self.reveal(shown_to, cx);
     }
 
+    /// Whether a paste now, on the selected row (or the root with none),
+    /// would do anything: there's an entry to paste, no cut's paste waits,
+    /// and a cut entry wouldn't land where it is. For the tree's menu,
+    /// which leaves out Paste otherwise.
+    pub(super) fn can_paste(&self) -> bool {
+        let Some(clip) = &self.clipboard.item else {
+            return false;
+        };
+        if self.clipboard.moving {
+            return false;
+        }
+        let Some(tree) = self.tree() else {
+            return false;
+        };
+        match clip.kind {
+            ClipKind::Copy => true,
+            ClipKind::Cut => {
+                let source = tree.root_path().join(&clip.rel);
+                (self.paste_folder(None)).is_some_and(|dir| source.parent() != Some(&dir))
+            }
+        }
+    }
+
     /// The cut entry's node, if it's loaded, for its row to be dimmed.
     pub(super) fn cut_node(&self) -> Option<NodeId> {
         let clip = (self.clipboard.item.as_ref()).filter(|clip| clip.kind == ClipKind::Cut)?;
