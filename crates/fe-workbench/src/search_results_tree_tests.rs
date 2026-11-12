@@ -140,7 +140,7 @@ fn rows(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Vec<String>
 }
 
 fn depths(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Vec<usize> {
-    search.read_with(cx, |search, _| search.depths.clone())
+    search.read_with(cx, |search, _| search.depths())
 }
 
 fn selected(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Option<usize> {
