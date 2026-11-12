@@ -19,6 +19,7 @@ use crate::fake::{Echo, FakeServer, InitializeReply, Record, Replica, Saved, Scr
 use crate::server::BACKSTOP;
 use crate::{LspManager, ManualClock, ServerId, ServerSpec, ServerStatus};
 
+mod fan_out;
 mod file_operations;
 
 const ROOT: &str = crate::fake::FAKE_ROOT;

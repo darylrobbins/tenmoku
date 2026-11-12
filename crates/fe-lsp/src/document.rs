@@ -18,14 +18,19 @@
 //!   each, walked in reverse against the text as sent before the batch, so
 //!   no change moves a later one's range.
 //!
-//! The subscription is shared with the manager ([`Subscribed`]), so that
-//! [`LspManager::close`](crate::LspManager::close) can detach it on the
-//! host's thread: the events queued so far stay for the actor's drains, in
-//! order, and an edit made after `close` returns is never sent. Whatever
-//! ends the actor's hold on a document ([`Attached`], dropped with the
+//! The subscription is shared with the manager through a hub
+//! ([`Subscribed`]), which fans its events out to one queue (a tap) per
+//! server the document is on, in order, and keeps the latest text drained
+//! for a server joining later. Whichever thread drains a tap drains the
+//! subscription into every tap. So that
+//! [`LspManager::close`](crate::LspManager::close) can detach the hub on
+//! the host's thread: the events queued so far stay in each tap for its
+//! drains, and an edit made after `close` returns is never sent. Whatever
+//! ends a server's hold on a document ([`Attached`], dropped with the
 //! document or with an opening still queued: a close, a crash, a failed
-//! start, a panic) drops the subscription too, so no buffer keeps queueing
-//! events for a server that will never drain them.
+//! start, a panic) drops its tap, and the last tap's drop drops the
+//! subscription too, so no buffer keeps queueing events for servers that
+//! will never drain them.
 //!
 //! Each incarnation (identity.rs) keeps a ring of the last [`RING`]
 //! versions sent, to admit requests and decode replies and published
@@ -129,61 +134,103 @@ fn known(kind: TextDocumentSyncKind) -> TextDocumentSyncKind {
     }
 }
 
-/// A document's subscription, shared by the manager and the actor.
+/// A document's subscription hub (docs/decisions/q5j03ax2af-lsp-add-on-servers.md
+/// §4), shared by the manager and the threads of the servers the document
+/// is on. The host hands [`LspManager::open`](crate::LspManager::open) one
+/// subscription; the hub fans it out to a queue (a *tap*) per server,
+/// and keeps the latest text drained, for a server that joins later.
 #[derive(Clone)]
-pub(crate) struct Subscribed(Arc<Mutex<Feed>>);
+pub(crate) struct Subscribed(Arc<Mutex<Hub>>);
+
+struct Hub {
+    /// Until the manager closes the document, or the last tap goes.
+    subscription: Option<Subscription>,
+    /// One per server the document is on or waits for, by tap number.
+    taps: Vec<(u64, Tap)>,
+    next_tap: u64,
+    /// The buffer's text as of the newest batch drained, and its version.
+    latest: (Text, Version),
+}
 
 #[derive(Default)]
-struct Feed {
-    /// Until the manager closes the document, or the actor lets it go.
-    subscription: Option<Subscription>,
-    /// Events taken from the subscription at `close`, still to drain.
-    detached: Vec<BufferEvent>,
+struct Tap {
+    /// Events drained from the subscription that this tap hasn't taken.
+    events: Vec<BufferEvent>,
     /// A save a catch-up drained that applies to the version it caught up
     /// to, for the `didOpen` that follows to send after itself.
     caught_up_save: Option<Version>,
 }
 
+impl Hub {
+    /// Moves what the subscription queued into every tap, in order, and
+    /// keeps the newest text.
+    fn fan_out(&mut self) {
+        let Some(subscription) = &self.subscription else {
+            return;
+        };
+        let events = subscription.drain();
+        for event in &events {
+            if let BufferEvent::Edited { to, text, .. } = event
+                && *to > self.latest.1
+            {
+                self.latest = (text.clone(), *to);
+            }
+        }
+        // Clones for all taps but the last, which takes the events.
+        if let Some(((_, last), others)) = self.taps.split_last_mut() {
+            for (_, tap) in others {
+                tap.events.extend(events.iter().cloned());
+            }
+            last.events.extend(events);
+        }
+    }
+
+    fn tap(&mut self, tap: u64) -> Option<&mut Tap> {
+        self.taps
+            .iter_mut()
+            .find_map(|(id, it)| (*id == tap).then_some(it))
+    }
+}
+
 impl Subscribed {
-    pub(crate) fn new(subscription: Subscription) -> Self {
-        Self(Arc::new(Mutex::new(Feed {
+    /// A hub for `subscription`, made no later than `version` of the
+    /// buffer, whose text is `text` then. It has no taps yet.
+    pub(crate) fn new(subscription: Subscription, text: Text, version: Version) -> Self {
+        Self(Arc::new(Mutex::new(Hub {
             subscription: Some(subscription),
-            detached: Vec::new(),
-            caught_up_save: None,
+            taps: Vec::new(),
+            next_tap: 0,
+            latest: (text, version),
         })))
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Feed> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Hub> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Takes every event queued so far.
-    fn take_events(&self) -> Vec<BufferEvent> {
-        let mut feed = self.lock();
-        let mut events = std::mem::take(&mut feed.detached);
-        if let Some(subscription) = &feed.subscription {
-            events.extend(subscription.drain());
-        }
-        events
+    /// A new tap, with the text and version it starts at: the latest
+    /// drained. It gets every event drained from now on; those still in
+    /// the subscription are all newer than that text.
+    pub(crate) fn tap(&self) -> (Attached, Text, Version) {
+        let mut hub = self.lock();
+        let tap = hub.next_tap;
+        hub.next_tap += 1;
+        hub.taps.push((tap, Tap::default()));
+        let (text, version) = hub.latest.clone();
+        drop(hub);
+        let attached = Attached {
+            hub: self.clone(),
+            tap,
+        };
+        (attached, text, version)
     }
 
-    /// Remembers `save` as the save of the version a catch-up reached, or
-    /// forgets the remembered one for a later edit.
-    fn set_caught_up_save(&self, save: Option<Version>) {
-        self.lock().caught_up_save = save;
-    }
-
-    fn take_caught_up_save(&self) -> Option<Version> {
-        self.lock().caught_up_save.take()
-    }
-
-    /// Drops the subscription, keeping the events it queued until now for
-    /// the actor's drains.
+    /// Drops the subscription, keeping the events it queued until now in
+    /// each tap for its drains.
     pub(crate) fn detach(&self) {
-        let mut feed = self.lock();
-        if let Some(subscription) = feed.subscription.take() {
-            feed.detached.extend(subscription.drain());
-        }
+        let mut hub = self.lock();
+        hub.fan_out();
+        hub.subscription = None;
     }
 
     /// Whether the buffer still queues events for it.
@@ -191,17 +238,53 @@ impl Subscribed {
     pub(crate) fn is_attached(&self) -> bool {
         self.lock().subscription.is_some()
     }
+
+    /// How many taps it has.
+    #[cfg(test)]
+    pub(crate) fn taps(&self) -> usize {
+        self.lock().taps.len()
+    }
 }
 
-/// The actor's hold on a [`Subscribed`]. Dropping it drops the
-/// subscription and any events still queued, however the hold ends.
-pub(crate) struct Attached(pub(crate) Subscribed);
+/// A server's tap on a [`Subscribed`]. Dropping it drops the tap and the
+/// events still queued in it, however the hold ends; dropping a hub's last
+/// tap drops the subscription too.
+pub(crate) struct Attached {
+    hub: Subscribed,
+    tap: u64,
+}
+
+impl Attached {
+    /// Takes every event queued for this tap so far.
+    pub(crate) fn take_events(&self) -> Vec<BufferEvent> {
+        let mut hub = self.hub.lock();
+        hub.fan_out();
+        hub.tap(self.tap)
+            .map(|tap| std::mem::take(&mut tap.events))
+            .unwrap_or_default()
+    }
+
+    /// Remembers `save` as the save of the version a catch-up reached, or
+    /// forgets the remembered one for a later edit.
+    fn set_caught_up_save(&self, save: Option<Version>) {
+        if let Some(tap) = self.hub.lock().tap(self.tap) {
+            tap.caught_up_save = save;
+        }
+    }
+
+    fn take_caught_up_save(&self) -> Option<Version> {
+        self.hub.lock().tap(self.tap)?.caught_up_save.take()
+    }
+}
 
 impl Drop for Attached {
     fn drop(&mut self) {
-        let mut feed = self.0.lock();
-        feed.subscription = None;
-        feed.detached = Vec::new();
+        let mut hub = self.hub.lock();
+        hub.taps.retain(|(tap, _)| *tap != self.tap);
+        if hub.taps.is_empty() {
+            // No server will drain it.
+            hub.subscription = None;
+        }
     }
 }
 
@@ -280,8 +363,8 @@ impl Opening {
     /// Brings the opening up to the buffer's latest edit, so a document
     /// waiting for a server doesn't keep a queue of events.
     pub(crate) fn catch_up(&mut self) {
-        let mut save = self.subscription.0.take_caught_up_save();
-        for event in self.subscription.0.take_events() {
+        let mut save = self.subscription.take_caught_up_save();
+        for event in self.subscription.take_events() {
             match event {
                 BufferEvent::Edited { to, text, .. } if to > self.version => {
                     self.text = text;
@@ -294,7 +377,7 @@ impl Opening {
                 _ => {}
             }
         }
-        self.subscription.0.set_caught_up_save(save);
+        self.subscription.set_caught_up_save(save);
     }
 }
 
@@ -507,7 +590,7 @@ impl Document {
             at: opening.version,
             synced: None,
         };
-        let saved = document.subscription.0.take_caught_up_save();
+        let saved = document.subscription.take_caught_up_save();
         link.identities.pause(Point::Activate);
         if !link.policy.open_close || document.oversized() {
             // Nothing to send, but its events still drain.
@@ -802,7 +885,7 @@ impl Document {
     /// batch that takes the document over its size limit closes it, and
     /// one that brings it back under opens it again.
     pub(crate) fn drain(&mut self, link: &mut Link) {
-        let events = self.subscription.0.take_events();
+        let events = self.subscription.take_events();
         if !link.policy.open_close {
             // Nothing is sent, but the queue mustn't grow either, and the
             // size limit still goes by the latest text.

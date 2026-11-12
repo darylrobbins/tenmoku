@@ -36,7 +36,7 @@ use lsp_types::request::Request;
 use lsp_types::{ServerCapabilities, Url};
 
 use crate::clock::{Clock, SystemClock};
-use crate::document::{Admitted, Attached, Opened, Opening, Subscribed, language_id};
+use crate::document::{Admitted, Opened, Opening, Subscribed, language_id};
 use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, ServerId, ServerStatus, SharedLog, not_open};
 use crate::identity::{Identities, IncarnationId, SessionId};
@@ -69,8 +69,8 @@ pub struct LspManager {
     pub(crate) clock: Arc<dyn Clock>,
     sink: Sink,
     servers: HashMap<ServerId, Handle>,
-    /// Every open document: where it's synced, and its subscription,
-    /// shared with that server's thread.
+    /// Every open document: where it's synced, and its subscription hub,
+    /// whose tap that server's thread holds.
     documents: HashMap<BufferId, Placed>,
     /// Where routed documents are, and those waiting for a server, shared
     /// with the servers' threads, which hand theirs on when they end.
@@ -990,12 +990,13 @@ impl LspManager {
         let specs = self.registry.specs();
         let markers = server_for(&specs, language).map_or(&[][..], |spec| &spec.root_markers);
         let root = server_root(path, window, markers);
-        let subscribed = Subscribed::new(subscription);
+        let subscribed = Subscribed::new(subscription, text, version);
+        let (tap, text, version) = subscribed.tap();
         let opening = Opening {
             buffer,
             text,
             version,
-            subscription: Attached(subscribed.clone()),
+            subscription: tap,
             uri,
             language_id: language_id(language, path),
             generation: self.identities.open(buffer),
@@ -1303,13 +1304,14 @@ impl LspManager {
         // Closed before the open is sent, so a server dropping the open
         // drops nothing the manager still tracks.
         self.close(buffer);
-        let subscription = Subscribed::new(subscription);
+        let subscription = Subscribed::new(subscription, text, version);
+        let (tap, text, version) = subscription.tap();
         let filtered_as = (uri.clone(), language_id(language, path));
         let opening = Opening {
             buffer,
             text,
             version,
-            subscription: Attached(subscription.clone()),
+            subscription: tap,
             uri,
             language_id: language_id(language, path),
             generation: self.identities.open(buffer),
