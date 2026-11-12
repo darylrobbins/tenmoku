@@ -28,6 +28,7 @@ use gpui::{
     IntoElement as _, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity,
     Window, div, px, svg,
 };
+use kiln_l10n::{text, tr};
 
 use super::buffer_lines_picker::RowPreview;
 use crate::{
@@ -305,14 +306,14 @@ impl PickerDelegate for DiagnosticsPicker {
 
     fn status(&self) -> Option<SharedString> {
         if self.scope == Scope::Document && self.previewed_path.is_none() {
-            Some("No file".into())
+            Some(tr!("workbench-lsp-diagnostics-no-file"))
         } else if self.rows.is_empty() {
             Some(match self.scope {
-                Scope::Document => "No problems in this file".into(),
-                Scope::Workspace => "No problems".into(),
+                Scope::Document => tr!("workbench-lsp-diagnostics-none-in-file"),
+                Scope::Workspace => tr!("workbench-lsp-diagnostics-none"),
             })
         } else if self.matches.is_empty() {
-            Some("No matching problems".into())
+            Some(tr!("workbench-lsp-diagnostics-no-match"))
         } else {
             None
         }
@@ -358,8 +359,8 @@ impl Workbench {
             cx,
         );
         let placeholder = match scope {
-            Scope::Document => "Search diagnostics in file…",
-            Scope::Workspace => "Search diagnostics…",
+            Scope::Document => text!("workbench-lsp-diagnostics-file-placeholder"),
+            Scope::Workspace => text!("workbench-lsp-diagnostics-placeholder"),
         };
         let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| {

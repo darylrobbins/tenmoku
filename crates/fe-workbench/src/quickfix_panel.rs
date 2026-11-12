@@ -29,6 +29,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
     uniform_list,
 };
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -55,9 +56,6 @@ pub(crate) const KEY_CONTEXT: &str = "quickfix_panel";
 
 /// The flag the panel's key context has while vim is on.
 const VIM_FLAG: &str = "vim";
-
-/// The title row's name while the panel shows a location list.
-const LOCATION_NAME: &str = "Location List";
 
 pub(crate) struct QuickfixPanel {
     workbench: WeakEntity<Workbench>,
@@ -147,8 +145,8 @@ impl QuickfixPanel {
     /// The title row's text: which list it shows.
     pub(crate) fn title(&self, _: &App) -> SharedString {
         match self.source {
-            Some(_) => LOCATION_NAME.into(),
-            None => SIDEBAR.name.into(),
+            Some(_) => tr!("workbench-lsp-quickfix-location-list"),
+            None => tr!("workbench-lsp-quickfix-quickfix-list"),
         }
     }
 
@@ -345,12 +343,17 @@ impl QuickfixPanel {
     fn header(&self, cx: &mut App) -> (String, String) {
         match self.list(cx) {
             Some(list) => {
-                let n = list.items.len();
-                let s = if n == 1 { "" } else { "s" };
-                (list.title.clone(), format!("{n} item{s}"))
+                let count = tr!("workbench-lsp-quickfix-items", count = list.items.len());
+                (list.title.clone(), count.into())
             }
-            None if self.source.is_some() => ("No location list".into(), String::new()),
-            None => ("No quickfix list".into(), String::new()),
+            None if self.source.is_some() => (
+                tr!("workbench-lsp-quickfix-no-location-list").into(),
+                String::new(),
+            ),
+            None => (
+                tr!("workbench-lsp-quickfix-no-quickfix-list").into(),
+                String::new(),
+            ),
         }
     }
 }

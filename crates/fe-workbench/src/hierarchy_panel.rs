@@ -41,9 +41,10 @@ use fe_text::Text;
 use fe_ui::{ActiveTheme as _, Icon, IconButton, TreeRow};
 use gpui::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy, Styled as _, Task,
-    UniformListScrollHandle, WeakEntity, Window, div, px, uniform_list,
+    IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy, SharedString,
+    Styled as _, Task, UniformListScrollHandle, WeakEntity, Window, div, px, uniform_list,
 };
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -65,14 +66,6 @@ pub(crate) const SIDEBAR: SidebarPanel = SidebarPanel {
     always_on_rail: false,
     focus_on_show: true,
 };
-
-/// What the toast says for a caret with no item, or a server that
-/// doesn't provide the hierarchy.
-const NONE_HERE: &str = "No call hierarchy available here";
-const NO_TYPES_HERE: &str = "No type hierarchy available here";
-
-/// What the toast says when no language server has the file.
-const NO_SERVER: &str = "No language server for this file";
 
 /// What the panel shows: the calls of a function or the supertypes and
 /// subtypes of a type.
@@ -117,28 +110,36 @@ impl Mode {
     }
 
     /// What the button that flips to the other mode says.
-    fn other_label(self) -> &'static str {
+    fn other_label(self) -> SharedString {
         match self {
-            Mode::Incoming => "Show Outgoing Calls",
-            Mode::Outgoing => "Show Incoming Calls",
-            Mode::Supertypes => "Show Subtypes",
-            Mode::Subtypes => "Show Supertypes",
+            Mode::Incoming => tr!("workbench-lsp-hierarchy-show-outgoing"),
+            Mode::Outgoing => tr!("workbench-lsp-hierarchy-show-incoming"),
+            Mode::Supertypes => tr!("workbench-lsp-hierarchy-show-subtypes"),
+            Mode::Subtypes => tr!("workbench-lsp-hierarchy-show-supertypes"),
         }
     }
 
     /// What an empty row says.
-    fn empty(self) -> &'static str {
+    fn empty(self) -> SharedString {
         match self {
-            Mode::Incoming | Mode::Outgoing => "No calls",
-            Mode::Supertypes => "No supertypes",
-            Mode::Subtypes => "No subtypes",
+            Mode::Incoming | Mode::Outgoing => tr!("workbench-lsp-hierarchy-no-calls"),
+            Mode::Supertypes => tr!("workbench-lsp-hierarchy-no-supertypes"),
+            Mode::Subtypes => tr!("workbench-lsp-hierarchy-no-subtypes"),
         }
     }
 
-    fn title(self) -> &'static str {
+    fn title(self) -> SharedString {
         match self.kind() {
-            Kind::Calls => "Call Hierarchy",
-            Kind::Types => "Type Hierarchy",
+            Kind::Calls => tr!("workbench-lsp-hierarchy-calls"),
+            Kind::Types => tr!("workbench-lsp-hierarchy-types"),
+        }
+    }
+
+    /// The dock's title row with `name`, the root's.
+    fn titled(self, name: &str) -> SharedString {
+        match self.kind() {
+            Kind::Calls => tr!("workbench-lsp-hierarchy-calls-of", name = name),
+            Kind::Types => tr!("workbench-lsp-hierarchy-types-of", name = name),
         }
     }
 }
@@ -260,10 +261,9 @@ impl HierarchyPanel {
     /// The dock's title row: `Call Hierarchy: <name>` or `Type Hierarchy:
     /// <name>`.
     pub(crate) fn title(&self, _: &App) -> gpui::SharedString {
-        let title = self.mode.title();
         match &self.root {
-            Some(root) => format!("{title}: {}", root.item.name).into(),
-            None => title.into(),
+            Some(root) => self.mode.titled(&root.item.name),
+            None => self.mode.title(),
         }
     }
 
@@ -360,15 +360,24 @@ impl HierarchyPanel {
             Ok(Some(items)) => items.into_iter().next(),
             Ok(None) => None,
             Err(error) => {
-                let what = self.mode.title();
-                toast::show(cx, Toast::error(format!("{what}: {error}")));
+                let text = match kind {
+                    Kind::Calls => tr!(
+                        "workbench-lsp-hierarchy-calls-failed",
+                        error = error.to_string()
+                    ),
+                    Kind::Types => tr!(
+                        "workbench-lsp-hierarchy-types-failed",
+                        error = error.to_string()
+                    ),
+                };
+                toast::show(cx, Toast::error(text));
                 return false;
             }
         };
         let Some(item) = item else {
             let none = match kind {
-                Kind::Calls => NONE_HERE,
-                Kind::Types => NO_TYPES_HERE,
+                Kind::Calls => tr!("workbench-lsp-hierarchy-no-calls-here"),
+                Kind::Types => tr!("workbench-lsp-hierarchy-no-types-here"),
             };
             toast::show(cx, Toast::info(none));
             return false;
@@ -565,7 +574,9 @@ impl HierarchyPanel {
             };
             match &node.children {
                 Children::NotLoaded => {}
-                Children::Loading => rows.push(message("Loading…", false)),
+                Children::Loading => {
+                    rows.push(message(&tr!("workbench-lsp-hierarchy-loading"), false))
+                }
                 Children::Failed(error) => rows.push(message(error, true)),
                 Children::Loaded(children) if children.is_empty() => {
                     rows.push(message(empty, false))
@@ -581,7 +592,7 @@ impl HierarchyPanel {
         }
         let mut rows = Vec::new();
         if let Some(root) = &self.root {
-            push(root, self.mode.empty(), &mut Vec::new(), &mut rows);
+            push(root, &self.mode.empty(), &mut Vec::new(), &mut rows);
         }
         rows
     }
@@ -722,7 +733,7 @@ impl HierarchyPanel {
                 let node = self.node(path).expect("a drawn row has its node");
                 let mut badge = Vec::new();
                 if node.recursive {
-                    badge.push("recursive".to_owned());
+                    badge.push(tr!("workbench-lsp-hierarchy-recursive").to_string());
                 }
                 if node.sites.len() > 1 {
                     badge.push(node.sites.len().to_string());
@@ -866,7 +877,7 @@ impl Workbench {
             .manager()
             .filter(|manager| lock(manager).server_of(buffer).is_some());
         let Some(manager) = manager else {
-            toast::show(cx, Toast::info(NO_SERVER));
+            toast::show(cx, Toast::info(tr!("workbench-lsp-no-server")));
             return;
         };
         let panel = match self.dock().read(cx).hierarchy().cloned() {
@@ -956,8 +967,14 @@ impl Workbench {
         // thread.
         let file = path.clone();
         let read = cx.background_spawn(async move {
-            let buffer = crate::loader::read(file.clone())
-                .map_err(|error| format!("Can't open {}: {error}", file.display()))?;
+            let buffer = crate::loader::read(file.clone()).map_err(|error| {
+                tr!(
+                    "workbench-lsp-cant-open-error",
+                    path = file.display().to_string(),
+                    error = error.to_string()
+                )
+                .to_string()
+            })?;
             Ok::<_, String>(buffer.map(|buffer| buffer.text().clone()))
         });
         let pane = self.pane().clone();

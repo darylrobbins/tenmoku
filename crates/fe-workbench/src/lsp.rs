@@ -141,6 +141,7 @@ use crate::lsp_consent::ConsentGate;
 use crate::open::settings_path;
 use crate::workbench::toast::{self, Toast};
 use crate::{RootChanged, TrustChanged, Workbench};
+use kiln_l10n::{tr, verbatim};
 use kiln_shell::{Icon, StatusSide, StatusTone};
 
 /// The status bar item's id.
@@ -864,17 +865,39 @@ pub(crate) fn status_text(
     if let Some(message) = message {
         return Some((message.to_owned(), StatusTone::Error));
     }
-    let (status, tone) = match status {
-        ServerStatus::Starting => ("starting…".to_owned(), StatusTone::Default),
-        ServerStatus::Indexing { title } => (format!("indexing {title}"), StatusTone::Default),
-        ServerStatus::Restarting(n) => {
-            (format!("restarting ({n}/{RESTARTS})"), StatusTone::Warning)
-        }
-        ServerStatus::Stopped(Some(error)) => (format!("stopped: {error}"), StatusTone::Error),
-        ServerStatus::Stopped(None) => ("stopped".to_owned(), StatusTone::Default),
+    let (text, tone) = match status {
+        ServerStatus::Starting => (
+            tr!("workbench-lsp-status-starting", name = name),
+            StatusTone::Default,
+        ),
+        ServerStatus::Indexing { title } => (
+            tr!("workbench-lsp-status-indexing", name = name, title = title),
+            StatusTone::Default,
+        ),
+        ServerStatus::Restarting(n) => (
+            tr!(
+                "workbench-lsp-status-restarting",
+                name = name,
+                attempt = *n,
+                attempts = RESTARTS
+            ),
+            StatusTone::Warning,
+        ),
+        ServerStatus::Stopped(Some(error)) => (
+            tr!(
+                "workbench-lsp-status-stopped-error",
+                name = name,
+                error = error.to_string()
+            ),
+            StatusTone::Error,
+        ),
+        ServerStatus::Stopped(None) => (
+            tr!("workbench-lsp-status-stopped", name = name),
+            StatusTone::Default,
+        ),
         _ => return None,
     };
-    Some((format!("{name}: {status}"), tone))
+    Some((text.into(), tone))
 }
 
 /// The language server's status item showing `text`.
@@ -882,7 +905,7 @@ pub(crate) fn lsp_status_item(text: String, tone: StatusTone) -> kiln_shell::Sta
     let mut item = kiln_shell::StatusItem::new(ITEM, StatusSide::Right, 0, text)
         .icon(Icon::Server)
         .tone(tone)
-        .tooltip("Show Language Server Log");
+        .tooltip(tr!("workbench-lsp-status-tooltip"));
     if let Ok(command) = Invocation::of("lsp.show_log") {
         item = item.command(command);
     }
@@ -893,12 +916,15 @@ pub(crate) fn lsp_status_item(text: String, tone: StatusTone) -> kiln_shell::Sta
 /// its marker root, `root`, isn't inside a trusted folder.
 fn untrusted_status(name: &str, root: &Path) -> (String, StatusTone, Option<String>) {
     (
-        format!("{name}: folder not trusted"),
+        tr!("workbench-lsp-status-untrusted", name = name).into(),
         StatusTone::Warning,
-        Some(format!(
-            "{} isn't inside a trusted folder, so its language servers don't start",
-            root.display()
-        )),
+        Some(
+            tr!(
+                "workbench-lsp-status-untrusted-detail",
+                root = root.display().to_string()
+            )
+            .into(),
+        ),
     )
 }
 
@@ -1928,7 +1954,7 @@ impl Workbench {
             } => {
                 let name = (lsp.servers.get(&server))
                     .map_or_else(|| format!("{server:?}"), |(name, _)| name.clone());
-                let label = label.unwrap_or_else(|| "an edit".to_owned());
+                let label = label.unwrap_or_else(|| verbatim!("an edit").to_owned());
                 // Claimed before anything changes, so the server never
                 // hears it wasn't applied when it was. Not claimable, it
                 // was answered not applied already: it timed out, or the
@@ -2117,7 +2143,8 @@ impl Workbench {
                     log::error!("can't restart {name}: {error}");
                     toast::show(
                         cx,
-                        Toast::error(format!("Can't restart {name}")).detail(error.to_string()),
+                        Toast::error(tr!("workbench-lsp-cant-restart", name = &name))
+                            .detail(error.to_string()),
                     );
                 }
             },

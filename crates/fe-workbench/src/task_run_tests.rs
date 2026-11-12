@@ -14,7 +14,7 @@ use kiln_shell::DockView as _;
 use crate::{
     Launch, TerminalPanel, Workbench,
     task_defs::{Source, Task, TaskCommand},
-    task_run::UNTRUSTED,
+    task_run::untrusted_message,
     terminal_panel::task_options,
     tests::open,
     workbench::toast::{Choices, Level},
@@ -391,7 +391,7 @@ fn an_untrusted_root_runs_nothing(cx: &mut TestAppContext) {
     let layer = workbench.read_with(cx, |workbench, _| workbench.toasts().clone());
     let action = layer.read_with(cx, |layer, _| {
         let entry = &layer.queue().shown()[0];
-        assert_eq!(entry.toast.message, UNTRUSTED);
+        assert_eq!(entry.toast.message, untrusted_message());
         entry.toast.action.clone()
     });
     let (title, command) = action.expect("an offer to trust it");

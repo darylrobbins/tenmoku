@@ -44,6 +44,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
     uniform_list,
 };
+use kiln_l10n::{tr, verbatim};
 
 use crate::{
     DockPanel, Workbench,
@@ -66,7 +67,7 @@ pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel 
 };
 
 /// The key context the panel's element sets.
-pub(crate) const KEY_CONTEXT: &str = "ReferencesPanel";
+pub(crate) const KEY_CONTEXT: &str = verbatim!("ReferencesPanel");
 
 /// The flag the panel's key context has while vim is on.
 const VIM_FLAG: &str = "vim";
@@ -86,8 +87,8 @@ enum Status {
     NoFolder,
     NoSymbol,
     Running,
-    /// The summary, and ` (by provider)` for a search answer.
-    Done(ReferencesSummary, String),
+    /// The summary, and the provider's name for a search's answer.
+    Done(ReferencesSummary, Option<String>),
     Failed(NavError),
 }
 
@@ -264,7 +265,7 @@ impl ReferencesPanel {
                 files_verified: self.files.len(),
                 ..ReferencesSummary::default()
             },
-            String::new(),
+            None,
         );
         cx.notify();
     }
@@ -301,7 +302,8 @@ impl ReferencesPanel {
         self.running = None;
         self.status = match answer {
             Ok(answer) => {
-                let by = crate::nav::by(&answer.provider, answer.precision);
+                let by = (answer.precision == fe_nav::Precision::Search)
+                    .then(|| answer.provider.clone());
                 self.word = answer.value.word.clone();
                 Status::Done(answer.value, by)
             }
@@ -332,39 +334,53 @@ impl ReferencesPanel {
     /// The line above the status: the word the results are of.
     fn header(&self) -> Option<String> {
         let word = self.word.as_ref()?;
-        Some(format!("References to `{word}`"))
+        Some(tr!("workbench-lsp-references-header", word = word).into())
     }
 
     /// The status line, and whether it's an error.
     fn status(&self) -> Option<(String, bool)> {
         let word = self.word.as_deref().unwrap_or_default();
+        // A search's answer names its provider.
+        let source = |by: &Option<String>| match by {
+            Some(_) => "search",
+            None => "exact",
+        };
+        let provider = |by: &Option<String>| by.clone().unwrap_or_default();
         let text = match &self.status {
             Status::Idle => return None,
-            Status::NoFolder => "No folder open".into(),
-            Status::NoSymbol => "No symbol at the caret".into(),
-            Status::Running => format!("Finding references to `{word}`…"),
+            Status::NoFolder => tr!("workbench-lsp-references-no-folder"),
+            Status::NoSymbol => tr!("workbench-lsp-references-no-symbol"),
+            Status::Running => tr!("workbench-lsp-references-finding", word = word),
             Status::Failed(error) => {
-                return Some((format!("Find references failed: {error}"), true));
+                let text = tr!("workbench-lsp-references-failed", error = error.to_string());
+                return Some((text.into(), true));
             }
-            Status::Done(summary, by) if summary.word.is_none() => {
-                format!("No symbol at the caret{by}")
-            }
-            Status::Done(summary, by) if summary.truncated => {
-                format!(
-                    "Showing the first {}{by}",
-                    count(self.references, "reference")
-                )
-            }
-            Status::Done(_, by) if self.references == 0 => {
-                format!("No references to `{word}`{by}")
-            }
-            Status::Done(_, by) => format!(
-                "{} in {}{by}",
-                count(self.references, "reference"),
-                count(self.files.len(), "file")
+            Status::Done(summary, by) if summary.word.is_none() => tr!(
+                "workbench-lsp-references-no-symbol-by",
+                source = source(by),
+                provider = provider(by)
+            ),
+            Status::Done(summary, by) if summary.truncated => tr!(
+                "workbench-lsp-references-first",
+                count = self.references,
+                source = source(by),
+                provider = provider(by)
+            ),
+            Status::Done(_, by) if self.references == 0 => tr!(
+                "workbench-lsp-references-none",
+                word = word,
+                source = source(by),
+                provider = provider(by)
+            ),
+            Status::Done(_, by) => tr!(
+                "workbench-lsp-references-found",
+                count = self.references,
+                files = self.files.len(),
+                source = source(by),
+                provider = provider(by)
             ),
         };
-        Some((text, false))
+        Some((text.into(), false))
     }
 
     /// Moves the selection `delta` references on, clamped to the first and
@@ -540,7 +556,7 @@ impl ReferencesPanel {
                                     div()
                                         .flex_none()
                                         .text_color(ui.muted_text)
-                                        .child("definition"),
+                                        .child(tr!("workbench-lsp-references-definition")),
                                 )
                             })
                     }
@@ -567,12 +583,6 @@ fn highlights(reference: &Reference) -> Vec<Range<usize>> {
         })
         .filter(|range| !range.is_empty())
         .collect()
-}
-
-/// `n` and `noun`, plural unless `n` is 1.
-fn count(n: usize, noun: &str) -> String {
-    let s = if n == 1 { "" } else { "s" };
-    format!("{n} {noun}{s}")
 }
 
 /// The word at `offset` in `text`: the longest run of word chars touching

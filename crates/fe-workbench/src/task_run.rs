@@ -17,6 +17,7 @@ use fe_editor::diagnostics::{Problem, Severity};
 use fe_terminal_view::{TerminalView, TerminalViewEvent};
 use fe_text::Text;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Window};
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -53,7 +54,9 @@ pub(crate) struct FakeTaskOutput(pub(crate) String);
 impl gpui::Global for FakeTaskOutput {}
 
 /// What running a task says in a folder that isn't trusted.
-pub(crate) const UNTRUSTED: &str = "Trust this folder to run its tasks";
+pub(crate) fn untrusted_message() -> String {
+    tr!("workbench-lsp-tasks-untrusted").into()
+}
 
 /// The terminal panel's task tabs, each with its source in the Problems panel,
 /// which keeps this: the terminal panel's tabs are its own, known here by the
@@ -206,7 +209,8 @@ impl Workbench {
         if !self.root_trusted() {
             let trust = fe_command::CommandId::parse("workbench.trust_folder")
                 .expect("the command's id is valid");
-            let toast = Toast::warning(UNTRUSTED).action("Trust Folder", trust);
+            let toast = Toast::warning(untrusted_message())
+                .action(tr!("workbench-lsp-tasks-trust-folder"), trust);
             return toast::show(cx, toast);
         }
         let terminal = self.terminal().clone();

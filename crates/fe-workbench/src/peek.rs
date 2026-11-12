@@ -45,6 +45,7 @@ use gpui::{
     px,
 };
 use imara_diff::{Algorithm, Diff, InternedInput, TokenSource};
+use kiln_l10n::tr;
 
 use crate::{Pane, PaneEvent, ReferencesPanel, Workbench, loader, pane::Reveal};
 
@@ -1327,7 +1328,11 @@ impl PeekView {
                     }
                     Err(error) => {
                         let name = crate::pane::file_name(Some(&path));
-                        view.error = Some(format!("Couldn't show {name}: {error}").into());
+                        view.error = Some(tr!(
+                            "workbench-lsp-peek-cant-show",
+                            name = name,
+                            error = error
+                        ));
                         cx.notify();
                     }
                 }
@@ -1429,11 +1434,11 @@ impl PeekView {
 /// one the pane opens in a viewer, unread ([`loader::is_large`]).
 fn read(path: &std::path::Path) -> Result<Buffer, String> {
     if loader::is_large(path) {
-        return Err("too large to show here".into());
+        return Err(tr!("workbench-lsp-peek-too-large").into());
     }
     match loader::read(path.to_owned()) {
         Ok(Some(buffer)) => Ok(buffer),
-        Ok(None) => Err("not found".into()),
+        Ok(None) => Err(tr!("workbench-lsp-peek-not-found").into()),
         Err(error) => Err(error.to_string()),
     }
 }

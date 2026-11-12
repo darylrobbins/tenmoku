@@ -22,6 +22,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use kiln_l10n::tr;
+
 /// How many lists a stack keeps, as nvim's `LISTCOUNT`.
 pub(crate) const STACK_DEPTH: usize = 10;
 
@@ -43,15 +45,15 @@ pub(crate) enum QuickfixKind {
 }
 
 impl QuickfixKind {
-    /// The word nvim shows for it after a space (`qf_types`): none for
-    /// [`QuickfixKind::Untyped`].
-    fn word(self) -> &'static str {
+    /// Which word nvim shows for it (`qf_types`), as the catalogue's
+    /// messages select it: none for [`QuickfixKind::Untyped`].
+    fn selector(self) -> Option<&'static str> {
         match self {
-            Self::Error => " error",
-            Self::Warning => " warning",
-            Self::Info => " info",
-            Self::Note => " note",
-            Self::Untyped => "",
+            Self::Error => Some("error"),
+            Self::Warning => Some("warning"),
+            Self::Info => Some("info"),
+            Self::Note => Some("note"),
+            Self::Untyped => None,
         }
     }
 }
@@ -88,12 +90,12 @@ pub(crate) enum QuickfixError {
 
 impl std::fmt::Display for QuickfixError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::NoErrors => "E42: No Errors",
-            Self::NoMoreItems => "E553: No more items",
-            Self::AtBottom => "E380: At bottom of quickfix stack",
-            Self::AtTop => "E381: At top of quickfix stack",
-            Self::NoLocationList => "E776: No location list",
+        f.write_str(&match self {
+            Self::NoErrors => tr!("workbench-lsp-quickfix-e42"),
+            Self::NoMoreItems => tr!("workbench-lsp-quickfix-e553"),
+            Self::AtBottom => tr!("workbench-lsp-quickfix-e380"),
+            Self::AtTop => tr!("workbench-lsp-quickfix-e381"),
+            Self::NoLocationList => tr!("workbench-lsp-quickfix-e776"),
         })
     }
 }
@@ -224,13 +226,24 @@ impl QuickfixList {
         let Some(item) = self.current_item() else {
             return String::new();
         };
-        format!(
-            "({} of {}){}: {}",
-            self.current + 1,
-            self.items.len(),
-            item.kind.word(),
-            one_line(&item.text)
-        )
+        let (current, total) = (self.current + 1, self.items.len());
+        let text = one_line(&item.text);
+        match item.kind.selector() {
+            Some(kind) => tr!(
+                "workbench-lsp-quickfix-landed",
+                current = current,
+                total = total,
+                kind = kind,
+                text = text
+            ),
+            None => tr!(
+                "workbench-lsp-quickfix-landed-untyped",
+                current = current,
+                total = total,
+                text = text
+            ),
+        }
+        .into()
     }
 
     /// `:clist`, on one line: up to [`LIST_CAP`] items from the first,
@@ -243,19 +256,34 @@ impl QuickfixList {
                 let path = root
                     .and_then(|root| item.path.strip_prefix(root).ok())
                     .unwrap_or(&item.path);
-                format!(
-                    "{} {}:{} col {}{}: {}",
-                    ix + 1,
-                    path.display(),
-                    item.row as u64 + 1,
-                    item.col as u64 + 1,
-                    item.kind.word(),
-                    one_line(&item.text)
-                )
+                let (nth, path) = (ix + 1, path.display().to_string());
+                let (row, col) = (item.row as u64 + 1, item.col as u64 + 1);
+                let text = one_line(&item.text);
+                match item.kind.selector() {
+                    Some(kind) => tr!(
+                        "workbench-lsp-quickfix-listed",
+                        nth = nth,
+                        path = path,
+                        row = row,
+                        col = col,
+                        kind = kind,
+                        text = text
+                    ),
+                    None => tr!(
+                        "workbench-lsp-quickfix-listed-untyped",
+                        nth = nth,
+                        path = path,
+                        row = row,
+                        col = col,
+                        text = text
+                    ),
+                }
+                .into()
             })
             .collect();
         if self.items.len() > LIST_CAP {
-            rows.push(format!("… {} more", self.items.len() - LIST_CAP));
+            let more = self.items.len() - LIST_CAP;
+            rows.push(tr!("workbench-lsp-quickfix-more", count = more).into());
         }
         rows.join(" | ")
     }
@@ -355,12 +383,15 @@ impl QuickfixStack {
         let Some(list) = self.current() else {
             return String::new();
         };
-        let lead = format!(
-            "error list {} of {}; {} errors ",
-            self.current + 1,
-            self.lists.len(),
-            list.items.len()
+        let lead = tr!(
+            "workbench-lsp-quickfix-summary",
+            current = self.current + 1,
+            total = self.lists.len(),
+            count = list.items.len()
         );
+        // A space after it, then padded to 34 columns, as nvim's is.
+        let mut lead = lead.to_string();
+        lead.push(' ');
         format!("{lead:<34}{}", list.title)
     }
 }

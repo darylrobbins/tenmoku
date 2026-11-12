@@ -24,6 +24,7 @@ use std::{
 
 use gpui::{App, AppContext as _, Context, EntityId, Global, Window};
 use kiln::{Cx, platform::command_actions::dispatch_window};
+use kiln_l10n::tr;
 
 use crate::{
     Workbench,
@@ -35,24 +36,36 @@ use crate::{
 };
 
 /// What `tests.run_at_cursor` says with no test around the caret.
-pub(crate) const NO_TEST_HERE: &str = "No test at the cursor";
+pub(crate) fn no_test_here() -> String {
+    tr!("workbench-lsp-tests-none-here").into()
+}
 
 /// What `tests.rerun_last` says before any test has run.
-pub(crate) const NO_TEST_RUN: &str = "No test has run yet";
+pub(crate) fn no_test_run() -> String {
+    tr!("workbench-lsp-tests-none-run").into()
+}
 
 /// What the commands say with no file to test: none active, or one never
 /// saved.
-pub(crate) const NO_FILE: &str = "Open a file to run its tests";
+fn no_file() -> String {
+    tr!("workbench-lsp-tests-no-file").into()
+}
 
 /// What the commands say with no folder open, whose trust a run needs.
-pub(crate) const NO_FOLDER: &str = "Open a folder to run its tests";
+fn no_folder() -> String {
+    tr!("workbench-lsp-tests-no-folder").into()
+}
 
 /// What the commands say when a file couldn't be saved: a test runs what's
 /// on disk.
-pub(crate) const NOT_SAVED: &str = "Save your changes to run the tests";
+fn not_saved() -> String {
+    tr!("workbench-lsp-tests-not-saved").into()
+}
 
 /// What `tests.run_at_cursor` says while the file's language loads.
-const NOT_READY: &str = "Still reading the file: try again";
+fn not_ready() -> String {
+    tr!("workbench-lsp-tests-not-ready").into()
+}
 
 /// The commands' declaration: see the module's docs. They're handled by
 /// [`init`]'s listeners, not here.
@@ -112,7 +125,7 @@ impl Workbench {
     /// was built for.
     fn run_test(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
         let Some(root) = self.root().map(Path::to_owned) else {
-            return toast::show(cx, Toast::info(NO_FOLDER));
+            return toast::show(cx, Toast::info(no_folder()));
         };
         let TestFile {
             path,
@@ -160,7 +173,7 @@ impl Workbench {
             model.path().is_some() && !view.is_read_only() && model.is_dirty()
         });
         if unsaved {
-            toast::show(cx, Toast::warning(NOT_SAVED));
+            toast::show(cx, Toast::warning(not_saved()));
         }
         !unsaved
     }
@@ -168,13 +181,13 @@ impl Workbench {
     /// The active editor's file and what in it to run: the test at the caret
     /// or the given row, else the whole file. Why there's none, in words.
     fn test_file(&self, target: Target, cx: &mut Context<Self>) -> Result<TestFile, String> {
-        let editor = self.active_editor(cx).ok_or(NO_FILE)?.clone();
+        let editor = self.active_editor(cx).ok_or_else(no_file)?.clone();
         // The caret and the tree are both read from what this catches up.
         editor.update(cx, |view, _| view.model_mut().sync_display());
         let view = editor.read(cx);
-        let path = view.model().path().ok_or(NO_FILE)?.to_owned();
+        let path = view.model().path().ok_or_else(no_file)?.to_owned();
         if view.is_loading_language() {
-            return Err(NOT_READY.to_owned());
+            return Err(not_ready());
         }
         let syntax = view.syntax();
         let language = syntax.map(|syntax| syntax.language().name());
@@ -196,14 +209,14 @@ impl Workbench {
             syntax.version() == snapshot.version() && !syntax.needs_parse() && !syntax.failed()
         });
         let Some(syntax) = syntax else {
-            return Err(NOT_READY.to_owned());
+            return Err(not_ready());
         };
         let row = match target {
             Target::Row(row) => row,
             _ => (text.offset_to_point(view.model().primary_selection().head())).row,
         };
         let found = runnables(language, syntax, text);
-        let runnable = runnable_at(&found, row).ok_or(NO_TEST_HERE)?.clone();
+        let runnable = runnable_at(&found, row).ok_or_else(no_test_here)?.clone();
         Ok(TestFile {
             path,
             language,
@@ -226,7 +239,7 @@ impl Workbench {
     /// again, as it was then.
     fn rerun_last_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(task) = self.last_test(cx) else {
-            return toast::show(cx, Toast::info(NO_TEST_RUN));
+            return toast::show(cx, Toast::info(no_test_run()));
         };
         let root = self.root().map(Path::to_owned);
         let saving = self.save_all(window, cx);

@@ -20,8 +20,8 @@ use crate::{
     task_commands::TestFiles,
     task_defs::{Group, ProjectFiles, Source, Task, TaskCommand},
     task_problems::{Matcher, match_output},
-    task_run::UNTRUSTED,
-    test_commands::{NO_TEST_HERE, NO_TEST_RUN},
+    task_run::untrusted_message,
+    test_commands::{no_test_here, no_test_run},
     test_runnables::{Runnable, RunnableKind, test_command},
     tests::open,
     workbench::toast::Level,
@@ -794,7 +794,7 @@ fn rerun_last_repeats_it(cx: &mut TestAppContext) {
 
     // None yet.
     project.run("tests.rerun_last");
-    assert_eq!(project.toasts(), [(Level::Info, NO_TEST_RUN.to_owned())]);
+    assert_eq!(project.toasts(), [(Level::Info, no_test_run())]);
     assert_eq!(project.tabs(), Vec::<String>::new());
 
     project.caret_at("fn adds");
@@ -844,7 +844,7 @@ fn no_test_at_the_cursor_toasts(cx: &mut TestAppContext) {
     let mut project = trusted(cx);
     project.caret_at("a + b");
     project.run("tests.run_at_cursor");
-    assert_eq!(project.toasts(), [(Level::Info, NO_TEST_HERE.to_owned())]);
+    assert_eq!(project.toasts(), [(Level::Info, no_test_here())]);
     assert_eq!(project.tabs(), Vec::<String>::new());
     assert_eq!(project.last_test(), None);
 
@@ -865,7 +865,7 @@ fn untrusted_folder_gets_the_trust_toast(cx: &mut TestAppContext) {
     let mut project = untrusted(cx);
     project.caret_at("fn adds");
     project.run("tests.run_at_cursor");
-    assert_eq!(project.toasts(), [(Level::Warning, UNTRUSTED.to_owned())]);
+    assert_eq!(project.toasts(), [(Level::Warning, untrusted_message())]);
     assert_eq!(project.tabs(), Vec::<String>::new());
     // Refused, it isn't the test to rerun.
     assert_eq!(project.last_test(), None);

@@ -37,6 +37,8 @@ use fe_lsp::{
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, WeakEntity};
 
+use kiln_l10n::verbatim;
+
 use crate::Workbench;
 
 /// Every open editor's input, heard, and the request each has in flight.
@@ -187,10 +189,11 @@ impl Workbench {
 }
 
 impl Target {
+    /// Which it is, as the debug log names it.
     fn what(&self) -> &'static str {
         match self.on_type {
-            true => "format on type",
-            false => "format on paste",
+            true => verbatim!("format on type"),
+            false => verbatim!("format on paste"),
         }
     }
 

@@ -34,6 +34,7 @@ use fe_project::{
     FsChange, IgnoreFinding, IgnoreFindingKind, IgnoreReport, IgnoreSeverity, check_ignore_file,
 };
 use gpui::{App, AppContext as _, Context, Entity, Task};
+use kiln_l10n::tr;
 
 use crate::Workbench;
 
@@ -377,14 +378,15 @@ fn diagnostic(finding: &IgnoreFinding) -> (std::ops::Range<usize>, Diagnostic) {
     };
     let (message, tags) = match &finding.kind {
         IgnoreFindingKind::Unused => (
-            "This pattern matches nothing in the project".to_owned(),
+            tr!("workbench-lsp-ignore-unused").into(),
             vec![DiagnosticTag::Unnecessary],
         ),
         IgnoreFindingKind::Duplicate { first_line } => {
-            (format!("Duplicate of line {first_line}"), Vec::new())
+            let message = tr!("workbench-lsp-ignore-duplicate", line = *first_line);
+            (message.into(), Vec::new())
         }
         IgnoreFindingKind::Shadowed { by_line } => (
-            format!("Everything this pattern matches is decided the other way by line {by_line}"),
+            tr!("workbench-lsp-ignore-shadowed", line = *by_line).into(),
             Vec::new(),
         ),
         IgnoreFindingKind::Invalid(reason) => (reason.clone(), Vec::new()),

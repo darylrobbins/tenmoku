@@ -16,6 +16,7 @@
 //! finds all references in the panel instead.
 
 use gpui::{AppContext as _, Context, Entity, Focusable as _, Subscription, Window};
+use kiln_l10n::tr;
 
 use super::{PeekView, Target, close};
 use crate::{
@@ -48,13 +49,13 @@ impl Workbench {
                 toast::show(cx, toast::Toast::info(status.to_owned()));
             };
         let Some(ready) = self.nav_state.start(cx) else {
-            return not_found(self, "No folder open", window, cx);
+            return not_found(self, &tr!("workbench-lsp-references-no-folder"), window, cx);
         };
         let request = self.nav_request(cx);
         let word = (request.as_ref())
             .and_then(|request| word_at(&request.text, request.offset, request.language));
         let (Some(request), Some(word)) = (request, word) else {
-            return not_found(self, "No symbol at the caret", window, cx);
+            return not_found(self, &tr!("workbench-lsp-references-no-symbol"), window, cx);
         };
         let workbench = cx.entity().downgrade();
         let panel = cx.new(|cx| ReferencesPanel::peeked(workbench, cx));

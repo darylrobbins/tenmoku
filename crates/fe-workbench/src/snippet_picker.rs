@@ -28,6 +28,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, Window, div,
 };
+use kiln_l10n::{text, tr};
 use kiln_shell::ModalId;
 
 use crate::{
@@ -81,7 +82,12 @@ fn snippet_rows(language: Option<&str>, cx: &mut App) -> Vec<SnippetRow> {
             name: offer.prefix.clone(),
             prefixes: offer.prefix.clone(),
             detail: match &offer.text.description {
-                Some(description) => format!("{description} ({})", offer.detail),
+                Some(description) => tr!(
+                    "workbench-lsp-snippet-detail",
+                    description = description,
+                    source = offer.detail.to_string()
+                )
+                .into(),
                 None => offer.detail.to_string(),
             },
             text: offer.text.clone(),
@@ -236,8 +242,7 @@ impl PickerDelegate for InsertSnippetPicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        (self.rows.is_empty())
-            .then(|| "No snippets for this language: Configure User Snippets adds some".into())
+        (self.rows.is_empty()).then(|| tr!("workbench-lsp-snippet-none"))
     }
 }
 
@@ -269,7 +274,7 @@ impl ConfigureSnippetsPicker {
     ) -> Self {
         let global = ConfigureRow {
             language: None,
-            label: "New Global Snippets file".into(),
+            label: tr!("workbench-lsp-snippet-new-global"),
             exists: dir.join(GLOBAL_SNIPPETS_FILE).is_file(),
         };
         let mut languages: Vec<ConfigureRow> = fe_syntax::language_names()
@@ -302,8 +307,13 @@ impl ConfigureSnippetsPicker {
     fn exists_note(&self, row: &ConfigureRow) -> Option<String> {
         let file = self.file(row);
         let name = (file.file_name()).map(|name| name.to_string_lossy().into_owned());
-        row.exists
-            .then(|| format!("{} exists", name.unwrap_or_default()))
+        row.exists.then(|| {
+            tr!(
+                "workbench-lsp-snippet-exists",
+                file = name.unwrap_or_default()
+            )
+            .into()
+        })
     }
 }
 
@@ -378,7 +388,11 @@ impl PickerDelegate for ConfigureSnippetsPicker {
     fn match_label(&self, ix: usize, _: &App) -> SharedString {
         let row = &self.rows[self.matches[ix]];
         match self.exists_note(row) {
-            Some(note) => format!("{}, {note}", row.label).into(),
+            Some(note) => tr!(
+                "workbench-lsp-snippet-label-note",
+                label = &row.label,
+                note = note
+            ),
             None => row.label.clone(),
         }
     }
@@ -390,7 +404,12 @@ impl PickerDelegate for ConfigureSnippetsPicker {
         };
         let file = self.file(&row);
         if let Err(error) = create_snippet_file(&file, row.language) {
-            let message = format!("Can't create {}: {error}", file.display());
+            let message = tr!(
+                "workbench-lsp-snippet-cant-create",
+                path = file.display().to_string(),
+                error = error.to_string()
+            )
+            .into();
             Workbench::notify(cx, log::Level::Error, message, None);
             return true;
         }
@@ -415,29 +434,29 @@ impl Workbench {
             return;
         };
         if editor.read(cx).is_read_only() {
-            let message = "Can't insert a snippet: the editor is read-only".to_owned();
+            let message = tr!("workbench-lsp-snippet-read-only").into();
             Workbench::notify(cx, log::Level::Info, message, None);
             return;
         }
         self.dismiss_palette(window, cx);
         let delegate = InsertSnippetPicker::new(&editor, cx);
-        let picker =
-            cx.new(|cx| Picker::new(delegate, "Select a snippet", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-lsp-snippet-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         self.show_snippet_modal(INSERT_SNIPPET, picker, window, cx);
     }
 
     /// Configure User Snippets: see the module docs.
     pub(crate) fn configure_snippets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(dir) = user_snippets_dir(cx) else {
-            let message = "No config directory to keep snippets in".to_owned();
+            let message = tr!("workbench-lsp-snippet-no-config-dir").into();
             Workbench::notify(cx, log::Level::Warn, message, None);
             return;
         };
         self.dismiss_palette(window, cx);
         let editor = self.active_editor(cx).cloned();
         let delegate = ConfigureSnippetsPicker::new(dir, cx.weak_entity(), editor.as_ref());
-        let picker =
-            cx.new(|cx| Picker::new(delegate, "Select a snippets file", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-lsp-snippet-file-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         self.show_snippet_modal(CONFIGURE_SNIPPETS, picker, window, cx);
     }
 

@@ -442,17 +442,6 @@ pub(crate) fn show_source(status_bar: &Entity<StatusBar>, provider: &str, cx: &m
     status_bar.update(cx, |bar, cx| bar.set_item(item, cx));
 }
 
-/// How a provider answered, for a status line: ` (by search)`, or nothing
-/// for an exact provider. Only the references panel's status still appends
-/// it, until its own card makes its statuses whole messages; nav's take
-/// [`source`].
-pub(crate) fn by(provider: &str, precision: Precision) -> String {
-    match precision {
-        Precision::Exact => String::new(),
-        Precision::Search => format!(" (by {provider})"),
-    }
-}
-
 /// How a provider answered, as the nav statuses' `source` argument: `search`
 /// for a search's answer, which a status names its `provider` after, or
 /// `exact`.

@@ -134,9 +134,6 @@ fn caret_of(editor: &Entity<EditorView>, cx: &App) -> Option<(Wanted, usize)> {
     Some((Wanted { version, word, at }, at))
 }
 
-/// What `fe_lsp` says of a buffer no server has open.
-const NOT_OPEN: &str = "not open on a language server";
-
 /// `result` as an [`Answer`]: a buffer no server serves, or a server
 /// without the provider, falls back to the words; any other error shows
 /// nothing.
@@ -145,7 +142,12 @@ pub(super) fn answer_of(
 ) -> Answer {
     match result {
         Ok(found) => Some(found),
-        Err(fe_lsp::LspError::Unavailable(why)) if why == NOT_OPEN => Some(None),
+        // What `fe_lsp` says of a buffer no server has open, in en-US: its
+        // `not_open` resolves it in the active locale, and it has no
+        // accessor to compare with.
+        Err(fe_lsp::LspError::Unavailable(why)) if why == "not open on a language server" => {
+            Some(None)
+        }
         Err(error) => {
             log::debug!("no document highlights: {error}");
             None

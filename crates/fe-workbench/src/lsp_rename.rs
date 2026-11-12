@@ -28,6 +28,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
     ParentElement as _, PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window, div,
 };
+use kiln_l10n::{text, tr};
 
 use crate::{
     Workbench,
@@ -36,8 +37,6 @@ use crate::{
     picker::{Picker, PickerDelegate},
     workbench::Palette,
 };
-
-const STALE: &str = "The file changed since the rename began: nothing renamed";
 
 /// What the picker asks about, as it opened.
 struct Request {
@@ -58,7 +57,7 @@ impl Workbench {
             return;
         };
         if self.lsp.rename.upgrade().is_some() {
-            return self.say("A rename is already running", window, cx);
+            return self.say(&tr!("workbench-lsp-rename-running"), window, cx);
         }
         let (buffer, version, caret) = {
             let model = editor.read(cx).model();
@@ -70,7 +69,7 @@ impl Workbench {
             )
         };
         let Some(prepared) = self.lsp_prepare_rename(buffer, version, caret) else {
-            return self.say("No language server for this file", window, cx);
+            return self.say(&tr!("workbench-lsp-no-server"), window, cx);
         };
         let guard = Rc::new(());
         self.lsp.rename = Rc::downgrade(&guard);
@@ -106,14 +105,15 @@ impl Workbench {
     ) {
         let target = match answer {
             Ok(Some(target)) => target,
-            Ok(None) => return self.say("Nothing to rename here", window, cx),
+            Ok(None) => return self.say(&tr!("workbench-lsp-rename-nothing"), window, cx),
             Err(error) => return self.say(&reason(&error), window, cx),
         };
         self.dismiss_palette(window, cx);
         let request = request(&target);
         let workbench = cx.entity().downgrade();
         let delegate = RenamePicker::new(workbench, request, target.placeholder.clone());
-        let picker = cx.new(|cx| Picker::new(delegate, "New name…", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-lsp-rename-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| {
             picker.show(window, cx);
             let input = picker.input().clone();
@@ -129,7 +129,7 @@ impl Workbench {
             PromptLevel::Info,
             message,
             None,
-            &[PromptButton::ok("OK")],
+            &[PromptButton::ok(tr!("workbench-lsp-ok"))],
             cx,
         ));
     }
@@ -161,7 +161,7 @@ impl Workbench {
             .map(|editor| editor.read(cx).model().buffer().version());
         let applied = answer.map_err(|error| reason(&error)).and_then(|files| {
             if current != Some(request.version) {
-                return Err(STALE.to_owned());
+                return Err(tr!("workbench-lsp-rename-stale").into());
             }
             let (editor, buffer) = (request.editor.clone(), request.buffer);
             let (target, caret) = (request.target.clone(), request.caret);
@@ -179,7 +179,7 @@ impl Workbench {
                     window.focus(&editor.focus_handle(cx), cx);
                 }
             });
-            let title = format!("Rename {} to {to}", request.name);
+            let title = tr!("workbench-lsp-rename-title", from = &request.name, to = to);
             self.preview_or_apply(title, request.buffer, files, on_applied, window, cx)
         });
         if let Err(message) = applied {
@@ -193,7 +193,7 @@ fn reason(error: &LspError) -> String {
     match error {
         LspError::Server { message, .. } => message.clone(),
         LspError::Unavailable(why) if why == "rename" => {
-            "The language server can't rename".to_owned()
+            tr!("workbench-lsp-rename-unsupported").into()
         }
         error => error.to_string(),
     }
@@ -260,7 +260,7 @@ impl RenamePicker {
     }
 
     fn label(&self) -> String {
-        format!("Rename to {}", self.name.trim())
+        tr!("workbench-lsp-rename-to", name = self.name.trim()).into()
     }
 
     /// Focuses the editor it was opened for, if it's still open.
@@ -335,12 +335,14 @@ impl PickerDelegate for RenamePicker {
                 })
             })
         } else {
-            workbench.update(cx, |workbench, cx| workbench.say(STALE, window, cx));
+            workbench.update(cx, |workbench, cx| {
+                workbench.say(&tr!("workbench-lsp-rename-stale"), window, cx)
+            });
             return true;
         };
         let Some((asked, guard)) = asked else {
-            let message = "No language server for this file";
-            workbench.update(cx, |workbench, cx| workbench.say(message, window, cx));
+            let message = tr!("workbench-lsp-no-server");
+            workbench.update(cx, |workbench, cx| workbench.say(&message, window, cx));
             return true;
         };
         let request = Request {
@@ -373,7 +375,7 @@ impl PickerDelegate for RenamePicker {
     }
 
     fn status(&self) -> Option<SharedString> {
-        Some("Enter to rename, Escape to cancel".into())
+        Some(tr!("workbench-lsp-rename-status"))
     }
 }
 

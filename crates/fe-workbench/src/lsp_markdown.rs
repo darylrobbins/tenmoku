@@ -12,6 +12,8 @@ use fe_markdown_view::{LinkHandler, MarkdownStyle, markdown_element};
 use fe_ui::ui_theme;
 use gpui::{AnyElement, App, Context, EntityId, Pixels, WeakEntity, Window};
 
+use kiln_l10n::verbatim;
+
 use crate::{Workbench, pane::Reveal};
 
 /// Every editor's renderer.
@@ -95,7 +97,7 @@ impl Workbench {
         for editor in &editors {
             let path = (editor.read(cx).model().path())
                 .map(ToOwned::to_owned)
-                .unwrap_or_else(|| root.clone().unwrap_or_default().join("Untitled"));
+                .unwrap_or_else(|| root.clone().unwrap_or_default().join(verbatim!("Untitled")));
             let renderer = renderers
                 .entry(editor.entity_id())
                 .or_insert_with(|| {

@@ -48,6 +48,7 @@ use std::{
 use fe_buffer::{Buffer, BufferId, HunkId, HunkStatus, HunkView, Origin, ProposedChange, Text};
 use fe_editor::{BufferSet, Changeset, ChangesetError, FileEntry, Summary};
 use fe_lsp::{EditTarget, FileEdits, decode_closed};
+use kiln_l10n::tr;
 
 use super::rebase;
 
@@ -63,7 +64,7 @@ pub(crate) enum PreviewError {
 impl std::fmt::Display for PreviewError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotDecidable => f.write_str("this edit applies whole or not at all"),
+            Self::NotDecidable => f.write_str(&tr!("workbench-lsp-refactor-whole-only")),
             Self::Changeset(error) => error.fmt(f),
         }
     }
@@ -214,7 +215,7 @@ impl RefactorPreview {
                         None => (normalized(&text_of(path, &target)?), &[][..]),
                     };
                     let edits = rebase(edits.clone(), runs)
-                        .ok_or_else(|| format!("{display}: its edits overlap"))?;
+                        .ok_or_else(|| file_problem(&display, overlap()))?;
                     (current, edits)
                 }
                 EditTarget::Closed { edits, encoding } => {
@@ -223,7 +224,7 @@ impl RefactorPreview {
                         None => normalized(&text_of(&origin(path, &renames), &target)?),
                     };
                     let decoded = decode_closed(&Text::new(&current), edits, *encoding)
-                        .map_err(|why| format!("{display}: {why}"))?;
+                        .map_err(|why| file_problem(&display, why))?;
                     // Applying a closed file's edits normalizes each one's
                     // line endings before it joins inserts at one place.
                     let decoded = (decoded.into_iter())
@@ -239,7 +240,7 @@ impl RefactorPreview {
                 _ => (0..decoded.len()).collect(),
             };
             let grouped = grouped(&Text::new(&current), decoded, indices)
-                .map_err(|why| format!("{display}: {why}"))?;
+                .map_err(|why| file_problem(&display, why))?;
             let (after, made) = applied(&current, &grouped);
             if let EditTarget::Open { buffer, .. } = &target {
                 let (text, runs) = buffers.entry(*buffer).or_default();
@@ -520,6 +521,21 @@ fn closed_order(edits: &[lsp_types::TextEdit]) -> Vec<usize> {
     order
 }
 
+/// Why a file's edits can't preview: they overlap.
+fn overlap() -> String {
+    tr!("workbench-lsp-refactor-overlap").into()
+}
+
+/// What's wrong with `file`'s edits, saying which file.
+fn file_problem(file: &impl std::fmt::Display, problem: impl Into<String>) -> String {
+    tr!(
+        "workbench-lsp-refactor-file-problem",
+        file = file.to_string(),
+        problem = problem.into()
+    )
+    .into()
+}
+
 /// `edits` of `text`, `indices` their indices in the entry, in text order
 /// (inserts at one place in the server's order), checked to fit it and be
 /// apart, with inserts at one place joined into one, each with the indices
@@ -535,10 +551,14 @@ fn grouped(
     if let Some((_, (range, _))) = (indexed.iter())
         .find(|(_, (range, _))| range.start > range.end || !fits(range.start) || !fits(range.end))
     {
-        return Err(format!("an edit at {range:?} doesn't fit its text"));
+        return Err(tr!(
+            "workbench-lsp-refactor-edit-doesnt-fit",
+            range = format!("{:?}", range)
+        )
+        .into());
     }
     if (indexed.windows(2)).any(|w| w[1].1.0.start < w[0].1.0.end) {
-        return Err("its edits overlap".into());
+        return Err(overlap());
     }
     // Joined as `merge_inserts` joins them, which applying does.
     let mut grouped: Vec<Group> = Vec::new();

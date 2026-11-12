@@ -4,6 +4,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use kiln_l10n::{tr, verbatim};
+
 use crate::task_defs::Source;
 
 /// The most problems one output yields.
@@ -63,9 +65,7 @@ impl Matcher {
             "eslint" => Self::Eslint,
             "python" => Self::Python,
             other => {
-                return Err(format!(
-                    "unknown problem matcher `{other}` (expected rustc, tsc, gcc, go, eslint or python)"
-                ));
+                return Err(tr!("workbench-lsp-tasks-unknown-matcher", matcher = other).into());
             }
         })
     }
@@ -306,7 +306,12 @@ fn rustc_header(line: &str) -> Option<(Severity, String)> {
     Some((
         severity,
         match code {
-            Some(code) => format!("{message} ({code})"),
+            Some(code) => tr!(
+                "workbench-lsp-tasks-problem-code",
+                message = message,
+                code = code
+            )
+            .into(),
             None => message.to_owned(),
         },
     ))
@@ -330,9 +335,9 @@ fn tsc_line(line: &str) -> Option<(String, u32, u32, Severity, String)> {
 
 fn gcc_message(rest: &str) -> Option<(Severity, String)> {
     for (prefix, severity) in [
-        ("fatal error: ", Severity::Error),
-        ("error: ", Severity::Error),
-        ("warning: ", Severity::Warning),
+        (verbatim!("fatal error: "), Severity::Error),
+        (verbatim!("error: "), Severity::Error),
+        (verbatim!("warning: "), Severity::Warning),
     ] {
         if let Some(message) = rest.strip_prefix(prefix) {
             return Some((severity, message.to_owned()));
@@ -392,14 +397,14 @@ fn panic_message(thread: &str, message: &str) -> String {
     let message = message.trim();
     match thread {
         "main" | "<unnamed>" => message.to_owned(),
-        test => format!("{test}: {message}"),
+        test => tr!("workbench-lsp-tasks-panic", test = test, message = message).into(),
     }
 }
 
 /// `  File "x.py", line 3, in f`.
 fn python_frame(line: &str) -> Option<(String, u32)> {
     let rest = line.trim_start().strip_prefix("File \"")?;
-    let (path, rest) = rest.split_once("\", line ")?;
+    let (path, rest) = rest.split_once(verbatim!("\", line "))?;
     let (l, _) = take_number(rest)?;
     Some((path.to_owned(), l))
 }

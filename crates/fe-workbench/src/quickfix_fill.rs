@@ -70,6 +70,7 @@ use fe_project::{
 };
 use fe_vim::{ExError, QuickfixAction};
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, WeakEntity, Window};
+use kiln_l10n::{tr, verbatim};
 use kiln_shell::ItemHandle as _;
 
 use crate::{
@@ -83,7 +84,9 @@ use crate::{
 };
 
 /// What `:grep` says with no folder open.
-pub(crate) const NO_FOLDER: &str = "Open a folder to search it";
+fn no_folder() -> String {
+    tr!("workbench-lsp-quickfix-no-folder").into()
+}
 
 /// The running search of each window, by its workbench's id: kept apart
 /// from the workbench, and dropped (so cancelled) with it.
@@ -172,7 +175,7 @@ impl Workbench {
             },
         };
         let Some(root) = self.root().map(Path::to_owned) else {
-            return say_error(editor, NO_FOLDER, cx);
+            return say_error(editor, no_folder(), cx);
         };
         let current = editor.and_then(|editor| editor.path(cx));
         let globs = globs
@@ -206,13 +209,17 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let Some(root) = self.root().map(Path::to_owned) else {
-            return say_error(editor, NO_FOLDER, cx);
+            return say_error(editor, no_folder(), cx);
         };
         let globs: Vec<&str> = grep.globs.iter().map(String::as_str).collect();
         let filter = match PathFilter::new(&root, &globs, &[]) {
             Ok(filter) => filter,
             Err(error) => {
-                let text = format!("Invalid glob {}: {}", error.glob, error.message);
+                let text = tr!(
+                    "workbench-lsp-quickfix-invalid-glob",
+                    glob = error.glob,
+                    error = error.message
+                );
                 return say_error(editor, text, cx);
             }
         };
@@ -274,22 +281,25 @@ impl Workbench {
             Ok(Some(found)) => found,
             Ok(None) => return,
             Err(SearchError::InvalidPattern(reason)) => {
-                let text = format!(
-                    "E383: Invalid search string: {} ({})",
-                    grep.pattern,
-                    last_line(&reason)
+                let text = tr!(
+                    "workbench-lsp-quickfix-e383",
+                    pattern = &grep.pattern,
+                    reason = last_line(&reason)
                 );
                 return say_error(editor, text, cx);
             }
         };
         if items.is_empty() {
-            return say_error(editor, format!("E480: No match: {}", grep.pattern), cx);
+            let text = tr!("workbench-lsp-quickfix-e480", pattern = &grep.pattern);
+            return say_error(editor, text, cx);
         }
         let capped = |text: String| match truncated {
-            true => format!(
-                "{text} (the first {} matches)",
-                SearchOptions::default().max_matches
-            ),
+            true => tr!(
+                "workbench-lsp-quickfix-capped",
+                text = text,
+                count = SearchOptions::default().max_matches
+            )
+            .into(),
             false => text,
         };
         let list = QuickfixList::new(grep.title, items);
@@ -319,7 +329,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         if !args.is_empty() {
-            let text = format!("Ignoring {args}: :make runs the default build task");
+            let text = tr!("workbench-lsp-quickfix-make-ignoring", args = args);
             say(editor, text, cx);
         }
         let root = self.root().map(Path::to_owned);
@@ -608,7 +618,7 @@ fn read_line(
 ) -> io::Result<Option<LineText>> {
     let mut file = open_match(root, path)?;
     if !file.metadata()?.is_file() {
-        return Err(io::Error::other("not a regular file"));
+        return Err(io::Error::other(verbatim!("not a regular file")));
     }
     let mut mark = [0; 2];
     let utf16 = match file.read_exact(&mut mark) {
@@ -651,7 +661,7 @@ fn open_match(root: &Path, path: &Path) -> io::Result<File> {
         // The root itself, a file: under its directory.
         _ => match (open_root.parent(), open_root.file_name()) {
             (Some(dir), Some(name)) => open_file_under(dir, Path::new(name)),
-            _ => Err(io::Error::other("no file")),
+            _ => Err(io::Error::other(verbatim!("no file"))),
         },
     }
 }
@@ -714,11 +724,11 @@ fn smart_case(pattern: &str) -> bool {
 fn include_glob(glob: &str, root: &Path, current: Option<&Path>) -> Result<String, String> {
     if glob == "%" {
         let Some(current) = current else {
-            return Err("E499: Empty file name for '%' or '#'".to_owned());
+            return Err(tr!("workbench-lsp-quickfix-e499").into());
         };
         let rel = current
             .strip_prefix(root)
-            .map_err(|_| format!("{} is outside the folder", current.display()))?;
+            .map_err(|_| outside(current.display()))?;
         let words: Vec<String> = words(rel).map(|word| escape_glob(&word)).collect();
         return Ok(format!("/{}", words.join("/")));
     }
@@ -728,12 +738,18 @@ fn include_glob(glob: &str, root: &Path, current: Option<&Path>) -> Result<Strin
         true => {
             let rel = Path::new(glob)
                 .strip_prefix(root)
-                .map_err(|_| format!("{glob} is outside the folder"))?;
+                .map_err(|_| outside(glob))?;
             words(rel).collect::<Vec<_>>().join("/")
         }
         false => glob.trim_start_matches("./").to_owned(),
     };
     Ok(format!("/{rel}"))
+}
+
+/// Why a `:vimgrep` file argument can't be searched: `path` is outside the
+/// root.
+fn outside(path: impl std::fmt::Display) -> String {
+    tr!("workbench-lsp-quickfix-outside", path = path.to_string()).into()
 }
 
 /// The words of `rel`, a path under the root: a glob joins them with `/` on

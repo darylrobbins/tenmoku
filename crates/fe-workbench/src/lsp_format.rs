@@ -64,6 +64,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, FutureExt as _, Task,
     WeakEntity, Window,
 };
+use kiln_l10n::{tr, verbatim};
 
 use crate::{
     Workbench,
@@ -106,7 +107,9 @@ impl Workbench {
         cx.spawn(async move |_, cx| {
             let message = match task.await {
                 Ok(FormatOutcome::Formatted | FormatOutcome::Unchanged) => return,
-                Ok(FormatOutcome::NoFormatter) => format!("No formatter for {language}"),
+                Ok(FormatOutcome::NoFormatter) => {
+                    tr!("workbench-lsp-no-formatter", language = language).into()
+                }
                 Err(error) => error,
             };
             cx.update(|cx| toast::show(cx, Toast::info(message)));
@@ -487,6 +490,10 @@ impl ExternalFormatter {
     }
 }
 
+/// Why a code action on save stopped, for the debug log: the buffer
+/// changed under it.
+const CHANGED: &str = verbatim!("the buffer changed");
+
 /// A request's failure: the buffer having changed before the server took
 /// the request is the user typing, which drops the format like a stale
 /// reply, not an error to show.
@@ -527,7 +534,7 @@ impl Workbench {
     /// is asked, resolved, applied or run at or after `deadline` on the
     /// executor's clock. The buffer is as the answer was asked for, but for
     /// the save's own edits: typing meanwhile, or an action gone stale,
-    /// ends the kind.
+    /// ends the kind. Its errors are for the debug log.
     async fn run_kind_on_save(
         this: &WeakEntity<Workbench>,
         editor: &Entity<EditorView>,
@@ -538,14 +545,14 @@ impl Workbench {
         let executor = cx.background_executor().clone();
         let in_time = || match executor.now() < deadline {
             true => Ok(()),
-            false => Err("out of time".to_owned()),
+            false => Err(verbatim!("out of time").to_owned()),
         };
         in_time()?;
         let asked = this
             .update(cx, |workbench, cx| workbench.ask_on_save(editor, kind, cx))
             .map_err(|error| error.to_string())?;
         let Some((actioner, mut version, reply)) = asked else {
-            return Err("no language server".into());
+            return Err(verbatim!("no language server").into());
         };
         let actions = cx
             .background_spawn(reply)
@@ -560,7 +567,7 @@ impl Workbench {
                 Ok::<_, String>(editor.read_with(cx, |view, _| view.model().buffer().version()))
             };
             if current(cx)? != version {
-                return Err("the buffer changed".into());
+                return Err(CHANGED.into());
             }
             let action = cx
                 .background_spawn(actioner.resolve(&action))
@@ -569,12 +576,12 @@ impl Workbench {
             let edits = actioner.edits(&action).map_err(|error| error.to_string())?;
             in_time()?;
             if current(cx)? != version {
-                return Err("the buffer changed".into());
+                return Err(CHANGED.into());
             }
             version = this
                 .update(cx, |workbench, cx| {
                     if !editor.update(cx, |view, cx| view.save_edits_allowed(cx)) {
-                        return Err("the buffer changed".to_owned());
+                        return Err(CHANGED.to_owned());
                     }
                     workbench.apply_file_edits(edits, cx)?;
                     Ok(editor.read(cx).model().buffer().version())

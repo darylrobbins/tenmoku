@@ -42,6 +42,7 @@ use fe_lsp::{EditTarget, FileEdits};
 use gpui::{
     App, Context, Entity, EntityId, Focusable as _, PromptButton, PromptLevel, Subscription, Window,
 };
+use kiln_l10n::tr;
 
 use super::{AiChanges, ListedFile, Listing, PreviewHead, lines};
 use crate::{
@@ -100,9 +101,11 @@ fn edit_count(target: &EditTarget) -> usize {
 /// What a row says of an operation of the edit, if `file` is one.
 fn operation(file: &FileEdits, display: impl Fn(&Path) -> String) -> Option<String> {
     match &file.target {
-        EditTarget::Create { .. } => Some("Create".to_owned()),
-        EditTarget::Rename { to, .. } => Some(format!("Rename to {}", display(to))),
-        EditTarget::Delete { .. } => Some("Delete".to_owned()),
+        EditTarget::Create { .. } => Some(tr!("workbench-lsp-refactor-create").into()),
+        EditTarget::Rename { to, .. } => {
+            Some(tr!("workbench-lsp-refactor-rename-to", path = display(to)).into())
+        }
+        EditTarget::Delete { .. } => Some(tr!("workbench-lsp-refactor-delete").into()),
         _ => None,
     }
 }
@@ -145,13 +148,50 @@ fn open_targets(target: &EditTarget, out: &mut Vec<(BufferId, Version)>) {
     }
 }
 
+/// Why an edit can't apply: `file`, an open buffer it edits, has closed.
+fn no_longer_open(file: &impl std::fmt::Display) -> String {
+    tr!(
+        "workbench-lsp-refactor-no-longer-open",
+        file = file.to_string()
+    )
+    .into()
+}
+
+/// Why an edit can't apply: `file` has changed since it was read.
+fn changed_since(file: &impl std::fmt::Display) -> String {
+    tr!(
+        "workbench-lsp-refactor-changed-since",
+        file = file.to_string()
+    )
+    .into()
+}
+
+/// Why an edit can't apply: `file` doesn't exist any more.
+fn doesnt_exist(file: &impl std::fmt::Display) -> String {
+    tr!(
+        "workbench-lsp-refactor-doesnt-exist",
+        file = file.to_string()
+    )
+    .into()
+}
+
+/// Why an edit can't apply: `file` can't be read.
+fn cant_read(file: &impl std::fmt::Display, error: &impl std::fmt::Display) -> String {
+    tr!(
+        "workbench-lsp-refactor-cant-read",
+        file = file.to_string(),
+        error = error.to_string()
+    )
+    .into()
+}
+
 /// An info prompt saying `message`, answered by its one button.
 fn say(message: &str, window: &mut Window, cx: &mut App) {
     drop(window.prompt(
         PromptLevel::Info,
         message,
         None,
-        &[PromptButton::ok("OK")],
+        &[PromptButton::ok(tr!("workbench-lsp-ok"))],
         cx,
     ));
 }
@@ -217,17 +257,17 @@ impl Workbench {
             } => {
                 let editor = (self.and_others(others, cx))
                     .find_map(|workbench| workbench.editors_of(*buffer, cx).into_iter().next())
-                    .ok_or_else(|| format!("{display} is no longer open"))?;
+                    .ok_or_else(|| no_longer_open(&display))?;
                 let buffer = editor.read(cx).model().buffer();
                 if buffer.version() != *version {
-                    return Err(format!("{display} has changed since"));
+                    return Err(changed_since(&display));
                 }
                 Ok(buffer.text().to_string())
             }
             _ => match loader::read(path.to_owned()) {
                 Ok(Some(buffer)) => Ok(buffer.text().to_string()),
-                Ok(None) => Err(format!("{display} doesn't exist")),
-                Err(error) => Err(format!("can't read {display}: {error}")),
+                Ok(None) => Err(doesnt_exist(&display)),
+                Err(error) => Err(cant_read(&display, &error)),
             },
         }
     }
@@ -295,14 +335,18 @@ impl Workbench {
             for (buffer, version) in targets {
                 let editor = (self.and_others(others, cx))
                     .find_map(|workbench| workbench.editors_of(buffer, cx).into_iter().next())
-                    .ok_or_else(|| format!("{display} is no longer open"))?;
+                    .ok_or_else(|| no_longer_open(&display))?;
                 let model = editor.read(cx).model();
                 if model.buffer().version() != version {
-                    return Err(format!("{display} has changed since"));
+                    return Err(changed_since(&display));
                 }
                 let shown = model.path().and_then(lsp::resolve);
                 if shown.is_none() || shown != lsp::resolve(&now) {
-                    return Err(format!("{display} has been saved under another name since"));
+                    return Err(tr!(
+                        "workbench-lsp-refactor-saved-under-another-name",
+                        file = display.to_string()
+                    )
+                    .into());
                 }
             }
             // Where it is now, and where the edit's renames have it then.
@@ -312,7 +356,11 @@ impl Workbench {
                     opened.contains(path) || lsp::resolve(path).is_some_and(|p| opened.contains(&p))
                 });
             if has_closed(&file.target) && open {
-                return Err(format!("{display} has been opened since"));
+                return Err(tr!(
+                    "workbench-lsp-refactor-opened-since",
+                    file = display.to_string()
+                )
+                .into());
             }
         }
         let applied: HashSet<&Path> = edits.iter().map(|file| file.path.as_path()).collect();
@@ -323,9 +371,9 @@ impl Workbench {
             let display = path.display();
             match loader::read(path.clone()) {
                 Ok(Some(buffer)) if buffer.text().to_string() == *text => {}
-                Ok(Some(_)) => return Err(format!("{display} has changed since")),
-                Ok(None) => return Err(format!("{display} doesn't exist")),
-                Err(error) => return Err(format!("can't read {display}: {error}")),
+                Ok(Some(_)) => return Err(changed_since(&display)),
+                Ok(None) => return Err(doesnt_exist(&display)),
+                Err(error) => return Err(cant_read(&display, &error)),
             }
         }
         Ok(())
@@ -409,7 +457,7 @@ impl Workbench {
                 self.ai_changes = None;
                 self.sync_ai_changes(cx);
                 say(
-                    &format!("{message}\n\nPart of the edit was made."),
+                    &tr!("workbench-lsp-refactor-partly-made", message = message),
                     window,
                     cx,
                 );
@@ -550,7 +598,11 @@ impl Workbench {
                 };
                 editor.update(cx, |editor, cx| {
                     editor.set_unsavable(true);
-                    editor.set_tab_title(format!("{name} (preview)"), name, cx);
+                    editor.set_tab_title(
+                        tr!("workbench-lsp-refactor-tab-title", name = &name),
+                        name,
+                        cx,
+                    );
                     editor.set_language(language, cx);
                 });
                 editor

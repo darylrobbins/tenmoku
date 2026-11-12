@@ -36,6 +36,7 @@ use gpui::{
     ParentElement as _, PromptButton, PromptLevel, SharedString, Styled as _, Task, WeakEntity,
     Window, div, prelude::FluentBuilder as _,
 };
+use kiln_l10n::{text, tr};
 
 use crate::{
     Workbench,
@@ -47,7 +48,10 @@ use crate::{
     workspace_edit::refactor_preview::RefactorPreview,
 };
 
-const STALE: &str = "The file changed; ask again";
+/// What an action chosen after its file changed says.
+fn stale() -> String {
+    tr!("workbench-lsp-code-actions-stale").into()
+}
 
 /// An info prompt saying `message`, answered by its one button.
 fn tell(message: &str, window: &mut Window, cx: &mut App) {
@@ -55,7 +59,7 @@ fn tell(message: &str, window: &mut Window, cx: &mut App) {
         PromptLevel::Info,
         message,
         None,
-        &[PromptButton::ok("OK")],
+        &[PromptButton::ok(tr!("workbench-lsp-ok"))],
         cx,
     ));
 }
@@ -135,7 +139,7 @@ impl Workbench {
             )
         });
         let Some(actioner) = self.lsp_code_actioner(buffer) else {
-            return tell("No language server for this file", window, cx);
+            return tell(&tr!("workbench-lsp-no-server"), window, cx);
         };
         let reply = actioner.ask(buffer, version, range.clone(), diagnostics, query.clone());
         self.lsp.code_actioning = Some(cx.spawn_in(window, async move |this, cx| {
@@ -184,8 +188,12 @@ impl Workbench {
         }
         if actions.is_empty() {
             return match kind_name(&query) {
-                Some(kind) => tell(&format!("No {kind} actions available"), window, cx),
-                None => tell("No code actions available", window, cx),
+                Some(kind) => tell(
+                    &tr!("workbench-lsp-code-actions-none-of-kind", kind = kind),
+                    window,
+                    cx,
+                ),
+                None => tell(&tr!("workbench-lsp-code-actions-none"), window, cx),
             };
         }
         if direct {
@@ -211,8 +219,8 @@ impl Workbench {
             refused: None,
             running: None,
         };
-        let picker =
-            cx.new(|cx| Picker::new(delegate, "Filter code actions…", fe_ui::ui_theme(cx), cx));
+        let placeholder = text!("workbench-lsp-code-actions-placeholder");
+        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));
         #[cfg(test)]
         LAST.with(|last| *last.borrow_mut() = Some(picker.downgrade()));
@@ -236,7 +244,7 @@ impl Workbench {
                 .update_in(cx, |workbench, window, cx| {
                     let unchanged = at.editor.read(cx).model().buffer().version() == at.version;
                     let applied = match resolved {
-                        Ok(_) if !unchanged => Err(STALE.to_owned()),
+                        Ok(_) if !unchanged => Err(stale()),
                         Ok(action) => (actioner.edits(&action))
                             .map_err(|error| reason(&error))
                             .and_then(|edits| {
@@ -374,10 +382,10 @@ impl CodeActionsPicker {
     ) -> Option<crate::lsp::Answer<()>> {
         let source = self.buffer;
         let applied = match action {
-            Ok(_) if !self.unchanged(cx) => Err(STALE.to_owned()),
+            Ok(_) if !self.unchanged(cx) => Err(stale()),
             Ok(action) => match (self.actioner.edits(&action), self.workbench.upgrade()) {
                 (Err(error), _) => Err(reason(&error)),
-                (Ok(_), None) => Err("the window has closed".to_owned()),
+                (Ok(_), None) => Err(tr!("workbench-lsp-code-actions-window-closed").into()),
                 (Ok(edits), Some(workbench)) if RefactorPreview::needs_preview(&edits, source) => {
                     // After the picker closes, so the panel keeps focus.
                     let title = action.title.clone();
@@ -509,7 +517,7 @@ impl PickerDelegate for CodeActionsPicker {
             return false;
         }
         if !self.unchanged(cx) {
-            tell(STALE, window, cx);
+            tell(&stale(), window, cx);
             self.focus_editor(window, cx);
             return true;
         }
@@ -548,8 +556,8 @@ impl PickerDelegate for CodeActionsPicker {
 
     fn status(&self) -> Option<SharedString> {
         match &self.refused {
-            Some(why) => Some(format!("Disabled: {why}").into()),
-            None => Some("Enter to apply, Escape to cancel".into()),
+            Some(why) => Some(tr!("workbench-lsp-code-actions-disabled", why = why)),
+            None => Some(tr!("workbench-lsp-code-actions-status")),
         }
     }
 }

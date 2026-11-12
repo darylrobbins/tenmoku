@@ -21,7 +21,7 @@ use crate::{
     Launch, TerminalPanel, Workbench,
     task_commands::{ShownRow, TaskPicker, TestFiles},
     task_defs::{ProjectFiles, TASKS_FILE},
-    task_run::UNTRUSTED,
+    task_run::untrusted_message,
     tests::open,
     workbench::toast::Level,
 };
@@ -287,7 +287,7 @@ fn picking_in_a_folder_not_trusted_is_refused(cx: &mut TestAppContext) {
     draw(project.cx);
     assert!(project.picker().is_none());
     assert_eq!(project.tabs(), Vec::<String>::new());
-    assert_eq!(project.toasts(), [(Level::Warning, UNTRUSTED.to_owned())]);
+    assert_eq!(project.toasts(), [(Level::Warning, untrusted_message())]);
     assert!(project.editor_focused());
 }
 

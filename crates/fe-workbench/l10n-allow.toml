@@ -126,6 +126,44 @@ migrated = [
     "src/lsp_consent_prompt.rs",
     "src/trust.rs",
     "src/user_snippets.rs",
+    # W6 (rest): language servers, tasks, tests, quickfix and the reference
+    # panels (T1561).
+    "src/lsp.rs",
+    "src/lsp_code_actions.rs",
+    "src/lsp_colors.rs",
+    "src/lsp_file_operations.rs",
+    "src/lsp_folds.rs",
+    "src/lsp_format_on_type.rs",
+    "src/lsp_format.rs",
+    "src/lsp_highlights.rs",
+    "src/lsp_inlay_hints.rs",
+    "src/lsp_lightbulb.rs",
+    "src/lsp_linked_editing.rs",
+    "src/lsp_links.rs",
+    "src/lsp_markdown.rs",
+    "src/lsp_rename.rs",
+    "src/lsp_semantic_tokens.rs",
+    "src/lsp_symbols.rs",
+    "src/lsp_watched_files.rs",
+    "src/refactor_preview.rs",
+    "src/refactor_preview_view.rs",
+    "src/task_defs.rs",
+    "src/task_problems.rs",
+    "src/task_run.rs",
+    "src/test_commands.rs",
+    "src/test_runnables.rs",
+    "src/quickfix.rs",
+    "src/quickfix_commands.rs",
+    "src/quickfix_fill.rs",
+    "src/quickfix_panel.rs",
+    "src/hierarchy_panel.rs",
+    "src/references_panel.rs",
+    "src/references_panel/landing.rs",
+    "src/peek.rs",
+    "src/peek_references.rs",
+    "src/snippet_picker.rs",
+    "src/diagnostics_picker.rs",
+    "src/ignore_diagnostics.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -270,11 +308,6 @@ reason = "A buffer row icon's debug selector"
 file = "src/config_files_picker.rs"
 text = "config-files-icon:{name}:{path}"
 reason = "A config file row icon's debug selector"
-
-[[literal]]
-file = "src/nav.rs"
-text = " (by {provider})"
-reason = "The suffix references_panel.rs (W6, not yet migrated) still appends to its status; nav's own statuses are whole messages"
 
 [[literal]]
 file = "src/find_bar.rs"
@@ -600,3 +633,71 @@ reason = "The User-Agent header sent to GitHub"
 file = "src/extension_snippets.rs"
 text = "User snippet"
 reason = "USER_SNIPPET, the detail snippet_picker.rs (not yet migrated) still shows; extension_snippets.rs's own completions take workbench-extensions-user-snippet"
+
+# W6 (T1561): sidebar panels' names in their SidebarPanel consts, by which
+# the rail orders them and tests name them, and element ids.
+
+[[literal]]
+file = "src/quickfix_panel.rs"
+text = "Quickfix List"
+reason = "The panel's name in its SidebarPanel const, not shown: QuickfixPanel::title titles it workbench-lsp-quickfix-quickfix-list"
+
+[[literal]]
+file = "src/quickfix_panel.rs"
+text = "quickfix-row-{:?}-{}"
+reason = "A row's element id, with its list and revision"
+
+[[literal]]
+file = "src/quickfix_fill.rs"
+text = ":{name} {pattern}"
+reason = "A list's title: the ex command as typed (:grep and its pattern), as nvim titles it"
+
+[[literal]]
+file = "src/quickfix_fill.rs"
+text = ":{name} {args}"
+reason = "A list's title: the ex command as typed (:vimgrep and its arguments), as nvim titles it"
+
+[[literal]]
+file = "src/hierarchy_panel.rs"
+text = "Hierarchy"
+reason = "The panel's name in its SidebarPanel const, not shown: HierarchyPanel::title titles it workbench-lsp-hierarchy-calls or -types"
+
+[[literal]]
+file = "src/lsp.rs"
+text = " {description}"
+reason = "A completion item's label description, joined to its label detail by a space as the editor shows labelDetails"
+
+[[literal]]
+file = "src/lsp_code_actions.rs"
+text = "{kind} · {why}"
+reason = "A disabled action's detail: its kind (the server's id) and the server's reason, joined by a middle dot"
+
+[[literal]]
+file = "src/peek.rs"
+text = "peek-row-{ix}"
+reason = "A definition row's debug selector, for tests"
+
+[[literal]]
+file = "src/references_panel.rs"
+text = "References"
+reason = "The panel's name in its SidebarPanel const: dock.rs's dock_item! titles the dock with it, as it does Search's and Chat's, until dock.rs keys them"
+
+[[literal]]
+file = "src/references_panel.rs"
+text = "reference-{generation}"
+reason = "The rows' element id name, per run"
+
+[[literal]]
+file = "src/diagnostics_picker.rs"
+text = "{message} {file}"
+reason = "What a row's query matches: its message and its file, joined by a space"
+
+[[literal]]
+file = "src/diagnostics_picker.rs"
+text = "diagnostics-picker-icon:{message}:{path}"
+reason = "A row icon's debug selector"
+
+[[literal]]
+file = "src/test_runnables.rs"
+text = "{name}.rs"
+reason = "A Rust target's file name, looked for on disk"

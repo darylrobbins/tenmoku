@@ -28,6 +28,8 @@ use fe_syntax::Syntax;
 use fe_text::Text;
 use tree_sitter::Node;
 
+use kiln_l10n::{tr, verbatim};
+
 use crate::task_defs::{Group, ProjectFiles, Source, Task, TaskCommand};
 
 /// The languages [`runnables`] and [`test_command`] know.
@@ -343,9 +345,12 @@ fn python_items(root: Node, text: &Text, found: &mut Vec<Runnable>) {
     }
 }
 
+/// A Rust package's manifest's file name.
+const CARGO_TOML: &str = verbatim!("Cargo.toml");
+
 /// What a language with no test runner says.
 pub fn no_runner(language: &str) -> String {
-    format!("No test runner for {language}")
+    tr!("workbench-lsp-tests-no-runner", language = language).into()
 }
 
 /// The task that runs `runnable`, of the file at `path`, in `language`, in the
@@ -367,7 +372,8 @@ pub fn test_command(
         return Err(no_runner(language));
     }
     let Ok(relative) = path.strip_prefix(root) else {
-        return Err(format!("{} isn't in the folder", path.display()));
+        let path = path.display().to_string();
+        return Err(tr!("workbench-lsp-tests-not-in-folder", path = path).into());
     };
     let (argv, cwd, source, matcher) = match language {
         "rust" => {
@@ -386,7 +392,7 @@ pub fn test_command(
         ),
     };
     Ok(Task {
-        label: format!("Test: {}", runnable.name),
+        label: tr!("workbench-lsp-tests-task-label", name = &runnable.name).into(),
         command: TaskCommand::Argv(argv),
         cwd,
         env: BTreeMap::new(),
@@ -729,12 +735,12 @@ fn cargo_test(
     relative: &Path,
 ) -> Result<(PathBuf, Vec<String>), String> {
     let shown = slashed(relative);
-    let (dir, package) = nearest(files, path, root, "Cargo.toml", package)
-        .ok_or_else(|| format!("No Cargo package holds {shown}"))?;
+    let (dir, package) = nearest(files, path, root, CARGO_TOML, package)
+        .ok_or_else(|| tr!("workbench-lsp-tests-no-cargo-package", path = &shown).to_string())?;
     let within = path.strip_prefix(&dir).unwrap_or(relative);
     let targets = targets(files, &dir, &package, within);
-    let place =
-        place(within, &targets).ok_or_else(|| format!("Can't tell which crate {shown} is in"))?;
+    let place = place(within, &targets)
+        .ok_or_else(|| tr!("workbench-lsp-tests-which-crate", path = &shown).to_string())?;
     let mut argv: Vec<String> = ["cargo", "test", "-p", &package.name]
         .map(str::to_owned)
         .into();
@@ -765,8 +771,8 @@ fn cargo_test(
         argv.push("--exact".to_owned());
     }
     argv.push("--nocapture".to_owned());
-    let manifest = dir.join("Cargo.toml");
-    let workspace = nearest(files, &manifest, root, "Cargo.toml", |manifest| {
+    let manifest = dir.join(CARGO_TOML);
+    let workspace = nearest(files, &manifest, root, CARGO_TOML, |manifest| {
         is_workspace(manifest).then_some(())
     });
     Ok((workspace.map_or(dir, |(workspace, ())| workspace), argv))
@@ -781,8 +787,9 @@ fn go_test(
     root: &Path,
     relative: &Path,
 ) -> Result<(PathBuf, Vec<String>), String> {
-    nearest(files, path, root, "go.mod", |_| Some(()))
-        .ok_or_else(|| format!("No go.mod holds {}", slashed(relative)))?;
+    nearest(files, path, root, "go.mod", |_| Some(())).ok_or_else(|| {
+        tr!("workbench-lsp-tests-no-go-mod", path = slashed(relative)).to_string()
+    })?;
     let mut argv: Vec<String> = vec!["go".to_owned(), "test".to_owned()];
     if runnable.kind != RunnableKind::File {
         argv.extend(["-run".to_owned(), format!("^{}$", runnable.selector)]);

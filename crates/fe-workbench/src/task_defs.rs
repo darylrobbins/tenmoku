@@ -62,6 +62,7 @@ use std::fmt;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use kiln_l10n::{tr, verbatim};
 use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 
@@ -80,9 +81,9 @@ const ENTRY_KEYS: [&str; 7] = [
 ];
 
 /// The makefile names, in the order `make` looks for them.
-const MAKEFILES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
+const MAKEFILES: [&str; 3] = ["GNUmakefile", "makefile", verbatim!("Makefile")];
 
-const JUSTFILES: [&str; 2] = ["justfile", "Justfile"];
+const JUSTFILES: [&str; 2] = ["justfile", verbatim!("Justfile")];
 
 /// What opens a string in a justfile, the longest first.
 const JUST_QUOTES: [&str; 6] = ["\"\"\"", "'''", "```", "\"", "'", "`"];
@@ -193,14 +194,24 @@ impl TaskDiagnostic {
     fn file(problem: impl fmt::Display) -> Self {
         Self {
             entry: None,
-            message: format!("{TASKS_FILE}: {problem}"),
+            message: tr!(
+                "workbench-lsp-tasks-file-problem",
+                file = TASKS_FILE,
+                problem = problem.to_string()
+            )
+            .into(),
         }
     }
 
     fn entry(entry: &str, problem: impl fmt::Display) -> Self {
         Self {
             entry: Some(entry.to_owned()),
-            message: format!("task {entry}: {problem}"),
+            message: tr!(
+                "workbench-lsp-tasks-entry-problem",
+                entry = entry,
+                problem = problem.to_string()
+            )
+            .into(),
         }
     }
 }
@@ -244,9 +255,9 @@ fn file_tasks(
         return Vec::new();
     };
     let Some(entries) = entries.as_array() else {
-        diagnostics.push(TaskDiagnostic::file(
-            "`task` has to be an array of tables: [[task]]",
-        ));
+        diagnostics.push(TaskDiagnostic::file(tr!(
+            "workbench-lsp-tasks-not-an-array"
+        )));
         return Vec::new();
     };
 
@@ -258,7 +269,7 @@ fn file_tasks(
             if !ENTRY_KEYS.contains(&key.as_str()) {
                 diagnostics.push(TaskDiagnostic::entry(
                     &name,
-                    format!("unknown key `{key}`, ignored"),
+                    tr!("workbench-lsp-tasks-unknown-key", key = key),
                 ));
             }
         }
@@ -266,10 +277,11 @@ fn file_tasks(
             Ok(task) if labels.insert(task.label.clone()) => tasks.push(task),
             Ok(_) => diagnostics.push(TaskDiagnostic::entry(
                 &name,
-                "repeats an earlier task's label, left out",
+                tr!("workbench-lsp-tasks-repeated-label"),
             )),
             Err(problem) => {
-                diagnostics.push(TaskDiagnostic::entry(&name, format!("{problem}, left out")));
+                let problem = tr!("workbench-lsp-tasks-left-out", problem = problem);
+                diagnostics.push(TaskDiagnostic::entry(&name, problem));
             }
         }
     }
@@ -286,20 +298,24 @@ fn entry_name(entry: &toml::Value, index: usize) -> String {
 }
 
 fn parse_entry(entry: &toml::Value, root: &Path) -> Result<Task, String> {
-    let entry = entry.as_table().ok_or("not a table")?;
+    let entry =
+        (entry.as_table()).ok_or_else(|| problem(tr!("workbench-lsp-tasks-not-a-table")))?;
     let label = match entry.get("label") {
-        None => return Err("no label".to_owned()),
-        Some(label) => label.as_str().ok_or("`label` isn't a string")?,
+        None => return Err(problem(tr!("workbench-lsp-tasks-no-label"))),
+        Some(label) => {
+            (label.as_str()).ok_or_else(|| problem(tr!("workbench-lsp-tasks-label-not-string")))?
+        }
     };
     if label.trim().is_empty() {
-        return Err("an empty label".to_owned());
+        return Err(problem(tr!("workbench-lsp-tasks-empty-label")));
     }
     let cwd = match entry.get("cwd") {
         None => root.to_path_buf(),
         Some(cwd) => {
-            let cwd = cwd.as_str().ok_or("`cwd` isn't a string")?;
+            let cwd =
+                (cwd.as_str()).ok_or_else(|| problem(tr!("workbench-lsp-tasks-cwd-not-string")))?;
             resolve_cwd(root, cwd)
-                .ok_or_else(|| format!("cwd `{cwd}` is outside the project root"))?
+                .ok_or_else(|| problem(tr!("workbench-lsp-tasks-cwd-outside", cwd = cwd)))?
         }
     };
     Ok(Task {
@@ -310,7 +326,8 @@ fn parse_entry(entry: &toml::Value, root: &Path) -> Result<Task, String> {
         group: entry.get("group").map(parse_group).transpose()?,
         default: match entry.get("default") {
             None => false,
-            Some(default) => default.as_bool().ok_or("`default` isn't a boolean")?,
+            Some(default) => (default.as_bool())
+                .ok_or_else(|| problem(tr!("workbench-lsp-tasks-default-not-boolean")))?,
         },
         source: Source::File,
         problem_matcher: match entry.get("problem_matcher") {
@@ -318,31 +335,36 @@ fn parse_entry(entry: &toml::Value, root: &Path) -> Result<Task, String> {
             Some(matcher) => Some(
                 matcher
                     .as_str()
-                    .ok_or("`problem_matcher` isn't a string")?
+                    .ok_or_else(|| problem(tr!("workbench-lsp-tasks-matcher-not-string")))?
                     .to_owned(),
             ),
         },
     })
 }
 
+/// A tasks file entry's problem, as `parse_entry` says it.
+fn problem(text: gpui::SharedString) -> String {
+    text.into()
+}
+
 fn parse_command(command: Option<&toml::Value>) -> Result<TaskCommand, String> {
-    const EMPTY: &str = "an empty command";
-    const WRONG_TYPE: &str = "`command` isn't a string or an array of strings";
+    let empty = || problem(tr!("workbench-lsp-tasks-empty-command"));
+    let wrong_type = || problem(tr!("workbench-lsp-tasks-command-wrong-type"));
     match command {
-        None => Err("no command".to_owned()),
-        Some(toml::Value::String(line)) if line.trim().is_empty() => Err(EMPTY.to_owned()),
+        None => Err(problem(tr!("workbench-lsp-tasks-no-command"))),
+        Some(toml::Value::String(line)) if line.trim().is_empty() => Err(empty()),
         Some(toml::Value::String(line)) => Ok(TaskCommand::Shell(line.clone())),
         Some(toml::Value::Array(words)) => {
             let argv = words
                 .iter()
-                .map(|word| word.as_str().map(str::to_owned).ok_or(WRONG_TYPE))
+                .map(|word| word.as_str().map(str::to_owned).ok_or_else(wrong_type))
                 .collect::<Result<Vec<_>, _>>()?;
             match argv.first() {
                 Some(program) if !program.trim().is_empty() => Ok(TaskCommand::Argv(argv)),
-                _ => Err(EMPTY.to_owned()),
+                _ => Err(empty()),
             }
         }
-        Some(_) => Err(WRONG_TYPE.to_owned()),
+        Some(_) => Err(wrong_type()),
     }
 }
 
@@ -350,15 +372,18 @@ fn parse_env(env: Option<&toml::Value>) -> Result<BTreeMap<String, String>, Stri
     let Some(env) = env else {
         return Ok(BTreeMap::new());
     };
-    let env = env.as_table().ok_or("`env` isn't a table")?;
+    let env = (env.as_table()).ok_or_else(|| problem(tr!("workbench-lsp-tasks-env-not-table")))?;
     env.iter()
         .map(|(name, value)| {
             if name.is_empty() || name.contains('=') {
-                return Err(format!("`{name}` can't name an environment variable"));
+                return Err(problem(tr!(
+                    "workbench-lsp-tasks-env-bad-name",
+                    name = name
+                )));
             }
             let value = value
                 .as_str()
-                .ok_or_else(|| format!("env `{name}` isn't a string"))?;
+                .ok_or_else(|| problem(tr!("workbench-lsp-tasks-env-not-string", name = name)))?;
             Ok((name.clone(), value.to_owned()))
         })
         .collect()
@@ -369,8 +394,11 @@ fn parse_group(group: &toml::Value) -> Result<Group, String> {
         Some("build") => Ok(Group::Build),
         Some("test") => Ok(Group::Test),
         Some("run") => Ok(Group::Run),
-        Some(other) => Err(format!("unknown group `{other}`, not build, test or run")),
-        None => Err("`group` isn't a string".to_owned()),
+        Some(other) => Err(problem(tr!(
+            "workbench-lsp-tasks-unknown-group",
+            group = other
+        ))),
+        None => Err(problem(tr!("workbench-lsp-tasks-group-not-string"))),
     }
 }
 
@@ -403,7 +431,7 @@ fn choose_defaults(tasks: &mut [Task], diagnostics: &mut Vec<TaskDiagnostic>) {
             task.default = false;
             diagnostics.push(TaskDiagnostic::entry(
                 &task.label,
-                "`default` needs a group, ignored",
+                tr!("workbench-lsp-tasks-default-needs-group"),
             ));
         }
     }
@@ -417,7 +445,11 @@ fn choose_defaults(tasks: &mut [Task], diagnostics: &mut Vec<TaskDiagnostic>) {
                 task.default = false;
                 diagnostics.push(TaskDiagnostic::entry(
                     &task.label,
-                    format!("`{first}` is already the default {group} task"),
+                    tr!(
+                        "workbench-lsp-tasks-default-taken",
+                        first = first,
+                        group = group.to_string()
+                    ),
                 ));
             } else {
                 marked = Some(task.label.clone());
@@ -494,7 +526,7 @@ fn first_readable(files: &dyn ProjectFiles, root: &Path, names: &[&str]) -> Opti
 }
 
 fn cargo_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
-    if !files.exists(&root.join("Cargo.toml")) {
+    if !files.exists(&root.join(verbatim!("Cargo.toml"))) {
         return Vec::new();
     }
     [
@@ -572,7 +604,7 @@ impl<'de> Deserialize<'de> for ScriptNames {
             type Value = ScriptNames;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("an object of scripts")
+                f.write_str(verbatim!("an object of scripts"))
             }
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ScriptNames, A::Error> {

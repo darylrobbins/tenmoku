@@ -25,6 +25,7 @@ use gpui::{
     AnyWindowHandle, AppContext as _, Context, Entity, EntityId, Subscription, Task, WeakEntity,
     Window,
 };
+use kiln_l10n::{tr, verbatim};
 
 use crate::{
     Workbench,
@@ -464,7 +465,7 @@ impl Workbench {
                     let reply = super::lock(&manager).resolve_document_link(buffer, version, link);
                     reply.await
                 }
-                None => Err(LspError::Unavailable("link gone".into())),
+                None => Err(LspError::Unavailable(verbatim!("link gone").into())),
             };
             cx.update_window(handle, |_, window, cx| {
                 workbench
@@ -476,10 +477,10 @@ impl Workbench {
                             Ok(link) if link.target.is_some() => {
                                 workbench.follow_link(&link, Some(origin), window, cx)
                             }
-                            Ok(_) => toast::show(cx, Toast::info("This link has no target")),
+                            Ok(_) => toast::show(cx, Toast::info(no_target())),
                             Err(error) => {
                                 log::debug!("document link not resolved: {error}");
-                                toast::show(cx, Toast::info("This link has no target"));
+                                toast::show(cx, Toast::info(no_target()));
                             }
                         }
                     })
@@ -527,12 +528,15 @@ impl Workbench {
         match link.scheme().as_deref() {
             Some("file") => {
                 let Some((path, fragment)) = link.file_target() else {
-                    return toast::show(cx, Toast::error(format!("Can't open {target}")));
+                    return toast::show(cx, Toast::error(cant_open(&target)));
                 };
                 self.open_link_file_from(path, fragment.as_deref(), origin, window, cx);
             }
             Some("http" | "https" | "mailto") => cx.open_url(&target),
-            _ => toast::show(cx, Toast::error("Can't open link: unsupported scheme")),
+            _ => toast::show(
+                cx,
+                Toast::error(tr!("workbench-lsp-link-unsupported-scheme")),
+            ),
         }
     }
 
@@ -593,7 +597,7 @@ impl Workbench {
                 }
                 if !is_file {
                     let name = path.file_name().unwrap_or(path.as_os_str());
-                    let message = format!("Can't open {}", name.to_string_lossy());
+                    let message = cant_open(&name.to_string_lossy());
                     return toast::show(cx, Toast::error(message));
                 }
                 // The row now; the column once the editor has the text.
@@ -869,6 +873,17 @@ impl Workbench {
             }
         }
     }
+}
+
+/// What a link with no target says when it's followed.
+fn no_target() -> gpui::SharedString {
+    tr!("workbench-lsp-link-no-target")
+}
+
+/// What a link to `target`, a file or address, says when it can't be
+/// opened.
+fn cant_open(target: &str) -> gpui::SharedString {
+    tr!("workbench-lsp-link-cant-open", target = target)
 }
 
 /// Closes once the Save As holding `path` as its destination lets go, if one does.
