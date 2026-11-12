@@ -9,13 +9,14 @@ use std::{fs, path::Path, process::Command, time::Duration};
 
 use fe_gpui::{EditorSettings, EditorTheme};
 use fe_ui::{ActiveTheme as _, ROW_HEIGHT, SHADOW_FLOAT};
-use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext, point, px};
+use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext, hsla, point, px};
 
 use crate::{
     Launch, Workbench,
     workbench::git_commands::git_log::{
-        CARD_DELAY, CLEARANCE, GitLogPanel, GraphColors, float_shadow, is_agent_commit,
-        lane_palette, rgb_distance,
+        CARD_DELAY, CLEARANCE, GitLogPanel, GraphColors, PieceRole, float_shadow, is_agent_commit,
+        lane_palette, piece_color, rgb_distance, signed_added, signed_removed, totals_line,
+        trailer_line,
     },
 };
 
@@ -295,14 +296,8 @@ fn assembled_messages_are_whole_and_render_as_before(_cx: &mut TestAppContext) {
         )),
         "Co-Authored-By: Ann"
     );
-    assert_eq!(
-        render(tr!("workbench-git-log-lines-added", added = 12u64)),
-        "+12"
-    );
-    assert_eq!(
-        render(tr!("workbench-git-log-lines-removed", removed = 3u64)),
-        "-3"
-    );
+    assert_eq!(signed_added(12), "+12");
+    assert_eq!(signed_removed(3), "-3");
     assert_eq!(
         render(tr!("workbench-git-log-parent-rev", short = "abc1234")),
         "abc1234^"
@@ -324,4 +319,87 @@ fn assembled_messages_are_whole_and_render_as_before(_cx: &mut TestAppContext) {
         render(tr!("workbench-git-log-refs-more", count = 3u64)),
         "+3"
     );
+}
+
+/// The production trailer and totals paths (the lines the card draws from)
+/// are the catalogue's English byte for byte, with the arguments' ranges
+/// found and styled, and the punctuation attached to what it follows.
+#[gpui::test]
+fn production_lines_render_the_english_trailers_and_totals(_cx: &mut TestAppContext) {
+    let trailer = trailer_line("Co-Authored-By", "Ann");
+    assert_eq!(trailer.text(), "Co-Authored-By: Ann");
+    assert_eq!(trailer.lead, "");
+    let roles: Vec<_> = trailer.args.iter().map(|(arg, _)| arg.role).collect();
+    assert_eq!(roles, [PieceRole::Key, PieceRole::Name]);
+    assert_eq!(trailer.args[0].0.text, "Co-Authored-By");
+    assert_eq!(trailer.args[0].1, ": ", "the colon goes with the key");
+    assert_eq!(trailer.args[1].1, "");
+
+    // The key and its colon are muted, the name is the text's.
+    let (muted, added, deleted) = (
+        hsla(0.1, 0.1, 0.5, 1.),
+        hsla(0.3, 1., 0.4, 1.),
+        hsla(0., 1., 0.4, 1.),
+    );
+    let color = |role| piece_color(role, muted, added, deleted);
+    assert_eq!(color(PieceRole::Key), Some(muted));
+    assert_eq!(color(PieceRole::Name), None);
+    assert_eq!(color(PieceRole::Added), Some(added));
+    assert_eq!(color(PieceRole::Removed), Some(deleted));
+    assert_eq!(color(PieceRole::Files), None);
+
+    // An RTL name is the formatter's own, whatever isolation it adds.
+    let formatted = kiln_l10n::tr!(
+        "workbench-git-log-card-trailer",
+        key = "Signed-off-by",
+        name = "שלום"
+    );
+    let rtl = trailer_line("Signed-off-by", "שלום");
+    assert_eq!(rtl.text(), formatted.to_string());
+    assert!(rtl.args[1].0.text.contains("שלום"));
+
+    let totals = totals_line(3, 12, 1);
+    assert_eq!(
+        totals.text(),
+        "3 files changed, 12 insertions(+), 1 deletion(-)"
+    );
+    let roles: Vec<_> = totals.args.iter().map(|(arg, _)| arg.role).collect();
+    assert_eq!(
+        roles,
+        [PieceRole::Files, PieceRole::Added, PieceRole::Removed]
+    );
+    let after: Vec<_> = totals
+        .args
+        .iter()
+        .map(|(_, after)| after.as_str())
+        .collect();
+    assert_eq!(after, [", ", ", ", ""], "each separator follows its count");
+    assert_eq!(totals.args[0].0.text, "3 files changed");
+    assert_eq!(
+        totals_line(1, 1, 1).text(),
+        "1 file changed, 1 insertion(+), 1 deletion(-)"
+    );
+}
+
+/// Reordered, repeated and adjacent placeholders survive with the
+/// whitespace between them, and an isolating formatter's marks stay.
+#[test]
+fn split_message_keeps_every_placeholder_whitespace_and_isolation() {
+    use crate::workbench::git_commands::git_log::split_message_for_test;
+    let marked = " \u{e001}\u{e000}  \u{e000}, \u{e001} ";
+    let line = split_message_for_test(" BA  A, B ", marked, &["A", "B"]);
+    assert_eq!(line.text(), " BA  A, B ");
+    assert_eq!(line.lead, " ");
+    assert_eq!(line.args.len(), 4);
+    assert_eq!(line.args[1].1, "  ");
+
+    // A formatter that isolates its arguments: the ranges include them.
+    let real = "\u{2068}A\u{2069}-\u{2068}B\u{2069}";
+    let line = split_message_for_test(real, "\u{e000}-\u{e001}", &["A", "B"]);
+    assert_eq!(line.text(), real);
+    assert_eq!(line.args[0].0.text, "\u{2068}A\u{2069}");
+
+    // One that doesn't: nothing is added.
+    let line = split_message_for_test("A-B", "\u{e000}-\u{e001}", &["A", "B"]);
+    assert_eq!(line.args[0].0.text, "A");
 }

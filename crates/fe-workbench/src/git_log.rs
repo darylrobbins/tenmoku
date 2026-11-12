@@ -506,30 +506,163 @@ fn totals_text(files: usize, added: u32, removed: u32) -> [String; 3] {
     ]
 }
 
-/// A message with placeholders laid out as elements: `text` is the message
-/// rendered with each placeholder given the marker char at its index in
-/// `marks`; this gives the text before the first marker and, in the order
-/// the message has them, each marker's index with the text after it up to
-/// the next. The message stays whole in the catalogue, so a locale can
-/// reorder or reword it around the pieces the card styles apart.
-fn message_parts(text: &str, marks: &[char]) -> (String, Vec<(usize, String)>) {
-    let mut lead = String::new();
-    let mut parts: Vec<(usize, String)> = Vec::new();
-    for ch in text.chars() {
-        match marks.iter().position(|mark| *mark == ch) {
-            Some(ix) => parts.push((ix, String::new())),
-            None => parts
-                .last_mut()
-                .map_or(&mut lead, |(_, after)| after)
-                .push(ch),
-        }
-    }
-    (lead, parts)
+/// Which of its arguments a piece of a card line is, as the card styles
+/// them apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PieceRole {
+    Key,
+    Name,
+    Files,
+    Added,
+    Removed,
 }
 
-/// The markers [`message_parts`] takes: private-use characters no message
+/// A run of a card line: its text and what it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Piece {
+    pub(crate) role: PieceRole,
+    pub(crate) text: String,
+}
+
+/// An argument and the literal text that follows it up to the next
+/// argument, which stays attached to it when the line wraps. `lead` is the
+/// text before the first argument.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CardLine {
+    pub(crate) lead: String,
+    pub(crate) args: Vec<(Piece, String)>,
+}
+
+impl CardLine {
+    /// The line as the catalogue formats it.
+    #[cfg(test)]
+    pub(crate) fn text(&self) -> String {
+        let args = self
+            .args
+            .iter()
+            .map(|(arg, after)| format!("{}{after}", arg.text));
+        format!("{}{}", self.lead, args.collect::<String>())
+    }
+}
+
+/// A message split at its placeholders. `real` is the message formatted
+/// with the real `values`, `marked` the same message formatted with the
+/// marker char at each placeholder's index in `marks`; the two are aligned
+/// so every argument's range in `real` is found, whatever isolation the
+/// formatter put round it, and the text is `real`'s, byte for byte. The
+/// message stays whole in the catalogue, so a locale can reorder, repeat or
+/// reword it around the arguments the card styles apart. If the two don't
+/// line up, the whole message is plain text.
+fn split_message(
+    real: &str,
+    marked: &str,
+    marks: &[char],
+    roles: &[PieceRole],
+    values: &[&str],
+) -> CardLine {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let plain = || CardLine {
+        lead: real.to_owned(),
+        args: Vec::new(),
+    };
+    let mut line = CardLine::default();
+    let mut at = 0;
+    for ch in marked.chars() {
+        let rest = &real[at..];
+        let Some(ix) = marks.iter().position(|mark| *mark == ch) else {
+            let Some(rest) = rest.strip_prefix(ch) else {
+                return plain();
+            };
+            at = real.len() - rest.len();
+            match line.args.last_mut() {
+                Some((_, after)) => after.push(ch),
+                None => line.lead.push(ch),
+            }
+            continue;
+        };
+        let isolated = rest.strip_prefix(FSI);
+        let inner = isolated.unwrap_or(rest);
+        let Some(after_value) = inner.strip_prefix(values[ix]) else {
+            return plain();
+        };
+        let closed = isolated
+            .and_then(|_| after_value.strip_prefix(PDI))
+            .unwrap_or(after_value);
+        let end = real.len() - closed.len();
+        line.args.push((
+            Piece {
+                role: roles[ix],
+                text: real[at..end].to_owned(),
+            },
+            String::new(),
+        ));
+        at = end;
+    }
+    if at != real.len() {
+        return plain();
+    }
+    line
+}
+
+/// The markers [`split_message`] takes: private-use characters no message
 /// holds.
 const MARKS: [char; 3] = ['\u{e000}', '\u{e001}', '\u{e002}'];
+
+/// A trailer's line, from its catalogue message.
+pub(crate) fn trailer_line(key: &str, name: &str) -> CardLine {
+    let real = tr!("workbench-git-log-card-trailer", key = key, name = name);
+    let marked = tr!(
+        "workbench-git-log-card-trailer",
+        key = MARKS[0].to_string(),
+        name = MARKS[1].to_string()
+    );
+    let roles = [PieceRole::Key, PieceRole::Name];
+    split_message(&real, &marked, &MARKS[..2], &roles, &[key, name])
+}
+
+/// The totals' line, from its catalogue message.
+pub(crate) fn totals_line(files: usize, added: u32, removed: u32) -> CardLine {
+    let [files, added, removed] = totals_text(files, added, removed);
+    let real = tr!(
+        "workbench-git-log-card-totals",
+        files = files.as_str(),
+        added = added.as_str(),
+        removed = removed.as_str()
+    );
+    let marked = tr!(
+        "workbench-git-log-card-totals",
+        files = MARKS[0].to_string(),
+        added = MARKS[1].to_string(),
+        removed = MARKS[2].to_string()
+    );
+    let roles = [PieceRole::Files, PieceRole::Added, PieceRole::Removed];
+    split_message(&real, &marked, &MARKS, &roles, &[&files, &added, &removed])
+}
+
+/// The colour a piece of a card line is drawn in; `None` is the text's. A
+/// key's colour carries its punctuation; a count's is the count's alone.
+pub(crate) fn piece_color(
+    role: PieceRole,
+    muted: Hsla,
+    added: Hsla,
+    deleted: Hsla,
+) -> Option<Hsla> {
+    match role {
+        PieceRole::Key => Some(muted),
+        PieceRole::Added => Some(added),
+        PieceRole::Removed => Some(deleted),
+        PieceRole::Name | PieceRole::Files => None,
+    }
+}
+
+/// [`split_message`] for the tests' own messages.
+#[cfg(test)]
+pub(crate) fn split_message_for_test(real: &str, marked: &str, values: &[&str]) -> CardLine {
+    let marks = ['\u{e000}', '\u{e001}'];
+    let roles = [PieceRole::Key, PieceRole::Name];
+    split_message(real, marked, &marks, &roles, values)
+}
 
 /// What a commit card's web link says for `url`: the host's name where
 /// it's known.
@@ -862,27 +995,21 @@ impl Render for CommitCard {
         }
         if !self.trailers.is_empty() {
             let rows = self.trailers.iter().map(|trailer| {
-                let (key, name) = (trailer.key.as_str(), trailer.name.as_str());
-                let message = tr!(
-                    "workbench-git-log-card-trailer",
-                    key = MARKS[0].to_string(),
-                    name = MARKS[1].to_string()
-                );
-                let (lead, parts) = message_parts(&message, &MARKS[..2]);
-                let mut row = div().flex().gap_1();
-                if !lead.trim().is_empty() {
-                    row = row.child(lead.trim().to_owned());
-                }
-                for (ix, after) in parts {
-                    row = if ix == 0 {
-                        let text = format!("{key}{}", after.trim_end());
-                        row.child(div().flex_none().text_color(ui.muted_text).child(text))
-                    } else {
-                        let text = format!("{name}{}", after.trim_end());
-                        row.child(div().min_w_0().child(text))
-                    };
-                }
-                row
+                let line = trailer_line(&trailer.key, &trailer.name);
+                let (muted, added, deleted) = (ui.muted_text, colors.added, colors.deleted);
+                let lead = (!line.lead.is_empty()).then(|| div().flex_none().child(line.lead));
+                (div().flex())
+                    .children(lead)
+                    .children(line.args.into_iter().map(|(arg, after)| {
+                        match piece_color(arg.role, muted, added, deleted) {
+                            Some(color) => (div().flex_none().text_color(color))
+                                .child(format!("{}{after}", arg.text))
+                                .into_any_element(),
+                            None => (div().min_w_0())
+                                .child(format!("{}{after}", arg.text))
+                                .into_any_element(),
+                        }
+                    }))
             });
             let trailers = div().flex().flex_col().children(rows);
             sections.push(("trailers", trailers.into_any_element()));
@@ -916,8 +1043,7 @@ impl Render for CommitCard {
             ("header", header.into_any_element()),
             ("scrolled", scrolled.into_any_element()),
         ];
-        if let Some((files, added, removed)) = self.totals {
-            let [files, added, removed] = totals_text(files, added, removed);
+        if let Some((files_n, added_n, removed_n)) = self.totals {
             // The count opens the commit's change to all its files.
             let files_part = |files: String| match self.repo.clone() {
                 Some(repo) => {
@@ -936,35 +1062,27 @@ impl Render for CommitCard {
                 }
                 None => div().child(files).into_any_element(),
             };
-            let message = tr!(
-                "workbench-git-log-card-totals",
-                files = MARKS[0].to_string(),
-                added = MARKS[1].to_string(),
-                removed = MARKS[2].to_string()
-            );
-            let (lead, laid) = message_parts(&message, &MARKS);
-            let mut totals = div().flex_none().flex().flex_wrap().gap_1();
-            if !lead.trim().is_empty() {
-                totals = totals.child(lead.trim().to_owned());
-            }
-            let mut pieces = [Some(files), Some(added), Some(removed)];
-            for (ix, after) in laid {
-                let Some(text) = pieces[ix].take() else {
-                    continue;
+            let line = totals_line(files_n, added_n, removed_n);
+            let (muted, added, deleted) = (ui.muted_text, colors.added, colors.deleted);
+            let lead = (!line.lead.is_empty()).then(|| div().child(line.lead));
+            // Each count keeps the text after it, so a separator can't wrap
+            // apart from the count it follows.
+            let counts = line.args.into_iter().map(|(arg, after)| {
+                let text = match arg.role {
+                    PieceRole::Files => files_part(arg.text),
+                    role => {
+                        let el = div().child(arg.text);
+                        match piece_color(role, muted, added, deleted) {
+                            Some(color) => el.text_color(color).into_any_element(),
+                            None => el.into_any_element(),
+                        }
+                    }
                 };
-                let part = match ix {
-                    0 => files_part(text),
-                    1 => div()
-                        .text_color(colors.added)
-                        .child(text)
-                        .into_any_element(),
-                    _ => div()
-                        .text_color(colors.deleted)
-                        .child(text)
-                        .into_any_element(),
-                };
-                totals = totals.child(div().flex().child(part).child(after.trim_end().to_owned()));
-            }
+                div().flex().child(text).child(after)
+            });
+            let totals = (div().flex_none().flex().flex_wrap())
+                .children(lead)
+                .children(counts);
             parts.push(("totals", totals.into_any_element()));
         }
         let copy = IconButton::new(
@@ -2285,12 +2403,12 @@ fn lettered(row: Stateful<Div>, lead: Div, ix: usize, probe: RowsProbe) -> State
 }
 
 /// A file row's added-lines count, as `+N`.
-fn signed_added(added: u32) -> String {
+pub(crate) fn signed_added(added: u32) -> String {
     tr!("workbench-git-log-lines-added", added = u64::from(added)).to_string()
 }
 
 /// A file row's removed-lines count, as `-N`.
-fn signed_removed(removed: u32) -> String {
+pub(crate) fn signed_removed(removed: u32) -> String {
     tr!(
         "workbench-git-log-lines-removed",
         removed = u64::from(removed)
