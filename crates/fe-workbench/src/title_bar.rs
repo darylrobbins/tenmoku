@@ -7,8 +7,9 @@
 //!   go; then the project widget, the root folder's name and a chevron,
 //!   which opens Open Recent (`workbench.open_recent`); and beside it, no
 //!   slash between them, the branch widget, HEAD's branch (its short id
-//!   when detached) and a chevron, which opens the branch picker
-//!   (`git.switch_branch`), shown only in a repository.
+//!   when detached), its marks and ahead/behind counts (`git_branch`) and a
+//!   chevron, which opens the branch picker (`git.switch_branch`), shown
+//!   only in a repository; its tooltip names the branch's upstream.
 //! - **Right**: search, which runs `quick_open.toggle` as its key does
 //!   (Go to File, and the palette by its prefixes), and a settings gear
 //!   (`workbench.open_settings_ui`).
@@ -63,6 +64,8 @@ pub(crate) struct State {
     /// HEAD's branch, or its short id when detached; none outside a
     /// repository.
     pub(crate) branch: Option<SharedString>,
+    /// The branch's upstream, as `origin/main`, if it has one.
+    pub(crate) upstream: Option<SharedString>,
 }
 
 /// What a mouse down on the bar asked the window to do, under test, where
@@ -170,7 +173,10 @@ fn left(state: &State, cx: &App) -> AnyElement {
             BRANCH_MAX_WIDTH,
             branch.clone(),
             tr!("workbench-chrome-branch", name = &branch),
-            tr!("workbench-chrome-switch-branch"),
+            match &state.upstream {
+                Some(upstream) => tr!("workbench-git-sync-switch-branch", upstream = upstream),
+                None => tr!("workbench-chrome-switch-branch"),
+            },
             "git.switch_branch",
         )
     });

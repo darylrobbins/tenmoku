@@ -70,6 +70,7 @@ mod find_bar_b3;
 mod find_keys;
 mod git_log_b3;
 mod git_log_graph_width;
+mod git_sync_ui;
 mod icon_theme_install;
 mod launch;
 pub(crate) mod lsp;

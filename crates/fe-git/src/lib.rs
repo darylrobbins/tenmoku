@@ -41,6 +41,7 @@ pub use commit_log::{CommitFile, LogCommit, LogFilter, LogScope, RefKind, RefLab
 pub use commit_stats::{CommitStats, FileStat};
 pub use index::SplitStatus;
 pub use log::FileCommit;
+pub use refs::Upstream;
 pub use refs::{Branch, Head};
 pub use remote::{PullMode, RemoteError};
 pub use stash::{StashEntry, StashError};

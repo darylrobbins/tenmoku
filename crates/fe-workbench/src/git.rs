@@ -25,7 +25,11 @@
 //!
 //! Each refresh that finds the repository also reads where HEAD points,
 //! which the status bar's branch item shows (`git_branch`), with whether
-//! anything changed; one that finds none hides the item.
+//! anything changed, and how far HEAD's branch is from its upstream as of
+//! the last fetch (no network), which the branch item and the Changes
+//! panel's header show ([`Sync`]); one that finds none hides them. As
+//! fetching, pulling, pushing, committing and switching branches each
+//! refresh once they've run, the counts follow them.
 //!
 //! An editor opened gets its base when the workbench starts observing it:
 //! its file's text at HEAD if it has one; else, as only the status tells
@@ -54,7 +58,7 @@ use std::{
     time::Duration,
 };
 
-use fe_git::{ChangeKind, GitError, Head, Repo, SplitStatus};
+use fe_git::{ChangeKind, GitError, Head, Repo, SplitStatus, Upstream};
 use fe_gpui::{EditorView, commands::EditorViewEvent};
 use fe_project::FsChange;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, WeakEntity};
@@ -64,9 +68,12 @@ pub(crate) mod git_conflicts;
 
 use git_conflicts::{ConflictBands, ConflictLenses};
 
+use kiln_l10n::tr;
+
 use crate::{
     GitPanel, Workbench,
     git_panel::{self, Located},
+    workbench::git_commands::git_remote,
 };
 
 /// How long after the last watcher batch a refresh runs.
@@ -85,6 +92,9 @@ struct Found {
     resolved: PathBuf,
     /// Where the root is in it, for the Changes panel.
     located: Located,
+    /// Its shared git directory, which `git_remote` knows a fetch, pull or
+    /// push running in it by; none if it couldn't be read.
+    repository: Option<PathBuf>,
 }
 
 /// What a refresh read: HEAD's id, where HEAD points, and the changed
@@ -97,6 +107,21 @@ struct Snapshot {
     kinds: HashMap<PathBuf, ChangeKind>,
     /// A merge or rebase is in progress.
     merging: bool,
+    /// HEAD's branch's upstream; none if there's none or it couldn't be
+    /// read.
+    upstream: Option<Upstream>,
+}
+
+/// What the Changes panel's header shows of syncing with the remote: how
+/// far HEAD's branch is from its upstream, as of the last fetch.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Sync {
+    /// HEAD is on a branch with commits, which a push without an upstream
+    /// publishes.
+    pub on_branch: bool,
+    pub upstream: Option<Upstream>,
+    /// The repository's shared git directory: see [`Found`].
+    pub repository: Option<PathBuf>,
 }
 
 /// What a refresh's status run found: the repository the root is in, if
@@ -129,6 +154,19 @@ impl Marks {
         }
         marks
     }
+}
+
+/// How far HEAD's branch is from `upstream`, as `↑2 ↓1`, each left out at 0;
+/// none if it's level or there's no upstream. The branch widget's, and the
+/// Changes panel header's.
+pub(crate) fn sync_counts(upstream: Option<&Upstream>) -> Option<String> {
+    let upstream = upstream?;
+    let ahead = (upstream.ahead > 0)
+        .then(|| tr!("workbench-git-sync-ahead", count = upstream.ahead).to_string());
+    let behind = (upstream.behind > 0)
+        .then(|| tr!("workbench-git-sync-behind", count = upstream.behind).to_string());
+    let counts: Vec<String> = [ahead, behind].into_iter().flatten().collect();
+    (!counts.is_empty()).then(|| counts.join(" "))
 }
 
 type Statuses = Result<Option<(Arc<Found>, Vec<SplitStatus>, Snapshot)>, GitError>;
@@ -421,8 +459,16 @@ impl GitState {
         let (statuses, landed) = match statuses {
             Ok(Some((repo, statuses, snapshot))) => {
                 if let Some(head) = snapshot.branch.clone() {
-                    self.show_branch(Some((head, Marks::of(&statuses, snapshot.merging))), cx);
+                    let marks = Marks::of(&statuses, snapshot.merging);
+                    let upstream = snapshot.upstream.clone();
+                    self.show_branch(Some((head, marks, upstream)), cx);
                 }
+                let sync = Sync {
+                    on_branch: matches!(snapshot.branch, Some(Head::Branch(_))),
+                    upstream: snapshot.upstream.clone(),
+                    repository: repo.repository.clone(),
+                };
+                self.show_sync(Some(sync), cx);
                 let after = Arc::new(snapshot);
                 let before = self.snapshot.replace(after.clone());
                 self.repo = Some(repo.clone());
@@ -435,6 +481,7 @@ impl GitState {
             }
             Ok(None) => {
                 self.show_branch(None, cx);
+                self.show_sync(None, cx);
                 self.repo = None;
                 self.no_repo = true;
                 self.snapshot = None;
@@ -472,9 +519,17 @@ impl GitState {
         }
     }
 
-    /// Has the workbench's status bar show `branch`, where HEAD points and
-    /// what changed; none hides it.
-    fn show_branch(&self, branch: Option<(Head, Marks)>, cx: &mut App) {
+    /// Has the Changes panel's header show `sync`; none, outside a
+    /// repository, hides it.
+    fn show_sync(&self, sync: Option<Sync>, cx: &mut App) {
+        (self.changes)
+            .update(cx, |changes, cx| changes.set_sync(sync, cx))
+            .ok();
+    }
+
+    /// Has the workbench's status bar show `branch`, where HEAD points, what
+    /// changed and its upstream; none hides it.
+    fn show_branch(&self, branch: Option<(Head, Marks, Option<Upstream>)>, cx: &mut App) {
         if let Some(workbench) = self.workbench.upgrade() {
             workbench.update(cx, |workbench, cx| workbench.set_branch_item(branch, cx));
         }
@@ -573,10 +628,14 @@ fn read(root: &Path, repo: Option<Arc<Found>>) -> Statuses {
             };
             let resolved =
                 (dunce::canonicalize(repo.workdir())).unwrap_or_else(|_| repo.workdir().to_owned());
+            let repository = (git_remote::repository(&repo))
+                .inspect_err(|error| log::warn!("can't find the git directory: {error}"))
+                .ok();
             Arc::new(Found {
                 repo,
                 resolved,
                 located,
+                repository,
             })
         }
     };
@@ -594,6 +653,10 @@ fn read(root: &Path, repo: Option<Arc<Found>>) -> Statuses {
             })
             .collect(),
         merging: repo.repo.merging(),
+        upstream: (repo.repo.upstream_status())
+            .inspect_err(|error| log::warn!("can't read HEAD's upstream: {error}"))
+            .ok()
+            .flatten(),
     };
     Ok(Some((repo, statuses, snapshot)))
 }

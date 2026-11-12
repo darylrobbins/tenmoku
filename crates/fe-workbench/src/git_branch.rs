@@ -7,9 +7,14 @@
 //!   HEAD's branch, or its short id when detached, then as VS Code's status
 //!   item does: `*` for working-tree or untracked changes, `+` for staged
 //!   ones and `!` while a merge or rebase is in progress, in that order;
-//!   nothing outside a repository. The git refresh ([`crate::git`]) sets it
-//!   each time it reads the status. A click runs `git.switch_branch`. The
-//!   status bar shows no branch (the design's status bar row).
+//!   then how far the branch is from its upstream as of the last fetch,
+//!   `main ↑2 ↓1`: `↑` the commits to push, `↓` those to pull, each left
+//!   out at 0, both with no upstream; nothing outside a repository. Its
+//!   tooltip names the upstream. The git refresh ([`crate::git`]) sets it
+//!   each time it reads the status, which fetching, pulling, pushing,
+//!   committing and switching each have it do. A click runs
+//!   `git.switch_branch`. The status bar shows no branch (the design's
+//!   status bar row).
 //! - **Picker.** `git.switch_branch`, or `:Git switch` and `:Git checkout`
 //!   with no name, lists the branches in the background, then shows the
 //!   shared picker (kiln-shell's: `ctrl-n`/`ctrl-p`, up and down move):
@@ -52,7 +57,7 @@ use std::{
     rc::Rc,
 };
 
-use fe_git::{Branch, BranchRef, Head, Repo, SwitchError};
+use fe_git::{Branch, BranchRef, Head, Repo, SwitchError, Upstream};
 use fe_ui::ui_theme;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable as _,
@@ -206,16 +211,24 @@ enum Outcome {
 
 impl Workbench {
     /// Shows `branch` in the title bar's branch widget: where HEAD points,
-    /// and what changed ([`Marks`]). None, outside a repository, hides the
-    /// widget.
+    /// what changed ([`Marks`]) and its upstream, if it has one. None,
+    /// outside a repository, hides the widget.
     pub(crate) fn set_branch_item(
         &mut self,
-        branch: Option<(Head, Marks)>,
+        branch: Option<(Head, Marks, Option<Upstream>)>,
         cx: &mut Context<Self>,
     ) {
-        let shown = branch.map(|(head, marks)| SharedString::from(branch_label(&head, marks)));
-        if shown != self.title_branch {
+        let (shown, upstream) = match branch {
+            Some((head, marks, upstream)) => {
+                let label = branch_label(&head, marks, upstream.as_ref());
+                let name = upstream.map(|upstream| SharedString::from(upstream.name));
+                (Some(SharedString::from(label)), name)
+            }
+            None => (None, None),
+        };
+        if shown != self.title_branch || upstream != self.title_upstream {
             self.title_branch = shown;
+            self.title_upstream = upstream;
             cx.notify();
         }
     }
@@ -519,8 +532,9 @@ impl Workbench {
     }
 }
 
-/// `head`'s name, with `*`, `+` and `!` as `marks` say.
-fn branch_label(head: &Head, marks: Marks) -> String {
+/// `head`'s name, with `*`, `+` and `!` as `marks` say, then `↑` and `↓`
+/// with how far it is from `upstream`, each only if it's some way.
+fn branch_label(head: &Head, marks: Marks, upstream: Option<&Upstream>) -> String {
     let mut text = head_name(head).to_owned();
     for (set, mark) in [
         (marks.working, '*'),
@@ -530,6 +544,10 @@ fn branch_label(head: &Head, marks: Marks) -> String {
         if set {
             text.push(mark);
         }
+    }
+    if let Some(counts) = crate::git::sync_counts(upstream) {
+        text.push(' ');
+        text.push_str(&counts);
     }
     text
 }

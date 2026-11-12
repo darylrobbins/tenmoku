@@ -26,6 +26,14 @@ workbench-changes-stage-all-merge = Stage All Merge Changes
 workbench-changes-unstage = Unstage Changes
 workbench-changes-unstage-all = Unstage All Changes
 
+## The sync header's buttons (git_panel.rs): their tooltips and accessible
+## names. Publish Branch is Push's on a branch with no upstream.
+
+workbench-changes-pull = Pull
+workbench-changes-push = Push
+workbench-changes-publish = Publish Branch
+workbench-changes-fetch = Fetch
+
 ## The commit box (git_panel.rs)
 
 # The empty box's placeholder.

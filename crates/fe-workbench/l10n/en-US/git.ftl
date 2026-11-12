@@ -27,6 +27,14 @@ workbench-git-cancel = Cancel
 workbench-git-error = git: { $error }
 workbench-git-not-supported-yet = Not supported yet: { $what }
 
+## Ahead and behind the upstream (git.rs): on the branch widget and the
+## Changes panel's header, `main ↑2 ↓1`
+
+workbench-git-sync-ahead = ↑{ $count }
+workbench-git-sync-behind = ↓{ $count }
+# The branch widget's tooltip (title_bar.rs) on a branch with an upstream.
+workbench-git-sync-switch-branch = Switch Branch… (upstream: { $upstream })
+
 ## Fetch, pull and push (git_remote.rs)
 
 workbench-git-remote-already-running = A fetch, pull or push is already running; wait for it to finish

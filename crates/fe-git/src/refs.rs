@@ -74,6 +74,17 @@ pub struct Branch {
     pub upstream_gone: bool,
 }
 
+/// HEAD's branch's upstream, as of the last fetch: see [`Repo::upstream_status`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upstream {
+    /// Its short name: `origin/main`, or for a local branch's, `main`.
+    pub name: String,
+    /// Commits on HEAD's branch that the upstream lacks.
+    pub ahead: u32,
+    /// Commits on the upstream that HEAD's branch lacks.
+    pub behind: u32,
+}
+
 /// What `%(upstream:track,nobracket)` says about one local branch.
 #[derive(Default)]
 struct Track {
@@ -266,6 +277,46 @@ impl Repo {
                 kiln_l10n::tr!("git-rev-list-unexpected", text = &*text).to_string(),
             )),
         }
+    }
+
+    /// HEAD's branch's upstream and how far apart they are, as of the last
+    /// fetch, from one `for-each-ref` call, with no network. `None` when
+    /// HEAD is detached or unborn, or the branch has no upstream, its
+    /// upstream is gone, or the fetch refspec doesn't map it; an upstream
+    /// that's a local branch (`branch.<name>.remote` of `.`) counts, so a
+    /// repository with no remotes may have one.
+    pub fn upstream_status(&self) -> Result<Option<Upstream>, GitError> {
+        let Head::Branch(branch) = self.current_branch()? else {
+            return Ok(None);
+        };
+        let full = format!("refs/heads/{branch}");
+        let args: Vec<OsString> = [
+            "for-each-ref",
+            "--format=%(refname)%00%(upstream:short)%00%(upstream:track,nobracket)",
+            &full,
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
+        let out = cli::run(&self.workdir, Access::Read, &args, None)?;
+        let text = String::from_utf8_lossy(&out);
+        // A pattern matches refs under it too, which can't be branches while
+        // this one is; only the line for the branch itself is read.
+        let fields = (text.lines())
+            .map(|line| line.split('\0').collect::<Vec<_>>())
+            .find(|fields| fields.first() == Some(&full.as_str()));
+        let Some([_, name, track]) = fields.as_deref() else {
+            return Ok(None);
+        };
+        let track = parse_track(track);
+        if name.is_empty() || track.gone {
+            return Ok(None);
+        }
+        Ok(Some(Upstream {
+            name: (*name).to_owned(),
+            ahead: track.ahead.unwrap_or(0),
+            behind: track.behind.unwrap_or(0),
+        }))
     }
 
     /// Whether a merge or rebase is in progress, as VS Code's `headLabel`

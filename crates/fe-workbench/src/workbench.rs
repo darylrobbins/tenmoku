@@ -279,6 +279,9 @@ pub struct Workbench {
     /// HEAD's branch for the title bar, or its short id when detached;
     /// none outside a repository.
     title_branch: Option<SharedString>,
+    /// The upstream of the branch the title bar shows, which its tooltip
+    /// names (`git_branch`).
+    title_upstream: Option<SharedString>,
     /// What the active pane's symbol chain was last worked out for: the
     /// pane, the editor, its caret and the outline: `None` if none can come
     /// (plain text, an unsupported language, a file too large), `Some(None)`
@@ -775,6 +778,7 @@ impl Workbench {
             breadcrumbs: true,
             nav: NavButtons::default(),
             title_branch: None,
+            title_upstream: None,
             chain_key: None,
             _outline: cx.observe(&outline, |_, _, cx| cx.notify()),
             #[cfg(test)]

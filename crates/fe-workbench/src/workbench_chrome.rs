@@ -80,6 +80,7 @@ impl Workbench {
             nav: self.nav,
             project: title_bar::name(self.root.as_deref()),
             branch: self.title_branch.clone(),
+            upstream: self.title_upstream.clone(),
         }
     }
 

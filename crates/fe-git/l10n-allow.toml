@@ -114,3 +114,8 @@ reason = "A git argument"
 file = "src/stash.rs"
 text = "stash@{{{index}}}"
 reason = "A git stash ref"
+
+[[literal]]
+file = "src/refs.rs"
+text = "refs/heads/{branch}"
+reason = "A git ref name passed to git"

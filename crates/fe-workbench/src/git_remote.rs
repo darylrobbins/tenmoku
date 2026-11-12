@@ -23,6 +23,8 @@
 //! [`ALREADY_RUNNING`], in any window into it, by any path or linked worktree,
 //! so finding the repository comes first, in the background. Each runs git in
 //! the background, with a toast saying it's going and one saying how it went.
+//! The Changes panel's header buttons run them too, and are off while one
+//! runs ([`is_busy`]), told as one starts and once it's done.
 //! How it went is said even if the root's changed or the window's closed by
 //! then, as nothing else would tell of a push that failed. A pull's open files
 //! are checked whatever the root is by then, as a new root keeps the tabs but
@@ -149,16 +151,31 @@ enum Outcome {
 }
 
 /// The repositories a command's running in, each until its claim's gone.
+/// Observers hear each claim made, and each command done.
 #[derive(Default)]
-struct Running(Vec<(PathBuf, Weak<()>)>);
+pub(crate) struct Running(Vec<(PathBuf, Weak<()>)>);
 
 impl Global for Running {}
 
 /// Whether a command's running in `repository`.
 fn is_running(repository: &Path, cx: &mut App) -> bool {
+    forget_done(cx);
+    let running = &cx.default_global::<Running>().0;
+    running.iter().any(|(busy, _)| busy == repository)
+}
+
+/// Forgets the commands done, telling [`Running`]'s observers.
+fn forget_done(cx: &mut App) {
     let running = &mut cx.default_global::<Running>().0;
     running.retain(|(_, claim)| claim.strong_count() > 0);
-    running.iter().any(|(busy, _)| busy == repository)
+}
+
+/// Whether a command's running in `repository`, as found by [`repository`],
+/// without telling [`Running`]'s observers, so a view may ask as it draws.
+pub(crate) fn is_busy(repository: &Path, cx: &App) -> bool {
+    (cx.try_global::<Running>()).is_some_and(|running| {
+        (running.0.iter()).any(|(busy, claim)| busy == repository && claim.strong_count() > 0)
+    })
 }
 
 /// Marks a command as running in `repository` for as long as what's returned
@@ -284,6 +301,7 @@ impl Workbench {
                 let told = told(command, outcome, &origin.root);
                 cx.update(|cx| toast::show(cx, told));
                 drop(claim);
+                cx.update(forget_done);
             })
         };
         match command {
@@ -318,18 +336,25 @@ fn find(root: &Path, command: GitCommand) -> Result<Option<Found>, RemoteError> 
     let Some(repo) = Repo::discover(root)? else {
         return Ok(None);
     };
-    let shared = git_read(&repo, &["rev-parse", "--git-common-dir"])?;
-    let repository = (dunce::canonicalize(repo.workdir().join(shared))).map_err(|error| {
-        failed(&tr!(
-            "workbench-git-remote-git-directory",
-            error = error.to_string()
-        ))
-    })?;
+    let repository = repository(&repo)?;
     let target = match command {
         GitCommand::PushForceWithLease => force_target(&repo).map(Some),
         _ => Ok(None),
     };
     Ok(Some(Found { repository, target }))
+}
+
+/// `repo`'s shared git directory, the same by any path into it and from any
+/// of its linked worktrees, which a command running in it is known by. Blocks
+/// until git exits.
+pub(crate) fn repository(repo: &Repo) -> Result<PathBuf, RemoteError> {
+    let shared = git_read(repo, &["rev-parse", "--git-common-dir"])?;
+    (dunce::canonicalize(repo.workdir().join(shared))).map_err(|error| {
+        failed(&tr!(
+            "workbench-git-remote-git-directory",
+            error = error.to_string()
+        ))
+    })
 }
 
 /// What a force-push from HEAD would do, as [`Repo::push`] finds it.

@@ -50,6 +50,15 @@
 //! changes the panel emits [`GitPanelEvent::Listed`], and the workbench
 //! hands [`GitPanel::statuses`] to the root's project panel.
 //!
+//! At the top, in a repository, is the sync header: HEAD's branch's
+//! upstream and how far apart they are as of the last fetch (`↑2 ↓1`, as
+//! the title bar's branch widget shows them), then Pull, Push and Fetch
+//! buttons, which run `git.pull`, `git.push` and `git.fetch` (`git_remote`:
+//! a pull only fast-forwards, and how each went is a toast). With no
+//! upstream, Push reads "Publish Branch", as a push then publishes the
+//! branch. The buttons are off while a fetch, pull or push runs in the
+//! repository, from any window.
+//!
 //! Above the list is the commit message box, an [`EditorView`] the
 //! workbench gives the panel once it's first drawn (`git_commit`): not a
 //! tab, so nothing saves, backs up or remembers it. It has no gutter,
@@ -101,9 +110,10 @@ use kiln_l10n::tr;
 
 use crate::{
     Workbench,
-    git::GitState,
+    git::{self, GitState, Sync},
     pane_toolbar,
     picker::{self, PaletteOp},
+    workbench::git_commands::{GitCommand, git_remote},
 };
 
 /// The key context the panel's element sets.
@@ -460,6 +470,12 @@ pub struct GitPanel {
     pending_g: bool,
     /// Drops `pending_g` when focus leaves the panel, once it's drawn.
     focus_out: Option<Subscription>,
+    /// What the sync header shows; none outside a repository or before the
+    /// first status is read.
+    sync: Option<Sync>,
+    /// Draws the sync header's buttons again as a fetch, pull or push
+    /// starts or ends anywhere, once the panel's drawn.
+    remote_watch: Option<Subscription>,
     #[cfg(test)]
     test: std::rc::Rc<std::cell::RefCell<TestHooks>>,
     /// The placeholder last drawn over the box, and the family it was set
@@ -502,6 +518,8 @@ impl GitPanel {
             pending_c: false,
             pending_g: false,
             focus_out: None,
+            sync: None,
+            remote_watch: None,
             #[cfg(test)]
             test: Default::default(),
             #[cfg(test)]
@@ -527,6 +545,86 @@ impl GitPanel {
         if let Some(git) = self.git.upgrade() {
             git.update(cx, GitState::refresh);
         }
+    }
+
+    /// Shows `sync` in the header; none hides it.
+    pub(crate) fn set_sync(&mut self, sync: Option<Sync>, cx: &mut Context<Self>) {
+        if sync != self.sync {
+            self.sync = sync;
+            cx.notify();
+        }
+    }
+
+    /// Whether a fetch, pull or push is running in the repository.
+    fn remote_busy(&self, cx: &App) -> bool {
+        let repository = self
+            .sync
+            .as_ref()
+            .and_then(|sync| sync.repository.as_deref());
+        repository.is_some_and(|repository| git_remote::is_busy(repository, cx))
+    }
+
+    /// The sync header: the upstream and the counts, then Pull, Push (or
+    /// Publish Branch) and Fetch. None outside a repository.
+    fn render_sync(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.status == Status::NotARepository {
+            return None;
+        }
+        let sync = self.sync.as_ref()?;
+        let ui = fe_ui::ui_theme(cx);
+        let busy = self.remote_busy(cx);
+        let workbench = (self.git.upgrade()).map(|git| git.read(cx).workbench());
+        let upstream = (sync.upstream.as_ref()).map(|upstream| upstream.name.clone());
+        let counts = git::sync_counts(sync.upstream.as_ref());
+        let buttons = sync_buttons(sync)
+            .into_iter()
+            .map(|(id, icon, name, command)| {
+                let workbench = workbench.clone();
+                let button = IconButton::new(id, icon, name, &ui)
+                    .disabled(busy)
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        let Some(workbench) = workbench.clone() else {
+                            return;
+                        };
+                        (workbench.update(cx, |workbench, cx| {
+                            workbench.run_git_command(command, window, cx)
+                        }))
+                        .ok();
+                    });
+                match pane_toolbar::shortcut(command.id(), cx) {
+                    Some(key) => button.shortcut(key),
+                    None => button,
+                }
+            });
+        let element = div()
+            .debug_selector(|| "changes-sync".into())
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_1()
+            .pl_3()
+            .pr_1()
+            .py_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .items_center()
+                    .text_color(ui.muted_text)
+                    .children(upstream.map(|upstream| div().min_w_0().truncate().child(upstream)))
+                    .children(counts.map(|counts| {
+                        div()
+                            .flex_none()
+                            .debug_selector(|| "changes-sync-counts".into())
+                            .text_color(ui.text)
+                            .child(counts)
+                    })),
+            )
+            .child(div().flex_none().flex().items_center().children(buttons));
+        Some(element.into_any_element())
     }
 
     /// A run starts: its sequence number.
@@ -1905,6 +2003,31 @@ impl GitPanel {
     }
 }
 
+/// The sync header's buttons, each its id, icon, accessible name and
+/// command: Push reads Publish Branch on a branch with no upstream, which a
+/// push publishes.
+fn sync_buttons(sync: &Sync) -> [(&'static str, Icon, SharedString, GitCommand); 3] {
+    let push = match sync.on_branch && sync.upstream.is_none() {
+        true => tr!("workbench-changes-publish"),
+        false => tr!("workbench-changes-push"),
+    };
+    [
+        (
+            "changes-pull",
+            Icon::ChevronDown,
+            tr!("workbench-changes-pull"),
+            GitCommand::Pull,
+        ),
+        ("changes-push", Icon::ChevronUp, push, GitCommand::Push),
+        (
+            "changes-fetch",
+            Icon::RefreshCw,
+            tr!("workbench-changes-fetch"),
+            GitCommand::Fetch,
+        ),
+    ]
+}
+
 /// How many pixels an em of a monospace font is per pixel of its size, near
 /// enough to place the placeholder where the box's text starts.
 const EM_PER_FONT_SIZE: f32 = 0.6;
@@ -2127,6 +2250,10 @@ impl Render for GitPanel {
                 panel.pending_g = false;
             }));
         }
+        if self.remote_watch.is_none() {
+            self.remote_watch = Some(cx.observe_global::<git_remote::Running>(|_, cx| cx.notify()));
+        }
+        let sync = self.render_sync(cx);
         let commit_box = self.render_commit_box(cx);
         let ui = fe_ui::ui_theme(cx);
         let list = uniform_list(
@@ -2152,6 +2279,7 @@ impl Render for GitPanel {
             .bg(ui.panel_background)
             .text_color(ui.text)
             .text_size(px(12.))
+            .children(sync)
             .children(commit_box)
             .when_some(self.message(), |panel, message| {
                 let color = if error { ui.error_text } else { ui.muted_text };
@@ -2166,6 +2294,15 @@ impl Render for GitPanel {
             })
             .child(list)
     }
+}
+
+/// What the sync header shows, for tests: see [`GitPanel::sync_header`].
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SyncHeader {
+    pub upstream: Option<String>,
+    pub counts: Option<String>,
+    pub buttons: Vec<(&'static str, String, bool)>,
 }
 
 /// What the tests hold and count of [`GitState`]'s status runs, which the
@@ -2398,6 +2535,25 @@ impl GitPanel {
     /// Whether Amend is checked.
     pub(crate) fn amend_checked(&self) -> bool {
         self.commit.as_ref().is_some_and(|commit| commit.amend)
+    }
+
+    /// What the sync header shows: the upstream, the counts, and each
+    /// button's id, accessible name and whether it's on. None while it's
+    /// hidden.
+    pub(crate) fn sync_header(&self, cx: &App) -> Option<SyncHeader> {
+        if self.status == Status::NotARepository {
+            return None;
+        }
+        let sync = self.sync.as_ref()?;
+        let on = !self.remote_busy(cx);
+        let buttons = (sync_buttons(sync).into_iter())
+            .map(|(id, _, name, _)| (id, name.to_string(), on))
+            .collect();
+        Some(SyncHeader {
+            upstream: (sync.upstream.as_ref()).map(|upstream| upstream.name.clone()),
+            counts: git::sync_counts(sync.upstream.as_ref()),
+            buttons,
+        })
     }
 
     /// The Commit button's label and whether it's enabled.
