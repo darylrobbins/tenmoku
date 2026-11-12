@@ -40,20 +40,23 @@
 //! workbench.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
     time::{Duration, Instant},
 };
 
+use crate::workbench::git_commands::git_log::float_shadow;
 use fe_command::{CommandId, Invocation, Source};
-use fe_ui::{ActiveTheme as _, Button, Icon, IconButton};
+use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, radius};
 use gpui::{
-    AnyWindowHandle, App, Context, Entity, FocusHandle, HoverListenerMode, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, WeakFocusHandle,
-    Window, WindowId, div, prelude::FluentBuilder as _, px,
+    AnyWindowHandle, App, Bounds, Context, Entity, FocusHandle, HoverListenerMode,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
+    SharedString, Size, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
+    WeakEntity, WeakFocusHandle, Window, WindowId, div, point, prelude::FluentBuilder as _, px,
+    svg,
 };
+use kiln_l10n::tr;
 
 /// How many toasts show at once.
 pub(crate) const MAX_SHOWN: usize = 3;
@@ -66,7 +69,13 @@ pub(crate) const MAX_WAITING: usize = 64;
 pub(crate) const LIFETIME: Duration = Duration::from_secs(6);
 
 /// A toast's width.
-const WIDTH: f32 = 360.;
+const WIDTH: f32 = 340.;
+
+/// How far a toast sits from the editor area's edges.
+const MARGIN: f32 = 12.;
+
+/// How many actions a toast has room for: its action, or its choices.
+pub(crate) const MAX_ACTIONS: usize = 2;
 
 /// How bad it is: info and warnings go by themselves, errors stay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -74,6 +83,7 @@ pub(crate) enum Level {
     Info,
     Warning,
     Error,
+    Success,
 }
 
 /// The question a toast asks: a button per title, and who to tell which
@@ -172,6 +182,22 @@ impl Toast {
 
     pub(crate) fn error(message: impl Into<String>) -> Self {
         Self::new(Level::Error, message)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code, reason = "no caller yet"))]
+    pub(crate) fn success(message: impl Into<String>) -> Self {
+        Self::new(Level::Success, message)
+    }
+
+    /// How many buttons the toast asks for: its action and a button per
+    /// choice. A question alone (no action) may ask more than
+    /// [`MAX_ACTIONS`], wrapping; an action beside choices may not.
+    pub(crate) fn action_count(&self) -> usize {
+        let choices = self
+            .choices
+            .as_ref()
+            .map_or(0, |choices| choices.titles.len());
+        usize::from(self.action.is_some()) + choices
     }
 
     pub(crate) fn detail(mut self, detail: impl Into<String>) -> Self {
@@ -444,6 +470,9 @@ pub(crate) struct ToastLayer {
     timer: Option<Task<()>>,
     /// The column's scroll, when the toasts are taller than the window.
     scroll: ScrollHandle,
+    /// The room the editor area leaves a toast (its size less both
+    /// margins), as [`Placed`] read it this frame; none with no area.
+    room: Rc<Cell<Option<Size<Pixels>>>>,
     /// The toast given keyboard focus, from `toast.focus` until it goes or
     /// focus is given back: focus may leave it meanwhile, for a picker
     /// opened from it, say, and come back to the same button.
@@ -523,6 +552,7 @@ impl ToastLayer {
             queue: ToastQueue::default(),
             timer: None,
             scroll: ScrollHandle::new(),
+            room: Rc::default(),
             focused: None,
             card,
             buttons: Vec::new(),
@@ -804,6 +834,16 @@ impl ToastLayer {
         fe_ui::announce(cx, said.join("\n"), politeness);
     }
 
+    /// The widest a card may be: the editor area's width less both
+    /// margins as [`Placed`] last measured it, else the window's.
+    fn max_width(&self, window: &Window) -> Pixels {
+        match self.room.get() {
+            Some(room) => room.width,
+            None => window.viewport_size().width - px(MARGIN * 2.),
+        }
+        .max(px(0.))
+    }
+
     /// The card for `entry`: an `Alert` named by its message, its detail
     /// the description, holding its buttons.
     fn render_toast(
@@ -813,11 +853,13 @@ impl ToastLayer {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let colors = cx.theme().colors;
-        let level = match entry.toast.level {
-            Level::Info => colors.status.info,
-            Level::Warning => colors.status.warning,
-            Level::Error => colors.status.error,
-        };
+        let look = card_look(&colors);
+        let (icon, level) = level_icon(entry.toast.level, &colors);
+        debug_assert!(
+            entry.toast.action.is_none() || entry.toast.action_count() <= MAX_ACTIONS,
+            "a toast has room for {MAX_ACTIONS} actions: {:?}",
+            entry.toast.message,
+        );
         let id = entry.id;
         let ix = id.0;
         let layer = cx.weak_entity();
@@ -835,7 +877,7 @@ impl ToastLayer {
         let close = IconButton::new(
             SharedString::from(format!("toast-close-{ix}")),
             Icon::X,
-            "Dismiss",
+            tr!("workbench-toast-dismiss"),
             &fe_ui::ui_theme(cx),
         )
         .when_some(focus_of(ToastButton::Close), |close, focus| {
@@ -851,10 +893,10 @@ impl ToastLayer {
             div()
                 .flex_none()
                 .text_color(colors.text.muted)
-                .child(format!("×{}", entry.count))
+                .child(tr!("workbench-toast-count", count = entry.count))
         });
         let detail = entry.toast.detail.clone().map(|detail| {
-            (div().text_xs().line_clamp(4))
+            (div().text_xs().line_clamp(1))
                 .text_color(colors.text.muted)
                 .child(detail)
         });
@@ -949,18 +991,17 @@ impl ToastLayer {
             .on_hover(hovered)
             .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
             .w(px(WIDTH))
-            .max_w(window.viewport_size().width - px(24.))
+            .max_w(self.max_width(window))
             .flex()
             .flex_col()
             .gap_1()
             .p_2()
             .pl_3()
-            .rounded_md()
+            .rounded(look.radius)
             .border_1()
-            .border_l_4()
             .border_color(colors.border.default)
-            .bg(colors.surface.overlay)
-            .shadow_md()
+            .bg(look.fill)
+            .shadow(vec![look.shadow])
             .text_sm()
             .text_color(colors.text.primary)
             .child(
@@ -970,11 +1011,16 @@ impl ToastLayer {
                     .gap_2()
                     .child(
                         div()
-                            .mt(px(5.))
+                            .debug_selector(move || format!("toast-icon-{ix}"))
+                            .mt(px(1.))
                             .flex_none()
-                            .size(px(8.))
-                            .rounded_full()
-                            .bg(level),
+                            .child(
+                                svg()
+                                    .path(icon.path())
+                                    .size(px(16.))
+                                    .flex_none()
+                                    .text_color(level),
+                            ),
                     )
                     .child(
                         (div().flex_1().min_w_0().line_clamp(8)).child(entry.toast.message.clone()),
@@ -985,6 +1031,163 @@ impl ToastLayer {
             .children(detail)
             .children(action)
             .children(choices)
+    }
+}
+
+/// A level's icon and its colour: shinsha for an error, kiseto for a
+/// warning, ruri for info, celadon for success.
+pub(crate) fn level_icon(level: Level, colors: &fe_ui::Tokens<gpui::Hsla>) -> (Icon, gpui::Hsla) {
+    match level {
+        Level::Info => (Icon::CircleDot, colors.status.info),
+        Level::Warning => (Icon::TriangleAlert, colors.status.warning),
+        Level::Error => (Icon::CircleX, colors.status.error),
+        Level::Success => (Icon::CircleCheck, colors.status.success),
+    }
+}
+
+/// A card's look: the raised surface, the float shadow under it, the
+/// float radius; its edge is the one hairline all round, no coloured side.
+pub(crate) struct CardLook {
+    pub fill: gpui::Hsla,
+    pub radius: gpui::Pixels,
+    pub shadow: gpui::BoxShadow,
+}
+
+pub(crate) fn card_look(colors: &fe_ui::Tokens<gpui::Hsla>) -> CardLook {
+    CardLook {
+        fill: colors.surface.raised,
+        radius: radius::FLOAT,
+        shadow: float_shadow(colors.surface.raised),
+    }
+}
+
+/// Reads the editor area as this frame laid it out.
+type AreaFn = Box<dyn Fn(&App) -> Option<Bounds<Pixels>>>;
+
+/// Draws its child at the lower right of the editor area, 12 px in: the
+/// area read as this frame's layout has it, in prepaint, after the panes
+/// recorded theirs, and the child laid out there then, within the area's
+/// size less both margins (the layer reads it as [`ToastLayer::room`] as it
+/// renders), so a dock opening, resizing or the bottom panel toggling moves
+/// and sizes the toasts in the same frame.
+pub(crate) struct Placed {
+    child: gpui::AnyElement,
+    area: AreaFn,
+    room: Rc<Cell<Option<Size<Pixels>>>>,
+    /// Where the child goes with no area: 12 px from the window's right
+    /// and this far from its bottom.
+    fallback_bottom: Pixels,
+}
+
+impl Placed {
+    pub(crate) fn new(
+        layer: &Entity<ToastLayer>,
+        area: impl Fn(&App) -> Option<Bounds<Pixels>> + 'static,
+        child: impl IntoElement,
+        fallback_bottom: Pixels,
+        cx: &App,
+    ) -> Self {
+        Self {
+            fallback_bottom,
+            child: child.into_any_element(),
+            area: Box::new(area),
+            room: layer.read(cx).room.clone(),
+        }
+    }
+}
+
+impl gpui::Element for Placed {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        // Nothing of its own: the child is laid out in prepaint, where the
+        // area is known.
+        let style = gpui::Style {
+            position: gpui::Position::Absolute,
+            ..gpui::Style::default()
+        };
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let margin = px(MARGIN);
+        let area = (self.area)(cx);
+        let room = area.map(|area| Size {
+            width: (area.size.width - margin * 2.).max(px(0.)),
+            height: (area.size.height - margin * 2.).max(px(0.)),
+        });
+        self.room.set(room);
+        let viewport = window.viewport_size();
+        let available = match room {
+            Some(room) => room,
+            None => Size {
+                width: (viewport.width - margin * 2.).max(px(0.)),
+                height: viewport.height,
+            },
+        };
+        let size = self.child.layout_as_root(
+            gpui::size(
+                gpui::AvailableSpace::Definite(available.width),
+                gpui::AvailableSpace::MinContent,
+            ),
+            window,
+            cx,
+        );
+        let origin = match area {
+            Some(area) => point(
+                area.right() - margin - size.width,
+                area.bottom() - margin - size.height,
+            ),
+            None => point(
+                viewport.width - margin - size.width,
+                viewport.height - self.fallback_bottom - size.height,
+            ),
+        };
+        self.child.prepaint_at(origin, window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+    }
+}
+
+impl IntoElement for Placed {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
     }
 }
 
@@ -1015,9 +1218,10 @@ impl Render for ToastLayer {
             // as the menu bar's, which closes on any press.
             .occlude()
             .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
-            // No taller than the room the workbench gives it, scrolling
+            // No taller than the room the editor area gives it, scrolling
             // past that, so each toast's buttons can be reached.
-            .max_h_full()
+            .when_some(self.room.get(), |layer, room| layer.max_h(room.height))
+            .when(self.room.get().is_none(), |layer| layer.max_h_full())
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             .flex()

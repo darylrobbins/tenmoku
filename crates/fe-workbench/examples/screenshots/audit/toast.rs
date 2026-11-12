@@ -1,6 +1,6 @@
-//! A warning toast with a detail line, as a failed save shows one. Its
-//! fill is translucent (`surface.overlay`, the audit's finding) over its own
-//! shadow, so no token gives the colour there: the probe is its warning dot.
+//! A warning toast with a detail line, as a failed save shows one: 340 px
+//! at the editor area's lower right, on the opaque `surface.raised` (the
+//! audit's TO1-TO3), a warning icon, no coloured border.
 
 use fe_workbench::Workbench;
 
@@ -17,8 +17,8 @@ pub(crate) const SURFACE: Surface = Surface {
 };
 
 const PROBES: &[Probe] = &[
-    // The warning dot's middle.
-    probe(648., 522., "status.warning"),
+    // The card's left padding, beside the icon: the raised surface.
+    probe(655., 530., "surface.raised"),
     // The editor, left of the toast.
     probe(400., 400., "surface.background"),
 ];

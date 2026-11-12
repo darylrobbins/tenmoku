@@ -514,6 +514,16 @@ impl Workbench {
         place_docks(docks, sidebar, terminal, cx);
     }
 
+    /// The editor area as the last frame laid it out: the panes' content,
+    /// below their tab bars, between the rail, the docks and the bottom
+    /// panel. None before there is one.
+    pub(crate) fn editor_area(&self, cx: &App) -> Option<gpui::Bounds<gpui::Pixels>> {
+        let areas = (self.panes(cx).into_iter())
+            .map(|pane| kiln_shell::PaneView::pane(pane.read(cx)).content_bounds())
+            .filter(|bounds| bounds.size.width > gpui::px(0.) && bounds.size.height > gpui::px(0.));
+        areas.reduce(|a, b| a.union(&b))
+    }
+
     /// The window's toasts.
     #[cfg(test)]
     pub(crate) fn toasts(&self) -> &Entity<toast::ToastLayer> {

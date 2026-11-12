@@ -1189,20 +1189,24 @@ impl Render for Workbench {
             )
             .children(self.setup.clone())
             .child({
-                // The window's height, for toasts to fit in, bottom first;
-                // over the setup sheet, which Install's result reports to.
-                let toasts = div()
-                    .absolute()
-                    .top(px(8.))
-                    .right(px(12.))
-                    .bottom(bottom)
-                    .flex()
-                    .flex_col()
-                    .justify_end()
-                    .items_end()
-                    .child(self.toasts.clone());
+                // Lower right inside the editor area, 12 px from its edges,
+                // above the bottom panel and clear of the rail and docks, as
+                // this frame lays them out (`toast::Placed`); with no panes
+                // yet, or over the setup sheet (which Install's result
+                // reports to), the window's own bottom right instead.
+                let this = cx.weak_entity();
+                let sheet = self.setup.is_some();
+                let area = move |cx: &App| {
+                    if sheet {
+                        return None;
+                    }
+                    this.read_with(cx, |workbench, cx| workbench.editor_area(cx))
+                        .ok()
+                        .flatten()
+                };
+                let content = div().child(self.toasts.clone());
                 #[cfg(test)]
-                let toasts = toasts.child({
+                let content = content.child({
                     let probe = self.overlay_text_style.clone();
                     gpui::canvas(
                         move |_, window, _| *probe.borrow_mut() = Some(window.text_style()),
@@ -1210,7 +1214,7 @@ impl Render for Workbench {
                     )
                     .absolute()
                 });
-                toasts
+                toast::Placed::new(&self.toasts, area, content, bottom, cx)
             })
             // The window's live region, last.
             .child(fe_ui::Announcer::mount(window, cx))

@@ -164,6 +164,9 @@ migrated = [
     "src/snippet_picker.rs",
     "src/diagnostics_picker.rs",
     "src/ignore_diagnostics.rs",
+
+    # T1556: toasts.
+    "src/toast.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -701,3 +704,33 @@ reason = "A row icon's debug selector"
 file = "src/test_runnables.rs"
 text = "{name}.rs"
 reason = "A Rust target's file name, looked for on disk"
+
+[[literal]]
+file = "src/toast.rs"
+text = "toast-close-{ix}"
+reason = "A toast's close button id, not shown"
+
+[[literal]]
+file = "src/toast.rs"
+text = "toast-choice-{ix}-{i}"
+reason = "A toast's answer button id and debug selector, not shown"
+
+[[literal]]
+file = "src/toast.rs"
+text = "toast-action-{ix}"
+reason = "A toast's action button debug selector, not shown"
+
+[[literal]]
+file = "src/toast.rs"
+text = "toast-action"
+reason = "A toast's action button id prefix, not shown"
+
+[[literal]]
+file = "src/toast.rs"
+text = "toast-{ix}"
+reason = "A toast card's id and debug selector, not shown"
+
+[[literal]]
+file = "src/toast.rs"
+text = "toast-icon-{ix}"
+reason = "A toast icon's debug selector, not shown"
