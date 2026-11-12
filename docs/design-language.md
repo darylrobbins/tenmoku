@@ -1,11 +1,14 @@
 # Tenmoku's design language
 
-What the code does today, not what it should do. Every rule names the path and
+What the code does today, not what it should do; what it *should* do is
+[`docs/design/design-system.md`](design/design-system.md), direction B3, and this
+file records how far the code has come to it: the B3 cards have landed, so the
+look below is theirs. Every rule names the path and
 symbol it comes from, written `path:symbol`, so it can be checked and so it goes
 stale visibly. Things that disagree are listed under [Gaps](#gaps) and left
-alone here; later cards pick them up. Pixel values are logical pixels. Counts
-are from the tree when this was written (T1273), to show which values carry
-weight, and aren't kept up to date.
+alone here; a gap a card closed is struck through there with the card's handle.
+Pixel values are logical pixels. Counts are from the tree when the section was
+written (T1273), to show which values carry weight, and aren't kept up to date.
 
 Paths starting `kiln/` are the framework; the rest are the app.
 
@@ -25,6 +28,16 @@ A window's colours come from two tables, each mainly for its own surfaces:
   `crates/fe-config/src/theme.rs:EditorPalette`, turned into
   `crates/fe-gpui/src/lib.rs:EditorTheme` by
   `crates/fe-gpui/src/theme.rs:EditorTheme::from_palette`.
+
+The defaults are **Yohen** (dark, warm iron-brown) and **Hakuji** (light, white
+porcelain and cool greys): `crates/fe-config/src/themes.rs:DEFAULT_DARK` and
+`DEFAULT_LIGHT`, files `crates/fe-config/themes/yohen.toml` and `hakuji.toml`. Each is
+complete: every kiln table, `[editor]`, `[syntax]` and `[terminal]`. The design's
+role names (hare's fur, oil spot, celadon, shinsha, kiseto, ruri, jun) are the
+values of `accent`, `agent`, `status` and `vcs` in them, one meaning per colour. The
+B3 cards added the role tokens: `surface.chrome`, `text.faint`, `border.control`,
+`status.modified` and the soft grounds, the `agent`, `vcs` and `file_icon` groups,
+and the editor's design keys.
 
 The tables below list each token, what it's for, and, where a theme may leave it
 out, what it follows (`kiln/crates/kiln-core/src/theme/tokens.rs:RULES`). "Root"
@@ -175,7 +188,10 @@ A scrolling view's scrollbar. `kiln/crates/kiln-core/src/theme/tokens.rs:Scrollb
 
 What an agent did or is doing: its edits' marks, its toasts. Never the accent, so
 an agent's work reads apart from the user's focus
-(`crates/fe-config/tests/design_role_tokens.rs`). Nothing reads it yet.
+(`crates/fe-config/tests/design_role_tokens.rs`). The Git log draws agents' commits
+in it (`crates/fe-workbench/src/git_log.rs:GraphColors`). The editor's agent lane in
+the gutter is its own `[editor] agent_lane` key, not this token. Agent chips, terminals,
+toasts and review aren't drawn in it yet.
 `kiln/crates/kiln-core/src/theme/tokens.rs:Agent`.
 
 | Token | For | If left out |
@@ -185,7 +201,9 @@ an agent's work reads apart from the user's focus
 
 ### vcs
 
-A file's or a line's version-control state. Nothing reads it yet.
+A file's or a line's version-control state. The Changes panel's letters and the
+Git log's lane colours read it (`crates/fe-workbench/src/git_panel.rs:letter_color`,
+`crates/fe-workbench/src/git_log.rs:GraphColors::new`).
 `kiln/crates/kiln-core/src/theme/tokens.rs:Vcs`.
 
 | Token | For | If left out |
@@ -217,10 +235,10 @@ A file's or a line's version-control state. Nothing reads it yet.
   `bracket_1`, `bracket_2`, `bracket_3`.
 - Sticky scroll: `sticky_scroll_background`, `sticky_scroll_border`,
   `sticky_scroll_shadow`, `sticky_scroll_hover`.
-- The design's roles, which the editor doesn't read yet: `find_match`,
-  `find_match_other`, `identifier_highlight`, `agent_lane`, `fold_hover`. The
-  Tenmoku themes set each to what the editor computes today: the foreground at
-  alpha `38` (0.22), the cursor's at `38` for `agent_lane`.
+- The design's roles: `find_match`, `find_match_other` (find matches,
+  `crates/fe-gpui/src/element.rs:match_colors`), `identifier_highlight` (the
+  identifier under the caret, `crates/fe-gpui/src/element/decorations.rs`),
+  `agent_lane` (the gutter's dotted agent lane) and `fold_hover`.
 - Vim's status segment: `vim_mode_normal`, `vim_mode_insert`, `vim_mode_visual`,
   `vim_mode_replace`, `vim_mode_command`, `vim_mode_foreground`.
 - Minimap: `minimap_background`, `minimap_slider`, `minimap_slider_hover`,
@@ -237,7 +255,7 @@ capture's dotted name to a colour. A capture takes its longest listed prefix, so
 
 - **Neither wins over the other: they're separate keys.** `surface.background` and
   `[editor] background` don't affect each other, and a theme keeps them equal by
-  writing both. All three Tenmoku themes do (`#16181d`, `#ffffff`, `#1c1814`).
+  writing both. So do the Tenmoku themes (`#16181d`, `#ffffff`, `#1c1814`) and Yohen and Hakuji.
 - **The division has exceptions,** where a view takes from both tables:
   - `crates/fe-markdown-view/src/style.rs:MarkdownStyle::new` takes body text,
     background and code colours from the editor, and muted text, borders, links and
@@ -260,12 +278,19 @@ capture's dotted name to a colour. A capture takes its longest listed prefix, so
   is dropped with a warning. `[syntax]` takes any well-formed capture name, a new one
   included, and warns only on a malformed name or a value that isn't a colour
   (`crates/fe-config/src/theme.rs:EditorPalette::syntax_colors`).
-- **The Tenmoku themes.** `crates/fe-config/themes/tenmoku-dark.toml` and
+- **The older Tenmoku themes,** kept beside the defaults.
+  `crates/fe-config/themes/tenmoku-dark.toml` and
   `crates/fe-config/themes/tenmoku-light.toml` set only `[editor]` and `[syntax]`;
   their chrome is `kiln/crates/kiln-core/themes/dark.toml` and
   `kiln/crates/kiln-core/themes/light.toml`.
   `crates/fe-config/themes/tenmoku-ember.toml` is complete, with kiln's tables as
   well.
+- **The terminal's colours** are a third table, `[terminal]`
+  (`crates/fe-config/src/theme.rs:TerminalColors`): `ansi_0` to `ansi_15` and the
+  foreground, background and cursor, which fall back to the editor's. A theme that
+  leaves the ANSI colours out gets xterm's hues for its appearance
+  (`crates/fe-terminal-view/src/style.rs:TerminalStyle::ansi_for`); Yohen and Hakuji
+  take theirs from their palette.
 - **Applying one.** `crates/fastedit/src/theme.rs` turns kiln's active theme into a
   palette and sets it with `crates/fe-gpui/src/theme.rs:set_editor_palette`.
 
@@ -294,7 +319,15 @@ measured is in `docs/decisions/77nkyz5y3r-token-probe.md`.
 
 ## Spacing
 
-There's no spacing scale in code: each widget has its own constants or literals.
+`kiln/crates/kiln-ui/src/roles.rs` names the design's scale, radii, heights and
+widths, and the B3 cards moved the chrome onto it: `roles::space` (`S2` 2, `S4` 4,
+`S6` 6, `S8` 8, `S12` 12, `S16` 16, `S24` 24, `S40` 40), `roles::radius` (`FILL` 2,
+`CONTROL` 4, `MENU` 6, `FLOAT` 10), `roles::height` (`TITLE_BAR` 38, `TAB_STRIP` 34,
+`ROW` 24, `MENU_ROW` 28, `STATUS_BAR` 24, `CONTROL` 26, `CONTROL_SMALL` 22,
+`RAIL_ITEM` 32), `roles::width` (`RAIL` 42, `SIDEBAR_MIN` 232, `SIDEBAR_DEFAULT` 248),
+`BOTTOM_PANEL_DEFAULT` 250, `SHADOW_FLOAT` and `FOCUS_RING` (2 wide, offset 1).
+Widgets still carry some constants and literals of their own, listed under
+[Gaps](#gaps); the tables below say what each is today, the constant it comes from.
 GPUI's helpers are in quarter-rems and nothing calls `set_rem_size`, so a rem is
 GPUI's default 16 px: `px_1` is 4, `px_2` 8, `px_3` 12, `gap_0p5` 2.
 
@@ -306,19 +339,18 @@ GPUI's default 16 px: `px_1` is 4, `px_2` 8, `px_3` 12, `gap_0p5` 2.
 
 | Value | What | Source |
 | --- | --- | --- |
-| 18 | A settings row's line | `crates/fe-workbench/src/settings_editor.rs:LINE_HEIGHT` |
+| 22 | A settings row's line | `crates/fe-workbench/src/settings_editor.rs:LINE_HEIGHT` |
 | 22 | A view's header in a stack | `kiln/crates/kiln-shell/src/view_stack.rs:VIEW_HEADER_HEIGHT` |
 | 22 | A peek's header | `crates/fe-workbench/src/peek.rs:HEADER_HEIGHT` |
-| 22, 26, 32 | Small, medium and large buttons | `kiln/crates/kiln-ui/src/controls.rs:ButtonSize::height` |
+| 22, 26, 32 | Small, medium and large buttons (the medium is `roles::height::CONTROL`) | `kiln/crates/kiln-ui/src/controls.rs:ButtonSize::height` |
 | 24 | Every list row; the status bar | `kiln/crates/kiln-ui/src/theme.rs:ROW_HEIGHT` |
 | 24 | The breadcrumbs' toolbar | `kiln/crates/kiln-ui/src/breadcrumbs.rs:TOOLBAR_HEIGHT` |
-| 24 | A settings select | `crates/fe-workbench/src/settings_editor_controls.rs:SELECT_HEIGHT` |
+| 26 | A settings select and control | `crates/fe-workbench/src/settings_editor_controls.rs:SELECT_HEIGHT`, `crates/fe-workbench/src/settings_editor.rs:CONTROL_HEIGHT` (both `roles::height::CONTROL`) |
 | 26 | A shortcuts row | `crates/fe-workbench/src/shortcuts_editor.rs:LINE_HEIGHT` |
 | 28 | The menu bar | `kiln/crates/kiln-ui/src/menu_bar.rs:MENU_BAR_HEIGHT` |
-| 30 | The tab bar | `kiln/crates/kiln-ui/src/tab_bar.rs:TAB_HEIGHT` |
-| 30 | A settings control | `crates/fe-workbench/src/settings_editor.rs:CONTROL_HEIGHT` |
-| 32 | The title bar | `kiln/crates/kiln-platform/src/window_options.rs:TITLE_BAR_HEIGHT` |
-| 36 | The activity rail's width, and its square buttons | `kiln/crates/kiln-ui/src/activity_rail.rs:RAIL_WIDTH` |
+| 34 | The tab bar | `kiln/crates/kiln-ui/src/tab_bar.rs:TAB_HEIGHT` |
+| 38 | The title bar | `kiln/crates/kiln-platform/src/window_options.rs:TITLE_BAR_HEIGHT` |
+| 42 | The activity rail's width | `kiln/crates/kiln-ui/src/activity_rail.rs:RAIL_WIDTH` |
 
 ### Paddings and gaps
 
@@ -328,8 +360,8 @@ GPUI's default 16 px: `px_1` is 4, `px_2` 8, `px_3` 12, `gap_0p5` 2.
 | 4 | A tree row's selection box inset from the list | `kiln/crates/kiln-ui/src/tree_row.rs:BOX_INSET` |
 | 6 | A tree row's left padding; its gaps around icon, badge and detail | `kiln/crates/kiln-ui/src/tree_row.rs:PADDING`, `ICON_GAP`, `BADGE_GAP`, `DETAIL_GAP` |
 | 14 | One level of tree indent | `kiln/crates/kiln-ui/src/tree_row.rs:TREE_INDENT` |
-| 8 or 12 | A status bar entry, plain or filled | `kiln/crates/kiln-ui/src/status_bar.rs` (`px_2`, `px_3`) |
-| 4, 10, 12, 16, 24 | Settings: row gap, row padding, row inset, section gap, control gap | `crates/fe-workbench/src/settings_editor_layout.rs:ROW_GAP`, `ROW_PADDING`, `ROW_INSET`, `SECTION_GAP`, `CONTROL_GAP` |
+| 8; 6 | A status bar entry's outer padding; inside a filled pill (16 high) | `kiln/crates/kiln-ui/src/status_bar.rs` (`space::S8`, `space::S6`, `PILL_HEIGHT`) |
+| 4, 12, 12, 16, 24 | Settings: row gap, row padding, row inset, section gap, control gap | `crates/fe-workbench/src/settings_editor_layout.rs:ROW_GAP`, `ROW_PADDING`, `ROW_INSET`, `SECTION_GAP`, `CONTROL_GAP` |
 | 26, 16 | Markdown: around the column, between blocks | `crates/fe-markdown-view/src/style.rs:MarkdownStyle::PADDING`, `BLOCK_GAP` |
 | 20, 5 | Markdown table cells, across and down | `crates/fe-markdown-view/src/table.rs:CELL_PAD_PX`, `CELL_PAD_Y_PX` |
 | 16 | The commit card's margin | `crates/fe-workbench/src/git_log.rs:CARD_MARGIN` |
@@ -340,8 +372,10 @@ GPUI's default 16 px: `px_1` is 4, `px_2` 8, `px_3` 12, `gap_0p5` 2.
 
 | Value | What | Source |
 | --- | --- | --- |
+| 340 | A toast | `crates/fe-workbench/src/toast.rs` |
 | 600 | The palette | `kiln/crates/kiln-ui/src/palette.rs:PALETTE_WIDTH` |
 | 420 | A prompt | `kiln/crates/kiln-ui/src/prompt.rs:PROMPT_WIDTH` |
+| 248, 232 | The sidebar's default and minimum | `kiln/crates/kiln-ui/src/roles.rs:width` |
 | 240 | The project panel; a peek's list | `crates/fe-workbench/src/project_panel.rs:PANEL_WIDTH`, `crates/fe-workbench/src/peek.rs:LIST_WIDTH` |
 | 480 | The commit card | `crates/fe-workbench/src/git_log.rs:CARD_WIDTH` |
 | 880 | The Markdown column at its widest | `crates/fe-markdown-view/src/style.rs:MarkdownStyle::MAX_WIDTH` |
@@ -358,13 +392,13 @@ GPUI's `rounded_sm` is a quarter rem, 4 px, and `rounded_md` is 6 px
 
 | Value | Uses | What |
 | --- | --- | --- |
-| 4 | `rounded_sm` 23, `rounded(px(4.))` 5 | Small controls, icon buttons, crumbs, a tree row's selection (`kiln/crates/kiln-ui/src/tree_row.rs:TreeRow`), code blocks |
-| 6 | `rounded_md` 18 | What floats: the palette, prompts (`kiln/crates/kiln-ui/src/palette.rs:PaletteFrame`, `kiln/crates/kiln-ui/src/prompt.rs`) |
+| 4 | `rounded_sm` 23, `rounded(px(4.))` 5, `roles::radius::CONTROL` | Small controls, icon buttons, crumbs, a tree row's selection (`kiln/crates/kiln-ui/src/tree_row.rs:TreeRow`), code blocks, text fields and segmented controls |
+| 6 | `rounded_md` 18, `roles::radius::MENU` | What floats: the palette, prompts (`kiln/crates/kiln-ui/src/palette.rs:PaletteFrame`, `kiln/crates/kiln-ui/src/prompt.rs`) |
 | 3 | `rounded(px(3.))` 3 | See [Gaps](#gaps) |
 | Full | `rounded_full` 5 | Avatars, dots, a switch's knob |
 
 Shadows are `shadow_lg` on the palette, prompts, the menu panel and the shortcuts
-dialog, and `shadow_md` on toasts and the settings select's menu. Sticky scroll's
+dialog, and `shadow_md` on the settings select's menu. Toasts and the Git log's commit card are floating surfaces in the design's look: `roles::radius::FLOAT` (10) and a float shadow (`crates/fe-workbench/src/git_log.rs:float_shadow`), through `crates/fe-workbench/src/toast.rs:card_look`. Sticky scroll's
 is a gradient 3 px high (`crates/fe-gpui/src/element/sticky_scroll.rs:SHADOW_HEIGHT`),
 in the theme's `sticky_scroll_shadow`.
 
@@ -372,36 +406,52 @@ in the theme's `sticky_scroll_shadow`.
 
 ### Fonts
 
-- **Chrome:** the system UI font. GPUI's default text style is `.SystemUIFont`, and
-  nothing in the chrome sets another. `crates/fe-gpui/src/hover.rs:UI_FONT` names
-  it where editor popovers need to go back to it.
+Three families are bundled, compiled in by `crates/fe-fonts/src/lib.rs` (OFL-1.1,
+static instances because GPUI registers a variable font at its default weight only):
+**Instrument Sans** (`fe_fonts::UI`), **Spline Sans Mono** (`CODE`) and **Instrument
+Serif** (`TITLE`). The workbench sets them as the `FontFamilies` global
+(`kiln/crates/kiln-ui/src/roles.rs:FontFamilies`, set in `crates/fe-workbench/src/lib.rs`);
+kiln alone defaults to the system UI font (`.SystemUIFont`) and the first installed
+monospace family.
+
+- **Chrome:** Instrument Sans (`FamilySlot::Ui`). Editor popovers go back to it with
+  `crates/fe-gpui/src/lib.rs` (the host's UI family).
+- **Titles:** Instrument Serif (`FamilySlot::Title`), for the settings page's title.
 - **Editor:** `editor.font_family`
   (`crates/fe-config/src/settings.rs:EditorSettings`), unset by default, which takes
-  the first installed of `kiln/crates/kiln-platform/src/fonts.rs:MONO_FAMILIES`
-  (JetBrains Mono, SF Mono, Menlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono,
-  Noto Sans Mono), or else `mono_last_resort`.
+  Spline Sans Mono when the host sets one, or else the first installed of
+  `kiln/crates/kiln-platform/src/fonts.rs:MONO_FAMILIES`.
 - **Terminal:** `terminal.font_family` and `font_size`
   (`crates/fe-config/src/settings.rs:TerminalSettings`), the editor's when unset.
+
+The type table is `kiln/crates/kiln-ui/src/roles.rs:TextRole`: `PAGE_TITLE` 30/36
+(400, title family), `SECTION_HEADING` 15/20 (600), `UI_HEADING` 13/18 (600),
+`UI_BODY` 13/18 (400), `UI_LABEL` 12/16 (500), `UI_SMALL` 11/14 (500), `CODE` 13/20
+and `CODE_SMALL` 12/18 (400, code family). The workbench's chrome is `UI_BODY`
+(`crates/fe-workbench/src/workbench.rs:Workbench::render`), the status bar, search and
+Problems panels, the Git log and the settings page use the roles; the older panels
+below still set their literals, as the rows say.
 
 ### Sizes and weights by role
 
 | Role | Size | Weight, line height | Source |
 | --- | --- | --- | --- |
-| Editor text | 13, from settings | Line height 1.6 | `crates/fe-config/src/settings.rs:EditorSettings` |
+| Editor text | 13, from settings | Line height 20 (`roles::CODE`) | `crates/fe-config/src/settings.rs:EditorSettings` |
 | Editor popovers, completion, which-key | The editor's | | `crates/fe-gpui/src/completion_menu.rs`, `crates/fe-gpui/src/hover.rs`, `crates/fe-gpui/src/vim/which_key.rs` |
 | Completion label | The editor's | Medium | `crates/fe-gpui/src/completion_menu.rs` |
-| Terminal | The editor's | Line height 1.25 | `crates/fe-terminal-view/src/style.rs:TerminalStyle::LINE_HEIGHT` |
+| Terminal | The editor's | Line height 1.25 (Code small, 12/18, in the bottom panel) | `crates/fe-terminal-view/src/style.rs:TerminalStyle::LINE_HEIGHT` |
 | kiln's body text | 13 | | `kiln/crates/kiln-shell/src/root.rs` |
-| Tenmoku's chrome (tabs, panels, status bar, title bar inherit it) | 12 | | `crates/fe-workbench/src/workbench.rs:Workbench::render` |
-| Panel rows | 12 | | `crates/fe-workbench/src/project_panel.rs`, `crates/fe-workbench/src/git_panel.rs`, `crates/fe-workbench/src/outline_panel.rs`, `crates/fe-workbench/src/problems_panel.rs`, `crates/fe-workbench/src/hierarchy_panel.rs`, `crates/fe-workbench/src/references_panel.rs`, `crates/fe-workbench/src/find_bar.rs`, `crates/fe-workbench/src/terminal_find.rs` |
+| Tenmoku's chrome (tabs, panels, status bar, title bar inherit it) | 13, line height 18 | `UI_BODY` | `crates/fe-workbench/src/workbench.rs:Workbench::render` |
+| Panel rows | 12 (older panels) | | `crates/fe-workbench/src/project_panel.rs`, `crates/fe-workbench/src/git_panel.rs`, `crates/fe-workbench/src/outline_panel.rs`, `crates/fe-workbench/src/problems_panel.rs`, `crates/fe-workbench/src/hierarchy_panel.rs`, `crates/fe-workbench/src/references_panel.rs`, `crates/fe-workbench/src/find_bar.rs`, `crates/fe-workbench/src/terminal_find.rs` |
 | A filled status segment | Inherits 12 | Semibold | `kiln/crates/kiln-ui/src/status_bar.rs:StatusEntry` |
 | Palette | 12 | | `kiln/crates/kiln-ui/src/palette.rs:PaletteFrame` |
 | Tooltip | 12 | | `kiln/crates/kiln-ui/src/tooltip.rs:Tooltip` |
 | Buttons | 11, 12, 13 by size | | `kiln/crates/kiln-ui/src/controls.rs:ButtonSize::text` |
 | Prompt | 13, its message 14 | | `kiln/crates/kiln-ui/src/prompt.rs:Prompt` |
-| Toast | `text_sm` 14, its detail `text_xs` 12 | | `crates/fe-workbench/src/toast.rs` |
-| Settings page heading | 15 | Semibold | `crates/fe-workbench/src/settings_editor_layout.rs` |
-| Settings row text; secondary text | 12; 11 | Semibold titles | `crates/fe-workbench/src/settings_editor_layout.rs` |
+| Toast | `text_sm` 14 title, `text_xs` 12 detail, one line | | `crates/fe-workbench/src/toast.rs` |
+| Settings page title | 30/36 | Instrument Serif, regular (`PAGE_TITLE`) | `crates/fe-workbench/src/settings_editor.rs:TITLE_ROLE` |
+| Settings section heading | 15 | Semibold | `crates/fe-workbench/src/settings_editor_layout.rs` |
+| Settings row label; help | 13; 11 (`UI_BODY`, `UI_SMALL`) | Semibold titles | `crates/fe-workbench/src/settings_editor_layout.rs` |
 | Git log labels, avatar initials | 11 | Bold on `HEAD` and initials | `crates/fe-workbench/src/git_log.rs` |
 | Commit card | 12 | Bold author and summary | `crates/fe-workbench/src/git_log.rs:CARD_TEXT` |
 | Dense two-line rows | 11 over 10 | | `crates/fe-workbench/src/extensions_picker.rs`, `crates/fe-workbench/src/config_problems.rs` |
@@ -416,8 +466,8 @@ Bold otherwise marks matched text and the argument being typed
 (`crates/fe-gpui/src/element.rs`). A preview tab's label is italic
 (`kiln/crates/kiln-ui/src/tab_bar.rs:Tab`).
 
-By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 15
-(1).
+By use, the literal sizes were 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 15
+(1) when counted (T1273); the cards since have moved those onto the roles above.
 
 ## Icons
 
@@ -471,7 +521,7 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
 
 | Size | Where | Tint | Source |
 | --- | --- | --- | --- |
-| 18 | Activity rail | `tab.active_text` highlighted, else `list.icon` | `kiln/crates/kiln-ui/src/activity_rail.rs:ICON_SIZE`, `RailButton` |
+| 16 | Activity rail (in a 32 box): top Files, Search, GitBranch, Bot, then the panels that join once shown (FileSymlink references, FileDiff AI changes, ListTree hierarchy, List quickfix); foot TriangleAlert (Problems), GitGraph, FileTerminal | `tab.active_text` highlighted, else `list.icon` | `kiln/crates/kiln-ui/src/activity_rail.rs:ICON_SIZE`, `RailButton` |
 | 16 | Tree rows | `list.icon`, `list.folder_icon`; chevron `list.chevron`; an unreadable row `status.error` | `kiln/crates/kiln-ui/src/tree_row.rs:ICON_SIZE`, `TreeRow` |
 | 16 | Icon buttons (in a 22 box) | `list.icon`, disabled `text.muted` | `kiln/crates/kiln-ui/src/icon_button.rs:IconButton` |
 | 14 | Status bar | The entry's | `kiln/crates/kiln-ui/src/status_bar.rs:ICON_SIZE` |
@@ -512,7 +562,9 @@ Two things look like motion and aren't animation:
 
 ## Gaps
 
-Found while writing this. None is fixed here. The probe measures **no** hard-coded
+Found while writing the first version (T1273). The B3 cards have closed many: a
+closed gap is ~~struck through~~ with the card that closed it, and what a card left
+is added under it or in its own bullet. The probe measures **no** hard-coded
 pixel in the workbench scene (`ALLOWED_FIXED_PIXELS` is 0), so there's no region to
 list for it; the hard-coded colours below are in things that scene doesn't draw.
 
@@ -527,33 +579,44 @@ list for it; the hard-coded colours below are in things that scene doesn't draw.
 ### Hard-coded colours
 
 - The lightbulb's `#FFCC00` and `#3794FF`: `crates/fe-gpui/src/element.rs:paint_lightbulb`.
-- The Git graph's five lane colours: `crates/fe-workbench/src/git_log.rs:GRAPH_COLORS`.
-- White initials on a hashed avatar colour, whatever the theme:
-  `crates/fe-workbench/src/git_log.rs:avatar_color`, and `gpui::white()` beside it.
-- A hunk's backgrounds, "until the themes have diff colours", though they now do:
-  `crates/fe-gpui/src/element/proposal.rs:ADDED`, `REMOVED`.
-- The 16 ANSI colours, chosen by the background's lightness, not in any theme:
-  `crates/fe-terminal-view/src/style.rs:TerminalStyle::ansi_dark`, `ansi_light`.
+- ~~The Git graph's five lane colours: `crates/fe-workbench/src/git_log.rs:GRAPH_COLORS`.~~
+  Closed by T1551 (Mac T348): `GraphColors` takes the lanes from the theme's signal
+  roles, and the avatars' colours from the same list.
+- ~~White initials on a hashed avatar colour, whatever the theme.~~ Closed by T1551:
+  the initials are drawn in the theme's ground over a lane colour
+  (`crates/fe-workbench/src/git_log.rs:GraphColors::avatar`).
+- ~~A hunk's backgrounds, "until the themes have diff colours", though they now do:
+  `crates/fe-gpui/src/element/proposal.rs:ADDED`, `REMOVED`.~~ Closed by T558 (T1554):
+  proposal hunks take the theme's diff tints.
+- ~~The 16 ANSI colours, chosen by the background's lightness, not in any theme.~~
+  Closed by T1513: a theme's `[terminal]` table sets them. What is left is the
+  fallback for a theme with no table, the two xterm-hue sets
+  `crates/fe-terminal-view/src/style.rs:TerminalStyle::ansi_dark`, `ansi_light`, chosen
+  by the background's lightness.
 - A Markdown task's check is one of two SVGs with their colour baked in, picked by the
   link colour's lightness: `crates/fe-markdown-view/src/blocks.rs:CHECK_SVG_DARK`,
   `CHECK_SVG_LIGHT`.
 - An image's checkerboard greys, computed from the background rather than a token:
   `crates/fe-gpui/src/image_viewer.rs:checker_colors`.
-- Added files' letters turn the accent green with a fixed hue rather than use
-  `status.success`: `crates/fe-workbench/src/git_panel.rs:ADDED_HUE`.
-- A find match is `foreground` at a fixed alpha, not the `find_match` key the themes
-  now set to that colour: `crates/fe-gpui/src/element.rs:search_match_color`.
+- ~~Added files' letters turn the accent green with a fixed hue rather than use
+  `status.success`: `crates/fe-workbench/src/git_panel.rs:ADDED_HUE`.~~ Closed by T1553
+  (T345): the letters are the `vcs.*` colours (`git_panel.rs:letter_color`).
+- ~~A find match is `foreground` at a fixed alpha, not the `find_match` key.~~ Closed
+  by T1550: `crates/fe-gpui/src/element.rs:match_colors` reads `find_match` and
+  `find_match_other`.
 - A second copy of Kiln Dark's colours in literals, which match it today only
   because they're kept by hand: `kiln/crates/kiln-ui/src/theme.rs:UiTheme::default_dark`,
   `UI_OVERLAY`.
 
 ### Two colours for one role
 
-- Git's change colours by table: the log's file labels take the palette
-  (`crates/fe-workbench/src/git_log.rs:FileColors::new`), the panel's letters the chrome's
-  tokens (`crates/fe-workbench/src/git_panel.rs:letter_color`); neither reads the `vcs`
-  tokens yet.
-- Warnings in Tenmoku Dark: `status.warning` `#d19a66`, `[editor] warning` `#e5c07b`.
+- Git's change colours by table: the log's file labels still take the palette
+  (`crates/fe-workbench/src/git_log.rs:FileColors::new`), the panel's letters the
+  chrome's `vcs` tokens (`crates/fe-workbench/src/git_panel.rs:letter_color`). ~~Neither
+  reads the `vcs` tokens yet.~~ The panel does since T1553; the log's file labels don't.
+- Tenmoku Dark's pairs below are no longer the defaults: Yohen and Hakuji are
+  (`DEFAULT_DARK`, `DEFAULT_LIGHT`), built on one set of roles, so the next items hold
+  for the older Tenmoku themes. Warnings in Tenmoku Dark: `status.warning` `#d19a66`, `[editor] warning` `#e5c07b`.
   Light and Ember use one colour for both:
   `kiln/crates/kiln-core/themes/dark.toml`, `crates/fe-config/themes/tenmoku-dark.toml`.
 - The selection's tint in Tenmoku Dark: `accent.subtle` at alpha `33`, `[editor]
@@ -572,32 +635,41 @@ list for it; the hard-coded colours below are in things that scene doesn't draw.
   `kiln/crates/kiln-shell/src/view_stack.rs:VIEW_HEADER_HEIGHT`,
   `crates/fe-workbench/src/peek.rs:HEADER_HEIGHT`.
 - Rows beside `ROW_HEIGHT` with their own height: 26 in
-  `crates/fe-workbench/src/shortcuts_editor.rs:LINE_HEIGHT`, 18 in
+  `crates/fe-workbench/src/shortcuts_editor.rs:LINE_HEIGHT`, 22 in
   `crates/fe-workbench/src/settings_editor.rs:LINE_HEIGHT`, and a literal 24 in
-  `kiln/crates/kiln-ui/src/menu_bar.rs`.
-- Off the scale, each once: `crates/fe-workbench/src/settings_editor_layout.rs:ROW_PADDING` 10,
-  `crates/fe-markdown-view/src/table.rs:CELL_PAD_PX` 20,
+  `kiln/crates/kiln-ui/src/menu_bar.rs`. (The settings page's controls closed on
+  `roles::height::CONTROL` in T1555 (T569).)
+- Off the scale, each once: ~~`crates/fe-workbench/src/settings_editor_layout.rs:ROW_PADDING` 10~~
+  (12 since T1555), `crates/fe-markdown-view/src/table.rs:CELL_PAD_PX` 20,
   `crates/fe-markdown-view/src/style.rs:MarkdownStyle::PADDING` 26.
+- `roles.rs` constants are adopted widget by widget, not everywhere: the title bar,
+  tab strip, rail, status bar, text fields and settings use them, while
+  `TITLE_BAR_HEIGHT`, `TAB_HEIGHT` and `RAIL_WIDTH` are separate constants that happen
+  to equal the role values. No test ties them together.
 - Row indents as literals, each once: `pl(px(22.))` in
   `crates/fe-workbench/src/ai_changes_panel.rs`, `pl(px(44.))` in
   `crates/fe-workbench/src/problems_panel.rs`.
-- A status bar entry's padding depends on its fill, 8 or 12:
-  `kiln/crates/kiln-ui/src/status_bar.rs:StatusEntry`.
+- ~~A status bar entry's padding depends on its fill, 8 or 12.~~ Closed by T1543: 8
+  outside, 6 inside a filled pill: `kiln/crates/kiln-ui/src/status_bar.rs:StatusEntry`.
 - `rounded(px(4.))` spells out `rounded_sm`:
   `kiln/crates/kiln-ui/src/tree_row.rs`, `crates/fe-markdown-view/src/blocks.rs`,
   `crates/fe-markdown-view/src/image.rs`, `crates/fe-gpui/src/image_viewer.rs`.
 - A radius of 3, off the others, three times: `crates/fe-markdown-view/src/blocks.rs`,
-  `crates/fe-gpui/src/file_viewer.rs`.
+  `crates/fe-gpui/src/file_viewer.rs`. The design's radii are 2, 4, 6 and 10
+  (`roles::radius`); 3 matches none.
 
 ### Type
 
-- Two chrome sizes: kiln's root says 13, Tenmoku's workbench 12, so a kiln widget that
-  doesn't set its own differs by host: `kiln/crates/kiln-shell/src/root.rs`,
-  `crates/fe-workbench/src/workbench.rs:Workbench::render`.
-- No role names a size: every size is a literal at its use, as in
-  `crates/fe-workbench/src/project_panel.rs`, `crates/fe-workbench/src/git_panel.rs`.
-- Used once: 15 in `crates/fe-workbench/src/settings_editor_layout.rs`, 14 in
-  `kiln/crates/kiln-ui/src/prompt.rs`.
+- ~~Two chrome sizes: kiln's root says 13, Tenmoku's workbench 12.~~ Closed by T1515:
+  the workbench's chrome is `UI_BODY`, 13. (kiln's root still says a literal 13,
+  `kiln/crates/kiln-shell/src/root.rs`, and the panels that haven't moved to the roles
+  still set 12: `crates/fe-workbench/src/project_panel.rs`.)
+- ~~No role names a size.~~ Closed by T1515 and the B3 cards: `roles.rs:TextRole`
+  names them. What is left is the surfaces that still set literals, as in
+  `crates/fe-workbench/src/project_panel.rs`, `crates/fe-workbench/src/git_panel.rs`,
+  `kiln/crates/kiln-ui/src/prompt.rs` (13 and 14).
+- ~~Used once: 15 in `settings_editor_layout.rs`.~~ 15 is `SECTION_HEADING` now
+  (T1555).
 - The only rem-sized text in the app, 14 and 12 by another route:
   `crates/fe-workbench/src/toast.rs` (`text_sm`, `text_xs`).
 - 10 px, the smallest, in two dense lists only:
@@ -605,11 +677,32 @@ list for it; the hard-coded colours below are in things that scene doesn't draw.
 
 ### Icons
 
-- `ICON_SIZE` names three different sizes: 16 in `kiln/crates/kiln-ui/src/tree_row.rs`,
-  14 in `kiln/crates/kiln-ui/src/status_bar.rs`, 18 in
-  `kiln/crates/kiln-ui/src/activity_rail.rs`.
+- `ICON_SIZE` names two different sizes: 16 in `kiln/crates/kiln-ui/src/tree_row.rs`
+  and `kiln/crates/kiln-ui/src/activity_rail.rs` (~~18~~, T1540), 14 in
+  `kiln/crates/kiln-ui/src/status_bar.rs`.
+- The rail's glyphs come from each panel's `SIDEBAR` declaration
+  (`crates/fe-workbench/src/dock.rs:SidebarPanel`, `icon`, `order`) and the foot buttons
+  from `crates/fe-workbench/src/dock.rs` (Problems, Git log, Terminal). They differ from
+  the design's rail (`docs/design/design-system.md`): there's no Runs button (the title
+  bar's run widget, T1539, is the only entry point), the Agents button is the chat
+  panel's Bot, and Changes is a Git branch rather than its own glyph.
+- ~~Strokes of mixed weight (Lucide's 2).~~ Closed by T1516: every icon is drawn at
+  1.75, which a test enforces.
 - Icons sized by a bare literal at the use, beside those constants, as in
   `kiln/crates/kiln-ui/src/tab_bar.rs:Tab`, `kiln/crates/kiln-ui/src/breadcrumbs.rs`,
   `kiln/crates/kiln-ui/src/controls.rs`.
 - Sizes used at one or two places: 11 in `crates/fe-workbench/src/git_log.rs` and
   `crates/fe-markdown-view/src/blocks.rs`, 10 in `kiln/crates/kiln-ui/src/controls.rs`.
+
+### Left by the B3 cards
+
+- `kiln/crates/kiln-ui/src/theme.rs:UiTheme::default_dark` and `UI_OVERLAY` are still
+  the second copy of Kiln Dark in literals (see Hard-coded colours above), and kiln's
+  own `dark.toml` and `light.toml` are not Yohen and Hakuji, so a kiln app that isn't
+  Tenmoku looks as it did.
+- The lightbulb is still `#FFCC00` and `#3794FF`, so its colour never follows the theme.
+- A Markdown task's check, the image checkerboard and the Git log's file labels
+  still bypass the tokens, as above.
+- The Tenmoku themes' `[editor]` pairs (warning, selection, body text) still disagree
+  with their chrome; Yohen and Hakuji are the defaults, so only a user who picks the
+  older ones sees it.
