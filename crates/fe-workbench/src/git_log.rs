@@ -593,14 +593,20 @@ fn split_message(
             }
             continue;
         };
-        let isolated = rest.strip_prefix(FSI);
-        let inner = isolated.unwrap_or(rest);
-        let Some(after_value) = inner.strip_prefix(values[ix]) else {
-            return plain();
+        // The raw value first, so a value that itself starts with FSI isn't
+        // taken for an isolate the formatter added.
+        let closed = match rest.strip_prefix(values[ix]) {
+            Some(after_value) => after_value,
+            None => {
+                let Some(inner) = rest.strip_prefix(FSI) else {
+                    return plain();
+                };
+                let Some(after_value) = inner.strip_prefix(values[ix]) else {
+                    return plain();
+                };
+                after_value.strip_prefix(PDI).unwrap_or(after_value)
+            }
         };
-        let closed = isolated
-            .and_then(|_| after_value.strip_prefix(PDI))
-            .unwrap_or(after_value);
         let end = real.len() - closed.len();
         line.args.push((
             Piece {
@@ -960,6 +966,51 @@ impl CommitCard {
     }
 }
 
+/// The debug selectors of each totals pair, its count and its separator.
+const TOTALS_SELECTORS: [(&str, &str, &str); 3] = [
+    ("totals-pair-0", "totals-count-0", "totals-after-0"),
+    ("totals-pair-1", "totals-count-1", "totals-after-1"),
+    ("totals-pair-2", "totals-count-2", "totals-after-2"),
+];
+
+/// The totals' row: each count keeps the text after it, so a separator can't
+/// wrap apart from the count it follows. `files_part` draws the files count.
+pub(crate) fn totals_row(
+    line: CardLine,
+    (muted, added, deleted): (Hsla, Hsla, Hsla),
+    files_part: impl Fn(String) -> AnyElement,
+) -> Div {
+    let lead = (!line.lead.is_empty()).then(|| div().child(line.lead));
+    let counts = line.args.into_iter().enumerate().map(|(ix, (arg, after))| {
+        let text = match arg.role {
+            PieceRole::Files => files_part(arg.text),
+            role => {
+                let el = div().child(arg.text);
+                match piece_color(role, muted, added, deleted) {
+                    Some(color) => el.text_color(color).into_any_element(),
+                    None => el.into_any_element(),
+                }
+            }
+        };
+        div()
+            .debug_selector(move || TOTALS_SELECTORS[ix].0.to_owned())
+            .flex()
+            .child(
+                div()
+                    .debug_selector(move || TOTALS_SELECTORS[ix].1.to_owned())
+                    .child(text),
+            )
+            .child(
+                div()
+                    .debug_selector(move || TOTALS_SELECTORS[ix].2.to_owned())
+                    .child(after),
+            )
+    });
+    (div().flex_none().flex().flex_wrap())
+        .children(lead)
+        .children(counts)
+}
+
 impl Render for CommitCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
@@ -1075,26 +1126,8 @@ impl Render for CommitCard {
                 None => div().child(files).into_any_element(),
             };
             let line = totals_line(files_n, added_n, removed_n);
-            let (muted, added, deleted) = (ui.muted_text, colors.added, colors.deleted);
-            let lead = (!line.lead.is_empty()).then(|| div().child(line.lead));
-            // Each count keeps the text after it, so a separator can't wrap
-            // apart from the count it follows.
-            let counts = line.args.into_iter().map(|(arg, after)| {
-                let text = match arg.role {
-                    PieceRole::Files => files_part(arg.text),
-                    role => {
-                        let el = div().child(arg.text);
-                        match piece_color(role, muted, added, deleted) {
-                            Some(color) => el.text_color(color).into_any_element(),
-                            None => el.into_any_element(),
-                        }
-                    }
-                };
-                div().flex().child(text).child(after)
-            });
-            let totals = (div().flex_none().flex().flex_wrap())
-                .children(lead)
-                .children(counts);
+            let colors = (ui.muted_text, colors.added, colors.deleted);
+            let totals = totals_row(line, colors, files_part);
             parts.push(("totals", totals.into_any_element()));
         }
         let copy = IconButton::new(

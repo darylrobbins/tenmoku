@@ -16,7 +16,7 @@ use crate::{
     workbench::git_commands::git_log::{
         CARD_DELAY, CLEARANCE, GitLogPanel, GraphColors, PieceRole, float_shadow, is_agent_commit,
         lane_palette, piece_color, rgb_distance, signed_added, signed_removed, totals_line,
-        trailer_line,
+        totals_row, trailer_line,
     },
 };
 
@@ -402,4 +402,83 @@ fn split_message_keeps_every_placeholder_whitespace_and_isolation() {
     // One that doesn't: nothing is added.
     let line = split_message_for_test("A-B", "\u{e000}-\u{e001}", &["A", "B"]);
     assert_eq!(line.args[0].0.text, "A");
+}
+
+/// The production totals row at a width too narrow for it: the pairs wrap
+/// onto their own lines, and each separator stays on its count's line.
+#[gpui::test]
+fn narrow_totals_keep_each_separator_with_its_count(cx: &mut TestAppContext) {
+    use gpui::{
+        AnyElement, Context, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
+    };
+
+    struct Narrow;
+    impl Render for Narrow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let colour = hsla(0., 0., 0.5, 1.);
+            let files = |text: String| -> AnyElement { div().child(text).into_any_element() };
+            let row = totals_row(totals_line(3, 12, 1), (colour, colour, colour), files);
+            div().w(px(150.)).child(row)
+        }
+    }
+
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
+    let window = cx.add_window(|_, _| Narrow);
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    draw(&mut cx);
+    let mut bounds = |name: String| {
+        cx.debug_bounds(Box::leak(name.clone().into_boxed_str()))
+            .unwrap_or_else(|| panic!("{name} drawn"))
+    };
+    let pair_tops: Vec<_> = (0..3)
+        .map(|ix| bounds(format!("totals-pair-{ix}")).top())
+        .collect();
+    assert!(
+        pair_tops[0] < pair_tops[1] && pair_tops[1] < pair_tops[2],
+        "the width is narrow enough to wrap every pair: {pair_tops:?}"
+    );
+    for ix in 0..2 {
+        let count = bounds(format!("totals-count-{ix}"));
+        let after = bounds(format!("totals-after-{ix}"));
+        assert_eq!(
+            after.top(),
+            count.top(),
+            "separator {ix} on its count's line"
+        );
+        assert!(
+            after.left() >= count.right(),
+            "separator {ix} follows its count"
+        );
+    }
+}
+
+/// A value that itself starts with the FSI isolate is the formatter's own
+/// text when it matches exactly; a trailer name holding isolates keeps the
+/// key's styling instead of the whole line falling back to plain text.
+#[gpui::test]
+fn a_value_starting_with_fsi_is_not_taken_for_an_added_isolate(_cx: &mut TestAppContext) {
+    let name = "\u{2068}Ann\u{2069}";
+    let line = trailer_line("Co-Authored-By", name);
+    let formatted = kiln_l10n::tr!(
+        "workbench-git-log-card-trailer",
+        key = "Co-Authored-By",
+        name = name
+    );
+    assert_eq!(line.text(), formatted.to_string());
+    let roles: Vec<_> = line.args.iter().map(|(arg, _)| arg.role).collect();
+    assert_eq!(roles, [PieceRole::Key, PieceRole::Name], "not plain text");
+    assert_eq!(line.args[0].0.text, "Co-Authored-By");
+    assert!(line.args[1].0.text.contains(name));
+
+    // Exact match first; a wrapped one still strips the formatter's isolate.
+    use crate::workbench::git_commands::git_log::split_message_for_test;
+    let raw = split_message_for_test("\u{2068}A", "\u{e000}", &["\u{2068}A"]);
+    assert_eq!(raw.args[0].0.text, "\u{2068}A");
+    let wrapped = "\u{2068}\u{2068}A\u{2069}\u{2069}";
+    let line = split_message_for_test(wrapped, "\u{e000}", &["\u{2068}A\u{2069}"]);
+    assert_eq!(line.args.len(), 1);
+    assert_eq!(line.args[0].0.text, wrapped);
 }
