@@ -1011,6 +1011,33 @@ pub(crate) fn totals_row(
         .children(counts)
 }
 
+impl CommitCard {
+    /// The body as Markdown, as the hover draws it, at the card's width. A
+    /// message with no Markdown in it draws as its lines.
+    fn body_element(&self, body: &str, cx: &App) -> AnyElement {
+        let Some(workbench) = self.workbench.upgrade() else {
+            return div().child(body.to_owned()).into_any_element();
+        };
+        let (theme, root) = {
+            let workbench = workbench.read(cx);
+            (
+                workbench.pane().read(cx).theme().clone(),
+                workbench.lsp.root.clone(),
+            )
+        };
+        let width = CARD_WIDTH - px(19.);
+        crate::lsp::markdown::markdown_body(
+            body,
+            true,
+            &theme,
+            width,
+            self.workbench.clone(),
+            root,
+            cx,
+        )
+    }
+}
+
 impl Render for CommitCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
@@ -1054,7 +1081,7 @@ impl Render for CommitCard {
                 .into_any_element(),
         )];
         if let Some(body) = self.body.clone() {
-            sections.push(("body", div().child(body).into_any_element()));
+            sections.push(("body", self.body_element(&body, cx)));
         }
         if !self.trailers.is_empty() {
             let rows = self.trailers.iter().map(|trailer| {

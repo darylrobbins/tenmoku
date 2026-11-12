@@ -2703,7 +2703,7 @@ mod file_operations;
 mod watched_files;
 
 #[path = "lsp_markdown.rs"]
-mod markdown;
+pub(crate) mod markdown;
 
 #[cfg(test)]
 #[path = "lsp_trust_tests.rs"]
