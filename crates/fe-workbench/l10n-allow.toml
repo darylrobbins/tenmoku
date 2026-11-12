@@ -707,8 +707,18 @@ reason = "A toast's close button id, not shown"
 
 [[literal]]
 file = "src/toast.rs"
-text = "toast-choice-{ix}-{i}"
+text = "toast-{kind}-{ix}-{i}"
 reason = "A toast's answer button id and debug selector, not shown"
+
+[[literal]]
+file = "src/toast.rs"
+text = "toast-more-{ix}"
+reason = "A toast's More button id and debug selector, not shown"
+
+[[literal]]
+file = "src/toast.rs"
+text = "toast-more-menu-{ix}"
+reason = "A toast's More menu debug selector, not shown"
 
 [[literal]]
 file = "src/toast.rs"

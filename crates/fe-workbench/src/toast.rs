@@ -189,15 +189,22 @@ impl Toast {
         Self::new(Level::Success, message)
     }
 
-    /// How many buttons the toast asks for: its action and a button per
-    /// choice. A question alone (no action) may ask more than
-    /// [`MAX_ACTIONS`], wrapping; an action beside choices may not.
+    /// How many buttons the toast shows: its action and a button per
+    /// choice. A question alone (no action) with more choices than
+    /// [`MAX_ACTIONS`] shows that many, the last of them its More button.
     pub(crate) fn action_count(&self) -> usize {
-        let choices = self
-            .choices
-            .as_ref()
-            .map_or(0, |choices| choices.titles.len());
+        let choices = self.choices.as_ref().map_or(0, |choices| {
+            self.overflow_from()
+                .map_or(choices.titles.len(), |_| MAX_ACTIONS)
+        });
         usize::from(self.action.is_some()) + choices
+    }
+
+    /// The first choice that goes into the More menu, if some do: a
+    /// question alone with more choices than there is room for.
+    pub(crate) fn overflow_from(&self) -> Option<usize> {
+        let choices = self.choices.as_ref()?;
+        (self.action.is_none() && choices.titles.len() > MAX_ACTIONS).then_some(MAX_ACTIONS - 1)
     }
 
     pub(crate) fn detail(mut self, detail: impl Into<String>) -> Self {
@@ -473,6 +480,9 @@ pub(crate) struct ToastLayer {
     /// The room the editor area leaves a toast (its size less both
     /// margins), as [`Placed`] read it this frame; none with no area.
     room: Rc<Cell<Option<Size<Pixels>>>>,
+    /// With no area, the height the viewport leaves the column between its
+    /// bottom offset and the top margin, as [`Placed`] read it this frame.
+    fallback_height: Rc<Cell<Option<Pixels>>>,
     /// The toast given keyboard focus, from `toast.focus` until it goes or
     /// focus is given back: focus may leave it meanwhile, for a picker
     /// opened from it, say, and come back to the same button.
@@ -483,6 +493,8 @@ pub(crate) struct ToastLayer {
     /// The focused toast's buttons' focus, in its tab order: as many as
     /// the most buttons a focused toast has had.
     buttons: Vec<FocusHandle>,
+    /// The toast whose More menu is open.
+    more: Option<ToastId>,
     /// Where focus was before the last `toast.focus`, kept once its toast
     /// has gone: a picker opened from the toast may give focus back to the
     /// toast's button after that, when it's no longer drawn, and then focus
@@ -508,16 +520,28 @@ struct Focused {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ToastButton {
     Choice(usize),
+    /// The More button, when choices overflow.
+    More,
+    /// A choice in the open More menu: its index among the choices.
+    Overflow(usize),
     Action,
     Close,
 }
 
 impl Entry {
-    /// Its buttons, in tab order.
-    pub(crate) fn buttons(&self) -> Vec<ToastButton> {
+    /// Its buttons, in tab order; `more_open` for its More menu showing.
+    pub(crate) fn buttons(&self, more_open: bool) -> Vec<ToastButton> {
         let answers = self.toast.choices.as_ref().map_or(0, |c| c.titles.len());
-        (0..answers)
+        let from = self.toast.overflow_from();
+        let shown = from.unwrap_or(answers);
+        let menu = match (from, more_open) {
+            (Some(from), true) => from..answers,
+            _ => 0..0,
+        };
+        (0..shown)
             .map(ToastButton::Choice)
+            .chain(from.map(|_| ToastButton::More))
+            .chain(menu.map(ToastButton::Overflow))
             .chain(self.toast.action.is_some().then_some(ToastButton::Action))
             .chain([ToastButton::Close])
             .collect()
@@ -553,9 +577,11 @@ impl ToastLayer {
             timer: None,
             scroll: ScrollHandle::new(),
             room: Rc::default(),
+            fallback_height: Rc::default(),
             focused: None,
             card,
             buttons: Vec::new(),
+            more: None,
             fallback: None,
             window: handle,
             announced: Vec::new(),
@@ -572,7 +598,10 @@ impl ToastLayer {
         let Some(newest) = self.queue.newest() else {
             return false;
         };
-        let (id, count) = (newest.id, newest.buttons().len());
+        let (id, count) = (
+            newest.id,
+            newest.buttons(self.more == Some(newest.id)).len(),
+        );
         let restore = match self.focused.take() {
             // Focus is in a toast already: where it was before that.
             Some(focused) if self.holds_focus(window, cx) => focused.restore,
@@ -596,7 +625,7 @@ impl ToastLayer {
     /// in the toast's tab order.
     fn focused_button(&self, window: &Window) -> Option<(ToastId, usize, Vec<ToastButton>)> {
         let id = self.focused.as_ref()?.id;
-        let buttons = self.queue.shown_entry(id)?.buttons();
+        let buttons = self.queue.shown_entry(id)?.buttons(self.more == Some(id));
         let at =
             (self.buttons.iter().take(buttons.len())).position(|focus| focus.is_focused(window))?;
         Some((id, at, buttons))
@@ -611,7 +640,11 @@ impl ToastLayer {
                 && let Some(entry) =
                     (self.focused.as_ref()).and_then(|f| self.queue.shown_entry(f.id))
             {
-                let to = if back { entry.buttons().len() - 1 } else { 0 };
+                let to = if back {
+                    entry.buttons(self.more == Some(entry.id)).len() - 1
+                } else {
+                    0
+                };
                 window.focus(&self.buttons[to], cx);
                 cx.notify();
             }
@@ -754,6 +787,39 @@ impl ToastLayer {
         id
     }
 
+    /// Opens or closes `id`'s More menu, its choices past the buttons
+    /// shown, which join the toast's tab order after the More button. The
+    /// focused toast's focus stays on the same button, or goes to More when
+    /// its button went with the menu: the focus handles are by position.
+    fn toggle_more(&mut self, id: ToastId, window: &mut Window, cx: &mut Context<Self>) {
+        let before = self
+            .focused_button(window)
+            .map(|(fid, at, buttons)| (fid, buttons[at]));
+        let open = self.more != Some(id);
+        self.more = open.then_some(id);
+        let most = [Some(id), before.map(|(fid, _)| fid)]
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.queue.shown_entry(id))
+            .map(|entry| entry.buttons(true).len())
+            .max()
+            .unwrap_or(0);
+        while self.buttons.len() < most {
+            self.buttons.push(cx.focus_handle().tab_stop(true));
+        }
+        if let Some((fid, button)) = before
+            && let Some(entry) = self.queue.shown_entry(fid)
+        {
+            let now = entry.buttons(self.more == Some(fid));
+            let to = (now.iter().position(|b| *b == button))
+                .or_else(|| now.iter().position(|b| *b == ToastButton::More));
+            if let Some(to) = to {
+                window.focus(&self.buttons[to], cx);
+            }
+        }
+        cx.notify();
+    }
+
     pub(crate) fn dismiss(&mut self, id: ToastId, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
         if self.queue.dismiss(id, now) {
@@ -856,7 +922,7 @@ impl ToastLayer {
         let look = card_look(&colors);
         let (icon, level) = level_icon(entry.toast.level, &colors);
         debug_assert!(
-            entry.toast.action.is_none() || entry.toast.action_count() <= MAX_ACTIONS,
+            entry.toast.action_count() <= MAX_ACTIONS,
             "a toast has room for {MAX_ACTIONS} actions: {:?}",
             entry.toast.message,
         );
@@ -869,7 +935,8 @@ impl ToastLayer {
             .focused
             .as_ref()
             .is_some_and(|focused| focused.id == id);
-        let order = entry.buttons();
+        let more_open = self.more == Some(id);
+        let order = entry.buttons(more_open);
         let focus_of = |button: ToastButton| {
             let at = order.iter().position(|b| *b == button)?;
             focused.then(|| self.buttons.get(at).cloned()).flatten()
@@ -901,36 +968,77 @@ impl ToastLayer {
                 .child(detail)
         });
         let choices = entry.toast.choices.clone().map(|choices| {
-            let buttons = choices
-                .titles
-                .iter()
-                .cloned()
-                .enumerate()
-                .map(|(i, title)| {
-                    let (layer, choices) = (layer.clone(), choices.clone());
-                    let focus = focus_of(ToastButton::Choice(i));
-                    div()
-                        .debug_selector(move || format!("toast-choice-{ix}-{i}"))
-                        .child(
-                            Button::new(
-                                SharedString::from(format!("toast-choice-{ix}-{i}")),
-                                title,
-                            )
+            let from = entry.toast.overflow_from();
+            let button = |i: usize, kind: &'static str, focus: Option<FocusHandle>| {
+                let (layer, choices) = (layer.clone(), choices.clone());
+                let title = choices.titles[i].clone();
+                div()
+                    .debug_selector(move || format!("toast-{kind}-{ix}-{i}"))
+                    .child(
+                        Button::new(SharedString::from(format!("toast-{kind}-{ix}-{i}")), title)
                             .small()
                             .when_some(focus, |button, focus| button.focus_handle(&focus))
                             .on_click(move |_, _, cx| {
                                 choices.answer(Some(i));
                                 layer.update(cx, |layer, cx| layer.dismiss(id, cx)).ok();
                             }),
-                        )
-                });
+                    )
+            };
+            let shown = from.unwrap_or(choices.titles.len());
+            let mut buttons: Vec<_> = (0..shown)
+                .map(|i| button(i, "choice", focus_of(ToastButton::Choice(i))))
+                .collect();
+            let mut menu = None;
+            if let Some(from) = from {
+                let focus = focus_of(ToastButton::More);
+                let layer = layer.clone();
+                buttons.push(
+                    div()
+                        .debug_selector(move || format!("toast-more-{ix}"))
+                        .child(
+                            Button::new(
+                                SharedString::from(format!("toast-more-{ix}")),
+                                tr!("workbench-toast-more"),
+                            )
+                            .small()
+                            .when_some(focus, |button, focus| button.focus_handle(&focus))
+                            .on_click(move |_, window, cx| {
+                                layer
+                                    .update(cx, |layer, cx| layer.toggle_more(id, window, cx))
+                                    .ok();
+                            }),
+                        ),
+                );
+                if more_open {
+                    let items = (from..choices.titles.len())
+                        .map(|i| button(i, "more-item", focus_of(ToastButton::Overflow(i))));
+                    menu = Some(
+                        div()
+                            .debug_selector(move || format!("toast-more-menu-{ix}"))
+                            .self_end()
+                            .flex()
+                            .flex_col()
+                            .items_end()
+                            .gap_1()
+                            .children(items),
+                    );
+                }
+            }
             div()
                 .self_end()
                 .flex()
-                .flex_wrap()
-                .justify_end()
+                .flex_col()
+                .items_end()
                 .gap_1()
-                .children(buttons)
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap_1()
+                        .children(buttons),
+                )
+                .children(menu)
         });
         let action = entry.toast.action.clone().map(|(label, command)| {
             let layer = layer.clone();
@@ -1077,6 +1185,8 @@ pub(crate) struct Placed {
     /// Where the child goes with no area: 12 px from the window's right
     /// and this far from its bottom.
     fallback_bottom: Pixels,
+    /// Where it leaves the height the fallback has room for.
+    fallback_height: Rc<Cell<Option<Pixels>>>,
 }
 
 impl Placed {
@@ -1092,6 +1202,7 @@ impl Placed {
             child: child.into_any_element(),
             area: Box::new(area),
             room: layer.read(cx).room.clone(),
+            fallback_height: layer.read(cx).fallback_height.clone(),
         }
     }
 }
@@ -1141,6 +1252,10 @@ impl gpui::Element for Placed {
         });
         self.room.set(room);
         let viewport = window.viewport_size();
+        self.fallback_height.set(match room {
+            Some(_) => None,
+            None => Some((viewport.height - self.fallback_bottom - margin).max(px(0.))),
+        });
         let available = match room {
             Some(room) => room,
             None => Size {
@@ -1221,7 +1336,14 @@ impl Render for ToastLayer {
             // No taller than the room the editor area gives it, scrolling
             // past that, so each toast's buttons can be reached.
             .when_some(self.room.get(), |layer, room| layer.max_h(room.height))
-            .when(self.room.get().is_none(), |layer| layer.max_h_full())
+            // With none, the viewport less the bottom offset and top margin:
+            // a percentage has no definite parent to resolve against.
+            .when(self.room.get().is_none(), |layer| {
+                match self.fallback_height.get() {
+                    Some(height) => layer.max_h(height),
+                    None => layer.max_h_full(),
+                }
+            })
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             .flex()

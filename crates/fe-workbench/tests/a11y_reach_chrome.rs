@@ -116,11 +116,11 @@ fn editor_focused(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> 
 mod toasts {
     use super::*;
 
-    /// A grammar offer's answers and their toast's buttons: Install, Not
-    /// now, Never, then the close button.
+    /// A grammar offer's answers and their toast's buttons: Install, More
+    /// (whose menu holds Not now, then Never), then the close button.
     const INSTALL: &str = "toast-choice-0-0";
-    const NOT_NOW: &str = "toast-choice-0-1";
-    const NEVER: &str = "toast-choice-0-2";
+    const MORE: &str = "toast-more-0";
+    const NEVER: &str = "toast-more-item-0-2";
     const CLOSE: &str = "icon-button:toast-close-0";
 
     fn kotlin() -> GrammarOffer {
@@ -196,7 +196,7 @@ mod toasts {
     /// The button whose bounds hold the focus ring, of those named.
     fn ringed(cx: &mut VisualTestContext) -> Option<&'static str> {
         let ring = bounds("focus-ring", cx)?;
-        [INSTALL, NOT_NOW, NEVER, CLOSE]
+        [INSTALL, MORE, NEVER, CLOSE]
             .into_iter()
             .find(|button| bounds(button, cx).is_some_and(|b| ring.contains(&b.center())))
     }
@@ -217,12 +217,12 @@ mod toasts {
         }
         assert_eq!(
             seen,
-            [Some(NOT_NOW), Some(NEVER), Some(CLOSE), Some(INSTALL)],
-            "Tab goes through the answers, then the close button, and wraps"
+            [Some(MORE), Some(CLOSE), Some(INSTALL), Some(MORE)],
+            "Tab goes through the answer and More, then the close button, and wraps"
         );
         cx.simulate_keystrokes("shift-tab");
         draw(cx);
-        assert_eq!(ringed(cx), Some(CLOSE), "Shift-Tab wraps back");
+        assert_eq!(ringed(cx), Some(INSTALL), "Shift-Tab goes back");
         assert_eq!(*installs.borrow(), 0, "moving presses nothing");
         assert!(bounds(INSTALL, cx).is_some());
     }
@@ -245,10 +245,10 @@ mod toasts {
             .filter(|node| node.id.to_string().contains("toast-"))
             .map(|node| node.label.to_string())
             .collect();
-        // Install, Not now, Never and the close button, in drawing order.
-        assert_eq!(buttons.len(), 4, "{buttons:?}");
+        // Install, More and the close button, in drawing order.
+        assert_eq!(buttons.len(), 3, "{buttons:?}");
         assert!(buttons.iter().all(|label| !label.is_empty()), "{buttons:?}");
-        for label in ["Install", "Not now", "Never", "Dismiss"] {
+        for label in ["Install", "More", "Dismiss"] {
             assert!(
                 buttons.iter().any(|button| button.starts_with(label)),
                 "{label}: {buttons:?}"
@@ -276,7 +276,8 @@ mod toasts {
         let (workbench, installs, never_file, cx) = offered(dir.path(), cx);
 
         run("toast.focus", cx);
-        press("tab tab space", cx);
+        // Tab to More, open it, then Tab to Not now and Never.
+        press("tab space tab tab space", cx);
         assert_eq!(*installs.borrow(), 0);
         let never = fs::read_to_string(&never_file).unwrap_or_default();
         assert!(never.contains("kt"), "Never was answered: {never:?}");
@@ -328,15 +329,15 @@ mod toasts {
 
         run("toast.focus", cx);
         press("tab", cx);
-        assert_eq!(ringed(cx), Some(NOT_NOW));
+        assert_eq!(ringed(cx), Some(MORE));
         cx.simulate_keystrokes("cmd-p");
         draw(cx);
         assert_eq!(ringed(cx), None, "Go to File has focus");
         cx.simulate_keystrokes("escape");
         draw(cx);
-        assert_eq!(ringed(cx), Some(NOT_NOW), "back on the same button");
+        assert_eq!(ringed(cx), Some(MORE), "back on the same button");
         press("tab", cx);
-        assert_eq!(ringed(cx), Some(NEVER));
+        assert_eq!(ringed(cx), Some(CLOSE));
         cx.simulate_keystrokes("escape");
         draw(cx);
         assert!(bounds(INSTALL, cx).is_none(), "dismissed");
@@ -372,7 +373,7 @@ mod toasts {
         cx.simulate_keystrokes("enter");
         draw(cx);
         press("tab", cx);
-        assert_eq!(ringed(cx), Some(NOT_NOW));
+        assert_eq!(ringed(cx), Some(MORE));
         cx.simulate_keystrokes("escape");
         draw(cx);
         assert!(bounds(INSTALL, cx).is_none());
@@ -394,7 +395,7 @@ mod toasts {
         assert!(!editor_focused(&workbench, cx), "the toast has focus");
         cx.simulate_keystrokes("tab");
         draw(cx);
-        assert_eq!(ringed(cx), Some(NOT_NOW));
+        assert_eq!(ringed(cx), Some(MORE));
         cx.simulate_keystrokes("escape");
         draw(cx);
         assert_eq!(*installs.borrow(), 0);

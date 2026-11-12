@@ -134,6 +134,7 @@ mod terminal_b3;
 mod title_bar;
 mod title_bar_b3;
 mod toast_b3;
+mod toast_overflow;
 mod toolbar_history;
 mod trash_isolation;
 mod tree_keys;

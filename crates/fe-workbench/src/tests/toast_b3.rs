@@ -160,6 +160,20 @@ fn two_actions_fit_and_a_third_is_a_debug_assertion() {
         .action("A", CommandId::parse("view.toggle_breadcrumbs").unwrap())
         .choices(vec!["B".into(), "C".into()], |_| {});
     assert_eq!(three.action_count(), 3);
+    // A question alone folds what doesn't fit into More: two buttons.
+    let many = Toast::info("x").choices(vec!["A".into(), "B".into(), "C".into()], |_| {});
+    assert_eq!(many.action_count(), 2);
+}
+
+#[gpui::test]
+fn the_grammar_prompts_three_choices_and_a_four_action_request_draw(cx: &mut TestAppContext) {
+    let (_dir, cx) = opened(cx);
+    for titles in [3, 4] {
+        let choices = (0..titles).map(|i| format!("Choice {i}")).collect();
+        cx.update(|_, cx| show(cx, Toast::info("Pick").choices(choices, |_| {})));
+    }
+    draw(cx);
+    assert!(cx.debug_bounds("toast-0").is_some() && cx.debug_bounds("toast-1").is_some());
 }
 
 #[gpui::test]
