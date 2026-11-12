@@ -51,12 +51,12 @@
 //! pane, as `quickfix_commands.rs` lands.
 //!
 //! Item columns are in chars. A match on a line over 512 bytes reads the line
-//! from disk to count them: in a UTF-16 file that count is off.
+//! from disk, once, to count them.
 
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Read as _, Seek as _, SeekFrom},
+    io::{self, Read as _, Seek as _, SeekFrom},
     path::Path,
     sync::{
         Arc,
@@ -65,7 +65,9 @@ use std::{
 };
 
 use fe_gpui::EditorView;
-use fe_project::{FileMatches, LineMatch, PathFilter, SearchError, SearchOptions, SearchQuery};
+use fe_project::{
+    FileMatches, LineMatch, PathFilter, SearchError, SearchOptions, SearchQuery, open_file_under,
+};
 use fe_vim::{ExError, QuickfixAction};
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, WeakEntity, Window};
 use kiln_shell::ItemHandle as _;
@@ -422,44 +424,235 @@ fn search(
                 true => &line.ranges[..],
                 false => &line.ranges[..line.ranges.len().min(1)],
             };
-            for range in ranges {
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            let starts: Vec<usize> = ranges.iter().map(|range| range.start).collect();
+            let Some(found) = line_columns(root, &file.path, line, &starts, &cancel) else {
+                return Ok(None);
+            };
+            for &col in &found.columns {
                 items.push(QuickfixItem {
                     path: file.path.clone(),
                     row: u32::try_from(line.line_number.saturating_sub(1)).unwrap_or(u32::MAX),
-                    col: char_column(&file.path, line, range.start),
+                    col,
                     text: line.preview.clone(),
                     kind: QuickfixKind::Untyped,
                 });
             }
         }
     }
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
     Ok(Some((items, summary.truncated)))
 }
 
-/// The column, in chars, of byte `start` of `line`, a line of the file at
-/// `path`: counted in the preview when it starts the line, else in the
-/// line read from disk.
-fn char_column(path: &Path, line: &LineMatch, start: usize) -> u32 {
+/// The columns of one matching line's matches, as [`line_columns`] finds them.
+struct LineColumns {
+    /// The column, in chars, of each start asked for.
+    columns: Vec<u32>,
+    /// How many times the line was read from disk: 0 or 1. For the tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    reads: u32,
+}
+
+/// The columns, in chars, of the byte offsets `starts` (ascending) of `line`,
+/// a line of the file at `path` under `root`: counted in the preview when it
+/// starts the line and holds them all, else in the line read from disk once,
+/// without following a symlink or blocking on a FIFO. A UTF-16 file's line is
+/// decoded as the search saw it, and a UTF-8 byte order mark isn't a char.
+/// None if `cancel` was set at any point before it returned.
+fn line_columns(
+    root: &Path,
+    path: &Path,
+    line: &LineMatch,
+    starts: &[usize],
+    cancel: &AtomicBool,
+) -> Option<LineColumns> {
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
+    let found = columns_of(root, path, line, starts, cancel)?;
+    (!cancel.load(Ordering::Relaxed)).then_some(found)
+}
+
+fn columns_of(
+    root: &Path,
+    path: &Path,
+    line: &LineMatch,
+    starts: &[usize],
+    cancel: &AtomicBool,
+) -> Option<LineColumns> {
     let chars_before = |text: &str, end: usize| {
         let before = text.char_indices().take_while(|(ix, _)| *ix < end).count();
         u32::try_from(before).unwrap_or(u32::MAX)
     };
-    if line.preview_start == 0 {
-        return chars_before(&line.preview, start);
+    let bom =
+        line.line_offset == 0 && line.preview_start == 0 && line.preview.starts_with('\u{feff}');
+    let in_preview = |start: usize| {
+        let chars = chars_before(&line.preview, start);
+        if bom && start >= '\u{feff}'.len_utf8() {
+            chars - 1
+        } else if bom {
+            0
+        } else {
+            chars
+        }
+    };
+    let preview_len = line.preview.len();
+    if line.preview_start == 0 && starts.iter().all(|&start| start <= preview_len) {
+        let columns = starts.iter().map(|&start| in_preview(start)).collect();
+        return Some(LineColumns { columns, reads: 0 });
     }
-    let mut bytes = vec![0; start];
-    let read = File::open(path).and_then(|mut file| {
-        file.seek(SeekFrom::Start(line.line_offset))?;
-        file.read_exact(&mut bytes)
-    });
-    match read {
-        Ok(()) => chars_before(&String::from_utf8_lossy(&bytes), start),
+    let last = starts.iter().copied().max().unwrap_or(0);
+    match read_line(root, path, line, last, cancel) {
+        Ok(Some(text)) => Some(LineColumns {
+            columns: text.columns(starts, cancel)?,
+            reads: 1,
+        }),
+        Ok(None) => None,
         // Gone since: the preview's chars past its start, a byte each before.
         Err(_) => {
             let skipped = u32::try_from(line.preview_start).unwrap_or(u32::MAX);
-            let within = start.saturating_sub(line.preview_start);
-            skipped.saturating_add(chars_before(&line.preview, within))
+            let columns = (starts.iter())
+                .map(|&start| {
+                    let within = start.saturating_sub(line.preview_start);
+                    skipped.saturating_add(chars_before(&line.preview, within))
+                })
+                .collect();
+            Some(LineColumns { columns, reads: 0 })
         }
+    }
+}
+
+/// A line's bytes from disk, as far as a read for its columns went.
+struct LineText {
+    bytes: Vec<u8>,
+    /// UTF-16 in this byte order (big endian if true), as the search
+    /// transcoded it; None for a UTF-8 (or other 8-bit) file.
+    utf16: Option<bool>,
+    /// The bytes open with a UTF-8 byte order mark.
+    bom: bool,
+}
+
+impl LineText {
+    /// The columns of `starts` (ascending), in one pass over the decoded
+    /// chars, as the search decoded them. None if cancelled meanwhile.
+    fn columns(&self, starts: &[usize], cancel: &AtomicBool) -> Option<Vec<u32>> {
+        let mut lens: Box<dyn Iterator<Item = usize> + '_> = match self.utf16 {
+            Some(big) => {
+                let units = self
+                    .bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(move |pair| match big {
+                        true => u16::from_be_bytes(*pair),
+                        false => u16::from_le_bytes(*pair),
+                    });
+                Box::new(char::decode_utf16(units).map(|ch| match ch {
+                    Ok(ch) => ch.len_utf8(),
+                    Err(_) => char::REPLACEMENT_CHARACTER.len_utf8(),
+                }))
+            }
+            // A run of invalid bytes is one replacement char.
+            None => Box::new(self.bytes.utf8_chunks().flat_map(|chunk| {
+                let invalid = chunk.invalid().len();
+                (chunk.valid().chars().map(char::len_utf8)).chain((invalid > 0).then_some(invalid))
+            })),
+        };
+        let mut columns = Vec::with_capacity(starts.len());
+        let (mut pos, mut count, mut steps) = (0, 0u32, 0u32);
+        for &start in starts {
+            while pos < start {
+                let Some(len) = lens.next() else { break };
+                pos += len;
+                count = count.saturating_add(1);
+                steps += 1;
+                #[cfg(test)]
+                STEP_HOOK.with_borrow_mut(|hook| hook.as_mut().map(|hook| hook(steps)));
+                if steps % 64 == 0 && cancel.load(Ordering::Relaxed) {
+                    return None;
+                }
+            }
+            // The mark is one char of the line, not of the text.
+            columns.push(match (self.bom, start) {
+                (true, 0..=2) => 0,
+                (true, _) => count.saturating_sub(1),
+                _ => count,
+            });
+        }
+        (!cancel.load(Ordering::Relaxed)).then_some(columns)
+    }
+}
+
+#[cfg(test)]
+type StepHook = Box<dyn FnMut(u32)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Called with the count of chars decoded so far, at each one.
+    static STEP_HOOK: std::cell::RefCell<Option<StepHook>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+/// Reads `line` from disk as far as byte `last` of it. None if cancelled.
+fn read_line(
+    root: &Path,
+    path: &Path,
+    line: &LineMatch,
+    last: usize,
+    cancel: &AtomicBool,
+) -> io::Result<Option<LineText>> {
+    let mut file = open_match(root, path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("not a regular file"));
+    }
+    let mut mark = [0; 2];
+    let utf16 = match file.read_exact(&mut mark) {
+        Ok(()) => matches!(mark, [0xFF, 0xFE] | [0xFE, 0xFF]),
+        Err(_) => false,
+    };
+    // Each UTF-16 unit is 2 bytes and at least 1 of the line's UTF-8, and a
+    // pair of them at most 4: with room for a char cut at `last`.
+    let want = if utf16 {
+        last.saturating_mul(2).saturating_add(4)
+    } else {
+        last
+    };
+    file.seek(SeekFrom::Start(line.line_offset))?;
+    let mut bytes = Vec::new();
+    let mut chunk = vec![0; 64 * 1024];
+    while bytes.len() < want {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let room = chunk.len().min(want - bytes.len());
+        match file.read(&mut chunk[..room])? {
+            0 => break,
+            n => bytes.extend_from_slice(&chunk[..n]),
+        }
+    }
+    let bom = !utf16 && line.line_offset == 0 && bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    let utf16 = utf16.then_some(mark == [0xFE, 0xFF]);
+    Ok(Some(LineText { bytes, utf16, bom }))
+}
+
+/// Opens `path`, a file of the search of `root`, as the search did.
+///
+/// `path` is under `root` as given, but the file is opened under the root
+/// canonicalized, as the search opens it.
+fn open_match(root: &Path, path: &Path) -> io::Result<File> {
+    let open_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    match path.strip_prefix(root) {
+        Ok(rel) if !rel.as_os_str().is_empty() => open_file_under(&open_root, rel),
+        // The root itself, a file: under its directory.
+        _ => match (open_root.parent(), open_root.file_name()) {
+            (Some(dir), Some(name)) => open_file_under(dir, Path::new(name)),
+            _ => Err(io::Error::other("no file")),
+        },
     }
 }
 
@@ -575,8 +768,15 @@ fn last_line(text: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{include_glob, smart_case};
-    use std::path::Path;
+    #![allow(clippy::single_range_in_vec_init)]
+
+    use super::{LineMatch, include_glob, line_columns, smart_case};
+    #[cfg(unix)]
+    use std::{
+        ffi::CString,
+        os::unix::{ffi::OsStrExt as _, fs::symlink},
+    };
+    use std::{fs, path::Path, sync::atomic::AtomicBool};
 
     #[test]
     fn smart_case_skips_escapes_and_group_names() {
@@ -603,5 +803,228 @@ mod tests {
         assert!(glob("/q/x").is_err());
         assert_eq!(glob("%").unwrap(), r"/a\ \[1\].rs");
         assert!(include_glob("%", root, None).is_err());
+    }
+
+    // The line reader: chars from the line as the search decoded it, from
+    // one read of it, never through a symlink or a FIFO.
+    fn line(
+        offset: u64,
+        ranges: Vec<std::ops::Range<usize>>,
+        preview_start: usize,
+        preview: &str,
+    ) -> LineMatch {
+        LineMatch {
+            line_number: 1,
+            line_offset: offset,
+            ranges,
+            preview: preview.to_owned(),
+            preview_start,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_line_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "éééééé").unwrap();
+        symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("link.txt"),
+        )
+        .unwrap();
+        let matched = line(0, vec![4..5], 3, "ab");
+        let cancel = AtomicBool::new(false);
+        let found = line_columns(
+            dir.path(),
+            &dir.path().join("link.txt"),
+            &matched,
+            &[4],
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(found.reads, 0, "the link was read");
+        // The preview's chars past its start, a byte each before: 3 + 1.
+        assert_eq!(found.columns, [4]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_line_reread_is_refused_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe.txt");
+        let name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `name` is a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let matched = line(0, vec![4..5], 3, "ab");
+        let cancel = AtomicBool::new(false);
+        let found = line_columns(dir.path(), &fifo, &matched, &[4], &cancel).unwrap();
+        assert_eq!(found.reads, 0);
+        assert_eq!(found.columns, [4]);
+    }
+
+    #[test]
+    fn utf16_lines_get_the_char_column() {
+        let dir = tempfile::tempdir().unwrap();
+        // "é" and "😀" in a long line: 2 and 4 bytes of the search's UTF-8.
+        let text = format!("é😀{}x\n", "a".repeat(600));
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in text.encode_utf16() {
+            bytes.extend(unit.to_le_bytes());
+        }
+        fs::write(dir.path().join("u.txt"), &bytes).unwrap();
+        let start = 'é'.len_utf8() + '😀'.len_utf8() + 600;
+        let matched = line(2, vec![start..start + 1], 0, "é");
+        let cancel = AtomicBool::new(false);
+        let found = line_columns(
+            dir.path(),
+            &dir.path().join("u.txt"),
+            &matched,
+            &[start],
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(found.columns, [602]);
+        // Big endian too.
+        let mut bytes = vec![0xFE, 0xFF];
+        for unit in text.encode_utf16() {
+            bytes.extend(unit.to_be_bytes());
+        }
+        fs::write(dir.path().join("b.txt"), &bytes).unwrap();
+        let found = line_columns(
+            dir.path(),
+            &dir.path().join("b.txt"),
+            &matched,
+            &[start],
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(found.columns, [602]);
+    }
+
+    #[test]
+    fn many_matches_on_a_long_line_come_from_one_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "x".repeat(5000);
+        fs::write(dir.path().join("a.txt"), &text).unwrap();
+        let starts: Vec<usize> = (0..5000).collect();
+        let matched = line(
+            0,
+            starts.iter().map(|&s| s..s + 1).collect(),
+            0,
+            &text[..512],
+        );
+        let cancel = AtomicBool::new(false);
+        let found = line_columns(
+            dir.path(),
+            &dir.path().join("a.txt"),
+            &matched,
+            &starts,
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(found.reads, 1);
+        let want: Vec<u32> = (0..5000).collect();
+        assert_eq!(found.columns, want);
+    }
+
+    #[test]
+    fn a_cancelled_fill_stops_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "x".repeat(5000);
+        fs::write(dir.path().join("a.txt"), &text).unwrap();
+        let matched = line(0, vec![4999..5000], 0, &text[..512]);
+        let cancel = AtomicBool::new(true);
+        assert!(
+            line_columns(
+                dir.path(),
+                &dir.path().join("a.txt"),
+                &matched,
+                &[4999],
+                &cancel
+            )
+            .is_none()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_root_reached_through_a_symlink_is_resolved_to_open_its_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        fs::write(real.join("a.txt"), "x".repeat(600)).unwrap();
+        let root = dir.path().join("root");
+        symlink(&real, &root).unwrap();
+        let matched = line(0, vec![550..551], 1, "x");
+        let cancel = AtomicBool::new(false);
+        let found = line_columns(&root, &root.join("a.txt"), &matched, &[550], &cancel).unwrap();
+        assert_eq!(found.reads, 1);
+        assert_eq!(found.columns, [550]);
+    }
+
+    #[test]
+    fn invalid_bytes_split_across_matches_count_as_one_char() {
+        let dir = tempfile::tempdir().unwrap();
+        // A cut-off emoji is one replacement char, however the matches fall.
+        fs::write(dir.path().join("a.txt"), b"a\xF0\x9F\x98b").unwrap();
+        let matched = line(0, vec![1..2, 2..3, 4..5], 1, "b");
+        let cancel = AtomicBool::new(false);
+        let found = line_columns(
+            dir.path(),
+            &dir.path().join("a.txt"),
+            &matched,
+            &[1, 2, 4],
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(found.reads, 1);
+        assert_eq!(found.columns, [1, 2, 2]);
+    }
+
+    #[test]
+    fn a_fill_cancelled_before_a_line_does_not_open_it() {
+        let dir = tempfile::tempdir().unwrap();
+        // Not there: an open would fall back to the preview, not stop.
+        let matched = line(0, vec![4..5], 3, "ab");
+        let cancel = AtomicBool::new(true);
+        let gone = dir.path().join("gone.txt");
+        assert!(line_columns(dir.path(), &gone, &matched, &[4], &cancel).is_none());
+    }
+
+    /// Sets `cancel` when the decoder has taken `after` chars.
+    fn cancel_after(after: u32, cancel: &'static AtomicBool) {
+        super::STEP_HOOK.with_borrow_mut(|hook| {
+            *hook = Some(Box::new(move |steps| {
+                if steps == after {
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }));
+        });
+    }
+
+    #[test]
+    fn a_fill_cancelled_during_decoding_returns_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "x".repeat(5000);
+        fs::write(dir.path().join("a.txt"), &text).unwrap();
+        let starts = [4999];
+        let matched = line(0, vec![4999..5000], 0, &text[..512]);
+        // Early, in the middle of a stretch between checks, and on the very
+        // last char, which only the check at the end sees.
+        for after in [10, 100, 4999] {
+            static CANCEL: AtomicBool = AtomicBool::new(false);
+            CANCEL.store(false, std::sync::atomic::Ordering::Relaxed);
+            cancel_after(after, &CANCEL);
+            let found = line_columns(
+                dir.path(),
+                &dir.path().join("a.txt"),
+                &matched,
+                &starts,
+                &CANCEL,
+            );
+            super::STEP_HOOK.with_borrow_mut(|hook| *hook = None);
+            assert!(found.is_none(), "cancelled after {after} chars");
+        }
     }
 }
