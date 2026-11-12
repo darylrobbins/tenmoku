@@ -36,6 +36,7 @@ use crate::{
 #[cfg(unix)]
 use crate::{LocalLauncher, LoginPath};
 
+mod add_on;
 mod css;
 mod gopls;
 mod java;

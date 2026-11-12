@@ -63,6 +63,7 @@ fn lsp_defaults_and_user_overrides() {
         readiness: Some(LspReadiness::Progress),
         ready_ignores_progress: Some(vec!["a/".into(), "b/".into()]),
         root_markers: None,
+        add_on: None,
         initialization_options: Some(json!({ "checkOnSave": false })),
         settings: json!({ "rust-analyzer": { "cargo": { "features": "all" } } })
             .as_object()

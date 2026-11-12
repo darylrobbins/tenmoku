@@ -57,6 +57,12 @@ pub struct ServerSpec {
     /// order: a file outside the window's folder gets the nearest ancestor
     /// holding the first marker found anywhere up its tree.
     pub root_markers: Vec<String>,
+    /// Whether the server adds to a language's main server rather than
+    /// being it (docs/decisions/q5j03ax2af-lsp-add-on-servers.md §3).
+    pub add_on: bool,
+    /// The package (npm or other) that provides `command`, which a
+    /// missing add-on's notice names.
+    pub package: Option<String>,
 }
 
 impl ServerSpec {
@@ -76,6 +82,8 @@ impl ServerSpec {
             unversioned_diagnostics: UnversionedDiagnostics::default(),
             pull_diagnostics: PullDiagnostics::default(),
             root_markers: Vec::new(),
+            add_on: false,
+            package: None,
         }
     }
 }

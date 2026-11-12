@@ -8,7 +8,7 @@ languages that embed CSS.
 
 ## 1. Status
 
-**Status: proposed.** Approver: the user (Daryl Robbins), who on 2026-11-08
+**Status: approved by the user 2026-11-12.** Approver: the user (Daryl Robbins), who on 2026-11-08
 approved making css-variables-language-server a built-in server. No code
 changed: `git diff --stat` against the lane's base (e0a0e43, the commit adding this card's spec on 14277d5) lists only this file. No
 implementation card is filed by this card. When it lands the lead brings this
@@ -18,7 +18,7 @@ Once approved, this supersedes "M4 has one server per language" in
 [lsp-client.md §3.2](lsp-client.md#32-instances). That line is left as it is
 here, because this card's scope is the new document only.
 
-**Decision:** proposed, for the user to approve; no code and no cards until then.
+**Decision:** approved by the user 2026-11-12; the cards in §8 may be filed.
 
 ## 2. What css-variables-language-server needs
 
@@ -593,17 +593,18 @@ laid over the built-in ones.
 - **Restart Language Server** restarts all the document's servers (above). One
   that stays stopped for lack of a command says so in its log only.
 - **A missing add-on.** If css-variables-language-server isn't installed, its
-  launch fails ("not found") and the user sees **nothing**: no status text, no
-  toast, no consent prompt beyond the one the root already has. The failure is
-  in its log, and the lead's features work as they did. This differs from a
+  launch fails ("not found") and the user sees one **one-time info toast**
+  naming the npm package that provides it (the spec's `package`), and no status
+  text or consent prompt beyond the one the root already has. The failure is
+  also in its log, and the lead's features work as they did. This differs from a
   missing primary, whose "stopped: … not found" shows today; for a built-in
-  add-on, silence is the point. Like any stopped server it isn't relaunched
+  add-on, one toast and no lasting status is the point. Like any stopped server it isn't relaunched
   until a restart, a settings change or a new spec.
 
 **Decision:** the fe-lsp API in 6.1 and the replacements in 6.2. The status item
 follows the lead, with add-ons in its hover list and shown only when one fails
 after it started. Restart restarts every server of the document. A missing
-add-on is silent.
+add-on shows a one-time info toast naming the npm package.
 
 ## 7. Testing
 
@@ -732,7 +733,7 @@ add-on is silent.
       then on.
   - **UI** (fe-workbench)
     - The status item shows the lead's status.
-    - A missing add-on shows nothing.
+    - A missing add-on shows one info toast naming its npm package, once.
     - Restart restarts both servers.
     - The log picker lists both.
 - **Real server.** One `#[ignore]`d test in the slow group (lsp-client.md
@@ -765,7 +766,7 @@ declared from its directory's `mod.rs` or `tests/mod.rs`. Cards that touch
 | A8 | m | Root-scoped static watches and index-change events. `ServerSpec::watch_files` / `watch_excludes` and `[lsp.servers.<name>]` keys of the same names hold globs relative to the session's root; a path outside the root never matches. Alternatively, `watch_files_from` / `watch_excludes_from` are JSON pointers into the spec's `settings`, read again at each configure, so the watch follows the effective `lookupFiles` and `blacklistFolders`. Either way the result is held as a permanent `didChangeWatchedFiles` registration of the session. Adds `LspEvent::Notified { server, what }` after each `didChangeWatchedFiles` and `didChangeConfiguration` sent, and `ServerSpec::repoll` / `[lsp.servers.<name>] repoll_ms` with `LspManager::repoll_due(server, now)` on the manager's `Clock` (§5, polling). | `crates/fe-lsp/src/launcher.rs`, `crates/fe-lsp/src/registry.rs`, `crates/fe-lsp/src/registration.rs`, `crates/fe-lsp/src/watched_files.rs`, `crates/fe-lsp/src/event.rs`, `crates/fe-lsp/src/server.rs`, `crates/fe-lsp/src/tests/registration/**`, `crates/fe-lsp/src/tests/registration.rs`, `crates/fe-config/src/settings.rs`, `crates/fe-config/settings.schema.json`, `crates/fe-config/settings-template.toml` | A1 | `crates/fe-lsp/src/tests/registration/static_watch.rs` (two roots with the same variable names, excluded folders, a `lookupFiles` change), `crates/fe-lsp/src/tests/registration/index_events.rs` (`Notified` after each notification; `repoll_due` on a manual clock; `repoll_ms` parsed, defaulting off) |
 | W1 | m | fe-workbench call sites except colours: `lsp.rs` (`Document.route`, `Lsp::route`/`lead`, gates), `lsp_inlay_hints.rs`, `lsp_semantic_tokens.rs`, `lsp_links.rs`, `lsp_lightbulb.rs`, `lsp_lenses.rs`, `lsp_folds.rs`, `lsp_symbols.rs`, `lsp_linked_editing.rs`, `hierarchy_panel.rs`, and `lsp_rename.rs`, whose `Request` carries the prepared rename's `owner` through confirmation. `Document.route` holds configured `RouteServer`s; `Lsp::route` and `Lsp::lead` select by configured identity. Hint, lens and link slots of shown buffers are re-asked on `Notified` and polled every `repoll_ms` (§5). | `crates/fe-workbench/src/lsp.rs`, `crates/fe-workbench/src/lsp_{inlay_hints,semantic_tokens,links,lightbulb,lenses,folds,symbols,linked_editing}.rs`, `crates/fe-workbench/src/hierarchy_panel.rs`, `crates/fe-workbench/src/lsp_rename.rs`, `crates/fe-workbench/src/tests/lsp_rename_add_ons.rs`, `crates/fe-workbench/src/tests/lsp_add_ons.rs`, `crates/fe-workbench/src/tests/mod.rs` | A7, A8 | `crates/fe-workbench/src/tests/lsp_add_ons.rs` (two fakes; hints, lenses and actions from both; folds and tokens from the provider; owners kept; a primary that can't start with a served add-on keeps the path's owner; CSS and SCSS aliases with different add-on sets keep `owners_match_manager`; a hint changed by the add-on's index shows at the next poll), `crates/fe-workbench/src/tests/lsp_rename_add_ons.rs` (only the add-on accepts `prepareRename`: confirming renames through the add-on alone and the primary gets no `rename`; the owner restarts between preparation and confirmation: nothing is renamed, no other server is asked, and the toast shows) |
 | W2 | s | **[lsp_colors.rs]** Colours: per-server identities in `Slot`, the merged answer with owners, presentations to the owner, and `default_colors::source` taking "the lead answered" with the add-on overlay in `auto`. Colour slots of shown buffers are re-asked on `Notified` and polled every `repoll_ms`. Removes the `server_of` alias. | `crates/fe-workbench/src/lsp_colors.rs`, `crates/fe-workbench/src/default_colors.rs`, `crates/fe-lsp/src/manager.rs`, `crates/fe-workbench/src/tests/lsp_colors_add_ons.rs`, `crates/fe-workbench/src/tests/mod.rs` | A7, A8, W1 | `crates/fe-workbench/src/tests/lsp_colors_add_ons.rs` (`auto` with and without lead colours, `never`, `always`, presentations to the owner, a scan ending long after start shows at the next poll, a watched-file change processed after `REST` shows at the next poll with the consumer unedited, hidden buffers not polled) |
-| W3 | s | Status item (the configured lead by `Lsp::lead`, the hover list, a failed add-on), Restart Language Server for every configured server by (name, root), the Language Server Log picker over `Lsp::route`, and silence for a missing add-on. | `crates/fe-workbench/src/lsp.rs`, `crates/fe-workbench/src/workbench_commands.rs`, `crates/fe-workbench/src/tests/lsp_status_add_ons.rs`, `crates/fe-workbench/src/tests/mod.rs` | W1 | `crates/fe-workbench/src/tests/lsp_status_add_ons.rs` (primary never placed under an untrusted root: the item shows the primary's state; restart and the log reach both servers by name and root; a missing add-on shows nothing) |
+| W3 | s | Status item (the configured lead by `Lsp::lead`, the hover list, a failed add-on), Restart Language Server for every configured server by (name, root), the Language Server Log picker over `Lsp::route`, and a one-time info toast naming the npm package for a missing add-on. | `crates/fe-workbench/src/lsp.rs`, `crates/fe-workbench/src/workbench_commands.rs`, `crates/fe-workbench/src/tests/lsp_status_add_ons.rs`, `crates/fe-workbench/src/tests/mod.rs` | W1 | `crates/fe-workbench/src/tests/lsp_status_add_ons.rs` (primary never placed under an untrusted root: the item shows the primary's state; restart and the log reach both servers by name and root; a missing add-on shows one info toast naming its package, once) |
 | A9 | s | **Last.** css-variables-language-server in `builtin_specs` as an add-on: command and `--stdio`, §2's languages (as Q1 settles), `package.json` marker, `settings.cssVariables`, `watch_files_from` / `watch_excludes_from` pointing into it, and `repoll_ms = 3000`. Settings template and docs list it, and the slow-group real-server test. | `crates/fe-lsp/src/registry.rs`, `crates/fe-lsp/src/tests/registry/**`, `crates/fe-lsp/tests/real_server.rs`, `crates/fe-lsp/tests/fixtures/real/**`, `scripts/lsp-real.sh`, `tools/lsp/package.json`, `tools/lsp/package-lock.json`, `crates/fe-config/settings-template.toml`, `docs/**` | A5, A7, A8, W2, W3 | `crates/fe-lsp/src/tests/registry/css_variables.rs` (it is an add-on beside vscode-css-language-server for CSS and beside the TS server for `tsx`, its settings reach `workspace/configuration`, and its root-scoped watch follows those settings), plus `real_server_css_variables` in `crates/fe-lsp/tests/real_server.rs` (§7) |
 
 Only **W2** touches `crates/fe-workbench/src/lsp_colors.rs`. W1 leaves it
@@ -789,23 +790,14 @@ Each is s or m, and all are Linux-OK. Only W2 touches `lsp_colors.rs`.
 - `didChangeWorkspaceFolders` for multi-root.
 - `textDocument/selectionRange` itself, which fe-lsp doesn't send yet.
 
-**Open questions for the user:**
+**Answers (approved by the user 2026-11-12):**
 
-- **Q1** (§2): keep `javascript`, `typescript` and `tsx` in
-  css-variables-language-server's languages, or only stylesheets, HTML, Vue,
-  Svelte and Astro? This document assumes keep.
-- **Q2** (§6.3): should a missing built-in add-on stay completely silent? This
-  document assumes silent. The alternative is a one-time info toast naming the
-  npm package.
-- **Q3** (§2.4): the scan of a big repository. Is adding `target`, `build`,
-  `out`, `vendor` and `.worktrees` to `blacklistFolders` enough, or should the
-  built-in settings also feed in the root's `.gitignore` folders (read once at
-  start)? This document assumes the fixed list.
-- **Q4** (§2.4): the server fetches `@import "https://…"` URLs found in project
-  CSS. Servers start only in trusted folders (lsp-client.md §3.3, Q7), so this
-  document treats that as covered by trust. Should it instead be off for this
-  server (there is no server setting for it, so that would need a patched
-  server or a sandboxing launcher)?
+- **Q1** (§2): keep. `javascript`, `typescript` and `tsx` stay in
+  css-variables-language-server's languages.
+- **Q2** (§6.3): changed. A missing built-in add-on is not silent: it shows a
+  one-time info toast naming the npm package.
+- **Q3** (§2.4): fixed list. `target`, `build`, `out`, `vendor` and
+  `.worktrees` go in `blacklistFolders`.
+- **Q4** (§2.4): covered by trust. Servers start only in trusted folders.
 
-**Decision:** the scope above. Q1 to Q4 go to the user with this document, and
-each has a stated default that the cards follow unless the user says otherwise.
+**Decision:** the scope above, with Q1 to Q4 answered as listed.

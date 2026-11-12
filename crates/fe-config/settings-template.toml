@@ -409,3 +409,13 @@
 # [formatters.go]
 # command = ["gofmt"]
 # timeout_ms = 5000
+
+# Language servers are set per name under [lsp.servers]. A project file can
+# only turn them off. add_on = true makes a server add to a language's main
+# server instead of being it: a file gets its first server that isn't an
+# add-on, plus every add-on listing its language.
+#
+# [lsp.servers.my_linter]
+# command = "my_linter"
+# languages = ["rust"]
+# add_on = true

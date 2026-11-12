@@ -415,3 +415,9 @@ settings-template-formatters-typescript =
     {"             "}the fallback when the first has nothing to do or fails.
     {"  "}timeout_ms how long the program may run, 1 to 60000 (default 3000).
     An entry with a bad value is ignored, with a warning; the others apply.
+
+settings-template-lsp-servers-my_linter =
+    Language servers are set per name under [lsp.servers]. A project file can
+    only turn them off. add_on = true makes a server add to a language's main
+    server instead of being it: a file gets its first server that isn't an
+    add-on, plus every add-on listing its language.

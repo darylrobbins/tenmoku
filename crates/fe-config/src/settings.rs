@@ -1468,6 +1468,11 @@ pub struct LspServerSettings {
     /// replaces the server's built-in list.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_markers: Option<Vec<String>>,
+    /// Whether the server only adds to the language's main server instead
+    /// of being it: a language's lead is its first server that isn't an
+    /// add-on, and a file also gets every add-on listing its language.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub add_on: Option<bool>,
     /// Sent with `initialize`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initialization_options: Option<serde_json::Value>,
@@ -1489,6 +1494,7 @@ impl Default for LspServerSettings {
             readiness: None,
             ready_ignores_progress: None,
             root_markers: None,
+            add_on: None,
             initialization_options: None,
             settings: None,
         }

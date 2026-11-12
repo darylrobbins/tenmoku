@@ -556,6 +556,13 @@
     "LspServerSettings": {
       "description": "One server's settings. Each key left unset keeps the built-in value.",
       "properties": {
+        "add_on": {
+          "description": "Whether the server only adds to the language's main server instead\nof being it: a language's lead is its first server that isn't an\nadd-on, and a file also gets every add-on listing its language.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "args": {
           "items": {
             "type": "string"

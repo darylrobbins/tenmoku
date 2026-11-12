@@ -279,12 +279,43 @@ pub fn extension_spec(name: &str, settings: &LspServerSettings) -> Option<Server
     Some(apply(base, settings))
 }
 
-/// The spec of the server a document in fe-syntax's `language` gets: the
-/// first of `specs` ([`Registry::specs`]) listing it.
-pub(crate) fn server_for<'a>(specs: &'a [ServerSpec], language: &str) -> Option<&'a ServerSpec> {
-    specs
+/// The servers a document in fe-syntax's `language` gets from `specs`
+/// ([`Registry::specs`]): its primary, the first spec listing it that isn't
+/// an add-on, and every add-on listing it, in order.
+pub(crate) struct Servers<'a> {
+    pub(crate) primary: Option<&'a ServerSpec>,
+    pub(crate) add_ons: Vec<&'a ServerSpec>,
+}
+
+impl<'a> Servers<'a> {
+    /// The primary, else the first add-on, whatever is running.
+    pub(crate) fn lead(&self) -> Option<&'a ServerSpec> {
+        self.primary.or_else(|| self.add_ons.first().copied())
+    }
+}
+
+pub(crate) fn servers_for<'a>(specs: &'a [ServerSpec], language: &str) -> Servers<'a> {
+    let mut servers = Servers {
+        primary: None,
+        add_ons: Vec::new(),
+    };
+    for spec in specs
         .iter()
-        .find(|spec| spec.languages.iter().any(|l| l == language))
+        .filter(|s| s.languages.iter().any(|l| l == language))
+    {
+        if spec.add_on {
+            servers.add_ons.push(spec);
+        } else if servers.primary.is_none() {
+            servers.primary = Some(spec);
+        }
+    }
+    servers
+}
+
+/// The spec of the server a document in fe-syntax's `language` gets: the
+/// lead of [`servers_for`].
+pub(crate) fn server_for<'a>(specs: &'a [ServerSpec], language: &str) -> Option<&'a ServerSpec> {
+    servers_for(specs, language).lead()
 }
 
 /// The folder a server runs in for `path`: `window_root` when the file is
@@ -357,6 +388,9 @@ fn apply(mut spec: ServerSpec, settings: &LspServerSettings) -> ServerSpec {
     }
     if let Some(markers) = &settings.root_markers {
         spec.root_markers.clone_from(markers);
+    }
+    if let Some(add_on) = settings.add_on {
+        spec.add_on = add_on;
     }
     if let Some(options) = &settings.initialization_options {
         spec.initialization_options = Some(options.clone());
