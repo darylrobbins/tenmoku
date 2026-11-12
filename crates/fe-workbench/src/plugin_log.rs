@@ -20,6 +20,7 @@ use fe_buffer::{Buffer, BufferId, Origin};
 use fe_editor::EditorModel;
 use fe_gpui::EditorView;
 use gpui::{App, Context, Entity, Focusable as _, Global, Window};
+use kiln_l10n::tr;
 
 use crate::Workbench;
 
@@ -170,7 +171,7 @@ fn stamp(time: SystemTime) -> String {
 
 /// `lines`, a line each.
 fn text(lines: &[LogLine]) -> String {
-    lines.iter().map(|line| format!("{line}\n")).collect()
+    lines.iter().map(|line| format!("{}\n", line)).collect()
 }
 
 /// Adds `text`, whole lines, at the end of `editor`'s buffer, dropping the
@@ -213,7 +214,8 @@ impl Workbench {
             let editor = pane.new_editor(model, cx);
             editor.update(cx, |editor, cx| {
                 editor.set_read_only(true, cx);
-                editor.set_tab_title(format!("{name} Log"), "plugin.log", cx);
+                let title = tr!("workbench-extensions-plugin-log-title", name = name);
+                editor.set_tab_title(title, "plugin.log", cx);
             });
             pane.add_item(Box::new(editor.clone()), cx);
             editor

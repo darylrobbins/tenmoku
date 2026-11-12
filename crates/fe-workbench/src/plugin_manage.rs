@@ -33,11 +33,12 @@ use std::{
 
 use fe_command::capability::Grants;
 use futures::channel::oneshot;
-use gpui::{App, AppContext as _, Global, PromptLevel, Subscription, Window};
+use gpui::{App, AppContext as _, Global, PromptLevel, SharedString, Subscription, Window};
 use kiln::core::{
     extension::{MANIFEST_FILE, Manifest},
     secrets::{KeychainStore, Secret, SecretError, SecretStore},
 };
+use kiln_l10n::tr;
 use kiln_plugin::{
     bindings::Error,
     grants::{GrantStore, Version},
@@ -56,8 +57,14 @@ use crate::{
 /// The setting the plugins load under.
 pub(crate) const PREVIEW_SETTING: &str = "extensions.plugins_preview";
 
-/// The uninstall confirmation's buttons, and the index of Uninstall.
-const UNINSTALL_BUTTONS: [&str; 2] = ["Uninstall", "Cancel"];
+/// The uninstall confirmation's buttons, and the index of Uninstall: an
+/// answer is matched by its button's index, never its title.
+fn uninstall_buttons() -> [SharedString; 2] {
+    [
+        tr!("workbench-extensions-plugin-uninstall"),
+        tr!("workbench-extensions-cancel"),
+    ]
+}
 const UNINSTALL: usize = 0;
 
 /// A plugin's part of its extension's row.
@@ -90,7 +97,13 @@ impl PluginRow {
             PluginState::Declined => (ExtensionState::PluginDeclined, None),
             PluginState::Stopped(diagnostic) => (
                 ExtensionState::Stopped,
-                Some(format!("Stopped: {diagnostic}")),
+                Some(
+                    tr!(
+                        "workbench-extensions-plugin-stopped",
+                        diagnostic = diagnostic.to_string()
+                    )
+                    .into(),
+                ),
             ),
             PluginState::PreviewOff => (ExtensionState::NeedsPluginsPreview, Some(needs_preview())),
         };
@@ -132,13 +145,19 @@ impl PluginRow {
     pub(crate) fn detail(&self) -> Vec<String> {
         let mut parts = Vec::new();
         if self.full_access {
-            parts.push("Full access".to_owned());
+            parts.push(tr!("workbench-extensions-plugin-full-access").into());
         }
         if !self.requested.is_empty() {
-            parts.push(format!("Asks to: {}", self.requested.join("; ")));
+            let asks = self.requested.join("; ");
+            parts.push(tr!("workbench-extensions-plugin-row-asks", capabilities = asks).into());
         }
         if !self.granted.is_empty() {
-            parts.push(format!("Granted: {}", self.granted.join("; ")));
+            let granted = self.granted.join("; ");
+            let granted = tr!(
+                "workbench-extensions-plugin-row-granted",
+                capabilities = granted
+            );
+            parts.push(granted.into());
         }
         parts.extend(self.reason.clone());
         parts
@@ -146,16 +165,25 @@ impl PluginRow {
 
     /// All it has to say, a line each, for the details Enter shows.
     pub(crate) fn full_detail(&self) -> Vec<String> {
-        let mut lines = vec![format!("State: {}", self.state.label())];
+        let state = self.state.label();
+        let mut lines = vec![tr!("workbench-extensions-state", state = state).into()];
         if self.full_access {
-            lines.push("Full access: it holds net:* or process.spawn:*".to_owned());
+            lines.push(tr!("workbench-extensions-plugin-full-access-detail").into());
         }
-        for (title, capabilities) in [("Asks to:", &self.requested), ("Granted:", &self.granted)] {
-            lines.push(title.to_owned());
+        let titles = [
+            (
+                tr!("workbench-extensions-plugin-row-asks-title"),
+                &self.requested,
+            ),
+            (tr!("workbench-extensions-plugin-granted"), &self.granted),
+        ];
+        for (title, capabilities) in titles {
+            lines.push(title.into());
             if capabilities.is_empty() {
-                lines.push("  nothing".to_owned());
+                let nothing = tr!("workbench-extensions-plugin-nothing");
+                lines.push(format!("  {}", nothing));
             }
-            lines.extend(capabilities.iter().map(|line| format!("  {line}")));
+            lines.extend(capabilities.iter().map(|line| format!("  {}", line)));
         }
         lines.extend(self.reason.clone());
         lines
@@ -164,14 +192,27 @@ impl PluginRow {
 
 /// Why a plugin waits on the preview.
 fn needs_preview() -> String {
-    format!("Turn on {PREVIEW_SETTING} in the settings to load it")
+    tr!(
+        "workbench-extensions-plugin-needs-preview",
+        setting = PREVIEW_SETTING
+    )
+    .into()
 }
 
 /// `grants`, each as `net:example.com: connect to example.com`.
 fn capability_lines(grants: &Grants) -> Vec<String> {
     grants
         .iter()
-        .map(|capability| format!("{capability}: {}", describe(capability)))
+        .map(|capability| {
+            let capability_text = capability.to_string();
+            let description = describe(capability);
+            let line = tr!(
+                "workbench-extensions-plugin-capability",
+                capability = capability_text,
+                description = description
+            );
+            line.into()
+        })
         .collect()
 }
 
@@ -268,10 +309,10 @@ impl SecretStore for Keychain {
 /// the next time it loads.
 pub(crate) fn revoke(id: &str, name: &str, cx: &mut App) {
     let Some(store) = stores(cx).grants() else {
-        return notify_error(cx, format!("Can't revoke {name}'s grants"), no_state_dir());
+        return notify_error(cx, cant_revoke(name), no_state_dir());
     };
     let Some(token) = hold_plugin(id, cx) else {
-        return notify_error(cx, format!("Can't revoke {name}'s grants"), busy());
+        return notify_error(cx, cant_revoke(name), busy());
     };
     let (settled, following) = settled(id, cx);
     let (id, name) = (id.to_owned(), name.to_owned());
@@ -293,13 +334,10 @@ pub(crate) fn revoke(id: &str, name: &str, cx: &mut App) {
                 Ok(_) => Workbench::notify(
                     cx,
                     log::Level::Info,
-                    format!("Revoked {name}'s grants"),
-                    Some("It's stopped, and asks for them again the next time it loads.".into()),
+                    tr!("workbench-extensions-plugin-revoked", name = name.as_str()).into(),
+                    Some(tr!("workbench-extensions-plugin-revoked-detail").into()),
                 ),
-                Err(error) => {
-                    let message = format!("Can't revoke {name}'s grants");
-                    notify_error(cx, message, error.to_string());
-                }
+                Err(error) => notify_error(cx, cant_revoke(&name), error.to_string()),
             }
         });
     })
@@ -309,25 +347,28 @@ pub(crate) fn revoke(id: &str, name: &str, cx: &mut App) {
 /// The uninstall confirmation's question and detail for `plugin`.
 pub(crate) fn uninstall_prompt_text(plugin: &PluginRow) -> (String, String) {
     let (major, minor, patch) = plugin.version;
-    let question = format!("Uninstall the plugin {}?", plugin.name);
-    let detail = format!(
-        "{} {major}.{minor}.{patch}\nFrom: {}\n\nIts stored secrets are deleted from the \
-         keychain, what you granted it is forgotten, and its folder is removed. This can't be \
-         undone.",
-        plugin.id,
-        plugin.dir.display(),
+    let question = tr!(
+        "workbench-extensions-plugin-uninstall-question",
+        name = plugin.name.as_str()
     );
-    (question, detail)
+    let detail = tr!(
+        "workbench-extensions-plugin-uninstall-detail",
+        id = plugin.id.as_str(),
+        version = format!("{major}.{minor}.{patch}"),
+        dir = plugin.dir.display().to_string()
+    );
+    (question.into(), detail.into())
 }
 
 /// Asks in `window` whether to uninstall `plugin`, and does it if so.
 pub(crate) fn confirm_uninstall(plugin: &PluginRow, window: &mut Window, cx: &mut App) {
     let (question, detail) = uninstall_prompt_text(plugin);
+    let buttons = uninstall_buttons();
     let answer = window.prompt(
         PromptLevel::Warning,
         &question,
         Some(&detail),
-        &UNINSTALL_BUTTONS,
+        &buttons.each_ref().map(|button| button.as_ref()),
         cx,
     );
     let plugin = plugin.clone();
@@ -356,11 +397,10 @@ enum Failure {
 fn uninstall(plugin: PluginRow, cx: &mut App) {
     let stores = stores(cx);
     let (Some(grants), Some(secrets)) = (stores.grants(), stores.secrets(&plugin.id)) else {
-        let message = format!("Can't uninstall {}", plugin.name);
-        return notify_error(cx, message, no_state_dir());
+        return notify_error(cx, cant_uninstall(&plugin.name), no_state_dir());
     };
     let Some(token) = hold_plugin(&plugin.id, cx) else {
-        return notify_error(cx, format!("Can't uninstall {}", plugin.name), busy());
+        return notify_error(cx, cant_uninstall(&plugin.name), busy());
     };
     let (settled, following) = settled(&plugin.id, cx);
     cx.spawn(async move |cx| {
@@ -373,8 +413,16 @@ fn uninstall(plugin: PluginRow, cx: &mut App) {
                 check_still_installed(&dir, &id).map_err(Failure::Replaced)?;
                 secrets.delete_all().map_err(Failure::Secrets)?;
                 (grants.forget(&id)).map_err(|error| Failure::Other(error.to_string()))?;
-                remove_extension_dir(&dir)
-                    .map_err(|error| Failure::Other(format!("{}: {error}", dir.display())))
+                remove_extension_dir(&dir).map_err(|error| {
+                    Failure::Other(
+                        tr!(
+                            "workbench-extensions-path-error",
+                            path = dir.display().to_string(),
+                            error = error.to_string()
+                        )
+                        .into(),
+                    )
+                })
             })
             .await;
         cx.update(|cx| {
@@ -382,17 +430,18 @@ fn uninstall(plugin: PluginRow, cx: &mut App) {
             let failure = match removed {
                 Ok(()) => {
                     release_plugin(&plugin.id, token, Release::Forgotten, cx);
-                    let message = format!("Uninstalled {name}");
-                    return Workbench::notify(cx, log::Level::Info, message, None);
+                    let message = tr!("workbench-extensions-plugin-uninstalled", name = name);
+                    return Workbench::notify(cx, log::Level::Info, message.into(), None);
                 }
-                Err(Failure::Secrets(error)) => format!(
-                    "Its stored secrets couldn't be deleted ({}), so it stays installed.",
-                    error_text(&error)
-                ),
+                Err(Failure::Secrets(error)) => tr!(
+                    "workbench-extensions-plugin-secrets-kept",
+                    error = error_text(&error)
+                )
+                .into(),
                 Err(Failure::Replaced(message) | Failure::Other(message)) => message,
             };
             release_plugin(&plugin.id, token, Release::Restored, cx);
-            notify_error(cx, format!("Can't uninstall {name}"), failure);
+            notify_error(cx, cant_uninstall(name), failure);
         });
     })
     .detach();
@@ -402,17 +451,24 @@ fn uninstall(plugin: PluginRow, cx: &mut App) {
 /// it. If not, why not.
 fn check_still_installed(dir: &Path, id: &str) -> Result<(), String> {
     let manifest = dir.join(MANIFEST_FILE);
-    let text = fs::read_to_string(&manifest)
-        .map_err(|error| format!("{} can't be read: {error}", manifest.display()))?;
+    let text = fs::read_to_string(&manifest).map_err(|error| {
+        tr!(
+            "workbench-extensions-plugin-manifest-unreadable",
+            path = manifest.display().to_string(),
+            error = error.to_string()
+        )
+        .to_string()
+    })?;
     let named = (text.parse::<toml::Table>().ok())
         .and_then(|table| table.get("id")?.as_str().map(str::to_owned));
     if named.as_deref() == Some(id) {
         Ok(())
     } else {
-        Err(format!(
-            "{} no longer holds it: it was replaced while you were asked.",
-            dir.display()
-        ))
+        Err(tr!(
+            "workbench-extensions-plugin-replaced",
+            dir = dir.display().to_string()
+        )
+        .into())
     }
 }
 
@@ -458,11 +514,19 @@ fn error_text(error: &Error) -> &str {
 }
 
 fn busy() -> String {
-    "It's being revoked or uninstalled already.".to_owned()
+    tr!("workbench-extensions-plugin-busy").into()
 }
 
 fn no_state_dir() -> String {
-    "There's no state directory to keep plugin grants in.".to_owned()
+    tr!("workbench-extensions-plugin-no-state-dir").into()
+}
+
+fn cant_revoke(name: &str) -> String {
+    tr!("workbench-extensions-plugin-cant-revoke", name = name).into()
+}
+
+fn cant_uninstall(name: &str) -> String {
+    tr!("workbench-extensions-plugin-cant-uninstall", name = name).into()
 }
 
 fn notify_error(cx: &mut App, message: String, detail: String) {

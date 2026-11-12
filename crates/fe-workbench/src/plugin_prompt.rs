@@ -13,19 +13,31 @@
 use std::path::PathBuf;
 
 use fe_command::capability::{Capability, Grants, Target};
-use gpui::{App, PromptLevel, Task, Window};
+use gpui::{App, PromptLevel, SharedString, Task, Window};
+use kiln_l10n::tr;
 use kiln_plugin::{
     grants::{Version, needs_wildcard_acceptance},
     warnings::{Warning, combination_warnings, describe},
 };
 
-/// The first prompt's buttons, and the indexes of the answers.
-const BUTTONS: [&str; 2] = ["Allow", "Don't Allow"];
+/// The first prompt's buttons, and the indexes of the answers: an answer
+/// is matched by its button's index, never its title.
+fn buttons() -> [SharedString; 2] {
+    [
+        tr!("workbench-extensions-allow"),
+        tr!("workbench-extensions-dont-allow"),
+    ]
+}
 const ALLOW: usize = 0;
 const DONT_ALLOW: usize = 1;
 
 /// The full-access prompt's buttons, and the indexes of the answers.
-const FULL_ACCESS_BUTTONS: [&str; 2] = ["Allow Full Access", "Don't Allow"];
+fn full_access_buttons() -> [SharedString; 2] {
+    [
+        tr!("workbench-extensions-plugin-allow-full-access"),
+        tr!("workbench-extensions-dont-allow"),
+    ]
+}
 const ALLOW_FULL_ACCESS: usize = 0;
 const DONT_ALLOW_FULL_ACCESS: usize = 1;
 
@@ -96,7 +108,14 @@ pub fn show_plugin_prompt(
     cx: &mut App,
 ) -> Task<PluginAnswer> {
     let (question, detail) = plugin_prompt_text(pending);
-    let answer = window.prompt(PromptLevel::Warning, &question, Some(&detail), &BUTTONS, cx);
+    let buttons = buttons();
+    let answer = window.prompt(
+        PromptLevel::Warning,
+        &question,
+        Some(&detail),
+        &buttons.each_ref().map(|button| button.as_ref()),
+        cx,
+    );
     let full_access = pending
         .needs_full_access()
         .then(|| full_access_prompt_text(pending));
@@ -104,13 +123,16 @@ pub fn show_plugin_prompt(
         let answer = answer.await.ok();
         // An answer that comes after the window closed decides nothing.
         let Ok(second) = cx.update(|window, cx| match (answer, &full_access) {
-            (Some(ALLOW), Some((question, detail))) => Some(window.prompt(
-                PromptLevel::Critical,
-                question,
-                Some(detail),
-                &FULL_ACCESS_BUTTONS,
-                cx,
-            )),
+            (Some(ALLOW), Some((question, detail))) => {
+                let buttons = full_access_buttons();
+                Some(window.prompt(
+                    PromptLevel::Critical,
+                    question,
+                    Some(detail),
+                    &buttons.each_ref().map(|button| button.as_ref()),
+                    cx,
+                ))
+            }
             _ => None,
         }) else {
             return PluginAnswer::Pending;
@@ -140,21 +162,28 @@ pub fn show_plugin_prompt(
 
 /// The question and the detail the first prompt shows for `pending`.
 pub fn plugin_prompt_text(pending: &PendingPluginGrant) -> (String, String) {
+    // Each paragraph is a whole message; a blank line parts them.
     let mut detail = format!(
-        "Plugin: {} {}, licensed {}\nFrom: {}\n\n",
-        pending.id,
-        version_text(pending.version),
-        pending.license,
-        pending.dir.display(),
+        "{}\n\n",
+        tr!(
+            "workbench-extensions-plugin-prompt-header",
+            id = pending.id.as_str(),
+            version = version_text(pending.version),
+            license = pending.license.as_str(),
+            dir = pending.dir.display().to_string()
+        )
     );
     let question = match &pending.ask {
         PluginAsk::Install => {
-            detail.push_str("It asks to:\n");
+            push_line(&mut detail, tr!("workbench-extensions-plugin-asks-to"));
             detail.push_str(&capabilities_text(&pending.requested));
-            format!("Allow the plugin {} to load?", pending.name)
+            tr!(
+                "workbench-extensions-plugin-load-question",
+                name = pending.name.as_str()
+            )
         }
         PluginAsk::Escalation { added, .. } => {
-            detail.push_str("This version asks for more than you granted. It adds:\n");
+            push_line(&mut detail, tr!("workbench-extensions-plugin-adds"));
             detail.push_str(&capabilities_text(added));
             let kept: Grants = pending
                 .requested
@@ -163,13 +192,13 @@ pub fn plugin_prompt_text(pending: &PendingPluginGrant) -> (String, String) {
                 .cloned()
                 .collect();
             if !kept.is_empty() {
-                detail.push_str("It keeps:\n");
+                push_line(&mut detail, tr!("workbench-extensions-plugin-keeps"));
                 detail.push_str(&capabilities_text(&kept));
             }
-            format!(
-                "Allow {} {} more access?",
-                pending.name,
-                version_text(pending.version)
+            tr!(
+                "workbench-extensions-plugin-more-access-question",
+                name = pending.name.as_str(),
+                version = version_text(pending.version)
             )
         }
     };
@@ -177,57 +206,78 @@ pub fn plugin_prompt_text(pending: &PendingPluginGrant) -> (String, String) {
     // granted before can combine with what's added.
     let warnings = combination_warnings(&pending.requested);
     if !warnings.is_empty() {
-        detail.push_str("\nWarnings:\n");
+        detail.push('\n');
+        push_line(&mut detail, tr!("workbench-extensions-plugin-warnings"));
         detail.push_str(&warnings_text(&warnings));
     }
     if pending.needs_full_access() {
-        detail.push_str(
-            "\nIt asks for full access: after Allow, you'll be asked to accept that on its own.\n",
+        detail.push('\n');
+        push_line(
+            &mut detail,
+            tr!("workbench-extensions-plugin-full-access-note"),
         );
     }
+    detail.push('\n');
     detail.push_str(&match &pending.ask {
-        PluginAsk::Install => "\nIt doesn't load until you allow it. Don't Allow keeps it from \
-                               loading, and isn't asked again until it asks for something else."
-            .to_owned(),
-        PluginAsk::Escalation { keep_running, .. } => {
-            let installed = keep_running.map_or_else(
-                || "The installed version".to_owned(),
-                |version| format!("The installed version, {},", version_text(version)),
-            );
-            format!(
-                "\n{installed} keeps running with what you granted it until you allow \
-                 this. Don't Allow keeps it running as it is, and isn't asked again until the \
-                 request changes."
-            )
-        }
+        PluginAsk::Install => tr!("workbench-extensions-plugin-install-footer"),
+        PluginAsk::Escalation {
+            keep_running: None, ..
+        } => tr!("workbench-extensions-plugin-escalation-footer"),
+        PluginAsk::Escalation {
+            keep_running: Some(version),
+            ..
+        } => tr!(
+            "workbench-extensions-plugin-escalation-footer-version",
+            version = version_text(*version)
+        ),
     });
-    (question, detail)
+    (question.into(), detail)
 }
 
 /// The question and the detail the full-access prompt shows for `pending`,
 /// which asks for `net:*` or `process.spawn:*`.
 fn full_access_prompt_text(pending: &PendingPluginGrant) -> (String, String) {
-    let question = format!("Give {} full access?", pending.name);
+    let question = tr!(
+        "workbench-extensions-plugin-full-access-question",
+        name = pending.name.as_str()
+    );
     let extreme: Vec<Warning> = combination_warnings(pending.asked())
         .into_iter()
         .filter(Warning::is_extreme)
         .collect();
+    let asks_for = tr!(
+        "workbench-extensions-plugin-full-access-asks-for",
+        id = pending.id.as_str(),
+        version = version_text(pending.version)
+    );
     let detail = format!(
-        "{} {} asks for:\n{}\n{}\nOnly Allow Full Access grants it. Don't Allow grants \
-         nothing it asks for.",
-        pending.id,
-        version_text(pending.version),
+        "{}\n{}\n{}\n{}",
+        asks_for,
         wildcards_text(pending.asked()),
         warnings_text(&extreme),
+        tr!("workbench-extensions-plugin-full-access-footer"),
     );
-    (question, detail)
+    (question.into(), detail)
+}
+
+/// Adds `line` to `text`, then a line break.
+fn push_line(text: &mut String, line: SharedString) {
+    text.push_str(&line);
+    text.push('\n');
 }
 
 /// `grants`, a line each with what it lets the plugin do.
 fn capabilities_text(grants: &Grants) -> String {
     grants
         .iter()
-        .map(|capability| format!("  {capability}: {}\n", describe(capability)))
+        .map(|capability| {
+            let line = tr!(
+                "workbench-extensions-plugin-capability",
+                capability = capability.to_string(),
+                description = describe(capability)
+            );
+            format!("  {}\n", line)
+        })
         .collect()
 }
 
@@ -250,7 +300,7 @@ fn wildcards_text(grants: &Grants) -> String {
 fn warnings_text(warnings: &[Warning]) -> String {
     warnings
         .iter()
-        .map(|warning| format!("  {warning}\n"))
+        .map(|warning| format!("  {}\n", warning))
         .collect()
 }
 

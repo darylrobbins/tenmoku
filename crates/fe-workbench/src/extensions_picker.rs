@@ -30,6 +30,7 @@ use kiln::{
     core::{LicenseClass, Manifest, extension::ExtensionSource as Installed},
     extensions::Skipped,
 };
+use kiln_l10n::tr;
 
 use crate::{
     ExtensionConsent, Invocation, PendingConsent, Workbench,
@@ -90,19 +91,20 @@ pub(crate) enum ExtensionState {
 }
 
 impl ExtensionState {
-    pub(crate) fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> SharedString {
         match self {
-            Self::Active => "Active",
-            Self::NeedsConsent { .. } => "Needs consent",
-            Self::Declined { .. } => "Declined",
-            Self::Disabled => "Disabled",
-            Self::SkippedUntrusted => "Skipped (untrusted)",
-            Self::Running => "Running",
-            Self::WaitingForGrant => "Waiting for grant",
-            Self::PluginDeclined => "Declined",
-            Self::Stopped => "Stopped",
-            Self::NeedsPluginsPreview => "Needs plugins preview",
-            Self::PluginStarting => "Starting",
+            Self::Active => tr!("workbench-extensions-state-active"),
+            Self::NeedsConsent { .. } => tr!("workbench-extensions-state-needs-consent"),
+            Self::Declined { .. } | Self::PluginDeclined => {
+                tr!("workbench-extensions-state-declined")
+            }
+            Self::Disabled => tr!("workbench-extensions-state-disabled"),
+            Self::SkippedUntrusted => tr!("workbench-extensions-state-skipped-untrusted"),
+            Self::Running => tr!("workbench-extensions-state-running"),
+            Self::WaitingForGrant => tr!("workbench-extensions-state-waiting-for-grant"),
+            Self::Stopped => tr!("workbench-extensions-state-stopped"),
+            Self::NeedsPluginsPreview => tr!("workbench-extensions-state-needs-plugins-preview"),
+            Self::PluginStarting => tr!("workbench-extensions-state-starting"),
         }
     }
 }
@@ -176,16 +178,23 @@ impl Row {
         };
         let mut servers: Vec<String> = (own.iter())
             .map(|pending| {
-                let status = if pending.declined {
-                    "declined"
-                } else {
-                    "pending"
-                };
-                format!(
-                    "{}: {} ({status})",
-                    pending.server,
-                    invocation_line(&pending.invocation)
-                )
+                let (server, invocation) = (
+                    pending.server.as_str(),
+                    invocation_line(&pending.invocation),
+                );
+                match pending.declined {
+                    true => tr!(
+                        "workbench-extensions-server-declined",
+                        server = server,
+                        invocation = invocation
+                    ),
+                    false => tr!(
+                        "workbench-extensions-server-pending",
+                        server = server,
+                        invocation = invocation
+                    ),
+                }
+                .into()
             })
             .collect();
         let listed = manifest.app.get("lsp").and_then(toml::Value::as_table);
@@ -195,15 +204,20 @@ impl Row {
             }
             let key = (dir.clone(), name.clone());
             if let Some(granted) = granted.iter().find(|granted| granted.key == key) {
-                let status = if granted.running {
-                    "granted"
-                } else {
-                    "granted; not running: an earlier extension's server of this name runs"
+                let invocation = invocation_line(&granted.invocation);
+                let line = match granted.running {
+                    true => tr!(
+                        "workbench-extensions-server-granted",
+                        server = name,
+                        invocation = invocation
+                    ),
+                    false => tr!(
+                        "workbench-extensions-server-granted-shadowed",
+                        server = name,
+                        invocation = invocation
+                    ),
                 };
-                servers.push(format!(
-                    "{name}: {} ({status})",
-                    invocation_line(&granted.invocation)
-                ));
+                servers.push(line.into());
             }
         }
         Self {
@@ -245,38 +259,48 @@ impl Row {
     /// Its state, its plugin's too where that's not the row's, and Full
     /// access if its plugin was granted that.
     pub(crate) fn label(&self) -> String {
-        let mut label = self.state.label().to_owned();
+        let mut label = self.state.label();
         if let Some(plugin) = &self.plugin {
             if plugin.state != self.state {
-                label.push_str(&format!(" · Plugin: {}", plugin.state.label()));
+                label = tr!(
+                    "workbench-extensions-label-with-plugin",
+                    state = label,
+                    plugin = plugin.state.label()
+                );
             }
             if plugin.full_access {
-                label.push_str(" · Full access");
+                label = tr!("workbench-extensions-label-full-access", label = label);
             }
         }
-        label
+        label.into()
     }
 
     /// The licence expression and its class.
     pub(crate) fn license_text(&self) -> String {
-        let class = match self.class {
-            LicenseClass::Permissive => "permissive",
-            LicenseClass::Copyleft => "copyleft",
-            LicenseClass::Unknown => "unknown",
-        };
-        format!("{} ({class})", self.license)
+        let license = self.license.as_str();
+        match self.class {
+            LicenseClass::Permissive => {
+                tr!("workbench-extensions-license-permissive", license = license)
+            }
+            LicenseClass::Copyleft => {
+                tr!("workbench-extensions-license-copyleft", license = license)
+            }
+            LicenseClass::Unknown => tr!("workbench-extensions-license-unknown", license = license),
+        }
+        .into()
     }
 
     /// User or Workspace, or where it's linked from.
     fn source_text(&self) -> String {
         if let Some(folder) = &self.linked {
-            return format!("Linked from {}", folder.display());
+            let folder = folder.display().to_string();
+            return tr!("workbench-extensions-linked-from", folder = folder).into();
         }
         match self.source {
-            ExtensionSource::User => "User",
-            ExtensionSource::Workspace => "Workspace",
+            ExtensionSource::User => tr!("workbench-extensions-source-user"),
+            ExtensionSource::Workspace => tr!("workbench-extensions-source-workspace"),
         }
-        .to_owned()
+        .into()
     }
 
     /// The secondary line: kinds, licence, source, servers, and why it
@@ -292,22 +316,42 @@ impl Row {
     /// Everything the row has to say, a line each, for the prompt Enter
     /// shows: the row's line may not have room for it.
     pub(crate) fn full_detail(&self) -> String {
-        let mut lines = vec![
-            format!("ID: {}", self.id),
-            format!("Version: {}", self.version),
-            format!("State: {}", self.label()),
-            format!("Contributes: {}", self.kinds),
-            format!("Licence: {}", self.license_text()),
-            format!("Source: {}", self.source_text()),
-            format!("Directory: {}", self.dir.display()),
-        ];
+        let dir = self.dir.display().to_string();
+        let mut lines: Vec<String> = [
+            tr!("workbench-extensions-detail-id", id = self.id.as_str()),
+            tr!(
+                "workbench-extensions-detail-version",
+                version = self.version.as_str()
+            ),
+            tr!("workbench-extensions-state", state = self.label()),
+            tr!(
+                "workbench-extensions-detail-contributes",
+                kinds = self.kinds.as_str()
+            ),
+            tr!(
+                "workbench-extensions-detail-licence",
+                license = self.license_text()
+            ),
+            tr!(
+                "workbench-extensions-detail-source",
+                source = self.source_text()
+            ),
+            tr!("workbench-extensions-detail-directory", dir = dir),
+        ]
+        .map(String::from)
+        .into();
         if !self.servers.is_empty() {
-            lines.push("Language servers:".to_owned());
-            lines.extend(self.servers.iter().map(|server| format!("  {server}")));
+            lines.push(tr!("workbench-extensions-detail-servers").into());
+            lines.extend(self.servers.iter().map(|server| format!("  {}", server)));
         }
         if let Some(plugin) = &self.plugin {
-            lines.push("Plugin:".to_owned());
-            lines.extend(plugin.full_detail().iter().map(|line| format!("  {line}")));
+            lines.push(tr!("workbench-extensions-detail-plugin").into());
+            lines.extend(
+                plugin
+                    .full_detail()
+                    .iter()
+                    .map(|line| format!("  {}", line)),
+            );
         }
         lines.extend(self.reason.clone());
         lines.join("\n")
@@ -350,6 +394,9 @@ fn quoted(word: &str) -> String {
     format!("'{}'", word.replace('\'', "'\\''"))
 }
 
+/// How many of a kind an extension contributes, and how that's said.
+type KindCount = (usize, fn(usize) -> SharedString);
+
 /// What `manifest` contributes, with counts: "1 theme, 1 lsp server".
 fn kinds(manifest: &Manifest) -> String {
     let count = |kind: &str| match manifest.app.get(kind) {
@@ -357,20 +404,32 @@ fn kinds(manifest: &Manifest) -> String {
         Some(toml::Value::Table(table)) => table.len(),
         _ => 0,
     };
-    let counts = [
-        ("theme", "themes", manifest.themes.len()),
-        ("keymap", "keymaps", manifest.keymaps.len()),
-        ("menu", "menus", manifest.menus.len()),
-        ("lsp server", "lsp servers", count("lsp")),
-        ("grammar", "grammars", count("grammars")),
-        ("snippet file", "snippet files", count("snippets")),
+    let counts: [KindCount; 6] = [
+        (manifest.themes.len(), |n| {
+            tr!("workbench-extensions-kind-themes", count = n)
+        }),
+        (manifest.keymaps.len(), |n| {
+            tr!("workbench-extensions-kind-keymaps", count = n)
+        }),
+        (manifest.menus.len(), |n| {
+            tr!("workbench-extensions-kind-menus", count = n)
+        }),
+        (count("lsp"), |n| {
+            tr!("workbench-extensions-kind-lsp-servers", count = n)
+        }),
+        (count("grammars"), |n| {
+            tr!("workbench-extensions-kind-grammars", count = n)
+        }),
+        (count("snippets"), |n| {
+            tr!("workbench-extensions-kind-snippet-files", count = n)
+        }),
     ];
     let parts: Vec<String> = (counts.into_iter())
-        .filter(|(.., n)| *n > 0)
-        .map(|(one, many, n)| format!("{n} {}", if n == 1 { one } else { many }))
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, text)| text(n).into())
         .collect();
     if parts.is_empty() {
-        "no contributions".to_owned()
+        tr!("workbench-extensions-kind-none").into()
     } else {
         parts.join(", ")
     }
@@ -683,7 +742,9 @@ impl PickerDelegate for ExtensionsPicker {
             let detail = row.full_detail();
             self.closed(window, cx);
             // Answered by closing it: nothing follows.
-            drop(window.prompt(PromptLevel::Info, &question, Some(&detail), &["OK"], cx));
+            let ok = tr!("workbench-extensions-ok");
+            let buttons = [ok.as_ref()];
+            drop(window.prompt(PromptLevel::Info, &question, Some(&detail), &buttons, cx));
         }
         true
     }

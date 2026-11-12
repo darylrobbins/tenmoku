@@ -26,13 +26,15 @@ use std::{
 
 use gpui::{App, AppContext as _, AsyncApp, Context, PathPromptOptions, Window};
 use kiln::core::extension::{ExtensionApi, MANIFEST_FILE};
+use kiln_l10n::tr;
 
 use crate::{
     InstallError, Installed, Workbench,
     extension_install::{
-        check, check_api, extensions_dir, file_name, installed_text, installed_with,
+        cant_install, check, check_api, extensions_dir, installed_with, no_extensions_dir,
         reserved_namespaces, version_text,
     },
+    plugin_manage::PREVIEW_SETTING,
 };
 
 /// Links the extension in `folder` into `extensions_dir` as
@@ -53,42 +55,46 @@ pub(crate) fn link(
     api: &ExtensionApi,
 ) -> Result<Installed, InstallError> {
     if !fs::metadata(folder)?.is_dir() {
-        return Err(InstallError::Refused("Pick a folder".to_owned()));
+        return Err(refused(tr!("workbench-extensions-dev-pick-folder")));
     }
     fs::create_dir_all(extensions_dir)?;
     let extensions_dir = kiln::core::platform::canonicalize(extensions_dir)?;
     let folder = kiln::core::platform::canonicalize(folder)?;
     if extensions_dir.starts_with(&folder) || folder.starts_with(&extensions_dir) {
-        let reason = "It's the folder the extensions are installed in, or in it, or holds it";
-        return Err(InstallError::Refused(reason.to_owned()));
+        return Err(refused(tr!("workbench-extensions-dev-extensions-folder")));
     }
     if !folder.join(MANIFEST_FILE).is_file() {
-        return Err(InstallError::Refused(format!(
-            "There's no {MANIFEST_FILE} at its top level"
+        return Err(refused(tr!(
+            "workbench-extensions-dev-no-manifest",
+            file = MANIFEST_FILE
         )));
     }
     let installed = check(&folder, &extensions_dir, api)?;
     let link = installed.dir.clone();
     let ours = links_to(&link, &folder);
     if !ours && fs::symlink_metadata(&link).is_ok() {
-        return Err(InstallError::Refused(format!(
-            "{} is there already, and isn't a link to this folder",
-            link.display()
+        return Err(refused(tr!(
+            "workbench-extensions-dev-taken",
+            dir = link.display().to_string()
         )));
     }
     let elsewhere =
         (installed_with(&extensions_dir, &installed.id)?.into_iter()).find(|dir| *dir != link);
     if let Some(dir) = elsewhere {
-        return Err(InstallError::Refused(format!(
-            "{} is installed already, in {}: uninstall it first",
-            installed.id,
-            dir.display()
+        return Err(refused(tr!(
+            "workbench-extensions-dev-installed-elsewhere",
+            id = installed.id.as_str(),
+            dir = dir.display().to_string()
         )));
     }
     if !ours {
         symlink_dir(&folder, &link)?;
     }
     Ok(installed)
+}
+
+fn refused(reason: gpui::SharedString) -> InstallError {
+    InstallError::Refused(reason.into())
 }
 
 /// Whether `link` is a symlink leading to `folder`, a canonical path.
@@ -119,20 +125,22 @@ pub(crate) fn linked_from(dir: &Path) -> Option<PathBuf> {
 
 /// The success toast's message and detail.
 fn linked_text(installed: &Installed, folder: &Path, preview: bool) -> (String, String) {
-    let message = format!(
-        "Installed {} {} for development",
-        installed.name,
-        version_text(installed.version)
+    let message = tr!(
+        "workbench-extensions-dev-installed",
+        name = installed.name.as_str(),
+        version = version_text(installed.version)
     );
-    let (_, plugin) = installed_text(installed, preview);
-    let mut detail = format!(
-        "Linked from {}: it reloads when it's rebuilt.",
-        folder.display()
-    );
-    if let Some(plugin) = plugin {
-        detail.push_str(&format!(" {plugin}."));
-    }
-    (message, detail)
+    let folder = folder.display().to_string();
+    let detail = match (installed.plugin, preview) {
+        (false, _) => tr!("workbench-extensions-dev-linked", folder = folder),
+        (true, true) => tr!("workbench-extensions-dev-linked-plugin", folder = folder),
+        (true, false) => tr!(
+            "workbench-extensions-dev-linked-plugin-needs-preview",
+            folder = folder,
+            setting = PREVIEW_SETTING
+        ),
+    };
+    (message.into(), detail.into())
 }
 
 impl Workbench {
@@ -140,8 +148,7 @@ impl Workbench {
     /// thread; the toast says how it went.
     pub(crate) fn link_extension_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(extensions_dir) = extensions_dir(cx) else {
-            let detail = "There's no state directory to install extensions in.".to_owned();
-            let message = "Can't install an extension".to_owned();
+            let (message, detail) = no_extensions_dir();
             return Workbench::notify(cx, log::Level::Error, message, Some(detail));
         };
         let api = check_api(reserved_namespaces(cx));
@@ -149,7 +156,7 @@ impl Workbench {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Install for Development".into()),
+            prompt: Some(tr!("workbench-extensions-dev-button")),
         });
         cx.spawn_in(window, async move |_, cx| {
             let folder = match answer.await {
@@ -182,7 +189,7 @@ fn finish_link(folder: &Path, linked: Result<Installed, InstallError>, cx: &mut 
             Workbench::notify(cx, log::Level::Info, message, Some(detail));
         }
         Err(error) => {
-            let message = format!("Can't install {}", file_name(folder));
+            let message = cant_install(folder);
             Workbench::notify(cx, log::Level::Error, message, Some(error.to_string()));
         }
     }

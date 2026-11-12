@@ -41,7 +41,8 @@ use fe_editor::{
     completion::{CompletionItem, CompletionList, CompletionTrigger},
     snippet::{MAX_DEPTH, Snippet},
 };
-use gpui::{App, Global, WeakEntity};
+use gpui::{App, Global, SharedString, WeakEntity};
+use kiln_l10n::tr;
 
 use crate::Workbench;
 
@@ -100,9 +101,9 @@ pub fn set_extension_snippets(cx: &mut App, snippets: Vec<ExtensionSnippet>) {
     let snippets = (snippets.into_iter())
         .filter(|snippet| {
             let error = if snippet.prefix.trim().is_empty() {
-                Some("it has no prefix".to_owned())
+                Some(tr!("workbench-extensions-snippet-no-prefix").into())
             } else if snippet.body.is_empty() {
-                Some("it has no body".to_owned())
+                Some(tr!("workbench-extensions-snippet-no-body").into())
             } else {
                 snippet_body_error(&snippet.body)
             };
@@ -172,7 +173,11 @@ impl BodyCheck<'_> {
                     let construct = (self.peek())
                         .is_some_and(|b| b == b'{' || b == b'_' || b.is_ascii_alphanumeric());
                     if construct && depth >= MAX_DEPTH {
-                        return Err(format!("its placeholders nest more than {MAX_DEPTH} deep"));
+                        return Err(tr!(
+                            "workbench-extensions-snippet-too-deep",
+                            depth = MAX_DEPTH.to_string()
+                        )
+                        .into());
                     }
                     match self.peek() {
                         Some(b'{') => {
@@ -189,7 +194,7 @@ impl BodyCheck<'_> {
         }
         match depth {
             0 => Ok(()),
-            _ => Err("a `${` is never closed".to_owned()),
+            _ => Err(tr!("workbench-extensions-snippet-unclosed").into()),
         }
     }
 
@@ -205,7 +210,11 @@ impl BodyCheck<'_> {
             .and_then(|n| n.parse::<u32>().ok())
         {
             Some(_) => Ok(()),
-            None => Err(format!("the tabstop number at byte {start} is too large")),
+            None => Err(tr!(
+                "workbench-extensions-snippet-tabstop-too-large",
+                at = start.to_string()
+            )
+            .into()),
         }
     }
 
@@ -231,9 +240,11 @@ impl BodyCheck<'_> {
                 false
             }
             _ => {
-                return Err(format!(
-                    "the `${{` at byte {at} names no tabstop or variable"
-                ));
+                return Err(tr!(
+                    "workbench-extensions-snippet-names-nothing",
+                    at = at.to_string()
+                )
+                .into());
             }
         };
         match self.peek() {
@@ -244,8 +255,20 @@ impl BodyCheck<'_> {
             }
             Some(b'|') if number => self.choice(at)?,
             Some(b'/') => self.transform(at)?,
-            None => return Err(format!("the `${{` at byte {at} is never closed")),
-            Some(_) => return Err(format!("the `${{` at byte {at} isn't closed by a `}}`")),
+            None => {
+                return Err(tr!(
+                    "workbench-extensions-snippet-brace-unclosed",
+                    at = at.to_string()
+                )
+                .into());
+            }
+            Some(_) => {
+                return Err(tr!(
+                    "workbench-extensions-snippet-brace-unmatched",
+                    at = at.to_string()
+                )
+                .into());
+            }
         }
         self.pos += 1;
         Ok(())
@@ -257,13 +280,23 @@ impl BodyCheck<'_> {
         self.pos += 1;
         loop {
             match self.peek() {
-                None => return Err(format!("the choice at byte {at} is never closed")),
+                None => {
+                    return Err(tr!(
+                        "workbench-extensions-snippet-choice-unclosed",
+                        at = at.to_string()
+                    )
+                    .into());
+                }
                 Some(b'\\') => self.escape(b"$}\\,|"),
                 Some(b'|') => {
                     self.pos += 1;
                     return match self.peek() {
                         Some(b'}') => Ok(()),
-                        _ => Err(format!("the choice at byte {at} isn't closed by `|}}`")),
+                        _ => Err(tr!(
+                            "workbench-extensions-snippet-choice-unmatched",
+                            at = at.to_string()
+                        )
+                        .into()),
                     };
                 }
                 Some(_) => self.pos += 1,
@@ -274,7 +307,13 @@ impl BodyCheck<'_> {
     /// A transform's regex, format and options, from its first `/` to the
     /// `}`.
     fn transform(&mut self, at: usize) -> Result<(), String> {
-        let open = || format!("the transform at byte {at} is never closed");
+        let open = || {
+            tr!(
+                "workbench-extensions-snippet-transform-unclosed",
+                at = at.to_string()
+            )
+            .into()
+        };
         for format in [false, true] {
             self.pos += 1;
             loop {
@@ -351,8 +390,14 @@ impl SnippetText {
     }
 }
 
-/// The detail of a user snippet's completion item.
+/// A user snippet's detail as Insert Snippet shows it (`snippet_picker.rs`,
+/// not yet migrated); a completion item's is [`user_snippet`].
 pub(crate) const USER_SNIPPET: &str = "User snippet";
+
+/// The detail of a user snippet's completion item.
+pub(crate) fn user_snippet() -> SharedString {
+    tr!("workbench-extensions-user-snippet")
+}
 
 /// The most text one request's snippet items carry in their bodies and
 /// descriptions: past it, further matches aren't offered, the user's first
@@ -545,7 +590,7 @@ fn item(snippet: &Offer, range: Range<usize>) -> CompletionItem {
     CompletionItem {
         label: snippet.prefix.clone(),
         label_detail: (snippet.text.description.as_ref())
-            .map(|description| format!(" {description}")),
+            .map(|description| format!(" {}", description)),
         kind: Some("snippet".to_owned()),
         detail: Some(snippet.detail.to_string()),
         sort_text: snippet.user.then(|| format!("\0{}", snippet.prefix)),
@@ -568,9 +613,7 @@ fn documented(expanded: &str, language: Option<&str>) -> Option<String> {
     }
     let fence = "`".repeat(fence);
     (!expanded.is_empty()).then(|| {
-        format!(
-            "{fence}{}\n{expanded}\n{fence}",
-            language.unwrap_or_default()
-        )
+        let language = language.unwrap_or_default();
+        format!("{}{}\n{}\n{}", fence, language, expanded, fence)
     })
 }

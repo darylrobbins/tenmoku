@@ -10,7 +10,7 @@
 //! The network is behind [`UpdateSource`]: the app reaches GitHub through
 //! `fe-net`, and anything on the test scheduler reaches only the fake it set,
 //! so no test can touch the network. One check runs at a time in the app;
-//! another asked for meanwhile answers [`ALREADY_CHECKING`].
+//! another asked for meanwhile answers [`already_checking`].
 //!
 //! The app binary can take the check over with an [`UpdaterHook`] (set by
 //! [`set_updater_hook`]), as it owns a platform updater this crate can't
@@ -21,8 +21,9 @@
 use std::{sync::Arc, time::Duration};
 
 use futures::{Stream, StreamExt as _, future::BoxFuture};
-use gpui::{App, AppContext as _, AsyncApp, Entity, Global};
+use gpui::{App, AppContext as _, AsyncApp, Entity, Global, SharedString};
 use kiln::command::{Capability, Grants};
+use kiln_l10n::tr;
 use serde_json::Value;
 
 use crate::workbench::toast::{self, Toast, ToastLayer};
@@ -45,20 +46,20 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 /// notes can take it further.
 pub(crate) const MAX_REPLY: usize = 4 * 1024 * 1024;
 
-/// What a check says while it runs.
-const CHECKING: &str = "Checking for updates…";
-
 /// What a check answers while another's running.
-pub(crate) const ALREADY_CHECKING: &str = "Already checking for updates";
+pub(crate) fn already_checking() -> SharedString {
+    tr!("workbench-extensions-update-already-checking")
+}
 
 /// What a check says when there's no release to compare with.
-pub(crate) const NO_RELEASE: &str = "No release was found on GitHub";
-
-/// The start of what a check says when it failed.
-const FAILED: &str = "Couldn't check for updates";
+pub(crate) fn no_release() -> SharedString {
+    tr!("workbench-extensions-update-no-release")
+}
 
 /// The Download button's title.
-pub(crate) const DOWNLOAD: &str = "Download";
+pub(crate) fn download() -> SharedString {
+    tr!("workbench-extensions-update-download")
+}
 
 /// What a fetcher got: the HTTP status, and the body if that's 200.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,7 +91,9 @@ impl UpdateSource {
             return source.clone();
         }
         let fetch: Fetcher = match cx.background_executor().is_test() {
-            true => Arc::new(|| Box::pin(async { Err("no fake fetcher is set".to_owned()) })),
+            true => Arc::new(|| {
+                Box::pin(async { Err(kiln_l10n::verbatim!("no fake fetcher is set").to_owned()) })
+            }),
             false => Arc::new(|| Box::pin(fetch_latest())),
         };
         UpdateSource {
@@ -147,11 +150,13 @@ pub(crate) fn run(layer: &Entity<ToastLayer>, cx: &mut App) {
         return;
     }
     if cx.default_global::<Checking>().0 {
-        return toast::show(cx, Toast::info(ALREADY_CHECKING));
+        return toast::show(cx, Toast::info(already_checking()));
     }
     cx.default_global::<Checking>().0 = true;
     let UpdateSource { fetch, running } = UpdateSource::of(cx);
-    let going = layer.update(cx, |layer, cx| layer.push(Toast::info(CHECKING), cx));
+    let going = layer.update(cx, |layer, cx| {
+        layer.push(Toast::info(tr!("workbench-extensions-update-checking")), cx)
+    });
     let layer = layer.downgrade();
     let outcome = cx.background_spawn(async move { judge(fetch().await, &running) });
     cx.spawn(async move |cx: &mut AsyncApp| {
@@ -174,14 +179,20 @@ fn tell(outcome: Outcome, cx: &mut App) {
             page,
             running,
         } => return offer(&version, &running, page, cx),
-        Outcome::UpToDate { running } => {
-            Toast::info(format!("Tenmoku is up to date (you have {running})"))
-        }
-        Outcome::NoRelease { status: None } => Toast::info(NO_RELEASE),
+        Outcome::UpToDate { running } => Toast::info(tr!(
+            "workbench-extensions-update-up-to-date",
+            running = running
+        )),
+        Outcome::NoRelease { status: None } => Toast::info(no_release()),
         Outcome::NoRelease {
             status: Some(status),
-        } => Toast::info(format!("{NO_RELEASE} (HTTP {status})")),
-        Outcome::Failed(reason) => Toast::error(format!("{FAILED}: {reason}")),
+        } => Toast::info(tr!(
+            "workbench-extensions-update-no-release-status",
+            status = status.to_string()
+        )),
+        Outcome::Failed(reason) => {
+            Toast::error(tr!("workbench-extensions-update-failed", reason = reason))
+        }
     };
     toast::show(cx, toast);
 }
@@ -191,8 +202,12 @@ fn tell(outcome: Outcome, cx: &mut App) {
 /// it stays until it's answered.
 fn offer(version: &str, running: &str, page: String, cx: &mut App) {
     let (answer, answered) = futures::channel::oneshot::channel();
-    let message = format!("Tenmoku {version} is available (you have {running})");
-    let offer = Toast::info(message).choices(vec![DOWNLOAD.to_owned()], move |choice| {
+    let message = tr!(
+        "workbench-extensions-update-available",
+        version = version,
+        running = running
+    );
+    let offer = Toast::info(message).choices(vec![download().into()], move |choice| {
         answer.send(choice).ok();
     });
     toast::show(cx, offer);
@@ -218,22 +233,44 @@ fn judge(fetched: Result<Fetched, String>, running: &str) -> Outcome {
             };
         }
         403 | 429 => {
-            return Outcome::Failed(format!(
-                "GitHub refused it, usually its rate limit, so try again later (HTTP {status})"
-            ));
+            return Outcome::Failed(
+                tr!(
+                    "workbench-extensions-update-refused",
+                    status = status.to_string()
+                )
+                .into(),
+            );
         }
-        _ => return Outcome::Failed(format!("GitHub answered HTTP {status}")),
+        _ => {
+            return Outcome::Failed(
+                tr!(
+                    "workbench-extensions-update-http-status",
+                    status = status.to_string()
+                )
+                .into(),
+            );
+        }
     }
     let Ok(release) = serde_json::from_slice::<Value>(&body) else {
-        return Outcome::Failed(format!("GitHub's reply isn't valid JSON (HTTP {status})"));
+        return Outcome::Failed(
+            tr!(
+                "workbench-extensions-update-invalid-json",
+                status = status.to_string()
+            )
+            .into(),
+        );
     };
     let Some((version, latest, page)) = release_of(&release) else {
         return Outcome::NoRelease { status: None };
     };
     let Some(current) = parse_version(running) else {
-        return Outcome::Failed(format!(
-            "this build's version, {running}, can't be compared"
-        ));
+        return Outcome::Failed(
+            tr!(
+                "workbench-extensions-update-version-not-comparable",
+                running = running
+            )
+            .into(),
+        );
     };
     let running = running.to_owned();
     match latest > current {
@@ -293,7 +330,9 @@ async fn fetch_latest() -> Result<Fetched, String> {
     .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
     .collect::<Result<_, Box<dyn std::error::Error + Send + Sync>>>()
     .map_err(|error| error.to_string())?;
-    let method = "GET".parse().map_err(|_| "no GET method".to_owned())?;
+    let method = "GET"
+        .parse()
+        .map_err(|_| tr!("workbench-extensions-update-no-get").to_string())?;
     let reply = client.request(method, LATEST_RELEASE, headers, Vec::new());
     let reply = reply.await.map_err(|error| error.to_string())?;
     read_reply(reply.status.as_u16(), reply.body).await
@@ -309,11 +348,21 @@ pub(crate) async fn read_reply<E: std::fmt::Display>(
     let mut body = Vec::new();
     if status == 200 {
         while let Some(chunk) = chunks.next().await {
-            let chunk = chunk
-                .map_err(|error| format!("GitHub's reply broke off: {error} (HTTP {status})"))?;
+            let chunk = chunk.map_err(|error| {
+                tr!(
+                    "workbench-extensions-update-broke-off",
+                    error = error.to_string(),
+                    status = status.to_string()
+                )
+                .to_string()
+            })?;
             body.extend(chunk);
             if body.len() > MAX_REPLY {
-                return Err(format!("GitHub's reply is too long (HTTP {status})"));
+                return Err(tr!(
+                    "workbench-extensions-update-too-long",
+                    status = status.to_string()
+                )
+                .into());
             }
         }
     }

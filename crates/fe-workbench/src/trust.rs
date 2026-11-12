@@ -13,6 +13,7 @@
 //! that record it ([`Workbench::set_root_trust`]).
 
 use gpui::{App, Context, Window};
+use kiln_l10n::{text, tr};
 #[cfg(test)]
 pub(crate) use kiln_shell::trust::decide;
 use kiln_shell::trust::{RootTrust, TrustHost, TrustPrompt};
@@ -20,19 +21,14 @@ pub use kiln_shell::trust::{TrustChanged, set_trust_file};
 
 use crate::Workbench;
 
-/// The prompt's question.
-const QUESTION: &str = "Do you trust the authors of the files in this folder?";
-
 /// What the workbench asks the first time a folder is opened as one.
 pub(crate) fn prompt() -> TrustPrompt {
-    TrustPrompt::new(QUESTION, |folder| {
-        format!(
-            "{}\n\nTrusting this folder lets Tenmoku start language servers in it, which \
-             can run the project's code: rust-analyzer runs build scripts and proc macros. \
-             Its subfolders are trusted too. Change this later with File > Trust This \
-             Folder or Untrust This Folder.",
-            folder.display()
+    TrustPrompt::new(text!("workbench-extensions-trust-question"), |folder| {
+        tr!(
+            "workbench-extensions-trust-detail",
+            folder = folder.display().to_string()
         )
+        .into()
     })
 }
 

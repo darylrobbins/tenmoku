@@ -40,8 +40,8 @@ use super::PluginFormatting;
 use crate::{
     external_format::{RunOutput, RunSpec, Runner},
     plugin_host::{
-        Found, GRANTS_FILE, PluginHost, PluginState, plugin_handle, plugin_kind, plugin_states,
-        set_plugin_dirs, set_plugins, set_preview,
+        Found, GRANTS_FILE, PluginHost, PluginState, StopReason, plugin_handle, plugin_kind,
+        plugin_states, set_plugin_dirs, set_plugins, set_preview,
     },
     tests::lsp::Lsp,
 };
@@ -103,6 +103,16 @@ struct Wired {
 /// TEXT) open and focused, and the editor guest loaded as plugin `fmt` with
 /// `fmt.format` the formatter for rust.
 fn setup(cx: &mut TestAppContext, rust: Script, settings: &str) -> Wired {
+    setup_with(cx, rust, settings, Duration::from_secs(30))
+}
+
+/// [`setup`], the plugin loaded with `call_deadline` its calls' deadline.
+fn setup_with(
+    cx: &mut TestAppContext,
+    rust: Script,
+    settings: &str,
+    call_deadline: Duration,
+) -> Wired {
     let mut s = Lsp::with_scripts(cx, rust, Script::default());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
@@ -136,7 +146,7 @@ fn setup(cx: &mut TestAppContext, rust: Script, settings: &str) -> Wired {
     s.cx.update(|_, cx| {
         set_plugin_dirs(cx, state, cache);
         set_preview(cx, true);
-        cx.global_mut::<PluginHost>().limits.call_deadline = Duration::from_secs(30);
+        cx.global_mut::<PluginHost>().limits.call_deadline = call_deadline;
         set_plugins(cx, vec![found]);
     });
     s.until("the plugin to run", |s| {
@@ -426,4 +436,48 @@ fn a_stale_answer_is_dropped(cx: &mut TestAppContext) {
     s.until("the plugin's format", |s| {
         text(s, &editor) == typed.to_uppercase()
     });
+}
+
+/// A formatter's call that overruns the plugin's own call deadline unloads
+/// the plugin, as a command's does, though the request stopped waiting for
+/// it first: it's stopped, timed out, and its commands and its formatter go
+/// with it.
+#[gpui::test]
+fn a_formatter_overrunning_its_deadline_stops_the_plugin(cx: &mut TestAppContext) {
+    let deadline = Duration::from_secs(2);
+    let Wired { mut s, editor, .. } = setup_with(cx, Script::default(), PREVIEW, deadline);
+    let record =
+        s.cx.update(|_, cx| cx.global::<PluginFormatting>().record.clone());
+    // Held until it's asked and the request has stopped waiting, then let go
+    // while this thread, the one that answers the plugin's read of the
+    // buffer, sleeps: the read waits out the call's deadline.
+    let handle = s.cx.update(|_, cx| plugin_handle(PLUGIN, cx)).unwrap();
+    let held = handle.lock().unwrap();
+    run(&mut s, "lsp.format_document");
+    s.until("the request", |s| asked(s) == 1);
+    s.cx.executor().advance_clock(deadline);
+    s.draw();
+    drop(held);
+    let waited = Instant::now() + Duration::from_secs(60);
+    while !record.lock().unwrap().iter().any(|line| line == "answered") {
+        assert!(Instant::now() < waited, "the call didn't return");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    s.until("the plugin to stop", |s| {
+        let states = s.cx.update(|_, cx| plugin_states(cx));
+        (states.iter()).any(|info| {
+            info.id == PLUGIN
+                && matches!(&info.state, PluginState::Stopped(diagnostic)
+                    if diagnostic.reason == StopReason::Timeout)
+        })
+    });
+    assert!(s.cx.update(|_, cx| plugin_handle(PLUGIN, cx)).is_none());
+    run(&mut s, "lsp.format_document");
+    s.until("the toast", |s| {
+        toasts(s)
+            .iter()
+            .any(|toast| toast == "No formatter for Rust")
+    });
+    assert_eq!(asked(&mut s), 1);
+    assert_eq!(text(&s, &editor), TEXT);
 }

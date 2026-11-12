@@ -15,7 +15,7 @@ use serde_json::json;
 use crate::{
     Launch, Workbench,
     update_check::{
-        ALREADY_CHECKING, DOWNLOAD, Fetched, MAX_REPLY, NO_RELEASE, UpdateSource, read_reply,
+        Fetched, MAX_REPLY, UpdateSource, already_checking, download, no_release, read_reply,
     },
     workbench::toast::{Choices, Level},
 };
@@ -138,7 +138,7 @@ fn newer_release_is_reported(cx: &mut TestAppContext) {
     let offer = only(&workbench, cx);
     assert_eq!(offer.level, Level::Info);
     assert_eq!(offer.message, "Tenmoku 0.2.0 is available (you have 0.1.0)");
-    assert_eq!(offer.choices.unwrap().titles(), [DOWNLOAD]);
+    assert_eq!(offer.choices.unwrap().titles(), [download()]);
     assert_eq!(cx.opened_url(), None);
 
     // Download opens the release's page.
@@ -237,7 +237,7 @@ fn pre_release_and_bad_tags(cx: &mut TestAppContext) {
         check(cx);
         let toast = only(&workbench, cx);
         assert_eq!(toast.level, Level::Info, "{reply}");
-        assert_eq!(toast.message, NO_RELEASE, "{reply}");
+        assert_eq!(toast.message, no_release(), "{reply}");
         assert_eq!(toast.choices, None, "{reply}");
     }
 }
@@ -394,7 +394,7 @@ fn fetch_runs_off_main_thread(cx: &mut TestAppContext) {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         messages(&workbench, cx),
-        ["Checking for updates…", ALREADY_CHECKING]
+        ["Checking for updates…", &*already_checking()]
     );
 
     // Its end takes the going toast away, and frees the next.
@@ -403,7 +403,10 @@ fn fetch_runs_off_main_thread(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(
         messages(&workbench, cx),
-        [ALREADY_CHECKING, "Tenmoku is up to date (you have 0.1.0)"]
+        [
+            &*already_checking(),
+            "Tenmoku is up to date (you have 0.1.0)"
+        ]
     );
     dismiss(&workbench, cx);
     check(cx);

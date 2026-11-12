@@ -60,6 +60,7 @@ use fe_lsp::{
     ExitInfo, LaunchCancel, LoginPath, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
 };
 use gpui::{App, AppContext as _, Global, Task};
+use kiln_l10n::tr;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -270,15 +271,24 @@ impl ConsentStore {
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-            Err(error) => return Err(format!("can't read {}: {error}", self.path.display())),
+            Err(error) => return Err(self.unreadable(&error)),
         };
-        let file: ConsentFile = toml::from_str(&text)
-            .map_err(|error| format!("can't read {}: {error}", self.path.display()))?;
+        let file: ConsentFile = toml::from_str(&text).map_err(|error| self.unreadable(&error))?;
         Ok(file
             .server
             .into_iter()
             .map(|entry| (entry.key(), entry))
             .collect())
+    }
+
+    /// Why the file can't be read: `error`.
+    fn unreadable(&self, error: &dyn std::fmt::Display) -> String {
+        tr!(
+            "workbench-extensions-lsp-consent-unreadable",
+            path = self.path.display().to_string(),
+            error = error.to_string()
+        )
+        .into()
     }
 
     /// Records `entry` over its server's last, keeping every other entry,
@@ -903,17 +913,22 @@ impl ServerLauncher for ConsentGate {
             self.wake.try_send(()).ok();
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                format!(
-                    "{} isn't started: what it runs changed since you allowed it",
-                    spec.name
-                ),
+                tr!(
+                    "workbench-extensions-lsp-consent-changed-since",
+                    server = spec.name.as_str()
+                )
+                .to_string(),
             ));
         }
         let Some(command) = resolved.filter(|command| command.is_absolute()) else {
             self.record(&spec.name, root, grant.invocation, None, cancel);
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("{} not found", spec.command.display()),
+                tr!(
+                    "workbench-extensions-lsp-consent-not-found",
+                    command = spec.command.display().to_string()
+                )
+                .to_string(),
             ));
         };
         let bound = ServerSpec {

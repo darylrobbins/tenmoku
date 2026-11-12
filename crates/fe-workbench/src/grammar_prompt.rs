@@ -49,6 +49,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Task, WeakEntity, Window,
     WindowId,
 };
+use kiln_l10n::tr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -312,9 +313,13 @@ fn claims_file_name(offer: &GrammarOffer, file_name: &str) -> bool {
 /// claims, else `Never for .kt`.
 fn never_label(offer: &GrammarOffer, key: &str) -> String {
     match claims_file_name(offer, key) {
-        true => format!("Never for {key}"),
-        false => format!("Never for .{key}"),
+        true => tr!("workbench-extensions-grammar-never-file", name = key),
+        false => tr!(
+            "workbench-extensions-grammar-never-extension",
+            extension = key
+        ),
     }
+    .into()
 }
 
 /// Starts the prompt for `offer`, as the file with `extension` opened (its
@@ -426,14 +431,18 @@ async fn ask_toast(
         let executor = cx.background_executor().clone();
         (file, extension.to_owned(), executor)
     });
-    let toast = Toast::info(format!(
-        "Syntax highlighting for {} isn't installed",
-        offer.name
+    let toast = Toast::info(tr!(
+        "workbench-extensions-grammar-offer",
+        name = offer.name.as_str()
     ))
     .choices(
         vec![
-            format!("Install ({})", size_label(offer.size)),
-            "Not now".to_owned(),
+            tr!(
+                "workbench-extensions-grammar-install",
+                size = size_label(offer.size)
+            )
+            .into(),
+            tr!("workbench-extensions-grammar-not-now").into(),
             never_label(offer, extension),
         ],
         move |choice| {
@@ -466,7 +475,7 @@ async fn install(
     cx: &mut AsyncApp,
 ) {
     let name = &offer.name;
-    let toast = Toast::info(format!("Installing {name} syntax…"));
+    let toast = Toast::info(tr!("workbench-extensions-grammar-installing", name = name));
     let going = layer.update(cx, |layer, cx| layer.push(toast, cx)).ok();
     let fetching = cx.update(|cx| (offers.fetch)(offer, cx));
     let fetched = fetching.await;
@@ -547,9 +556,7 @@ async fn report_registered(offer: &GrammarOffer, owner: Owner, cx: &mut AsyncApp
         if !warned && executor.now() >= deadline {
             warned = true;
             log::warn!("{} is installed but hasn't registered", offer.language);
-            let toast = Toast::warning(format!(
-                "Installed {name} syntax, but it hasn't loaded: it may after a restart"
-            ));
+            let toast = Toast::warning(tr!("workbench-extensions-grammar-not-loaded", name = name));
             tell(toast, cx);
         }
         let any_open = cx.update(|cx| !cx.default_global::<Prompts>().workbenches.is_empty());
@@ -564,7 +571,8 @@ async fn report_registered(offer: &GrammarOffer, owner: Owner, cx: &mut AsyncApp
         executor.timer(poll).await;
     }
     cx.update(|cx| rehighlight(&offer.language, cx));
-    tell(Toast::info(format!("Installed {name} syntax")), cx);
+    let installed = tr!("workbench-extensions-grammar-installed", name = name);
+    tell(Toast::info(installed), cx);
 }
 
 /// Has every tab of `language`, in every window, highlight as it. One whose
@@ -614,16 +622,25 @@ fn failure_line(name: &str, error: &GrammarInstallError) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    let hint = match error.offline {
-        true => " The language pack installs it without a connection.",
-        false => "",
-    };
-    format!("Couldn't install {name} syntax: {reason}.{hint}")
+    match error.offline {
+        true => tr!(
+            "workbench-extensions-grammar-failed-offline",
+            name = name,
+            reason = reason
+        ),
+        false => tr!(
+            "workbench-extensions-grammar-failed",
+            name = name,
+            reason = reason
+        ),
+    }
+    .into()
 }
 
 /// A download's size as the button shows it.
 fn size_label(bytes: u64) -> String {
-    format!("{:.1} MB", bytes as f64 / 1_000_000.)
+    let megabytes = format!("{:.1}", bytes as f64 / 1_000_000.);
+    tr!("workbench-extensions-grammar-size", size = megabytes).into()
 }
 
 /// [`PROMPT_FILE`]'s contents.

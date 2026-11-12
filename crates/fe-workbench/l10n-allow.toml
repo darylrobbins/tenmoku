@@ -108,6 +108,24 @@ migrated = [
     "src/git_log.rs",
     "src/git_log_menu.rs",
     "src/git_history.rs",
+    # W5 (rest): extensions, plugins, updates and trust (T1560).
+    "src/extension_install.rs",
+    "src/extension_snippets.rs",
+    "src/extensions_picker.rs",
+    "src/plugin_bridge.rs",
+    "src/plugin_dev.rs",
+    "src/plugin_events.rs",
+    "src/plugin_host.rs",
+    "src/plugin_log.rs",
+    "src/plugin_manage.rs",
+    "src/plugin_paint.rs",
+    "src/plugin_prompt.rs",
+    "src/grammar_prompt.rs",
+    "src/update_check.rs",
+    "src/lsp_consent.rs",
+    "src/lsp_consent_prompt.rs",
+    "src/trust.rs",
+    "src/user_snippets.rs",
 ]
 
 # The Explorer's name as its SidebarPanel const declares it, by which the
@@ -504,3 +522,81 @@ reason = "The New Terminal button's element id"
 file = "src/git_history.rs"
 text = "History"
 reason = "The History panel's name in its SidebarPanel const, not shown: its title row is workbench-git-log-history-title"
+
+# Extensions, plugins, updates and trust (W5, T1560): ids, file names and
+# formats, and developer logs, not text.
+
+[[literal]]
+file = "src/extension_install.rs"
+text = "replaced-{index}"
+reason = "The folder an installed version is moved aside to in the staging directory"
+
+[[literal]]
+file = "src/grammar_prompt.rs"
+text = "{}.{}.tmp"
+reason = "A temporary file's extension, beside the file it replaces"
+
+[[literal]]
+file = "src/lsp_consent.rs"
+text = """
+# The language servers your extensions contribute that you allowed or
+# refused to start, each with exactly what it runs. Remove an entry to be
+# asked again.
+
+"""
+reason = "The consent file's header: TOML comments in a state file, which must stay comments whatever the locale"
+
+[[literal]]
+file = "src/lsp_consent.rs"
+text = "{hash} {path}"
+reason = "A script's hash and path as the consent file records them, compared on each launch"
+
+[[literal]]
+file = "src/lsp_consent.rs"
+text = ".{name}.{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/plugin_bridge.rs"
+text = "the buffer's file"
+reason = "PluginDenied's &'static str arg, inside kiln-command's own (not yet migrated) English error"
+
+[[literal]]
+file = "src/plugin_host.rs"
+text = "plugin_load_{}"
+reason = "A loaded plugin's key-context flag"
+
+[[literal]]
+file = "src/plugin_host.rs"
+text = "plugin {id}"
+reason = "A plugin's thread's name, shown only in debuggers"
+
+[[literal]]
+file = "src/plugin_host.rs"
+text = "log {id} on {thread}: {message}"
+reason = "A plugin lifecycle record: a debug log line, and the host's record under test"
+
+[[literal]]
+file = "src/plugin_host.rs"
+text = "init {}"
+reason = "A plugin lifecycle record: a debug log line, and the host's record under test"
+
+[[literal]]
+file = "src/plugin_host.rs"
+text = "shutdown {}"
+reason = "A plugin lifecycle record: a debug log line, and the host's record under test"
+
+[[literal]]
+file = "src/plugin_paint.rs"
+text = "plugin:{}:{}"
+reason = "A plugin status item's id: its plugin and its own id"
+
+[[literal]]
+file = "src/update_check.rs"
+text = "Tenmoku/{}"
+reason = "The User-Agent header sent to GitHub"
+
+[[literal]]
+file = "src/extension_snippets.rs"
+text = "User snippet"
+reason = "USER_SNIPPET, the detail snippet_picker.rs (not yet migrated) still shows; extension_snippets.rs's own completions take workbench-extensions-user-snippet"

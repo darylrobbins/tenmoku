@@ -40,12 +40,13 @@ use std::{
 
 use gpui::{
     App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Global, PathPromptOptions,
-    PromptLevel, WeakEntity, Window,
+    PromptLevel, SharedString, WeakEntity, Window,
 };
 use kiln::core::{
     ApiVersion, Diagnostic,
     extension::{ExtensionApi, MANIFEST_FILE, load_manifest},
 };
+use kiln_l10n::tr;
 use kiln_plugin::manifest::{ExtensionOrigin, PluginManifest};
 
 use crate::{Workbench, plugin_host::plugin_kind, plugin_manage::PREVIEW_SETTING};
@@ -60,8 +61,14 @@ pub(crate) const MAX_UNPACKED: u64 = 64 * 1024 * 1024;
 /// The most bytes a tar's long-name or pax header may have.
 pub(crate) const MAX_TAR_HEADER: u64 = 64 * 1024;
 
-/// The replace prompt's buttons, and the index of Replace.
-const REPLACE_BUTTONS: [&str; 2] = ["Replace", "Cancel"];
+/// The replace prompt's buttons, and the index of Replace: an answer is
+/// matched by its button's index, never its title.
+fn replace_buttons() -> [SharedString; 2] {
+    [
+        tr!("workbench-extensions-install-replace"),
+        tr!("workbench-extensions-cancel"),
+    ]
+}
 const REPLACE: usize = 0;
 
 /// The staging directory's name starts with this.
@@ -96,7 +103,7 @@ pub enum InstallError {
 impl fmt::Display for InstallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported => f.write_str("Pick a .zip, .tar.gz or .tgz file, or a folder"),
+            Self::Unsupported => f.write_str(&tr!("workbench-extensions-install-unsupported")),
             Self::Refused(reason) | Self::Io(reason) => f.write_str(reason),
         }
     }
@@ -210,10 +217,14 @@ impl Staged {
             return error.into();
         }
         self.staging.keep = true;
-        InstallError::Io(format!(
-            "{error}. The installed version couldn't be put back: it's kept in {}",
-            kept.join(", ")
-        ))
+        InstallError::Io(
+            tr!(
+                "workbench-extensions-install-kept-aside",
+                error = error.to_string(),
+                dirs = kept.join(", ")
+            )
+            .into(),
+        )
     }
 }
 
@@ -228,8 +239,8 @@ pub(crate) fn stage(
     fs::create_dir_all(extensions_dir)?;
     let extensions_dir = fs::canonicalize(extensions_dir)?;
     if kind == Source::Folder && extensions_dir.starts_with(fs::canonicalize(source)?) {
-        let reason = "It's the folder the extensions are installed in, or holds it";
-        return Err(InstallError::Refused(reason.to_owned()));
+        let reason = tr!("workbench-extensions-install-extensions-folder");
+        return Err(refused(reason));
     }
     let staging = Staging::new(&extensions_dir)?;
     let unpacked = staging.dir.join("unpacked");
@@ -250,10 +261,10 @@ pub(crate) fn stage(
     // Taken by something else, it isn't replaced unasked.
     let taken = fs::symlink_metadata(&installed.dir).is_ok();
     if taken && !replaced.iter().any(|dir| same_file(dir, &installed.dir)) {
-        return Err(InstallError::Refused(format!(
-            "{} is there already, and isn't {}",
-            installed.dir.display(),
-            installed.id
+        return Err(refused(tr!(
+            "workbench-extensions-install-taken",
+            dir = installed.dir.display().to_string(),
+            id = installed.id.as_str()
         )));
     }
     let replaces = replaced.first().map(|dir| installed_version(dir));
@@ -314,7 +325,9 @@ impl Staging {
                 Err(error) => return Err(error),
             }
         }
-        Err(io::Error::other("no fresh directory to unpack into"))
+        Err(io::Error::other(
+            tr!("workbench-extensions-install-no-staging-dir").to_string(),
+        ))
     }
 }
 
@@ -356,8 +369,7 @@ impl Unpack {
         // The archive keeps one entry a name, so a name used twice could
         // hide an entry, and the count.
         if archive.has_duplicate_names() {
-            let reason = "It has two entries with one name".to_owned();
-            return Err(InstallError::Refused(reason));
+            return Err(refused(tr!("workbench-extensions-install-duplicate-names")));
         }
         if archive.len() > MAX_ENTRIES {
             return Err(too_many());
@@ -408,11 +420,11 @@ impl Unpack {
                 || kind.is_pax_global_extensions()
             {
                 if size > MAX_TAR_HEADER {
-                    let reason = format!(
-                        "It has a long-name or pax header over {} KiB",
-                        MAX_TAR_HEADER >> 10
+                    let reason = tr!(
+                        "workbench-extensions-install-header-too-long",
+                        kib = (MAX_TAR_HEADER >> 10).to_string()
                     );
-                    return Err(InstallError::Refused(reason));
+                    return Err(refused(reason));
                 }
                 let mut payload = Vec::new();
                 (&mut entry).take(size).read_to_end(&mut payload)?;
@@ -432,11 +444,12 @@ impl Unpack {
             match pax_size.take() {
                 Some(declared) if declared > MAX_UNPACKED => return Err(too_big()),
                 Some(declared) if declared != size => {
-                    let reason = format!(
-                        "It has a pax header giving an entry {declared} bytes, and the entry's own \
-                         header {size}"
+                    let reason = tr!(
+                        "workbench-extensions-install-pax-size",
+                        declared = declared.to_string(),
+                        size = size.to_string()
                     );
-                    return Err(InstallError::Refused(reason));
+                    return Err(refused(reason));
                 }
                 _ => {}
             }
@@ -457,7 +470,10 @@ impl Unpack {
                 None => entry.path_bytes().into_owned(),
             };
             let name = std::str::from_utf8(&path)
-                .map_err(|_| refused(&String::from_utf8_lossy(&path), "isn't named in UTF-8"))?
+                .map_err(|_| {
+                    let name = String::from_utf8_lossy(&path);
+                    refused(tr!("workbench-extensions-install-not-utf8", name = name))
+                })?
                 .to_owned();
             self.write(&name, kind, &mut entry)?;
         }
@@ -530,9 +546,18 @@ impl Unpack {
     ) -> Result<(), InstallError> {
         let relative = entry_path(name)?;
         let executable = match kind {
-            Kind::Symlink => return Err(refused(name, "is a symbolic link")),
-            Kind::HardLink => return Err(refused(name, "is a hard link")),
-            Kind::Special => return Err(refused(name, "isn't a file or a folder")),
+            Kind::Symlink => {
+                let reason = tr!("workbench-extensions-install-symlink", name = name);
+                return Err(refused(reason));
+            }
+            Kind::HardLink => {
+                let reason = tr!("workbench-extensions-install-hard-link", name = name);
+                return Err(refused(reason));
+            }
+            Kind::Special => {
+                let reason = tr!("workbench-extensions-install-special", name = name);
+                return Err(refused(reason));
+            }
             Kind::File { executable } => executable,
             Kind::Dir => false,
         };
@@ -565,19 +590,18 @@ impl Unpack {
 fn entry_path(name: &str) -> Result<PathBuf, InstallError> {
     let drive = name.as_bytes().get(1) == Some(&b':');
     if name.starts_with(['/', '\\']) || drive || Path::new(name).has_root() {
-        return Err(refused(name, "is an absolute path"));
+        return Err(absolute(name));
     }
     let mut path = PathBuf::new();
     for part in name.split(['/', '\\']) {
         match Path::new(part).components().next() {
             None | Some(Component::CurDir) => {}
             Some(Component::ParentDir) => {
-                return Err(refused(name, "leads outside the extension"));
+                let reason = tr!("workbench-extensions-install-outside", name = name);
+                return Err(refused(reason));
             }
             Some(Component::Normal(_)) => path.push(part),
-            Some(Component::RootDir | Component::Prefix(_)) => {
-                return Err(refused(name, "is an absolute path"));
-            }
+            Some(Component::RootDir | Component::Prefix(_)) => return Err(absolute(name)),
         }
     }
     Ok(path)
@@ -591,7 +615,7 @@ struct PaxRecords {
 
 /// The `path` and `size` the pax header `payload` gives the next entry.
 fn pax_records(payload: &[u8]) -> Result<PaxRecords, InstallError> {
-    let unreadable = || InstallError::Refused("It has a pax header that can't be read".to_owned());
+    let unreadable = || refused(tr!("workbench-extensions-install-pax-unreadable"));
     let mut records = PaxRecords {
         path: None,
         size: None,
@@ -624,8 +648,9 @@ fn extension_root(unpacked: &Path) -> Result<PathBuf, InstallError> {
             return Ok(dir);
         }
     }
-    Err(InstallError::Refused(format!(
-        "There's no {MANIFEST_FILE} at its top level, or in a single folder there"
+    Err(refused(tr!(
+        "workbench-extensions-install-no-manifest",
+        file = MANIFEST_FILE
     )))
 }
 
@@ -648,7 +673,11 @@ pub(crate) fn check(
         .map_err(|error| InstallError::Refused(error.to_string()))?;
     let mut components = Path::new(&manifest.id).components();
     if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
-        return Err(refused(&manifest.id, "isn't an extension ID"));
+        let reason = tr!(
+            "workbench-extensions-install-bad-id",
+            id = manifest.id.as_str()
+        );
+        return Err(refused(reason));
     }
     Ok(Installed {
         dir: extensions_dir.join(&manifest.id),
@@ -661,11 +690,26 @@ pub(crate) fn check(
 
 /// `extension.toml:3:11: version: …`, without the staging directory.
 fn diagnostic_text(diagnostic: &Diagnostic) -> String {
-    let key = (diagnostic.key.as_ref()).map_or_else(String::new, |key| format!("{key}: "));
-    format!(
-        "{MANIFEST_FILE}:{}:{}: {key}{}",
-        diagnostic.line, diagnostic.column, diagnostic.message
-    )
+    let (line, column) = (diagnostic.line.to_string(), diagnostic.column.to_string());
+    let message = diagnostic.message.as_str();
+    match &diagnostic.key {
+        Some(key) => tr!(
+            "workbench-extensions-install-manifest-key-error",
+            file = MANIFEST_FILE,
+            line = line,
+            column = column,
+            key = key.as_str(),
+            message = message
+        ),
+        None => tr!(
+            "workbench-extensions-install-manifest-error",
+            file = MANIFEST_FILE,
+            line = line,
+            column = column,
+            message = message
+        ),
+    }
+    .into()
 }
 
 /// The directories in `extensions_dir` whose manifest has `id`, whatever
@@ -715,28 +759,46 @@ fn installed_version(dir: &Path) -> String {
     let text = fs::read_to_string(dir.join(MANIFEST_FILE)).unwrap_or_default();
     (text.parse::<toml::Table>().ok())
         .and_then(|table| table.get("version")?.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_owned())
+        .unwrap_or_else(|| unknown_version().into())
 }
 
-fn refused(name: &str, why: &str) -> InstallError {
-    InstallError::Refused(format!("{name} {why}"))
+/// What an installed version unnamed by its manifest is shown as.
+fn unknown_version() -> SharedString {
+    tr!("workbench-extensions-install-unknown-version")
+}
+
+fn refused(reason: SharedString) -> InstallError {
+    InstallError::Refused(reason.into())
+}
+
+fn absolute(name: &str) -> InstallError {
+    refused(tr!("workbench-extensions-install-absolute", name = name))
 }
 
 fn too_big() -> InstallError {
-    InstallError::Refused(format!(
-        "It unpacks to more than {} MiB",
-        MAX_UNPACKED >> 20
+    refused(tr!(
+        "workbench-extensions-install-too-big",
+        mib = (MAX_UNPACKED >> 20).to_string()
     ))
 }
 
 fn too_many() -> InstallError {
-    InstallError::Refused(format!("It has more than {MAX_ENTRIES} entries"))
+    refused(tr!(
+        "workbench-extensions-install-too-many",
+        max = MAX_ENTRIES.to_string()
+    ))
 }
 
 fn zip_error(error: zip::result::ZipError) -> InstallError {
     match error {
         zip::result::ZipError::Io(error) => error.into(),
-        error => InstallError::Io(format!("It isn't a zip archive that can be read: {error}")),
+        error => InstallError::Io(
+            tr!(
+                "workbench-extensions-install-bad-zip",
+                error = error.to_string()
+            )
+            .into(),
+        ),
     }
 }
 
@@ -791,32 +853,43 @@ pub(crate) fn version_text((major, minor, patch): Version) -> String {
 /// The replace prompt's question and detail.
 pub(crate) fn replace_prompt_text(staged: &Staged) -> (String, String) {
     let installed = staged.installed();
-    let old = staged.replaces().unwrap_or("unknown");
+    let unknown = unknown_version();
+    let old = staged.replaces().unwrap_or(&unknown);
     let new = version_text(installed.version);
-    let question = format!("Replace {} {old} with {new}?", installed.name);
-    let detail = format!(
-        "{} {old} is installed in {}. Replacing it removes that folder.",
-        installed.id,
-        staged.replaced_dir().unwrap_or(&installed.dir).display()
+    let question = tr!(
+        "workbench-extensions-install-replace-question",
+        name = installed.name.as_str(),
+        old = old,
+        new = new
     );
-    (question, detail)
+    let detail = tr!(
+        "workbench-extensions-install-replace-detail",
+        id = installed.id.as_str(),
+        old = old,
+        dir = (staged.replaced_dir().unwrap_or(&installed.dir).display()).to_string()
+    );
+    (question.into(), detail.into())
 }
 
 /// The success toast's message and detail.
 pub(crate) fn installed_text(installed: &Installed, preview: bool) -> (String, Option<String>) {
-    let message = format!(
-        "Installed {} {}",
-        installed.name,
-        version_text(installed.version)
+    let message = tr!(
+        "workbench-extensions-install-installed",
+        name = installed.name.as_str(),
+        version = version_text(installed.version)
     );
     let detail = installed.plugin.then(|| {
         if preview {
-            "It asks before it runs".to_owned()
+            tr!("workbench-extensions-install-plugin-asks").into()
         } else {
-            format!("Turn on {PREVIEW_SETTING} to run it")
+            tr!(
+                "workbench-extensions-install-plugin-needs-preview",
+                setting = PREVIEW_SETTING
+            )
+            .into()
         }
     });
-    (message, detail)
+    (message.into(), detail)
 }
 
 /// The extensions directory installs go to: the app's; under test, none
@@ -874,8 +947,7 @@ impl Workbench {
             return;
         }
         if extensions_dir(cx).is_none() {
-            let detail = "There's no state directory to install extensions in.".to_owned();
-            let message = "Can't install an extension".to_owned();
+            let (message, detail) = no_extensions_dir();
             return Workbench::notify(cx, log::Level::Error, message, Some(detail));
         }
         cx.default_global::<Installs>().busy = true;
@@ -883,7 +955,7 @@ impl Workbench {
             files: true,
             directories: true,
             multiple: false,
-            prompt: Some("Install".into()),
+            prompt: Some(tr!("workbench-extensions-install-button")),
         });
         cx.spawn_in(window, async move |workbench, cx| {
             let source = match answer.await {
@@ -923,7 +995,7 @@ impl Workbench {
                         Workbench::notify(cx, log::Level::Info, message, detail);
                     }
                     Some((source, Err(error))) => {
-                        let message = format!("Can't install {}", file_name(&source));
+                        let message = cant_install(&source);
                         Workbench::notify(cx, log::Level::Error, message, Some(error.to_string()));
                     }
                 }
@@ -952,11 +1024,12 @@ async fn install_asking(
     if staged.replaces().is_some() {
         let (question, detail) = replace_prompt_text(&staged);
         let answer = workbench.update_in(cx, |_, window, cx| {
+            let buttons = replace_buttons();
             window.prompt(
                 PromptLevel::Warning,
                 &question,
                 Some(&detail),
-                &REPLACE_BUTTONS,
+                &buttons.each_ref().map(|button| button.as_ref()),
                 cx,
             )
         });
@@ -971,6 +1044,24 @@ async fn install_asking(
         }
     }
     Some(cx.background_spawn(async move { staged.place() }).await)
+}
+
+/// What an install says when there's no extensions directory: its message
+/// and detail.
+pub(crate) fn no_extensions_dir() -> (String, String) {
+    let message = tr!("workbench-extensions-install-cant-install");
+    let detail = tr!("workbench-extensions-install-no-state-dir");
+    (message.into(), detail.into())
+}
+
+/// What an install of `source` that failed says.
+pub(crate) fn cant_install(source: &Path) -> String {
+    let name = file_name(source);
+    tr!(
+        "workbench-extensions-install-cant-install-from",
+        name = name
+    )
+    .into()
 }
 
 /// `path`'s file name, else all of it.

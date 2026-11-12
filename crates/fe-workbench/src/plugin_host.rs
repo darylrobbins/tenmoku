@@ -88,6 +88,7 @@ use kiln::core::{
     extension::{ExtensionSet, ExtensionSource, Manifest},
     secrets::{KeychainStore, MemoryStore, Secret, SecretError, SecretStore},
 };
+use kiln_l10n::tr;
 use kiln_plugin::{
     bindings::{
         self, Level, LogSink,
@@ -133,9 +134,19 @@ pub const SECRETS_INDEX_FILE: &str = "plugin-secrets.toml";
 /// The directory in the cache directory compiled plugins are kept in.
 pub const CACHE_DIR: &str = "plugins";
 
-/// What a plugin that doesn't link against this host's world is told.
-pub const REBUILD: &str = "the plugin API is a preview and can change in any release; rebuild \
-                           the plugin against this release";
+/// What a plugin that doesn't link against this host's world is told, in
+/// the active locale when it's shown.
+pub const REBUILD: Rebuild = Rebuild;
+
+/// [`REBUILD`]'s type: shows as `workbench-extensions-plugin-rebuild`.
+#[derive(Clone, Copy, Debug)]
+pub struct Rebuild;
+
+impl fmt::Display for Rebuild {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&tr!("workbench-extensions-plugin-rebuild"))
+    }
+}
 
 /// Where a plugin stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,7 +173,11 @@ pub struct PluginDiagnostic {
 
 impl fmt::Display for PluginDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.reason, self.message)
+        f.write_str(&tr!(
+            "workbench-extensions-plugin-diagnostic",
+            reason = self.reason.to_string(),
+            message = self.message.as_str()
+        ))
     }
 }
 
@@ -198,14 +213,14 @@ impl From<Reason> for StopReason {
 
 impl fmt::Display for StopReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Trap => "trapped",
-            Self::Timeout => "timed out",
-            Self::Memory => "out of memory",
-            Self::Protocol => "protocol error",
-            Self::Load => "failed to load",
-            Self::Grants => "grants unavailable",
-            Self::Unloaded => "unloaded",
+        f.write_str(&match self {
+            Self::Trap => tr!("workbench-extensions-plugin-stop-trap"),
+            Self::Timeout => tr!("workbench-extensions-plugin-stop-timeout"),
+            Self::Memory => tr!("workbench-extensions-plugin-stop-memory"),
+            Self::Protocol => tr!("workbench-extensions-plugin-stop-protocol"),
+            Self::Load => tr!("workbench-extensions-plugin-stop-load"),
+            Self::Grants => tr!("workbench-extensions-plugin-stop-grants"),
+            Self::Unloaded => tr!("workbench-extensions-plugin-stop-unloaded"),
         })
     }
 }
@@ -327,7 +342,7 @@ pub fn unload_plugin(id: &str, cx: &mut App) {
     };
     let diagnostic = PluginDiagnostic {
         reason: StopReason::Unloaded,
-        message: format!("plugin {id} was unloaded"),
+        message: tr!("workbench-extensions-plugin-unloaded", id = id).into(),
     };
     let host = cx.global_mut::<PluginHost>();
     let slot = host.slots.get_mut(id).expect("found above");
@@ -507,18 +522,20 @@ fn check_invocation(meta: &CommandMeta, invocation: &Invocation) -> Result<(), D
     let table = match &invocation.args {
         Value::Null => &empty,
         Value::Object(table) => table,
-        _ if meta.args_schema.is_none() => return bad("takes no args".into()),
-        _ => return bad("args must be a table".into()),
+        _ if meta.args_schema.is_none() => {
+            return bad(tr!("workbench-extensions-plugin-args-none").into());
+        }
+        _ => return bad(tr!("workbench-extensions-plugin-args-table").into()),
     };
     let Some(schema) = &meta.args_schema else {
         return if table.is_empty() {
             Ok(())
         } else {
-            bad("takes no args".into())
+            bad(tr!("workbench-extensions-plugin-args-none").into())
         };
     };
     if table.values().any(has_null) {
-        return bad("args can't hold a null".into());
+        return bad(tr!("workbench-extensions-plugin-args-null").into());
     }
     let required = schema.get("required").and_then(Value::as_array);
     let missing = required
@@ -527,7 +544,7 @@ fn check_invocation(meta: &CommandMeta, invocation: &Invocation) -> Result<(), D
         .filter_map(Value::as_str)
         .find(|key| !table.contains_key(*key));
     match missing {
-        Some(key) => bad(format!("args need `{key}`")),
+        Some(key) => bad(tr!("workbench-extensions-plugin-args-missing", key = key).into()),
         None => Ok(()),
     }
 }
@@ -1076,7 +1093,7 @@ fn decide(
                 return (id.clone(), record(&id).granted, Outcome::Off);
             }
             let Some(store) = store else {
-                let message = "no state directory to keep its grants in".to_owned();
+                let message = tr!("workbench-extensions-plugin-grants-no-state-dir").into();
                 let outcome = Outcome::Failed(StopReason::Grants, message);
                 return (id, fe_command::Grants::new(), outcome);
             };
@@ -1114,13 +1131,27 @@ fn decide(
 /// The component at `path`, refused over the read limit.
 fn read_component(path: &Path) -> Result<Vec<u8>, String> {
     let limit = Limits::default().max_read_bytes;
-    let file = fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let failed = |error: io::Error| {
+        let path = path.display().to_string();
+        tr!(
+            "workbench-extensions-path-error",
+            path = path,
+            error = error.to_string()
+        )
+        .to_string()
+    };
+    let file = fs::File::open(path).map_err(failed)?;
     let mut bytes = Vec::new();
     file.take(limit as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+        .map_err(failed)?;
     if bytes.len() > limit {
-        return Err(format!("{} is over the {limit}-byte limit", path.display()));
+        return Err(tr!(
+            "workbench-extensions-plugin-too-large",
+            path = path.display().to_string(),
+            limit = limit.to_string()
+        )
+        .into());
     }
     Ok(bytes)
 }
@@ -1336,19 +1367,21 @@ fn start_unload(id: &str, cx: &mut App) {
         shut_down.await;
         cx.update(|cx| {
             let host = cx.global_mut::<PluginHost>();
-            let mut why = "";
+            let mut shut_down = tr!("workbench-extensions-plugin-shut-down");
             if let Some(slot) = host.slots.get_mut(&id) {
                 slot.busy = false;
                 if let Want::Unload(state) = &slot.want {
                     slot.state = state.clone();
                 }
-                why = match &slot.state {
-                    _ if slot.gone => ": it's no longer installed",
-                    PluginState::PreviewOff => ": the plugins preview is off",
-                    _ => "",
+                shut_down = match &slot.state {
+                    _ if slot.gone => tr!("workbench-extensions-plugin-shut-down-uninstalled"),
+                    PluginState::PreviewOff => {
+                        tr!("workbench-extensions-plugin-shut-down-preview-off")
+                    }
+                    _ => shut_down,
                 };
             }
-            plugin_log::push(&id, log::Level::Info, format!("shut down{why}"), cx);
+            plugin_log::push(&id, log::Level::Info, shut_down.to_string(), cx);
             drive(&id, cx);
         });
     })
@@ -1540,8 +1573,12 @@ fn loaded_plugin(id: &str, finished: Finished, cx: &mut App) {
                 slot.stopped = None;
                 slot.state = PluginState::Running;
                 let (major, minor, patch) = version;
-                let done = if reload { "reloaded" } else { "loaded" };
-                diagnostic = Some((log::Level::Info, format!("{done} {major}.{minor}.{patch}")));
+                let version = format!("{major}.{minor}.{patch}");
+                let done = match reload {
+                    true => tr!("workbench-extensions-plugin-reloaded", version = version),
+                    false => tr!("workbench-extensions-plugin-loaded", version = version),
+                };
+                diagnostic = Some((log::Level::Info, done.into()));
             }
         }
         Err(LoadFailure::Cancelled) => {}
@@ -1622,7 +1659,11 @@ fn stopped_running(id: &str, load: u64, diagnostic: Diagnostic, cx: &mut App) {
     let diagnostic = PluginDiagnostic::from(diagnostic);
     slot.stopped = Some((loaded.identity, diagnostic.clone()));
     slot.state = PluginState::Stopped(diagnostic.clone());
-    plugin_log::push(id, log::Level::Error, format!("stopped: {diagnostic}"), cx);
+    let stopped = tr!(
+        "workbench-extensions-plugin-log-stopped",
+        diagnostic = diagnostic.to_string()
+    );
+    plugin_log::push(id, log::Level::Error, stopped.to_string(), cx);
     plugin_paint::unload(id, cx);
     plugin_diagnostics::unload(id, cx);
     plugin_format::unload(id, cx);
@@ -2079,7 +2120,11 @@ fn answered(pending: PendingPluginGrant, answer: PluginAnswer, cx: &mut App) {
             cx.global_mut::<PluginHost>().answering.remove(&id);
             if let Err(message) = recorded {
                 log::error!("can't record the answer for plugin {id}: {message}");
-                let logged = format!("can't record the answer to its prompt: {message}");
+                let logged = tr!(
+                    "workbench-extensions-plugin-answer-unrecorded",
+                    message = message.to_string()
+                )
+                .to_string();
                 plugin_log::push(&id, log::Level::Error, logged, cx);
                 if let Some(slot) = cx.global_mut::<PluginHost>().slots.get_mut(&id) {
                     slot.set_want(Want::Unload(PluginState::Stopped(PluginDiagnostic {
@@ -2187,7 +2232,11 @@ impl HostedPlugin {
         };
         let unlinked = |error: wasmtime::Error| LoadError::Invalid {
             plugin: id.to_owned(),
-            message: format!("{error:#}; {REBUILD}"),
+            message: tr!(
+                "workbench-extensions-plugin-unlinked",
+                error = format!("{error:#}")
+            )
+            .into(),
         };
         let component = match cache {
             Some(cache) => cache.load(engine.engine(), component),
@@ -2235,7 +2284,7 @@ impl HostedPlugin {
             Err(LoadError::Unloaded(Diagnostic {
                 plugin: id.to_owned(),
                 reason: Reason::Trap,
-                message: "its thread stopped while loading it".into(),
+                message: tr!("workbench-extensions-plugin-thread-stopped-loading").into(),
             }))
         });
         if let Err(error) = started {
@@ -2257,7 +2306,8 @@ impl HostedPlugin {
         &self.state
     }
 
-    /// Runs `call` on the plugin's thread. One that fails unloads it first.
+    /// Runs `call` on the plugin's thread. One that fails unloads it first,
+    /// and tells the host it stopped ([`Inbox::stop`]).
     fn call(&mut self, call: Call) -> Result<Reply, CallError> {
         let Some(channel) = &self.channel else {
             return Err(CallError::Unloaded);
@@ -2270,12 +2320,14 @@ impl HostedPlugin {
             Err(Diagnostic {
                 plugin: self.id.clone(),
                 reason: Reason::Trap,
-                message: "its thread stopped".into(),
+                message: tr!("workbench-extensions-plugin-thread-stopped").into(),
             })
         });
         replied.map_err(|diagnostic| {
             log::warn!("{diagnostic}");
-            self.inbox.close();
+            // The host is told whoever called, a command or a formatter, and
+            // even once the caller stopped waiting: it stops the load.
+            self.inbox.stop(diagnostic.clone());
             self.channel = None;
             if let Some(thread) = self.thread.take() {
                 drop(thread.join());
@@ -2328,7 +2380,7 @@ impl CallPlugin for LateHandle {
             // Asked while its `init` runs: a failure of the one request, not
             // an unload of the plugin.
             None => Ok(Reply::RunCommand(Err(bindings::Error::Failed(
-                "the plugin is still loading".into(),
+                tr!("workbench-extensions-plugin-still-loading").into(),
             )))),
         }
     }
@@ -2424,7 +2476,14 @@ impl Exports {
                 .and_then(|interface| {
                     instance.get_export_index(&mut *store, Some(&interface), name)
                 })
-                .ok_or_else(|| wasmtime::format_err!("no export {interface}#{name}"))
+                .ok_or_else(|| {
+                    let export = tr!(
+                        "workbench-extensions-plugin-no-export",
+                        interface = interface,
+                        name = name
+                    );
+                    wasmtime::format_err!("{}", export)
+                })
         };
         let run_command = export("kiln:extension/command-handler@1.0.0", "run-command")?;
         let handle_events = export("kiln:extension/event-handler@1.0.0", "handle-events")?;
@@ -2509,7 +2568,11 @@ impl Guest {
         {
             log::warn!("{diagnostic}");
             let failed = PluginDiagnostic::from(diagnostic);
-            let message = format!("its shutdown failed: {failed}");
+            let message = tr!(
+                "workbench-extensions-plugin-shutdown-failed",
+                diagnostic = failed.to_string()
+            )
+            .to_string();
             self.record.logs.push(&self.id, log::Level::Error, message);
         }
         self.record.push(format!("shutdown {}", self.id));
@@ -2647,7 +2710,11 @@ impl Guest {
                 let deadline = self.limits.call_deadline;
                 Err(self.diagnosis(
                     Reason::Timeout,
-                    format!("a call ran past its {deadline:?} deadline"),
+                    tr!(
+                        "workbench-extensions-plugin-deadline",
+                        deadline = format!("{:?}", deadline)
+                    )
+                    .into(),
                 ))
             }
         }
@@ -2732,7 +2799,13 @@ fn start_ticker(
                 .for_each(Waker::wake);
         }
     }))
-    .map_err(|error| format!("no thread to enforce plugins' deadlines: {error}"))
+    .map_err(|error| {
+        tr!(
+            "workbench-extensions-plugin-no-ticker",
+            error = error.to_string()
+        )
+        .into()
+    })
 }
 
 /// Keeps the epoch advancing until the guard drops: the ticker started
@@ -2748,7 +2821,7 @@ fn cancelled(id: &str) -> Diagnostic {
     Diagnostic {
         plugin: id.to_owned(),
         reason: Reason::Protocol,
-        message: "its load was cancelled".into(),
+        message: tr!("workbench-extensions-plugin-load-cancelled").into(),
     }
 }
 

@@ -54,6 +54,7 @@ use fe_editor::commands::Editor;
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_plugin::editor::{BufferAccess, BufferText, Proposal};
 use gpui::{AnyWindowHandle, App, Entity, Focusable as _, Global};
+use kiln_l10n::tr;
 use kiln_plugin::{
     bindings::Error,
     commands::{CommandHost, Dispatcher, Request},
@@ -120,7 +121,9 @@ impl Bridge {
             }
         }));
         if sent.is_err() {
-            return Err(Error::Failed("the editor has closed".into()));
+            return Err(Error::Failed(
+                tr!("workbench-extensions-bridge-closed").into(),
+            ));
         }
         handoff.wait()
     }
@@ -189,10 +192,11 @@ impl<R> Handoff<R> {
                     let left = self.deadline.saturating_duration_since(Instant::now());
                     if left.is_zero() {
                         let started = matches!(waiting, Slot::Running);
-                        return Err(Error::Failed(format!(
-                            "the editor didn't {} before the call's deadline",
-                            if started { "finish" } else { "answer" }
-                        )));
+                        let message = match started {
+                            true => tr!("workbench-extensions-bridge-unfinished"),
+                            false => tr!("workbench-extensions-bridge-unanswered"),
+                        };
+                        return Err(Error::Failed(message.into()));
                     }
                     *slot = waiting;
                     slot = (self.done)
@@ -299,7 +303,7 @@ impl Served {
         if self.workbench.get(command).is_some() {
             let window = (cx.active_window())
                 .and_then(|window| window.downcast::<Workbench>())
-                .ok_or_else(|| failed("no window is active"))?;
+                .ok_or_else(|| failed(&tr!("workbench-extensions-bridge-no-window")))?;
             return AnyWindowHandle::from(window)
                 .update(cx, |_, window, cx| {
                     let mut forward = Forward {
@@ -309,7 +313,7 @@ impl Served {
                     };
                     self.workbench.dispatch(&mut forward, invocation).map(drop)
                 })
-                .map_err(|_| failed("the window closed"))?;
+                .map_err(|_| failed(&tr!("workbench-extensions-bridge-window-closed")))?;
         }
         if self.registry.get(command).is_none()
             && let Actor::Host(plugin) = &invocation.actor
@@ -324,10 +328,10 @@ impl Served {
         self.registry.validate(&invocation)?;
         let window = (cx.active_window())
             .and_then(|window| window.downcast::<Workbench>())
-            .ok_or_else(|| failed("no window is active"))?;
+            .ok_or_else(|| failed(&tr!("workbench-extensions-bridge-no-window")))?;
         let editor = (window.read(cx).ok())
             .and_then(|workbench| workbench.active_editor(cx).cloned())
-            .ok_or_else(|| failed("no editor is active"))?;
+            .ok_or_else(|| failed(&tr!("workbench-extensions-bridge-no-editor")))?;
         // A plugin's save is checked against the file it writes: none queued
         // before it, which would write wherever the buffer's path is by
         // then, and no save hook, so that the save takes its path now.
@@ -336,7 +340,7 @@ impl Served {
         if saves {
             let view = editor.read(cx);
             if view.is_saving() {
-                return Err(failed("a save of the buffer is under way"));
+                return Err(failed(&tr!("workbench-extensions-bridge-saving")));
             }
             let path = view.model().path().map(Path::to_owned);
             self.may_save(&invocation, path.as_deref())?;
@@ -359,10 +363,10 @@ impl Served {
                 }
             });
         }
-        dispatched.map_err(|_| failed("the window closed"))?;
+        dispatched.map_err(|_| failed(&tr!("workbench-extensions-bridge-window-closed")))?;
         match self.ran.take() {
             true => Ok(()),
-            false => Err(failed("the active editor didn't run it")),
+            false => Err(failed(&tr!("workbench-extensions-bridge-not-run"))),
         }
     }
 
@@ -628,7 +632,13 @@ fn editor_of(buffer: u64, cx: &mut App) -> Result<(Entity<EditorView>, u64), Err
     (open_editors(cx).into_iter())
         .find(|(id, ..)| *id == buffer)
         .map(|(_, version, editor)| (editor, version))
-        .ok_or_else(|| Error::NotFound(format!("no open buffer has id {buffer}")))
+        .ok_or_else(|| {
+            let message = tr!(
+                "workbench-extensions-bridge-no-buffer",
+                buffer = buffer.to_string()
+            );
+            Error::NotFound(message.into())
+        })
 }
 
 /// Buffer `buffer` as it is now, if it's open.
@@ -656,9 +666,15 @@ fn edit(
 ) -> Result<u64, Error> {
     let (editor, now) = editor_of(buffer, cx)?;
     if now != version {
-        return Err(Error::Conflict(format!(
-            "buffer {buffer} is at version {now}, not {version}"
-        )));
+        return Err(Error::Conflict(
+            tr!(
+                "workbench-extensions-bridge-stale-version",
+                buffer = buffer.to_string(),
+                now = now.to_string(),
+                version = version.to_string()
+            )
+            .into(),
+        ));
     }
     editor.update(cx, |view, cx| {
         let model = view.model_mut();

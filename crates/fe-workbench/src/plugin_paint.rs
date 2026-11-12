@@ -47,6 +47,7 @@ use fe_plugin::{
 use gpui::{
     App, Entity, EntityId, Focusable as _, Global, Subscription, WeakEntity, Window, WindowId,
 };
+use kiln_l10n::tr;
 use kiln_shell::StatusSide;
 
 use crate::{Workbench, plugin_bridge, plugin_diagnostics, plugin_events, plugin_host};
@@ -491,7 +492,7 @@ fn registry(cx: &mut App) -> Result<&Registry<Editor>, fe_command::DispatchError
         let Some(commands) = plugin_host::command_host(cx) else {
             return Err(fe_command::DispatchError::Failed {
                 command: CommandId::parse(CLICK).expect("a valid id"),
-                error: fe_command::CommandError("no plugin is loaded".into()),
+                error: fe_command::CommandError(tr!("workbench-extensions-paint-no-plugin").into()),
             });
         };
         let mut registry = fe_editor::commands::registry();

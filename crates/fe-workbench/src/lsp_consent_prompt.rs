@@ -17,15 +17,22 @@ use std::{
     path::PathBuf,
 };
 
-use gpui::{App, Context, Global, PromptLevel, Subscription, Window, WindowId};
+use gpui::{App, Context, Global, PromptLevel, SharedString, Subscription, Window, WindowId};
+use kiln_l10n::tr;
 
 use crate::{
     ExtensionConsent, Invocation, PendingConsent, Workbench, decline_extension_server,
     grant_extension_server, pending_extension_consents,
 };
 
-/// The prompt's buttons, and the indexes of the answers.
-const BUTTONS: [&str; 2] = ["Allow", "Don't Allow"];
+/// The prompt's buttons, and the indexes of the answers: an answer is
+/// matched by its button's index, never its title.
+fn buttons() -> [SharedString; 2] {
+    [
+        tr!("workbench-extensions-allow"),
+        tr!("workbench-extensions-dont-allow"),
+    ]
+}
 const ALLOW: usize = 0;
 const DONT_ALLOW: usize = 1;
 
@@ -128,7 +135,14 @@ pub(crate) fn ask_about(window: &mut Window, cx: &mut App, pending: PendingConse
     let key = server_key(&pending);
     cx.default_global::<Asking>().0.insert(key.clone(), me);
     let (question, detail) = consent_prompt_text(&pending);
-    let answer = window.prompt(PromptLevel::Warning, &question, Some(&detail), &BUTTONS, cx);
+    let buttons = buttons();
+    let answer = window.prompt(
+        PromptLevel::Warning,
+        &question,
+        Some(&detail),
+        &buttons.each_ref().map(|button| button.as_ref()),
+        cx,
+    );
     window
         .spawn(cx, async move |cx| {
             let answer = answer.await.ok();
@@ -148,23 +162,30 @@ pub(crate) fn ask_about(window: &mut Window, cx: &mut App, pending: PendingConse
         .detach();
 }
 
-/// The question and the detail the prompt shows for `pending`.
+/// The question and the detail the prompt shows for `pending`. Each
+/// paragraph and each line is a whole message.
 pub(crate) fn consent_prompt_text(pending: &PendingConsent) -> (String, String) {
-    let question = format!("Allow {} to run a language server?", pending.extension_name);
-    let mut detail = format!(
-        "Extension: {} {}, licensed {}\nFrom: {}\nLanguage server: {} ({})\n",
-        pending.extension_id,
-        pending.extension_version,
-        pending.extension_license,
-        pending.extension_dir.display(),
-        pending.server,
-        pending.languages.join(", "),
+    let question = tr!(
+        "workbench-extensions-lsp-consent-question",
+        name = pending.extension_name.as_str()
     );
+    let mut detail = tr!(
+        "workbench-extensions-lsp-consent-header",
+        id = pending.extension_id.as_str(),
+        version = pending.extension_version.as_str(),
+        license = pending.extension_license.as_str(),
+        dir = pending.extension_dir.display().to_string(),
+        server = pending.server.as_str(),
+        languages = pending.languages.join(", ")
+    )
+    .to_string();
+    detail.push_str("\n\n");
     if let Some(previous) = &pending.previous {
-        detail.push_str("\nThis extension changed what it runs.\nBefore:\n");
+        detail.push_str(&tr!("workbench-extensions-lsp-consent-changed"));
+        detail.push('\n');
         detail.push_str(&invocation_text(previous));
-        detail.push_str("\nNow:\n");
-    } else {
+        detail.push('\n');
+        detail.push_str(&tr!("workbench-extensions-lsp-consent-now"));
         detail.push('\n');
     }
     detail.push_str(&invocation_text(&pending.invocation));
@@ -174,31 +195,41 @@ pub(crate) fn consent_prompt_text(pending: &PendingConsent) -> (String, String) 
             || invocation.command.to_string_lossy(),
             |name| name.to_string_lossy(),
         );
-        detail.push_str(&format!("\n{program} can run any code in its arguments."));
+        detail.push('\n');
+        detail.push_str(&tr!(
+            "workbench-extensions-lsp-consent-interpreter",
+            program = program
+        ));
         for hashed in invocation.script_hashes.values() {
             // "<sha256> <canonical path>"
             if let Some((_, path)) = hashed.split_once(' ') {
-                detail.push_str(&format!("\nScript: {path}"));
+                detail.push('\n');
+                detail.push_str(&tr!("workbench-extensions-lsp-consent-script", path = path));
             }
         }
     }
-    detail.push_str(
-        "\n\nIt runs with your permissions, outside any sandbox. Don't Allow keeps it from \
-         running and isn't asked again until the command changes.",
-    );
-    (question, detail)
+    detail.push_str("\n\n");
+    detail.push_str(&tr!("workbench-extensions-lsp-consent-footer"));
+    (question.into(), detail)
 }
 
 /// `invocation`'s executable, arguments and environment, a line each.
 fn invocation_text(invocation: &Invocation) -> String {
-    let mut text = format!("  Runs: {}\n", invocation.command.display());
+    let mut lines = vec![tr!(
+        "workbench-extensions-lsp-consent-runs",
+        command = invocation.command.display().to_string()
+    )];
     for arg in &invocation.args {
-        text.push_str(&format!("  Argument: {arg}\n"));
+        lines.push(tr!("workbench-extensions-lsp-consent-argument", arg = arg));
     }
     for (name, value) in &invocation.env {
-        text.push_str(&format!("  Environment: {name}={value}\n"));
+        lines.push(tr!(
+            "workbench-extensions-lsp-consent-environment",
+            name = name,
+            value = value
+        ));
     }
-    text
+    lines.iter().map(|line| format!("  {}\n", line)).collect()
 }
 
 #[cfg(test)]

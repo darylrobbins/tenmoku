@@ -24,5 +24,6 @@ kiln_l10n::resources! {
         "../l10n/en-US/lens.ftl",
         "../l10n/en-US/terminal.ftl",
         "../l10n/en-US/git_log.ftl",
+        "../l10n/en-US/extensions.ftl",
     ],
 }
