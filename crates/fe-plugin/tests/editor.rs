@@ -6,10 +6,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use fe_buffer::{Buffer, BufferEvent, Origin, Version};
 use fe_plugin::editor::{BufferAccess, BufferText, Proposal, State};
+use fe_plugin::fastedit::editor::buffer::Host as _;
 use fe_plugin::{EditorExtension, HostState};
 use kiln_command::capability::{Capability, Grants};
 use kiln_plugin::bindings::Error;
 use kiln_plugin::limits::Limits;
+use kiln_plugin::paths::{self, Rules};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 
@@ -23,6 +25,8 @@ fn host() -> Origin {
 struct Open {
     buffer: Buffer,
     seen: Vec<Version>,
+    /// Its path, as the host spells it.
+    path: Option<String>,
 }
 
 impl Open {
@@ -50,6 +54,7 @@ impl Buffers {
             Open {
                 buffer: Buffer::new(text),
                 seen: Vec::new(),
+                path: Some(format!("/work/{id}.txt")),
             },
         );
         Arc::new(Mutex::new(buffers))
@@ -62,7 +67,7 @@ impl BufferAccess for Buffers {
         Some(BufferText {
             version: open.version(),
             snapshot: open.buffer.snapshot(),
-            path: Some(format!("/work/{buffer}.txt")),
+            path: open.path.clone(),
             language: Some("text".into()),
         })
     }
@@ -103,6 +108,11 @@ struct Plugin {
 
 impl Plugin {
     fn new(grants: &[&str], buffers: &Arc<Mutex<Buffers>>) -> Self {
+        Self::with_path_rules(grants, buffers, Rules::HOST)
+    }
+
+    /// [`Plugin::new`], over buffers whose paths `rules` spell.
+    fn with_path_rules(grants: &[&str], buffers: &Arc<Mutex<Buffers>>, rules: Rules) -> Self {
         // Compiled once for every plugin a test loads.
         static COMPILED: OnceLock<(Engine, Component, Linker<HostState>)> = OnceLock::new();
         let (engine, component, linker) = COMPILED.get_or_init(|| {
@@ -133,7 +143,8 @@ impl Plugin {
                 &grants,
                 &Limits::default(),
                 Box::new(Arc::clone(buffers)),
-            ),
+            )
+            .with_path_rules(rules),
             ..HostState::default()
         };
         let mut store = Store::new(engine, state);
@@ -162,6 +173,15 @@ impl Plugin {
         let (version, text) = logged.split_once(' ').unwrap();
         Ok((version.parse().unwrap(), text.to_owned()))
     }
+}
+
+/// The path the plugin's read of buffer `id` names, calling the import as the guest would.
+fn read_path(plugin: &mut Plugin, id: u64) -> Option<String> {
+    plugin.store.data_mut().read(id, None).unwrap().path
+}
+
+fn set_path(buffers: &Arc<Mutex<Buffers>>, id: u64, path: &str) {
+    buffers.lock().unwrap().open.get_mut(&id).unwrap().path = Some(path.to_owned());
 }
 
 fn text(buffers: &Arc<Mutex<Buffers>>, id: u64) -> String {
@@ -425,4 +445,59 @@ fn a_proposed_change_waits_for_the_user() {
         buffer.text().to_string(),
         "// x\nfn parse_header() {}\nparse_header();\n"
     );
+}
+
+#[test]
+fn a_snapshot_names_the_guest_path_of_a_windows_host_path() {
+    let buffers = Buffers::with(1, "text");
+    let mut plugin = Plugin::with_path_rules(&["buffer.read"], &buffers, Rules::Windows);
+    for (host, guest) in [
+        (r"C:\Users\d\work\a.rs", Some("/C:/Users/d/work/a.rs")),
+        (r"c:\Users\d\work\a.rs", Some("/C:/Users/d/work/a.rs")),
+        // A file over 260 characters drops its `\\?\`.
+        (r"\\?\D:\work\b.rs", Some("/D:/work/b.rs")),
+        // A network share's path never reaches the plugin as a host string, and its text still
+        // does.
+        (r"\\server\share\a.rs", None),
+        (r"\\?\UNC\server\share\a.rs", None),
+    ] {
+        set_path(&buffers, 1, host);
+        assert_eq!(read_path(&mut plugin, 1).as_deref(), guest, "{host}");
+        assert_eq!(
+            read_path(&mut plugin, 1),
+            paths::to_guest(host, Rules::Windows).ok()
+        );
+    }
+    assert_eq!(plugin.read("1").unwrap().1, "text");
+
+    // Under Unix rules the path is the host's own.
+    let buffers = Buffers::with(2, "text");
+    let mut plugin = Plugin::with_path_rules(&["buffer.read"], &buffers, Rules::Unix);
+    assert_eq!(read_path(&mut plugin, 2).as_deref(), Some("/work/2.txt"));
+}
+
+#[test]
+fn an_edit_of_a_buffer_at_a_windows_host_path_applies() {
+    let buffers = Buffers::with(1, "one two");
+    set_path(&buffers, 1, r"C:\Users\d\work\a.rs");
+    let mut plugin =
+        Plugin::with_path_rules(&["buffer.read", "buffer.write"], &buffers, Rules::Windows);
+    let (version, _) = plugin.read("1").unwrap();
+    let after = plugin.run("edit", &format!("1 {version}\n0 3 1")).unwrap();
+    assert_eq!(text(&buffers, 1), "1 two");
+    let snapshot = plugin.store.data_mut().read(1, None).unwrap();
+    assert_eq!(snapshot.version.to_string(), after);
+    assert_eq!(snapshot.path.as_deref(), Some("/C:/Users/d/work/a.rs"));
+    // The guest path maps back to the buffer's.
+    assert_eq!(
+        paths::to_host(snapshot.path.as_deref().unwrap(), Rules::Windows).as_deref(),
+        Ok(r"C:\Users\d\work\a.rs")
+    );
+
+    // A buffer on a network share is edited too, its path withheld.
+    set_path(&buffers, 1, r"\\server\share\a.rs");
+    let (version, _) = plugin.read("1").unwrap();
+    plugin.run("edit", &format!("1 {version}\n2 5 2")).unwrap();
+    assert_eq!(text(&buffers, 1), "1 2");
+    assert_eq!(read_path(&mut plugin, 1), None);
 }

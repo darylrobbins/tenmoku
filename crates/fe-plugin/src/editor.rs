@@ -14,6 +14,7 @@ use fe_buffer::{BufferSnapshot, Origin, ProposedChange};
 use kiln_command::capability::{Capability, Grants};
 use kiln_plugin::bindings::Error;
 use kiln_plugin::limits::Limits;
+use kiln_plugin::paths::{self, Rules};
 
 use crate::HostState;
 use crate::fastedit::editor::buffer::{self as wit, Host, Snapshot, TextEdit};
@@ -23,6 +24,7 @@ pub struct BufferText {
     pub snapshot: BufferSnapshot,
     /// The version plugins see: it increases with every change to the buffer.
     pub version: u64,
+    /// The host's path, which the plugin is given as its guest path ([`kiln_plugin::paths`]).
     pub path: Option<String>,
     pub language: Option<String>,
 }
@@ -94,6 +96,8 @@ struct Attached {
     origin: Origin,
     grants: Grants,
     max_read_bytes: usize,
+    /// How the host's paths are spelled.
+    rules: Rules,
     access: Box<dyn BufferAccess>,
 }
 
@@ -111,9 +115,19 @@ impl State {
                 origin: Origin::Host(plugin.into()),
                 grants: grants.clone(),
                 max_read_bytes: limits.max_read_bytes,
+                rules: Rules::HOST,
                 access,
             }),
         }
+    }
+
+    /// The slice, reading `access`'s paths as `rules` spell them rather than as this host does:
+    /// for tests of another OS's paths.
+    pub fn with_path_rules(mut self, rules: Rules) -> Self {
+        if let Some(attached) = &mut self.attached {
+            attached.rules = rules;
+        }
+        self
     }
 
     /// The attachment, if its grants include `capability`, which `import` needs.
@@ -168,7 +182,7 @@ impl Host for HostState {
             buffer,
             version: text.version,
             text: text.snapshot.text().slice_to_string(range),
-            path: text.path,
+            path: (text.path).and_then(|path| paths::guest(&path, attached.rules)),
             language: text.language,
         })
     }

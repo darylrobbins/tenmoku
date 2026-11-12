@@ -15,6 +15,7 @@ use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 use crate::bindings::HostState;
 use crate::bindings::kiln::extension::fs::Host;
+use crate::paths::{self, Rules};
 
 /// The file-system slice of [`HostState`].
 pub struct State;
@@ -29,12 +30,14 @@ pub struct Workspace {
 
 /// Sets `wasi`, a fresh builder, up as `grants` allow in `workspace`: each root preopened,
 /// read-only for `fs.read:workspace` and read-write for `fs.write:workspace` (WASI has no
-/// write-only directory), at its own absolute path, so the paths a plugin sees are the app's.
-/// Without either grant nothing is preopened. Sockets and name lookups are denied. The rest is
+/// write-only directory), at its guest path ([`paths::root`]): its own absolute path on Unix,
+/// `/C:/…` on Windows, so the paths a plugin sees are the app's, mapped as every path it's given
+/// is. Without either grant nothing is preopened. Sockets and name lookups are denied. The rest is
 /// left as [`WasiCtxBuilder::new`] makes it: no environment, no arguments, stdin closed, and
 /// stdout and stderr discarded.
 ///
-/// A root that can't be opened is left out, with a warning.
+/// A root that can't be opened, or has no guest path (a network share, or a Windows root over
+/// 260 characters), is left out, with a warning.
 pub fn configure(wasi: &mut WasiCtxBuilder, grants: &Grants, workspace: &Workspace) {
     wasi.allow_tcp(false)
         .allow_udp(false)
@@ -48,14 +51,10 @@ pub fn configure(wasi: &mut WasiCtxBuilder, grants: &Grants, workspace: &Workspa
         return;
     };
     for root in &workspace.roots {
-        let Some(guest_path) = root.to_str().filter(|_| root.is_absolute()) else {
-            log::warn!(
-                "not preopening {}: not an absolute UTF-8 path",
-                root.display()
-            );
+        let Some(guest_path) = paths::root(root, Rules::HOST) else {
             continue;
         };
-        if let Err(error) = wasi.preopened_dir(root, guest_path, perms) {
+        if let Err(error) = wasi.preopened_dir(root, &guest_path, perms) {
             log::warn!("not preopening {}: {error:#}", root.display());
         }
     }

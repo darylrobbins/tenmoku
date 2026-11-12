@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 
 use kiln_command::capability::{Capability, Grants};
 use kiln_plugin::fs::Workspace;
+use kiln_plugin::paths::{self, Rules};
 use kiln_plugin::runner::wasi_context;
 use wasmtime::component::{Component, ComponentNamedList, Instance, Lift, Linker, Lower};
 use wasmtime::{Engine, Store};
@@ -45,9 +46,9 @@ fn workspace(dir: &Path) -> Workspace {
     }
 }
 
-/// A path as the guest is given it.
+/// A path as the guest is given it: `/C:/…` on Windows.
 fn guest_path(path: &Path) -> String {
-    path.to_str().unwrap().to_owned()
+    paths::to_guest(path.to_str().unwrap(), Rules::HOST).unwrap()
 }
 
 struct Ctx {
@@ -116,10 +117,6 @@ impl Guest {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "a root is preopened at its host path, which wasi-libc can't resolve on Windows"
-)]
 fn a_guest_reads_inside_a_preopened_folder() {
     let dir = temp_dir("reads");
     let mut guest = Guest::load(&grants(&["fs.read:workspace"]), &workspace(&dir));
@@ -137,10 +134,6 @@ fn nothing_is_preopened_without_a_grant() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "a root is preopened at its host path, which wasi-libc can't resolve on Windows"
-)]
 fn read_alone_cannot_write_and_write_can() {
     let dir = temp_dir("write");
     let written = dir.join("root/written.txt");
@@ -176,10 +169,6 @@ fn symlink(target: &Path, link: &Path, folder: bool) {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "a root is preopened at its host path, which wasi-libc can't resolve on Windows"
-)]
 fn dotdot_and_symlinks_cannot_leave_the_root() {
     let dir = temp_dir("escape");
     // Link targets in this OS's own separators: Windows reads a `/` in one as part of a name.

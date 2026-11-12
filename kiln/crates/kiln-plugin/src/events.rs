@@ -16,7 +16,9 @@
 //! it, in order, under the call's deadline, and closes the queue as soon as the plugin unloads or
 //! drops, so that the queue empties and every later push does nothing.
 //!
-//! Events carry buffer ids, versions and ranges, never text.
+//! Events carry buffer ids, versions and ranges, never text. Their paths are guest paths: the
+//! host maps its own through [`crate::paths`] before it pushes, naming no path for a buffer whose
+//! path has no guest form and sending no save to one. The queue passes them on as they are.
 //!
 //! The `subscribe` import is still a stub, [`unimplemented`]: its store state has no handle on
 //! the plugin's queue yet. Until it does, the host sets what the queue takes with
@@ -68,7 +70,8 @@ pub struct Change {
 }
 
 /// What the host pushes onto an [`EventQueue`]: an [`Event`] but `lagged`, which only the queue
-/// makes, with a change naming its edits so that a later change can map its ranges.
+/// makes, with a change naming its edits so that a later change can map its ranges. Paths are
+/// guest paths ([`crate::paths::guest`]), never the host's own.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostEvent {
     BufferOpened(BufferOpened),

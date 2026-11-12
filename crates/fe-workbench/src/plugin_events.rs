@@ -36,6 +36,7 @@ use kiln_plugin::{
     },
     events::{Change, Edit, EventQueue, HostEvent},
     limits::Limits,
+    paths::{self, Rules},
     runner::Diagnostic,
 };
 
@@ -530,8 +531,13 @@ fn opened(id: u64, version: u64, editor: &Entity<EditorView>, cx: &App) -> Buffe
     }
 }
 
+/// `model`'s path as plugins see it, its guest path (`kiln_plugin::paths`):
+/// `/C:/…` on Windows. None for one that has none, such as a network share's
+/// or one that isn't UTF-8, so that no host path reaches a plugin: its open
+/// names no path, and its saves aren't sent.
 fn path_of(model: &fe_editor::EditorModel) -> Option<String> {
-    model.path().map(|path| path.display().to_string())
+    let path = model.path()?.to_str()?;
+    paths::guest(path, Rules::HOST)
 }
 
 fn range(range: &std::ops::Range<usize>) -> Range {

@@ -15,6 +15,7 @@ pub mod l10n;
 pub mod limits;
 pub mod manifest;
 pub mod net;
+pub mod paths;
 pub mod process;
 pub mod runner;
 pub mod secrets;

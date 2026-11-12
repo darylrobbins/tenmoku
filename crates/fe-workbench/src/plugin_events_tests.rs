@@ -464,7 +464,9 @@ fn buffer_lifecycle_reaches_a_subscribed_plugin(cx: &mut TestAppContext) {
 
     inbox.hold(false);
     let events = delivered(cx, &inbox, 4);
-    let path = a.display().to_string();
+    // The guest path plugins are given: `/C:/…` on Windows.
+    let path =
+        kiln_plugin::paths::to_guest(a.to_str().unwrap(), kiln_plugin::paths::Rules::HOST).unwrap();
     let [
         Event::BufferOpened(opened),
         Event::BufferChanged(changed),

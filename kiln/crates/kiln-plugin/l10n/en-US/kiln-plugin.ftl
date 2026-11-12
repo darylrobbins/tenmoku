@@ -175,6 +175,23 @@ kiln-plugin-net-locations = a { $status } response has more than one Location
 # `$location` is the redirect's Location, quoted; `$reason` why it's refused.
 kiln-plugin-net-bad-redirect = { $url } redirected to { $location }: { $reason }
 
+## Paths between the host and a plugin (`paths`). `$path` is a path a
+## plugin named, quoted.
+
+kiln-plugin-path-not-absolute = { $path } isn't absolute: it must start with /
+kiln-plugin-path-backslash = { $path } holds a \: a plugin's paths are /-separated
+kiln-plugin-path-no-drive = { $path } doesn't start with a drive, as /C:/ does
+kiln-plugin-path-dot = { $path } has a . or .. part
+kiln-plugin-path-outside-roots = { $path } is outside every folder open to plugins
+# Why a host path isn't given to plugins, after "not preopening <path>
+# for plugins: ".
+kiln-plugin-path-unmapped = { $why ->
+        [unc] a network share, which plugins can't reach yet
+        [device] a device path, which plugins can't reach
+        [long-root] over 260 characters, so it keeps its \\?\ prefix, which plugins can't reach
+       *[not-absolute] not an absolute path
+    }
+
 ## Plugins' secrets.
 
 kiln-plugin-secret-name = a secret's name is 1 to { $max } characters of a-z, 0-9, _ and -
