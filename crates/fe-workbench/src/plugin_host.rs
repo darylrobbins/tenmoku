@@ -75,7 +75,7 @@ use fe_command::{
     CommandId, CommandMeta, ContextPredicate, DispatchError, Invocation, Value,
     capability::Capability,
 };
-use fe_plugin::{EditorExtensionPre, net::FeNet};
+use fe_plugin::net::FeNet;
 use futures::{
     channel::oneshot,
     future::{self, Either},
@@ -85,6 +85,7 @@ use gpui::{
     WindowId,
 };
 use kiln::core::{
+    ApiVersion,
     extension::{ExtensionSet, ExtensionSource, Manifest},
     secrets::{KeychainStore, MemoryStore, Secret, SecretError, SecretStore},
 };
@@ -96,7 +97,7 @@ use kiln_plugin::{
     },
     cache::ComponentCache,
     commands::{CallPlugin, CommandHost, PluginCommand},
-    compat,
+    compat::{self, World},
     engine::PluginEngine,
     fs::Workspace,
     grants::{Decision, GrantRecord, GrantStore, ProgramIdentity, Prompt, resolve_program},
@@ -653,6 +654,9 @@ pub(crate) struct Found {
     version: Version,
     license: String,
     dir: PathBuf,
+    /// The API version its manifest's `engine` names, whose world it runs
+    /// against.
+    engine: ApiVersion,
     plugin: Result<PluginManifest, String>,
 }
 
@@ -664,6 +668,7 @@ impl Found {
             version: manifest.version,
             license: manifest.license.expr.clone(),
             dir: manifest.dir.clone(),
+            engine: manifest.engine,
             plugin,
         }
     }
@@ -828,11 +833,13 @@ struct Loading {
     cancel: Arc<AtomicBool>,
 }
 
-/// What a load ran: its component, grants, the programs its spawn grants
-/// are bound to and those suspended, and, with an `fs` grant, roots.
+/// What a load ran: its component, the world it runs against, grants, the
+/// programs its spawn grants are bound to and those suspended, and, with an
+/// `fs` grant, roots.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Identity {
     sha256: [u8; 32],
+    world: World,
     version: Version,
     grants: fe_command::Grants,
     programs: BTreeMap<String, ProgramIdentity>,
@@ -1019,8 +1026,10 @@ enum Outcome {
     Off,
     /// It can't load, as `reason` says.
     Failed(StopReason, String),
-    /// Load it with these grants, and the record they're from.
+    /// Load it against `world`, with these grants, and the record they're
+    /// from.
     Load {
+        world: World,
         grants: fe_command::Grants,
         sha256: [u8; 32],
         bytes: Vec<u8>,
@@ -1092,6 +1101,15 @@ fn decide(
             if !preview {
                 return (id.clone(), record(&id).granted, Outcome::Off);
             }
+            // The world of the minor it needs: a 1.0 plugin is never asked
+            // for a later minor's exports.
+            let world = match compat::world_for(found.engine) {
+                Ok(world) => world,
+                Err(error) => {
+                    let outcome = Outcome::Failed(StopReason::Load, error.to_string());
+                    return (id, fe_command::Grants::new(), outcome);
+                }
+            };
             let Some(store) = store else {
                 let message = tr!("workbench-extensions-plugin-grants-no-state-dir").into();
                 let outcome = Outcome::Failed(StopReason::Grants, message);
@@ -1105,6 +1123,7 @@ fn decide(
             let outcome = match decision {
                 Ok(Decision::Load(grants)) => match read_component(&plugin.wasm) {
                     Ok(bytes) => Outcome::Load {
+                        world,
                         grants,
                         sha256: Sha256::digest(&bytes).into(),
                         bytes,
@@ -1205,6 +1224,7 @@ fn apply(
                 (Want::Unload(state), None)
             }
             Outcome::Load {
+                world,
                 grants,
                 sha256,
                 bytes,
@@ -1212,6 +1232,7 @@ fn apply(
             } => {
                 let identity = Identity {
                     sha256,
+                    world,
                     version: found.version,
                     workspace: reaches_files(&grants).then(|| workspace.clone()),
                     grants,
@@ -1470,6 +1491,7 @@ fn start_load(id: &str, cx: &mut App) {
     });
     let load = LOADS.fetch_add(1, Ordering::Relaxed) + 1;
     let grants = identity.grants.clone();
+    let identity_world = identity.world;
     let loading_artifact = artifact.clone();
     let loading = cx.background_spawn(async move {
         #[cfg(test)]
@@ -1479,7 +1501,13 @@ fn start_load(id: &str, cx: &mut App) {
         if let Some(old) = old {
             lock(&old.plugin).shutdown();
         }
-        context.load_with(&loading_artifact, &grants, &cancel, &formatting)
+        context.load_with(
+            &loading_artifact,
+            identity_world,
+            &grants,
+            &cancel,
+            &formatting,
+        )
     });
     let id = id.to_owned();
     cx.spawn(async move |cx| {
@@ -1715,8 +1743,8 @@ struct LoadContext {
 }
 
 impl LoadContext {
-    /// As [`Self::load_with`], its formatters on formatting of their own
-    /// that nothing asks.
+    /// As [`Self::load_with`], against the current world, its formatters on
+    /// formatting of their own that nothing asks.
     #[cfg(test)]
     fn load(
         &self,
@@ -1724,15 +1752,17 @@ impl LoadContext {
         grants: &fe_command::Grants,
         cancel: &Arc<AtomicBool>,
     ) -> Result<Started, LoadFailure> {
-        self.load_with(artifact, grants, cancel, &PluginFormatting::default())
+        let formatting = PluginFormatting::default();
+        self.load_with(artifact, World::CURRENT, grants, cancel, &formatting)
     }
 
-    /// Compiles and starts `artifact`'s plugin with `grants`, its formatters
-    /// registered on `formatting`, unless `cancel` is set first: blocking,
-    /// for the background executor.
+    /// Compiles and starts `artifact`'s plugin against `world` with
+    /// `grants`, its formatters registered on `formatting`, unless `cancel`
+    /// is set first: blocking, for the background executor.
     fn load_with(
         &self,
         artifact: &Artifact,
+        world: World,
         grants: &fe_command::Grants,
         cancel: &Arc<AtomicBool>,
         formatting: &PluginFormatting,
@@ -1790,6 +1820,7 @@ impl LoadContext {
             engine,
             self.cache.as_deref(),
             &artifact.bytes,
+            world,
             id,
             grants,
             limits,
@@ -2243,7 +2274,8 @@ pub(crate) enum Work {
 
 impl HostedPlugin {
     /// Compiles `component` (through `cache`), links it against the editor
-    /// world, and starts plugin `id` on its thread, calling its `init`. It
+    /// world of `world`'s minor, and starts plugin `id` on its thread,
+    /// calling its `init`. It
     /// refuses to when `ticker` can't enforce the call deadline, and stops
     /// before compiling, instantiating or `init` once `cancel` is set.
     #[allow(clippy::too_many_arguments)]
@@ -2251,6 +2283,7 @@ impl HostedPlugin {
         engine: &PluginEngine,
         cache: Option<&ComponentCache>,
         component: &[u8],
+        world: World,
         id: &str,
         grants: &fe_command::Grants,
         limits: Limits,
@@ -2299,7 +2332,7 @@ impl HostedPlugin {
             .map_err(invalid)?
             .instantiate_pre(&component)
             .map_err(unlinked)?;
-        EditorExtensionPre::new(pre.clone()).map_err(unlinked)?;
+        fe_plugin::check(world, &pre).map_err(unlinked)?;
         if cancel.load(Ordering::Acquire) {
             return Err(cancelled());
         }
@@ -2317,6 +2350,7 @@ impl HostedPlugin {
         };
         let guest = Guest {
             id: id.to_owned(),
+            world,
             limits,
             store: Store::new(engine.engine(), data),
             record,
@@ -2468,15 +2502,18 @@ fn linker(engine: &PluginEngine) -> wasmtime::Result<Linker<Data>> {
         &mut data.host
     })?;
     // kiln-plugin's `subscribe` can't reach the plugin's queue: this host's
-    // can, in its store.
+    // can, in its store. It replaces the one `add_to_linker` defined, by its
+    // name: every minor's plugins reach that one.
     linker.allow_shadowing(true);
-    linker.instance("kiln:extension/events@1.0.0")?.func_wrap(
-        "subscribe",
-        |store: StoreContextMut<'_, Data>, (kinds,): (EventKinds,)| {
-            store.data().inbox.subscribe(kinds);
-            Ok((Ok::<(), bindings::Error>(()),))
-        },
-    )?;
+    linker
+        .instance(&World::CURRENT.interface("events"))?
+        .func_wrap(
+            "subscribe",
+            |store: StoreContextMut<'_, Data>, (kinds,): (EventKinds,)| {
+                store.data().inbox.subscribe(kinds);
+                Ok((Ok::<(), bindings::Error>(()),))
+            },
+        )?;
     linker.allow_shadowing(false);
     compat::link(&mut linker)?;
     Ok(linker)
@@ -2521,7 +2558,8 @@ struct Exports {
 }
 
 impl Exports {
-    fn new(store: &mut Store<Data>, instance: &Instance) -> wasmtime::Result<Self> {
+    /// `instance`'s exports, named as `world` names them.
+    fn new(store: &mut Store<Data>, instance: &Instance, world: World) -> wasmtime::Result<Self> {
         let mut export = |interface: &str, name: &str| {
             instance
                 .get_export_index(&mut *store, None, interface)
@@ -2537,8 +2575,8 @@ impl Exports {
                     wasmtime::format_err!("{}", export)
                 })
         };
-        let run_command = export("kiln:extension/command-handler@1.0.0", "run-command")?;
-        let handle_events = export("kiln:extension/event-handler@1.0.0", "handle-events")?;
+        let run_command = export(&world.interface("command-handler"), "run-command")?;
+        let handle_events = export(&world.interface("event-handler"), "handle-events")?;
         Ok(Self {
             init: instance.get_typed_func(&mut *store, "init")?,
             shutdown: instance.get_typed_func(&mut *store, "shutdown")?,
@@ -2563,6 +2601,8 @@ enum Delivered {
 /// The plugin thread's side.
 struct Guest {
     id: String,
+    /// The world it runs against.
+    world: World,
     limits: Limits,
     store: Store<Data>,
     record: Record,
@@ -2690,7 +2730,7 @@ impl Guest {
         let instance = self
             .guarded(async |store| pre.instantiate_async(store).await)
             .map_err(LoadError::Unloaded)?;
-        let exports = Exports::new(&mut self.store, &instance).map_err(|error| {
+        let exports = Exports::new(&mut self.store, &instance, self.world).map_err(|error| {
             LoadError::Unloaded(self.diagnosis(Reason::Protocol, format!("{error:?}")))
         })?;
         if let Some(cancelled) = cancelled(self) {

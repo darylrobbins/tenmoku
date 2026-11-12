@@ -1,6 +1,11 @@
-package kiln:extension@1.0.0;
+package kiln:extension@1.1.0;
 
 /// A plugin for any kiln app.
+///
+/// API 1.1, a preview: incompatible changes may come in any release until it is declared stable.
+/// Released minors are frozen in `released/`; a 1.1 change to them is additive only (new
+/// interfaces and functions, never a new case or field in an existing type), and the host serves
+/// each released minor's world.
 world extension {
     use types.{error};
 

@@ -1,0 +1,79 @@
+package kiln:extension@1.0.0;
+
+/// Events the host delivers to a plugin, in order.
+///
+/// They wait in a bounded queue, so a plugin that falls behind gets fewer, later events and
+/// never holds up the host. What waits is coalesced: consecutive changes to one buffer arrive as
+/// one; focus, selection (per buffer) and config reloads only as the latest. Opens, saves and
+/// closes are never merged, and each buffer's events keep their order. Events carry ranges and
+/// versions, never text.
+interface events {
+    use types.{buffer-id, version, range, error};
+
+    /// The kinds of event a plugin receives.
+    flags event-kinds {
+        buffer-opened,
+        buffer-changed,
+        buffer-saved,
+        buffer-closed,
+        focus-changed,
+        selection-changed,
+        config-reloaded,
+    }
+
+    record buffer-opened {
+        buffer: buffer-id,
+        version: version,
+        path: option<string>,
+        language: option<string>,
+    }
+
+    record buffer-changed {
+        buffer: buffer-id,
+        /// The version after the change.
+        version: version,
+        /// What the change replaced, in the text after it, in order and apart. For changes the
+        /// host merged, what they all replaced. Empty when that was too many to list: the buffer
+        /// has to be read again rather than patched.
+        ranges: list<range>,
+    }
+
+    record buffer-saved {
+        buffer: buffer-id,
+        version: version,
+        path: string,
+    }
+
+    record selection-changed {
+        buffer: buffer-id,
+        version: version,
+        /// One per cursor, the newest last; empty ranges are bare cursors.
+        ranges: list<range>,
+    }
+
+    variant event {
+        buffer-opened(buffer-opened),
+        buffer-changed(buffer-changed),
+        buffer-saved(buffer-saved),
+        buffer-closed(buffer-id),
+        /// The focused buffer, or none when focus left every buffer.
+        focus-changed(option<buffer-id>),
+        selection-changed(selection-changed),
+        config-reloaded,
+        /// The plugin fell behind and the host dropped this many events. Buffers changed
+        /// meanwhile have to be read again rather than patched.
+        lagged(u64),
+    }
+
+    /// Replaces the set of event kinds the plugin receives. It starts empty.
+    subscribe: func(kinds: event-kinds) -> result<_, error>;
+}
+
+/// What a plugin exports to receive events.
+interface event-handler {
+    use events.{event};
+
+    /// Delivers the next events in order; the host sends one per call. `lagged` stands in for
+    /// any the host dropped.
+    handle-events: func(events: list<event>);
+}

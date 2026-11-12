@@ -7,9 +7,10 @@ Code plugins are a **preview**. They are off by default, behind the setting
 prompted for. The supported way to extend Tenmoku is a declarative extension:
 themes, keymaps, menus, language servers, grammars and snippets.
 
-The WIT is **unstable**. `kiln:extension@1.0.0` and `fastedit:editor@1.0.0` may
-change incompatibly in any release until they are declared stable, so rebuild
-your plugin against each release. The editor package keeps its pre-rename name,
+The WIT is **unstable**. `kiln:extension@1.1.0` and `fastedit:editor@1.1.0`, API
+1.1, may change incompatibly in any release until they are declared stable, so
+rebuild your plugin against each release. A plugin built against them names
+`engine.tenmoku = "1.1"`; one built for 1.0 still loads, against the 1.0 world. The editor package keeps its pre-rename name,
 `fastedit:editor`, during the preview.
 
 ## Quick start

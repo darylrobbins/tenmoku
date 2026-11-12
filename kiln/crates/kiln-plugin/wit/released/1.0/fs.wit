@@ -1,0 +1,7 @@
+package kiln:extension@1.0.0;
+
+/// File access. Empty on purpose: a plugin reads and writes files through WASI, and its
+/// grants decide which directories the host preopens. The interface holds the place for
+/// file operations WASI has no call for.
+interface fs {
+}

@@ -1,0 +1,16 @@
+package fastedit:editor@1.0.0;
+
+/// A plugin for fastedit: a kiln extension with the editor's own imports.
+///
+/// This world and the `kiln:extension` world it includes are a preview: incompatible changes may
+/// come in any release until they are declared stable. The package versions stay @1.0.0 meanwhile,
+/// and the adapters in `kiln_plugin::compat` apply from stabilization on.
+world editor-extension {
+    include kiln:extension/extension@1.0.0;
+
+    import buffer;
+    import decorations;
+    import diagnostics;
+    import formatting;
+    import status;
+}

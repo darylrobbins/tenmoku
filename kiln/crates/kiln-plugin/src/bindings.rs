@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The `kiln:extension@1.0.0` world the host and plugins share, and its generated bindings.
+//! The `kiln:extension` worlds the host and plugins share, and their generated bindings: one world
+//! per supported API minor, which [`compat::world_for`](crate::compat::world_for) picks.
 //!
-//! The WIT lives in `wit/`, one file per interface, so a card that implements an interface edits
-//! only its own file. [`HostState`] is the store data a plugin's imports run against: it holds one
+//! The current minor's WIT lives in `wit/`, one file per interface, so a card that implements an
+//! interface edits only its own file; its bindings are this module's. Each released minor is
+//! frozen in `wit/released/<minor>/`, and its world generated in a module of its own ([`v1_0`])
+//! whose interfaces are mapped onto the current ones: a minor only adds, so the types and `Host`
+//! impls are shared, and one linker serves every minor's imports (wasmtime matches `@1.0.0`
+//! against `@1.1.0`). What a world adds is its exports, which a component is checked against. [`HostState`] is the store data a plugin's imports run against: it holds one
 //! `State` per slice (`commands::State` and so on), each defined in that slice's module beside its
 //! `Host` impl, so a slice adds fields without touching this file. A slice whose card has not
 //! landed answers every call with [`unimplemented`], an error value rather than a trap.
@@ -19,6 +24,18 @@ wasmtime::component::bindgen!({
     path: "wit",
     additional_derives: [PartialEq, Eq],
 });
+
+/// The frozen `kiln:extension@1.0.0` world, from `wit/released/1.0`, over the current
+/// interfaces' types.
+pub mod v1_0 {
+    wasmtime::component::bindgen!({
+        world: "extension",
+        path: "wit/released/1.0",
+        with: {
+            "kiln:extension": crate::bindings::kiln::extension,
+        },
+    });
+}
 
 pub use kiln::extension::log::Level;
 

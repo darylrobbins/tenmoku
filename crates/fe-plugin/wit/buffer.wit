@@ -1,8 +1,8 @@
-package fastedit:editor@1.0.0;
+package fastedit:editor@1.1.0;
 
 /// Reading and editing the editor's buffers.
 interface buffer {
-    use kiln:extension/types@1.0.0.{buffer-id, version, range, error};
+    use kiln:extension/types@1.1.0.{buffer-id, version, range, error};
 
     /// A buffer's text, or a range of it, at one version.
     record snapshot {

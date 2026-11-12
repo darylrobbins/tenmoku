@@ -24,6 +24,7 @@ use std::{
 };
 
 use kiln_command::Grants;
+use kiln_core::ApiVersion;
 use kiln_l10n::tr;
 use wasmtime::{
     Store, Trap, UpdateDeadline,
@@ -32,9 +33,9 @@ use wasmtime::{
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use crate::bindings::kiln::extension::events::Event;
-use crate::bindings::{self, Error, ExtensionPre, HostState, Level, LogSink};
+use crate::bindings::{self, Error, HostState, Level, LogSink};
 use crate::cache::ComponentCache;
-use crate::compat;
+use crate::compat::{self, Compat, HOST_API, Incompatible, World};
 use crate::engine::{self, PluginEngine};
 use crate::fs::{self, Workspace};
 use crate::limits::{Limits, PROGRAM_DEADLINE, StoreLimiter};
@@ -117,6 +118,11 @@ pub enum LoadError {
         plugin: String,
         error: io::Error,
     },
+    /// The API version it needs is one this host doesn't serve; nothing of it was compiled.
+    Incompatible {
+        plugin: String,
+        error: Incompatible,
+    },
     /// Its `init` returned an error.
     Init {
         plugin: String,
@@ -148,6 +154,13 @@ impl fmt::Display for LoadError {
                 plugin = plugin,
                 reason = error.to_string()
             ),
+            Self::Incompatible { plugin, error } => {
+                tr!(
+                    "kiln-plugin-invalid",
+                    plugin = plugin,
+                    reason = error.to_string()
+                )
+            }
             Self::Init { plugin, error } => tr!(
                 "kiln-plugin-init-failed",
                 plugin = plugin,
@@ -270,7 +283,8 @@ impl Plugin {
     /// against `host`, whose slices the caller has set up for plugin `id`: its commands slice
     /// on the app's [`CommandHost`](crate::commands::CommandHost), say. `host` runs on the
     /// plugin's thread; its commands slice takes registrations only while `init` runs, and it
-    /// learns each call's deadline as [`HostState::deadline`].
+    /// learns each call's deadline as [`HostState::deadline`]. It runs against the current
+    /// [`World`], as a plugin needing [`HOST_API`].
     pub fn load_hosted(
         engine: &PluginEngine,
         cache: Option<&ComponentCache>,
@@ -280,6 +294,41 @@ impl Plugin {
         limits: Limits,
         host: HostState,
     ) -> Result<Self, LoadError> {
+        Self::load_for(
+            engine,
+            cache,
+            component,
+            id,
+            grants,
+            limits,
+            host,
+            &Compat::CURRENT,
+            HOST_API,
+        )
+    }
+
+    /// Loads `component` as [`load_hosted`](Self::load_hosted) does, as a plugin needing API
+    /// `needed` (its manifest's `engine`) on `compat`'s host. It is refused, before anything is
+    /// compiled, when that host doesn't serve `needed`; otherwise it runs against `needed`'s
+    /// generated world ([`Compat::world_for`]), so it is asked only for that world's exports.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_for(
+        engine: &PluginEngine,
+        cache: Option<&ComponentCache>,
+        component: &[u8],
+        id: &str,
+        grants: &Grants,
+        limits: Limits,
+        host: HostState,
+        compat: &Compat,
+        needed: ApiVersion,
+    ) -> Result<Self, LoadError> {
+        let world = compat
+            .world_for(needed)
+            .map_err(|error| LoadError::Incompatible {
+                plugin: id.to_owned(),
+                error,
+            })?;
         if component.len() > limits.max_read_bytes {
             return Err(LoadError::TooLarge {
                 plugin: id.to_owned(),
@@ -300,7 +349,7 @@ impl Plugin {
         let pre = linker(engine)
             .and_then(|linker| linker.instantiate_pre(&component))
             .map_err(invalid)?;
-        ExtensionPre::new(pre.clone()).map_err(invalid)?;
+        world.check(&pre).map_err(invalid)?;
         let data = Data {
             host,
             wasi: wasi_context(grants, &Workspace::default()),
@@ -311,6 +360,7 @@ impl Plugin {
         };
         let guest = Guest {
             id: id.to_owned(),
+            world,
             engine: engine.clone(),
             limits,
             store: Store::new(engine.engine(), data),
@@ -457,7 +507,7 @@ impl WasiView for Data {
     }
 }
 
-/// The world's exports, typed. The generated `Extension` calls them synchronously, which would
+/// A world's exports, typed. The generated `Extension` calls them synchronously, which would
 /// block in an async WASI import past any deadline; these are called async.
 struct Exports {
     init: TypedFunc<(), (Result<(), Error>,)>,
@@ -467,7 +517,8 @@ struct Exports {
 }
 
 impl Exports {
-    fn new(store: &mut Store<Data>, instance: &Instance) -> wasmtime::Result<Self> {
+    /// `instance`'s exports, named as `world` names them.
+    fn new(store: &mut Store<Data>, instance: &Instance, world: World) -> wasmtime::Result<Self> {
         let mut export = |interface: &str, name: &str| {
             instance
                 .get_export_index(&mut *store, None, interface)
@@ -479,8 +530,8 @@ impl Exports {
                     wasmtime::format_err!("{}", tr!("kiln-plugin-no-export", export = export))
                 })
         };
-        let run_command = export("kiln:extension/command-handler@1.0.0", "run-command")?;
-        let handle_events = export("kiln:extension/event-handler@1.0.0", "handle-events")?;
+        let run_command = export(&world.interface("command-handler"), "run-command")?;
+        let handle_events = export(&world.interface("event-handler"), "handle-events")?;
         Ok(Self {
             init: instance.get_typed_func(&mut *store, "init")?,
             shutdown: instance.get_typed_func(&mut *store, "shutdown")?,
@@ -493,6 +544,8 @@ impl Exports {
 /// The plugin thread's side: the store and what it runs.
 struct Guest {
     id: String,
+    /// The world it runs against.
+    world: World,
     engine: PluginEngine,
     limits: Limits,
     store: Store<Data>,
@@ -559,7 +612,7 @@ impl Guest {
         let instance = self
             .guarded(async |store| pre.instantiate_async(store).await)
             .map_err(LoadError::Unloaded)?;
-        let exports = Exports::new(&mut self.store, &instance).map_err(|error| {
+        let exports = Exports::new(&mut self.store, &instance, self.world).map_err(|error| {
             LoadError::Unloaded(self.diagnosis(Reason::Protocol, format!("{error:?}")))
         })?;
         self.store.data_mut().host.commands.begin_init();

@@ -1,0 +1,22 @@
+package kiln:extension@1.0.0;
+
+/// A plugin for any kiln app.
+world extension {
+    use types.{error};
+
+    import log;
+    import commands;
+    import events;
+    import fs;
+    import process;
+    import net;
+    import secrets;
+
+    /// Called once after instantiation, before anything else. An error unloads the plugin.
+    export init: func() -> result<_, error>;
+    /// Called once before the host drops the plugin.
+    export shutdown: func();
+
+    export command-handler;
+    export event-handler;
+}

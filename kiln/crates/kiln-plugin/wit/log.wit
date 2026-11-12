@@ -1,4 +1,4 @@
-package kiln:extension@1.0.0;
+package kiln:extension@1.1.0;
 
 /// Writes to the host's log, under the plugin's name.
 interface log {

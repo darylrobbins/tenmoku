@@ -1,0 +1,19 @@
+package fastedit:editor@1.0.0;
+
+/// Problems a plugin reports on a buffer, such as a linter's findings. A plugin reports in named
+/// sets; publishing a set replaces it, and the editor maps it through later edits until the plugin
+/// publishes it again. Both imports need the `decorations` capability. A plugin keeps at most
+/// 10,000 diagnostics on one buffer, over all its sets; a publish that would take it past that
+/// fails with `invalid-argument`. Unloading the plugin, or closing the buffer, removes the sets.
+interface diagnostics {
+    use kiln:extension/types@1.0.0.{buffer-id, version, diagnostic, error};
+
+    /// Replaces diagnostic set `set` on `buffer` with `items`, their ranges in the text at
+    /// `version`. A range off a character boundary or past the end of that text fails with
+    /// `invalid-argument`. A `version` the editor can no longer map from fails with `conflict`;
+    /// publish again against the buffer's version now. Nothing changes on error.
+    publish: func(buffer: buffer-id, version: version, set: string, items: list<diagnostic>) -> result<_, error>;
+
+    /// Removes diagnostic set `set` from `buffer`.
+    clear: func(buffer: buffer-id, set: string) -> result<_, error>;
+}

@@ -1,4 +1,4 @@
-package kiln:extension@1.0.0;
+package kiln:extension@1.1.0;
 
 /// Commands on the host's command registry.
 interface commands {

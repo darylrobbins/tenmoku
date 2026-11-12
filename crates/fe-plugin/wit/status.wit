@@ -1,10 +1,10 @@
-package fastedit:editor@1.0.0;
+package fastedit:editor@1.1.0;
 
 /// Items a plugin shows in the status bar. The editor keeps them and draws from its copy. Both
 /// imports need the `status` capability. A plugin shows at most 64 items; unloading it removes
 /// them.
 interface status {
-    use kiln:extension/types@1.0.0.{command-id, error};
+    use kiln:extension/types@1.1.0.{command-id, error};
 
     enum alignment {
         left,

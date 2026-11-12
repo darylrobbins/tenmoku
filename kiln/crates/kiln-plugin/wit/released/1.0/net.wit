@@ -1,0 +1,37 @@
+package kiln:extension@1.0.0;
+
+/// HTTP requests, to the hosts the plugin's grants allow.
+interface net {
+    use types.{error};
+
+    enum method {
+        get,
+        head,
+        post,
+        put,
+        patch,
+        delete,
+    }
+
+    record request {
+        method: method,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+        /// How long the fetch may take, redirects and all. None takes the host's default.
+        timeout-ms: option<u32>,
+    }
+
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    /// Sends `request` and reads its response, if the plugin's `net:<host>` grants reach the
+    /// URL's host. The URL is `https` (or `http` to a loopback address) without a user name.
+    /// Redirects are followed by the host, at most five, each to a granted host and never from
+    /// `https` to `http`; the response is the last one. A body over the host's read limit is an
+    /// error. A host the grants don't reach is `denied`, and nothing is sent to it.
+    fetch: func(request: request) -> result<response, error>;
+}

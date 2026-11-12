@@ -1,0 +1,23 @@
+package fastedit:editor@1.0.0;
+
+/// Formatting a plugin offers for Format Document. A plugin registers one of its own commands as
+/// the formatter for languages. The host asks by running that command with JSON arguments
+/// `{"request": n, "buffer": id, "version": v, "language": "<name>"}`; the command reads the text
+/// with `buffer.read`, calls `answer` and returns. Returning without answering means the text is
+/// unchanged. A command that runs past the plugin's call deadline unloads the plugin and fails
+/// the request.
+interface formatting {
+    use kiln:extension/types@1.0.0.{command-id, error};
+    use buffer.{text-edit};
+
+    /// Makes `command`, one of the plugin's own registered commands (`<id>.<name>`), the
+    /// formatter for `languages`. Registering again replaces this plugin's entry for them. Needs
+    /// `buffer.read` and `buffer.write`; a command the plugin did not register is
+    /// `invalid-argument`.
+    register: func(languages: list<string>, command: command-id) -> result<_, error>;
+
+    /// Replies to `request` with `edits`, as for `buffer.edit` (in order, apart and on char
+    /// boundaries) against the version the request named. Anything else is `invalid-argument`
+    /// and fails the request.
+    answer: func(request: u64, edits: list<text-edit>) -> result<_, error>;
+}

@@ -1,6 +1,7 @@
 # A plugin to copy: it shows the focused buffer's word count in the status bar. Built by `build.zsh`
 # into `word_count.wasm`; not a member of the workspace. A copy outside this repository points the
-# `tenmoku-plugin` path at its checkout.
+# `tenmoku-plugin` path at its checkout. It builds against plugin API 1.1, a preview (README.md),
+# which its extension.toml names as `engine.tenmoku = "1.1"`.
 [package]
 name = "word-count"
 version = "0.1.0"

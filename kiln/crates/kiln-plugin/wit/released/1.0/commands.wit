@@ -1,0 +1,42 @@
+package kiln:extension@1.0.0;
+
+/// Commands on the host's command registry.
+interface commands {
+    use types.{command-id, error};
+
+    /// A command a plugin contributes. The host runs it by calling the plugin's
+    /// `command-handler.run-command`.
+    record command {
+        /// `<extension id>.<name>`: the plugin's own id, then one or more segments, each
+        /// `[a-z][a-z0-9_]*`. Not a built-in's id, another plugin's, or in a namespace the
+        /// host reserves.
+        id: command-id,
+        /// Shown in the command palette.
+        title: string,
+        /// A JSON Schema for the arguments; none when it takes none.
+        args-schema: option<string>,
+        /// A context predicate, such as `editor_focus && !read_only`; none enables it everywhere.
+        when: option<string>,
+        /// Whether it edits the focused buffer, so the host can refuse it in a read-only one.
+        mutates-buffer: bool,
+    }
+
+    /// Adds a command. Only during `init`, and only with the `commands` capability; a bad or
+    /// taken id fails.
+    register: func(command: command) -> result<_, error>;
+
+    /// Runs a registered command, the host's or a plugin's, with JSON arguments (empty for
+    /// none), as an invocation by this plugin from a script, recorded and observed like a
+    /// user's. It needs the `commands` capability, the command must be open to plugins, and
+    /// the plugin's grants must cover what it needs: a refusal is `denied`, naming what is
+    /// missing.
+    invoke: func(id: command-id, args: string) -> result<_, error>;
+}
+
+/// What a plugin exports to run its commands.
+interface command-handler {
+    use types.{command-id, error};
+
+    /// Runs one of the plugin's registered commands with JSON arguments.
+    run-command: func(id: command-id, args: string) -> result<_, error>;
+}

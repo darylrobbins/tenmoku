@@ -1,4 +1,4 @@
-package fastedit:editor@1.0.0;
+package fastedit:editor@1.1.0;
 
 /// Formatting a plugin offers for Format Document. A plugin registers one of its own commands as
 /// the formatter for languages. The host asks by running that command with JSON arguments
@@ -7,7 +7,7 @@ package fastedit:editor@1.0.0;
 /// unchanged. A command that runs past the plugin's call deadline unloads the plugin and fails
 /// the request.
 interface formatting {
-    use kiln:extension/types@1.0.0.{command-id, error};
+    use kiln:extension/types@1.1.0.{command-id, error};
     use buffer.{text-edit};
 
     /// Makes `command`, one of the plugin's own registered commands (`<id>.<name>`), the
