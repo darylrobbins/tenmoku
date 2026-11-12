@@ -23,6 +23,12 @@ kiln-plugin-capability-spawn = run the program { $program }, outside the sandbox
 kiln-plugin-capability-spawn-any = run any program, outside the sandbox
 kiln-plugin-capability-net = connect to { $host }
 kiln-plugin-capability-net-any = connect to any host on the internet
+kiln-plugin-capability-jobs = run background jobs
+kiln-plugin-capability-language = add completions, hovers and other language features
+kiln-plugin-capability-panels = show panels
+kiln-plugin-capability-tasks = add tasks, and run them
+# `$server` is a language server's name, as in `lsp:rust-analyzer`.
+kiln-plugin-capability-lsp = send requests to the language server { $server }
 
 ## The warnings a prompt shows for a plugin's capabilities together.
 ## `$hosts` and `$programs` are lists, joined by kiln-plugin-and-list.

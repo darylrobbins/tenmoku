@@ -114,6 +114,26 @@ fn new_or_wider_capabilities_are_an_escalation() {
 }
 
 #[test]
+fn stage3_adding_a_capability_to_an_installed_plugin_is_an_escalation() {
+    let record = installed((1, 0, 0), &["buffer.read", "lsp:gopls"]);
+    for added in ["jobs", "language", "panels", "tasks", "lsp:rust-analyzer"] {
+        assert_eq!(
+            evaluate(Some(&record), &grants(&["buffer.read", "lsp:gopls", added])),
+            Decision::Escalation {
+                added: grants(&[added]),
+                keep_running: Some((1, 0, 0)),
+            },
+            "{added}"
+        );
+    }
+    // What was granted still loads, and `lsp:` names one server only.
+    assert_eq!(
+        evaluate(Some(&record), &grants(&["lsp:gopls"])),
+        Decision::Load(grants(&["lsp:gopls"]))
+    );
+}
+
+#[test]
 fn requesting_less_applies_without_a_prompt() {
     let store = GrantStore::new(temp_dir("less").join("plugin-grants.toml"));
     store

@@ -4,7 +4,8 @@
 //! (`docs/decisions/vmtnmkay62-extensions-and-plugins.md` §7): "Nothing
 //! ambient. The manifest lists capabilities (`buffer.read`, `buffer.write`,
 //! `commands`, `decorations`, `status`, `fs.read:workspace`,
-//! `fs.write:workspace`, `process.spawn:<program>`, `net:<host>`); the user
+//! `fs.write:workspace`, `process.spawn:<program>`, `net:<host>`; stage 3 adds
+//! `jobs`, `language`, `panels`, `tasks` and `lsp:<server>`); the user
 //! grants them at install, by a prompt that names them." A first-party
 //! plugin compiled into the app, such as the built-in chat, holds them the
 //! same way, granted by the app instead of a prompt.
@@ -48,6 +49,19 @@ pub enum Capability {
     /// `net:<host>`: reach the named host through the host's HTTP and socket
     /// imports; `net:*` reaches any host.
     Net(Target),
+    /// `jobs`: run background jobs.
+    Jobs,
+    /// `language`: contribute language features (completion, hover and the
+    /// like).
+    Language,
+    /// `panels`: show panels.
+    Panels,
+    /// `tasks`: contribute and run tasks.
+    Tasks,
+    /// `lsp:<server>`: send requests and notifications to the named language
+    /// server, the plugin's own or a built-in one. Always a name: there is
+    /// no `lsp:*`.
+    Lsp(String),
 }
 
 /// Where an `fs.read` or `fs.write` capability reaches.
@@ -90,15 +104,23 @@ impl Capability {
             ("commands", None) => Ok(Self::Commands),
             ("decorations", None) => Ok(Self::Decorations),
             ("status", None) => Ok(Self::Status),
-            ("buffer.read" | "buffer.write" | "commands" | "decorations" | "status", Some(_)) => {
-                Err(invalid("this capability takes no argument"))
-            }
+            ("jobs", None) => Ok(Self::Jobs),
+            ("language", None) => Ok(Self::Language),
+            ("panels", None) => Ok(Self::Panels),
+            ("tasks", None) => Ok(Self::Tasks),
+            (
+                "buffer.read" | "buffer.write" | "commands" | "decorations" | "status" | "jobs"
+                | "language" | "panels" | "tasks",
+                Some(_),
+            ) => Err(invalid("this capability takes no argument")),
             ("fs.read", Some(scope)) => Ok(Self::FsRead(parse_scope(scope).map_err(invalid)?)),
             ("fs.write", Some(scope)) => Ok(Self::FsWrite(parse_scope(scope).map_err(invalid)?)),
             ("process.spawn", Some(program)) => {
                 Ok(Self::ProcessSpawn(parse_program(program).map_err(invalid)?))
             }
             ("net", Some(host)) => Ok(Self::Net(parse_host(host).map_err(invalid)?)),
+            ("lsp", Some(server)) => Ok(Self::Lsp(parse_server(server).map_err(invalid)?)),
+            ("lsp", None) => Err(invalid("needs a server, as in `lsp:rust-analyzer`")),
             ("fs.read" | "fs.write", None) => {
                 Err(invalid("needs a scope, as in `fs.read:workspace`"))
             }
@@ -137,6 +159,26 @@ fn parse_program(program: &str) -> Result<Target, &'static str> {
         return Err("a program name is a bare name, with no `/`, `\\` or `:`");
     }
     Ok(Target::Named(program.to_string()))
+}
+
+/// A language server's name: bare, like a program's, and never `*`.
+fn parse_server(server: &str) -> Result<String, &'static str> {
+    if server == "*" || server.contains('*') {
+        return Err("a server is named; there is no `lsp:*`");
+    }
+    if server.is_empty() {
+        return Err("the server is empty");
+    }
+    if server
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch.is_control())
+    {
+        return Err("a server name has no spaces or control characters");
+    }
+    if server.contains(['/', '\\', ':']) {
+        return Err("a server name is a bare name, with no `/`, `\\` or `:`");
+    }
+    Ok(server.to_string())
 }
 
 /// Extensions Windows' `PATHEXT` commonly holds.
@@ -215,6 +257,11 @@ impl fmt::Display for Capability {
             Self::FsWrite(scope) => write!(f, "fs.write:{scope}"),
             Self::ProcessSpawn(program) => write!(f, "process.spawn:{program}"),
             Self::Net(host) => write!(f, "net:{host}"),
+            Self::Jobs => f.write_str("jobs"),
+            Self::Language => f.write_str("language"),
+            Self::Panels => f.write_str("panels"),
+            Self::Tasks => f.write_str("tasks"),
+            Self::Lsp(server) => write!(f, "lsp:{server}"),
         }
     }
 }

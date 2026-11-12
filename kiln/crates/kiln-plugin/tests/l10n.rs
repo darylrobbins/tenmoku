@@ -599,6 +599,17 @@ fn en_us_errors_and_prompt_text_are_unchanged() {
             Capability::Net(Target::Any),
             "connect to any host on the internet",
         ),
+        (Capability::Jobs, "run background jobs"),
+        (
+            Capability::Language,
+            "add completions, hovers and other language features",
+        ),
+        (Capability::Panels, "show panels"),
+        (Capability::Tasks, "add tasks, and run them"),
+        (
+            Capability::Lsp("rust-analyzer".into()),
+            "send requests to the language server rust-analyzer",
+        ),
     ];
     for (capability, english) in described {
         assert_eq!(describe(&capability), english);

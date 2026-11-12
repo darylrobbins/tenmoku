@@ -186,6 +186,11 @@ pub fn describe(capability: &Capability) -> String {
         Capability::ProcessSpawn(Target::Any) => tr!("kiln-plugin-capability-spawn-any"),
         Capability::Net(Target::Named(host)) => tr!("kiln-plugin-capability-net", host = host),
         Capability::Net(Target::Any) => tr!("kiln-plugin-capability-net-any"),
+        Capability::Jobs => tr!("kiln-plugin-capability-jobs"),
+        Capability::Language => tr!("kiln-plugin-capability-language"),
+        Capability::Panels => tr!("kiln-plugin-capability-panels"),
+        Capability::Tasks => tr!("kiln-plugin-capability-tasks"),
+        Capability::Lsp(server) => tr!("kiln-plugin-capability-lsp", server = server),
     }
     .to_string()
 }

@@ -58,6 +58,10 @@ workbench-extensions-plugin-full-access-footer = Only Allow Full Access grants i
 # A capability and what it lets the plugin do: `net:example.com: connect
 # to example.com`.
 workbench-extensions-plugin-capability = { $capability }: { $description }
+# `lsp:<server>`'s description in the prompt, by whether fastedit ships the
+# server. `$server` is the server's name.
+workbench-extensions-plugin-lsp-built-in = send requests to { $server }, a built-in language server
+workbench-extensions-plugin-lsp-not-built-in = send requests to { $server }, a language server that is not built in
 
 ## An extension's language server's consent prompt (lsp_consent_prompt.rs).
 ## The detail's paragraphs and lines are each a message; what the server

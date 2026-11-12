@@ -279,11 +279,42 @@ fn capabilities_text(grants: &Grants) -> String {
             let line = tr!(
                 "workbench-extensions-plugin-capability",
                 capability = capability.to_string(),
-                description = describe(capability)
+                description = prompt_description(capability)
             );
             format!("  {}\n", line)
         })
         .collect()
+}
+
+/// The language servers fastedit ships a spec for, which `lsp:<server>`
+/// may name besides the plugin's own (`fe_lsp`'s built-in registry).
+const BUILT_IN_SERVERS: [&str; 8] = [
+    "rust-analyzer",
+    "pyright",
+    "typescript-language-server",
+    "typescript-go",
+    "vscode-css-language-server",
+    "gopls",
+    "jdtls",
+    "kotlin-lsp",
+];
+
+/// What `capability` lets the plugin do; `lsp:<server>` also says whether
+/// the server is built in.
+fn prompt_description(capability: &Capability) -> String {
+    match capability {
+        Capability::Lsp(server) if BUILT_IN_SERVERS.contains(&server.as_str()) => tr!(
+            "workbench-extensions-plugin-lsp-built-in",
+            server = server.as_str()
+        )
+        .to_string(),
+        Capability::Lsp(server) => tr!(
+            "workbench-extensions-plugin-lsp-not-built-in",
+            server = server.as_str()
+        )
+        .to_string(),
+        _ => describe(capability),
+    }
 }
 
 /// The wildcards in `grants`, a line each.

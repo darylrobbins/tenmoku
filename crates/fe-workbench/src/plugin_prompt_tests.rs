@@ -77,6 +77,41 @@ fn prompt_text_lists_every_capability_and_warning() {
 }
 
 #[test]
+fn stage3_capabilities_are_worded_and_lsp_says_whether_it_is_built_in() {
+    let built_in = [
+        "rust-analyzer",
+        "pyright",
+        "typescript-language-server",
+        "typescript-go",
+        "vscode-css-language-server",
+        "gopls",
+        "jdtls",
+        "kotlin-lsp",
+    ];
+    let mut names = vec!["jobs", "language", "panels", "tasks", "lsp:acme-ls"];
+    let lsp: Vec<String> = built_in
+        .iter()
+        .map(|server| format!("lsp:{server}"))
+        .collect();
+    names.extend(lsp.iter().map(String::as_str));
+    let pending = install(&names);
+    let (_, detail) = plugin_prompt_text(&pending);
+    let mut expected = vec![
+        "jobs: run background jobs".to_string(),
+        "language: add completions, hovers and other language features".to_string(),
+        "panels: show panels".to_string(),
+        "tasks: add tasks, and run them".to_string(),
+        "lsp:acme-ls: send requests to acme-ls, a language server that is not built in".to_string(),
+    ];
+    expected.extend(built_in.iter().map(|server| {
+        format!("lsp:{server}: send requests to {server}, a built-in language server")
+    }));
+    for expected in expected {
+        assert!(detail.contains(&expected), "{expected:?} in {detail}");
+    }
+}
+
+#[test]
 fn an_escalation_says_what_was_added_and_that_the_old_version_keeps_running() {
     let pending = PendingPluginGrant {
         version: (2, 0, 0),
