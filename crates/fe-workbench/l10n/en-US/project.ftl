@@ -113,6 +113,18 @@ workbench-project-paste-busy-working = “{ $name }” is being worked on. Paste
 # A paste that found its entry changed under it. $name is the entry's.
 workbench-project-paste-raced = “{ $name }” was moved or replaced while it was being pasted. Nothing was moved.
 
+## Dragging rows onto a folder (project_panel_drag.rs)
+
+# Under the pointer while several selected rows are dragged. $count is how
+# many.
+workbench-project-drag-count = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+}
+# A row dropped on a folder that has an entry of its name already: it isn't
+# moved. $name is the entry's name, $folder the folder's.
+workbench-project-drop-name-taken = “{ $name }” wasn’t moved: “{ $folder }” has a file or folder of that name already.
+
 ## The tree's right-click menu (project_panel_menu.rs)
 
 # What a screen reader calls the menu a right click on the tree opens. Its

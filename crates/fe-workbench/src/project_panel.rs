@@ -35,7 +35,8 @@
 //! collapsing every folder, toggling ignored entries and refreshing are in
 //! [`nav`]; cutting, copying and pasting entries are in [`clipboard`];
 //! filtering the rows by name is in [`filter`]; the right-click menu that
-//! offers them is in [`menu`].
+//! offers them is in [`menu`]; dragging rows onto a folder to move or copy
+//! them is in [`drag`].
 
 use std::{
     cell::Cell,
@@ -58,7 +59,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     Global, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     ParentElement as _, Render, ScrollStrategy, SharedString, Styled as _, Task,
-    UniformListScrollHandle, Window, div, px, uniform_list,
+    UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use kiln_l10n::{Text, text, tr, verbatim};
 use kiln_shell::PaneAction;
@@ -300,6 +301,12 @@ pub struct ProjectPanel {
     /// The root row's text the last frame drew, if it drew one.
     #[cfg(test)]
     drawn_root: Option<String>,
+    /// Each row the last frame drew tinted as where a drop would go, by
+    /// name, and whether it drew the root so.
+    #[cfg(test)]
+    drawn_drop: Vec<String>,
+    #[cfg(test)]
+    drawn_root_drop: bool,
     /// Whether the tree lists ignored entries.
     show_ignored: bool,
     /// Folders being expanded as their parents' listings land: expand
@@ -317,6 +324,8 @@ pub struct ProjectPanel {
     filter: Option<filter::Filter>,
     /// The right-click menu, while it's open.
     menu: Option<menu::TreeMenu>,
+    /// A drag of the tree's rows, while it's under way.
+    drag: Option<drag::Drag>,
     _watch: Option<Task<()>>,
     /// Its text, and its open fields' placeholders, in a new language.
     _locale: gpui::Subscription,
@@ -367,6 +376,10 @@ impl ProjectPanel {
             drawn_status: Vec::new(),
             #[cfg(test)]
             drawn_root: None,
+            #[cfg(test)]
+            drawn_drop: Vec::new(),
+            #[cfg(test)]
+            drawn_root_drop: false,
             show_ignored,
             expansion: None,
             status: None,
@@ -375,6 +388,7 @@ impl ProjectPanel {
             drawn_cut: Vec::new(),
             filter: None,
             menu: None,
+            drag: None,
             _watch: None,
             _locale: cx.observe_global::<kiln_platform::locale::ActiveLocale>(Self::follow_locale),
         };
@@ -1061,7 +1075,12 @@ impl ProjectPanel {
                 | Open
                 | Toggle
         );
-        if moves {
+        if moves && self.several() {
+            // Redrawn even if the move goes nowhere (Left on a root-level
+            // row, say): the other rows are no longer selected.
+            self.select_one();
+            cx.notify();
+        } else if moves {
             self.select_one();
         }
         match op {
@@ -1136,8 +1155,17 @@ impl ProjectPanel {
         let mut places = HashMap::new();
         let weak = cx.entity().downgrade();
         let several = self.several();
+        // What dragging one of the selected rows carries.
+        let selection = several.then(|| self.dragged_selection());
+        // The folder a drop would go in, whose rows are tinted: the root's
+        // is the whole list's.
+        let drop_target = (self.drop_target())
+            .filter(|&dir| dir != tree.root())
+            .and_then(|dir| tree.path(dir));
         #[cfg(test)]
         let mut drawn_selection = Vec::new();
+        #[cfg(test)]
+        let mut drawn_drop = Vec::new();
         let mut rows: Vec<gpui::AnyElement> = (shown.into_iter())
             .filter_map(|ix| Some((tree.rows(ix..ix + 1).next()?, ix)))
             .map(|(row, ix)| {
@@ -1169,6 +1197,11 @@ impl ProjectPanel {
                     .error(row.error.is_some())
                     .selected(selected)
                     .active(primary)
+                    .drop_target(
+                        (drop_target.as_ref()).is_some_and(|dir| {
+                            tree.path(id).is_some_and(|path| path.starts_with(dir))
+                        }),
+                    )
                     .on_click(cx.listener(move |panel, event, _, cx| panel.clicked(id, event, cx)))
                     .on_secondary_click({
                         let panel = weak.clone();
@@ -1181,6 +1214,21 @@ impl ProjectPanel {
                     });
                 if row.kind == EntryKind::Dir {
                     element = element.directory(row.expanded);
+                }
+                if let Some((dragged, ghost)) = self.dragged(id, selected, selection.as_ref(), cx) {
+                    let panel = weak.clone();
+                    element = element
+                        .on_drag(dragged, ghost, move |dragged, window, cx| {
+                            (panel.update(cx, |panel, cx| panel.drag_started(dragged, window, cx)))
+                                .ok();
+                        })
+                        .on_drop(cx.listener(move |panel, dragged, window, cx| {
+                            panel.dropped(dragged, drag::Over::Row(id), window, cx)
+                        }));
+                }
+                #[cfg(test)]
+                if element.is_drop_target() {
+                    drawn_drop.push(row.name.to_string_lossy().into_owned());
                 }
                 if let Some((position, count)) = place_in_folder(tree, id, &mut places) {
                     element = element.in_set(position, count);
@@ -1224,6 +1272,7 @@ impl ProjectPanel {
             self.drawn_status.extend(drawn);
             self.drawn_cut.extend(drawn_cut);
             self.drawn_selection.extend(drawn_selection);
+            self.drawn_drop.extend(drawn_drop);
         }
         if let Some(ix) = seen {
             self.selected_hint = ix;
@@ -1315,7 +1364,8 @@ impl ProjectPanel {
     /// no row selected it's selected alone.
     fn extend_to(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(from) = self.anchor_index() else {
-            return self.select_row(ix, cx);
+            self.select_row(ix, cx);
+            return self.selected_count_changed(cx);
         };
         let Some(tree) = self.tree() else {
             return;
@@ -1348,7 +1398,8 @@ impl ProjectPanel {
         };
         let mut multi: HashSet<NodeId> = (self.selection().into_iter()).map(|(_, id)| id).collect();
         if multi.is_empty() {
-            return self.select_row(ix, cx);
+            self.select_row(ix, cx);
+            return self.selected_count_changed(cx);
         }
         if !multi.remove(&id) {
             multi.insert(id);
@@ -1386,7 +1437,11 @@ impl ProjectPanel {
     /// With no row selected, it moves the selection as up and down do.
     fn extend_by(&mut self, delta: isize, cx: &mut Context<Self>) {
         let Some(at) = self.selected_index() else {
-            return self.move_selection(delta, cx);
+            self.move_selection(delta, cx);
+            if self.selected_index().is_some() {
+                self.selected_count_changed(cx);
+            }
+            return;
         };
         let rows = self.list_rows(0..self.list_count());
         let Ok(pos) = rows.binary_search(&at) else {
@@ -1442,7 +1497,12 @@ impl Render for ProjectPanel {
             self.drawn_selection.clear();
             self.drawn_status.clear();
             self.drawn_cut.clear();
+            self.drawn_drop.clear();
         }
+        // A drag dropped elsewhere, or stopped; or rows moved under the
+        // pointer.
+        self.end_drag(cx);
+        self.settle_drag_drawn(window, cx);
         // Something selected a row of its own (the right-click menu, say):
         // the rows selected with the one before go.
         if !self.several() && !self.multi.is_empty() {
@@ -1454,13 +1514,19 @@ impl Render for ProjectPanel {
             _ => self.root.as_deref().and_then(Path::file_name),
         }
         .map(|name| name.to_string_lossy().into_owned());
+        // A drop in the root tints its row and the list.
+        let root_drop = (self.drop_target())
+            .is_some_and(|dir| self.tree().is_some_and(|tree| tree.root() == dir));
+        let root_tint = root_drop.then(|| TreeRow::drop_color(cx));
         #[cfg(test)]
         {
             self.drawn_root = root.clone();
+            self.drawn_root_drop = root_drop;
         }
         let root = root.map(|name| {
             div()
                 .debug_selector(|| "project-root".into())
+                .when_some(root_tint, |root, tint| root.bg(tint))
                 .flex_none()
                 .h(ROW_HEIGHT)
                 .flex()
@@ -1497,6 +1563,7 @@ impl Render for ProjectPanel {
                     .min_h_0()
                     .flex()
                     .flex_col()
+                    .when_some(root_tint, |body, tint| body.bg(tint))
                     .child(rows)
                     .on_mouse_down(
                         MouseButton::Right,
@@ -1514,6 +1581,8 @@ impl Render for ProjectPanel {
         let typing = self.edit.is_some() || self.filter_typing();
         let context = if self.menu.is_some() {
             menu::MENU_KEY_CONTEXT
+        } else if self.dragging() {
+            drag::DRAG_KEY_CONTEXT
         } else if fe_gpui::vim_enabled(cx) && !typing {
             VIM_KEY_CONTEXT
         } else {
@@ -1527,6 +1596,13 @@ impl Render for ProjectPanel {
             .on_action(cx.listener(Self::on_run_command))
             .on_key_down(cx.listener(Self::on_menu_key))
             .on_key_down(cx.listener(Self::on_extend_key))
+            .on_key_down(cx.listener(Self::on_drag_key))
+            // Rows dragged over the panel, and dropped where no row takes
+            // them: in the root.
+            .on_drag_move(cx.listener(Self::drag_moved))
+            .on_drop(cx.listener(|panel, dragged, window, cx| {
+                panel.dropped(dragged, drag::Over::Root, window, cx)
+            }))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
             .min_w_0()
@@ -1799,6 +1875,19 @@ impl ProjectPanel {
     pub(crate) fn drawn_root(&self) -> Option<String> {
         self.drawn_root.clone()
     }
+
+    /// Each row the last frame drew tinted as where a drop would go, by
+    /// name, and whether it tinted the root's row and the list so.
+    /// Each once: the list measures its first row as well as building it.
+    pub(crate) fn drawn_drop(&self) -> (Vec<String>, bool) {
+        let mut drawn: Vec<String> = Vec::new();
+        for name in &self.drawn_drop {
+            if !drawn.contains(name) {
+                drawn.push(name.clone());
+            }
+        }
+        (drawn, self.drawn_root_drop)
+    }
 }
 
 #[path = "project_panel_ops.rs"]
@@ -1825,6 +1914,9 @@ mod filter;
 
 #[path = "project_panel_menu.rs"]
 mod menu;
+
+#[path = "project_panel_drag.rs"]
+mod drag;
 
 #[cfg(test)]
 #[path = "project_panel_filter_tests.rs"]

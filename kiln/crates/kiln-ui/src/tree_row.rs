@@ -3,9 +3,10 @@
 use std::f32::consts::FRAC_PI_2;
 
 use gpui::{
-    App, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Transformation, Window, div, prelude::FluentBuilder as _, px, radians, svg,
+    App, AppContext as _, ClickEvent, Context, Div, DragMoveEvent, ElementId, Hsla,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels, Point, Render,
+    RenderOnce, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
+    Transformation, Window, div, prelude::FluentBuilder as _, px, radians, svg,
 };
 
 use crate::{
@@ -53,6 +54,12 @@ pub const DOT_SIZE: Pixels = px(6.);
 /// ([`TreeRow::a11y_description`]). Its list should be a `Tree`. A selected
 /// row is its focused list's active descendant, unless the list selects
 /// several and says which one its keys act on ([`TreeRow::active`]).
+///
+/// A row can be dragged ([`TreeRow::on_drag`]), drawn under the pointer as
+/// a small ghost of its icon and name, take what's dropped on it
+/// ([`TreeRow::on_drop`]), and be drawn as where a drop would go
+/// ([`TreeRow::drop_target`]). Dragging is mouse-only: a list that offers
+/// it should offer the same through its keys (cut and paste, say).
 #[derive(IntoElement)]
 pub struct TreeRow {
     id: ElementId,
@@ -82,7 +89,15 @@ pub struct TreeRow {
     a11y_description: Option<SharedString>,
     on_click: Option<ClickHandler>,
     on_secondary_click: Option<SecondaryClickHandler>,
+    /// Whether it's drawn as where a drop would go.
+    drop_target: bool,
+    /// What its drag carries is drawn as, if not its icon and label.
+    ghost: Option<SharedString>,
+    drag: DragHooks,
 }
+
+/// Drag and drop handlers, kept until the row's element is built.
+type DragHooks = Vec<Box<dyn FnOnce(Stateful<Div>, Ghost) -> Stateful<Div>>>;
 
 /// What a right click on a row runs, given where it was in the window.
 type SecondaryClickHandler = Box<dyn Fn(Point<Pixels>, &mut Window, &mut App)>;
@@ -100,6 +115,45 @@ pub(crate) struct RowColors {
     pub icon_opacity: f32,
     pub chevron: Hsla,
     pub badge: Option<Hsla>,
+}
+
+/// The alpha of [`TreeRow::drop_color`]'s tint: as a pane's drop overlay.
+const DROP_ALPHA: f32 = 0.2;
+
+/// What a dragged row is drawn as under the pointer: its icon and label in
+/// a small box of the list's colours.
+#[derive(Clone)]
+struct Ghost {
+    icon: Option<IconRef>,
+    label: SharedString,
+}
+
+impl Render for Ghost {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = &cx.theme().colors;
+        let (text, icon_tint) = (colors.text.primary, colors.list.icon);
+        let label = self.label.clone();
+        div()
+            .debug_selector(move || [kiln_l10n::verbatim!("tree-ghost:"), &label].concat())
+            .h(ROW_HEIGHT)
+            .px(PADDING)
+            .flex()
+            .items_center()
+            .rounded(px(4.))
+            .bg(colors.list.row_selected)
+            .text_color(text)
+            .opacity(0.9)
+            .when_some(self.icon.as_ref(), |ghost, icon| {
+                ghost.child(
+                    div()
+                        .size(ICON_SIZE)
+                        .flex_none()
+                        .mr(ICON_GAP)
+                        .child(icon.element(ICON_SIZE, icon_tint)),
+                )
+            })
+            .child(div().whitespace_nowrap().child(self.label.clone()))
+    }
 }
 
 /// The width of the accent bar down the left of a selected row while its
@@ -155,6 +209,9 @@ impl TreeRow {
             a11y_description: None,
             on_click: None,
             on_secondary_click: None,
+            drop_target: false,
+            ghost: None,
+            drag: Vec::new(),
         }
     }
 
@@ -320,6 +377,68 @@ impl TreeRow {
         self
     }
 
+    /// Makes the row draggable: moving the pointer a few pixels with the
+    /// button down starts a drag of `value`, drawn under the pointer as a
+    /// small ghost of the row's icon and label, or of `ghost` in their
+    /// place ("3 items", say, for the rows dragged with it), and runs
+    /// `on_start` as it starts, the pointer where the window has it. A drag
+    /// doesn't click the row.
+    pub fn on_drag<T: 'static>(
+        mut self,
+        value: T,
+        ghost: Option<SharedString>,
+        on_start: impl Fn(&T, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.ghost = ghost;
+        self.drag.push(Box::new(move |row, ghost| {
+            row.on_drag(value, move |value, _, window, cx| {
+                on_start(value, window, cx);
+                cx.new(|_| ghost.clone())
+            })
+        }));
+        self
+    }
+
+    /// What a `T` dropped on the row runs. The innermost element that takes
+    /// a `T` takes the drop, so the row's list can take it elsewhere.
+    pub fn on_drop<T: 'static>(
+        mut self,
+        handler: impl Fn(&T, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.drag.push(Box::new(|row, _| row.on_drop(handler)));
+        self
+    }
+
+    /// What the pointer moving while a `T` is dragged runs, wherever it is:
+    /// the event's bounds are the row's, to tell whether it's over the row.
+    pub fn on_drag_move<T: 'static>(
+        mut self,
+        handler: impl Fn(&DragMoveEvent<T>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.drag.push(Box::new(|row, _| row.on_drag_move(handler)));
+        self
+    }
+
+    /// Draws the row as where what's dragged would drop: tinted in
+    /// [`TreeRow::drop_color`], selected or not. A list marks the folder
+    /// row a drop goes in and the rows under it.
+    pub fn drop_target(mut self, target: bool) -> Self {
+        self.drop_target = target;
+        self
+    }
+
+    /// Whether it's drawn as where a drop would go, for a host's tests.
+    pub fn is_drop_target(&self) -> bool {
+        self.drop_target
+    }
+
+    /// The tint of a row a drop would go in ([`TreeRow::drop_target`]):
+    /// the theme's `state.drop_target`, at a low alpha, for a list to tint
+    /// other drop areas (its root's row, say) alike.
+    pub fn drop_color(cx: &App) -> Hsla {
+        cx.theme().colors.state.drop_target.opacity(DROP_ALPHA)
+    }
+
     /// Its colours in `colors`, the active theme's tokens.
     pub(crate) fn colors(&self, colors: &Tokens<Hsla>) -> RowColors {
         let (list, text) = (&colors.list, &colors.text);
@@ -367,6 +486,11 @@ impl RenderOnce for TreeRow {
         let tokens = &cx.theme().colors;
         let colors = self.colors(tokens);
         let (hover, indent_guide) = (tokens.list.row_hover, tokens.list.indent_guide);
+        let ghost = Ghost {
+            icon: self.ghost.is_none().then(|| self.icon.clone()).flatten(),
+            label: self.ghost.clone().unwrap_or_else(|| self.label.clone()),
+        };
+        let drop_tint = self.drop_target.then(|| Self::drop_color(cx));
         let label = &self.label;
         // Hover is styled here, so the box needs an ID: GPUI keeps hover state
         // and asks for a redraw on entry and exit only for identified
@@ -387,6 +511,18 @@ impl RenderOnce for TreeRow {
                 selection
                     .child(selection_edge(edge).debug_selector(|| format!("tree-row-edge:{label}")))
             });
+        // Over the selection's tint, so a selected row reads as the target.
+        let drop_tint = drop_tint.map(|tint| {
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(BOX_INSET)
+                .right(BOX_INSET)
+                .rounded(px(4.))
+                .bg(tint)
+                .debug_selector(|| [kiln_l10n::verbatim!("tree-drop:"), label].concat())
+        });
         // Each ancestor's line runs through the centre of its chevron.
         let guides = (0..self.depth).map(|level| {
             div()
@@ -474,6 +610,7 @@ impl RenderOnce for TreeRow {
             .pl(PADDING + TREE_INDENT * self.depth as f32)
             .pr(BOX_INSET + px(4.))
             .child(selection)
+            .children(drop_tint)
             .children(guides)
             .child(
                 div()
@@ -505,6 +642,7 @@ impl RenderOnce for TreeRow {
             })
             // Honoured only while an ancestor, the list, has focus.
             .when(active, |row| row.aria_active_descendant());
+        let row = (self.drag.into_iter()).fold(row, |row, hook| hook(row, ghost.clone()));
         node_with(row, window, cx, Role::TreeItem, self.label, a11y_states)
     }
 }

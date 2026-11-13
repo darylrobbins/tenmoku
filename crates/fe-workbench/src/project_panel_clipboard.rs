@@ -36,6 +36,10 @@
 //! at the moved files' new paths, so a move that fails (its new path taken
 //! meanwhile, say) makes none of them. Once it's moved, there's nothing
 //! left to paste.
+//!
+//! A drop of the tree's rows on a folder ([`drag`](super::drag)) is pasted
+//! as they would be ([`ProjectPanel::drop_into`]), but for a move's name:
+//! one taken in the folder isn't passed over, and the move isn't made.
 
 use kiln_l10n::tr;
 use std::{
@@ -92,13 +96,22 @@ pub(super) struct Clipboard {
     seen: u64,
 }
 
+/// What a move pastes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MoveOf {
+    /// A cut, by its [`Clip::serial`]: an entry moved is no longer to
+    /// paste.
+    Clip(u64),
+    /// Rows dropped on a folder: they keep their names, or aren't moved.
+    Drop,
+}
+
 /// A cut's paste: `from` into folder `dir` as `name` (which needn't be
 /// UTF-8), all under the tree's (canonical) `root`, and the panel's
 /// spelling of the old and new paths.
 struct Move {
-    /// The cut it pastes ([`Clip::serial`]), and the entry's path from the
-    /// root.
-    serial: u64,
+    /// What it pastes, and the entry's path from the root.
+    of: MoveOf,
     rel: PathBuf,
     /// The entry's device and inode when it was asked about
     /// ([`ops::entry_identity`]).
@@ -192,7 +205,27 @@ impl ProjectPanel {
             toast::show(cx, Toast::error(message));
         }
         let several = clip.rels.len() > 1;
-        match clip.kind {
+        let of = MoveOf::Clip(clip.serial);
+        self.paste_into(clip.kind, of, sources, several, dir, root, window, cx);
+    }
+
+    /// Pastes `sources`, cut or copied as `kind` says (a cut's by `of`),
+    /// into `dir`, all under `root`: copies in the background, moves once
+    /// language servers have answered, as one entry is unless `several`
+    /// were taken. A cut entry already in `dir` isn't moved.
+    #[allow(clippy::too_many_arguments)]
+    fn paste_into(
+        &mut self,
+        kind: ClipKind,
+        of: MoveOf,
+        sources: Vec<PathBuf>,
+        several: bool,
+        dir: PathBuf,
+        root: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match kind {
             ClipKind::Copy if several => self.paste_copies(sources, dir, root, window, cx),
             ClipKind::Copy => {
                 if let Some(source) = sources.into_iter().next() {
@@ -207,13 +240,37 @@ impl ProjectPanel {
                 match sources.as_slice() {
                     [] => {}
                     [source] if !several => {
-                        let rel = clip.rels[0].clone();
-                        self.paste_cut(clip.serial, rel, source.clone(), dir, root, window, cx)
+                        let Ok(rel) = source.strip_prefix(&root).map(Path::to_owned) else {
+                            return;
+                        };
+                        self.paste_cut(of, rel, source.clone(), dir, root, window, cx)
                     }
-                    _ => self.paste_cuts(clip.serial, sources, dir, root, window, cx),
+                    _ => self.paste_cuts(of, sources, dir, root, window, cx),
                 }
             }
         }
+    }
+
+    /// Rows dropped on folder `dir`, all under `root`: `sources`, moved or
+    /// copied as `kind` says, as a paste of them would be
+    /// ([`Self::paste_into`]), except that a move keeps its entry's name or
+    /// isn't made. Nothing is dropped while a cut's paste or another
+    /// drop's move waits for language servers.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn drop_into(
+        &mut self,
+        kind: ClipKind,
+        sources: Vec<PathBuf>,
+        several: bool,
+        dir: PathBuf,
+        root: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.clipboard.moving {
+            return;
+        }
+        self.paste_into(kind, MoveOf::Drop, sources, several, dir, root, window, cx);
     }
 
     /// The folder a paste goes in: the selected one, unless that's one of
@@ -330,12 +387,13 @@ impl ProjectPanel {
         .detach();
     }
 
-    /// The move of `source`, cut as `rel` by cut `serial`, into `dir`, all
-    /// under `root`, under the name it would take there now passing over
-    /// those `planned` for others of its paste, or why it can't be.
+    /// The move of `source`, at `rel` from the root, for `of`, into `dir`,
+    /// all under `root`, under the name it would take there now passing
+    /// over those `planned` for others of its paste, or why it can't be. A
+    /// drop's move keeps its name: if that's taken, it can't be.
     fn plan_move(
         &self,
-        serial: u64,
+        of: MoveOf,
         rel: PathBuf,
         source: PathBuf,
         dir: PathBuf,
@@ -346,12 +404,20 @@ impl ProjectPanel {
             let message = tr!("workbench-project-move-failed", name = file_name(&source));
             ops::Failure::error(message, &error)
         })?;
+        if of == MoveOf::Drop && Some(name.as_os_str()) != source.file_name() {
+            let message = tr!(
+                "workbench-project-drop-name-taken",
+                name = file_name(&source),
+                folder = file_name(&dir)
+            );
+            return Err(ops::Failure::said(message));
+        }
         let shown = (self.shown(&source, &root)).zip(self.shown(&dir.join(&name), &root));
         let Some((shown_from, shown_to)) = shown else {
             return Ok(None);
         };
         Ok(Some(Move {
-            serial,
+            of,
             rel,
             identity: ops::entry_identity(&source),
             root,
@@ -370,7 +436,7 @@ impl ProjectPanel {
     #[allow(clippy::too_many_arguments)]
     fn paste_cut(
         &mut self,
-        serial: u64,
+        of: MoveOf,
         rel: PathBuf,
         source: PathBuf,
         dir: PathBuf,
@@ -378,7 +444,7 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let moving = match self.plan_move(serial, rel, source, dir, root, &[]) {
+        let moving = match self.plan_move(of, rel, source, dir, root, &[]) {
             Ok(Some(moving)) => moving,
             Ok(None) => return,
             Err(failure) => return failure.show(cx),
@@ -409,15 +475,15 @@ impl ProjectPanel {
         .detach();
     }
 
-    /// Moves each of `sources` into `dir`, all under `root`, cut by cut
-    /// `serial`, as one is moved ([`Self::paste_cut`]): each takes a name
+    /// Moves each of `sources` into `dir`, all under `root`, for `of`, as
+    /// one is moved ([`Self::paste_cut`]): each takes a name
     /// no other of them does, the language servers are asked about them
     /// all in one request, and once they've answered each is moved in turn
     /// ([`Self::move_each`]). What can't be moved is named in one toast,
     /// with why.
     fn paste_cuts(
         &mut self,
-        serial: u64,
+        of: MoveOf,
         sources: Vec<PathBuf>,
         dir: PathBuf,
         root: PathBuf,
@@ -432,7 +498,7 @@ impl ProjectPanel {
                 continue;
             };
             let dir = dir.clone();
-            match self.plan_move(serial, rel, source, dir, root.clone(), &planned) {
+            match self.plan_move(of, rel, source, dir, root.clone(), &planned) {
                 Ok(Some(moving)) => match self.move_busy(&moving, window, cx) {
                     Some(busy) => failures.push(busy),
                     None => {
@@ -595,7 +661,7 @@ impl ProjectPanel {
             }
         };
         let Move {
-            serial,
+            of,
             rel,
             shown_from,
             shown_to,
@@ -607,7 +673,8 @@ impl ProjectPanel {
             moves,
         });
         // Once moved, it's no longer to paste.
-        if let Some(item) = (self.clipboard.item.as_mut()).filter(|item| item.serial == serial) {
+        let item = (self.clipboard.item.as_mut()).filter(|item| of == MoveOf::Clip(item.serial));
+        if let Some(item) = item {
             item.rels.retain(|kept| *kept != rel);
             if item.rels.is_empty() {
                 self.clipboard.item = None;
@@ -785,7 +852,7 @@ fn by_folder(path: &Path) -> Option<PathBuf> {
 }
 
 /// `path`'s last component, for messages.
-fn file_name(path: &Path) -> String {
+pub(super) fn file_name(path: &Path) -> String {
     let name = path.file_name().unwrap_or(path.as_os_str());
     name.to_string_lossy().into_owned()
 }

@@ -110,6 +110,7 @@ mod pane_maximize;
 mod pane_toolbar;
 mod pane_toolbar_no_path_item;
 mod problems_b3;
+mod project_drag;
 mod project_menu;
 mod project_multi_select;
 mod project_panel;
