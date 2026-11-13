@@ -1,5 +1,5 @@
 //! Git sync in the UI (T332): the title bar's branch widget shows how far the
-//! branch is from its upstream, `main ↑2 ↓1`, its tooltip naming the
+//! branch is from its upstream, `main` and `↑2 ↓1` beside it, its tooltip naming the
 //! upstream; the Changes panel's header shows the same, with Pull, Push (or
 //! Publish Branch) and Fetch buttons, off while one runs; and both follow a
 //! fetch, pull, push or commit. On repositories built with the `git` CLI in
@@ -182,6 +182,21 @@ fn branch_item(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Opt
     state.branch.map(|branch| branch.to_string())
 }
 
+/// The counts the branch widget shows beside the name, drawn as their own element.
+fn branch_sync(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<String> {
+    let state = workbench.read_with(cx, |workbench, _| workbench.title_bar_state());
+    let tracking = match state.tracking {
+        crate::title_bar::Tracking::Upstream(upstream) => Some(upstream),
+        _ => None,
+    };
+    let counts = crate::git::sync_counts(tracking.as_ref());
+    assert_eq!(
+        counts.is_some(),
+        cx.debug_bounds("title-branch-sync").is_some()
+    );
+    counts
+}
+
 /// The tooltip shown once the mouse rests on the branch widget.
 fn branch_tooltip(cx: &mut VisualTestContext) -> String {
     cx.simulate_mouse_move(
@@ -258,8 +273,11 @@ fn the_branch_widget_shows_ahead_and_behind_counts(cx: &mut TestAppContext) {
 
     // Level with its upstream: nothing extra, but the tooltip names it.
     assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx), None);
     let tooltip = branch_tooltip(cx);
     assert!(tooltip.contains("origin/main"), "{tooltip}");
+    assert!(tooltip.contains("0 to push, 0 to pull"), "{tooltip}");
+    assert!(tooltip.contains("as of the last fetch"), "{tooltip}");
     let shown = header(&panel, cx).expect("the sync header shows");
     assert_eq!(shown.upstream.as_deref(), Some("origin/main"));
     assert_eq!(shown.counts, None);
@@ -268,15 +286,18 @@ fn the_branch_widget_shows_ahead_and_behind_counts(cx: &mut TestAppContext) {
     commit_file(work, "b.txt");
     commit_file(work, "c.txt");
     refresh(&workbench, cx);
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main ↑2"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑2"));
 
     // Ahead and behind, as of the last fetch: none until then.
     move_remote(&fixture, "d.txt");
     refresh(&workbench, cx);
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main ↑2"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑2"));
     git(work, &["fetch", "-q"]);
     refresh(&workbench, cx);
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main ↑2 ↓1"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑2 ↓1"));
     let shown = header(&panel, cx).expect("the sync header shows");
     assert_eq!(shown.counts.as_deref(), Some("↑2 ↓1"));
     assert!(cx.debug_bounds("changes-sync-counts").is_some());
@@ -284,7 +305,8 @@ fn the_branch_widget_shows_ahead_and_behind_counts(cx: &mut TestAppContext) {
     // After the marks.
     fs::write(work.join("a.txt"), "edited\n").unwrap();
     refresh(&workbench, cx);
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main* ↑2 ↓1"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main*"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑2 ↓1"));
 
     // Behind only.
     git(work, &["reset", "-q", "--hard", "origin/main"]);
@@ -292,7 +314,8 @@ fn the_branch_widget_shows_ahead_and_behind_counts(cx: &mut TestAppContext) {
     assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
     git(work, &["reset", "-q", "--hard", "HEAD~1"]);
     refresh(&workbench, cx);
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main ↓1"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↓1"));
 }
 
 #[gpui::test]
@@ -361,7 +384,8 @@ fn counts_refresh_after_fetch_pull_push_and_commit(cx: &mut TestAppContext) {
     cx.simulate_click(button.center(), Modifiers::none());
     draw(cx);
     assert_eq!(git(work, &["log", "-1", "--format=%s"]), "local");
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main ↑1"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑1"));
     let counts = header(&panel, cx).unwrap().counts;
     assert_eq!(counts.as_deref(), Some("↑1"));
 
@@ -377,7 +401,8 @@ fn counts_refresh_after_fetch_pull_push_and_commit(cx: &mut TestAppContext) {
     refresh(&workbench, cx);
     assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
     click("changes-fetch", cx);
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main ↓1"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↓1"));
     let counts = header(&panel, cx).unwrap().counts;
     assert_eq!(counts.as_deref(), Some("↓1"));
 
@@ -456,7 +481,8 @@ fn a_diverged_branch_says_pull_cannot_fast_forward_and_offers_no_merge(cx: &mut 
     git(work, &["fetch", "-q"]);
     let local = head(work);
     let (workbench, panel, cx) = open(cx, work);
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main ↑1 ↓1"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑1 ↓1"));
     toasts(&workbench, cx);
 
     click("changes-pull", cx);
@@ -470,7 +496,8 @@ fn a_diverged_branch_says_pull_cannot_fast_forward_and_offers_no_merge(cx: &mut 
     assert_eq!(head(work), local);
     assert!(!work.join(".git/MERGE_HEAD").exists());
     assert_eq!(git(work, &["status", "--porcelain"]), "");
-    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main ↑1 ↓1"));
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("main"));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑1 ↓1"));
     assert_eq!(buttons(&panel, cx).len(), 3);
 }
 
@@ -489,4 +516,82 @@ fn nothing_shows_outside_a_repository(cx: &mut TestAppContext) {
         let selector = format!("icon-button:{id}");
         assert!(cx.debug_bounds(selector.leak()).is_none(), "{id}");
     }
+}
+
+#[gpui::test]
+fn the_counts_stay_when_a_long_branch_name_ellipsizes(cx: &mut TestAppContext) {
+    let fixture = fixture();
+    let work = &fixture.work;
+    let long = "feature/a-very-long-branch-name-that-cannot-fit-in-the-widget-at-all";
+    git(work, &["switch", "-q", "-c", long]);
+    git(work, &["push", "-q", "-u", "origin", long]);
+    commit_file(work, "b.txt");
+    commit_file(work, "c.txt");
+    let (workbench, _panel, cx) = open(cx, work);
+
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some(long));
+    assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑2"));
+    let button = cx.debug_bounds("title-branch").expect("the branch widget");
+    let counts = cx.debug_bounds("title-branch-sync").expect("the counts");
+    // The name's capped (it's far wider than that uncapped) and ends in an
+    // ellipsis; the counts are whole, inside the control, before the chevron.
+    assert!(button.size.width <= gpui::px(200.), "{:?}", button.size);
+    assert!(counts.size.width > gpui::px(0.) && counts.size.width < gpui::px(40.));
+    assert!(
+        counts.left() > button.left() + gpui::px(100.),
+        "{counts:?} in {button:?}"
+    );
+    assert!(
+        counts.right() < button.right(),
+        "the chevron follows: {counts:?} in {button:?}"
+    );
+    assert!(
+        counts.right() > button.right() - gpui::px(40.),
+        "{counts:?} in {button:?}"
+    );
+    // The text the bar drew for the counts, not recomputed from the state.
+    let drawn = crate::title_bar::DRAWN.with_borrow(|drawn| drawn.clone());
+    assert!(
+        drawn
+            .iter()
+            .any(|(id, text)| *id == "title-branch-sync" && text.as_ref() == "↑2"),
+        "{drawn:?}"
+    );
+
+    // In a narrow window the name gives way further; the counts keep their
+    // width and stay before the chevron, inside the control.
+    cx.simulate_resize(gpui::size(gpui::px(300.), gpui::px(400.)));
+    draw(cx);
+    let narrow_button = cx.debug_bounds("title-branch").expect("the branch widget");
+    let narrow = cx
+        .debug_bounds("title-branch-sync")
+        .expect("the counts, narrow");
+    assert!(
+        narrow_button.size.width < button.size.width,
+        "{narrow_button:?} vs {button:?}"
+    );
+    assert_eq!(narrow.size.width, counts.size.width);
+    assert!(narrow.left() >= narrow_button.left() && narrow.right() < narrow_button.right());
+    let gap = narrow_button.right() - narrow.right();
+    let wide_gap = button.right() - counts.right();
+    assert_eq!(gap, wide_gap, "the chevron's room after the counts");
+    let tooltip = branch_tooltip(cx);
+    assert!(tooltip.contains("2 to push"), "{tooltip}");
+    assert!(tooltip.contains(&format!("origin/{long}")), "{tooltip}");
+}
+
+#[gpui::test]
+fn a_branch_with_no_upstream_says_so_in_its_tooltip(cx: &mut TestAppContext) {
+    let fixture = fixture();
+    let work = &fixture.work;
+    git(work, &["switch", "-q", "-c", "local-only"]);
+    let (workbench, _panel, cx) = open(cx, work);
+
+    assert_eq!(branch_item(&workbench, cx).as_deref(), Some("local-only"));
+    assert_eq!(branch_sync(&workbench, cx), None);
+    let tooltip = branch_tooltip(cx);
+    assert!(
+        tooltip.contains("No upstream: Push publishes this branch"),
+        "{tooltip}"
+    );
 }

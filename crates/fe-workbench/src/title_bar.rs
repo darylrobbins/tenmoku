@@ -64,8 +64,18 @@ pub(crate) struct State {
     /// HEAD's branch, or its short id when detached; none outside a
     /// repository.
     pub(crate) branch: Option<SharedString>,
-    /// The branch's upstream, as `origin/main`, if it has one.
-    pub(crate) upstream: Option<SharedString>,
+    /// How the branch stands with its upstream.
+    pub(crate) tracking: Tracking,
+}
+
+/// Whether HEAD's branch has an upstream, and how far it is from it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Tracking {
+    /// HEAD is detached, or there's no repository: nothing to say.
+    Detached,
+    /// A branch never pushed or set to track anything.
+    None,
+    Upstream(fe_git::Upstream),
 }
 
 /// What a mouse down on the bar asked the window to do, under test, where
@@ -168,17 +178,54 @@ fn left(state: &State, cx: &App) -> AnyElement {
         "workbench.open_recent",
     );
     let branch = state.branch.clone().map(|branch| {
-        widget(
+        let sync = match &state.tracking {
+            Tracking::Upstream(upstream) => crate::git::sync_counts(Some(upstream)),
+            _ => None,
+        }
+        .map(SharedString::from);
+        let name = match &sync {
+            Some(sync) => {
+                tr!(
+                    "workbench-chrome-branch-synced",
+                    name = &branch,
+                    counts = sync
+                )
+            }
+            None => tr!("workbench-chrome-branch", name = &branch),
+        };
+        let title = match &state.tracking {
+            Tracking::Upstream(upstream) => tr!(
+                "workbench-git-sync-switch-branch-counts",
+                ahead = upstream.ahead,
+                behind = upstream.behind,
+                upstream = &upstream.name
+            ),
+            Tracking::None => tr!("workbench-git-sync-no-upstream"),
+            Tracking::Detached => tr!("workbench-chrome-switch-branch"),
+        };
+        // The name gives way to the bar's width, ending in an ellipsis; the
+        // counts between it and the chevron never do.
+        let counts = sync.map(|sync| {
+            #[cfg(test)]
+            DRAWN.with_borrow_mut(|drawn| drawn.push(("title-branch-sync", sync.clone())));
+            div()
+                .whitespace_nowrap()
+                .text_size(px(12.))
+                .debug_selector(|| "title-branch-sync".into())
+                .child(sync)
+        });
+        let button = widget(
             "title-branch",
             BRANCH_MAX_WIDTH,
-            branch.clone(),
-            tr!("workbench-chrome-branch", name = &branch),
-            match &state.upstream {
-                Some(upstream) => tr!("workbench-git-sync-switch-branch", upstream = upstream),
-                None => tr!("workbench-chrome-switch-branch"),
-            },
+            branch,
+            name,
+            title,
             "git.switch_branch",
-        )
+        );
+        match counts {
+            Some(counts) => button.after_icon(counts),
+            None => button,
+        }
     });
     div()
         .flex()

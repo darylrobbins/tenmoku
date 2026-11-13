@@ -33,7 +33,10 @@ workbench-git-not-supported-yet = Not supported yet: { $what }
 workbench-git-sync-ahead = ↑{ $count }
 workbench-git-sync-behind = ↓{ $count }
 # The branch widget's tooltip (title_bar.rs) on a branch with an upstream.
-workbench-git-sync-switch-branch = Switch Branch… (upstream: { $upstream })
+# The branch widget's tooltip on a branch with an upstream, as of the last fetch.
+workbench-git-sync-switch-branch-counts = Switch Branch… ({ $ahead } to push, { $behind } to pull from { $upstream }, as of the last fetch)
+# The branch widget's tooltip on a branch with no upstream.
+workbench-git-sync-no-upstream = No upstream: Push publishes this branch
 
 ## Fetch, pull and push (git_remote.rs)
 

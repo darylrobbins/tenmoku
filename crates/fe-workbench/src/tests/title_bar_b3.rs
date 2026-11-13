@@ -342,9 +342,13 @@ fn each_has_a_name_and_a_tooltip_with_its_key(cx: &mut TestAppContext) {
         assert_eq!(hover(selector, away, cx), format!("{title} {key}"));
     }
 
-    // Switch Branch has no key by default; bound, its tooltip names it.
+    // Switch Branch has no key by default; bound, its tooltip names it. The
+    // demo's branch has no upstream, which the tooltip says.
     assert_eq!(key("git.switch_branch", cx), None);
-    assert_eq!(hover("title-branch", away, cx), "Switch Branch…");
+    assert_eq!(
+        hover("title-branch", away, cx),
+        "No upstream: Push publishes this branch"
+    );
     let (default, _) = KeymapLayer::parse(Path::new(DEFAULT_KEYMAP_PATH), DEFAULT_MACOS, None);
     let (user, diagnostics) = KeymapLayer::parse(
         Path::new("keymap.toml"),
@@ -361,7 +365,10 @@ fn each_has_a_name_and_a_tooltip_with_its_key(cx: &mut TestAppContext) {
     cx.update(|_, cx| fe_gpui::set_user_keymap(cx, keymap));
     assert_eq!(
         hover("title-branch", away, cx),
-        shown("Switch Branch… ⌥⌘B", "Switch Branch… Alt+Super+B")
+        shown(
+            "No upstream: Push publishes this branch ⌥⌘B",
+            "No upstream: Push publishes this branch Alt+Super+B"
+        )
     );
 }
 

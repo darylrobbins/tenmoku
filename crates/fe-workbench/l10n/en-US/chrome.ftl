@@ -12,6 +12,8 @@ workbench-chrome-open-recent = Open Recent…
 # The branch widget's accessible name. $name is the branch, or HEAD's short
 # id when detached.
 workbench-chrome-branch = Branch: { $name }
+# The same with how far the branch is from its upstream: $counts is `↑2 ↓1`.
+workbench-chrome-branch-synced = Branch: { $name } { $counts }
 workbench-chrome-switch-branch = Switch Branch…
 workbench-chrome-go-to-file = Go to File
 workbench-chrome-settings = Settings

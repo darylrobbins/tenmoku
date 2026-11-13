@@ -75,6 +75,7 @@ use super::{
 use crate::{
     git::Marks,
     picker::{Picker, PickerDelegate},
+    title_bar::Tracking,
 };
 
 /// The branch picker's first row, in en-US, for tests.
@@ -218,17 +219,23 @@ impl Workbench {
         branch: Option<(Head, Marks, Option<Upstream>)>,
         cx: &mut Context<Self>,
     ) {
-        let (shown, upstream) = match branch {
+        let (shown, tracking) = match branch {
             Some((head, marks, upstream)) => {
-                let label = branch_label(&head, marks, upstream.as_ref());
-                let name = upstream.map(|upstream| SharedString::from(upstream.name));
-                (Some(SharedString::from(label)), name)
+                let tracking = match upstream {
+                    Some(upstream) => Tracking::Upstream(upstream),
+                    None if matches!(head, Head::Detached(_)) => Tracking::Detached,
+                    None => Tracking::None,
+                };
+                (
+                    Some(SharedString::from(branch_label(&head, marks))),
+                    tracking,
+                )
             }
-            None => (None, None),
+            None => (None, Tracking::Detached),
         };
-        if shown != self.title_branch || upstream != self.title_upstream {
+        if shown != self.title_branch || tracking != self.title_upstream {
             self.title_branch = shown;
-            self.title_upstream = upstream;
+            self.title_upstream = tracking;
             cx.notify();
         }
     }
@@ -532,9 +539,9 @@ impl Workbench {
     }
 }
 
-/// `head`'s name, with `*`, `+` and `!` as `marks` say, then `↑` and `↓`
-/// with how far it is from `upstream`, each only if it's some way.
-fn branch_label(head: &Head, marks: Marks, upstream: Option<&Upstream>) -> String {
+/// `head`'s name, with `*`, `+` and `!` as `marks` say. How far it is from
+/// its upstream is the title bar's own element ([`crate::git::sync_counts`]).
+fn branch_label(head: &Head, marks: Marks) -> String {
     let mut text = head_name(head).to_owned();
     for (set, mark) in [
         (marks.working, '*'),
@@ -544,10 +551,6 @@ fn branch_label(head: &Head, marks: Marks, upstream: Option<&Upstream>) -> Strin
         if set {
             text.push(mark);
         }
-    }
-    if let Some(counts) = crate::git::sync_counts(upstream) {
-        text.push(' ');
-        text.push_str(&counts);
     }
     text
 }

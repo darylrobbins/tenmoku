@@ -13,11 +13,11 @@
 use std::rc::Rc;
 
 use gpui::{
-    Action, App, AppContext as _, Bounds, ClickEvent, CursorStyle, Div, Element, ElementId,
-    FocusHandle, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, MouseButton, ParentElement as _, Pixels, Refineable as _, RenderOnce,
-    Role, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Window,
-    accesskit, div, prelude::FluentBuilder as _, px, svg,
+    Action, AnyElement, App, AppContext as _, Bounds, ClickEvent, CursorStyle, Div, Element,
+    ElementId, FocusHandle, GlobalElementId, Hsla, InspectorElementId, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, MouseButton, ParentElement as _, Pixels, Refineable as _,
+    RenderOnce, Role, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, accesskit, div, prelude::FluentBuilder as _, px, svg,
 };
 
 use kiln_command::Source;
@@ -373,6 +373,7 @@ pub struct Button {
     name: Option<SharedString>,
     shortcut: Option<SharedString>,
     icon: Option<Icon>,
+    after_icon: Option<AnyElement>,
     variant: ButtonVariant,
     size: ButtonSize,
     disabled: bool,
@@ -419,12 +420,21 @@ impl Button {
             name: None,
             shortcut: None,
             icon: None,
+            after_icon: None,
             variant: ButtonVariant::default(),
             size: ButtonSize::default(),
             disabled: false,
             focus: None,
             on_click: None,
         }
+    }
+
+    /// An element placed after the icon in the button's children, and
+    /// before the label: with the row reversed, between the label and the
+    /// icon. It never shrinks.
+    pub fn after_icon(mut self, element: impl IntoElement) -> Self {
+        self.after_icon = Some(element.into_any_element());
+        self
     }
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
@@ -634,6 +644,10 @@ impl Button {
                 .flex_none()
                 .text_color(look.text)
         }))
+        .children(
+            self.after_icon
+                .map(|element| div().flex_none().child(element)),
+        )
         // A button the caller lets shrink ends its label in an ellipsis;
         // its icon keeps its size.
         .children(
