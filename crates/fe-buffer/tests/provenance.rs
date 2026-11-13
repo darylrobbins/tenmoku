@@ -18,6 +18,7 @@ fn ai(agent: &str) -> Origin {
 fn ai_author(agent: &str) -> Author {
     Author::Ai {
         agent: agent.into(),
+        session: "session".into(),
     }
 }
 
@@ -46,6 +47,28 @@ fn an_ai_edit_is_the_agents() {
     let mut buffer = Buffer::new("one two");
     buffer.edit([(4..7, "2")], ai("claude"));
     assert_eq!(spans(&buffer), [(4..5, ai_author("claude"))]);
+}
+
+#[test]
+fn two_sessions_of_one_agent_are_two_runs() {
+    let ai_in = |session: &str| Origin::Ai {
+        agent: "fastedit.chat".into(),
+        session: session.into(),
+    };
+    let author = |session: &str| Author::Ai {
+        agent: "fastedit.chat".into(),
+        session: session.into(),
+    };
+    let mut buffer = Buffer::new("");
+    buffer.edit([(0..0, "ab")], ai_in("one"));
+    buffer.edit([(2..2, "cd")], ai_in("one"));
+    assert_eq!(spans(&buffer), [(0..4, author("one"))]);
+    buffer.edit([(4..4, "ef")], ai_in("two"));
+    assert_ne!(author("one"), author("two"));
+    assert_eq!(
+        spans(&buffer),
+        [(0..4, author("one")), (4..6, author("two"))]
+    );
 }
 
 #[test]

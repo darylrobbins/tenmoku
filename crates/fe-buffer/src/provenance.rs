@@ -30,8 +30,10 @@ use crate::{Edit, Origin};
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Author {
     User,
+    /// An agent's session is part of the author, so two chats are two runs.
     Ai {
         agent: Arc<str>,
+        session: Arc<str>,
     },
     /// An editor tool: `"lsp"` or `"format"`.
     Tool(&'static str),
@@ -42,8 +44,9 @@ impl From<&Origin> for Author {
     fn from(origin: &Origin) -> Self {
         match origin {
             Origin::User => Author::User,
-            Origin::Ai { agent, .. } => Author::Ai {
+            Origin::Ai { agent, session } => Author::Ai {
                 agent: agent.clone(),
+                session: session.clone(),
             },
             Origin::Lsp => Author::Tool("lsp"),
             Origin::Format => Author::Tool("format"),
