@@ -9,6 +9,10 @@
 //! a branch's or every branch's commits with parents and ref names ([`Repo::log`]) and the
 //! files a commit changed ([`Repo::commit_files`]) with their line counts ([`Repo::commit_stats`]), with [`graph`] laying out their lanes;
 //! and the files it tracks or would add ([`Repo::listed_files`]).
+//! An agent lane's linked worktree is added, listed and removed here
+//! ([`Repo::add_worktree_detached`], [`Repo::worktrees`], [`Repo::remove_worktree`]),
+//! and its whole state frozen as a commit on a private ref through a temporary
+//! index ([`Repo::freeze`], under a [`RefNamespace`]).
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
 //! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
 //! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`], [`Repo::create_branch_at`], [`Repo::rename_branch`], [`Repo::delete_branch`], [`Repo::merge_into_current`], [`Repo::stash_push`], [`Repo::stash_pop`], [`Repo::stash_apply`]) and
@@ -35,6 +39,7 @@ mod remote;
 pub mod remote_link;
 mod stage;
 mod stash;
+mod worktree;
 
 pub use askpass::{Askpass, AskpassRequest};
 pub use blame::{BlameRun, CommitInfo};
@@ -48,6 +53,7 @@ pub use refs::Upstream;
 pub use refs::{Branch, Head};
 pub use remote::{PullMode, RemoteError};
 pub use stash::{StashEntry, StashError};
+pub use worktree::{RefNamespace, Revision, Worktree};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

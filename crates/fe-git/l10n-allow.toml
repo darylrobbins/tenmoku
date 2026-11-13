@@ -139,3 +139,23 @@ reason = "A thread's name, for debuggers"
 file = "src/askpass.rs"
 text = "#!/bin/sh\nunset GIT_CONFIG_PARAMETERS SSH_ASKPASS SSH_ASKPASS_REQUIRE\nGIT_ASKPASS=true GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never\nexport GIT_ASKPASS GIT_TERMINAL_PROMPT GCM_INTERACTIVE\ncase $1 in\nget)\n  if found=$(git credential fill 2>&1); then\n    printf '%s\\n' \"$found\" | grep -E '^[a-z_]+(\\[\\])?=.'\n  else\n    case $found in *'told us to quit'*) echo quit=1;; esac\n  fi;;\nerase) git credential reject 2>/dev/null;;\nesac\nexit 0\n"
 reason = "The credential helper script git runs, not shown"
+
+[[literal]]
+file = "src/worktree.rs"
+text = "{}^{{tree}}"
+reason = "A git revision"
+
+[[literal]]
+file = "src/worktree.rs"
+text = "{commit}^{{commit}}"
+reason = "A git revision"
+
+[[literal]]
+file = "src/worktree.rs"
+text = "--format=%(objectname) %(refname)"
+reason = "A git argument"
+
+[[literal]]
+file = "src/worktree.rs"
+text = "fe-git-index-{}-{nanos:x}-{}"
+reason = "A scratch directory name"
