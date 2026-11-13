@@ -171,16 +171,25 @@ fn a_file_from_before_roots_were_recorded_is_found_by_its_paths() {
         fs::write(store.file(), text).unwrap();
     };
     fs::create_dir_all(dir.path()).unwrap();
-    let a = LayoutStore::new(dir.path(), Path::new("/old/project"));
+    let old_root = if cfg!(windows) {
+        r"C:\old\project"
+    } else {
+        "/old/project"
+    };
+    let old_file = Path::new(old_root).join("src").join("main.rs");
+    let a = LayoutStore::new(dir.path(), Path::new(old_root));
+    let old_file_json = old_file.to_string_lossy().replace('\\', "\\\\");
     write(
         &a,
-        r#"{"id": 1, "saved": 5, "session": 3, "panes": {"items": [{"state": {"path": "/old/project/src/main.rs"}}]}}"#,
+        &format!(
+            r#"{{"id": 1, "saved": 5, "session": 3, "panes": {{"items": [{{"state": {{"path": "{old_file_json}"}}}}]}}}}"#
+        ),
     );
     let rootless = LayoutStore::new(dir.path(), Path::new(""));
     write(&rootless, r#"{"id": 2, "saved": 4, "session": 3}"#);
     let found = restore_last_quit(dir.path(), 8, |_| true);
     let roots: Vec<_> = found.iter().map(|w| w.root.clone()).collect();
-    assert_eq!(roots, [PathBuf::from("/old/project"), PathBuf::new()]);
+    assert_eq!(roots, [PathBuf::from(old_root), PathBuf::new()]);
     assert_eq!(found[0].store, a);
     assert_eq!(found[1].store, rootless);
 }

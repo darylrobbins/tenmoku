@@ -196,18 +196,25 @@ fn manifest_errors_name_their_key_and_position() {
     let manifest = with("name = \"Solarized\"\n", "");
     assert_refused(&manifest, "name", None);
 
-    let absolute = if cfg!(windows) {
-        "C:\\\\themes\\\\dark.toml"
-    } else {
-        "/themes/dark.toml"
-    };
-    let manifest = with("\"./themes/light.toml\"", &format!("\"{absolute}\""));
-    let error = assert_refused(
-        &manifest,
-        "contributes.themes",
-        Some(&format!("\"{absolute}\"")),
-    );
-    assert!(error.message.contains("must be relative"), "{error}");
+    // A forward-slash absolute path is "must be relative" on every OS; one
+    // with a backslash hits the portable-path rule first.
+    // (`C:/...` is only absolute on Windows; on Unix it is a plain relative name.)
+    let mut cases = vec![
+        ("/themes/dark.toml", "must be relative"),
+        ("C:\\\\themes\\\\dark.toml", "use /"),
+    ];
+    if cfg!(windows) {
+        cases.push(("C:/themes/dark.toml", "must be relative"));
+    }
+    for (absolute, message) in cases {
+        let manifest = with("\"./themes/light.toml\"", &format!("\"{absolute}\""));
+        let error = assert_refused(
+            &manifest,
+            "contributes.themes",
+            Some(&format!("\"{absolute}\"")),
+        );
+        assert!(error.message.contains(message), "{absolute}: {error}");
+    }
 
     let manifest = with("\"keymaps/vim.toml\"", "\"keymaps/../../vim.toml\"");
     let error = assert_refused(
