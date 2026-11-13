@@ -43,7 +43,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::workbench::git_commands::git_log::float_shadow;
@@ -57,6 +57,11 @@ use gpui::{
     svg,
 };
 use kiln_l10n::{Text, text, tr};
+
+#[path = "notification_inbox.rs"]
+pub(crate) mod notification_inbox;
+
+use notification_inbox::{NotificationInbox, NotificationSource, Resolution};
 
 /// How many toasts show at once.
 pub(crate) const MAX_SHOWN: usize = 3;
@@ -159,6 +164,8 @@ pub(crate) struct Toast {
     pub action: Option<(String, CommandId)>,
     /// A question, with a button per answer.
     pub choices: Option<Choices>,
+    /// Who raised it, for the notification inbox: the app's own if none.
+    pub source: Option<NotificationSource>,
 }
 
 impl Toast {
@@ -169,7 +176,15 @@ impl Toast {
             detail: None,
             action: None,
             choices: None,
+            source: None,
         }
+    }
+
+    /// Says who raised it, as the inbox shows.
+    #[cfg_attr(not(test), allow(dead_code, reason = "no caller yet"))]
+    pub(crate) fn source(mut self, source: NotificationSource) -> Self {
+        self.source = Some(source);
+        self
     }
 
     pub(crate) fn info(message: impl Into<String>) -> Self {
@@ -282,6 +297,25 @@ impl Entry {
     }
 }
 
+/// What [`ToastQueue::push_merging`] did.
+pub(crate) struct Pushed {
+    pub id: ToastId,
+    /// Whether the toast was counted into one already there.
+    pub merged: bool,
+    /// The waiting toast dropped to make room, if one was.
+    pub evicted: Option<ToastId>,
+}
+
+impl Pushed {
+    fn merged(id: ToastId) -> Self {
+        Self {
+            id,
+            merged: true,
+            evicted: None,
+        }
+    }
+}
+
 /// The toasts of a window, with no GPUI: those shown, oldest first, and
 /// those waiting for room, each told the time when it matters.
 #[derive(Debug, Default)]
@@ -299,17 +333,24 @@ impl ToastQueue {
     /// [`MAX_SHOWN`] show, dropping the oldest waiting if [`MAX_WAITING`]
     /// already do. One identical to a toast shown or waiting counts that one
     /// up instead, a shown one's timer starting again.
+    #[cfg(test)]
     pub(crate) fn push(&mut self, toast: Toast, now: Instant) -> ToastId {
+        self.push_merging(toast, now).id
+    }
+
+    /// [`push`](Self::push), also saying whether the toast was counted into
+    /// one already there.
+    pub(crate) fn push_merging(&mut self, toast: Toast, now: Instant) -> Pushed {
         let merges = toast.choices.is_none();
         if let Some(entry) = (self.shown.iter_mut()).find(|entry| merges && entry.toast == toast) {
             entry.count += 1;
             entry.start(now);
-            return entry.id;
+            return Pushed::merged(entry.id);
         }
         if let Some(entry) = (self.waiting.iter_mut()).find(|entry| merges && entry.toast == toast)
         {
             entry.count += 1;
-            return entry.id;
+            return Pushed::merged(entry.id);
         }
         let id = ToastId(self.next_id);
         self.next_id += 1;
@@ -321,13 +362,19 @@ impl ToastQueue {
             under_pointer: false,
         };
         self.waiting.push_back(entry);
+        let mut evicted = None;
         if self.waiting.len() > MAX_WAITING
             && let Some(dropped) = self.waiting.pop_front()
         {
             log::info!("too many notifications, dropped: {}", dropped.toast.message);
+            evicted = Some(dropped.id);
         }
         self.fill(now);
-        id
+        Pushed {
+            id,
+            merged: false,
+            evicted,
+        }
     }
 
     /// The toasts shown, oldest (top) first.
@@ -349,6 +396,13 @@ impl ToastQueue {
         self.waiting.retain(|entry| entry.id != id);
         self.fill(now);
         self.shown.len() + self.waiting.len() != before
+    }
+
+    /// The toasts shown or waiting.
+    fn ids(&self) -> Vec<ToastId> {
+        (self.shown.iter().chain(&self.waiting))
+            .map(|entry| entry.id)
+            .collect()
     }
 
     /// Dismisses every toast, waiting ones too. False if there were none.
@@ -473,6 +527,8 @@ impl gpui::Global for Layers {}
 /// bottom right, with the timer that dismisses them.
 pub(crate) struct ToastLayer {
     queue: ToastQueue,
+    /// Every toast pushed, kept after it goes.
+    inbox: NotificationInbox,
     /// Wakes the layer when the next toast's time is up.
     timer: Option<Task<()>>,
     /// The column's scroll, when the toasts are taller than the window.
@@ -574,6 +630,7 @@ impl ToastLayer {
         });
         Self {
             queue: ToastQueue::default(),
+            inbox: NotificationInbox::default(),
             timer: None,
             scroll: ScrollHandle::new(),
             room: Rc::default(),
@@ -776,11 +833,27 @@ impl ToastLayer {
         &self.queue
     }
 
+    /// Every toast pushed to this window, split into what needs the user
+    /// and what's earlier.
+    #[cfg_attr(not(test), allow(dead_code, reason = "the bell and popup come later"))]
+    pub(crate) fn inbox(&self) -> &NotificationInbox {
+        &self.inbox
+    }
+
     /// Shows `toast` in this layer's window, whichever is active: for
     /// [`ToastLayer::dismiss`] once it's out of date.
     pub(crate) fn push(&mut self, toast: Toast, cx: &mut Context<Self>) -> ToastId {
         let now = cx.background_executor().now();
-        let id = self.queue.push(toast, now);
+        let Pushed {
+            id,
+            merged,
+            evicted,
+        } = self.queue.push_merging(toast.clone(), now);
+        self.inbox.record(&toast, id, merged, SystemTime::now());
+        if let Some(evicted) = evicted {
+            // Gone unseen, its question answered with none.
+            self.inbox.resolve_toast(evicted, Resolution::Dismissed);
+        }
         // The newest, at the bottom, shows even when they don't all fit.
         self.scroll.scroll_to_bottom();
         self.changed(cx);
@@ -820,7 +893,18 @@ impl ToastLayer {
         cx.notify();
     }
 
+    /// Dismisses toast `id` for having been dealt with as `how`: its action
+    /// taken or a choice answered, which moves its notification to Earlier.
+    fn resolve(&mut self, id: ToastId, how: Resolution, cx: &mut Context<Self>) {
+        self.inbox.resolve_toast(id, how);
+        self.dismiss_toast(id, cx);
+    }
+
     pub(crate) fn dismiss(&mut self, id: ToastId, cx: &mut Context<Self>) {
+        self.resolve(id, Resolution::Dismissed, cx);
+    }
+
+    fn dismiss_toast(&mut self, id: ToastId, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
         if self.queue.dismiss(id, now) {
             self.changed(cx);
@@ -828,6 +912,9 @@ impl ToastLayer {
     }
 
     pub(crate) fn dismiss_all(&mut self, cx: &mut Context<Self>) {
+        for id in self.queue.ids() {
+            self.inbox.resolve_toast(id, Resolution::Dismissed);
+        }
         if self.queue.dismiss_all() {
             self.changed(cx);
         }
@@ -983,7 +1070,9 @@ impl ToastLayer {
                         .when_some(focus, |button, focus| button.focus_handle(&focus))
                         .on_click(move |_, _, cx| {
                             choices.answer(Some(i));
-                            layer.update(cx, |layer, cx| layer.dismiss(id, cx)).ok();
+                            layer
+                                .update(cx, |layer, cx| layer.resolve(id, Resolution::Answered, cx))
+                                .ok();
                         }),
                     )
             };
@@ -1066,7 +1155,9 @@ impl ToastLayer {
                                 false => Source::Mouse,
                             };
                             run_action(command.clone(), source, window, cx);
-                            layer.update(cx, |layer, cx| layer.dismiss(id, cx)).ok();
+                            layer
+                                .update(cx, |layer, cx| layer.resolve(id, Resolution::Acted, cx))
+                                .ok();
                         }),
                 )
         });
@@ -1355,6 +1446,12 @@ impl Render for ToastLayer {
             .gap_2()
             .children(toasts)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    #[path = "../tests/notification_inbox.rs"]
+    mod notification_inbox;
 }
 
 #[cfg(test)]
