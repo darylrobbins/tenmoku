@@ -2470,7 +2470,16 @@ mod undo_race_tests {
         let err = restore(&root, &mut trashed).unwrap_err();
 
         assert!(race_tests::reached());
-        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        // The taken path or the unsearchable folder, whichever the platform
+        // checks first: macOS says the former, Linux the latter.
+        let kind = err.kind();
+        assert!(
+            matches!(
+                kind,
+                io::ErrorKind::AlreadyExists | io::ErrorKind::PermissionDenied
+            ),
+            "{kind:?}"
+        );
         let dir = staging_dir.borrow().clone().unwrap();
         assert_eq!(trashed.location(), Some(dir.join("a.txt").as_path()));
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();

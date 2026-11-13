@@ -712,7 +712,7 @@ impl ProjectPanel {
     }
 
     /// How many steps there are to undo and to redo.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn history_depth(&self) -> (usize, usize) {
         (self.history.undo.len(), self.history.redo.len())
     }
