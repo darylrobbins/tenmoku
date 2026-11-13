@@ -479,7 +479,7 @@ fn late_suspension_of_a_restored_file(
 fn big_program(fixture: &Fixture) -> crate::grants::ProgramIdentity {
     const CHUNKS: u64 = 8;
     let file = fs::OpenOptions::new()
-        .append(true)
+        .write(true)
         .open(fixture.program())
         .unwrap();
     file.set_len(CHUNKS * (64 << 10)).unwrap();

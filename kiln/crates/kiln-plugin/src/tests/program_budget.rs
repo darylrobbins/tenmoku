@@ -210,7 +210,7 @@ fn a_share_that_ends_mid_check_refuses_without_suspending_the_grant() {
     const CHUNKS: usize = 32;
     let path = support::script(&dir, "big", "exit 0", "exit /b 0");
     fs::OpenOptions::new()
-        .append(true)
+        .write(true)
         .open(&path)
         .unwrap()
         .set_len(u64::try_from(CHUNKS * (64 << 10)).unwrap())
