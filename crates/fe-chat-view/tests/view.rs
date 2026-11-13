@@ -312,7 +312,7 @@ fn states_show_their_banner_and_action(cx: &mut TestAppContext) {
         ),
         cut_off,
         fallen_back(&["claude-sonnet-5-5"]),
-        fallen_back(&["claude-sonnet-5-5", "claude-haiku-5-5"]),
+        fallen_back(&["claude-sonnet-5-5", "claude-haiku-4-5"]),
     ]));
     let mut chat = open(cx, provider.clone(), false);
 
@@ -415,7 +415,7 @@ fn states_show_their_banner_and_action(cx: &mut TestAppContext) {
     assert!(chat.shown("chat-answered-by-5".into()));
     chat.send("Sixth");
     let shown = chat.read(|view, _| view.turn_display(6)).unwrap();
-    assert_eq!(shown.answered_by.as_deref(), Some("claude-haiku-5-5"));
+    assert_eq!(shown.answered_by.as_deref(), Some("claude-haiku-4-5"));
     assert!(chat.shown("chat-answered-by-6".into()));
 }
 

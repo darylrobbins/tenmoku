@@ -1486,9 +1486,10 @@ impl ChatPanel {
             .on_click(pick);
             mark(button, label, current)
         });
+        let takes_effort = fe_config::chat_models::takes_effort(&model_now);
         let efforts = choices.efforts.into_iter().enumerate().map(|(i, effort)| {
             let label = effort_label(effort);
-            let current = effort == effort_now;
+            let current = effort == effort_now && takes_effort;
             let pick = cx.listener(move |this, _, window, cx| {
                 this.pick(Pick::Effort(effort), window, cx);
             });
@@ -1496,6 +1497,7 @@ impl ChatPanel {
                 .small()
                 .ghost()
                 .debug_selector(move || format!("{}-{i}", verbatim!("chat-effort-row")))
+                .disabled(!takes_effort)
                 .on_click(pick);
             mark(button, label.resolve().to_string(), current)
         });

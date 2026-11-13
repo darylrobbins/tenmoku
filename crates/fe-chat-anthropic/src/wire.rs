@@ -49,16 +49,19 @@ pub fn request_body(request: &ChatRequest, fallbacks: bool) -> Result<Vec<u8>, P
         request.messages.iter().map(message).collect(),
     );
     body.insert("model".to_owned(), request.model.clone().into());
-    body.insert(
-        "output_config".to_owned(),
-        object([("effort", effort(request.effort).into())]),
-    );
+    let takes_effort = takes_effort(&request.model);
+    if takes_effort {
+        body.insert(
+            "output_config".to_owned(),
+            object([("effort", effort(request.effort).into())]),
+        );
+    }
     body.insert("stream".to_owned(), true.into());
     body.insert(
         "system".to_owned(),
         request.system.iter().map(system_block).collect(),
     );
-    if request.show_thinking {
+    if request.show_thinking && takes_effort {
         body.insert(
             "thinking".to_owned(),
             object([
@@ -81,6 +84,16 @@ pub fn request_body(request: &ChatRequest, fallbacks: bool) -> Result<Vec<u8>, P
     }
     serde_json::to_vec(&Value::Object(body))
         .map_err(|error| ProviderError::new(ErrorKind::InvalidRequest, error.to_string()))
+}
+
+/// Whether the model takes `output_config.effort` and adaptive thinking.
+/// Claude Haiku 4.5 takes neither (effort is an error; its thinking is a
+/// budget), so it is sent neither. Mirrors
+/// `fe_config::chat_models::takes_effort`, which the picker uses; this crate
+/// doesn't depend on fe-config. A model id the app doesn't know keeps the
+/// full body.
+fn takes_effort(model: &str) -> bool {
+    model != "claude-haiku-4-5"
 }
 
 /// The headers for `request`, the key among them. The fallback beta goes

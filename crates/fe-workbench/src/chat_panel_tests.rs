@@ -294,7 +294,7 @@ fallbacks = false
 
 const CHANGED: &str = "\
 [chat]
-model = \"claude-haiku-5-5\"
+model = \"claude-haiku-4-5\"
 effort = \"low\"
 show_thinking = false
 max_tokens = 2048
@@ -360,7 +360,7 @@ fn new_chats_take_settings_and_grants(cx: &mut TestAppContext) {
         let settings = kiln::platform::config::settings::<fe_config::Settings>(cx);
         settings.chat.model.clone()
     });
-    assert_eq!(model, "claude-haiku-5-5", "reloaded");
+    assert_eq!(model, "claude-haiku-4-5", "reloaded");
     assert_eq!(chat_settings(&panel, cx), first_chat);
 
     // A new chat takes it, from the key or the header's button.
@@ -368,7 +368,7 @@ fn new_chats_take_settings_and_grants(cx: &mut TestAppContext) {
         max_tokens: 2048,
         fallbacks: true,
     };
-    let changed_chat = ("claude-haiku-5-5".to_owned(), Effort::Low, false, changed);
+    let changed_chat = ("claude-haiku-4-5".to_owned(), Effort::Low, false, changed);
     dispatch_in("chat.new", &[crate::KEY_CONTEXT, "chat"], cx);
     assert_eq!(chat_settings(&panel, cx), changed_chat);
     assert_eq!(made.borrow().last(), Some(&("env-key".to_owned(), changed)));
@@ -625,3 +625,36 @@ mod set_key;
 
 #[path = "chat_store_tests.rs"]
 mod store;
+
+#[gpui::test]
+fn chat_picker_effort_rows_are_disabled_for_haiku(cx: &mut TestAppContext) {
+    let config = tempfile::tempdir().unwrap();
+    let _sender = settings(
+        config.path(),
+        "[chat]\nmodel = \"claude-haiku-4-5\"\neffort = \"high\"\n",
+        cx,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, cx) = opened(cx, dir.path());
+    let _made = scripted(cx);
+    let store = Arc::new(MemoryStore::new());
+    set_source(Some("env-key"), &store, cx);
+    dispatch("chat.open", cx);
+    let panel = chat(&workbench, cx).expect("made");
+    let click = |selector: &'static str, cx: &mut VisualTestContext| {
+        let bounds = cx.debug_bounds(selector).expect("drawn");
+        cx.simulate_click(bounds.center(), Default::default());
+        draw(cx);
+    };
+    click("chat-model-picker", cx);
+    // A disabled row runs nothing: the picker stays open, the effort stays.
+    click("chat-effort-row-0", cx);
+    assert!(panel.read_with(cx, |panel, _| panel.picker_open()));
+    assert_eq!(chat_settings(&panel, cx).1, Effort::High);
+    // A model row still picks.
+    click("chat-model-row-0", cx);
+    assert!(!panel.read_with(cx, |panel, _| panel.picker_open()));
+    click("chat-model-picker", cx);
+    click("chat-effort-row-0", cx);
+    assert_eq!(chat_settings(&panel, cx).1, Effort::Low);
+}

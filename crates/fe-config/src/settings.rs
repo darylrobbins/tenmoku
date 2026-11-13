@@ -149,7 +149,7 @@ impl Default for TreeSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ChatSettings {
-    /// The Claude model new chats use. A chat keeps the model it started with.
+    /// The Claude model new chats start with.
     #[schemars(length(min = 1))]
     pub model: String,
     /// How much Claude thinks before it answers: lower is faster and

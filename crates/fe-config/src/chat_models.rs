@@ -7,9 +7,16 @@
 pub const KNOWN: &[&str] = &[
     "claude-opus-5-5",
     "claude-sonnet-5-5",
-    "claude-haiku-5-5",
+    "claude-haiku-4-5",
     "claude-fable-5-1",
 ];
+
+/// Whether requests to `id` carry an effort. Only `claude-haiku-4-5` does
+/// not: its API rejects `output_config.effort`. The wire code in
+/// `fe-chat-anthropic` keeps its own copy of this check.
+pub fn takes_effort(id: &str) -> bool {
+    id != "claude-haiku-4-5"
+}
 
 /// The models whose effort changes mid-chat through an effort-only system
 /// message (beta `mid-conversation-output-config-2026-07-01`), which keeps
@@ -30,7 +37,7 @@ pub fn label(id: &str) -> &str {
     match id {
         "claude-opus-5-5" => kiln_l10n::verbatim!("Opus 5.5"),
         "claude-sonnet-5-5" => kiln_l10n::verbatim!("Sonnet 5.5"),
-        "claude-haiku-5-5" => kiln_l10n::verbatim!("Haiku 5.5"),
+        "claude-haiku-4-5" => kiln_l10n::verbatim!("Haiku 4.5"),
         "claude-fable-5-1" => kiln_l10n::verbatim!("Fable 5.1"),
         other => other,
     }

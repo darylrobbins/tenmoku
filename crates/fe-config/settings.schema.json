@@ -91,7 +91,7 @@
         },
         "model": {
           "default": "claude-opus-5-5",
-          "description": "The Claude model new chats use. A chat keeps the model it started with.",
+          "description": "The Claude model new chats start with.",
           "minLength": 1,
           "type": "string"
         },

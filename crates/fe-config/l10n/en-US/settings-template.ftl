@@ -370,7 +370,7 @@ settings-template-terminal-font_fallbacks =
     Or set font_family to a Nerd Font, such as "JetBrainsMono Nerd Font Mono".
 
 settings-template-chat-model =
-    The Claude model new chats use. A chat keeps the model it started with. A
+    The Claude model new chats start with. A
     project file can't set any [chat] key.
 
 settings-template-chat-effort =

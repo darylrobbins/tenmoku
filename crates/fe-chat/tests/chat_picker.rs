@@ -133,7 +133,7 @@ fn picker_model_switch_applies_next_turn_history_unchanged() {
     let provider = ScriptedProvider::new([
         reply("claude-opus-5-5", "One."),
         reply("claude-opus-5-5", "Two."),
-        reply("claude-haiku-5-5", "Three."),
+        reply("claude-haiku-4-5", "Three."),
         reply("claude-opus-5-5", "Four."),
     ]);
     send(&mut chat, &provider, "First?", &settings);
@@ -141,7 +141,7 @@ fn picker_model_switch_applies_next_turn_history_unchanged() {
     let history = chat.history();
 
     // Picked between turns: nothing earlier changes.
-    chat.set_model("claude-haiku-5-5");
+    chat.set_model("claude-haiku-4-5");
     assert_eq!(chat.history(), history, "the history is as it was");
     assert_eq!(
         chat.turns[1].asked_model.as_deref(),
@@ -149,7 +149,7 @@ fn picker_model_switch_applies_next_turn_history_unchanged() {
     );
 
     let third = send(&mut chat, &provider, "Third?", &settings);
-    assert_eq!(third.model, "claude-haiku-5-5", "the next request names it");
+    assert_eq!(third.model, "claude-haiku-4-5", "the next request names it");
     assert_eq!(third.effort, Effort::Medium);
     // Earlier turns go back verbatim, the other model's thinking included.
     assert_eq!(third.messages[..history.len()], history[..]);
@@ -167,9 +167,9 @@ fn picker_model_switch_applies_next_turn_history_unchanged() {
     assert!(extends(&third, &second));
     assert_eq!(
         chat.turns[2].asked_model.as_deref(),
-        Some("claude-haiku-5-5")
+        Some("claude-haiku-4-5")
     );
-    assert_eq!(chat.turns[2].model.as_deref(), Some("claude-haiku-5-5"));
+    assert_eq!(chat.turns[2].model.as_deref(), Some("claude-haiku-4-5"));
 
     // And back: the same history again, the haiku turn included.
     chat.set_model("claude-opus-5-5");
@@ -188,7 +188,7 @@ fn picker_effort_change_appends_effort_message_top_level_unchanged() {
         reply("claude-opus-5-5", "Two."),
         reply("claude-opus-5-5", "Three."),
         reply("claude-opus-5-5", "Four."),
-        reply("claude-haiku-5-5", "Five."),
+        reply("claude-haiku-4-5", "Five."),
     ]);
     let first = send(&mut chat, &provider, "First?", &settings);
     assert_eq!(first.effort, Effort::Medium);
@@ -233,7 +233,7 @@ fn picker_effort_change_appends_effort_message_top_level_unchanged() {
 
     // A model that doesn't take the message: the top-level effort changes
     // instead, and no effort message is sent.
-    chat.set_model("claude-haiku-5-5");
+    chat.set_model("claude-haiku-4-5");
     chat.set_effort(Effort::Low);
     let fifth = send(&mut chat, &provider, "Fifth?", &settings);
     assert_eq!(fifth.effort, Effort::Low);

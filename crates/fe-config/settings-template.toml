@@ -351,7 +351,7 @@
 # font_fallbacks = []
 
 [chat]
-# The Claude model new chats use. A chat keeps the model it started with. A
+# The Claude model new chats start with. A
 # project file can't set any [chat] key.
 # model = "claude-opus-5-5"
 # How much Claude thinks before it answers: low, medium, high, xhigh or max.

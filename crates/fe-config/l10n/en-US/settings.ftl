@@ -44,7 +44,7 @@ settings-chat-fallbacks =
 
 settings-chat-max_tokens = The most a reply may use, its thinking included.
 
-settings-chat-model = The Claude model new chats use. A chat keeps the model it started with.
+settings-chat-model = The Claude model new chats start with.
 
 settings-chat-show_thinking =
     Show a summary of Claude's reasoning above each reply. Applies to new
