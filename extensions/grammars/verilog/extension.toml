@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_verilog"
+name = "Verilog and SystemVerilog syntax"
+version = "1.0.3"
+license = "MIT AND Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "verilog"
+wasm = "tree-sitter-verilog.wasm"
+extensions = ["v", "vh", "sv", "svh"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+license = "MIT"

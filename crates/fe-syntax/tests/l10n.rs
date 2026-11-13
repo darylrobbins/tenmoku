@@ -24,7 +24,7 @@ fn english_keeps_its_wording_for_counts_and_clashes() {
     };
     assert_eq!(
         too_large.to_string(),
-        "g.wasm: 1 bytes; a grammar's files may have at most 16777216"
+        "g.wasm: 1 bytes; a grammar's files may have at most 20971520"
     );
     let clash = |clash| GrammarError::Clash {
         language: "foo".into(),

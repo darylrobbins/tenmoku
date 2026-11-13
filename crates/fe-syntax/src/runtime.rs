@@ -37,7 +37,7 @@ use crate::{
 };
 
 /// The most [`register_language`] reads of a module or a query file.
-pub const MAX_GRAMMAR_BYTES: u64 = 16 << 20;
+pub const MAX_GRAMMAR_BYTES: u64 = 20 << 20;
 
 /// How long a grammar's code may run before it's stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

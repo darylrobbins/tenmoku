@@ -42,6 +42,10 @@ const NOT_RELEASED: &[(&str, &str)] = &[
         "added on vps01; recorded by the Mac's next grammar release",
     ),
     (
+        "verilog",
+        "added on argon; recorded by the Mac's next grammar release",
+    ),
+    (
         "vhdl",
         "added on vps01; recorded by the Mac's next grammar release",
     ),
