@@ -121,7 +121,7 @@ fn tab_count(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize
     workbench.read_with(cx, |workbench, cx| workbench.pane().read(cx).tabs().len())
 }
 
-const FOLDER_MENU: [Option<&str>; 14] = [
+const FOLDER_MENU: [Option<&str>; 17] = [
     Some("project_panel.new_file"),
     Some("project_panel.new_folder"),
     None,
@@ -134,6 +134,9 @@ const FOLDER_MENU: [Option<&str>; 14] = [
     None,
     Some("project_panel.copy_path"),
     Some("project_panel.copy_relative_path"),
+    Some("project_panel.reveal_in_os"),
+    Some("project_panel.open_in_terminal"),
+    Some("project_panel.find_in_folder"),
     None,
     Some("project_panel.collapse_all"),
 ];
@@ -205,6 +208,13 @@ fn folder_menu_lists_new_and_delete(cx: &mut TestAppContext) {
             "Copy",
             "Copy Path",
             "Copy Relative Path",
+            if cfg!(target_os = "macos") {
+                "Reveal in Finder"
+            } else {
+                "Reveal in File Manager"
+            },
+            "Open in Terminal",
+            "Find in Folder…",
             "Collapse All Folders",
         ],
         "the commands' titles"

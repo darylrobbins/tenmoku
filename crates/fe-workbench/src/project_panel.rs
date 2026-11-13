@@ -211,6 +211,10 @@ pub enum PanelEvent {
     /// A file row was clicked once: it opens for a look, in a preview tab
     /// that the next one replaces, if `workbench.preview_tabs` is on.
     PreviewFile(PathBuf),
+    /// A new terminal is wanted in this folder.
+    OpenTerminalIn(PathBuf),
+    /// Find in Files is wanted limited to this folder.
+    FindInFolder(PathBuf),
     /// A watcher batch came, for others that follow the disk too.
     FsChanged(Vec<FsChange>),
     /// The root opened: its tree shows.
@@ -1138,6 +1142,9 @@ impl ProjectPanel {
             PanelOp::Duplicate => self.duplicate_selected(window, cx),
             PanelOp::CopyPath => self.copy_path(false, cx),
             PanelOp::CopyRelativePath => self.copy_path(true, cx),
+            PanelOp::RevealInOs | PanelOp::OpenInTerminal | PanelOp::FindInFolder => {
+                self.run_os_op(op, cx)
+            }
             PanelOp::ExpandAll => self.expand_all(cx),
             PanelOp::CollapseAll => self.collapse_all(cx),
             PanelOp::ToggleIgnored => {
@@ -1724,6 +1731,9 @@ pub(crate) enum PanelOp {
     Duplicate,
     CopyPath,
     CopyRelativePath,
+    RevealInOs,
+    OpenInTerminal,
+    FindInFolder,
     Toggle,
     ExpandAll,
     CollapseAll,
@@ -1793,6 +1803,13 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
             KEY_CONTEXT,
             CopyRelativePath,
         ),
+        ("project_panel.reveal_in_os", KEY_CONTEXT, RevealInOs),
+        (
+            "project_panel.open_in_terminal",
+            KEY_CONTEXT,
+            OpenInTerminal,
+        ),
+        ("project_panel.find_in_folder", KEY_CONTEXT, FindInFolder),
         ("project_panel.toggle", KEY_CONTEXT, Toggle),
         ("project_panel.expand_all", KEY_CONTEXT, ExpandAll),
         ("project_panel.collapse_all", KEY_CONTEXT, CollapseAll),
@@ -1980,6 +1997,8 @@ pub(crate) mod templates;
 #[path = "project_panel_drag.rs"]
 mod drag;
 
+#[path = "project_panel_os.rs"]
+mod os;
 #[path = "project_panel_undo.rs"]
 mod undo;
 

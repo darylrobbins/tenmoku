@@ -360,6 +360,24 @@ impl TerminalPanel {
     /// directory here, else in the panel's directory or, if that's gone,
     /// the home directory.
     pub(crate) fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.add_in(None, window, cx);
+    }
+
+    /// Like [`Self::add`], but in `dir` if it's given and a directory.
+    pub(crate) fn add_in(
+        &mut self,
+        dir: Option<&Path>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(dir) = dir.filter(|dir| dir.is_dir()) {
+            let options = TerminalOptions {
+                shell: self.shell(),
+                scrollback: self.settings.scrollback,
+                ..TerminalOptions::new(dir.to_owned())
+            };
+            return self.add_session(options, window, cx);
+        }
         let reported = (self.view())
             .and_then(|view| view.read(cx).terminal()?.cwd())
             .filter(|dir| dir.is_dir());

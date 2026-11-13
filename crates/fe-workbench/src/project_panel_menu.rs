@@ -7,7 +7,8 @@
 //! A right click on a row selects it (it doesn't open a file or toggle a
 //! folder, as a left click does) and offers, on a folder: New File, New
 //! Folder | Rename, Duplicate, Move to Trash | Cut, Copy, Paste | Copy Path,
-//! Copy Relative Path | Collapse All Folders. A file's menu is the same
+//! Copy Relative Path, Reveal in Finder (the File Manager elsewhere), Open in
+//! Terminal, Find in Folder | Collapse All Folders. A file's menu is the same
 //! without New File and New Folder; its Paste goes beside it, as the key's
 //! does. A right click on the empty space below the rows selects nothing
 //! and offers New File, New Folder | Paste | Refresh, each acting on the
@@ -50,6 +51,9 @@ pub(crate) enum MenuItem {
     Paste,
     CopyPath,
     CopyRelativePath,
+    RevealInOs,
+    OpenInTerminal,
+    FindInFolder,
     CollapseAll,
     Refresh,
 }
@@ -71,6 +75,9 @@ const FOLDER_ITEMS: &[Option<MenuItem>] = &[
     None,
     Some(CopyPath),
     Some(CopyRelativePath),
+    Some(RevealInOs),
+    Some(OpenInTerminal),
+    Some(FindInFolder),
     None,
     Some(CollapseAll),
 ];
@@ -99,6 +106,9 @@ impl MenuItem {
             Paste => PanelOp::Paste,
             CopyPath => PanelOp::CopyPath,
             CopyRelativePath => PanelOp::CopyRelativePath,
+            RevealInOs => PanelOp::RevealInOs,
+            OpenInTerminal => PanelOp::OpenInTerminal,
+            FindInFolder => PanelOp::FindInFolder,
             CollapseAll => PanelOp::CollapseAll,
             Refresh => PanelOp::Refresh,
         }
@@ -117,6 +127,9 @@ impl MenuItem {
             Paste => "project_panel.paste",
             CopyPath => "project_panel.copy_path",
             CopyRelativePath => "project_panel.copy_relative_path",
+            RevealInOs => "project_panel.reveal_in_os",
+            OpenInTerminal => "project_panel.open_in_terminal",
+            FindInFolder => "project_panel.find_in_folder",
             CollapseAll => "project_panel.collapse_all",
             Refresh => "project_panel.refresh",
         }
@@ -124,6 +137,9 @@ impl MenuItem {
 
     /// Its title: its command's, in the active locale.
     pub(crate) fn title(self) -> SharedString {
+        if self == RevealInOs {
+            return super::os::reveal_title();
+        }
         fe_command::l10n::command_label(self.command(), "")
     }
 }

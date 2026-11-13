@@ -211,3 +211,9 @@ workbench-project-structure-capped = { $count ->
     [one] Showing the first { $shown } symbol
    *[other] Showing the first { $shown } symbols
 }
+
+## Reveal, Open in Terminal and Find in Folder (project_panel_os.rs)
+
+# The context menu's Reveal item: the platform's name for its file manager.
+workbench-project-reveal-in-finder = Reveal in Finder
+workbench-project-reveal-in-file-manager = Reveal in File Manager

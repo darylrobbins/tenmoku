@@ -86,6 +86,8 @@ impl Workbench {
                     workbench.lsp_files_created(paths);
                     crate::pane::editorconfigs_changed(&tree_changes(paths), cx);
                 }
+                PanelEvent::OpenTerminalIn(dir) => workbench.open_terminal_in(dir, window, cx),
+                PanelEvent::FindInFolder(dir) => workbench.find_in_folder(dir, window, cx),
                 PanelEvent::Deleted(paths) => {
                     workbench.lsp_files_deleted(paths);
                     crate::pane::editorconfigs_changed(&tree_changes(paths), cx);

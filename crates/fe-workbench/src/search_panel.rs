@@ -946,6 +946,17 @@ impl SearchPanel {
         cx.notify();
     }
 
+    /// Limits the search to the folder `glob` names, shown in the include
+    /// field, and focuses the query, running it if it has text.
+    pub(crate) fn scope_to(&mut self, glob: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.details_shown = true;
+        self.include
+            .update(cx, |input, cx| input.set_text(glob, cx));
+        window.focus(&gpui::Focusable::focus_handle(&self.input, cx), cx);
+        self.run(cx);
+        cx.notify();
+    }
+
     /// Shows or hides the include and exclude fields, focusing the query if
     /// one of them had focus.
     fn toggle_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
