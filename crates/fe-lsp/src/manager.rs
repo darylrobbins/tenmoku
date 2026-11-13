@@ -2476,7 +2476,11 @@ impl LspManager {
         self.session(server, |session| session.capabilities.clone())
     }
 
-    fn session<T>(&self, server: ServerId, read: impl FnOnce(&Session) -> Option<T>) -> Option<T> {
+    pub(crate) fn session<T>(
+        &self,
+        server: ServerId,
+        read: impl FnOnce(&Session) -> Option<T>,
+    ) -> Option<T> {
         let handle = self.servers.get(&server)?;
         read(
             &handle

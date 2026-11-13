@@ -420,4 +420,7 @@ settings-template-lsp-servers-my_linter =
     Language servers are set per name under [lsp.servers]. A project file can
     only turn them off. add_on = true makes a server add to a language's main
     server instead of being it: a file gets its first server that isn't an
-    add-on, plus every add-on listing its language.
+    add-on, plus every add-on listing its language. watch_files tells it of
+    changes on disk to those files under its root, except under watch_excludes,
+    even if it never asks. repoll_ms asks it again that often for the colours,
+    hints, lenses and links of the files shown (0 or unset: never).

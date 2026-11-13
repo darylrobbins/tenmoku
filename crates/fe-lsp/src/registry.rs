@@ -6,6 +6,7 @@
 //! fe-config has already narrowed to turning servers off.
 
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use fe_config::settings::{LspReadiness, LspServerSettings, LspSettings, TypescriptServer};
 use serde_json::Value;
@@ -393,7 +394,7 @@ fn lexically_normal(path: &Path) -> PathBuf {
 }
 
 /// `spec` with what `settings` sets.
-fn apply(mut spec: ServerSpec, settings: &LspServerSettings) -> ServerSpec {
+pub(crate) fn apply(mut spec: ServerSpec, settings: &LspServerSettings) -> ServerSpec {
     if let Some(command) = &settings.command {
         spec.command = command.into();
     }
@@ -420,6 +421,25 @@ fn apply(mut spec: ServerSpec, settings: &LspServerSettings) -> ServerSpec {
     }
     if let Some(add_on) = settings.add_on {
         spec.add_on = add_on;
+    }
+    // A list set here is what's meant, over a built-in pointer, unless a
+    // pointer is set here too.
+    if let Some(globs) = &settings.watch_files {
+        spec.watch_files.clone_from(globs);
+        spec.watch_files_from = None;
+    }
+    if let Some(globs) = &settings.watch_excludes {
+        spec.watch_excludes.clone_from(globs);
+        spec.watch_excludes_from = None;
+    }
+    if let Some(pointer) = &settings.watch_files_from {
+        spec.watch_files_from = Some(pointer.clone());
+    }
+    if let Some(pointer) = &settings.watch_excludes_from {
+        spec.watch_excludes_from = Some(pointer.clone());
+    }
+    if let Some(ms) = settings.repoll_ms {
+        spec.repoll = (ms > 0).then(|| Duration::from_millis(ms));
     }
     if let Some(options) = &settings.initialization_options {
         spec.initialization_options = Some(options.clone());

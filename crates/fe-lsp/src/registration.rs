@@ -23,9 +23,15 @@
 //! `RequestFailed`, naming the methods, and records nothing.
 //! `client/unregisterCapability` removes the ids it names, and their
 //! watchers; an unknown id is a no-op.
+//!
+//! Beside those, a session holds its spec's root-scoped static watch
+//! ([`StaticWatch`]: `ServerSpec::watch_files` and `watch_excludes`, or
+//! the lists their `_from` pointers find in its settings) as a permanent
+//! watched-files registration, which no id names and nothing unregisters
+//! (docs/decisions/q5j03ax2af-lsp-add-on-servers.md §2.4).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use async_lsp::{ErrorCode, ResponseError};
 use lsp_types::notification::{DidChangeConfiguration, DidChangeWatchedFiles, Notification};
@@ -37,6 +43,7 @@ use lsp_types::{
 };
 
 use crate::glob::LspGlob;
+use crate::launcher::ServerSpec;
 
 /// The methods a server may register.
 const SUPPORTED: [&str; 3] = [
@@ -95,11 +102,140 @@ pub(crate) fn trigger_chars(first: &str, more: Option<&[String]>) -> Vec<char> {
     chars
 }
 
-/// A session's accepted registrations, by registration id.
+/// A spec's root-scoped static watch: the changes of files under `root`
+/// that match one of `files` and neither they nor a folder above them (up
+/// to the root) match one of `excludes`, both globs relative to the root.
+/// Every kind of change counts.
+pub(crate) struct StaticWatch {
+    root: PathBuf,
+    files: Vec<LspGlob>,
+    excludes: Vec<LspGlob>,
+}
+
+impl StaticWatch {
+    /// The watch of `spec` running at `root` with `settings`, or `None` if
+    /// it watches nothing. Each list is the one its `_from` pointer finds
+    /// in `settings` when set, else the spec's own. A list that isn't an
+    /// array of strings is empty. A files glob that doesn't build is left
+    /// out; an exclude that doesn't build leaves no watch at all, rather
+    /// than one wider than meant. Each failure is logged.
+    pub(crate) fn new(
+        spec: &ServerSpec,
+        root: &Path,
+        settings: &serde_json::Value,
+    ) -> Option<Self> {
+        let name = &spec.name;
+        let files = globs(
+            name,
+            &spec.watch_files,
+            spec.watch_files_from.as_deref(),
+            settings,
+        );
+        let files: Vec<LspGlob> = (files.iter())
+            .filter_map(|glob| {
+                (compile(glob))
+                    .inspect_err(|err| log::warn!("{name}: watch_files: {err}"))
+                    .ok()
+            })
+            .collect();
+        if files.is_empty() {
+            return None;
+        }
+        let excludes = globs(
+            name,
+            &spec.watch_excludes,
+            spec.watch_excludes_from.as_deref(),
+            settings,
+        );
+        let excludes = (excludes.iter())
+            .map(|glob| compile(glob))
+            .collect::<Result<Vec<_>, _>>()
+            .inspect_err(|err| log::warn!("{name}: watch_excludes: {err}; watching nothing"))
+            .ok()?;
+        Some(Self {
+            root: root.to_owned(),
+            files,
+            excludes,
+        })
+    }
+
+    /// Whether the change of `path` is one it watches. A path with `.` or
+    /// `..` in it under the root never is. The globs see the path's parts
+    /// joined by `/`, whatever the platform's separator, so `**/dist`
+    /// leaves out `src\dist\a.css` on Windows as `src/dist/a.css` here.
+    fn watches(&self, path: &Path) -> bool {
+        let Ok(relative) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        let parts: Option<Vec<_>> = (relative.components())
+            .map(|part| match part {
+                Component::Normal(part) => Some(part.to_string_lossy()),
+                _ => None,
+            })
+            .collect();
+        let Some(parts) = parts.filter(|parts| !parts.is_empty()) else {
+            return false;
+        };
+        let under = |count: usize| PathBuf::from(parts[..count].join("/"));
+        self.files
+            .iter()
+            .any(|glob| glob.matches(&under(parts.len())))
+            && !(1..=parts.len())
+                .any(|count| self.excludes.iter().any(|glob| glob.matches(&under(count))))
+    }
+}
+
+/// The globs a watch list takes: those at `pointer` in `settings` when it's
+/// set, else `own`.
+fn globs(
+    name: &str,
+    own: &[String],
+    pointer: Option<&str>,
+    settings: &serde_json::Value,
+) -> Vec<String> {
+    let Some(pointer) = pointer else {
+        return own.to_vec();
+    };
+    let found = settings.pointer(pointer).and_then(|value| {
+        (value.as_array()?.iter())
+            .map(|glob| glob.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+    });
+    found.unwrap_or_else(|| {
+        log::warn!("{name}: the settings at {pointer} aren't a list of globs");
+        Vec::new()
+    })
+}
+
+/// A glob relative to a root, matched against paths relative to it. A
+/// leading `./` is dropped, as fast-glob does.
+fn compile(glob: &str) -> Result<LspGlob, String> {
+    let glob = glob.strip_prefix("./").unwrap_or(glob);
+    LspGlob::new(&GlobPattern::String(glob.to_owned()))
+}
+
+/// A session's accepted registrations, by registration id, and its static
+/// watch.
 #[derive(Default)]
-pub(crate) struct Registrations(BTreeMap<String, Registered>);
+pub(crate) struct Registrations {
+    by_id: BTreeMap<String, Registered>,
+    fixed: Option<StaticWatch>,
+}
 
 impl Registrations {
+    /// None accepted yet, with `watch` as the static watch.
+    pub(crate) fn with_watch(watch: Option<StaticWatch>) -> Self {
+        Self {
+            by_id: BTreeMap::new(),
+            fixed: watch,
+        }
+    }
+
+    /// Replaces the static watch (its settings changed).
+    pub(crate) fn set_watch(&mut self, watch: Option<StaticWatch>) {
+        self.fixed = watch;
+    }
+
     pub(crate) fn register(&mut self, params: RegistrationParams) -> Result<(), ResponseError> {
         let mut refused = Vec::new();
         let mut accepted = Vec::new();
@@ -119,18 +255,18 @@ impl Registrations {
                 format!("Tenmoku can't register {}", refused.join(", ")),
             ));
         }
-        self.0.extend(accepted);
+        self.by_id.extend(accepted);
         Ok(())
     }
 
     pub(crate) fn unregister(&mut self, params: UnregistrationParams) {
         for unregistration in params.unregisterations {
-            self.0.remove(&unregistration.id);
+            self.by_id.remove(&unregistration.id);
         }
     }
 
-    /// Whether a watched-files registration wants a change of `typ` to
-    /// `path`.
+    /// Whether a watched-files registration, or the static watch, wants a
+    /// change of `typ` to `path`.
     pub(crate) fn watches(&self, path: &Path, typ: FileChangeType) -> bool {
         let kind = match typ {
             FileChangeType::CREATED => WatchKind::Create,
@@ -138,13 +274,13 @@ impl Registrations {
             FileChangeType::DELETED => WatchKind::Delete,
             _ => return false,
         };
-        self.0
-            .values()
-            .flat_map(|registered| match registered {
-                Registered::Configuration | Registered::OnTypeFormatting { .. } => &[][..],
-                Registered::WatchedFiles(watchers) => watchers,
-            })
-            .any(|(glob, wanted)| wanted.contains(kind) && glob.matches(path))
+        self.fixed.as_ref().is_some_and(|watch| watch.watches(path))
+            || (self.by_id.values())
+                .flat_map(|registered| match registered {
+                    Registered::Configuration | Registered::OnTypeFormatting { .. } => &[][..],
+                    Registered::WatchedFiles(watchers) => watchers,
+                })
+                .any(|(glob, wanted)| wanted.contains(kind) && glob.matches(path))
     }
 
     /// The characters the on-type formatting registrations for the
@@ -152,7 +288,7 @@ impl Registrations {
     /// registered (by id), once each.
     pub(crate) fn on_type_triggers(&self, uri: &Url, language_id: &str) -> Vec<char> {
         let mut chars = Vec::new();
-        for registered in self.0.values() {
+        for registered in self.by_id.values() {
             let Registered::OnTypeFormatting { selector, triggers } = registered else {
                 continue;
             };
@@ -172,7 +308,7 @@ impl Registrations {
     /// The registration ids, in order.
     #[cfg(test)]
     pub(crate) fn ids(&self) -> Vec<String> {
-        self.0.keys().cloned().collect()
+        self.by_id.keys().cloned().collect()
     }
 }
 

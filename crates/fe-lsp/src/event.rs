@@ -28,6 +28,18 @@ pub enum Refresh {
     CodeLens,
 }
 
+/// A notification fe-lsp handed a server that may change its index with
+/// no edit to the documents it's asked about
+/// (docs/decisions/q5j03ax2af-lsp-add-on-servers.md §5, "Asking again").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Notice {
+    /// `workspace/didChangeWatchedFiles`.
+    WatchedFiles,
+    /// `workspace/didChangeConfiguration`.
+    Configuration,
+}
+
 /// Sent to the manager's sink, on the server's thread.
 ///
 /// A host showing diagnostics applies a `Diagnostics` only while its
@@ -99,6 +111,11 @@ pub enum LspEvent {
     /// every document it has open. The client capabilities that invite
     /// these requests are advertised by the feature cards, not here.
     Refresh { server: ServerId, what: Refresh },
+    /// `what` was just handed to the server (not necessarily read yet). Its
+    /// answers may change once it has dealt with it, so a host may ask it
+    /// again for those it shows; [`LspManager::repoll_due`](crate::LspManager::repoll_due)
+    /// catches what changes later.
+    Notified { server: ServerId, what: Notice },
     /// The server asked for `edits` to be applied (`workspace/applyEdit`,
     /// a code action's command, say), under `label` for undo. Answer
     /// through `reply`: unanswered after 5 s, it's answered not applied.

@@ -68,7 +68,9 @@ use futures::stream::FuturesUnordered;
 use futures::{
     AsyncRead, AsyncReadExt, AsyncWrite, Future, FutureExt, StreamExt, pin_mut, select_biased,
 };
-use lsp_types::notification::{Cancel, DidChangeConfiguration, Exit, Initialized};
+use lsp_types::notification::{
+    Cancel, DidChangeConfiguration, DidChangeWatchedFiles, Exit, Initialized, Notification,
+};
 use lsp_types::request::{Initialize, Request, Shutdown};
 use lsp_types::{
     CancelParams, ClientCapabilities, ClientInfo, CodeActionCapabilityResolveSupport,
@@ -96,7 +98,7 @@ use crate::clock::Clock;
 use crate::diagnostics::{FileDiagnostic, Inbox};
 use crate::document::{Admitted, Document, Link, Note, Opened, Opening, SentDocument, SyncPolicy};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspError, LspEvent, ServerId, ServerStatus, SharedLog, not_open};
+use crate::event::{LspError, LspEvent, Notice, ServerId, ServerStatus, SharedLog, not_open};
 use crate::identity::{EndSession, Identities, SessionId};
 use crate::launcher::{
     ExitInfo, Flag, LaunchCancel, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
@@ -104,7 +106,7 @@ use crate::launcher::{
 };
 use crate::pull::{Pulled, Puller};
 use crate::readiness::Readiness;
-use crate::registration::Registrations;
+use crate::registration::{Registrations, StaticWatch};
 use crate::requests::{Issue, Orphans, Out, Settled};
 use crate::restart::{Carry, Kill, SharedCrashes, Verdict, Waited};
 use crate::router::{ClientState, Signal, client_router};
@@ -335,6 +337,10 @@ pub(crate) struct Session {
     pub(crate) capabilities: Option<ServerCapabilities>,
     pub(crate) encoding: Option<PositionEncoding>,
     pub(crate) registrations: Registrations,
+    /// When the session initialized, and how often its answers are asked
+    /// for again (`ServerSpec::repoll`): none before it initializes, or for
+    /// a spec without one.
+    pub(crate) repoll: Option<(Instant, Duration)>,
     /// How many orphans the actor holds, and the most it has held.
     #[cfg(test)]
     pub(crate) orphans: (usize, usize),
@@ -584,7 +590,14 @@ impl Server {
             killed: false,
             switch: self.switch.clone(),
         };
-        *lock(&self.session) = Session::default();
+        *lock(&self.session) = Session {
+            registrations: Registrations::with_watch(StaticWatch::new(
+                &self.spec,
+                &self.root,
+                &carry.settings,
+            )),
+            ..Session::default()
+        };
         let queue = Rc::new(Queue::default());
         let settings = Rc::new(RefCell::new(carry.settings.clone()));
         let readiness = Arc::new(Mutex::new(Readiness::new(&self.spec)));
@@ -666,6 +679,7 @@ impl Server {
             spec: self.spec.clone(),
             settings,
             folder: folder.clone(),
+            root: self.root.clone(),
             clock: self.clock.clone(),
             session: self.session.clone(),
             socket,
@@ -812,6 +826,8 @@ struct Actor {
     /// The spec's `settings` as they are now, shared with the router.
     settings: Rc<RefCell<serde_json::Value>>,
     folder: WorkspaceFolder,
+    /// The folder it runs in, which its static watch is under.
+    root: PathBuf,
     clock: Arc<dyn Clock>,
     session: Arc<Mutex<Session>>,
     socket: ServerSocket,
@@ -1189,12 +1205,19 @@ impl Actor {
             Command::Configure(settings) => {
                 self.settings.replace(settings.clone());
                 self.carry.settings = settings.clone();
+                // The static watch's pointers are read again first, so the
+                // next change on disk is filtered by the new settings.
+                let watch = StaticWatch::new(&self.spec, &self.root, &settings);
+                lock(&self.session).registrations.set_watch(watch);
                 // If the loop has gone, `loop_done` says so.
-                let _ = self
+                let sent = self
                     .socket
                     .notify::<DidChangeConfiguration>(DidChangeConfigurationParams { settings });
                 let _ = self.socket.emit(Taken);
                 self.sent += 1;
+                if sent.is_ok() {
+                    self.notified(Notice::Configuration);
+                }
             }
             Command::Notify { method, params } => {
                 let sent = {
@@ -1206,6 +1229,9 @@ impl Actor {
                 {
                     let _ = self.socket.emit(Taken);
                     self.sent += 1;
+                    if method == DidChangeWatchedFiles::METHOD {
+                        self.notified(Notice::WatchedFiles);
+                    }
                 }
             }
             Command::Drain => {
@@ -1325,10 +1351,13 @@ impl Actor {
         Ended::Crashed { why, at, carry }
     }
 
-    /// Retires the session's identities, then reports the diagnostics of
-    /// each document the server had open cleared, and of each whose
-    /// `didClose` is still in the outbox, which is never sent now.
+    /// Retires the session's identities and stops its polls, then reports
+    /// the diagnostics of each document the server had open cleared, and of
+    /// each whose `didClose` is still in the outbox, which is never sent now.
     fn end_session(&mut self) {
+        // Nothing is polled through a session that has ended, during its
+        // shutdown or a crash's backoff, nor after the last crash.
+        lock(&self.session).repoll = None;
         for reply in self.asked.drain(..) {
             reply.fail("the server's session ended");
         }
@@ -1639,9 +1668,26 @@ impl Actor {
                 .to_string(),
             );
         }
-        lock(&self.readiness).initialized(self.clock.now());
+        let now = self.clock.now();
+        lock(&self.readiness).initialized(now);
+        lock(&self.session).repoll = (self.spec.repoll)
+            .filter(|period| !period.is_zero())
+            .map(|period| (now, period));
         self.readiness_changed();
         Started::Running
+    }
+
+    /// Reports that `what` was handed to async-lsp for the server.
+    fn notified(&self, what: Notice) {
+        let mut sink = self
+            .link
+            .sink
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        sink(LspEvent::Notified {
+            server: self.link.server,
+            what,
+        });
     }
 
     fn record(&mut self, result: InitializeResult) {

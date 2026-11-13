@@ -1475,6 +1475,31 @@ pub struct LspServerSettings {
     /// add-on, and a file also gets every add-on listing its language.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub add_on: Option<bool>,
+    /// Globs, relative to the server's root, of the files whose changes on
+    /// disk it's told of, whether or not it asks: `**/*.css`, say. Files
+    /// outside its root are never sent. Replaces the built-in list or
+    /// pointer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watch_files: Option<Vec<String>>,
+    /// Globs, relative to the server's root, of the files and folders left
+    /// out of `watch_files`: a folder matching one leaves out everything in
+    /// it, as `**/node_modules` does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watch_excludes: Option<Vec<String>>,
+    /// A JSON pointer into `settings` to the list `watch_files` takes, read
+    /// again whenever they change: `/cssVariables/lookupFiles`, say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    pub watch_files_from: Option<String>,
+    /// A JSON pointer into `settings` to the list `watch_excludes` takes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    pub watch_excludes_from: Option<String>,
+    /// How often, in milliseconds, the colours, hints, lenses and links of
+    /// the files shown are asked of the server again, for a server whose
+    /// answers change with no edit. 0 or unset never.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repoll_ms: Option<u64>,
     /// Sent with `initialize`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initialization_options: Option<serde_json::Value>,
@@ -1497,6 +1522,11 @@ impl Default for LspServerSettings {
             ready_ignores_progress: None,
             root_markers: None,
             add_on: None,
+            watch_files: None,
+            watch_excludes: None,
+            watch_files_from: None,
+            watch_excludes_from: None,
+            repoll_ms: None,
             initialization_options: None,
             settings: None,
         }

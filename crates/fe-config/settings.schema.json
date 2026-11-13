@@ -629,6 +629,15 @@
             "null"
           ]
         },
+        "repoll_ms": {
+          "description": "How often, in milliseconds, the colours, hints, lenses and links of\nthe files shown are asked of the server again, for a server whose\nanswers change with no edit. 0 or unset never.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "root_markers": {
           "description": "File or folder names that mark a project root, in priority order;\nreplaces the server's built-in list. `*.ext` matches any name ending\nin `.ext`, such as `*.sln`; there is no other glob syntax.",
           "items": {
@@ -644,6 +653,42 @@
           "description": "Answers the server's `workspace/configuration` requests, by section:\n`[lsp.servers.rust-analyzer.settings.rust-analyzer]` is the\n`rust-analyzer` section. Changing it doesn't restart the server.",
           "type": [
             "object",
+            "null"
+          ]
+        },
+        "watch_excludes": {
+          "description": "Globs, relative to the server's root, of the files and folders left\nout of `watch_files`: a folder matching one leaves out everything in\nit, as `**/node_modules` does.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "watch_excludes_from": {
+          "description": "A JSON pointer into `settings` to the list `watch_excludes` takes.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "watch_files": {
+          "description": "Globs, relative to the server's root, of the files whose changes on\ndisk it's told of, whether or not it asks: `**/*.css`, say. Files\noutside its root are never sent. Replaces the built-in list or\npointer.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "watch_files_from": {
+          "description": "A JSON pointer into `settings` to the list `watch_files` takes, read\nagain whenever they change: `/cssVariables/lookupFiles`, say.",
+          "minLength": 1,
+          "type": [
+            "string",
             "null"
           ]
         }

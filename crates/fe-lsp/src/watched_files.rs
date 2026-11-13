@@ -8,14 +8,23 @@
 //! `workspace/didChangeWatchedFiles`: the registrations live with the
 //! session, and one the router answered before the call is applied. A
 //! `workspace/didChangeWatchedFiles` queued as such is sent as it is.
+//!
+//! A server's index can change with no edit, after a change on disk, say,
+//! that it reads in its own time: each session's static watch tells it of
+//! those changes (registration.rs), [`LspEvent::Notified`](crate::LspEvent::Notified)
+//! follows each notification, and [`LspManager::repoll_due`] times the
+//! asking again that catches what changes later
+//! (docs/decisions/q5j03ax2af-lsp-add-on-servers.md §5, "Asking again").
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use lsp_types::notification::{DidChangeWatchedFiles, Notification};
 use lsp_types::{DidChangeWatchedFilesParams, FileChangeType, FileEvent, Url};
 use serde_json::Value;
 
+use crate::event::ServerId;
 use crate::manager::LspManager;
 use crate::registration::Registrations;
 
@@ -26,10 +35,12 @@ const FILES_CHANGED: &str = "fe-lsp/filesChanged";
 impl LspManager {
     /// Tells each server of the changes to files on disk that its
     /// `workspace/didChangeWatchedFiles` registrations match, by glob and
-    /// kind: in the order given, each path once (with its last type), in
-    /// one notification, or none if nothing matches. A server with no such
-    /// registration is told nothing. Paths must be absolute; others are
-    /// ignored.
+    /// kind, or that its spec's static watch takes (under its own root):
+    /// in the order given, each path once (with its last type), in one
+    /// notification, or none if nothing matches. A server with neither is
+    /// told nothing. Each notification sent is followed by an
+    /// [`LspEvent::Notified`](crate::LspEvent::Notified). Paths must be
+    /// absolute; others are ignored.
     pub fn files_changed(&self, changes: Vec<(PathBuf, FileChangeType)>) {
         let mut events: Vec<FileEvent> = Vec::new();
         let mut at: HashMap<PathBuf, usize> = HashMap::new();
@@ -53,6 +64,25 @@ impl LspManager {
             return;
         };
         self.notify_sessions(FILES_CHANGED, |_, _| Some(params.clone()));
+    }
+
+    /// The latest poll of `server` due by `now`, on the manager's clock: its
+    /// session's initialization plus the most whole periods of its spec's
+    /// `repoll` that fit before `now`. A host asks the server again for
+    /// what it has cached of the documents it shows each time this
+    /// changes. `None` before one period has passed, for a server with no
+    /// `repoll`, one that hasn't initialized, or one whose session has ended
+    /// (shutting down, waiting out a crash's backoff, crashed too often or
+    /// gone). Each session (a restart, say) counts from its own
+    /// initialization.
+    pub fn repoll_due(&self, server: ServerId, now: Instant) -> Option<Instant> {
+        let (since, period) = self.session(server, |session| session.repoll)?;
+        let periods = now.checked_duration_since(since)?.as_nanos() / period.as_nanos();
+        if periods == 0 {
+            return None;
+        }
+        let elapsed = u64::try_from(periods * period.as_nanos()).ok()?;
+        since.checked_add(Duration::from_nanos(elapsed))
     }
 }
 

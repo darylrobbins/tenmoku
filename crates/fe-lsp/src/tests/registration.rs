@@ -1,9 +1,13 @@
 //! Dynamic registration (§3.6): only `workspace/didChangeConfiguration`,
 //! `workspace/didChangeWatchedFiles` and `textDocument/onTypeFormatting`
 //! are accepted (the last in on_type_formatting_tests.rs), and the
-//! configuration notification never depends on its registration.
+//! configuration notification never depends on its registration. A
+//! spec's static watch is a registration of its own (static_watch.rs), and
+//! each notification sent is reported (index_events.rs).
 
 mod globs;
+mod index_events;
+mod static_watch;
 mod watched_files;
 
 use std::path::Path;

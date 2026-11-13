@@ -143,7 +143,9 @@ pub use document_highlight::{DocumentHighlight, HighlightKind};
 pub use document_link::DocumentLink;
 pub use document_symbol::DocumentSymbol;
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};
-pub use event::{LspError, LspEvent, MessageReply, Refresh, ServerId, ServerStatus, Unavailable};
+pub use event::{
+    LspError, LspEvent, MessageReply, Notice, Refresh, ServerId, ServerStatus, Unavailable,
+};
 pub use folding_range::{FoldKind, FoldingRange};
 pub use hierarchy::{CallEdge, HierarchyItem};
 pub use hover::Hover;

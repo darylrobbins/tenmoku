@@ -63,6 +63,24 @@ pub struct ServerSpec {
     /// The package (npm or other) that provides `command`, which a
     /// missing add-on's notice names.
     pub package: Option<String>,
+    /// Globs, relative to the server's root, of the files whose changes on
+    /// disk it's told of with no registration of its own: a permanent
+    /// `workspace/didChangeWatchedFiles` registration of each session. A
+    /// path outside the root never matches.
+    pub watch_files: Vec<String>,
+    /// Globs, relative to the root, of the files and folders `watch_files`
+    /// leaves out: a folder matching one leaves out everything under it.
+    pub watch_excludes: Vec<String>,
+    /// A JSON pointer into `settings` to an array of globs that replaces
+    /// `watch_files`, read again each time the settings change.
+    pub watch_files_from: Option<String>,
+    /// As `watch_files_from`, for `watch_excludes`.
+    pub watch_excludes_from: Option<String>,
+    /// How often a host asks the server again for the answers it has
+    /// cached of the documents it shows, so they catch up with an index
+    /// that changes with no edit ([`LspManager::repoll_due`](crate::LspManager::repoll_due)).
+    /// `None` (the default) never.
+    pub repoll: Option<Duration>,
 }
 
 impl ServerSpec {
@@ -84,6 +102,11 @@ impl ServerSpec {
             root_markers: Vec::new(),
             add_on: false,
             package: None,
+            watch_files: Vec::new(),
+            watch_excludes: Vec::new(),
+            watch_files_from: None,
+            watch_excludes_from: None,
+            repoll: None,
         }
     }
 }
