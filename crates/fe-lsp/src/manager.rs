@@ -39,6 +39,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use fe_buffer::{BufferId, Subscription, Version};
 use fe_config::settings::LspSettings;
@@ -186,7 +187,17 @@ struct Handle {
     done: Done,
     session: Arc<Mutex<Session>>,
     thread: JoinHandle<()>,
+    /// Whether a routed document has been closed on it alone
+    /// ([`LspManager::release`]): its stop then waits for that `didClose`.
+    closed: bool,
 }
+
+/// How long a retired server that a document was just closed on gets to
+/// send that `didClose` before its stop goes ahead anyway, so one that
+/// has stopped reading its input can't hold up its shutdown (and a
+/// restart waiting for it) for longer. Real time, not the manager's
+/// clock: a bound no test clock can hold back.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
 impl Handle {
     /// Asks it to stop, cutting a launch in progress short; the next
@@ -195,6 +206,46 @@ impl Handle {
         let _ = self.stop.send(());
         self.cancel.cancel();
         retiring.insert((self.name, self.root), self.done);
+    }
+
+    /// As [`stop`](Self::stop), except that one a document was closed on
+    /// ([`closed`](Self::closed)) stops only once its thread has carried
+    /// out the commands queued before now, so that `didClose` goes ahead
+    /// of `shutdown` (§4: a removed add-on is told), or after
+    /// [`CLOSE_GRACE`], whichever is first. A launch in progress is still
+    /// cut short at once.
+    fn retire(self, retiring: &mut HashMap<(String, PathBuf), Done>) {
+        if !self.closed {
+            return self.stop(retiring);
+        }
+        self.cancel.cancel();
+        retiring.insert((self.name.clone(), self.root.clone()), self.done);
+        let stop = Arc::new(Mutex::new(Some(self.stop)));
+        // Run behind the queued commands, or dropped unrun (a server
+        // between sessions drops it, as does a closed channel): the stop
+        // goes either way.
+        let queued = StopOnDrop(stop.clone());
+        let behind = Command::Documents(Box::new(move |_| drop(queued)));
+        let _ = self.commands.unbounded_send(behind);
+        let grace = StopOnDrop(stop);
+        // With no thread, the grace drops at once, and the stop goes now.
+        let _ = (std::thread::Builder::new())
+            .name(format!("fe-lsp {} close grace", self.name))
+            .spawn(move || {
+                std::thread::sleep(CLOSE_GRACE);
+                drop(grace);
+            });
+    }
+}
+
+/// Sends a server's stop once the first of its holders drops.
+struct StopOnDrop(Arc<Mutex<Option<oneshot::Sender<()>>>>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        if let Some(stop) = lock(&self.0).take() {
+            let _ = stop.send(());
+        }
     }
 }
 
@@ -392,8 +443,10 @@ impl LspManager {
     /// one; their other servers keep them. Documents waiting get a server
     /// if one now applies. A document stays on a lead that keeps running,
     /// even if another would now come first for its language; an add-on
-    /// it no longer has closes it, and one it gains opens it at its current
-    /// text. Buffers of one path whose languages now share a lead keep the
+    /// it no longer has closes it (`didClose`, before that server stops if
+    /// it does), and one it gains opens it at its current text, as does a
+    /// server whose root for it moved (its markers changed), after closing
+    /// it at the old root. Buffers of one path whose languages now share a lead keep the
     /// earlier holder: the other is closed on each server it was on, and
     /// waits. `max_file_bytes` applies to documents opened from now on.
     ///
@@ -731,6 +784,7 @@ impl LspManager {
                 done,
                 session,
                 thread,
+                closed: false,
             },
         );
         Ok(id)
@@ -1493,7 +1547,8 @@ impl LspManager {
     /// Gives routed `buffer` the servers its language has under `specs`,
     /// keeping lead `keep` if given (see [`Route::reroot`]): a server it
     /// gains waits for it, at its hub's latest text; one it loses closes it
-    /// there.
+    /// there; one it keeps at another root closes it on the instance at
+    /// the old root, and waits for the new root's, at its latest text.
     fn reroot_one(&mut self, buffer: BufferId, specs: &[ServerSpec], keep: Option<&str>) {
         let Some(Placed {
             kind: Kind::Routed(route),
@@ -1502,7 +1557,17 @@ impl LspManager {
         else {
             return;
         };
+        let roots = route.roots.clone();
         let (before, after) = route.reroot(specs, keep);
+        // Kept, but at another root (its markers changed): closed on the
+        // instance at the old one, it waits for the new one's.
+        let moved: Vec<String> = (route.roots.iter())
+            .filter(|&kept| (roots.iter()).any(|(name, root)| *name == kept.0 && *root != kept.1))
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in moved {
+            self.release(buffer, &name, true);
+        }
         // Gained first, so the document keeps a tap throughout.
         for name in after.iter().filter(|name| !before.contains(name)) {
             let spare = self.routes.lock().lot.remove(&(buffer, String::new()));
@@ -1547,6 +1612,9 @@ impl LspManager {
         let Some(Place::Server(server, commands)) = placed else {
             return;
         };
+        if let Some(handle) = self.servers.get_mut(&server) {
+            handle.closed = true;
+        }
         let identities = self.identities.clone();
         let retire = move || {
             if let Some(identity) = identities.active(buffer, server) {
@@ -1617,7 +1685,8 @@ impl LspManager {
             return;
         };
         let (name, root) = (handle.name.clone(), handle.root.clone());
-        self.retiring.insert((name.clone(), root), handle.done);
+        self.retiring
+            .insert((name.clone(), root), handle.done.clone());
         let buffers: Vec<BufferId> = (self.documents.iter())
             .filter(|&(&buffer, placed)| match placed.kind {
                 Kind::On(server) => server == id,
@@ -1652,8 +1721,8 @@ impl LspManager {
                 }
             }
         }
-        let _ = handle.stop.send(());
-        handle.cancel.cancel();
+        // A document closed on it alone (it left the route) hears so first.
+        handle.retire(&mut self.retiring);
     }
 
     /// Opens each document waiting for a server its route now gives it

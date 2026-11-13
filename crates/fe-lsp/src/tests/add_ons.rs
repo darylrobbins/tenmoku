@@ -6,6 +6,7 @@ mod crash;
 mod holders;
 mod lead_kept;
 mod lead_unavailable;
+mod reconcile;
 mod sync;
 
 use std::path::{Path, PathBuf};

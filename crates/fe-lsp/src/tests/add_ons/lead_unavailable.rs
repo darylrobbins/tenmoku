@@ -18,7 +18,7 @@ use crate::{LaunchCancel, ServerId, ServerIo, ServerLauncher, ServerSpec, Server
 /// A project at `t/proj`, whose `vars.json` marks the add-on's root, with
 /// a stylesheet at `t/proj/src/a.css`: the primary, with no markers, runs
 /// at `t/proj/src`.
-fn tree() -> (TempDir, PathBuf, PathBuf) {
+pub(super) fn tree() -> (TempDir, PathBuf, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let proj = dir.path().join("t/proj");
     std::fs::create_dir_all(proj.join("src")).unwrap();
@@ -26,7 +26,7 @@ fn tree() -> (TempDir, PathBuf, PathBuf) {
     (dir, proj.clone(), proj.join("src/a.css"))
 }
 
-fn vars_spec() -> ServerSpec {
+pub(super) fn vars_spec() -> ServerSpec {
     ServerSpec {
         root_markers: vec!["vars.json".into()],
         ..spec("vars", &[CSS], true)

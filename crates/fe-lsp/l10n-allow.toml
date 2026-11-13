@@ -164,3 +164,8 @@ reason = "failureReason sent back to the server in a workspace/applyEdit reply (
 file = "src/workspace_edit.rs"
 text = "not answered in time"
 reason = "failureReason sent back to the server in a workspace/applyEdit reply (protocol text)"
+
+[[literal]]
+file = "src/manager.rs"
+text = "fe-lsp {} close grace"
+reason = "Thread name"
