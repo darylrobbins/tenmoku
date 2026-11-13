@@ -117,7 +117,7 @@ pub enum ChatEvent {
   (adding a tool later breaks the prompt cache and the thinking-block binding;
   the agent loop uses `tool_addition` blocks, beta
   `mid-conversation-tool-changes-2026-07-01`). Running a tool is dispatching an
-  `Invocation` with the AI actor (§ 9). v1 sends no tools.
+  `Invocation` with the AI actor (§ 9). v1 sends no tools (the agent tool loop is `50t8wt9we2-ai-agents.md` § 6).
 
 ## 3. The Anthropic provider
 
@@ -442,13 +442,14 @@ from disk. Trusted folders keep chats on disk as above.
 (`low`, `medium`, `high`, `xhigh`, `max`), `show_thinking = false`,
 `max_tokens = 64000`, `context_budget = 32000` (tokens of attachments per
 turn), `fallbacks = true`, `exclude = []` (globs the @file picker and attach
-refuse, from the user's and the workspace's settings, merged). `model` and
+refuse, from the user's settings; not implemented, see the Corrections in
+`50t8wt9we2-ai-agents.md`). `model` and
 `effort` are new chats' defaults; the chat header's picker changes an open
 chat's (§ 4) without writing them. A project's
-`settings.toml` can't set the rest of `[chat]`: a cloned repo mustn't pick the
-model or turn fallbacks off. That is a `ProjectFilter` on `chat` that keeps
-only `exclude` (`kiln_core::ProjectFilter`, as `lsp` and `theme` are narrowed
-in `crates/fe-config/src/settings.rs`).
+`settings.toml` can't set any of `[chat]`: a cloned repo mustn't pick the
+model or turn fallbacks off. The code drops a project's whole `[chat]` table
+(`drop_chat`, `crates/fe-config/src/settings.rs`), and `chat.exclude` does
+not exist; the deny list in use is `chat_context::refusal`.
 
 ## 13. Context and its budget
 
@@ -519,7 +520,7 @@ In order (each depends on this record):
 
 ## 17. Out of scope (v1)
 
-The agent tool loop; inline chat in the editor; ghost-text completions from
+The agent tool loop (now `50t8wt9we2-ai-agents.md` § 6); inline chat in the editor; ghost-text completions from
 the model; other providers; images and PDFs as attachments; compaction; HTTP
 proxies and a configurable base URL (a later card, below); usage and cost reporting
 beyond the context meter.
@@ -538,7 +539,7 @@ beyond the context meter.
    to api.anthropic.com only). Follow-up work: `HTTPS_PROXY` in `fe-net`, and a
    `chat.base_url` that is also a `net:` grant.
 6. **@file deny list: a built-in list** (`.env*`, `*.pem`, `id_*`, credentials
-   files and the like) **plus a `chat.exclude` glob setting** (user and workspace).
+   files and the like) **plus a `chat.exclude` glob setting** (planned for user settings only; not implemented, see § 12).
 7. **Prompt cache TTL: 5 minutes** (the default).
 
 ## Decisions (user sign-off, 2026-10-18)

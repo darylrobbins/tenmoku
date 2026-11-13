@@ -9,8 +9,8 @@ pending work, keeps it out of the user's tree until it is reviewed, and feeds
 every row of the provenance table. It writes no code and files no cards; the
 lead files them from § Card breakdown.
 
-Out of scope here: the review panel itself (`docs/designs/agent-review.md`),
-command permissions (`docs/designs/agent-command-permissions.md`), and the
+Out of scope here: the review panel itself and command permissions (both in
+`docs/decisions/50t8wt9we2-ai-agents.md`, § 7 and § 8), and the
 choice of an agent protocol or provider. Where the lane model needs something
 from a protocol, § Lane model › What a protocol must give says what, not which.
 
@@ -382,7 +382,7 @@ writes files there freely; review never reads the live worktree.
   the root's persistent layout key is part of every ref, and clearing a
   lane deletes only refs under its own root's key and number. A revision is
   frozen when a turn ends: the user's **Review lane**
-  (`agent.review_lane`), the terminal's process exiting, a task ending, and
+  (`agent.review_lane`), the terminal's process exiting, a task ending, an ACP prompt response, and
   once on restore. Between revisions the worktree's live diff feeds the
   Agents panel's `changed since review` count, and starts the next turn
   (§ Lifecycle).
@@ -627,7 +627,7 @@ pub struct LaneSummary {                                           // LaneStore:
 - **Shows**: reviewing one of a lane's files side by side, the left header
   `Before` and the right `After · lane 2`, the right header's text
   silver-blue. Comments becoming the lane's next instruction is the review
-  panel's (`docs/designs/agent-review.md`); the lane end of it is
+  panel's (`docs/decisions/50t8wt9we2-ai-agents.md` § 8); the lane end of it is
   `LaneStore::instruct(lane, text)`, which delivers a `lane.instruction`.
 - **Data**: `fe_gpui::DiffSide { title, model, read_only }`
   (`crates/fe-gpui/src/diff_view.rs`) with the title `After · lane 2` and a
@@ -686,7 +686,7 @@ its state is kept and what it is called, not what it does.
   - The AI Changes panel still shows one changeset, lane 1's, with the same
     header text, rows, buttons, commands and `No pending changes`. Showing
     other lanes there is the review panel's
-    (`docs/designs/agent-review.md`), not lane 1's.
+    (`docs/decisions/50t8wt9we2-ai-agents.md` § 8), not lane 1's.
   - Accept still lands as `Origin::User` with the text authored by the
     agent; undo still reverts it.
   - The provenance column's labels stay `AI · <agent>` and `Written by
@@ -919,8 +919,9 @@ those lists, not in each other's files.
 - **Agent tasks in Runs** (`LaneKind::Task`): after Runs and card 18.
 - **`lane.run`**, an external agent running a command in its worktree's
   read-only terminal: after cards 19 and 20, with the command permissions
-  design (`docs/designs/agent-command-permissions.md`).
-- **The review panel** (`docs/designs/agent-review.md`), which builds on
+  of `docs/decisions/50t8wt9we2-ai-agents.md` § 7.
+- **The review panel** (`docs/decisions/50t8wt9we2-ai-agents.md` § 8, with
+  what it leaves for a fuller panel), which builds on
   cards 6, 14 and 15 and owns comments as the next instruction.
 
 ## Open questions
