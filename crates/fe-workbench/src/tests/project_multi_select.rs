@@ -613,8 +613,27 @@ fn cut_entries_of_one_name_take_distinct_names(cx: &mut TestAppContext) {
     assert_eq!(read("dst/x.txt").as_deref(), Some("a/x.txt"));
     assert_eq!(read("dst/x copy.txt").as_deref(), Some("dst/x copy.txt"));
     assert_eq!(read("dst/x copy 2.txt").as_deref(), Some("b/x.txt"));
-    assert_eq!(read("dst/X copy 3.TXT").as_deref(), Some("c/X.TXT"));
+    // `X.TXT` collides with the `x.txt` pasted alongside it, so it takes a
+    // copy name; which one is free depends on whether the filesystem folds
+    // case: where it does, `X copy.TXT` is `x copy.txt` (taken), and so is
+    // `X copy 2.TXT`; where it does not, `X copy.TXT` is free.
+    if is_case_insensitive(&root) {
+        assert_eq!(read("dst/X copy 3.TXT").as_deref(), Some("c/X.TXT"));
+    } else {
+        assert_eq!(read("dst/X copy.TXT").as_deref(), Some("c/X.TXT"));
+        assert_eq!(read("dst/X copy 3.TXT"), None);
+    }
     assert_eq!(toasts(&workbench, cx), []);
+}
+
+/// Whether the filesystem holding `dir` treats names that differ only in
+/// case as one: it makes `case-probe`, looks for `CASE-PROBE`, and removes it.
+fn is_case_insensitive(dir: &std::path::Path) -> bool {
+    let probe = dir.join("case-probe");
+    fs::write(&probe, "").expect("probe written");
+    let folded = dir.join("CASE-PROBE").exists();
+    fs::remove_file(&probe).expect("probe removed");
+    folded
 }
 
 /// A rust-analyzer fake asked for its edits before a `*.rs` file's rename.
