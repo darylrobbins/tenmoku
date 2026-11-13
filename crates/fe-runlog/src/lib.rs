@@ -13,10 +13,12 @@
 //! Nothing here runs a process, keeps history or draws anything.
 
 mod assertion;
+mod history;
 mod libtest;
 mod nextest;
 
 pub use assertion::{AssertOp, Assertion};
+pub use history::{Flaky, History, Outcome};
 pub use libtest::LibtestParser;
 pub use nextest::NextestParser;
 
