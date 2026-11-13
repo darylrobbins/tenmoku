@@ -611,6 +611,8 @@ impl Button {
             .filter(|_| icon_only || self.shortcut.is_some())
             .map(|name| name_tooltip(name, self.shortcut.clone()));
         let id = self.base.interactivity().element_id.clone();
+        // Test-visible bounds of the label and the icon, from the button's id.
+        let part_id = id.clone();
         let focus = key_focus(id, self.focus.take(), disabled, window, cx);
         let base = styled(self.base, |base| {
             base.relative()
@@ -638,11 +640,13 @@ impl Button {
         .when_some(self.shortcut, |base, key| base.aria_keyshortcuts(key))
         .when_some(tooltip, |base, tooltip| base.tooltip(tooltip))
         .children(self.icon.map(|icon| {
+            let part_id = part_id.clone();
             svg()
                 .path(icon.path())
                 .size(px(14.))
                 .flex_none()
                 .text_color(look.text)
+                .debug_selector(move || part_selector(&part_id, "chevron"))
         }))
         .children(
             self.after_icon
@@ -650,10 +654,13 @@ impl Button {
         )
         // A button the caller lets shrink ends its label in an ellipsis;
         // its icon keeps its size.
-        .children(
-            self.label
-                .map(|label| div().min_w_0().truncate().child(label)),
-        )
+        .children(self.label.map(|label| {
+            div()
+                .min_w_0()
+                .truncate()
+                .debug_selector(move || part_selector(&part_id, "label"))
+                .child(label)
+        }))
         .when_some(self.on_click.filter(|_| !disabled), |base, on_click| {
             base.on_click(move |event, window, cx| on_click(event, window, cx))
         });
@@ -662,6 +669,14 @@ impl Button {
             named(base, window, cx, Role::Button, name, States::default()),
             disabled,
         )
+    }
+}
+
+/// The debug selector of one of a button's parts: `<id>-<part>`.
+fn part_selector(id: &Option<ElementId>, part: &str) -> String {
+    match id {
+        Some(id) => format!("{id}-{part}"),
+        None => part.to_owned(),
     }
 }
 

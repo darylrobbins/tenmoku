@@ -521,7 +521,8 @@ fn nothing_shows_outside_a_repository(cx: &mut TestAppContext) {
 /// The branch widget's parts as laid out, from their bounds after the draw.
 struct WidgetLayout {
     button: gpui::Bounds<gpui::Pixels>,
-    /// The room the name's text has: from the button's padding to the counts.
+    /// The name's label as drawn: it ends in an ellipsis when narrower than
+    /// the full text.
     name: gpui::Bounds<gpui::Pixels>,
     counts: gpui::Bounds<gpui::Pixels>,
     chevron: gpui::Bounds<gpui::Pixels>,
@@ -564,24 +565,17 @@ impl WidgetLayout {
     }
 }
 
-/// Measures the widget now: `title-branch` and `title-branch-sync` by their
-/// selectors, the chevron as the button's trailing icon (the padding and
-/// border in from its right edge), the name's room up to the counts, and the
-/// full text widths by shaping.
+/// Measures the widget now: the button, its name label, the counts and its
+/// chevron by their selectors, and the full text widths by shaping.
 fn widget_layout(cx: &mut VisualTestContext, name: &str, sync: &str) -> WidgetLayout {
-    // The button's border and horizontal padding, its gap and its icon.
-    let (edge, gap, icon) = (gpui::px(13.), gpui::px(4.), gpui::px(14.));
     let button = cx.debug_bounds("title-branch").expect("the branch widget");
     let counts = cx.debug_bounds("title-branch-sync").expect("the counts");
-    let chevron = gpui::Bounds::new(
-        gpui::point(button.right() - edge - icon, button.top()),
-        gpui::size(icon, button.size.height),
-    );
-    let name_left = button.left() + edge;
-    let room = gpui::Bounds::new(
-        gpui::point(name_left, button.top()),
-        gpui::size(counts.left() - gap - name_left, button.size.height),
-    );
+    let label = cx
+        .debug_bounds("title-branch-label")
+        .expect("the name label");
+    let chevron = cx
+        .debug_bounds("title-branch-chevron")
+        .expect("the chevron");
     let measure = |cx: &mut VisualTestContext, text: &str, size: f32| {
         cx.update(|window, _| {
             let run = gpui::TextRun {
@@ -600,7 +594,7 @@ fn widget_layout(cx: &mut VisualTestContext, name: &str, sync: &str) -> WidgetLa
     };
     WidgetLayout {
         button,
-        name: room,
+        name: label,
         counts,
         chevron,
         name_full: measure(cx, name, 12.),
