@@ -79,7 +79,7 @@ pub(crate) fn gather(
 /// `path` as the chat names it: from the root with `/` (on Windows too, as
 /// the chat's links name files), whole if outside it, and `untitled` for a
 /// buffer with no file.
-pub(super) fn shown_path(root: Option<&Path>, path: Option<&Path>) -> String {
+pub(crate) fn shown_path(root: Option<&Path>, path: Option<&Path>) -> String {
     let Some(path) = path else {
         return "untitled".to_owned();
     };
@@ -676,7 +676,7 @@ fn live_file_editors(this: &Workbench, cx: &App) -> Vec<Entity<EditorView>> {
 }
 
 /// Toasts that `path` wasn't attached, and why.
-fn refused(path: &str, reason: &str, cx: &mut App) {
+pub(crate) fn refused(path: &str, reason: &str, cx: &mut App) {
     toast::show(
         cx,
         Toast::warning(tr!("workbench-chat-cant-attach", path = path, reason = reason).to_string()),

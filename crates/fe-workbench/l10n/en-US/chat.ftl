@@ -162,3 +162,8 @@ workbench-chat-inline-deleted-discard = The selection was deleted: the edit is d
 workbench-chat-inline-changed = The selection changed: the edit is discarded
 workbench-chat-inline-no-code = The reply had no code to apply
 workbench-chat-inline-no-change = The reply changes nothing
+
+## Asking the agent from elsewhere (agent_actions.rs)
+
+workbench-chat-ask-no-key = The draft is in the chat: set an API key to send it.
+workbench-chat-ask-untrusted = The draft is in the chat: this folder isn't trusted, so it isn't sent.

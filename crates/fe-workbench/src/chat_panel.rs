@@ -88,7 +88,7 @@ use crate::{
 #[path = "chat_apply.rs"]
 mod chat_apply;
 #[path = "chat_context.rs"]
-mod chat_context;
+pub(crate) mod chat_context;
 #[path = "chat_store_worker.rs"]
 mod chat_store_worker;
 
@@ -502,6 +502,8 @@ pub(crate) struct ChatPanel {
     picker: bool,
     /// The listing under way: dropping it drops its answer.
     listing: Option<Task<()>>,
+    /// The chat (by `views_made`) and prompt an ask is to send once the keychain's key is read.
+    pending_send: Option<(u64, String)>,
     /// The view's events, its gaining focus, and its changes.
     _view: [Subscription; 3],
     /// The workbench's changes, and its root's and its trust's.
@@ -625,6 +627,7 @@ impl ChatPanel {
             history: None,
             picker: false,
             listing: None,
+            pending_send: None,
             _view: view_subscriptions,
             _workbench: Vec::new(),
         }
@@ -1273,7 +1276,7 @@ impl ChatPanel {
 
     /// Closes the key form, forgetting what was typed, and focuses the
     /// composer.
-    fn close_key_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_key_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.key_form.take().is_some() {
             let focus = self.view.focus_handle(cx);
             window.focus(&focus, cx);
@@ -1525,6 +1528,11 @@ impl ChatPanel {
             Pick::Model(model) => view.set_model(model, cx),
             Pick::Effort(effort) => view.set_effort(effort, cx),
         });
+        // A pick is the user's own activity: a restore still pending must
+        // not replace the chat they picked for, and a chat with turns keeps
+        // the pick through the store as a finished turn does.
+        (self.restoring, self.restored) = (None, true);
+        self.remember_chat(cx);
         self.picker = false;
         let focus = self.focus_handle(cx);
         window.focus(&focus, cx);
@@ -1676,6 +1684,7 @@ impl ChatPanel {
     /// again.
     fn root_changed(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;
+        self.pending_send = None;
         // What the user attached under the old root or trust goes, being
         // read or not, and no retry sends what was sent under them.
         let generation = self.generation;
@@ -1749,6 +1758,7 @@ impl ChatPanel {
         }
         let (store, service) = (source.store, key_service());
         let read = cx.background_spawn(async move { store.get(&service, KEY_ACCOUNT) });
+        let handle = self.window;
         self.reading = Some(cx.spawn(async move |this, cx| {
             let key = match read.await {
                 Ok(secret) => secret.map(|secret| ApiKey::new(secret.into_string())),
@@ -1757,11 +1767,29 @@ impl ChatPanel {
                     None
                 }
             };
-            this.update(cx, |this, cx| {
+            let pending = this.update(cx, |this, cx| {
                 this.reading = None;
                 this.set_key(key.map(|key| (KeyOrigin::Keychain, key)), cx);
-            })
-            .ok();
+                this.pending_send.take()
+            });
+            // An ask waiting for the key decides now.
+            if let Ok(Some((views, prompt))) = pending {
+                cx.update_window(handle, |_, window, cx| {
+                    (this.update(cx, |this, cx| {
+                        // Still the chat that was asked.
+                        if this.views_made != views {
+                            return;
+                        }
+                        let trusted = this.workbench().is_some_and(|workbench| {
+                            let workbench = workbench.read(cx);
+                            workbench.root().is_none() || workbench.root_trusted()
+                        });
+                        this.finish_ask(&prompt, trusted, window, cx)
+                    }))
+                    .ok();
+                })
+                .ok();
+            }
         }));
     }
 
@@ -2261,6 +2289,11 @@ fn on_workbench(cx: &mut App, run: fn(&mut Workbench, &mut Window, &mut Context<
             .ok();
     });
 }
+
+// The buttons that call it are the next cards.
+#[allow(dead_code)]
+#[path = "agent_actions.rs"]
+pub(crate) mod agent_actions;
 
 #[cfg(test)]
 #[path = "chat_panel_tests.rs"]
