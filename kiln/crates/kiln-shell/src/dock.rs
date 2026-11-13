@@ -311,7 +311,7 @@ pub struct RailAction {
 
 /// One of a panel's own actions, in the dock's title row before ⋯ and —
 /// ([`DockItem::actions`]): an icon button, named by its title, that runs
-/// `run` when clicked.
+/// `run` when clicked, or `anchored` if it has one.
 #[derive(Clone)]
 pub struct PaneAction {
     /// Distinct among the panel's actions: its button's `icon-button:<id>`
@@ -323,10 +323,18 @@ pub struct PaneAction {
     /// The command it does, whose key its tooltip shows, if it has one.
     pub command: Option<&'static str>,
     pub run: ActionHandler,
+    /// For an action that opens a menu under its button: what a click runs
+    /// in place of `run`, given the button's bounds in the window as last
+    /// drawn, to put the menu under them.
+    pub anchored: Option<AnchoredHandler>,
 }
 
 /// What a [`PaneAction`]'s click runs.
 pub type ActionHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// What a [`PaneAction`] that opens a menu runs when clicked, with its
+/// button's bounds.
+pub type AnchoredHandler = Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut App)>;
 
 impl std::fmt::Debug for PaneAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -335,6 +343,7 @@ impl std::fmt::Debug for PaneAction {
             .field("icon", &self.icon)
             .field("title", &self.title)
             .field("command", &self.command)
+            .field("anchored", &self.anchored.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -597,6 +606,16 @@ pub struct DockState {
     menu_return: Option<FocusHandle>,
     /// While the menu is open: to focus leaving it, which closes it.
     menu_watch: Option<Subscription>,
+    /// What had focus before the menu, when the menu went with focus in it
+    /// and no window to give focus back in, as the dock hiding or the
+    /// menu's items going take it: the frame drawn without it gives focus
+    /// back ([`DockState::open_menu`]'s watches), unless focus moved on
+    /// first.
+    menu_orphan: Option<FocusHandle>,
+    /// To focus lost with the menu's element, and to the menu's focus
+    /// moving on, which give focus back to `menu_orphan` or drop it: made
+    /// the first time the menu opens.
+    menu_lost: Option<[Subscription; 2]>,
     /// Whether the title row is a tab strip of the open panels.
     tabs: bool,
     /// The panels open in a tabbed dock: shown since, and not closed.
@@ -630,6 +649,8 @@ impl DockState {
             menu_focus: None,
             menu_return: None,
             menu_watch: None,
+            menu_orphan: None,
+            menu_lost: None,
             tabs: false,
             opened: HashSet::new(),
             hide_command: None,
@@ -644,10 +665,12 @@ impl DockState {
         self.rail_hidden = hidden;
     }
 
-    /// The items of the title row's ⋯ menu: with none, the row has no ⋯.
+    /// The items of the title row's ⋯ menu: with none, the row has no ⋯,
+    /// and an open menu closes, giving focus back to what had it before
+    /// once the frame without it is drawn.
     pub fn set_menu(&mut self, items: Vec<DockMenuItem>) {
         if items.is_empty() {
-            self.menu_open = false;
+            self.orphan_menu();
         }
         self.menu = items;
     }
@@ -683,10 +706,27 @@ impl DockState {
         }
         self.menu_open = true;
         self.menu_highlighted = Some(0);
+        self.menu_orphan = None;
         let focus = self
             .menu_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
+        if self.menu_lost.is_none() {
+            // Focus lost as the menu went without a window to move it in:
+            // back to what had it before, if that's drawn.
+            let lost = cx.on_focus_lost(window, |view: &mut V, window, cx| {
+                if let Some(back) = view.dock_mut().menu_orphan.take()
+                    && kiln_platform::focus::is_drawn(&back, window, cx)
+                {
+                    window.focus(&back, cx);
+                }
+            });
+            // Focus moved on from it some other way first: it stays there.
+            let moved = cx.on_blur(&focus, window, |view: &mut V, _, _| {
+                view.dock_mut().menu_orphan = None;
+            });
+            self.menu_lost = Some([lost, moved]);
+        }
         self.menu_return = window.focused(cx).filter(|focused| *focused != focus);
         window.focus(&focus, cx);
         let watch = cx.on_focus_out(&focus, window, |view: &mut V, _, _, cx| {
@@ -704,8 +744,19 @@ impl DockState {
         let focused = self.menu_focused(window);
         let back = self.menu_return.take();
         self.dismiss_menu();
+        self.menu_orphan = None;
         if focused && let Some(back) = back {
             window.focus(&back, cx);
+        }
+    }
+
+    /// Closes the ⋯ menu, if it's open, with no window to give focus back
+    /// in: the frame drawn without it does ([`DockState::menu_orphan`]).
+    fn orphan_menu(&mut self) {
+        if self.menu_open {
+            let back = self.menu_return.take();
+            self.dismiss_menu();
+            self.menu_orphan = back;
         }
     }
 
@@ -1070,12 +1121,13 @@ impl DockState {
     }
 
     /// Shows or hides the dock, keeping its active panel. Hiding closes the
-    /// ⋯ menu: focus in it stays, as on a hidden panel.
+    /// ⋯ menu, giving focus in it back to what had it before once the
+    /// frame without it is drawn, unless the host moves it first.
     pub fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
         self.open_shown();
-        if !visible && self.menu_open {
-            self.dismiss_menu();
+        if !visible {
+            self.orphan_menu();
         }
     }
 
@@ -1333,11 +1385,31 @@ impl DockState {
     /// if the dock has a menu, with the menu under it while open, and —.
     fn controls<V: DockView>(&self, panel: &dyn PanelHandle, cx: &mut Context<V>) -> AnyElement {
         self.drawn.controls.borrow_mut().clear();
-        let actions: Vec<_> = (panel.actions(cx).into_iter())
-            .map(|action| {
-                let run = action.run.clone();
-                self.control(action.id, action.icon, action.title, action.command, cx)
-                    .on_click(move |_, window, cx| run(window, cx))
+        let actions: Vec<_> = (panel.actions(cx).into_iter().enumerate())
+            .map(|(ix, action)| {
+                let button = self.control(action.id, action.icon, action.title, action.command, cx);
+                match action.anchored {
+                    None => {
+                        let run = action.run;
+                        button
+                            .on_click(move |_, window, cx| run(window, cx))
+                            .into_any_element()
+                    }
+                    // Where it was drawn, for the menu it opens.
+                    Some(anchored) => {
+                        let drawn = ScrollHandle::new();
+                        let at = drawn.clone();
+                        div()
+                            .id(("dock-action-anchor", ix))
+                            .track_scroll(&drawn)
+                            .child(
+                                button.on_click(move |_, window, cx| {
+                                    anchored(at.bounds(), window, cx)
+                                }),
+                            )
+                            .into_any_element()
+                    }
+                }
             })
             .collect();
         let more = (!self.menu.is_empty()).then(|| {

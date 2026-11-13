@@ -170,6 +170,32 @@ workbench-project-drop-name-taken = “{ $name }” wasn’t moved: “{ $folder
 # items are the tree's commands, titled as the command palette lists them.
 workbench-project-menu = File actions
 
+## The header's New menu (project_panel_new_menu.rs, project_new_templates.rs)
+
+# The + at the left of the dock's header: its tooltip and accessible name.
+workbench-project-new = New…
+# What a screen reader calls the menu the + opens.
+workbench-project-new-menu = New
+# The menu's first entries: a new file of any name, and a new folder.
+workbench-project-new-file = File
+workbench-project-new-folder = Folder
+# Its typed entries: a new file of that type, named in the tree's name field
+# and made with a small template.
+workbench-project-new-markdown = Markdown File
+workbench-project-new-rust = Rust File
+workbench-project-new-typescript = TypeScript File
+workbench-project-new-javascript = JavaScript File
+workbench-project-new-python = Python File
+workbench-project-new-go = Go File
+workbench-project-new-java = Java File
+workbench-project-new-html = HTML File
+workbench-project-new-css = CSS File
+workbench-project-new-json = JSON File
+workbench-project-new-shell = Shell Script
+# The name a typed entry's field starts with, before the extension
+# (Untitled.py), its stem selected to type over. A file name: no spaces.
+workbench-project-new-untitled = Untitled
+
 ## Structure, the outline (outline_panel.rs)
 
 workbench-project-structure-no-file = No file open

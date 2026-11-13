@@ -2191,6 +2191,7 @@ impl SearchPanel {
                     run: Rc::new(move |window, cx| {
                         this.update(cx, |panel, cx| act(panel, window, cx)).ok();
                     }),
+                    anchored: None,
                 }
             })
             .collect()

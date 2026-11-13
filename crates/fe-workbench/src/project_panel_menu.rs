@@ -147,13 +147,7 @@ pub(super) struct TreeMenu {
 /// runs it where the tree has focus, as the tree has keys while the menu
 /// isn't open.
 fn menu_entries(entries: &[Option<MenuItem>], cx: &App) -> Vec<MenuEntry> {
-    let mut frame = ContextFrame::new(KEY_CONTEXT);
-    if fe_gpui::vim_enabled(cx) {
-        frame = frame.flag("vim");
-    }
-    let stack: ContextStack = [ContextFrame::new(crate::KEY_CONTEXT), frame]
-        .into_iter()
-        .collect();
+    let stack = tree_context(cx);
     (entries.iter())
         .map(|entry| match entry {
             Some(item) => MenuEntry::Item {
@@ -164,6 +158,42 @@ fn menu_entries(entries: &[Option<MenuItem>], cx: &App) -> Vec<MenuEntry> {
             None => MenuEntry::Separator,
         })
         .collect()
+}
+
+/// The key context of the tree with focus, its menus closed, which their
+/// items' keys are looked up in.
+pub(super) fn tree_context(cx: &App) -> ContextStack {
+    let mut frame = ContextFrame::new(KEY_CONTEXT);
+    if fe_gpui::vim_enabled(cx) {
+        frame = frame.flag("vim");
+    }
+    [ContextFrame::new(crate::KEY_CONTEXT), frame]
+        .into_iter()
+        .collect()
+}
+
+/// Where Down (or with `down` false, Up) moves a menu's highlight from
+/// `highlighted`, among entries `is_item` says are items rather than
+/// separators: wrapping and passing separators over; from none, the first
+/// or the last. None with no items.
+pub(super) fn next_highlight(
+    is_item: &[bool],
+    highlighted: Option<usize>,
+    down: bool,
+) -> Option<usize> {
+    let items: Vec<usize> = (is_item.iter().enumerate())
+        .filter_map(|(ix, &item)| item.then_some(ix))
+        .collect();
+    let last = items.len().checked_sub(1)?;
+    let at = highlighted.and_then(|ix| items.iter().position(|&item| item == ix));
+    let next = match (at, down) {
+        (None, true) => 0,
+        (None, false) => last,
+        (Some(at), true) if at >= last => 0,
+        (Some(at), true) => at + 1,
+        (Some(at), false) => at.checked_sub(1).unwrap_or(last),
+    };
+    Some(items[next])
 }
 
 /// `items` without those `keep` leaves out, and without a separator
@@ -216,6 +246,7 @@ impl ProjectPanel {
         }
         let can_paste = self.can_paste();
         let entries = kept(items, |item| item != Paste || can_paste);
+        self.new_menu = None;
         window.focus(&self.focus, cx);
         let focus_out = cx.on_focus_out(&self.focus, window, |panel, _, _, cx| {
             panel.close_menu(cx);
@@ -230,9 +261,11 @@ impl ProjectPanel {
         cx.notify();
     }
 
-    /// Closes the open menu, if there's one.
+    /// Closes the open menu, if there's one, this one or the New menu
+    /// ([`super::new_menu`]), leaving focus where it is.
     pub(super) fn close_menu(&mut self, cx: &mut Context<Self>) {
-        if self.menu.take().is_some() {
+        let tree = self.menu.take().is_some();
+        if self.new_menu.take().is_some() || tree {
             cx.notify();
         }
     }
@@ -277,24 +310,11 @@ impl ProjectPanel {
         let Some(menu) = &mut self.menu else {
             return;
         };
-        let items: Vec<usize> = (menu.entries.iter().enumerate())
-            .filter_map(|(ix, entry)| entry.map(|_| ix))
-            .collect();
-        let Some(last) = items.len().checked_sub(1) else {
-            return;
-        };
-        let at = menu
-            .highlighted
-            .and_then(|ix| items.iter().position(|&item| item == ix));
-        let next = match (at, down) {
-            (None, true) => 0,
-            (None, false) => last,
-            (Some(at), true) if at >= last => 0,
-            (Some(at), true) => at + 1,
-            (Some(at), false) => at.checked_sub(1).unwrap_or(last),
-        };
-        menu.highlighted = Some(items[next]);
-        cx.notify();
+        let items: Vec<bool> = menu.entries.iter().map(Option::is_some).collect();
+        if let Some(next) = next_highlight(&items, menu.highlighted, down) {
+            menu.highlighted = Some(next);
+            cx.notify();
+        }
     }
 
     /// Enter in the open menu: runs the highlighted item, if any, as a

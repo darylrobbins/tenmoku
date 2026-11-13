@@ -201,6 +201,8 @@ icons! {
         SquarePlus => "square-plus",
         SquareMinus => "square-minus",
         Bell => "bell",
+        // The project panel's New menu button; not mapped from names.
+        Plus => "plus",
         // TintedIcons' language glyphs; LucideIcons maps none of them.
         Coffee => "coffee",
         Layers => "layers",

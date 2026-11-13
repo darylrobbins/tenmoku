@@ -19,6 +19,12 @@
 //! entry's name may hold `/`s, which name folders to create above it, and
 //! one ending in `/` names a folder.
 //!
+//! The New menu's typed entries ([`super::new_menu`]) open the same field
+//! for a new file, prefilled with a free `Untitled.<ext>` in the folder,
+//! its stem selected so typing keeps the extension; the file is made with
+//! its type's template ([`super::templates`]) as its text, if the name
+//! still ends in that extension.
+//!
 //! Every operation goes through `fe_project`'s `fs_ops`, under the tree's
 //! (canonical) root. Creating, duplicating and trashing run off the main
 //! thread. A rename runs on it, refused while a buffer it would move is
@@ -57,7 +63,7 @@ use std::{
 
 use fe_gpui::commands::RunCommand;
 use fe_lsp::FileEdits;
-use fe_project::{FsChange, NameError, NodeId, fs_ops};
+use fe_project::{FileTree, FsChange, NameError, NodeId, fs_ops};
 use fe_ui::{
     CHEVRON_WIDTH, ICON_SIZE, IconRef, TREE_INDENT, TextField, TextFieldEvent, text_field,
 };
@@ -68,6 +74,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, svg,
 };
 
+use super::templates::{self, FileType};
 use super::{
     PanelEvent, PanelOp, ProjectPanel, ROW_HEIGHT, State, op,
     undo::{Made, Moved, Step},
@@ -110,6 +117,8 @@ pub(super) enum EditKind {
 /// The name field, open.
 pub(super) struct NameEdit {
     pub(super) kind: EditKind,
+    /// For a new file of the New menu's typed entries, its type.
+    template: Option<FileType>,
     /// For a new entry the folder it goes in (the tree's root, maybe); for
     /// a rename the entry.
     pub(super) node: NodeId,
@@ -208,6 +217,28 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_field(kind, None, window, cx);
+    }
+
+    /// Opens the name field for a new file of `file_type`, as
+    /// [`Self::start_edit`] does for a new file, prefilled with a name of
+    /// that type that's free in the folder, its stem selected.
+    pub(super) fn start_typed_file(
+        &mut self,
+        file_type: FileType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_field(EditKind::NewFile, Some(file_type), window, cx);
+    }
+
+    fn open_field(
+        &mut self,
+        kind: EditKind,
+        template: Option<FileType>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(tree) = self.tree() else {
             return;
         };
@@ -229,7 +260,10 @@ impl ProjectPanel {
                         .unwrap_or(tree.root()),
                     None => tree.root(),
                 };
-                (dir, String::new())
+                let name = (template
+                    .map(|file_type| free_name(tree, dir, file_type.template().extension)))
+                .unwrap_or_default();
+                (dir, name)
             }
         };
         if kind != EditKind::Rename {
@@ -270,6 +304,7 @@ impl ProjectPanel {
         });
         self.edit = Some(NameEdit {
             kind,
+            template,
             node,
             input,
             error: None,
@@ -300,6 +335,12 @@ impl ProjectPanel {
             self.epoch += 1;
             self.reconcile(cx);
         }
+    }
+
+    /// Whether the name field's operation is running, or its rename waits
+    /// for language servers: closing it then would drop what it's doing.
+    pub(super) fn edit_busy(&self) -> bool {
+        (self.edit.as_ref()).is_some_and(|edit| edit.running || edit.waiting.is_some())
     }
 
     /// Whether the name field has focus.
@@ -404,6 +445,10 @@ impl ProjectPanel {
             return;
         };
         let (kind, root) = (edit.kind, tree.root_path().to_owned());
+        // What a new file starts with: its template's body, or nothing.
+        let contents = (edit.template.map(FileType::template))
+            .filter(|template| templates::names_its_type(&name, template))
+            .map_or("", |template| template.body);
         let naming = Naming {
             serial: edit.serial,
             kind,
@@ -428,7 +473,7 @@ impl ProjectPanel {
             cx.background_spawn(async move {
                 let _running = running;
                 let folder = kind == EditKind::NewFolder;
-                fs_ops::create_recorded(&root, &target, &name, folder)
+                fs_ops::create_recorded_with(&root, &target, &name, contents.as_bytes(), folder)
             })
         };
         cx.spawn_in(window, async move |panel, cx| {
@@ -1341,6 +1386,32 @@ pub(crate) fn ready_now<F: Future + Unpin>(future: &mut F) -> Option<F::Output> 
         Poll::Ready(output) => Some(output),
         Poll::Pending => None,
     }
+}
+
+/// The stem a typed new file is prefilled with, in the active locale.
+pub(super) fn untitled() -> SharedString {
+    tr!("workbench-project-new-untitled")
+}
+
+/// `Untitled.<extension>`, or with the first number from 2 that's free
+/// (`Untitled-2.<extension>`), among folder `dir`'s entries as listed in
+/// `tree`; a folder not listed yet has none.
+fn free_name(tree: &FileTree, dir: NodeId, extension: &str) -> String {
+    let stem = untitled();
+    let taken = |name: &str| {
+        (tree.children(dir).into_iter().flatten())
+            .filter_map(|&id| tree.row(id))
+            .any(|row| {
+                row.name
+                    .to_str()
+                    .is_some_and(|row| row.eq_ignore_ascii_case(name))
+            })
+    };
+    let first = format!("{stem}.{extension}");
+    std::iter::once(first)
+        .chain((2..100).map(|n| format!("{stem}-{n}.{extension}")))
+        .find(|name| !taken(name))
+        .unwrap_or_else(|| format!("{stem}.{extension}"))
 }
 
 /// The length of `name`'s stem, which a rename selects: up to its last

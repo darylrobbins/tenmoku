@@ -157,11 +157,12 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
         (Some(DockPanel::Explorer), "Project".into())
     );
 
-    // The title row is TAB_HEIGHT high, and a click on it does nothing.
+    // The title row is TAB_HEIGHT high, and a click on it (on its title,
+    // left of the pane's buttons) does nothing.
     draw(cx);
     let column = dock.read_with(cx, |dock, _| dock.column_bounds().unwrap());
     let before = ops(&dock, cx);
-    let title = point(column.center().x, column.top() + TAB_HEIGHT / 2.);
+    let title = point(column.left() + px(24.), column.top() + TAB_HEIGHT / 2.);
     cx.simulate_click(title, Modifiers::none());
     draw(cx);
     assert_eq!(state(&dock, cx), (true, DockPanel::Explorer));

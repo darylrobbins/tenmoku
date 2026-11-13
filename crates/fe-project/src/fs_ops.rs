@@ -20,7 +20,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     fs::File,
-    io,
+    io::{self, Write as _},
     path::{Component, Path, PathBuf},
 };
 #[cfg(unix)]
@@ -125,13 +125,29 @@ fn validate_component(name: &str) -> Result<(), NameError> {
 /// created. Should creating fail midway, the folders made are removed again:
 /// those it made, not ones another process put in their place or in them.
 pub fn create_file(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
-    create(root, dir, name, name.ends_with(is_separator)).map(|created| created.path)
+    create_file_with(root, dir, name, b"")
+}
+
+/// [`create_file`], with `contents` written into the new file through the
+/// handle that made it, so they never land in anything else found at its
+/// path. A `name` ending in `/` makes a folder, as there, and writes
+/// nothing. Should writing fail, the file goes again with the folders made
+/// for it, unless another has taken its place.
+pub fn create_file_with(
+    root: &Path,
+    dir: &Path,
+    name: &str,
+    contents: &[u8],
+) -> io::Result<PathBuf> {
+    let folder = name.ends_with(is_separator);
+    let contents = if folder { &[][..] } else { contents };
+    create(root, dir, name, contents, folder).map(|created| created.path)
 }
 
 /// Creates folder `name` in folder `dir`, with any folders `name` names above
 /// it (`a/b/c`); a trailing `/` is allowed. Otherwise as [`create_file`].
 pub fn create_dir(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
-    create(root, dir, name, true).map(|created| created.path)
+    create(root, dir, name, b"", true).map(|created| created.path)
 }
 
 /// What an entry is: its device and inode (on Windows, its volume's serial
@@ -167,10 +183,30 @@ pub struct Created {
 /// swaps in at that instant is recorded as made. Undoing the create then
 /// moves that folder to the Trash: never deleted, and redo puts it back.
 pub fn create_recorded(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<Created> {
-    create(root, dir, name, folder || name.ends_with(is_separator))
+    create_recorded_with(root, dir, name, b"", folder)
 }
 
-fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<Created> {
+/// [`create_recorded`], with `contents` written into a new file as in
+/// [`create_file_with`].
+pub fn create_recorded_with(
+    root: &Path,
+    dir: &Path,
+    name: &str,
+    contents: &[u8],
+    folder: bool,
+) -> io::Result<Created> {
+    let folder = folder || name.ends_with(is_separator);
+    let contents = if folder { &[][..] } else { contents };
+    create(root, dir, name, contents, folder)
+}
+
+fn create(
+    root: &Path,
+    dir: &Path,
+    name: &str,
+    contents: &[u8],
+    folder: bool,
+) -> io::Result<Created> {
     validate_name(name)?;
     let root = Root::open(root)?;
     let dir_names = names_under(&root.path, dir)?;
@@ -238,7 +274,20 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<Creat
             mkdir_at(&parent, last, 0o777)?;
             Ok(listing::stat_at(&parent, last)?.id)
         } else {
-            listing::identity(&create_new_file(&parent, last, 0o666)?)
+            let mut file = create_new_file(&parent, last, 0o666)?;
+            let id = listing::identity(&file)?;
+            if contents.is_empty() {
+                return Ok(id);
+            }
+            file.write_all(contents)
+                .inspect_err(|_| {
+                    // Only the file this made, as it was made.
+                    let there = listing::stat_at(&parent, last).ok().map(|stat| stat.id);
+                    if there == Some(id) {
+                        remove_at(&parent, last, false).ok();
+                    }
+                })
+                .map(|()| id)
         }
     })();
     if result.is_err() {
@@ -2620,6 +2669,20 @@ mod tests {
         let err = no_replace_result(Err(io::Error::from_raw_os_error(libc::EEXIST))).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         no_replace_result(Ok(())).unwrap();
+    }
+
+    #[test]
+    fn a_file_created_with_contents_holds_them() {
+        let (_dir, root) = temp();
+        let made = create_file_with(&root, &root, "src/a.sh", b"#!/bin/sh\n").unwrap();
+        assert_eq!(made, root.join("src/a.sh"));
+        assert_eq!(fs::read_to_string(&made).unwrap(), "#!/bin/sh\n");
+        // An existing file keeps its own, and a folder takes none.
+        let err = create_file_with(&root, &root, "src/a.sh", b"x").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&made).unwrap(), "#!/bin/sh\n");
+        let folder = create_file_with(&root, &root, "lib/", b"x").unwrap();
+        assert!(folder.is_dir());
     }
 
     #[test]

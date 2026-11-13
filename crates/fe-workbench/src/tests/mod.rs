@@ -114,6 +114,7 @@ mod problems_b3;
 mod project_drag;
 mod project_menu;
 mod project_multi_select;
+mod project_new_menu;
 mod project_panel;
 #[cfg(target_os = "macos")]
 mod project_undo;

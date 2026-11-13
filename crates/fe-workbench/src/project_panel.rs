@@ -35,8 +35,9 @@
 //! collapsing every folder, toggling ignored entries and refreshing are in
 //! [`nav`]; cutting, copying and pasting entries are in [`clipboard`];
 //! filtering the rows by name is in [`filter`]; the right-click menu that
-//! offers them is in [`menu`]; dragging rows onto a folder to move or copy
-//! them is in [`drag`].
+//! offers them is in [`menu`]; the header's New menu, with typed files and
+//! their [`templates`], is in [`new_menu`]; dragging rows onto a folder to
+//! move or copy them is in [`drag`].
 
 use std::{
     cell::Cell,
@@ -145,13 +146,28 @@ fn place_in_folder(
     Some((at + 1, siblings.len()))
 }
 
-/// The project tree's actions, in the dock's header before ⋯ and —:
-/// reveal the active file, and collapse every folder.
+/// The project tree's actions, in the dock's header before ⋯ and —: `+`,
+/// leftmost, opening the New menu under it ([`new_menu`]); reveal the
+/// active file; and collapse every folder.
 pub(crate) fn pane_actions(panel: &Entity<ProjectPanel>) -> Vec<PaneAction> {
     let reveal = REVEAL_ACTIVE;
     let collapse = "project_panel.collapse_all";
     let weak = panel.downgrade();
+    let (new, new_at) = (panel.downgrade(), panel.downgrade());
     vec![
+        PaneAction {
+            id: NEW_BUTTON,
+            icon: Icon::Plus,
+            title: tr!("workbench-project-new"),
+            command: None,
+            // With no button to put the menu under: its first entry.
+            run: Rc::new(move |window, cx| {
+                (new.update(cx, |panel, cx| panel.run_op(PanelOp::NewFile, window, cx))).ok();
+            }),
+            anchored: Some(Rc::new(move |anchor, window, cx| {
+                (new_at.update(cx, |panel, cx| panel.toggle_new_menu(anchor, window, cx))).ok();
+            })),
+        },
         PaneAction {
             id: "project-reveal",
             icon: Icon::Target,
@@ -160,6 +176,7 @@ pub(crate) fn pane_actions(panel: &Entity<ProjectPanel>) -> Vec<PaneAction> {
             run: Rc::new(move |window, cx| {
                 crate::pane_toolbar::dispatch(reveal, fe_command::Source::Mouse, window, cx)
             }),
+            anchored: None,
         },
         PaneAction {
             id: "project-collapse",
@@ -173,9 +190,13 @@ pub(crate) fn pane_actions(panel: &Entity<ProjectPanel>) -> Vec<PaneAction> {
                 }))
                 .ok();
             }),
+            anchored: None,
         },
     ]
 }
+
+/// The `+`'s id among the header's buttons: `icon-button:project-new`.
+pub(crate) const NEW_BUTTON: &str = "project-new";
 
 /// The sidebar's width as built. Its panels fill its column, however
 /// wide it's dragged.
@@ -326,6 +347,8 @@ pub struct ProjectPanel {
     filter: Option<filter::Filter>,
     /// The right-click menu, while it's open.
     menu: Option<menu::TreeMenu>,
+    /// The header's New menu, while it's open.
+    new_menu: Option<new_menu::NewMenu>,
     /// A drag of the tree's rows, while it's under way.
     drag: Option<drag::Drag>,
     _watch: Option<Task<()>>,
@@ -391,6 +414,7 @@ impl ProjectPanel {
             drawn_cut: Vec::new(),
             filter: None,
             menu: None,
+            new_menu: None,
             drag: None,
             _watch: None,
             _locale: cx.observe_global::<kiln_platform::locale::ActiveLocale>(Self::follow_locale),
@@ -527,6 +551,7 @@ impl ProjectPanel {
         self.edit = None;
         self.filter = None;
         self.menu = None;
+        self.new_menu = None;
         self.clip_reopened();
         self.start(self.show_ignored, cx);
         cx.notify();
@@ -1483,13 +1508,18 @@ impl ProjectPanel {
             "down" if only_shift => 1,
             _ => return,
         };
-        if self.menu.is_some() || self.field_focused(window, cx) || self.filter_focused(window, cx)
-        {
+        if self.menu_open() || self.field_focused(window, cx) || self.filter_focused(window, cx) {
             return;
         }
         self.cancel_reveal();
         self.extend_by(delta, cx);
         cx.stop_propagation();
+    }
+
+    /// Whether a menu is open, the right-click one or the New menu: the
+    /// panel's keys are then the menu's.
+    fn menu_open(&self) -> bool {
+        self.menu.is_some() || self.new_menu.is_some()
     }
 
     /// Says how many rows are selected to a screen reader, as the
@@ -1596,7 +1626,7 @@ impl Render for ProjectPanel {
         // Vim's tree keys are off while the name field or the filter's box
         // takes typing.
         let typing = self.edit.is_some() || self.filter_typing();
-        let context = if self.menu.is_some() {
+        let context = if self.menu_open() {
             menu::MENU_KEY_CONTEXT
         } else if self.dragging() {
             drag::DRAG_KEY_CONTEXT
@@ -1612,6 +1642,7 @@ impl Render for ProjectPanel {
             .key_context(context)
             .on_action(cx.listener(Self::on_run_command))
             .on_key_down(cx.listener(Self::on_menu_key))
+            .on_key_down(cx.listener(Self::on_new_menu_key))
             .on_key_down(cx.listener(Self::on_extend_key))
             .on_key_down(cx.listener(Self::on_drag_key))
             // Rows dragged over the panel, and dropped where no row takes
@@ -1638,7 +1669,8 @@ impl Render for ProjectPanel {
             .children(
                 (self.status.as_ref()).map(|status| self.message(status.resolve().into(), cx)),
             )
-            .children(self.render_menu(window, cx));
+            .children(self.render_menu(window, cx))
+            .children(self.render_new_menu(window, cx));
         // To a screen reader the panel is the `Tree` "Files", its rows the
         // tree's items (the list holds no node of its own). It's what takes
         // focus, so the selected row can be its active descendant.
@@ -1938,6 +1970,12 @@ mod filter;
 
 #[path = "project_panel_menu.rs"]
 mod menu;
+
+#[path = "project_panel_new_menu.rs"]
+pub(crate) mod new_menu;
+
+#[path = "project_new_templates.rs"]
+pub(crate) mod templates;
 
 #[path = "project_panel_drag.rs"]
 mod drag;

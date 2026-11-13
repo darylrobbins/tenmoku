@@ -115,12 +115,13 @@ fn one_heading_above_the_first_tree_row_ending_in_the_pane_controls(cx: &mut Tes
     let root_row = bounds("project-root", cx);
     assert_eq!(root_row.top(), heading.bottom(), "{root_row:?} {heading:?}");
 
-    // The view's actions, then ⋯, named, then —, right-aligned in that
-    // order.
+    // The view's actions, `+` first, then ⋯, named, then —, right-aligned
+    // in that order.
     let ids: Vec<_> = controls.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(
         ids,
         [
+            crate::project_panel::NEW_BUTTON,
             "project-reveal",
             "project-collapse",
             MORE_BUTTON,
@@ -131,6 +132,7 @@ fn one_heading_above_the_first_tree_row_ending_in_the_pane_controls(cx: &mut Tes
     assert_eq!(
         names,
         [
+            "New…",
             "Reveal Active File in Project",
             "Collapse All Folders",
             "More actions",
@@ -541,6 +543,102 @@ fn the_docks_menu_works_from_the_keyboard(cx: &mut TestAppContext) {
     assert_eq!(menu_state(&dock, cx), (false, false, None));
     let position = dock.read_with(cx, |dock, _| dock.state().position());
     assert_eq!(position, DockPosition::Right);
+}
+
+/// Whether the active editor has focus.
+fn editor_focused(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+    let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
+    let editor = editor.expect("a file is open");
+    cx.update(|window, cx| editor.focus_handle(cx).is_focused(window))
+}
+
+/// The editor focused, then the dock's ⋯ menu opened from its button, so
+/// the menu has focus and the editor is what it gives focus back to.
+fn open_more_from_the_editor(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Entity<Dock> {
+    let dock = dock(workbench, cx);
+    let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
+    let editor = editor.expect("a file is open");
+    cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    draw(cx);
+    let more = button(MORE_BUTTON, cx);
+    cx.simulate_click(more.center(), Modifiers::none());
+    draw(cx);
+    assert_eq!(menu_state(&dock, cx), (true, true, Some(0)));
+    dock
+}
+
+#[gpui::test]
+fn the_sidebar_shortcut_hiding_the_docks_menu_gives_focus_back(cx: &mut TestAppContext) {
+    let (_dir, root) = mixed_case();
+    let (workbench, cx) = opened(cx, &root, "fn a() {}\n");
+    let dock = open_more_from_the_editor(&workbench, cx);
+
+    // dock.toggle's key, with the menu open: the sidebar hides, the menu
+    // goes, and typing reaches the editor again.
+    cx.simulate_keystrokes("cmd-b");
+    draw(cx);
+    assert!(!dock.read_with(cx, |dock, _| dock.is_visible()));
+    assert_eq!(menu_state(&dock, cx), (false, false, None));
+    assert!(editor_focused(&workbench, cx));
+    cx.simulate_input("x");
+    draw(cx);
+    assert_eq!(editor_text(&workbench, cx), "xfn a() {}\n");
+}
+
+#[gpui::test]
+fn hiding_the_dock_or_clearing_its_menu_gives_focus_back(cx: &mut TestAppContext) {
+    let (_dir, root) = mixed_case();
+    let (workbench, cx) = opened(cx, &root, "fn a() {}\n");
+
+    // Hidden with no window to move focus in, as zen mode hides it: the
+    // frame without the menu gives focus back.
+    let dock = open_more_from_the_editor(&workbench, cx);
+    dock.update(cx, |dock, cx| {
+        dock.dock_mut().set_visible(false);
+        cx.notify();
+    });
+    draw(cx);
+    assert_eq!(menu_state(&dock, cx), (false, false, None));
+    assert!(editor_focused(&workbench, cx));
+    cx.simulate_input("x");
+    draw(cx);
+    assert_eq!(editor_text(&workbench, cx), "xfn a() {}\n");
+
+    // Its items cleared: the same.
+    dock.update(cx, |dock, cx| {
+        dock.dock_mut().set_visible(true);
+        cx.notify();
+    });
+    let items = dock.read_with(cx, |dock, _| dock.state().menu().to_vec());
+    open_more_from_the_editor(&workbench, cx);
+    dock.update(cx, |dock, cx| {
+        dock.dock_mut().set_menu(Vec::new());
+        cx.notify();
+    });
+    draw(cx);
+    assert_eq!(menu_state(&dock, cx), (false, false, None));
+    assert!(editor_focused(&workbench, cx));
+
+    // Focus the host moved on first stays where it went.
+    dock.update(cx, |dock, cx| {
+        dock.dock_mut().set_menu(items);
+        cx.notify();
+    });
+    open_more_from_the_editor(&workbench, cx);
+    let tree = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
+    cx.update(|window, cx| {
+        dock.update(cx, |dock, cx| {
+            dock.dock_mut().set_menu(Vec::new());
+            cx.notify();
+        });
+        window.focus(&tree.focus_handle(cx), cx);
+    });
+    draw(cx);
+    assert!(cx.update(|window, cx| tree.focus_handle(cx).is_focused(window)));
+    assert!(!editor_focused(&workbench, cx));
 }
 
 #[gpui::test]
