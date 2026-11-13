@@ -129,7 +129,8 @@ tree-sitter-yaml = { workspace = true, optional = true }
 kiln-l10n = { workspace = true, features = ["lint"] }
 # Integration tests that compare highlights need them complete, whatever the
 # machine's load. The crate itself gets this only under `cfg(test)`.
-fe-syntax = { path = ".", default-features = false, features = ["no-query-budget"] }
+# `csharp` is on so the gate's workspace test run compiles the csharp tests.
+fe-syntax = { path = ".", default-features = false, features = ["no-query-budget", "csharp"] }
 criterion.workspace = true
 proptest.workspace = true
 rand.workspace = true
