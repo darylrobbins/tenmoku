@@ -128,6 +128,7 @@ mod rail_b3;
 mod references_landing;
 mod references_panel;
 mod restore_lsp_clean;
+mod run_process;
 mod run_widget_b3;
 mod runs_model;
 mod search_panel;
