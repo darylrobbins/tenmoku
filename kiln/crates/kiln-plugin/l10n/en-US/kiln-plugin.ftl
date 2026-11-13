@@ -83,6 +83,17 @@ kiln-plugin-manifest-more-than-one = { $id }: [contributes.plugin] must be a sin
 kiln-plugin-manifest-missing-wasm = { $id }: [contributes.plugin] needs a `wasm` string
 kiln-plugin-manifest-capabilities-not-strings = { $id }: `capabilities` must be an array of strings
 kiln-plugin-manifest-signature-not-string = { $id }: `signature` must be a string
+# `$key` is a key of `[contributes.plugin.background]`; `$reason` one of the messages below.
+kiln-plugin-manifest-background = { $id }: background `{ $key }`: { $reason }
+kiln-plugin-manifest-background-unknown-key = { $id }: unknown key `{ $key }` in [contributes.plugin.background]
+kiln-plugin-background-not-a-string = must be a string, such as `256MiB` or `30m`
+kiln-plugin-background-malformed = must be a whole number and a unit (KiB, MiB or GiB for sizes, s or m for times)
+kiln-plugin-background-too-small = is below the least allowed
+kiln-plugin-background-too-large = is too large
+# `$declared` and `$ceiling` are whole mebibytes.
+kiln-plugin-background-memory-clamped = { $id }: background memory of { $declared } MiB is past what this computer allows, so jobs get { $ceiling } MiB
+# `$declared` and `$ceiling` are whole minutes.
+kiln-plugin-background-wall-clamped = { $id }: background wall time of { $declared } min is past what this computer allows, so jobs get { $ceiling } min
 kiln-plugin-manifest-capability = { $id }: { $reason }
 # `$path` is the `wasm` path, quoted; `$reason` one of the messages below.
 kiln-plugin-manifest-wasm-path = { $id }: wasm path { $path }: { $reason }

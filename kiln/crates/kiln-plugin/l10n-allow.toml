@@ -45,3 +45,18 @@ reason = "A fault the crate's unit tests inject, under a #[cfg(test)] statement 
 file = "src/runner.rs"
 text = "plugin {id}"
 reason = "A plugin's thread's name, shown only in debuggers"
+
+[[literal]]
+file = "src/manifest.rs"
+text = "KiB"
+reason = "A size unit written in the manifest's background table, as in the design"
+
+[[literal]]
+file = "src/manifest.rs"
+text = "MiB"
+reason = "A size unit written in the manifest's background table, as in the design"
+
+[[literal]]
+file = "src/manifest.rs"
+text = "GiB"
+reason = "A size unit written in the manifest's background table, as in the design"

@@ -33,6 +33,8 @@ use kiln_l10n::tr;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use crate::limits::BackgroundLimits;
+
 /// The file in the state directory the grants are kept in.
 pub const GRANTS_FILE: &str = "plugin-grants.toml";
 
@@ -69,6 +71,14 @@ pub struct GrantRecord {
     /// this is what tells a suspension found under an earlier grant from one that still applies.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub grant_tokens: BTreeMap<String, String>,
+    /// The background limits the user accepted, or `None` for the defaults: a record written
+    /// before there were any, or never granted any. See [`evaluate_background`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<BackgroundLimits>,
+    /// The background limits of the request last declined, with `declined`; `None` for the
+    /// defaults, as in a record written before they were kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declined_background: Option<BackgroundLimits>,
 }
 
 impl GrantRecord {
@@ -144,6 +154,8 @@ impl GrantRecord {
             declined: self.declined.clone(),
             suspended,
             grant_tokens,
+            background: self.background,
+            declined_background: self.declined_background,
         })
     }
 }
@@ -234,6 +246,45 @@ pub fn evaluate(record: Option<&GrantRecord>, requested: &Grants) -> Decision {
     } else {
         Decision::Escalation {
             added,
+            keep_running: record.version,
+        }
+    }
+}
+
+/// [`evaluate`], where an update that loads under the grants but raises `background`'s memory
+/// or wall time over what the record accepted is an escalation too, with nothing in `added`:
+/// the prompt names the raised limits ([`BackgroundLimits::raises`]). Lowering one never asks.
+/// A record with no accepted limits accepts the defaults.
+pub fn evaluate_background(
+    record: Option<&GrantRecord>,
+    requested: &Grants,
+    background: &BackgroundLimits,
+) -> Decision {
+    // A decline covers the whole request: the capabilities and the limits. A record written
+    // before limits were kept declined the defaults.
+    let declined = record.is_some_and(|record| {
+        record.declined.as_ref() == Some(requested)
+            && record.declined_background.unwrap_or_default() == *background
+    });
+    let Some(record) = record else {
+        return evaluate(None, requested);
+    };
+    let mut open = record.clone();
+    if !declined {
+        open.declined = None;
+    }
+    let decision = evaluate(Some(&open), requested);
+    if !matches!(decision, Decision::Load(_)) {
+        return decision;
+    }
+    let accepted = record.background.unwrap_or_default();
+    if background.raises(&accepted).is_empty() {
+        decision
+    } else if declined {
+        Decision::Declined
+    } else {
+        Decision::Escalation {
+            added: Grants::new(),
             keep_running: record.version,
         }
     }
@@ -773,11 +824,45 @@ impl GrantStore {
                     .collect(),
                 programs: bound,
                 grant_tokens,
+                background: previous.background,
+                declined_background: None,
             };
             granted = Some(record.clone());
             Ok(Some(record))
         })?;
         Ok(granted.expect("update ran"))
+    }
+
+    /// Records the background limits the user accepted for `id`, as at a prompt that named
+    /// them. Run after [`Self::grant`]; nothing else changes.
+    pub fn accept_background(
+        &self,
+        id: &str,
+        background: BackgroundLimits,
+    ) -> Result<(), GrantStoreError> {
+        self.update(id, |record| {
+            let mut record = record.unwrap_or_default();
+            record.background = Some(background);
+            Ok(Some(record))
+        })?;
+        Ok(())
+    }
+
+    /// [`Self::decline`], for a request that also asked for `background`: it is not asked again
+    /// until the capabilities or the limits change ([`evaluate_background`]).
+    pub fn decline_with_background(
+        &self,
+        id: &str,
+        requested: &Grants,
+        background: BackgroundLimits,
+    ) -> Result<(), GrantStoreError> {
+        self.update(id, |record| {
+            let mut record = record.unwrap_or_default();
+            record.declined = Some(requested.clone());
+            record.declined_background = Some(background);
+            Ok(Some(record))
+        })?;
+        Ok(())
     }
 
     /// Records that the user declined `id`'s `requested`, so
@@ -787,6 +872,7 @@ impl GrantStore {
         self.update(id, |record| {
             let mut record = record.unwrap_or_default();
             record.declined = Some(requested.clone());
+            record.declined_background = None;
             Ok(Some(record))
         })
     }

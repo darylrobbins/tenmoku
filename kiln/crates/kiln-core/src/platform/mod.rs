@@ -21,9 +21,11 @@ pub use fs::{
     replace_file, sync_dir,
 };
 pub(crate) mod keychain;
+mod memory;
 pub(crate) mod process_tree;
 pub(crate) mod stdio;
 
+pub use memory::{parse_meminfo, physical_ram_bytes};
 pub use process_tree::ProcessTree;
 pub use stdio::{OutputDrain, OutputSource, StdinFeed, without_console_window};
 

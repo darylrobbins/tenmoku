@@ -7,7 +7,10 @@
 //! [`plugin_kind`]'s schema; [`PluginManifest::from_extension`] reads it
 //! from the checked [`Manifest`].
 
-use std::path::{Component, Path, PathBuf};
+use std::{
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
 
 use kiln_command::{Capability, CapabilityError, Grants};
 use kiln_core::{AppKind, extension::Manifest};
@@ -15,11 +18,16 @@ use kiln_l10n::tr;
 use serde_json::json;
 use toml::Value;
 
+use crate::limits::{
+    BACKGROUND_MEMORY_FLOOR, BACKGROUND_WALL_FLOOR, BackgroundLimit, BackgroundLimits, Ceilings,
+    DATA_QUOTA_CEILING,
+};
+
 /// The `contributes` key that makes an extension a plugin.
 pub const PLUGIN_KIND: &str = "plugin";
 
-/// The `[contributes.plugin]` kind: `wasm`, `capabilities` and an optional
-/// `signature`. Register it for the user's extensions layer only.
+/// The `[contributes.plugin]` kind: `wasm`, `capabilities`, an optional
+/// `signature` and an optional `[contributes.plugin.background]` table. Register it for the user's extensions layer only.
 pub fn plugin_kind() -> AppKind {
     AppKind {
         name: PLUGIN_KIND,
@@ -29,6 +37,15 @@ pub fn plugin_kind() -> AppKind {
                 "wasm": { "type": "string" },
                 "capabilities": { "type": "array", "items": { "type": "string" } },
                 "signature": { "type": "string" },
+                "background": {
+                    "type": "object",
+                    "properties": {
+                        "memory": { "type": "string" },
+                        "wall": { "type": "string" },
+                        "data": { "type": "string" },
+                    },
+                    "additionalProperties": false,
+                },
             },
             "required": ["wasm"],
             "additionalProperties": false,
@@ -62,6 +79,15 @@ pub enum PluginManifestError {
     SignatureNotString {
         id: String,
     },
+    UnknownBackgroundKey {
+        id: String,
+        key: String,
+    },
+    Background {
+        id: String,
+        key: &'static str,
+        reason: BackgroundError,
+    },
     Capability {
         id: String,
         #[source]
@@ -89,6 +115,19 @@ impl std::fmt::Display for PluginManifestError {
             Self::SignatureNotString { id } => {
                 tr!("kiln-plugin-manifest-signature-not-string", id = id)
             }
+            Self::UnknownBackgroundKey { id, key } => {
+                tr!(
+                    "kiln-plugin-manifest-background-unknown-key",
+                    id = id,
+                    key = key
+                )
+            }
+            Self::Background { id, key, reason } => tr!(
+                "kiln-plugin-manifest-background",
+                id = id,
+                key = *key,
+                reason = reason.to_string()
+            ),
             Self::Capability { id, source } => tr!(
                 "kiln-plugin-manifest-capability",
                 id = id,
@@ -102,6 +141,74 @@ impl std::fmt::Display for PluginManifestError {
             ),
         })
     }
+}
+
+/// Why a `[contributes.plugin.background]` value is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackgroundError {
+    NotAString,
+    Malformed,
+    TooSmall,
+    TooLarge,
+}
+
+/// In the active locale.
+impl std::fmt::Display for BackgroundError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&tr!(match self {
+            Self::NotAString => "kiln-plugin-background-not-a-string",
+            Self::Malformed => "kiln-plugin-background-malformed",
+            Self::TooSmall => "kiln-plugin-background-too-small",
+            Self::TooLarge => "kiln-plugin-background-too-large",
+        }))
+    }
+}
+
+/// `text` as a whole number of `units`, each a suffix and its size: `512MiB`, `30m`.
+fn with_unit(text: &str, units: &[(&str, u64)]) -> Result<u64, BackgroundError> {
+    let text = text.trim();
+    let (suffix, size) = units
+        .iter()
+        .filter(|(suffix, _)| text.ends_with(suffix))
+        // `MiB` before `B`, were there one.
+        .max_by_key(|(suffix, _)| suffix.len())
+        .ok_or(BackgroundError::Malformed)?;
+    let digits = text[..text.len() - suffix.len()].trim_end();
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(BackgroundError::Malformed);
+    }
+    let count: u64 = digits.parse().map_err(|_| BackgroundError::TooLarge)?;
+    count.checked_mul(*size).ok_or(BackgroundError::TooLarge)
+}
+
+const SIZE_UNITS: &[(&str, u64)] = &[("KiB", 1 << 10), ("MiB", 1 << 20), ("GiB", 1 << 30)];
+const TIME_UNITS: &[(&str, u64)] = &[("s", 1), ("m", 60)];
+
+/// A size such as `256MiB`, in bytes, within `min..=max`. A value past `max` isn't an error
+/// here for `memory` and `wall`: the host's ceilings clamp it ([`Ceilings::clamp`]).
+fn size_value(
+    id: &str,
+    key: &'static str,
+    value: &Value,
+    min: u64,
+    max: u64,
+) -> Result<u64, PluginManifestError> {
+    let fail = |reason| PluginManifestError::Background {
+        id: id.to_owned(),
+        key,
+        reason,
+    };
+    let Value::String(text) = value else {
+        return Err(fail(BackgroundError::NotAString));
+    };
+    let bytes = with_unit(text, SIZE_UNITS).map_err(fail)?;
+    if bytes < min {
+        return Err(fail(BackgroundError::TooSmall));
+    }
+    if bytes > max {
+        return Err(fail(BackgroundError::TooLarge));
+    }
+    Ok(bytes)
 }
 
 /// Why a plugin's `wasm` path isn't a file inside its extension's directory.
@@ -144,6 +251,9 @@ pub struct PluginManifest {
     pub capabilities: Grants,
     /// A reserved slot: accepted and kept, never verified.
     pub signature: Option<String>,
+    /// What `[contributes.plugin.background]` declares, over the defaults. As declared: the
+    /// host's [`Ceilings`] clamp it where it is used.
+    pub background: BackgroundLimits,
     /// Notes on capabilities that were accepted but are better written
     /// another way, such as `process.spawn:rg.exe`.
     pub warnings: Vec<String>,
@@ -205,6 +315,52 @@ impl PluginManifest {
             Some(Value::String(signature)) => Some(signature.clone()),
             Some(_) => return Err(PluginManifestError::SignatureNotString { id: id.clone() }),
         };
+        let mut background = BackgroundLimits::default();
+        match entry.get("background") {
+            None => {}
+            Some(Value::Table(table)) => {
+                if let Some(key) = table
+                    .keys()
+                    .find(|key| !matches!(key.as_str(), "memory" | "wall" | "data"))
+                {
+                    return Err(PluginManifestError::UnknownBackgroundKey {
+                        id: id.clone(),
+                        key: key.clone(),
+                    });
+                }
+                // A value past the ceiling isn't refused: the host clamps it.
+                if let Some(value) = table.get("memory") {
+                    let bytes = size_value(id, "memory", value, BACKGROUND_MEMORY_FLOOR, u64::MAX)?;
+                    background.memory_bytes = bytes;
+                }
+                if let Some(value) = table.get("wall") {
+                    let fail = |reason| PluginManifestError::Background {
+                        id: id.clone(),
+                        key: "wall",
+                        reason,
+                    };
+                    let Value::String(text) = value else {
+                        return Err(fail(BackgroundError::NotAString));
+                    };
+                    let secs = with_unit(text, TIME_UNITS).map_err(fail)?;
+                    if secs < BACKGROUND_WALL_FLOOR.as_secs() {
+                        return Err(fail(BackgroundError::TooSmall));
+                    }
+                    background.wall = Duration::from_secs(secs);
+                }
+                if let Some(value) = table.get("data") {
+                    background.data_bytes =
+                        Some(size_value(id, "data", value, 0, DATA_QUOTA_CEILING)?);
+                }
+            }
+            Some(_) => {
+                return Err(PluginManifestError::Background {
+                    id: id.clone(),
+                    key: "background",
+                    reason: BackgroundError::NotAString,
+                });
+            }
+        }
         Ok(Some(Self {
             id: manifest.id.clone(),
             name: manifest.name.clone(),
@@ -212,8 +368,35 @@ impl PluginManifest {
             wasm,
             capabilities,
             signature,
+            background,
             warnings,
         }))
+    }
+
+    /// The background limits jobs run with on a computer with `ceilings`, and a warning for each
+    /// declared value clamped to them. Not an error: the plugin still loads.
+    pub fn background_within(&self, ceilings: &Ceilings) -> (BackgroundLimits, Vec<String>) {
+        let (limits, clamped) = ceilings.clamp(self.background);
+        let warnings = clamped
+            .iter()
+            .map(|clamped| match clamped.limit {
+                BackgroundLimit::Memory => tr!(
+                    "kiln-plugin-background-memory-clamped",
+                    id = self.id.as_str(),
+                    declared = clamped.declared / (1 << 20),
+                    ceiling = clamped.ceiling / (1 << 20)
+                )
+                .to_string(),
+                BackgroundLimit::Wall => tr!(
+                    "kiln-plugin-background-wall-clamped",
+                    id = self.id.as_str(),
+                    declared = clamped.declared / 60,
+                    ceiling = clamped.ceiling / 60
+                )
+                .to_string(),
+            })
+            .collect();
+        (limits, warnings)
     }
 
     /// Whether the signature was checked. Always false: the slot is

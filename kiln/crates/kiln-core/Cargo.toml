@@ -22,7 +22,7 @@ toml_edit.workspace = true
 unicode-segmentation.workspace = true
 
 # O_NONBLOCK, for opening untrusted files (src/platform/fs.rs); process groups
-# and signals (src/platform/process_tree.rs).
+# and signals (src/platform/process_tree.rs); `hw.memsize` on macOS (src/platform/memory.rs).
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
@@ -37,7 +37,7 @@ windows-native-keyring-store.workspace = true
 # A file's volume and index, its identity, and private directories' access
 # lists, owners and the process token's user (src/platform/acl.rs); a job
 # object per process tree, its thread resumed once assigned
-# (src/platform/process_tree.rs).
+# (src/platform/process_tree.rs); the total physical memory (src/platform/memory.rs).
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -45,6 +45,7 @@ windows-sys = { workspace = true, features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_JobObjects",
+    "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
 ] }

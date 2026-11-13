@@ -8,6 +8,8 @@
 
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use wasmtime::{ResourceLimiter, StoreLimits, StoreLimitsBuilder};
 
 /// How long one call into a plugin may run before it is interrupted and the plugin unloaded.
@@ -30,7 +32,9 @@ pub const EVENT_QUEUE: usize = 256;
 /// The most bytes the host reads for a plugin at once, its component among them.
 pub const MAX_READ_BYTES: usize = 16 << 20;
 
-/// One plugin's limits. The default is the named constants; settings override them.
+/// One plugin's interactive limits: what the user waits on (§3.1 of the stage 3 design). The
+/// default is the named constants; settings override them. The background tier's are
+/// [`BackgroundLimits`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
     pub call_deadline: Duration,
@@ -47,6 +51,137 @@ impl Default for Limits {
             event_queue: EVENT_QUEUE,
             max_read_bytes: MAX_READ_BYTES,
         }
+    }
+}
+
+/// How long a background job runs before it is cancelled, unless its manifest declares another.
+pub const BACKGROUND_WALL: Duration = Duration::from_secs(10 * 60);
+
+/// The longest wall time a job may have, whatever is declared. No fuel metering backs it: the
+/// engine has none, so wall time is what bounds a job's CPU.
+pub const BACKGROUND_WALL_CEILING: Duration = Duration::from_secs(60 * 60);
+
+/// The shortest wall time a manifest may declare.
+pub const BACKGROUND_WALL_FLOOR: Duration = Duration::from_secs(1);
+
+/// The memory a job's worker store may hold, unless its manifest declares another.
+pub const BACKGROUND_MEMORY_BYTES: u64 = 256 << 20;
+
+/// The least memory a manifest may declare for a job.
+pub const BACKGROUND_MEMORY_FLOOR: u64 = 1 << 20;
+
+/// The most one job may hold, however much RAM there is.
+pub const JOB_MEMORY_CAP: u64 = 2 << 30;
+
+/// The most all running jobs may hold together, however much RAM there is.
+pub const ALL_JOBS_MEMORY_CAP: u64 = 4 << 30;
+
+/// The most a plugin's data quota may be declared as: reserved for the data store (B7).
+pub const DATA_QUOTA_CEILING: u64 = 2 << 30;
+
+/// One plugin's background limits: what a job may use. A manifest's
+/// `[contributes.plugin.background]` declares them, the host's [`Ceilings`] clamp them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackgroundLimits {
+    /// Wall time per job.
+    pub wall: Duration,
+    /// Memory per job, in bytes.
+    pub memory_bytes: u64,
+    /// The plugin data quota, in bytes. Reserved: parsed and kept, nothing enforces it yet.
+    pub data_bytes: Option<u64>,
+}
+
+impl Default for BackgroundLimits {
+    fn default() -> Self {
+        Self {
+            wall: BACKGROUND_WALL,
+            memory_bytes: BACKGROUND_MEMORY_BYTES,
+            data_bytes: None,
+        }
+    }
+}
+
+impl BackgroundLimits {
+    /// Whether `self` asks for more than `granted` on `wall` or `memory_bytes`: the limits an
+    /// update must ask the user about again. Lowering one, or the reserved data quota, never
+    /// counts.
+    pub fn raises(&self, granted: &Self) -> Vec<BackgroundLimit> {
+        let mut raised = Vec::new();
+        if self.memory_bytes > granted.memory_bytes {
+            raised.push(BackgroundLimit::Memory);
+        }
+        if self.wall > granted.wall {
+            raised.push(BackgroundLimit::Wall);
+        }
+        raised
+    }
+}
+
+/// A background limit an escalation can name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackgroundLimit {
+    Memory,
+    Wall,
+}
+
+/// A limit declared past what the host allows, and what it was clamped to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Clamped {
+    pub limit: BackgroundLimit,
+    pub declared: u64,
+    pub ceiling: u64,
+}
+
+/// What this computer allows background jobs, from its physical RAM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ceilings {
+    pub wall: Duration,
+    /// Per job: min(2 GiB, RAM / 4).
+    pub job_memory_bytes: u64,
+    /// All running jobs together: min(4 GiB, RAM / 2).
+    pub all_jobs_memory_bytes: u64,
+}
+
+/// What [`Ceilings::host`] assumes when the platform won't say how much RAM there is.
+const UNKNOWN_RAM_BYTES: u64 = 4 << 30;
+
+impl Ceilings {
+    /// The ceilings of a computer with `ram_bytes` of physical RAM.
+    pub fn for_ram(ram_bytes: u64) -> Self {
+        Self {
+            wall: BACKGROUND_WALL_CEILING,
+            job_memory_bytes: JOB_MEMORY_CAP.min(ram_bytes / 4),
+            all_jobs_memory_bytes: ALL_JOBS_MEMORY_CAP.min(ram_bytes / 2),
+        }
+    }
+
+    /// The ceilings of this computer.
+    pub fn host() -> Self {
+        Self::for_ram(kiln_core::platform::physical_ram_bytes().unwrap_or(UNKNOWN_RAM_BYTES))
+    }
+
+    /// `limits` held to these ceilings, with what was clamped. Not an error: the job runs with
+    /// what the host allows.
+    pub fn clamp(&self, limits: BackgroundLimits) -> (BackgroundLimits, Vec<Clamped>) {
+        let mut clamped = Vec::new();
+        let mut limits = limits;
+        if limits.memory_bytes > self.job_memory_bytes {
+            clamped.push(Clamped {
+                limit: BackgroundLimit::Memory,
+                declared: limits.memory_bytes,
+                ceiling: self.job_memory_bytes,
+            });
+            limits.memory_bytes = self.job_memory_bytes;
+        }
+        if limits.wall > self.wall {
+            clamped.push(Clamped {
+                limit: BackgroundLimit::Wall,
+                declared: limits.wall.as_secs(),
+                ceiling: self.wall.as_secs(),
+            });
+            limits.wall = self.wall;
+        }
+        (limits, clamped)
     }
 }
 
