@@ -296,7 +296,7 @@ impl CredentialPrompt {
         let prompt = asked.request.prompt.trim().to_owned();
         let field = cx.new(|cx| {
             fe_ui::TextField::new(window, cx)
-                .placeholder(prompt.clone())
+                .placeholder(kiln_l10n::Text::verbatim(prompt.clone()))
                 .name(prompt)
                 .masked(true)
         });
