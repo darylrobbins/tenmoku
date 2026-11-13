@@ -52,6 +52,7 @@ fe-net = { path = "crates/fe-net" }
 fe-plugin = { path = "crates/fe-plugin" }
 kiln-plugin = { path = "kiln/crates/kiln-plugin" }
 fe-registry = { path = "crates/fe-registry" }
+fe-acp = { path = "crates/fe-acp" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to
@@ -108,6 +109,13 @@ lsp-types = "=0.95.1"
 async-io = "2"
 async-process = "2"
 futures = "0.3"
+# The Agent Client Protocol client (fe-acp; docs/decisions/50t8wt9we2-ai-agents.md
+# § 4), Apache-2.0. Pinned with `=`: the record read 5.2.0 and its schema
+# 1.17.0. No features: neither `process` nor `stdio`, since fe-acp spawns the
+# agent itself, and no unstable protocol. It turns on serde_json's
+# `preserve_order` workspace-wide (its Cargo.toml), so JSON output keeps
+# insertion order rather than sorting keys.
+agent-client-protocol = { version = "=5.2.0", default-features = false }
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
 # File encodings: decode and encode legacy encodings, and guess
 # unmarked ones (fe-text). chardetng is Apache-2.0 OR MIT; encoding_rs stays at
