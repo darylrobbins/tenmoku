@@ -14,6 +14,7 @@
 //! files, so a file that changes after the store took it cannot misplace
 //! them.
 
+use kiln_l10n::tr;
 use std::{
     fs::OpenOptions,
     io::{self, Read as _},
@@ -311,7 +312,7 @@ impl VimRemaps {
         let mut entries = Vec::new();
         for (entry, remap) in self.table.iter().enumerate() {
             if !readable && let Some(side) = names_leader(remap) {
-                let message = "vim.leader can't be read".to_owned();
+                let message = tr!("fastedit-vim-leader-unreadable").to_string();
                 problems.push(Problem::Entry(entry, side, message));
                 continue;
             }
@@ -394,7 +395,7 @@ impl VimRemaps {
         groups.extend_from_slice(&self.vimrc_groups);
         for (entry, group) in self.group_table.iter().enumerate() {
             if !readable && group.keys.to_ascii_lowercase().contains("<leader>") {
-                let message = "vim.leader can't be read".to_owned();
+                let message = tr!("fastedit-vim-leader-unreadable").to_string();
                 problems.push(Problem::Group(entry, "keys", message));
                 continue;
             }
@@ -542,7 +543,8 @@ impl ConfigSource for VimRemaps {
 /// file of at most [`MAX_BYTES`] is read, opened without blocking (a FIFO
 /// would block the open) and checked once open.
 fn read(path: &Path) -> Result<String, String> {
-    let cannot = |error: io::Error| format!("cannot read the file: {error}");
+    let cannot =
+        |error: io::Error| tr!("fastedit-vim-read-failed", error = error.to_string()).to_string();
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -553,17 +555,14 @@ fn read(path: &Path) -> Result<String, String> {
         Err(error) => return Err(cannot(error)),
     };
     if !file.metadata().map_err(cannot)?.is_file() {
-        return Err("cannot read the file: not a regular file".to_owned());
+        return Err(tr!("fastedit-vim-read-not-regular").to_string());
     }
     let mut bytes = Vec::new();
     (file.take(MAX_BYTES + 1).read_to_end(&mut bytes)).map_err(cannot)?;
     if bytes.len() as u64 > MAX_BYTES {
-        return Err(format!(
-            "cannot read the file: bigger than {} KiB",
-            MAX_BYTES / 1024
-        ));
+        return Err(tr!("fastedit-vim-read-too-big", kib = MAX_BYTES / 1024).to_string());
     }
-    String::from_utf8(bytes).map_err(|_| "cannot read the file: it isn't valid UTF-8".to_owned())
+    String::from_utf8(bytes).map_err(|_| tr!("fastedit-vim-read-not-utf8").to_string())
 }
 
 /// What `text`, in the vimrc subset, loads as when `<leader>` starts as
@@ -575,14 +574,26 @@ fn parse_with_leader(text: &str, leader: &str) -> Vimrc {
 
 /// What a map the keymap hides says in the config problems list.
 fn conflict_message(conflict: &fe_gpui::RemapConflict) -> String {
-    let mode = match conflict.mode {
-        RemapMode::CmdLine => "the command line",
-        _ => "insert mode",
-    };
-    format!(
-        "\"{}\" is bound in the keymap in {mode} (\"{}\" runs {}); the keymap wins there",
-        conflict.from, conflict.keys, conflict.command
-    )
+    let (from, keys, command) = (
+        conflict.from.to_string(),
+        conflict.keys.to_string(),
+        conflict.command.to_string(),
+    );
+    match conflict.mode {
+        RemapMode::CmdLine => tr!(
+            "fastedit-vim-conflict-cmdline",
+            from = from,
+            keys = keys,
+            command = command
+        ),
+        _ => tr!(
+            "fastedit-vim-conflict-insert",
+            from = from,
+            keys = keys,
+            command = command
+        ),
+    }
+    .to_string()
 }
 
 /// A diagnostic for the file at `path`, at the start of `line`.

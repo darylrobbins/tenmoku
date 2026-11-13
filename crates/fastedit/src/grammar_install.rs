@@ -37,6 +37,7 @@ use fe_syntax::MAX_GRAMMAR_BYTES;
 use fe_workbench::{GrammarInstallError, GrammarOffer, GrammarOffers};
 use gpui::AppContext as _;
 use kiln::command::{Capability, Grants};
+use kiln_l10n::tr;
 use serde::Deserialize;
 
 /// The hosts a download may reach: the releases, and where GitHub's redirects
@@ -107,10 +108,14 @@ impl Pack {
             toml::from_str(text).map_err(|error| InstallError::Manifest(error.to_string()))?;
         for (language, entry) in &pack.languages {
             if !is_wasm_file_name(&entry.file) {
-                return Err(InstallError::Manifest(format!(
-                    "{language}'s file {:?} isn't a .wasm file's name",
-                    entry.file
-                )));
+                return Err(InstallError::Manifest(
+                    tr!(
+                        "fastedit-grammar-file-not-wasm",
+                        language = language.as_str(),
+                        file = format!("{:?}", entry.file)
+                    )
+                    .to_string(),
+                ));
             }
         }
         Ok(pack)
@@ -269,16 +274,26 @@ impl Offered {
 }
 
 fn offer_grammar(language: &str, files: &ExtensionFiles) -> Result<Offered, String> {
-    let manifest = toml::from_str::<OfferManifest>(files.extension_toml)
-        .map_err(|error| format!("{language}'s extension manifest: {error}"))?;
+    let manifest = toml::from_str::<OfferManifest>(files.extension_toml).map_err(|error| {
+        tr!(
+            "fastedit-grammar-manifest-error",
+            language = language,
+            error = error.to_string()
+        )
+        .to_string()
+    })?;
     let grammar = (manifest.contributes.grammars.into_iter())
         .find(|grammar| grammar.language == language)
-        .ok_or_else(|| format!("{language}'s extension manifest has no grammar for it"))?;
+        .ok_or_else(|| {
+            tr!("fastedit-grammar-manifest-no-grammar", language = language).to_string()
+        })?;
     if !is_wasm_file_name(&grammar.wasm) {
-        return Err(format!(
-            "{language}'s wasm {:?} isn't a .wasm file's name",
-            grammar.wasm
-        ));
+        return Err(tr!(
+            "fastedit-grammar-wasm-not-wasm",
+            language = language,
+            file = format!("{:?}", grammar.wasm)
+        )
+        .to_string());
     }
     Ok(Offered {
         name: (manifest.name.strip_suffix(" syntax"))
@@ -448,37 +463,107 @@ impl Grammar {
 
 /// Why a grammar wasn't installed. The extensions directory is as it was, unless
 /// it's [`InstallError::NotRestored`].
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub(crate) enum InstallError {
-    #[error("the grammar manifest: {0}")]
     Manifest(String),
-    #[error("there's no first-party grammar for {0}")]
     UnknownLanguage(String),
     /// The fetch step's bundle of downloads isn't one it made.
-    #[error("the downloaded grammars: {0}")]
     Bundle(String),
     /// An injection-only language the install didn't download, as it was
     /// installed then, isn't any more.
-    #[error("{0}, which it injects, was removed while it downloaded: try again")]
     Removed(String),
     /// The wasm couldn't be had, or isn't what the manifest recorded.
-    #[error(transparent)]
-    Fetch(#[from] GrammarFetchError),
-    #[error("{}: {source}", path.display())]
-    Io { path: PathBuf, source: io::Error },
+    Fetch(GrammarFetchError),
+    Io {
+        path: PathBuf,
+        source: io::Error,
+    },
     /// The new extension couldn't be put in place, nor the old one put back:
     /// `previous` is the only copy of what was at `target`.
-    #[error(
-        "{}: {source}; the previous version couldn't be put back ({restoring}) and is at {}",
-        target.display(),
-        previous.display()
-    )]
     NotRestored {
         target: PathBuf,
         previous: PathBuf,
         source: io::Error,
         restoring: io::Error,
     },
+}
+
+impl From<GrammarFetchError> for InstallError {
+    fn from(error: GrammarFetchError) -> Self {
+        InstallError::Fetch(error)
+    }
+}
+
+impl std::fmt::Display for InstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InstallError::Manifest(error) => {
+                write!(
+                    f,
+                    "{}",
+                    tr!("fastedit-grammar-manifest", error = error.as_str())
+                )
+            }
+            InstallError::UnknownLanguage(language) => write!(
+                f,
+                "{}",
+                tr!(
+                    "fastedit-grammar-unknown-language",
+                    language = language.as_str()
+                )
+            ),
+            InstallError::Bundle(error) => {
+                write!(
+                    f,
+                    "{}",
+                    tr!("fastedit-grammar-bundle", error = error.as_str())
+                )
+            }
+            InstallError::Removed(language) => write!(
+                f,
+                "{}",
+                tr!("fastedit-grammar-removed", language = language.as_str())
+            ),
+            InstallError::Fetch(error) => std::fmt::Display::fmt(error, f),
+            InstallError::Io { path, source } => write!(
+                f,
+                "{}",
+                tr!(
+                    "fastedit-grammar-io",
+                    path = path.display().to_string(),
+                    error = source.to_string()
+                )
+            ),
+            InstallError::NotRestored {
+                target,
+                previous,
+                source,
+                restoring,
+            } => write!(
+                f,
+                "{}",
+                tr!(
+                    "fastedit-grammar-not-restored",
+                    path = target.display().to_string(),
+                    error = source.to_string(),
+                    restoring = restoring.to_string(),
+                    previous = previous.display().to_string()
+                )
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InstallError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            InstallError::Fetch(error) => error.source(),
+            InstallError::Io { source, .. } | InstallError::NotRestored { source, .. } => {
+                Some(source)
+            }
+            _ => None,
+        }
+    }
 }
 
 fn io_error(path: &Path) -> impl FnOnce(io::Error) -> InstallError {
@@ -610,10 +695,12 @@ pub(crate) fn offers_with(
                         if !warned && executor.now() >= deadline {
                             warned = true;
                             log::warn!("{waiting}, which {language} injects, hasn't registered");
-                            let message = format!(
-                                "Installed {name} syntax, but {waiting}, which it uses, hasn't \
-                                 loaded: it may after a restart"
-                            );
+                            let message = tr!(
+                                "fastedit-grammar-injected-slow",
+                                name = name.as_str(),
+                                waiting = waiting.as_str()
+                            )
+                            .to_string();
                             cx.update(|cx| {
                                 fe_workbench::Workbench::notify(
                                     cx,
@@ -713,9 +800,9 @@ pub(crate) fn install_failure(error: &InstallError) -> GrammarInstallError {
     let reason = match error {
         InstallError::Fetch(GrammarFetchError::Net(
             NetError::Connect(_) | NetError::Timeout | NetError::Io(_),
-        )) => return offline("no connection to the download"),
+        )) => return offline(&tr!("fastedit-grammar-offline")),
         InstallError::Fetch(GrammarFetchError::HashMismatch { .. }) => {
-            "the download didn't match its recorded hash".to_owned()
+            tr!("fastedit-grammar-hash-mismatch").to_string()
         }
         error => error.to_string(),
     };
@@ -795,7 +882,7 @@ fn bundle(fetched: &[(Grammar, Vec<u8>)]) -> Vec<u8> {
 
 /// The languages and wasm [`bundle`] made `bytes` of.
 fn unbundle(mut bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, InstallError> {
-    let broken = || InstallError::Bundle("it's cut short".to_owned());
+    let broken = || InstallError::Bundle(tr!("fastedit-grammar-bundle-short").to_string());
     let take = |bytes: &mut &[u8]| -> Result<Vec<u8>, InstallError> {
         let (len, rest) = bytes.split_first_chunk::<8>().ok_or_else(broken)?;
         let len = usize::try_from(u64::from_le_bytes(*len)).map_err(|_| broken())?;
@@ -806,7 +893,7 @@ fn unbundle(mut bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, InstallError> {
     let mut fetched = Vec::new();
     while !bytes.is_empty() {
         let language = String::from_utf8(take(&mut bytes)?)
-            .map_err(|_| InstallError::Bundle("a language's name isn't UTF-8".to_owned()))?;
+            .map_err(|_| InstallError::Bundle(tr!("fastedit-grammar-bundle-name").to_string()))?;
         fetched.push((language, take(&mut bytes)?));
     }
     Ok(fetched)
@@ -832,7 +919,9 @@ pub(crate) fn write_bundle(
             let needed = needed(pack, language)?;
             write_set(grammar, wasm, injected, &needed, extensions, &rename)
         }
-        _ => Err(InstallError::Bundle(format!("it isn't {language}'s"))),
+        _ => Err(InstallError::Bundle(
+            tr!("fastedit-grammar-bundle-other", language = language).to_string(),
+        )),
     }
 }
 

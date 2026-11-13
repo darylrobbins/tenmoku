@@ -1,0 +1,67 @@
+# fastedit's exceptions to the literal lint (kiln_l10n::lint::literals).
+all = true
+
+# Text owned by another task's files in this crate, or never shown in the UI.
+
+[[file]]
+path = "src/perf.rs"
+reason = "`--perf`'s report: developer tooling that prints measurements, not user-facing text"
+
+[[file]]
+path = "src/velopack_update.rs"
+reason = "The updater's log lines, its refusals (only ever logged) and the TENMOKU_VELOPACK_UPDATE_NOW test hook's output; no UI"
+
+[[file]]
+path = "src/update_signature.rs"
+reason = "The release signer's errors: build-time tooling, shared by path with examples/sign_update_feed.rs, which links no catalogue"
+
+[[file]]
+path = "src/sparkle.rs"
+reason = "Why Sparkle didn't load, which is only ever logged"
+
+[[file]]
+path = "src/ipc.rs"
+reason = "Instance handoff's thread names, errors and logs: internal, never shown"
+
+[[file]]
+path = "src/log_file.rs"
+reason = "The log file's own lines and macOS paths"
+
+[[file]]
+path = "src/config.rs"
+reason = "Extension manifest problems, owned by the extensions cards (not part of F1's files)"
+
+[[literal]]
+file = "src/vim_remaps.rs"
+text = "vim.remap[{entry}].{side}"
+reason = "A settings key path"
+
+[[literal]]
+file = "src/vim_remaps.rs"
+text = "vim.which_key_group[{entry}].{side}"
+reason = "A settings key path"
+
+[[literal]]
+file = "src/grammar_install.rs"
+text = "tenmoku.grammar_{}"
+reason = "An extension id"
+
+[[literal]]
+file = "src/grammar_install.rs"
+text = "tenmoku.grammar_{language}"
+reason = "An extension id"
+
+[[literal]]
+file = "src/grammar_install.rs"
+text = "net:{host}"
+reason = "A capability string"
+
+[[literal]]
+file = "src/shell_command.rs"
+text = "export PATH=\"{dir}:$PATH\""
+reason = "Shell code the user pastes into their config"
+
+[[literal]]
+file = "src/shell_command.rs"
+text = "export PATH='{}':\"$PATH\""
+reason = "Shell code the user pastes into their config"

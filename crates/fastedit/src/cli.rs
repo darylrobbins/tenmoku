@@ -1,30 +1,18 @@
 //! The `tenmoku` command line: flags, and paths with an optional
 //! `:line[:column]`, made absolute against the working directory.
 
+use kiln_l10n::{tr, verbatim};
 use std::{
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
 };
 
-/// `--help`'s text, and what an unknown flag prints to stderr.
-const USAGE: &str = "\
-Tenmoku, a code editor.
-
-Usage: tenmoku [options] [--] [path[:line[:column]] ...]
-
-Each path opens as a tab, in order, the last one active; a path that doesn't
-exist is a new file, which saving creates. The first folder is the project
-root, or with no folder, the first file's folder. Lines and columns count
-from 1. A file really named a:1 opens as itself.
-
-Options:
-      --new-window  Open in a new window on the path's folder
-      --wait        Wait until the files' tabs have closed, then exit
-      --perf        Measure startup and scrolling on the file, print, and quit
-  -h, --help        Print this help
-  -V, --version     Print the version
-      --            Treat everything after it as a path
-";
+// Declared here because main.rs belongs to another task. Test builds get the
+// catalogue from theme.rs instead: the integration tests that include
+// theme.rs (and not main.rs) need it, and two copies would register twice.
+#[cfg(not(test))]
+#[path = "l10n.rs"]
+pub(crate) mod l10n;
 
 /// A path to open, and where, 1-based.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +39,22 @@ pub(crate) enum CliError {
     UnknownFlag(String),
 }
 
+/// The catalogue for the system's languages, built here rather than waited
+/// for: main warms it on a thread, which may not have set the locale yet.
+fn system_locale() {
+    kiln_l10n::set_locales(&kiln_platform::locale::preferred());
+}
+
+/// `--help`'s text, which ends in a newline.
+fn usage() -> String {
+    format!("{}\n", plain(tr!("fastedit-cli-usage")))
+}
+
+/// `message` for a terminal, which may draw bidi isolation marks as boxes.
+fn plain(message: kiln_l10n::SharedString) -> String {
+    kiln_l10n::strip_isolates(&message).into_owned()
+}
+
 impl CliError {
     /// The process's exit code.
     pub(crate) fn exit_code(&self) -> i32 {
@@ -63,9 +67,22 @@ impl CliError {
     /// What to print: help and the version on stdout, an error on stderr.
     fn text(&self) -> String {
         match self {
-            CliError::Help => USAGE.to_owned(),
-            CliError::Version => format!("tenmoku {}\n", env!("CARGO_PKG_VERSION")),
-            CliError::UnknownFlag(flag) => format!("tenmoku: unknown flag {flag}\n\n{USAGE}"),
+            CliError::Help => {
+                system_locale();
+                usage()
+            }
+            CliError::Version => {
+                format!("{} {}\n", verbatim!("tenmoku"), env!("CARGO_PKG_VERSION"))
+            }
+            CliError::UnknownFlag(flag) => {
+                system_locale();
+                format!(
+                    "{}: {}\n\n{}",
+                    verbatim!("tenmoku"),
+                    plain(tr!("fastedit-cli-unknown-flag", flag = flag.as_str())),
+                    usage(),
+                )
+            }
         }
     }
 

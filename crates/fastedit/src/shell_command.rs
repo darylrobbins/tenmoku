@@ -5,6 +5,7 @@
 //! other file is left alone and named. Uninstall removes only such a link.
 //! The file work runs off the main thread; a toast reports it.
 
+use kiln_l10n::tr;
 use std::{
     ffi::OsStr,
     fs, io,
@@ -72,7 +73,11 @@ pub(crate) fn install(link: &Path, target: &Path, path: Option<&OsStr>) -> Repor
             Ok(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
-                    format!("{} exists and isn't a link to tenmoku", link.display()),
+                    tr!(
+                        "fastedit-shell-exists-not-ours",
+                        path = link.display().to_string()
+                    )
+                    .to_string(),
                 ));
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -81,7 +86,9 @@ pub(crate) fn install(link: &Path, target: &Path, path: Option<&OsStr>) -> Repor
         symlink(target, link)
     })();
     match result {
-        Err(error) => Report::error(format!("Couldn't install the 'tenmoku' command: {error}")),
+        Err(error) => Report::error(
+            tr!("fastedit-shell-install-failed", error = error.to_string()).to_string(),
+        ),
         Ok(()) => {
             let hint = path_hint(link.parent().expect("a link has a directory"), path);
             Report {
@@ -90,16 +97,36 @@ pub(crate) fn install(link: &Path, target: &Path, path: Option<&OsStr>) -> Repor
                 } else {
                     log::Level::Info
                 },
-                message: format!("Linked {} to {}", link.display(), target.display()),
+                message: tr!(
+                    "fastedit-shell-linked",
+                    link = link.display().to_string(),
+                    target = target.display().to_string()
+                )
+                .to_string(),
                 detail: hint.map(|line| {
-                    format!(
-                        "{} isn't on your PATH. Add this to your shell config: {line}",
-                        link.parent().expect("a link has a directory").display()
+                    tr!(
+                        "fastedit-shell-not-on-path",
+                        dir = link
+                            .parent()
+                            .expect("a link has a directory")
+                            .display()
+                            .to_string(),
+                        line = line
                     )
+                    .to_string()
                 }),
             }
         }
     }
+}
+
+fn remove_failed(link: &Path, error: &io::Error) -> String {
+    tr!(
+        "fastedit-shell-remove-failed",
+        path = link.display().to_string(),
+        error = error.to_string()
+    )
+    .to_string()
 }
 
 /// Removes `link` if it's a symlink to a tenmoku binary.
@@ -107,22 +134,30 @@ pub(crate) fn uninstall(link: &Path) -> Report {
     match fs::symlink_metadata(link) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Report {
             level: log::Level::Info,
-            message: format!("{} isn't installed", link.display()),
+            message: tr!(
+                "fastedit-shell-not-installed",
+                path = link.display().to_string()
+            )
+            .to_string(),
             detail: None,
         },
         Ok(meta) if meta.is_symlink() && is_ours(link) => match fs::remove_file(link) {
             Ok(()) => Report {
                 level: log::Level::Info,
-                message: format!("Removed {}", link.display()),
+                message: tr!("fastedit-shell-removed", path = link.display().to_string())
+                    .to_string(),
                 detail: None,
             },
-            Err(error) => Report::error(format!("Couldn't remove {}: {error}", link.display())),
+            Err(error) => Report::error(remove_failed(link, &error)),
         },
-        Ok(_) => Report::error(format!(
-            "Not removing {}: it isn't a link to tenmoku",
-            link.display()
-        )),
-        Err(error) => Report::error(format!("Couldn't remove {}: {error}", link.display())),
+        Ok(_) => Report::error(
+            tr!(
+                "fastedit-shell-remove-not-ours",
+                path = link.display().to_string()
+            )
+            .to_string(),
+        ),
+        Err(error) => Report::error(remove_failed(link, &error)),
     }
 }
 
@@ -132,7 +167,7 @@ fn run(install_it: bool, cx: &mut App) {
             .background_executor()
             .spawn(async move {
                 let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-                    return Report::error("HOME isn't set".to_owned());
+                    return Report::error(tr!("fastedit-shell-no-home").to_string());
                 };
                 let link = link_in(&home);
                 if !install_it {
@@ -140,9 +175,9 @@ fn run(install_it: bool, cx: &mut App) {
                 }
                 match std::env::current_exe().and_then(dunce::canonicalize) {
                     Ok(target) => install(&link, &target, std::env::var_os("PATH").as_deref()),
-                    Err(error) => {
-                        Report::error(format!("Couldn't find the running binary: {error}"))
-                    }
+                    Err(error) => Report::error(
+                        tr!("fastedit-shell-no-binary", error = error.to_string()).to_string(),
+                    ),
                 }
             })
             .await;

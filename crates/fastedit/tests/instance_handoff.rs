@@ -8,9 +8,12 @@
 #[allow(dead_code)]
 #[path = "../src/cli.rs"]
 mod cli;
+// cli.rs leaves the catalogue to the test build's includer.
 #[allow(dead_code)]
 #[path = "../src/ipc.rs"]
 mod ipc;
+#[path = "../src/l10n.rs"]
+mod l10n;
 
 use std::{
     fs,

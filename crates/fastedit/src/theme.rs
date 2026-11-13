@@ -6,6 +6,13 @@
 //! choice on, and turns each active theme into the editor's palette
 //! ([`fe_gpui::set_editor_palette`]).
 
+use kiln_l10n::tr;
+
+// The catalogue, for every test build that includes this file: see cli.rs.
+#[cfg(test)]
+#[path = "l10n.rs"]
+mod l10n;
+
 use std::sync::Arc;
 
 use fe_config::{
@@ -113,10 +120,12 @@ fn named(
             let titles: Vec<&str> = (themes::bundled_themes().iter())
                 .map(|theme| theme.title)
                 .collect();
-            format!(
-                "theme {name} isn't bundled: the bundled themes are {}",
-                titles.join(", ")
+            tr!(
+                "fastedit-theme-not-bundled",
+                name = name,
+                themes = titles.join(", ")
             )
+            .to_string()
         }
         Some(found) => {
             let (slot, appearance) = match found.appearance {
@@ -127,10 +136,12 @@ fn named(
                 *slot = Some(kiln::extensions::builtin_theme_id(found.id));
                 return (dark, light, notes);
             }
-            format!(
-                "theme.name {} is ignored: theme.{appearance} chooses the {appearance} theme",
-                found.title
+            tr!(
+                "fastedit-theme-name-ignored",
+                title = found.title,
+                appearance = appearance
             )
+            .to_string()
         }
     };
     let (line, column) = source.map_or((1, 1), name_position);

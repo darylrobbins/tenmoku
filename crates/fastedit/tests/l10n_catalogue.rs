@@ -30,6 +30,10 @@ use fe_workbench as _;
 use kiln as _;
 use kiln_platform as _;
 
+// The app's own catalogue: its binary's modules aren't a library to link.
+#[path = "../src/l10n.rs"]
+mod l10n;
+
 /// The repository's root.
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
