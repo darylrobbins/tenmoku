@@ -8,6 +8,7 @@ use gpui::{
     Context, InteractiveElement as _, IntoElement, Modifiers, ParentElement as _, Render,
     Styled as _, TestAppContext, VisualTestContext, Window, div, prelude::FluentBuilder as _, px,
 };
+use kiln_l10n::Text;
 
 use crate::{Button, Checkbox, Switch};
 
@@ -27,7 +28,7 @@ impl Render for Form {
             .flex_col()
             .gap_2()
             .child(
-                Button::new("save", "Save")
+                Button::new("save", Text::verbatim("Save"))
                     .primary()
                     .debug_selector(|| "save".into())
                     // The caller's styles win over the button's own.
@@ -39,7 +40,7 @@ impl Render for Form {
                     })),
             )
             .child(
-                Button::new("off", "Off")
+                Button::new("off", Text::verbatim("Off"))
                     .disabled(true)
                     .debug_selector(|| "off".into())
                     .on_click(cx.listener(|this, _, _, _| this.disabled_clicks += 1)),

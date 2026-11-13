@@ -251,13 +251,19 @@ fn a_parse_error_is_reported_and_the_rest_still_loads() {
 }
 
 #[test]
-fn text_converts_from_strings_as_verbatim() {
-    assert_eq!(Text::from("Literal"), Text::Verbatim("Literal".into()));
-    assert_eq!(Text::from(String::from("Owned")).resolve(), "Owned");
-    assert_eq!(Text::from(&String::from("Borrowed")).resolve(), "Borrowed");
-    assert_eq!(Text::from(SharedString::from("Shared")).resolve(), "Shared");
+fn verbatim_text_takes_any_string() {
+    assert_eq!(Text::verbatim("Literal"), Text::Verbatim("Literal".into()));
+    assert_eq!(Text::verbatim(String::from("Owned")).resolve(), "Owned");
     assert_eq!(
-        Text::from(std::borrow::Cow::Borrowed("Cow")).resolve(),
+        Text::verbatim(String::from("Borrowed").as_str()).resolve(),
+        "Borrowed"
+    );
+    assert_eq!(
+        Text::verbatim(SharedString::from("Shared")).resolve(),
+        "Shared"
+    );
+    assert_eq!(
+        Text::verbatim(std::borrow::Cow::Borrowed("Cow")).resolve(),
         "Cow"
     );
     assert_eq!(Text::verbatim("x").key(), None);

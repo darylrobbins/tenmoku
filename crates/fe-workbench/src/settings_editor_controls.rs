@@ -940,7 +940,7 @@ impl SettingsEditor {
     ) -> Field {
         let ui = ui_theme(cx);
         let input = cx.new(|cx| {
-            let placeholder = placeholder.unwrap_or_else(|| kiln_l10n::Text::from(""));
+            let placeholder = placeholder.unwrap_or_default();
             let mut input = TextInput::new(placeholder, &ui, cx)
                 .bordered()
                 .height(CONTROL_HEIGHT);

@@ -47,7 +47,7 @@ use gpui::{
     InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke, ParentElement as _, Styled as _,
     Subscription, Task, WeakEntity, Window, div, px,
 };
-use kiln_l10n::{tr, verbatim};
+use kiln_l10n::{Text, tr, verbatim};
 
 use super::StatusBar;
 use crate::{
@@ -274,7 +274,8 @@ impl StatusBar {
             Some(input) if self.line.named == named => input.clone(),
             _ => {
                 let name = status::command_line_name(kind);
-                let input = cx.new(|cx| TextInput::new("", &fe_ui::ui_theme(cx), cx).name(name));
+                let input = cx
+                    .new(|cx| TextInput::new(Text::default(), &fe_ui::ui_theme(cx), cx).name(name));
                 self.line.named = named;
                 let focus = input.focus_handle(cx);
                 self.line._blur = Some(cx.on_blur(&focus, window, Self::line_blurred));

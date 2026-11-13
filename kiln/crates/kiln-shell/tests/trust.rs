@@ -85,7 +85,7 @@ impl Opened {
     fn new(root: Option<&Path>, as_folder: bool, cx: &mut TestAppContext) -> Self {
         let root = root.map(Path::to_owned);
         let window = cx.add_window(move |window, cx| {
-            let prompt = TrustPrompt::new("Trust it?", |folder| {
+            let prompt = TrustPrompt::new(kiln_l10n::Text::verbatim("Trust it?"), |folder| {
                 format!("{} may run code.", folder.display())
             });
             let mut host = Host {

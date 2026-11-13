@@ -208,6 +208,29 @@ impl<D: PickerDelegate> Picker<D> {
     /// active now, or verbatim text. It draws in the active theme's
     /// colours ([`ui_theme`]), so it follows a theme change; `_ui` is
     /// unused, left for callers until a later API cleanup.
+    ///
+    /// A string isn't a placeholder, however it is stored, so it can't skip
+    /// the catalogue (`docs/decisions/xte5e7hqsw-i18n-design.md` § 8, layer
+    /// 1); `text!` or `Text::verbatim` it:
+    ///
+    /// ```compile_fail,E0277
+    /// use gpui::Context;
+    /// use kiln_shell::picker::{Picker, PickerDelegate};
+    ///
+    /// fn open<D: PickerDelegate>(delegate: D, cx: &mut Context<Picker<D>>) -> Picker<D> {
+    ///     Picker::new(delegate, "files", kiln_ui::ui_theme(cx), cx)
+    /// }
+    /// ```
+    ///
+    /// ```
+    /// use gpui::Context;
+    /// use kiln_l10n::Text;
+    /// use kiln_shell::picker::{Picker, PickerDelegate};
+    ///
+    /// fn open<D: PickerDelegate>(delegate: D, cx: &mut Context<Picker<D>>) -> Picker<D> {
+    ///     Picker::new(delegate, Text::verbatim("files"), kiln_ui::ui_theme(cx), cx)
+    /// }
+    /// ```
     pub fn new(
         delegate: D,
         placeholder: impl Into<Text>,

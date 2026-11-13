@@ -1178,7 +1178,7 @@ impl ChatView {
                 .on_click(send)
         };
         let attach = cx.listener(|_, _, _, cx| cx.emit(ChatViewEvent::AttachFileRequested));
-        let attach = Button::new("chat-attach", "@")
+        let attach = Button::new("chat-attach", Text::verbatim("@"))
             .small()
             .disabled(no_key)
             .debug_selector(|| "chat-attach".into())

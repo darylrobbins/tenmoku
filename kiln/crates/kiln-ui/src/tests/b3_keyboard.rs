@@ -7,6 +7,7 @@
 //! control's accessibility node carries its name, its state and whether
 //! it's disabled.
 
+use kiln_l10n::Text;
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
@@ -38,7 +39,7 @@ impl Render for Form {
         let controls = vec![
             (
                 "button",
-                Button::new("button", "Save")
+                Button::new("button", Text::verbatim("Save"))
                     .disabled(d)
                     .on_click(click("button", cx))
                     .element(window, cx),

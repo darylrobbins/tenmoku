@@ -46,7 +46,7 @@ use gpui::{
     Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
     Window, div, px,
 };
-use kiln_l10n::{tr, verbatim};
+use kiln_l10n::{Text, tr, verbatim};
 use kiln_shell::{DockItem, PanelId};
 
 use crate::{
@@ -944,7 +944,7 @@ impl TerminalPanel {
                     .debug_selector(|| "terminal-new".to_owned())
                     .tooltip(tip(new.clone(), "terminal.new"))
                     .child(
-                        Button::new("terminal-new-button", "+")
+                        Button::new("terminal-new-button", Text::verbatim("+"))
                             .name(new)
                             .ghost()
                             .small()

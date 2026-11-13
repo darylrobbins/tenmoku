@@ -105,7 +105,7 @@ fn open<'a>(cx: &'a mut TestAppContext, refuse: Vec<&'static str>) -> Opened<'a>
         refuse,
     };
     let (picker, cx) =
-        cx.add_window_view(|_, cx| Picker::new(words, "Find a word", UiTheme::default_dark(), cx));
+        cx.add_window_view(|_, cx| Picker::new(words, kiln_l10n::Text::verbatim("Find a word"), UiTheme::default_dark(), cx));
     let events = Rc::new(RefCell::new(0));
     cx.update(|window, cx| {
         let events = events.clone();

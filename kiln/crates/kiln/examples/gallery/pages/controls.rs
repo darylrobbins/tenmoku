@@ -16,6 +16,7 @@ use kiln::{
         Switch, ToggleButton, h_flex, ui_theme, v_flex,
     },
 };
+use kiln_l10n::Text;
 
 use super::{labelled, page_frame, page_root, section};
 
@@ -89,7 +90,7 @@ impl ControlsPage {
     ) -> Button {
         let what: SharedString = format!("{} {}", variant.1, size.1).into();
         let id = ElementId::from(what.clone());
-        Button::new(id, size.1)
+        Button::new(id, Text::verbatim(size.1))
             .variant(variant.0)
             .size(size.0)
             .on_click(
@@ -106,9 +107,12 @@ impl ControlsPage {
                 .items_center()
                 .children(sizes)
                 .child(
-                    Button::new(SharedString::from(format!("{name} disabled")), "Disabled")
-                        .variant(variant.0)
-                        .disabled(true),
+                    Button::new(
+                        SharedString::from(format!("{name} disabled")),
+                        Text::verbatim("Disabled"),
+                    )
+                    .variant(variant.0)
+                    .disabled(true),
                 )
                 .child(
                     Button::icon_only(SharedString::from(format!("{name} icon")), Icon::Search)
@@ -120,18 +124,23 @@ impl ControlsPage {
                         })),
                 )
                 .child(
-                    Button::new(SharedString::from(format!("{name} labelled icon")), "Apply")
-                        .icon(Icon::Check)
-                        .variant(variant.0)
-                        .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                    Button::new(
+                        SharedString::from(format!("{name} labelled icon")),
+                        Text::verbatim("Apply"),
+                    )
+                    .icon(Icon::Check)
+                    .variant(variant.0)
+                    .on_click(cx.listener(
+                        move |page, _: &ClickEvent, _, cx| {
                             page.clicked(format!("{name} Apply").into(), cx)
-                        })),
+                        },
+                    )),
                 )
                 .when(variant.0 == ButtonVariant::Secondary, |row| {
                     // Focused from the keyboard, it shows the focus ring:
                     // the gallery's screenshots tab to it.
                     row.child(
-                        Button::new("focused", "Focused")
+                        Button::new("focused", Text::verbatim("Focused"))
                             .focus_handle(&self.focus_demo)
                             .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
                                 page.clicked("Focused".into(), cx)

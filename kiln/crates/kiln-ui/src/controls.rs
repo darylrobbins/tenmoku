@@ -384,6 +384,25 @@ impl Button {
     /// A button labelled `label`: a catalogue message (`text!`), or
     /// verbatim text. A button is built at each render, so this resolves it
     /// in the locale active then.
+    ///
+    /// ```
+    /// use kiln_l10n::{Text, text};
+    /// use kiln_ui::Button;
+    ///
+    /// let _ = Button::new("save", text!("kiln-ui-cancel"));
+    /// let _ = Button::new("open", Text::verbatim("Cargo.toml"));
+    /// ```
+    ///
+    /// A string isn't a label, however it is stored, so it can't skip the
+    /// catalogue (`docs/decisions/xte5e7hqsw-i18n-design.md` § 8, layer 1):
+    ///
+    /// ```compile_fail,E0277
+    /// let _ = kiln_ui::Button::new("save", "Save");
+    /// ```
+    ///
+    /// ```compile_fail,E0277
+    /// let _ = kiln_ui::Button::new("save", gpui::SharedString::from("Save"));
+    /// ```
     pub fn new(id: impl Into<ElementId>, label: impl Into<Text>) -> Self {
         Self::bare(id).label(label.into().resolve())
     }

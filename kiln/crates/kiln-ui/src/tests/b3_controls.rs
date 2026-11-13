@@ -11,6 +11,7 @@ use gpui::{
     Modifiers, ParentElement as _, Pixels, Render, Styled as _, TestAppContext, VisualTestContext,
     Window, div, px,
 };
+use kiln_l10n::Text;
 
 use crate::{
     ActiveTheme as _, Badge, BadgeTone, Button, ButtonVariant, DISABLED_OPACITY, FOCUS_RING, Icon,
@@ -47,12 +48,12 @@ impl Render for Buttons {
             .flex_col()
             .items_start()
             .child(
-                Button::new("medium", "Save")
+                Button::new("medium", Text::verbatim("Save"))
                     .primary()
                     .debug_selector(|| "medium".into()),
             )
             .child(
-                Button::new("small", "Save")
+                Button::new("small", Text::verbatim("Save"))
                     .small()
                     .debug_selector(|| "small".into()),
             )
@@ -162,8 +163,10 @@ impl Render for Inputs {
 fn a_focused_input_draws_a_2_px_accent_ring_1_px_out(cx: &mut TestAppContext) {
     let (inputs, cx) = open(
         |window, cx| Inputs {
-            field: cx.new(|cx| TextField::new(window, cx).placeholder("Name")),
-            input: cx.new(|cx| TextInput::new("Search", &UiTheme::default(), cx).bordered()),
+            field: cx.new(|cx| TextField::new(window, cx).placeholder(Text::verbatim("Name"))),
+            input: cx.new(|cx| {
+                TextInput::new(Text::verbatim("Search"), &UiTheme::default(), cx).bordered()
+            }),
         },
         cx,
     );
@@ -281,7 +284,7 @@ fn icon_only_buttons_need_a_name(cx: &mut TestAppContext) {
     // Named, it draws, and its name is its accessible name.
     let named = Button::icon_only("close", Icon::X).name("Close");
     assert_eq!(named.accessible_name().map(|name| &**name), Some("Close"));
-    let labelled = Button::new("save", "Save");
+    let labelled = Button::new("save", Text::verbatim("Save"));
     assert_eq!(labelled.accessible_name().map(|name| &**name), Some("Save"));
     let (_, cx) = open(|_, _| Buttons, cx);
     assert!(cx.debug_bounds("icon").is_some());

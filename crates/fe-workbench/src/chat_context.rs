@@ -26,7 +26,7 @@ use fe_editor::{EditorModel, diagnostics::Severity};
 use fe_gpui::EditorView;
 use gpui::{App, AppContext as _, Context, Entity, Focusable as _, Window};
 use kiln::command::{Capability, Grants};
-use kiln_l10n::tr;
+use kiln_l10n::{text, tr};
 
 use super::ChatPanel;
 use crate::{
@@ -699,7 +699,7 @@ impl ChatPanel {
             let picker = cx.new(|cx| {
                 Picker::new(
                     QuickOpen::new(root, pane),
-                    tr!("workbench-chat-attach-placeholder").to_string(),
+                    text!("workbench-chat-attach-placeholder"),
                     kiln::ui::ui_theme(cx),
                     cx,
                 )

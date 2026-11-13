@@ -1967,6 +1967,61 @@ through the `pending` list. Crates and files that T1429's P-cards rewrite
 panel and log, toast, hover, peek) migrate after those cards. B1 waits for a
 launch locale.
 
+### Z1's check: no `title` reader left (T602, 2026-11-13)
+
+Z1 found no reader to move: I3, G1 and W1 had moved them all. Two checks
+back that.
+
+**The rg check.** Every non-test file that names one of the four types or
+the typed-command registry, then every `.title` read in it:
+
+```sh
+rg -l --type rust -g '!**/tests/**' -g '!*_tests.rs' -g '!**/tests.rs' \
+  '\b(CommandMeta|TypedCommand|CommandSpec|CommandInfo|typed_command|typed_commands)\b' \
+  crates kiln/crates \
+  | xargs rg -n '[a-z_)]\.title\b[^(_]' | rg -v '^\S+:\d+:\s*//'
+```
+
+Its 35 hits, each read by hand:
+
+- **The fallback inside `label()`** (allowed): `registry.rs:92`
+  (`CommandMeta`), `command_actions.rs:87` (`TypedCommand`),
+  `contributions.rs:196` (`CommandSpec`).
+- **The fallback passed on, not shown**: `contributions.rs:220` (a
+  `CommandSpec`'s title becomes kiln-platform's `CommandInfo`, the
+  `TypedCommand`'s fallback), `:342` and `:382` (the macro's records into a
+  `CommandSpec`), `:1086` (the toggle's fallback, which `derive_label`
+  shadows), `command_actions.rs:124` (`CommandInfo` into `TypedCommand`),
+  `kiln-plugin/src/commands.rs:662` (a plugin's manifest title into
+  `CommandMeta`).
+- **fe-keymap's `CommandInfo`** at `shortcuts_model.rs:153`: built resolved,
+  `title: typed.label().into()` and `meta.label().into()`
+  (`shortcuts_editor.rs:1410, 1422`), as section 4 says.
+- **Other types' `title`**: the palette's `Entry`
+  (`command_palette.rs:120, 214, 215`) and the keymaps picker's and
+  shortcuts editor's rows, all built from `label()`; a chat's own title
+  (`chat_panel.rs`); a panel's title as an argument
+  (`contributions.rs:1544, 1546`); a colour (`which_key.rs:690`).
+- **`#[cfg(test)]` modules** in a non-test file: `command_actions.rs:550`,
+  `contributions.rs:2106, 2353, 2358, 2440`.
+
+**The compiler check.** rg can't see a read through another name, so the
+field was renamed, `title` to `zz_title`, on `CommandMeta`, `TypedCommand`
+and `CommandSpec`, then on fe-keymap's `CommandInfo`, and
+`cargo check --workspace` (every lib and bin, no tests) run until clean,
+each error patched and logged. The only reads (E0609) were the three
+`label()` bodies and `contributions.rs:220`, and for `CommandInfo`
+`shortcuts_model.rs:153`, all above. Every other error was a struct
+literal (E0560) building one of them. The renames were then reverted.
+
+**Layer 1 on.** T602 removed `Text`'s `From` impls. Every `tr!` passed to
+`Picker::new`, `Button::new`, `TextInput::new`, `TextField::placeholder` or
+`TrustPrompt::new` became `text!` with the same key; text held in a model
+as resolved strings, such as toast choices and the setup sheet's options,
+is `Text::verbatim`, as are tests' and examples' literals. kiln-l10n's
+`tests/text_from_strings.rs` stops compiling if a string converts again,
+and `Button::new` and `Picker::new` carry `compile_fail` doc tests.
+
 ## 10. Cost to every future card
 
 **What a card that adds UI text must do:**

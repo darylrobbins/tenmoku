@@ -86,7 +86,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px, svg,
     uniform_list,
 };
-use kiln_l10n::{tr, verbatim};
+use kiln_l10n::{text, tr, verbatim};
 use kiln_shell::PaneAction;
 
 use crate::{
@@ -263,13 +263,13 @@ impl SearchPanel {
     /// until a query runs.
     pub fn new(root: Option<PathBuf>, pane: WeakEntity<Pane>, cx: &mut Context<Self>) -> Self {
         let ui = fe_ui::ui_theme(cx);
-        let input = cx.new(|cx| TextInput::new(tr!("workbench-search-placeholder"), &ui, cx));
+        let input = cx.new(|cx| TextInput::new(text!("workbench-search-placeholder"), &ui, cx));
         let include =
-            cx.new(|cx| TextInput::new(tr!("workbench-search-include-placeholder"), &ui, cx));
+            cx.new(|cx| TextInput::new(text!("workbench-search-include-placeholder"), &ui, cx));
         let exclude =
-            cx.new(|cx| TextInput::new(tr!("workbench-search-exclude-placeholder"), &ui, cx));
+            cx.new(|cx| TextInput::new(text!("workbench-search-exclude-placeholder"), &ui, cx));
         let replace =
-            cx.new(|cx| TextInput::new(tr!("workbench-search-replace-placeholder"), &ui, cx));
+            cx.new(|cx| TextInput::new(text!("workbench-search-replace-placeholder"), &ui, cx));
         let fields = [
             (&input, false),
             (&include, true),

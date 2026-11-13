@@ -4,6 +4,7 @@
 //! light pair, the flat chrome colours as a view of it, and controls drawn
 //! from it.
 
+use kiln_l10n::Text;
 use std::{cell::Cell, path::Path, rc::Rc};
 
 use gpui::{
@@ -188,9 +189,13 @@ impl Render for Form {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.renders.set(self.renders.get() + 1);
         div()
-            .child(Button::new("ok", "OK").primary())
-            .child(Button::new("cancel", "Cancel"))
-            .child(Button::new("delete", "Delete").danger().disabled(true))
+            .child(Button::new("ok", Text::verbatim("OK")).primary())
+            .child(Button::new("cancel", Text::verbatim("Cancel")))
+            .child(
+                Button::new("delete", Text::verbatim("Delete"))
+                    .danger()
+                    .disabled(true),
+            )
             .child(Checkbox::new("wrap").checked(true).label("Wrap"))
             .child(Switch::new("sync").on(true).label("Sync"))
     }

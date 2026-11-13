@@ -108,7 +108,7 @@ use gpui::{
     WeakEntity, Window, canvas, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use kiln::Cx;
-use kiln_l10n::tr;
+use kiln_l10n::{Text, text, tr};
 
 use crate::{
     Workbench,
@@ -1713,7 +1713,8 @@ impl GitPanel {
                 let input = match &commit.line {
                     Some(input) => input.clone(),
                     None => {
-                        let input = cx.new(|cx| TextInput::new("", &fe_ui::ui_theme(cx), cx));
+                        let input =
+                            cx.new(|cx| TextInput::new(Text::default(), &fe_ui::ui_theme(cx), cx));
                         let focus = input.focus_handle(cx);
                         (commit._subscriptions).push(cx.on_blur(
                             &focus,
@@ -1947,7 +1948,7 @@ impl GitPanel {
         };
         let commit_button = Button::new("commit-button", button.text())
             .debug_selector(|| "commit-button".into())
-            .name(button.label.clone())
+            .name(button.label.resolve())
             .primary()
             .small()
             // In a narrow sidebar its label ends in an ellipsis; its
@@ -2051,7 +2052,7 @@ impl GitPanel {
                             .gap(px(1.))
                             .child(commit_button)
                             .child(
-                                Button::new("commit-and-push", tr!("workbench-changes-and-push"))
+                                Button::new("commit-and-push", text!("workbench-changes-and-push"))
                                     .debug_selector(|| "commit-and-push".into())
                                     .primary()
                                     .small()
@@ -2143,20 +2144,20 @@ fn commit_warning(commit: &CommitBox, cx: &App) -> Option<SharedString> {
 
 /// The Commit button as drawn: its label, the key that commits from the
 /// box, if bound, and whether it's enabled.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CommitButton {
-    pub(crate) label: SharedString,
+    pub(crate) label: Text,
     pub(crate) key: Option<SharedString>,
     pub(crate) enabled: bool,
 }
 
 impl CommitButton {
     /// Its text: its label, and its key after it while it can commit.
-    pub(crate) fn text(&self) -> SharedString {
+    pub(crate) fn text(&self) -> Text {
         match (&self.key, self.enabled) {
-            (Some(key), true) => tr!(
+            (Some(key), true) => text!(
                 "workbench-changes-commit-with-key",
-                label = self.label.to_string(),
+                label = self.label.resolve().to_string(),
                 key = key.to_string()
             ),
             _ => self.label.clone(),
@@ -2174,9 +2175,9 @@ fn commit_button(commit: &CommitBox, staged: usize, cx: &App) -> CommitButton {
     let committing = commit.committing.is_some();
     let enabled = !committing && (commit.amend || !blank);
     let label = match (committing, commit.amend) {
-        (true, _) => tr!("workbench-changes-committing"),
-        (false, true) => tr!("workbench-changes-commit-amend"),
-        (false, false) => tr!("workbench-changes-commit", count = staged),
+        (true, _) => text!("workbench-changes-committing"),
+        (false, true) => text!("workbench-changes-commit-amend"),
+        (false, false) => text!("workbench-changes-commit", count = staged),
     };
     CommitButton {
         label,
@@ -2752,7 +2753,7 @@ impl GitPanel {
     /// The Commit button's label and whether it's enabled.
     pub(crate) fn commit_button_state(&self, cx: &App) -> Option<(SharedString, bool)> {
         let button = self.commit_button(cx)?;
-        Some((button.label, button.enabled))
+        Some((button.label.resolve(), button.enabled))
     }
 
     /// The Commit button as it's drawn.

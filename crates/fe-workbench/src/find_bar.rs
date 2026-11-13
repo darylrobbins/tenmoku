@@ -180,10 +180,11 @@ pub(crate) struct FindBar {
 
 impl FindBar {
     pub(crate) fn new(ui: &UiTheme, cx: &mut Context<Pane>) -> Self {
-        // A placeholder is resolved once, as a picker's is.
-        let input = cx.new(|cx| TextInput::new(tr!("workbench-find-placeholder"), ui, cx).search());
+        // Placeholders resolve as they draw, so they follow a locale switch.
+        let input =
+            cx.new(|cx| TextInput::new(text!("workbench-find-placeholder"), ui, cx).search());
         let replace_input =
-            cx.new(|cx| TextInput::new(tr!("workbench-find-replace-placeholder"), ui, cx));
+            cx.new(|cx| TextInput::new(text!("workbench-find-replace-placeholder"), ui, cx));
         let changed = cx.subscribe(&input, |pane, _, event, cx| {
             if *event == TextInputEvent::Changed {
                 pane.update_find(|bar, editor, cx| bar.search(editor, cx), cx);

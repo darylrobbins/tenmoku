@@ -13,9 +13,9 @@ use crate::Args;
 /// button: either a catalogue key with its arguments, resolved in the locale
 /// active when it is drawn, or verbatim text from a user or a plugin.
 ///
-/// Make one with [`text!`](crate::text) or [`Text::verbatim`]. The `From`
-/// impls for strings are transitional: they keep existing call sites
-/// compiling while crates migrate, and each makes verbatim text.
+/// Make one with [`text!`](crate::text) or [`Text::verbatim`]. There is no
+/// conversion from a string, so a label reaches a widget only through the
+/// catalogue or an explicit verbatim.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Text {
     Key(Cow<'static, str>, Args),
@@ -62,35 +62,5 @@ impl Default for Text {
 impl fmt::Display for Text {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.resolve())
-    }
-}
-
-impl From<&str> for Text {
-    fn from(text: &str) -> Self {
-        Text::Verbatim(SharedString::from(text))
-    }
-}
-
-impl From<&String> for Text {
-    fn from(text: &String) -> Self {
-        Text::Verbatim(SharedString::from(text))
-    }
-}
-
-impl From<String> for Text {
-    fn from(text: String) -> Self {
-        Text::Verbatim(SharedString::from(text))
-    }
-}
-
-impl From<SharedString> for Text {
-    fn from(text: SharedString) -> Self {
-        Text::Verbatim(text)
-    }
-}
-
-impl From<Cow<'_, str>> for Text {
-    fn from(text: Cow<'_, str>) -> Self {
-        Text::Verbatim(SharedString::from(text))
     }
 }

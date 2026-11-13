@@ -11,6 +11,7 @@ use gpui::{
     accesskit::{self, NodeId, Role, TreeId, TreeUpdate},
     div, px,
 };
+use kiln_l10n::Text;
 
 use crate::{TextInput, UiTheme, text_input::A11yLine};
 
@@ -107,7 +108,13 @@ fn open(
     make: impl FnOnce(TextInput) -> TextInput + 'static,
 ) -> (Entity<TextInput>, &mut VisualTestContext) {
     let (host, cx) = cx.add_window_view(|_, cx| {
-        Host(cx.new(|cx| make(TextInput::new("Find", &UiTheme::default(), cx))))
+        Host(cx.new(|cx| {
+            make(TextInput::new(
+                Text::verbatim("Find"),
+                &UiTheme::default(),
+                cx,
+            ))
+        }))
     });
     let input = host.read_with(cx, |host, _| host.0.clone());
     cx.update(|window, cx| {

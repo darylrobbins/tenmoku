@@ -258,7 +258,7 @@ fn a_picker_is_a_modal(cx: &mut TestAppContext) {
         dismissed: dismissed.clone(),
     };
     let picker =
-        s.cx.new(|cx| Picker::new(delegate, "Pick…", UiTheme::default_dark(), cx));
+        s.cx.new(|cx| Picker::new(delegate, kiln_l10n::Text::verbatim("Pick…"), UiTheme::default_dark(), cx));
     let picker_shown = picker.clone();
     s.cx.update(|window, cx| picker_shown.update(cx, |picker, cx| picker.show(window, cx)));
     s.show(ASK, &picker);

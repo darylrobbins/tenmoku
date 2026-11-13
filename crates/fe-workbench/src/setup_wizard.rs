@@ -39,7 +39,7 @@ use kiln::{
     },
     prelude::AppExt as _,
 };
-use kiln_l10n::{text, tr, verbatim};
+use kiln_l10n::{Text, text, tr, verbatim};
 
 use crate::{
     KEY_CONTEXT as WORKBENCH_CONTEXT, Workbench,
@@ -659,7 +659,7 @@ impl SetupWizard {
         let id = control.id;
         let element_id =
             gpui::ElementId::NamedInteger(format!("setup-radio-{id:?}").into(), option as u64);
-        let button = Button::new(element_id, label.clone())
+        let button = Button::new(element_id, Text::verbatim(label.clone()))
             .debug_selector(move || format!("setup-radio-{id:?}-{option}"))
             .when(selected, |button| {
                 button
@@ -919,7 +919,7 @@ impl SetupWizard {
                 true => control.selected > 0,
                 false => control.selected < last,
             };
-            let button = Button::new(part(id, name), shown)
+            let button = Button::new(part(id, name), Text::verbatim(shown))
                 .debug_selector(move || format!("setup-{name}-{id:?}"))
                 .disabled(!enabled)
                 .on_click(cx.listener(move |this, _, _, cx| {

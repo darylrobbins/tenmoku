@@ -6,6 +6,7 @@
 //! thread in a second view with a field of its own; and it saves in the
 //! window's layout as the thread it shows and its unsent text.
 
+use kiln_l10n::Text;
 use std::hash::{BuildHasher as _, BuildHasherDefault, DefaultHasher};
 
 use kiln::gpui::{prelude::*, *};
@@ -71,7 +72,7 @@ impl Item for Conversation {
         Threads::get(state.thread, cx)?;
         let input = cx.new(|cx| {
             TextField::new(window, cx)
-                .placeholder("Write a message…")
+                .placeholder(Text::verbatim("Write a message…"))
                 .text(&state.draft)
         });
         Some(Self {
@@ -174,7 +175,9 @@ impl View for Conversation {
         let log = log.track_scroll(&self.scrolled.0).p_4().gap_2();
         let bar = h_flex().p_2().gap_2().border_t_1();
         let bar = bar.border_color(c.border.default);
-        let send = Button::new("send", "Send").small().command(SendMessage);
+        let send = Button::new("send", Text::verbatim("Send"))
+            .small()
+            .command(SendMessage);
         let bar = bar
             .child(div().flex_1().child(self.input.clone()))
             .child(send);

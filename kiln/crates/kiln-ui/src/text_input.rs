@@ -1229,7 +1229,9 @@ mod settle_tests {
         text: &str,
     ) -> (Entity<TextInput>, &'a mut gpui::VisualTestContext) {
         let (host, cx) = cx.add_window_view(|_, cx| {
-            Host(cx.new(|cx| TextInput::new("Find", &UiTheme::default(), cx)))
+            Host(cx.new(|cx| {
+                TextInput::new(kiln_l10n::Text::verbatim("Find"), &UiTheme::default(), cx)
+            }))
         });
         cx.run_until_parked();
         let input = host.read_with(cx, |host, _| host.0.clone());

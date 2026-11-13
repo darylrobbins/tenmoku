@@ -109,7 +109,7 @@ use gpui::{
     Subscription, UniformListScrollHandle, WeakEntity, Window, anchored, canvas, deferred, div,
     point, prelude::FluentBuilder as _, px, quad, rgba, size, svg, transparent_black, uniform_list,
 };
-use kiln_l10n::tr;
+use kiln_l10n::{text, tr};
 
 use super::{
     super::git_blame,
@@ -1411,7 +1411,7 @@ impl GitLogPanel {
     pub(crate) fn new(workbench: WeakEntity<Workbench>, cx: &mut Context<Self>) -> Self {
         let ui = fe_ui::ui_theme(cx);
         let filter_input = cx.new(|cx| {
-            TextInput::new(tr!("workbench-git-log-filter-placeholder"), &ui, cx).bordered()
+            TextInput::new(text!("workbench-git-log-filter-placeholder"), &ui, cx).bordered()
         });
         let filter_subscription = cx.subscribe(&filter_input, |panel, _, event, cx| {
             if *event == TextInputEvent::Changed {

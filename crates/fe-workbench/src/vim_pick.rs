@@ -11,6 +11,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, Window, div, px,
 };
+use kiln_l10n::Text;
 use kiln_shell::ModalId;
 
 use super::Workbench;
@@ -155,7 +156,8 @@ impl Workbench {
         self.dismiss_palette(window, cx);
         let title = pick.title.clone();
         let delegate = VimPicker::new(pick, editor.downgrade());
-        let picker = cx.new(|cx| Picker::new(delegate, &title, fe_ui::ui_theme(cx), cx));
+        let picker =
+            cx.new(|cx| Picker::new(delegate, Text::verbatim(title), fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));
         self.modals.update(cx, |layer, cx| {
             layer.show_modal(VIM_PICK, picker, window, cx)

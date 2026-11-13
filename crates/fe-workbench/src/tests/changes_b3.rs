@@ -379,9 +379,9 @@ fn the_button_reads_commit_n_files_with_its_key(cx: &mut TestAppContext) {
     let button = panel
         .read_with(cx, |panel, cx| panel.commit_button(cx))
         .unwrap();
-    assert_eq!(button.label, "Commit 1 file");
+    assert_eq!(button.label.resolve(), "Commit 1 file");
     assert_eq!(button.key.as_deref(), Some(key.as_str()));
-    assert_eq!(button.text(), format!("Commit 1 file {key}"));
+    assert_eq!(button.text().resolve(), format!("Commit 1 file {key}"));
     assert!(button.enabled);
 
     git(root, &["add", "b.rs", "c.rs"]);
@@ -390,7 +390,7 @@ fn the_button_reads_commit_n_files_with_its_key(cx: &mut TestAppContext) {
     let button = panel
         .read_with(cx, |panel, cx| panel.commit_button(cx))
         .unwrap();
-    assert_eq!(button.text(), format!("Commit 3 files {key}"));
+    assert_eq!(button.text().resolve(), format!("Commit 3 files {key}"));
 
     // With nothing staged it commits by asking to stage everything.
     git(root, &["reset", "-q"]);
@@ -399,14 +399,14 @@ fn the_button_reads_commit_n_files_with_its_key(cx: &mut TestAppContext) {
     let button = panel
         .read_with(cx, |panel, cx| panel.commit_button(cx))
         .unwrap();
-    assert_eq!(button.label, "Commit");
+    assert_eq!(button.label.resolve(), "Commit");
     // Disabled, the key isn't offered.
     set_text(&commit_box, "", cx);
     let button = panel
         .read_with(cx, |panel, cx| panel.commit_button(cx))
         .unwrap();
     assert!(!button.enabled);
-    assert_eq!(button.text(), "Commit");
+    assert_eq!(button.text().resolve(), "Commit");
 }
 
 #[gpui::test]
@@ -495,7 +495,7 @@ fn the_button_counts_what_a_commit_takes_from_the_whole_repository(cx: &mut Test
     let button = panel
         .read_with(cx, |panel, cx| panel.commit_button(cx))
         .unwrap();
-    assert_eq!(button.label, "Commit 2 files");
+    assert_eq!(button.label.resolve(), "Commit 2 files");
     let bounds = cx.debug_bounds("commit-button").expect("drawn");
     cx.simulate_click(bounds.center(), Modifiers::none());
     draw(cx);

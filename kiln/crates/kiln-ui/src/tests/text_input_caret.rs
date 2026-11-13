@@ -7,6 +7,7 @@ use gpui::{
     AppContext as _, Context, Entity, EntityInputHandler as _, Focusable as _, IntoElement,
     ParentElement as _, Render, Styled as _, TestAppContext, VisualTestContext, Window, div, px,
 };
+use kiln_l10n::Text;
 
 use crate::{TextInput, UiTheme};
 
@@ -23,8 +24,9 @@ fn input_with<'a>(
     cx: &'a mut TestAppContext,
     text: &str,
 ) -> (Entity<TextInput>, &'a mut VisualTestContext) {
-    let (host, cx) =
-        cx.add_window_view(|_, cx| Host(cx.new(|cx| TextInput::new("", &UiTheme::default(), cx))));
+    let (host, cx) = cx.add_window_view(|_, cx| {
+        Host(cx.new(|cx| TextInput::new(Text::verbatim(""), &UiTheme::default(), cx)))
+    });
     let input = host.read_with(cx, |host, _| host.0.clone());
     input.update_in(cx, |input, window, cx| {
         input.set_text(text, cx);

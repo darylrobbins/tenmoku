@@ -3,6 +3,7 @@
 //! TextInput takes IME composition: it stays out of `text()` and raises no
 //! event until it commits, and its bounds follow the committed text.
 
+use kiln_l10n::Text;
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
@@ -29,7 +30,7 @@ fn input_with<'a>(
     let events: Events = Rc::default();
     let log = events.clone();
     let (host, cx) = cx.add_window_view(|_, cx| {
-        let input = cx.new(|cx| TextInput::new("Find", &UiTheme::default(), cx));
+        let input = cx.new(|cx| TextInput::new(Text::verbatim("Find"), &UiTheme::default(), cx));
         cx.subscribe(&input, move |_, _, event: &TextInputEvent, _| {
             log.borrow_mut().push(*event)
         })

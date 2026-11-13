@@ -6,6 +6,7 @@
 //! has a name, and toggles and controls carry their toggled and disabled
 //! states.
 
+use kiln_l10n::Text;
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
@@ -38,7 +39,7 @@ impl Render for Chrome {
             ])
             .footer([RailButton::new("settings", Icon::Settings, &ui).name("Settings")]);
         let controls = div()
-            .child(Button::new("save", "Save").disabled(d))
+            .child(Button::new("save", Text::verbatim("Save")).disabled(d))
             .child(
                 Button::icon_only("add", Icon::SquarePlus)
                     .name("Add")

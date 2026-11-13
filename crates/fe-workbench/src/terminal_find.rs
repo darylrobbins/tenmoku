@@ -23,7 +23,7 @@ use gpui::{
     MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity, Window,
     div, px,
 };
-use kiln_l10n::{tr, verbatim};
+use kiln_l10n::{text, tr, verbatim};
 
 use crate::{
     TerminalPanel,
@@ -50,7 +50,8 @@ pub(crate) struct TerminalFind {
 
 impl TerminalFind {
     pub(crate) fn new(ui: &UiTheme, cx: &mut Context<TerminalPanel>) -> Self {
-        let input = cx.new(|cx| TextInput::new(tr!("workbench-terminal-find-placeholder"), ui, cx));
+        let input =
+            cx.new(|cx| TextInput::new(text!("workbench-terminal-find-placeholder"), ui, cx));
         let changed = cx.subscribe(&input, |panel, _, event, cx| {
             if *event == TextInputEvent::Changed {
                 panel.update_find(|find, view, cx| find.search(view, cx), cx);

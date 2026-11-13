@@ -3,6 +3,7 @@
 //! `Button::command`: clicking dispatches the button's action from the
 //! focused element, a typed command as an invocation from the mouse.
 
+use kiln_l10n::Text;
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
@@ -51,17 +52,17 @@ impl Render for Toolbar {
                     .push(("plain", current_invocation(cx)));
             }))
             .child(
-                Button::new("bold", "Bold")
+                Button::new("bold", Text::verbatim("Bold"))
                     .debug_selector(|| "bold".into())
                     .command(pad::Bold),
             )
             .child(
-                Button::new("plain", "Plain")
+                Button::new("plain", Text::verbatim("Plain"))
                     .debug_selector(|| "plain".into())
                     .command(Plain),
             )
             .child(
-                Button::new("off", "Off")
+                Button::new("off", Text::verbatim("Off"))
                     .disabled(true)
                     .debug_selector(|| "off".into())
                     .command(Plain),

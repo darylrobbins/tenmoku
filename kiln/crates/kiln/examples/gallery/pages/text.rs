@@ -13,6 +13,7 @@ use kiln::{
     prelude::*,
     ui::{TextField, TextFieldEvent, TextInput, TextInputEvent, ui_theme, v_flex},
 };
+use kiln_l10n::Text;
 
 use super::{labelled, page_frame, page_root, section};
 use crate::commands::{InputBackspace, InputDeleteWord};
@@ -28,10 +29,12 @@ pub(crate) struct TextPage {
 impl TextPage {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let field = cx.new(|cx| {
-            TextField::new(window, cx).placeholder("Type, select with shift-arrows, undo…")
+            TextField::new(window, cx)
+                .placeholder(Text::verbatim("Type, select with shift-arrows, undo…"))
         });
-        let input =
-            cx.new(|cx| TextInput::new("Type; backspace deletes", &ui_theme(cx), cx).bordered());
+        let input = cx.new(|cx| {
+            TextInput::new(Text::verbatim("Type; backspace deletes"), &ui_theme(cx), cx).bordered()
+        });
         let field_events = cx.subscribe_in(&field, window, |page, field, event, _, cx| {
             if *event == TextFieldEvent::Submitted {
                 page.submitted = Some(field.read(cx).value().to_owned());

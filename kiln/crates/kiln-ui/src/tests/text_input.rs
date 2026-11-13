@@ -7,6 +7,7 @@ use gpui::{
     AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _, IntoElement,
     Modifiers, ParentElement as _, Render, Styled as _, TestAppContext, Window, div, px,
 };
+use kiln_l10n::Text;
 
 use crate::{ActiveTheme as _, TextInput, UiTheme};
 
@@ -37,8 +38,9 @@ fn a_click_focuses_it_and_a_bordered_one_shows_focus(cx: &mut TestAppContext) {
     let (host, cx) = cx.add_window_view(|_, cx| {
         let theme = UiTheme::default();
         Host {
-            plain: cx.new(|cx| TextInput::new("Plain", &theme, cx)),
-            bordered: cx.new(|cx| TextInput::new("Bordered", &theme, cx).bordered()),
+            plain: cx.new(|cx| TextInput::new(Text::verbatim("Plain"), &theme, cx)),
+            bordered: cx
+                .new(|cx| TextInput::new(Text::verbatim("Bordered"), &theme, cx).bordered()),
         }
     });
     cx.run_until_parked();

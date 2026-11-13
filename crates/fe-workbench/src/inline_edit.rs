@@ -39,7 +39,7 @@ use gpui::{
     Task, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use kiln::platform::command_actions::typed_command;
-use kiln_l10n::tr;
+use kiln_l10n::{text, tr};
 
 use crate::{
     Workbench, chat_panel,
@@ -180,7 +180,8 @@ fn focused(window: &Window, cx: &mut gpui::App) -> Option<Entity<InlineEdit>> {
 impl InlineEdit {
     fn new(editor: &Entity<EditorView>, cx: &mut Context<Self>) -> Self {
         let ui = ui_theme(cx);
-        let input = cx.new(|cx| TextInput::new(tr!("workbench-chat-inline-placeholder"), &ui, cx));
+        let input =
+            cx.new(|cx| TextInput::new(text!("workbench-chat-inline-placeholder"), &ui, cx));
         let model = editor.read(cx).model();
         let snapshot = model.snapshot();
         let selection = model.primary_selection().range;

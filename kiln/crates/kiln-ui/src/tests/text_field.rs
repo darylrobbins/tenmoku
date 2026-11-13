@@ -10,6 +10,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, Styled as _,
     Subscription, TestAppContext, VisualTestContext, Window, accesskit::Role, div, point, px,
 };
+use kiln_l10n::Text;
 
 use super::text_input_a11y as a11y_tests;
 use crate::{TextField, TextFieldEvent};
@@ -43,7 +44,11 @@ fn open<'a>(
     cx.update(|cx| cx.bind_keys(TextField::key_bindings(macos)));
     let text = text.to_string();
     let (host, cx) = cx.add_window_view(move |window, cx| {
-        let field = cx.new(|cx| TextField::new(window, cx).placeholder("Find").text(&text));
+        let field = cx.new(|cx| {
+            TextField::new(window, cx)
+                .placeholder(Text::verbatim("Find"))
+                .text(&text)
+        });
         let events = cx.subscribe_in(&field, window, |host: &mut Host, _, event, _, _| {
             host.events.push(*event);
         });

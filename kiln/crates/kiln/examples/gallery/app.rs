@@ -16,6 +16,7 @@ use kiln::{
         SplitPane, StatusBarFrame, StatusEntry, ThemeMode, h_flex, ui_theme, v_flex,
     },
 };
+use kiln_l10n::Text;
 
 use crate::{
     commands::{NextPage, PreviousPage, ShowPrompt, ToggleTheme},
@@ -148,7 +149,7 @@ impl Gallery {
             (ThemeMode::System, "System"),
         ];
         let switcher = h_flex().gap_1().children(modes.map(|(choice, label)| {
-            Button::new(label, label)
+            Button::new(label, Text::verbatim(label))
                 .small()
                 .variant(if mode == Some(choice) {
                     ButtonVariant::Primary
@@ -161,14 +162,14 @@ impl Gallery {
         let paging = h_flex()
             .gap_1()
             .child(
-                Button::new("previous-page", "Previous")
+                Button::new("previous-page", Text::verbatim("Previous"))
                     .small()
                     .ghost()
                     .debug_selector(|| "previous-page".into())
                     .command(PreviousPage),
             )
             .child(
-                Button::new("next-page", "Next")
+                Button::new("next-page", Text::verbatim("Next"))
                     .small()
                     .ghost()
                     .debug_selector(|| "next-page".into())

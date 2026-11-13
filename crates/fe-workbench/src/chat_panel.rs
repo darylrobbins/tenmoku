@@ -71,7 +71,7 @@ use kiln::{
     platform::command_actions::{dispatch_invocation, dispatch_window, typed_command},
     ui::{Button, TextField, TextFieldEvent, h_flex, ui_theme, v_flex},
 };
-use kiln_l10n::{tr, verbatim};
+use kiln_l10n::{Text, text, tr, verbatim};
 
 use crate::{
     DockPanel, RootChanged, TrustChanged, Workbench,
@@ -288,7 +288,7 @@ pub(crate) struct HistoryRow {
 }
 
 impl HistoryRow {
-    fn label(&self) -> String {
+    fn label(&self) -> Text {
         let title = if self.title.is_empty() {
             tr!("workbench-chat-untitled").to_string()
         } else {
@@ -304,7 +304,7 @@ impl HistoryRow {
             3600..86400 => tr!("workbench-chat-ago-hours", count = ago / 3600).to_string(),
             _ => tr!("workbench-chat-ago-days", count = ago / 86400).to_string(),
         };
-        tr!("workbench-chat-history-label", title = title, when = when).to_string()
+        text!("workbench-chat-history-label", title = title, when = when)
     }
 }
 
@@ -1175,7 +1175,7 @@ impl ChatPanel {
             self.forms_made += 1;
             let field = cx.new(|cx| {
                 TextField::new(window, cx)
-                    .placeholder(tr!("workbench-chat-key-placeholder").to_string())
+                    .placeholder(text!("workbench-chat-key-placeholder"))
                     .masked(true)
             });
             let events = cx.subscribe_in(&field, window, |this, _, event, window, cx| {
@@ -1323,22 +1323,16 @@ impl ChatPanel {
                 h_flex()
                     .gap_2()
                     .child(
-                        Button::new(
-                            verbatim!("chat-key-save"),
-                            tr!("workbench-chat-save").to_string(),
-                        )
-                        .small()
-                        .debug_selector(|| "chat-key-save".into())
-                        .on_click(save),
+                        Button::new(verbatim!("chat-key-save"), text!("workbench-chat-save"))
+                            .small()
+                            .debug_selector(|| "chat-key-save".into())
+                            .on_click(save),
                     )
                     .child(
-                        Button::new(
-                            verbatim!("chat-key-cancel"),
-                            tr!("workbench-chat-cancel").to_string(),
-                        )
-                        .small()
-                        .debug_selector(|| "chat-key-cancel".into())
-                        .on_click(cancel),
+                        Button::new(verbatim!("chat-key-cancel"), text!("workbench-chat-cancel"))
+                            .small()
+                            .debug_selector(|| "chat-key-cancel".into())
+                            .on_click(cancel),
                     ),
             )
             .child(note(tr!("workbench-chat-key-note").to_string()))
@@ -1844,16 +1838,13 @@ impl Render for ChatPanel {
             .border_color(ui.border)
             .child(div().flex_1().min_w_0().children(note))
             .child(
-                Button::new(
-                    verbatim!("chat-history"),
-                    tr!("workbench-chat-history").to_string(),
-                )
-                .small()
-                .debug_selector(|| "chat-history".into())
-                .on_click(history),
+                Button::new(verbatim!("chat-history"), text!("workbench-chat-history"))
+                    .small()
+                    .debug_selector(|| "chat-history".into())
+                    .on_click(history),
             )
             .child(
-                Button::new(verbatim!("chat-new"), tr!("workbench-chat-new").to_string())
+                Button::new(verbatim!("chat-new"), text!("workbench-chat-new"))
                     .small()
                     .debug_selector(|| "chat-new".into())
                     .on_click(new_chat),

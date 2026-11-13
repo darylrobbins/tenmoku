@@ -11,6 +11,7 @@ use kiln::{
     prelude::*,
     ui::{Button, h_flex},
 };
+use kiln_l10n::Text;
 
 use super::{page_frame, page_root, section};
 
@@ -61,7 +62,7 @@ impl Render for PromptsPage {
         ];
         let buttons =
             h_flex().gap_2().children(levels.map(|(level, label)| {
-                Button::new(label, format!("Ask ({label})"))
+                Button::new(label, Text::verbatim(format!("Ask ({label})")))
                     .primary()
                     .on_click(cx.listener(move |page, _: &ClickEvent, window, cx| {
                         page.ask(level, window, cx)

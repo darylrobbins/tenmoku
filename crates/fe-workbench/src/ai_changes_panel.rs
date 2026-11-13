@@ -47,7 +47,7 @@ use gpui::{
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px, uniform_list,
 };
-use kiln_l10n::{tr, verbatim};
+use kiln_l10n::{Text, text, tr, verbatim};
 
 use crate::{
     Pane, Workbench,
@@ -302,7 +302,7 @@ impl AiChangesPanel {
 
     fn header_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let can_revert = self.listing.summary.counts.accepted > 0;
-        let button = |id: &'static str, label: String, command: &'static str, on: bool| {
+        let button = |id: &'static str, label: Text, command: &'static str, on: bool| {
             div().flex_none().debug_selector(move || id.into()).child(
                 Button::new(id, label)
                     .small()
@@ -316,7 +316,7 @@ impl AiChangesPanel {
         let row = div().flex_none().flex().flex_wrap().items_center().gap_1();
         if self.listing.preview.is_some() {
             // Buttons, not commands: the preview's are its own.
-            let button = |id: &'static str, label: String, apply: bool| {
+            let button = |id: &'static str, label: Text, apply: bool| {
                 let workbench = self.workbench.clone();
                 div().flex_none().debug_selector(move || id.into()).child(
                     Button::new(id, label)
@@ -333,30 +333,30 @@ impl AiChangesPanel {
             return row
                 .child(button(
                     "ai-changes-apply",
-                    tr!("workbench-chat-changes-apply").to_string(),
+                    text!("workbench-chat-changes-apply"),
                     true,
                 ))
                 .child(button(
                     "ai-changes-cancel",
-                    tr!("workbench-chat-changes-cancel").to_string(),
+                    text!("workbench-chat-changes-cancel"),
                     false,
                 ));
         }
         row.child(button(
             "ai-changes-accept-all",
-            tr!("workbench-chat-changes-accept-all").to_string(),
+            text!("workbench-chat-changes-accept-all"),
             "ai.changes_accept_all",
             true,
         ))
         .child(button(
             "ai-changes-reject-all",
-            tr!("workbench-chat-changes-reject-all").to_string(),
+            text!("workbench-chat-changes-reject-all"),
             "ai.changes_reject_all",
             true,
         ))
         .child(button(
             "ai-changes-revert",
-            tr!("workbench-chat-changes-revert-turn").to_string(),
+            text!("workbench-chat-changes-revert-turn"),
             "ai.changes_revert",
             can_revert,
         ))
@@ -393,16 +393,8 @@ impl AiChangesPanel {
                 let whole = (self.listing.preview.as_ref()).is_some_and(|head| !head.decidable)
                     || file.operation.is_some();
                 let buttons = [
-                    (
-                        "accept",
-                        tr!("workbench-chat-changes-accept").to_string(),
-                        true,
-                    ),
-                    (
-                        "reject",
-                        tr!("workbench-chat-changes-reject").to_string(),
-                        false,
-                    ),
+                    ("accept", text!("workbench-chat-changes-accept"), true),
+                    ("reject", text!("workbench-chat-changes-reject"), false),
                 ]
                 .into_iter()
                 .map(|(what, label, accept)| {

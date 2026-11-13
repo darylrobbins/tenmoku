@@ -159,7 +159,7 @@ fn the_shell_follows_a_theme_change(cx: &mut TestAppContext) {
         dock.add_panel(panel, cx);
         dock
     });
-    let picker = cx.new(|cx| Picker::new(Words, "Pick…", built_with, cx));
+    let picker = cx.new(|cx| Picker::new(Words, kiln_l10n::Text::verbatim("Pick…"), built_with, cx));
     cx.update(|window, cx| {
         shell.update(cx, |shell, cx| {
             shell.set_center(centre, cx);

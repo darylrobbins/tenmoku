@@ -95,7 +95,7 @@ fn interrupted_g_prefix_is_dropped(cx: &mut TestAppContext) {
         words: WORDS.to_vec(),
     };
     let (picker, cx) =
-        cx.add_window_view(|_, cx| Picker::new(words, "Find", UiTheme::default_dark(), cx));
+        cx.add_window_view(|_, cx| Picker::new(words, kiln_l10n::Text::verbatim("Find"), UiTheme::default_dark(), cx));
     cx.update(|window, cx| picker.update(cx, |picker, cx| picker.show(window, cx)));
     draw(cx);
 

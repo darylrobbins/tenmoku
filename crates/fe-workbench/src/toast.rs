@@ -56,7 +56,7 @@ use gpui::{
     WeakEntity, WeakFocusHandle, Window, WindowId, div, point, prelude::FluentBuilder as _, px,
     svg,
 };
-use kiln_l10n::tr;
+use kiln_l10n::{Text, text, tr};
 
 /// How many toasts show at once.
 pub(crate) const MAX_SHOWN: usize = 3;
@@ -975,13 +975,16 @@ impl ToastLayer {
                 div()
                     .debug_selector(move || format!("toast-{kind}-{ix}-{i}"))
                     .child(
-                        Button::new(SharedString::from(format!("toast-{kind}-{ix}-{i}")), title)
-                            .small()
-                            .when_some(focus, |button, focus| button.focus_handle(&focus))
-                            .on_click(move |_, _, cx| {
-                                choices.answer(Some(i));
-                                layer.update(cx, |layer, cx| layer.dismiss(id, cx)).ok();
-                            }),
+                        Button::new(
+                            SharedString::from(format!("toast-{kind}-{ix}-{i}")),
+                            Text::verbatim(title),
+                        )
+                        .small()
+                        .when_some(focus, |button, focus| button.focus_handle(&focus))
+                        .on_click(move |_, _, cx| {
+                            choices.answer(Some(i));
+                            layer.update(cx, |layer, cx| layer.dismiss(id, cx)).ok();
+                        }),
                     )
             };
             let shown = from.unwrap_or(choices.titles.len());
@@ -998,7 +1001,7 @@ impl ToastLayer {
                         .child(
                             Button::new(
                                 SharedString::from(format!("toast-more-{ix}")),
-                                tr!("workbench-toast-more"),
+                                text!("workbench-toast-more"),
                             )
                             .small()
                             .when_some(focus, |button, focus| button.focus_handle(&focus))
@@ -1048,7 +1051,7 @@ impl ToastLayer {
                 .self_end()
                 .flex()
                 .child(
-                    Button::new(("toast-action", ix), label)
+                    Button::new(("toast-action", ix), Text::verbatim(label))
                         .small()
                         .when_some(focus, |button, focus| button.focus_handle(&focus))
                         .on_click(move |event, window, cx| {
