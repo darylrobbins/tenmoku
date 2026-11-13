@@ -271,6 +271,8 @@ pub struct Workbench {
     _status_bar: [Subscription; 2],
     /// The window's toasts, over the panes at the bottom right.
     pub(crate) toasts: Entity<toast::ToastLayer>,
+    /// The builds, tests and scripts run here ([`crate::runs`]).
+    pub(crate) runs: Entity<crate::runs::Runs>,
     /// What the panes' toolbar crumbs and "…" list.
     toolbar_picker: Entity<Picker<ToolbarPicker>>,
     /// Whether the panes show their toolbars.
@@ -774,6 +776,7 @@ impl Workbench {
             _modals: modals_changed,
             _status_bar: [status_bar_changed, vim_host_commands],
             toasts,
+            runs: cx.new(|_| crate::runs::Runs::default()),
             toolbar_picker,
             breadcrumbs: true,
             nav: NavButtons::default(),

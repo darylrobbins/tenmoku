@@ -10,6 +10,11 @@
 //! until the tab closes. Two tabs of one label are two sources. A run started
 //! by [`Workbench::run_task_then`] hands the same problems to its caller too
 //! (vim's `:make`, `quickfix_fill.rs`), with columns in chars.
+//!
+//! Each session a task tab starts is a run in the workbench's
+//! [`crate::runs::Runs`], of the kind the task's group says: finished from
+//! its exit code, cancelled if its tab closes while it runs. A rerun in the
+//! tab is a new run.
 
 use std::{collections::HashMap, path::PathBuf};
 
@@ -22,7 +27,8 @@ use kiln_l10n::tr;
 use crate::{
     Workbench,
     dock::problems_panel::{ColumnUnit, SourceProblem, byte_column, read_text},
-    task_defs::Task,
+    runs::{RunEnd, RunId, RunKind, RunSummary, Runs},
+    task_defs::{Group, Task},
     task_problems::{self, Matcher, TaskProblem},
     workbench::toast::{self, Toast},
 };
@@ -82,6 +88,30 @@ struct TaskTab {
     /// What hears this session's problems, if its run was asked for by
     /// [`Workbench::run_task_then`]: not a rerun's.
     heard: Option<RunHeard>,
+    /// The session's run in the workbench's [`Runs`].
+    run: RunId,
+}
+
+/// The kind of run `task` is: its group's, a script unless it builds or
+/// tests.
+fn run_kind(task: &Task) -> RunKind {
+    match task.group {
+        Some(Group::Build) => RunKind::Build,
+        Some(Group::Test) => RunKind::Test,
+        Some(Group::Run) | None => RunKind::Script,
+    }
+}
+
+/// How a session that exited with `code` ended, and what its run says.
+fn run_end(code: Option<i32>) -> (RunEnd, Option<RunSummary>) {
+    match code {
+        Some(0) => (RunEnd::Passed, Some(RunSummary::Exit(0))),
+        Some(code) => (
+            RunEnd::Failed { code: Some(code) },
+            Some(RunSummary::Exit(code)),
+        ),
+        None => (RunEnd::Failed { code: None }, None),
+    }
 }
 
 /// How to read one run's output.
@@ -188,6 +218,12 @@ fn source_problem(
 }
 
 impl Workbench {
+    /// The builds, tests and scripts run here, newest first, for a panel to
+    /// list and observe.
+    pub fn runs(&self) -> &Entity<Runs> {
+        &self.runs
+    }
+
     /// Runs `task` and shows the terminal dock with it, focused there as a
     /// new terminal is, and remembers it as the last task. A task's command
     /// comes from the project, so one in a root that isn't trusted is refused
@@ -246,10 +282,15 @@ impl Workbench {
             cwd: task.cwd.clone(),
             root: (self.root()).map_or_else(|| task.cwd.clone(), ToOwned::to_owned),
         };
+        let runs = self.runs.clone();
+        let run = runs.update(cx, |runs, cx| runs.begin(run_kind(task), &task.label, cx));
         let exited = cx.subscribe(
             &view,
             move |workbench, view, event: &TerminalViewEvent, cx| {
-                if let TerminalViewEvent::Exited(_) = event {
+                if let TerminalViewEvent::Exited(code) = *event {
+                    let (end, summary) = run_end(code);
+                    (workbench.runs.clone())
+                        .update(cx, |runs, cx| runs.finish(run, end, summary, cx));
                     workbench.read_task_output(&view, &reader, cx);
                 }
             },
@@ -259,7 +300,7 @@ impl Workbench {
         });
         let view = view.entity_id();
         let panel = self.dock().read(cx).problems().clone();
-        panel.update(cx, |panel, _| {
+        let replaced_run = panel.update(cx, |panel, _| {
             let tabs = &mut panel.task_tabs;
             tabs.closing.get_or_insert(closing);
             let tab = (tabs.tabs.iter_mut()).find(|tab| Some(tab.view) == replaced);
@@ -269,6 +310,7 @@ impl Workbench {
                     tab._exited = exited;
                     tab._matching = None;
                     tab.heard = heard;
+                    Some(std::mem::replace(&mut tab.run, run))
                 }
                 None => {
                     let key = tabs.next_key;
@@ -279,10 +321,19 @@ impl Workbench {
                         _exited: exited,
                         _matching: None,
                         heard,
+                        run,
                     });
+                    None
                 }
             }
         });
+        // The tab reruns once its session's done, so this is only for one
+        // whose end went unheard.
+        if let Some(replaced) = replaced_run {
+            runs.update(cx, |runs, cx| {
+                runs.finish(replaced, RunEnd::Cancelled, None, cx)
+            });
+        }
     }
 
     /// Reads the output of the session `view` shows, which has exited, off the
@@ -394,9 +445,15 @@ impl Workbench {
             for tab in &closed {
                 panel.clear_source(tab.key);
             }
-            !closed.is_empty()
+            closed.iter().map(|tab| tab.run).collect::<Vec<_>>()
         });
-        if closed {
+        // Those still running are cancelled: closing a tab ends its session.
+        (self.runs.clone()).update(cx, |runs, cx| {
+            for &run in &closed {
+                runs.finish(run, RunEnd::Cancelled, None, cx);
+            }
+        });
+        if !closed.is_empty() {
             self.sync_problems(cx);
         }
     }
