@@ -52,3 +52,7 @@ reason = "A developer log line on stderr, logged once per unreadable file"
 file = "src/provider.rs"
 text = "SystemBlock"
 reason = "A serde struct name, not user-facing"
+
+[[file]]
+path = "src/permissions.rs"
+reason = "Command patterns, shell metacharacters and host names are matched, never shown to the user"

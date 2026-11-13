@@ -31,6 +31,7 @@ mod edits;
 mod fake;
 mod inline;
 pub mod l10n;
+pub mod permissions;
 mod provider;
 mod request;
 mod store;
