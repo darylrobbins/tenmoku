@@ -314,7 +314,11 @@ fn delete_a_branch_checked_out_elsewhere_fails() {
         ],
     );
     match repo.delete_branch("elsewhere", true) {
-        Err(BranchError::Failed { output }) => assert!(output.contains("worktree"), "{output}"),
+        // Git words this by version: "used by worktree at" or "checked out at".
+        Err(BranchError::Failed { output }) => assert!(
+            output.contains("worktree") || output.contains("checked out"),
+            "{output}"
+        ),
         other => panic!("expected Failed, got {other:?}"),
     }
     assert!(has_ref(&work, "refs/heads/elsewhere"));
