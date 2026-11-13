@@ -56,6 +56,9 @@
 //!   into one `cx.spawn` loop per workbench, as `ProjectPanel` consumes
 //!   `ProjectWatcher`. Status and `window/showMessage` drive a status bar
 //!   item for the active editor's server.
+//!   Each server's open work-done progress ([`LspEvent::Progress`]) is
+//!   listed in [`Workbench::operations`] ([`crate::operations`]), and
+//!   cleared from there with the manager.
 //! - **Diagnostics** (§4.1, "Delivery to the UI"). A `Diagnostics` event goes
 //!   to the [`fe_editor::diagnostics::DiagnosticSet`] of each open editor of
 //!   its buffer, keyed by server (a [`DiagnosticOwner`], beside the
@@ -1053,6 +1056,8 @@ impl Workbench {
         if dropped {
             self.sync_problems(cx);
         }
+        // Their progress went with them.
+        (self.operations).update(cx, |operations, cx| operations.clear_servers(cx));
         let lsp = &mut self.lsp;
         let Some(root) = self.root.clone() else {
             return self.start_lsp_manager(None, cx);
@@ -1826,6 +1831,12 @@ impl Workbench {
                 if ended && lsp.drop_file_diagnostics(Some(server)) {
                     self.sync_problems(cx);
                 }
+            }
+            // Emptied before its session's end is reported.
+            LspEvent::Progress { server, name, work } => {
+                (self.operations).update(cx, |operations, cx| {
+                    operations.set_server(server, &name, &work, cx);
+                });
             }
             LspEvent::ShowMessage {
                 server,

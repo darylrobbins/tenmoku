@@ -21,6 +21,12 @@
 //! its reply ([`Readiness::final_mark`]). A non-empty answer is always
 //! final; no timer ever makes an empty one final.
 //!
+//! It also keeps what each open token last reported (title, message,
+//! percentage) for the host to show ([`Readiness::take_work`]), counted or
+//! not; that never bears on readiness. Each is stamped when it began by the
+//! real clock, not the injected one, for the host to order it among its
+//! other work: the stamp is never compared with the injected times.
+//!
 //! The tracker is a plain state machine on times the caller passes in, so
 //! its timers run on the injected clock. Every input first applies what
 //! time has changed by then ([`Readiness::tick`]), so a status or progress
@@ -33,7 +39,7 @@ use std::time::{Duration, Instant};
 
 use lsp_types::{NumberOrString, WorkDoneProgress};
 
-use crate::event::ServerStatus;
+use crate::event::{ServerStatus, WorkProgress};
 use crate::launcher::{ReadinessMode, ServerSpec};
 
 /// How long no counted progress may be open before the progress rule
@@ -47,6 +53,9 @@ pub(crate) const STATUS_WAIT: Duration = Duration::from_secs(10);
 /// the table, and an ignored token only risks an early `Ready`, which
 /// costs routing, never an answer's finality.
 const TOKENS_MAX: usize = 256;
+/// The most open tokens reported to the host, the oldest begun: a server
+/// with more open at once has more than anyone can read.
+pub(crate) const WORK_MAX: usize = 64;
 
 /// One session's readiness.
 pub(crate) struct Readiness {
@@ -71,14 +80,25 @@ pub(crate) struct Readiness {
     epoch: u64,
     /// Bumped on every begin, to find the latest open title.
     begins: u64,
+    /// The open work last taken by [`take_work`](Self::take_work).
+    reported: Vec<WorkProgress>,
 }
 
 struct Open {
     count: u32,
     counted: bool,
     title: String,
+    /// The latest begin's or report's message, if any said one.
+    message: Option<String>,
+    /// The latest begin's or report's percentage, if any said one.
+    percentage: Option<u32>,
     /// When its latest begin came, in [`Readiness::begins`] order.
     begun: u64,
+    /// When its first begin came, while it's stayed open: the order it's
+    /// reported in.
+    first: u64,
+    /// When that begin came, by the real clock.
+    started: Instant,
 }
 
 impl Readiness {
@@ -96,6 +116,7 @@ impl Readiness {
             unlogged_fallback: false,
             epoch: 0,
             begins: 0,
+            reported: Vec::new(),
         }
     }
 
@@ -157,16 +178,33 @@ impl Readiness {
                     count: 0,
                     counted,
                     title: String::new(),
+                    message: None,
+                    percentage: None,
                     begun: 0,
+                    first: self.begins,
+                    started: Instant::now(),
                 });
                 open.count += 1;
                 open.title.clone_from(&begin.title);
+                open.message.clone_from(&begin.message);
+                open.percentage = begin.percentage;
                 open.begun = self.begins;
                 if counted {
                     self.quiet_since = None;
                 }
             }
-            WorkDoneProgress::Report(_) => {}
+            // A report leaves out what hasn't changed. One for a token not
+            // begun shows nothing: it has no title.
+            WorkDoneProgress::Report(report) => {
+                if let Some(open) = self.open.get_mut(token) {
+                    if report.message.is_some() {
+                        open.message.clone_from(&report.message);
+                    }
+                    if report.percentage.is_some() {
+                        open.percentage = report.percentage;
+                    }
+                }
+            }
             WorkDoneProgress::End(_) => {
                 // An occurrence begun ends first; else one only created. An
                 // end with neither is ignored.
@@ -268,6 +306,26 @@ impl Readiness {
             .map_or(ServerStatus::Starting, |open| ServerStatus::Indexing {
                 title: open.title.clone(),
             })
+    }
+
+    /// The open work, oldest begun first, at most [`WORK_MAX`] of it, if
+    /// it changed since this was last asked.
+    pub(crate) fn take_work(&mut self) -> Option<Vec<WorkProgress>> {
+        let mut open: Vec<(&NumberOrString, &Open)> = self.open.iter().collect();
+        open.sort_unstable_by_key(|(_, open)| open.first);
+        let work: Vec<WorkProgress> = (open.into_iter().take(WORK_MAX))
+            .map(|(token, open)| WorkProgress {
+                token: token.clone(),
+                title: open.title.clone(),
+                message: open.message.clone(),
+                percentage: open.percentage.map(|p| p.min(100)),
+                started: open.started,
+            })
+            .collect();
+        (work != self.reported).then(|| {
+            self.reported.clone_from(&work);
+            work
+        })
     }
 
     /// A mark to check a reply against, if an empty answer to a request

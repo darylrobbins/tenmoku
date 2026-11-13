@@ -1,8 +1,9 @@
 //! The client side's router: what fe-lsp answers when a server asks, and
 //! what it does with the server's notifications (§3.6).
 //!
-//! Handled notifications: `$/progress` and `experimental/serverStatus`
-//! (readiness.rs), `window/logMessage` (into the log ring) and
+//! Handled notifications: `$/progress` (readiness.rs, and
+//! [`LspEvent::Progress`]) and `experimental/serverStatus` (readiness.rs),
+//! `window/logMessage` (into the log ring) and
 //! `window/showMessage` ([`LspEvent::ShowMessage`]), and
 //! `textDocument/publishDiagnostics`, which goes to the actor to decode
 //! (diagnostics.rs). `workspace/applyEdit` goes to the actor too, to decode
@@ -255,11 +256,24 @@ impl ClientState {
         }
     }
 
+    /// Applies a `$/progress` to readiness, and reports the open work if
+    /// what it shows changed.
     fn progress(&self, params: ProgressParams) {
         let ProgressParamsValue::WorkDone(value) = &params.value;
-        self.readiness()
-            .progress(&params.token, value, self.clock.now());
+        let work = {
+            let mut readiness = self.readiness();
+            readiness.progress(&params.token, value, self.clock.now());
+            readiness.take_work()
+        };
         self.signal.raise();
+        if let Some(work) = work {
+            let mut sink = self.sink.lock().unwrap_or_else(PoisonError::into_inner);
+            sink(LspEvent::Progress {
+                server: self.server,
+                name: self.name.clone(),
+                work,
+            });
+        }
     }
 
     fn server_status(&self, params: &ServerStatusParams) {

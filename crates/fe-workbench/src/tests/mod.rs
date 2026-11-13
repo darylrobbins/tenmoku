@@ -101,6 +101,7 @@ mod nav_partial;
 mod nav_pending;
 mod open_folder;
 mod open_settings;
+mod operations;
 mod outline_detail;
 mod outline_kind_icons;
 mod outline_panel;

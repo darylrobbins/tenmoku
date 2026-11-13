@@ -144,7 +144,8 @@ pub use document_link::DocumentLink;
 pub use document_symbol::DocumentSymbol;
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{
-    LspError, LspEvent, MessageReply, Notice, Refresh, ServerId, ServerStatus, Unavailable,
+    LspError, LspEvent, MessageReply, Notice, Refresh, ServerId, ServerProgress, ServerStatus,
+    Unavailable, WorkProgress,
 };
 pub use folding_range::{FoldKind, FoldingRange};
 pub use hierarchy::{CallEdge, HierarchyItem};

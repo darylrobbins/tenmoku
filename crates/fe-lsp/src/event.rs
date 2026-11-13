@@ -16,6 +16,14 @@ use crate::workspace_edit::{ApplyReply, FileEdits};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ServerId(pub(crate) u64);
 
+impl ServerId {
+    /// The id `n`, which no manager need have started: for a host's tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_tests(n: u64) -> Self {
+        Self(n)
+    }
+}
+
 /// What a server's refresh request asks the client to ask for again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -54,6 +62,16 @@ pub enum LspEvent {
         server: ServerId,
         name: String,
         status: ServerStatus,
+    },
+    /// What `server`'s open work-done progress (`$/progress`) shows
+    /// changed: all of it, as [`LspManager::progress`](crate::LspManager::progress)
+    /// now lists it for the server. An empty `work` means none is open,
+    /// as after its session ends: before its `Status` becomes `Restarting`
+    /// or `Stopped`, an empty one is sent if any was open.
+    Progress {
+        server: ServerId,
+        name: String,
+        work: Vec<WorkProgress>,
     },
     /// The server asked for a message to be shown (`window/showMessage`).
     ShowMessage {
@@ -209,6 +227,61 @@ pub enum ServerStatus {
     /// stopped (it couldn't launch, or crashed too often). Its thread has
     /// ended or is about to.
     Stopped(Option<String>),
+}
+
+/// One open work-done progress token of a server (`$/progress`): its
+/// begin's title, and the message and percentage its latest begin or
+/// report said, if any did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WorkProgress {
+    /// The token, as the server named it: unique among its server's open
+    /// work, and kept while that work stays open.
+    pub token: lsp_types::NumberOrString,
+    pub title: String,
+    pub message: Option<String>,
+    /// From 0 to 100, if the server says how far along it is.
+    pub percentage: Option<u32>,
+    /// When the client heard its begin, by the real clock (never a
+    /// manager's injected one): kept while it stays open, hidden by the cap
+    /// or not, to order it among the host's other work.
+    pub started: std::time::Instant,
+}
+
+impl WorkProgress {
+    /// `title`'s progress under `token`, begun at `started`, saying
+    /// nothing more: for a host's tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_tests(
+        token: lsp_types::NumberOrString,
+        title: &str,
+        started: std::time::Instant,
+    ) -> Self {
+        Self {
+            token,
+            title: title.to_owned(),
+            message: None,
+            percentage: None,
+            started,
+        }
+    }
+
+    /// How far along it is, from 0 to 1, if the server says.
+    pub fn fraction(&self) -> Option<f32> {
+        self.percentage.map(|p| p.min(100) as f32 / 100.0)
+    }
+}
+
+/// A running server's open work-done progress, as
+/// [`LspManager::progress`](crate::LspManager::progress) lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ServerProgress {
+    pub server: ServerId,
+    pub name: String,
+    pub root: std::path::PathBuf,
+    /// Oldest begun first, at most 64 of it.
+    pub work: Vec<WorkProgress>,
 }
 
 /// Why a request got no answer.

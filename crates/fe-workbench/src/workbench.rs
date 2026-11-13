@@ -273,6 +273,9 @@ pub struct Workbench {
     pub(crate) toasts: Entity<toast::ToastLayer>,
     /// The builds, tests and scripts run here ([`crate::runs`]).
     pub(crate) runs: Entity<crate::runs::Runs>,
+    /// What's going on in the background, the runs' among it
+    /// ([`crate::operations`]).
+    pub(crate) operations: Entity<crate::operations::Operations>,
     /// What the panes' toolbar crumbs and "…" list.
     toolbar_picker: Entity<Picker<ToolbarPicker>>,
     /// Whether the panes show their toolbars.
@@ -628,6 +631,8 @@ impl Workbench {
         let nav_state = Nav::new(launch_root.clone(), cx);
         let status_bar = cx.new(|_| StatusBar::new());
         let toasts = cx.new(|cx| toast::ToastLayer::new(window, cx));
+        let runs = cx.new(|_| crate::runs::Runs::default());
+        let operations = cx.new(|cx| crate::operations::Operations::new(&runs, cx));
         // A restored layout's panes are made like a pane of the workbench's.
         let template = Rc::new(RefCell::new(pane.downgrade()));
         let workspace = cx.new(|cx| {
@@ -776,7 +781,8 @@ impl Workbench {
             _modals: modals_changed,
             _status_bar: [status_bar_changed, vim_host_commands],
             toasts,
-            runs: cx.new(|_| crate::runs::Runs::default()),
+            runs,
+            operations,
             toolbar_picker,
             breadcrumbs: true,
             nav: NavButtons::default(),

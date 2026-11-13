@@ -55,7 +55,10 @@ use lsp_types::{ServerCapabilities, Url};
 use crate::clock::{Clock, SystemClock};
 use crate::document::{Admitted, Opened, Opening, Subscribed, language_id};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspError, LspEvent, ServerId, ServerStatus, SharedLog, Unavailable, not_open};
+use crate::event::{
+    LspError, LspEvent, ServerId, ServerProgress, ServerStatus, SharedLog, Unavailable,
+    WorkProgress, not_open,
+};
 use crate::identity::{Generation, Identities, IncarnationId, SessionId};
 use crate::launcher::{Flag, LaunchCancel, ServerLauncher, ServerSpec};
 use crate::registry::{Registry, needs_restart, server_for, server_root, servers_for};
@@ -205,6 +208,8 @@ pub struct LspManager {
     logs: HashMap<(String, PathBuf), SharedLog>,
     /// The latest status of the servers started at each (name, root).
     statuses: HashMap<(String, PathBuf), LatestStatus>,
+    /// Each server's open work-done progress, as the sink last heard it.
+    progress: Progress,
     max_file_bytes: usize,
     next_id: u64,
     /// The count of routed opens, which orders aliases for their holder.
@@ -469,10 +474,12 @@ impl LspManager {
         clock: Arc<dyn Clock>,
         sink: impl FnMut(LspEvent) + Send + 'static,
     ) -> Self {
+        let progress = Progress::default();
         Self {
             launcher,
             clock,
-            sink: Arc::new(Mutex::new(sink)),
+            sink: Arc::new(Mutex::new(progress.tap(sink))),
+            progress,
             servers: HashMap::new(),
             documents: HashMap::new(),
             routes: Routes::default(),
@@ -1296,6 +1303,28 @@ impl LspManager {
     pub fn status_at(&self, name: &str, root: &Path) -> Option<ServerStatus> {
         let latest = self.statuses.get(&(name.to_owned(), root.to_owned()))?;
         lock(latest).as_ref().map(|(_, status)| status.clone())
+    }
+
+    /// The running servers' open work-done progress (`$/progress`), oldest
+    /// server first, each server's oldest begun first: as of the latest
+    /// [`LspEvent::Progress`] each sent, which the sink hears after it's
+    /// here. A server with none open isn't listed, nor one whose session
+    /// ended (its `Status` went `Restarting` or `Stopped`).
+    pub fn progress(&self) -> Vec<ServerProgress> {
+        let progress = lock(&self.progress.0);
+        let mut listed: Vec<ServerProgress> = (progress.iter())
+            .filter_map(|(&server, (name, work))| {
+                let handle = self.servers.get(&server)?;
+                Some(ServerProgress {
+                    server,
+                    name: name.clone(),
+                    root: handle.root.clone(),
+                    work: work.clone(),
+                })
+            })
+            .collect();
+        listed.sort_by_key(|progress| progress.server);
+        listed
     }
 
     /// The servers running for `root`, oldest first, each with its latest
@@ -2578,6 +2607,56 @@ impl Drop for LspManager {
     fn drop(&mut self) {
         for (_, handle) in self.servers.drain() {
             handle.stop(&mut self.retiring);
+        }
+    }
+}
+
+/// Each server's open work-done progress, by its name, as the sink last
+/// heard it.
+#[derive(Clone, Default)]
+struct Progress(Arc<Mutex<HashMap<ServerId, Named>>>);
+
+/// A server's name, and its open work.
+type Named = (String, Vec<WorkProgress>);
+
+impl Progress {
+    /// `sink`, recording each server's progress before it hears of it,
+    /// and clearing it as its session ends: when a server whose progress
+    /// was open goes `Restarting` or `Stopped`, `sink` hears an empty
+    /// [`LspEvent::Progress`] first.
+    fn tap(
+        &self,
+        mut sink: impl FnMut(LspEvent) + Send + 'static,
+    ) -> impl FnMut(LspEvent) + Send + 'static {
+        let progress = self.clone();
+        move |event| {
+            let ended = match &event {
+                LspEvent::Progress { server, name, work } => {
+                    let mut progress = lock(&progress.0);
+                    if work.is_empty() {
+                        progress.remove(server);
+                    } else {
+                        progress.insert(*server, (name.clone(), work.clone()));
+                    }
+                    None
+                }
+                LspEvent::Status {
+                    server,
+                    status: ServerStatus::Restarting(_) | ServerStatus::Stopped(_),
+                    ..
+                } => lock(&progress.0)
+                    .remove(server)
+                    .map(|(name, _)| (*server, name)),
+                _ => None,
+            };
+            if let Some((server, name)) = ended {
+                sink(LspEvent::Progress {
+                    server,
+                    name,
+                    work: Vec::new(),
+                });
+            }
+            sink(event);
         }
     }
 }

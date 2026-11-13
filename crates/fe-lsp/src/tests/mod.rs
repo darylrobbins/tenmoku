@@ -17,6 +17,7 @@ mod launcher;
 mod launcher_path_safety;
 mod lifecycle;
 mod navigation;
+mod progress;
 mod provider_wait;
 mod pull_diagnostics;
 mod readiness;
@@ -119,10 +120,18 @@ impl Events {
         }
     }
 
-    /// Asserts nothing arrives for a moment of real time.
+    /// Asserts nothing arrives for a moment of real time but
+    /// [`LspEvent::Progress`], which reports `$/progress` as it comes, and
+    /// tests/progress.rs reads.
     fn assert_quiet(&self) {
-        if let Ok(event) = self.0.recv_timeout(Duration::from_millis(100)) {
-            panic!("unexpected {event:?}");
+        let deadline = Instant::now() + Duration::from_millis(100);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.0.recv_timeout(left) {
+                Ok(LspEvent::Progress { .. }) => {}
+                Ok(event) => panic!("unexpected {event:?}"),
+                Err(_) => return,
+            }
         }
     }
 }
