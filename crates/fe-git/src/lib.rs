@@ -11,7 +11,7 @@
 //! and the files it tracks or would add ([`Repo::listed_files`]).
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
 //! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
-//! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`], [`Repo::stash_push`], [`Repo::stash_pop`], [`Repo::stash_apply`]) and
+//! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`], [`Repo::create_branch_at`], [`Repo::rename_branch`], [`Repo::delete_branch`], [`Repo::merge_into_current`], [`Repo::stash_push`], [`Repo::stash_pop`], [`Repo::stash_apply`]) and
 //! remotes ([`Repo::fetch`], [`Repo::pull`], [`Repo::push`], [`Repo::publish`]) run `git`,
 //! because gix doesn't apply clean filters or autocrlf when staging; they block,
 //! so callers run them off the UI thread.
@@ -35,7 +35,7 @@ mod stage;
 mod stash;
 
 pub use blame::{BlameRun, CommitInfo};
-pub use branch::{BranchRef, SwitchError};
+pub use branch::{BranchError, BranchRef, MergeError, SwitchError};
 pub use commit::CommitError;
 pub use commit_log::{CommitFile, LogCommit, LogFilter, LogScope, RefKind, RefLabel};
 pub use commit_stats::{CommitStats, FileStat};

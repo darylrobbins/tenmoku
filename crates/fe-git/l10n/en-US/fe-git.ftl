@@ -24,6 +24,22 @@ git-switch-failed =
     git failed:
     { $output }
 
+git-branch-exists = a branch of that name already exists
+git-branch-current = the current branch can't be deleted
+git-branch-not-merged = the branch isn't fully merged
+git-branch-failed =
+    git branch failed:
+    { $output }
+
+git-merge-would-overwrite =
+    { $count ->
+        [one] local changes would be overwritten by the merge ({ $count } file)
+       *[other] local changes would be overwritten by the merge ({ $count } files)
+    }
+git-merge-failed =
+    git merge failed:
+    { $output }
+
 git-commit-empty-message = empty commit message
 git-commit-nothing-staged = nothing staged to commit
 git-commit-hook-failed =

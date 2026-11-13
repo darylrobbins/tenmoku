@@ -218,7 +218,7 @@ impl Repo {
     /// `commit.gpgSign`, then `branch.<name>.mergeOptions` as git parses it,
     /// later options overriding earlier ones. A rebase ignores mergeOptions
     /// and reads `commit.gpgSign` alone. A fast-forward never signs.
-    fn signs_commits(&self, branch: &str, mode: PullMode) -> Result<bool, GitError> {
+    pub(crate) fn signs_commits(&self, branch: &str, mode: PullMode) -> Result<bool, GitError> {
         if mode == PullMode::FastForwardOnly {
             return Ok(false);
         }
@@ -319,7 +319,7 @@ impl Repo {
     }
 
     /// HEAD's branch by its short name, `None` when HEAD is detached.
-    fn branch(&self) -> Result<Option<String>, GitError> {
+    pub(crate) fn branch(&self) -> Result<Option<String>, GitError> {
         let args = ["symbolic-ref", "-q", "HEAD"].map(OsString::from);
         let output = run_raw(&self.workdir, Access::Read, &args, None, &[])?;
         // Exit 1: HEAD isn't a symbolic ref.
@@ -370,7 +370,7 @@ impl Repo {
     }
 
     /// The unmerged files, as absolute paths.
-    fn unmerged_paths(&self) -> Result<Vec<PathBuf>, GitError> {
+    pub(crate) fn unmerged_paths(&self) -> Result<Vec<PathBuf>, GitError> {
         let args = [
             "diff",
             "--name-only",
