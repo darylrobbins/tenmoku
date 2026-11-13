@@ -295,8 +295,7 @@ fn a_plugin_is_pending_until_granted(cx: &mut TestAppContext) {
     cx.update(reevaluate);
     until(cx, "the granted plugin to run", running(TOOL));
     assert_eq!(lifecycle(cx), [format!("init {TOOL}")]);
-    // Windows doesn't cache compiled plugins (see CONTRIBUTING.md).
-    assert_eq!(plugins.cache_entries(), usize::from(cfg!(unix)));
+    assert_eq!(plugins.cache_entries(), 1);
     assert_eq!(cx.update(|cx| pending_plugin_grants(cx)), []);
     let info = cx.update(|cx| plugin_states(cx)).remove(0);
     assert_eq!(info.granted, grants(&["commands"]));

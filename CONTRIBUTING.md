@@ -49,8 +49,6 @@ The Windows build lacks some things the other platforms have:
 - Copying a symlink in the project tree is refused.
 - Plugins can't read the workspace's files: WASI preopens are named by host
   path, which a guest can't resolve on Windows.
-- Compiled plugins aren't cached, as nothing checks that the cache folder is
-  the user's alone.
 
 ## Tests and checks
 
