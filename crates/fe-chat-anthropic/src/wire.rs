@@ -19,6 +19,29 @@ pub const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 /// The beta that an effort-only system message in `messages` takes.
 const EFFORT_MESSAGE_BETA: &str = "mid-conversation-output-config-2026-07-01";
 
+/// The beta that `output_config.task_budget` takes.
+const TASK_BUDGET_BETA: &str = "task-budgets-2026-03-13";
+
+/// The beta that a `tool_removal` block in a system message takes.
+const TOOL_CHANGES_BETA: &str = "mid-conversation-tool-changes-2026-07-01";
+
+/// Whether the request ends with the user's message, or with a
+/// `tool_removal` system message that follows it (the removal comes last
+/// after the new content; any other last message is a prefill).
+fn ends_with_user(messages: &[ApiMessage]) -> bool {
+    match messages {
+        [.., user, removal]
+            if user.role == Role::User
+                && matches!(removal.role, Role::System { .. })
+                && !removal.removed_tools().is_empty() =>
+        {
+            true
+        }
+        [.., last] => last.role == Role::User,
+        [] => false,
+    }
+}
+
 /// The body of a streamed request for `request`, with `fallbacks: "default"`
 /// when `fallbacks` is on.
 ///
@@ -26,9 +49,8 @@ const EFFORT_MESSAGE_BETA: &str = "mid-conversation-output-config-2026-07-01";
 /// all are 400s on Claude Opus 5.5. A request whose last message isn't the
 /// user's fails here, before anything is sent.
 pub fn request_body(request: &ChatRequest, fallbacks: bool) -> Result<Vec<u8>, ProviderError> {
-    match request.messages.last() {
-        Some(message) if message.role == Role::User => {}
-        _ => {
+    if !ends_with_user(&request.messages) {
+        {
             return Err(ProviderError::new(
                 ErrorKind::InvalidRequest,
                 tr!("chat-anthropic-request-must-end-with-user").to_string(),
@@ -50,11 +72,18 @@ pub fn request_body(request: &ChatRequest, fallbacks: bool) -> Result<Vec<u8>, P
     );
     body.insert("model".to_owned(), request.model.clone().into());
     let takes_effort = takes_effort(&request.model);
+    let mut output_config = Map::new();
     if takes_effort {
-        body.insert(
-            "output_config".to_owned(),
-            object([("effort", effort(request.effort).into())]),
+        output_config.insert("effort".to_owned(), effort(request.effort).into());
+    }
+    if let Some(total) = request.task_budget {
+        output_config.insert(
+            "task_budget".to_owned(),
+            object([("total", total.into()), ("type", "tokens".into())]),
         );
+    }
+    if !output_config.is_empty() {
+        body.insert("output_config".to_owned(), Value::Object(output_config));
     }
     body.insert("stream".to_owned(), true.into());
     body.insert(
@@ -99,7 +128,8 @@ fn takes_effort(model: &str) -> bool {
 /// The headers for `request`, the key among them. The fallback beta goes
 /// only with `fallbacks: "default"`, and the mid-conversation output-config
 /// beta only with an effort-only system message; both go in one
-/// comma-joined `anthropic-beta`.
+/// comma-joined `anthropic-beta`. The task-budget beta goes with a task
+/// budget, and the tool-changes beta with a `tool_removal` message.
 pub fn request_headers(
     api_key: &str,
     fallbacks: bool,
@@ -125,6 +155,16 @@ pub fn request_headers(
     {
         betas.push(EFFORT_MESSAGE_BETA);
     }
+    if request.task_budget.is_some() {
+        betas.push(TASK_BUDGET_BETA);
+    }
+    if request
+        .messages
+        .iter()
+        .any(|message| !message.removed_tools().is_empty())
+    {
+        betas.push(TOOL_CHANGES_BETA);
+    }
     if !betas.is_empty() {
         headers.push(("anthropic-beta".to_owned(), betas.join(",")));
     }
@@ -135,6 +175,13 @@ fn message(message: &ApiMessage) -> Value {
     let role = match message.role {
         Role::User => "user",
         Role::Assistant => "assistant",
+        Role::System { .. } if message.effort_change().is_none() => {
+            // A tool-removal message changes no effort, so it sends none.
+            return object([
+                ("content", Value::Array(message.content.clone())),
+                ("role", "system".into()),
+            ]);
+        }
         Role::System { effort: level } => {
             return object([
                 ("content", Value::Array(message.content.clone())),
