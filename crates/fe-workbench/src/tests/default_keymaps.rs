@@ -83,6 +83,10 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
         // VS Code's Linux keymap has no key for either.
         "workbench.save_all",
         "workbench.save_without_formatting",
+        // The project tree's undo and redo of file operations, only where
+        // what goes to the Trash can be put back (T1754).
+        "project_panel.undo",
+        "project_panel.redo",
     ];
     let mut expected: BTreeSet<_> = commands(&macos)
         .into_iter()

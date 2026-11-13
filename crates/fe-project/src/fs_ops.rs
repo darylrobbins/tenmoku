@@ -125,16 +125,52 @@ fn validate_component(name: &str) -> Result<(), NameError> {
 /// created. Should creating fail midway, the folders made are removed again:
 /// those it made, not ones another process put in their place or in them.
 pub fn create_file(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
-    create(root, dir, name, name.ends_with(is_separator))
+    create(root, dir, name, name.ends_with(is_separator)).map(|created| created.path)
 }
 
 /// Creates folder `name` in folder `dir`, with any folders `name` names above
 /// it (`a/b/c`); a trailing `/` is allowed. Otherwise as [`create_file`].
 pub fn create_dir(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
-    create(root, dir, name, true)
+    create(root, dir, name, true).map(|created| created.path)
 }
 
-fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathBuf> {
+/// What an entry is: its device and inode (on Windows, its volume's serial
+/// number and its file index), as `kiln::core::platform::path_identity`
+/// gives it.
+pub type EntryId = (u64, u64);
+
+/// An entry an operation made: its path, absolute under the root, and what
+/// it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Placed {
+    pub path: PathBuf,
+    pub id: EntryId,
+}
+
+/// What [`create_recorded`] made: the entry's path, and the first entry it
+/// made, the top of what undoing it removes: the first folder its name
+/// names that it made, or the entry. A folder that was there, or that
+/// another process made meanwhile, isn't counted as made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Created {
+    pub path: PathBuf,
+    pub first: Placed,
+}
+
+/// [`create_file`], or with `folder` [`create_dir`], saying what it made.
+///
+/// **Known limit** (same-user races are outside fs_ops's threat model,
+/// as its create and copy cleanup and the Trash already assume; narrowing
+/// it is T1778): a folder's identity is looked up through its
+/// parent's handle right after `mkdir` makes it (as the cleanup should a
+/// create fail already does), so a folder another process of the same user
+/// swaps in at that instant is recorded as made. Undoing the create then
+/// moves that folder to the Trash: never deleted, and redo puts it back.
+pub fn create_recorded(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<Created> {
+    create(root, dir, name, folder || name.ends_with(is_separator))
+}
+
+fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<Created> {
     validate_name(name)?;
     let root = Root::open(root)?;
     let dir_names = names_under(&root.path, dir)?;
@@ -172,11 +208,15 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
     // can fail opens it, so that is all that is removed. One that can't be
     // looked up is not known to be ours, and is kept.
     let mut made: Vec<(File, &OsStr, Identity)> = Vec::new();
+    // Which of `names` is the first folder made, and what it is.
+    let mut first_made: Option<(usize, Identity)> = None;
     let result = (|| {
-        for name in &above[existing..] {
+        reach(Point::Making)?;
+        for (at, name) in above.iter().enumerate().skip(existing) {
             match mkdir_at(&parent, name, 0o777) {
                 Ok(()) => {
                     let id = listing::stat_at(&parent, name)?.id;
+                    first_made.get_or_insert((at, id));
                     made.push((parent, name, id));
                     let (above, _, _) = made.last().expect("just pushed");
                     reach(Point::Opening)?;
@@ -195,9 +235,10 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
         }
         reach(Point::Parents)?;
         if folder {
-            mkdir_at(&parent, last, 0o777)
+            mkdir_at(&parent, last, 0o777)?;
+            Ok(listing::stat_at(&parent, last)?.id)
         } else {
-            create_new_file(&parent, last, 0o666).map(drop)
+            listing::identity(&create_new_file(&parent, last, 0o666)?)
         }
     })();
     if result.is_err() {
@@ -208,7 +249,20 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
             discard(parent, name, &owned);
         }
     }
-    result.map(|()| path)
+    let id = result?;
+    // The first folder made, below those that were there.
+    let first = match first_made {
+        Some((at, id)) => {
+            let mut first = root.path.clone();
+            first.extend(dir_names.iter().chain(&names[..=at]));
+            Placed { path: first, id }
+        }
+        None => Placed {
+            path: path.clone(),
+            id,
+        },
+    };
+    Ok(Created { path, first })
 }
 
 /// Opens the file at `path` for writing and empties it, as a create that
@@ -316,6 +370,75 @@ fn rename_to_temp(dir: &File, old: &OsStr, what: &str) -> io::Result<OsString> {
 /// the entry the handles found. A folder swapped for a symlink in between
 /// can't lead the move out of the root.
 pub fn trash(root: &Path, paths: &[impl AsRef<Path>]) -> io::Result<()> {
+    trash_recorded(root, paths).map(drop)
+}
+
+/// An entry [`trash_recorded`] moved to the Trash: where it was, and where
+/// in the Trash it went, if the system said, for [`restore`] to put it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Trashed {
+    /// Absolute, under the root, as the root was given.
+    path: PathBuf,
+    /// Where it is in the Trash.
+    at: Option<PathBuf>,
+    /// What it is, so another entry found there isn't taken for it.
+    id: Identity,
+}
+
+impl Trashed {
+    /// Where the entry was, under the root.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Where it is in the Trash, if the system said: on macOS, and in test
+    /// builds' trash. The freedesktop.org and Windows trashes aren't
+    /// followed, so their entries can't be put back.
+    pub fn location(&self) -> Option<&Path> {
+        self.at.as_deref()
+    }
+
+    /// What the entry is, as it is in the Trash and once it's put back.
+    pub fn id(&self) -> EntryId {
+        self.id
+    }
+
+    /// Whether the entry is still where the record says in the Trash, as
+    /// it was trashed: `Err` if that can't be told now.
+    pub fn in_trash(&self) -> io::Result<bool> {
+        let Some(at) = self.at.as_deref() else {
+            return Ok(false);
+        };
+        let (dir, name) = match open_parent(at) {
+            Ok(found) => found,
+            Err(err) if is_missing(&err) => return Ok(false),
+            Err(err) => return Err(err),
+        };
+        match listing::stat_at(&dir, name) {
+            Ok(stat) => Ok(stat.id == self.id),
+            Err(err) if is_missing(&err) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+/// Whether the system Trash says where [`trash_recorded`] put an entry, so
+/// [`restore`] can put it back: on macOS. Not the freedesktop.org trash nor
+/// the Recycle Bin, which aren't followed. In test builds, whose trash is
+/// the test trash, see [`restores_from_trash`].
+pub const SYSTEM_TRASH_RESTORES: bool = cfg!(target_os = "macos");
+
+/// Whether what [`trash_recorded`] moves can be put back ([`restore`]):
+/// [`SYSTEM_TRASH_RESTORES`], or in test builds (`cfg(test)` or the
+/// `test-support` feature) always, as they move to the test trash.
+pub const fn restores_from_trash() -> bool {
+    SYSTEM_TRASH_RESTORES || cfg!(any(test, feature = "test-support"))
+}
+
+/// [`trash`], saying where each entry moved went: one [`Trashed`] for each
+/// entry moved (an entry inside another one given goes with it, and has
+/// none of its own), in the order of their paths.
+pub fn trash_recorded(root: &Path, paths: &[impl AsRef<Path>]) -> io::Result<Vec<Trashed>> {
     let root = Root::open(root)?;
     // Each folder's handle is closed again, so a long selection doesn't hold
     // one open per entry.
@@ -327,10 +450,169 @@ pub fn trash(root: &Path, paths: &[impl AsRef<Path>]) -> io::Result<()> {
     }
     full.sort();
     full.dedup_by(|inner, outer| inner.starts_with(outer));
-    for path in &full {
-        trash_target(&root.resolve(path)?)?;
+    let mut trashed = Vec::with_capacity(full.len());
+    for path in full {
+        let target = root.resolve(&path)?;
+        let id = listing::stat_at(&target.parent, target.name)?.id;
+        let at = trash_target(&target)?;
+        #[cfg(any(test, feature = "test-support"))]
+        let at = at.or_else(|| in_test_trash(&target, id));
+        trashed.push(Trashed { path, at, id });
     }
-    Ok(())
+    Ok(trashed)
+}
+
+/// Where the test trash put `target`, which was `id`, if it went there.
+#[cfg(any(test, feature = "test-support"))]
+fn in_test_trash(target: &Target<'_>, id: Identity) -> Option<PathBuf> {
+    if test_trash::real_held() {
+        return None;
+    }
+    let found = |path: &Path| {
+        let (dir, name) = open_parent(path)?;
+        listing::stat_at(&dir, name)
+    };
+    test_trash::trashed(target.name)
+        .into_iter()
+        .find(|path| found(path).is_ok_and(|stat| stat.id == id))
+}
+
+/// The folder of absolute `path`, opened a component at a time without
+/// following a symlink (to look up what is in it, which a folder whose
+/// listing is protected, as the macOS Trash is, allows), and its name.
+fn open_parent(path: &Path) -> io::Result<(File, &OsStr)> {
+    let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(invalid(tr!("project-io-not-absolute").to_string()));
+    };
+    let dir = listing::open_dirs(folder, Access::Search)
+        .map_err(|unreached| unreached.err)?
+        .pop()
+        .expect("the path's own folder is opened last");
+    Ok((dir, name))
+}
+
+/// Puts the entry [`trash_recorded`] moved to the Trash back where it was,
+/// under the root, and returns its path there. Nothing is ever replaced:
+/// should that path be taken now, it fails with
+/// [`io::ErrorKind::AlreadyExists`], checked atomically with the move. An
+/// entry whose place in the Trash isn't known, or that isn't there any more
+/// (emptied, put back already, or something else in its place), fails with
+/// [`io::ErrorKind::NotFound`]; so does one whose folder is gone (then
+/// [`Trashed::in_trash`] still holds). The folder it goes back to is found
+/// through the root's handles.
+///
+/// The entry is first moved into a folder of this restore's own in the
+/// Trash, named unpredictably and only its owner's, and `trashed` follows
+/// it there; it's checked there to be the one trashed, moved on from that
+/// folder's handle, and checked again where it lands. Should putting it
+/// back fail, it goes back to its name in the Trash, and `trashed` with it,
+/// or, if that's taken now, stays staged: it's never left where the record
+/// doesn't say.
+///
+/// **Known limit** (same-user races are outside fs_ops's threat model,
+/// as its create and copy cleanup and the Trash already assume; narrowing
+/// it is T1778): no call binds a rename to the entry checked, so
+/// another process of the same user that swaps the staged entry between
+/// its check and the move publishes its own entry instead. That's found
+/// where it lands and left alone there, and the restore fails
+/// ([`io::ErrorKind::NotFound`]); nothing is deleted.
+pub fn restore(root: &Path, trashed: &mut Trashed) -> io::Result<PathBuf> {
+    let at = trashed
+        .at
+        .clone()
+        .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+    let (dir, name) = open_parent(&at)?;
+    let gone = || io::Error::from(io::ErrorKind::NotFound);
+    if listing::stat_at(&dir, name)?.id != trashed.id {
+        return Err(gone());
+    }
+    let root = Root::open(root)?;
+    let target = root.resolve(&trashed.path)?;
+    reach(Point::Restoring)?;
+    let (private_name, private) = private_dir(&dir)?;
+    let drop_private = || {
+        let _ = remove_at(&dir, &private_name, true);
+    };
+    if let Err(err) = rename_noreplace(&dir, name, &private, name) {
+        drop_private();
+        return Err(err);
+    }
+    // From here the record says where the entry is: staged, until it's
+    // back under its name in the Trash or put back.
+    let staged = at.with_file_name(&private_name).join(name);
+    trashed.at = Some(staged);
+    let unstage = |trashed: &mut Trashed| {
+        if rename_noreplace(&private, name, &dir, name).is_ok() {
+            trashed.at = Some(at.clone());
+            drop_private();
+        }
+    };
+    let checked = listing::stat_at(&private, name);
+    if checked.as_ref().map(|stat| stat.id).ok() != Some(trashed.id) {
+        // Something else staged: it goes back where it was found. Unsure,
+        // the entry stays staged, where the record says.
+        if checked.is_ok() {
+            unstage(trashed);
+        }
+        return Err(gone());
+    }
+    reach(Point::Staged)?;
+    if let Err(err) = rename_noreplace(&private, name, &target.parent, target.name) {
+        unstage(trashed);
+        return Err(err);
+    }
+    // Something put in its place in the staging folder in that instant
+    // went instead (whatever's there now is left alone): the entry wasn't
+    // put back, and isn't where the record says any more.
+    if (listing::stat_at(&target.parent, target.name)).is_ok_and(|stat| stat.id != trashed.id) {
+        return Err(gone());
+    }
+    drop_private();
+    Ok(target.path)
+}
+
+/// Whether `err` says there's no entry there.
+fn is_missing(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
+}
+
+/// Makes a folder of this process's own in `dir`, only its owner's, under
+/// a name another can't guess, and opens it: its name and handle.
+///
+/// **Known limit** (same-user races are outside fs_ops's threat model,
+/// as its create and copy cleanup and the Trash already assume; narrowing
+/// it is T1778): it's checked to be the folder made by
+/// looking it up by name after `mkdir`, so one another process of the same
+/// user swaps in at that instant would be taken for it.
+fn private_dir(dir: &File) -> io::Result<(OsString, File)> {
+    use std::hash::{BuildHasher, Hasher};
+    for _ in 0..100 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(std::process::id());
+        let (pid, key) = (std::process::id(), hasher.finish());
+        // As `rename_to_temp` names its own, with a key another can't guess.
+        let mut name = OsString::from(kiln_l10n::verbatim!(".fastedit-restore-"));
+        name.push(format!("{pid}-{key:016x}"));
+        match mkdir_at(dir, &name, 0o700) {
+            Ok(()) => {
+                let id = listing::stat_at(dir, &name)?.id;
+                let opened = open_subdir(dir, &name)?;
+                if listing::identity(&opened)? != id {
+                    return Err(replaced());
+                }
+                return Ok((name, opened));
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        tr!("project-io-no-temp-name").to_string(),
+    ))
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -354,8 +636,16 @@ enum Point {
     Checked,
     /// A folder was made and is about to be opened.
     Opening,
+    /// `create` looked for the folders above its entry and is about to
+    /// make those it didn't find.
+    Making,
     /// `create` made the folders above its entry and is about to make it.
     Parents,
+    /// `restore` checked the entry in the Trash and is about to stage it.
+    Restoring,
+    /// `restore` staged the entry and checked it, and is about to put it
+    /// back.
+    Staged,
     /// `open_truncated` opened the folder of its file and is about to open
     /// it.
     Truncating,
@@ -397,7 +687,7 @@ fn reach(point: Point) -> io::Result<()> {
 /// entry by volume and file id rather than by path, and is checked to name
 /// the entry found through the handles before it is used.
 #[cfg(target_os = "macos")]
-fn trash_target(target: &Target<'_>) -> io::Result<()> {
+fn trash_target(target: &Target<'_>) -> io::Result<Option<PathBuf>> {
     use objc2_foundation::{NSFileManager, NSString, NSURL};
 
     let path = target
@@ -438,11 +728,14 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
     reach(Point::Checked)?;
     #[cfg(any(test, feature = "test-support"))]
     if !test_trash::reaching_real() {
-        return test_trash::move_into(target);
+        return test_trash::move_into(target).map(|()| None);
     }
+    let mut resulting = None;
     NSFileManager::defaultManager()
-        .trashItemAtURL_resultingItemURL_error(&reference, None)
-        .map_err(|err| io::Error::other(err.localizedDescription().to_string()))
+        .trashItemAtURL_resultingItemURL_error(&reference, Some(&mut resulting))
+        .map_err(|err| io::Error::other(err.localizedDescription().to_string()))?;
+    // Where it went, for it to be put back.
+    Ok(resulting.and_then(|url| Some(PathBuf::from(url.path()?.to_string()))))
 }
 
 /// One entry as its file reference URL names it (volume id, file id) and as
@@ -483,11 +776,11 @@ fn reference_ids(url: &str) -> Option<(i32, u64)> {
 /// made first, exclusively, reserving the name in `files`; the entry is then
 /// renamed into `files` from its folder's handle.
 #[cfg(target_os = "linux")]
-fn trash_target(target: &Target<'_>) -> io::Result<()> {
+fn trash_target(target: &Target<'_>) -> io::Result<Option<PathBuf>> {
     #[cfg(any(test, feature = "test-support"))]
     if !test_trash::reaching_real() {
         reach(Point::Checked)?;
-        return test_trash::move_into(target);
+        return test_trash::move_into(target).map(|()| None);
     }
     let volume = freedesktop::Volume::of(&target.parent)?;
     // The home trash records the entry's absolute path; a volume's, its path
@@ -501,7 +794,8 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
         }
     };
     reach(Point::Checked)?;
-    freedesktop::move_into(&trash, target, &recorded)
+    // Not followed: an entry can't be put back from the freedesktop trash.
+    freedesktop::move_into(&trash, target, &recorded).map(|()| None)
 }
 
 /// Moves `target` to the Recycle Bin with the shell, which takes a path: the
@@ -509,19 +803,20 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
 /// shell then finds it by path again. Where a drive has no Recycle Bin, the
 /// shell asks before deleting it for good.
 #[cfg(windows)]
-fn trash_target(target: &Target<'_>) -> io::Result<()> {
+fn trash_target(target: &Target<'_>) -> io::Result<Option<PathBuf>> {
     #[cfg(any(test, feature = "test-support"))]
     if !test_trash::reaching_real() {
         reach(Point::Checked)?;
-        return test_trash::move_into(target);
+        return test_trash::move_into(target).map(|()| None);
     }
     listing::stat_at(&target.parent, target.name)?;
     reach(Point::Checked)?;
-    crate::win::recycle(&target.path)
+    // Not followed: an entry can't be put back from the Recycle Bin.
+    crate::win::recycle(&target.path).map(|()| None)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-fn trash_target(_: &Target<'_>) -> io::Result<()> {
+fn trash_target(_: &Target<'_>) -> io::Result<Option<PathBuf>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         tr!("project-io-no-trash").to_string(),
@@ -885,11 +1180,28 @@ mod freedesktop {
 /// socket) is left out. Should copying fail, the partial copy is removed:
 /// what it made, not what another process put in it or in its place.
 pub fn duplicate(root: &Path, path: &Path) -> io::Result<PathBuf> {
+    duplicate_recorded(root, path).map(|copy| copy.path)
+}
+
+/// [`duplicate`], saying what the copy is: an entry the copy made.
+///
+/// **Known limit** (same-user races are outside fs_ops's threat model,
+/// as its create and copy cleanup and the Trash already assume; narrowing
+/// it is T1778): a copied folder's or symlink's identity is
+/// looked up by name right after `mkdir` or `symlink` makes it (as the
+/// cleanup should a copy fail already does), so an entry another process
+/// of the same user swaps in at that instant is taken for the copy's.
+/// Undoing the copy then moves that entry to the Trash: never deleted, and
+/// redo puts it back.
+pub fn duplicate_recorded(root: &Path, path: &Path) -> io::Result<Placed> {
     let root = Root::open(root)?;
     let target = root.resolve(path)?;
     let kind = listing::stat_at(&target.parent, target.name)?.kind;
-    let name = copy_first_free(&target, kind, &target.parent, 1)?;
-    Ok(target.path.with_file_name(name))
+    let (name, id) = copy_first_free(&target, kind, &target.parent, 1)?;
+    Ok(Placed {
+        path: target.path.with_file_name(name),
+        id,
+    })
 }
 
 /// Copies the entry at `path` into folder `dir`, as a paste of a copied
@@ -906,6 +1218,12 @@ pub fn duplicate(root: &Path, path: &Path) -> io::Result<PathBuf> {
 /// refused too. Should it be moved into the entry once checked, the copy
 /// still never copies what it has made.
 pub fn copy_into(root: &Path, path: &Path, dir: &Path) -> io::Result<PathBuf> {
+    copy_into_recorded(root, path, dir).map(|copy| copy.path)
+}
+
+/// [`copy_into`], saying what the copy is, with
+/// [`duplicate_recorded`]'s known limit.
+pub fn copy_into_recorded(root: &Path, path: &Path, dir: &Path) -> io::Result<Placed> {
     let root = Root::open(root)?;
     let target = root.resolve(path)?;
     let source = listing::stat_at(&target.parent, target.name)?;
@@ -915,21 +1233,22 @@ pub fn copy_into(root: &Path, path: &Path, dir: &Path) -> io::Result<PathBuf> {
         return Err(invalid(tr!("project-io-copy-into-itself").to_string()));
     }
     reach(Point::Pasting)?;
-    let name = copy_first_free(&target, source.kind, &to, 0)?;
+    let (name, id) = copy_first_free(&target, source.kind, &to, 0)?;
     let mut copy = root.path.clone();
     copy.extend(&dir_names);
     copy.push(name);
-    Ok(copy)
+    Ok(Placed { path: copy, id })
 }
 
 /// Copies `target`, of `kind`, into folder `to` under the first free name
-/// of [`paste_name_n`]'s from the `first`th on, and returns that name.
+/// of [`paste_name_n`]'s from the `first`th on, and returns that name and
+/// what the copy is: an entry the copy made, never one put in its place.
 fn copy_first_free(
     target: &Target<'_>,
     kind: EntryKind,
     to: &File,
     first: u32,
-) -> io::Result<OsString> {
+) -> io::Result<(OsString, Identity)> {
     for n in first..10_000 {
         let name = paste_name_n(target.name, kind == EntryKind::Dir, n);
         let mut copying = Copying::default();
@@ -950,7 +1269,11 @@ fn copy_first_free(
             discard(to, &name, &copying.owned);
             return Err(err);
         }
-        return Ok(name);
+        let id = listing::stat_at(to, &name)?.id;
+        if !copying.owned.contains(&id) {
+            return Err(replaced());
+        }
+        return Ok((name, id));
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
@@ -1986,6 +2309,185 @@ fn rename_exclusive(from_dir: &File, from: &CStr, to_dir: &File, to: &CStr) -> i
 #[cfg(all(unix, not(any(target_os = "linux", target_vendor = "apple"))))]
 fn rename_exclusive(_: &File, _: &CStr, _: &File, _: &CStr) -> io::Result<()> {
     Err(io::Error::from_raw_os_error(libc::ENOSYS))
+}
+
+/// A restore and a create racing another process: one that puts another
+/// entry in the trashed one's place once it's checked, and one that makes
+/// a folder the create's name names once it's looked for.
+#[cfg(all(test, unix))]
+mod undo_race_tests {
+    use std::{fs, io, path::PathBuf};
+
+    use super::{Point, create_recorded, race_tests, restore, trash_recorded};
+
+    /// A temporary directory and its canonical path.
+    fn temp() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dunce::canonicalize(dir.path()).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn a_restore_never_puts_back_what_took_the_entrys_place() {
+        let (_dir, root) = temp();
+        let file = root.join("a.txt");
+        fs::write(&file, "trashed\n").unwrap();
+        let mut trashed = trash_recorded(&root, &[&file]).unwrap().pop().unwrap();
+        let at = trashed.location().unwrap().to_owned();
+        let aside = root.join("aside.txt");
+        race_tests::at(Point::Restoring, {
+            let (at, aside) = (at.clone(), aside.clone());
+            move || {
+                fs::rename(&at, &aside).unwrap();
+                fs::write(&at, "another\n").unwrap();
+            }
+        });
+
+        let err = restore(&root, &mut trashed).unwrap_err();
+
+        assert!(race_tests::reached());
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(!file.exists(), "nothing was put back");
+        assert_eq!(fs::read_to_string(&at).unwrap(), "another\n");
+        assert_eq!(fs::read_to_string(&aside).unwrap(), "trashed\n");
+    }
+
+    /// The folder `restore` stages entries in, in the Trash folder of `at`.
+    fn staging(at: &std::path::Path) -> PathBuf {
+        let found = fs::read_dir(at.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".fastedit-restore-")
+            });
+        found.expect("a staging folder").path()
+    }
+
+    #[test]
+    fn what_takes_the_staged_entrys_place_is_never_put_back() {
+        let (_dir, root) = temp();
+        let file = root.join("a.txt");
+        fs::write(&file, "trashed\n").unwrap();
+        let mut trashed = trash_recorded(&root, &[&file]).unwrap().pop().unwrap();
+        let at = trashed.location().unwrap().to_owned();
+        let aside = root.join("aside.txt");
+        race_tests::at(Point::Staged, {
+            let (at, aside) = (at.clone(), aside.clone());
+            move || {
+                let staged = staging(&at).join("a.txt");
+                fs::rename(&staged, &aside).unwrap();
+                fs::write(&staged, "another\n").unwrap();
+            }
+        });
+
+        let err = restore(&root, &mut trashed).unwrap_err();
+
+        // No rename binds the entry it moves to one checked: what took its
+        // place in that instant went, and is left alone where it landed.
+        // The restore says it failed, and the record no longer claims an
+        // entry in the Trash.
+        assert!(race_tests::reached());
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "another\n");
+        assert!(!trashed.in_trash().unwrap());
+        assert_eq!(fs::read_to_string(&aside).unwrap(), "trashed\n");
+    }
+
+    #[test]
+    fn a_staged_entry_out_of_reach_stays_where_the_record_says() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, root) = temp();
+        let file = root.join("a.txt");
+        fs::write(&file, "trashed\n").unwrap();
+        let mut trashed = trash_recorded(&root, &[&file]).unwrap().pop().unwrap();
+        let at = trashed.location().unwrap().to_owned();
+        let staging_dir = std::rc::Rc::new(std::cell::RefCell::new(None));
+        race_tests::at(Point::Staged, {
+            let (at, file, staging_dir) = (at.clone(), file.clone(), staging_dir.clone());
+            move || {
+                // Its old path taken and its Trash name with it, and the
+                // staging folder can't be searched: nothing can go back.
+                fs::write(&file, "taken\n").unwrap();
+                fs::write(&at, "another trash\n").unwrap();
+                let dir = staging(&at);
+                fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
+                *staging_dir.borrow_mut() = Some(dir);
+            }
+        });
+
+        let err = restore(&root, &mut trashed).unwrap_err();
+
+        assert!(race_tests::reached());
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        let dir = staging_dir.borrow().clone().unwrap();
+        assert_eq!(trashed.location(), Some(dir.join("a.txt").as_path()));
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(trashed.in_trash().unwrap());
+        fs::remove_file(&file).unwrap();
+        restore(&root, &mut trashed).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "trashed\n");
+    }
+
+    #[test]
+    fn a_failed_restore_whose_trash_name_was_taken_keeps_where_it_is() {
+        let (_dir, root) = temp();
+        let file = root.join("a.txt");
+        fs::write(&file, "trashed\n").unwrap();
+        let mut trashed = trash_recorded(&root, &[&file]).unwrap().pop().unwrap();
+        let at = trashed.location().unwrap().to_owned();
+        race_tests::at(Point::Staged, {
+            let (at, file) = (at.clone(), file.clone());
+            move || {
+                // Another trash takes its name there, and its old path is
+                // taken.
+                fs::write(&at, "another trash\n").unwrap();
+                fs::write(&file, "taken\n").unwrap();
+            }
+        });
+
+        let err = restore(&root, &mut trashed).unwrap_err();
+
+        assert!(race_tests::reached());
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        let staged = trashed.location().unwrap().to_owned();
+        assert_ne!(staged, at, "the record follows it");
+        assert_eq!(fs::read_to_string(&staged).unwrap(), "trashed\n");
+        assert!(trashed.in_trash().unwrap());
+        fs::remove_file(&file).unwrap();
+        restore(&root, &mut trashed).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "trashed\n");
+        assert_eq!(fs::read_to_string(&at).unwrap(), "another trash\n");
+    }
+
+    #[test]
+    fn a_folder_made_meanwhile_is_not_counted_as_made() {
+        let (_dir, root) = temp();
+        race_tests::at(Point::Making, {
+            let theirs = root.join("a");
+            move || {
+                fs::create_dir(&theirs).unwrap();
+                fs::write(theirs.join("theirs.txt"), "").unwrap();
+            }
+        });
+
+        let created = create_recorded(&root, &root, "a/b/c.rs", false).unwrap();
+
+        assert!(race_tests::reached());
+        assert_eq!(created.path, root.join("a/b/c.rs"));
+        assert_eq!(created.first.path, root.join("a/b"), "a isn't the create's");
+        let id = kiln_ids(&created.first.path);
+        assert_eq!(created.first.id, id);
+    }
+
+    /// What the entry at `path` is, as the workbench looks it up.
+    fn kiln_ids(path: &std::path::Path) -> (u64, u64) {
+        use std::os::unix::fs::MetadataExt;
+        let meta = fs::symlink_metadata(path).unwrap();
+        (meta.dev(), meta.ino())
+    }
 }
 
 /// Pastes racing another process that moves the folder pasted in into

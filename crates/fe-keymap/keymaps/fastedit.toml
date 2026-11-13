@@ -1394,6 +1394,23 @@ keys = "secondary-v"
 command = "project_panel.paste"
 context = "project_panel"
 
+# Project tree: undo and redo of the last file operations (a create,
+# rename, move, duplicate or move to the Trash), as VS Code's explorer
+# does. In the name field and the filter's box, the panel gives the keys to
+# the box, to undo and redo its text. macOS only: elsewhere what goes to
+# the Trash can't be put back yet, and the commands aren't there.
+[[bindings]]
+keys = "cmd-z"
+command = "project_panel.undo"
+context = "project_panel"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-shift-z"
+command = "project_panel.redo"
+context = "project_panel"
+platform = "macos"
+
 # Project tree: filter by name, as neo-tree's `/` and nvim-tree's live
 # filter (`f`, cleared with `F`) do. `/` opens a box whose text narrows the
 # rows to the names holding it, ignoring case, with their folders; Enter

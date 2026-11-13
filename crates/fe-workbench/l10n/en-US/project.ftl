@@ -113,6 +113,45 @@ workbench-project-paste-busy-working = “{ $name }” is being worked on. Paste
 # A paste that found its entry changed under it. $name is the entry's.
 workbench-project-paste-raced = “{ $name }” was moved or replaced while it was being pasted. Nothing was moved.
 
+## Undo and redo of file operations (project_panel_undo.rs)
+
+# The tree's own commands, beside the editor's Undo and Redo.
+command-project_panel-undo = Undo File Operation
+command-project_panel-redo = Redo File Operation
+# An undo or redo refused: $name is the entry's.
+workbench-project-undo-changed = “{ $name }” was moved, replaced or deleted since, so it was left as it is.
+workbench-project-undo-taken = “{ $name }” can’t be put back: something by that name is there now.
+workbench-project-undo-not-in-trash = “{ $name }” is no longer in the Trash.
+# An entry that changed, or couldn't be reached, as it was being undone or
+# redone: it stays, to be asked about the next time.
+workbench-project-undo-changed-kept = “{ $name }” changed meanwhile, so it was left as it is. Try again to go ahead.
+workbench-project-undo-unreachable = “{ $name }” can’t be reached now. Try again once it can.
+workbench-project-undo-failed = “{ $name }” couldn’t be put back.
+# The question before undoing or redoing an operation on an entry that was
+# replaced since (as another program's save replaces a file), and the
+# button that goes ahead. $name is the entry's.
+# $count is how many were replaced, $name the first's; with several, the
+# question's detail names each, a line apiece.
+workbench-project-undo-changed-question = { $count ->
+    [one] “{ $name }” has changed since. Undo anyway?
+   *[other] { $count } items have changed since. Undo anyway?
+}
+workbench-project-undo-anyway = Undo
+workbench-project-redo-changed-question = { $count ->
+    [one] “{ $name }” has changed since. Redo anyway?
+   *[other] { $count } items have changed since. Redo anyway?
+}
+workbench-project-redo-anyway = Redo
+workbench-project-undo-busy-saving = “{ $name }” is being saved. Undo once it’s saved.
+workbench-project-undo-busy-opening = “{ $name }” is being opened. Undo once it’s open.
+workbench-project-undo-busy-working = “{ $name }” is being worked on. Undo once that’s done.
+# A toast when several entries of an undo or redo failed: $count is how
+# many. Its detail names each, a line apiece.
+workbench-project-undo-failed-many = { $count ->
+    [one] { $count } item couldn’t be put back.
+   *[other] { $count } items couldn’t be put back.
+}
+
 ## Dragging rows onto a folder (project_panel_drag.rs)
 
 # Under the pointer while several selected rows are dragged. $count is how

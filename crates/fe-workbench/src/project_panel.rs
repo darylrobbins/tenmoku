@@ -317,6 +317,8 @@ pub struct ProjectPanel {
     status: Option<Text>,
     /// The entry cut or copied, to paste.
     clipboard: clipboard::Clipboard,
+    /// The file operations to undo and redo.
+    history: undo::History,
     /// Each row the last frame drew dimmed as cut, by name.
     #[cfg(test)]
     drawn_cut: Vec<String>,
@@ -384,6 +386,7 @@ impl ProjectPanel {
             expansion: None,
             status: None,
             clipboard: clipboard::Clipboard::default(),
+            history: undo::History::default(),
             #[cfg(test)]
             drawn_cut: Vec::new(),
             filter: None,
@@ -1041,6 +1044,18 @@ impl ProjectPanel {
     /// field or the filter's box has focus, it takes the keys
     /// ([`Self::run_in_field`], [`Self::run_in_filter`]).
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
+        // In the name field and the filter's box, undo and redo are the
+        // box's own, of its text: never the tree's file operations.
+        if self.field_focused(window, cx) || self.filter_focused(window, cx) {
+            let action: Option<Box<dyn gpui::Action>> = match op(run, cx) {
+                Some(PanelOp::Undo) => Some(Box::new(fe_ui::text_field::Undo)),
+                Some(PanelOp::Redo) => Some(Box::new(fe_ui::text_field::Redo)),
+                _ => None,
+            };
+            if let Some(action) = action {
+                return window.dispatch_action(action, cx);
+            }
+        }
         if self.field_focused(window, cx) {
             return self.run_in_field(run, window, cx);
         }
@@ -1112,6 +1127,8 @@ impl ProjectPanel {
             PanelOp::Paste => self.paste(window, cx),
             PanelOp::Filter => self.start_filter(window, cx),
             PanelOp::ClearFilter => self.clear_filter(window, cx),
+            PanelOp::Undo => self.revert(undo::Way::Undo, window, cx),
+            PanelOp::Redo => self.revert(undo::Way::Redo, window, cx),
         }
         if matches!(op, PanelOp::NewFile | PanelOp::NewFolder | PanelOp::Rename) {
             self.scroll_to_field();
@@ -1685,6 +1702,8 @@ pub(crate) enum PanelOp {
     Paste,
     Filter,
     ClearFilter,
+    Undo,
+    Redo,
 }
 
 /// The [`CommandTarget`] of panel commands: the op to do.
@@ -1752,8 +1771,13 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
         ("project_panel.paste", KEY_CONTEXT, Paste),
         ("project_panel.filter", KEY_CONTEXT, Filter),
         ("project_panel.clear_filter", KEY_CONTEXT, ClearFilter),
+        ("project_panel.undo", KEY_CONTEXT, Undo),
+        ("project_panel.redo", KEY_CONTEXT, Redo),
     ];
     let mut registry = Registry::new();
+    // Undo and redo only where what goes to the Trash can be put back.
+    let commands =
+        (commands.into_iter()).filter(|(_, _, op)| undo::supported() || !matches!(op, Undo | Redo));
     for (id, context, op) in commands {
         registry
             .register(
@@ -1917,6 +1941,9 @@ mod menu;
 
 #[path = "project_panel_drag.rs"]
 mod drag;
+
+#[path = "project_panel_undo.rs"]
+mod undo;
 
 #[cfg(test)]
 #[path = "project_panel_filter_tests.rs"]

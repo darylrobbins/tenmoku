@@ -68,7 +68,10 @@ use gpui::{
     prelude::FluentBuilder as _, px, svg,
 };
 
-use super::{PanelEvent, PanelOp, ProjectPanel, ROW_HEIGHT, State, op};
+use super::{
+    PanelEvent, PanelOp, ProjectPanel, ROW_HEIGHT, State, op,
+    undo::{Made, Moved, Step},
+};
 use crate::{
     Workbench,
     picker::{self, PaletteOp},
@@ -182,6 +185,11 @@ struct Naming {
     root: PathBuf,
     target: PathBuf,
     name: String,
+    /// For a new entry once it's made, the first entry the create made
+    /// (the entry, or the first folder above it it made), to undo it by.
+    first: Option<Made>,
+    /// For a rename, what the entry was as it was renamed.
+    identity: Option<fs_ops::EntryId>,
 }
 
 /// What an operation that names an entry did: the entry's path, under the
@@ -402,6 +410,8 @@ impl ProjectPanel {
             root: root.clone(),
             target: target.clone(),
             name: name.clone(),
+            first: None,
+            identity: None,
         };
         if kind == EditKind::Rename {
             if target.file_name().is_some_and(|old| *old == *name) {
@@ -417,16 +427,16 @@ impl ProjectPanel {
             let running = running.clone();
             cx.background_spawn(async move {
                 let _running = running;
-                match kind {
-                    EditKind::NewFolder => fs_ops::create_dir(&root, &target, &name),
-                    EditKind::NewFile | EditKind::Rename => {
-                        fs_ops::create_file(&root, &target, &name)
-                    }
-                }
+                let folder = kind == EditKind::NewFolder;
+                fs_ops::create_recorded(&root, &target, &name, folder)
             })
         };
         cx.spawn_in(window, async move |panel, cx| {
-            let named = job.await;
+            let mut naming = naming;
+            let named = job.await.map(|created| {
+                naming.first = Some(created.first.into());
+                created.path
+            });
             panel
                 .update_in(cx, |panel, window, cx| {
                     panel.edit_done(naming, named, window, cx)
@@ -594,10 +604,12 @@ impl ProjectPanel {
     /// Renames `naming`'s entry on this thread, unless [`Self::refused`].
     /// Done here, between saves, so none starts before the editors take the
     /// new path.
-    fn rename_now(&mut self, naming: Naming, window: &mut Window, cx: &mut Context<Self>) {
+    fn rename_now(&mut self, mut naming: Naming, window: &mut Window, cx: &mut Context<Self>) {
         if self.refused(&naming, window, cx) {
             return;
         }
+        // What's renamed, for the history: a rename keeps it.
+        naming.identity = entry_identity(&naming.target);
         // Planned while every spelling of the old path still resolves.
         let moves = (self.renaming_paths(&naming))
             .map(|(from, to)| (Workbench::plan_rename(&from, &to, window, cx), from, to));
@@ -626,6 +638,8 @@ impl ProjectPanel {
             root,
             target,
             name,
+            first,
+            identity,
         } = naming;
         let name = name.as_str();
         let open = self.edit.as_mut().filter(|edit| edit.serial == serial);
@@ -645,6 +659,19 @@ impl ProjectPanel {
                 path
             }
         };
+        let step = match kind {
+            EditKind::Rename => Step::Moved(
+                (identity.into_iter())
+                    .map(|identity| Moved {
+                        from: target.clone(),
+                        to: path.clone(),
+                        identity,
+                    })
+                    .collect(),
+            ),
+            EditKind::NewFile | EditKind::NewFolder => Step::Made(first.into_iter().collect()),
+        };
+        self.landed_new(&root, step, true);
         // By the root the operation ran under: the tree may be being opened
         // again.
         let shown = |path: &Path| {
@@ -732,19 +759,21 @@ impl ProjectPanel {
                 .background_spawn({
                     let path = path.clone();
                     let running = running.clone();
+                    let root = root.clone();
                     async move {
                         let _running = running;
                         if asked.is_none() || entry_identity(&path) != asked {
                             let moved = moved.to_string();
                             return Err(io::Error::new(io::ErrorKind::NotFound, moved));
                         }
-                        fs_ops::trash(&root, &[path])
+                        fs_ops::trash_recorded(&root, &[path])
                     }
                 })
                 .await;
             panel
                 .update_in(cx, |panel, window, cx| match trashed {
-                    Ok(()) => {
+                    Ok(trashed) => {
+                        panel.landed_new(&root, Step::Trashed(restorable(trashed)), true);
                         panel.changed(&shown, cx);
                         cx.emit(PanelEvent::Deleted(vec![(shown, folder)]));
                     }
@@ -799,6 +828,7 @@ impl ProjectPanel {
             let trashed = cx
                 .background_spawn({
                     let running = running.clone();
+                    let root = root.clone();
                     async move {
                         let _running = running;
                         (jobs.into_iter())
@@ -807,7 +837,7 @@ impl ProjectPanel {
                                     let moved = moved.clone();
                                     return Err(io::Error::new(io::ErrorKind::NotFound, moved));
                                 }
-                                fs_ops::trash(&root, &[path])
+                                fs_ops::trash_recorded(&root, &[path])
                             })
                             .collect::<Vec<_>>()
                     }
@@ -816,16 +846,22 @@ impl ProjectPanel {
             panel
                 .update(cx, |panel, cx| {
                     let mut deleted = Vec::new();
+                    let mut recorded = Vec::new();
                     let mut failures = Vec::new();
                     for (entry, trashed) in asked.into_iter().zip(trashed) {
                         match trashed {
-                            Ok(()) => deleted.push((entry.shown, entry.folder)),
+                            Ok(trashed) => {
+                                recorded.extend(restorable(trashed));
+                                deleted.push((entry.shown, entry.folder));
+                            }
                             Err(error) => failures.push(Failure::error(
                                 tr!("workbench-project-trash-failed", name = &entry.name),
                                 &error,
                             )),
                         }
                     }
+                    let changed = !deleted.is_empty();
+                    panel.landed_new(&root, Step::Trashed(recorded), changed);
                     if !deleted.is_empty() {
                         let changes: Vec<FsChange> = (deleted.iter())
                             .map(|(shown, _)| FsChange::Path(shown.clone()))
@@ -861,7 +897,7 @@ impl ProjectPanel {
             let root = root.clone();
             async move {
                 let _running = running;
-                fs_ops::duplicate(&root, &path)
+                fs_ops::duplicate_recorded(&root, &path)
             }
         });
         cx.spawn_in(window, async move |panel, cx| {
@@ -869,7 +905,9 @@ impl ProjectPanel {
             panel
                 .update_in(cx, |panel, window, cx| match copied {
                     Ok(copy) => {
-                        if let Some(copy) = panel.shown(&copy, &root) {
+                        let shown = panel.shown(&copy.path, &root);
+                        panel.landed_new(&root, Step::Made(vec![Made::from(copy)]), true);
+                        if let Some(copy) = shown {
                             panel.changed(&copy, cx);
                             let folder = copy.symlink_metadata().is_ok_and(|meta| meta.is_dir());
                             cx.emit(PanelEvent::Created(vec![(copy.clone(), folder)]));
@@ -909,7 +947,7 @@ impl ProjectPanel {
             async move {
                 let _running = running;
                 (paths.iter())
-                    .map(|path| fs_ops::duplicate(&root, path))
+                    .map(|path| fs_ops::duplicate_recorded(&root, path))
                     .collect::<Vec<_>>()
             }
         });
@@ -918,16 +956,22 @@ impl ProjectPanel {
             panel
                 .update(cx, |panel, cx| {
                     let mut made = Vec::new();
+                    let mut copies = Vec::new();
                     let mut failures = Vec::new();
                     for ((_, name), copied) in entries.iter().zip(copied) {
                         match copied {
-                            Ok(copy) => made.extend(panel.shown(&copy, &root)),
+                            Ok(copy) => {
+                                made.extend(panel.shown(&copy.path, &root));
+                                copies.push(Made::from(copy));
+                            }
                             Err(error) => failures.push(Failure::error(
                                 tr!("workbench-project-duplicate-failed", name = name),
                                 &error,
                             )),
                         }
                     }
+                    let changed = !copies.is_empty();
+                    panel.landed_new(&root, Step::Made(copies), changed);
                     panel.made(made, cx);
                     report_failures(failures, Many::Duplicate, cx);
                 })
@@ -1187,6 +1231,8 @@ pub(super) enum Many {
     Trash,
     Duplicate,
     Paste,
+    /// An undo or a redo.
+    Undo,
 }
 
 /// Shows what failed of an operation on several entries: one failure as
@@ -1202,6 +1248,7 @@ pub(super) fn report_failures(failures: Vec<Failure>, many: Many, cx: &mut gpui:
         Many::Trash => tr!("workbench-project-trash-failed-many", count = count),
         Many::Duplicate => tr!("workbench-project-duplicate-failed-many", count = count),
         Many::Paste => tr!("workbench-project-paste-failed-many", count = count),
+        Many::Undo => tr!("workbench-project-undo-failed-many", count = count),
     };
     let lines: Vec<String> = failures.iter().map(Failure::line).collect();
     toast::show(cx, Toast::error(message).detail(lines.join("\n")));
@@ -1235,6 +1282,13 @@ fn failure(error: &io::Error, name: &str) -> FieldError {
         Some(refused) => FieldError::Name(*refused),
         None => Text::verbatim(capitalized(&error.to_string())).into(),
     }
+}
+
+/// Those of `trashed` that can be put back, which an undo offers.
+fn restorable(trashed: Vec<fs_ops::Trashed>) -> Vec<fs_ops::Trashed> {
+    (trashed.into_iter())
+        .filter(|trashed| trashed.location().is_some())
+        .collect()
 }
 
 /// The device and inode of the entry at `path`, a symlink itself rather

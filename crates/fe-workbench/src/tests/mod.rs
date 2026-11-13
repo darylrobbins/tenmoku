@@ -115,6 +115,8 @@ mod project_drag;
 mod project_menu;
 mod project_multi_select;
 mod project_panel;
+#[cfg(target_os = "macos")]
+mod project_undo;
 pub(crate) mod quick_open;
 mod quick_open_races;
 mod rail_b3;

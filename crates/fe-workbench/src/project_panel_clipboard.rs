@@ -55,6 +55,7 @@ use gpui::{App, AppContext as _, Context, Window};
 use super::{
     PanelEvent, ProjectPanel,
     ops::{self, Running},
+    undo::{self, Made, Reverting, Step},
 };
 use crate::{
     Workbench,
@@ -104,6 +105,18 @@ pub(super) enum MoveOf {
     Clip(u64),
     /// Rows dropped on a folder: they keep their names, or aren't moved.
     Drop,
+    /// An undo or redo of a move, back to where the entry was.
+    Revert(Reverting),
+}
+
+impl MoveOf {
+    /// Which operation it is, for a toast about several that failed.
+    fn many(self) -> ops::Many {
+        match self {
+            MoveOf::Clip(_) | MoveOf::Drop => ops::Many::Paste,
+            MoveOf::Revert(_) => ops::Many::Undo,
+        }
+    }
 }
 
 /// A cut's paste: `from` into folder `dir` as `name` (which needn't be
@@ -124,12 +137,22 @@ struct Move {
     shown_to: PathBuf,
 }
 
+/// A move not made: why, and for an undo or redo, the step's entry to
+/// revert again (none for one found changed).
+struct NotMoved {
+    failure: ops::Failure,
+    kept: Option<undo::Moved>,
+}
+
 /// A cut entry moved: from and to, as the panel hands paths out, and its
 /// old path with its folders resolved ([`by_folder`]), as servers name it.
 struct Moved {
     shown_from: PathBuf,
     shown_to: PathBuf,
     from_resolved: Option<PathBuf>,
+    /// As the history keeps it: from and to under the tree's root, and
+    /// what it is.
+    step: undo::Moved,
 }
 
 impl Moved {
@@ -308,7 +331,7 @@ impl ProjectPanel {
             let root = root.clone();
             async move {
                 let _running = running;
-                fs_ops::copy_into(&root, &source, &dir)
+                fs_ops::copy_into_recorded(&root, &source, &dir)
             }
         });
         cx.spawn_in(window, async move |panel, cx| {
@@ -316,7 +339,9 @@ impl ProjectPanel {
             panel
                 .update(cx, |panel, cx| match copied {
                     Ok(copy) => {
-                        if let Some(copy) = panel.shown(&copy, &root) {
+                        let shown = panel.shown(&copy.path, &root);
+                        panel.landed_new(&root, Step::Made(vec![Made::from(copy)]), true);
+                        if let Some(copy) = shown {
                             panel.changed(&copy, cx);
                             let folder = copy.symlink_metadata().is_ok_and(|meta| meta.is_dir());
                             cx.emit(PanelEvent::Created(vec![(copy.clone(), folder)]));
@@ -359,7 +384,7 @@ impl ProjectPanel {
             async move {
                 let _running = running;
                 (sources.iter())
-                    .map(|source| fs_ops::copy_into(&root, source, &dir))
+                    .map(|source| fs_ops::copy_into_recorded(&root, source, &dir))
                     .collect::<Vec<_>>()
             }
         });
@@ -368,16 +393,22 @@ impl ProjectPanel {
             panel
                 .update(cx, |panel, cx| {
                     let mut made = Vec::new();
+                    let mut copies = Vec::new();
                     let mut failures = Vec::new();
                     for (source, copied) in sources.iter().zip(copied) {
                         match copied {
-                            Ok(copy) => made.extend(panel.shown(&copy, &root)),
+                            Ok(copy) => {
+                                made.extend(panel.shown(&copy.path, &root));
+                                copies.push(Made::from(copy));
+                            }
                             Err(error) => failures.push(ops::Failure::error(
                                 tr!("workbench-project-paste-failed", name = file_name(source)),
                                 &error,
                             )),
                         }
                     }
+                    let changed = !copies.is_empty();
+                    panel.landed_new(&root, Step::Made(copies), changed);
                     panel.made(made, cx);
                     ops::report_failures(failures, ops::Many::Paste, cx);
                 })
@@ -510,6 +541,20 @@ impl ProjectPanel {
                 Err(failure) => failures.push(failure),
             }
         }
+        self.ask_and_move(moves, failures, window, cx);
+    }
+
+    /// Moves each of `moves` in turn ([`Self::move_each`]) once language
+    /// servers whose `willRename` filters match have answered for them all,
+    /// asked in one request. `failures`, from before, are named with those
+    /// of the moves.
+    fn ask_and_move(
+        &mut self,
+        moves: Vec<Move>,
+        failures: Vec<ops::Failure>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if moves.is_empty() {
             return ops::report_failures(failures, ops::Many::Paste, cx);
         }
@@ -552,18 +597,27 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         let asked = moves.len();
+        let Some(first) = moves.first() else {
+            return;
+        };
+        let (of, root) = (first.of, first.root.clone());
         let mut moved = Vec::new();
+        let mut kept = Vec::new();
         for moving in moves {
             match self.move_one(moving, window, cx) {
                 Ok(done) => moved.push(done),
-                Err(failure) => failures.push(failure),
+                Err(not) => {
+                    failures.push(not.failure);
+                    kept.extend(not.kept);
+                }
             }
         }
+        self.land_moves(of, &root, &moved, kept);
         if moved.len() == asked {
             let edits = (moved.iter()).fold(edits, |edits, done| done.edits(edits));
             // Once the editors have taken the new paths, which the moves'
             // events have them do.
-            window.defer(cx, move |window, cx| ops::apply_edits(edits, window, cx));
+            self.apply_edits_later(edits, window, cx);
         } else if !edits.is_empty() {
             log::warn!(
                 "not every entry was moved: the language servers' edits for them aren't made"
@@ -572,7 +626,7 @@ impl ProjectPanel {
         if let Some(first) = moved.into_iter().next() {
             self.reveal(first.shown_to, cx);
         }
-        ops::report_failures(failures, ops::Many::Paste, cx);
+        ops::report_failures(failures, of.many(), cx);
     }
 
     /// Why `moving` must wait, if it must: something acts on its old path
@@ -587,6 +641,9 @@ impl ProjectPanel {
                 file_name(&moving.dir),
             ),
         };
+        if let MoveOf::Revert(_) = moving.of {
+            return Some(undo::busy_failure(busy, &name));
+        }
         let message = match busy {
             Busy::Saving => tr!("workbench-project-paste-busy-saving", name = &name),
             Busy::Opening => tr!("workbench-project-paste-busy-opening", name = &name),
@@ -613,17 +670,46 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let (of, root) = (moving.of, moving.root.clone());
         match self.move_one(moving, window, cx) {
             Ok(moved) => {
+                self.land_moves(of, &root, std::slice::from_ref(&moved), Vec::new());
                 let edits = moved.edits(edits);
                 // Once the editors have taken the new paths, which the
                 // event has them do: an open file in a moved folder is
                 // found by its new one.
-                window.defer(cx, move |window, cx| ops::apply_edits(edits, window, cx));
+                self.apply_edits_later(edits, window, cx);
                 self.reveal(moved.shown_to, cx);
             }
-            Err(failure) => failure.show(cx),
+            Err(not) => {
+                self.land_moves(of, &root, &[], not.kept.into_iter().collect());
+                not.failure.show(cx);
+            }
         }
+    }
+
+    /// Takes in what moves for `of`, under `root`, did: those `moved`, and
+    /// for an undo or redo, the step's entries `kept` to revert again.
+    fn land_moves(&mut self, of: MoveOf, root: &Path, moved: &[Moved], kept: Vec<undo::Moved>) {
+        let done = Step::Moved(moved.iter().map(|done| done.step.clone()).collect());
+        match of {
+            MoveOf::Revert(reverting) => {
+                self.landed_revert(reverting, root, done, Step::Moved(kept));
+            }
+            MoveOf::Clip(_) | MoveOf::Drop => self.landed_new(root, done, !moved.is_empty()),
+        }
+    }
+
+    /// Makes `edits`, language servers' for moves, once the editors have
+    /// taken the new paths. A file they replace is asked about before an
+    /// undo or redo moves it again, as any replaced since is.
+    fn apply_edits_later(
+        &mut self,
+        edits: Vec<FileEdits>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.defer(cx, move |window, cx| ops::apply_edits(edits, window, cx));
     }
 
     /// [`Self::move_now`]'s move, short of making the language servers'
@@ -634,15 +720,48 @@ impl ProjectPanel {
         moving: Move,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<Moved, ops::Failure> {
+    ) -> Result<Moved, NotMoved> {
+        // An undo's or redo's entry, to revert again.
+        let kept = match moving.of {
+            MoveOf::Revert(_) => moving.identity.map(|identity| undo::Moved {
+                from: moving.dir.join(&moving.name),
+                to: moving.from.clone(),
+                identity,
+            }),
+            MoveOf::Clip(_) | MoveOf::Drop => None,
+        };
         if let Some(busy) = self.move_busy(&moving, window, cx) {
-            return Err(busy);
+            return Err(NotMoved {
+                failure: busy,
+                kept,
+            });
         }
         let entry = moving.entry_name();
-        if moving.identity.is_none() || ops::entry_identity(&moving.from) != moving.identity {
-            let message = tr!("workbench-project-paste-raced", name = &entry);
-            return Err(ops::Failure::said(message));
-        }
+        let found = undo::probe(&moving.from);
+        let identity = match moving.identity {
+            Some(identity) if found == undo::Probe::Is(identity) => identity,
+            _ => {
+                let (message, kept) = match moving.of {
+                    // Gone: never reverted. Replaced (a save that finished
+                    // while the servers were asked, say) or out of reach:
+                    // kept, to be asked about or waited for next time.
+                    MoveOf::Revert(_) if found == undo::Probe::Missing => {
+                        (tr!("workbench-project-undo-changed", name = &entry), None)
+                    }
+                    MoveOf::Revert(_) => (
+                        tr!("workbench-project-undo-changed-kept", name = &entry),
+                        kept,
+                    ),
+                    MoveOf::Clip(_) | MoveOf::Drop => {
+                        (tr!("workbench-project-paste-raced", name = &entry), None)
+                    }
+                };
+                return Err(NotMoved {
+                    failure: ops::Failure::said(message),
+                    kept,
+                });
+            }
+        };
         // Planned while every spelling of the old path still resolves.
         let moves = Workbench::plan_rename(&moving.shown_from, &moving.shown_to, window, cx);
         // By its folder: a symlink moved is the link, not what it leads to.
@@ -652,13 +771,30 @@ impl ProjectPanel {
                 .and_then(|id| tree.row(id))
                 .is_some_and(|row| row.kind == EntryKind::Dir && row.expanded)
         });
-        let moved = fs_ops::move_into(&moving.root, &moving.from, &moving.dir, &moving.name);
+        // Back to another name in its folder, as an undone rename is: as
+        // a rename, which also changes only its case where the volume
+        // ignores case.
+        let renamed = (moving.from.parent() == Some(moving.dir.as_path()))
+            .then(|| moving.name.to_str())
+            .flatten();
+        let moved = match renamed {
+            Some(name) => fs_ops::rename(&moving.root, &moving.from, name),
+            None => fs_ops::move_into(&moving.root, &moving.from, &moving.dir, &moving.name),
+        };
         let path = match moved {
             Ok(path) => path,
             Err(error) => {
                 let message = tr!("workbench-project-move-failed", name = &entry);
-                return Err(ops::Failure::error(message, &error));
+                return Err(NotMoved {
+                    failure: ops::Failure::error(message, &error),
+                    kept,
+                });
             }
+        };
+        let step = undo::Moved {
+            from: moving.from.clone(),
+            to: path.clone(),
+            identity,
         };
         let Move {
             of,
@@ -694,7 +830,52 @@ impl ProjectPanel {
             shown_from,
             shown_to,
             from_resolved,
+            step,
         })
+    }
+
+    /// Moves each of `moved`, all under `root`, back from where it was
+    /// moved to, as `reverting` reverts a move: as a cut's paste moves them
+    /// ([`Self::ask_and_move`]), each to its old name.
+    pub(super) fn move_back(
+        &mut self,
+        reverting: Reverting,
+        root: PathBuf,
+        moved: Vec<undo::Moved>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let moves: Vec<Move> = (moved.into_iter())
+            .filter_map(|moved| {
+                let undo::Moved {
+                    from: back,
+                    to: from,
+                    identity,
+                } = moved;
+                Some(Move {
+                    of: MoveOf::Revert(reverting),
+                    rel: from.strip_prefix(&root).ok()?.to_owned(),
+                    identity: Some(identity),
+                    shown_from: self.shown(&from, &root)?,
+                    shown_to: self.shown(&back, &root)?,
+                    dir: back.parent()?.to_owned(),
+                    name: back.file_name()?.to_owned(),
+                    root: root.clone(),
+                    from,
+                })
+            })
+            .collect();
+        if moves.is_empty() {
+            let none = || Step::Moved(Vec::new());
+            return self.landed_revert(reverting, &root, none(), none());
+        }
+        self.ask_and_move(moves, Vec::new(), window, cx);
+    }
+
+    /// Whether a cut's paste, a drop's move or an undone move waits for
+    /// language servers' edits.
+    pub(super) fn clipboard_moving(&self) -> bool {
+        self.clipboard.moving
     }
 
     /// Whether a paste now, on the selected row (or the root with none),
