@@ -104,6 +104,15 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: markers(&GRADLE_MAVEN_MARKERS[1..]),
             ..spec("kotlin-lsp", "kotlin-lsp", &["--stdio"], &["kotlin"])
         },
+        // razzmatazz/csharp-ls (`dotnet tool install --global csharp-ls`,
+        // needs the .NET 10 SDK); LSP on stdio with no args. It walks its
+        // root for `*.sln`/`*.slnx`, else every `*.csproj` below it, so the
+        // root is the folder holding the solution: a solution above beats a
+        // nearer project (docs/decisions/2pj9dv7s78-csharp-server.md).
+        ServerSpec {
+            root_markers: markers(&["*.sln", "*.slnx", "*.csproj", ".git"]),
+            ..spec("csharp-ls", "csharp-ls", &[], &["csharp"])
+        },
     ]
 }
 
@@ -322,7 +331,8 @@ pub(crate) fn server_for<'a>(specs: &'a [ServerSpec], language: &str) -> Option<
 /// under it (one server per window folder); otherwise the nearest ancestor
 /// holding the first of `markers` found anywhere up the tree, so
 /// `Cargo.lock`'s workspace beats a member's `Cargo.toml`; with none, the
-/// file's own folder. Only checks that entries exist.
+/// file's own folder. Only checks that entries exist; a marker `*.ext`
+/// matches any entry named `<something>.ext` (`holds_marker`).
 pub fn server_root(path: &Path, window_root: Option<&Path>, markers: &[String]) -> PathBuf {
     let path = lexically_normal(path);
     if let Some(root) = window_root
@@ -333,11 +343,30 @@ pub fn server_root(path: &Path, window_root: Option<&Path>, markers: &[String]) 
     }
     let folder = path.parent().unwrap_or(&path);
     for marker in markers {
-        if let Some(found) = folder.ancestors().find(|dir| dir.join(marker).exists()) {
+        if let Some(found) = folder.ancestors().find(|dir| holds_marker(dir, marker)) {
             return found.to_path_buf();
         }
     }
     folder.to_path_buf()
+}
+
+/// Whether `dir` holds `marker`: an entry of that name, or for a marker
+/// `*.ext`, any entry whose name ends in `.ext` after a non-empty stem
+/// (case-sensitive; no other glob syntax, so `*.sln` doesn't match `sln`,
+/// `.sln` or `a.slnx.bak`). Files and folders alike count.
+fn holds_marker(dir: &Path, marker: &str) -> bool {
+    let Some(ext) = marker.strip_prefix("*.") else {
+        return dir.join(marker).exists();
+    };
+    let suffix = format!(".{ext}");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name();
+        let name = name.as_encoded_bytes();
+        name.len() > suffix.len() && name.ends_with(suffix.as_bytes())
+    })
 }
 
 /// `path` with its `.` and `..` components resolved by name, so a path

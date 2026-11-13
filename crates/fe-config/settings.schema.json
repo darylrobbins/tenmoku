@@ -630,7 +630,7 @@
           ]
         },
         "root_markers": {
-          "description": "File or folder names that mark a project root, in priority order;\nreplaces the server's built-in list.",
+          "description": "File or folder names that mark a project root, in priority order;\nreplaces the server's built-in list. `*.ext` matches any name ending\nin `.ext`, such as `*.sln`; there is no other glob syntax.",
           "items": {
             "type": "string"
           },
@@ -670,7 +670,7 @@
             "$ref": "#/$defs/LspServerSettings"
           },
           "default": {},
-          "description": "Servers by name: changes to the built-in rust-analyzer, pyright,\ntypescript-language-server, typescript-go, gopls,\nvscode-css-language-server, jdtls and kotlin-lsp, or servers of your own, which need a `command`.",
+          "description": "Servers by name: changes to the built-in rust-analyzer, pyright,\ntypescript-language-server, typescript-go, gopls,\nvscode-css-language-server, jdtls, kotlin-lsp and csharp-ls, or servers of your own, which\nneed a `command`.",
           "type": "object"
         },
         "timeouts": {

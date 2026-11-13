@@ -288,7 +288,7 @@ fn capabilities_text(grants: &Grants) -> String {
 
 /// The language servers fastedit ships a spec for, which `lsp:<server>`
 /// may name besides the plugin's own (`fe_lsp`'s built-in registry).
-const BUILT_IN_SERVERS: [&str; 8] = [
+const BUILT_IN_SERVERS: [&str; 9] = [
     "rust-analyzer",
     "pyright",
     "typescript-language-server",
@@ -297,6 +297,7 @@ const BUILT_IN_SERVERS: [&str; 8] = [
     "gopls",
     "jdtls",
     "kotlin-lsp",
+    "csharp-ls",
 ];
 
 /// What `capability` lets the plugin do; `lsp:<server>` also says whether

@@ -87,6 +87,7 @@ fn stage3_capabilities_are_worded_and_lsp_says_whether_it_is_built_in() {
         "gopls",
         "jdtls",
         "kotlin-lsp",
+        "csharp-ls",
     ];
     let mut names = vec!["jobs", "language", "panels", "tasks", "lsp:acme-ls"];
     let lsp: Vec<String> = built_in

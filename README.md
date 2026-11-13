@@ -69,9 +69,13 @@ run without bundling, use `cargo run --release -p fastedit -- path/to/project`.
   [language pack](docs/release/language-pack.md) is the same files in one
   download for machines that can't reach GitHub.
 - **Language servers**: rust-analyzer, pyright, typescript-language-server (or
-  typescript-go), gopls and the CSS server, found on your `PATH`, with
-  diagnostics, hover, completion, go to definition, references, rename, code
-  actions, inlay hints, code lenses, semantic highlighting and format on save.
+  typescript-go), gopls, the CSS server, jdtls, kotlin-lsp and csharp-ls,
+  found on your `PATH`, with diagnostics, hover, completion, go to definition,
+  references, rename, code actions, inlay hints, code lenses, semantic
+  highlighting and format on save. For C#, run
+  `dotnet tool install --global csharp-ls` (needs the .NET 10 SDK) and put
+  `~/.dotnet/tools` on your `PATH`; Razor (`.cshtml`, `.razor`) gets no server
+  ([decision](docs/decisions/2pj9dv7s78-csharp-server.md)).
 - **Navigation**: peek definition and references, symbol picker, workspace
   symbols, project tree, find and replace, project-wide search.
 - **Editing**: multiple cursors, soft wrap, sticky scroll, minimap.

@@ -1367,7 +1367,8 @@ pub struct LspSettings {
     pub timeouts: LspTimeouts,
     /// Servers by name: changes to the built-in rust-analyzer, pyright,
     /// typescript-language-server, typescript-go, gopls,
-    /// vscode-css-language-server, jdtls and kotlin-lsp, or servers of your own, which need a `command`.
+    /// vscode-css-language-server, jdtls, kotlin-lsp and csharp-ls, or servers of your own, which
+    /// need a `command`.
     pub servers: BTreeMap<String, LspServerSettings>,
 }
 
@@ -1465,7 +1466,8 @@ pub struct LspServerSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ready_ignores_progress: Option<Vec<String>>,
     /// File or folder names that mark a project root, in priority order;
-    /// replaces the server's built-in list.
+    /// replaces the server's built-in list. `*.ext` matches any name ending
+    /// in `.ext`, such as `*.sln`; there is no other glob syntax.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_markers: Option<Vec<String>>,
     /// Whether the server only adds to the language's main server instead

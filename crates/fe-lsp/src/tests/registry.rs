@@ -37,6 +37,7 @@ use crate::{
 use crate::{LocalLauncher, LoginPath};
 
 mod add_on;
+mod csharp;
 mod css;
 mod gopls;
 mod java;
@@ -185,6 +186,14 @@ fn builtin_specs() {
                 ReadinessMode::Progress,
                 vec![],
             ),
+            (
+                "csharp-ls",
+                "csharp-ls",
+                vec![],
+                strings(&["csharp"]),
+                ReadinessMode::Progress,
+                vec![],
+            ),
         ]
     );
 
@@ -204,7 +213,8 @@ fn builtin_specs() {
             "gopls",
             "vscode-css-language-server",
             "jdtls",
-            "kotlin-lsp"
+            "kotlin-lsp",
+            "csharp-ls"
         ]
     );
     let chosen =
