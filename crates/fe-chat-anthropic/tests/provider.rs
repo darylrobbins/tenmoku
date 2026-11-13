@@ -376,6 +376,7 @@ fn the_request_matches_the_record() {
         description: "Reads a file of the project.".to_owned(),
         input_schema: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
         strict: true,
+        eager_input_streaming: true,
     }];
     let transport = FakeTransport::new([Reply::fixture("tool_use.sse")]);
     let (provider, _) = fake_provider(&transport);

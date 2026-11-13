@@ -56,3 +56,12 @@ reason = "A serde struct name, not user-facing"
 [[file]]
 path = "src/permissions.rs"
 reason = "Command patterns, shell metacharacters and host names are matched, never shown to the user"
+
+[[file]]
+path = "src/tools.rs"
+reason = "The tools' descriptions, validation errors and the results answering calls that didn't run are sent to the model, not shown to the user"
+
+[[literal]]
+file = "src/conversation.rs"
+text = "the model's tool input wasn't valid"
+reason = "A provider error's detail, beside the API's own English error text in the same field"

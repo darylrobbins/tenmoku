@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use futures::Stream;
 use serde::{Deserialize, Serialize, Serializer};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// A model behind a streaming chat API.
 pub trait ChatProvider: Send + Sync {
@@ -29,7 +29,9 @@ pub type ChatStream = Pin<Box<dyn Stream<Item = ChatEvent> + Send>>;
 pub struct ChatRequest {
     pub model: String,
     pub system: Vec<SystemBlock>,
-    /// Empty in v1.
+    /// The chat's tool set, frozen at its first send and sent the same in
+    /// every request after (a withdrawal is a `tool_removal` message, never
+    /// a change here). Empty for a chat without tools.
     pub tools: Vec<ToolSpec>,
     /// The history and the new user message, with an effort-only system
     /// message ([`Role::System`]) before each turn whose effort changed on a
@@ -42,6 +44,9 @@ pub struct ChatRequest {
     pub effort: Effort,
     /// Whether the reply's thinking is shown (summarized) rather than omitted.
     pub show_thinking: bool,
+    /// The chat's task budget in tokens (`output_config.task_budget`, beta
+    /// `task-budgets-2026-03-13`), frozen with its tools; `None` when off.
+    pub task_budget: Option<u32>,
 }
 
 /// A `text` block of the system prompt, serialised as the API takes it.
@@ -106,12 +111,55 @@ impl ApiMessage {
     }
 
     /// The effort an effort-only system message sets; `None` for any other
-    /// message.
+    /// message, a [`tool_removal`](ApiMessage::tool_removal) one included.
     pub fn effort_change(&self) -> Option<Effort> {
         match self.role {
-            Role::System { effort } => Some(effort),
-            Role::User | Role::Assistant => None,
+            Role::System { effort } if self.content.is_empty() => Some(effort),
+            Role::User | Role::Assistant | Role::System { .. } => None,
         }
+    }
+
+    /// The system message withdrawing the tools `names`: one `tool_removal`
+    /// block per tool, naming it by reference (beta
+    /// `mid-conversation-tool-changes-2026-07-01`). It must follow a user
+    /// message and be last or before an assistant message.
+    ///
+    /// Its role carries `in_effect`, the effort already in effect, so it
+    /// changes none: it isn't an effort-only message, and the wire leaves
+    /// its effort out.
+    pub fn tool_removal<'a>(
+        names: impl IntoIterator<Item = &'a str>,
+        in_effect: Effort,
+    ) -> ApiMessage {
+        let content = names
+            .into_iter()
+            .map(|name| {
+                let mut tool = Map::new();
+                tool.insert("name".to_owned(), Value::String(name.to_owned()));
+                tool.insert("type".to_owned(), "tool_reference".into());
+                let mut block = Map::new();
+                block.insert("tool".to_owned(), Value::Object(tool));
+                block.insert("type".to_owned(), "tool_removal".into());
+                Value::Object(block)
+            })
+            .collect();
+        ApiMessage {
+            role: Role::System { effort: in_effect },
+            content,
+        }
+    }
+
+    /// The tools a [`tool_removal`](ApiMessage::tool_removal) message
+    /// withdraws; empty for any other message.
+    pub fn removed_tools(&self) -> Vec<&str> {
+        if !matches!(self.role, Role::System { .. }) {
+            return Vec::new();
+        }
+        self.content
+            .iter()
+            .filter(|block| block["type"] == "tool_removal")
+            .filter_map(|block| block["tool"]["name"].as_str())
+            .collect()
     }
 }
 
@@ -348,8 +396,9 @@ impl ErrorKind {
     }
 }
 
-/// A client tool the model may call, for the agent loop (v1 sends none).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A client tool the model may call, for the tool loop
+/// ([`tool_set`](crate::tool_set) gives the chat's five).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
@@ -357,6 +406,10 @@ pub struct ToolSpec {
     pub input_schema: Value,
     /// Whether the model's input must match the schema exactly.
     pub strict: bool,
+    /// Whether the input streams as it's generated, unbuffered and
+    /// unvalidated by the API, so it's validated here at the block's end.
+    #[serde(default)]
+    pub eager_input_streaming: bool,
 }
 
 /// Whether the model may call tools. Forced choices (`any`, `tool`) are a

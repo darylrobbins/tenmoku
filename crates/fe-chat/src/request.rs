@@ -1,8 +1,10 @@
-//! Request assembly, laid out for the prompt cache (the record's § 5): no
-//! tools in v1, then one constant system block with an explicit breakpoint,
-//! then the history, then the new turn, its context first and the question
-//! last. Nothing per-workspace, per-request, timed or random goes before the
-//! new turn, so each request's prefix is byte-identical to the last one's.
+//! Request assembly, laid out for the prompt cache (the record's § 5): the
+//! chat's tools, frozen at its first send, then one constant system block
+//! with an explicit breakpoint, then the history, then the new turn, its
+//! context first and the question last. Nothing per-workspace, per-request,
+//! timed or random goes before the new turn, so each request's prefix is
+//! byte-identical to the last one's. A turn's later rounds extend its
+//! first request the same way (the agents record's § 6).
 //!
 //! JSON built here is built with its keys in sorted order, so it serialises
 //! the same whether or not another crate turns on serde_json's
@@ -12,8 +14,8 @@
 use serde_json::{Map, Value};
 
 use crate::context::{ContextItem, ContextKind};
-use crate::conversation::Conversation;
-use crate::provider::{ApiMessage, CacheControl, ChatRequest, Effort, Role, SystemBlock};
+use crate::conversation::{Conversation, RoundSettings};
+use crate::provider::{CacheControl, ChatRequest, Effort, SystemBlock};
 
 /// The chat's instructions. Versioned in code and never built at runtime:
 /// changing it empties every chat's cache.
@@ -89,9 +91,10 @@ impl Default for ChatSettings {
 }
 
 /// The request for a new turn of `conversation`, at its `model` and
-/// `effort` now: the system prompt, its history, then `new_user_content`.
-/// Call it before or after [`Conversation::begin_turn`]: the streaming turn
-/// isn't in the history.
+/// `effort` now: its tools, the system prompt, its history, then
+/// `new_user_content`. Call it before [`Conversation::begin_turn_with`]
+/// (or after, as the streaming turn isn't in the history), with the same
+/// settings and no turn streaming: stop one first.
 ///
 /// Earlier turns go back unchanged whatever model they were asked of. When
 /// the chat's model takes effort messages (`settings.effort_message_models`),
@@ -100,6 +103,11 @@ impl Default for ChatSettings {
 /// differs from the one in effect; so a later request's prefix is an
 /// earlier one's. On any other model no effort message is sent and the
 /// top-level effort is the chat's effort now.
+///
+/// When the history ends with a result message nothing answered (a turn
+/// stopped mid-tool, at the round limit, or refused in a later round), the
+/// new content joins it, after the results. When the tools were withdrawn,
+/// the `tool_removal` message follows the new content, last.
 pub fn build_request(
     conversation: &Conversation,
     new_user_content: Vec<Value>,
@@ -108,39 +116,82 @@ pub fn build_request(
     let effort_messages = settings
         .effort_message_models
         .contains(&conversation.model.as_str());
-    let first = conversation.first_effort();
-    let mut in_effect = first;
-    let mut messages = Vec::new();
-    for (turn, user, reply) in conversation.history_turns() {
-        let asked = conversation.asked_effort(turn);
-        if effort_messages && asked != in_effect {
-            messages.push(ApiMessage::effort(asked));
-            in_effect = asked;
-        }
-        messages.extend([user, reply]);
+    let mut layout = conversation.layout(effort_messages, false);
+    layout.user(conversation.effort, &new_user_content);
+    if conversation.removal_pending() {
+        layout.removal(&conversation.tools);
     }
-    if effort_messages && conversation.effort != in_effect {
-        messages.push(ApiMessage::effort(conversation.effort));
-    }
-    messages.push(ApiMessage {
-        role: Role::User,
-        content: new_user_content,
-    });
+    request(
+        conversation,
+        conversation.model.clone(),
+        layout.messages,
+        if effort_messages {
+            conversation.first_effort()
+        } else {
+            conversation.effort
+        },
+        settings.max_tokens,
+    )
+}
+
+/// The request for the last turn's next round, or the same round again:
+/// the history, then the turn's user message and its committed rounds, the
+/// last result message last. `None` for a chat with no turns.
+///
+/// It's sent with the request settings recorded on the turn
+/// ([`Turn::sent_with`](crate::Turn::sent_with)) by
+/// [`Conversation::begin_turn_with`], and the model and effort the turn
+/// asked for, so a round's request is the same whenever it's built: a
+/// resend after invalid tool input or a Retry after a failure is byte for
+/// byte the request before, the first round's included (whether
+/// [`build_request`] or this built it), and each round's extends the last
+/// one's. `settings` only count for a turn begun without them
+/// ([`Conversation::begin_turn`]), whose first call here records them.
+pub fn round_request(
+    conversation: &mut Conversation,
+    settings: &ChatSettings,
+) -> Option<ChatRequest> {
+    let model = conversation
+        .asked_model(conversation.turns.last()?)
+        .to_owned();
+    let recorded = RoundSettings::new(&model, settings);
+    let turn = conversation.turns.last_mut()?;
+    let sent_with = *turn.sent_with.get_or_insert(recorded);
+    let conversation = &*conversation;
+    let turn = conversation.turns.last()?;
+    let layout = conversation.layout(sent_with.effort_messages, true);
+    Some(request(
+        conversation,
+        model,
+        layout.messages,
+        if sent_with.effort_messages {
+            conversation.first_effort()
+        } else {
+            conversation.asked_effort(turn)
+        },
+        sent_with.max_tokens,
+    ))
+}
+
+fn request(
+    conversation: &Conversation,
+    model: String,
+    messages: Vec<crate::provider::ApiMessage>,
+    effort: Effort,
+    max_tokens: u32,
+) -> ChatRequest {
     ChatRequest {
-        model: conversation.model.clone(),
+        model,
         system: vec![SystemBlock {
             text: SYSTEM_PROMPT.to_owned(),
             cache_control: Some(CacheControl::Ephemeral),
         }],
-        tools: Vec::new(),
+        tools: conversation.tools.clone(),
         messages,
-        max_tokens: settings.max_tokens,
-        effort: if effort_messages {
-            first
-        } else {
-            conversation.effort
-        },
+        max_tokens,
+        effort,
         show_thinking: conversation.show_thinking,
+        task_budget: conversation.task_budget,
     }
 }
 

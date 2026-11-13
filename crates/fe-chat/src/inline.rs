@@ -108,6 +108,7 @@ pub fn inline_request(input: &InlineEditInput) -> ChatRequest {
         max_tokens: input.settings.max_tokens,
         effort: input.settings.effort,
         show_thinking: false,
+        task_budget: None,
     }
 }
 
