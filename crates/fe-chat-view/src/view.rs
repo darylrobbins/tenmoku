@@ -28,6 +28,7 @@ use serde_json::Value;
 use crate::{
     COMPOSER_CONTEXT,
     reply::{self, BlockState, CodeBlock, CodeSpan, CodeSpans, Documents, HeaderAt},
+    tool_rows::{PermissionAnswer, Tools},
 };
 
 /// The context window the meter measures against.
@@ -217,6 +218,8 @@ pub struct ChatView {
     thinking_open: HashSet<usize>,
     /// The replies and thinking as Markdown, parsed as they're drawn.
     documents: Documents,
+    /// The host's tool rows, plans and permission prompts.
+    pub(crate) tools: Tools,
     _composer_changed: Subscription,
 }
 
@@ -249,11 +252,19 @@ impl ChatView {
     /// Sends the composer's text with the chips' items as the context
     /// budget leaves them, and empties the composer and the attachments.
     /// The host's items the user took off come back. Does nothing with no
-    /// text, no provider, while a reply streams or while an attachment is
-    /// being read.
+    /// text, no provider, while a reply streams, while an attachment is
+    /// being read or while a permission prompt waits. With the composer
+    /// empty and a prompt waiting, allows the first prompt once, if it
+    /// offers that: Enter allows once.
     #[command(id = "chat.send")]
     pub fn send_message(&mut self, cx: &mut Cx<Self>) {
         let text = self.composer_text(cx);
+        if !self.waiting_permissions().is_empty() {
+            if text.trim().is_empty() {
+                self.answer_first_permission(PermissionAnswer::AllowOnce, cx);
+            }
+            return;
+        }
         if text.trim().is_empty()
             || self.is_streaming()
             || self.provider.is_none()
@@ -280,15 +291,14 @@ impl ChatView {
 
     /// Stop Reply
     ///
-    /// Stops the reply streaming in, keeping what came.
+    /// Stops the reply streaming in, keeping what came. With a permission
+    /// prompt waiting, denies the first one instead: Escape denies.
     #[command(id = "chat.stop")]
     pub fn stop_reply(&mut self, cx: &mut Cx<Self>) {
-        if !self.is_streaming() {
+        if self.answer_first_permission(PermissionAnswer::Deny, cx) {
             return;
         }
-        self.stream = None;
-        self.conversation.stop();
-        self.end_turn(cx);
+        self.stop(cx);
     }
 
     /// Retry
@@ -390,6 +400,7 @@ impl ChatView {
             tail: Tail::Off,
             thinking_open: HashSet::new(),
             documents: Documents::default(),
+            tools: Tools::default(),
             _composer_changed: composer_changed,
         }
     }
@@ -716,8 +727,9 @@ impl ChatView {
     pub fn turn_display(&self, index: usize) -> Option<TurnDisplay> {
         let turn = self.conversation.turns.get(index)?;
         let thinking = turn.thinking();
-        let answered_by =
-            serving_model(turn).filter(|model| *model != self.conversation.model.as_str());
+        // Against what the turn asked for, not what the next turn will.
+        let asked = self.conversation.asked_model(turn);
+        let answered_by = serving_model(turn).filter(|model| *model != asked);
         Some(TurnDisplay {
             question: question_of(turn),
             attachments: turn.attachments.iter().map(|a| a.label.clone()).collect(),
@@ -814,7 +826,7 @@ impl ChatView {
                 Some(banner(text, only_last(BannerAction::Edit), false))
             }
             TurnState::Failed(error) => {
-                let (text, action) = self.failure(error);
+                let (text, action) = Self::failure(error, self.conversation.asked_model(turn));
                 let action = action.filter(|action| {
                     last || matches!(action, BannerAction::SetKey | BannerAction::OpenSettings)
                 });
@@ -823,8 +835,9 @@ impl ChatView {
         }
     }
 
-    /// A failure's line and action, by its kind (the record's § 14).
-    fn failure(&self, error: &ProviderError) -> (String, Option<BannerAction>) {
+    /// A failure's line and action, by its kind (the record's § 14), for a
+    /// turn that asked for `model`.
+    fn failure(error: &ProviderError, model: &str) -> (String, Option<BannerAction>) {
         let message = error.message.clone();
         match error.kind {
             ErrorKind::Auth => (
@@ -833,11 +846,7 @@ impl ChatView {
             ),
             ErrorKind::Billing | ErrorKind::Permission => (message, None),
             ErrorKind::NotFound => (
-                tr!(
-                    "chat-view-banner-not-found",
-                    model = self.conversation.model.as_str()
-                )
-                .to_string(),
+                tr!("chat-view-banner-not-found", model = model).to_string(),
                 Some(BannerAction::OpenSettings),
             ),
             ErrorKind::TooLarge => (
@@ -927,6 +936,20 @@ impl ChatView {
             .ok();
         }));
         cx.notify();
+    }
+
+    /// Stop: closes the permission prompts waiting as refused, and stops
+    /// the reply streaming in, keeping what came.
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        if !self.waiting_permissions().is_empty() {
+            self.close_permissions(cx);
+        }
+        if !self.is_streaming() {
+            return;
+        }
+        self.stream = None;
+        self.conversation.stop();
+        self.end_turn(cx);
     }
 
     fn end_turn(&mut self, cx: &mut Context<Self>) {
@@ -1045,6 +1068,7 @@ impl ChatView {
                         .child(reply::thinking_element(&document, &style, cx.weak_entity()))
                 }))
         });
+        let tools = self.render_tools(index, ui, cx);
         let reply = if shown.reply.is_empty() && streaming {
             div().text_color(ui.text).child("…").into_any_element()
         } else {
@@ -1095,6 +1119,7 @@ impl ChatView {
             .gap_2()
             .child(user)
             .children(thinking)
+            .children(tools)
             .child(
                 // Its own id scope: every document numbers its texts and code
                 // blocks from 0, and their click and scroll state is kept by
@@ -1187,10 +1212,9 @@ impl ChatView {
         let height = line_height * rows as f32 + px(2.);
         let empty = editor.model().text().to_string().trim().is_empty();
         let no_key = self.provider.is_none();
-        let button = if self.is_streaming() {
-            let stop = cx.listener(|this, _, window, cx| {
-                kiln::with_cx(window, cx, |cx| this.stop_reply(cx));
-            });
+        // A prompt waiting keeps the turn waiting, and Stop closes it.
+        let button = if self.is_streaming() || !self.waiting_permissions().is_empty() {
+            let stop = cx.listener(|this, _, _, cx| this.stop(cx));
             Button::new("chat-stop", text!("chat-view-stop"))
                 .small()
                 .debug_selector(|| "chat-stop".into())

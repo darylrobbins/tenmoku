@@ -83,3 +83,62 @@ chat-view-no-key = Add your Anthropic API key
 command-chat-send = Send Message
 command-chat-stop = Stop Reply
 command-chat-retry = Retry
+
+## Tool rows: a call before it ran, and after
+chat-view-tool-read = Read `{ $path }`
+chat-view-tool-read-rows = Read `{ $path }` rows { $first }–{ $last }
+chat-view-tool-search = Search `{ $pattern }`
+chat-view-tool-searched = Searched `{ $pattern }`
+chat-view-tool-searched-files =
+    { $files ->
+        [one] Searched `{ $pattern }` · { $files } file
+       *[other] Searched `{ $pattern }` · { $files } files
+    }
+chat-view-tool-dir = `{ $dir }`
+chat-view-tool-project = the project folder
+chat-view-tool-list = List { $dir }
+chat-view-tool-listed = Listed { $dir }
+chat-view-tool-propose = Propose changes to `{ $path }`
+chat-view-tool-proposed =
+    { $changes ->
+        [one] Proposed { $changes } change to `{ $path }`
+       *[other] Proposed { $changes } changes to `{ $path }`
+    }
+chat-view-tool-run = Run `{ $command }`
+chat-view-tool-ran = Ran `{ $command }`
+chat-view-tool-ran-exit = Ran `{ $command }` · exit { $code } · { $seconds } s
+chat-view-tool-ran-killed = Ran `{ $command }` · killed after { $seconds } s
+chat-view-tool-pending = Waiting
+chat-view-tool-running = Running
+chat-view-tool-done = Done
+chat-view-tool-failed = Failed
+chat-view-tool-denied = Denied
+chat-view-tool-location-row = { $path }:{ $row }
+chat-view-tool-output-open = ▾ Output
+chat-view-tool-output-closed = ▸ Output
+chat-view-tool-review = Review
+chat-view-tool-diff-more =
+    { $rows ->
+        [one] … { $rows } more row
+       *[other] … { $rows } more rows
+    }
+chat-view-tool-diff-too-large = Too large to preview
+
+## Plans
+chat-view-plan = Plan
+chat-view-plan-pending = Not started
+chat-view-plan-in-progress = In progress
+chat-view-plan-completed = Done
+
+## Permission prompts
+chat-view-permission-read = Allow reading `{ $target }`?
+chat-view-permission-search = Allow searching for `{ $target }`?
+chat-view-permission-propose-edit = Allow proposing changes to `{ $target }`?
+chat-view-permission-run-command = Allow running `{ $target }`?
+chat-view-permission-fetch = Allow fetching `{ $target }`?
+chat-view-permission-other = Allow { $target }?
+chat-view-permission-cwd = In `{ $cwd }`
+chat-view-permission-in-project = This runs in your project folder and can change files.
+chat-view-permission-allow-once = Allow Once
+chat-view-permission-allow-chat = Allow for This Chat
+chat-view-permission-deny = Deny

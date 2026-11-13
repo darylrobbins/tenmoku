@@ -109,3 +109,113 @@ reason = "An element id or debug selector, never shown"
 file = "src/view.rs"
 text = "chat-set-key"
 reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tools-{turn}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-review"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-review-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-status-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-location-{turn}-{k}-{n}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-output-toggle-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-output-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-plan-{turn}-{n}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-plan-{turn}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-allow-once"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-allow-once-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-allow-chat"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-allow-chat-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-option"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-option-{turn}-{k}-{n}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-deny"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-deny-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-permission-{turn}-{k}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-diff-{turn}-{k}-{d}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-diff-{turn}-{k}-{d}-{name}-{r}"
+reason = "An element id or debug selector, never shown"
+
+[[literal]]
+file = "src/tool_rows.rs"
+text = "chat-tool-diff-more-{turn}-{k}-{d}"
+reason = "An element id or debug selector, never shown"

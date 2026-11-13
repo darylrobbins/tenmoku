@@ -13,6 +13,10 @@
 //!   ([`ChatViewEvent::ApplyBlock`]), and what came of it, as the host
 //!   says ([`ChatView::set_block_state`]); a link opens in the browser or asks
 //!   the host to open a project file ([`ChatViewEvent::OpenPath`]).
+//! - The host's tool rows, plans and permission prompts show in their turn
+//!   ([`ChatView::set_tool_row`], [`ChatView::set_plan`],
+//!   [`ChatView::ask_permission`]), and the user's answers come back as
+//!   [`ToolEvent::PermissionAnswered`].
 //!
 //! It knows nothing of fastedit's workbench: the host gives it a provider
 //! and context items and listens for [`ChatViewEvent`]s.
@@ -21,9 +25,15 @@ use gpui::App;
 
 pub mod l10n;
 mod reply;
+mod tool_rows;
 mod view;
 
 pub use reply::{BlockState, CodeBlock};
+pub use tool_rows::{
+    CommandOutcome, DiffPreview, OfferedOption, PREVIEW_ROWS, PermissionAnswer, PermissionChoices,
+    PermissionPrompt, PlanEntry, PlanStatus, ToolEvent, ToolKind, ToolLocation, ToolRow,
+    ToolStatus, ToolTitle,
+};
 pub use view::{
     Banner, BannerAction, ChatOptions, ChatView, ChatViewEvent, RetryTurn, SendMessage, StopReply,
     TurnDisplay,
