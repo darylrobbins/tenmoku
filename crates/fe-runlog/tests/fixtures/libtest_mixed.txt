@@ -1,0 +1,98 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/fe_runlog-7689c8cf0503661c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sample.rs (target/debug/deps/sample-211b8a933b66638e)
+
+running 8 tests
+test ignored ... ignored
+test ignored_with_reason ... ignored, needs a network
+test fails_eq ... FAILED
+test fails_multiline ... FAILED
+test fails_ne ... FAILED
+test inner::nested_passes ... ok
+test panics_plainly ... FAILED
+test passes ... ok
+
+failures:
+
+---- fails_eq stdout ----
+some output first
+
+thread 'fails_eq' (1316142) panicked at crates/fe-runlog/tests/sample.rs:7:5:
+assertion `left == right` failed: lists differ for x
+  left: [1, 2]
+ right: [1, 3]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- fails_multiline stdout ----
+
+thread 'fails_multiline' (1316143) panicked at crates/fe-runlog/tests/sample.rs:26:5:
+assertion `left == right` failed
+  left: first line
+second line
+ right: first line
+second line
+
+---- fails_ne stdout ----
+
+thread 'fails_ne' (1316144) panicked at crates/fe-runlog/tests/sample.rs:12:5:
+assertion `left != right` failed
+  left: 2
+ right: 2
+
+---- panics_plainly stdout ----
+
+thread 'panics_plainly' (1316146) panicked at crates/fe-runlog/tests/sample.rs:31:5:
+not an assertion
+
+
+failures:
+    fails_eq
+    fails_multiline
+    fails_ne
+    panics_plainly
+
+test result: FAILED. 2 passed; 4 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p fe-runlog --test sample`
+   Doc-tests fe_runlog
+
+running 2 tests
+test crates/fe-runlog/src/lib.rs - (line 7) ... FAILED
+test crates/fe-runlog/src/lib.rs - (line 3) ... ok
+
+failures:
+
+---- crates/fe-runlog/src/lib.rs - (line 7) stdout ----
+Test executable failed (exit status: 101).
+
+stderr:
+
+thread 'main' (1316188) panicked at /tmp/rustdoctestqplVvj/doctest_bundle_2024.rs:14:1:
+assertion `left == right` failed: doc maths
+  left: 2
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+
+failures:
+    crates/fe-runlog/src/lib.rs - (line 7)
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test crates/fe-runlog/src/lib.rs - (line 11) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.13s; merged doctests compilation took 0.13s
+error: doctest failed, to rerun pass `-p fe-runlog --doc`
+error: 2 targets failed:
+    `-p fe-runlog --test sample`
+    `-p fe-runlog --doc`

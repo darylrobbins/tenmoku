@@ -1,0 +1,7 @@
+some output first
+
+thread 'fails_eq' (1316142) panicked at crates/fe-runlog/tests/sample.rs:7:5:
+assertion `left == right` failed: lists differ for x
+  left: [1, 2]
+ right: [1, 3]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

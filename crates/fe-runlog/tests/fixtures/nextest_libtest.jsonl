@@ -1,0 +1,20 @@
+{"type":"suite","event":"started","test_count":8}
+{"type":"test","event":"started","name":"fe-runlog::sample$ignored"}
+{"type":"test","event":"started","name":"fe-runlog::sample$ignored_with_reason"}
+{"type":"test","event":"started","name":"fe-runlog::sample$inner::nested_passes"}
+{"type":"test","event":"started","name":"fe-runlog::sample$fails_eq"}
+{"type":"test","event":"started","name":"fe-runlog::sample$fails_multiline"}
+{"type":"test","event":"started","name":"fe-runlog::sample$fails_ne"}
+{"type":"test","event":"started","name":"fe-runlog::sample$passes"}
+{"type":"test","event":"started","name":"fe-runlog::sample$panics_plainly"}
+{"type":"test","event":"ignored","name":"fe-runlog::sample$ignored"}
+{"type":"test","event":"ignored","name":"fe-runlog::sample$ignored_with_reason"}
+{"type":"test","event":"ok","name":"fe-runlog::sample$inner::nested_passes","exec_time":0.004599416}
+{"type":"test","event":"failed","name":"fe-runlog::sample$fails_ne","exec_time":0.004340818,"stdout":"\nthread 'fails_ne' (1316451) panicked at crates/fe-runlog/tests/sample.rs:12:5:\nassertion `left != right` failed\n  left: 2\n right: 2\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"}
+{"type":"test","event":"failed","name":"fe-runlog::sample$panics_plainly","exec_time":0.004507376,"stdout":"\nthread 'panics_plainly' (1316452) panicked at crates/fe-runlog/tests/sample.rs:31:5:\nnot an assertion\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"}
+{"type":"test","event":"ok","name":"fe-runlog::sample$passes","exec_time":0.00489961}
+{"type":"suite","event":"failed","passed":2,"failed":2,"ignored":2,"measured":0,"filtered_out":0,"exec_time":0.01834722}
+{"type":"suite","event":"started","test_count":8}
+{"type":"test","event":"failed","name":"fe-runlog::sample$fails_multiline","exec_time":0.006320896,"stdout":"\nthread 'fails_multiline' (1316456) panicked at crates/fe-runlog/tests/sample.rs:26:5:\nassertion `left == right` failed\n  left: first line\nsecond line\n right: first line\nsecond line\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"}
+{"type":"test","event":"failed","name":"fe-runlog::sample$fails_eq","exec_time":0.006440447,"stdout":"some output first\n\nthread 'fails_eq' (1316457) panicked at crates/fe-runlog/tests/sample.rs:7:5:\nassertion `left == right` failed: lists differ for x\n  left: [1, 2]\n right: [1, 3]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"}
+{"type":"suite","event":"failed","passed":0,"failed":2,"ignored":2,"measured":0,"filtered_out":4,"exec_time":0.012761343}
