@@ -37,6 +37,8 @@ pub mod menus;
 #[cfg(feature = "test-support")]
 pub mod screenshots;
 pub mod system_a11y;
+#[cfg(test)]
+mod test_lock;
 pub mod window_options;
 
 pub use capabilities::Capabilities;

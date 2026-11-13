@@ -19,6 +19,14 @@ use kiln::{
     platform::{keys, menus},
 };
 
+/// `kiln::init` sets the process-global `$app` label argument, so the tests
+/// that call it (or build menus) take turns.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[path = "support/platform_keymaps.rs"]
 mod platform_keymaps;
 
@@ -98,6 +106,7 @@ fn catalog(cx: &mut TestAppContext) -> std::rc::Rc<dyn kiln::core::CommandCatalo
 
 #[gpui::test]
 fn the_bundled_keys_resolve_under_an_app_keymap_without_them(cx: &mut TestAppContext) {
+    let _serial = serial();
     let catalog = catalog(cx);
     let config = config().default_keys(true);
     for os in [Os::MacOs, Os::Linux] {
@@ -146,6 +155,7 @@ fn the_bundled_keys_resolve_under_an_app_keymap_without_them(cx: &mut TestAppCon
 
 #[gpui::test]
 fn init_installs_the_bundled_keys(cx: &mut TestAppContext) {
+    let _serial = serial();
     let diagnostics = cx.update(|cx| kiln::init(cx, config().default_keys(true)));
     assert_eq!(diagnostics, []);
     cx.update(|cx| {
@@ -157,6 +167,7 @@ fn init_installs_the_bundled_keys(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_apps_keymap_overrides_the_bundled_and_the_users_overrides_both(cx: &mut TestAppContext) {
+    let _serial = serial();
     let catalog = catalog(cx);
     let app = format!(
         "{KEYMAP}\n[[bindings]]\nkeys = \"secondary-q\"\ncommand = \"notes.new_note\"\n\
@@ -197,6 +208,7 @@ fn the_apps_keymap_overrides_the_bundled_and_the_users_overrides_both(cx: &mut T
 
 #[gpui::test]
 fn by_default_the_keymap_is_the_apps_and_the_users_alone(cx: &mut TestAppContext) {
+    let _serial = serial();
     let user =
         TempFile::new("[[bindings]]\nkeys = \"secondary-shift-n\"\ncommand = \"notes.new_note\"\n");
     let (_, closed) = kiln::platform::config::batch_channel();
@@ -224,6 +236,7 @@ fn by_default_the_keymap_is_the_apps_and_the_users_alone(cx: &mut TestAppContext
 
 #[gpui::test]
 fn init_installs_the_bundled_menus_named_for_the_app(cx: &mut TestAppContext) {
+    let _serial = serial();
     let diagnostics = cx.update(|cx| kiln::init(cx, config().default_menus(true)));
     assert_eq!(diagnostics, []);
     cx.update(|cx| {
@@ -260,6 +273,7 @@ fn items(config: &Config, os: Os, cx: &mut TestAppContext) -> Vec<(String, Vec<S
 
 #[gpui::test]
 fn the_bundled_menus_on_each_platform(cx: &mut TestAppContext) {
+    let _serial = serial();
     let _ = catalog(cx);
     let config = Config::new("com.example.Notes", "Notes").default_menus(true);
     let view = (
@@ -299,6 +313,7 @@ fn the_bundled_menus_on_each_platform(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_app_name_is_quoted_into_the_bundled_menus(cx: &mut TestAppContext) {
+    let _serial = serial();
     let _ = catalog(cx);
     let config = Config::new("com.example.Quotes", r#"Say "Hi" \o/"#).default_menus(true);
     let menus = items(&config, Os::Linux, cx);
@@ -321,6 +336,7 @@ fn commands(menus: &[(String, Vec<String>)]) -> Vec<String> {
 /// with is folded into its app menu: every command stays, in a menu each.
 #[gpui::test]
 fn an_app_named_like_a_bundled_menu_keeps_every_menu(cx: &mut TestAppContext) {
+    let _serial = serial();
     let _ = catalog(cx);
     let notes = Config::new("com.example.Notes", "Notes").default_menus(true);
     for name in ["View", "Window"] {
@@ -347,21 +363,25 @@ fn an_app_named_like_a_bundled_menu_keeps_every_menu(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn init_installs_the_menus_of_an_app_named_view(cx: &mut TestAppContext) {
+    let _serial = serial();
     init_named("View", false, cx);
 }
 
 #[gpui::test]
 fn init_installs_the_menus_of_an_app_named_window_failing_fast(cx: &mut TestAppContext) {
+    let _serial = serial();
     init_named("Window", true, cx);
 }
 
 #[gpui::test]
 fn init_installs_the_menus_of_an_app_named_window(cx: &mut TestAppContext) {
+    let _serial = serial();
     init_named("Window", false, cx);
 }
 
 #[gpui::test]
 fn init_installs_the_menus_of_an_app_named_view_failing_fast(cx: &mut TestAppContext) {
+    let _serial = serial();
     init_named("View", true, cx);
 }
 
@@ -384,6 +404,7 @@ fn init_named(name: &str, fail_fast: bool, cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn an_app_menu_table_replaces_the_bundled_menus(cx: &mut TestAppContext) {
+    let _serial = serial();
     let config = config().menus("menus.toml", MENUS).default_menus(true);
     let diagnostics = cx.update(|cx| kiln::init(cx, config));
     assert_eq!(diagnostics, []);
@@ -396,6 +417,7 @@ fn an_app_menu_table_replaces_the_bundled_menus(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_bundled_keymap_and_menus_load_cleanly_on_every_platform(cx: &mut TestAppContext) {
+    let _serial = serial();
     let catalog = catalog(cx);
     let config = Config::new("com.example.Notes", "Notes")
         .default_keys(true)

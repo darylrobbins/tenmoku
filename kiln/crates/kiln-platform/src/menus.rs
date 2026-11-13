@@ -386,6 +386,7 @@ mod tests {
 
     #[test]
     fn the_window_menu_keeps_its_role_when_translated() {
+        let _locale = crate::test_lock::locale();
         let keyed =
             bar("[[menus]]\nname = \"Pad\"\n\n[[menus]]\ntitle_key = \"kiln-core-menu-window\"\n");
         let literal = bar("[[menus]]\nname = \"Pad\"\n\n[[menus]]\nname = \"Window\"\n");

@@ -506,6 +506,7 @@ mod label_tests {
 
     #[test]
     fn label_resolves_in_the_active_locale_and_falls_back_silently() {
+        let _locale = crate::test_lock::locale();
         let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
         log::set_logger(&RECORDER).unwrap();
         log::set_max_level(log::LevelFilter::Trace);
@@ -561,6 +562,7 @@ mod label_tests {
     /// each locale set, and so does a command registered after one.
     #[gpui::test]
     fn the_store_keeps_the_fallback_and_label_follows_the_locale(cx: &mut gpui::TestAppContext) {
+        let _locale = crate::test_lock::locale();
         let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
         let row = |title: &str, label: &str| (title.to_owned(), label.to_owned());
         let plain = row("Plain Title", "Plain Title");
