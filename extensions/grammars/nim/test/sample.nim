@@ -86,6 +86,9 @@ when isMainModule:
   let apple = Item(name: "apple", count: 3, kind: kFood, calories: 52.0)
   let toolKind = parseEnum[Kind]("kTool")
   inv.add apple
+  let counts = inv.items.to[seq[int]]()
+  let seen = initTable[string, int]()
+  let blanks = newSeq[int] 3
   withLog("report"):
     for name in inv.named:
       echo name.toUpperAscii()
