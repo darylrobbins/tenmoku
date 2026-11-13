@@ -917,7 +917,12 @@ const DEFS: &[Def] = &[
         extensions: &["cs"],
         file_names: &[],
         grammar: || tree_sitter_c_sharp::LANGUAGE.into(),
-        highlights: || &[tree_sitter_c_sharp::HIGHLIGHTS_QUERY],
+        highlights: || {
+            &[
+                tree_sitter_c_sharp::HIGHLIGHTS_QUERY,
+                include_str!("../queries/csharp.scm"),
+            ]
+        },
         earlier_patterns_win: false,
         injections: None,
         hidden: false,

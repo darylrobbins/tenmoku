@@ -1608,7 +1608,13 @@ fn kotlin_extension_is_as_built_in() {
 #[cfg(feature = "csharp")]
 #[test]
 fn csharp_extension_is_as_built_in() {
-    assert_as_built_in("csharp", &[tree_sitter_c_sharp::HIGHLIGHTS_QUERY], None);
+    // Read at run time, not `include_str!`: this file builds against pre-fix code, which has no csharp.scm.
+    let extra = read(&repository().join("crates/fe-syntax/queries/csharp.scm"));
+    assert_as_built_in(
+        "csharp",
+        &[tree_sitter_c_sharp::HIGHLIGHTS_QUERY, &extra],
+        None,
+    );
 }
 
 #[cfg(feature = "scala")]
