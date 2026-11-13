@@ -16,6 +16,9 @@ pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// takes `server-side-fallback-2026-06-01`; mixing them is a 400.)
 pub const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 
+/// The beta that an effort-only system message in `messages` takes.
+const EFFORT_MESSAGE_BETA: &str = "mid-conversation-output-config-2026-07-01";
+
 /// The body of a streamed request for `request`, with `fallbacks: "default"`
 /// when `fallbacks` is on.
 ///
@@ -80,9 +83,15 @@ pub fn request_body(request: &ChatRequest, fallbacks: bool) -> Result<Vec<u8>, P
         .map_err(|error| ProviderError::new(ErrorKind::InvalidRequest, error.to_string()))
 }
 
-/// The request's headers, the key among them. The fallback beta goes only
-/// with `fallbacks: "default"`.
-pub fn request_headers(api_key: &str, fallbacks: bool) -> Vec<(String, String)> {
+/// The headers for `request`, the key among them. The fallback beta goes
+/// only with `fallbacks: "default"`, and the mid-conversation output-config
+/// beta only with an effort-only system message; both go in one
+/// comma-joined `anthropic-beta`.
+pub fn request_headers(
+    api_key: &str,
+    fallbacks: bool,
+    request: &ChatRequest,
+) -> Vec<(String, String)> {
     let mut headers = vec![
         ("x-api-key".to_owned(), api_key.to_owned()),
         ("anthropic-version".to_owned(), ANTHROPIC_VERSION.to_owned()),
@@ -92,8 +101,19 @@ pub fn request_headers(api_key: &str, fallbacks: bool) -> Vec<(String, String)> 
             format!("tenmoku/{}", env!("CARGO_PKG_VERSION")),
         ),
     ];
+    let mut betas = Vec::new();
     if fallbacks {
-        headers.push(("anthropic-beta".to_owned(), FALLBACK_BETA.to_owned()));
+        betas.push(FALLBACK_BETA);
+    }
+    if request
+        .messages
+        .iter()
+        .any(|message| message.effort_change().is_some())
+    {
+        betas.push(EFFORT_MESSAGE_BETA);
+    }
+    if !betas.is_empty() {
+        headers.push(("anthropic-beta".to_owned(), betas.join(",")));
     }
     headers
 }
@@ -102,6 +122,13 @@ fn message(message: &ApiMessage) -> Value {
     let role = match message.role {
         Role::User => "user",
         Role::Assistant => "assistant",
+        Role::System { effort: level } => {
+            return object([
+                ("content", Value::Array(message.content.clone())),
+                ("output_config", object([("effort", effort(level).into())])),
+                ("role", "system".into()),
+            ]);
+        }
     };
     object([
         ("content", Value::Array(message.content.clone())),

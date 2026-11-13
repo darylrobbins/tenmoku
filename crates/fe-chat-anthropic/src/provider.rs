@@ -137,7 +137,7 @@ impl ChatProvider for AnthropicProvider {
         let mut run = Run {
             transport: Arc::clone(&self.transport),
             url: self.url.clone(),
-            headers: request_headers(self.key.expose(), self.fallbacks),
+            headers: request_headers(self.key.expose(), self.fallbacks, &request),
             body: Vec::new(),
             sleep: Arc::clone(&self.sleep),
             retries: 0,

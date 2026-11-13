@@ -8,8 +8,8 @@ use std::sync::Arc;
 use fe_buffer::{Buffer, BufferEvent, EditKind, Origin, Subscription as BufferSubscription};
 use fe_chat::{
     Attachment, AttachmentKind, BlockKind, Budgeted, ChatEvent, ChatProvider, ChatSettings,
-    ContextItem, ContextKind, Conversation, ErrorKind, Fit, ProviderError, Turn, TurnState, budget,
-    build_request, render_user_content,
+    ContextItem, ContextKind, Conversation, Effort, ErrorKind, Fit, ProviderError, Turn, TurnState,
+    budget, build_request, render_user_content,
 };
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, editor_palette};
@@ -164,6 +164,9 @@ pub struct ChatView {
     provider: Option<Arc<dyn ChatProvider>>,
     conversation: Conversation,
     options: ChatOptions,
+    /// The models whose effort changes through an effort-only system
+    /// message.
+    effort_message_models: &'static [&'static str],
     composer: Entity<EditorView>,
     /// The composer buffer's edits, to tell an `@` typed.
     composer_edits: BufferSubscription,
@@ -365,6 +368,7 @@ impl ChatView {
             provider: Some(provider),
             conversation,
             options,
+            effort_message_models: &[],
             composer,
             composer_edits,
             attachments: Vec::new(),
@@ -392,6 +396,30 @@ impl ChatView {
 
     pub fn conversation(&self) -> &Conversation {
         &self.conversation
+    }
+
+    /// Sets the models whose effort changes through an effort-only system
+    /// message ([`ChatSettings::effort_message_models`]); none until set.
+    pub fn set_effort_message_models(&mut self, models: &'static [&'static str]) {
+        self.effort_message_models = models;
+    }
+
+    /// Picks the model the chat's next turn asks for. Earlier turns stay
+    /// as they were sent.
+    pub fn set_model(&mut self, model: String, cx: &mut Context<Self>) {
+        if self.conversation.model != model {
+            self.conversation.set_model(model);
+            cx.notify();
+        }
+    }
+
+    /// Picks the effort the chat's next turn asks for. Earlier turns stay
+    /// as they were sent.
+    pub fn set_effort(&mut self, effort: Effort, cx: &mut Context<Self>) {
+        if self.conversation.effort != effort {
+            self.conversation.set_effort(effort);
+            cx.notify();
+        }
     }
 
     /// Sets the provider, or with `None` shows the no-key state: the
@@ -854,6 +882,7 @@ impl ChatView {
             effort: self.conversation.effort,
             show_thinking: self.conversation.show_thinking,
             max_tokens: self.options.max_tokens,
+            effort_message_models: self.effort_message_models,
         };
         let request = build_request(&self.conversation, user_content.clone(), &settings);
         self.origins.insert(self.conversation.turns.len(), origin);

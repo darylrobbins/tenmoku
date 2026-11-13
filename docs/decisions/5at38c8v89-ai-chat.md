@@ -123,8 +123,10 @@ pub enum ChatEvent {
 
 - `POST https://api.anthropic.com/v1/messages`, headers `x-api-key`,
   `anthropic-version: 2023-06-01`, `content-type: application/json`,
-  `anthropic-beta: server-side-fallback-2026-07-01`, and a `user-agent` naming
-  fastedit and its version.
+  `anthropic-beta: server-side-fallback-2026-07-01` (comma-joined with
+  `mid-conversation-output-config-2026-07-01` when the messages hold an
+  effort-only system message, § 4), and a `user-agent` naming fastedit and its
+  version.
 - Body: `model` (default **`claude-opus-5-5`**, exactly, no date suffix),
   `max_tokens: 64000`, `stream: true`, `system`, `messages`,
   `output_config: {effort}` (default `medium`, the model's own default),
@@ -159,8 +161,10 @@ pub enum ChatEvent {
 - `Conversation { id, title, model, effort, show_thinking, turns }`; a `Turn`
   holds the user message as sent (its content blocks, rendered once at send,
   verbatim), the attachments' metadata (kind, path, rows, token estimate) for
-  the UI, and the reply: its content blocks verbatim, the model that served
-  it, `stop_reason`, `stop_details`, usage, and its state (streaming, done,
+  the UI, what it asked for (`asked_model`, `asked_effort`; absent in chats
+  saved before the picker, whose turns all asked the chat's own), and the
+  reply: its content blocks verbatim, the model that served it,
+  `stop_reason`, `stop_details`, usage, and its state (streaming, done,
   stopped, refused, failed).
 - **Append-only.** The API history is every done turn's user message and reply
   content, passed back unchanged: thinking blocks included (Claude Opus 5.5
@@ -176,10 +180,26 @@ pub enum ChatEvent {
 - After a mid-output fallback, a reply echoes back without the `thinking`,
   `redacted_thinking` and `tool_use` blocks that come before its last
   `fallback` block, as the fallback rules require.
-- `model`, `effort` and `show_thinking` are fixed per conversation at its first
-  send: a model switch empties the cache and drops thinking blocks, and an
-  effort or thinking change empties the messages cache. Settings changes apply
-  to new chats.
+- `model` and `effort` are what the next turn asks for, and change between
+  turns through the picker in the chat's header (T604); a pick on an empty
+  chat is simply its own. Nothing earlier is edited, and each turn records
+  what it asked, so a reloaded chat sends the same messages:
+  - **Model**: the next request names the new model and the earlier turns go
+    back unchanged, thinking blocks included (a model that can't read
+    another's thinking blocks drops them, unbilled). The prompt cache is per
+    model, so the first request after a switch misses it.
+  - **Effort**, on a model that takes the effort-only system message
+    (`fe_config::chat_models::EFFORT_MESSAGE_MODELS`: claude-opus-5-5,
+    claude-sonnet-5-5, claude-fable-5-1): the top-level
+    `output_config.effort` stays the chat's first turn's, and
+    `{"role": "system", "content": [], "output_config": {"effort": …}}` goes
+    before the user message of each turn whose effort differs from the one in
+    effect, with beta `mid-conversation-output-config-2026-07-01`; the cached
+    prefix holds. On any other model no effort message is sent and the
+    top-level effort is the one asked for now, which empties the messages
+    cache.
+- `show_thinking` stays fixed per conversation: a change empties the messages
+  cache. Settings changes apply to new chats; the picker doesn't write them.
 - A **refused** turn (`stop_reason: "refusal"`, before or mid-stream) and a
   **failed** turn stay in the transcript but leave the API history (the
   partial is discarded, as the docs require); the user edits and resends. A
@@ -200,10 +220,13 @@ Render order is tools, system, messages. The layout:
    edit-block format of § 8), versioned in code, with an explicit
    `cache_control: {"type": "ephemeral"}` breakpoint. Nothing per-workspace or
    per-request in it.
-3. `messages`: the history (§ 4), then the new user turn: its context blocks
-   first (each a `text` block tagged with what it is: `<file path="…"
-   rows="…">`, `<selection …>`, `<diagnostics>`, `<open-editors>`), the
-   question last.
+3. `messages`: the history (§ 4), with an effort-only system message before
+   each turn whose effort changed (§ 4), then the new user turn (after its own
+   effort message, if its effort changed): its context blocks first (each a
+   `text` block tagged with what it is: `<file path="…" rows="…">`,
+   `<selection …>`, `<diagnostics>`, `<open-editors>`), the question last. An
+   effort message only ever goes after what earlier requests sent, so the
+   prefix holds.
 4. Top-level automatic `cache_control: {"type": "ephemeral"}` moves the tail
    breakpoint forward each turn. 5-minute TTL (decided, see "Decided by the
    user"). An explicit breakpoint and the automatic one compose; the explicit
@@ -419,7 +442,9 @@ from disk. Trusted folders keep chats on disk as above.
 (`low`, `medium`, `high`, `xhigh`, `max`), `show_thinking = false`,
 `max_tokens = 64000`, `context_budget = 32000` (tokens of attachments per
 turn), `fallbacks = true`, `exclude = []` (globs the @file picker and attach
-refuse, from the user's and the workspace's settings, merged). A project's
+refuse, from the user's and the workspace's settings, merged). `model` and
+`effort` are new chats' defaults; the chat header's picker changes an open
+chat's (§ 4) without writing them. A project's
 `settings.toml` can't set the rest of `[chat]`: a cloned repo mustn't pick the
 model or turn fallbacks off. That is a `ProjectFilter` on `chat` that keeps
 only `exclude` (`kiln_core::ProjectFilter`, as `lsp` and `theme` are narrowed
@@ -496,8 +521,7 @@ In order (each depends on this record):
 
 The agent tool loop; inline chat in the editor; ghost-text completions from
 the model; other providers; images and PDFs as attachments; compaction; HTTP
-proxies and a configurable base URL (a later card, below); per-message effort
-(beta `mid-conversation-output-config-2026-07-01`); usage and cost reporting
+proxies and a configurable base URL (a later card, below); usage and cost reporting
 beyond the context meter.
 
 ## Decided by the user (2026-10-17)

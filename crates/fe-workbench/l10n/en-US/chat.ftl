@@ -25,6 +25,23 @@ workbench-chat-untrusted = the folder isn't trusted any more
 workbench-chat-delete-title = Delete this chat?
 workbench-chat-delete-detail = “{ $title }” will be deleted for good.
 
+## The model picker in the chat's header. A model's name, such as
+## "Opus 5.5", is a product name and isn't translated.
+
+# The picker button: $model is the chat's model, $effort its effort.
+workbench-chat-model-effort = { $model } · { $effort }
+# The picker button's name for a screen reader: $current is its label.
+workbench-chat-picker-name = Model and effort: { $current }
+workbench-chat-picker-model = Model
+workbench-chat-picker-effort = Effort
+# A picker row that is the chat's now: $name is its label.
+workbench-chat-picker-current = { $name }, current
+workbench-chat-effort-low = Low
+workbench-chat-effort-medium = Medium
+workbench-chat-effort-high = High
+workbench-chat-effort-xhigh = Extra high
+workbench-chat-effort-max = Max
+
 ## The API key form
 
 workbench-chat-key-placeholder = Anthropic API key

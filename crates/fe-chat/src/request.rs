@@ -61,13 +61,19 @@ an example or a shell command, has no path.
 
 /// What a new request takes from the chat settings. `model`, `effort` and
 /// `show_thinking` only apply to new chats: once a chat exists, its own are
-/// sent.
+/// sent (a chat's model and effort then change through its picker).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatSettings {
     pub model: String,
     pub effort: Effort,
     pub show_thinking: bool,
     pub max_tokens: u32,
+    /// The models whose effort changes mid-chat through an effort-only
+    /// system message (the host passes
+    /// `fe_config::chat_models::EFFORT_MESSAGE_MODELS`). On any other model
+    /// the top-level effort changes instead. None by default, which is
+    /// right for any model.
+    pub effort_message_models: &'static [&'static str],
 }
 
 impl Default for ChatSettings {
@@ -77,19 +83,45 @@ impl Default for ChatSettings {
             effort: Effort::Medium,
             show_thinking: false,
             max_tokens: 64_000,
+            effort_message_models: &[],
         }
     }
 }
 
-/// The request for a new turn of `conversation`: the system prompt, its
-/// history, then `new_user_content`. Call it before or after
-/// [`Conversation::begin_turn`]: the streaming turn isn't in the history.
+/// The request for a new turn of `conversation`, at its `model` and
+/// `effort` now: the system prompt, its history, then `new_user_content`.
+/// Call it before or after [`Conversation::begin_turn`]: the streaming turn
+/// isn't in the history.
+///
+/// Earlier turns go back unchanged whatever model they were asked of. When
+/// the chat's model takes effort messages (`settings.effort_message_models`),
+/// the top-level effort is the chat's first and an effort-only system
+/// message goes before each turn, the new one included, whose effort
+/// differs from the one in effect; so a later request's prefix is an
+/// earlier one's. On any other model no effort message is sent and the
+/// top-level effort is the chat's effort now.
 pub fn build_request(
     conversation: &Conversation,
     new_user_content: Vec<Value>,
     settings: &ChatSettings,
 ) -> ChatRequest {
-    let mut messages = conversation.history();
+    let effort_messages = settings
+        .effort_message_models
+        .contains(&conversation.model.as_str());
+    let first = conversation.first_effort();
+    let mut in_effect = first;
+    let mut messages = Vec::new();
+    for (turn, user, reply) in conversation.history_turns() {
+        let asked = conversation.asked_effort(turn);
+        if effort_messages && asked != in_effect {
+            messages.push(ApiMessage::effort(asked));
+            in_effect = asked;
+        }
+        messages.extend([user, reply]);
+    }
+    if effort_messages && conversation.effort != in_effect {
+        messages.push(ApiMessage::effort(conversation.effort));
+    }
     messages.push(ApiMessage {
         role: Role::User,
         content: new_user_content,
@@ -103,7 +135,11 @@ pub fn build_request(
         tools: Vec::new(),
         messages,
         max_tokens: settings.max_tokens,
-        effort: conversation.effort,
+        effort: if effort_messages {
+            first
+        } else {
+            conversation.effort
+        },
         show_thinking: conversation.show_thinking,
     }
 }

@@ -133,10 +133,14 @@ pub struct Conversation {
     pub id: ChatId,
     /// The first user line, cut to 60 chars; empty before the first turn.
     pub title: String,
-    /// The model asked for, fixed for the chat: a switch would empty the
-    /// prompt cache and drop the thinking blocks.
+    /// The model the next turn asks for. Picked from the chat's header; a
+    /// switch applies from the next send, earlier turns going back
+    /// unchanged (the first request after it misses the cache, which is per
+    /// model).
     pub model: String,
-    /// Fixed for the chat: a change empties the messages cache.
+    /// The effort the next turn asks for, picked like `model`. On a model
+    /// that takes effort messages a change goes through one (see
+    /// [`build_request`](crate::build_request)) and keeps the cache.
     pub effort: Effort,
     /// Fixed for the chat: a change empties the messages cache.
     pub show_thinking: bool,
@@ -155,6 +159,15 @@ pub struct Turn {
     pub reply: Vec<ReplyBlock>,
     /// The model that served the reply.
     pub model: Option<String>,
+    /// The model the turn asked for; `None` in chats saved before the
+    /// picker, whose turns all asked the chat's `model`.
+    #[serde(default)]
+    pub asked_model: Option<String>,
+    /// The effort the turn asked for; `None` in chats saved before the
+    /// picker, whose turns all asked the chat's `effort`. The request
+    /// replays it, so a reloaded chat sends the same messages.
+    #[serde(default)]
+    pub asked_effort: Option<Effort>,
     pub stop_reason: Option<StopReason>,
     pub stop_details: Option<Value>,
     pub usage: Option<Usage>,
@@ -254,8 +267,7 @@ pub struct Attachment {
 }
 
 impl Conversation {
-    /// A new, empty chat, its model, effort and thinking fixed from
-    /// `settings`.
+    /// A new, empty chat, its model, effort and thinking from `settings`.
     pub fn new(settings: &ChatSettings) -> Conversation {
         Conversation {
             id: ChatId::new(),
@@ -267,8 +279,49 @@ impl Conversation {
         }
     }
 
-    /// Starts a turn with the user message as sent. A turn still streaming
-    /// is stopped first.
+    /// Picks the model for the turns from the next send on. Nothing earlier
+    /// changes.
+    pub fn set_model(&mut self, model: impl Into<String>) {
+        self.settle_asked();
+        self.model = model.into();
+    }
+
+    /// Picks the effort for the turns from the next send on. Nothing
+    /// earlier changes.
+    pub fn set_effort(&mut self, effort: Effort) {
+        self.settle_asked();
+        self.effort = effort;
+    }
+
+    /// Writes what each turn of a chat saved before the picker asked for,
+    /// the chat's model and effort, into the turn, before they change.
+    fn settle_asked(&mut self) {
+        for turn in &mut self.turns {
+            turn.asked_model.get_or_insert_with(|| self.model.clone());
+            turn.asked_effort.get_or_insert(self.effort);
+        }
+    }
+
+    /// The model `turn` asked for.
+    pub fn asked_model<'a>(&'a self, turn: &'a Turn) -> &'a str {
+        turn.asked_model.as_deref().unwrap_or(&self.model)
+    }
+
+    /// The effort `turn` asked for.
+    pub fn asked_effort(&self, turn: &Turn) -> Effort {
+        turn.asked_effort.unwrap_or(self.effort)
+    }
+
+    /// The effort the chat's first turn asked for, or its effort now before
+    /// one: the top-level effort while effort messages carry the changes.
+    pub fn first_effort(&self) -> Effort {
+        self.turns
+            .first()
+            .map_or(self.effort, |turn| self.asked_effort(turn))
+    }
+
+    /// Starts a turn with the user message as sent, asking for the chat's
+    /// model and effort now. A turn still streaming is stopped first.
     pub fn begin_turn(&mut self, user_content: Vec<Value>, attachments: Vec<Attachment>) {
         self.stop();
         if self.title.is_empty() {
@@ -279,6 +332,8 @@ impl Conversation {
             attachments,
             reply: Vec::new(),
             model: None,
+            asked_model: Some(self.model.clone()),
+            asked_effort: Some(self.effort),
             stop_reason: None,
             stop_details: None,
             usage: None,
@@ -374,6 +429,15 @@ impl Conversation {
     /// A done turn with no finished blocks is left out too, since an empty
     /// assistant message is a 400.
     pub fn history(&self) -> Vec<ApiMessage> {
+        self.history_turns()
+            .into_iter()
+            .flat_map(|(_, user, reply)| [user, reply])
+            .collect()
+    }
+
+    /// [`Conversation::history`] by turn: each turn in it, with its user
+    /// message and reply.
+    pub fn history_turns(&self) -> Vec<(&Turn, ApiMessage, ApiMessage)> {
         let mut messages = Vec::new();
         for turn in &self.turns {
             let reply = match turn.state {
@@ -388,14 +452,15 @@ impl Conversation {
             if reply.is_empty() {
                 continue;
             }
-            messages.push(ApiMessage {
+            let user = ApiMessage {
                 role: Role::User,
                 content: turn.user_content.clone(),
-            });
-            messages.push(ApiMessage {
+            };
+            let reply = ApiMessage {
                 role: Role::Assistant,
                 content: reply,
-            });
+            };
+            messages.push((turn, user, reply));
         }
         messages
     }

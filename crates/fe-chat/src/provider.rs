@@ -31,8 +31,14 @@ pub struct ChatRequest {
     pub system: Vec<SystemBlock>,
     /// Empty in v1.
     pub tools: Vec<ToolSpec>,
+    /// The history and the new user message, with an effort-only system
+    /// message ([`Role::System`]) before each turn whose effort changed on a
+    /// model that takes one.
     pub messages: Vec<ApiMessage>,
     pub max_tokens: u32,
+    /// The top-level effort: on a model that takes effort messages, the
+    /// chat's first effort, so the cached prefix holds; on any other, the
+    /// effort asked for now.
     pub effort: Effort,
     /// Whether the reply's thinking is shown (summarized) rather than omitted.
     pub show_thinking: bool,
@@ -72,6 +78,14 @@ pub enum CacheControl {
 pub enum Role {
     User,
     Assistant,
+    /// An effort-only system message (`content: []` with
+    /// `output_config.effort`, beta `mid-conversation-output-config-2026-07-01`):
+    /// the effort from the next user message on, without the messages-cache
+    /// reset a top-level change makes. Its content is empty. See
+    /// [`ApiMessage::effort`].
+    System {
+        effort: Effort,
+    },
 }
 
 /// One message of the API history: its content blocks, verbatim.
@@ -79,6 +93,26 @@ pub enum Role {
 pub struct ApiMessage {
     pub role: Role,
     pub content: Vec<Value>,
+}
+
+impl ApiMessage {
+    /// The effort-only system message setting `effort` for the turns from
+    /// the next user message on.
+    pub fn effort(effort: Effort) -> ApiMessage {
+        ApiMessage {
+            role: Role::System { effort },
+            content: Vec::new(),
+        }
+    }
+
+    /// The effort an effort-only system message sets; `None` for any other
+    /// message.
+    pub fn effort_change(&self) -> Option<Effort> {
+        match self.role {
+            Role::System { effort } => Some(effort),
+            Role::User | Role::Assistant => None,
+        }
+    }
 }
 
 /// How hard the model thinks (`output_config.effort`).

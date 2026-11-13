@@ -22,6 +22,12 @@
 //! - **New chats** take their model, effort, thinking, token limit and
 //!   fallbacks from `[chat]` in the settings; a change to them leaves an
 //!   open chat as it is.
+//! - **The model picker** (`chat-model-picker`, "Opus 5.5 · Medium") in the
+//!   header lists, in place of the chat as History does, the models and
+//!   efforts [`picker_choices`] offers, the chat's own marked. A pick sets
+//!   what the chat's next turn asks for (an empty chat's own model or
+//!   effort); earlier turns go back as they were sent (record § 4). It
+//!   doesn't write the settings.
 //! - **The first-run notice** (record § 10) shows until Got It, which
 //!   writes `<state_dir>/chats/notice-seen`.
 //! - **Context** (record § 13; `chat_context.rs`): the selection, the
@@ -279,6 +285,12 @@ struct Folder {
     target: Option<Target>,
 }
 
+/// A model picker row's choice.
+enum Pick {
+    Model(String),
+    Effort(Effort),
+}
+
 /// A chat in History.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HistoryRow {
@@ -306,6 +318,62 @@ impl HistoryRow {
         };
         text!("workbench-chat-history-label", title = title, when = when)
     }
+}
+
+/// What the model picker offers: models and efforts, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PickerChoices {
+    pub(crate) models: Vec<String>,
+    pub(crate) efforts: Vec<Effort>,
+}
+
+/// The efforts, least first.
+const EFFORTS: [Effort; 5] = [
+    Effort::Low,
+    Effort::Medium,
+    Effort::High,
+    Effort::XHigh,
+    Effort::Max,
+];
+
+/// What the picker offers for `conversation`: the models the app knows,
+/// then the chat's own if it isn't one of them (typed into the settings),
+/// and the five efforts. The one place the lists come from, so another
+/// kind of chat can offer its own.
+pub(crate) fn picker_choices(conversation: &Conversation) -> PickerChoices {
+    let mut models: Vec<String> = (fe_config::chat_models::KNOWN.iter())
+        .map(|model| (*model).to_owned())
+        .collect();
+    if !models.contains(&conversation.model) {
+        models.push(conversation.model.clone());
+    }
+    PickerChoices {
+        models,
+        efforts: EFFORTS.to_vec(),
+    }
+}
+
+/// An effort's name, such as "Medium".
+fn effort_label(effort: Effort) -> Text {
+    match effort {
+        Effort::Low => text!("workbench-chat-effort-low"),
+        Effort::Medium => text!("workbench-chat-effort-medium"),
+        Effort::High => text!("workbench-chat-effort-high"),
+        Effort::XHigh => text!("workbench-chat-effort-xhigh"),
+        Effort::Max => text!("workbench-chat-effort-max"),
+    }
+}
+
+/// The picker button's label for `conversation`: its model and effort, as
+/// "Opus 5.5 · Medium".
+pub(crate) fn picker_label(conversation: &Conversation) -> Text {
+    let model = fe_config::chat_models::label(&conversation.model).to_owned();
+    let effort = effort_label(conversation.effort).resolve().to_string();
+    text!(
+        "workbench-chat-model-effort",
+        model = model,
+        effort = effort
+    )
 }
 
 /// Writes the empty `file`, its directory made private if it's new.
@@ -337,6 +405,7 @@ fn new_chat_settings(cx: &App) -> (ChatSettings, ChatOptions) {
         effort,
         show_thinking: chat.show_thinking,
         max_tokens: chat.max_tokens,
+        effort_message_models: fe_config::chat_models::EFFORT_MESSAGE_MODELS,
     };
     let options = ChatOptions {
         max_tokens: chat.max_tokens,
@@ -429,6 +498,8 @@ pub(crate) struct ChatPanel {
     bases: HashMap<ChatId, Arc<SaveState>>,
     /// History, while it shows in place of the chat.
     history: Option<Vec<HistoryRow>>,
+    /// Whether the model picker shows in place of the chat.
+    picker: bool,
     /// The listing under way: dropping it drops its answer.
     listing: Option<Task<()>>,
     /// The view's events, its gaining focus, and its changes.
@@ -552,6 +623,7 @@ impl ChatPanel {
             acked: HashMap::new(),
             bases: HashMap::new(),
             history: None,
+            picker: false,
             listing: None,
             _view: view_subscriptions,
             _workbench: Vec::new(),
@@ -584,6 +656,7 @@ impl ChatPanel {
                 cx,
             );
             view.set_provider(None, cx);
+            view.set_effort_message_models(settings.effort_message_models);
             view.set_notice(notice, cx);
             view.set_context_budget(budget, cx);
             view
@@ -872,6 +945,7 @@ impl ChatPanel {
     /// where it is trusted, with the window's own not written, so that
     /// those chats are listed whatever the trust has been since.
     fn toggle_history(&mut self, cx: &mut Context<Self>) {
+        self.picker = false;
         if self.history.take().is_some() || self.listing.take().is_some() {
             cx.notify();
             return;
@@ -1370,6 +1444,93 @@ impl ChatPanel {
         }))
     }
 
+    /// The model picker: the models, then the efforts, each a button that
+    /// picks it, the chat's own marked.
+    fn render_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui = ui_theme(cx);
+        let conversation = self.view.read(cx).conversation();
+        let choices = picker_choices(conversation);
+        let (model_now, effort_now) = (conversation.model.clone(), conversation.effort);
+        let heading = |label: Text| {
+            div()
+                .px_1()
+                .pt_1()
+                .text_color(ui.muted_text)
+                .child(label.resolve())
+        };
+        let mark = |button: Button, label: String, current: bool| {
+            if current {
+                button
+                    .icon(fe_ui::Icon::Check)
+                    .name(tr!("workbench-chat-picker-current", name = label).to_string())
+            } else {
+                button
+            }
+        };
+        let models = choices.models.into_iter().enumerate().map(|(i, model)| {
+            let label = fe_config::chat_models::label(&model).to_owned();
+            let current = model == model_now;
+            let pick = cx.listener(move |this, _, window, cx| {
+                this.pick(Pick::Model(model.clone()), window, cx);
+            });
+            let button = Button::new(
+                (verbatim!("chat-model-row"), i),
+                Text::verbatim(label.clone()),
+            )
+            .small()
+            .ghost()
+            .debug_selector(move || format!("{}-{i}", verbatim!("chat-model-row")))
+            .on_click(pick);
+            mark(button, label, current)
+        });
+        let efforts = choices.efforts.into_iter().enumerate().map(|(i, effort)| {
+            let label = effort_label(effort);
+            let current = effort == effort_now;
+            let pick = cx.listener(move |this, _, window, cx| {
+                this.pick(Pick::Effort(effort), window, cx);
+            });
+            let button = Button::new((verbatim!("chat-effort-row"), i), label.clone())
+                .small()
+                .ghost()
+                .debug_selector(move || format!("{}-{i}", verbatim!("chat-effort-row")))
+                .on_click(pick);
+            mark(button, label.resolve().to_string(), current)
+        });
+        v_flex()
+            .id("chat-picker-list")
+            .debug_selector(|| "chat-picker-list".into())
+            .size_full()
+            .gap_1()
+            .p_2()
+            .overflow_y_scroll()
+            .child(heading(text!("workbench-chat-picker-model")))
+            .children(models)
+            .child(heading(text!("workbench-chat-picker-effort")))
+            .children(efforts)
+    }
+
+    /// Shows or closes the model picker, in place of the chat.
+    fn toggle_picker(&mut self, cx: &mut Context<Self>) {
+        self.picker = !self.picker;
+        if self.picker {
+            (self.history, self.listing) = (None, None);
+        }
+        cx.notify();
+    }
+
+    /// Picks a model or effort for the chat's next turn, closes the picker
+    /// and gives the composer focus.
+    fn pick(&mut self, pick: Pick, window: &mut Window, cx: &mut Context<Self>) {
+        self.view.update(cx, |view, cx| match pick {
+            Pick::Model(model) => view.set_model(model, cx),
+            Pick::Effort(effort) => view.set_effort(effort, cx),
+        });
+        self.picker = false;
+        let focus = self.focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
     /// Replaces the chat with a new one, from the settings now.
     fn start_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_chat(None, window, cx);
@@ -1388,9 +1549,11 @@ impl ChatPanel {
         self.adopt(folder, cx);
         // The list's buttons or the old composer had focus: the new view's
         // composer takes it.
-        let refocus =
-            self.history.is_some() || self.view.focus_handle(cx).contains_focused(window, cx);
+        let refocus = self.history.is_some()
+            || self.picker
+            || self.view.focus_handle(cx).contains_focused(window, cx);
         self.history = None;
+        self.picker = false;
         self.listing = None;
         let (view, options, subscriptions) = Self::chat_view(self.notice, conversation, window, cx);
         (self.view, self.options, self._view) = (view, options, subscriptions);
@@ -1528,6 +1691,7 @@ impl ChatPanel {
         self.gather(cx);
         // What was being read for the old root or trust doesn't show.
         (self.history, self.listing, self.restoring) = (None, None, None);
+        self.picker = false;
         let folder = self.track_current(cx);
         if folder != self.home {
             if self.view.read(cx).conversation().turns.is_empty() {
@@ -1804,6 +1968,18 @@ impl ChatPanel {
     pub(crate) fn header_note(&self) -> Option<SharedString> {
         self.key_note()
     }
+
+    /// The model picker button's label now.
+    pub(crate) fn picker_label(&self, cx: &App) -> String {
+        picker_label(self.view.read(cx).conversation())
+            .resolve()
+            .to_string()
+    }
+
+    /// Whether the model picker shows.
+    pub(crate) fn picker_open(&self) -> bool {
+        self.picker
+    }
 }
 
 impl Render for ChatPanel {
@@ -1822,21 +1998,42 @@ impl Render for ChatPanel {
         let new_chat = cx.listener(|this, _, window, cx| {
             kiln::with_cx(window, cx, |cx| this.new_chat(cx));
         });
+        // Under the buttons, on a line of its own, so the picker beside
+        // them never squeezes it into a column.
         let note = self.key_note().map(|note| {
             div()
                 .debug_selector(|| "chat-key-note".into())
+                .px_2()
+                .pb_1()
                 .text_color(ui.muted_text)
                 .child(note)
         });
         let history = cx.listener(|this, _, _, cx| this.toggle_history(cx));
-        let header = h_flex()
+        let picker = cx.listener(|this, _, _, cx| this.toggle_picker(cx));
+        let picker_label = picker_label(self.view.read(cx).conversation());
+        let picker_name = tr!(
+            "workbench-chat-picker-name",
+            current = picker_label.resolve().to_string()
+        )
+        .to_string();
+        let buttons = h_flex()
             .gap_2()
             .px_2()
             .py_1()
             .items_center()
-            .border_b_1()
-            .border_color(ui.border)
-            .child(div().flex_1().min_w_0().children(note))
+            .child(
+                // It takes the room the others leave, and in a narrow
+                // panel its label ends in an ellipsis.
+                h_flex().flex_1().min_w_0().child(
+                    Button::new(verbatim!("chat-model-picker"), picker_label)
+                        .small()
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .name(picker_name)
+                        .debug_selector(|| "chat-model-picker".into())
+                        .on_click(picker),
+                ),
+            )
             .child(
                 Button::new(verbatim!("chat-history"), text!("workbench-chat-history"))
                     .small()
@@ -1849,6 +2046,11 @@ impl Render for ChatPanel {
                     .debug_selector(|| "chat-new".into())
                     .on_click(new_chat),
             );
+        let header = v_flex()
+            .border_b_1()
+            .border_color(ui.border)
+            .child(buttons)
+            .children(note);
         let root = v_flex()
             .size_full()
             .child(header)
@@ -1862,6 +2064,7 @@ impl Render for ChatPanel {
                         .flex_1()
                         .min_h_0()
                         .child(self.render_history(rows, cx)),
+                    None if self.picker => div().flex_1().min_h_0().child(self.render_picker(cx)),
                     None => div().flex_1().min_h_0().child(self.view.clone()),
                 },
             });
@@ -2062,3 +2265,7 @@ fn on_workbench(cx: &mut App, run: fn(&mut Workbench, &mut Window, &mut Context<
 #[cfg(test)]
 #[path = "chat_panel_tests.rs"]
 mod chat_panel_tests;
+
+#[cfg(test)]
+#[path = "chat_picker_tests.rs"]
+mod chat_picker_tests;
