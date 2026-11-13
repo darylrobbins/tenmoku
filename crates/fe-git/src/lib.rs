@@ -333,7 +333,9 @@ fn commit_blob<'repo>(
 }
 
 /// The text of `rela_path`'s blob in `commit`'s tree, decoded as UTF-8
-/// (lossily); `None` when it isn't there or is binary.
+/// (lossily) with one leading BOM dropped, as the buffer drops it on load;
+/// `None` when it isn't there or is binary. A UTF-16 blob isn't valid UTF-8,
+/// so its text is still garbage (the buffer decodes UTF-16, the base doesn't).
 fn commit_text(commit: &gix::Commit<'_>, rela_path: &Path) -> Result<Option<String>, GitError> {
     let Some(object) = commit_blob(commit, rela_path)? else {
         return Ok(None);
@@ -341,7 +343,13 @@ fn commit_text(commit: &gix::Commit<'_>, rela_path: &Path) -> Result<Option<Stri
     if is_binary(&object.data) {
         return Ok(None);
     }
-    Ok(Some(String::from_utf8_lossy(&object.data).into_owned()))
+    Ok(Some(blob_text(&object.data)))
+}
+
+/// `data` as lossy UTF-8, minus one leading UTF-8 BOM.
+pub(crate) fn blob_text(data: &[u8]) -> String {
+    let data = data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data);
+    String::from_utf8_lossy(data).into_owned()
 }
 
 /// Whether git would take `data` for binary: a NUL in its first 8000 bytes.

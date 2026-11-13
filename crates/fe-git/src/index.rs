@@ -56,7 +56,9 @@ impl Repo {
     }
 
     /// The text of `path`'s stage-0 blob in the index, decoded as UTF-8
-    /// (lossily). `None` when `path` isn't in the index (or is only marked
+    /// (lossily) with one leading BOM dropped, as the buffer drops it on load.
+    /// A UTF-16 blob isn't valid UTF-8, so its text is still garbage. `None`
+    /// when `path` isn't in the index (or is only marked
     /// intent-to-add), is outside the working tree, or the blob is binary.
     pub fn index_text(&self, path: &std::path::Path) -> Result<Option<String>, GitError> {
         let Ok(rela_path) = path.strip_prefix(&self.workdir) else {
@@ -86,7 +88,7 @@ impl Repo {
         if data[..data.len().min(BINARY_PROBE_LEN)].contains(&0) {
             return Ok(None);
         }
-        Ok(Some(String::from_utf8_lossy(data).into_owned()))
+        Ok(Some(crate::blob_text(data)))
     }
 
     /// Every changed file with the staged and unstaged halves apart, sorted by
