@@ -119,3 +119,23 @@ reason = "A git stash ref"
 file = "src/refs.rs"
 text = "refs/heads/{branch}"
 reason = "A git ref name passed to git"
+
+[[literal]]
+file = "src/askpass.rs"
+text = "askpass-{}-{}"
+reason = "The name of a remote command's private askpass directory, not shown"
+
+[[literal]]
+file = "src/askpass.rs"
+text = "fe-git askpass"
+reason = "A thread's name, for debuggers"
+
+[[literal]]
+file = "src/askpass.rs"
+text = "fe-git askpass watch"
+reason = "A thread's name, for debuggers"
+
+[[literal]]
+file = "src/askpass.rs"
+text = "#!/bin/sh\nunset GIT_CONFIG_PARAMETERS SSH_ASKPASS SSH_ASKPASS_REQUIRE\nGIT_ASKPASS=true GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never\nexport GIT_ASKPASS GIT_TERMINAL_PROMPT GCM_INTERACTIVE\ncase $1 in\nget)\n  if found=$(git credential fill 2>&1); then\n    printf '%s\\n' \"$found\" | grep -E '^[a-z_]+(\\[\\])?=.'\n  else\n    case $found in *'told us to quit'*) echo quit=1;; esac\n  fi;;\nerase) git credential reject 2>/dev/null;;\nesac\nexit 0\n"
+reason = "The credential helper script git runs, not shown"

@@ -2280,6 +2280,7 @@ dependencies = [
  "gix",
  "imara-diff",
  "kiln-l10n",
+ "rustix",
  "tempfile",
  "thiserror 2.0.21",
 ]

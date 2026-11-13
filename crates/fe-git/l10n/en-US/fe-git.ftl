@@ -64,6 +64,7 @@ git-remote-rejected =
 git-remote-auth =
     authentication failed:
     { $output }
+git-askpass-cancelled = the credential prompt was cancelled
 git-remote-failed =
     git failed:
     { $output }

@@ -121,6 +121,13 @@ workbench-git-remote-cant =
        *[push] push
     }: { $cause }
 
+## Credential prompts for fetch, pull and push (git_askpass.rs)
+
+# The prompt's name to a screen reader; $remote is the remote's name, as origin.
+workbench-git-askpass-title = Sign in to { $remote }
+# Under the masked field, whose placeholder is what git or ssh asked.
+workbench-git-askpass-status = { $remote } asks for this. Enter sends it to git, Escape cancels; it isn't saved.
+
 ## Stash (git_stash.rs)
 
 workbench-git-stash-none = There are no stashes in the repository.

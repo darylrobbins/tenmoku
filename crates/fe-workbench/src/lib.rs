@@ -33,6 +33,7 @@ pub mod external_format;
 mod find_bar;
 mod find_commands;
 mod git;
+mod git_askpass;
 mod git_panel;
 mod go_to_line;
 mod grammar_prompt;
@@ -133,6 +134,7 @@ pub use extension_install::{InstallError, Installed, install_extension};
 pub use extension_snippets::{
     ExtensionSnippet, extension_snippets, set_extension_snippets, snippet_body_error,
 };
+pub use git_askpass::{git_askpass_helper, set_git_askpass};
 pub use git_panel::{GitPanel, GitPanelEvent};
 pub use grammar_prompt::{
     FetchGrammar, GrammarInstallError, GrammarInstalled, GrammarOffer, GrammarOffers,

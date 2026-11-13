@@ -653,3 +653,8 @@ reason = "A row's debug selector, for tests"
 file = "src/todo_picker.rs"
 text = "todo-picker-badge:{keyword}:{text}"
 reason = "A row's keyword badge's debug selector, for tests"
+
+[[literal]]
+file = "src/git_remote.rs"
+text = "git {}"
+reason = "A prompting fetch's, pull's or push's thread's name, shown only in debuggers"

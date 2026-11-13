@@ -51,6 +51,20 @@ pub(crate) fn run_raw(
     stdin: Option<&[u8]>,
     envs: &[(&str, &Path)],
 ) -> Result<Output, GitError> {
+    run_raw_with(workdir, access, args, stdin, envs, None)
+}
+
+/// Like [`run_raw`]. With `group`, git runs in a process group of its own,
+/// whose id (git's pid) `group` is told once it's started, so all it runs
+/// can be stopped together. Unix only: elsewhere `group` is never told.
+pub(crate) fn run_raw_with(
+    workdir: &Path,
+    access: Access,
+    args: &[OsString],
+    stdin: Option<&[u8]>,
+    envs: &[(&str, &Path)],
+    group: Option<&dyn Fn(u32)>,
+) -> Result<Output, GitError> {
     let mut command = Command::new("git");
     // Paths are literal file names, never pathspec patterns. Not for
     // `stash`, which is never given paths: `push --include-untracked`
@@ -79,10 +93,20 @@ pub(crate) fn run_raw(
     if access == Access::Read {
         command.env("GIT_OPTIONAL_LOCKS", "0");
     }
+    #[cfg(unix)]
+    if group.is_some() {
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    }
     let mut child = command.spawn().map_err(|err| match err.kind() {
         ErrorKind::NotFound => GitError::GitMissing,
         _ => GitError::Io(err.to_string()),
     })?;
+    #[cfg(unix)]
+    if let Some(group) = group {
+        group(child.id());
+    }
+    #[cfg(not(unix))]
+    let _ = group;
     // Written on its own thread: git may not read stdin until a hook has run,
     // and the hook's output must be drained meanwhile.
     let writer = match (stdin, child.stdin.take()) {

@@ -13,9 +13,11 @@
 //! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
 //! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`], [`Repo::create_branch_at`], [`Repo::rename_branch`], [`Repo::delete_branch`], [`Repo::merge_into_current`], [`Repo::stash_push`], [`Repo::stash_pop`], [`Repo::stash_apply`]) and
 //! remotes ([`Repo::fetch`], [`Repo::pull`], [`Repo::push`], [`Repo::publish`]) run `git`,
+//! asking for credentials only through an [`Askpass`] ([`Repo::set_askpass`]),
 //! because gix doesn't apply clean filters or autocrlf when staging; they block,
 //! so callers run them off the UI thread.
 
+pub mod askpass;
 mod blame;
 mod branch;
 mod cli;
@@ -34,6 +36,7 @@ pub mod remote_link;
 mod stage;
 mod stash;
 
+pub use askpass::{Askpass, AskpassRequest};
 pub use blame::{BlameRun, CommitInfo};
 pub use branch::{BranchError, BranchRef, MergeError, SwitchError};
 pub use commit::CommitError;
@@ -112,6 +115,8 @@ pub struct FileStatus {
 pub struct Repo {
     repo: gix::ThreadSafeRepository,
     workdir: PathBuf,
+    /// How remote commands ask for credentials; never, without one.
+    askpass: Option<Askpass>,
 }
 
 impl Repo {
@@ -136,7 +141,11 @@ impl Repo {
             return Ok(None);
         };
         let workdir = std::path::absolute(workdir).map_err(GitError::from_gix)?;
-        Ok(Some(Repo { repo, workdir }))
+        Ok(Some(Repo {
+            repo,
+            workdir,
+            askpass: None,
+        }))
     }
 
     /// The root of the working tree.

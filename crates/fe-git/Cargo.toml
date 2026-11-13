@@ -14,6 +14,10 @@ gix.workspace = true
 imara-diff.workspace = true
 thiserror.workspace = true
 
+# Stopping a cancelled credential prompt's git and all it runs (askpass.rs).
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 kiln-l10n = { workspace = true, features = ["lint"] }
 tempfile.workspace = true

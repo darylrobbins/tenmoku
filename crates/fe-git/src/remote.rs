@@ -3,10 +3,13 @@
 //! terminal. Every call blocks until git exits, which can take as long as the
 //! network does; callers run it off the UI thread.
 //!
-//! Nothing here waits on a prompt: git gets no stdin, terminal and askpass
-//! prompts are off, and `ssh` runs in batch mode unless the user configured
-//! their own ssh command. A remote that wants credentials it can't get
-//! fails with [`RemoteError::Auth`].
+//! Git gets no stdin, and never prompts on a terminal. Without an
+//! [`Askpass`] ([`Repo::set_askpass`]) nothing here waits on a prompt:
+//! askpass prompts are off too, and `ssh` runs in batch mode unless the user
+//! configured their own ssh command. A remote that wants credentials it
+//! can't get fails with [`RemoteError::Auth`]. With one, git's prompts, and
+//! ssh's unless the user's ssh command is their own, go to it instead (see
+//! [`crate::askpass`]), and one cancelled fails the same way.
 //!
 //! A signer, or the command that finds its key, may ask for a passphrase, so
 //! nothing here can sign: pulls pass `--no-gpg-sign` and turn
@@ -23,7 +26,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use crate::cli::{Access, run, run_raw};
+use crate::askpass::Askpass;
+use crate::cli::{Access, run, run_raw, run_raw_with};
 use crate::{GitError, Repo};
 
 /// How [`Repo::pull`] brings in the upstream's commits.
@@ -61,8 +65,10 @@ pub enum RemoteError {
     /// (or a lease went stale). `output` is all git printed.
     #[error("{}", kiln_l10n::tr!("git-remote-rejected", output = output.as_str()))]
     Rejected { output: String },
-    /// The remote wanted credentials git couldn't get without a prompt, or
-    /// refused them. `output` is all git printed.
+    /// The remote wanted credentials git couldn't get without a prompt (or
+    /// with one, cancelled, which stops git), or refused them. `output` is
+    /// all git printed, or for a cancel that stopped git before it said
+    /// anything, that it was cancelled.
     #[error("{}", kiln_l10n::tr!("git-remote-auth", output = output.as_str()))]
     Auth { output: String },
     /// Git failed for another reason, and `output` is all it printed; or it
@@ -83,6 +89,13 @@ const AUTH_MARKERS: &[&str] = &[
 ];
 
 impl Repo {
+    /// Has fetches, pulls and pushes ask for the credentials git can't find
+    /// through `askpass`, or, with `None`, never ask (as a new `Repo`
+    /// doesn't). Ignored on Windows.
+    pub fn set_askpass(&mut self, askpass: Option<Askpass>) {
+        self.askpass = askpass;
+    }
+
     /// Fetches HEAD's upstream remote, or `origin` when HEAD's branch has none
     /// or HEAD is detached, deleting remote-tracking branches gone from the
     /// remote when `prune` (otherwise `fetch.prune` decides). `FETCH_HEAD`
@@ -103,8 +116,8 @@ impl Repo {
         if prune {
             args.push("--prune".into());
         }
-        args.extend(["--".into(), remote.into()]);
-        let output = self.run_remote(&args)?;
+        args.extend(["--".into(), (&remote).into()]);
+        let output = self.run_remote(&remote, &args)?;
         outcome(output)
     }
 
@@ -120,9 +133,9 @@ impl Repo {
     /// `commit.gpgSign` says. Signatures are verified as configured.
     pub fn pull(&self, mode: PullMode) -> Result<(), RemoteError> {
         let branch = self.branch()?.ok_or(RemoteError::Detached)?;
-        if self.upstream_of(&branch)?.is_none() {
+        let Some((remote, _)) = self.upstream_of(&branch)? else {
             return Err(RemoteError::NoUpstream);
-        }
+        };
         let signs = self.signs_commits(&branch, mode)?;
         let mut args: Vec<OsString> = [
             "-c",
@@ -143,7 +156,7 @@ impl Repo {
             PullMode::FastForwardOnly => &["--no-rebase", "--ff-only"],
         };
         args.extend(flags.iter().map(OsString::from));
-        let output = self.run_remote(&args)?;
+        let output = self.run_remote(&remote, &args)?;
         // Checked on success too, in case something left the merge half done.
         let paths = self.unmerged_paths()?;
         if !paths.is_empty() {
@@ -176,8 +189,12 @@ impl Repo {
         if force_with_lease {
             args.push("--force-with-lease".into());
         }
-        args.extend(["--".into(), remote.into(), format!("HEAD:{merge}").into()]);
-        let output = self.run_remote(&args)?;
+        args.extend([
+            "--".into(),
+            (&remote).into(),
+            format!("HEAD:{merge}").into(),
+        ]);
+        let output = self.run_remote(&remote, &args)?;
         outcome(output)
     }
 
@@ -199,7 +216,7 @@ impl Repo {
             remote.into(),
             format!("{commit}:{merge}").into(),
         ]);
-        let output = self.run_remote(&args)?;
+        let output = self.run_remote(remote, &args)?;
         outcome(output)
     }
 
@@ -210,7 +227,7 @@ impl Repo {
         self.branch()?.ok_or(RemoteError::Detached)?;
         let mut args = self.push_args()?;
         args.extend(["-u", "--", remote, "HEAD"].map(OsString::from));
-        let output = self.run_remote(&args)?;
+        let output = self.run_remote(remote, &args)?;
         outcome(output)
     }
 
@@ -390,23 +407,65 @@ impl Repo {
             .collect()
     }
 
-    /// Runs a git command that talks to a remote, with every prompt off.
-    fn run_remote(&self, args: &[OsString]) -> Result<Output, GitError> {
-        // An empty GIT_ASKPASS also keeps git from falling back to SSH_ASKPASS
-        // for credentials; Git Credential Manager has its own switch.
-        let mut envs: Vec<(&str, &Path)> = vec![
-            ("GIT_ASKPASS", "".as_ref()),
-            ("GCM_INTERACTIVE", "never".as_ref()),
-            ("GIT_EDITOR", "true".as_ref()),
-        ];
+    /// Runs a git command that talks to `remote`, its prompts going to the
+    /// askpass if there's one, else every prompt off.
+    fn run_remote(&self, remote: &str, args: &[OsString]) -> Result<Output, RemoteError> {
         let own_ssh = ["GIT_SSH_COMMAND", "GIT_SSH"]
             .iter()
             .any(|var| std::env::var_os(var).is_some())
             || self.config("core.sshCommand")?.is_some();
+        // Kept until git's exited, with the socket answering meanwhile. One
+        // that can't be set up leaves the prompts off.
+        #[cfg(unix)]
+        let session = (self.askpass.as_ref())
+            .and_then(|askpass| crate::askpass::Session::start(askpass, remote).ok());
+        #[cfg(not(unix))]
+        let _ = remote;
+        // Git Credential Manager has its own switch, and would show its own
+        // window otherwise.
+        let mut envs: Vec<(&str, &Path)> = vec![
+            ("GCM_INTERACTIVE", "never".as_ref()),
+            ("GIT_EDITOR", "true".as_ref()),
+        ];
+        #[cfg(unix)]
+        if let Some(session) = &session {
+            envs.push(("GIT_ASKPASS", session.script()));
+            if !own_ssh {
+                // Asking even with a terminal to read from, which an app
+                // started from one has.
+                envs.push(("SSH_ASKPASS", session.script()));
+                envs.push(("SSH_ASKPASS_REQUIRE", "force".as_ref()));
+            }
+            let mut with_config = session.config_args();
+            with_config.extend_from_slice(args);
+            let started = |group| session.started(group);
+            let output = run_raw_with(
+                &self.workdir,
+                Access::Write,
+                &with_config,
+                None,
+                &envs,
+                Some(&started),
+            )?;
+            if session.cancelled() {
+                // Stopped, it may have said nothing of why.
+                let text = combined(&output);
+                let output = if text.is_empty() {
+                    kiln_l10n::tr!("git-askpass-cancelled").to_string()
+                } else {
+                    text
+                };
+                return Err(RemoteError::Auth { output });
+            }
+            return Ok(output);
+        }
+        // An empty GIT_ASKPASS also keeps git from falling back to
+        // SSH_ASKPASS for credentials.
+        envs.push(("GIT_ASKPASS", "".as_ref()));
         if !own_ssh {
             envs.push(("GIT_SSH_COMMAND", "ssh -o BatchMode=yes".as_ref()));
         }
-        run_raw(&self.workdir, Access::Write, args, None, &envs)
+        Ok(run_raw(&self.workdir, Access::Write, args, None, &envs)?)
     }
 }
 
@@ -546,15 +605,20 @@ fn command_error(args: &[OsString], output: &Output) -> GitError {
     }
 }
 
+/// All git printed, stdout then stderr, trimmed.
+fn combined(output: &Output) -> String {
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    text.trim().to_owned()
+}
+
 /// `Ok` for a git that succeeded, else the error its output names.
 fn outcome(output: Output) -> Result<(), RemoteError> {
     if output.status.success() {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-    text.push_str(&stderr);
-    let output = text.trim().to_owned();
+    let output = combined(&output);
     Err(
         if stderr.contains("[rejected]") || stderr.contains("[remote rejected]") {
             RemoteError::Rejected { output }

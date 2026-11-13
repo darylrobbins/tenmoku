@@ -869,7 +869,17 @@ fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App)
     })
 }
 
+/// The first argument that runs the executable as git's askpass helper.
+const ASKPASS_FLAG: &str = "--askpass";
+
 fn main() {
+    // Run by git or ssh for a credential prompt (fe_workbench::set_git_askpass,
+    // below): it asks the running app over the socket given, and is done.
+    // Before anything else, the log file and the instance check included.
+    let mut args = std::env::args_os().skip(1);
+    if args.next().is_some_and(|arg| arg == ASKPASS_FLAG) {
+        std::process::exit(fe_workbench::git_askpass_helper(args));
+    }
     #[cfg(windows)]
     windows_console::attach_to_parent();
     let mut startup = Startup::new();
@@ -1003,6 +1013,15 @@ fn main() {
         // extensions load, so their servers are checked against it.
         if let Some(dir) = fe_config::paths::state_dir() {
             fe_workbench::set_extension_consent_file(cx, dir.join(fe_workbench::CONSENT_FILE));
+            // Fetches, pulls and pushes ask for the credentials git can't
+            // find through this executable's askpass mode, over a socket in
+            // a private directory of each command's here. Not on Windows.
+            if cfg!(unix)
+                && let Ok(exe) = std::env::current_exe()
+            {
+                let helper = vec![exe.into_os_string(), ASKPASS_FLAG.into()];
+                fe_workbench::set_git_askpass(cx, helper, dir.clone());
+            }
             let history = fe_buffer::LocalHistory::new(dir.join("history"));
             let pruned = history.clone();
             cx.background_executor()

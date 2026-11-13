@@ -19,6 +19,10 @@
 //!   that commit to that destination, whatever HEAD does meanwhile. It doesn't
 //!   publish.
 //!
+//! A remote that wants credentials git can't find asks for them in the
+//! window, when the app has set up the helper (`git_askpass`); such a
+//! command runs on a thread of its own while it may wait on the user.
+//!
 //! One runs at a time in a repository: another asked for meanwhile answers
 //! [`ALREADY_RUNNING`], in any window into it, by any path or linked worktree,
 //! so finding the repository comes first, in the background. Each runs git in
@@ -37,7 +41,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use fe_git::{Head, PullMode, RemoteError, Repo};
+use fe_git::{Askpass, Head, PullMode, RemoteError, Repo};
 use gpui::{App, AppContext as _, AsyncApp, Context, EntityId, Global, SharedString, Window};
 use kiln_l10n::tr;
 
@@ -48,7 +52,7 @@ use super::{
     },
     GitCommand, GitOp,
 };
-use crate::Workbench;
+use crate::{Workbench, git_askpass};
 
 /// What a command answers outside a repository.
 fn no_repo() -> SharedString {
@@ -281,10 +285,28 @@ impl Workbench {
             #[cfg(test)]
             let gate = git_stage::test_gate(cx);
             let root = origin.root.clone();
+            let askpass = git_askpass::askpass(workbench.clone(), window, cx);
             let outcome = cx.background_spawn(async move {
                 #[cfg(test)]
                 gate.await;
-                run_remote(&root, command, confirmed.as_ref())
+                let Some(askpass) = askpass else {
+                    return run_remote(&root, command, confirmed.as_ref(), None);
+                };
+                // It may wait on the user for as long as they take, which
+                // a thread of the background pool shouldn't.
+                let (done, outcome) = futures::channel::oneshot::channel();
+                let ran = std::thread::Builder::new()
+                    .name(format!("git {}", verb(command)))
+                    .spawn(move || {
+                        let outcome = run_remote(&root, command, confirmed.as_ref(), Some(askpass));
+                        done.send(outcome).ok();
+                    });
+                match ran {
+                    Ok(_) => outcome.await.unwrap_or_else(|_| {
+                        Outcome::Failed(failed(&tr!("workbench-git-remote-failed")))
+                    }),
+                    Err(error) => Outcome::Failed(failed(&error.to_string())),
+                }
             });
             cx.spawn(async move |cx: &mut AsyncApp| {
                 let outcome = outcome.await;
@@ -432,14 +454,21 @@ fn after_force_check(workdir: &Path) {
     }
 }
 
-/// Runs `command` in the repository containing `root`. Runs on the background
-/// executor, and blocks until git exits.
-fn run_remote(root: &Path, command: GitCommand, confirmed: Option<&Target>) -> Outcome {
-    let repo = match Repo::discover(root) {
+/// Runs `command` in the repository containing `root`, asking for
+/// credentials through `askpass` if there's one. Runs off the main thread,
+/// and blocks until git exits.
+fn run_remote(
+    root: &Path,
+    command: GitCommand,
+    confirmed: Option<&Target>,
+    askpass: Option<Askpass>,
+) -> Outcome {
+    let mut repo = match Repo::discover(root) {
         Ok(Some(repo)) => repo,
         Ok(None) => return Outcome::NoRepo,
         Err(error) => return Outcome::Failed(error.into()),
     };
+    repo.set_askpass(askpass);
     let ran = match command {
         GitCommand::Fetch => {
             (repo.fetch(false)).map(|()| tr!("workbench-git-remote-fetched").into())
@@ -539,7 +568,7 @@ fn told(command: GitCommand, outcome: Outcome, root: &Path) -> Toast {
 
 /// The toast for `command`, run in `root`, failing with `error`: one sentence
 /// on the cause and what to do, under it anything git said.
-fn failure(command: GitCommand, error: RemoteError, root: &Path) -> Toast {
+pub(crate) fn failure(command: GitCommand, error: RemoteError, root: &Path) -> Toast {
     let verb = verb(command);
     let (sentence, detail) = match error {
         RemoteError::NoRemote => (tr!("workbench-git-remote-no-remote", verb = verb), None),
