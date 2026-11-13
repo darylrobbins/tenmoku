@@ -171,14 +171,13 @@ fn a_file_from_before_roots_were_recorded_is_found_by_its_paths() {
         fs::write(store.file(), text).unwrap();
     };
     fs::create_dir_all(dir.path()).unwrap();
-    let old_root = if cfg!(windows) {
-        r"C:\old\project"
-    } else {
-        "/old/project"
-    };
-    let old_file = Path::new(old_root).join("src").join("main.rs");
-    let a = LayoutStore::new(dir.path(), Path::new(old_root));
-    let old_file_json = old_file.to_string_lossy().replace('\\', "\\\\");
+    // Absolute on every OS; it need not exist.
+    let old_root = std::env::temp_dir().join("old").join("project");
+    let old_file = old_root.join("src").join("main.rs");
+    let a = LayoutStore::new(dir.path(), &old_root);
+    // A JSON string literal, quotes off: a Windows path needs its backslashes escaped.
+    let old_file_json = serde_json::to_string(&old_file.to_string_lossy()).unwrap();
+    let old_file_json = &old_file_json[1..old_file_json.len() - 1];
     write(
         &a,
         &format!(
@@ -189,7 +188,7 @@ fn a_file_from_before_roots_were_recorded_is_found_by_its_paths() {
     write(&rootless, r#"{"id": 2, "saved": 4, "session": 3}"#);
     let found = restore_last_quit(dir.path(), 8, |_| true);
     let roots: Vec<_> = found.iter().map(|w| w.root.clone()).collect();
-    assert_eq!(roots, [PathBuf::from(old_root), PathBuf::new()]);
+    assert_eq!(roots, [old_root, PathBuf::new()]);
     assert_eq!(found[0].store, a);
     assert_eq!(found[1].store, rootless);
 }
