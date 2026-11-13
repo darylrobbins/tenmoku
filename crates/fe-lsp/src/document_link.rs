@@ -2,14 +2,18 @@
 //! server finds in a document (URLs and paths in comments and strings,
 //! import paths), as ranges with the URI each one opens.
 //!
-//! - **Provider.** A server without `documentLinkProvider` gets no
-//!   request: `Ok(None)`.
+//! - **Provider.** Links are asked of the document's first server (the
+//!   lead first) with `documentLinkProvider` (merged across servers once
+//!   A7 lands). With none, nothing is sent: `Ok(None)`.
 //! - **Ranges.** Decoded against the text the server had at the request's
 //!   version, as bytes of that version, sorted by start. An empty range
 //!   (nothing to click) is dropped.
-//! - **Resolve.** Only a link without a `target` is resolved, only from a
-//!   server whose provider has a `resolveProvider`, and only while the
-//!   server has the version the link was found in.
+//! - **Resolve.** Only a link without a `target` is resolved, only by the
+//!   server that found it ([`DocumentLink::owner`]) and only if its
+//!   provider has a `resolveProvider`, and only while that session has the
+//!   document open as it had it, at the version the link was found in. A
+//!   link whose server stopped or restarted since sends nothing, and is
+//!   `Unavailable("the language server restarted")`.
 //! - **Failures.** A request past `lsp.timeouts.hover` (3 s) is
 //!   `Ok(Some([]))`, a resolve past it is the link as it was. Both cancel
 //!   the request.
@@ -25,7 +29,7 @@ use lsp_types::{DocumentLinkParams, ServerCapabilities, TextDocumentIdentifier};
 use crate::document::Admitted;
 use crate::encoding::to_lsp;
 use crate::event::LspError;
-use crate::manager::LspManager;
+use crate::manager::{LspManager, Owner};
 
 /// One link a server has in a document.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,16 +45,28 @@ pub struct DocumentLink {
     pub tooltip: Option<String>,
     /// The server's own, kept for the resolve.
     pub data: Option<serde_json::Value>,
+    /// The server that found it, and the document as its session had it
+    /// open: only that session resolves it.
+    owner: Option<Owner>,
 }
 
 impl DocumentLink {
+    /// A link no server owns: it's resolved by the lead of the buffer it's
+    /// in.
     pub fn new(range: Range<usize>, target: Option<String>) -> Self {
         Self {
             range,
             target,
             tooltip: None,
             data: None,
+            owner: None,
         }
+    }
+
+    /// The server that found the link, with the opening of the document it
+    /// was found in.
+    pub fn owner(&self) -> Option<Owner> {
+        self.owner
     }
 
     /// The scheme of the link's target, in lower case: `file`, `https`…
@@ -79,11 +95,12 @@ const FEATURE: &str = "documentLink";
 const RESOLVE: &str = "documentLink/resolve";
 
 impl LspManager {
-    /// The links in open buffer `buffer` at its `version`: sent only if
-    /// the server has that version, as any
+    /// The links in open buffer `buffer` at its `version`, asked of its
+    /// first server with `documentLinkProvider` (the lead first), each
+    /// owned by it: sent only if the server has that version, as any
     /// [`document_request`](Self::document_request) is.
     ///
-    /// `Ok(None)` if the server doesn't provide links: nothing is sent.
+    /// `Ok(None)` if no server provides links: nothing is sent.
     /// `Ok(Some(vec![]))` if it has none, or doesn't say within
     /// `lsp.timeouts.hover` (which also cancels the request). Dropping the
     /// future cancels it too. It doesn't borrow the manager.
@@ -93,7 +110,7 @@ impl LspManager {
         version: Version,
     ) -> impl Future<Output = Result<Option<Vec<DocumentLink>>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request_if_provided::<DocumentLinkRequest>(
+        let reply = self.provider_request::<DocumentLinkRequest>(
             buffer,
             version,
             FEATURE,
@@ -110,9 +127,10 @@ impl LspManager {
         reply
             .boxed()
             .map(|answer| match answer {
-                Ok((reply, admitted)) => {
+                Ok((reply, admitted, server)) => {
+                    let owner = Some(Owner::of(server, &admitted));
                     let mut links: Vec<_> = (reply.result.unwrap_or_default().into_iter())
-                        .map(|link| convert(link, &admitted))
+                        .map(|link| convert(link, &admitted, owner))
                         .filter(|link| !link.range.is_empty())
                         .collect();
                     links.sort_by_key(|link| (link.range.start, link.range.end));
@@ -126,8 +144,11 @@ impl LspManager {
     }
 
     /// `link`, found in open buffer `buffer` at its `version`, with the
-    /// `target` its server resolves. Sent only while the server has that
-    /// version.
+    /// `target` its server resolves. Sent only to the link's
+    /// [`owner`](DocumentLink::owner), while its session has the document
+    /// open as it had it and at that version: otherwise nothing is sent,
+    /// and the answer is `Unavailable("the language server restarted")`.
+    /// A link with no owner goes to `buffer`'s lead.
     ///
     /// A link that has its target is as resolved as it gets, and is
     /// answered as it is without asking; one whose server has no
@@ -144,28 +165,42 @@ impl LspManager {
             return async move { Ok(link) }.boxed();
         }
         let raw = link.clone();
-        let reply = self.document_request_if_provided::<DocumentLinkResolve>(
-            buffer,
-            version,
-            RESOLVE,
-            resolves_links,
-            move |at| {
-                let text = &at.document.sent.text;
-                lsp_types::DocumentLink {
-                    range: lsp_types::Range {
-                        start: to_lsp(text, raw.range.start, at.encoding),
-                        end: to_lsp(text, raw.range.end, at.encoding),
-                    },
-                    target: None,
-                    tooltip: raw.tooltip,
-                    data: raw.data,
-                }
-            },
-        );
+        let owner = link.owner;
+        let params = move |at: &Admitted| {
+            let text = &at.document.sent.text;
+            lsp_types::DocumentLink {
+                range: lsp_types::Range {
+                    start: to_lsp(text, raw.range.start, at.encoding),
+                    end: to_lsp(text, raw.range.end, at.encoding),
+                },
+                target: None,
+                tooltip: raw.tooltip,
+                data: raw.data,
+            }
+        };
+        let reply = match owner {
+            Some(owner) => self
+                .owner_request::<DocumentLinkResolve>(
+                    owner,
+                    version,
+                    RESOLVE,
+                    resolves_links,
+                    params,
+                )
+                .boxed(),
+            None => self
+                .document_request_if_provided::<DocumentLinkResolve>(
+                    buffer,
+                    version,
+                    RESOLVE,
+                    resolves_links,
+                    params,
+                )
+                .boxed(),
+        };
         reply
-            .boxed()
             .map(move |answer| match answer {
-                Ok((reply, admitted)) => Ok(convert(reply.result, &admitted)),
+                Ok((reply, admitted)) => Ok(convert(reply.result, &admitted, owner)),
                 Err(LspError::Timeout) => Ok(link),
                 Err(err) => Err(err),
             })
@@ -173,13 +208,14 @@ impl LspManager {
     }
 }
 
-/// A reply's link, in bytes of the version asked about.
-fn convert(link: lsp_types::DocumentLink, at: &Admitted) -> DocumentLink {
+/// A reply's link, in bytes of the version asked about, owned by `owner`.
+fn convert(link: lsp_types::DocumentLink, at: &Admitted, owner: Option<Owner>) -> DocumentLink {
     DocumentLink {
         range: at.offsets(link.range),
         target: link.target.map(String::from),
         tooltip: link.tooltip,
         data: link.data,
+        owner,
     }
 }
 

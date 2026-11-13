@@ -1,9 +1,11 @@
 //! `textDocument/documentSymbol`: the symbols of a document, as the flat
 //! pre-order list the tree-sitter outline uses.
 //!
-//! - **Provider.** A server without `documentSymbolProvider` gets no
-//!   request: `Ok(None)`, and the caller falls back to the tree-sitter
-//!   outline.
+//! - **Provider.** Only the document's provider is asked
+//!   ([`Feature::DocumentSymbols`](crate::Feature::DocumentSymbols)): its
+//!   lead if that has `documentSymbolProvider`, else the first add-on that
+//!   does, for one outline. With none, nothing is sent: `Ok(None)`, and the
+//!   caller falls back to the tree-sitter outline.
 //! - **Shapes.** `DocumentSymbol[]` keeps the server's nesting;
 //!   `SymbolInformation[]` is flat and is nested by range containment, its
 //!   symbols of other documents dropped.
@@ -87,7 +89,7 @@ impl LspManager {
         version: Version,
     ) -> impl Future<Output = Result<Option<Vec<DocumentSymbol>>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request_if_provided::<DocumentSymbolRequest>(
+        let reply = self.provider_request::<DocumentSymbolRequest>(
             buffer,
             version,
             FEATURE,
@@ -104,7 +106,7 @@ impl LspManager {
         reply
             .boxed()
             .map(|answer| match answer {
-                Ok((reply, admitted)) => Ok(Some(match reply.result {
+                Ok((reply, admitted, _)) => Ok(Some(match reply.result {
                     None => Vec::new(),
                     Some(DocumentSymbolResponse::Nested(symbols)) => nested(symbols, &admitted),
                     Some(DocumentSymbolResponse::Flat(symbols)) => flat(symbols, &admitted),
@@ -118,7 +120,7 @@ impl LspManager {
 }
 
 /// Whether the server provides document symbols.
-fn provides_symbols(capabilities: &ServerCapabilities) -> bool {
+pub(crate) fn provides_symbols(capabilities: &ServerCapabilities) -> bool {
     match &capabilities.document_symbol_provider {
         None | Some(OneOf::Left(false)) => false,
         Some(OneOf::Left(true) | OneOf::Right(_)) => true,

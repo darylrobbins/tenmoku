@@ -1,7 +1,10 @@
 //! `textDocument/foldingRange`: the ranges the server says can fold.
 //!
-//! - **Provider.** A server without `foldingRangeProvider` gets no
-//!   request: `Ok(None)`, and the caller keeps its own fold model.
+//! - **Provider.** Only the document's provider is asked
+//!   ([`Feature::Folding`](crate::Feature::Folding)): its lead if that has
+//!   `foldingRangeProvider`, else the first add-on that does, as two
+//!   servers' fold sets would make nonsense folds. With none, nothing is
+//!   sent: `Ok(None)`, and the caller keeps its own fold model.
 //! - **Ranges.** Whole lines only (the client declares `lineFoldingOnly`),
 //!   so a range is its start and end rows, which need no position
 //!   encoding. A range that ends on or before its start is dropped, as is
@@ -67,7 +70,7 @@ impl LspManager {
         version: Version,
     ) -> impl Future<Output = Result<Option<Vec<FoldingRange>>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request_if_provided::<FoldingRangeRequest>(
+        let reply = self.provider_request::<FoldingRangeRequest>(
             buffer,
             version,
             FEATURE,
@@ -84,7 +87,7 @@ impl LspManager {
         reply
             .boxed()
             .map(|answer| match answer {
-                Ok((reply, _)) => {
+                Ok((reply, _, _)) => {
                     let found = (reply.result.unwrap_or_default().into_iter())
                         .filter(|range| range.end_line > range.start_line)
                         .map(|range| FoldingRange {
@@ -109,7 +112,7 @@ impl LspManager {
 }
 
 /// Whether the server provides folding ranges.
-fn provides_folding(capabilities: &ServerCapabilities) -> bool {
+pub(crate) fn provides_folding(capabilities: &ServerCapabilities) -> bool {
     !matches!(
         capabilities.folding_range_provider,
         None | Some(FoldingRangeProviderCapability::Simple(false))

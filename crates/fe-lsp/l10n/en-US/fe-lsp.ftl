@@ -44,6 +44,7 @@ lsp-kind-type-parameter = type parameter
 lsp-unavailable-buffer-changed = buffer changed
 lsp-unavailable-too-large = too large for the language server
 lsp-unavailable-not-open = not open on a language server
+lsp-unavailable-restarted = the language server restarted
 lsp-not-absolute = { $path } isn't an absolute path
 lsp-not-a-server-command = { $command }: not a command of the server
 

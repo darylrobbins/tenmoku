@@ -1,8 +1,11 @@
 //! `textDocument/semanticTokens/full` and `full/delta`: the tokens a
 //! server has for a whole document, by the names in its legend.
 //!
-//! - **Provider.** A server without a `semanticTokensProvider` that does
-//!   `full` gets no request: `Ok(None)`.
+//! - **Provider.** Only the document's provider is asked
+//!   ([`Feature::SemanticTokens`](crate::Feature::SemanticTokens)): its
+//!   lead if that has a `semanticTokensProvider` that does `full`, else
+//!   the first add-on that does, as legends differ and a delta belongs to
+//!   one server's last answer. With none, nothing is sent: `Ok(None)`.
 //! - **Session.** The legend is read from the capabilities when the request
 //!   is made, with the opening of the document they go with. A reply from
 //!   another session or opening than the legend's is `Err(Retry)`, and so
@@ -40,7 +43,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::Admitted;
 use crate::encoding::from_lsp;
-use crate::event::LspError;
+use crate::event::{LspError, not_open};
 use crate::identity::{IncarnationId, SessionId};
 use crate::manager::LspManager;
 
@@ -217,33 +220,51 @@ impl LspManager {
                 uri: at.document.uri.clone(),
             },
         };
-        // The capabilities, with the opening they go with: the same before
-        // and after them, as a new session opens the document anew.
-        let known = self.server_of(buffer).and_then(|server| {
+        // The provider (§5): the first server the buffer is placed on whose
+        // capabilities have full tokens, with them and the opening they go
+        // with: the same before and after them, as a new session opens the
+        // document anew. One still initializing before it is waited for.
+        let mut known = Err(None);
+        for server in self.servers_of(buffer) {
             let opening = self.active_identity(buffer, server);
-            let capabilities = self.capabilities(server)?;
-            let same = self.active_identity(buffer, server) == opening;
-            Some((capabilities, opening.filter(|_| same)))
-        });
-        let Some((capabilities, opening)) = known else {
-            // Waits for them, sends nothing, and has the caller ask again
-            // (or says why it can't).
-            return self
-                .document_request_if_provided::<FullRequest>(
-                    buffer,
-                    version,
-                    INITIALIZED,
-                    |_| false,
-                    full_params,
-                )
-                .boxed()
-                .map(|answer| match answer {
-                    Ok(_) => Err(LspError::Retry),
-                    Err(LspError::Unavailable(why)) if why == INITIALIZED => Err(LspError::Retry),
-                    Err(LspError::Timeout) => Err(LspError::Retry),
-                    Err(err) => Err(err),
-                })
-                .boxed();
+            let Some(capabilities) = self.capabilities(server) else {
+                known = Err(Some(server));
+                break;
+            };
+            if provides_full(&capabilities) {
+                let same = self.active_identity(buffer, server) == opening;
+                known = Ok((server, capabilities, opening.filter(|_| same)));
+                break;
+            }
+        }
+        let (server, capabilities, opening) = match known {
+            Ok(known) => known,
+            // None provides them: nothing is sent.
+            Err(None) if self.is_served(buffer) => return async { Ok(None) }.boxed(),
+            Err(None) => return async { Err(LspError::Unavailable(not_open())) }.boxed(),
+            Err(Some(initializing)) => {
+                // Waits for them, sends nothing, and has the caller ask again
+                // (or says why it can't).
+                return self
+                    .document_request_if_provided_on::<FullRequest>(
+                        initializing,
+                        buffer,
+                        version,
+                        INITIALIZED,
+                        |_| false,
+                        full_params,
+                    )
+                    .boxed()
+                    .map(|answer| match answer {
+                        Ok(_) => Err(LspError::Retry),
+                        Err(LspError::Unavailable(why)) if why == INITIALIZED => {
+                            Err(LspError::Retry)
+                        }
+                        Err(LspError::Timeout) => Err(LspError::Retry),
+                        Err(err) => Err(err),
+                    })
+                    .boxed();
+            }
         };
         let legend = legend(&capabilities);
         let delta = previous.and_then(|previous| {
@@ -255,7 +276,8 @@ impl LspManager {
         // Boxed, as their types name the manager's borrow.
         let (reply, previous): (BoxFuture<'static, _>, _) = match delta {
             Some((previous_result_id, previous)) => (
-                self.document_request_if_provided::<DeltaRequest>(
+                self.document_request_if_provided_on::<DeltaRequest>(
+                    server,
                     buffer,
                     version,
                     FEATURE,
@@ -284,7 +306,8 @@ impl LspManager {
                 Some(previous),
             ),
             None => (
-                self.document_request_if_provided::<FullRequest>(
+                self.document_request_if_provided_on::<FullRequest>(
+                    server,
                     buffer,
                     version,
                     FEATURE,
@@ -415,7 +438,7 @@ fn legend(capabilities: &ServerCapabilities) -> Option<Legend> {
 }
 
 /// Whether the server provides the tokens of a whole document.
-fn provides_full(capabilities: &ServerCapabilities) -> bool {
+pub(crate) fn provides_full(capabilities: &ServerCapabilities) -> bool {
     options(capabilities).is_some_and(|options| {
         matches!(
             options.full,

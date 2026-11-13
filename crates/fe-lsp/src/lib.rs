@@ -155,7 +155,7 @@ pub use launcher::{
 };
 pub use linked_editing::LinkedEditing;
 pub use lsp_types::FileChangeType;
-pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager, RouteServer};
+pub use manager::{DEFAULT_MAX_FILE_BYTES, Feature, KillSwitch, LspManager, Owner, RouteServer};
 pub use navigation::LspNavigation;
 pub use registry::{extension_spec, server_root};
 pub use requests::{ORPHANS_MAX, Reply};

@@ -3,19 +3,23 @@
 //! `textDocument/onTypeFormatting`, the edits a character just typed asks
 //! for.
 //!
+//! - **Provider.** Only the document's provider of each is asked
+//!   ([`Feature`]): its lead if that has the provider, else the first
+//!   add-on that does, as two edit sets can't be applied together.
 //! - **On type.** Sent only for one of the buffer's trigger characters
-//!   ([`LspManager::on_type_formatting_triggers`]): the server's static
-//!   `documentOnTypeFormattingProvider`, or a dynamic registration for the
-//!   document. Any other character, or a buffer whose server's capabilities
-//!   aren't known yet, is `Ok(None)` with nothing sent: typing never waits
-//!   for a server to start.
+//!   ([`LspManager::on_type_formatting_triggers`]), its provider's alone:
+//!   the server's static `documentOnTypeFormattingProvider`, or a dynamic
+//!   registration for the document. Any other character, or a buffer whose
+//!   servers' capabilities aren't known yet, is `Ok(None)` with nothing
+//!   sent: typing never waits for a server to start.
 //!
 //! - **Edits.** The reply's edits are decoded against the text the server
 //!   had at the request's version, as byte edits of that version, sorted
 //!   by start. Edits that overlap are an error ([`LspError::RefusedEdit`]).
-//! - **No formatter.** `Ok(None)` for a server without the provider, with
-//!   nothing sent (a server still initializing is waited for first), so a host can say "no formatter". `Ok(Some(vec![]))`
-//!   is a server with nothing to change.
+//! - **No formatter.** `Ok(None)` when no server of the document has the
+//!   provider, with nothing sent (a server still initializing is waited
+//!   for first), so a host can say "no formatter". `Ok(Some(vec![]))` is a
+//!   server with nothing to change.
 //! - **Failures.** A request past 3 s is [`LspError::Timeout`], which also
 //!   cancels it, not an empty result: format on save can tell "nothing to
 //!   change" from "gave up".
@@ -34,7 +38,7 @@ use lsp_types::{
 use crate::document::Admitted;
 use crate::encoding::to_lsp;
 use crate::event::LspError;
-use crate::manager::LspManager;
+use crate::manager::{Feature, LspManager};
 use crate::workspace_edit::decode_closed;
 
 /// Byte edits of the version formatted, sorted by start.
@@ -62,9 +66,10 @@ impl LspManager {
     /// byte `range` of it: sent only if the server has that version, as
     /// any [`document_request`](Self::document_request) is.
     ///
-    /// `Ok(None)` if the buffer's server has no formatting provider (or,
-    /// for a range, no range formatting provider). `Err(Timeout)` if it
-    /// doesn't answer within 3 s. It doesn't borrow the manager.
+    /// Sent to the buffer's provider of [`Feature::Formatting`] (for a
+    /// range, [`Feature::RangeFormatting`]). `Ok(None)` if none of its
+    /// servers has the provider. `Err(Timeout)` if the provider doesn't
+    /// answer within 3 s. It doesn't borrow the manager.
     pub fn format(
         &self,
         buffer: BufferId,
@@ -74,13 +79,13 @@ impl LspManager {
     ) -> impl Future<Output = Result<Option<Edits>, LspError>> + Send + 'static + use<> {
         // A buffer on no server has no formatter; a server still
         // initializing (or restarting) is waited for, inside the timeout.
-        let reply = self.server_of(buffer).map(|_| match range {
+        let reply = self.is_served(buffer).then(|| match range {
             None => self
-                .document_request_if_provided::<Formatting>(
+                .provider_request::<Formatting>(
                     buffer,
                     version,
                     FEATURE,
-                    |capabilities| offers(capabilities.document_formatting_provider.clone()),
+                    |capabilities| Feature::Formatting.advertised(capabilities),
                     move |at| DocumentFormattingParams {
                         text_document: document(at),
                         options: options.lsp(),
@@ -89,11 +94,11 @@ impl LspManager {
                 )
                 .boxed(),
             Some(range) => self
-                .document_request_if_provided::<RangeFormatting>(
+                .provider_request::<RangeFormatting>(
                     buffer,
                     version,
                     FEATURE,
-                    |capabilities| offers(capabilities.document_range_formatting_provider.clone()),
+                    |capabilities| Feature::RangeFormatting.advertised(capabilities),
                     move |at| {
                         let text = &at.document.sent.text;
                         let position = |offset| {
@@ -116,7 +121,7 @@ impl LspManager {
             let Some(reply) = reply else {
                 return Ok(None);
             };
-            let (reply, admitted) = match reply.await {
+            let (reply, admitted, _) = match reply.await {
                 Ok(answered) => answered,
                 Err(LspError::Unavailable(why)) if why == FEATURE => return Ok(None),
                 Err(err) => return Err(err),
@@ -133,8 +138,9 @@ impl LspManager {
 impl LspManager {
     /// The edits the server makes after `ch` was typed, leaving the caret
     /// at byte `offset` of open buffer `buffer` at its `version`: sent only
-    /// if `ch` is one of the buffer's on-type formatting triggers (see the
-    /// [module](self)) and the server has that version.
+    /// to the buffer's provider of [`Feature::OnTypeFormatting`], and only if
+    /// `ch` is one of its on-type formatting triggers (see the
+    /// [module](self)) and it has that version.
     ///
     /// `Ok(None)` if `ch` isn't a trigger there. `Err(Timeout)` if the
     /// server doesn't answer within 3 s. It doesn't borrow the manager.
@@ -146,11 +152,14 @@ impl LspManager {
         ch: char,
         options: FormatOptions,
     ) -> impl Future<Output = Result<Option<Edits>, LspError>> + Send + 'static + use<> {
-        let triggered = self.on_type_formatting_triggers(buffer).contains(&ch);
-        let reply = triggered.then(|| {
+        let provider = self.provider_of(buffer, Feature::OnTypeFormatting);
+        let triggered =
+            provider.filter(|&provider| (self.on_type_triggers_on(provider, buffer)).contains(&ch));
+        let reply = triggered.map(|provider| {
             // The triggers were read from the capabilities and registrations
             // known now: the request goes whichever provided them.
-            self.document_request_if_provided::<OnTypeFormatting>(
+            self.document_request_if_provided_on::<OnTypeFormatting>(
+                provider,
                 buffer,
                 version,
                 FEATURE,
@@ -181,7 +190,7 @@ impl LspManager {
 const FEATURE: &str = "formatting";
 
 /// Whether a server's provider capability is on.
-fn offers<T>(provider: Option<OneOf<bool, T>>) -> bool {
+pub(crate) fn offers<T>(provider: Option<OneOf<bool, T>>) -> bool {
     match provider {
         Some(OneOf::Left(on)) => on,
         Some(OneOf::Right(_)) => true,

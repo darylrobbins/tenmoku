@@ -98,9 +98,21 @@ impl Started {
             .collect()
     }
 
+    /// What a rename at `offset` would rename. A target found is owned by
+    /// the server, as it has the buffer open now, and is answered without
+    /// its owner, to compare.
     fn prepare(&self, offset: usize) -> Result<Option<RenameTarget>, LspError> {
         let (buffer, version) = (self.buffer.id(), self.buffer.version());
-        answer(self.manager.prepare_rename(buffer, version, offset))
+        let prepared = answer(self.manager.prepare_rename(buffer, version, offset))?;
+        Ok(prepared.map(|target| {
+            let owner = target.owner.expect("a prepared target has its owner");
+            assert_eq!(owner.buffer, buffer);
+            assert_eq!(
+                Some(owner.identity),
+                self.manager.active_identity(buffer, owner.server)
+            );
+            RenameTarget::new(target.range, target.placeholder)
+        }))
     }
 
     fn rename(&self, offset: usize, new_name: &str) -> Result<Vec<FileEdits>, LspError> {

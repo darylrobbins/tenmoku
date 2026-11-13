@@ -480,9 +480,10 @@ fn items_from_another_session_are_stale() {
     // A result keeps the session of the item it answers.
     assert_eq!(edges[0].item.from, target.from);
     let before = s.requests(INCOMING).len();
-    target.from = target
-        .from
-        .map(|(_, incarnation)| (s.manager.identities().new_session(), incarnation));
+    target.from = target.from.map(|owner| crate::Owner {
+        identity: (s.manager.identities().new_session(), owner.identity.1),
+        ..owner
+    });
     let stale = answer(s.manager.incoming_calls(s.buffer.id(), &target));
     assert_eq!(stale, Err(LspError::Unavailable("stale".into())));
     assert_eq!(s.requests(INCOMING).len(), before);

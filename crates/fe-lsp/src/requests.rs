@@ -20,6 +20,7 @@
 
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::task::Poll;
 use std::time::Duration;
 
 use async_lsp::ServerSocket;
@@ -31,7 +32,7 @@ use futures::{FutureExt, StreamExt, select_biased};
 use lsp_types::request::Request;
 
 use crate::clock::Clock;
-use crate::event::LspError;
+use crate::event::{LspError, not_open};
 use crate::readiness::Readiness;
 use crate::server::send_request;
 
@@ -123,6 +124,82 @@ pub(crate) fn within<A: Send + 'static>(
                 timed_out
             }
         }
+    }
+}
+
+/// How one server's answer to a first-that-answers request counts (§5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Rank {
+    /// A non-empty answer: taken, once every earlier server has settled.
+    Taken,
+    /// An empty answer: the answer only if no server gives one.
+    Empty,
+    /// An error: the answer only if no server answers at all.
+    Failed,
+    /// The server doesn't provide the feature: the answer only if none
+    /// does.
+    Unprovided,
+}
+
+/// The first-that-answers of `asks` (§5), one request per server in
+/// server order (the lead first), all already sent: the first answer that
+/// `rank` takes *in that order*, waiting for each earlier server to
+/// answer, fail or time out before taking a later one's, so the result
+/// doesn't depend on which answered first. If none is taken, the earliest
+/// of the best of the rest: an empty answer, else an error, else "not
+/// provided". No servers at all is `Unavailable(not open)`.
+///
+/// Every request is polled at once. Those still out when the answer is
+/// known are dropped, which cancels them, as is every one if the future
+/// is dropped.
+pub(crate) fn first_that_answers<T: Send + 'static>(
+    asks: Vec<BoxFuture<'static, Result<T, LspError>>>,
+    rank: impl Fn(&Result<T, LspError>) -> Rank + Send + 'static,
+) -> impl Future<Output = Result<T, LspError>> + Send + 'static {
+    let mut pending: Vec<Option<BoxFuture<'static, Result<T, LspError>>>> =
+        asks.into_iter().map(Some).collect();
+    let mut settled: Vec<Option<Result<T, LspError>>> = pending.iter().map(|_| None).collect();
+    // Every server before this one has settled, and none was taken.
+    let mut next = 0;
+    futures::future::poll_fn(move |cx| {
+        for (ask, answer) in pending.iter_mut().zip(settled.iter_mut()).skip(next) {
+            if let Some(future) = ask
+                && let Poll::Ready(answered) = future.poll_unpin(cx)
+            {
+                *answer = Some(answered);
+                *ask = None;
+            }
+        }
+        while let Some(answer) = settled.get(next) {
+            match answer {
+                None => return Poll::Pending,
+                Some(answer) if rank(answer) == Rank::Taken => {
+                    // The later ones are cancelled.
+                    pending.clear();
+                    return Poll::Ready(settled[next].take().expect("settled"));
+                }
+                Some(_) => next += 1,
+            }
+        }
+        let best = (settled.iter().enumerate())
+            .filter_map(|(at, answer)| Some((rank(answer.as_ref()?), at)))
+            .min()
+            .map(|(_, at)| at);
+        Poll::Ready(match best {
+            Some(at) => settled[at].take().expect("settled"),
+            None => Err(LspError::Unavailable(not_open())),
+        })
+    })
+}
+
+/// How a list answer counts: a non-empty list is taken, an empty one is
+/// empty, and none (`Ok(None)`) is a server without the provider.
+pub(crate) fn rank_list<T>(answer: &Result<Option<Vec<T>>, LspError>) -> Rank {
+    match answer {
+        Ok(Some(found)) if !found.is_empty() => Rank::Taken,
+        Ok(Some(_)) => Rank::Empty,
+        Ok(None) => Rank::Unprovided,
+        Err(_) => Rank::Failed,
     }
 }
 

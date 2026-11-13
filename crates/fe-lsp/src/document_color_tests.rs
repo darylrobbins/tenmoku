@@ -162,11 +162,21 @@ fn colors_decode_to_bytes_and_clamp() {
         ]),
     );
     let colors = s.ask().unwrap();
+    // Each is the server's, as it has the buffer open.
+    let owner = colors[0].owner().expect("a colour found has its owner");
+    assert_eq!(owner.buffer, s.buffer.id());
     assert_eq!(
-        colors,
+        Some(owner.identity),
+        s.manager.active_identity(owner.buffer, owner.server)
+    );
+    assert!(colors.iter().all(|info| info.owner() == Some(owner)));
+    assert_eq!(
+        (colors.iter())
+            .map(|info| (info.range.clone(), info.color))
+            .collect::<Vec<_>>(),
         [
-            ColorInformation::new(bytes_of("#ff0000"), [1., 0., 0., 1.]),
-            ColorInformation::new(bytes_of("rgb(0 0 255 / 50%)"), [0., 0., 1., 0.5]),
+            (bytes_of("#ff0000"), [1., 0., 0., 1.]),
+            (bytes_of("rgb(0 0 255 / 50%)"), [0., 0., 1., 0.5]),
         ]
     );
     let sent = s.sent(COLORS);

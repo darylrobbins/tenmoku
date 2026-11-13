@@ -10,8 +10,12 @@
 //!   clamped to the last; a signature with no parameters has no active
 //!   parameter. A help's missing `activeParameter` is 0 (gopls leaves it
 //!   out for the first argument); a signature's own stays as given.
+//! - **Servers.** First-that-answers (§5): see
+//!   [`signature_help`](LspManager::signature_help). Trigger and retrigger
+//!   characters are each server's, and a typed one asks only the servers
+//!   listing it.
 //! - **Failures.** A timeout (`lsp.timeouts.signature_help`, 3 s) is no help. Other
-//!   failures are errors.
+//!   failures are errors, if no other server has help.
 
 use std::ops::Range;
 
@@ -20,15 +24,16 @@ use fe_text::Bias;
 use futures::FutureExt;
 use lsp_types::request::SignatureHelpRequest;
 use lsp_types::{
-    Documentation, MarkupContent, ParameterInformation, ParameterLabel, SignatureHelpContext,
-    SignatureHelpParams, SignatureHelpTriggerKind, SignatureInformation, TextDocumentIdentifier,
-    TextDocumentPositionParams,
+    Documentation, MarkupContent, ParameterInformation, ParameterLabel, ServerCapabilities,
+    SignatureHelpContext, SignatureHelpParams, SignatureHelpTriggerKind, SignatureInformation,
+    TextDocumentIdentifier, TextDocumentPositionParams,
 };
 
 use crate::document::Admitted;
 use crate::encoding::to_lsp;
 use crate::event::LspError;
 use crate::manager::LspManager;
+use crate::requests::{Rank, first_that_answers};
 
 /// Why signature help is asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,13 +120,22 @@ impl Signature {
     }
 }
 
+/// What `Unavailable` says when no server provides signature help.
+const FEATURE: &str = "signatureHelp";
+
 impl LspManager {
     /// The signature help for byte `offset` of open buffer `buffer`, at
     /// its `version`: sent only if the server has that version, as any
     /// [`document_request`](Self::document_request) is.
     ///
-    /// `Ok(None)` if the server has no signatures, or doesn't say within
-    /// the timeout (which also cancels the request). Dropping the future
+    /// First-that-answers (§5): a buffer on one server asks it, whatever
+    /// it advertises, as ever. One on several asks, at once, each that has
+    /// `signatureHelpProvider` and, for a typed character, lists it among
+    /// its trigger or retrigger characters; the first help in server order
+    /// (the lead first) is taken, waiting for each earlier server first.
+    ///
+    /// `Ok(None)` if no server has signatures, or none says within the
+    /// timeout (which also cancels the request). Dropping the future
     /// cancels it too. It doesn't borrow the manager.
     pub fn signature_help(
         &self,
@@ -131,36 +145,92 @@ impl LspManager {
         context: SignatureContext,
     ) -> impl Future<Output = Result<Option<SignatureHelp>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request::<SignatureHelpRequest>(buffer, version, move |at| {
-            SignatureHelpParams {
+        let lone = self.servers_of(buffer).len() == 1;
+        let typed = match context.trigger {
+            SignatureTrigger::Character(c) => Some(c),
+            _ => None,
+        };
+        let asks = self.ask_all(buffer, |server| {
+            let context = context.clone();
+            let params = move |at: &Admitted| SignatureHelpParams {
                 text_document_position_params: position(at, offset),
                 work_done_progress_params: Default::default(),
                 context: Some(request_context(&context)),
-            }
+            };
+            let reply = if lone {
+                self.document_request_on::<SignatureHelpRequest>(server, buffer, version, params)
+                    .boxed()
+            } else {
+                let asked = move |capabilities: &ServerCapabilities| {
+                    (triggers(capabilities)).is_some_and(|(triggers, retriggers)| {
+                        typed.is_none_or(|c| triggers.contains(&c) || retriggers.contains(&c))
+                    })
+                };
+                self.document_request_if_provided_on::<SignatureHelpRequest>(
+                    server, buffer, version, FEATURE, asked, params,
+                )
+                .boxed()
+            };
+            reply
+                .map(|answer| match answer {
+                    Ok((reply, _)) => Ok(reply.result.and_then(convert)),
+                    Err(LspError::Timeout) => Ok(None),
+                    Err(err) => Err(err),
+                })
+                .boxed()
         });
-        reply.boxed().map(|answer| match answer {
-            Ok((reply, _)) => Ok(reply.result.and_then(convert)),
-            Err(LspError::Timeout) => Ok(None),
-            Err(err) => Err(err),
+        let asks = asks.into_iter().map(|(_, ask)| ask).collect();
+        first_that_answers(asks, |answer| match answer {
+            Ok(Some(_)) => Rank::Taken,
+            Ok(None) => Rank::Empty,
+            Err(LspError::Unavailable(why)) if why == FEATURE => Rank::Unprovided,
+            Err(_) => Rank::Failed,
+        })
+        .map(|answer| match answer {
+            Err(LspError::Unavailable(why)) if why == FEATURE => Ok(None),
+            answer => answer,
         })
     }
 
-    /// The characters that ask the server of open buffer `buffer` for
+    /// The characters that ask the servers of open buffer `buffer` for
     /// signature help when typed, and those that ask again while help is
-    /// showing, once it has initialized.
+    /// showing: each server's with `signatureHelpProvider`, once it has
+    /// initialized, in server order (the lead's first), each once. `None`
+    /// if none of them has the provider.
     pub fn signature_help_triggers(&self, buffer: BufferId) -> Option<(Vec<char>, Vec<char>)> {
-        let server = self.server_of(buffer)?;
-        let options = self.capabilities(server)?.signature_help_provider?;
-        let chars = |strings: Option<Vec<String>>| {
-            (strings.unwrap_or_default().iter())
-                .filter_map(|s| s.chars().next())
-                .collect::<Vec<_>>()
-        };
-        Some((
-            chars(options.trigger_characters),
-            chars(options.retrigger_characters),
-        ))
+        let mut found: Option<(Vec<char>, Vec<char>)> = None;
+        for server in self.servers_of(buffer) {
+            let Some((triggers, retriggers)) =
+                (self.capabilities(server)).and_then(|capabilities| triggers(&capabilities))
+            else {
+                continue;
+            };
+            let (all_triggers, all_retriggers) = found.get_or_insert_default();
+            for (all, chars) in [(all_triggers, triggers), (all_retriggers, retriggers)] {
+                for c in chars {
+                    if !all.contains(&c) {
+                        all.push(c);
+                    }
+                }
+            }
+        }
+        found
     }
+}
+
+/// The trigger and retrigger characters of a server with
+/// `signatureHelpProvider`; `None` for one without it.
+fn triggers(capabilities: &ServerCapabilities) -> Option<(Vec<char>, Vec<char>)> {
+    let options = capabilities.signature_help_provider.clone()?;
+    let chars = |strings: Option<Vec<String>>| {
+        (strings.unwrap_or_default().iter())
+            .filter_map(|s| s.chars().next())
+            .collect::<Vec<_>>()
+    };
+    Some((
+        chars(options.trigger_characters),
+        chars(options.retrigger_characters),
+    ))
 }
 
 /// The request's document and offset, as the server has them.

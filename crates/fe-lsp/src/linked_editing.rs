@@ -1,8 +1,11 @@
 //! `textDocument/linkedEditingRange`: the ranges that are renamed together
 //! with the one at an offset, such as an HTML tag's open and close names.
 //!
-//! - **Provider.** A server without `linkedEditingRangeProvider` gets no
-//!   request: `Ok(None)`.
+//! - **Provider.** Only the document's provider is asked
+//!   ([`Feature::LinkedEditing`](crate::Feature::LinkedEditing)): its lead
+//!   if that has `linkedEditingRangeProvider`, else the first add-on that
+//!   does, as linked ranges must come from one server. With none, nothing
+//!   is sent: `Ok(None)`.
 //! - **Ranges.** Decoded against the text the server had at the request's
 //!   version, as bytes of that version, sorted by start, duplicates
 //!   dropped.
@@ -53,7 +56,7 @@ impl LspManager {
         offset: usize,
     ) -> impl Future<Output = Result<Option<LinkedEditing>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request_if_provided::<LinkedEditingRange>(
+        let reply = self.provider_request::<LinkedEditingRange>(
             buffer,
             version,
             FEATURE,
@@ -67,7 +70,7 @@ impl LspManager {
         reply
             .boxed()
             .map(|answer| match answer {
-                Ok((reply, admitted)) => Ok(Some(match reply.result {
+                Ok((reply, admitted, _)) => Ok(Some(match reply.result {
                     None => LinkedEditing::default(),
                     Some(found) => {
                         let mut ranges: Vec<_> = (found.ranges.into_iter())
@@ -90,7 +93,7 @@ impl LspManager {
 }
 
 /// Whether the server provides linked editing ranges.
-fn provided(capabilities: &ServerCapabilities) -> bool {
+pub(crate) fn provided(capabilities: &ServerCapabilities) -> bool {
     !matches!(
         capabilities.linked_editing_range_provider,
         None | Some(LinkedEditingRangeServerCapabilities::Simple(false))

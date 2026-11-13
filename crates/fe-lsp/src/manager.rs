@@ -18,8 +18,11 @@
 //! *holder*, chosen apart from placement: the first opened, then the next
 //! earliest as it closes, and, where groups merge on a settings change, the
 //! earliest of their holders. Only the holder is placed, on its own route;
-//! the others wait on every server until it closes. Requests go to the
-//! lead alone.
+//! the others wait on every server until it closes. A request goes to the
+//! servers its feature routes to (§5): a provider feature to the first
+//! placed server advertising it ([`LspManager::provider_of`]), a
+//! first-that-answers one to every placed server advertising it, and a
+//! follow-up on an item to the item's [`Owner`] alone.
 //!
 //! A server that crashes restarts itself (restart.rs); the manager keeps
 //! each (server, root)'s crash list and log ring across the instances it
@@ -52,7 +55,7 @@ use lsp_types::{ServerCapabilities, Url};
 use crate::clock::{Clock, SystemClock};
 use crate::document::{Admitted, Opened, Opening, Subscribed, language_id};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspError, LspEvent, ServerId, ServerStatus, SharedLog, not_open};
+use crate::event::{LspError, LspEvent, ServerId, ServerStatus, SharedLog, Unavailable, not_open};
 use crate::identity::{Generation, Identities, IncarnationId, SessionId};
 use crate::launcher::{Flag, LaunchCancel, ServerLauncher, ServerSpec};
 use crate::registry::{Registry, needs_restart, server_for, server_root, servers_for};
@@ -71,6 +74,106 @@ pub(crate) type Answer<T> = BoxFuture<'static, Result<T, LspError>>;
 /// The answers of two requests admitted together: the first's with what
 /// they were admitted with.
 pub(crate) type Paired<A, B> = (Answer<(Reply<A>, Admitted)>, Answer<Reply<B>>);
+
+/// A reply to a request on a document, with what it was admitted with and
+/// the server that answered.
+pub(crate) type Provided<T> = (Reply<T>, Admitted, ServerId);
+
+/// A server a request may go to: what its capabilities are read from, and
+/// what it's sent commands by.
+type Target = (
+    ServerId,
+    Arc<Mutex<Session>>,
+    mpsc::UnboundedSender<Command>,
+);
+
+/// A feature one server of a document answers, its *provider*
+/// (docs/decisions/q5j03ax2af-lsp-add-on-servers.md §5): the lead if it's
+/// placed and advertises the feature, else the first placed add-on that
+/// does. Named here so that callers needn't name `lsp_types` capabilities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Feature {
+    /// Full semantic tokens (and their deltas).
+    SemanticTokens,
+    Folding,
+    DocumentSymbols,
+    LinkedEditing,
+    /// Formatting the whole document.
+    Formatting,
+    /// Formatting a range of it.
+    RangeFormatting,
+    /// On-type formatting, by `documentOnTypeFormattingProvider` or a
+    /// registration taking the document.
+    OnTypeFormatting,
+    SelectionRange,
+}
+
+impl Feature {
+    /// Whether `capabilities` advertise the feature.
+    pub(crate) fn advertised(self, capabilities: &ServerCapabilities) -> bool {
+        match self {
+            Self::SemanticTokens => crate::semantic_tokens::provides_full(capabilities),
+            Self::Folding => crate::folding_range::provides_folding(capabilities),
+            Self::DocumentSymbols => crate::document_symbol::provides_symbols(capabilities),
+            Self::LinkedEditing => crate::linked_editing::provided(capabilities),
+            Self::Formatting => {
+                crate::formatting::offers(capabilities.document_formatting_provider.clone())
+            }
+            Self::RangeFormatting => {
+                crate::formatting::offers(capabilities.document_range_formatting_provider.clone())
+            }
+            Self::OnTypeFormatting => capabilities.document_on_type_formatting_provider.is_some(),
+            Self::SelectionRange => !matches!(
+                capabilities.selection_range_provider,
+                None | Some(lsp_types::SelectionRangeProviderCapability::Simple(false))
+            ),
+        }
+    }
+}
+
+/// The server that produced an item, and the document as that server's
+/// session had it open then (§5, owners). A follow-up on the item (a
+/// colour's presentations, a link's resolve, a hierarchy item's calls or
+/// types, a prepared rename) goes to that session alone: never to another
+/// server, nor to a session the server restarted into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct Owner {
+    pub server: ServerId,
+    /// The document the item was asked about.
+    pub buffer: BufferId,
+    /// The opening of `buffer` on `server` the item came from.
+    pub(crate) identity: (SessionId, IncarnationId),
+}
+
+impl Owner {
+    /// `server`, answering a request admitted as `at`.
+    pub(crate) fn of(server: ServerId, at: &Admitted) -> Self {
+        Self {
+            server,
+            buffer: at.document.buffer,
+            identity: at.document.identity,
+        }
+    }
+
+    /// Whether `opened` (what the server has open as a request is sent)
+    /// has the owner's document open as it had it.
+    pub(crate) fn has_open(&self, opened: &Opened) -> bool {
+        (opened.documents.iter())
+            .any(|document| document.buffer == self.buffer && document.identity == self.identity)
+    }
+}
+
+/// Why a follow-up isn't sent: its owner's session has ended.
+pub(crate) fn restarted() -> Unavailable {
+    Unavailable::Other(tr!("lsp-unavailable-restarted").to_string())
+}
+
+/// The capabilities `session` has, once known.
+fn known(session: &Mutex<Session>) -> Option<ServerCapabilities> {
+    lock(session).capabilities.clone()
+}
 
 /// The default [`LspManager::max_file_bytes`]: 50 MB, the size past which
 /// fastedit highlights only the viewport.
@@ -488,9 +591,10 @@ impl LspManager {
         self.reconcile();
     }
 
-    /// The server `buffer` is synced to and its requests go to, if any:
+    /// `buffer`'s lead server, if it's placed there:
     /// [`lead_of`](Self::lead_of), which it stays an alias of until its
-    /// last caller moves.
+    /// last caller moves. Requests a feature routes to other servers (§5)
+    /// don't go by it.
     pub fn server_of(&self, buffer: BufferId) -> Option<ServerId> {
         self.lead_of(buffer)
     }
@@ -964,7 +1068,8 @@ impl LspManager {
     }
 
     /// Sends `R` about open buffer `buffer`, computed on its `version`
-    /// (§4.1). The server's thread brings the document up to date first,
+    /// (§4.1), to its lead. The server's thread brings the document up to
+    /// date first,
     /// then:
     ///
     /// - if the server now has `version`, builds the request's params with
@@ -983,6 +1088,29 @@ impl LspManager {
         version: Version,
         params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
     ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
+        self.document_request_to::<R>(self.server_of(buffer), buffer, version, params)
+    }
+
+    /// As [`document_request`](Self::document_request), aimed at `server`
+    /// alone (one `buffer` is placed on), whatever it advertises.
+    pub(crate) fn document_request_on<R: Request>(
+        &self,
+        server: ServerId,
+        buffer: BufferId,
+        version: Version,
+        params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
+    ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
+        self.document_request_to::<R>(Some(server), buffer, version, params)
+    }
+
+    /// `R` about `buffer`, to `server` (none: `Unavailable(not open)`).
+    fn document_request_to<R: Request>(
+        &self,
+        server: Option<ServerId>,
+        buffer: BufferId,
+        version: Version,
+        params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
+    ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
         let (answer, answered) = oneshot::channel();
         let admit: Admit = Box::new(move |admission| {
             let admitted = match admission {
@@ -997,7 +1125,7 @@ impl LspManager {
                 reply.map(|reply| (reply, admitted))
             })]
         });
-        self.admit(buffer, version, admit);
+        self.admit_on(server, buffer, version, admit);
         let answered = answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
         within(
             answered,
@@ -1060,7 +1188,12 @@ impl LspManager {
     /// Hands `admit` to the server `buffer` is synced to, or answers it
     /// `Unavailable` if there's none.
     pub(crate) fn admit(&self, buffer: BufferId, version: Version, admit: Admit) {
-        match self.server_of(buffer) {
+        self.admit_on(self.server_of(buffer), buffer, version, admit);
+    }
+
+    /// Hands `admit` to `server`, or answers it `Unavailable` if none.
+    fn admit_on(&self, server: Option<ServerId>, buffer: BufferId, version: Version, admit: Admit) {
+        match server {
             Some(server) => self.send(
                 server,
                 Command::Admit {
@@ -2027,6 +2160,12 @@ impl LspManager {
 
     /// Every server this manager has running, in id order.
     #[allow(dead_code)] // Nothing calls it until the watched-files and file-operation cards.
+    /// Whether instance `server` still runs (or starts, or restarts in
+    /// place): it hasn't been stopped or replaced.
+    pub(crate) fn runs(&self, server: ServerId) -> bool {
+        self.servers.contains_key(&server)
+    }
+
     pub(crate) fn server_ids(&self) -> Vec<ServerId> {
         let mut ids: Vec<ServerId> = self.servers.keys().copied().collect();
         ids.sort();
@@ -2046,13 +2185,13 @@ impl LspManager {
     }
 
     /// As [`document_request`](Self::document_request), but the request is
-    /// queued only once the capabilities of the server `buffer` is on are
-    /// known, and only if `provides` says it has `feature`: otherwise
-    /// nothing is sent and the answer is `Unavailable(feature)`. (A server
-    /// still initializing is waited for, on the manager's clock, so a
-    /// request isn't queued for one that turns out not to have the
-    /// feature; the method's timeout covers the wait too.) The buffer's
-    /// `version` is checked when the request is queued, not before.
+    /// queued only once the capabilities of `buffer`'s lead are known, and
+    /// only if `provides` says it has `feature`: otherwise nothing is sent
+    /// and the answer is `Unavailable(feature)`. (A server still
+    /// initializing is waited for, on the manager's clock, so a request
+    /// isn't queued for one that turns out not to have the feature; the
+    /// method's timeout covers the wait too.) The buffer's `version` is
+    /// checked when the request is queued, not before.
     pub(crate) fn document_request_if_provided<R: Request>(
         &self,
         buffer: BufferId,
@@ -2061,8 +2200,97 @@ impl LspManager {
         provides: fn(&ServerCapabilities) -> bool,
         params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
     ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
+        let lead = self.server_of(buffer).into_iter().collect();
+        self.document_request_among::<R>(lead, buffer, version, feature, provides, params)
+            .map(|answer| answer.map(|(reply, admitted, _)| (reply, admitted)))
+    }
+
+    /// As [`document_request_if_provided`](Self::document_request_if_provided),
+    /// sent to `server` alone, whether or not it leads `buffer`: one server
+    /// of a request [`ask_all`](Self::ask_all) aims at each of them.
+    pub(crate) fn document_request_if_provided_on<R: Request>(
+        &self,
+        server: ServerId,
+        buffer: BufferId,
+        version: Version,
+        feature: &'static str,
+        provides: impl Fn(&ServerCapabilities) -> bool + Send + 'static,
+        params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
+    ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
+        self.document_request_among::<R>(vec![server], buffer, version, feature, provides, params)
+            .map(|answer| answer.map(|(reply, admitted, _)| (reply, admitted)))
+    }
+
+    /// As [`document_request_if_provided`](Self::document_request_if_provided),
+    /// sent to `buffer`'s provider of the feature (§5): the first server
+    /// it's placed on, in order (the lead first), that `provides` says has
+    /// it, each waited for in turn while it initializes. With the server it
+    /// went to. `Unavailable(feature)` if none has it.
+    pub(crate) fn provider_request<R: Request>(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        feature: &'static str,
+        provides: impl Fn(&ServerCapabilities) -> bool + Send + 'static,
+        params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
+    ) -> impl Future<Output = Result<Provided<R::Result>, LspError>> + Send + 'static {
+        let servers = self.servers_of(buffer);
+        self.document_request_among::<R>(servers, buffer, version, feature, provides, params)
+    }
+
+    /// `R`, sent to the first of `servers` that `provides` says has
+    /// `feature` (see [`admit_to_first`](Self::admit_to_first)).
+    fn document_request_among<R: Request>(
+        &self,
+        servers: Vec<ServerId>,
+        buffer: BufferId,
+        version: Version,
+        feature: &'static str,
+        provides: impl Fn(&ServerCapabilities) -> bool + Send + 'static,
+        params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
+    ) -> impl Future<Output = Result<Provided<R::Result>, LspError>> + Send + 'static {
         let timeout = self.timeout::<R>();
-        self.admit_once_known(buffer, version, timeout, move |capabilities, answer| {
+        let unprovided = LspError::Unavailable(feature.into());
+        self.admit_to_first(
+            servers,
+            (buffer, version),
+            timeout,
+            (provides, unprovided),
+            move |server, _, answer| {
+                Ok(Box::new(move |admission| {
+                    let admitted = match admission {
+                        Ok(admitted) => admitted,
+                        Err(err) => {
+                            let _ = answer.send(Err(err));
+                            return Vec::new();
+                        }
+                    };
+                    let params = params(&admitted);
+                    vec![call::<R, _>(answer, params, move |_, reply| {
+                        reply.map(|reply| (reply, admitted, server))
+                    })]
+                }))
+            },
+        )
+    }
+
+    /// As [`document_request_if_provided_on`](Self::document_request_if_provided_on),
+    /// for a follow-up on an item `owner` produced (§5, owners): sent only
+    /// to `owner`'s server, and only while its session still has the
+    /// document open as it had it then. Otherwise (the server stopped or
+    /// restarted, or the document was reopened there) nothing is sent and
+    /// the answer is `Unavailable("the language server restarted")`. The
+    /// buffer's `version` is checked as for any document request.
+    pub(crate) fn owner_request<R: Request>(
+        &self,
+        owner: Owner,
+        version: Version,
+        feature: &'static str,
+        provides: impl Fn(&ServerCapabilities) -> bool + Send + 'static,
+        params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
+    ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
+        let timeout = self.timeout::<R>();
+        self.admit_to_owner(owner, version, timeout, move |capabilities, answer| {
             if !provides(capabilities) {
                 return Err(LspError::Unavailable(feature.into()));
             }
@@ -2082,19 +2310,65 @@ impl LspManager {
         })
     }
 
-    /// Admits `buffer` at `version` once the capabilities of the server it
-    /// is on are known: `decide` is given them, with the sender the answer
-    /// goes to, and builds the [`Admit`] that answers it, or the error that
-    /// does instead (nothing is then admitted). A server still initializing
-    /// is waited for on the manager's clock, and `timeout` (if any) covers
-    /// the wait too. `decide` runs at once if they're known already, so the
-    /// request is queued as [`admit`](Self::admit) queues it. A server that
-    /// stops while waited for answers `ServerDown`.
-    pub(crate) fn admit_once_known<T: Send + 'static>(
+    /// Admits `owner`'s document at `version` on `owner`'s server alone,
+    /// once its capabilities are known, as
+    /// [`admit_to_first`](Self::admit_to_first) does, for `decide`'s
+    /// [`Admit`]. That is handed the admission only if the session has the
+    /// document open as `owner` had it; otherwise it's handed
+    /// `Unavailable("the language server restarted")`, and sends nothing.
+    /// So is the answer at once if the server has stopped, or no longer
+    /// has that opening active.
+    pub(crate) fn admit_to_owner<T: Send + 'static>(
         &self,
+        owner: Owner,
+        version: Version,
+        timeout: Option<Duration>,
+        decide: impl FnOnce(
+            &ServerCapabilities,
+            oneshot::Sender<Result<T, LspError>>,
+        ) -> Result<Admit, LspError>
+        + Send
+        + 'static,
+    ) -> BoxFuture<'static, Result<T, LspError>> {
+        let current = self.servers.contains_key(&owner.server)
+            && self.active_identity(owner.buffer, owner.server) == Some(owner.identity);
+        if !current {
+            return async { Err(LspError::Unavailable(restarted())) }.boxed();
+        }
+        self.admit_on_one(
+            vec![owner.server],
+            owner.buffer,
+            version,
+            timeout,
+            move |capabilities, answer| {
+                let admit = decide(capabilities, answer)?;
+                // Checked again as the request is admitted: the session may
+                // have ended, or reopened the document, since.
+                Ok(Box::new(move |admission: Result<Admitted, LspError>| {
+                    admit(admission.and_then(|admitted| {
+                        if admitted.document.identity == owner.identity {
+                            Ok(admitted)
+                        } else {
+                            Err(LspError::Unavailable(restarted()))
+                        }
+                    }))
+                }))
+            },
+        )
+        .boxed()
+    }
+
+    /// Admits `buffer` at `version` on `server` alone once its capabilities
+    /// are known, as [`admit_to_first`](Self::admit_to_first) does: `decide`
+    /// is given them, with the sender the answer goes to, and builds the
+    /// [`Admit`] that answers it, or the error that does instead (nothing
+    /// is then admitted). No server: `Unavailable(not open)`.
+    pub(crate) fn admit_on_one<T: Send + 'static>(
+        &self,
+        server: Vec<ServerId>,
         buffer: BufferId,
         version: Version,
-        timeout: Option<std::time::Duration>,
+        timeout: Option<Duration>,
         decide: impl FnOnce(
             &ServerCapabilities,
             oneshot::Sender<Result<T, LspError>>,
@@ -2102,66 +2376,159 @@ impl LspManager {
         + Send
         + 'static,
     ) -> impl Future<Output = Result<T, LspError>> + Send + 'static {
+        self.admit_to_first(
+            server,
+            (buffer, version),
+            timeout,
+            (
+                |_: &ServerCapabilities| true,
+                LspError::Unavailable(not_open()),
+            ),
+            move |_, capabilities, answer| decide(capabilities, answer),
+        )
+    }
+
+    /// Admits `buffer` at `version` on the first of `servers` (in their
+    /// order) whose capabilities `provides` accepts (`accepts` is
+    /// `(provides, unprovided)`), each waited for in turn while unknown: `decide` is given that server and its
+    /// capabilities, with the sender the answer goes to, and builds the
+    /// [`Admit`] that answers it, or the error that does instead (nothing
+    /// is then admitted). None accepting answers `unprovided`; no servers,
+    /// `Unavailable(not open)`.
+    ///
+    /// A server still initializing is waited for on the manager's clock,
+    /// and `timeout` (if any) covers the wait too. `decide` runs at once if
+    /// the capabilities it needs are known already, so the request is
+    /// queued as [`admit`](Self::admit) queues it. A server that stops
+    /// while waited for is passed over; if none then accepts, the answer
+    /// is `ServerDown`.
+    pub(crate) fn admit_to_first<T: Send + 'static>(
+        &self,
+        servers: Vec<ServerId>,
+        (buffer, version): (BufferId, Version),
+        timeout: Option<Duration>,
+        accepts: (
+            impl Fn(&ServerCapabilities) -> bool + Send + 'static,
+            LspError,
+        ),
+        decide: impl FnOnce(
+            ServerId,
+            &ServerCapabilities,
+            oneshot::Sender<Result<T, LspError>>,
+        ) -> Result<Admit, LspError>
+        + Send
+        + 'static,
+    ) -> impl Future<Output = Result<T, LspError>> + Send + 'static {
         /// How often the capabilities are looked at while unknown.
-        const POLL: std::time::Duration = std::time::Duration::from_millis(20);
+        const POLL: Duration = Duration::from_millis(20);
+        let (provides, unprovided) = accepts;
         let (answer, answered) = oneshot::channel();
-        let target = self
-            .server_of(buffer)
-            .and_then(|server| self.servers.get(&server))
-            .map(|handle| (handle.session.clone(), handle.commands.clone()));
+        let mut targets: Vec<Target> = (servers.into_iter())
+            .filter_map(|server| {
+                let handle = self.servers.get(&server)?;
+                Some((server, handle.session.clone(), handle.commands.clone()))
+            })
+            .collect();
         let clock = self.clock.clone();
-        let mut decide = Some(decide);
-        let mut send = Some(
-            move |commands: mpsc::UnboundedSender<Command>,
-                  capabilities: &ServerCapabilities|
-                  -> Result<(), LspError> {
-                let admit = decide.take().unwrap()(capabilities, answer)?;
-                // A server that has gone drops the command, and `answer` with it.
-                let _ = commands.unbounded_send(Command::Admit {
-                    buffer,
-                    version,
-                    admit,
-                });
-                Ok(())
-            },
-        );
-        let known = |session: &Mutex<Session>| {
-            (session.lock().unwrap_or_else(PoisonError::into_inner))
-                .capabilities
-                .clone()
+        let mut chosen = Some((decide, answer));
+        // Hands the request to `server`: decided, and its admission queued.
+        let mut send = move |server: ServerId,
+                             commands: &mpsc::UnboundedSender<Command>,
+                             capabilities: &ServerCapabilities|
+              -> Result<(), LspError> {
+            let (decide, answer) = chosen.take().expect("a request is sent once");
+            let admit = decide(server, capabilities, answer)?;
+            // A server that has gone drops the command, and `answer` with it.
+            let _ = commands.unbounded_send(Command::Admit {
+                buffer,
+                version,
+                admit,
+            });
+            Ok(())
         };
-        // Known now: queued now, as `document_request` queues, polled or
-        // not. Otherwise queued by the first poll to find them known.
-        let mut waiting = None;
-        let mut refused = None;
-        match target {
-            None => refused = Some(LspError::Unavailable(not_open())),
-            Some((session, commands)) => match known(&session) {
-                Some(capabilities) => {
-                    if let Err(err) = send.take().unwrap()(commands, &capabilities) {
+        // Those known now are looked at now, so one that accepts is queued
+        // now, as `document_request` queues, polled or not. From the first
+        // still unknown on, the rest are waited for in turn.
+        let mut refused = targets
+            .is_empty()
+            .then(|| LspError::Unavailable(not_open()));
+        let mut sent = false;
+        while refused.is_none() && !sent {
+            let Some((server, session, commands)) = targets.first() else {
+                refused = Some(unprovided.clone());
+                break;
+            };
+            match known(session) {
+                None => break,
+                Some(capabilities) if provides(&capabilities) => {
+                    if let Err(err) = send(*server, commands, &capabilities) {
                         refused = Some(err);
                     }
+                    sent = true;
                 }
-                None => waiting = Some((session, commands)),
-            },
+                Some(_) => {
+                    targets.remove(0);
+                }
+            }
         }
         let gated = async move {
             if let Some(err) = refused {
                 return Err(err);
             }
-            if let Some((session, commands)) = waiting {
-                let capabilities = loop {
-                    match known(&session) {
-                        Some(capabilities) => break capabilities,
-                        None if commands.is_closed() => return Err(LspError::ServerDown),
-                        None => clock.sleep(POLL).await,
+            if !sent {
+                let mut down = false;
+                let mut accepted = None;
+                for (server, session, commands) in targets {
+                    let capabilities = loop {
+                        match known(&session) {
+                            Some(capabilities) => break Some(capabilities),
+                            None if commands.is_closed() => break None,
+                            None => clock.sleep(POLL).await,
+                        }
+                    };
+                    match capabilities {
+                        None => down = true,
+                        Some(capabilities) if provides(&capabilities) => {
+                            accepted = Some(send(server, &commands, &capabilities));
+                            break;
+                        }
+                        Some(_) => {}
                     }
-                };
-                send.take().unwrap()(commands, &capabilities)?;
+                }
+                match accepted {
+                    Some(sent) => sent?,
+                    None if down => return Err(LspError::ServerDown),
+                    None => return Err(unprovided),
+                }
             }
             answered.await.unwrap_or(Err(LspError::ServerDown))
         };
         within(gated, timeout, &*self.clock, Err(LspError::Timeout))
+    }
+
+    /// Each server `buffer` is placed on, in order (the lead first), with
+    /// `ask(server)`: one request aimed at each, all sent at once.
+    pub(crate) fn ask_all<T>(
+        &self,
+        buffer: BufferId,
+        mut ask: impl FnMut(ServerId) -> Answer<T>,
+    ) -> Vec<(ServerId, Answer<T>)> {
+        (self.servers_of(buffer).into_iter())
+            .map(|server| (server, ask(server)))
+            .collect()
+    }
+
+    /// `buffer`'s provider of `feature` (§5), as its servers' capabilities
+    /// are known now: the first server it's placed on, in order (the lead
+    /// first), that advertises it. On-type formatting counts the triggers
+    /// a registration taking the document gives too. `None` if none does,
+    /// or none that does is known yet.
+    pub fn provider_of(&self, buffer: BufferId, feature: Feature) -> Option<ServerId> {
+        (self.servers_of(buffer).into_iter()).find(|&server| match feature {
+            Feature::OnTypeFormatting => !self.on_type_triggers_on(server, buffer).is_empty(),
+            _ => (self.capabilities(server))
+                .is_some_and(|capabilities| feature.advertised(&capabilities)),
+        })
     }
 
     /// What `server` said it can do, once it has initialized.
@@ -2179,14 +2546,22 @@ impl LspManager {
         )
     }
 
-    /// The characters that ask `buffer`'s server for on-type formatting
-    /// when typed: its `documentOnTypeFormattingProvider`'s, and those of
-    /// each `textDocument/onTypeFormatting` registration whose document
-    /// selector takes the buffer. None for a buffer on no server, or whose
-    /// server's capabilities aren't known yet.
+    /// The characters that ask `buffer`'s provider of on-type formatting
+    /// (see [`provider_of`](Self::provider_of)) for it when typed: its
+    /// `documentOnTypeFormattingProvider`'s, and those of each
+    /// `textDocument/onTypeFormatting` registration whose document selector
+    /// takes the buffer (§5: the provider's alone). None for a buffer on no
+    /// server, or whose servers' capabilities aren't known yet.
     pub fn on_type_formatting_triggers(&self, buffer: BufferId) -> Vec<char> {
-        let (Some(server), Some(placed)) = (self.server_of(buffer), self.documents.get(&buffer))
-        else {
+        (self.servers_of(buffer).into_iter())
+            .map(|server| self.on_type_triggers_on(server, buffer))
+            .find(|triggers| !triggers.is_empty())
+            .unwrap_or_default()
+    }
+
+    /// The characters that ask `server` for on-type formatting of `buffer`.
+    pub(crate) fn on_type_triggers_on(&self, server: ServerId, buffer: BufferId) -> Vec<char> {
+        let Some(placed) = self.documents.get(&buffer) else {
             return Vec::new();
         };
         let (uri, language_id) = &placed.filtered_as;

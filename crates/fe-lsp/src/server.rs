@@ -1266,7 +1266,9 @@ impl Actor {
     /// manager now places them ([`Routes`]), at the text drained so far:
     /// what the buffer did since waits in its subscription for the next
     /// server's drains. Closes the command channel first, and takes every
-    /// command still in it; the others are dropped with the session.
+    /// command still in it; the others are dropped with the session. A
+    /// close queued after a document's opening (or its being open) ends it
+    /// here, as [`hand_over`] has it.
     fn hand_over(&mut self) {
         self.carry.openings.extend(
             self.documents
@@ -1274,12 +1276,15 @@ impl Actor {
                 .map(|(_, document)| document.into_opening()),
         );
         // Opened later than those, so they go after them.
-        self.carry
-            .openings
-            .extend(self.backlog.drain(..).filter_map(|command| match command {
-                Command::Open(opening) => Some(*opening),
-                _ => None,
-            }));
+        for command in self.backlog.drain(..) {
+            match command {
+                Command::Open(opening) => self.carry.openings.push(*opening),
+                Command::Close(buffer) => {
+                    (self.carry.openings).retain(|opening| opening.buffer != buffer);
+                }
+                _ => {}
+            }
+        }
         self.tick = None;
         self.drain_queued = false;
         self.moving = None;
@@ -1789,6 +1794,12 @@ async fn kill(process: &mut dyn ServerProcess) {
 /// Closes `commands`, then forwards `openings` and every opening still
 /// queued there, after them, as [`Places::forward`] does.
 ///
+/// A close queued there ends every opening of its buffer before it: the
+/// manager has taken the document off this instance (and, if it keeps it
+/// on the server, given it a fresh opening of its own, as a reroot does),
+/// so forwarding the old one would open it a second time wherever it's
+/// placed now, replacing the identity it has there.
+///
 /// It takes commands until the channel has ended, not just until it's
 /// empty: a send the channel counted before the close may still be on its
 /// way into the queue, and an open there would be dropped with the
@@ -1803,6 +1814,7 @@ pub(crate) fn hand_over(
     loop {
         match commands.try_recv() {
             Ok(Command::Open(opening)) => openings.push(*opening),
+            Ok(Command::Close(buffer)) => openings.retain(|opening| opening.buffer != buffer),
             Ok(_) => {}
             Err(mpsc::TryRecvError::Closed) => break,
             // Another thread is part-way through a send, as futures'

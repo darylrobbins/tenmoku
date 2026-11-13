@@ -9,6 +9,12 @@
 //!   reply is nothing to rename there. A server's error stays an error,
 //!   for a UI to say "cannot rename this". A server that doesn't prepare
 //!   gets the word at the offset, with no request.
+//! - **Servers.** Preparation is first-that-answers (§5): every server of
+//!   the document with `renameProvider` is asked, and the first in server
+//!   order to accept owns the rename ([`RenameTarget::owner`]).
+//!   [`rename_prepared`](LspManager::rename_prepared) goes to that owner
+//!   alone, only while its session has the document open as it did, and
+//!   one edit set is never merged with another server's.
 //! - **Edits.** [`rename`](LspManager::rename) answers the decoded
 //!   workspace edit, as [`Admitted::decode_workspace_edit`] does.
 //! - **No rename.** A server without `renameProvider` is
@@ -24,13 +30,13 @@ use fe_text::{Bias, Text};
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use lsp_types::request::{PrepareRenameRequest, Rename};
-use lsp_types::{OneOf, PrepareRenameResponse, RenameParams, ServerCapabilities};
+use lsp_types::{OneOf, PrepareRenameResponse, RenameParams, ServerCapabilities, WorkspaceEdit};
 
 use crate::document::Admitted;
 use crate::encoding::from_lsp;
-use crate::event::LspError;
-use crate::manager::LspManager;
-use crate::requests::{call, within};
+use crate::event::{LspError, ServerId};
+use crate::manager::{LspManager, Owner};
+use crate::requests::{Rank, call, first_that_answers, within};
 use crate::workspace_edit::FileEdits;
 
 /// How long a rename may take: more than a hover, as it walks the
@@ -45,6 +51,11 @@ pub struct RenameTarget {
     pub range: Range<usize>,
     /// The name it has now, for the UI to start the new one from.
     pub placeholder: String,
+    /// The server whose preparation accepted the rename, which alone
+    /// renames it ([`rename_prepared`](LspManager::rename_prepared)), as
+    /// its session had the document open then. None for a target made with
+    /// [`new`](Self::new).
+    pub owner: Option<Owner>,
 }
 
 impl RenameTarget {
@@ -52,6 +63,7 @@ impl RenameTarget {
         Self {
             range,
             placeholder: placeholder.into(),
+            owner: None,
         }
     }
 }
@@ -59,33 +71,64 @@ impl RenameTarget {
 impl LspManager {
     /// What a rename at byte `offset` of open buffer `buffer`, at its
     /// `version`, would rename: `Ok(None)` if there's nothing to rename
-    /// there. Sent only if the server has that version, as any
+    /// there. Sent only if a server has that version, as any
     /// [`document_request`](Self::document_request) is.
     ///
-    /// `Err(LspError::Server { message, .. })` if the server refuses, and
-    /// `Unavailable("rename")` if it can't rename at all. A server that
-    /// can't prepare gets no request: the word at `offset` is the target.
-    /// Dropping the future cancels the request.
+    /// First-that-answers (§5): every server of the buffer with
+    /// `renameProvider` is asked at once, and the first in server order
+    /// (the lead first) to accept owns the rename: the target's
+    /// [`owner`](RenameTarget::owner). Each earlier server is waited for
+    /// first, so which answers first doesn't matter.
+    ///
+    /// `Err(LspError::Server { message, .. })` if a server refuses and none
+    /// accepts, and `Unavailable("rename")` if none can rename at all. A
+    /// server that can't prepare gets no request, and accepts: the word at
+    /// `offset` is its target. Dropping the future cancels the requests.
     pub fn prepare_rename(
         &self,
         buffer: BufferId,
         version: Version,
         offset: usize,
     ) -> impl Future<Output = Result<Option<RenameTarget>, LspError>> + Send + 'static + use<> {
+        let asks = self.ask_all(buffer, |server| {
+            self.prepare_rename_on(server, buffer, version, offset)
+        });
+        first_that_answers(
+            asks.into_iter().map(|(_, ask)| ask).collect(),
+            |answer| match answer {
+                Ok(Some(_)) => Rank::Taken,
+                Ok(None) => Rank::Empty,
+                Err(LspError::Unavailable(why)) if why == FEATURE => Rank::Unprovided,
+                Err(_) => Rank::Failed,
+            },
+        )
+    }
+
+    /// [`prepare_rename`](Self::prepare_rename), asked of `server` alone.
+    fn prepare_rename_on(
+        &self,
+        server: ServerId,
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+    ) -> BoxFuture<'static, Result<Option<RenameTarget>, LspError>> {
         // Decided once the server's capabilities are known.
-        self.admit_once_known(
+        self.admit_on_one(
+            vec![server],
             buffer,
             version,
             Some(RENAME_TIMEOUT),
             move |capabilities, answer| {
                 if !renames(capabilities) {
-                    return Err(LspError::Unavailable("rename".into()));
+                    return Err(LspError::Unavailable(FEATURE.into()));
                 }
                 if !prepares(capabilities) {
                     // No request: the version is checked, and the word read
                     // from the text the server has at it.
                     return Ok(Box::new(move |admission| {
-                        let _ = answer.send(admission.map(|at| default_target(&at, offset)));
+                        let _ = answer.send(admission.map(|at| {
+                            default_target(&at, offset).map(|target| target.owned(server, &at))
+                        }));
                         Vec::new()
                     }));
                 }
@@ -103,9 +146,9 @@ impl LspManager {
                         params,
                         move |_, reply| {
                             reply.map(|reply| {
-                                reply
-                                    .result
+                                (reply.result)
                                     .and_then(|reply| target(reply, &admitted, offset))
+                                    .map(|target| target.owned(server, &admitted))
                             })
                         },
                     )]
@@ -117,11 +160,13 @@ impl LspManager {
 
     /// The edits renaming the symbol at byte `offset` of open buffer
     /// `buffer`, at its `version`, to `new_name`, decoded against what the
-    /// server had open when asked. Sent as
-    /// [`prepare_rename`](Self::prepare_rename) is.
+    /// server had open when asked. With no prepared target, so sent to the
+    /// buffer's first server (the lead first) with `renameProvider`;
+    /// [`rename_prepared`](Self::rename_prepared) sends it to the server
+    /// that accepted the preparation instead.
     ///
     /// `Err(LspError::RefusedEdit)` if the edit can't be applied as the
-    /// server meant, and `Unavailable("rename")` if it can't rename.
+    /// server meant, and `Unavailable("rename")` if no server can rename.
     pub fn rename(
         &self,
         buffer: BufferId,
@@ -129,17 +174,54 @@ impl LspManager {
         offset: usize,
         new_name: String,
     ) -> impl Future<Output = Result<Vec<FileEdits>, LspError>> + Send + 'static + use<> {
-        let reply = self.document_request_if_provided::<Rename>(
-            buffer,
-            version,
-            "rename",
-            renames,
-            move |at| RenameParams {
+        let reply = self
+            .provider_request::<Rename>(buffer, version, FEATURE, renames, move |at| RenameParams {
                 text_document_position: at.position(offset),
                 new_name,
                 work_done_progress_params: Default::default(),
-            },
-        );
+            })
+            .map(|answer| answer.map(|(reply, at, _)| (reply, at)))
+            .boxed();
+        self.decoded(reply)
+    }
+
+    /// The edits renaming `target`, prepared at byte `offset` of open
+    /// buffer `buffer` at its `version`, to `new_name`: sent only to the
+    /// target's [`owner`](RenameTarget::owner), the server that accepted
+    /// the preparation, and only while its session still has the document
+    /// open as it had it then. Otherwise (the server stopped or restarted
+    /// since, or reopened the document) nothing is sent to any server, and
+    /// the answer is `Unavailable("the language server restarted")`. A
+    /// target with no owner is renamed as [`rename`](Self::rename) does.
+    ///
+    /// `Err(LspError::RefusedEdit)` if the edit can't be applied as the
+    /// server meant.
+    pub fn rename_prepared(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        target: &RenameTarget,
+        offset: usize,
+        new_name: String,
+    ) -> impl Future<Output = Result<Vec<FileEdits>, LspError>> + Send + 'static + use<> {
+        let Some(owner) = target.owner else {
+            return self.rename(buffer, version, offset, new_name).boxed();
+        };
+        let reply = self
+            .owner_request::<Rename>(owner, version, FEATURE, renames, move |at| RenameParams {
+                text_document_position: at.position(offset),
+                new_name,
+                work_done_progress_params: Default::default(),
+            })
+            .boxed();
+        self.decoded(reply).boxed()
+    }
+
+    /// `reply`'s workspace edit, decoded, within [`RENAME_TIMEOUT`].
+    fn decoded(
+        &self,
+        reply: BoxFuture<'static, Answered>,
+    ) -> impl Future<Output = Result<Vec<FileEdits>, LspError>> + Send + 'static + use<> {
         let reply: BoxFuture<'static, _> = reply
             .map(|answer| {
                 let (reply, at) = answer?;
@@ -156,6 +238,22 @@ impl LspManager {
             Err(LspError::Timeout),
         )
         .boxed()
+    }
+}
+
+/// A rename's reply, with what it was admitted with.
+type Answered = Result<(crate::Reply<Option<WorkspaceEdit>>, Admitted), LspError>;
+
+/// What `Unavailable` says when no server renames.
+const FEATURE: &str = "rename";
+
+impl RenameTarget {
+    /// The target, owned by `server`, which answered as `at`.
+    fn owned(self, server: ServerId, at: &Admitted) -> Self {
+        Self {
+            owner: Some(Owner::of(server, at)),
+            ..self
+        }
     }
 }
 
@@ -186,15 +284,14 @@ fn target(reply: PrepareRenameResponse, at: &Admitted, offset: usize) -> Option<
     match reply {
         PrepareRenameResponse::Range(range) => {
             let range = bytes(range);
-            Some(RenameTarget {
-                placeholder: text.slice_to_string(range.clone()),
-                range,
-            })
+            Some(RenameTarget::new(
+                range.clone(),
+                text.slice_to_string(range),
+            ))
         }
-        PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } => Some(RenameTarget {
-            range: bytes(range),
-            placeholder,
-        }),
+        PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } => {
+            Some(RenameTarget::new(bytes(range), placeholder))
+        }
         PrepareRenameResponse::DefaultBehavior { .. } => default_target(at, offset),
     }
 }
@@ -202,10 +299,7 @@ fn target(reply: PrepareRenameResponse, at: &Admitted, offset: usize) -> Option<
 /// The word at `offset` of the document the server has.
 fn default_target(at: &Admitted, offset: usize) -> Option<RenameTarget> {
     let text = &at.document.sent.text;
-    word_at(text, offset).map(|range| RenameTarget {
-        placeholder: text.slice_to_string(range.clone()),
-        range,
-    })
+    word_at(text, offset).map(|range| RenameTarget::new(range.clone(), text.slice_to_string(range)))
 }
 
 /// The run of letters, digits and underscores that `offset` is in or at

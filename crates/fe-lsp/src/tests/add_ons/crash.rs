@@ -43,7 +43,7 @@ fn diagnoses(f: &Fixture, name: &str, server: ServerId, uri: &Url, version: i32)
 
 /// Crashes `name`, whose instance is `server`, and returns the servers
 /// whose incarnations were reported cleared until it said it restarts.
-fn crash(f: &Fixture, name: &str, server: ServerId) -> Vec<ServerId> {
+pub(super) fn crash(f: &Fixture, name: &str, server: ServerId) -> Vec<ServerId> {
     f.fake(name).crash();
     let mut cleared = Vec::new();
     f.events
@@ -64,7 +64,7 @@ fn crash(f: &Fixture, name: &str, server: ServerId) -> Vec<ServerId> {
 
 /// Waits out `name`'s 1 s backoff: its second launch opens the document
 /// at `buffer`'s current text.
-fn comes_back(f: &Fixture, name: &str, server: ServerId, uri: &Url, buffer: &Buffer) {
+pub(super) fn comes_back(f: &Fixture, name: &str, server: ServerId, uri: &Url, buffer: &Buffer) {
     let backoff = Duration::from_secs(1);
     f.clock.wait_for_sleep(backoff);
     f.clock.advance(backoff);

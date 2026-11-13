@@ -2,17 +2,23 @@
 //! `callHierarchy/incomingCalls|outgoingCalls`) and type hierarchy
 //! (`textDocument/prepareTypeHierarchy`, `typeHierarchy/supertypes|subtypes`).
 //!
-//! - **Provider.** A server without `callHierarchyProvider` (or
-//!   `typeHierarchyProvider`) gets no prepare request: `Ok(None)`.
+//! - **Servers.** Preparation is first-that-answers (§5): every server of
+//!   the document with `callHierarchyProvider` (or `typeHierarchyProvider`)
+//!   is asked at once, and the first non-empty answer in server order (the
+//!   lead first) is taken. With none providing, nothing is sent:
+//!   `Ok(None)`.
 //!   lsp-types 0.95.1 has no field for the latter, so the session records
 //!   it as `experimental.typeHierarchyProvider` ([`mark_type_hierarchy`]).
 //! - **Items.** A [`HierarchyItem`] may be in a file that isn't open, so its
 //!   ranges stay LSP positions in the session's encoding and are converted
 //!   against whatever text the host has ([`HierarchyItem::selection_in`]).
 //!   Items whose uri isn't a `file:` path are dropped.
-//! - **Follow-ups.** The raw item goes back unchanged to the server of the
-//!   buffer it came from, only while that session has the buffer open as it
-//!   was when the item came: otherwise `Unavailable("stale")`.
+//! - **Follow-ups.** The raw item goes back unchanged to the server that
+//!   produced it ([`HierarchyItem::owner`]), and to no other, only while
+//!   that session has the buffer open as it was when the item came:
+//!   otherwise (the server stopped or restarted, or the document was
+//!   reopened there) nothing is sent, and the answer is
+//!   `Unavailable("stale")`.
 //! - **Failures.** A `null` reply or a timeout is empty. Results are capped
 //!   at [`MAX_EDGES`].
 
@@ -32,9 +38,9 @@ use serde_json::Value;
 
 use crate::document_symbol::outline_kind;
 use crate::encoding::{PositionEncoding, from_lsp};
-use crate::event::{LspError, not_open};
-use crate::identity::{IncarnationId, SessionId};
-use crate::manager::LspManager;
+use crate::event::{LspError, ServerId, not_open};
+use crate::manager::{LspManager, Owner};
+use crate::requests::{first_that_answers, rank_list};
 
 /// The most edges (or items) one answer keeps.
 pub const MAX_EDGES: usize = 2_000;
@@ -60,11 +66,18 @@ pub struct HierarchyItem {
     /// The item exactly as the server sent it (it carries `data`), sent
     /// back unchanged to ask for its calls or types.
     pub raw: Value,
-    /// The document the item was asked for, as its session had it open.
-    from: Option<(SessionId, IncarnationId)>,
+    /// The server that produced the item, and the document it was asked
+    /// for as that server's session had it open: follow-ups go there alone.
+    from: Option<Owner>,
 }
 
 impl HierarchyItem {
+    /// The server that produced the item, which alone is asked for its
+    /// calls or types, with the opening of the document it came from.
+    pub fn owner(&self) -> Option<Owner> {
+        self.from
+    }
+
     /// `selection_range` in bytes of `text`.
     pub fn selection_in(&self, text: &Text) -> std::ops::Range<usize> {
         self.offsets(text, self.selection_range)
@@ -130,16 +143,7 @@ pub(crate) fn types(capabilities: &ServerCapabilities) -> bool {
     }
 }
 
-/// Whether the server has the document `from` names open as it was.
-fn has_open(opened: &crate::Opened, from: Identity, buffer: BufferId) -> bool {
-    match from {
-        None => true,
-        Some(identity) => (opened.documents.iter())
-            .any(|document| document.buffer == buffer && document.identity == identity),
-    }
-}
-
-type Identity = Option<(SessionId, IncarnationId)>;
+type Identity = Option<Owner>;
 
 /// The fields of an item that fe-lsp reads, decoded from its JSON; the
 /// item's other fields (`data` among them) stay in the JSON.
@@ -226,17 +230,21 @@ impl LspManager {
         offset: usize,
     ) -> impl Future<Output = Result<Option<Vec<HierarchyItem>>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request_if_provided::<PrepareCalls>(
-            buffer,
-            version,
-            "callHierarchy",
-            calls,
-            move |at| CallHierarchyPrepareParams {
-                text_document_position_params: at.position(offset),
-                work_done_progress_params: Default::default(),
-            },
-        );
-        prepared("callHierarchy", reply.boxed())
+        let asks = self.ask_all(buffer, |server| {
+            let reply = self.document_request_if_provided_on::<PrepareCalls>(
+                server,
+                buffer,
+                version,
+                "callHierarchy",
+                calls,
+                move |at| CallHierarchyPrepareParams {
+                    text_document_position_params: at.position(offset),
+                    work_done_progress_params: Default::default(),
+                },
+            );
+            prepared("callHierarchy", server, reply.boxed())
+        });
+        first_that_answers(asks.into_iter().map(|(_, ask)| ask).collect(), rank_list)
     }
 
     /// As [`prepare_call_hierarchy`](Self::prepare_call_hierarchy), for type
@@ -248,17 +256,21 @@ impl LspManager {
         offset: usize,
     ) -> impl Future<Output = Result<Option<Vec<HierarchyItem>>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request_if_provided::<PrepareTypes>(
-            buffer,
-            version,
-            "typeHierarchy",
-            types,
-            move |at| TypeHierarchyPrepareParams {
-                text_document_position_params: at.position(offset),
-                work_done_progress_params: Default::default(),
-            },
-        );
-        prepared("typeHierarchy", reply.boxed())
+        let asks = self.ask_all(buffer, |server| {
+            let reply = self.document_request_if_provided_on::<PrepareTypes>(
+                server,
+                buffer,
+                version,
+                "typeHierarchy",
+                types,
+                move |at| TypeHierarchyPrepareParams {
+                    text_document_position_params: at.position(offset),
+                    work_done_progress_params: Default::default(),
+                },
+            );
+            prepared("typeHierarchy", server, reply.boxed())
+        });
+        first_that_answers(asks.into_iter().map(|(_, ask)| ask).collect(), rank_list)
     }
 
     /// The calls into `item`, which came from open buffer `server_of`.
@@ -328,28 +340,37 @@ impl LspManager {
         }
     }
 
-    /// Sends `item`'s raw JSON back, unchanged, to the server of
-    /// `server_of`, if that session still has the buffer open as it was.
-    /// `null` and a timeout are an empty list.
+    /// Sends `item`'s raw JSON back, unchanged, to the server that produced
+    /// it, if that session still has the buffer open as it was: otherwise
+    /// `Unavailable("stale")`, with nothing sent. (An item with no owner
+    /// goes to the lead of `server_of`.) `null` and a timeout are an empty
+    /// list.
     fn follow_up<R: Request<Params = Value, Result = Option<Vec<Value>>> + 'static>(
         &self,
         server_of: BufferId,
         item: &HierarchyItem,
     ) -> futures::future::BoxFuture<'static, Result<Vec<Value>, LspError>> {
-        let Some(server) = self.server_of(server_of) else {
-            return async { Err(LspError::Unavailable(not_open())) }.boxed();
-        };
         let from = item.from;
+        let server = match from {
+            Some(owner) if !self.runs(owner.server) => {
+                return async { Err(LspError::Unavailable(STALE.into())) }.boxed();
+            }
+            Some(owner) => owner.server,
+            None => match self.server_of(server_of) {
+                Some(server) => server,
+                None => return async { Err(LspError::Unavailable(not_open())) }.boxed(),
+            },
+        };
         let params = serde_json::json!({ "item": item.raw });
         let reply = self
             .request_if::<R>(server, params, move |opened| {
-                has_open(opened, from, server_of)
+                from.is_none_or(|owner| owner.has_open(opened))
             })
             .boxed();
         async move {
             match reply.await {
                 Ok(Some(reply)) => Ok(reply.result.unwrap_or_default()),
-                Ok(None) => Err(LspError::Unavailable("stale".into())),
+                Ok(None) => Err(LspError::Unavailable(STALE.into())),
                 Err(LspError::Timeout) => Ok(Vec::new()),
                 Err(err) => Err(err),
             }
@@ -358,15 +379,20 @@ impl LspManager {
     }
 }
 
-/// The answer to a prepare request: `Ok(None)` without the provider.
+/// What `Unavailable` says when an item's session has ended.
+const STALE: &str = "stale";
+
+/// `server`'s answer to a prepare request: `Ok(None)` without the
+/// provider.
 fn prepared(
     feature: &'static str,
+    server: ServerId,
     reply: futures::future::BoxFuture<'static, Prepared>,
 ) -> futures::future::BoxFuture<'static, Result<Option<Vec<HierarchyItem>>, LspError>> {
     reply
         .map(move |answer| match answer {
             Ok((reply, admitted)) => {
-                let from = Some(admitted.document.identity);
+                let from = Some(Owner::of(server, &admitted));
                 Ok(Some(
                     (reply.result.unwrap_or_default().into_iter())
                         .filter_map(|raw| decode(raw, admitted.encoding, from))

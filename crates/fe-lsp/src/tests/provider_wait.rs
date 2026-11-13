@@ -189,6 +189,16 @@ fn prepare_rename_asks_a_preparing_server_once_known() {
         .prepare_rename(s.buffer.id(), s.buffer.version(), 4);
     let calls = vec![thread::spawn(move || async_io::block_on(prepare))];
     let answers = s.finish_initializing(calls);
+    let answers: Vec<_> = (answers.into_iter())
+        .map(|answer| {
+            answer.map(|target| {
+                target.map(|target| {
+                    assert!(target.owner.is_some(), "a prepared target has its owner");
+                    RenameTarget::new(target.range, target.placeholder)
+                })
+            })
+        })
+        .collect();
     assert_eq!(answers, vec![Ok(Some(RenameTarget::new(3..9, "renamed")))]);
     assert_eq!(s.sent("textDocument/prepareRename"), 1);
 }

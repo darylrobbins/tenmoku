@@ -2,7 +2,10 @@
 //! settings, trust and specs adding or removing one server of a document,
 //! and `restart(name, root)` of one, leave its other servers alone.
 
+use std::io;
 use std::path::Path;
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use fe_buffer::Buffer;
 use fe_config::settings::LspSettings;
@@ -10,6 +13,8 @@ use lsp_types::Url;
 
 use super::lead_unavailable::{tree, vars_spec};
 use super::{CSS, Fixture, ROOT, defined, settle, spec};
+use crate::fake::{FakeLaunchers, FakeServer, Script};
+use crate::{LaunchCancel, ServerIo, ServerLauncher, ServerSpec};
 
 /// Where a server comes from: each adds or removes one as [`update_settings`],
 /// [`register_spec`] and [`set_extension_specs`] do.
@@ -318,4 +323,86 @@ fn reroot_moves_only_the_server_whose_root_changed() {
     // It still answers.
     f.barrier(old);
     untouched(&f, "css", &uri, "reroot");
+}
+
+/// Holds the first launch of `vars` until released, then fails it; hands
+/// every other launch to the fakes.
+struct HeldThenFailed {
+    fakes: FakeLaunchers,
+    entered: Mutex<Option<mpsc::Sender<()>>>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+
+impl ServerLauncher for HeldThenFailed {
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> io::Result<ServerIo> {
+        let held = (spec.name == "vars")
+            .then(|| self.entered.lock().unwrap().take())
+            .flatten();
+        if let Some(entered) = held {
+            entered.send(()).unwrap();
+            let _ = (self.release.lock().unwrap()).recv_timeout(Duration::from_secs(10));
+            return Err(io::Error::other("the held launch fails"));
+        }
+        self.fakes.launch(spec, root, cancel)
+    }
+}
+
+/// A reroot while the old instance still launches gives the new one an
+/// opening of its own: the old one's, handed back when its launch fails,
+/// is never forwarded there too (T1735 F1), which would close and reopen
+/// the document on the new instance and replace its identity.
+#[test]
+fn reroot_while_old_launch_held_opens_once_on_the_new_root() {
+    let (_dir, proj, path) = tree();
+    let uri = Url::from_file_path(&path).unwrap();
+    let fakes: Vec<(&'static str, FakeServer)> = vec![
+        ("css", FakeServer::new(Script::default())),
+        ("vars", FakeServer::new(Script::default())),
+    ];
+    let (entered, entering) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let launcher = HeldThenFailed {
+        fakes: FakeLaunchers::new(fakes.iter().map(|(name, fake)| (*name, fake.launcher()))),
+        entered: Mutex::new(Some(entered)),
+        release: Mutex::new(released),
+    };
+    let mut f = Fixture::with_launcher(fakes, Arc::new(launcher));
+    f.manager.register_spec(spec("css", &[CSS], false));
+    f.manager.register_spec(vars_spec());
+
+    // The document is queued on the add-on's instance at `proj`, whose
+    // launch is held.
+    let mut buffer = Buffer::new("a {}\n");
+    f.open_at(None, &mut buffer, &path, CSS);
+    entering.recv_timeout(Duration::from_secs(10)).unwrap();
+    let old = f.placed(&buffer, "vars").unwrap();
+
+    // Without its marker, the add-on's root is the primary's: the document
+    // goes to a new instance there, which opens it.
+    std::fs::remove_file(proj.join("vars.json")).unwrap();
+    f.manager.update_settings(&LspSettings::default());
+    f.wait_synced("vars", &uri, &buffer);
+    let new = f.placed(&buffer, "vars").unwrap();
+    assert_ne!(new, old);
+    let identity = f.manager.active_identity(buffer.id(), new);
+    assert!(identity.is_some());
+
+    // The old launch fails, handing back what was queued on it.
+    release.send(()).unwrap();
+    settle();
+    f.barrier(new);
+    assert_eq!(
+        methods(&f, "vars", &uri),
+        ["didOpen"],
+        "the new instance opened it once"
+    );
+    assert_eq!(f.manager.active_identity(buffer.id(), new), identity);
+    assert_eq!(f.placed(&buffer, "vars"), Some(new));
+    f.edit(&mut buffer, "x");
+    f.wait_synced("vars", &uri, &buffer);
 }

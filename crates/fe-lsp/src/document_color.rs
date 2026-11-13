@@ -2,9 +2,16 @@
 //! colour literals a server finds in a document (CSS, SCSS, Tailwind…),
 //! and the ways it can write a colour back, for a picker.
 //!
-//! - **Provider.** A server without `colorProvider` (or with it `false`)
-//!   gets no request: colours are `Ok(None)`, presentations
-//!   `Unavailable("colorPresentation")`.
+//! - **Provider.** Colours are asked of the document's first server (the
+//!   lead first) with `colorProvider` (merged across servers once A7
+//!   lands). With none, nothing is sent: `Ok(None)`.
+//! - **Owner.** Each colour carries the server that found it, as its
+//!   session had the document open ([`ColorInformation::owner`]). Its
+//!   presentations are asked of that session alone, never another server
+//!   nor one the server restarted into: then nothing is sent, and the
+//!   answer is `Unavailable("the language server restarted")`. A server
+//!   without `colorProvider` (or with it `false`) gets no presentation
+//!   request: `Unavailable("colorPresentation")`.
 //! - **Ranges.** Decoded against the text the server had at the request's
 //!   version, as bytes of that version, sorted by start.
 //! - **Colours.** Red, green, blue and alpha, each clamped to `0..=1`.
@@ -24,7 +31,7 @@ use lsp_types::{
 use crate::document::Admitted;
 use crate::encoding::to_lsp;
 use crate::event::LspError;
-use crate::manager::LspManager;
+use crate::manager::{LspManager, Owner};
 
 /// A colour a server found in a document.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,11 +41,26 @@ pub struct ColorInformation {
     pub range: Range<usize>,
     /// Red, green, blue and alpha, each in `0..=1`.
     pub color: [f32; 4],
+    /// The server that found it, and the document as its session had it
+    /// open: presentations are asked of that session alone.
+    owner: Option<Owner>,
 }
 
 impl ColorInformation {
+    /// A colour no server owns: its presentations are asked of the lead
+    /// of the buffer they're for.
     pub fn new(range: Range<usize>, color: [f32; 4]) -> Self {
-        Self { range, color }
+        Self {
+            range,
+            color,
+            owner: None,
+        }
+    }
+
+    /// The server that found the colour, with the opening of the document
+    /// it was found in.
+    pub fn owner(&self) -> Option<Owner> {
+        self.owner
     }
 }
 
@@ -82,11 +104,12 @@ impl Request for ColorPresentationRequest {
 }
 
 impl LspManager {
-    /// The colours in open buffer `buffer` at its `version`: sent only if
-    /// the server has that version, as any
+    /// The colours in open buffer `buffer` at its `version`, asked of its
+    /// first server with `colorProvider` (the lead first), each owned by
+    /// it: sent only if the server has that version, as any
     /// [`document_request`](Self::document_request) is.
     ///
-    /// `Ok(None)` if the server doesn't provide colours: nothing is sent.
+    /// `Ok(None)` if no server provides colours: nothing is sent.
     /// `Ok(Some(vec![]))` if it has none, or doesn't say within
     /// `lsp.timeouts.hover` (which also cancels the request). Dropping the
     /// future cancels it too. It doesn't borrow the manager.
@@ -96,7 +119,7 @@ impl LspManager {
         version: Version,
     ) -> impl Future<Output = Result<Option<Vec<ColorInformation>>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request_if_provided::<DocumentColor>(
+        let reply = self.provider_request::<DocumentColor>(
             buffer,
             version,
             FEATURE,
@@ -113,11 +136,13 @@ impl LspManager {
         reply
             .boxed()
             .map(|answer| match answer {
-                Ok((reply, admitted)) => {
+                Ok((reply, admitted, server)) => {
+                    let owner = Some(Owner::of(server, &admitted));
                     let mut colors: Vec<_> = (reply.result.unwrap_or_default().into_iter())
                         .map(|info| ColorInformation {
                             range: admitted.offsets(info.range),
                             color: components(info.color),
+                            owner,
                         })
                         .collect();
                     colors.sort_by_key(|info| (info.range.start, info.range.end));
@@ -132,7 +157,11 @@ impl LspManager {
 
     /// The ways the server can write `info`'s colour over `info`'s range,
     /// found in open buffer `buffer` at its `version`, with the edits in
-    /// bytes of that version. Sent only while the server has that version.
+    /// bytes of that version. Sent only while the server has that version,
+    /// and only to `info`'s [`owner`](ColorInformation::owner), while its
+    /// session has the document open as it had it: otherwise nothing is
+    /// sent, and the answer is `Unavailable("the language server
+    /// restarted")`. A colour with no owner goes to `buffer`'s lead.
     ///
     /// A server without `colorProvider` is
     /// `Unavailable("colorPresentation")`, and nothing is sent. One that
@@ -145,37 +174,51 @@ impl LspManager {
         info: ColorInformation,
     ) -> impl Future<Output = Result<Vec<ColorPresentation>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.document_request_if_provided::<ColorPresentationRequest>(
-            buffer,
-            version,
-            PRESENTATION,
-            provides_colors,
-            move |at| {
-                let text = &at.document.sent.text;
-                let len = text.len();
-                let (start, end) = (info.range.start.min(len), info.range.end.min(len));
-                let [red, green, blue, alpha] = info.color;
-                ColorPresentationParams {
-                    text_document: TextDocumentIdentifier {
-                        uri: at.document.uri.clone(),
-                    },
-                    color: lsp_types::Color {
-                        red,
-                        green,
-                        blue,
-                        alpha,
-                    },
-                    range: lsp_types::Range {
-                        start: to_lsp(text, start, at.encoding),
-                        end: to_lsp(text, end, at.encoding),
-                    },
-                    work_done_progress_params: Default::default(),
-                    partial_result_params: Default::default(),
-                }
-            },
-        );
+        let owner = info.owner;
+        let params = move |at: &Admitted| {
+            let text = &at.document.sent.text;
+            let len = text.len();
+            let (start, end) = (info.range.start.min(len), info.range.end.min(len));
+            let [red, green, blue, alpha] = info.color;
+            ColorPresentationParams {
+                text_document: TextDocumentIdentifier {
+                    uri: at.document.uri.clone(),
+                },
+                color: lsp_types::Color {
+                    red,
+                    green,
+                    blue,
+                    alpha,
+                },
+                range: lsp_types::Range {
+                    start: to_lsp(text, start, at.encoding),
+                    end: to_lsp(text, end, at.encoding),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            }
+        };
+        let reply = match owner {
+            Some(owner) => self
+                .owner_request::<ColorPresentationRequest>(
+                    owner,
+                    version,
+                    PRESENTATION,
+                    provides_colors,
+                    params,
+                )
+                .boxed(),
+            None => self
+                .document_request_if_provided::<ColorPresentationRequest>(
+                    buffer,
+                    version,
+                    PRESENTATION,
+                    provides_colors,
+                    params,
+                )
+                .boxed(),
+        };
         reply
-            .boxed()
             .map(|answer| match answer {
                 Ok((reply, admitted)) => Ok((reply.result.unwrap_or_default().into_iter())
                     .map(|presentation| convert(presentation, &admitted))

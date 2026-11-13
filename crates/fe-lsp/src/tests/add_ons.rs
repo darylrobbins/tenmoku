@@ -1,11 +1,15 @@
 //! Add-on servers (docs/decisions/q5j03ax2af-lsp-add-on-servers.md §4,
-//! §7): a document placed on its primary and its add-ons at once, each
-//! apart, with one holder per (URI, lead).
+//! §5, §7): a document placed on its primary and its add-ons at once, each
+//! apart, with one holder per (URI, lead), and its features routed across
+//! them.
 
 mod crash;
+mod first_answer;
 mod holders;
 mod lead_kept;
 mod lead_unavailable;
+mod owners;
+mod provider;
 mod reconcile;
 mod sync;
 
@@ -14,11 +18,13 @@ use std::sync::Arc;
 
 use fe_buffer::{Buffer, Origin};
 use fe_config::settings::{LspServerSettings, LspSettings};
-use lsp_types::Url;
+use lsp_types::{PositionEncodingKind, ServerCapabilities, Url};
 use serde_json::{Value, json};
 
 use super::{Events, ROOT, answer, manager};
-use crate::fake::{Echo, FakeLaunchers, FakeServer, Record, Replica, Script};
+use crate::fake::{
+    Echo, FakeLaunchers, FakeServer, InitializeReply, Record, Replica, Script, initialize_result,
+};
 use crate::{LspManager, ManualClock, RouteServer, ServerId, ServerLauncher, ServerSpec};
 
 /// The language the fixture's primary serves, which no built-in lists.
@@ -76,7 +82,14 @@ impl Fixture {
         fakes: Vec<(&'static str, FakeServer)>,
         launcher: Arc<dyn ServerLauncher>,
     ) -> Self {
-        let clock = Arc::new(ManualClock::new());
+        Self::with_clock(fakes, launcher, Arc::new(ManualClock::new()))
+    }
+
+    fn with_clock(
+        fakes: Vec<(&'static str, FakeServer)>,
+        launcher: Arc<dyn ServerLauncher>,
+        clock: Arc<ManualClock>,
+    ) -> Self {
         let (manager, events) = manager(launcher, Some(clock.clone()));
         Self {
             fakes,
@@ -92,6 +105,59 @@ impl Fixture {
         f.manager.register_spec(spec("css", &[CSS], false));
         f.manager.register_spec(spec("vars", &[CSS], true));
         f
+    }
+
+    /// Primary `css` and add-on `vars`, both for [`CSS`], each fake saying
+    /// it can do what `css` and `vars` add to its capabilities, its
+    /// scripted delays on the manager's clock.
+    fn css_and_vars_with(
+        css: impl FnOnce(&mut ServerCapabilities),
+        vars: impl FnOnce(&mut ServerCapabilities),
+    ) -> Self {
+        let clock = Arc::new(ManualClock::new());
+        let fake = |give: &mut dyn FnMut(&mut ServerCapabilities)| {
+            let mut init = initialize_result(Some(PositionEncodingKind::UTF8));
+            give(&mut init.capabilities);
+            let script = Script {
+                initialize: InitializeReply::Result(Box::new(init)),
+                ..Script::default()
+            };
+            FakeServer::with_clock(script, clock.clone())
+        };
+        let (mut css, mut vars) = (Some(css), Some(vars));
+        let fakes = vec![
+            ("css", fake(&mut |c| css.take().unwrap()(c))),
+            ("vars", fake(&mut |c| vars.take().unwrap()(c))),
+        ];
+        let launchers =
+            FakeLaunchers::new(fakes.iter().map(|(name, fake)| (*name, fake.launcher())));
+        let mut f = Self::with_clock(fakes, Arc::new(launchers), clock);
+        f.manager.register_spec(spec("css", &[CSS], false));
+        f.manager.register_spec(spec("vars", &[CSS], true));
+        f
+    }
+
+    /// Opens `buffer` as `a.css` in [`CSS`], and waits until both `css`
+    /// and `vars` have it. Returns its URI.
+    fn open_on_both(&mut self, buffer: &mut Buffer) -> Url {
+        let uri = self.open(buffer, "a.css", CSS);
+        self.wait_synced("css", &uri, buffer);
+        self.wait_synced("vars", &uri, buffer);
+        uri
+    }
+
+    /// The params of each `method` request fake `name` got, in any launch.
+    fn asked(&self, name: &str, method: &str) -> Vec<Value> {
+        (self.fake(name).records().into_iter())
+            .filter_map(|record| match record {
+                Record::Request {
+                    method: asked,
+                    params,
+                    ..
+                } if asked == method => Some(params),
+                _ => None,
+            })
+            .collect()
     }
 
     fn fake(&self, name: &str) -> &FakeServer {
