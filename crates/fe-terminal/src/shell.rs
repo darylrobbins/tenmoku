@@ -20,10 +20,11 @@ use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::{Dimensions, Grid, Scroll};
-use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{Term, TermMode};
 
@@ -366,6 +367,104 @@ impl CommandStatus {
     }
 }
 
+/// The most command blocks a session keeps: past it the oldest goes.
+pub(crate) const MAX_BLOCKS: usize = 1_000;
+
+/// A command and its output as the shell marks them with OSC 133: its
+/// prompt (`A`), command line (`B`), output (`C`) and end (`D`). Rows are
+/// relative to the view's top row at the time it was read, the rows
+/// [`Snapshot`](crate::Snapshot) copies: negative above the view, past its
+/// last row below.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandBlock {
+    /// The block's identity for as long as the session keeps it, for
+    /// [`Terminal::command_text`](crate::Terminal::command_text) and
+    /// [`Terminal::command_output`](crate::Terminal::command_output).
+    pub id: u64,
+    /// The row the prompt starts on (`A`).
+    pub prompt_row: isize,
+    /// The row the command line starts on (`B`), if the shell marked it.
+    pub input_row: Option<isize>,
+    /// The row the command's output starts on (`C`): `None` until the
+    /// command runs, or if the shell doesn't mark it.
+    pub output_start_row: Option<isize>,
+    /// The block's last row: `None` while the command runs, or while its
+    /// prompt waits for one. A block ends at `D`, or at the next prompt if
+    /// the shell sends no `D`.
+    pub end_row: Option<isize>,
+    /// The exit code `D` gave: `None` without a `D`, or with one that gave
+    /// none.
+    pub exit_code: Option<i32>,
+    /// When the command started (`C`); until then, when its prompt did.
+    pub started: Instant,
+    /// When the command ended (`D`, or the next prompt without one).
+    pub finished: Option<Instant>,
+}
+
+impl CommandBlock {
+    /// How long the command ran, once it ended: `None` while it runs, or if
+    /// no output start (`C`) marked when it started.
+    pub fn duration(&self) -> Option<Duration> {
+        self.output_start_row?;
+        Some(self.finished?.saturating_duration_since(self.started))
+    }
+
+    /// Whether the command started (`C`) and hasn't ended.
+    pub fn running(&self) -> bool {
+        self.output_start_row.is_some() && self.finished.is_none()
+    }
+}
+
+/// A cell by absolute row (see the module's doc) and column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Spot {
+    row: u64,
+    col: usize,
+}
+
+/// A command block as recorded, by absolute rows.
+#[derive(Clone, Debug)]
+struct Block {
+    id: u64,
+    /// The cursor at `A`.
+    prompt: Spot,
+    /// The cursor at `B`.
+    input: Option<Spot>,
+    /// The cursor at `C`.
+    output: Option<Spot>,
+    /// The cursor at `D`, or at the next `A` without one: just past the
+    /// block's last cell.
+    end: Option<Spot>,
+    exit_code: Option<i32>,
+    started: Instant,
+    finished: Option<Instant>,
+}
+
+impl Block {
+    /// The block's last row, from its end: the row before the end's if the
+    /// end starts a row.
+    fn last_row(&self) -> Option<u64> {
+        let end = self.end?;
+        let before = end.col == 0 && end.row > self.prompt.row;
+        Some(end.row - u64::from(before))
+    }
+
+    /// The spots a reflow moves: prompt, input, output and end.
+    fn spots(&self) -> [Option<Spot>; 4] {
+        [Some(self.prompt), self.input, self.output, self.end]
+    }
+}
+
+/// Where a spot is by logical line, which a reflow keeps.
+#[derive(Clone, Copy, Debug)]
+enum Anchor {
+    /// Above the top of history: the reflow doesn't move it.
+    Above(Spot),
+    /// `offset` cells into logical line `line`, counted from the top of
+    /// history.
+    At { line: usize, offset: usize },
+}
+
 /// What a session knows of its shell, and the prompt marks' bookkeeping.
 #[derive(Debug)]
 pub(crate) struct ShellState {
@@ -380,6 +479,10 @@ pub(crate) struct ShellState {
     marks: VecDeque<u64>,
     /// The mark the view last scrolled to, until it returns to the bottom.
     remembered: Option<u64>,
+    /// The command blocks, oldest first, at most [`MAX_BLOCKS`].
+    blocks: VecDeque<Block>,
+    /// The next block's id.
+    next_block: u64,
     /// Rows trimmed off the top of history, or lost to clearing it.
     dropped: u64,
     /// The history's size after the last parser call.
@@ -410,6 +513,9 @@ pub(crate) struct Anchors {
     /// Each mark's logical line.
     marks: Vec<Option<usize>>,
     remembered: Option<usize>,
+    /// Each block's id and its spots' anchors, as [`Block::spots`] lists
+    /// them.
+    blocks: Vec<(u64, [Option<Anchor>; 4])>,
 }
 
 impl ShellState {
@@ -420,6 +526,8 @@ impl ShellState {
             command: CommandStatus::Idle,
             marks: VecDeque::new(),
             remembered: None,
+            blocks: VecDeque::new(),
+            next_block: 0,
             dropped: 0,
             history: 0,
             resync: false,
@@ -451,11 +559,218 @@ impl ShellState {
     pub(crate) fn event<T>(&mut self, event: ShellEvent, term: &mut Term<T>) {
         match event {
             ShellEvent::Cwd(path) => self.cwd = Some(path),
-            ShellEvent::PromptStart => self.mark(term),
-            ShellEvent::OutputStart => self.command = CommandStatus::Running,
-            ShellEvent::CommandEnd(code) => self.command = CommandStatus::Finished(code),
-            ShellEvent::CommandStart => {}
+            ShellEvent::PromptStart => {
+                self.mark(term);
+                self.open_block(term);
+            }
+            ShellEvent::CommandStart => self.command_start(term),
+            ShellEvent::OutputStart => {
+                self.command = CommandStatus::Running;
+                self.output_start(term);
+            }
+            ShellEvent::CommandEnd(code) => {
+                self.command = CommandStatus::Finished(code);
+                self.end_block(term, code);
+            }
         }
+    }
+
+    /// The cursor's spot, or `None` on the alternate screen, whose rows
+    /// aren't counted.
+    fn cursor<T>(&self, term: &Term<T>) -> Option<Spot> {
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        let point = term.grid().cursor.point;
+        Some(Spot {
+            row: self.base(term) + point.line.0.max(0) as u64,
+            col: point.column.0,
+        })
+    }
+
+    /// Starts a block at the prompt the cursor is on (`A`), unless on the
+    /// alternate screen. Blocks from there down are of rows the shell has
+    /// since written over; the block before ends here if nothing ended it.
+    fn open_block<T>(&mut self, term: &Term<T>) {
+        let Some(at) = self.cursor(term) else {
+            return;
+        };
+        let now = Instant::now();
+        while self.blocks.back().is_some_and(|block| block.prompt >= at) {
+            self.blocks.pop_back();
+        }
+        if let Some(last) = self.blocks.back_mut() {
+            if last.end.is_none_or(|end| end > at) {
+                last.end = Some(at);
+            }
+            last.finished.get_or_insert(now);
+            for spot in [&mut last.input, &mut last.output] {
+                if spot.is_some_and(|spot| spot > at) {
+                    *spot = Some(at);
+                }
+            }
+        }
+        self.blocks.push_back(Block {
+            id: self.next_block,
+            prompt: at,
+            input: None,
+            output: None,
+            end: None,
+            exit_code: None,
+            started: now,
+            finished: None,
+        });
+        self.next_block += 1;
+        while self.blocks.len() > MAX_BLOCKS {
+            self.blocks.pop_front();
+        }
+    }
+
+    /// The newest block, if its command hasn't started (`C`) nor ended.
+    fn waiting_block(&mut self) -> Option<&mut Block> {
+        (self.blocks.back_mut()).filter(|block| block.output.is_none() && block.end.is_none())
+    }
+
+    /// The command line starts at the cursor (`B`): the newest block's, if
+    /// its command hasn't run. A prompt redrawn marks it again.
+    fn command_start<T>(&mut self, term: &Term<T>) {
+        let Some(at) = self.cursor(term) else {
+            return;
+        };
+        if let Some(block) = self.waiting_block() {
+            block.input = Some(at);
+        }
+    }
+
+    /// The command's output starts at the cursor (`C`), and its clock.
+    fn output_start<T>(&mut self, term: &Term<T>) {
+        let Some(at) = self.cursor(term) else {
+            return;
+        };
+        if let Some(block) = self.waiting_block() {
+            block.output = Some(at);
+            block.started = Instant::now();
+        }
+    }
+
+    /// The command ended (`D`), with `code`: the newest block ends at the
+    /// cursor. A `D` for a block whose command never started (`C`), as bash
+    /// sends for an empty command line, ends it with no exit code. On the
+    /// alternate screen the end's row is unknown: the next prompt sets it.
+    fn end_block<T>(&mut self, term: &Term<T>, code: Option<i32>) {
+        let at = self.cursor(term);
+        let Some(block) = self.blocks.back_mut() else {
+            return;
+        };
+        if block.end.is_some() || block.finished.is_some() {
+            return;
+        }
+        block.finished = Some(Instant::now());
+        block.exit_code = code.filter(|_| block.output.is_some());
+        if let Some(at) = at {
+            block.end = Some(at.max(block.prompt));
+        }
+    }
+
+    /// The blocks' rows past which each may still be on screen, oldest
+    /// first: `None` for the newest while it hasn't ended.
+    fn block_last_rows(&self) -> impl Iterator<Item = Option<u64>> + '_ {
+        (self.blocks.iter().enumerate()).map(|(ix, block)| {
+            block.last_row().or_else(|| {
+                let next = self.blocks.get(ix + 1)?;
+                Some(next.prompt.row.saturating_sub(1).max(block.prompt.row))
+            })
+        })
+    }
+
+    /// The blocks with a row in view, by rows relative to the view's top
+    /// row: none on the alternate screen.
+    pub(crate) fn command_blocks<T>(&self, term: &Term<T>) -> Vec<CommandBlock> {
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            return Vec::new();
+        }
+        let grid = term.grid();
+        let top = self.base(term) as i64 - grid.display_offset() as i64;
+        let bottom = top + grid.screen_lines() as i64 - 1;
+        let relative = |row: u64| (row as i64 - top) as isize;
+        (self.blocks.iter().zip(self.block_last_rows()))
+            .filter(|(block, last)| {
+                block.prompt.row as i64 <= bottom && last.is_none_or(|last| last as i64 >= top)
+            })
+            .map(|(block, _)| CommandBlock {
+                id: block.id,
+                prompt_row: relative(block.prompt.row),
+                input_row: block.input.map(|spot| relative(spot.row)),
+                output_start_row: block.output.map(|spot| relative(spot.row)),
+                end_row: block.last_row().map(relative),
+                exit_code: block.exit_code,
+                started: block.started,
+                finished: block.finished,
+            })
+            .collect()
+    }
+
+    fn block(&self, id: u64) -> Option<&Block> {
+        let ix = self
+            .blocks
+            .binary_search_by_key(&id, |block| block.id)
+            .ok()?;
+        self.blocks.get(ix)
+    }
+
+    /// Block `id`'s command line, from `B` to `C`, trailing blanks trimmed:
+    /// `None` if the session no longer keeps the block, its command hasn't
+    /// started, or the shell didn't mark both, or on the alternate screen.
+    pub(crate) fn command_text<T>(&self, term: &Term<T>, id: u64) -> Option<String> {
+        let block = self.block(id)?;
+        let text = self.text_between(term, block.input?, block.output?)?;
+        Some(text.trim_end().to_owned())
+    }
+
+    /// Block `id`'s output so far, from `C` to its end (or the cursor while
+    /// it runs), trailing line breaks trimmed: `None` if the session no
+    /// longer keeps the block, its command hasn't started, or on the
+    /// alternate screen. Rows trimmed off history are left out.
+    pub(crate) fn command_output<T>(&self, term: &Term<T>, id: u64) -> Option<String> {
+        let block = self.block(id)?;
+        let end = match block.end {
+            Some(end) => end,
+            None => self.cursor(term)?,
+        };
+        let text = self.text_between(term, block.output?, end)?;
+        Some(text.trim_end_matches(['\n', '\r']).to_owned())
+    }
+
+    /// The text from `from` up to, not including, `to`, of the rows still
+    /// kept; `None` on the alternate screen.
+    fn text_between<T>(&self, term: &Term<T>, from: Spot, to: Spot) -> Option<String> {
+        if term.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        let grid = term.grid();
+        let base = self.base(term) as i64;
+        let (top, bottom) = (grid.topmost_line().0, grid.bottommost_line().0);
+        let line = |spot: Spot| (spot.row as i64 - base) as i32;
+        let start = if line(from) < top {
+            Point::new(Line(top), Column(0))
+        } else {
+            Point::new(Line(line(from)), Column(from.col.min(grid.columns() - 1)))
+        };
+        // The cell before `to`.
+        let end = if to.col > 0 {
+            Point::new(Line(line(to)), Column((to.col - 1).min(grid.columns() - 1)))
+        } else {
+            Point::new(Line(line(to) - 1), grid.last_column())
+        };
+        let end = if end.line.0 > bottom {
+            Point::new(Line(bottom), grid.last_column())
+        } else {
+            end
+        };
+        if end < start {
+            return Some(String::new());
+        }
+        Some(term.bounds_to_string(start, end))
     }
 
     /// Marks a prompt at the cursor's row, unless on the alternate screen.
@@ -526,6 +841,11 @@ impl ShellState {
         let dropped = self.dropped;
         while self.marks.front().is_some_and(|&mark| mark < dropped) {
             self.marks.pop_front();
+        }
+        while (self.block_last_rows().next())
+            .is_some_and(|last| last.is_some_and(|last| last < dropped))
+        {
+            self.blocks.pop_front();
         }
     }
 
@@ -609,8 +929,9 @@ impl ShellState {
             offset: term.grid().display_offset(),
             marks: Vec::new(),
             remembered: None,
+            blocks: Vec::new(),
         };
-        if alt || self.marks.is_empty() {
+        if alt || (self.marks.is_empty() && self.blocks.is_empty()) {
             return anchors;
         }
         let starts = logical_starts(term.grid());
@@ -623,6 +944,20 @@ impl ShellState {
         };
         anchors.marks = self.marks.iter().map(|&mark| logical(mark)).collect();
         anchors.remembered = self.remembered.and_then(logical);
+        let columns = term.columns();
+        let anchor = |spot: Spot| match logical(spot.row) {
+            None => Anchor::Above(spot),
+            Some(ix) => {
+                let row = (spot.row as i64 - base - i64::from(starts[ix])) as usize;
+                Anchor::At {
+                    line: ix,
+                    offset: row * columns + spot.col,
+                }
+            }
+        };
+        anchors.blocks = (self.blocks.iter())
+            .map(|block| (block.id, block.spots().map(|spot| spot.map(anchor))))
+            .collect();
         anchors
     }
 
@@ -643,6 +978,7 @@ impl ShellState {
             // next `advanced`, which trims it).
             if self.frozen.is_none() && term.columns() != anchors.columns {
                 self.marks.clear();
+                self.blocks.clear();
             }
             self.resized_hidden = true;
             self.resync = true;
@@ -655,10 +991,11 @@ impl ShellState {
     /// Puts the marks on the first rows of the logical lines `anchors`
     /// names.
     fn place<T>(&mut self, term: &Term<T>, anchors: Anchors) {
-        if self.marks.is_empty() {
+        if self.marks.is_empty() && self.blocks.is_empty() {
             return;
         }
         let starts = logical_starts(term.grid());
+        self.place_blocks(term, &starts, &anchors.blocks);
         let base = self.base(term) as i64;
         let row = |logical: Option<usize>| {
             let start = starts.get(logical?)?;
@@ -668,6 +1005,47 @@ impl ShellState {
         marks.dedup();
         self.marks = marks.into();
         self.remembered = row(anchors.remembered);
+    }
+
+    /// Puts each block's spots where `anchors` (by block id) says they are
+    /// after a reflow into logical lines starting at `starts`. A block
+    /// whose prompt's line went goes too; another spot whose line went is
+    /// forgotten.
+    fn place_blocks<T>(
+        &mut self,
+        term: &Term<T>,
+        starts: &[i32],
+        anchors: &[(u64, [Option<Anchor>; 4])],
+    ) {
+        let base = self.base(term) as i64;
+        let columns = term.columns();
+        let bottom = term.bottommost_line().0;
+        let spot = |anchor: Anchor| match anchor {
+            Anchor::Above(spot) => Some(spot),
+            Anchor::At { line, offset } => {
+                let start = *starts.get(line)?;
+                let next = starts.get(line + 1).map_or(bottom + 1, |&next| next);
+                let row = (start + (offset / columns) as i32).min(next - 1);
+                Some(Spot {
+                    row: (base + i64::from(row)) as u64,
+                    col: offset % columns,
+                })
+            }
+        };
+        self.blocks.retain_mut(|block| {
+            let Ok(ix) = anchors.binary_search_by_key(&block.id, |&(id, _)| id) else {
+                return true;
+            };
+            let [prompt, input, output, end] = anchors[ix].1.map(|anchor| anchor.and_then(spot));
+            let Some(prompt) = prompt else {
+                return false;
+            };
+            block.prompt = prompt;
+            block.input = input;
+            block.output = output;
+            block.end = end;
+            true
+        });
     }
 }
 

@@ -31,8 +31,21 @@ add the snippet for your shell below to its startup file.
   shows a spinner from a `133;C` until the `133;D` after it, and a red mark
   while the last `133;D` had a status other than 0.
 
-`133;B` (command start) is read but not used yet. The snippets send it anyway
-so later features work without changing your setup.
+- **Command blocks** (`133;A`, `B`, `C` and `D` together). Each prompt
+  starts a block: its prompt (`A`), its command line (`B`, after the prompt
+  text), its output (`C`) and its end (`D`, with the exit code). The block
+  records when the command started (`C`) and ended (`D`), so how long it
+  ran. A block whose command is running has no end yet. A shell that sends
+  no `D` leaves its blocks with no exit code: the next prompt ends each one.
+  A `D` for a command line that never ran (no `C`, as bash sends after an
+  empty line) ends the block with no exit code either. The terminal keeps
+  the newest 1,000 blocks, each for as long as any of its rows are in the
+  scrollback. Like prompt marks, blocks follow their lines when a resize
+  rewraps them, and programs on the alternate screen can't start or move
+  them. Nothing draws blocks yet: this is the model the terminal's view will
+  draw them from.
+
+The snippets send `133;B` so the command line of each block can be read.
 
 Each snippet checks `TERM_PROGRAM`, which Tenmoku sets to `tenmoku` in its
 terminals, so other terminals don't get these sequences.
@@ -89,7 +102,8 @@ fi
 ```
 
 A prompt theme that rebuilds `PS1` before every prompt (powerlevel10k,
-starship) drops the `133;B` at its end. Only `133;A` matters for now.
+starship) drops the `133;B` at its end. Prompt marks and blocks still work
+then; only a block's command line can't be told from its prompt.
 
 ## bash
 
@@ -165,3 +179,29 @@ usually starts in the project root. If the remote shell has the snippet,
 prompt marks work there as they do locally. The remote side needs
 `TERM_PROGRAM` passed through (`SendEnv` and `AcceptEnv`) for the check to
 pass.
+
+## The block model (for the terminal's view)
+
+`fe_terminal::Terminal::command_blocks()` returns the blocks with a row in
+view, oldest first; `snapshot_with_blocks()` returns them with the
+`Snapshot` of the same moment. Each `CommandBlock` has:
+
+- `id`: stable while the terminal keeps the block, for
+  `Terminal::command_text(id)` (the command line, `B` to `C`) and
+  `Terminal::command_output(id)` (the output, `C` to the end, or to the
+  cursor while it runs; rows trimmed off history are left out).
+- `prompt_row`, `input_row`, `output_start_row`, `end_row`: rows relative
+  to the view's top row, negative above it and past its last row below.
+  `end_row` is the block's last row: the row before the cursor's at `D` if
+  the cursor was at the start of a row, else the cursor's row. A command
+  that printed nothing has an `output_start_row` past its `end_row`.
+- `exit_code`, `started`, `finished`, and `duration()` (once it ended, if
+  `C` marked its start) and `running()` (started, not ended).
+
+Internally (`crates/fe-terminal/src/shell.rs`) each mark is a cell by
+absolute row, the same row numbering the prompt marks use, so trimming
+history doesn't move it. A resize anchors each cell to its logical line and
+its offset in it, and puts it back after the reflow; a resize on the
+alternate screen uses the anchors taken as it hid the primary grid.
+Clearing history drops the blocks whose rows went, all but a block still
+running.

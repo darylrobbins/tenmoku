@@ -23,7 +23,7 @@ use rustix_openpty::rustix::termios::Winsize;
 
 use crate::pty_loop::{LoopSender, Msg, PtyLoop, lock};
 use crate::search::{self, QueryError, TerminalMatch, TerminalQuery};
-use crate::shell::{CommandStatus, ShellState, UNBOUNDED_HISTORY};
+use crate::shell::{CommandBlock, CommandStatus, ShellState, UNBOUNDED_HISTORY};
 use crate::snapshot::{self, Snapshot};
 use crate::vi;
 
@@ -545,6 +545,38 @@ impl Terminal {
     /// A copy of the visible grid.
     pub fn snapshot(&self) -> Snapshot {
         snapshot::take(&self.term.lock())
+    }
+
+    /// The command blocks the shell marked with OSC 133 that have a row in
+    /// view, oldest first, their rows relative to the view's top row
+    /// (docs/terminal-shell-integration.md): none on the alternate screen.
+    pub fn command_blocks(&self) -> Vec<CommandBlock> {
+        let term = self.term.lock();
+        lock(&self.shell).command_blocks(&term)
+    }
+
+    /// [`Terminal::snapshot`] and [`Terminal::command_blocks`] of the same
+    /// moment, so the blocks' rows are the snapshot's.
+    pub fn snapshot_with_blocks(&self) -> (Snapshot, Vec<CommandBlock>) {
+        let term = self.term.lock();
+        let blocks = lock(&self.shell).command_blocks(&term);
+        (snapshot::take(&term), blocks)
+    }
+
+    /// The command line of block `id` ([`CommandBlock::id`]), from OSC
+    /// 133;B to C: `None` once the block is gone, before its command runs,
+    /// if the shell doesn't mark both, or on the alternate screen.
+    pub fn command_text(&self, id: u64) -> Option<String> {
+        let term = self.term.lock();
+        lock(&self.shell).command_text(&term, id)
+    }
+
+    /// The output of block `id` ([`CommandBlock::id`]) so far, from OSC
+    /// 133;C to its end, of the rows still in history: `None` once the
+    /// block is gone, before its command runs, or on the alternate screen.
+    pub fn command_output(&self, id: u64) -> Option<String> {
+        let term = self.term.lock();
+        lock(&self.shell).command_output(&term, id)
     }
 
     /// All the output kept, scrollback and screen, top to bottom, wherever
