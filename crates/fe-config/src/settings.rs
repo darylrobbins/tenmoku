@@ -19,6 +19,9 @@ use toml::{
     de::{DeTable, DeValue},
 };
 
+use crate::agent_settings::{
+    PROJECT_AGENTS, PROJECT_PERMISSIONS_SET, drop_project_permissions, narrow_agents,
+};
 use crate::{
     diagnostic::{Diagnostic, Severity},
     layers::Layer,
@@ -54,6 +57,9 @@ pub struct Settings {
     /// The AI chat.
     #[serde(default)]
     pub chat: ChatSettings,
+    /// AI agents. A project file can only tighten their permissions.
+    #[serde(default)]
+    pub agents: crate::agent_settings::AgentSettings,
     /// Installed extensions. A project file can't set them.
     #[serde(default)]
     pub extensions: ExtensionsSettings,
@@ -1644,6 +1650,10 @@ impl SettingsStore {
 fn options() -> SettingsOptions {
     SettingsOptions::new()
         .schema_for(schema_for)
+        .layer_filter(ProjectFilter::new(
+            "agents.project_permissions",
+            drop_project_permissions,
+        ))
         .layer_filter(ProjectFilter::new("formatters", drop_bad_formatters))
         .layer_filter(ProjectFilter::new(SPELL_SCOPES_KEY, drop_bad_spell_scopes))
         .project_filter(ProjectFilter::new("formatters", drop_formatters))
@@ -1652,6 +1662,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("terminal", drop_terminal_shell))
         .project_filter(ProjectFilter::new("vim", drop_vim_user_only))
         .project_filter(ProjectFilter::new("chat", drop_chat))
+        .project_filter(ProjectFilter::new("agents", narrow_agents))
         .project_filter(ProjectFilter::new("extensions", drop_extensions))
         .project_filter(ProjectFilter::new("workbench", drop_workbench_user_only))
 }
@@ -1906,6 +1917,8 @@ pub(crate) fn project_warning(en_us: &str) -> String {
         PROJECT_FORMATTERS => tr!("config-project-formatters-ignored"),
         PROJECT_EXTENSIONS => tr!("config-project-extensions-ignored"),
         PROJECT_CHAT => tr!("config-project-chat-ignored"),
+        PROJECT_AGENTS => tr!("config-project-agents-ignored"),
+        PROJECT_PERMISSIONS_SET => tr!("config-agents-project-permissions-set"),
         PROJECT_TERMINAL_SHELL => tr!("config-project-terminal-shell-ignored"),
         PROJECT_VIM_USER_ONLY => tr!("config-project-vim-user-only"),
         PROJECT_ICON_THEME => tr!("config-project-icon-theme-ignored"),
@@ -2272,7 +2285,7 @@ fn drop_workbench_user_only(layer: &mut Layer) {
 
 /// Where the key at `first` then `rest` is in the source, or where the
 /// deepest of its tables found is.
-fn key_offset(table: &DeTable<'_>, first: &str, rest: &[String]) -> usize {
+pub(crate) fn key_offset(table: &DeTable<'_>, first: &str, rest: &[String]) -> usize {
     let mut table = table;
     let mut offset = 0;
     for key in std::iter::once(first).chain(rest.iter().map(String::as_str)) {

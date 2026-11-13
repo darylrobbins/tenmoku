@@ -4,6 +4,10 @@
 
 ## The Settings editor's group titles, by table name.
 
+settings-group-agents = Agents
+settings-group-claude_code = Claude Code
+settings-group-permissions = Permissions
+settings-group-project_permissions = Project Permissions
 settings-group-chat = Chat
 settings-group-editor = Editor
 settings-group-minimap = Minimap
@@ -22,6 +26,113 @@ settings-group-zen_mode = Zen Mode
 
 ## Each table's and setting's description, by its dotted path, with an
 ## attribute for each value that has one of its own.
+
+settings-agents = AI agents. A project file can only tighten their permissions.
+
+settings-agents-claude_code = The Claude Code agent. A project file can't set any of it.
+
+settings-agents-claude_code-adapter =
+    The path of the claude-agent-acp adapter. Empty finds it on your
+    login shell's PATH.
+
+settings-agents-claude_code-claude =
+    The path of the claude program. Empty finds it on your login shell's
+    PATH.
+
+settings-agents-claude_code-mcp_servers = Let Claude Code run the MCP servers its own settings configure.
+
+settings-agents-claude_code-sandbox_allow_write = Extra paths Claude Code's sandbox may write.
+
+settings-agents-command_timeout_secs = How long one command an agent runs may take, in seconds.
+
+settings-agents-max_rounds = The most requests one turn makes.
+
+settings-agents-permissions = What an agent may do without asking, by kind of action.
+
+settings-agents-permissions-commands_allow = Command patterns that run without asking.
+
+settings-agents-permissions-commands_ask = Command patterns that always ask.
+
+settings-agents-permissions-commands_deny = Command patterns that never run.
+
+settings-agents-permissions-fetch = Fetching from the network.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-permissions-other = Any other action.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-permissions-propose_edit = Proposing an edit, which you review before it applies.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-permissions-read = Reading files in the folder.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-permissions-run_command = Running a command.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-permissions-search = Searching the folder.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-project_permissions =
+    Permissions a project file asked for: each can only tighten what
+    `permissions` allows, so the effective level is the stricter of the
+    two. A project file's `agents.permissions` is moved here.
+
+settings-agents-project_permissions-commands_ask = Command patterns that always ask, added to yours.
+
+settings-agents-project_permissions-commands_deny = Command patterns that never run, added to yours.
+
+settings-agents-project_permissions-fetch = Fetching from the network.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-project_permissions-other = Any other action.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-project_permissions-propose_edit = Proposing an edit.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-project_permissions-read = Reading files in the folder.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-project_permissions-run_command = Running a command.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-project_permissions-search = Searching the folder.
+    .allow = Do it without asking.
+    .ask = Ask first.
+    .deny = Never.
+
+settings-agents-task_budget =
+    The most tokens a turn's task may use, 0 for no budget, else at
+    least 20000.
+
+settings-agents-tool_loop =
+    The API chat offers Claude tools it runs for you, in trusted folders
+    only.
+
+settings-agents-turn_time_limit_secs = How long one turn may run, in seconds.
 
 settings-chat = The AI chat.
 

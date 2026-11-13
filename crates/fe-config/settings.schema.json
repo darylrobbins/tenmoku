@@ -1,5 +1,168 @@
 {
   "$defs": {
+    "AgentLevel": {
+      "description": "What happens when an agent wants to do something of a kind. Later is\nstricter.",
+      "oneOf": [
+        {
+          "const": "allow",
+          "description": "Do it without asking.",
+          "type": "string"
+        },
+        {
+          "const": "ask",
+          "description": "Ask first.",
+          "type": "string"
+        },
+        {
+          "const": "deny",
+          "description": "Never.",
+          "type": "string"
+        }
+      ]
+    },
+    "AgentPermissions": {
+      "description": "`agents.permissions`: a level for each kind of action, and command\npatterns that override a level for `run_command`.",
+      "properties": {
+        "commands_allow": {
+          "default": [],
+          "description": "Command patterns that run without asking.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "commands_ask": {
+          "default": [],
+          "description": "Command patterns that always ask.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "commands_deny": {
+          "default": [],
+          "description": "Command patterns that never run.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "fetch": {
+          "$ref": "#/$defs/AgentLevel",
+          "default": "ask",
+          "description": "Fetching from the network."
+        },
+        "other": {
+          "$ref": "#/$defs/AgentLevel",
+          "default": "ask",
+          "description": "Any other action."
+        },
+        "propose_edit": {
+          "$ref": "#/$defs/AgentLevel",
+          "default": "allow",
+          "description": "Proposing an edit, which you review before it applies."
+        },
+        "read": {
+          "$ref": "#/$defs/AgentLevel",
+          "default": "allow",
+          "description": "Reading files in the folder."
+        },
+        "run_command": {
+          "$ref": "#/$defs/AgentLevel",
+          "default": "ask",
+          "description": "Running a command."
+        },
+        "search": {
+          "$ref": "#/$defs/AgentLevel",
+          "default": "allow",
+          "description": "Searching the folder."
+        }
+      },
+      "type": "object"
+    },
+    "AgentSettings": {
+      "description": "Settings for AI agents.",
+      "properties": {
+        "claude_code": {
+          "$ref": "#/$defs/ClaudeCodeSettings",
+          "default": {
+            "adapter": "",
+            "claude": "",
+            "mcp_servers": false,
+            "sandbox_allow_write": []
+          },
+          "description": "The Claude Code agent. A project file can't set any of it."
+        },
+        "command_timeout_secs": {
+          "default": 120,
+          "description": "How long one command an agent runs may take, in seconds.",
+          "format": "uint32",
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_rounds": {
+          "default": 25,
+          "description": "The most requests one turn makes.",
+          "format": "uint32",
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "permissions": {
+          "$ref": "#/$defs/AgentPermissions",
+          "default": {
+            "commands_allow": [],
+            "commands_ask": [],
+            "commands_deny": [],
+            "fetch": "ask",
+            "other": "ask",
+            "propose_edit": "allow",
+            "read": "allow",
+            "run_command": "ask",
+            "search": "allow"
+          },
+          "description": "What an agent may do without asking, by kind of action."
+        },
+        "project_permissions": {
+          "$ref": "#/$defs/ProjectPermissions",
+          "default": {
+            "commands_ask": [],
+            "commands_deny": []
+          },
+          "description": "Permissions a project file asked for: each can only tighten what\n`permissions` allows, so the effective level is the stricter of the\ntwo. A project file's `agents.permissions` is moved here."
+        },
+        "task_budget": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "minimum": 20000
+            }
+          ],
+          "default": 0,
+          "description": "The most tokens a turn's task may use, 0 for no budget, else at\nleast 20000.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tool_loop": {
+          "default": true,
+          "description": "The API chat offers Claude tools it runs for you, in trusted folders\nonly.",
+          "type": "boolean"
+        },
+        "turn_time_limit_secs": {
+          "default": 600,
+          "description": "How long one turn may run, in seconds.",
+          "format": "uint32",
+          "maximum": 7200,
+          "minimum": 30,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "AutoSave": {
       "description": "`editor.auto_save`.",
       "oneOf": [
@@ -99,6 +262,35 @@
           "default": false,
           "description": "Show a summary of Claude's reasoning above each reply. Applies to new\nchats.",
           "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ClaudeCodeSettings": {
+      "description": "`agents.claude_code`: the programs Tenmoku runs for the Claude Code agent.",
+      "properties": {
+        "adapter": {
+          "default": "",
+          "description": "The path of the claude-agent-acp adapter. Empty finds it on your\nlogin shell's PATH.",
+          "type": "string"
+        },
+        "claude": {
+          "default": "",
+          "description": "The path of the claude program. Empty finds it on your login shell's\nPATH.",
+          "type": "string"
+        },
+        "mcp_servers": {
+          "default": false,
+          "description": "Let Claude Code run the MCP servers its own settings configure.",
+          "type": "boolean"
+        },
+        "sandbox_allow_write": {
+          "default": [],
+          "description": "Extra paths Claude Code's sandbox may write.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -896,6 +1088,94 @@
         }
       ]
     },
+    "ProjectPermissions": {
+      "description": "`agents.project_permissions`: what a project file asks for. A level here\nonly takes effect if it is stricter than the user's.",
+      "properties": {
+        "commands_ask": {
+          "default": [],
+          "description": "Command patterns that always ask, added to yours.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "commands_deny": {
+          "default": [],
+          "description": "Command patterns that never run, added to yours.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "fetch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Fetching from the network."
+        },
+        "other": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Any other action."
+        },
+        "propose_edit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Proposing an edit."
+        },
+        "read": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Reading files in the folder."
+        },
+        "run_command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Running a command."
+        },
+        "search": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Searching the folder."
+        }
+      },
+      "type": "object"
+    },
     "RailSide": {
       "description": "`workbench.rail`.",
       "oneOf": [
@@ -1592,6 +1872,38 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Tenmoku's settings, as written in `settings.toml`.",
   "properties": {
+    "agents": {
+      "$ref": "#/$defs/AgentSettings",
+      "default": {
+        "claude_code": {
+          "adapter": "",
+          "claude": "",
+          "mcp_servers": false,
+          "sandbox_allow_write": []
+        },
+        "command_timeout_secs": 120,
+        "max_rounds": 25,
+        "permissions": {
+          "commands_allow": [],
+          "commands_ask": [],
+          "commands_deny": [],
+          "fetch": "ask",
+          "other": "ask",
+          "propose_edit": "allow",
+          "read": "allow",
+          "run_command": "ask",
+          "search": "allow"
+        },
+        "project_permissions": {
+          "commands_ask": [],
+          "commands_deny": []
+        },
+        "task_budget": 0,
+        "tool_loop": true,
+        "turn_time_limit_secs": 600
+      },
+      "description": "AI agents. A project file can only tighten their permissions."
+    },
     "chat": {
       "$ref": "#/$defs/ChatSettings",
       "default": {

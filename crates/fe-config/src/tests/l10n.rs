@@ -286,6 +286,14 @@ fn project_warnings_are_their_constants_in_en_us() {
         (PROJECT_EXTENSIONS, "config-project-extensions-ignored"),
         (PROJECT_CHAT, "config-project-chat-ignored"),
         (
+            crate::agent_settings::PROJECT_PERMISSIONS_SET,
+            "config-agents-project-permissions-set",
+        ),
+        (
+            crate::agent_settings::PROJECT_AGENTS,
+            "config-project-agents-ignored",
+        ),
+        (
             PROJECT_TERMINAL_SHELL,
             "config-project-terminal-shell-ignored",
         ),

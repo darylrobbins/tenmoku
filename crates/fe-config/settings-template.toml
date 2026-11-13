@@ -368,6 +368,51 @@
 # recommended fallback model.
 # fallbacks = true
 
+[agents]
+# The API chat offers Claude tools it runs for you, in trusted folders only.
+# A project file can only tighten [agents.permissions].
+# tool_loop = true
+# The most requests one turn makes (1 to 200).
+# max_rounds = 25
+# The most tokens a turn's task may use, 0 for no budget, else at least
+# 20000.
+# task_budget = 0
+# How long one turn may run, in seconds (30 to 7200).
+# turn_time_limit_secs = 600
+# How long one command an agent runs may take, in seconds (1 to 3600).
+# command_timeout_secs = 120
+
+[agents.permissions]
+# Reading files in the folder: allow, ask or deny.
+# read = "allow"
+# Searching the folder.
+# search = "allow"
+# Proposing an edit, which you review before it applies.
+# propose_edit = "allow"
+# Running a command.
+# run_command = "ask"
+# Fetching from the network.
+# fetch = "ask"
+# Any other action.
+# other = "ask"
+# Command patterns that run without asking.
+# commands_allow = []
+# Command patterns that always ask.
+# commands_ask = []
+# Command patterns that never run.
+# commands_deny = []
+
+[agents.claude_code]
+# The path of the claude-agent-acp adapter. Empty finds it on your login
+# shell's PATH.
+# adapter = ""
+# The path of the claude program. Empty finds it on your login shell's PATH.
+# claude = ""
+# Extra paths Claude Code's sandbox may write.
+# sandbox_allow_write = []
+# Let Claude Code run the MCP servers its own settings configure.
+# mcp_servers = false
+
 [update]
 # Check for a newer Tenmoku in the background once a day and offer to install
 # it. Check for Updates… always works.

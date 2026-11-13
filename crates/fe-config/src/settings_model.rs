@@ -271,6 +271,22 @@ impl SettingsModel {
                 | ["vim", "shell" | "remap"]
                 | ["workbench", "icon_theme" | "locale"]
         ) && match key.as_slice() {
+            // Only what `narrow_agents` keeps: class levels, commands_ask
+            // and commands_deny, which only tighten the user's.
+            ["agents", rest @ ..] => matches!(
+                rest,
+                [
+                    "permissions",
+                    "read"
+                        | "search"
+                        | "propose_edit"
+                        | "run_command"
+                        | "fetch"
+                        | "other"
+                        | "commands_ask"
+                        | "commands_deny"
+                ]
+            ),
             ["lsp", rest @ ..] => matches!(rest, ["enabled"] | ["servers", ..]),
             _ => true,
         }
@@ -395,9 +411,15 @@ fn resolve<'a>(defs: &'a Value, schema: &'a Value) -> &'a Value {
 }
 
 /// `project` with what a project file can't set dropped, as the settings
-/// store's project filters drop it.
+/// store's project filters drop it, its `agents.permissions` moved to
+/// `agents.project_permissions`.
 fn applied_project(project: &Table) -> Table {
     let mut table = project.clone();
+    let agents = applied_agents(project);
+    table.remove("agents");
+    if let Some(agents) = agents {
+        table.insert("agents".into(), agents);
+    }
     table.remove("chat");
     table.remove("theme");
     for (name, keys) in [
@@ -706,4 +728,37 @@ pub(crate) fn title(name: &str) -> String {
         })
         .collect::<Vec<String>>()
         .join(" ")
+}
+
+/// What `narrow_agents` keeps of a project's `agents`: its valid class
+/// levels, `commands_ask` and `commands_deny`, moved to
+/// `agents.project_permissions`.
+fn applied_agents(project: &Table) -> Option<toml::Value> {
+    let permissions = project
+        .get("agents")?
+        .as_table()?
+        .get("permissions")?
+        .as_table()?;
+    let mut kept = Table::new();
+    for (name, value) in permissions {
+        let ok = match (name.as_str(), value) {
+            (
+                "read" | "search" | "propose_edit" | "run_command" | "fetch" | "other",
+                toml::Value::String(level),
+            ) => matches!(level.as_str(), "allow" | "ask" | "deny"),
+            ("commands_ask" | "commands_deny", toml::Value::Array(items)) => {
+                items.iter().all(toml::Value::is_str)
+            }
+            _ => false,
+        };
+        if ok {
+            kept.insert(name.clone(), value.clone());
+        }
+    }
+    if kept.is_empty() {
+        return None;
+    }
+    let mut agents = Table::new();
+    agents.insert("project_permissions".into(), toml::Value::Table(kept));
+    Some(toml::Value::Table(agents))
 }

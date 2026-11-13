@@ -1331,8 +1331,7 @@ A project's `settings.toml` is narrowed by
     `tool_loop`;
   - all of `[agents.claude_code]`, since a cloned repo must not choose the
     programs Tenmoku runs.
-- **If the user's own file sets `agents.project_permissions`,** it can only
-  tighten, so it is harmless.
+- **No file may set `agents.project_permissions` itself:** a layer filter drops it with a warning, and only `narrow_agents` fills it from a project's file; the user tightens through `agents.permissions`.
 
 ### Grants and plugin authorisation
 

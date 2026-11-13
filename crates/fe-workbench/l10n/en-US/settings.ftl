@@ -61,6 +61,32 @@ workbench-settings-appearance-light = light
 ## names (Rail position, Editor font, Font size, Vim mode). Looked up by key
 ## (`workbench-settings-label-` is a dynamic prefix).
 
+workbench-settings-label-agents-claude_code-adapter = Adapter
+workbench-settings-label-agents-claude_code-claude = Claude
+workbench-settings-label-agents-claude_code-mcp_servers = Mcp Servers
+workbench-settings-label-agents-claude_code-sandbox_allow_write = Sandbox Allow Write
+workbench-settings-label-agents-command_timeout_secs = Command Timeout Secs
+workbench-settings-label-agents-max_rounds = Max Rounds
+workbench-settings-label-agents-permissions-commands_allow = Commands Allow
+workbench-settings-label-agents-permissions-commands_ask = Commands Ask
+workbench-settings-label-agents-permissions-commands_deny = Commands Deny
+workbench-settings-label-agents-permissions-fetch = Fetch
+workbench-settings-label-agents-permissions-other = Other
+workbench-settings-label-agents-permissions-propose_edit = Propose Edit
+workbench-settings-label-agents-permissions-read = Read
+workbench-settings-label-agents-permissions-run_command = Run Command
+workbench-settings-label-agents-permissions-search = Search
+workbench-settings-label-agents-project_permissions-commands_ask = Commands Ask
+workbench-settings-label-agents-project_permissions-commands_deny = Commands Deny
+workbench-settings-label-agents-project_permissions-fetch = Fetch
+workbench-settings-label-agents-project_permissions-other = Other
+workbench-settings-label-agents-project_permissions-propose_edit = Propose Edit
+workbench-settings-label-agents-project_permissions-read = Read
+workbench-settings-label-agents-project_permissions-run_command = Run Command
+workbench-settings-label-agents-project_permissions-search = Search
+workbench-settings-label-agents-task_budget = Task Budget
+workbench-settings-label-agents-tool_loop = Tool Loop
+workbench-settings-label-agents-turn_time_limit_secs = Turn Time Limit Secs
 workbench-settings-label-chat-context_budget = Context Budget
 workbench-settings-label-chat-effort = Effort
 workbench-settings-label-chat-fallbacks = Fallbacks

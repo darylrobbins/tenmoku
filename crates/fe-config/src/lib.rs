@@ -16,6 +16,7 @@
 //! [`set_setting`] and [`reset_setting`] write one into the user's file or
 //! the project's.
 
+pub mod agent_settings;
 pub mod chat_models;
 pub mod editorconfig;
 pub mod first_run;

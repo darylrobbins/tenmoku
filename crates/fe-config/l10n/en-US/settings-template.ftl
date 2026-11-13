@@ -389,6 +389,48 @@ settings-template-chat-fallbacks =
     When Claude declines a request, let Anthropic's API answer with its
     recommended fallback model.
 
+settings-template-agents-tool_loop =
+    The API chat offers Claude tools it runs for you, in trusted folders only.
+    A project file can only tighten [agents.permissions].
+
+settings-template-agents-max_rounds = The most requests one turn makes (1 to 200).
+
+settings-template-agents-task_budget =
+    The most tokens a turn's task may use, 0 for no budget, else at least
+    20000.
+
+settings-template-agents-turn_time_limit_secs = How long one turn may run, in seconds (30 to 7200).
+
+settings-template-agents-command_timeout_secs = How long one command an agent runs may take, in seconds (1 to 3600).
+
+settings-template-agents-permissions-read = Reading files in the folder: allow, ask or deny.
+
+settings-template-agents-permissions-search = Searching the folder.
+
+settings-template-agents-permissions-propose_edit = Proposing an edit, which you review before it applies.
+
+settings-template-agents-permissions-run_command = Running a command.
+
+settings-template-agents-permissions-fetch = Fetching from the network.
+
+settings-template-agents-permissions-other = Any other action.
+
+settings-template-agents-permissions-commands_allow = Command patterns that run without asking.
+
+settings-template-agents-permissions-commands_ask = Command patterns that always ask.
+
+settings-template-agents-permissions-commands_deny = Command patterns that never run.
+
+settings-template-agents-claude_code-adapter =
+    The path of the claude-agent-acp adapter. Empty finds it on your login
+    shell's PATH.
+
+settings-template-agents-claude_code-claude = The path of the claude program. Empty finds it on your login shell's PATH.
+
+settings-template-agents-claude_code-sandbox_allow_write = Extra paths Claude Code's sandbox may write.
+
+settings-template-agents-claude_code-mcp_servers = Let Claude Code run the MCP servers its own settings configure.
+
 settings-template-update-automatic_checks =
     Check for a newer Tenmoku in the background once a day and offer to install
     it. Check for Updates… always works.
