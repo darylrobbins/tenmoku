@@ -2,9 +2,13 @@
 //! colour literals a server finds in a document (CSS, SCSS, Tailwind…),
 //! and the ways it can write a colour back, for a picker.
 //!
-//! - **Provider.** Colours are asked of the document's first server (the
-//!   lead first) with `colorProvider` (merged across servers once A7
-//!   lands). With none, nothing is sent: `Ok(None)`.
+//! - **Servers.** Merged (docs/decisions/q5j03ax2af-lsp-add-on-servers.md
+//!   §5): every server of the document with `colorProvider` is asked at
+//!   once, at the one version. With none, nothing is sent: `Ok(None)`. A
+//!   range shows one swatch, so where two servers' colours have the same
+//!   range the earlier server's (in server order, the lead first) wins;
+//!   colours at other ranges are all kept. A server that fails or times
+//!   out contributes nothing; the answer fails only if every server did.
 //! - **Owner.** Each colour carries the server that found it, as its
 //!   session had the document open ([`ColorInformation::owner`]). Its
 //!   presentations are asked of that session alone, never another server
@@ -32,6 +36,7 @@ use crate::document::Admitted;
 use crate::encoding::to_lsp;
 use crate::event::LspError;
 use crate::manager::{LspManager, Owner};
+use crate::requests::{Gate, by_precedence, merged};
 
 /// A colour a server found in a document.
 #[derive(Clone, Debug, PartialEq)]
@@ -104,24 +109,27 @@ impl Request for ColorPresentationRequest {
 }
 
 impl LspManager {
-    /// The colours in open buffer `buffer` at its `version`, asked of its
-    /// first server with `colorProvider` (the lead first), each owned by
-    /// it: sent only if the server has that version, as any
-    /// [`document_request`](Self::document_request) is.
+    /// The colours in open buffer `buffer` at its `version`, merged across
+    /// its servers with `colorProvider` (see the [module](self)), each
+    /// owned by the server that found it: each sent only if its server has
+    /// that version, as any [`document_request`](Self::document_request)
+    /// is.
     ///
     /// `Ok(None)` if no server provides colours: nothing is sent.
-    /// `Ok(Some(vec![]))` if it has none, or doesn't say within
+    /// `Ok(Some(vec![]))` if they have none, or don't say within
     /// `lsp.timeouts.hover` (which also cancels the request). Dropping the
-    /// future cancels it too. It doesn't borrow the manager.
+    /// future cancels every request still out. It doesn't borrow the
+    /// manager.
     pub fn document_colors(
         &self,
         buffer: BufferId,
         version: Version,
     ) -> impl Future<Output = Result<Option<Vec<ColorInformation>>, LspError>> + Send + 'static + use<>
     {
-        let reply = self.provider_request::<DocumentColor>(
+        let asks = self.ask_each::<DocumentColor, _>(
             buffer,
             version,
+            Gate::Advertised,
             FEATURE,
             provides_colors,
             |at| DocumentColorParams {
@@ -131,28 +139,27 @@ impl LspManager {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             },
+            |server, reply, admitted| {
+                let owner = Some(Owner::of(server, &admitted));
+                (reply.result.unwrap_or_default().into_iter())
+                    .map(|info| ColorInformation {
+                        range: admitted.offsets(info.range),
+                        color: components(info.color),
+                        owner,
+                    })
+                    .collect::<Vec<_>>()
+            },
         );
-        // Boxed, as its type names the manager's borrow.
-        reply
-            .boxed()
-            .map(|answer| match answer {
-                Ok((reply, admitted, server)) => {
-                    let owner = Some(Owner::of(server, &admitted));
-                    let mut colors: Vec<_> = (reply.result.unwrap_or_default().into_iter())
-                        .map(|info| ColorInformation {
-                            range: admitted.offsets(info.range),
-                            color: components(info.color),
-                            owner,
-                        })
-                        .collect();
-                    colors.sort_by_key(|info| (info.range.start, info.range.end));
-                    Ok(Some(colors))
-                }
-                Err(LspError::Timeout) => Ok(Some(Vec::new())),
-                Err(LspError::Unavailable(why)) if why == FEATURE => Ok(None),
-                Err(err) => Err(err),
-            })
-            .boxed()
+        merged(asks).map(|answer| match answer {
+            Ok(Some(parts)) => {
+                let mut colors = by_precedence(parts, |info| &info.range);
+                colors.sort_by_key(|info| (info.range.start, info.range.end));
+                Ok(Some(colors))
+            }
+            Ok(None) => Ok(None),
+            Err(LspError::Timeout) => Ok(Some(Vec::new())),
+            Err(err) => Err(err),
+        })
     }
 
     /// The ways the server can write `info`'s colour over `info`'s range,

@@ -31,8 +31,13 @@ use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt, select_biased};
 use lsp_types::request::Request;
 
+use fe_buffer::{BufferId, Version};
+use lsp_types::ServerCapabilities;
+
 use crate::clock::Clock;
-use crate::event::{LspError, not_open};
+use crate::document::Admitted;
+use crate::event::{LspError, ServerId, not_open};
+use crate::manager::LspManager;
 use crate::readiness::Readiness;
 use crate::server::send_request;
 
@@ -190,6 +195,167 @@ pub(crate) fn first_that_answers<T: Send + 'static>(
             None => Err(LspError::Unavailable(not_open())),
         })
     })
+}
+
+/// One server's part of a merged answer (§5): what it said (`Ok(Some)`),
+/// that it doesn't provide the feature and was sent nothing (`Ok(None)`),
+/// or why it gave nothing.
+pub(crate) type Part<T> = Result<Option<T>, LspError>;
+
+/// The merged answer of `asks` (§5, "Merged"), one request per server in
+/// server order (the lead first), all already sent: once every one has
+/// answered, failed or timed out, the parts given, in server order.
+///
+/// A server that fails contributes nothing; the answer is an error only
+/// if every server providing the feature failed, and then the first
+/// error in server order. `Ok(None)` if none provides it; no servers at
+/// all is `Unavailable(not open)`.
+///
+/// Every request is polled at once, and dropping the future drops (so
+/// cancels) every one still out.
+pub(crate) async fn merged<T: Send + 'static>(
+    asks: Vec<BoxFuture<'static, Part<T>>>,
+) -> Result<Option<Vec<T>>, LspError> {
+    if asks.is_empty() {
+        return Err(LspError::Unavailable(not_open()));
+    }
+    let mut given = Vec::new();
+    let mut failed = None;
+    let mut provided = false;
+    for part in futures::future::join_all(asks).await {
+        match part {
+            Ok(Some(part)) => {
+                given.push(part);
+                provided = true;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                failed.get_or_insert(err);
+                provided = true;
+            }
+        }
+    }
+    match failed {
+        Some(err) if given.is_empty() => Err(err),
+        _ if !provided => Ok(None),
+        _ => Ok(Some(given)),
+    }
+}
+
+/// Servers' parts, in server order, as one list with *precedence* (§5):
+/// where two servers' entries have the same `range`, only the earlier
+/// server's are kept, as one range shows one link or one swatch. Entries
+/// at other ranges, and a server's own at one range, are all kept, in
+/// order.
+pub(crate) fn by_precedence<T>(
+    parts: Vec<Vec<T>>,
+    range: impl Fn(&T) -> &std::ops::Range<usize>,
+) -> Vec<T> {
+    let mut kept: Vec<T> = Vec::new();
+    for part in parts {
+        // Only an earlier server's entries take precedence.
+        let taken: std::collections::HashSet<std::ops::Range<usize>> =
+            kept.iter().map(|entry| range(entry).clone()).collect();
+        kept.extend(
+            part.into_iter()
+                .filter(|entry| !taken.contains(range(entry))),
+        );
+    }
+    kept
+}
+
+/// Which servers of a document a merged request asks (§5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Gate {
+    /// Only those advertising the feature, always.
+    Advertised,
+    /// Only those advertising the feature, except a lead that is the
+    /// document's only server: that is asked whatever it advertises, as a
+    /// lone server always was. A sole *add-on* is still asked only if it
+    /// advertises the feature.
+    UnlessLoneLead,
+}
+
+impl LspManager {
+    /// `R` about open buffer `buffer` at `version`, aimed at each server
+    /// it's placed on, in server order (the lead first), all sent at once,
+    /// for [`merged`]. Each is admitted at `version` alone, so every part
+    /// of the answer is of that one version: a server that has moved on
+    /// answers `Unavailable("buffer changed")`, and contributes nothing.
+    ///
+    /// A server `gate` leaves out (`provides` says it hasn't `feature`,
+    /// once its capabilities are known: one initializing is waited for
+    /// under the method's timeout) is sent nothing and answers `Ok(None)`.
+    /// Otherwise its reply and what it was admitted with become its part
+    /// through `answer`.
+    #[allow(clippy::too_many_arguments)] // Each is one thing the request needs.
+    pub(crate) fn ask_each<R: Request, T: Send + 'static>(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        gate: Gate,
+        feature: &'static str,
+        provides: impl Fn(&ServerCapabilities) -> bool + Clone + Send + 'static,
+        params: impl FnOnce(&Admitted) -> R::Params + Clone + Send + 'static,
+        answer: impl FnOnce(ServerId, Reply<R::Result>, Admitted) -> T + Clone + Send + 'static,
+    ) -> Vec<BoxFuture<'static, Part<T>>> {
+        let servers = self.servers_of(buffer);
+        self.ask_among::<R, T>(
+            servers,
+            (buffer, version),
+            (gate, feature, provides),
+            params,
+            answer,
+        )
+    }
+
+    /// As [`ask_each`](Self::ask_each), aimed at `servers` alone (some of
+    /// those `buffer` is placed on, in server order). Whether the lead is
+    /// the document's only server is judged by every server it's placed
+    /// on, not by `servers`.
+    pub(crate) fn ask_among<R: Request, T: Send + 'static>(
+        &self,
+        servers: Vec<ServerId>,
+        (buffer, version): (BufferId, Version),
+        (gate, feature, provides): (
+            Gate,
+            &'static str,
+            impl Fn(&ServerCapabilities) -> bool + Clone + Send + 'static,
+        ),
+        params: impl FnOnce(&Admitted) -> R::Params + Clone + Send + 'static,
+        answer: impl FnOnce(ServerId, Reply<R::Result>, Admitted) -> T + Clone + Send + 'static,
+    ) -> Vec<BoxFuture<'static, Part<T>>> {
+        let placed = self.servers_of(buffer);
+        let lone_lead = gate == Gate::UnlessLoneLead
+            && placed.len() == 1
+            && self.lead_of(buffer) == placed.first().copied();
+        (servers.into_iter())
+            .map(|server| {
+                let reply = if lone_lead {
+                    self.document_request_on::<R>(server, buffer, version, params.clone())
+                        .boxed()
+                } else {
+                    self.document_request_if_provided_on::<R>(
+                        server,
+                        buffer,
+                        version,
+                        feature,
+                        provides.clone(),
+                        params.clone(),
+                    )
+                    .boxed()
+                };
+                let answer = answer.clone();
+                reply
+                    .map(move |reply| match reply {
+                        Ok((reply, admitted)) => Ok(Some(answer(server, reply, admitted))),
+                        Err(LspError::Unavailable(why)) if why == feature => Ok(None),
+                        Err(err) => Err(err),
+                    })
+                    .boxed()
+            })
+            .collect()
+    }
 }
 
 /// How a list answer counts: a non-empty list is taken, an empty one is

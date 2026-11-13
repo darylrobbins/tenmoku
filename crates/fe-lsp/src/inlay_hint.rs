@@ -1,8 +1,14 @@
 //! `textDocument/inlayHint` and `inlayHint/resolve`: the hints a server
 //! has for a range of a buffer, and a hint's tooltip and edits.
 //!
-//! - **Provider.** A server without `inlayHintProvider` gets no request:
-//!   `Ok(None)`.
+//! - **Servers.** Merged (docs/decisions/q5j03ax2af-lsp-add-on-servers.md
+//!   §5): every server of the document with `inlayHintProvider` is asked
+//!   at once, at the one version; one without gets no request, and with
+//!   none the answer is `Ok(None)`. Hints are never deduped: two at one
+//!   offset may carry different tooltips, edits or commands, so both
+//!   show, in server order. Each keeps its server, which alone resolves
+//!   it. A server that fails or times out contributes nothing; the answer
+//!   fails only if every server did.
 //! - **Positions.** A hint's position and its edits are decoded against
 //!   the text the server had at the request's version, as bytes of that
 //!   version. A label made of parts is the parts' values joined. Hints
@@ -33,6 +39,7 @@ use crate::encoding::{PositionEncoding, from_lsp};
 use crate::event::{LspError, ServerId};
 use crate::identity::{IncarnationId, SessionId};
 use crate::manager::LspManager;
+use crate::requests::{Gate, merged};
 
 /// What a hint stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,13 +130,15 @@ const FEATURE: &str = "inlayHint";
 
 impl LspManager {
     /// The hints for bytes `range` of open buffer `buffer`, at its
-    /// `version`: sent only if the server has that version, as any
-    /// [`document_request`](Self::document_request) is.
+    /// `version`, merged across its servers with `inlayHintProvider` (see
+    /// the [module](self)): each sent only if its server has that version,
+    /// as any [`document_request`](Self::document_request) is.
     ///
-    /// `Ok(None)` if the server doesn't provide hints: nothing is sent.
-    /// `Ok(Some(vec![]))` if it has none, or doesn't say within
+    /// `Ok(None)` if no server provides hints: nothing is sent.
+    /// `Ok(Some(vec![]))` if they have none, or don't say within
     /// `lsp.timeouts.hover` (which also cancels the request). Dropping the
-    /// future cancels it too. It doesn't borrow the manager.
+    /// future cancels every request still out. It doesn't borrow the
+    /// manager.
     pub fn inlay_hints(
         &self,
         buffer: BufferId,
@@ -137,11 +146,11 @@ impl LspManager {
         range: Range<usize>,
     ) -> impl Future<Output = Result<Option<Vec<InlayHint>>, LspError>> + Send + 'static + use<>
     {
-        let server = self.server_of(buffer);
         let asked = range.clone();
-        let reply = self.document_request_if_provided::<InlayHintRequest>(
+        let asks = self.ask_each::<InlayHintRequest, _>(
             buffer,
             version,
+            Gate::Advertised,
             FEATURE,
             provides_hints,
             move |at| InlayHintParams {
@@ -154,24 +163,24 @@ impl LspManager {
                     at.position(range.end).position,
                 ),
             },
+            move |server, reply, admitted| {
+                (reply.result.unwrap_or_default().into_iter())
+                    .map(|hint| convert(hint, &admitted, server))
+                    .filter(|hint| asked.contains(&hint.offset) || hint.offset == asked.end)
+                    .collect::<Vec<_>>()
+            },
         );
-        // Boxed, as its type names the manager's borrow.
-        reply
-            .boxed()
-            .map(move |answer| match (answer, server) {
-                (Ok((reply, admitted)), Some(server)) => {
-                    let mut hints: Vec<_> = (reply.result.unwrap_or_default().into_iter())
-                        .map(|hint| convert(hint, &admitted, server))
-                        .filter(|hint| asked.contains(&hint.offset) || hint.offset == asked.end)
-                        .collect();
-                    hints.sort_by_key(|hint| hint.offset);
-                    Ok(Some(hints))
-                }
-                (Ok(_), None) | (Err(LspError::Timeout), _) => Ok(Some(Vec::new())),
-                (Err(LspError::Unavailable(why)), _) if why == FEATURE => Ok(None),
-                (Err(err), _) => Err(err),
-            })
-            .boxed()
+        merged(asks).map(|answer| match answer {
+            Ok(Some(parts)) => {
+                // Stable: server order among hints at one offset, all kept.
+                let mut hints: Vec<_> = parts.into_iter().flatten().collect();
+                hints.sort_by_key(|hint| hint.offset);
+                Ok(Some(hints))
+            }
+            Ok(None) => Ok(None),
+            Err(LspError::Timeout) => Ok(Some(Vec::new())),
+            Err(err) => Err(err),
+        })
     }
 
     /// `hint` with the `tooltip` and `edits` its server resolves.

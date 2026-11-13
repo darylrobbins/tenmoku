@@ -3,9 +3,18 @@
 //! (docs/decisions/lsp-client.md §5).
 //!
 //! - **One provider for every language**, bound to a manager and its
-//!   workspace root. It asks the manager which server documents of a
-//!   request's language go to, and is [`Readiness::Ready`] only once that
-//!   server is [`ServerStatus::Ready`]: until then search answers.
+//!   workspace root. It asks the manager which servers documents of a
+//!   request's language go to, lead and add-ons, and is
+//!   [`Readiness::Ready`] once any of them is [`ServerStatus::Ready`]:
+//!   until then search answers.
+//! - **Several servers** (docs/decisions/q5j03ax2af-lsp-add-on-servers.md
+//!   §5, §6.2): definitions, their kin and references are asked of every
+//!   server of the document that is ready (all of them, if none is yet),
+//!   at once, each under its own timeout, and merged: locations in server
+//!   order (the lead first), deduped by file and range. A server that
+//!   fails contributes nothing, but leaves an empty answer not final, so
+//!   search answers. Workspace symbols are asked of every session ready at
+//!   the root, once each, and deduped by name, kind and location.
 //! - **Calls block** on the caller's thread, polling its cancel flag every
 //!   [`POLL`]. A cancel drops the request's future, which sends
 //!   `$/cancelRequest`, and answers [`NavError::Cancelled`].
@@ -14,7 +23,7 @@
 //!   Anything that keeps the server from answering (no buffer, a buffer
 //!   that moved on, a file too large to sync, a timeout, a crash, a
 //!   `ContentModified`) is [`NavError::Unavailable`], so search answers.
-//!   So is an empty answer, unless the server has said it's done
+//!   So is an empty answer, unless every server asked has said it's done
 //!   ([`Reply::empty_is_final`]); a non-empty one is final.
 //! - **Offsets** (§5): a location in the request's own file is decoded
 //!   against [`NavRequest::text`], one in another open document against
@@ -42,7 +51,7 @@ use fe_nav::{
 };
 use fe_text::{Bias, Text};
 use futures::FutureExt;
-use futures::future::{self, Either};
+use futures::future::{self, BoxFuture, Either};
 use lsp_types::request::{
     GotoDeclaration, GotoDefinition, GotoImplementation, GotoTypeDefinition, References, Request,
     WorkspaceSymbolRequest,
@@ -54,10 +63,12 @@ use lsp_types::{
     WorkspaceSymbolResponse,
 };
 
+use crate::Reply;
 use crate::document::{Admitted, SentDocument};
 use crate::encoding::{PositionEncoding, from_lsp};
-use crate::event::{LspError, ServerStatus};
+use crate::event::{LspError, ServerId, ServerStatus};
 use crate::manager::LspManager;
+use crate::requests::{Gate, Part, merged};
 use crate::workspace_edit::file_path;
 
 /// How often a blocked call checks its cancel flag.
@@ -100,10 +111,15 @@ impl LspNavigation {
         }
     }
 
-    /// A definition-shaped request `R`, decoded as definitions are.
+    /// A definition-shaped request `R`, merged across the document's
+    /// servers (§5) and decoded as definitions are: each server's reply
+    /// against its own position encoding, locations deduped by (file,
+    /// range), the first server's order kept.
     ///
-    /// With `provided`, the request is sent only once the server's
-    /// capabilities are known, and if they say it provides the feature.
+    /// With `provided`, a server is asked only once its capabilities are
+    /// known, and if they say it provides the feature; without, a lead
+    /// that is the document's only server is asked whatever it advertises,
+    /// as ever, and any other only with `definitionProvider`.
     fn goto<R>(
         &self,
         req: &NavRequest,
@@ -115,52 +131,66 @@ impl LspNavigation {
     {
         let (buffer, version) = request_buffer(req)?;
         let offset = req.offset;
+        let (feature, provides, gate) = match provided {
+            Some((feature, provides)) => (feature, provides, Gate::Advertised),
+            None => ("definition", defines as fn(&_) -> _, Gate::UnlessLoneLead),
+        };
         let sent = self.with_manager(|manager| {
-            let params = move |at: &Admitted| GotoDefinitionParams {
-                text_document_position_params: at.position(offset),
-                work_done_progress_params: Default::default(),
-                partial_result_params: Default::default(),
-            };
-            let reply = match provided {
-                Some((feature, provides)) => manager
-                    .document_request_if_provided::<R>(buffer, version, feature, provides, params)
-                    .boxed(),
-                None => manager
-                    .document_request::<R>(buffer, version, params)
-                    .boxed(),
-            };
-            (reply, manager.max_file_bytes())
+            let asks = manager.ask_among::<R, _>(
+                ready_servers(manager, buffer),
+                (buffer, version),
+                (gate, feature, provides),
+                move |at: &Admitted| GotoDefinitionParams {
+                    text_document_position_params: at.position(offset),
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                },
+                |_, reply, admitted| (reply, admitted),
+            );
+            (merged(kept_failures(asks)), manager.max_file_bytes())
         });
         let (reply, max_bytes) = sent.ok_or_else(gone)?;
-        let (reply, admitted) = wait(reply, cancel).map_err(|err| match (err, provided) {
-            (NavError::Unavailable(why), Some((feature, _)))
-                if why == LspError::Unavailable(feature.into()).to_string() =>
-            {
-                NavError::Unsupported
-            }
-            (err, _) => err,
-        })?;
-        let targets = targets(reply.result);
-        if targets.is_empty() && !reply.empty_is_final {
-            return Err(NavError::Unavailable(not_final()));
-        }
+        let Some(parts) = wait(reply, cancel)? else {
+            return Err(NavError::Unsupported);
+        };
+        // A server that failed may have had what the others didn't: an
+        // empty answer is final only if every server said so.
+        let (parts, empty_is_final) = answered(parts, |(reply, _)| reply.empty_is_final)?;
         let word = req.word();
-        let mut decoder = Decoder::new(&self.root, admitted.encoding, max_bytes, cancel)
-            .with_request(req, &admitted)
-            .with_open(&admitted.others);
-        let items: Vec<Definition> = (targets.into_iter())
-            .filter_map(|(uri, range)| decoder.decode(&uri, range))
-            .map(|found| {
+        let mut decoder = Decoder::new(&self.root, PositionEncoding::Utf16, max_bytes, cancel);
+        let mut items: Vec<Definition> = Vec::new();
+        let mut targeted = 0;
+        for (reply, admitted) in &parts {
+            let targets = targets(reply.result.clone());
+            targeted += targets.len();
+            decoder.encoding = admitted.encoding;
+            decoder = decoder
+                .with_request(req, admitted)
+                .with_open(&admitted.others);
+            for (uri, range) in targets {
+                let Some(found) = decoder.decode(&uri, range) else {
+                    continue;
+                };
+                let seen = (items.iter()).any(|item| {
+                    item.location.rel == found.location.rel
+                        && item.location.range == found.location.range
+                });
+                if seen {
+                    continue;
+                }
                 let name = found.name().or_else(|| word.clone()).unwrap_or_default();
-                Definition {
+                items.push(Definition {
                     location: found.location,
                     name,
                     kind: None,
                     container: None,
                     tier: found.tier,
-                }
-            })
-            .collect();
+                });
+            }
+        }
+        if targeted == 0 && !empty_is_final {
+            return Err(NavError::Unavailable(not_final()));
+        }
         check(cancel)?;
         if items.is_empty() && !decoder.dropped.is_empty() {
             return Err(NavError::Unavailable(decoder.dropped_why()));
@@ -246,8 +276,9 @@ impl NavigationProvider for LspNavigation {
         Precision::Exact
     }
 
-    /// For a language: as its server is (§5). With none (workspace
-    /// symbols): ready once any server for the root is.
+    /// For a language: the best of its servers', lead and add-ons (ready
+    /// if any is, §6.2). With none (workspace symbols): ready once any
+    /// server for the root is.
     fn readiness(&self, language: Option<&str>) -> Readiness {
         let Some(language) = language else {
             let servers = self.with_manager(|manager| manager.servers_at(&self.root));
@@ -260,13 +291,21 @@ impl NavigationProvider for LspNavigation {
                 })
                 .unwrap_or(Readiness::Unsupported);
         };
-        let server = self.with_manager(|manager| manager.language_server(&self.root, language));
-        match server.flatten() {
-            None => Readiness::Unsupported,
-            // Configured, and started by the first document that needs it.
-            Some((_, None)) => Readiness::NotYet,
-            Some((_, Some(status))) => readiness(&status),
-        }
+        // The best of the language's servers, lead or add-on: a healthy
+        // add-on answers while the lead is missing, untrusted or down.
+        let servers = self.with_manager(|manager| manager.language_servers(&self.root, language));
+        (servers.unwrap_or_default().into_iter())
+            .map(|(_, _, status)| match status {
+                // Configured, and started by the first document that needs it.
+                None => Readiness::NotYet,
+                Some(status) => readiness(&status),
+            })
+            .min_by_key(|readiness| match readiness {
+                Readiness::Ready => 0,
+                Readiness::NotYet => 1,
+                Readiness::Unsupported => 2,
+            })
+            .unwrap_or(Readiness::Unsupported)
     }
 
     fn definitions(&self, req: &NavRequest, cancel: &AtomicBool) -> Result<Definitions, NavError> {
@@ -308,74 +347,88 @@ impl NavigationProvider for LspNavigation {
         let (buffer, version) = request_buffer(req)?;
         let offset = req.offset;
         let sent = self.with_manager(|manager| {
-            // Admitted together, so both are asked of the same text.
-            let (references, definitions) = manager
-                .document_request_pair::<References, GotoDefinition>(
-                    buffer,
-                    version,
-                    move |at| ReferenceParams {
-                        text_document_position: at.position(offset),
-                        work_done_progress_params: Default::default(),
-                        partial_result_params: Default::default(),
-                        context: ReferenceContext {
-                            include_declaration: true,
-                        },
+            // Each server is asked for its references, with a definition
+            // request alongside, to it alone, at the one version.
+            let servers = ready_servers(manager, buffer);
+            let references = manager.ask_among::<References, _>(
+                servers.clone(),
+                (buffer, version),
+                (Gate::UnlessLoneLead, "references", provides_references),
+                move |at| ReferenceParams {
+                    text_document_position: at.position(offset),
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                    context: ReferenceContext {
+                        include_declaration: true,
                     },
-                    move |at| GotoDefinitionParams {
-                        text_document_position_params: at.position(offset),
-                        work_done_progress_params: Default::default(),
-                        partial_result_params: Default::default(),
-                    },
-                );
-            (references, definitions, manager.max_file_bytes())
+                },
+                |_, reply, admitted| (reply, admitted),
+            );
+            let definitions = manager.ask_among::<GotoDefinition, _>(
+                servers,
+                (buffer, version),
+                (Gate::UnlessLoneLead, "definition", defines),
+                move |at| GotoDefinitionParams {
+                    text_document_position_params: at.position(offset),
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                },
+                |_, reply, _| reply,
+            );
+            let asks: Vec<_> = (references.into_iter().zip(definitions))
+                .map(|(references, definitions)| marked(references, definitions).boxed())
+                .collect();
+            (merged(kept_failures(asks)), manager.max_file_bytes())
         });
-        let (references, definitions, max_bytes) = sent.ok_or_else(gone)?;
-        // The references decide, as soon as they come: a failure or an
-        // empty answer doesn't wait for the definitions, which only mark
-        // definitions among them (none, if they fail). The definitions are
-        // polled meanwhile, so their own timeout runs (and cancels them);
-        // dropping a future cancels its request.
-        let mut definitions = definitions.fuse();
-        let mut defined = None;
-        let first = async {
-            let mut references = references.fuse();
-            loop {
-                futures::select_biased! {
-                    answer = references => return answer,
-                    answer = definitions => defined = Some(answer),
-                }
-            }
+        let (reply, max_bytes) = sent.ok_or_else(gone)?;
+        let Some(parts) = wait(reply, cancel)? else {
+            return Err(NavError::Unsupported);
         };
-        let (reply, admitted) = wait(first, cancel)?;
-        let found = reply.result.unwrap_or_default();
         let word = req.word();
-        if found.is_empty() && !reply.empty_is_final {
+        // As for definitions: final only if every server said so.
+        let (parts, empty_is_final) = answered(parts, |(reply, ..)| reply.empty_is_final)?;
+        let found_any = parts
+            .iter()
+            .any(|(reply, ..)| reply.result.as_ref().is_some_and(|found| !found.is_empty()));
+        if !found_any && !empty_is_final {
             return Err(NavError::Unavailable(not_final()));
         }
-        let definitions = match (found.is_empty(), defined) {
-            (true, _) => None,
-            (false, Some(answer)) => answer.ok(),
-            (false, None) => wait(definitions, cancel)
-                .map(Some)
-                .or_else(|err| match err {
-                    NavError::Cancelled => Err(err),
-                    _ => Ok(None),
-                })?,
-        };
-        let mut decoder = Decoder::new(&self.root, admitted.encoding, max_bytes, cancel)
-            .with_request(req, &admitted)
-            .with_open(&admitted.others);
-        let defined: Vec<(PathBuf, std::ops::Range<usize>)> = definitions
-            .map(|reply| targets(reply.result))
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|(uri, range)| decoder.decode(&uri, range))
-            .map(|found| (found.location.rel, found.location.range))
-            .collect();
-        // A definition that can't be read only goes unmarked: it doesn't
-        // make the references unavailable.
-        decoder.dropped.clear();
-        let files = group_references(&mut decoder, &found, &defined);
+        let mut decoder = Decoder::new(&self.root, PositionEncoding::Utf16, max_bytes, cancel);
+        let mut files: Vec<(Tier, FileReferences)> = Vec::new();
+        for (reply, admitted, definitions) in &parts {
+            decoder.encoding = admitted.encoding;
+            decoder = decoder
+                .with_request(req, admitted)
+                .with_open(&admitted.others);
+            let found = reply.result.clone().unwrap_or_default();
+            let before = decoder.dropped.len();
+            let defined: Vec<(PathBuf, std::ops::Range<usize>)> = (definitions.clone())
+                .map(|reply| targets(reply.result))
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|(uri, range)| decoder.decode(&uri, range))
+                .map(|found| (found.location.rel, found.location.range))
+                .collect();
+            // A definition that can't be read only goes unmarked: it doesn't
+            // make the references unavailable.
+            decoder.dropped.truncate(before);
+            // Deduped by location, a definition if any server says so.
+            for (tier, file) in group_references(&mut decoder, &found, &defined) {
+                let Some((_, known)) = files.iter_mut().find(|(_, known)| known.rel == file.rel)
+                else {
+                    files.push((tier, file));
+                    continue;
+                };
+                for reference in file.refs {
+                    let same = (known.refs.iter_mut())
+                        .find(|known| known.location.range == reference.location.range);
+                    match same {
+                        Some(same) => same.is_definition |= reference.is_definition,
+                        None => known.refs.push(reference),
+                    }
+                }
+            }
+        }
         check(cancel)?;
         if files.is_empty() && !decoder.dropped.is_empty() {
             return Err(NavError::Unavailable(decoder.dropped_why()));
@@ -402,8 +455,11 @@ impl NavigationProvider for LspNavigation {
         Ok(summary)
     }
 
-    /// `workspace/symbol` from every server ready for the root, ranked
-    /// together by search's fuzzy matcher before the best `limit` are kept.
+    /// `workspace/symbol` from every server ready for the root, each
+    /// session once, whatever its languages (add-ons are sessions at the
+    /// root too), deduped by (name, kind, location) with the first
+    /// server's copy kept, and ranked together by search's fuzzy matcher
+    /// before the best `limit` are kept.
     fn workspace_symbols(
         &self,
         query: &str,
@@ -440,6 +496,9 @@ impl NavigationProvider for LspNavigation {
             cancel,
         )?;
         let mut symbols = Vec::new();
+        // The kinds listed so far by name and location.
+        let mut listed: HashMap<(String, PathBuf, std::ops::Range<usize>), Vec<SymbolKind>> =
+            HashMap::new();
         let mut empty_is_final = true;
         let mut failed = None;
         // Why a symbol was left out, if one was: its file couldn't be read.
@@ -458,6 +517,18 @@ impl NavigationProvider for LspNavigation {
                 .with_open(&opened.documents);
             for (name, kind, container, uri, range) in found {
                 if let Some(found) = decoder.decode(&uri, range) {
+                    // One two servers report is listed once, the first
+                    // server's copy kept.
+                    let key = (
+                        name.clone(),
+                        found.location.rel.clone(),
+                        found.location.range.clone(),
+                    );
+                    let kinds = listed.entry(key).or_default();
+                    if kinds.contains(&kind) {
+                        continue;
+                    }
+                    kinds.push(kind);
                     symbols.push(WorkspaceSymbol {
                         location: found.location,
                         name,
@@ -486,6 +557,106 @@ impl NavigationProvider for LspNavigation {
         }
         Ok(WorkspaceSymbol::rank(query, symbols, limit))
     }
+}
+
+/// The servers of `buffer` navigation asks (§6.2): those placed that are
+/// ready, lead or add-on, in server order, without waiting for one still
+/// starting or indexing; every one placed if none is ready yet, as a lone
+/// server always was asked.
+fn ready_servers(manager: &LspManager, buffer: BufferId) -> Vec<ServerId> {
+    let ready: Vec<ServerId> = (manager.route_servers(buffer).into_iter())
+        .filter(|server| manager.status_at(&server.name, &server.root) == Some(ServerStatus::Ready))
+        .filter_map(|server| server.placed)
+        .collect();
+    match ready.is_empty() {
+        true => manager.servers_of(buffer),
+        false => ready,
+    }
+}
+
+/// `asks` with each failure kept as a part of its own, for [`merged`], so
+/// that the answer can tell a server that failed (whose answer may have
+/// been the one that mattered) from one that had nothing: see
+/// [`answered`].
+fn kept_failures<T: Send + 'static>(
+    asks: Vec<BoxFuture<'static, Part<T>>>,
+) -> Vec<BoxFuture<'static, Part<Result<T, LspError>>>> {
+    (asks.into_iter())
+        .map(|ask| {
+            ask.map(|part| match part {
+                Ok(part) => Ok(part.map(Ok)),
+                Err(err) => Ok(Some(Err(err))),
+            })
+            .boxed()
+        })
+        .collect()
+}
+
+/// The parts that answered, and whether an empty answer is final: only if
+/// every server answered and `is_final` says each one's is. The first
+/// error, in server order, if every server failed.
+fn answered<T>(
+    parts: Vec<Result<T, LspError>>,
+    is_final: impl Fn(&T) -> bool,
+) -> Result<(Vec<T>, bool), NavError> {
+    let mut given = Vec::new();
+    let mut failed = None;
+    for part in parts {
+        match part {
+            Ok(part) => given.push(part),
+            Err(err) => {
+                failed.get_or_insert(err);
+            }
+        }
+    }
+    match failed {
+        Some(err) if given.is_empty() => Err(unavailable(err)),
+        failed => {
+            let empty_is_final = failed.is_none() && given.iter().all(is_final);
+            Ok((given, empty_is_final))
+        }
+    }
+}
+
+type Listed = (Reply<Option<Vec<lsp_types::Location>>>, Admitted);
+
+type Referenced = (
+    Reply<Option<Vec<lsp_types::Location>>>,
+    Admitted,
+    Option<Reply<Option<GotoDefinitionResponse>>>,
+);
+
+/// One server's references, and, if it found any, its definitions to mark
+/// them with (none if those fail or aren't provided). The references
+/// decide, as soon as they come: a failure or an empty answer doesn't
+/// wait for the definitions. Those are polled meanwhile, so their own
+/// timeout runs (and cancels them); dropping either future cancels its
+/// request.
+async fn marked(
+    references: BoxFuture<'static, Part<Listed>>,
+    definitions: BoxFuture<'static, Part<Reply<Option<GotoDefinitionResponse>>>>,
+) -> Part<Referenced> {
+    let mut definitions = definitions.fuse();
+    let mut defined = None;
+    let answer = {
+        let mut references = references.fuse();
+        loop {
+            futures::select_biased! {
+                answer = references => break answer,
+                answer = definitions => defined = Some(answer),
+            }
+        }
+    };
+    let Some((reply, admitted)) = answer? else {
+        return Ok(None);
+    };
+    let found = reply.result.as_ref().is_some_and(|found| !found.is_empty());
+    let definitions = match (found, defined) {
+        (false, _) => None,
+        (true, Some(answer)) => answer.ok().flatten(),
+        (true, None) => definitions.await.ok().flatten(),
+    };
+    Ok(Some((reply, admitted, definitions)))
 }
 
 /// What a server's status means for routing (§5).
@@ -881,6 +1052,18 @@ fn load(path: &Path, max_bytes: usize) -> Option<Text> {
 
 /// A feature's name, and whether a server's capabilities provide it.
 type Provided = (&'static str, fn(&ServerCapabilities) -> bool);
+
+/// Whether the server provides definitions.
+fn defines(caps: &ServerCapabilities) -> bool {
+    (caps.definition_provider.as_ref())
+        .is_some_and(|provider| !matches!(provider, OneOf::Left(false)))
+}
+
+/// Whether the server provides references.
+fn provides_references(caps: &ServerCapabilities) -> bool {
+    (caps.references_provider.as_ref())
+        .is_some_and(|provider| !matches!(provider, OneOf::Left(false)))
+}
 
 /// Whether the server provides declarations.
 fn declares(caps: &ServerCapabilities) -> bool {

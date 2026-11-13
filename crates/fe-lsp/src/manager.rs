@@ -71,10 +71,6 @@ pub(crate) type WithId<T> = (i32, Result<Reply<T>, LspError>);
 /// A request's answer, to await anywhere.
 pub(crate) type Answer<T> = BoxFuture<'static, Result<T, LspError>>;
 
-/// The answers of two requests admitted together: the first's with what
-/// they were admitted with.
-pub(crate) type Paired<A, B> = (Answer<(Reply<A>, Admitted)>, Answer<Reply<B>>);
-
 /// A reply to a request on a document, with what it was admitted with and
 /// the server that answered.
 pub(crate) type Provided<T> = (Reply<T>, Admitted, ServerId);
@@ -1133,62 +1129,6 @@ impl LspManager {
             &*self.clock,
             Err(LspError::Timeout),
         )
-    }
-
-    /// As [`document_request`](Self::document_request), for two requests
-    /// admitted together: both go out at the same version, `A` first, or
-    /// neither does. `B` answers with its reply alone.
-    pub(crate) fn document_request_pair<A: Request, B: Request>(
-        &self,
-        buffer: BufferId,
-        version: Version,
-        a: impl FnOnce(&Admitted) -> A::Params + Send + 'static,
-        b: impl FnOnce(&Admitted) -> B::Params + Send + 'static,
-    ) -> Paired<A::Result, B::Result> {
-        let (answer_a, answered_a) = oneshot::channel();
-        let (answer_b, answered_b) = oneshot::channel();
-        let admit: Admit = Box::new(move |admission| {
-            let admitted = match admission {
-                Ok(admitted) => admitted,
-                Err(err) => {
-                    let _ = answer_a.send(Err(err.clone()));
-                    let _ = answer_b.send(Err(err));
-                    return Vec::new();
-                }
-            };
-            let (params_a, params_b) = (a(&admitted), b(&admitted));
-            vec![
-                call::<A, _>(answer_a, params_a, move |_, reply| {
-                    reply.map(|reply| (reply, admitted))
-                }),
-                call::<B, _>(answer_b, params_b, |_, reply| reply),
-            ]
-        });
-        self.admit(buffer, version, admit);
-        let answered_a = answered_a.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
-        let answered_b = answered_b.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
-        (
-            within(
-                answered_a,
-                self.timeout::<A>(),
-                &*self.clock,
-                Err(LspError::Timeout),
-            )
-            .boxed(),
-            within(
-                answered_b,
-                self.timeout::<B>(),
-                &*self.clock,
-                Err(LspError::Timeout),
-            )
-            .boxed(),
-        )
-    }
-
-    /// Hands `admit` to the server `buffer` is synced to, or answers it
-    /// `Unavailable` if there's none.
-    pub(crate) fn admit(&self, buffer: BufferId, version: Version, admit: Admit) {
-        self.admit_on(self.server_of(buffer), buffer, version, admit);
     }
 
     /// Hands `admit` to `server`, or answers it `Unavailable` if none.
@@ -2399,9 +2339,9 @@ impl LspManager {
     /// A server still initializing is waited for on the manager's clock,
     /// and `timeout` (if any) covers the wait too. `decide` runs at once if
     /// the capabilities it needs are known already, so the request is
-    /// queued as [`admit`](Self::admit) queues it. A server that stops
-    /// while waited for is passed over; if none then accepts, the answer
-    /// is `ServerDown`.
+    /// queued as [`document_request`](Self::document_request) queues it.
+    /// A server that stops while waited for is passed over; if none then
+    /// accepts, the answer is `ServerDown`.
     pub(crate) fn admit_to_first<T: Send + 'static>(
         &self,
         servers: Vec<ServerId>,

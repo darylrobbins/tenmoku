@@ -8,10 +8,14 @@ mod first_answer;
 mod holders;
 mod lead_kept;
 mod lead_unavailable;
+mod merge_collisions;
+mod merge_completion;
+mod merge_lists;
 mod owners;
 mod provider;
 mod reconcile;
 mod sync;
+mod workspace_symbols;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

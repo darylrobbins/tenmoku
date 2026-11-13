@@ -10,20 +10,32 @@
 //!   too: a plain-text line of three backticks starts a code block there.
 //! - **Range.** The reply's range, if any, is decoded against the text the
 //!   server had at the request's version, as bytes of that version.
+//! - **Servers.** Merged (docs/decisions/q5j03ax2af-lsp-add-on-servers.md
+//!   §5): every server of the document with `hoverProvider` is asked at
+//!   once, at the one version (a lead that is the document's only server
+//!   is asked whatever it advertises, as ever). Their contents are joined
+//!   in server order (the lead first), a markdown rule apart, with
+//!   contents equal to an earlier server's dropped; the range is the first
+//!   server's that gives one.
 //! - **Failures.** A timeout (3 s by default, `lsp.timeouts.hover`) is no
 //!   hover, as §3.5 says: silently nothing. Other failures are errors,
-//!   which a UI shows as nothing too.
+//!   which a UI shows as nothing too. A server that fails or times out
+//!   contributes nothing; the answer fails only if every server did.
 
 use std::ops::Range;
 
 use fe_buffer::{BufferId, Version};
 use futures::FutureExt;
 use lsp_types::request::HoverRequest;
-use lsp_types::{HoverContents, HoverParams, LanguageString, MarkedString, MarkupContent};
+use lsp_types::{
+    HoverContents, HoverParams, HoverProviderCapability, LanguageString, MarkedString,
+    MarkupContent, ServerCapabilities,
+};
 
 use crate::document::Admitted;
 use crate::event::LspError;
 use crate::manager::LspManager;
+use crate::requests::{Gate, merged};
 
 /// What a server says about the text at an offset.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,32 +56,72 @@ impl Hover {
     }
 }
 
+/// What `Unavailable` says when no server provides hovers.
+const FEATURE: &str = "hover";
+
+/// What separates two servers' contents: a markdown rule.
+const RULE: &str = "\n\n---\n\n";
+
 impl LspManager {
     /// The hover for byte `offset` of open buffer `buffer`, at its
-    /// `version`: sent only if the server has that version, as any
+    /// `version`, merged across its servers (see the [module](self)): each
+    /// sent only if the server has that version, as any
     /// [`document_request`](Self::document_request) is.
     ///
-    /// `Ok(None)` if the server has nothing to say, or doesn't say it
-    /// within `lsp.timeouts.hover` (which also cancels the request).
-    /// Dropping the future cancels it too. It doesn't borrow the manager,
-    /// so it may leave the manager's lock.
+    /// `Ok(None)` if no server has anything to say, or none says it within
+    /// `lsp.timeouts.hover` (which also cancels the request). One server
+    /// failing or timing out leaves the others' contents. Dropping the
+    /// future cancels every request still out. It doesn't borrow the
+    /// manager, so it may leave the manager's lock.
     pub fn hover(
         &self,
         buffer: BufferId,
         version: Version,
         offset: usize,
     ) -> impl Future<Output = Result<Option<Hover>, LspError>> + Send + 'static + use<> {
-        let reply = self.document_request::<HoverRequest>(buffer, version, move |at| HoverParams {
-            text_document_position_params: at.position(offset),
-            work_done_progress_params: Default::default(),
-        });
-        // Boxed, as its type names the manager's borrow.
-        reply.boxed().map(|answer| match answer {
-            Ok((reply, admitted)) => Ok(reply.result.and_then(|hover| convert(hover, &admitted))),
+        let asks = self.ask_each::<HoverRequest, _>(
+            buffer,
+            version,
+            Gate::UnlessLoneLead,
+            FEATURE,
+            provides_hover,
+            move |at| HoverParams {
+                text_document_position_params: at.position(offset),
+                work_done_progress_params: Default::default(),
+            },
+            |_, reply, admitted| reply.result.and_then(|hover| convert(hover, &admitted)),
+        );
+        merged(asks).map(|answer| match answer {
+            Ok(parts) => Ok(merge(parts.into_iter().flatten().flatten())),
             Err(LspError::Timeout) => Ok(None),
             Err(err) => Err(err),
         })
     }
+}
+
+/// Servers' hovers as one, in server order: their contents a rule apart,
+/// with a repeat of earlier contents dropped, and the first range given.
+fn merge(hovers: impl IntoIterator<Item = Hover>) -> Option<Hover> {
+    let mut texts: Vec<String> = Vec::new();
+    let mut range = None;
+    for hover in hovers {
+        if !texts.contains(&hover.text) {
+            texts.push(hover.text);
+        }
+        range = range.or(hover.range);
+    }
+    (!texts.is_empty()).then(|| Hover {
+        text: texts.join(RULE),
+        range,
+    })
+}
+
+/// Whether the server provides hovers.
+fn provides_hover(capabilities: &ServerCapabilities) -> bool {
+    !matches!(
+        capabilities.hover_provider,
+        None | Some(HoverProviderCapability::Simple(false))
+    )
 }
 
 /// A reply as a [`Hover`], if it has any text.

@@ -6,8 +6,17 @@
 //! - **Request.** The range and the diagnostics the host shows over it,
 //!   in the session's encoding, each with the `data` its server gave it.
 //!   Timeout 10 s (`lsp.timeouts.code_action`): an empty list.
-//! - **Order.** Quick fixes first, preferred ones first, then as the
-//!   server sent them. A bare `Command` is an action with that title and
+//! - **Servers.** Merged (docs/decisions/q5j03ax2af-lsp-add-on-servers.md
+//!   §5): every server of the document with `codeActionProvider` is asked
+//!   at once, at the one version (a lead that is the document's only
+//!   server is asked whatever it advertises, as ever), and their actions
+//!   joined in server order (the lead first). Each action keeps its
+//!   server ([`Payload`]): it resolves and runs there alone. A server that
+//!   fails or times out contributes nothing; the answer fails only if
+//!   every server did. Actions are deduped only as `merge` says: both of
+//!   two actions must be final, edit-carrying and command-free.
+//! - **Order.** Quick fixes first, preferred ones first, then in server
+//!   order and as each server sent them. A bare `Command` is an action with that title and
 //!   no kind. Disabled actions are kept, with their reason, and never run.
 //! - **Kinds.** [`CodeActionQuery`] asks for actions of given kinds
 //!   (`context.only`) and says whether the ask is automatic (the lightbulb,
@@ -30,7 +39,8 @@ use futures::FutureExt;
 use lsp_types::request::{CodeActionRequest, CodeActionResolveRequest, ExecuteCommand};
 use lsp_types::{
     CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeActionTriggerKind, ExecuteCommandParams, NumberOrString, TextDocumentIdentifier,
+    CodeActionProviderCapability, CodeActionTriggerKind, ExecuteCommandParams, NumberOrString,
+    ServerCapabilities, TextDocumentIdentifier,
 };
 
 use crate::diagnostics::{Diagnostic, DiagnosticTag, Severity};
@@ -40,6 +50,7 @@ use crate::event::LspError;
 use crate::event::ServerId;
 use crate::identity::{IncarnationId, SessionId};
 use crate::manager::LspManager;
+use crate::requests::{Gate, merged};
 use crate::workspace_edit::FileEdits;
 
 /// What a server offers to do at a range.
@@ -54,11 +65,21 @@ pub struct CodeAction {
     pub disabled: Option<String>,
     /// How many of the diagnostics the request carried it says it fixes.
     pub diagnostics_fixed: usize,
+    /// The name of the server that offers it, when the list has an action
+    /// with the same title from another server: for a menu to show after
+    /// the title, to tell the two apart.
+    pub server_name: Option<String>,
     /// What's needed to resolve and run it.
     pub payload: Payload,
 }
 
 impl CodeAction {
+    /// The server that offers it.
+    #[cfg(test)]
+    pub(crate) fn server(&self) -> ServerId {
+        self.payload.server
+    }
+
     /// A quick fix, or a kind within one (`quickfix.import`).
     pub fn is_quick_fix(&self) -> bool {
         self.kind.as_deref().is_some_and(|kind| {
@@ -137,7 +158,7 @@ impl LspManager {
         diagnostics: Vec<Diagnostic>,
         query: CodeActionQuery,
     ) -> impl Future<Output = Result<Vec<CodeAction>, LspError>> + Send + 'static + use<> {
-        let server = self.server_of(buffer);
+        let names = self.server_names(buffer);
         let given = diagnostics.clone();
         let only = query.only.clone();
         let trigger = if query.automatic {
@@ -151,39 +172,55 @@ impl LspManager {
                 .map(CodeActionKind::from)
                 .collect::<Vec<_>>()
         });
-        let reply = self.document_request::<CodeActionRequest>(buffer, version, move |at| {
-            let text = &at.document.sent.text;
-            let end = text.clip_offset(range.end, Bias::Right);
-            let start = text.clip_offset(range.start, Bias::Left).min(end);
-            CodeActionParams {
-                text_document: TextDocumentIdentifier {
-                    uri: at.document.uri.clone(),
-                },
-                range: lsp_types::Range::new(
-                    to_lsp(text, start, at.encoding),
-                    to_lsp(text, end, at.encoding),
-                ),
-                context: CodeActionContext {
-                    diagnostics: diagnostics.iter().map(|d| encode(d, at)).collect(),
-                    only: wanted.clone(),
-                    trigger_kind: Some(trigger),
-                },
-                work_done_progress_params: Default::default(),
-                partial_result_params: Default::default(),
-            }
-        });
-        // Boxed, as its type names the manager's borrow.
-        reply.boxed().map(move |answer| match (answer, server) {
-            (Ok((reply, admitted)), Some(server)) => {
+        // Whether each server resolves actions, as its capabilities are
+        // known now: one still initializing counts as resolving.
+        let resolving: Vec<ServerId> = (self.servers_of(buffer).into_iter())
+            .filter(|&server| self.capabilities(server).is_none_or(|c| resolves(&c)))
+            .collect();
+        let asks = self.ask_each::<CodeActionRequest, _>(
+            buffer,
+            version,
+            Gate::UnlessLoneLead,
+            FEATURE,
+            provides_actions,
+            move |at| {
+                let text = &at.document.sent.text;
+                let end = text.clip_offset(range.end, Bias::Right);
+                let start = text.clip_offset(range.start, Bias::Left).min(end);
+                CodeActionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: at.document.uri.clone(),
+                    },
+                    range: lsp_types::Range::new(
+                        to_lsp(text, start, at.encoding),
+                        to_lsp(text, end, at.encoding),
+                    ),
+                    context: CodeActionContext {
+                        diagnostics: diagnostics.iter().map(|d| encode(d, at)).collect(),
+                        only: wanted.clone(),
+                        trigger_kind: Some(trigger),
+                    },
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                }
+            },
+            move |server, reply, admitted| {
                 let sent: Vec<_> = given.iter().map(|d| encode(d, &admitted)).collect();
-                let mut actions: Vec<_> = (reply.result.into_iter().flatten())
+                let actions: Vec<_> = (reply.result.into_iter().flatten())
                     .map(|action| convert(action, &admitted, server, &sent))
                     .filter(|action| match &only {
                         None => true,
                         Some(kinds) => kinds.iter().any(|kind| action.kind_is(kind)),
                     })
                     .collect();
-                // Stable: the server's order within each rank.
+                (actions, !resolving.contains(&server))
+            },
+        );
+        merged(asks).map(move |answer| match answer {
+            Ok(parts) => {
+                let mut actions = merge(parts.unwrap_or_default(), &names);
+                // Stable: server order, then each server's own, within
+                // each rank.
                 let rank =
                     |action: &CodeAction| match (action.is_quick_fix(), action.diagnostics_fixed) {
                         (true, 1..) => 0,
@@ -193,8 +230,8 @@ impl LspManager {
                 actions.sort_by_key(|action| (rank(action), !action.is_preferred));
                 Ok(actions)
             }
-            (Ok(_), None) | (Err(LspError::Timeout), _) => Ok(Vec::new()),
-            (Err(err), _) => Err(err),
+            Err(LspError::Timeout) => Ok(Vec::new()),
+            Err(err) => Err(err),
         })
     }
 
@@ -212,17 +249,9 @@ impl LspManager {
         let resolves = action.disabled.is_none()
             && !action.payload.bare
             && action.payload.raw.edit.is_none()
-            && self.capabilities(server).is_some_and(|capabilities| {
-                matches!(
-                    capabilities.code_action_provider,
-                    Some(lsp_types::CodeActionProviderCapability::Options(
-                        lsp_types::CodeActionOptions {
-                            resolve_provider: Some(true),
-                            ..
-                        }
-                    ))
-                )
-            });
+            && self
+                .capabilities(server)
+                .is_some_and(|capabilities| resolves(&capabilities));
         let reply = resolves.then(|| {
             self.request_with_documents_if::<CodeActionResolveRequest>(
                 server,
@@ -336,6 +365,86 @@ impl LspManager {
     }
 }
 
+/// What `Unavailable` says when no server provides code actions.
+const FEATURE: &str = "codeAction";
+
+/// Whether the server provides code actions.
+fn provides_actions(capabilities: &ServerCapabilities) -> bool {
+    !matches!(
+        capabilities.code_action_provider,
+        None | Some(CodeActionProviderCapability::Simple(false))
+    )
+}
+
+/// Whether the server resolves the code actions it gives.
+fn resolves(capabilities: &ServerCapabilities) -> bool {
+    matches!(
+        capabilities.code_action_provider,
+        Some(CodeActionProviderCapability::Options(
+            lsp_types::CodeActionOptions {
+                resolve_provider: Some(true),
+                ..
+            }
+        ))
+    )
+}
+
+/// Servers' actions, in server order, each with whether its server
+/// doesn't resolve actions, as one list (§5, "Code-action dedupe"): two
+/// actions from different servers collapse into the earlier server's only
+/// when *each* has an edit, has no command, and comes from a server that
+/// doesn't resolve, and the two are equal in title, kind, edit (as
+/// decoded, so position encodings don't matter), `disabled` and
+/// `isPreferred`. Otherwise both stay, and entries left with the same
+/// title from two servers carry their server's name.
+fn merge(parts: Vec<(Vec<CodeAction>, bool)>, names: &[(ServerId, String)]) -> Vec<CodeAction> {
+    let mut actions: Vec<CodeAction> = Vec::new();
+    // The qualifying actions kept, by title.
+    let mut kept: std::collections::HashMap<String, Vec<usize>> = Default::default();
+    for (given, final_actions) in parts {
+        for action in given {
+            if final_actions && qualifies(&action) {
+                let same = kept.entry(action.title.clone()).or_default();
+                let earlier = (same.iter()).any(|&at| {
+                    let other: &CodeAction = &actions[at];
+                    other.payload.server != action.payload.server && equivalent(other, &action)
+                });
+                if earlier {
+                    continue;
+                }
+                same.push(actions.len());
+            }
+            actions.push(action);
+        }
+    }
+    crate::completion::name_twins(
+        &mut actions,
+        |action| &action.title,
+        |action| action.payload.server,
+        names,
+        |action, name| action.server_name = Some(name),
+    );
+    actions
+}
+
+/// Whether `action`, from a server that doesn't resolve, may collapse
+/// with an equal one: it has an edit, decoded, and no command.
+fn qualifies(action: &CodeAction) -> bool {
+    !action.payload.bare
+        && action.payload.raw.edit.is_some()
+        && action.payload.edits.is_ok()
+        && action.payload.raw.command.is_none()
+}
+
+/// Whether two qualifying actions do exactly the same.
+fn equivalent(a: &CodeAction, b: &CodeAction) -> bool {
+    a.title == b.title
+        && a.kind == b.kind
+        && a.disabled == b.disabled
+        && a.is_preferred == b.is_preferred
+        && a.payload.edits == b.payload.edits
+}
+
 /// Whether the server has the document an action came from open as it was.
 fn has_open(opened: &Opened, (buffer, identity): (BufferId, (SessionId, IncarnationId))) -> bool {
     (opened.documents.iter())
@@ -422,6 +531,7 @@ fn convert(
             .as_ref()
             .map(|disabled| disabled.reason.clone()),
         diagnostics_fixed: fixed,
+        server_name: None,
         payload: Payload {
             server,
             from: (at.document.buffer, at.document.identity),

@@ -19,10 +19,32 @@
 //!   (a TypeScript auto-import) replace the listed ones, decoded against
 //!   the text of the request's version; a reply without them keeps the
 //!   listed ones. The main edit never changes.
+//! - **Servers.** Merged (docs/decisions/q5j03ax2af-lsp-add-on-servers.md
+//!   §5, "Completion merging"). Every server of the document with a
+//!   `completionProvider` is asked at once, at the one buffer version, so
+//!   every item of the merged list is of that version; a server that has
+//!   moved on contributes nothing. A typed trigger character asks only the
+//!   servers listing it (the triggers offered are the union); an invoked
+//!   or incomplete completion asks every server. A lead that is the
+//!   document's only server is asked whatever it advertises, as ever. The
+//!   lists are joined in server order (the lead first), and the list is
+//!   incomplete if any server's is: typing on then asks every server again
+//!   at the new version (each as for an incomplete list) and the whole
+//!   list is replaced, so no item is ever carried across versions.
+//! - **Dedupe.** Two items from different servers collapse into the
+//!   earlier server's only when *each* is final (its server has no
+//!   `resolveProvider`; one whose capabilities aren't known yet counts as
+//!   resolving) and has no `command`, and the two are equal in label,
+//!   kind, `filterText`, `insertTextFormat`, main edit (its insert and
+//!   replace ranges), additional edits and commit characters. Checked on
+//!   both items once every server has answered, so which answered first
+//!   never matters. Entries left with the same label from two servers carry
+//!   their server's name ([`CompletionItem::server_name`]).
 //! - **Failures.** A completion past `lsp.timeouts.completion` (3 s) is no
 //!   completions, and a resolve past `lsp.timeouts.resolve` (2 s) is the
 //!   item as it was: §3.5's "the menu closes". Both cancel the request.
-//!   Other failures are errors.
+//!   Other failures are errors. A server failing or timing out contributes
+//!   nothing; the answer fails only if every server did.
 //! - **Command.** An item's `command` (as resolved, if it was) is run after
 //!   the item is accepted. One its server lists in `executeCommandProvider`
 //!   goes to it as `workspace/executeCommand`
@@ -48,6 +70,7 @@ use crate::encoding::{PositionEncoding, from_lsp};
 use crate::event::{LspError, ServerId};
 use crate::identity::{IncarnationId, SessionId};
 use crate::manager::LspManager;
+use crate::requests::{Gate, merged};
 
 /// Why completions are asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,6 +119,10 @@ pub struct CompletionItem {
     /// are then typed: its `commitCharacters`, else the server's
     /// `allCommitCharacters`, else none.
     pub commit_characters: Vec<String>,
+    /// The name of the server that offers it, when the list has an entry
+    /// with the same label from another server: for a menu to tell the two
+    /// apart by, in the detail.
+    pub server_name: Option<String>,
     /// The server's item, to resolve, and the server, session and
     /// document it came from: only that session can resolve it.
     raw: Arc<lsp_types::CompletionItem>,
@@ -131,6 +158,21 @@ impl Decoded {
 }
 
 impl CompletionItem {
+    /// The replace range of an insert/replace main edit, else the edit's
+    /// own range.
+    fn replace(&self) -> Range<usize> {
+        match &self.raw.text_edit {
+            Some(CompletionTextEdit::InsertAndReplace(edit)) => self.decoded.range(edit.replace),
+            _ => self.edit.range.clone(),
+        }
+    }
+
+    /// The server that offers it.
+    #[cfg(test)]
+    pub(crate) fn server(&self) -> ServerId {
+        self.server
+    }
+
     /// The item's command, to run after it is accepted: as resolved, if it
     /// was.
     pub fn command(&self) -> Option<&lsp_types::Command> {
@@ -163,13 +205,16 @@ pub struct Completions {
 }
 
 impl LspManager {
-    /// What the server of open buffer `buffer` offers at byte `offset` of
-    /// its `version`: sent only if the server has that version, as any
+    /// What the servers of open buffer `buffer` offer at byte `offset` of
+    /// its `version`, as one merged list (see the [module](self)): each
+    /// sent only if its server has that version, as any
     /// [`document_request`](Self::document_request) is.
     ///
-    /// `Ok(None)` if the server offers nothing, or doesn't answer within
-    /// `lsp.timeouts.completion` (which also cancels the request).
-    /// Dropping the future cancels it too. It doesn't borrow the manager.
+    /// `Ok(None)` if no server offers anything, or none answers within
+    /// `lsp.timeouts.completion` (which also cancels the request). One
+    /// server failing or timing out leaves the others' items. Dropping the
+    /// future cancels every request still out. It doesn't borrow the
+    /// manager.
     pub fn completion(
         &self,
         buffer: BufferId,
@@ -177,11 +222,25 @@ impl LspManager {
         offset: usize,
         trigger: CompletionTrigger,
     ) -> impl Future<Output = Result<Option<Completions>, LspError>> + Send + 'static + use<> {
-        let server = self.server_of(buffer);
-        let all_commit_characters = (server.and_then(|server| self.capabilities(server)))
-            .and_then(|capabilities| capabilities.completion_provider)
-            .and_then(|provider| provider.all_commit_characters)
-            .unwrap_or_default();
+        // As each server's capabilities are known now: one still
+        // initializing has no commit characters, and counts as resolving.
+        let known: Vec<(ServerId, Vec<String>, bool)> = (self.servers_of(buffer).into_iter())
+            .map(|server| {
+                let provider = (self.capabilities(server))
+                    .and_then(|capabilities| capabilities.completion_provider);
+                let all_commit_characters = (provider.as_ref())
+                    .and_then(|provider| provider.all_commit_characters.clone())
+                    .unwrap_or_default();
+                let resolves =
+                    provider.is_none_or(|provider| provider.resolve_provider == Some(true));
+                (server, all_commit_characters, !resolves)
+            })
+            .collect();
+        let names = self.server_names(buffer);
+        let typed = match &trigger {
+            CompletionTrigger::Character(c) => Some(c.clone()),
+            _ => None,
+        };
         let (trigger_kind, trigger_character) = match trigger {
             CompletionTrigger::Invoked => (CompletionTriggerKind::INVOKED, None),
             CompletionTrigger::Character(c) => (CompletionTriggerKind::TRIGGER_CHARACTER, Some(c)),
@@ -190,8 +249,21 @@ impl LspManager {
                 None,
             ),
         };
-        let reply =
-            self.document_request::<Completion>(buffer, version, move |at| CompletionParams {
+        // A typed trigger asks only the servers that list it.
+        let provides = move |capabilities: &lsp_types::ServerCapabilities| {
+            (capabilities.completion_provider.as_ref()).is_some_and(|provider| {
+                typed.as_ref().is_none_or(|c| {
+                    (provider.trigger_characters.as_ref()).is_some_and(|listed| listed.contains(c))
+                })
+            })
+        };
+        let asks = self.ask_each::<Completion, _>(
+            buffer,
+            version,
+            Gate::UnlessLoneLead,
+            FEATURE,
+            provides,
+            move |at| CompletionParams {
                 text_document_position: at.position(offset),
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
@@ -199,14 +271,22 @@ impl LspManager {
                     trigger_kind,
                     trigger_character,
                 }),
-            });
-        // Boxed, as its type names the manager's borrow.
-        reply.boxed().map(move |answer| match (answer, server) {
-            (Ok((reply, admitted)), Some(server)) => Ok(reply.result.map(|response| {
-                convert(response, &admitted, offset, server, all_commit_characters)
-            })),
-            (Ok(_), None) | (Err(LspError::Timeout), _) => Ok(None),
-            (Err(err), _) => Err(err),
+            },
+            move |server, reply, admitted| {
+                let (all_commit_characters, final_items) = (known.iter())
+                    .find(|(known, ..)| *known == server)
+                    .map(|(_, all, final_items)| (all.clone(), *final_items))
+                    .unwrap_or_default();
+                let list = (reply.result).map(|response| {
+                    convert(response, &admitted, offset, server, all_commit_characters)
+                });
+                (list, final_items)
+            },
+        );
+        merged(asks).map(move |answer| match answer {
+            Ok(parts) => Ok(merge(parts.unwrap_or_default(), &names)),
+            Err(LspError::Timeout) => Ok(None),
+            Err(err) => Err(err),
         })
     }
 
@@ -298,14 +378,133 @@ impl LspManager {
             .boxed()
     }
 
-    /// The characters that should ask the server of open buffer `buffer`
-    /// for completions when typed: its `triggerCharacters`, once it has
-    /// initialized.
+    /// The characters that should ask the servers of open buffer `buffer`
+    /// for completions when typed: the union of their `triggerCharacters`,
+    /// once each has initialized, in server order (the lead's first), each
+    /// once. Typing one asks only the servers that list it.
     pub fn trigger_characters(&self, buffer: BufferId) -> Vec<String> {
-        (self.server_of(buffer))
-            .and_then(|server| self.capabilities(server)?.completion_provider)
-            .and_then(|provider| provider.trigger_characters)
-            .unwrap_or_default()
+        let mut all: Vec<String> = Vec::new();
+        for server in self.servers_of(buffer) {
+            let listed = (self.capabilities(server))
+                .and_then(|capabilities| capabilities.completion_provider)
+                .and_then(|provider| provider.trigger_characters)
+                .unwrap_or_default();
+            for c in listed {
+                if !all.contains(&c) {
+                    all.push(c);
+                }
+            }
+        }
+        all
+    }
+
+    /// The name of each server `buffer` is placed on, by its instance.
+    pub(crate) fn server_names(&self, buffer: BufferId) -> Vec<(ServerId, String)> {
+        (self.route_servers(buffer).into_iter())
+            .filter_map(|server| Some((server.placed?, server.name)))
+            .collect()
+    }
+}
+
+/// What `Unavailable` says when no server provides completions.
+const FEATURE: &str = "completion";
+
+/// Servers' lists, in server order, each with whether its items are
+/// final (its server has no `resolveProvider`), as one: one version, as
+/// every server was asked at the same one; incomplete if any is;
+/// equivalent items collapsed (see [`equivalent`]); and an entry left
+/// beside another server's with the same label given its server's name.
+/// `None` if no server gave a list.
+fn merge(
+    parts: Vec<(Option<Completions>, bool)>,
+    names: &[(ServerId, String)],
+) -> Option<Completions> {
+    if parts.iter().all(|(list, _)| list.is_none()) {
+        return None;
+    }
+    let mut is_incomplete = false;
+    let mut items: Vec<CompletionItem> = Vec::new();
+    // The final items kept, by label, to look equivalents up among.
+    let mut kept: std::collections::HashMap<String, Vec<usize>> = Default::default();
+    for (list, final_items) in parts {
+        let Some(list) = list else { continue };
+        is_incomplete |= list.is_incomplete;
+        for item in list.items {
+            let qualifies = final_items && item.command().is_none();
+            if qualifies {
+                let same = kept.entry(item.label.clone()).or_default();
+                let earlier = (same.iter()).any(|&at| {
+                    let other: &CompletionItem = &items[at];
+                    other.server != item.server && equivalent(other, &item)
+                });
+                if earlier {
+                    continue;
+                }
+                same.push(items.len());
+            }
+            items.push(item);
+        }
+    }
+    name_twins(
+        &mut items,
+        |item| &item.label,
+        |item| item.server,
+        names,
+        |item, name| {
+            item.server_name = Some(name);
+        },
+    );
+    Some(Completions {
+        items,
+        is_incomplete,
+    })
+}
+
+/// Whether two items, each final and command-free, do exactly the same
+/// when accepted (§5, "Completion merging"): equal in label, kind,
+/// `filterText` and `insertTextFormat`, in the main edit (its range and
+/// text, or both its insert and replace ranges), in their additional
+/// edits and in their commit characters. Edits are compared in bytes of
+/// the one version both were asked at, so servers with other position
+/// encodings compare alike.
+fn equivalent(a: &CompletionItem, b: &CompletionItem) -> bool {
+    a.label == b.label
+        && a.kind == b.kind
+        && a.raw.filter_text == b.raw.filter_text
+        && a.snippet == b.snippet
+        && a.edit == b.edit
+        && a.replace() == b.replace()
+        && a.additional_edits == b.additional_edits
+        && a.commit_characters == b.commit_characters
+}
+
+/// Gives each entry of `entries` that has a twin (an entry from another
+/// server with the same `key`) its server's name, through `set`.
+pub(crate) fn name_twins<T>(
+    entries: &mut [T],
+    key: impl Fn(&T) -> &str,
+    server: impl Fn(&T) -> ServerId,
+    names: &[(ServerId, String)],
+    mut set: impl FnMut(&mut T, String),
+) {
+    let mut servers: std::collections::HashMap<&str, Vec<ServerId>> = Default::default();
+    for entry in entries.iter() {
+        let found = servers.entry(key(entry)).or_default();
+        if !found.contains(&server(entry)) {
+            found.push(server(entry));
+        }
+    }
+    let twinned: Vec<bool> = (entries.iter())
+        .map(|entry| servers.get(key(entry)).is_some_and(|found| found.len() > 1))
+        .collect();
+    for (entry, twinned) in entries.iter_mut().zip(twinned) {
+        if !twinned {
+            continue;
+        }
+        let server = server(entry);
+        if let Some((_, name)) = names.iter().find(|(id, _)| *id == server) {
+            set(entry, name.clone());
+        }
     }
 }
 
@@ -368,6 +567,7 @@ fn convert(
                 snippet,
                 additional_edits,
                 commit_characters,
+                server_name: None,
                 raw: Arc::new(item),
                 server,
                 from: (at.document.buffer, at.document.identity),
