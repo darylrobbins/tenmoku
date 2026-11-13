@@ -458,6 +458,10 @@ workbench-task-reading = Reading tasks…
 workbench-task-none = No tasks: add { $file }
 # $group is the tasks file's group name, as written there: build, test or run.
 workbench-task-none-in-group = No { $group } tasks: add { $file }
+# $command is the program and the typed arguments, as run: ./gradlew :app:test
+workbench-task-custom-run = Run `{ $command }`
+workbench-task-custom-empty = type a task or goal to run
+workbench-task-custom-unterminated = a quote is not closed
 workbench-task-run-placeholder = Run task…
 workbench-task-run-build-placeholder = Run build task…
 
