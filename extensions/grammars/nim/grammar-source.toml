@@ -1,0 +1,18 @@
+# Where this extension's WebAssembly grammar comes from: a commit of the
+# grammar's repository, whose tree has the generated parser.c, which
+# scripts/build-grammar-wasm.sh fetches and compiles.
+#
+# tenmoku-editor/tree-sitter-nim is our fork of metacraft-labs/tree-sitter-nim
+# (MIT). Branch tenmoku/case-of-same-column is upstream's
+# 67cd55401207fa04c0a108fe8535dcddb297215e plus one patch: case_stmt accepts
+# `of`/`elif`/`else` branches at `case`'s column (the Nim manual's and NEP-1's
+# layout) as well as one level in, and adds an elif_branch node. parser.c was
+# regenerated with tree-sitter-cli 0.25.10 (LANGUAGE_VERSION 15).
+git = "https://github.com/tenmoku-editor/tree-sitter-nim"
+# The full 40-hex commit: the head of tenmoku/case-of-same-column.
+rev = "d7408ccad04d1ae23d387ba6d1413391d76e95ab"
+# The directory holding parser.c and scanner.c.
+src = "src"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "nim"

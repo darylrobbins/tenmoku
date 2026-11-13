@@ -1,0 +1,20 @@
+id = "tenmoku.grammar_nim"
+name = "Nim syntax"
+version = "0.1.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "nim"
+wasm = "tree-sitter-nim.wasm"
+extensions = ["nim", "nims", "nimble"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+packs = ["systems"]
+earlier_patterns_win = false
+license = "MIT"
+line_comment = "#"
+block_comment = ["#[", "]#"]
+shebangs = ["nim"]
