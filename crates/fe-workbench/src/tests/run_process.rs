@@ -331,7 +331,8 @@ async fn output_is_capped_at_8_mib_and_marked_truncated(cx: &mut TestAppContext)
     };
     // About 10.9 MB of lines, "1" to "1500000".
     const LAST: usize = 1_500_000;
-    let script = format!("seq 1 {LAST}");
+    // awk, not seq: BSD seq prints 1e+06 from a million on and repeats lines.
+    let script = format!("awk 'BEGIN {{ for (i = 1; i <= {LAST}; i++) print i }}'");
     let process = start(sh(&script, dir.path()), &sink, &runs, cx)
         .await
         .unwrap();
@@ -434,7 +435,8 @@ async fn a_slow_sink_takes_bounded_batches_and_every_line(cx: &mut TestAppContex
     };
     // About 2 MB, far faster than the sink takes it.
     const LAST: usize = 300_000;
-    let script = format!("seq 1 {LAST}");
+    // awk, not seq: BSD seq prints 1e+06 from a million on and repeats lines.
+    let script = format!("awk 'BEGIN {{ for (i = 1; i <= {LAST}; i++) print i }}'");
     let process = start(sh(&script, dir.path()), &sink, &runs, cx)
         .await
         .unwrap();
