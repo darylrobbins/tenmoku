@@ -518,6 +518,96 @@ fn nothing_shows_outside_a_repository(cx: &mut TestAppContext) {
     }
 }
 
+/// The branch widget's parts as laid out, from their bounds after the draw.
+struct WidgetLayout {
+    button: gpui::Bounds<gpui::Pixels>,
+    /// The room the name's text has: from the button's padding to the counts.
+    name: gpui::Bounds<gpui::Pixels>,
+    counts: gpui::Bounds<gpui::Pixels>,
+    chevron: gpui::Bounds<gpui::Pixels>,
+    /// The name and counts measured in full, unclipped, as the button sets them.
+    name_full: gpui::Pixels,
+    counts_full: gpui::Pixels,
+}
+
+impl WidgetLayout {
+    fn assert_ordered_and_whole(&self) {
+        let Self {
+            button,
+            name,
+            counts,
+            chevron,
+            name_full,
+            counts_full,
+        } = self;
+        // The name is truncated: its full text doesn't fit the room it has.
+        assert!(
+            *name_full > name.size.width && name.size.width > gpui::px(0.),
+            "name {name_full:?} in {name:?}"
+        );
+        // The counts are whole: their element is as wide as their full text
+        // (layout rounds a width up to a whole pixel, no more).
+        assert!(
+            counts.size.width >= *counts_full - gpui::px(0.01)
+                && counts.size.width < *counts_full + gpui::px(1.),
+            "counts {counts:?} vs text {counts_full:?}"
+        );
+        // Contained in the widget, ordered name, counts, chevron.
+        for part in [name, counts, chevron] {
+            assert!(
+                part.left() >= button.left() && part.right() <= button.right(),
+                "{part:?} in {button:?}"
+            );
+        }
+        assert!(name.right() <= counts.left(), "{name:?} {counts:?}");
+        assert!(counts.right() <= chevron.left(), "{counts:?} {chevron:?}");
+    }
+}
+
+/// Measures the widget now: `title-branch` and `title-branch-sync` by their
+/// selectors, the chevron as the button's trailing icon (the padding and
+/// border in from its right edge), the name's room up to the counts, and the
+/// full text widths by shaping.
+fn widget_layout(cx: &mut VisualTestContext, name: &str, sync: &str) -> WidgetLayout {
+    // The button's border and horizontal padding, its gap and its icon.
+    let (edge, gap, icon) = (gpui::px(13.), gpui::px(4.), gpui::px(14.));
+    let button = cx.debug_bounds("title-branch").expect("the branch widget");
+    let counts = cx.debug_bounds("title-branch-sync").expect("the counts");
+    let chevron = gpui::Bounds::new(
+        gpui::point(button.right() - edge - icon, button.top()),
+        gpui::size(icon, button.size.height),
+    );
+    let name_left = button.left() + edge;
+    let room = gpui::Bounds::new(
+        gpui::point(name_left, button.top()),
+        gpui::size(counts.left() - gap - name_left, button.size.height),
+    );
+    let measure = |cx: &mut VisualTestContext, text: &str, size: f32| {
+        cx.update(|window, _| {
+            let run = gpui::TextRun {
+                len: text.len(),
+                font: window.text_style().font(),
+                color: gpui::black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            window
+                .text_system()
+                .shape_line(text.to_owned().into(), gpui::px(size), &[run], None)
+                .width
+        })
+    };
+    WidgetLayout {
+        button,
+        name: room,
+        counts,
+        chevron,
+        name_full: measure(cx, name, 12.),
+        counts_full: measure(cx, sync, 12.),
+    }
+}
+
 #[gpui::test]
 fn the_counts_stay_when_a_long_branch_name_ellipsizes(cx: &mut TestAppContext) {
     let fixture = fixture();
@@ -531,24 +621,13 @@ fn the_counts_stay_when_a_long_branch_name_ellipsizes(cx: &mut TestAppContext) {
 
     assert_eq!(branch_item(&workbench, cx).as_deref(), Some(long));
     assert_eq!(branch_sync(&workbench, cx).as_deref(), Some("↑2"));
-    let button = cx.debug_bounds("title-branch").expect("the branch widget");
-    let counts = cx.debug_bounds("title-branch-sync").expect("the counts");
-    // The name's capped (it's far wider than that uncapped) and ends in an
-    // ellipsis; the counts are whole, inside the control, before the chevron.
-    assert!(button.size.width <= gpui::px(200.), "{:?}", button.size);
-    assert!(counts.size.width > gpui::px(0.) && counts.size.width < gpui::px(40.));
+    let wide = widget_layout(cx, long, "↑2");
     assert!(
-        counts.left() > button.left() + gpui::px(100.),
-        "{counts:?} in {button:?}"
+        wide.button.size.width <= gpui::px(200.),
+        "{:?}",
+        wide.button
     );
-    assert!(
-        counts.right() < button.right(),
-        "the chevron follows: {counts:?} in {button:?}"
-    );
-    assert!(
-        counts.right() > button.right() - gpui::px(40.),
-        "{counts:?} in {button:?}"
-    );
+    wide.assert_ordered_and_whole();
     // The text the bar drew for the counts, not recomputed from the state.
     let drawn = crate::title_bar::DRAWN.with_borrow(|drawn| drawn.clone());
     assert!(
@@ -559,22 +638,19 @@ fn the_counts_stay_when_a_long_branch_name_ellipsizes(cx: &mut TestAppContext) {
     );
 
     // In a narrow window the name gives way further; the counts keep their
-    // width and stay before the chevron, inside the control.
+    // whole text and stay between the name and the chevron.
     cx.simulate_resize(gpui::size(gpui::px(300.), gpui::px(400.)));
     draw(cx);
-    let narrow_button = cx.debug_bounds("title-branch").expect("the branch widget");
-    let narrow = cx
-        .debug_bounds("title-branch-sync")
-        .expect("the counts, narrow");
+    let narrow = widget_layout(cx, long, "↑2");
     assert!(
-        narrow_button.size.width < button.size.width,
-        "{narrow_button:?} vs {button:?}"
+        narrow.button.size.width < wide.button.size.width,
+        "{:?} vs {:?}",
+        narrow.button,
+        wide.button
     );
-    assert_eq!(narrow.size.width, counts.size.width);
-    assert!(narrow.left() >= narrow_button.left() && narrow.right() < narrow_button.right());
-    let gap = narrow_button.right() - narrow.right();
-    let wide_gap = button.right() - counts.right();
-    assert_eq!(gap, wide_gap, "the chevron's room after the counts");
+    narrow.assert_ordered_and_whole();
+    assert!(narrow.name.size.width < wide.name.size.width);
+    assert_eq!(narrow.counts.size.width, wide.counts.size.width);
     let tooltip = branch_tooltip(cx);
     assert!(tooltip.contains("2 to push"), "{tooltip}");
     assert!(tooltip.contains(&format!("origin/{long}")), "{tooltip}");
