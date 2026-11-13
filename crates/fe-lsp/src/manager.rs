@@ -1,12 +1,25 @@
 //! [`LspManager`]: starts and stops servers, and carries requests to them.
 //!
 //! Documents opened with [`LspManager::open`] are routed (§3.2): each goes
-//! to the first enabled server listing its language (registry.rs), one
+//! to its language's servers (registry.rs): the lead, the first enabled
+//! server listing it that isn't an add-on, and every add-on listing it
+//! (docs/decisions/q5j03ax2af-lsp-add-on-servers.md §3, §4). Each is one
 //! instance per (server, root), its root the window root for a file under
-//! it and the file's marker root otherwise (`registry::server_root`),
-//! started by the first document that needs it and left running when its
-//! last document closes. One with no server to go to waits, parked, until
-//! settings, an extension or a host spec give it one.
+//! it and the file's marker root for that server otherwise
+//! (`registry::server_root`), started by the first document that needs it
+//! and left running when its last document closes. A document is placed on
+//! each of its servers apart, keyed by server name: under that server's
+//! root's trust, crash budget and launch. A server it can't go to leaves
+//! it waiting, parked, there alone, until settings, an extension, a host
+//! spec, trust or a restart give it one; its other servers sync it
+//! meanwhile.
+//!
+//! Buffers of one URI whose languages have one lead (aliases) share one
+//! *holder*, chosen apart from placement: the first opened, then the next
+//! earliest as it closes, and, where groups merge on a settings change, the
+//! earliest of their holders. Only the holder is placed, on its own route;
+//! the others wait on every server until it closes. Requests go to the
+//! lead alone.
 //!
 //! A server that crashes restarts itself (restart.rs); the manager keeps
 //! each (server, root)'s crash list and log ring across the instances it
@@ -39,9 +52,9 @@ use crate::clock::{Clock, SystemClock};
 use crate::document::{Admitted, Opened, Opening, Subscribed, language_id};
 use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, ServerId, ServerStatus, SharedLog, not_open};
-use crate::identity::{Identities, IncarnationId, SessionId};
+use crate::identity::{Generation, Identities, IncarnationId, SessionId};
 use crate::launcher::{Flag, LaunchCancel, ServerLauncher, ServerSpec};
-use crate::registry::{Registry, needs_restart, server_for, server_root};
+use crate::registry::{Registry, needs_restart, server_for, server_root, servers_for};
 use crate::requests::{Reply, call, timeout, within};
 use crate::restart::SharedCrashes;
 use crate::server::{
@@ -94,6 +107,8 @@ pub struct LspManager {
     statuses: HashMap<(String, PathBuf), LatestStatus>,
     max_file_bytes: usize,
     next_id: u64,
+    /// The count of routed opens, which orders aliases for their holder.
+    next_open: u64,
     /// Whether routed servers may start for a root: see
     /// [`set_trust`](LspManager::set_trust).
     trusted: Trusted,
@@ -196,14 +211,21 @@ enum Kind {
     /// Opened on a server of the host's choosing ([`LspManager::open_on`]).
     On(ServerId),
     /// Routed by [`LspManager::open`]: where it is is in `routes`.
-    Routed(Route),
+    Routed(Box<Route>),
 }
 
 struct Route {
-    /// Where its server runs: [`server_root`] of `path`, `window` and the
-    /// markers of the spec its language has, kept up to date by
-    /// [`LspManager::reconcile`].
-    root: PathBuf,
+    /// Its servers, the lead first, then its language's add-ons in order,
+    /// each with where it runs: [`server_root`] of `path`, `window` and
+    /// that server's markers. Kept up to date by
+    /// [`LspManager::reconcile`]; one whose language no server lists keeps
+    /// the ones it had, and waits on each.
+    roots: Vec<(String, PathBuf)>,
+    /// Its language's configured lead (§3), placed or not, while a server
+    /// lists the language. Buffers of one URI with one lead share a holder.
+    lead: Option<String>,
+    /// Whether the lead is a primary rather than the first add-on.
+    primary: bool,
     /// The window root it was opened under, if any.
     window: Option<PathBuf>,
     path: PathBuf,
@@ -211,6 +233,75 @@ struct Route {
     uri: Url,
     /// fe-syntax's name.
     language: String,
+    /// When it was opened, by the manager's count, which picks a group's
+    /// next holder.
+    opened: u64,
+    /// Whether it holds its path for its lead (§4): one buffer of each
+    /// (URI, lead) does, chosen apart from placement. Only the holder is
+    /// placed; the others wait on every server.
+    holder: bool,
+    /// The open generation its openings carry.
+    generation: Generation,
+    /// The size limit it was opened with.
+    max_bytes: usize,
+}
+
+impl Route {
+    /// Sets its servers to those `specs` give its language, unless none
+    /// does: then it keeps its roots and has no lead. Its lead stays
+    /// `keep`, if given and still a primary listing the language, rather
+    /// than one that would now come first: a document stays on a lead that
+    /// keeps running (§4). Returns the names it had and the names it has
+    /// now.
+    fn reroot(&mut self, specs: &[ServerSpec], keep: Option<&str>) -> (Vec<String>, Vec<String>) {
+        let before = self.names();
+        let mut servers = servers_for(specs, &self.language);
+        if let Some(kept) = keep.and_then(|keep| {
+            (specs.iter()).find(|spec| {
+                spec.name == keep && !spec.add_on && spec.languages.contains(&self.language)
+            })
+        }) {
+            servers.primary = Some(kept);
+        }
+        self.primary = servers.primary.is_some();
+        let configured: Vec<&ServerSpec> =
+            servers.primary.into_iter().chain(servers.add_ons).collect();
+        if configured.is_empty() {
+            self.lead = None;
+            return (before.clone(), before);
+        }
+        self.roots = configured
+            .iter()
+            .map(|spec| {
+                let root = server_root(&self.path, self.window.as_deref(), &spec.root_markers);
+                (spec.name.clone(), root)
+            })
+            .collect();
+        self.lead = Some(self.roots[0].0.clone());
+        (before, self.names())
+    }
+
+    fn names(&self) -> Vec<String> {
+        self.roots.iter().map(|(name, _)| name.clone()).collect()
+    }
+
+    fn root_of(&self, name: &str) -> Option<&Path> {
+        (self.roots.iter())
+            .find(|(server, _)| server == name)
+            .map(|(_, root)| root.as_path())
+    }
+}
+
+/// One of a document's configured servers ([`LspManager::route_servers`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RouteServer {
+    pub name: String,
+    /// Where it runs for the document.
+    pub root: PathBuf,
+    /// Whether its spec is an add-on.
+    pub add_on: bool,
+    /// The instance the document is placed on now, if any.
+    pub placed: Option<ServerId>,
 }
 
 impl LspManager {
@@ -244,6 +335,7 @@ impl LspManager {
             statuses: HashMap::new(),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             next_id: 0,
+            next_open: 0,
             trusted: Arc::new(|_| true),
             switch: Arc::default(),
             threads: Arc::default(),
@@ -295,12 +387,15 @@ impl LspManager {
     ///   `workspace/configuration` with them from now on, and is sent
     ///   `workspace/didChangeConfiguration`.
     ///
-    /// A stopped or restarted server's documents go to the server they'd
-    /// get if opened now, at the text it last drained, or wait for one.
-    /// Documents waiting get a server if one now applies. A document stays
-    /// on a server that keeps running, even if another would now come
-    /// first for its language. `max_file_bytes` applies to documents
-    /// opened from now on.
+    /// A stopped or restarted server's documents go to the instance of it
+    /// they'd get if opened now, at the text it last drained, or wait for
+    /// one; their other servers keep them. Documents waiting get a server
+    /// if one now applies. A document stays on a lead that keeps running,
+    /// even if another would now come first for its language; an add-on
+    /// it no longer has closes it, and one it gains opens it at its current
+    /// text. Buffers of one path whose languages now share a lead keep the
+    /// earlier holder: the other is closed on each server it was on, and
+    /// waits. `max_file_bytes` applies to documents opened from now on.
     ///
     /// A server that stopped on its own (a launch error such as a missing
     /// command, or a crash) hands its documents back to wait, and they get
@@ -340,49 +435,140 @@ impl LspManager {
         self.reconcile();
     }
 
-    /// The server `buffer` is synced to, if any.
+    /// The server `buffer` is synced to and its requests go to, if any:
+    /// [`lead_of`](Self::lead_of), which it stays an alias of until its
+    /// last caller moves.
     pub fn server_of(&self, buffer: BufferId) -> Option<ServerId> {
-        match self.documents.get(&buffer)?.kind {
-            Kind::On(server) => Some(server),
-            Kind::Routed(_) => self.place_of(buffer),
+        self.lead_of(buffer)
+    }
+
+    /// The server of `buffer`'s configured lead (§3), if the document is
+    /// placed on it; never an add-on in its place, whatever runs. One
+    /// opened with [`open_on`](Self::open_on): the server it's on.
+    pub fn lead_of(&self, buffer: BufferId) -> Option<ServerId> {
+        match &self.documents.get(&buffer)?.kind {
+            Kind::On(server) => Some(*server),
+            Kind::Routed(route) => self.placed_on(buffer, route.lead.as_deref()?),
         }
     }
 
-    /// The name of the server `language` is routed to under the current
-    /// settings, trusted root or not: the server a document of it opened
-    /// now would wait for or go to.
+    /// The servers `buffer` is placed on now, in its route's order: the
+    /// lead first when it's placed, then its add-ons.
+    pub fn servers_of(&self, buffer: BufferId) -> Vec<ServerId> {
+        match self.documents.get(&buffer).map(|placed| &placed.kind) {
+            Some(Kind::On(server)) => vec![*server],
+            Some(Kind::Routed(_)) => (self.placements(buffer).into_iter())
+                .map(|(_, server)| server)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Whether `buffer` is placed on any server: for a routed document,
+    /// whether it holds its path for its lead (§4).
+    pub fn is_served(&self, buffer: BufferId) -> bool {
+        !self.servers_of(buffer).is_empty()
+    }
+
+    /// The active identity of `buffer` on each server it's placed on, in
+    /// [`servers_of`](Self::servers_of)'s order: a slot can tell a restart
+    /// or reopen of any one of them. A server yet to open it is left out.
+    pub fn served_identities(&self, buffer: BufferId) -> Vec<(ServerId, SessionId, IncarnationId)> {
+        (self.servers_of(buffer).into_iter())
+            .filter_map(|server| {
+                let (session, incarnation) = self.active_identity(buffer, server)?;
+                Some((server, session, incarnation))
+            })
+            .collect()
+    }
+
+    /// `buffer`'s configured servers: the lead first, placed or not, then
+    /// its add-ons, each by name and root with the instance it's placed on.
+    /// Configured identity, apart from live ids, for status, restart and the
+    /// log. Empty for a document no server lists; one opened with
+    /// [`open_on`](Self::open_on) has the server it's on.
+    pub fn route_servers(&self, buffer: BufferId) -> Vec<RouteServer> {
+        let Some(placed) = self.documents.get(&buffer) else {
+            return Vec::new();
+        };
+        let route = match &placed.kind {
+            Kind::On(server) => {
+                return (self.servers.get(server).into_iter())
+                    .map(|handle| RouteServer {
+                        name: handle.name.clone(),
+                        root: handle.root.clone(),
+                        add_on: handle.spec.add_on,
+                        placed: Some(*server),
+                    })
+                    .collect();
+            }
+            Kind::Routed(route) if route.lead.is_some() => route,
+            Kind::Routed(_) => return Vec::new(),
+        };
+        let routes = self.routes.lock();
+        (route.roots.iter().enumerate())
+            .map(|(at, (name, root))| RouteServer {
+                name: name.clone(),
+                root: root.clone(),
+                add_on: at > 0 || !route.primary,
+                placed: match routes.places.get(&(buffer, name.clone())) {
+                    Some(Place::Server(server, _)) => Some(*server),
+                    _ => None,
+                },
+            })
+            .collect()
+    }
+
+    /// The name of the lead server `language` is routed to under the
+    /// current settings, trusted root or not: the server a document of it
+    /// opened now would wait for or go to first.
     pub fn route_for(&self, language: &str) -> Option<String> {
         let specs = self.registry.specs();
         Some(server_for(&specs, language)?.name.clone())
     }
 
-    /// The name of the server `buffer`'s document is on, or, while it
-    /// waits (under an untrusted root, or for a server), the one it's
-    /// routed to. Unlike [`route_for`](Self::route_for), a document kept on
-    /// a running server after settings changed is where it actually is.
+    /// The name of `buffer`'s lead: its language's configured lead, placed
+    /// or waiting (under an untrusted root, or for a server). One opened
+    /// with [`open_on`](Self::open_on): the server it's on.
     pub fn route_of(&self, buffer: BufferId) -> Option<String> {
-        let placed = self.documents.get(&buffer)?;
-        if let Some(server) = self.server_of(buffer) {
-            return self.servers.get(&server).map(|handle| handle.name.clone());
+        match &self.documents.get(&buffer)?.kind {
+            Kind::On(server) => self.servers.get(server).map(|handle| handle.name.clone()),
+            Kind::Routed(route) => route.lead.clone(),
         }
-        match &placed.kind {
-            Kind::Routed(route) => self.route_for(&route.language),
+    }
+
+    /// The routed document `buffer`'s route.
+    fn route(&self, buffer: BufferId) -> Option<&Route> {
+        match &self.documents.get(&buffer)?.kind {
+            Kind::Routed(route) => Some(route),
             Kind::On(_) => None,
         }
     }
 
-    /// The server a routed document is placed on, if any.
-    fn place_of(&self, buffer: BufferId) -> Option<ServerId> {
-        match self
-            .routes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .places
-            .get(&buffer)?
-        {
+    /// The instance routed `buffer` is placed on for server `name`, if
+    /// any.
+    fn placed_on(&self, buffer: BufferId, name: &str) -> Option<ServerId> {
+        match self.routes.lock().places.get(&(buffer, name.to_owned()))? {
             Place::Server(server, _) => Some(*server),
             Place::Waiting => None,
         }
+    }
+
+    /// Each server routed `buffer` is placed on, by name, in its route's
+    /// order.
+    fn placements(&self, buffer: BufferId) -> Vec<(String, ServerId)> {
+        let Some(route) = self.route(buffer) else {
+            return Vec::new();
+        };
+        let routes = self.routes.lock();
+        (route.roots.iter())
+            .filter_map(
+                |(name, _)| match routes.places.get(&(buffer, name.clone())) {
+                    Some(Place::Server(server, _)) => Some((name.clone(), *server)),
+                    _ => None,
+                },
+            )
+            .collect()
     }
 
     /// The largest text, in bytes, a document may have and be synced
@@ -441,7 +627,6 @@ impl LspManager {
             return;
         }
         let identities = &self.identities;
-        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
         self.documents.retain(|&buffer, placed| match placed.kind {
             Kind::On(server) => {
                 let live = !gone.contains(&server);
@@ -450,15 +635,17 @@ impl LspManager {
                 }
                 live
             }
-            Kind::Routed(_) => {
-                if let Some(Place::Server(server, _)) = routes.places.get(&buffer)
-                    && gone.contains(server)
-                {
-                    routes.places.insert(buffer, Place::Waiting);
-                }
-                true
-            }
+            Kind::Routed(_) => true,
         });
+        // Only the (document, server) places on those wait: the documents'
+        // other servers keep them.
+        for place in self.routes.lock().places.values_mut() {
+            if let Place::Server(server, _) = place
+                && gone.contains(server)
+            {
+                *place = Place::Waiting;
+            }
+        }
     }
 
     fn start_server(
@@ -514,7 +701,7 @@ impl LspManager {
             stop: stop_requested,
             cancel: cancel.clone(),
             switch: self.switch.clone(),
-            routes: self.routes.clone(),
+            routes: self.routes.named(&spec.name),
             after,
             done: Some(done_sender),
             crashes,
@@ -554,19 +741,24 @@ impl LspManager {
     /// ([`LaunchCancel`]), or ends its wait to restart; the sink hears
     /// `Stopped(None)` when it has gone. Requests still waiting get
     /// [`LspError::ServerDown`]. Its documents go with it, routed ones too:
-    /// they're no longer tracked, as if closed, and a host wanting them
-    /// synced again opens them again. (One that a crash or a settings
-    /// change leaves without a server waits for one instead.)
+    /// they're no longer tracked, as if closed (each is closed on its other
+    /// servers), and a host wanting them synced again opens them again.
+    /// (One that a crash or a settings change leaves without a server waits
+    /// for one instead.)
     pub fn stop(&mut self, server: ServerId) {
         // Its documents go with it.
         let gone: Vec<BufferId> = self
             .documents
             .keys()
             .copied()
-            .filter(|&buffer| self.server_of(buffer) == Some(server))
+            .filter(|&buffer| self.servers_of(buffer).contains(&server))
             .collect();
         for buffer in gone {
-            self.forget(buffer);
+            for other in self.forget(buffer) {
+                if other != server {
+                    self.send(other, Command::Close(buffer));
+                }
+            }
         }
         if let Some(handle) = self.servers.remove(&server) {
             handle.stop(&mut self.retiring);
@@ -604,6 +796,7 @@ impl LspManager {
         let (spec, routed) = match running {
             Some((id, true, _)) => {
                 self.retire(id, &specs);
+                self.regroup();
                 match configured {
                     Some(spec) => (spec, true),
                     None => return Ok(None),
@@ -639,20 +832,35 @@ impl LspManager {
             .unwrap_or_default()
     }
 
-    /// Stops tracking `buffer`: retires its identity, drops its
-    /// subscription, its place and any opening waiting for it. Returns the
-    /// server it was synced to.
-    fn forget(&mut self, buffer: BufferId) -> Option<ServerId> {
-        let server = self.server_of(buffer);
-        let placed = self.documents.remove(&buffer)?;
+    /// Stops tracking `buffer`: retires its identities, drops its
+    /// subscription, its places and any opening waiting for it. Returns the
+    /// servers it was synced to.
+    fn forget(&mut self, buffer: BufferId) -> Vec<ServerId> {
+        let servers = self.servers_of(buffer);
+        let Some(placed) = self.documents.remove(&buffer) else {
+            return servers;
+        };
         self.identities.close(buffer);
         placed.subscribed.detach();
-        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
-        routes.places.remove(&buffer);
-        let parked = routes.lot.remove(&buffer);
+        let mut names = match placed.kind {
+            Kind::Routed(route) => route.names(),
+            Kind::On(_) => Vec::new(),
+        };
+        // An opening for no server, if it has one.
+        names.push(String::new());
+        let mut routes = self.routes.lock();
+        let parked: Vec<Opening> = (names.into_iter())
+            .filter_map(|name| {
+                let key = (buffer, name);
+                routes.places.remove(&key);
+                routes.lot.remove(&key)
+            })
+            .collect();
         drop(routes);
+        // Its subscription's hub is locked as each drops: not under the
+        // places' lock.
         drop(parked);
-        server
+        servers
     }
 
     /// Sends `R` to `server`. A request made while the server starts is
@@ -917,23 +1125,50 @@ impl LspManager {
         )
     }
 
-    /// The server documents of fe-syntax's `language` under `root` go to
-    /// now, by name, with the latest status of one started there (`None`
-    /// if none has been); `None` if they'd go to none: no server lists the
-    /// language, `[lsp]` turns it off, or `root` isn't trusted.
+    /// The lead server documents of fe-syntax's `language` under `root` go
+    /// to now, by name, with the latest status of one started there
+    /// (`None` if none has been); `None` if they'd go to none: no server
+    /// lists the language, `[lsp]` turns it off, or `root` isn't trusted.
+    /// The first of [`language_servers`](Self::language_servers), running
+    /// or not, without its add-on flag.
     pub fn language_server(
         &self,
         root: &Path,
         language: &str,
     ) -> Option<(String, Option<ServerStatus>)> {
+        let (name, _, status) = self.language_servers(root, language).into_iter().next()?;
+        Some((name, status))
+    }
+
+    /// Every server documents of fe-syntax's `language` under `root` go to
+    /// now, the lead first, then its add-ons, each by name, with whether
+    /// it's an add-on and the latest status of one started there (`None` if
+    /// none has been). Empty if they'd go to none: no server lists the
+    /// language, `[lsp]` turns it off, or `root` isn't trusted.
+    pub fn language_servers(
+        &self,
+        root: &Path,
+        language: &str,
+    ) -> Vec<(String, bool, Option<ServerStatus>)> {
         if !(self.trusted)(root) {
-            return None;
+            return Vec::new();
         }
         let specs = self.registry.specs();
-        let name = server_for(&specs, language)?.name.clone();
-        let status = (self.statuses.get(&(name.clone(), root.to_owned())))
-            .and_then(|latest| lock(latest).as_ref().map(|(_, status)| status.clone()));
-        Some((name, status))
+        let servers = servers_for(&specs, language);
+        (servers.primary.into_iter().chain(servers.add_ons))
+            .map(|spec| {
+                let status = self.status_at(&spec.name, root);
+                (spec.name.clone(), spec.add_on, status)
+            })
+            .collect()
+    }
+
+    /// The latest status of the server started at (`name`, `root`), or
+    /// `None` if none ever started there: a missing command reports
+    /// `Stopped(Some(…))`, and an untrusted root has none.
+    pub fn status_at(&self, name: &str, root: &Path) -> Option<ServerStatus> {
+        let latest = self.statuses.get(&(name.to_owned(), root.to_owned()))?;
+        lock(latest).as_ref().map(|(_, status)| status.clone())
     }
 
     /// The servers running for `root`, oldest first, each with its latest
@@ -951,22 +1186,25 @@ impl LspManager {
         servers
     }
 
-    /// Starts syncing buffer `buffer`, at `path`, to the server for
-    /// fe-syntax's `language` and the folder [`server_root`] gives it from
-    /// the window root `root` and that server's root markers (§3.2),
-    /// starting that server if it isn't running there, and returns which it
-    /// is. As [`open_on`](Self::open_on) otherwise.
+    /// Starts syncing buffer `buffer`, at `path`, to the servers of
+    /// fe-syntax's `language`, its lead and its add-ons (§3), each at the
+    /// folder [`server_root`] gives it from the window root `root` and that
+    /// server's root markers (§3.2), starting each that isn't running
+    /// there, and returns the instance its lead was placed on, if it was
+    /// ([`lead_of`](Self::lead_of) once it's there). As
+    /// [`open_on`](Self::open_on) otherwise.
     ///
-    /// So a document under `root` goes to the window root's server; one
-    /// outside it, or opened with no root, to a server at its marker root
+    /// So a document under `root` goes to the window root's servers; one
+    /// outside it, or opened with no root, to servers at their marker roots
     /// (or its own folder, with no marker above), under the same trust rule
-    /// as the window root. One with no server for its language (none
-    /// listing it, or `[lsp]` turning it off) is kept, without a server,
-    /// until [`update_settings`](Self::update_settings) or
-    /// [`register_spec`](Self::register_spec) give it one; its subscription
-    /// is drained at each [`changed`](Self::changed) meanwhile. So is one
-    /// under a root [`set_trust`](Self::set_trust) rejects, until it's
-    /// trusted.
+    /// as the window root. Each server places it apart: one it can't go to
+    /// (none listing its language, `[lsp]` turning it off, a root
+    /// [`set_trust`](Self::set_trust) rejects, a command missing or crashed
+    /// out) leaves it waiting there alone, until settings, a spec, trust or
+    /// a [`restart`](Self::restart) give it one. Its subscription is drained
+    /// at each [`changed`](Self::changed) meanwhile. An alias of a buffer
+    /// that holds `path` for the same lead waits on every server until that
+    /// one closes.
     ///
     /// Errs if `path` isn't absolute.
     #[allow(clippy::too_many_arguments)] // Each is one thing the document needs.
@@ -988,80 +1226,123 @@ impl LspManager {
             )
         })?;
         self.close(buffer);
-        let window = root;
         let specs = self.registry.specs();
-        let markers = server_for(&specs, language).map_or(&[][..], |spec| &spec.root_markers);
-        let root = server_root(path, window, markers);
-        let subscribed = Subscribed::new(subscription, text, version);
-        let (tap, text, version) = subscribed.tap();
-        let opening = Opening {
-            buffer,
-            text,
-            version,
-            subscription: tap,
-            uri,
-            language_id: language_id(language, path),
+        let mut route = Route {
+            roots: Vec::new(),
+            lead: None,
+            primary: false,
+            window: root.map(Path::to_owned),
+            path: path.to_owned(),
+            uri: uri.clone(),
+            language: language.to_owned(),
+            opened: self.next_open,
+            holder: false,
             generation: self.identities.open(buffer),
             max_bytes: self.max_file_bytes,
         };
-        let filtered_as = (opening.uri.clone(), opening.language_id.clone());
+        self.next_open += 1;
+        let (_, names) = route.reroot(&specs, None);
+        // The group's holder keeps its path, placed or not.
+        route.holder = route.lead.is_some() && self.holder_of(&route.uri, &route.lead).is_none();
         self.documents.insert(
             buffer,
             Placed {
-                subscribed,
-                filtered_as,
-                kind: Kind::Routed(Route {
-                    root: root.clone(),
-                    window: window.map(Path::to_owned),
-                    path: path.to_owned(),
-                    uri: opening.uri.clone(),
-                    language: language.to_owned(),
-                }),
+                subscribed: Subscribed::new(subscription, text, version),
+                filtered_as: (uri, language_id(language, path)),
+                kind: Kind::Routed(Box::new(route)),
             },
         );
-        let server = self.place(opening, &specs);
-        // Documents waiting for the same server (after it failed, say) go
-        // to it too.
-        if server.is_some()
-            && let Some(spec) = server_for(&specs, language)
-        {
-            let only = (spec.name.clone(), root);
+        if names.is_empty() {
+            // No server lists it: an opening under no name keeps its
+            // subscription drained until one does.
+            let opening = self.opening(buffer).expect("just opened");
+            self.routes
+                .lock()
+                .lot
+                .insert((buffer, String::new()), opening);
+        }
+        // One opening per server, each with its own tap.
+        let lead = names.first().cloned();
+        let mut on_lead = None;
+        let mut placed = Vec::new();
+        for name in names {
+            let opening = self.opening(buffer).expect("just opened");
+            let (server, place) = self.place_for(buffer, &name, &specs);
+            let mut routes = self.routes.lock();
+            routes.places.insert((buffer, name.clone()), place);
+            routes.forward(&self.identities, &name, vec![opening]);
+            drop(routes);
+            if server.is_some() {
+                if Some(&name) == lead.as_ref() {
+                    on_lead = server;
+                }
+                placed.push(name);
+            }
+        }
+        // Documents waiting for the same servers (after one failed, say) go
+        // to them too.
+        for name in placed {
+            let Some(root) = self.route(buffer).and_then(|route| route.root_of(&name)) else {
+                continue;
+            };
+            let only = (name, root.to_owned());
             self.place_waiting(&specs, Some(&only));
         }
-        Ok(server)
+        // Where the lead was placed, even if it has failed since.
+        Ok(on_lead)
     }
 
-    /// Opens `opening` on the server its route gives it under `specs`,
-    /// starting that if need be, or leaves it waiting.
-    fn place(&mut self, opening: Opening, specs: &[ServerSpec]) -> Option<ServerId> {
-        let buffer = opening.buffer;
-        let (server, place) = self.place_for(buffer, specs);
-        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
-        routes.places.insert(buffer, place);
-        routes.forward(&self.identities, vec![opening]);
-        server
+    /// A new opening of routed `buffer`, for one of its servers, at its
+    /// hub's latest text, with a tap of its own.
+    fn opening(&self, buffer: BufferId) -> Option<Opening> {
+        let placed = self.documents.get(&buffer)?;
+        let Kind::Routed(route) = &placed.kind else {
+            return None;
+        };
+        let (subscription, text, version) = placed.subscribed.tap();
+        Some(Opening {
+            buffer,
+            text,
+            version,
+            subscription,
+            uri: route.uri.clone(),
+            language_id: placed.filtered_as.1.clone(),
+            generation: route.generation,
+            max_bytes: route.max_bytes,
+        })
     }
 
-    /// Places routed `buffer` at `place`. If it's a server and the
-    /// document's opening is waiting in the lot (handed back meanwhile),
-    /// that goes there now.
-    fn set_place(&self, buffer: BufferId, place: Place) {
-        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
+    /// Places routed `buffer` at `place` on server `name`. If it's an
+    /// instance and the document's opening for it is waiting in the lot
+    /// (handed back meanwhile), that goes there now.
+    fn set_place(&self, buffer: BufferId, name: &str, place: Place) {
+        let mut routes = self.routes.lock();
+        let key = (buffer, name.to_owned());
         let to_server = matches!(place, Place::Server(..));
-        routes.places.insert(buffer, place);
-        if to_server && let Some(opening) = routes.lot.remove(&buffer) {
-            routes.forward(&self.identities, vec![opening]);
+        routes.places.insert(key.clone(), place);
+        if to_server && let Some(opening) = routes.lot.remove(&key) {
+            routes.forward(&self.identities, name, vec![opening]);
         }
     }
 
-    /// The server for `buffer` under `specs`, started if need be, and its
-    /// place, or none and [`Place::Waiting`].
-    fn place_for(&mut self, buffer: BufferId, specs: &[ServerSpec]) -> (Option<ServerId>, Place) {
-        self.target(buffer, specs)
+    /// The instance of server `name` for routed `buffer` under `specs`,
+    /// started if need be, and its place there, or none and
+    /// [`Place::Waiting`]: so too for a buffer that doesn't hold its path.
+    fn place_for(
+        &mut self,
+        buffer: BufferId,
+        name: &str,
+        specs: &[ServerSpec],
+    ) -> (Option<ServerId>, Place) {
+        if !self.holds_path(buffer) {
+            return (None, Place::Waiting);
+        }
+        self.target(buffer, name, specs)
             // A server has one document per URI, however documents came to
-            // be routed to it (settings or trust moving several there): the
-            // others wait until it closes.
-            .filter(|&server| !self.holds_uri(buffer, server))
+            // be routed to it (two leads' holders meeting on one add-on,
+            // settings or trust moving several there): the others wait
+            // there until it closes.
+            .filter(|&server| !self.holds_uri(buffer, name, server))
             .and_then(|server| {
                 let commands = self.servers.get(&server)?.commands.clone();
                 Some((Some(server), Place::Server(server, commands)))
@@ -1069,30 +1350,54 @@ impl LspManager {
             .unwrap_or((None, Place::Waiting))
     }
 
+    /// Whether routed `buffer` holds its path for its lead (§4). One with
+    /// no lead holds nothing.
+    fn holds_path(&self, buffer: BufferId) -> bool {
+        self.route(buffer)
+            .is_some_and(|route| route.lead.is_some() && route.holder)
+    }
+
+    /// The buffer holding `uri` for `lead`, if one does.
+    fn holder_of(&self, uri: &Url, lead: &Option<String>) -> Option<BufferId> {
+        self.documents
+            .iter()
+            .find_map(|(&buffer, placed)| match &placed.kind {
+                Kind::Routed(r) if r.holder && r.uri == *uri && r.lead == *lead => Some(buffer),
+                _ => None,
+            })
+    }
+
     /// Whether a routed document other than `buffer`, of the same URI, is
-    /// placed on `server`.
-    fn holds_uri(&self, buffer: BufferId, server: ServerId) -> bool {
-        let Some(Kind::Routed(route)) = self.documents.get(&buffer).map(|placed| &placed.kind)
-        else {
+    /// placed on `server` (as server `name`).
+    fn holds_uri(&self, buffer: BufferId, name: &str, server: ServerId) -> bool {
+        let Some(route) = self.route(buffer) else {
             return false;
         };
+        let routes = self.routes.lock();
         self.documents.iter().any(|(&other, placed)| {
             other != buffer
                 && matches!(&placed.kind, Kind::Routed(r) if r.uri == route.uri)
-                && self.place_of(other) == Some(server)
+                && matches!(
+                    routes.places.get(&(other, name.to_owned())),
+                    Some(Place::Server(on, _)) if *on == server
+                )
         })
     }
 
-    /// The server `buffer`'s route gives it under `specs`, started if it
-    /// isn't running. `None` for a document without a route, with no
-    /// server for its language, under an untrusted root, or whose server's
-    /// thread can't be made.
-    fn target(&mut self, buffer: BufferId, specs: &[ServerSpec]) -> Option<ServerId> {
-        let Kind::Routed(route) = &self.documents.get(&buffer)?.kind else {
-            return None;
-        };
-        let spec = server_for(specs, &route.language)?.clone();
-        let root = route.root.clone();
+    /// The instance of server `name` that `buffer`'s route gives it under
+    /// `specs`, started if it isn't running. `None` for a document without
+    /// a route, whose route hasn't `name`, or whose language `name` doesn't
+    /// serve under `specs` (as the first primary or an add-on), under
+    /// an untrusted root (that server's), whose server there gave up after
+    /// too many crashes, or whose server's thread can't be made.
+    fn target(&mut self, buffer: BufferId, name: &str, specs: &[ServerSpec]) -> Option<ServerId> {
+        let route = self.route(buffer)?;
+        let root = route.root_of(name)?.to_owned();
+        // A lead kept while its instance runs is never started again.
+        let servers = servers_for(specs, &route.language);
+        let spec = (servers.primary.into_iter().chain(servers.add_ons))
+            .find(|spec| spec.name == name)?
+            .clone();
         if !(self.trusted)(&root) {
             return None;
         }
@@ -1121,6 +1426,7 @@ impl LspManager {
         self.prune();
         let specs = self.registry.specs();
         self.reroot(&specs);
+        self.regroup();
         let routed: Vec<ServerId> = self
             .servers
             .iter()
@@ -1159,61 +1465,207 @@ impl LspManager {
                 None => self.retire(id, &specs),
             }
         }
+        // A lead that was kept above but has since been retired gives way
+        // to the one its language has now.
+        self.reroot(&specs);
+        self.regroup();
         self.place_waiting(&specs, None);
     }
 
-    /// Gives each routed document the root its language's server under
-    /// `specs` has for it, whose markers may have changed. One whose
-    /// language no server lists keeps its root.
+    /// Gives each routed document the servers its language has under
+    /// `specs`, and the root each has for it, whose markers may have
+    /// changed. A lead it's placed on that's running and still lists the
+    /// language stays its lead, even if another would now come first. A
+    /// server it gains waits for it, at its hub's latest text; one it
+    /// loses closes it there. One whose language no server lists keeps its
+    /// roots, and waits on each.
     fn reroot(&mut self, specs: &[ServerSpec]) {
-        for placed in self.documents.values_mut() {
-            if let Kind::Routed(route) = &mut placed.kind
-                && let Some(spec) = server_for(specs, &route.language)
+        let buffers: Vec<BufferId> = self.documents.keys().copied().collect();
+        for buffer in buffers {
+            let keep = (self.route(buffer).and_then(|route| route.lead.clone())).filter(|lead| {
+                self.placed_on(buffer, lead)
+                    .is_some_and(|server| self.servers.contains_key(&server))
+            });
+            self.reroot_one(buffer, specs, keep.as_deref());
+        }
+    }
+
+    /// Gives routed `buffer` the servers its language has under `specs`,
+    /// keeping lead `keep` if given (see [`Route::reroot`]): a server it
+    /// gains waits for it, at its hub's latest text; one it loses closes it
+    /// there.
+    fn reroot_one(&mut self, buffer: BufferId, specs: &[ServerSpec], keep: Option<&str>) {
+        let Some(Placed {
+            kind: Kind::Routed(route),
+            ..
+        }) = self.documents.get_mut(&buffer)
+        else {
+            return;
+        };
+        let (before, after) = route.reroot(specs, keep);
+        // Gained first, so the document keeps a tap throughout.
+        for name in after.iter().filter(|name| !before.contains(name)) {
+            let spare = self.routes.lock().lot.remove(&(buffer, String::new()));
+            let Some(opening) = spare.or_else(|| self.opening(buffer)) else {
+                continue;
+            };
+            let mut routes = self.routes.lock();
+            routes.places.insert((buffer, name.clone()), Place::Waiting);
+            routes.lot.insert((buffer, name.clone()), opening);
+        }
+        for name in before.iter().filter(|name| !after.contains(name)) {
+            self.release(buffer, name, false);
+        }
+    }
+
+    /// Closes routed `buffer` on server `name` alone, retiring its identity
+    /// there; its other servers keep it. If `keep`, it waits there again,
+    /// at its hub's latest text; otherwise `name` is no longer one of its
+    /// servers.
+    fn release(&mut self, buffer: BufferId, name: &str, keep: bool) {
+        let Some(route) = self.route(buffer) else {
+            return;
+        };
+        let generation = route.generation;
+        let key = (buffer, name.to_owned());
+        let mut routes = self.routes.lock();
+        let placed = routes.places.get(&key).cloned();
+        let parked = match (keep, &placed) {
+            (true, Some(Place::Server(..))) => {
+                let fresh = self.opening(buffer);
+                routes.places.insert(key.clone(), Place::Waiting);
+                fresh.and_then(|fresh| routes.lot.insert(key, fresh))
+            }
+            (true, _) => None,
+            (false, _) => {
+                routes.places.remove(&key);
+                routes.lot.remove(&key)
+            }
+        };
+        drop(routes);
+        drop(parked);
+        let Some(Place::Server(server, commands)) = placed else {
+            return;
+        };
+        let identities = self.identities.clone();
+        let retire = move || {
+            if let Some(identity) = identities.active(buffer, server) {
+                identities.retire(buffer, generation, server, identity);
+            }
+        };
+        retire();
+        let _ = commands.unbounded_send(Command::Close(buffer));
+        // An open still on its way there activates after that: it's
+        // retired behind its close.
+        let _ = commands.unbounded_send(Command::Documents(Box::new(move |_| retire())));
+    }
+
+    /// Gives each (URI, lead) group one holder after leads changed (§4):
+    /// of groups that merged, the earliest opened of their holders keeps
+    /// the path, whether or not it's placed now, and the others are closed
+    /// on every server they're on, to wait; a group with no holder (one
+    /// split off) gets its earliest opened.
+    fn regroup(&mut self) {
+        // Each member: whether it held its path, when it was opened, and it.
+        type Member = (bool, u64, BufferId);
+        let mut groups: HashMap<(Url, String), Vec<Member>> = HashMap::new();
+        for (&buffer, placed) in &self.documents {
+            if let Kind::Routed(route) = &placed.kind
+                && let Some(lead) = &route.lead
             {
-                route.root = server_root(&route.path, route.window.as_deref(), &spec.root_markers);
+                (groups.entry((route.uri.clone(), lead.clone())).or_default()).push((
+                    route.holder,
+                    route.opened,
+                    buffer,
+                ));
+            }
+        }
+        let mut lost = Vec::new();
+        for members in groups.into_values() {
+            // Holders first, then the earliest opened.
+            let keeper = (members.iter())
+                .min_by_key(|&&(holder, opened, _)| (!holder, opened))
+                .map(|&(_, _, buffer)| buffer);
+            for (holder, _, buffer) in members {
+                let holds = Some(buffer) == keeper;
+                if let Some(Placed {
+                    kind: Kind::Routed(route),
+                    ..
+                }) = self.documents.get_mut(&buffer)
+                {
+                    route.holder = holds;
+                }
+                if holder && !holds {
+                    lost.push(buffer);
+                }
+            }
+        }
+        for buffer in lost {
+            for (name, _) in self.placements(buffer) {
+                self.release(buffer, &name, true);
             }
         }
     }
 
     /// Stops routed server `id`, first placing each of its documents on
-    /// the server it gets under `specs` (started if need be: a new
-    /// instance of it waits for it to end), or to wait, so its thread
-    /// forwards them there. Documents opened on it by
-    /// [`open_on`](Self::open_on) go with it.
+    /// the instance of that server they get under `specs` (started if need
+    /// be: a new instance of it waits for it to end), or to wait there, so
+    /// its thread forwards them. Their other servers keep them. Documents
+    /// opened on it by [`open_on`](Self::open_on) go with it.
     fn retire(&mut self, id: ServerId, specs: &[ServerSpec]) {
         let Some(handle) = self.servers.remove(&id) else {
             return;
         };
         let (name, root) = (handle.name.clone(), handle.root.clone());
-        self.retiring.insert((name, root), handle.done);
-        let buffers: Vec<BufferId> = self
-            .documents
-            .keys()
-            .copied()
-            .filter(|&buffer| self.server_of(buffer) == Some(id))
+        self.retiring.insert((name.clone(), root), handle.done);
+        let buffers: Vec<BufferId> = (self.documents.iter())
+            .filter(|&(&buffer, placed)| match placed.kind {
+                Kind::On(server) => server == id,
+                Kind::Routed(_) => self.placed_on(buffer, &name) == Some(id),
+            })
+            .map(|(&buffer, _)| buffer)
             .collect();
         for buffer in buffers {
             if matches!(self.documents[&buffer].kind, Kind::On(_)) {
                 self.forget(buffer);
                 continue;
             }
-            let (_, place) = self.place_for(buffer, specs);
-            self.set_place(buffer, place);
+            let (server, place) = self.place_for(buffer, &name, specs);
+            self.set_place(buffer, &name, place);
+            // A lead kept only while that instance ran (another primary
+            // comes first now) gives way to the language's own.
+            let Some(route) = self.route(buffer) else {
+                continue;
+            };
+            let kept = route.lead.as_deref() == Some(name.as_str())
+                && server_for(specs, &route.language).is_none_or(|spec| spec.name != name);
+            if server.is_none() && kept {
+                self.reroot_one(buffer, specs, None);
+                self.regroup();
+                for other in self.route(buffer).map(Route::names).unwrap_or_default() {
+                    if self.placed_on(buffer, &other).is_none() {
+                        let (server, place) = self.place_for(buffer, &other, specs);
+                        if server.is_some() {
+                            self.set_place(buffer, &other, place);
+                        }
+                    }
+                }
+            }
         }
         let _ = handle.stop.send(());
         handle.cancel.cancel();
     }
 
-    /// Opens each waiting document whose route now gives it a server
+    /// Opens each document waiting for a server its route now gives it
     /// (only `only`, a server name and root, if given), with the size limit
-    /// it was opened with. One its old server hasn't handed back yet is
+    /// it was opened with. One its old instance hasn't handed back yet is
     /// forwarded there when it is.
     fn place_waiting(&mut self, specs: &[ServerSpec], only: Option<&(String, PathBuf)>) {
         let started = self.next_id;
-        for buffer in self.waiting_for(specs, only) {
-            let (server, place) = self.place_for(buffer, specs);
+        for (buffer, name) in self.waiting_for(only) {
+            let (server, place) = self.place_for(buffer, &name, specs);
             if server.is_some() {
-                self.set_place(buffer, place);
+                self.set_place(buffer, &name, place);
             }
         }
         // One placed early in the pass may have come back meanwhile from an
@@ -1221,43 +1673,60 @@ impl LspManager {
         // instance running now rather than wait beside it. None is started
         // for this, so a server failing at once can't make it a loop.
         if self.next_id != started {
-            for buffer in self.waiting_for(specs, only) {
-                if let Some(place) = self.running_place(buffer, specs) {
-                    self.set_place(buffer, place);
+            for (buffer, name) in self.waiting_for(only) {
+                if let Some(place) = self.running_place(buffer, &name) {
+                    self.set_place(buffer, &name, place);
                 }
             }
         }
     }
 
-    /// The place of the instance running for routed `buffer`'s server and
-    /// root under `specs`, if there is one; none is started.
-    fn running_place(&self, buffer: BufferId, specs: &[ServerSpec]) -> Option<Place> {
-        let Kind::Routed(route) = &self.documents.get(&buffer)?.kind else {
+    /// The place of the instance running for routed `buffer`'s server
+    /// `name` and its root there, if there is one and the buffer holds its
+    /// path; none is started.
+    fn running_place(&self, buffer: BufferId, name: &str) -> Option<Place> {
+        if !self.holds_path(buffer) {
             return None;
-        };
-        let spec = server_for(specs, &route.language)?;
+        }
+        let root = self.route(buffer)?.root_of(name)?;
         self.servers
             .iter()
-            .find(|(_, handle)| handle.name == spec.name && handle.root == route.root)
-            .filter(|(id, _)| !self.holds_uri(buffer, **id))
+            .find(|(_, handle)| handle.name == name && handle.root == root)
+            .filter(|(id, _)| !self.holds_uri(buffer, name, **id))
             .map(|(&id, handle)| Place::Server(id, handle.commands.clone()))
     }
 
-    /// The routed documents waiting for a server that `specs` give them
-    /// one of (only `only`, a server name and root, if given).
-    fn waiting_for(&self, specs: &[ServerSpec], only: Option<&(String, PathBuf)>) -> Vec<BufferId> {
-        self.documents
-            .iter()
-            .filter_map(|(&buffer, placed)| {
-                let Kind::Routed(route) = &placed.kind else {
-                    return None;
-                };
-                let spec = server_for(specs, &route.language)?;
-                (only.is_none_or(|(name, root)| spec.name == *name && route.root == *root)
-                    && (self.trusted)(&route.root))
-                .then_some(buffer)
+    /// The (routed document, server name) pairs waiting for a server their
+    /// route gives them, under a trusted root (only `only`, a server name
+    /// and root, if given), the earliest opened first.
+    fn waiting_for(&self, only: Option<&(String, PathBuf)>) -> Vec<(BufferId, String)> {
+        let mut candidates: Vec<(u64, BufferId, &str, &Path)> = Vec::new();
+        for (&buffer, placed) in &self.documents {
+            let Kind::Routed(route) = &placed.kind else {
+                continue;
+            };
+            // None of its servers lists its language any more.
+            if route.lead.is_none() {
+                continue;
+            }
+            for (name, root) in &route.roots {
+                if only.is_none_or(|(only, at)| only == name && at == root) {
+                    candidates.push((route.opened, buffer, name, root));
+                }
+            }
+        }
+        candidates.sort_by_key(|&(opened, ..)| opened);
+        candidates.retain(|&(_, _, _, root)| (self.trusted)(root));
+        let routes = self.routes.lock();
+        candidates
+            .into_iter()
+            .filter(|&(_, buffer, name, _)| {
+                !matches!(
+                    routes.places.get(&(buffer, name.to_owned())),
+                    Some(Place::Server(..))
+                )
             })
-            .filter(|&buffer| self.place_of(buffer).is_none())
+            .map(|(_, buffer, name, _)| (buffer, name.to_owned()))
             .collect()
     }
 
@@ -1340,34 +1809,42 @@ impl LspManager {
         Ok(())
     }
 
-    /// Stops syncing `buffer`: what it did until now that its server
-    /// hasn't been sent yet is sent, in order, then `didClose`. The
+    /// Stops syncing `buffer`: what it did until now that its servers
+    /// haven't been sent yet is sent, in order, then `didClose`. The
     /// subscription is dropped here, on the calling thread, so edits made
-    /// after this returns send nothing, and its identity is retired here
-    /// too, before `didClose` is sent.
+    /// after this returns send nothing, and its identities are retired here
+    /// too, before `didClose` is sent. An alias it held its path from opens
+    /// on its servers now.
     pub fn close(&mut self, buffer: BufferId) {
-        let uri = match self.documents.get(&buffer).map(|placed| &placed.kind) {
-            Some(Kind::Routed(route)) => Some(route.uri.clone()),
-            _ => None,
-        };
-        if let Some(server) = self.forget(buffer) {
+        let uri = self.route(buffer).map(|route| route.uri.clone());
+        for server in self.forget(buffer) {
             self.send(server, Command::Close(buffer));
-            // A document of the same URI held back for it opens now.
-            let specs = self.registry.specs();
-            let held: Vec<BufferId> = self
-                .waiting_for(&specs, None)
-                .into_iter()
-                .filter(|other| {
-                    matches!(
-                        self.documents.get(other).map(|placed| &placed.kind),
-                        Some(Kind::Routed(route)) if Some(&route.uri) == uri.as_ref()
-                    )
-                })
-                .collect();
-            for other in held {
-                let (server, place) = self.place_for(other, &specs);
+        }
+        let Some(uri) = uri else {
+            return;
+        };
+        let mut held: Vec<(u64, BufferId)> = (self.documents.iter())
+            .filter_map(|(&other, placed)| match &placed.kind {
+                Kind::Routed(route) if route.uri == uri => Some((route.opened, other)),
+                _ => None,
+            })
+            .collect();
+        if held.is_empty() {
+            return;
+        }
+        held.sort_by_key(|&(opened, _)| opened);
+        // The next earliest opened holds the path if it held it.
+        self.regroup();
+        let specs = self.registry.specs();
+        for (_, other) in held {
+            let names = self.route(other).map(Route::names).unwrap_or_default();
+            for name in names {
+                if self.placed_on(other, &name).is_some() {
+                    continue;
+                }
+                let (server, place) = self.place_for(other, &name, &specs);
                 if server.is_some() {
-                    self.set_place(other, place);
+                    self.set_place(other, &name, place);
                 }
             }
         }
@@ -1422,8 +1899,19 @@ impl LspManager {
         &self,
         buffer: BufferId,
     ) -> impl Future<Output = Vec<(i32, Version)>> + use<> {
+        let server = self.server_of(buffer);
+        self.ring_on(buffer, server)
+    }
+
+    /// As [`ring`](Self::ring), on `server` (`None`: on none).
+    #[cfg(test)]
+    pub(crate) fn ring_on(
+        &self,
+        buffer: BufferId,
+        server: Option<ServerId>,
+    ) -> impl Future<Output = Vec<(i32, Version)>> + use<> {
         let (answer, answered) = oneshot::channel();
-        if let Some(server) = self.server_of(buffer) {
+        if let Some(server) = server {
             self.send(server, Command::Ring(buffer, answer));
         }
         answered.map(Result::unwrap_or_default)
@@ -1437,22 +1925,34 @@ impl LspManager {
             .is_some_and(|placed| placed.subscribed.is_attached())
     }
 
-    /// Says `buffer` emitted events (edits or a save), so its server's
-    /// thread drains them now rather than at the next backstop tick; a
+    /// Says `buffer` emitted events (edits or a save), so its servers'
+    /// threads drain them now rather than at the next backstop tick; a
     /// document waiting for a server is drained here. Cheap: call it once
     /// a frame for each buffer that changed.
     pub fn changed(&self, buffer: BufferId) {
-        if !self.documents.contains_key(&buffer) {
-            return;
-        }
-        match self.server_of(buffer) {
-            Some(server) => self.send(server, Command::Changed(buffer)),
-            None => {
-                let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
-                if let Some(opening) = routes.lot.get_mut(&buffer) {
-                    opening.catch_up();
+        let names = match self.documents.get(&buffer).map(|placed| &placed.kind) {
+            None => return,
+            Some(Kind::On(server)) => return self.send(*server, Command::Changed(buffer)),
+            Some(Kind::Routed(route)) => route.names(),
+        };
+        let mut servers = Vec::new();
+        {
+            let mut routes = self.routes.lock();
+            // With the opening one no server lists keeps.
+            for name in names.into_iter().chain([String::new()]) {
+                let key = (buffer, name);
+                match routes.places.get(&key) {
+                    Some(Place::Server(server, _)) => servers.push(*server),
+                    _ => {
+                        if let Some(opening) = routes.lot.get_mut(&key) {
+                            opening.catch_up();
+                        }
+                    }
                 }
             }
+        }
+        for server in servers {
+            self.send(server, Command::Changed(buffer));
         }
     }
 

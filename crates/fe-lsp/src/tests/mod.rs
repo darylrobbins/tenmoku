@@ -1,6 +1,7 @@
 //! Unit tests, one module per area. They run servers through the fake in
 //! `crate::fake` (declared in lib.rs, so fe-workbench can share it).
 
+mod add_ons;
 mod admission;
 mod cancel;
 mod catalogue;

@@ -202,16 +202,53 @@ pub(crate) enum Command {
 /// channel before it takes what's queued there. So a document forwarded to
 /// a server that has since stopped either lands in its queue in time to be
 /// forwarded again, or fails to send and goes where its place now says.
-pub(crate) type Routes = Arc<Mutex<Places>>;
+///
+/// Each server's handle is [`named`](Routes::named) after its spec, so what
+/// it hands on goes under its own (document, server) key: a document is
+/// placed on each of its servers apart (docs/decisions/q5j03ax2af-lsp-add-on-servers.md
+/// §4).
+#[derive(Clone, Default)]
+pub(crate) struct Routes(Arc<Named>);
+
+#[derive(Default)]
+struct Named {
+    places: Arc<Mutex<Places>>,
+    /// The server name what this handle forwards is keyed by.
+    name: String,
+}
+
+impl Routes {
+    /// The same places, forwarding under server `name`.
+    pub(crate) fn named(&self, name: &str) -> Self {
+        Self(Arc::new(Named {
+            places: self.0.places.clone(),
+            name: name.to_owned(),
+        }))
+    }
+
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, Places> {
+        self.0.places.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// As [`Places::forward`], under this handle's server name.
+    pub(crate) fn forward(&self, identities: &Identities, openings: Vec<Opening>) {
+        self.lock().forward(identities, &self.0.name, openings);
+    }
+}
+
+/// A routed document on one of its servers, by the server's name.
+pub(crate) type Key = (BufferId, String);
 
 #[derive(Default)]
 pub(crate) struct Places {
     /// Where each document [`LspManager::open`](crate::LspManager::open)
-    /// routed is, or is going. A document not here isn't forwarded.
-    pub(crate) places: HashMap<BufferId, Place>,
+    /// routed is, or is going, on each of its servers. A document not here
+    /// for a server isn't forwarded to it.
+    pub(crate) places: HashMap<Key, Place>,
     /// Documents waiting for a server, as openings at the text last
-    /// drained.
-    pub(crate) lot: HashMap<BufferId, Opening>,
+    /// drained. One no server lists keeps its opening here under the empty
+    /// name, with no place, so its subscription is still drained.
+    pub(crate) lot: HashMap<Key, Opening>,
 }
 
 #[derive(Clone)]
@@ -223,19 +260,21 @@ pub(crate) enum Place {
 }
 
 impl Places {
-    /// Sends each of `openings` still current where its place says: to its
-    /// server, or, if that has gone (its place then says it waits) or it has
-    /// none, to the lot. One with no place is dropped. Each is first brought
-    /// up to its buffer's latest edit, so a server's `didOpen` carries the
-    /// text as it is now, even for one handed on late (by a retired server,
-    /// say) after edits nothing drained.
-    pub(crate) fn forward(&mut self, identities: &Identities, openings: Vec<Opening>) {
+    /// Sends each of `openings`, for server `name`, still current where its
+    /// place there says: to its server, or, if that has gone (its place
+    /// then says it waits) or it has none, to the lot. One with no place is
+    /// dropped. Each is first brought up to its buffer's latest edit, so a
+    /// server's `didOpen` carries the text as it is now, even for one
+    /// handed on late (by a retired server, say) after edits nothing
+    /// drained.
+    pub(crate) fn forward(&mut self, identities: &Identities, name: &str, openings: Vec<Opening>) {
         for mut opening in openings {
             if !identities.is_current(opening.buffer, opening.generation) {
                 continue;
             }
             opening.catch_up();
-            let opening = match self.places.get(&opening.buffer) {
+            let key = (opening.buffer, name.to_owned());
+            let opening = match self.places.get(&key) {
                 None => continue,
                 Some(Place::Waiting) => opening,
                 Some(Place::Server(_, commands)) => {
@@ -248,8 +287,8 @@ impl Places {
                     }
                 }
             };
-            self.places.insert(opening.buffer, Place::Waiting);
-            self.lot.insert(opening.buffer, opening);
+            self.places.insert(key.clone(), Place::Waiting);
+            self.lot.insert(key, opening);
         }
     }
 }
@@ -1772,10 +1811,7 @@ pub(crate) fn hand_over(
         }
     }
     if !openings.is_empty() {
-        routes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .forward(identities, openings);
+        routes.forward(identities, openings);
     }
 }
 
