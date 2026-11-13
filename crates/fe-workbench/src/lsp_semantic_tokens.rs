@@ -29,7 +29,8 @@ type Answer = Result<Option<SemanticTokens>, LspError>;
 
 /// `token_type` with `modifiers`, as the name of a highlight the syntax
 /// colours use; `None` for a server's own type, which leaves the grammar's
-/// colour.
+/// colour. Roslyn's `excludedCode` / `excluded code` (inactive `#if`
+/// branches) map to `comment`, so those rows are dimmed.
 pub(super) fn highlight_name<M: AsRef<str>>(
     token_type: &str,
     modifiers: &[M],
@@ -74,6 +75,7 @@ pub(super) fn highlight_name<M: AsRef<str>>(
                 "comment"
             }
         }
+        "excludedCode" | "excluded code" => "comment",
         "string" => "string",
         "formatSpecifier" => "string.placeholder",
         "escapeSequence" => "escape",
@@ -381,3 +383,7 @@ fn decorations(
 #[cfg(test)]
 #[path = "lsp_semantic_tokens_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "lsp_semantic_tokens_inactive_tests.rs"]
+mod inactive_tests;
