@@ -795,8 +795,11 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     let shared_keymap = service.keymap_store().expect("the service has the keymap");
     let task = match config.batches.take() {
         Some(batches) => service.start_with(batches, cx),
-        None if service.paths().is_empty() && service.trees().is_empty() => {
-            // Nothing to watch: the service only applies what's loaded.
+        None if cx.is_test() || (service.paths().is_empty() && service.trees().is_empty()) => {
+            // Nothing to watch, or under gpui's test scheduler, which panics
+            // on activity from a thread it doesn't know (the Windows
+            // directory-change thread): the service only applies what's
+            // loaded. Tests send changes through `Config::watch_with`.
             let (_, closed) = batch_channel();
             service.start_with(closed, cx)
         }
