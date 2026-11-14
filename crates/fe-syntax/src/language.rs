@@ -867,7 +867,12 @@ const DEFS: &[Def] = &[
         extensions: &["java"],
         file_names: &[],
         grammar: || tree_sitter_java::LANGUAGE.into(),
-        highlights: || &[tree_sitter_java::HIGHLIGHTS_QUERY],
+        highlights: || {
+            &[
+                tree_sitter_java::HIGHLIGHTS_QUERY,
+                include_str!("../queries/java.scm"),
+            ]
+        },
         earlier_patterns_win: false,
         injections: None,
         hidden: false,

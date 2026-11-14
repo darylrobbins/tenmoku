@@ -117,7 +117,7 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | css | tree-sitter-css | 0.25.0 | https://github.com/tree-sitter/tree-sitter-css | MIT | `HIGHLIGHTS_QUERY` |
 | yaml | tree-sitter-yaml | 0.7.2, patched² | https://github.com/tree-sitter-grammars/tree-sitter-yaml | MIT | `HIGHLIGHTS_QUERY` |
 | markdown | tree-sitter-md | 0.5.3 | https://github.com/tree-sitter-grammars/tree-sitter-markdown | MIT | `HIGHLIGHT_QUERY_BLOCK`¹, then one pattern of ours⁹; `INJECTION_QUERY_BLOCK`. Inline grammar (`INLINE_LANGUAGE`, our `markdown_inline`): `HIGHLIGHT_QUERY_INLINE`¹; `INJECTION_QUERY_INLINE` |
-| java | tree-sitter-java | 0.23.5 | https://github.com/tree-sitter/tree-sitter-java | MIT | `HIGHLIGHTS_QUERY` |
+| java | tree-sitter-java | 0.23.5 | https://github.com/tree-sitter/tree-sitter-java | MIT | `HIGHLIGHTS_QUERY`, then `queries/java.scm` |
 | ruby | tree-sitter-ruby | 0.23.1 | https://github.com/tree-sitter/tree-sitter-ruby | MIT | `HIGHLIGHTS_QUERY`, then `queries/ruby.scm`⁴ |
 | lua | tree-sitter-lua | 0.5.0 | https://github.com/tree-sitter-grammars/tree-sitter-lua | MIT | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
 | php | tree-sitter-php | 0.24.2 | https://github.com/tree-sitter/tree-sitter-php | MIT | `HIGHLIGHTS_QUERY`; `queries/php-injections.scm`⁸ (grammar `LANGUAGE_PHP`) |
