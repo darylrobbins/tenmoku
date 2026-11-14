@@ -488,6 +488,22 @@ impl Buffer {
         Ok(buffer)
     }
 
+    /// Like [`Buffer::from_reader_detecting`], but decoded in `encoding`
+    /// rather than the one detected (see [`Text::from_reader_with`]), and
+    /// saves back in it, its BOM as read: what [`Buffer::from_file_with`]
+    /// makes of a file, from bytes already read.
+    pub fn from_reader_with(
+        reader: impl std::io::Read,
+        encoding: FileEncoding,
+    ) -> std::io::Result<Self> {
+        let decoded = Text::from_reader_with(reader, encoding)?;
+        let mut buffer = Self::with_text(decoded.text, decoded.line_ending);
+        buffer.encoding = decoded.encoding;
+        buffer.saved_encoding = decoded.encoding;
+        buffer.replaced_on_read = decoded.replaced;
+        Ok(buffer)
+    }
+
     /// Reads `file` as [`Buffer::from_reader_detecting`] does, recording
     /// its [`DiskStamp`] from the handle before reading.
     pub fn from_file(file: File) -> io::Result<Self> {

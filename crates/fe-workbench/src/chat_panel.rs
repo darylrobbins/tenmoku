@@ -86,7 +86,7 @@ use crate::{
 };
 
 #[path = "chat_apply.rs"]
-mod chat_apply;
+pub(crate) mod chat_apply;
 #[path = "chat_context.rs"]
 pub(crate) mod chat_context;
 #[path = "chat_store_worker.rs"]

@@ -349,9 +349,9 @@ fn within_root(path: &str) -> bool {
 
 /// A file a block or link is for, found: the path to open it by, and
 /// whether its permissions allow writing it.
-struct Located {
-    path: PathBuf,
-    read_only: bool,
+pub(crate) struct Located {
+    pub(crate) path: PathBuf,
+    pub(crate) read_only: bool,
 }
 
 /// How many symlinks [`real_path`] follows before it gives up, as Linux's
@@ -421,7 +421,7 @@ fn real_path(path: &Path) -> Option<PathBuf> {
 /// Where `rel` is under `root`, really, unless that's outside it; opened
 /// by the path of an editor already on the same file, of `open`, so its
 /// buffer, unsaved edits and all, is the one used. Reads the disk.
-fn locate(root: &Path, rel: &str, open: &[PathBuf]) -> Result<Located, String> {
+pub(crate) fn locate(root: &Path, rel: &str, open: &[PathBuf]) -> Result<Located, String> {
     if !within_root(rel) {
         return Err(tr!("workbench-chat-why-outside").to_string());
     }
@@ -447,7 +447,7 @@ fn locate(root: &Path, rel: &str, open: &[PathBuf]) -> Result<Located, String> {
 
 /// Whether the file at `path` is there and can't be written: its
 /// permissions allow no writing, or not by this process. Reads the disk.
-fn is_read_only(path: &Path) -> bool {
+pub(crate) fn is_read_only(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|meta| meta.permissions().readonly() || !writable(path))
 }
 
@@ -534,7 +534,7 @@ fn refusal(editor: &EditorView) -> Option<String> {
 /// `body` proposed over `range` of `snapshot`, as `origin`: the step Apply
 /// and Review Changes share, so their errors read alike; else why not, for
 /// the toast.
-fn propose(
+pub(crate) fn propose(
     snapshot: &BufferSnapshot,
     range: Range<usize>,
     body: EditBody,

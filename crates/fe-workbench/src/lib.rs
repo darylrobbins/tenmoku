@@ -13,6 +13,8 @@
 //! line's) a keystroke reaches as a [`fe_gpui::commands::RunCommand`] that
 //! the panel takes. [`command_catalog`] checks them all with no app.
 
+#[allow(dead_code, reason = "the API tool loop (card AG10) runs the tools")]
+mod agent_tools;
 mod ai_changes_buffers;
 mod ai_changes_panel;
 mod auto_save;

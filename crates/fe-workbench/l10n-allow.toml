@@ -659,6 +659,13 @@ file = "src/git_remote.rs"
 text = "git {}"
 reason = "A prompting fetch's, pull's or push's thread's name, shown only in debuggers"
 
+# The API chat's workbench tools (card AG7): their results, truncation
+# lines and errors are the model's text, as fe-chat's tools.rs is.
+
+[[file]]
+path = "src/agent_tools.rs"
+reason = "Tool results, their headers and truncation lines, and the reasons a call failed are sent to the model, not shown to the user"
+
 [[literal]]
 file = "src/git_branch_menu.rs"
 text = "git-branches-row:{ix}"

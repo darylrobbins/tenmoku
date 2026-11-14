@@ -141,6 +141,24 @@ pub(crate) struct AiChanges {
     /// A language server's edit under review, shown in place of the
     /// changeset, which is then empty.
     refactor: Option<refactor_preview_view::Review>,
+    /// Who takes the changeset back once another review replaces it, or
+    /// the panel is cleared: its chat ([`Workbench::set_changeset_returning`]).
+    returned: Option<Returned>,
+}
+
+/// Takes a changeset back when the panel lets it go, decisions, hunk memo
+/// and checkpoint all as they stood.
+pub(crate) type Returned = Box<dyn FnOnce(Changeset)>;
+
+impl Drop for AiChanges {
+    /// However the review is replaced or cleared, its changeset goes back
+    /// to whoever asked for it.
+    fn drop(&mut self) {
+        if let Some(returned) = self.returned.take() {
+            let empty = Changeset::new(String::new(), fe_buffer::Origin::User);
+            returned(std::mem::replace(&mut self.changeset, empty));
+        }
+    }
 }
 
 impl AiChanges {
@@ -156,6 +174,7 @@ impl AiChanges {
             opening: None,
             previews: Vec::new(),
             refactor: None,
+            returned: None,
         }
     }
 }
@@ -682,9 +701,24 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.set_changeset_returning(changeset, None, window, cx);
+    }
+
+    /// [`Workbench::set_changeset`], and once another review replaces it or
+    /// the panel is cleared, `returned` takes the changeset back as it then
+    /// stands: how the API chat keeps its turns' decisions and hunk memos.
+    pub(crate) fn set_changeset_returning(
+        &mut self,
+        changeset: Changeset,
+        returned: Option<Returned>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // The turn it replaces leaves no review tabs behind.
         self.discard_ai_reviews(window, cx);
-        self.ai_changes = Some(AiChanges::new(changeset));
+        let mut changes = AiChanges::new(changeset);
+        changes.returned = returned;
+        self.ai_changes = Some(changes);
         self.ai_changes_panel(cx);
         self.sync_ai_changes(cx);
         self.run_dock_op(crate::dock::DockOp::ShowAiChanges, window, cx);
