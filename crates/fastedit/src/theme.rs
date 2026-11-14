@@ -371,11 +371,16 @@ mod tests {
             set_themes(cx, ThemeMode::Light, Theme::dark(), Theme::light());
         });
         let palette = cx.update(|cx| fe_gpui::editor_palette(cx));
-        assert_eq!(*palette, hakuji);
+        // Font styles are a theme's own, so kiln's bases have none.
+        let unstyled = |palette: &EditorPalette| EditorPalette {
+            styles: vec![],
+            ..palette.clone()
+        };
+        assert_eq!(*palette, unstyled(&hakuji));
 
         cx.update(|cx| cx.set_theme_mode(ThemeMode::Dark));
         let palette = cx.update(|cx| fe_gpui::editor_palette(cx));
-        assert_eq!(*palette, yohen);
+        assert_eq!(*palette, unstyled(&yohen));
 
         // A bundled theme of its own colours keeps them: Tenmoku Dark.
         let (tenmoku_dark, tenmoku_palette) = bundled("tenmoku-dark");
@@ -394,6 +399,7 @@ mod tests {
         assert_eq!(palette.editor.background.to_rgba_u32(), 0x000000ff);
         assert_ne!(palette.editor.background, dark.editor.background);
         let mut expected = dark.clone();
+        expected.styles.clear();
         expected.editor.background = palette.editor.background;
         assert_eq!(*palette, expected);
     }

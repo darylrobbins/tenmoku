@@ -35,13 +35,18 @@ fn theme(source: &str) -> (ThemeData, usize) {
 fn bundled_palettes() {
     let dark = EditorPalette::fastedit_dark();
     let light = EditorPalette::fastedit_light();
+    // Font styles are a theme's own, so a theme without the table has none.
+    let unstyled = |palette: &EditorPalette| EditorPalette {
+        styles: vec![],
+        ..palette.clone()
+    };
     assert_eq!(
         EditorPalette::for_theme(ThemeData::dark()),
-        (dark.clone(), vec![])
+        (unstyled(dark), vec![])
     );
     assert_eq!(
         EditorPalette::for_theme(ThemeData::light()),
-        (light.clone(), vec![])
+        (unstyled(light), vec![])
     );
 
     // Yohen's and Hakuji's: Tenmoku's default themes.
@@ -138,6 +143,7 @@ keyword = "#d00000"
 
     let light = EditorPalette::fastedit_light();
     let mut expected = light.clone();
+    expected.styles.clear();
     expected.editor.background = color("#fafafa");
     let keyword = expected
         .syntax

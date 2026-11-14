@@ -6,6 +6,7 @@
 use std::{mem, sync::Arc};
 
 use fe_config::theme::{Color, EditorPalette};
+use fe_syntax::Highlight;
 use gpui::{App, Context, Global, Hsla, Pixels, SharedString, px, rgba};
 
 use crate::{EditorSettings, EditorTheme, EditorView, RenderWhitespace, StickyScrollSettings};
@@ -16,6 +17,19 @@ impl EditorTheme {
         let mut theme = Self::colored(palette, SharedString::default(), px(13.), 1.6);
         theme.set_metrics(settings, cx);
         theme
+    }
+
+    /// The colour and font style of `highlight`: `None` colour is the
+    /// foreground, `None` style the plain face.
+    pub fn capture_style(
+        &self,
+        highlight: Highlight,
+    ) -> (Option<Hsla>, Option<fe_config::FontStyle>) {
+        let ix = highlight.index();
+        (
+            self.syntax.get(ix).copied().flatten(),
+            self.syntax_styles.get(ix).copied().flatten(),
+        )
     }
 
     /// Takes every colour from `palette`, leaving the metrics alone.
@@ -46,6 +60,9 @@ impl EditorTheme {
         let editor = &palette.editor;
         let syntax: Vec<(&str, Hsla)> = (palette.syntax.iter())
             .map(|(name, color)| (name.as_str(), hsla(*color)))
+            .collect();
+        let styles: Vec<(&str, fe_config::FontStyle)> = (palette.styles.iter())
+            .map(|(name, style)| (name.as_str(), *style))
             .collect();
         Self {
             font_family,
@@ -117,6 +134,7 @@ impl EditorTheme {
             minimap_gutter_modified: hsla(editor.minimap_gutter_modified),
             minimap_gutter_deleted: hsla(editor.minimap_gutter_deleted),
             syntax: fe_syntax::resolve_theme(&syntax),
+            syntax_styles: fe_syntax::resolve_theme(&styles),
         }
     }
 }

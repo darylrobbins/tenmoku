@@ -263,6 +263,9 @@ pub struct EditorTheme {
     /// Text colour for each [`Highlight`], by [`Highlight::index`]; `None`
     /// uses `foreground`. Build it with [`fe_syntax::resolve_theme`].
     pub syntax: Vec<Option<Hsla>>,
+    /// Font style for each [`Highlight`], resolved like `syntax`; `None`
+    /// is the plain face. Nothing draws it yet.
+    pub syntax_styles: Vec<Option<fe_config::FontStyle>>,
 }
 
 impl EditorTheme {

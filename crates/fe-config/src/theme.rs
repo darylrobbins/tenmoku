@@ -44,7 +44,7 @@ pub use kiln_core::theme::Color;
 
 /// The app tables a Tenmoku theme file has, beside kiln's own keys: for
 /// [`ThemeFile::load`] and [`ThemeFile::parse`], and kiln's user theme.
-pub const EXTENSIONS: &[&str] = &["editor", "syntax", "terminal", COLOR_BLIND];
+pub const EXTENSIONS: &[&str] = &["editor", "syntax", "syntax_style", "terminal", COLOR_BLIND];
 
 /// The app table of a theme's colour-blind colours ([`color_blind`]).
 pub const COLOR_BLIND: &str = "color_blind";
@@ -267,8 +267,43 @@ pub struct EditorPalette {
     /// prefix. The base's entries come first, then the theme's new ones in
     /// table order; no name appears twice.
     pub syntax: Vec<(String, Color)>,
+    /// Font styles for highlight captures, from a theme's `[syntax_style]`
+    /// table, by the same longest-prefix rule as `syntax`. Nothing draws
+    /// them yet. No name appears twice.
+    pub styles: Vec<(String, FontStyle)>,
     /// The terminal's colours: a theme's `[terminal]` table.
     pub terminal: TerminalColors,
+}
+
+/// A capture's font style: `"italic"`, `"bold"` or `"bold italic"` in a
+/// theme's `[syntax_style]` table.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FontStyle {
+    pub italic: bool,
+    pub bold: bool,
+}
+
+impl std::str::FromStr for FontStyle {
+    type Err = String;
+
+    /// Words separated by spaces, each `italic` or `bold`; `normal` alone
+    /// is no style.
+    fn from_str(text: &str) -> Result<Self, String> {
+        let mut style = FontStyle::default();
+        for word in text.split_whitespace() {
+            match word {
+                "italic" => style.italic = true,
+                "bold" => style.bold = true,
+                "normal" => {}
+                _ => {
+                    return Err(
+                        kiln_l10n::tr!("config-theme-not-font-style", found = word).to_string()
+                    );
+                }
+            }
+        }
+        Ok(style)
+    }
 }
 
 /// The terminal's colours: a theme's `[terminal]` table, whose keys are
@@ -344,6 +379,7 @@ fn bundled(file_name: &str, source: &str) -> EditorPalette {
     let warnings = palette.overlay(
         file.extensions.get("editor"),
         file.extensions.get("syntax"),
+        file.extensions.get("syntax_style"),
         file.extensions.get("terminal"),
     );
     debug_assert_eq!(
@@ -381,9 +417,13 @@ impl EditorPalette {
     /// palette's high-contrast pass ([`EditorPalette::high_contrast`]).
     pub fn for_theme(theme: &ThemeData) -> (EditorPalette, Vec<String>) {
         let mut palette = Self::bundled(theme.appearance).clone();
+        // Font styles are a theme's own: without a `[syntax_style]` a theme
+        // has none, not the bundled palette's.
+        palette.styles.clear();
         let warnings = palette.overlay(
             theme.extension("editor"),
             theme.extension("syntax"),
+            theme.extension("syntax_style"),
             theme.extension("terminal"),
         );
         if theme.contrast == Contrast::High {
@@ -460,12 +500,37 @@ impl EditorPalette {
             .map(|&(_, color)| color)
     }
 
-    /// Lays `editor`, `syntax` and `terminal` tables over the palette,
+    /// The style listed for the capture named exactly `name`.
+    pub fn syntax_style(&self, name: &str) -> Option<FontStyle> {
+        self.styles
+            .iter()
+            .find(|(capture, _)| capture == name)
+            .map(|&(_, style)| style)
+    }
+
+    /// The style of `capture` by the longest listed prefix, as the editor
+    /// resolves it: with `comment` and `comment.todo` listed,
+    /// `comment.documentation` takes `comment`'s.
+    pub fn style_for(&self, capture: &str) -> Option<FontStyle> {
+        self.styles
+            .iter()
+            .filter(|(prefix, _)| {
+                capture == prefix
+                    || capture
+                        .strip_prefix(prefix.as_str())
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+            .max_by_key(|(prefix, _)| prefix.len())
+            .map(|&(_, style)| style)
+    }
+
+    /// Lays `editor`, `syntax`, `syntax_style` and `terminal` tables over the palette,
     /// returning the warnings.
     fn overlay(
         &mut self,
         editor: Option<&Table>,
         syntax: Option<&Table>,
+        syntax_style: Option<&Table>,
         terminal: Option<&Table>,
     ) -> Vec<String> {
         let mut warnings = Vec::new();
@@ -494,7 +559,48 @@ impl EditorPalette {
             let mut path = Vec::new();
             self.syntax_colors(syntax, &mut path, &mut warnings);
         }
+        if let Some(styles) = syntax_style {
+            let mut path = Vec::new();
+            self.syntax_styles(styles, &mut path, &mut warnings);
+        }
         warnings
+    }
+
+    /// Sets the `[syntax_style]` table's font styles, with nested tables as
+    /// in [`EditorPalette::syntax_colors`].
+    fn syntax_styles(&mut self, table: &Table, path: &mut Vec<String>, warnings: &mut Vec<String>) {
+        for (key, value) in table {
+            path.push(key.clone());
+            let name = path.join(".");
+            if !is_capture_name(&name) {
+                let name = name.clone();
+                warnings
+                    .push(kiln_l10n::tr!("config-theme-not-capture-name", name = name).to_string());
+            } else if let Value::Table(table) = value {
+                self.syntax_styles(table, path, warnings);
+            } else {
+                let style = match value {
+                    Value::String(text) => text.parse::<FontStyle>(),
+                    _ => Err(kiln_l10n::tr!(
+                        "config-theme-not-font-style",
+                        found = value.type_str()
+                    )
+                    .to_string()),
+                };
+                match style {
+                    Ok(style) => match self.styles.iter_mut().find(|(capture, _)| *capture == name)
+                    {
+                        Some((_, slot)) => *slot = style,
+                        None => self.styles.push((name, style)),
+                    },
+                    Err(message) => warnings.push(key_problem(
+                        &["syntax_style", name.as_str()].join("."),
+                        message,
+                    )),
+                }
+            }
+            path.pop();
+        }
     }
 
     /// Sets the `[syntax]` table's colours. A nested table, as an unquoted

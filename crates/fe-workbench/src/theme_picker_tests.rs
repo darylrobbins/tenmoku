@@ -484,7 +484,10 @@ fn the_current_mark_follows_kilns_fallback(cx: &mut TestAppContext) {
     );
     let kiln_dark = (
         ThemeData::dark().tokens,
-        EditorPalette::fastedit_dark().clone(),
+        EditorPalette {
+            styles: vec![],
+            ..EditorPalette::fastedit_dark().clone()
+        },
     );
     assert_eq!(showing(cx), kiln_dark);
     assert_ne!(kiln_dark.0, yohen.0);
@@ -520,7 +523,10 @@ fn the_current_mark_follows_kilns_fallback(cx: &mut TestAppContext) {
     assert_eq!(marked(refused, cx), [] as [&str; 0]);
     let kiln_light = (
         ThemeData::light().tokens,
-        EditorPalette::fastedit_light().clone(),
+        EditorPalette {
+            styles: vec![],
+            ..EditorPalette::fastedit_light().clone()
+        },
     );
     assert_eq!(showing(cx), kiln_light);
     let gone = "[theme]\nmode = \"light\"\nlight = \"acme.gone/noon\"\n";

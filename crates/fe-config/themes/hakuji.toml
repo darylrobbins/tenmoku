@@ -298,3 +298,9 @@ ansi_15 = "#5f6670"  # ink, one step lighter
 "type.parameter" = "#0d6e66"
 "variable.builtin" = "#7b36a8"
 "variable.parameter" = "#1f2328"
+
+# Font styles for captures (docs/design/design-system.md#syntax): comments
+# italic, function definitions bold. Data only until the faces are drawn.
+[syntax_style]
+"comment" = "italic"
+"function.definition" = "bold"

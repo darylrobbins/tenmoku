@@ -251,6 +251,12 @@ capture's dotted name to a colour. A capture takes its longest listed prefix, so
 `function.macro` falls back to `function`; a capture with none uses `foreground`
 (`crates/fe-gpui/src/lib.rs:EditorTheme::syntax`).
 
+`[syntax_style]` (`crates/fe-config/src/theme.rs:EditorPalette::styles`) maps a capture
+to a font style, `"italic"`, `"bold"` or `"bold italic"`, by the same longest-prefix rule
+(`crates/fe-gpui/src/lib.rs:EditorTheme::syntax_styles`). Yohen and Hakuji set
+`comment = "italic"` and `"function.definition" = "bold"`; every other bundled theme sets
+none. It is data only: nothing draws the styles yet.
+
 ### How the two tables relate
 
 - **Neither wins over the other: they're separate keys.** `surface.background` and
