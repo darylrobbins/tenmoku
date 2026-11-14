@@ -1,5 +1,5 @@
-//! Keys written in code (object, struct, table and designated-initializer
-//! keys) are `string.special.key`, like data-file keys; member access, field
+//! Keys written in code (object, struct and designated-initializer keys) are
+//! `property`: they label a value. Data files keep `string.special.key`; member access, field
 //! declarations, shorthand and quoted keys keep their highlights.
 
 #![cfg(all(
@@ -9,13 +9,14 @@
     feature = "go",
     feature = "c",
     feature = "lua",
+    feature = "toml",
     feature = "python"
 ))]
 
 use fe_buffer::Buffer;
 use fe_syntax::{Syntax, language_by_name};
 
-const KEY: &str = "string.special.key";
+const PROP: &str = "property";
 
 /// `(start, text, highlight)` for every span of `text` in the language `name`.
 fn spans(name: &str, text: &str) -> Vec<(usize, String, &'static str)> {
@@ -70,7 +71,7 @@ fn assert_not_key(lang: &str, text: &str, word: &str, nth: usize) {
     assert!(
         !found
             .iter()
-            .any(|(s, t, h)| *h == KEY && *s < end && s + t.len() > start),
+            .any(|(s, t, h)| *h == PROP && *s < end && s + t.len() > start),
         "{lang} {word} #{nth}: {found:?}"
     );
 }
@@ -95,14 +96,14 @@ fn users_tsx_snippet_keys_are_keys() {
         );
     };
     // `isbn` #0 is the key; #1 and #2 start isbn13 and isbn10.
-    is("isbn", 0, KEY);
+    is("isbn", 0, PROP);
     is("isbn13", 0, "property");
     is("isbn10", 0, "property");
-    is("title", 0, KEY);
+    is("title", 0, PROP);
     is("title", 1, "property");
-    is("authors", 0, KEY);
+    is("authors", 0, PROP);
     is("authors", 1, "property");
-    is("publishedYear", 0, KEY);
+    is("publishedYear", 0, PROP);
     is("publishedYear", 1, "property");
     is("join", 0, "function.method");
     is("toString", 0, "function.method");
@@ -115,8 +116,8 @@ fn javascript_and_typescript_keys() {
                     const { author: a } = b;\n\
                     const m = { f: () => 1, g() {} };\n\
                     b.used;\n";
-        assert_is(lang, text, "title", 0, KEY);
-        assert_is(lang, text, "author", 0, KEY);
+        assert_is(lang, text, "title", 0, PROP);
+        assert_is(lang, text, "author", 0, PROP);
         assert_not_key(lang, text, "isbn", 0);
         assert_is(lang, text, "\"quoted\"", 0, "string");
         assert_not_key(lang, text, "1", 1);
@@ -148,9 +149,9 @@ fn rust_struct_keys() {
                     let Book { title: t, .. } = b;\n\
                 }\n\
                 struct Book { title: String }\n";
-    assert_is("rust", text, "title", 0, KEY);
+    assert_is("rust", text, "title", 0, PROP);
     assert_is("rust", text, "title", 1, "property");
-    assert_is("rust", text, "title", 2, KEY);
+    assert_is("rust", text, "title", 2, PROP);
     assert_is("rust", text, "title", 3, "property");
     assert_not_key("rust", text, "isbn", 0);
 }
@@ -164,9 +165,9 @@ fn go_composite_literal_keys() {
                 var m = map[string]int{mk: 1}\n\
                 var r = [...]string{A: \"a\"}\n";
     assert_is("go", text, "Title", 0, "property");
-    assert_is("go", text, "Title", 1, KEY);
+    assert_is("go", text, "Title", 1, PROP);
     assert_is("go", text, "Title", 2, "property");
-    assert_is("go", text, "Title", 3, KEY);
+    assert_is("go", text, "Title", 3, PROP);
     assert_not_key("go", text, "mk", 0);
     assert_is("go", text, "mk", 0, "variable");
     assert_not_key("go", text, "A", 0);
@@ -182,8 +183,8 @@ fn c_designated_initializer_keys() {
                 }\n";
     assert_is("c", text, "x", 0, "property");
     assert_is("c", text, "y", 0, "property");
-    assert_is("c", text, "x", 1, KEY);
-    assert_is("c", text, "y", 1, KEY);
+    assert_is("c", text, "x", 1, PROP);
+    assert_is("c", text, "y", 1, PROP);
     assert_is("c", text, "y", 2, "property");
     assert_is("c", text, "y", 3, "property");
 }
@@ -191,7 +192,7 @@ fn c_designated_initializer_keys() {
 #[test]
 fn lua_table_keys() {
     let text = "local t = { title = b.title, f = function() end, [\"k\"] = 1, [idx] = 2 }\n";
-    assert_is("lua", text, "title", 0, KEY);
+    assert_is("lua", text, "title", 0, "string.special.key");
     assert_is("lua", text, "title", 1, "property");
     assert_is("lua", text, "f", 0, "function");
     assert_is("lua", text, "\"k\"", 0, "string");
@@ -203,15 +204,18 @@ fn lua_table_keys() {
 fn python_has_no_identifier_keys() {
     let text = "d = {\"a\": 1, k: 2}\nf(a=1)\nb.title\n";
     let found = spans("python", text);
-    assert!(!found.iter().any(|(_, _, h)| *h == KEY), "{found:?}");
+    assert!(
+        !found.iter().any(|(_, _, h)| *h == "string.special.key"),
+        "{found:?}"
+    );
     assert_is("python", text, "title", 0, "property");
 }
 
 #[test]
 fn is_key_needs_exactly_a_keys_range() {
-    let text = "fn f(b: Book) -> Book { Book { title: b.title } }\n";
+    let text = "\ntitle = 1\nother = \"title\"\n";
     let mut syntax = Syntax::new(
-        language_by_name("rust").unwrap(),
+        language_by_name("toml").unwrap(),
         Buffer::new(text).current(),
     );
     syntax.finish(syntax.parse_job().run());

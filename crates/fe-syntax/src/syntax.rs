@@ -543,8 +543,7 @@ impl Syntax {
     }
 
     /// Whether the host language's grammar highlights exactly `range` as a
-    /// key, `string.special.key`: a key in a data file, or one written in an
-    /// object, struct or table literal. So a language server's `property`
+    /// key, `string.special.key`: a key in a data file. So a language server's `property`
     /// token over it can leave the grammar's colour.
     ///
     /// Queries only `range`, every call, without the range cache of

@@ -337,7 +337,8 @@ impl Workbench {
 /// tab isn't drawn, so it doesn't catch up) or the language loads.
 ///
 /// A server's `property` over a name the grammar paints as a key
-/// (`Book { title: … }`) leaves the key's colour; access stays `property`.
+/// (a data file's key, `string.special.key`) leaves the key's colour; a
+/// value or member access stays `property`.
 fn decorations(
     tokens: &SemanticTokens,
     editors: &HashMap<EntityId, (Entity<EditorView>, ProviderId)>,
