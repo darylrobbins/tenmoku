@@ -7,8 +7,6 @@
 //! the queue as before. A toast timing out leaves its notification where it
 //! is: an action not taken still needs you. At most [`CAP`] are kept.
 
-#![allow(dead_code, reason = "the bell and popup read it later")]
-
 use std::time::SystemTime;
 
 use fe_command::CommandId;
@@ -33,6 +31,14 @@ pub(crate) enum NotificationSource {
 /// A notification in an inbox, for as long as it's kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct NotificationId(u64);
+
+impl NotificationId {
+    /// The id as a number, distinct among a window's notifications: for
+    /// element ids that follow a notification wherever its row moves.
+    pub(crate) fn value(self) -> u64 {
+        self.0
+    }
+}
 
 /// Where a notification stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +73,8 @@ pub(crate) struct Notification {
     pub action: Option<(String, CommandId)>,
     /// Whether it asks a question, with a button per answer.
     pub choices: bool,
+    /// The question's answers, each a button's title: empty for none.
+    pub answers: Vec<String>,
     /// When it was last raised: an identical toast merged into it moves it.
     pub at: SystemTime,
     /// How many times it was raised: 1, or more for identical toasts merged.
@@ -123,6 +131,7 @@ impl NotificationInbox {
             detail: toast.detail.clone(),
             action: toast.action.clone(),
             choices: toast.choices.as_ref().is_some_and(|c| !c.titles.is_empty()),
+            answers: (toast.choices.as_ref()).map_or_else(Vec::new, |c| c.titles.clone()),
             at,
             count: 1,
             state: State::Open,
@@ -158,6 +167,29 @@ impl NotificationInbox {
         (self.items.iter_mut())
             .find(|item| item.id == id)
             .is_some_and(|item| item.resolve(how))
+    }
+
+    /// The queue's toast for notification `id`, if it may still be there.
+    pub(crate) fn toast_of(&self, id: NotificationId) -> Option<ToastId> {
+        (self.items.iter())
+            .find(|item| item.id == id)
+            .and_then(|item| item.toast)
+    }
+
+    /// Removes notification `id`, as the inbox's dismiss does to an Earlier
+    /// one. False if it's gone.
+    pub(crate) fn remove(&mut self, id: NotificationId) -> bool {
+        let before = self.items.len();
+        self.items.retain(|item| item.id != id);
+        self.items.len() != before
+    }
+
+    /// Removes every Earlier notification, as the inbox's Clear earlier
+    /// does, returning the queue's toasts they had: some may still show.
+    pub(crate) fn clear_earlier(&mut self) -> Vec<ToastId> {
+        let toasts = (self.earlier()).filter_map(|item| item.toast).collect();
+        self.items.retain(Notification::needs_you);
+        toasts
     }
 
     /// Resolves the notification of queue toast `toast`, which is the one

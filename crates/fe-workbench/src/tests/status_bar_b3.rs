@@ -282,12 +282,15 @@ fn right_the_server_position_indent_encoding_line_ending_language(cx: &mut TestA
             StatusItem::ENCODING,
             StatusItem::LINE_ENDING,
             StatusItem::LANGUAGE,
+            StatusItem::NOTIFICATIONS,
         ]
     );
-    // Against the bar's right edge.
+    // The bell against the bar's right edge, the language beside it.
     let edge = bounds("status-bar".into(), cx).unwrap().right();
+    let bell = bounds(format!("status-item:{}", StatusItem::NOTIFICATIONS), cx).unwrap();
+    assert_eq!(bell.right(), edge);
     let language = bounds(format!("status-item:{}", StatusItem::LANGUAGE), cx).unwrap();
-    assert_eq!(language.right(), edge);
+    assert_eq!(language.right(), bell.left());
 }
 
 #[gpui::test]

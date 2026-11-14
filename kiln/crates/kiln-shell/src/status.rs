@@ -17,10 +17,17 @@
 //! the focused element, stamped, if it names no context, with the focused
 //! element's ([`kiln_platform::keys::context_stack`]).
 
-use gpui::{App, IntoElement, SharedString, Window};
+use gpui::{
+    App, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce,
+    SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+};
 use kiln_command::Invocation;
+use kiln_l10n::verbatim;
 use kiln_platform::{command_actions::dispatch_invocation, keys};
-use kiln_ui::{Icon, StatusBarFrame, StatusEntry, StatusFill, StatusTone, ui_theme};
+use kiln_ui::{
+    ActiveTheme as _, Icon, Role, StatusBarFrame, StatusEntry, StatusFill, StatusTone, node,
+    ui_theme,
+};
 
 use crate::ItemHandle;
 
@@ -52,6 +59,13 @@ pub struct StatusItem {
     pub fill: Option<StatusFill>,
     /// Shown on hover.
     pub tooltip: Option<SharedString>,
+    /// Draws a 6 px accent dot at the icon's top right: something there
+    /// wants the user ([`StatusItem::dot`]).
+    pub dot: bool,
+    /// What a screen reader calls it, as a button if it has a command:
+    /// for an item that is only an icon, or whose text says less than its
+    /// state ([`StatusItem::name`]).
+    pub name: Option<SharedString>,
 }
 
 impl StatusItem {
@@ -74,6 +88,8 @@ impl StatusItem {
             tone: StatusTone::Default,
             fill: None,
             tooltip: None,
+            dot: false,
+            name: None,
         }
     }
 
@@ -104,6 +120,18 @@ impl StatusItem {
     /// Shows `tooltip` on hover.
     pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
         self.tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// Draws the accent dot on the icon, or not.
+    pub fn dot(mut self, dot: bool) -> Self {
+        self.dot = dot;
+        self
+    }
+
+    /// Names the item `name` for a screen reader.
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
         self
     }
 }
@@ -175,9 +203,10 @@ pub fn status_bar(items: Vec<StatusItem>, cx: &App) -> StatusBarFrame {
 
 /// `item`'s entry, which runs its command when clicked. In tests its
 /// bounds are those of the debug selector `status-item:{id}`, its icon's
-/// those of `status-icon:{id}`.
+/// those of `status-icon:{id}`, and its dot's, if it has one, those of
+/// `status-dot:{id}`.
 pub fn status_entry(item: StatusItem, cx: &App) -> impl IntoElement + use<> {
-    let mut entry = StatusEntry::new(item.id, item.text, &ui_theme(cx)).tone(item.tone);
+    let mut entry = StatusEntry::new(item.id.clone(), item.text, &ui_theme(cx)).tone(item.tone);
     if let Some(icon) = item.icon {
         entry = entry.icon(icon);
     }
@@ -187,11 +216,79 @@ pub fn status_entry(item: StatusItem, cx: &App) -> impl IntoElement + use<> {
     if let Some(tooltip) = item.tooltip {
         entry = entry.tooltip(tooltip);
     }
-    match item.command {
+    let button = item.command.is_some();
+    let entry = match item.command {
         Some(command) => {
             entry.on_click(move |_, window, cx| run_item_command(command.clone(), window, cx))
         }
         None => entry,
+    };
+    Marked {
+        id: item.id,
+        entry,
+        dot: item.dot,
+        name: item.name,
+        button,
+    }
+}
+
+/// How far the dot sits from the entry's left and top: over the top right
+/// of a 14 px icon after the entry's 8 px padding, in the 24 px bar.
+const DOT_LEFT: f32 = 17.;
+const DOT_TOP: f32 = 4.;
+const DOT_SIZE: f32 = 6.;
+
+/// An entry with its dot and accessible name, if it has either: in a
+/// wrapper then, the entry as it is otherwise.
+#[derive(IntoElement)]
+struct Marked {
+    id: SharedString,
+    entry: StatusEntry,
+    dot: bool,
+    name: Option<SharedString>,
+    button: bool,
+}
+
+impl RenderOnce for Marked {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if !self.dot && self.name.is_none() {
+            return self.entry.into_any_element();
+        }
+        let id = self.id;
+        let prefix = verbatim!("status-marked:");
+        let wrapper = div()
+            .id(ElementId::Name(format!("{prefix}{id}").into()))
+            .relative()
+            .flex_none()
+            .h_full()
+            .child(self.entry)
+            .when(self.dot, |wrapper| {
+                let accent = cx.theme().colors.accent.base;
+                let id = id.clone();
+                wrapper.child(
+                    div()
+                        .debug_selector(move || {
+                            let prefix = verbatim!("status-dot:");
+                            format!("{prefix}{id}")
+                        })
+                        .absolute()
+                        .left(px(DOT_LEFT))
+                        .top(px(DOT_TOP))
+                        .size(px(DOT_SIZE))
+                        .rounded_full()
+                        .bg(accent),
+                )
+            });
+        match self.name {
+            Some(name) => {
+                let role = match self.button {
+                    true => Role::Button,
+                    false => Role::Label,
+                };
+                node(wrapper, window, cx, role, name).into_any_element()
+            }
+            None => wrapper.into_any_element(),
+        }
     }
 }
 
@@ -202,5 +299,72 @@ fn run_item_command(mut command: Invocation, window: &mut Window, cx: &mut App) 
     }
     if let Err(error) = dispatch_invocation(command, window, cx) {
         log::warn!("{error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{
+        Context, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window, div,
+        px,
+    };
+
+    use super::{Icon, StatusItem, StatusSide, status_bar};
+
+    struct Bench(Vec<StatusItem>);
+
+    impl Render for Bench {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(div().flex_1())
+                .child(status_bar(self.0.clone(), cx))
+        }
+    }
+
+    #[test]
+    fn the_dot_and_name_builders() {
+        let plain = StatusItem::new("bell", StatusSide::Right, 0, "");
+        assert!(!plain.dot);
+        assert_eq!(plain.name, None);
+        let marked = plain.dot(true).name("2 notifications");
+        assert!(marked.dot);
+        assert_eq!(marked.name.as_deref(), Some("2 notifications"));
+        assert!(!marked.dot(false).dot);
+    }
+
+    #[gpui::test]
+    fn a_dotted_item_draws_its_dot_on_the_icon(cx: &mut TestAppContext) {
+        let items = vec![
+            StatusItem::new("bell", StatusSide::Right, 0, "")
+                .icon(Icon::Bell)
+                .dot(true)
+                .name("1 notification needs you"),
+            StatusItem::new("quiet", StatusSide::Right, 1, "")
+                .icon(Icon::Bell)
+                .name("No notifications"),
+            StatusItem::new("plain", StatusSide::Left, 0, "Plain"),
+        ];
+        let (_, cx) = cx.add_window_view(|_, _| Bench(items));
+        cx.run_until_parked();
+
+        let item = cx.debug_bounds("status-item:bell").expect("drawn");
+        let icon = cx.debug_bounds("status-icon:bell").expect("icon drawn");
+        let dot = cx.debug_bounds("status-dot:bell").expect("dot drawn");
+        assert_eq!(dot.size, gpui::size(px(6.), px(6.)));
+        // Over the icon's top right, inside the entry.
+        assert!(item.contains(&dot.origin) && item.contains(&dot.bottom_right()));
+        assert!(
+            dot.left() > icon.center().x && dot.left() < icon.right(),
+            "{dot:?} {icon:?}"
+        );
+        assert!(dot.top() < icon.top() + px(3.), "{dot:?} {icon:?}");
+
+        assert_eq!(cx.debug_bounds("status-dot:quiet"), None);
+        assert_eq!(cx.debug_bounds("status-dot:plain"), None);
+        assert!(cx.debug_bounds("status-item:quiet").is_some());
+        assert!(cx.debug_bounds("status-item:plain").is_some());
     }
 }

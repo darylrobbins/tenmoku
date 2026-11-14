@@ -273,6 +273,8 @@ pub struct Workbench {
     _status_bar: [Subscription; 2],
     /// The window's toasts, over the panes at the bottom right.
     pub(crate) toasts: Entity<toast::ToastLayer>,
+    /// The notification inbox's popup, opened from the status bar's bell.
+    pub(crate) inbox: Entity<notification_inbox_view::NotificationInboxView>,
     /// The builds, tests and scripts run here ([`crate::runs`]).
     pub(crate) runs: Entity<crate::runs::Runs>,
     /// The bottom panel's list of them ([`crate::runs_panel`]).
@@ -641,6 +643,14 @@ impl Workbench {
         let nav_state = Nav::new(launch_root.clone(), cx);
         let status_bar = cx.new(|_| StatusBar::new());
         let toasts = cx.new(|cx| toast::ToastLayer::new(window, cx));
+        let inbox = cx.new(|cx| {
+            notification_inbox_view::NotificationInboxView::new(
+                toasts.clone(),
+                status_bar.downgrade(),
+                window,
+                cx,
+            )
+        });
         let operations = cx.new(|cx| crate::operations::Operations::new(&runs, cx));
         // A restored layout's panes are made like a pane of the workbench's.
         let template = Rc::new(RefCell::new(pane.downgrade()));
@@ -791,6 +801,7 @@ impl Workbench {
             _modals: modals_changed,
             _status_bar: [status_bar_changed, vim_host_commands],
             toasts,
+            inbox,
             runs,
             runs_panel,
             operations,
@@ -1175,6 +1186,7 @@ impl Render for Workbench {
         let drop_border = fe_ui::ui_theme(cx).accent;
         let drop_wash = drop_border.opacity(0.12);
         let bottom = if status_bar { ROW_HEIGHT } else { px(0.) } + px(8.);
+        let inbox_open = self.inbox.read(cx).is_open();
         // The typed commands' handlers, in the workbench's key context, flagged
         // with the plugin loads whose commands the palette lists. Not under
         // the sheet: a menu pick of one comes straight here as its action, not
@@ -1233,7 +1245,8 @@ impl Render for Workbench {
                     }),
             )
             .children(self.setup.clone())
-            .child({
+            // Hidden while the inbox shows them, as its rows.
+            .children((!inbox_open).then(|| {
                 // Lower right inside the editor area, 12 px from its edges,
                 // above the bottom panel and clear of the rail and docks, as
                 // this frame lays them out (`toast::Placed`); with no panes
@@ -1260,7 +1273,13 @@ impl Render for Workbench {
                     .absolute()
                 });
                 toast::Placed::new(&self.toasts, area, content, bottom, cx)
-            })
+            }))
+            // Above the bell, at the window's lower right.
+            .children(notification_inbox_view::overlay(
+                &self.inbox,
+                bottom - px(4.),
+                cx,
+            ))
             // The window's live region, last.
             .child(fe_ui::Announcer::mount(window, cx))
     }
@@ -1385,6 +1404,9 @@ mod hot_exit;
 
 #[path = "toast.rs"]
 pub(crate) mod toast;
+
+#[path = "notification_inbox_view.rs"]
+pub(crate) mod notification_inbox_view;
 
 #[path = "zen_mode.rs"]
 pub(crate) mod zen_mode;

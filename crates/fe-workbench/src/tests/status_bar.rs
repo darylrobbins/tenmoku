@@ -75,9 +75,11 @@ fn drawn(
 ) -> Vec<String> {
     let bar = workbench.read_with(cx, |workbench, _| workbench.status_bar().clone());
     let items = bar.read_with(cx, |bar, _| bar.drawn(side));
-    // The bar's last render, if the last frame showed it.
+    // The bar's last render, if the last frame showed it; less the bell,
+    // which `notification_inbox_view`'s tests cover.
     items
         .into_iter()
+        .filter(|(id, _)| id != StatusItem::NOTIFICATIONS)
         .filter(|(id, _)| item_bounds(id, cx).is_some())
         .map(|(_, text)| text.to_string())
         .collect()

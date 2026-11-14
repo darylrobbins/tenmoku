@@ -61,7 +61,7 @@ use kiln_l10n::{Text, text, tr};
 #[path = "notification_inbox.rs"]
 pub(crate) mod notification_inbox;
 
-use notification_inbox::{NotificationInbox, NotificationSource, Resolution};
+use notification_inbox::{NotificationId, NotificationInbox, NotificationSource, Resolution};
 
 /// How many toasts show at once.
 pub(crate) const MAX_SHOWN: usize = 3;
@@ -396,6 +396,11 @@ impl ToastQueue {
         self.waiting.retain(|entry| entry.id != id);
         self.fill(now);
         self.shown.len() + self.waiting.len() != before
+    }
+
+    /// Toast `id`, shown or waiting.
+    fn entry(&self, id: ToastId) -> Option<&Entry> {
+        (self.shown.iter().chain(&self.waiting)).find(|entry| entry.id == id)
     }
 
     /// The toasts shown or waiting.
@@ -835,9 +840,70 @@ impl ToastLayer {
 
     /// Every toast pushed to this window, split into what needs the user
     /// and what's earlier.
-    #[cfg_attr(not(test), allow(dead_code, reason = "the bell and popup come later"))]
     pub(crate) fn inbox(&self) -> &NotificationInbox {
         &self.inbox
+    }
+
+    /// Resolves notification `id` from the inbox, as `how` says it was
+    /// dealt with there: its toast goes too, if it's still shown or
+    /// waiting, a question it asks answered with none.
+    pub(crate) fn resolve_notification(
+        &mut self,
+        id: NotificationId,
+        how: Resolution,
+        cx: &mut Context<Self>,
+    ) {
+        let toast = self.inbox.toast_of(id);
+        if self.inbox.resolve(id, how)
+            && let Some(toast) = toast
+        {
+            self.dismiss_toast(toast, cx);
+        }
+        cx.notify();
+    }
+
+    /// Removes notification `id` from the inbox, as its dismiss does to an
+    /// Earlier one: its toast goes too, if it's still shown or waiting (an
+    /// error without an action stays until dismissed).
+    pub(crate) fn remove_notification(&mut self, id: NotificationId, cx: &mut Context<Self>) {
+        let toast = self.inbox.toast_of(id);
+        if self.inbox.remove(id) {
+            if let Some(toast) = toast {
+                self.dismiss_toast(toast, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    /// Removes the inbox's Earlier notifications, and the toasts of theirs
+    /// still shown or waiting.
+    pub(crate) fn clear_earlier(&mut self, cx: &mut Context<Self>) {
+        for toast in self.inbox.clear_earlier() {
+            self.dismiss_toast(toast, cx);
+        }
+        cx.notify();
+    }
+
+    /// Answers notification `id`'s question with its choice `choice`, as
+    /// the choice's button on its toast would: the reply gets it, the toast
+    /// goes, and the notification moves to Earlier. False, doing nothing, if
+    /// its toast is no longer there to answer.
+    pub(crate) fn answer_notification(
+        &mut self,
+        id: NotificationId,
+        choice: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(toast) = self.inbox.toast_of(id) else {
+            return false;
+        };
+        let Some(choices) = (self.queue.entry(toast)).and_then(|entry| entry.toast.choices.clone())
+        else {
+            return false;
+        };
+        choices.answer(Some(choice));
+        self.resolve(toast, Resolution::Answered, cx);
+        true
     }
 
     /// Shows `toast` in this layer's window, whichever is active: for
@@ -1402,7 +1468,7 @@ impl IntoElement for Placed {
 
 /// Runs `command` from where `window`'s focus is, in its context, as the
 /// command palette does once it's given focus back.
-fn run_action(command: CommandId, source: Source, window: &mut Window, cx: &mut App) {
+pub(crate) fn run_action(command: CommandId, source: Source, window: &mut Window, cx: &mut App) {
     let stack = kiln_platform::keys::context_stack(&window.context_stack(), cx);
     let invocation = Invocation::new(command).source(source).context(stack);
     window.defer(cx, move |window, cx| {

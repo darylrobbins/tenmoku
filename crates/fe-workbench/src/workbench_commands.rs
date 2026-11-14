@@ -1080,6 +1080,15 @@ impl Workbench {
             .update(cx.cx, |toasts, cx| toasts.dismiss_all(cx));
     }
 
+    /// Show Notifications
+    #[command(id = "notifications.show")]
+    fn show_notifications(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let window = &mut *cx.window;
+        (self.inbox).update(cx.cx, |inbox, cx| inbox.toggle(window, cx));
+        cx.cx.notify();
+    }
+
     /// Toast: Focus
     #[command(id = "toast.focus")]
     fn focus_toast(&mut self, cx: &mut Cx<Self>) {

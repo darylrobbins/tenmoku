@@ -6,8 +6,10 @@
 //! endings and language on the right ([`fe_gpui::pane_item::status`]); and
 //! whatever items a host sets: on the left, after the mode, the error and
 //! warning counts, each with its glyph (`problems_panel.rs`);
-//! on the right, first, the language server's (`lsp.rs`). No branch:
-//! that is the title bar's (`git_branch.rs`).
+//! on the right, first, the language server's (`lsp.rs`), and last the
+//! notification bell ([`StatusItem::NOTIFICATIONS`], kept in step by
+//! `notification_inbox_view.rs`). No branch: that is the title bar's
+//! (`git_branch.rs`).
 //!
 //! Items are data ([`StatusItem`], fastedit's name for kiln-shell's
 //! [`kiln_shell::StatusItem`], with the built-in items' ids), kept and
@@ -118,6 +120,32 @@ impl StatusItem {
     /// The language's name, `Plain Text`, or `…` while it loads; a click
     /// runs `language.select`: priority 500.
     pub const LANGUAGE: &str = built_in::LANGUAGE;
+    /// The notification bell, an icon with no text, last on the right; a
+    /// click runs `notifications.show`: priority [`BELL_PRIORITY`].
+    pub const NOTIFICATIONS: &str = verbatim!("notifications");
+}
+
+/// The bell's priority: after every other item on the right.
+pub(crate) const BELL_PRIORITY: i32 = 100_000;
+
+/// The bell for an inbox with `needs_you` notifications waiting on the
+/// user: the accent dot while there are any, and an accessible name and
+/// tooltip that count them.
+pub(crate) fn bell_item(needs_you: usize) -> kiln_shell::StatusItem {
+    let name = tr!("workbench-inbox-bell", count = needs_you);
+    let show = Invocation::of(crate::workbench::notification_inbox_view::SHOW)
+        .expect("a valid command ID");
+    kiln_shell::StatusItem::new(
+        StatusItem::NOTIFICATIONS,
+        StatusSide::Right,
+        BELL_PRIORITY,
+        SharedString::default(),
+    )
+    .icon(fe_ui::Icon::Bell)
+    .dot(needs_you > 0)
+    .name(name.clone())
+    .tooltip(name)
+    .command(show)
 }
 
 #[derive(Default)]
@@ -128,6 +156,9 @@ pub struct StatusBar {
     editor: Option<WeakEntity<EditorView>>,
     /// The host's items.
     items: StatusItems,
+    /// How many notifications need the user, for the bell; no bell before
+    /// the workbench says ([`StatusBar::set_bell`]).
+    bell: Option<usize>,
     line: vim_line::VimLine,
     _observe: Option<Subscription>,
     /// Each item drawn by the last render, in order: its side, id and text.
@@ -147,6 +178,15 @@ impl StatusBar {
     pub fn set_item(&mut self, item: impl Into<kiln_shell::StatusItem>, cx: &mut Context<Self>) {
         self.items.set(item.into());
         cx.notify();
+    }
+
+    /// Shows the bell, for `needs_you` notifications waiting on the user.
+    /// Its text is made as the bar renders, in the locale then.
+    pub(crate) fn set_bell(&mut self, needs_you: usize, cx: &mut Context<Self>) {
+        if self.bell != Some(needs_you) {
+            self.bell = Some(needs_you);
+            cx.notify();
+        }
     }
 
     /// Removes the host's item `id`; a built-in item it replaced comes back.
@@ -195,10 +235,11 @@ impl StatusBar {
     }
 
     /// Every item to draw, sorted: the item's, with the editor's macro
-    /// recording, and the host's over them.
+    /// recording and the bell, and the host's over them.
     pub(crate) fn items(&self, cx: &App) -> Vec<kiln_shell::StatusItem> {
+        let bell = self.bell.map(bell_item);
         let Some(item) = self.item.as_deref() else {
-            return self.items.items_for(None, cx);
+            return self.items.merged(bell);
         };
         let recording = self
             .editor
@@ -228,7 +269,8 @@ impl StatusBar {
                 }
             }
         }
-        self.items.merged(own.into_iter().chain(recording))
+        self.items
+            .merged(own.into_iter().chain(recording).chain(bell))
     }
 }
 

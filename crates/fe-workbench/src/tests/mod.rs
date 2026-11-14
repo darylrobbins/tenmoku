@@ -102,6 +102,7 @@ mod nav;
 mod nav_click;
 mod nav_partial;
 mod nav_pending;
+mod notification_inbox_view;
 mod open_folder;
 mod open_settings;
 mod operations;
