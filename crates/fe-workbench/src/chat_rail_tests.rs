@@ -61,12 +61,13 @@ fn chat_is_on_the_rail_from_the_start(cx: &mut TestAppContext) {
     let icons = workbench.read_with(cx, |workbench, cx| workbench.dock().read(cx).rail_icons());
     assert_eq!(
         icons.len(),
-        base.len() + 3,
-        "the Problems, Git log and Terminal actions follow"
+        base.len() + 4,
+        "the Problems, Runs, Git log and Terminal actions follow"
     );
     assert_eq!(icons[3], Icon::Bot);
     assert_eq!(icons[4], Icon::TriangleAlert);
-    assert_eq!(icons[6], Icon::FileTerminal);
+    assert_eq!(icons[5], Icon::ListVideo);
+    assert_eq!(icons[7], Icon::FileTerminal);
 
     dispatch("git.file_history", cx);
     dispatch("nav.find_references", cx);

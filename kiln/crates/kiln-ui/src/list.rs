@@ -275,6 +275,16 @@ impl<D: ListDelegate> List<D> {
         cx.notify();
     }
 
+    /// Moves the selection to row `ix` (clamped to the rows; `None` clears
+    /// it) without scrolling or emitting: for the list's owner once its
+    /// rows move under the selection, as when a row is added above it, so
+    /// the selection stays on the same item wherever the list is scrolled.
+    pub fn keep_selected(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        let count = self.delegate.count();
+        self.selected = ix.filter(|_| count > 0).map(|ix| ix.min(count - 1));
+        cx.notify();
+    }
+
     /// Selects row `ix` as a click or key would, emitting
     /// [`ListEvent::Selected`] if the selection changed.
     pub fn select(&mut self, ix: usize, cx: &mut Context<Self>) {

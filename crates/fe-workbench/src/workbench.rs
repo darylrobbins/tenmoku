@@ -145,11 +145,11 @@ pub struct Workbench {
     /// switching, which the sidebar's foot buttons follow.
     _terminal: [Subscription; 3],
     /// Whether a window key brought focus to the bottom panel's tool
-    /// window (Problems, the terminal or the Git log) from the sidebar, so
+    /// window (Problems, Runs, the terminal or the Git log) from the sidebar, so
     /// up goes back there ([`crate::dock_leave`]): until focus leaves any
     /// of them, which the subscriptions hear.
     pub(crate) bottom_from_sidebar: bool,
-    _bottom_tools: [Subscription; 3],
+    _bottom_tools: [Subscription; 4],
     /// Reads the recent list again for a shown Start page when it changes.
     _recents: Subscription,
     /// The window's shell around the panes, which it keeps in step: their
@@ -273,6 +273,8 @@ pub struct Workbench {
     pub(crate) toasts: Entity<toast::ToastLayer>,
     /// The builds, tests and scripts run here ([`crate::runs`]).
     pub(crate) runs: Entity<crate::runs::Runs>,
+    /// The bottom panel's list of them ([`crate::runs_panel`]).
+    pub(crate) runs_panel: Entity<crate::runs_panel::RunsPanel>,
     /// What's going on in the background, the runs' among it
     /// ([`crate::operations`]).
     pub(crate) operations: Entity<crate::operations::Operations>,
@@ -464,10 +466,14 @@ impl Workbench {
         let problems = cx.new(|cx| ProblemsPanel::new(problems, &theme, cx));
         let workbench = cx.weak_entity();
         let git_log = cx.new(|cx| GitLogPanel::new(workbench, cx));
+        let runs = cx.new(|_| crate::runs::Runs::default());
+        let workbench = cx.weak_entity();
+        let runs_panel =
+            cx.new(|cx| crate::runs_panel::RunsPanel::new(&runs, workbench, window, cx));
         let terminal_dock = cx.new(|cx| {
             // Its tool windows are shown by the sidebar's foot buttons and
             // their commands, so it draws no rail of its own: its tabs, in
-            // the design's order (Runs, when it comes, after Problems).
+            // the design's order.
             let state = DockState::new(DockPosition::Bottom)
                 .without_rail()
                 .with_tabs()
@@ -475,6 +481,7 @@ impl Workbench {
                 .shortcut_contexts([KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
             let mut dock = kiln_shell::Dock::with_state(state);
             dock.add_panel(problems.clone(), cx);
+            dock.add_panel(runs_panel.clone(), cx);
             dock.add_panel(terminal.clone(), cx);
             dock.add_panel(git_log.clone(), cx);
             dock.dock_mut().set_visible(false);
@@ -483,6 +490,7 @@ impl Workbench {
         let terminal_subscriptions = Self::follow_terminal(&terminal, &terminal_dock, window, cx);
         let bottom_tools = [
             problems.focus_handle(cx),
+            runs_panel.focus_handle(cx),
             terminal.focus_handle(cx),
             git_log.focus_handle(cx),
         ];
@@ -631,7 +639,6 @@ impl Workbench {
         let nav_state = Nav::new(launch_root.clone(), cx);
         let status_bar = cx.new(|_| StatusBar::new());
         let toasts = cx.new(|cx| toast::ToastLayer::new(window, cx));
-        let runs = cx.new(|_| crate::runs::Runs::default());
         let operations = cx.new(|cx| crate::operations::Operations::new(&runs, cx));
         // A restored layout's panes are made like a pane of the workbench's.
         let template = Rc::new(RefCell::new(pane.downgrade()));
@@ -782,6 +789,7 @@ impl Workbench {
             _status_bar: [status_bar_changed, vim_host_commands],
             toasts,
             runs,
+            runs_panel,
             operations,
             toolbar_picker,
             breadcrumbs: true,

@@ -302,6 +302,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         Icon::GitBranch,
         Icon::Bot,
         Icon::TriangleAlert,
+        Icon::ListVideo,
         Icon::GitGraph,
         Icon::FileTerminal,
     ];

@@ -14,7 +14,8 @@
 //! Each session a task tab starts is a run in the workbench's
 //! [`crate::runs::Runs`], of the kind the task's group says: finished from
 //! its exit code, cancelled if its tab closes while it runs. A rerun in the
-//! tab is a new run.
+//! tab is a new run. The tab of each of its runs is known while it's open
+//! ([`Workbench::task_view_of_run`]), for the Runs panel to show.
 
 use std::{collections::HashMap, path::PathBuf};
 
@@ -27,7 +28,7 @@ use kiln_l10n::tr;
 use crate::{
     Workbench,
     dock::problems_panel::{ColumnUnit, SourceProblem, byte_column, read_text},
-    runs::{RunEnd, RunId, RunKind, RunSummary, Runs},
+    runs::{MAX_FINISHED, RunEnd, RunId, RunKind, RunSummary, Runs},
     task_defs::{Group, Task},
     task_problems::{self, Matcher, TaskProblem},
     workbench::toast::{self, Toast},
@@ -90,6 +91,9 @@ struct TaskTab {
     heard: Option<RunHeard>,
     /// The session's run in the workbench's [`Runs`].
     run: RunId,
+    /// The runs of the sessions it showed before, oldest first: no more
+    /// than [`MAX_FINISHED`], as many as the runs keep.
+    earlier: Vec<RunId>,
 }
 
 /// The kind of run `task` is: its group's, a script unless it builds or
@@ -310,7 +314,12 @@ impl Workbench {
                     tab._exited = exited;
                     tab._matching = None;
                     tab.heard = heard;
-                    Some(std::mem::replace(&mut tab.run, run))
+                    let replaced = std::mem::replace(&mut tab.run, run);
+                    tab.earlier.push(replaced);
+                    if tab.earlier.len() > MAX_FINISHED {
+                        tab.earlier.remove(0);
+                    }
+                    Some(replaced)
                 }
                 None => {
                     let key = tabs.next_key;
@@ -322,6 +331,7 @@ impl Workbench {
                         _matching: None,
                         heard,
                         run,
+                        earlier: Vec::new(),
                     });
                     None
                 }
@@ -456,6 +466,15 @@ impl Workbench {
         if !closed.is_empty() {
             self.sync_problems(cx);
         }
+    }
+
+    /// The view of the task tab whose session made `run`, or made one of
+    /// its earlier runs, while the tab's open.
+    pub(crate) fn task_view_of_run(&self, run: RunId, cx: &App) -> Option<EntityId> {
+        let panel = self.dock().read(cx).problems().read(cx);
+        (panel.task_tabs.tabs.iter())
+            .find(|tab| tab.run == run || tab.earlier.contains(&run))
+            .map(|tab| tab.view)
     }
 
     /// The task last run in this root, for a rerun.

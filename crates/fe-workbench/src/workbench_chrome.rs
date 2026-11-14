@@ -15,8 +15,9 @@ use super::toast;
 use super::{Launch, LayoutKeys, TERMINAL_BUTTON, Workbench, active_diff_view};
 
 /// The rail's foot buttons, each its bottom tool window's id.
-const BOTTOM_BUTTONS: [&str; 3] = [
+const BOTTOM_BUTTONS: [&str; 4] = [
     crate::dock::PROBLEMS_BUTTON,
+    crate::dock::RUNS_BUTTON,
     crate::dock::GIT_LOG_BUTTON,
     TERMINAL_BUTTON,
 ];
@@ -227,6 +228,7 @@ impl Workbench {
             id if id == crate::dock::PROBLEMS_BUTTON => {
                 self.dock.read(cx).problems().focus_handle(cx)
             }
+            id if id == crate::dock::RUNS_BUTTON => self.runs_panel.focus_handle(cx),
             id if id == crate::dock::GIT_LOG_BUTTON => match self.dock.read(cx).git_log() {
                 Some(git_log) => git_log.focus_handle(cx),
                 None => return false,
@@ -249,6 +251,7 @@ impl Workbench {
     pub(crate) fn bottom_panel_focused(&self, window: &Window, cx: &App) -> bool {
         let sidebar = self.dock.read(cx);
         self.terminal.read(cx).is_focused(window, cx)
+            || (self.runs_panel.focus_handle(cx)).contains_focused(window, cx)
             || sidebar
                 .problems()
                 .focus_handle(cx)
@@ -417,8 +420,8 @@ impl Workbench {
     /// the fallback focus: showing the project panel focuses it, showing
     /// search focuses its input, and showing the outline leaves focus where
     /// it is unless on a hidden panel.
-    /// `problems.show` and the Git log's show op show their tool windows
-    /// in the bottom dock.
+    /// `problems.show`, `runs.show` and the Git log's show op show their
+    /// tool windows in the bottom dock.
     pub(crate) fn run_dock_op(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) {
         self.dock.update(cx, |dock, cx| dock.run(op, window, cx));
         match op {
@@ -428,6 +431,9 @@ impl Workbench {
             }
             DockOp::ShowGitLog => {
                 self.show_bottom_panel(PanelId(crate::dock::GIT_LOG_BUTTON), window, cx)
+            }
+            DockOp::ShowRuns => {
+                self.show_bottom_panel(PanelId(crate::dock::RUNS_BUTTON), window, cx)
             }
             _ => {}
         }
@@ -983,8 +989,8 @@ impl Workbench {
 }
 
 /// The bottom panel's sizes in its saved state ([`DockState::save`]),
-/// and, as `"shown"`, the tool window it shows if that's Problems or the
-/// Git log: the terminal comes back hidden, with no session.
+/// and, as `"shown"`, the tool window it shows if that's Problems, Runs or
+/// the Git log: the terminal comes back hidden, with no session.
 fn terminal_dock_sizes(dock: &DockState, cx: &App) -> Value {
     let saved = dock.save(cx);
     let size = |key: &'static str| Some((key, saved.get(key)?.clone()));
@@ -999,13 +1005,19 @@ fn terminal_dock_sizes(dock: &DockState, cx: &App) -> Value {
     kept
 }
 
-/// `panel` if the bottom panel shows it again on a restore: Problems or
-/// the Git log, not the terminal, whose sessions end with the window.
+/// `panel` if the bottom panel shows it again on a restore: Problems, Runs
+/// or the Git log, not the terminal, whose sessions end with the window.
 fn restorable(panel: PanelId) -> Option<PanelId> {
-    [crate::dock::PROBLEMS_BUTTON, crate::dock::GIT_LOG_BUTTON]
-        .contains(&panel.0)
-        .then_some(panel)
+    RESTORABLE.contains(&panel.0).then_some(panel)
 }
+
+/// The bottom panel's tool windows a restore shows again: see
+/// [`restorable`].
+const RESTORABLE: [&str; 3] = [
+    crate::dock::PROBLEMS_BUTTON,
+    crate::dock::RUNS_BUTTON,
+    crate::dock::GIT_LOG_BUTTON,
+];
 
 /// Puts back the terminal dock's sizes as [`terminal_dock_sizes`] kept
 /// them, as [`DockState::restore`] does, but leaving its panel,
@@ -1108,7 +1120,7 @@ impl LayoutKeys {
     /// Puts back the terminal dock's place, if the saved places are two
     /// edges with the sidebar at a side, then the sidebar's state and the
     /// bottom panel's sizes (it stays hidden, with no session, unless it
-    /// was saved showing Problems or the Git log, or a layout saved before
+    /// was saved showing Problems, Runs or the Git log, or a layout saved before
     /// it held them had one shown in the sidebar: it shows that), and notes
     /// the breadcrumbs. The sidebar stays on the rail's side, as
     /// `workbench.rail` put it: the terminal's dock gives way if it was
@@ -1138,9 +1150,7 @@ impl LayoutKeys {
                 cx.notify();
             });
             let shown = saved.get("shown").and_then(Value::as_str);
-            let shown = [crate::dock::PROBLEMS_BUTTON, crate::dock::GIT_LOG_BUTTON]
-                .into_iter()
-                .find(|id| shown == Some(*id));
+            let shown = RESTORABLE.into_iter().find(|id| shown == Some(*id));
             bottom = shown.map(PanelId).or(bottom);
         }
         if let Some(panel) = bottom {

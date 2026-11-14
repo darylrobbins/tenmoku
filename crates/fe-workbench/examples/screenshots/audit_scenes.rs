@@ -48,6 +48,8 @@ mod project_tree_git;
 mod project_tree_menu;
 #[path = "audit/prompt.rs"]
 mod prompt;
+#[path = "audit/runs.rs"]
+mod runs;
 #[path = "audit/search_panel.rs"]
 mod search_panel;
 #[path = "audit/settings.rs"]
@@ -107,6 +109,7 @@ const SURFACES: &[&Surface] = &[
     &terminal::SURFACE,
     &git_log_card::SURFACE,
     &project_tree_menu::SURFACE,
+    &runs::SURFACE,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup

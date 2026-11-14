@@ -936,6 +936,12 @@ impl Workbench {
         self.dock_command(DockOp::Problems(ProblemsOp::Show), cx);
     }
 
+    /// Show Runs
+    #[command(id = "runs.show")]
+    fn show_runs(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::ShowRuns, cx);
+    }
+
     /// Select Next Problem
     #[command(id = "problems.select_next", context = "problems_panel")]
     fn select_next_problem(&mut self, cx: &mut Cx<Self>) {

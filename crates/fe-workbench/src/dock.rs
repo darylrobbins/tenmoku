@@ -6,7 +6,7 @@
 //! Switching keeps each panel's state. The rail's top group is Project
 //! (the Explorer), Search, Changes (Source Control) and Chat, then the
 //! panels shown on first use; its foot is the bottom panel's tool windows,
-//! Problems, the Git log and Terminal ([`rail_actions`]), which the bottom
+//! Problems, Runs, the Git log and Terminal ([`rail_actions`]), which the bottom
 //! dock shows under its own tab strip ([`BOTTOM_PANEL_HEIGHT`]): a click
 //! runs the tool window's command, or hides the bottom dock if it shows
 //! that one ([`DockEvent::Action`]). Changes' button counts the changed
@@ -56,6 +56,7 @@ use crate::{
     ProjectPanel, ReferencesPanel,
     ai_changes_panel::AiChangesPanel,
     outline_panel::CaretSymbol,
+    runs_panel::{self, RunsPanel},
     search_panel::{self, SearchPanel},
 };
 
@@ -236,22 +237,30 @@ pub(crate) const TERMINAL_BUTTON: &str = "terminal";
 /// The Problems tool window's id in the bottom dock, and its rail button's.
 pub(crate) const PROBLEMS_BUTTON: &str = DockPanel::Problems.0.0;
 
+/// The Runs tool window's id in the bottom dock, and its rail button's.
+pub(crate) const RUNS_BUTTON: &str = runs_panel::PANEL;
+
 /// The Git log tool window's id in the bottom dock, and its rail button's:
 /// the id it had on the sidebar before it was Source Control's Graph, which
 /// layouts saved then name.
 pub(crate) const GIT_LOG_BUTTON: &str = crate::workbench::git_commands::git_log::OLD_PANEL;
 
 /// The rail's actions, at its foot: the bottom panel's tool windows in
-/// the order the design names them (Runs, when it comes, after Problems),
-/// each showing its tool window in the bottom dock, its button highlighted
-/// while that shows.
-pub(crate) fn rail_actions() -> [RailAction; 3] {
+/// the order the design names them, each showing its tool window in the
+/// bottom dock, its button highlighted while that shows.
+pub(crate) fn rail_actions() -> [RailAction; 4] {
     [
         RailAction {
             id: PROBLEMS_BUTTON,
             icon: problems_panel::SIDEBAR.icon,
             title: tr!("workbench-problems-title"),
             command: problems_panel::SIDEBAR.show_command,
+        },
+        RailAction {
+            id: RUNS_BUTTON,
+            icon: runs_panel::ICON,
+            title: tr!("workbench-runs-title"),
+            command: runs_panel::SHOW_COMMAND,
         },
         RailAction {
             id: GIT_LOG_BUTTON,
@@ -377,6 +386,29 @@ impl DockItem for ProblemsPanel {
 
     fn show_command(&self) -> Option<&'static str> {
         Some(problems_panel::SIDEBAR.show_command)
+    }
+
+    fn focus_on_show(&self) -> bool {
+        true
+    }
+}
+
+/// The bottom panel's Runs tool window, titled from the catalogue.
+impl DockItem for RunsPanel {
+    fn id(&self) -> PanelId {
+        PanelId(RUNS_BUTTON)
+    }
+
+    fn title(&self, _: &App) -> SharedString {
+        tr!("workbench-runs-title")
+    }
+
+    fn icon(&self, _: &App) -> Icon {
+        runs_panel::ICON
+    }
+
+    fn show_command(&self) -> Option<&'static str> {
+        Some(runs_panel::SHOW_COMMAND)
     }
 
     fn focus_on_show(&self) -> bool {
@@ -885,7 +917,7 @@ impl Dock {
                 true
             }
             // The bottom dock's, which the workbench does.
-            DockOp::ShowGitLog | DockOp::Problems(_) => false,
+            DockOp::ShowGitLog | DockOp::ShowRuns | DockOp::Problems(_) => false,
             DockOp::RefreshChanges => {
                 self.changes.update(cx, GitPanel::refresh);
                 true
@@ -1145,6 +1177,9 @@ pub(crate) enum DockOp {
     /// `git.log` and `git.log_all`, once they have asked for the list:
     /// show the Git log in the bottom dock, focused (the workbench's).
     ShowGitLog,
+    /// `runs.show`: shows the Runs tool window in the bottom dock, focused
+    /// (the workbench's).
+    ShowRuns,
     /// `nav.show_call_hierarchy`, once it has made the panel and its root
     /// has landed.
     ShowHierarchy,

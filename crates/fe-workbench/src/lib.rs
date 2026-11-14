@@ -87,6 +87,7 @@ mod quickfix_fill;
 mod references_panel;
 pub mod run_process;
 pub mod runs;
+mod runs_panel;
 mod save_commands;
 mod search_panel;
 mod settings_editor;

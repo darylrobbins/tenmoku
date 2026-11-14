@@ -259,13 +259,14 @@ fn buttons_draw_lucide_icons(cx: &mut TestAppContext) {
     let dock = dock(&workbench, cx);
     let drawn =
         |cx: &mut VisualTestContext| dock.read_with(cx, |dock, _| dock.rail_icons().to_vec());
-    // Problems, the Git log and Terminal are pinned below the panels'.
+    // Problems, Runs, the Git log and Terminal are pinned below the panels'.
     let icons = [
         Icon::Files,
         Icon::Search,
         Icon::GitBranch,
         Icon::Bot,
         Icon::TriangleAlert,
+        Icon::ListVideo,
         Icon::GitGraph,
         Icon::FileTerminal,
     ];

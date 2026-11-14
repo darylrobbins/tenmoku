@@ -1,7 +1,7 @@
 //! The activity rail in B3 (`docs/design/design-system.md`, Workbench
 //! anatomy): 42 px wide with 32 px items; Project, Search, Changes and
 //! Chat at the top, the panels shown on first use after them, Problems,
-//! the Git log and Terminal at the foot; the selection's bar on the edge
+//! Runs, the Git log and Terminal at the foot; the selection's bar on the edge
 //! facing the sidebar; Changes' and Problems' badges; and
 //! `workbench.rail`, which moves the rail and the sidebar together.
 
@@ -108,6 +108,7 @@ fn git(dir: &Path, args: &[&str]) {
 const PROJECT: PanelId = PanelId("project");
 const CHANGES: PanelId = PanelId("scm");
 const PROBLEMS: PanelId = PanelId("problems");
+const RUNS: PanelId = PanelId("runs");
 const GIT_LOG: PanelId = PanelId("git_log");
 const TERMINAL: PanelId = PanelId("terminal");
 
@@ -122,7 +123,7 @@ fn a_42_px_rail_of_32_px_items(cx: &mut TestAppContext) {
     assert_eq!(rail.left(), px(0.), "{rail:?}");
     let column = dock.read_with(cx, |dock, _| dock.column_bounds().unwrap());
     assert_eq!(column.left(), rail.right());
-    for id in [PROJECT, CHANGES, PROBLEMS, GIT_LOG, TERMINAL] {
+    for id in [PROJECT, CHANGES, PROBLEMS, RUNS, GIT_LOG, TERMINAL] {
         let button = button(&dock, id, cx);
         assert_eq!(button.size.height, px(32.), "{id:?}");
         assert_eq!(button.size.height, RailButton::HEIGHT, "{id:?}");
@@ -138,21 +139,28 @@ fn top_and_foot_groups_in_order(cx: &mut TestAppContext) {
     let names: Vec<_> = (DockPanel::ALL.iter()).map(|panel| panel.name()).collect();
     assert_eq!(names, ["Project", "Search", "Changes", "Chat"]);
     let top = [Icon::Files, Icon::Search, Icon::GitBranch, Icon::Bot];
-    let foot = [Icon::TriangleAlert, Icon::GitGraph, Icon::FileTerminal];
+    let foot = [
+        Icon::TriangleAlert,
+        Icon::ListVideo,
+        Icon::GitGraph,
+        Icon::FileTerminal,
+    ];
     assert_eq!(icons(&dock, cx), [&top[..], &foot[..]].concat());
 
     // The foot is at the rail's bottom, its buttons one after another,
     // well below the top group.
     let rail = rail_bounds(&dock, cx);
     let chat = button(&dock, PanelId("chat"), cx);
-    let (problems, log, terminal) = (
+    let (problems, runs, log, terminal) = (
         button(&dock, PROBLEMS, cx),
+        button(&dock, RUNS, cx),
         button(&dock, GIT_LOG, cx),
         button(&dock, TERMINAL, cx),
     );
     assert!(rail.bottom() - terminal.bottom() <= px(4.), "{terminal:?}");
     assert_eq!(log.bottom(), terminal.top());
-    assert_eq!(problems.bottom(), log.top());
+    assert_eq!(runs.bottom(), log.top());
+    assert_eq!(problems.bottom(), runs.top());
     assert!(chat.bottom() < problems.top());
 
     // A panel shown on first use joins the top group, after Chat.

@@ -120,7 +120,8 @@ fn the_rails_foot_opens_tool_windows_in_the_bottom_panel(cx: &mut TestAppContext
     let (workbench, cx, _dir) = opened(cx);
     let sidebar = sidebar(&workbench, cx);
     let ids = sidebar.read_with(cx, |dock, _| dock.state().drawn().rail_ids());
-    assert_eq!(ids[ids.len() - 3..], [PROBLEMS, GIT_LOG, TERMINAL]);
+    let runs = PanelId("runs");
+    assert_eq!(ids[ids.len() - 4..], [PROBLEMS, runs, GIT_LOG, TERMINAL]);
     assert!(!sidebar.read_with(cx, |dock, _| dock.state().panel_ids().contains(&PROBLEMS)));
     assert_eq!(shown(&workbench, cx), None);
     assert!(tabs(&workbench, cx).is_empty());
