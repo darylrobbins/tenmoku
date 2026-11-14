@@ -146,7 +146,15 @@ impl Repo {
         // Its stat cache spares hashing every unchanged file again.
         copy_index(&own, &index).map_err(|err| GitError::Io(err.to_string()))?;
         self.unhide_entries(&index)?;
-        self.temp_index_git(&index, &["add", "--all"], None)?;
+        // `--sparse` stages materialized files outside a sparse checkout's
+        // cone, which `add` otherwise skips; git before 2.34 lacks it, and
+        // there is no cone to skip them with.
+        if self
+            .temp_index_git(&index, &["add", "--all", "--sparse"], None)
+            .is_err()
+        {
+            self.temp_index_git(&index, &["add", "--all"], None)?;
+        }
         let stdout = self.temp_index_git(&index, &["write-tree"], None)?;
         Ok(String::from_utf8_lossy(&stdout).trim().to_owned())
     }
@@ -178,10 +186,6 @@ impl Repo {
     /// skip an entry's file on disk: assume-unchanged on every entry, and
     /// skip-worktree on each whose file is there. A skip-worktree entry
     /// with no file (outside a sparse checkout) keeps its index content.
-    ///
-    /// Known limit: in a sparse checkout, `add` still leaves alone a file
-    /// outside the sparse cone that is on disk, so its changes aren't
-    /// frozen (that needs `add --sparse`, git 2.34).
     fn unhide_entries(&self, index: &Path) -> Result<(), GitError> {
         let stdout = self.temp_index_git(index, &["ls-files", "-v", "-z"], None)?;
         let mut assumed = Vec::new();

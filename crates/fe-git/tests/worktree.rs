@@ -170,6 +170,58 @@ fn freeze_reads_files_marked_assume_unchanged_or_skip_worktree() {
     assert_eq!(repo.worktree_tree().unwrap(), revision.tree);
 }
 
+/// In a sparse checkout, a modified tracked file and an untracked file
+/// outside the cone, both on disk, are frozen; entries absent from disk stay
+/// as the index has them (unchanged, so not in the changed-file list); the
+/// real index and its flags are untouched.
+#[test]
+fn freeze_captures_files_outside_a_sparse_cone() {
+    let (_dir, root, repo) = init();
+    for dir in ["in", "out"] {
+        fs::create_dir(root.join(dir)).unwrap();
+        for name in ["x.txt", "y.txt"] {
+            fs::write(root.join(dir).join(name), "one\n").unwrap();
+        }
+    }
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "dirs"]);
+    git(
+        &root,
+        &["sparse-checkout", "init", "--cone", "--no-sparse-index"],
+    );
+    git(&root, &["sparse-checkout", "set", "in"]);
+    assert!(!root.join("out").exists(), "out is outside the cone");
+    // Materialize two files outside the cone: one tracked, one untracked.
+    fs::create_dir(root.join("out")).unwrap();
+    fs::write(root.join("out/x.txt"), "changed\n").unwrap();
+    fs::write(root.join("out/new.txt"), "new\n").unwrap();
+    let head = repo.head_id().unwrap();
+    let flags_before = git(&root, &["ls-files", "-v"]);
+    let index_before = fs::read(root.join(".git/index")).unwrap();
+
+    let revision = repo
+        .freeze(&namespace("refs/tenmoku/lanes/k1/1"), 1, Some(&head), "r1")
+        .unwrap();
+
+    assert_eq!(show(&root, &revision.commit, "out/x.txt"), "changed");
+    assert_eq!(show(&root, &revision.commit, "out/new.txt"), "new");
+    assert_eq!(show(&root, &revision.commit, "out/y.txt"), "one");
+    let changed = |kind, name: &str| FileStatus {
+        path: root.join(name),
+        kind,
+    };
+    assert_eq!(
+        repo.changed_files(&head, &revision.commit).unwrap(),
+        [
+            changed(ChangeKind::Added, "out/new.txt"),
+            changed(ChangeKind::Modified, "out/x.txt"),
+        ]
+    );
+    assert!(!root.join("out/y.txt").exists());
+    assert_eq!(git(&root, &["ls-files", "-v"]), flags_before);
+    assert_eq!(fs::read(root.join(".git/index")).unwrap(), index_before);
+}
+
 /// The real index split, with every write making a new shared index and
 /// expiring the old at once: freezing (which clears a flag, stages and
 /// writes a tree on its temporary index) leaves the real index and the
