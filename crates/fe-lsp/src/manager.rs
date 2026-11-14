@@ -1066,7 +1066,7 @@ impl LspManager {
     }
 
     /// How long `R` may take, from `lsp.timeouts`.
-    fn timeout<R: Request>(&self) -> Option<std::time::Duration> {
+    pub(crate) fn timeout<R: Request>(&self) -> Option<std::time::Duration> {
         timeout(R::METHOD, &self.registry.settings().timeouts)
     }
 
