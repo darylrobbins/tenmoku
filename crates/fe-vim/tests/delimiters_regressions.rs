@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use fe_vim::HeadlessVim;
-use fe_vim::search::{DEFAULT_TIME_LIMIT, set_time_limit};
+use fe_vim::search::{DEFAULT_TIME_LIMIT, regex_calls, set_call_limit, set_time_limit};
 
 static LIMIT: Mutex<()> = Mutex::new(());
 
@@ -106,16 +106,33 @@ fn a_keyword_atom_in_a_pattern_name_pairs() {
     }
 }
 
+/// Puts the regex-call budget back to none when dropped.
+struct CallBudget;
+
+impl Drop for CallBudget {
+    fn drop(&mut self) {
+        set_call_limit(None);
+    }
+}
+
 #[test]
 fn pattern_pairing_past_many_other_tags_finishes_in_time() {
-    // This one is about the default limit: no test that raises it runs
-    // alongside.
-    let _limit = Limit::set(DEFAULT_TIME_LIMIT);
-    // 20,000 `<b>` can't start a tag named `a.b`; trying each against every
-    // span after it runs past the search time limit, which fails the object.
+    // Counts the work instead of timing it, so machine load can't fail it: the
+    // wall-clock limit is off, and a budget of regex calls stands
+    // in for the default limit. Pairing past the other tags takes a handful
+    // of calls; trying each of them against every span after it takes
+    // 20,000 or more, which runs the budget out and fails the object.
+    let _limit = Limit::set(Duration::MAX);
+    let _budget = CallBudget;
+    const BUDGET: u64 = 1_000;
+    set_call_limit(Some(BUDGET));
+    // 20,000 `<b>` can't start a tag named `a.b`.
     let many = "<b>".repeat(20_000);
     let text = format!("<a.b>{many}x</axb>");
+    let before = regex_calls();
     let (got, register) = run(&text, 0, "dit");
+    let calls = regex_calls() - before;
+    assert!(calls < BUDGET, "{calls} regex calls");
     assert_eq!(register, format!("{many}x"));
     assert_eq!(got, "<a.b></axb>");
 }
