@@ -22,6 +22,8 @@
 //! - [`claude`] builds the security profile, checks the version floor,
 //!   names the states the panel shows, and keeps each session's profile
 //!   current ([`ClaudeAgent`]);
+//! - [`preflight`] finds `claude` and the adapter, with versions, before any
+//!   session;
 //! - [`claude_settings`] checks the inherited Claude Code settings, and
 //!   refuses any that widen the profile.
 //!
@@ -35,6 +37,7 @@ pub mod claude_settings;
 mod client;
 mod events;
 pub mod launch;
+pub mod preflight;
 
 pub use claude::{AgentState, ClaudeAgent, Lane, LaneDirs};
 pub use client::{
