@@ -9,13 +9,22 @@ publish.workspace = true
 
 [dependencies]
 agent-client-protocol.workspace = true
+# The adapter's process and its stdio (launch.rs), as fe-lsp spawns servers.
+async-io.workspace = true
+async-process.workspace = true
+# The agent settings the security profile is built from (claude.rs).
+fe-config.workspace = true
 futures.workspace = true
 log.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# Killing the adapter's process group (launch.rs).
+rustix.workspace = true
+
 [dev-dependencies]
-async-io.workspace = true
-serde.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

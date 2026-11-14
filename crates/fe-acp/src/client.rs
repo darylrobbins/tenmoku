@@ -26,18 +26,20 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::schema::{
-    CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, Implementation,
-    InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse, Meta,
-    NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionId, PromptRequest,
-    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
-    SessionId, SessionModeId, SessionNotification, SetSessionConfigOptionRequest,
-    SetSessionModeRequest, ToolCallUpdate,
+    CancelNotification, ClientCapabilities, CloseSessionRequest, ContentBlock,
+    FileSystemCapabilities, Implementation, InitializeRequest, InitializeResponse,
+    LoadSessionRequest, LoadSessionResponse, Meta, NewSessionRequest, NewSessionResponse,
+    PermissionOption, PermissionOptionId, PromptRequest, PromptResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
+    ResumeSessionResponse, SelectedPermissionOutcome, SessionConfigId, SessionConfigOption,
+    SessionConfigOptionValue, SessionId, SessionModeId, SessionNotification,
+    SetSessionConfigOptionRequest, SetSessionModeRequest, ToolCallUpdate,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
-use agent_client_protocol::{Agent, Client, ConnectTo, Error, JsonRpcRequest};
+use agent_client_protocol::{Agent, Client, ConnectTo, Error, JsonRpcNotification, JsonRpcRequest};
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, FutureExt as _, Shared};
+use serde::{Deserialize, Serialize};
 
 use crate::AcpEvent;
 
@@ -98,9 +100,20 @@ pub fn connect(
     let updates_tx = incoming_tx.clone();
     let permissions_tx = incoming_tx;
     let permissions = pending.clone();
+    let auth = Arc::new(Mutex::new(None));
+    let auth_status = auth.clone();
     let driver = Client
         .v1()
         .name("fe-acp")
+        .on_receive_notification(
+            async move |status: AuthStatusUpdate, _connection| {
+                let kind = AuthKind::from_wire(status.kind.as_deref());
+                log::debug!("fe-acp: Claude Code's auth status is {kind:?}");
+                *lock(&auth_status) = Some(kind);
+                Ok(())
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
         .on_receive_notification(
             async move |notification: SessionNotification, _connection| {
                 let session_id = notification.session_id;
@@ -141,8 +154,49 @@ pub fn connect(
         connection: connection_rx.shared(),
         pending,
         close: Arc::new(Mutex::new(Some(close_tx))),
+        auth,
     };
     (client, incoming_rx, driver)
+}
+
+/// The adapter's `_auth/status_update` (§ 2), as fe-acp reads it: only its
+/// `kind`. The account's email and organisation it can carry are never
+/// deserialized, so never kept or logged (§ 4).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonRpcNotification)]
+#[notification(method = "_auth/status_update")]
+struct AuthStatusUpdate {
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// How Claude Code is logged in, from the adapter's `_auth/status_update`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthKind {
+    /// A claude.ai account.
+    Account,
+    /// An API key.
+    ApiKey,
+    /// A gateway.
+    Gateway,
+    /// Credentials from outside Claude Code.
+    External,
+    /// Not logged in: the "Not logged in" state (§ 4).
+    None,
+    /// A kind this version doesn't know, or none given.
+    Unknown,
+}
+
+impl AuthKind {
+    fn from_wire(kind: Option<&str>) -> Self {
+        match kind {
+            Some("account") => Self::Account,
+            Some("api_key") => Self::ApiKey,
+            Some("gateway") => Self::Gateway,
+            Some("external") => Self::External,
+            Some("none") => Self::None,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 /// A handle to a connected agent. Clones share the connection.
@@ -154,6 +208,7 @@ pub struct AcpClient {
     connection: Shared<oneshot::Receiver<ConnectionTo<Agent>>>,
     pending: Pending,
     close: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    auth: Arc<Mutex<Option<AuthKind>>>,
 }
 
 impl std::fmt::Debug for AcpClient {
@@ -205,20 +260,191 @@ impl AcpClient {
             .await
     }
 
+    /// Sends `session/resume` for `session_id` in `cwd`, with no MCP servers
+    /// and the given `_meta`. Unlike a load, the agent replays nothing.
+    pub async fn resume_session(
+        &self,
+        session_id: impl Into<SessionId>,
+        cwd: impl Into<PathBuf>,
+        meta: Option<Meta>,
+    ) -> Result<ResumeSessionResponse> {
+        self.request(ResumeSessionRequest::new(session_id, cwd).meta(meta))
+            .await
+    }
+
+    /// Sends `session/close`: the agent ends the session and frees what it
+    /// holds for it.
+    pub async fn close_session(&self, session_id: impl Into<SessionId>) -> Result<()> {
+        self.request(CloseSessionRequest::new(session_id)).await?;
+        Ok(())
+    }
+
+    /// The `kind` of the adapter's latest `_auth/status_update`, if it sent
+    /// one. [`AuthKind::None`] means Claude Code isn't logged in.
+    #[must_use]
+    pub fn auth_kind(&self) -> Option<AuthKind> {
+        *lock(&self.auth)
+    }
+
     /// Sends `session/prompt` and waits for the turn to end: the response's
     /// stop reason ends it. The turn's updates and permission requests
     /// arrive on the [`Incoming`] stream meanwhile.
     ///
-    /// The turn runs from the first poll until the response arrives, fails,
-    /// or the future is dropped.
+    /// The turn runs from the first poll until its response arrives, or
+    /// until the connection ends without one. It is settled on the
+    /// connection's dispatch loop as the response is received, before any
+    /// later message from the agent is handed out, so dropping this future
+    /// doesn't end it early, and a response nobody has awaited yet doesn't
+    /// keep it running.
     pub async fn prompt(
         &self,
         session_id: impl Into<SessionId>,
         prompt: Vec<ContentBlock>,
     ) -> Result<PromptResponse> {
+        self.connected().await?;
+        self.start_prompt(session_id, prompt)?.await
+    }
+
+    /// Waits until the connection has started, so [`start_prompt`] can
+    /// send.
+    ///
+    /// [`start_prompt`]: Self::start_prompt
+    pub async fn connected(&self) -> Result<()> {
+        self.connection().await.map(drop)
+    }
+
+    /// Sends `session/prompt` at once, without waiting: the turn is
+    /// registered and the request queued before this returns, and the
+    /// future it returns waits for the response, as [`prompt`] does. A
+    /// caller holding a lock of its own around this call knows, under that
+    /// lock, whether the prompt was sent.
+    ///
+    /// # Errors
+    ///
+    /// When the connection hasn't started ([`connected`] wasn't awaited) or
+    /// has ended.
+    ///
+    /// [`prompt`]: Self::prompt
+    /// [`connected`]: Self::connected
+    pub fn start_prompt(
+        &self,
+        session_id: impl Into<SessionId>,
+        prompt: Vec<ContentBlock>,
+    ) -> Result<impl Future<Output = Result<PromptResponse>> + Send + 'static> {
         let session_id = session_id.into();
-        let _turn = self.pending.start_turn(&session_id);
-        self.request(PromptRequest::new(session_id, prompt)).await
+        // Checked before the turn is registered, so a failure leaves none.
+        self.started("session/prompt")?;
+        let turn = self.pending.start_turn(&session_id);
+        // The turn ends in the callback, on the dispatch loop, before a
+        // later permission request can be refused (or let through) by it.
+        self.start(
+            "session/prompt",
+            PromptRequest::new(session_id, prompt),
+            move |_| drop(turn),
+        )
+    }
+
+    /// Sends `session/load` at once, as [`start_prompt`] sends a prompt.
+    /// `on_response` runs on the dispatch loop as the response is received,
+    /// whatever became of the returned future; if the connection ends
+    /// first, it is dropped uncalled.
+    ///
+    /// # Errors
+    ///
+    /// As [`start_prompt`]'s.
+    ///
+    /// [`start_prompt`]: Self::start_prompt
+    pub fn start_load_session(
+        &self,
+        session_id: impl Into<SessionId>,
+        cwd: impl Into<PathBuf>,
+        meta: Option<Meta>,
+        on_response: impl FnOnce(&Result<LoadSessionResponse>) + Send + 'static,
+    ) -> Result<impl Future<Output = Result<LoadSessionResponse>> + Send + 'static> {
+        self.start(
+            "session/load",
+            LoadSessionRequest::new(session_id, cwd).meta(meta),
+            on_response,
+        )
+    }
+
+    /// Sends `session/resume` at once, as [`start_load_session`] sends a
+    /// load.
+    ///
+    /// # Errors
+    ///
+    /// As [`start_prompt`]'s.
+    ///
+    /// [`start_prompt`]: Self::start_prompt
+    /// [`start_load_session`]: Self::start_load_session
+    pub fn start_resume_session(
+        &self,
+        session_id: impl Into<SessionId>,
+        cwd: impl Into<PathBuf>,
+        meta: Option<Meta>,
+        on_response: impl FnOnce(&Result<ResumeSessionResponse>) + Send + 'static,
+    ) -> Result<impl Future<Output = Result<ResumeSessionResponse>> + Send + 'static> {
+        self.start(
+            "session/resume",
+            ResumeSessionRequest::new(session_id, cwd).meta(meta),
+            on_response,
+        )
+    }
+
+    /// The connection, if it has started.
+    fn started(&self, method: &str) -> Result<ConnectionTo<Agent>> {
+        match self.connection.clone().now_or_never() {
+            // The handle outlives its driver: once that has ended, nothing
+            // sent on it is ever answered.
+            Some(Ok(connection)) if ending(&connection) => Err(disconnected(method)),
+            Some(Ok(connection)) => Ok(connection),
+            Some(Err(_)) => Err(disconnected(method)),
+            None => Err(Error::internal_error()
+                .data("the connection to the agent hasn't started; await `connected` first")),
+        }
+    }
+
+    /// Queues `request` now; `on_response` runs on the dispatch loop when
+    /// its response is received, and the returned future yields it.
+    fn start<R>(
+        &self,
+        method: &'static str,
+        request: R,
+        on_response: impl FnOnce(&Result<R::Response>) + Send + 'static,
+    ) -> Result<impl Future<Output = Result<R::Response>> + Send + 'static>
+    where
+        R: JsonRpcRequest,
+        R::Response: Send + 'static,
+    {
+        let connection = self.started(method)?;
+        let (response_tx, response_rx) = oneshot::channel();
+        // Prepared, so the ordered callback is registered before the
+        // request is published: a fast response can't be routed around it,
+        // even with the connection driven on another thread.
+        connection
+            .prepare_request(request)
+            .on_receiving_result(move |response| {
+                on_response(&response);
+                let _ = response_tx.send(response);
+                future::ready(Ok(()))
+            })
+            .map_err(|error| normalized(&connection, method, error))?;
+        Ok(async move {
+            match response_rx.await {
+                Ok(Ok(response)) => Ok(response),
+                // A publication failure reaches the callback too.
+                Ok(Err(error)) => Err(normalized(&connection, method, error)),
+                Err(_) => Err(disconnected(method)),
+            }
+        })
+    }
+
+    /// Whether a turn of the session is running: its prompt was sent and
+    /// its response hasn't been received, whatever became of the caller's
+    /// future.
+    #[must_use]
+    pub fn turn_running(&self, session_id: &SessionId) -> bool {
+        self.pending.turn_running(session_id)
     }
 
     /// Stops the session's running turns: sends `session/cancel`, then
@@ -239,7 +465,8 @@ impl AcpClient {
         let session_id = session_id.into();
         let connection = self.connection().await?;
         self.pending.cancel_session(&session_id, || {
-            connection.send_notification(CancelNotification::new(session_id.clone()))
+            (connection.send_notification(CancelNotification::new(session_id.clone())))
+                .map_err(|error| normalized(&connection, "session/cancel", error))
         })
     }
 
@@ -276,15 +503,69 @@ impl AcpClient {
     }
 
     async fn connection(&self) -> Result<ConnectionTo<Agent>> {
-        self.connection.clone().await.map_err(|_| {
-            Error::internal_error().data("the connection to the agent ended before it started")
-        })
+        // The sender is dropped unsent when the connection ends before it
+        // starts.
+        let connection = (self.connection.clone().await).map_err(|_| disconnected("connect"))?;
+        if ending(&connection) {
+            return Err(disconnected("connect"));
+        }
+        Ok(connection)
     }
 
     async fn request<R: JsonRpcRequest>(&self, request: R) -> Result<R::Response> {
         let connection = self.connection().await?;
-        connection.send_request(request).block_task().await
+        let method = request.method().to_owned();
+        (connection.send_request(request).block_task().await)
+            .map_err(|error| normalized(&connection, &method, error))
     }
+}
+
+/// The reason in the data of the error a request fails with when the
+/// connection ends before its response.
+const DISCONNECTED_REASON: &str = "fe-acp/disconnected";
+
+/// The error for a request whose response never came: the connection ended.
+fn disconnected(method: &str) -> Error {
+    Error::internal_error().data(serde_json::json!({
+        "reason": DISCONNECTED_REASON,
+        "method": method,
+        "message": "the connection to the agent ended before its response",
+    }))
+}
+
+/// Whether the connection is ending or has ended. The SDK closes its task
+/// queue first as the connection tears down, before it drains its output
+/// and publishes the termination; so a queue that refuses a no-op task (it
+/// never reaches the wire) shows the end before
+/// [`ConnectionTo::termination`] does.
+fn ending(connection: &ConnectionTo<Agent>) -> bool {
+    connection.termination().is_some() || connection.spawn(future::ready(Ok(()))).is_err()
+}
+
+/// `error`, from sending `method` or from its response, as a disconnect
+/// when it is one or the connection is ending: the SDK's local failures
+/// while it tears down (a closed task or outgoing queue) carry no mark of
+/// their own.
+fn normalized(connection: &ConnectionTo<Agent>, method: &str, error: Error) -> Error {
+    if is_disconnect(&error) || ending(connection) {
+        disconnected(method)
+    } else {
+        error
+    }
+}
+
+/// Whether `error` says the connection to the agent ended before the
+/// request's response, or before the request was sent: the agent exited,
+/// the transport failed, or the client shut down.
+#[must_use]
+pub fn is_disconnect(error: &Error) -> bool {
+    agent_client_protocol::is_incoming_transport_closed(error)
+        || agent_client_protocol::is_connection_terminated(error)
+        || error
+            .data
+            .as_ref()
+            .and_then(|data| data.get("reason"))
+            .is_some_and(|reason| reason == DISCONNECTED_REASON)
 }
 
 /// A `session/request_permission` from the agent, waiting for an answer.
@@ -488,6 +769,13 @@ impl Pending {
 
     fn is_open(&self, id: u64) -> bool {
         lock(&self.0).open.iter().any(|open| open.id == id)
+    }
+
+    fn turn_running(&self, session_id: &SessionId) -> bool {
+        lock(&self.0)
+            .turns
+            .get(session_id)
+            .is_some_and(|turns| !turns.running.is_empty())
     }
 
     fn start_turn(&self, session_id: &SessionId) -> Turn {

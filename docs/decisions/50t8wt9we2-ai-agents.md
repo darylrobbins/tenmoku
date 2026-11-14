@@ -1716,15 +1716,23 @@ hand at 0.106.0, and again for each raise of the tested version. It checks:
 14. **The source table matches this Claude Code version.** It is done in
     two parts, matching the table's last column.
     - **Sources the session loads now** (every row marked "yes", except
-      managed preferences). For each, in turn:
-      1. plant `"sandbox": {"excludedCommands": ["touch"]}` in it;
-      2. run `claude` by hand in a lane worktree and confirm `touch ../x`
-         now escapes the sandbox, which shows Claude Code reads that file;
-      3. confirm Claude Agent refuses to start, naming that file.
+      managed preferences). First, with none of them planted, run `claude`
+      by hand in a lane worktree under the profile's sandbox, have the
+      model issue `touch ../x`, and confirm it fails: this is the baseline.
+      Then for each source, in turn:
+      1. plant `"sandbox": {"excludedCommands": ["touch *"]}` in it (with
+         the `*`: `"touch"` alone matches only `touch` without arguments,
+         so `touch ../x` would stay sandboxed and show nothing);
+      2. run `claude` by hand in the same lane worktree, have the model
+         issue the same `touch ../x`, and confirm it now escapes the
+         sandbox, which shows Claude Code reads that file;
+      3. confirm Claude Agent refuses to start, naming that file;
+      4. remove the planted value, and delete `../x`, before the next
+         source.
 
       A source Claude Code reads that the table lacks is a bug in
       `claude_settings.rs`, fixed before the tested version is raised.
-    - **Files checked only ahead of Update lane** (the main checkout's
+    - **Files checked only ahead of Update lane** (the opened root's
       `.claude/settings.json`). Plant the same value there, and confirm
       Claude Agent refuses to start, naming that file. The current session
       isn't expected to honour it, since Claude Code reads the worktree's

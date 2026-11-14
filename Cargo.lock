@@ -2224,10 +2224,14 @@ version = "0.1.6"
 dependencies = [
  "agent-client-protocol",
  "async-io",
+ "async-process",
+ "fe-config",
  "futures",
  "log",
+ "rustix",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

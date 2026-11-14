@@ -15,13 +15,31 @@
 //! stdin and stdout), so callers need no direct dependency on
 //! `agent-client-protocol`.
 //!
+//! Claude Agent's side (§§ 3 and 4):
+//!
+//! - [`launch`] spawns the adapter from given paths, in its own process
+//!   group, with its stderr kept;
+//! - [`claude`] builds the security profile, checks the version floor,
+//!   names the states the panel shows, and keeps each session's profile
+//!   current ([`ClaudeAgent`]);
+//! - [`claude_settings`] checks the inherited Claude Code settings, and
+//!   refuses any that widen the profile.
+//!
+//! `fe-acp-fake-agent`, the crate's binary, plays a scripted agent for
+//! tests (§ 12).
+//!
 //! fe-acp is headless: no GPUI, and no runtime of its own.
 
+pub mod claude;
+pub mod claude_settings;
 mod client;
 mod events;
+pub mod launch;
 
+pub use claude::{AgentState, ClaudeAgent, Lane, LaneDirs};
 pub use client::{
-    AcpClient, CLIENT_NAME, Incoming, PermissionRequest, Result, client_capabilities, connect,
+    AcpClient, AuthKind, CLIENT_NAME, Incoming, PermissionRequest, Result, client_capabilities,
+    connect, is_disconnect,
 };
 pub use events::AcpEvent;
 
