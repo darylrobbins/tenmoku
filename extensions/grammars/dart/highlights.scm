@@ -225,7 +225,7 @@
     name: (identifier) @variable.parameter)
 
 (named_argument
-  (label (identifier) @variable.parameter))
+  (label (identifier) @property))
 
 ; Literals
 ; --------------------
