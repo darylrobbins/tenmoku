@@ -1003,7 +1003,12 @@ const DEFS: &[Def] = &[
             "packages.config",
         ],
         grammar: || tree_sitter_xml::LANGUAGE_XML.into(),
-        highlights: || &[tree_sitter_xml::XML_HIGHLIGHT_QUERY],
+        highlights: || {
+            &[
+                tree_sitter_xml::XML_HIGHLIGHT_QUERY,
+                include_str!("../queries/xml.scm"),
+            ]
+        },
         earlier_patterns_win: false,
         injections: None,
         hidden: false,

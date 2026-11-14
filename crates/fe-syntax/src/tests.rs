@@ -361,7 +361,7 @@ fn each_language_highlights_a_snippet() {
             "<svg width=\"1\"><!-- c --></svg>",
             &[
                 ("svg", "tag"),
-                ("width", "property"),
+                ("width", "attribute"),
                 ("<!-- c -->", "comment"),
             ],
         ),

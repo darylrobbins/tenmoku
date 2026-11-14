@@ -123,7 +123,7 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | php | tree-sitter-php | 0.24.2 | https://github.com/tree-sitter/tree-sitter-php | MIT | `HIGHLIGHTS_QUERY`; `queries/php-injections.scm`⁸ (grammar `LANGUAGE_PHP`) |
 | csharp | tree-sitter-c-sharp | 0.23.5 | https://github.com/tree-sitter/tree-sitter-c-sharp | MIT | `HIGHLIGHTS_QUERY` |
 | scala | tree-sitter-scala | 0.26.2 | https://github.com/tree-sitter/tree-sitter-scala | MIT | `HIGHLIGHTS_QUERY` |
-| xml | tree-sitter-xml | 0.7.0 | https://github.com/tree-sitter-grammars/tree-sitter-xml | MIT | `XML_HIGHLIGHT_QUERY` (grammar `LANGUAGE_XML`) |
+| xml | tree-sitter-xml | 0.7.0 | https://github.com/tree-sitter-grammars/tree-sitter-xml | MIT | `XML_HIGHLIGHT_QUERY` (grammar `LANGUAGE_XML`), then `queries/xml.scm` |
 | swift | tree-sitter-swift | 0.7.3 | https://github.com/alex-pinkus/tree-sitter-swift | MIT | `HIGHLIGHTS_QUERY` |
 | kotlin | tree-sitter-kotlin-sg | 0.4.1 | https://github.com/ast-grep/tree-sitter-kotlin, a publication of https://github.com/fwcd/tree-sitter-kotlin⁵ | MIT | `HIGHLIGHTS_QUERY`¹, then `queries/kotlin.scm`⁶ |
 | sql | tree-sitter-sequel | 0.3.11 | https://github.com/derekstride/tree-sitter-sql | MIT | `HIGHLIGHTS_QUERY`, then `queries/sql.scm`⁷ |
