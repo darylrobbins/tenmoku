@@ -10,6 +10,10 @@
 # Corporation and (c) 2015 Colorsublime.com; both MIT, the notices in this
 # repository's NOTICE.
 #
+# `property` stays the text colour: upstream colours no property scope
+# (variable.other.property, meta.object-literal.key, support.type.property-name
+# are all absent at that commit), so a property takes the `variable` rule.
+#
 # Left out: font styles (italic storage.type, parameters and support.type,
 # underlined class names), `invalid`, the markdown-only and find-in-files
 # scopes and the token.*-token semantic rules. Chosen from the palette, as

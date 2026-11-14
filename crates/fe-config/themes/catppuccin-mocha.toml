@@ -32,8 +32,9 @@
 # boolean and the semantic `boolean`), `module` the namespaces',
 # `type.parameter` entity.name.type's, as VS Code colours a type parameter
 # like its type, and `punctuation.special` and `string.special` take
-# punctuation's and string's. `label`, `property` and `variable` have no
-# scope of their own and take the text colour.
+# punctuation's and string's. `label` and `variable` have no
+# scope of their own and take the text colour; `property` is Lavender, as in
+# catppuccin/vscode (variable.other.property).
 #
 # To try it, copy it to ~/.config/tenmoku/theme.toml with `mode = "dark"`.
 # Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
@@ -199,7 +200,7 @@ minimap_gutter_deleted = "#F38BA8"
 "module" = "#F9E2AF"
 "number" = "#FAB387"
 "operator" = "#94E2D5"
-"property" = "#CDD6F4"
+"property" = "#B4BEFE"
 "punctuation" = "#9399B2"
 "punctuation.special" = "#9399B2"
 "string" = "#A6E3A1"
