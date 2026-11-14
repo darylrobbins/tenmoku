@@ -97,9 +97,13 @@ suggested. Later cards add `session*`, `registry*` and the like beside them.
   `output` events, an exit code, and `lingers` (a mute adapter that outlives
   `disconnect` until killed).
 - The `fe-dap-fake` binary requires `test-support`. The crate dev-depends on itself
-  with that feature, so `cargo test`/`nextest` builds the binary, and the unit tests
-  in `tests::launcher` find it beside their own executable (cargo sets
-  `CARGO_BIN_EXE_*` only for integration tests).
+  with that feature, so `cargo test`/`nextest` builds the binary. The tests that
+  launch it are the integration tests in `tests/launcher.rs`, which read its path
+  from `CARGO_BIN_EXE_fe-dap-fake` (cargo sets it only for integration tests), as
+  fe-acp's launch tests do; the connect-loop and drain tests on private items stay
+  unit tests in `tests::launcher`. (They first found it beside the unit test's own
+  executable, which misses it on a Mac whose `build.build-dir` puts test binaries
+  outside the target dir.)
 
 ## The app links fe-dap
 
