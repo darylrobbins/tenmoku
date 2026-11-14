@@ -54,7 +54,11 @@ fn primary_non_empty_answer_wins_even_when_add_on_is_first() {
     let mut buffer = Buffer::new(TEXT);
     f.open_on_both(&mut buffer);
     // The add-on answers at once; the primary only once the clock moves.
-    let late = Duration::from_millis(500);
+    // Not `readiness::SETTLE` (500 ms): `wait_for_sleep` would take a
+    // server's settle timer for the primary's delay and `advance` past it
+    // before the delay was armed.
+    let late = Duration::from_millis(700);
+    assert_ne!(late, crate::readiness::SETTLE);
     f.fake("css").set_reply(
         HIGHLIGHT,
         Scripted {
