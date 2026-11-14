@@ -201,6 +201,14 @@ pub enum ChatEvent {
         index: usize,
         partial_json: String,
     },
+    /// How a `tool_use` block's input parsed, sent just before its
+    /// [`ChatEvent::BlockFinished`]. Without it, a string input is taken as
+    /// [`InputStatus::Unparsed`] and anything else as parsed; an object
+    /// input sends none.
+    ToolInputParsed {
+        index: usize,
+        status: InputStatus,
+    },
     /// The whole block, verbatim, as the API would echo it back.
     BlockFinished {
         index: usize,
@@ -421,6 +429,20 @@ pub enum ToolChoice {
     #[default]
     Auto,
     None,
+}
+
+/// How a finished `tool_use` block's streamed input parsed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputStatus {
+    /// Valid JSON, an object.
+    Object,
+    /// Valid JSON, but not an object (a string, array, ...): finished, and
+    /// invalid as a call's input.
+    NonObject,
+    /// Not valid JSON, as when the input was cut short; the block keeps
+    /// the raw string.
+    Unparsed,
 }
 
 /// A tool call the model made: a finished `tool_use` block.

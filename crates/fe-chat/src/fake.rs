@@ -13,8 +13,8 @@ use futures::Stream;
 use serde_json::{Map, Value};
 
 use crate::provider::{
-    BlockKind, ChatEvent, ChatProvider, ChatRequest, ChatStream, ErrorKind, ProviderError,
-    StopReason,
+    BlockKind, ChatEvent, ChatProvider, ChatRequest, ChatStream, ErrorKind, InputStatus,
+    ProviderError, StopReason,
 };
 
 /// Plays one scripted reply per [`ChatProvider::stream`] call, in order,
@@ -207,7 +207,15 @@ impl ReplyScript {
     /// A finished `tool_use` block whose streamed input `raw` isn't JSON:
     /// kept as the raw string, as the Anthropic provider keeps it.
     pub fn invalid_tool_use(self, id: &str, name: &str, raw: &str) -> ReplyScript {
-        self.tool_block(id, name, raw, Some(Value::String(raw.to_owned())))
+        let mut script = self.tool_block(id, name, raw, Some(Value::String(raw.to_owned())));
+        // The status goes just before the block's finish, its last event.
+        let finish = script.events.pop().expect("the block finished");
+        script.events.push(ChatEvent::ToolInputParsed {
+            index: script.next - 1,
+            status: InputStatus::Unparsed,
+        });
+        script.events.push(finish);
+        script
     }
 
     /// A `tool_use` block whose input is still streaming: started, with

@@ -16,8 +16,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::provider::{
-    ApiMessage, BlockKind, ChatEvent, Effort, ErrorKind, ProviderError, Role, StopReason, ToolCall,
-    ToolSpec, Usage,
+    ApiMessage, BlockKind, ChatEvent, Effort, ErrorKind, InputStatus, ProviderError, Role,
+    StopReason, ToolCall, ToolSpec, Usage,
 };
 use crate::request::ChatSettings;
 use crate::tools::{self, MIN_TASK_BUDGET, NotRun};
@@ -318,6 +318,9 @@ pub struct ReplyBlock {
     pub text: String,
     /// The whole block, verbatim, once it finished.
     pub block: Option<Value>,
+    /// How a finished call's input parsed, when the provider said.
+    #[serde(default)]
+    pub input_status: Option<InputStatus>,
 }
 
 /// Where a turn is.
@@ -621,6 +624,13 @@ impl Conversation {
                     name: String::new(),
                 };
                 turn.block_mut(index, kind).text.push_str(&partial_json);
+            }
+            ChatEvent::ToolInputParsed { index, status } => {
+                let kind = || BlockKind::ToolUse {
+                    id: String::new(),
+                    name: String::new(),
+                };
+                turn.block_mut(index, kind).input_status = Some(status);
             }
             ChatEvent::BlockFinished { index, block } => {
                 let kind = BlockKind::of(&block);
@@ -993,6 +1003,7 @@ impl Turn {
                     kind: kind(),
                     text: String::new(),
                     block: None,
+                    input_status: None,
                 };
                 self.reply.insert(at, block);
                 at
@@ -1104,17 +1115,18 @@ impl Turn {
         if self.kept_tool_uses().any(|block| block.block.is_none()) {
             return true;
         }
-        // Input cut short isn't JSON: the provider keeps it as the raw
-        // string. Complete JSON that fails validation wasn't cut short.
+        // Input cut short isn't JSON: the provider says it's unparsed (or,
+        // without a status, keeps the raw string). Complete JSON that fails
+        // validation, a string included, wasn't cut short.
         *stop_reason == StopReason::MaxTokens
             && self.reply.last().is_some_and(|last| {
                 self.kept_tool_uses()
                     .last()
                     .is_some_and(|kept| kept.index == last.index)
-                    && last
-                        .block
-                        .as_ref()
-                        .is_some_and(|block| block["input"].is_string())
+                    && last.block.as_ref().is_some_and(|block| {
+                        let _ = block;
+                        last.input_status == Some(InputStatus::Unparsed)
+                    })
             })
     }
 

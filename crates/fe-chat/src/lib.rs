@@ -58,7 +58,8 @@ pub use inline::{
 };
 pub use provider::{
     ApiMessage, BlockKind, CacheControl, ChatEvent, ChatProvider, ChatRequest, ChatStream, Effort,
-    ErrorKind, ProviderError, Role, StopReason, SystemBlock, ToolCall, ToolChoice, ToolSpec, Usage,
+    ErrorKind, InputStatus, ProviderError, Role, StopReason, SystemBlock, ToolCall, ToolChoice,
+    ToolSpec, Usage,
 };
 pub use request::{ChatSettings, SYSTEM_PROMPT, build_request, render_user_content, round_request};
 pub use store::{ChatStore, ChatSummary, StoreError};

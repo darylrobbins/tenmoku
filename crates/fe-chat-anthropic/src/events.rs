@@ -5,7 +5,7 @@
 use kiln_l10n::tr;
 use std::collections::BTreeMap;
 
-use fe_chat::{BlockKind, ChatEvent, ErrorKind, ProviderError, StopReason, Usage};
+use fe_chat::{BlockKind, ChatEvent, ErrorKind, InputStatus, ProviderError, StopReason, Usage};
 use serde_json::Value;
 
 use crate::sse::SseEvent;
@@ -223,10 +223,14 @@ impl EventDecoder {
             );
             return Vec::new();
         };
-        vec![ChatEvent::BlockFinished {
-            index,
-            block: block.finish(),
-        }]
+        let (block, status) = block.finish();
+        let mut events = Vec::new();
+        // An object input is the default and sends no status.
+        if let Some(status) = status.filter(|status| *status != InputStatus::Object) {
+            events.push(ChatEvent::ToolInputParsed { index, status });
+        }
+        events.push(ChatEvent::BlockFinished { index, block });
+        events
     }
 
     fn message_delta(&mut self, data: &Value) -> Vec<ChatEvent> {
@@ -246,12 +250,13 @@ impl Block {
     /// The block as the API would echo it: its start, with the deltas'
     /// text, thinking and signature in place. A `tool_use` block's input is
     /// its joined `partial_json`, parsed strictly; when that isn't JSON, the
-    /// input is kept as the raw string, which flags it (the API's input is
-    /// always an object), and the caller must not run the tool.
-    fn finish(self) -> Value {
+    /// input is kept as the raw string and the status is `Unparsed`; the
+    /// caller must not run the tool. A parsed non-object is `NonObject`.
+    fn finish(self) -> (Value, Option<InputStatus>) {
         let mut block = self.start;
+        let mut status = None;
         let Some(fields) = block.as_object_mut() else {
-            return block;
+            return (block, status);
         };
         match fields
             .get("type")
@@ -273,8 +278,16 @@ impl Block {
             }
             "tool_use" if self.input_streamed => {
                 let input = match serde_json::from_str::<Value>(&self.partial_json) {
-                    Ok(input) => input,
+                    Ok(input) => {
+                        status = Some(if input.is_object() {
+                            InputStatus::Object
+                        } else {
+                            InputStatus::NonObject
+                        });
+                        input
+                    }
                     Err(error) => {
+                        status = Some(InputStatus::Unparsed);
                         log::warn!(
                             "fe-chat-anthropic: a tool_use block's input isn't JSON: {error}"
                         );
@@ -285,7 +298,7 @@ impl Block {
             }
             _ => {}
         }
-        block
+        (block, status)
     }
 }
 
