@@ -1126,7 +1126,7 @@ impl EditorView {
         let pin = (self.popover.current.as_mut()).and_then(|current| current.pin.as_mut());
         if let Some(pin) = pin {
             pin.selected = Some((ix, text.clone()));
-            cx.write_to_primary(ClipboardItem::new_string(text));
+            crate::view::write_primary_text(cx, text);
             cx.notify();
         }
     }

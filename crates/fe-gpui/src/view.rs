@@ -2109,12 +2109,12 @@ impl Focusable for EditorView {
 /// Writes `text` to the primary selection. GPUI has one on Linux and FreeBSD
 /// only; elsewhere this does nothing.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn write_primary_text(cx: &mut App, text: String) {
+pub(crate) fn write_primary_text(cx: &mut App, text: String) {
     cx.write_to_primary(gpui::ClipboardItem::new_string(text));
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-fn write_primary_text(_: &mut App, _: String) {}
+pub(crate) fn write_primary_text(_: &mut App, _: String) {}
 
 /// The primary selection's text, where GPUI has one (Linux and FreeBSD).
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
