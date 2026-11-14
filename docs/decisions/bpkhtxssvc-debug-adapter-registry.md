@@ -68,6 +68,15 @@ failing, marks it closed. So a session whose adapter closes after `disconnect` e
 once, without the exit grace or a kill.
 The registry treats a Port spec as found: there is no program to look for.
 
+The two tests that start `fe-dap-fake` as the host's adapter (the Port connection and
+the session that ends when the adapter closes it) are the integration tests in
+`crates/fe-dap/tests/registry_host.rs`, reading the fake's path from
+`CARGO_BIN_EXE_fe-dap-fake` as `tests/launcher.rs` does, so
+`tests::registry::a_server_port_adapter_connects_to_the_port_its_host_gives` is now
+`fe-dap::registry_host a_server_port_adapter_connects_to_the_port_its_host_gives`.
+(They first found the fake beside the unit test's own executable, which misses it on a
+Mac whose `build.build-dir` puts test binaries outside the target dir.)
+
 ## Data rules
 
 - **Python** (§3): `<root>/.venv/bin/python`, then `$VIRTUAL_ENV/bin/python`, then

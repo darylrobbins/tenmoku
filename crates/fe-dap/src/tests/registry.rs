@@ -20,12 +20,10 @@ use crate::launcher::{
     AdapterIo, AdapterLauncher, AdapterSpec, AdapterTransport, LaunchCancel, LocalLauncher,
     PORT_PLACEHOLDER,
 };
-use crate::protocol::{DisconnectArguments, InitializeArguments, Message, RequestMessage, request};
 use crate::registry::{
-    Adapter, Context, HostOs, Lookup, Registry, Runner, Source, Status, XCRUN, lldb_dap_lookups,
+    Context, HostOs, Lookup, Registry, Runner, Source, Status, XCRUN, lldb_dap_lookups,
     python_interpreter, rust_init_commands,
 };
-use crate::transport::{FrameReader, FrameWriter};
 
 /// A folder of programs and a login shell whose `PATH` is `bin` (after a
 /// directory that doesn't exist), with a project root beside them.
@@ -910,102 +908,6 @@ fn the_macos_xcrun_lookup_is_data() {
     }
 }
 
-#[test]
-fn a_server_port_adapter_connects_to_the_port_its_host_gives() {
-    // The host starts the adapter and learns its port, as jdtls gives
-    // java-debug's: here fe-dap-fake, listening on a port picked for it.
-    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let mut host_adapter = std::process::Command::new(super::launcher::fake_binary())
-        .args(["--port", &port.to_string()])
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-
-    let login = Arc::new(LoginPath::new("/nonexistent-shell"));
-    let mut registry = Registry::new(login).with_os(HostOs::Linux);
-    registry.register(AdapterSpec {
-        name: "java-debug".into(),
-        transport: AdapterTransport::Port(port),
-        languages: strings(&["java"]),
-        types: strings(&["java"]),
-        ..AdapterSpec::default()
-    });
-    let context = Context {
-        root: std::env::temp_dir(),
-        language: None,
-        virtual_env: None,
-    };
-    let Adapter {
-        source,
-        spec,
-        status,
-    } = registry.find("java", &context).unwrap();
-    // Nothing to find: the host started it.
-    assert_eq!((source, status), (Source::Host, Status::Found));
-    assert_eq!(spec.transport, AdapterTransport::Port(port));
-    assert_eq!(spec.command, PathBuf::new());
-
-    let io = LocalLauncher::new()
-        .launch(&spec, &context.root, &LaunchCancel::new())
-        .unwrap();
-    assert_eq!(io.port, Some(port));
-    let AdapterIo {
-        input,
-        output,
-        stderr,
-        stdout,
-        mut process,
-        ..
-    } = io;
-    // No process of fe-dap's: the adapter is the host's.
-    assert!(stderr.is_none() && stdout.is_none());
-    assert_eq!(process.id(), None);
-    let mut writer = FrameWriter::new(input);
-    let mut reader = FrameReader::new(output);
-    async_io::block_on(async {
-        let initialize = Message::Request(RequestMessage::new::<request::Initialize>(
-            1,
-            &InitializeArguments {
-                adapter_id: "java".into(),
-                ..Default::default()
-            },
-        ));
-        writer.write(&initialize).await.unwrap();
-        let Some(Message::Response(response)) = reader.read().await.unwrap() else {
-            panic!("no initialize response");
-        };
-        assert!(response.success);
-        assert_eq!(response.request_seq, 1);
-        let capabilities = response.body::<request::Initialize>().unwrap();
-        assert_eq!(capabilities.supports_configuration_done_request, Some(true));
-        let disconnect = Message::Request(RequestMessage::new::<request::Disconnect>(
-            2,
-            &DisconnectArguments::default(),
-        ));
-        writer.write(&disconnect).await.unwrap();
-        loop {
-            match reader.read().await.unwrap() {
-                Some(Message::Response(response)) if response.command == "disconnect" => break,
-                Some(_) => {}
-                None => panic!("no disconnect response"),
-            }
-        }
-        assert_eq!(reader.read().await.unwrap(), None);
-        // The adapter closed the connection: that alone is its end, with
-        // no kill.
-        process.exited().await;
-        // A kill after it changes nothing.
-        process.kill();
-        process.exited().await;
-    });
-    let exit = host_adapter.wait().unwrap();
-    assert!(exit.success(), "{exit:?}");
-}
-
 /// A user's adapter of their own over TCP gets that transport.
 #[cfg(unix)]
 #[test]
@@ -1078,44 +980,6 @@ fn a_port_connection_closed_by_either_end_has_exited() {
     }
 }
 
-/// A session over a Port adapter ends as soon as the adapter closes its
-/// connection after `disconnect`: no kill, and no exit grace, on a clock
-/// that never moves.
-#[test]
-fn a_port_session_ends_when_the_adapter_closes_its_connection() {
-    use super::session_harness::{options_with_breakpoint, start_on};
-    use crate::session::{EndReason, SessionState};
-
-    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let mut host_adapter = std::process::Command::new(super::launcher::fake_binary())
-        .args(["--port", &port.to_string()])
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let spec = AdapterSpec {
-        name: "java-debug".into(),
-        transport: AdapterTransport::Port(port),
-        ..AdapterSpec::default()
-    };
-    let io = LocalLauncher::new()
-        .launch(&spec, &std::env::temp_dir(), &LaunchCancel::new())
-        .unwrap();
-    let mut options = options_with_breakpoint();
-    options.adapter = spec;
-    let mut harness = start_on(io, options);
-    harness.wait_state(SessionState::Stopped);
-    harness.session.stop();
-    let ended = harness.wait_ended();
-    // Its clock never moved, so no grace timer ended it.
-    assert_eq!(ended.reason, EndReason::Stopped);
-    let exit = host_adapter.wait().unwrap();
-    assert!(exit.success(), "{exit:?}");
-}
-
 /// [`SystemRunner`]'s one deadline covers its stdout as well as its exit:
 /// a program whose descendant keeps its stdout open has run out of time,
 /// and that descendant is killed with its group.
@@ -1156,7 +1020,7 @@ fn the_system_runner_stops_a_descendant_holding_its_stdout() {
         .trim()
         .parse()
         .unwrap();
-    super::launcher::wait_gone(pid);
+    wait_gone(pid);
 
     // One that never ends is stopped at the deadline too.
     let hanging = fixture.dir.join("hanging");
@@ -1164,4 +1028,32 @@ fn the_system_runner_stops_a_descendant_holding_its_stdout() {
     let started = Instant::now();
     assert_eq!(runner.stdout(&hanging, &[], &fixture.root), None);
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+/// Waits up to 10 s for process `pid` to be gone: no such process, or (on
+/// Linux) a zombie waiting for a parent that isn't us.
+#[cfg(unix)]
+fn wait_gone(pid: u32) {
+    use std::time::{Duration, Instant};
+
+    let gone = || {
+        let Some(pid) = rustix::process::Pid::from_raw(pid as i32) else {
+            return true;
+        };
+        if rustix::process::test_kill_process(pid).is_err() {
+            return true;
+        }
+        std::fs::read_to_string(format!("/proc/{}/stat", pid.as_raw_nonzero()))
+            .ok()
+            .and_then(|stat| {
+                stat.rsplit_once(')')
+                    .map(|(_, rest)| rest.trim_start().starts_with('Z'))
+            })
+            .unwrap_or(false)
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !gone() {
+        assert!(Instant::now() < deadline, "process {pid} is still running");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
