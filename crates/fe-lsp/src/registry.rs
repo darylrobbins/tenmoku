@@ -96,7 +96,7 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
         // file, not the parent's: no outermost-ancestor mechanism exists.
         ServerSpec {
             root_markers: markers(&GRADLE_MAVEN_MARKERS),
-            ..spec("jdtls", "jdtls", &[], &["java"])
+            ..spec(JDTLS, "jdtls", &[], &["java"])
         },
         // JetBrains' kotlin-lsp, the maintained server; fwcd's
         // kotlin-language-server is a manual `[lsp.servers.<name>]` override
@@ -116,6 +116,10 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
         },
     ]
 }
+
+/// The built-in Java server, the one that takes the host's bundles
+/// ([`Registry::set_jdtls_bundles`]).
+pub(crate) const JDTLS: &str = "jdtls";
 
 /// The built-in TypeScript server `lsp.typescript_server` picks; the other
 /// never runs.
@@ -137,6 +141,9 @@ pub(crate) struct Registry {
     extension: Vec<ServerSpec>,
     /// Registered by the host, in order, each name once.
     host: Vec<ServerSpec>,
+    /// The bundles the host gives jdtls, in order, each once: merged into
+    /// its `initializationOptions.bundles` as it launches ([`launched`](Self::launched)).
+    jdtls_bundles: Vec<String>,
 }
 
 impl Registry {
@@ -191,6 +198,52 @@ impl Registry {
             Some(host) => *host = spec,
             None => self.host.push(spec),
         }
+    }
+
+    /// Sets the bundles (jar paths) the host gives jdtls, dropping repeats.
+    /// Whether they changed.
+    pub(crate) fn set_jdtls_bundles(&mut self, bundles: Vec<String>) -> bool {
+        let mut kept: Vec<String> = Vec::with_capacity(bundles.len());
+        for bundle in bundles {
+            if !kept.contains(&bundle) {
+                kept.push(bundle);
+            }
+        }
+        if self.jdtls_bundles == kept {
+            return false;
+        }
+        self.jdtls_bundles = kept;
+        true
+    }
+
+    pub(crate) fn jdtls_bundles(&self) -> &[String] {
+        &self.jdtls_bundles
+    }
+
+    /// `spec`, a spec from [`specs`](Self::specs), as a routed instance
+    /// launches it, with the host bundles that reached it: jdtls's with
+    /// them merged into its `initializationOptions` ([`with_bundles`]),
+    /// none if they can't be; any other spec unchanged, with none. Kept
+    /// out of `specs` so that new bundles don't restart a running jdtls:
+    /// they apply on its next start.
+    pub(crate) fn launched(&self, spec: ServerSpec) -> (ServerSpec, Vec<String>) {
+        if spec.name != JDTLS || self.jdtls_bundles.is_empty() {
+            return (spec, Vec::new());
+        }
+        match with_bundles(spec, &self.jdtls_bundles) {
+            (spec, Ok(())) => (spec, self.jdtls_bundles.clone()),
+            (spec, Err(_)) => (spec, Vec::new()),
+        }
+    }
+
+    /// Why the host's bundles can't reach jdtls's next launch, if they
+    /// can't: see [`with_bundles`]. `None` with no bundles, or no jdtls.
+    pub(crate) fn bundles_refused(&self) -> Option<BundlesRefused> {
+        if self.jdtls_bundles.is_empty() {
+            return None;
+        }
+        let jdtls = self.specs().into_iter().find(|spec| spec.name == JDTLS)?;
+        with_bundles(jdtls, &self.jdtls_bundles).1.err()
     }
 
     /// Every server that may run now, in the order a language's server is
@@ -448,6 +501,61 @@ pub(crate) fn apply(mut spec: ServerSpec, settings: &LspServerSettings) -> Serve
         spec.settings = Value::Object(settings.clone());
     }
     spec
+}
+
+/// Why the host's jdtls bundles can't be merged into jdtls's
+/// `initializationOptions` without replacing what the user wrote in
+/// `[lsp.servers.jdtls] initialization_options`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BundlesRefused {
+    /// The options aren't a table.
+    OptionsNotATable,
+    /// Their `bundles` isn't a list.
+    BundlesNotAList,
+}
+
+/// `spec` with `bundles` appended to its `initializationOptions.bundles`,
+/// after the ones already listed there (the user's
+/// `[lsp.servers.jdtls] initialization_options`), skipping any listed
+/// already. No options, or null ones, become `{ "bundles": [...] }`, and a
+/// missing or null `bundles` a new list. Options that aren't an object, or
+/// a `bundles` that isn't a list, are left as they are, with a warning,
+/// and why: merging would replace what the user wrote.
+pub(crate) fn with_bundles(
+    mut spec: ServerSpec,
+    bundles: &[String],
+) -> (ServerSpec, Result<(), BundlesRefused>) {
+    if bundles.is_empty() {
+        return (spec, Ok(()));
+    }
+    let name = spec.name.clone();
+    let options =
+        (spec.initialization_options).get_or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if options.is_null() {
+        *options = Value::Object(serde_json::Map::new());
+    }
+    let Value::Object(options) = options else {
+        log::warn!(
+            "{name}'s initialization_options aren't a table: the host's bundles aren't added"
+        );
+        return (spec, Err(BundlesRefused::OptionsNotATable));
+    };
+    let listed = (options.entry("bundles")).or_insert_with(|| Value::Array(Vec::new()));
+    if listed.is_null() {
+        *listed = Value::Array(Vec::new());
+    }
+    let Value::Array(listed) = listed else {
+        log::warn!(
+            "{name}'s initialization_options.bundles isn't a list: the host's bundles aren't added"
+        );
+        return (spec, Err(BundlesRefused::BundlesNotAList));
+    };
+    for bundle in bundles {
+        if !listed.iter().any(|given| given.as_str() == Some(bundle)) {
+            listed.push(Value::String(bundle.clone()));
+        }
+    }
+    (spec, Ok(()))
 }
 
 /// Whether a running server's spec changing from `old` to `new` takes a

@@ -88,6 +88,9 @@ pub struct Script {
     /// Answers to other requests, by method. Unscripted methods are
     /// echoed.
     pub replies: HashMap<String, Scripted>,
+    /// Answers to `workspace/executeCommand`, by the command it names,
+    /// ahead of `replies`. An unscripted command goes by `replies`.
+    pub commands: HashMap<String, Scripted>,
     /// Whether a `$/cancelRequest` for a request still being answered
     /// answers it at once with `RequestCancelled` (-32800), as a compliant
     /// server does. Otherwise it's only recorded.
@@ -134,6 +137,7 @@ impl Default for Script {
             answer_shutdown: true,
             on_exit: OnExit::Exit(0),
             replies: HashMap::new(),
+            commands: HashMap::new(),
             answer_cancels: false,
         }
     }
@@ -717,6 +721,15 @@ impl FakeServer {
         self.lock().script.replies.insert(method.to_owned(), reply);
     }
 
+    /// Changes the script's answer to `workspace/executeCommand` naming
+    /// `command` from now on, as [`set_reply`](Self::set_reply) does.
+    pub fn set_command_reply(&self, command: &str, reply: Scripted) {
+        self.lock()
+            .script
+            .commands
+            .insert(command.to_owned(), reply);
+    }
+
     /// Writes `bytes` to the latest launch's stderr.
     pub fn stderr(&self, bytes: &[u8]) {
         let _ = self.session().stderr.unbounded_send(bytes.to_vec());
@@ -1228,7 +1241,11 @@ async fn answer(
     clock: &dyn Clock,
     req: &AnyRequest,
 ) -> Result<Value, ResponseError> {
-    if let Some(Scripted { reply, delay }) = script.replies.get(&req.method) {
+    let command = (req.method == "workspace/executeCommand")
+        .then(|| req.params["command"].as_str())
+        .flatten()
+        .and_then(|command| script.commands.get(command));
+    if let Some(Scripted { reply, delay }) = command.or_else(|| script.replies.get(&req.method)) {
         if !delay.is_zero() {
             clock.sleep(*delay).await;
         }

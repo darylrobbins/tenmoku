@@ -61,7 +61,10 @@ use crate::event::{
 };
 use crate::identity::{Generation, Identities, IncarnationId, SessionId};
 use crate::launcher::{Flag, LaunchCancel, ServerLauncher, ServerSpec};
-use crate::registry::{Registry, needs_restart, server_for, server_root, servers_for};
+use crate::registry::{
+    BundlesRefused, JDTLS, Registry, needs_restart, server_for, server_root, servers_for,
+    with_bundles,
+};
 use crate::requests::{Reply, call, timeout, within};
 use crate::restart::SharedCrashes;
 use crate::server::{
@@ -204,6 +207,10 @@ pub struct LspManager {
     identities: Identities,
     /// The crashes of the servers started at each (name, root).
     crashes: HashMap<(String, PathBuf), SharedCrashes>,
+    /// The host's jdtls bundles that reached the last instance started at
+    /// each (name, root) ([`set_jdtls_bundles`](Self::set_jdtls_bundles)):
+    /// none but for a routed jdtls whose options took them.
+    launched_bundles: HashMap<(String, PathBuf), Vec<String>>,
     /// The log ring of the servers started at each (name, root).
     logs: HashMap<(String, PathBuf), SharedLog>,
     /// The latest status of the servers started at each (name, root).
@@ -221,6 +228,21 @@ pub struct LspManager {
     switch: Arc<Flag>,
     /// Shared with the [`KillSwitch`]es.
     threads: Threads,
+}
+
+/// What the host's jdtls bundles reach
+/// ([`LspManager::set_jdtls_bundles`], [`LspManager::jdtls_bundles`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct JdtlsBundles {
+    /// The roots of the jdtls instances [`LspManager::open`] routes to
+    /// that run without exactly these bundles, oldest first: a
+    /// [`restart`](LspManager::restart) there brings them in, unless
+    /// `refused`.
+    pub stale: Vec<PathBuf>,
+    /// Why they can't reach jdtls's next launch: the user's
+    /// `initialization_options` can't take them. Its instances launch
+    /// without them until the settings change.
+    pub refused: Option<BundlesRefused>,
 }
 
 /// Force-stops every server an [`LspManager`] started, from
@@ -279,7 +301,9 @@ type Trusted = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
 struct Handle {
     name: String,
     root: PathBuf,
-    /// What it was started with, or last configured with.
+    /// What it was started with, or last configured with: for a routed
+    /// instance, as [`Registry::specs`] gave it, without the host's jdtls
+    /// bundles, so that new bundles don't restart it.
     spec: ServerSpec,
     /// Started by [`LspManager::open`], so settings changes apply to it.
     routed: bool,
@@ -488,6 +512,7 @@ impl LspManager {
             registry: Registry::default(),
             identities: Identities::default(),
             crashes: HashMap::new(),
+            launched_bundles: HashMap::new(),
             logs: HashMap::new(),
             statuses: HashMap::new(),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
@@ -592,6 +617,73 @@ impl LspManager {
     pub fn register_spec(&mut self, spec: ServerSpec) {
         self.registry.register(spec);
         self.reconcile();
+    }
+
+    /// Sets the bundles (jar paths, such as java-debug's
+    /// `com.microsoft.java.debug.plugin-*.jar`) jdtls loads, which are
+    /// merged into its `initializationOptions.bundles` after any the
+    /// user's `[lsp.servers.jdtls] initialization_options` list, without
+    /// replacing them. They go to the jdtls [`open`](Self::open) routes
+    /// documents to, as named by built-ins, settings or
+    /// [`register_spec`](Self::register_spec); a spec given to
+    /// [`start`](Self::start) is launched as given.
+    ///
+    /// They apply on jdtls's next start at a root: the first document
+    /// there, a [`restart`](Self::restart), or a restart for a change to
+    /// its spec. One already running keeps the bundles it launched with
+    /// (jdtls loads bundles only as it initializes), and so does a crash
+    /// restart of it; one that gave up after too many crashes stays
+    /// stopped. Returns what they reach ([`jdtls_bundles`](Self::jdtls_bundles)).
+    /// A path that isn't UTF-8 is skipped, with a warning: the bundles are
+    /// JSON strings.
+    pub fn set_jdtls_bundles(&mut self, bundles: Vec<PathBuf>) -> JdtlsBundles {
+        let bundles: Vec<String> = (bundles.into_iter())
+            .filter_map(|path| match path.into_os_string().into_string() {
+                Ok(path) => Some(path),
+                Err(path) => {
+                    log::warn!("jdtls bundle {path:?} isn't UTF-8, so it's skipped");
+                    None
+                }
+            })
+            .collect();
+        self.registry.set_jdtls_bundles(bundles);
+        self.jdtls_bundles()
+    }
+
+    /// What the bundles [`set_jdtls_bundles`](Self::set_jdtls_bundles) set
+    /// reach now, under the current settings.
+    pub fn jdtls_bundles(&mut self) -> JdtlsBundles {
+        self.prune();
+        let wanted = self.registry.jdtls_bundles();
+        let mut stale: Vec<(ServerId, PathBuf)> = (self.servers.iter())
+            .filter(|(_, handle)| handle.routed && handle.name == JDTLS)
+            .filter(|(_, handle)| {
+                let key = (handle.name.clone(), handle.root.clone());
+                self.launched_bundles.get(&key).map(Vec::as_slice) != Some(wanted)
+            })
+            .map(|(&id, handle)| (id, handle.root.clone()))
+            .collect();
+        stale.sort();
+        JdtlsBundles {
+            stale: stale.into_iter().map(|(_, root)| root).collect(),
+            refused: self.registry.bundles_refused(),
+        }
+    }
+
+    /// The newest instance of the server `name` running for `root`, if
+    /// any.
+    pub(crate) fn instance_at(&self, name: &str, root: &Path) -> Option<ServerId> {
+        (self.servers.iter())
+            .filter(|(_, handle)| handle.name == name && handle.root == root)
+            .map(|(&id, _)| id)
+            .max()
+    }
+
+    /// `server`'s session, shared with its thread.
+    pub(crate) fn shared_session(&self, server: ServerId) -> Option<Arc<Mutex<Session>>> {
+        self.servers
+            .get(&server)
+            .map(|handle| handle.session.clone())
     }
 
     /// `buffer`'s lead server, if it's placed there:
@@ -847,9 +939,14 @@ impl LspManager {
         let before = lock(&latest).clone();
         crate::server::latest(&latest, id, &ServerStatus::Starting);
         let unmade = latest.clone();
+        // Routed jdtls launches with the host's bundles (registry.rs).
+        let (launched, bundles) = match routed {
+            true => self.registry.launched(spec.clone()),
+            false => (spec.clone(), Vec::new()),
+        };
         let thread = Server {
             id,
-            spec: spec.clone(),
+            spec: launched,
             root: root.to_owned(),
             launcher: self.launcher.clone(),
             clock: self.clock.clone(),
@@ -872,6 +969,7 @@ impl LspManager {
         .spawn()
         .inspect_err(|_| *lock(&unmade) = before)?;
         self.retiring.remove(&key);
+        self.launched_bundles.insert(key, bundles);
         let done = done.shared();
         {
             let mut threads = lock(&self.threads);
@@ -1557,11 +1655,18 @@ impl LspManager {
         if !(self.trusted)(&root) {
             return None;
         }
-        if let Some(crashes) = self.crashes.get(&(spec.name.clone(), root.clone())) {
+        let key = (spec.name.clone(), root.clone());
+        // What it launched with: jdtls with the bundles that reached it
+        // then, which don't count as a new spec.
+        let launched = match self.launched_bundles.get(&key) {
+            Some(bundles) if spec.name == JDTLS => with_bundles(spec.clone(), bundles).0,
+            _ => spec.clone(),
+        };
+        if let Some(crashes) = self.crashes.get(&key) {
             let mut crashes = lock(crashes);
             match &crashes.given_up {
                 // It stays stopped until a restart.
-                Some(given_up) if *given_up == spec => return None,
+                Some(given_up) if *given_up == spec || *given_up == launched => return None,
                 // A new spec gets a fresh budget.
                 Some(_) => crashes.clear(),
                 None => {}

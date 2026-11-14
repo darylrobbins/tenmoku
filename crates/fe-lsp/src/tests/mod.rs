@@ -13,6 +13,7 @@ mod encoding;
 mod fake_launchers;
 mod hover;
 mod identity;
+mod java_debug;
 mod kill;
 mod launcher;
 mod launcher_path_safety;

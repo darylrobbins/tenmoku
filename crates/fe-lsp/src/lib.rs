@@ -61,6 +61,10 @@
 //!   the host to place in each closed one ([`workspace_edit`]).
 //! - [`rename`], [`code_action`], [`formatting`] and [`signature_help`]
 //!   hold those features.
+//! - [`LspManager::execute_command_at`] has the server running for a root
+//!   run one of its own commands (`workspace/executeCommand`), with its
+//!   reply as JSON; [`LspManager::set_jdtls_bundles`] gives jdtls bundles
+//!   to load, such as java-debug's.
 //! - [`LspNavigation`] answers fe-nav's go-to-definition, references and
 //!   workspace symbols from a manager's servers, once each is ready.
 //!
@@ -90,6 +94,7 @@ mod document_link;
 pub mod document_symbol;
 mod encoding;
 mod event;
+mod execute_command;
 mod file_operations;
 pub mod folding_range;
 pub mod formatting;
@@ -158,9 +163,11 @@ pub use launcher::{
 };
 pub use linked_editing::LinkedEditing;
 pub use lsp_types::FileChangeType;
-pub use manager::{DEFAULT_MAX_FILE_BYTES, Feature, KillSwitch, LspManager, Owner, RouteServer};
+pub use manager::{
+    DEFAULT_MAX_FILE_BYTES, Feature, JdtlsBundles, KillSwitch, LspManager, Owner, RouteServer,
+};
 pub use navigation::LspNavigation;
-pub use registry::{extension_spec, server_root};
+pub use registry::{BundlesRefused, extension_spec, server_root};
 pub use requests::{ORPHANS_MAX, Reply};
 pub use semantic_tokens::{SemanticToken, SemanticTokens};
 pub use signature_help::{Signature, SignatureContext, SignatureHelp, SignatureTrigger};
