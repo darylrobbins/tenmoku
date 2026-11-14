@@ -21,6 +21,7 @@ use kiln_l10n::{Args, Catalogue, Resources, lint};
 // app's binary links them.
 use fe_buffer as _;
 use fe_config as _;
+use fe_dap as _;
 use fe_gpui as _;
 use fe_lsp as _;
 use fe_net as _;

@@ -1,0 +1,47 @@
+[package]
+name = "fe-dap"
+description = "Debug Adapter Protocol client: framing over stdio and TCP, protocol types, the adapter launcher and a scripted fake adapter. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The scripted in-process fake adapter (`fe_dap::fake`) and the
+# `fe-dap-fake` binary, for this crate's and other crates' tests.
+test-support = []
+
+[[bin]]
+# The fake adapter over TCP (or stdio), so `LocalLauncher` is tested end to
+# end with a real process. Never shipped.
+name = "fe-dap-fake"
+path = "src/bin/fe-dap-fake.rs"
+required-features = ["test-support"]
+test = false
+doc = false
+
+[dependencies]
+# fe-lsp's runtime shape: a thread per session under async-io, the adapter
+# process through async-process, no tokio.
+async-io.workspace = true
+async-process.workspace = true
+futures.workspace = true
+kiln-l10n.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Process groups (src/launcher.rs).
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+# Turns `test-support` on for the tests, so the `fe-dap-fake` binary is built
+# for them.
+fe-dap = { path = ".", features = ["test-support"] }
+kiln-l10n = { workspace = true, features = ["lint"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

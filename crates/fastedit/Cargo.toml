@@ -24,6 +24,10 @@ async-channel.workspace = true
 base64.workspace = true
 fe-buffer.workspace = true
 fe-config.workspace = true
+# The debugger's client (docs/decisions/r1b9dw3g0g-debugger.md). Nothing calls it yet;
+# depended on now so its catalogue is the app's, as tests/l10n_catalogue.rs requires of
+# every crate with an l10n/ directory.
+fe-dap.workspace = true
 fe-gpui.workspace = true
 fe-lsp.workspace = true
 fe-net.workspace = true

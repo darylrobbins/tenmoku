@@ -2155,6 +2155,7 @@ dependencies = [
  "embed-resource",
  "fe-buffer",
  "fe-config",
+ "fe-dap",
  "fe-gpui",
  "fe-lsp",
  "fe-net",
@@ -2318,6 +2319,22 @@ dependencies = [
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
  "toml_edit 0.25.15+spec-1.1.0",
+]
+
+[[package]]
+name = "fe-dap"
+version = "0.1.6"
+dependencies = [
+ "async-io",
+ "async-process",
+ "fe-dap",
+ "futures",
+ "kiln-l10n",
+ "log",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -53,6 +53,7 @@ fe-plugin = { path = "crates/fe-plugin" }
 kiln-plugin = { path = "kiln/crates/kiln-plugin" }
 fe-registry = { path = "crates/fe-registry" }
 fe-acp = { path = "crates/fe-acp" }
+fe-dap = { path = "crates/fe-dap" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to
