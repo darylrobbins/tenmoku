@@ -177,6 +177,8 @@ fn file_name(word: &str) -> &str {
 /// matches anything after the words before it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pattern {
+    /// The pattern as written, which a [`Reason::Pattern`] names.
+    text: String,
     words: Vec<String>,
     /// A lone `*`: matches every command.
     any: bool,
@@ -193,7 +195,16 @@ impl Pattern {
             // An empty pattern matches nothing.
             words = vec![String::new()];
         }
-        Pattern { words, any }
+        Pattern {
+            text: text.trim().to_owned(),
+            words,
+            any,
+        }
+    }
+
+    /// The pattern as written, trimmed.
+    pub fn text(&self) -> &str {
+        &self.text
     }
 
     /// Whether argv starts with this pattern's words, the program compared
@@ -234,6 +245,22 @@ struct Remembered {
 struct Memory {
     classes: HashSet<Class>,
     commands: HashSet<Remembered>,
+}
+
+/// What decided a request ([`Policy::decide_with_reason`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reason {
+    /// The class's level, the user's or the project's.
+    Class,
+    /// A `commands_allow`, `commands_ask` or `commands_deny` pattern, as
+    /// written.
+    Pattern(String),
+    /// A remembered "Allow for this chat".
+    Remembered,
+    /// A rule no setting changes: a request that must prompt (shell syntax,
+    /// a program given with a path or not resolved, a sandbox network
+    /// request), or a loopback host refused.
+    Hard,
 }
 
 /// The policy: class levels, command patterns and per-chat memory.
@@ -310,20 +337,25 @@ impl Policy {
 
     /// Decides a request. Never `Allow` for something that must prompt.
     pub fn decide(&self, request: &Request) -> Level {
+        self.decide_with_reason(request).0
+    }
+
+    /// Decides a request, with what decided it: for the audit trail.
+    pub fn decide_with_reason(&self, request: &Request) -> (Level, Reason) {
         match &request.target {
             Target::SandboxNetworkAccess { host } => {
                 if is_loopback_host(host) {
-                    Level::Deny
+                    (Level::Deny, Reason::Hard)
                 } else {
-                    Level::Ask
+                    (Level::Ask, Reason::Hard)
                 }
             }
             Target::Plain(_) => {
                 let level = self.class_level(request.class);
                 if level == Level::Ask && self.class_remembered(request) {
-                    Level::Allow
+                    (Level::Allow, Reason::Remembered)
                 } else {
-                    level
+                    (level, Reason::Class)
                 }
             }
             Target::Command(command) => self.decide_command(request, command),
@@ -338,7 +370,7 @@ impl Policy {
                 .is_some_and(|m| m.classes.contains(&request.class))
     }
 
-    fn decide_command(&self, request: &Request, command: &Command) -> Level {
+    fn decide_command(&self, request: &Request, command: &Command) -> (Level, Reason) {
         let class_level = self.class_level(Class::RunCommand);
         // A request's own class is run_command whatever the caller set.
         let _ = request.class;
@@ -355,31 +387,46 @@ impl Policy {
             ),
         };
         let Some(&first) = words.first() else {
-            return class_level.max(Level::Ask);
+            return if class_level == Level::Deny {
+                (Level::Deny, Reason::Class)
+            } else {
+                (Level::Ask, Reason::Hard)
+            };
         };
         // Deny and ask patterns: for shell syntax only the first word is
         // known, so a pattern matches on its first word alone.
-        let hits = |patterns: &[Pattern]| {
-            patterns.iter().any(|p| {
-                if shaped {
-                    p.matches_first_word(first)
-                } else {
-                    p.matches_argv(&words)
-                }
-            })
+        let hit = |patterns: &[Pattern]| -> Option<Reason> {
+            patterns
+                .iter()
+                .find(|p| {
+                    if shaped {
+                        p.matches_first_word(first)
+                    } else {
+                        p.matches_argv(&words)
+                    }
+                })
+                .map(|p| Reason::Pattern(p.text.clone()))
         };
-        if class_level == Level::Deny || hits(&self.deny) {
-            return Level::Deny;
+        if class_level == Level::Deny {
+            return (Level::Deny, Reason::Class);
         }
-        // Shell syntax, a path-given program or an unresolved one must
-        // prompt, whatever the class level; and so must an ask pattern.
-        if hits(&self.ask) || !allow_eligible(command, first, shaped, resolved) {
-            return Level::Ask;
+        if let Some(reason) = hit(&self.deny) {
+            return (Level::Deny, reason);
+        }
+        // An ask pattern prompts; so must shell syntax, a path-given
+        // program or an unresolved one, whatever the class level.
+        if let Some(reason) = hit(&self.ask) {
+            return (Level::Ask, reason);
+        }
+        if !allow_eligible(command, first, shaped, resolved) {
+            return (Level::Ask, Reason::Hard);
         }
         if class_level == Level::Allow {
-            return Level::Allow;
+            return (Level::Allow, Reason::Class);
         }
-        let by_pattern = self.allow.iter().any(|p| p.matches_argv(&words));
+        if let Some(p) = self.allow.iter().find(|p| p.matches_argv(&words)) {
+            return (Level::Allow, Reason::Pattern(p.text.clone()));
+        }
         let by_memory = self.memory.get(&request.chat).is_some_and(|m| {
             m.commands.contains(&Remembered {
                 program: first.to_owned(),
@@ -387,10 +434,10 @@ impl Policy {
                 resolved: resolved.map(Path::to_path_buf),
             })
         });
-        if by_pattern || by_memory {
-            Level::Allow
+        if by_memory {
+            (Level::Allow, Reason::Remembered)
         } else {
-            Level::Ask
+            (Level::Ask, Reason::Class)
         }
     }
 

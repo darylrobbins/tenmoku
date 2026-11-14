@@ -13,6 +13,13 @@
 //! line's) a keystroke reaches as a [`fe_gpui::commands::RunCommand`] that
 //! the panel takes. [`command_catalog`] checks them all with no app.
 
+#[allow(
+    dead_code,
+    reason = "the API tool loop (card AG10) records its decisions"
+)]
+mod agent_audit;
+#[allow(dead_code, reason = "the API tool loop (card AG10) runs the commands")]
+mod agent_command;
 #[allow(dead_code, reason = "the API tool loop (card AG10) runs the tools")]
 mod agent_tools;
 mod ai_changes_buffers;
@@ -211,6 +218,7 @@ pub fn init(cx: &mut App) {
     find_commands::init(cx);
     path_commands::init(cx);
     save_commands::init(cx);
+    agent_audit::init(cx);
     test_commands::init(cx);
     test_lens::init(cx);
     lsp::init(cx);

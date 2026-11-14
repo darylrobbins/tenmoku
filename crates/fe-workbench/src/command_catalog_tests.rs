@@ -224,6 +224,7 @@ fn the_palette_lists_what_it_listed(cx: &mut TestAppContext) {
 /// The IDs the palette listed at the base both with the editor focused and
 /// with the project panel focused.
 const LISTED_ANYWHERE: &[&str] = &[
+    "agent.show_audit_log",
     "ai.changes_accept_all",
     "ai.changes_reject_all",
     "ai.changes_revert",

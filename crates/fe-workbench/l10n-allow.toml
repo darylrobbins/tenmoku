@@ -666,6 +666,23 @@ reason = "A prompting fetch's, pull's or push's thread's name, shown only in deb
 path = "src/agent_tools.rs"
 reason = "Tool results, their headers and truncation lines, and the reasons a call failed are sent to the model, not shown to the user"
 
+# The API chat's run_command executor (card AG8): its results, statuses
+# ("exit N", "killed after T s", "[N bytes omitted]") and the reasons a call
+# failed are the model's text, as agent_tools.rs's are; its thread names show
+# only in debuggers.
+
+[[file]]
+path = "src/agent_command.rs"
+reason = "run_command results, their status lines and truncation line, and the reasons a call failed are sent to the model, not shown to the user"
+
+# The agents' audit log (card AG8): its JSONL lines are a state file's
+# records, the same whatever the locale.
+
+[[literal]]
+file = "src/agent_audit.rs"
+text = "the log has no folder"
+reason = "An io::Error for a log path with no parent, only logged when an audit line can't be written"
+
 [[literal]]
 file = "src/git_branch_menu.rs"
 text = "git-branches-row:{ix}"

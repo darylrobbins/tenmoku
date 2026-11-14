@@ -3,6 +3,7 @@
 # `#[kiln::command]` method has, or the title a registry registers, stays
 # the English fallback; tests/l10n.rs checks the two match.
 
+command-agent-show_audit_log = Show Agent Audit Log
 command-ai-changes_accept_all = Accept All AI Changes
 command-ai-changes_next_file = Select Next AI Changed File
 command-ai-changes_previous_file = Select Previous AI Changed File
@@ -440,6 +441,13 @@ command-workbench-unpin_tab = Unpin Tab
 command-workbench-untrust_folder = Untrust This Folder
 
 ## What the commands say
+
+# The agents' audit log (agent_audit.rs): its tab's title, and what Show
+# Agent Audit Log says when there's nothing to open.
+workbench-agent-audit-title = Agent Audit Log
+workbench-agent-audit-no-folder = Open a folder to see what agents did in it
+workbench-agent-audit-empty = No agent actions are logged for this folder yet
+workbench-agent-audit-unreadable = Can't read the agent audit log
 
 # Spelling (spell_commands.rs).
 workbench-spell-no-misspelling-here = No misspelling here
