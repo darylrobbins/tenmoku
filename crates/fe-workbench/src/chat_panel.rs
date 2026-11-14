@@ -39,6 +39,10 @@
 //!   proposes it in its file, or over the selection its turn was sent with,
 //!   by dispatching `chat.propose_edit` as the AI actor; a link to a file
 //!   under the root opens it.
+//! - **Lane 1** (`crate::lanes`): every chat is the window's lane 1. A
+//!   reply starting to stream is a send, which starts the lane's turn; the
+//!   reply finishing, failing or being stopped ends it, as does a new chat
+//!   taking the panel mid-reply.
 //! - **Chats** (record § 11): each is kept at
 //!   `<state_dir>/chats/<layout_key(root)>/<id>.json` (`no-folder` with no
 //!   root) by [`ChatStore`], written after each finished turn on the
@@ -63,7 +67,7 @@ use fe_chat_anthropic::ApiKey;
 use fe_chat_view::{ChatOptions, ChatView, ChatViewEvent};
 use fe_command::Invocation;
 use fe_config::ChatEffort;
-use fe_editor::EditorModel;
+use fe_editor::{EditorModel, lane::LaneEvent};
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable,
     Global, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, PromptLevel,
@@ -87,10 +91,11 @@ use crate::{
 
 #[path = "chat_apply.rs"]
 pub(crate) mod chat_apply;
+pub(crate) use chat_apply::AGENT;
 #[path = "chat_context.rs"]
 pub(crate) mod chat_context;
 #[path = "chat_store_worker.rs"]
-mod chat_store_worker;
+pub(crate) mod chat_store_worker;
 
 use chat_store_worker::{SaveState, Saved, Target, Worker, WorkerError};
 
@@ -504,6 +509,9 @@ pub(crate) struct ChatPanel {
     listing: Option<Task<()>>,
     /// The chat (by `views_made`) and prompt an ask is to send once the keychain's key is read.
     pending_send: Option<(u64, String)>,
+    /// Whether lane 1's turn was started by a reply streaming, and not yet
+    /// ended.
+    in_turn: bool,
     /// The view's events, its gaining focus, and its changes.
     _view: [Subscription; 3],
     /// The workbench's changes, and its root's and its trust's.
@@ -628,6 +636,7 @@ impl ChatPanel {
             picker: false,
             listing: None,
             pending_send: None,
+            in_turn: false,
             _view: view_subscriptions,
             _workbench: Vec::new(),
         }
@@ -672,7 +681,10 @@ impl ChatPanel {
             this.gather(cx);
         });
         // A turn sent keeps the selection it was sent with.
-        let changed = cx.observe(&view, |this, _, cx| this.note_turns(cx));
+        let changed = cx.observe(&view, |this, _, cx| {
+            this.note_turns(cx);
+            this.note_send(cx);
+        });
         (view, options, [events, focused, changed])
     }
 
@@ -1567,6 +1579,8 @@ impl ChatPanel {
         self.listing = None;
         let (view, options, subscriptions) = Self::chat_view(self.notice, conversation, window, cx);
         (self.view, self.options, self._view) = (view, options, subscriptions);
+        // The old view's stopped reply tells nothing now.
+        self.end_lane_turn(cx);
         self.applies.new_chat();
         self.apply_key(cx);
         self.gather_soon(cx);
@@ -1843,6 +1857,36 @@ impl ChatPanel {
         }
     }
 
+    /// A reply started streaming: a send, which starts lane 1's turn.
+    fn note_send(&mut self, cx: &mut Context<Self>) {
+        if self.in_turn || !self.view.read(cx).is_streaming() {
+            return;
+        }
+        self.in_turn = true;
+        self.lane_turn(LaneEvent::TurnStarted, cx);
+    }
+
+    /// The reply finished, failed or was stopped: lane 1's turn, if a send
+    /// started one, ends.
+    fn end_lane_turn(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.in_turn) {
+            self.lane_turn(LaneEvent::TurnEnded, cx);
+        }
+    }
+
+    /// Lane 1's turn starts or ends, once the current update's out, as the
+    /// workbench may be in one.
+    fn lane_turn(&self, event: LaneEvent, cx: &mut Context<Self>) {
+        let Some(workbench) = self.workbench() else {
+            return;
+        };
+        cx.defer(move |cx| {
+            workbench.update(cx, |workbench, cx| {
+                workbench.lane_turn(crate::lanes::chat_lane(), event, cx)
+            });
+        });
+    }
+
     fn view_event(
         &mut self,
         _: &Entity<ChatView>,
@@ -1860,7 +1904,10 @@ impl ChatPanel {
                 window.defer(cx, |window, cx| run_command(SETTINGS_COMMAND, window, cx));
             }
             ChatViewEvent::NoticeDismissed => self.dismiss_notice(cx),
-            ChatViewEvent::TurnFinished => self.remember_chat(cx),
+            ChatViewEvent::TurnFinished => {
+                self.end_lane_turn(cx);
+                self.remember_chat(cx);
+            }
             ChatViewEvent::AttachFileRequested => {
                 let panel = cx.weak_entity();
                 window.defer(cx, move |window, cx| {

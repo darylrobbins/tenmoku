@@ -702,3 +702,12 @@ reason = "A local branch's full ref name, passed to git for-each-ref"
 file = "src/git_branch_menu.rs"
 text = "refs/heads/{name}^{{commit}}"
 reason = "A revision, passed to git rev-parse"
+
+# Lane 1's name in the lane record (docs/designs/agent-lanes.md § Today's
+# chat agent): what the agent calls itself, as an external agent's name is
+# the one it gives, and the record keeps it as written.
+
+[[literal]]
+file = "src/lanes.rs"
+text = "Chat"
+reason = "Lane 1's name as the lane record keeps it, as an agent names itself; not a translated label"

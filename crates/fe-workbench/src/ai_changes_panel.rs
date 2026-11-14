@@ -18,8 +18,10 @@
 //! selected row's buttons, and `ai_changes.apply_preview` and
 //! `ai_changes.cancel_preview` a refactor preview's Apply and Cancel.
 //!
-//! The workbench owns the changeset ([`Workbench::set_changeset`], one at a
-//! time) and lists it again into the panel after every decision. A
+//! The panel is a view of lane 1's newest turn (`crate::lanes`): the
+//! workbench holds that turn's changeset ([`Workbench::set_changeset`], one
+//! at a time; an older one still undecided stays in the lane's work) and
+//! lists it again into the panel after every decision. A
 //! changeset with everything decided and nothing accepted leaves the panel
 //! with `No pending changes`; one with accepted hunks keeps its rows so the
 //! turn can still be reverted. Reverting a file edited since asks first,
@@ -52,6 +54,7 @@ use kiln_l10n::{Text, text, tr, verbatim};
 use crate::{
     Pane, Workbench,
     ai_changes_buffers::{Made, with_editors},
+    lanes::LaneStore,
     workbench::toast::{self, Toast},
 };
 use fe_editor::Changeset;
@@ -124,9 +127,11 @@ pub(crate) struct PreviewHead {
 /// The workbench's active changeset and what it needs to reach buffers.
 pub(crate) struct AiChanges {
     pub(crate) changeset: Changeset,
+    /// The lane whose turn it is; `None` for a refactor preview's.
+    pub(crate) lane: Option<fe_editor::lane::LaneId>,
     /// Which changeset this is, among those the workbench has shown.
     generation: u64,
-    made: Made,
+    pub(crate) made: Made,
     /// Lines added and removed per file, as last read.
     lines: HashMap<PathBuf, (usize, usize)>,
     /// To the open editors' proposal events.
@@ -143,7 +148,7 @@ pub(crate) struct AiChanges {
     refactor: Option<refactor_preview_view::Review>,
     /// Who takes the changeset back once another review replaces it, or
     /// the panel is cleared: its chat ([`Workbench::set_changeset_returning`]).
-    returned: Option<Returned>,
+    pub(crate) returned: Option<Returned>,
 }
 
 /// Takes a changeset back when the panel lets it go, decisions, hunk memo
@@ -166,6 +171,7 @@ impl AiChanges {
         static GENERATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
             changeset,
+            lane: None,
             generation: GENERATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             made: Made::default(),
             lines: HashMap::new(),
@@ -176,6 +182,16 @@ impl AiChanges {
             refactor: None,
             returned: None,
         }
+    }
+
+    /// Lets go of what showing it in the panel needs, as it leaves the
+    /// panel to stay in its lane's work: its editors' events (the panel's
+    /// turn follows them), a row being opened, and its new files' review
+    /// tabs, already closed.
+    pub(crate) fn set_aside(&mut self) {
+        self.editors.clear();
+        self.opening = None;
+        self.previews.clear();
     }
 }
 
@@ -691,10 +707,9 @@ fn lines(text: &str) -> usize {
 
 impl Workbench {
     /// Shows `changeset`, a turn's proposals, in the AI Changes panel, made
-    /// and shown now, in place of any before it: the old changeset's
-    /// proposals stay on their editors, whatever was pending, and only the
-    /// list is replaced.
-    #[allow(dead_code)] // Card 13's chat turns call it.
+    /// and shown now, in place of any before it: lane 1's newest turn. The
+    /// old changeset's proposals stay on their editors, whatever was
+    /// pending, and the old turn in lane 1's work while any is.
     pub(crate) fn set_changeset(
         &mut self,
         changeset: Changeset,
@@ -707,6 +722,7 @@ impl Workbench {
     /// [`Workbench::set_changeset`], and once another review replaces it or
     /// the panel is cleared, `returned` takes the changeset back as it then
     /// stands: how the API chat keeps its turns' decisions and hunk memos.
+    /// A turn kept in lane 1's work goes back when that work lets it go.
     pub(crate) fn set_changeset_returning(
         &mut self,
         changeset: Changeset,
@@ -714,14 +730,14 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The turn it replaces leaves no review tabs behind.
-        self.discard_ai_reviews(window, cx);
-        let mut changes = AiChanges::new(changeset);
-        changes.returned = returned;
-        self.ai_changes = Some(changes);
-        self.ai_changes_panel(cx);
-        self.sync_ai_changes(cx);
-        self.run_dock_op(crate::dock::DockOp::ShowAiChanges, window, cx);
+        LaneStore::set_changeset(
+            self,
+            crate::lanes::chat_lane(),
+            changeset,
+            returned,
+            window,
+            cx,
+        );
     }
 
     /// The panel, made and registered in the dock the first time.
@@ -761,10 +777,18 @@ impl Workbench {
     }
 
     /// Lists the changeset into the panel again, and follows the proposal
+    /// events of the open editors, then counts the lanes again
+    /// ([`Workbench::sync_lanes`]).
+    pub(crate) fn sync_ai_changes(&mut self, cx: &mut Context<Self>) {
+        self.list_ai_changes(cx);
+        self.sync_lanes(cx);
+    }
+
+    /// Lists the changeset into the panel again, and follows the proposal
     /// events of the open editors. Each editor showing a file of the
     /// changeset gets its proposal, and a file reopened after its tab was
     /// closed is followed to its new buffer.
-    pub(crate) fn sync_ai_changes(&mut self, cx: &mut Context<Self>) {
+    fn list_ai_changes(&mut self, cx: &mut Context<Self>) {
         if self.reviewing() {
             return self.sync_refactor_preview(cx);
         }

@@ -20,6 +20,10 @@
 //! the rest load; with none loaded, the panel isn't shown. A later Review
 //! of the same turn replaces its changeset, and the proposals it put on
 //! the editors.
+//!
+//! The chat's session is claimed in lane 1 first (`crate::lanes`), and the
+//! changeset becomes lane 1's newest turn ([`Workbench::set_changeset`]):
+//! the turn it replaces stays in lane 1's work while it has hunks pending.
 
 use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 
@@ -169,6 +173,7 @@ impl ChatPanel {
             return;
         };
         let document = fe_markdown::parse(&turn.text());
+        self.claim_session(actor, cx);
         let mut blocks: Vec<FileBlock> = Vec::new();
         let mut index = 0;
         while let Some((info, code)) = super::fence(&document.blocks, index) {
@@ -466,6 +471,9 @@ fn invalidate(
             });
         }
     }
+    // Kept in lane 1's work, it goes too, what it accepted still lane 1's.
+    workbench.drop_lane_turn(turn_id, cx);
+    workbench.sync_lanes(cx);
     if (workbench.ai_changes.as_ref()).is_some_and(|shown| shown.changeset.turn_id() == turn_id) {
         workbench.ai_changes = None;
         workbench.sync_ai_changes(cx);

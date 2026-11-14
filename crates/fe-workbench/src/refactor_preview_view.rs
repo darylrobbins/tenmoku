@@ -225,6 +225,8 @@ impl Workbench {
             Ok(text)
         })?;
         self.discard_ai_reviews(window, cx);
+        // Lane 1's turn shown stays in its lane's work, still pending.
+        self.keep_shown_turn(cx);
         let mut state = AiChanges::new(Changeset::new(preview.title(), Origin::Lsp));
         state.refactor = Some(Review {
             preview,
@@ -283,7 +285,7 @@ impl Workbench {
 
     /// Closes the tabs made to review the panel's changes: a turn's new
     /// files' and a preview's.
-    pub(super) fn discard_ai_reviews(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn discard_ai_reviews(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let buffers: Vec<BufferId> = (self.ai_changes.as_ref())
             .map(|state| {
                 let previews = state.previews.iter().map(|(_, buffer)| *buffer);

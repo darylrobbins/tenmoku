@@ -42,6 +42,9 @@
 //!   trust it was asked under: a new chat or a change to either drops it,
 //!   and the Applies waiting on reads.
 //!
+//!   The chat's session is claimed in lane 1 first (`crate::lanes`), and
+//!   the proposal made is adopted as one of lane 1's loose proposals
+//!   ([`LaneStore::adopt`]), so it counts as pending until decided.
 //!   It's shown with [`EditorView::set_proposals`] beside any shown
 //!   already, and its first hunk revealed through the pane, so a tab
 //!   showing its Markdown preview shows the text. A file not open yet is
@@ -66,6 +69,7 @@
 //! [`ChatViewEvent::OpenPath`]: fe_chat_view::ChatViewEvent::OpenPath
 //! [`notify_observers`]: kiln::platform::commands::notify_observers
 //! [`ChatView::set_block_state`]: fe_chat_view::ChatView::set_block_state
+//! [`LaneStore::adopt`]: crate::lanes::LaneStore::adopt
 
 use std::{
     cell::RefCell,
@@ -712,6 +716,7 @@ impl ChatPanel {
         let Some((info, code)) = fence(&document.blocks, args.block) else {
             return;
         };
+        self.claim_session(actor, cx);
         let attempt = self.applies.attempt((args.turn, args.block));
         let block = match parse_edit_block(&info, &code) {
             Ok(block) => block,
@@ -758,6 +763,22 @@ impl ChatPanel {
                 self.apply_to_selection(edit, window, cx);
             }
         }
+    }
+
+    /// Adds the session of `actor`, if it's the chat's, to lane 1's, so
+    /// what it proposes is lane 1's whichever chat it is.
+    fn claim_session(&self, actor: &Actor, cx: &mut App) {
+        let Actor::Ai { agent, session } = actor else {
+            return;
+        };
+        let Some(workbench) = self.workbench().filter(|_| agent == AGENT) else {
+            return;
+        };
+        let lanes = workbench.read(cx).lanes.clone();
+        let session: Arc<str> = Arc::from(session.as_str());
+        lanes.update(cx, |lanes, _| {
+            lanes.claim(crate::lanes::chat_lane(), session)
+        });
     }
 
     /// Finds `rel` under the root, off the main thread, then proposes
@@ -962,6 +983,14 @@ impl ChatPanel {
         // Applied again since: that Apply's outcome is the one shown.
         if !self.applies.is_latest(attempt) {
             return;
+        }
+        if let Some(workbench) = self.workbench() {
+            let model = editor.read(cx).model();
+            let (buffer, path) = (model.buffer().id(), model.path().map(Path::to_owned));
+            let adopted = proposal.clone();
+            workbench.update(cx, |workbench, cx| {
+                workbench.adopt_proposal(buffer, path, adopted, cx)
+            });
         }
         let at = attempt.at;
         let state = proposal_state(&proposal.borrow());
