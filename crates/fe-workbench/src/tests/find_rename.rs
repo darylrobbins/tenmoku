@@ -250,5 +250,49 @@ fn a_server_starting_later_enables_rename_symbol(cx: &mut TestAppContext) {
     s.draw();
     assert!(shown(&mut s, "find-replace"));
     s.set_trust(true);
-    s.until("Rename symbol", |s| shown(s, "find-rename-symbol"));
+    s.fake
+        .wait_for_document(&s.uri("src/main.rs"), "didOpen", |r| r.is_some());
+    wait_rename_symbol(&mut s);
+}
+
+/// Waits for Rename symbol, stepping the manual clock by fe-lsp's 20 ms
+/// capability poll while a probe sleeps on it: the clock never moves on its
+/// own, so a probe sent before `initialize` was answered would otherwise
+/// sleep forever. Steps only while a sleeper is due within one poll (the
+/// poll itself; the 10 s RENAME_TIMEOUT sleeper is not), and at most 2 s in
+/// all, so the rename timeout is never reached while the fake answers.
+fn wait_rename_symbol(s: &mut Lsp) {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(20);
+    let advanced = std::cell::Cell::new(std::time::Duration::ZERO);
+    s.until("Rename symbol", |s| {
+        if shown(s, "find-rename-symbol") {
+            return true;
+        }
+        let polling = s.clock.sleeping().iter().any(|left| *left <= POLL);
+        if polling && advanced.get() < std::time::Duration::from_secs(2) {
+            s.clock.advance(POLL);
+            advanced.set(advanced.get() + POLL);
+        }
+        false
+    });
+}
+
+#[gpui::test]
+fn a_probe_before_the_server_initializes_is_driven_to_rename_symbol(cx: &mut TestAppContext) {
+    let mut s = Lsp::with_scripts(cx, renamer(), Script::default());
+    fs::write(s.path("src/main.rs"), MAIN).unwrap();
+    s.open("src/main.rs");
+    reply(&s, PrepareRenameRequest::METHOD, Reply::Result(foo(2, 4)));
+    find(&mut s, "foo", "bar");
+    s.hold_launches_late(true);
+    s.set_trust(true);
+    s.wait_launch_held();
+    // The bar asks while the capabilities are unknown.
+    s.draw();
+    s.release_one_launch();
+    // Initialize is answered before the clock is driven, so a slow fake
+    // cannot spend the helper's budget.
+    s.fake
+        .wait_for_document(&s.uri("src/main.rs"), "didOpen", |r| r.is_some());
+    wait_rename_symbol(&mut s);
 }
