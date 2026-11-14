@@ -95,6 +95,7 @@ fn source_name(source: Source) -> &'static str {
         Source::Npm => "npm",
         Source::Gradle => "gradle",
         Source::Maven => "maven",
+        Source::Dotnet => "dotnet",
         Source::Make => "make",
         Source::Just => "just",
     }

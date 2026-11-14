@@ -30,7 +30,8 @@
 //! # Detection
 //!
 //! Only the root's own files count, with no recursion and no workspace
-//! members, in this order, each in its file's order:
+//! members, except that a .NET solution is also looked for one folder down
+//! (`src/`), in this order, each in its file's order:
 //!
 //! - `Cargo.toml`: `cargo build`, `cargo test`, `cargo run`, `cargo clippy`,
 //!   for a package or a `[workspace]` alike, so it's only looked for.
@@ -41,6 +42,12 @@
 //!   `./gradlew <task>` when a `gradlew` is beside it, else `gradle <task>`.
 //! - `pom.xml`: `compile`, `test`, `package`, `verify` and `clean`, as
 //!   `./mvnw <goal>` when an `mvnw` is beside it, else `mvn <goal>`.
+//! - .NET: each `.sln` or `.slnx` at the root, or else in any immediate
+//!   subfolder, as `dotnet build|test|clean|restore <solution>`
+//!   (the path relative to the root). With no solution, each root `.csproj`,
+//!   `.fsproj` or `.vbproj` gets the same four plus `dotnet run --project
+//!   <project>`. With a solution, `run` is left out: finding which projects
+//!   are executables would mean reading every project file.
 //! - `GNUmakefile`, `makefile` or `Makefile`, the first of them as `make`
 //!   picks: each target as `make <target>`, by a scan of its lines.
 //! - `justfile` or `Justfile`: each public recipe as `just <recipe>`.
@@ -58,7 +65,7 @@
 //! File tasks come first, then detected ones, and a file task replaces the
 //! detected one with its label. Each of the groups has at most one default:
 //! the first marked, with a diagnostic for any later one. Failing that, the
-//! build and test groups fall to the first detected Cargo, npm, Gradle or Maven task named
+//! build and test groups fall to the first detected Cargo, npm, Gradle, Maven or .NET task named
 //! so, in that order, so Gradle's default beats Maven's when a root has both. `default` on a task with no group has nothing to apply to, so it's
 //! cleared with a diagnostic.
 
@@ -110,6 +117,12 @@ pub trait ProjectFiles {
 
     /// Whether a file is at `path`.
     fn exists(&self, path: &Path) -> bool;
+
+    /// The entries (files and folders) directly in `dir`; empty when it
+    /// isn't a readable folder, or when the source can't list.
+    fn list_dir(&self, _dir: &Path) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 /// [`ProjectFiles`] on the real disk. Tests can't name it: they all fake the
@@ -126,6 +139,12 @@ impl ProjectFiles for DiskFiles {
 
     fn exists(&self, path: &Path) -> bool {
         path.is_file()
+    }
+
+    fn list_dir(&self, dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -183,6 +202,7 @@ pub enum Source {
     Npm,
     Gradle,
     Maven,
+    Dotnet,
     Make,
     Just,
 }
@@ -467,7 +487,11 @@ fn choose_defaults(tasks: &mut [Task], diagnostics: &mut Vec<TaskDiagnostic>) {
                 task.group == Some(group)
                     && matches!(
                         task.source,
-                        Source::Cargo | Source::Npm | Source::Gradle | Source::Maven
+                        Source::Cargo
+                            | Source::Npm
+                            | Source::Gradle
+                            | Source::Maven
+                            | Source::Dotnet
                     )
             });
             if let Some(task) = by_name {
@@ -482,6 +506,7 @@ fn detected_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
     tasks.extend(npm_tasks(files, root));
     tasks.extend(gradle_tasks(files, root));
     tasks.extend(maven_tasks(files, root));
+    tasks.extend(dotnet_tasks(files, root));
     if let Some(text) = first_readable(files, root, &MAKEFILES) {
         tasks.extend(
             make_targets(&text)
@@ -603,6 +628,89 @@ fn maven_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
     .into_iter()
     .map(|(goal, group)| detected(Source::Maven, group, &[runner, goal], root))
     .collect()
+}
+
+/// Folders a solution is never looked for in.
+const DOTNET_SKIP: [&str; 4] = ["node_modules", "target", "bin", "obj"];
+
+fn extension_in(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| extensions.iter().any(|want| ext.eq_ignore_ascii_case(want)))
+}
+
+/// The root-relative names of the files in `dir` with one of `extensions`,
+/// sorted.
+fn files_with(files: &dyn ProjectFiles, dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = files
+        .list_dir(dir)
+        .into_iter()
+        .filter(|path| extension_in(path, extensions) && files.exists(path))
+        .collect();
+    found.sort();
+    found
+}
+
+/// `dotnet` build, test, clean and restore per solution (root, else one
+/// folder down), or per root project when there's no solution, with
+/// `dotnet run` for those projects.
+fn dotnet_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
+    const SOLUTIONS: [&str; 2] = ["sln", "slnx"];
+    const PROJECTS: [&str; 3] = ["csproj", "fsproj", "vbproj"];
+    let mut solutions = files_with(files, root, &SOLUTIONS);
+    if solutions.is_empty() {
+        let mut folders: Vec<PathBuf> = files
+            .list_dir(root)
+            .into_iter()
+            .filter(|path| {
+                !files.exists(path)
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| !name.starts_with('.') && !DOTNET_SKIP.contains(&name))
+            })
+            .collect();
+        folders.sort();
+        for folder in folders {
+            solutions.extend(files_with(files, &folder, &SOLUTIONS));
+        }
+    }
+    let (targets, runnable) = if solutions.is_empty() {
+        (files_with(files, root, &PROJECTS), true)
+    } else {
+        (solutions, false)
+    };
+    let mut tasks = Vec::new();
+    for target in targets {
+        let rel = target.strip_prefix(root).unwrap_or(&target);
+        let rel = rel
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        for (verb, group) in [
+            ("build", Some(Group::Build)),
+            ("test", Some(Group::Test)),
+            ("clean", None),
+            ("restore", None),
+        ] {
+            tasks.push(detected(
+                Source::Dotnet,
+                group,
+                &["dotnet", verb, &rel],
+                root,
+            ));
+        }
+        if runnable {
+            tasks.push(detected(
+                Source::Dotnet,
+                None,
+                &["dotnet", "run", "--project", &rel],
+                root,
+            ));
+        }
+    }
+    tasks
 }
 
 fn npm_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
