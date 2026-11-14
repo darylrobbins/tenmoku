@@ -121,12 +121,9 @@ fn the_footer_fills_late_without_moving_the_card(cx: &mut TestAppContext) {
             .read_with(&s.cx, |view, _| view.popover_text())
             .is_some()
     });
-    let fake = s.fake.clone();
-    fake.wait_for("the incoming calls", |records| {
-        records
-            .iter()
-            .any(|r| matches!(r, Record::Request { method, .. } if method == INCOMING))
-    });
+    // The request goes out from a task the frames drive, so draw while
+    // waiting: blocking on the fake alone never lets it run.
+    s.until("the incoming calls", |s| requests(s, INCOMING) > 0);
     // The card is up without a count.
     assert!(!footer(&mut s, &editor).iter().any(|t| t.contains("caller")));
     // Its room is held: the footer is there, empty of text.
