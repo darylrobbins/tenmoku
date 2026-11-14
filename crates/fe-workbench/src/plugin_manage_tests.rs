@@ -325,6 +325,10 @@ fn start_with(
         set_stores(cx, state.clone(), keychain);
         set_plugin_dirs(cx, state, cache);
         set_preview(cx, preview);
+        // Loading runs under the call deadline too: a starved thread can push
+        // instantiate and init past the real 100 ms and stop the plugin for
+        // good, so the wait below never sees it run.
+        cx.global_mut::<PluginHost>().limits.call_deadline = Duration::from_secs(30);
     });
     let root = fixture.dir.path().join("project");
     fs::create_dir_all(&root).unwrap();
