@@ -47,17 +47,18 @@ use std::{
     time::Duration,
 };
 
-use fe_buffer::{Bias, Buffer, BufferId, Version};
+use fe_buffer::{Anchor, Bias, Buffer, BufferId, Version};
 use fe_editor::{
     decorations::DecorationKind,
     diagnostics::{DiagnosticEntry, RelatedInfo},
 };
 use fe_syntax::{HighlightSpan, Syntax, fence_language, language_by_name};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, BoxShadow, Context, Div, Font, FontWeight, Global,
-    Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, StyledText, Subscription, Task,
-    TextRun, Window, anchored, canvas, deferred, div, font, hsla, point, px,
+    AnyElement, App, AvailableSpace, Bounds, BoxShadow, ClipboardItem, Context, Div, Font,
+    FontWeight, Global, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
+    Point, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, StyledText,
+    Subscription, Task, TextRun, Window, anchored, canvas, deferred, div, font, hsla, point, px,
 };
 use kiln_l10n::tr;
 
@@ -166,7 +167,10 @@ pub(crate) fn hide_on_escape(view: &mut EditorView, cx: &mut Context<EditorView>
     let this = cx.weak_entity();
     view.popover._escape = Some(cx.intercept_keystrokes(move |event, _, cx| {
         if event.keystroke.key == "escape" {
-            this.update(cx, |view, cx| view.hide_popover(cx)).ok();
+            this.update(cx, |view, cx| view.close_popover(cx)).ok();
+        } else if event.keystroke.key == "c" && event.keystroke.modifiers.secondary() {
+            this.update(cx, |view, cx| view.copy_pinned_selection(cx))
+                .ok();
         }
     }));
 }
@@ -205,6 +209,17 @@ struct Current {
     hiding: Option<Task<()>>,
     /// Its content's scroll, from the top.
     scroll: ScrollHandle,
+    /// Pinned by a second `editor.show_hover`: kept until `escape`, another
+    /// `editor.show_hover`, or the caret leaves the line it was pinned on.
+    pin: Option<Pinned>,
+}
+
+/// A pinned card ([`Current::pin`]).
+struct Pinned {
+    /// The start of the caret's line when it was pinned: it follows edits.
+    line: Anchor,
+    /// The part of the card selected, to copy: its text.
+    selected: Option<(usize, String)>,
 }
 
 /// What the pointer, or the caret, rests on.
@@ -801,7 +816,7 @@ impl EditorView {
     /// in place of any shown: as `editor.show_hover` shows the provider's,
     /// and hidden as that is. Nothing for a caret out of the frame.
     pub fn show_popover(&mut self, content: HoverContent, cx: &mut Context<Self>) {
-        self.hide_popover(cx);
+        self.close_popover(cx);
         let caret = self.model.primary_selection().head();
         let hovered = Hovered {
             under: Under::Char(caret),
@@ -826,7 +841,17 @@ impl EditorView {
 
     /// `editor.show_hover`: the popover for what's at the caret, at once.
     pub(crate) fn show_hover(&mut self, cx: &mut Context<Self>) {
-        self.hide_popover(cx);
+        // A second one pins the card it opened, or the pointer's; a third
+        // closes it.
+        if self.popover_pinned() {
+            self.close_popover(cx);
+            return;
+        }
+        if self.popover_blocks().is_some() {
+            self.pin_popover(cx);
+            return;
+        }
+        self.close_popover(cx);
         let caret = self.model.primary_selection().head();
         // The word the caret is in, or else the one it's just past the end
         // of, preferring a name to punctuation: `beta|;` asks about `beta`.
@@ -870,6 +895,9 @@ impl EditorView {
         content: Option<HoverContent>,
         cx: &mut Context<Self>,
     ) {
+        if self.popover_pinned() {
+            return;
+        }
         let buffer = self.model.buffer().id();
         // The offset asked about: the pointer's or caret's, in the word.
         let ask = hovered.word.clone().map(|word| {
@@ -991,6 +1019,7 @@ impl EditorView {
             _task: task,
             hiding: None,
             scroll: ScrollHandle::new(),
+            pin: None,
         });
         if delay.is_none() {
             cx.notify();
@@ -1002,6 +1031,10 @@ impl EditorView {
     /// was over them, at the caret, the caret where it was, and on a gutter
     /// annotation, the column still showing.
     fn popover_stands(&self, shown: &Hovered) -> bool {
+        if let Some(pin) = (self.popover.current.as_ref()).and_then(|current| current.pin.as_ref())
+        {
+            return self.pin_stands(pin);
+        }
         shown.version == self.model.snapshot().version()
             && shown.scroll == self.scroll
             && (shown.caret).is_none_or(|caret| caret == self.model.primary_selection().head())
@@ -1039,6 +1072,67 @@ impl EditorView {
 
     /// Hides the popover, and stops waiting for one.
     pub(crate) fn hide_popover(&mut self, cx: &mut Context<Self>) {
+        if self.popover_pinned() {
+            return;
+        }
+        self.close_popover(cx);
+    }
+
+    /// Whether the popover is pinned.
+    fn popover_pinned(&self) -> bool {
+        (self.popover.current.as_ref()).is_some_and(|current| current.pin.is_some())
+    }
+
+    /// Pins the shown popover where the caret is.
+    fn pin_popover(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.model.snapshot();
+        let row = self
+            .model
+            .text()
+            .offset_to_point(self.model.primary_selection().head())
+            .row;
+        let start = self.model.text().row_start(row);
+        let line = snapshot.anchor_before(start);
+        if let Some(current) = self.popover.current.as_mut() {
+            current.hiding = None;
+            current.pin = Some(Pinned {
+                line,
+                selected: None,
+            });
+            cx.notify();
+        }
+    }
+
+    /// Whether the caret is on the line a pinned card was pinned on.
+    fn pin_stands(&self, pin: &Pinned) -> bool {
+        let text = self.model.text();
+        let line = self.model.snapshot().resolve(&pin.line);
+        let row = |offset: usize| text.offset_to_point(offset.min(text.len())).row;
+        row(line) == row(self.model.primary_selection().head())
+    }
+
+    /// Copies what's selected in a pinned card.
+    fn copy_pinned_selection(&mut self, cx: &mut Context<Self>) {
+        let selected = (self.popover.current.as_ref())
+            .and_then(|current| current.pin.as_ref()?.selected.as_ref())
+            .map(|(_, text)| text.clone());
+        if let Some(text) = selected {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    /// Selects part `ix` of a pinned card, whose text is `text`.
+    fn select_in_pinned(&mut self, ix: usize, text: String, cx: &mut Context<Self>) {
+        let pin = (self.popover.current.as_mut()).and_then(|current| current.pin.as_mut());
+        if let Some(pin) = pin {
+            pin.selected = Some((ix, text.clone()));
+            cx.write_to_primary(ClipboardItem::new_string(text));
+            cx.notify();
+        }
+    }
+
+    /// Hides the popover, pinned or not, and stops waiting for one.
+    pub(crate) fn close_popover(&mut self, cx: &mut Context<Self>) {
         let current = self.popover.current.take();
         if current.is_some_and(|current| current.shown) {
             cx.notify();
@@ -1052,6 +1146,9 @@ impl EditorView {
     /// as a fresh move. One waiting, or shown at the caret, goes at once.
     /// Whether one is still shown.
     fn leave_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.popover_pinned() {
+            return true;
+        }
         let Some(current) = (self.popover.current.as_mut()).filter(|current| {
             current.shown && current.hovered.caret.is_none() && !current.blocks().is_empty()
         }) else {
@@ -1089,6 +1186,7 @@ impl EditorView {
     /// fits in `window`.
     pub(crate) fn render_popover(
         &mut self,
+        this: gpui::WeakEntity<Self>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -1159,15 +1257,19 @@ impl EditorView {
         let theme = &self.theme;
         let fonts = CardFonts::new(theme, ui_font.clone());
         let faint = faint_text(theme);
-        let mut children: Vec<AnyElement> = Vec::new();
+        let mut children: Vec<(String, AnyElement)> = Vec::new();
         // The diagnostics first, as text: only the provider's is Markdown.
         if !current.hovered.items.is_empty() {
             let text = diagnostics_text(&current.hovered.items);
             let runs = vec![run(text.len(), fonts.ui.clone(), theme.foreground)];
-            children.push(
-                card_text(HoverCardPart::Diagnostics, text, sizes.body, runs, cx)
-                    .into_any_element(),
+            let part = card_text(
+                HoverCardPart::Diagnostics,
+                text.clone(),
+                sizes.body,
+                runs,
+                cx,
             );
+            children.push((text, part.into_any_element()));
         }
         if let Some(card) = &card {
             if let Some(path) = &card.path {
@@ -1179,13 +1281,13 @@ impl EditorView {
                     runs,
                     cx,
                 );
-                children.push(text.into_any_element());
+                children.push((path.clone(), text.into_any_element()));
             }
             if let Some(signature) = &card.signature {
                 let runs = signature.runs(theme, &fonts.code);
-                let text = signature.code.clone();
-                let text = card_text(HoverCardPart::Signature, text, sizes.code, runs, cx);
-                children.push(text.into_any_element());
+                let code = signature.code.clone();
+                let text = card_text(HoverCardPart::Signature, code.clone(), sizes.code, runs, cx);
+                children.push((code, text.into_any_element()));
             }
             let docs = card.docs.as_str();
             if !docs.trim().is_empty() {
@@ -1194,12 +1296,13 @@ impl EditorView {
                         // Its padding and border, left and right.
                         let max_width = POPOVER_WIDTH - window.rem_size() * 0.5 * 2. - px(2.);
                         let drawn = renderer.render(docs, theme, max_width, window, cx);
-                        children.push(
+                        children.push((
+                            docs.to_owned(),
                             div()
                                 .debug_selector(|| "hover-card-docs".into())
                                 .child(drawn)
                                 .into_any_element(),
-                        );
+                        ));
                     }
                     None => {
                         for block in markdown_blocks(docs) {
@@ -1209,13 +1312,35 @@ impl EditorView {
                             };
                             let text = block.text().to_owned();
                             let runs = vec![run(text.len(), font, theme.foreground)];
-                            let text = card_text(HoverCardPart::Docs, text, sizes.body, runs, cx);
-                            children.push(text.into_any_element());
+                            let part =
+                                card_text(HoverCardPart::Docs, text.clone(), sizes.body, runs, cx);
+                            children.push((text, part.into_any_element()));
                         }
                     }
                 }
             }
         }
+        // A pinned card's parts select on a press, to copy.
+        let pin = current.pin.as_ref();
+        let children: Vec<AnyElement> = (children.into_iter().enumerate())
+            .map(|(ix, (text, part))| match pin {
+                None => part,
+                Some(pin) => {
+                    let this = this.clone();
+                    let selected = pin.selected.as_ref().is_some_and(|(at, _)| *at == ix);
+                    div()
+                        .id(("hover-card-part", ix))
+                        .when(selected, |part| part.bg(theme.selection))
+                        .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                            let text = text.clone();
+                            this.update(cx, |view, cx| view.select_in_pinned(ix, text, cx))
+                                .ok();
+                        })
+                        .child(part)
+                        .into_any_element()
+                }
+            })
+            .collect();
         // The prose in the UI family, a renderer's too, inheriting it; code
         // sets its own.
         let body = div()
@@ -1329,8 +1454,13 @@ impl EditorView {
                     None => tr!("gpui-hover-related-line", line = definition.row + 1).to_string(),
                 }
             });
-        let hint = (self.vim.is_some())
-            .then(|| tr!("gpui-hover-go-to-definition", keys = VIM_DEFINITION_KEYS).to_string());
+        let hint = match (current.pin.is_some(), self.vim.is_some()) {
+            (true, _) => Some(tr!("gpui-hover-pinned").to_string()),
+            (false, true) => {
+                Some(tr!("gpui-hover-go-to-definition", keys = VIM_DEFINITION_KEYS).to_string())
+            }
+            (false, false) => None,
+        };
         let callers = current.callers.map(|count| {
             let shown = if count >= CALLER_COUNT_CAP {
                 format!("{CALLER_COUNT_CAP}+")
@@ -1808,8 +1938,9 @@ pub(crate) fn popover_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
     let view = cx.entity().downgrade();
     let layer = canvas(
         move |_, window, cx| {
+            let this = view.clone();
             let mut popover = view
-                .update(cx, |view, cx| view.render_popover(window, cx))
+                .update(cx, |view, cx| view.render_popover(this, window, cx))
                 .ok()??;
             popover.prepaint_as_root(
                 Point::default(),

@@ -7,3 +7,7 @@ gpui-hover-callers =
         [one] { $shown } caller
        *[other] { $shown } callers
     }
+
+# The footer of a hover card pinned with K: a pin glyph, in the place of the
+# vim key's hint.
+gpui-hover-pinned = 📌
