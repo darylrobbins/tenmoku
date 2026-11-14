@@ -166,7 +166,7 @@ impl LspManager {
             move |server, reply, admitted| {
                 (reply.result.unwrap_or_default().into_iter())
                     .map(|hint| convert(hint, &admitted, server))
-                    .filter(|hint| asked.contains(&hint.offset) || hint.offset == asked.end)
+                    .filter(|hint| asked.contains(&hint.offset))
                     .collect::<Vec<_>>()
             },
         );

@@ -32,7 +32,6 @@ use std::sync::Arc;
 
 use fe_buffer::{BufferId, Version};
 use futures::FutureExt;
-use futures::future::BoxFuture;
 use lsp_types::request::Request;
 use lsp_types::{
     Position, SemanticTokenModifier, SemanticTokenType, SemanticTokensDeltaParams,
@@ -46,6 +45,7 @@ use crate::encoding::from_lsp;
 use crate::event::{LspError, not_open};
 use crate::identity::{IncarnationId, SessionId};
 use crate::manager::LspManager;
+use crate::requests::call;
 
 /// One token of a document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -213,13 +213,6 @@ impl LspManager {
         previous: Option<&SemanticTokens>,
     ) -> impl Future<Output = Result<Option<SemanticTokens>, LspError>> + Send + 'static + use<>
     {
-        let full_params = |at: &Admitted| SemanticTokensParams {
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            text_document: TextDocumentIdentifier {
-                uri: at.document.uri.clone(),
-            },
-        };
         // The provider (§5): the first server the buffer is placed on whose
         // capabilities have full tokens, with them and the opening they go
         // with: the same before and after them, as a new session opens the
@@ -237,97 +230,102 @@ impl LspManager {
                 break;
             }
         }
-        let (server, capabilities, opening) = match known {
-            Ok(known) => known,
+        // Those still initializing: waited for below, once.
+        let (servers, capabilities, opening) = match known {
+            Ok((server, capabilities, opening)) => (vec![server], Some(capabilities), opening),
             // None provides them: nothing is sent.
             Err(None) if self.is_served(buffer) => return async { Ok(None) }.boxed(),
             Err(None) => return async { Err(LspError::Unavailable(not_open())) }.boxed(),
-            Err(Some(initializing)) => {
-                // Waits for them, sends nothing, and has the caller ask again
-                // (or says why it can't).
-                return self
-                    .document_request_if_provided_on::<FullRequest>(
-                        initializing,
-                        buffer,
-                        version,
-                        INITIALIZED,
-                        |_| false,
-                        full_params,
-                    )
-                    .boxed()
-                    .map(|answer| match answer {
-                        Ok(_) => Err(LspError::Retry),
-                        Err(LspError::Unavailable(why)) if why == INITIALIZED => {
-                            Err(LspError::Retry)
-                        }
-                        Err(LspError::Timeout) => Err(LspError::Retry),
-                        Err(err) => Err(err),
-                    })
-                    .boxed();
-            }
+            Err(Some(_)) => (self.servers_of(buffer), None, None),
         };
-        let legend = legend(&capabilities);
-        let delta = previous.and_then(|previous| {
-            let result_id = previous.result_id.clone()?;
-            let same = previous.from.0 == buffer && opening == Some(previous.from.1);
-            (same && provides_delta(&capabilities))
-                .then(|| (result_id, (previous.from.1, previous.data.clone())))
+        let initialized = capabilities.is_some();
+        let legend = capabilities.as_ref().and_then(legend);
+        let previous = previous.and_then(|previous| {
+            Some(Previous {
+                from: previous.from,
+                result_id: previous.result_id.clone()?,
+                data: previous.data.clone(),
+            })
         });
-        // Boxed, as their types name the manager's borrow.
-        let (reply, previous): (BoxFuture<'static, _>, _) = match delta {
-            Some((previous_result_id, previous)) => (
-                self.document_request_if_provided_on::<DeltaRequest>(
-                    server,
-                    buffer,
-                    version,
-                    FEATURE,
-                    provides_delta,
-                    move |at| SemanticTokensDeltaParams {
-                        work_done_progress_params: Default::default(),
-                        partial_result_params: Default::default(),
-                        text_document: TextDocumentIdentifier {
-                            uri: at.document.uri.clone(),
-                        },
-                        previous_result_id,
-                    },
-                )
-                .boxed()
-                .map(|answer| {
-                    answer.map(|(reply, at)| {
-                        let answer = match reply.result {
-                            None => Answer::Full(Full::default()),
-                            Some(DeltaReply::Full(full)) => Answer::Full(full),
-                            Some(DeltaReply::Delta(delta)) => Answer::Delta(delta),
-                        };
-                        (answer, at)
-                    })
-                })
-                .boxed(),
-                Some(previous),
-            ),
-            None => (
-                self.document_request_if_provided_on::<FullRequest>(
-                    server,
-                    buffer,
-                    version,
-                    FEATURE,
-                    provides_full,
-                    full_params,
-                )
-                .boxed()
-                .map(|answer| {
-                    answer.map(|(reply, at)| (Answer::Full(reply.result.unwrap_or_default()), at))
-                })
-                .boxed(),
-                None,
-            ),
-        };
+        let timeout = self.timeout::<FullRequest>();
+        let reply = self.admit_to_first(
+            servers,
+            (buffer, version),
+            timeout,
+            (provides_full, LspError::Unavailable(FEATURE.into())),
+            move |_, capabilities, answer| {
+                // Capabilities learned only now: sends nothing, and has the
+                // caller ask again, with the legend of this session.
+                if !initialized {
+                    return Err(LspError::Unavailable(INITIALIZED.into()));
+                }
+                let delta_provided = provides_delta(capabilities);
+                Ok(Box::new(move |admission| {
+                    let at = match admission {
+                        Ok(at) => at,
+                        Err(err) => {
+                            let _ = answer.send(Err(err));
+                            return Vec::new();
+                        }
+                    };
+                    let text_document = TextDocumentIdentifier {
+                        uri: at.document.uri.clone(),
+                    };
+                    // Chosen by the opening admitted, not the one asked on:
+                    // the server may have been given the document anew since.
+                    let delta = previous.filter(|previous| {
+                        delta_provided && previous.from == (buffer, at.document.identity)
+                    });
+                    vec![match delta {
+                        Some(Previous {
+                            from,
+                            result_id,
+                            data,
+                        }) => call::<DeltaRequest, _>(
+                            answer,
+                            SemanticTokensDeltaParams {
+                                work_done_progress_params: Default::default(),
+                                partial_result_params: Default::default(),
+                                text_document,
+                                previous_result_id: result_id,
+                            },
+                            move |_, reply| {
+                                reply.map(|reply| {
+                                    let answer = match reply.result {
+                                        None => Answer::Full(Full::default()),
+                                        Some(DeltaReply::Full(full)) => Answer::Full(full),
+                                        Some(DeltaReply::Delta(delta)) => Answer::Delta(delta),
+                                    };
+                                    (answer, at, Some((from.1, data)))
+                                })
+                            },
+                        ),
+                        None => call::<FullRequest, _>(
+                            answer,
+                            SemanticTokensParams {
+                                work_done_progress_params: Default::default(),
+                                partial_result_params: Default::default(),
+                                text_document,
+                            },
+                            move |_, reply| {
+                                reply.map(|reply| {
+                                    (Answer::Full(reply.result.unwrap_or_default()), at, None)
+                                })
+                            },
+                        ),
+                    }]
+                }))
+            },
+        );
         reply
             .map(move |answer| {
-                let (answer, at) = match answer {
+                let (answer, at, previous) = match answer {
                     Ok(answered) => answered,
                     Err(LspError::Timeout) => return Err(LspError::Retry),
                     Err(LspError::Unavailable(why)) if why == FEATURE => return Ok(None),
+                    Err(LspError::Unavailable(why)) if why == INITIALIZED => {
+                        return Err(LspError::Retry);
+                    }
                     Err(err) => return Err(err),
                 };
                 let identity = at.document.identity;
@@ -357,6 +355,13 @@ impl LspManager {
             })
             .boxed()
     }
+}
+
+/// The last answer for a buffer, as a delta request starts from it.
+struct Previous {
+    from: (BufferId, (SessionId, IncarnationId)),
+    result_id: String,
+    data: Vec<u32>,
 }
 
 /// `previous` with `edits`, each of which indexes its integers, applied

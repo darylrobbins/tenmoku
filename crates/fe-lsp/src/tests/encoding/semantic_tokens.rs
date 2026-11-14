@@ -388,6 +388,64 @@ fn no_provider_sends_nothing() {
 }
 
 #[test]
+fn no_provider_before_initialization_is_none_not_retry() {
+    let t = start(PositionEncodingKind::UTF16, None);
+    t.s.fake.crash();
+    while !matches!(t.s.events.status(t.s.server), ServerStatus::Restarting(_)) {}
+    let mut early = (t.s.manager)
+        .semantic_tokens(t.buffer.id(), t.buffer.version(), None)
+        .boxed();
+    assert!(early.as_mut().now_or_never().is_none());
+    t.clock.wait_for_sleep(Duration::from_secs(1));
+    t.clock.advance(Duration::from_secs(1));
+    t.s.fake.wait_initialized_at(2);
+    t.s.fake
+        .wait_for_document(&t.uri, "reopened", |r| r.is_some_and(|r| r.launch == 2));
+    // The wait polls every 20 ms of the manager's clock.
+    t.clock.advance(Duration::from_millis(20));
+    assert_eq!(answer(early), Ok(None));
+    assert!(requests(&t.s.fake.records_of(2)).is_empty());
+}
+
+#[test]
+fn a_delta_is_not_asked_across_two_pending_size_crossings() {
+    let mut t = start(PositionEncodingKind::UTF8, delta());
+    t.s.manager.set_max_file_bytes(TEXT.len() + 1);
+    let mut buffer = Buffer::new(TEXT);
+    t.uri = t.s.open_synced(&mut buffer, "b.rs");
+    t.buffer = buffer;
+    reply(
+        &t,
+        SemanticTokensFullRequest::METHOD,
+        json!({ "resultId": "1", "data": stream(&FIRST, t.utf16) }),
+    );
+    let first = ask(&t, None).unwrap();
+
+    // Over the limit and back under it, neither synced when asked: the
+    // document is closed and opened again as the request is admitted, so
+    // `first`'s result id isn't the server's to answer a delta from.
+    let end = TEXT.len();
+    (t.buffer.edit([(end..end, "too long")], Origin::User)).unwrap();
+    (t.buffer.edit([(end..end + 8, "")], Origin::User)).unwrap();
+    reply(
+        &t,
+        SemanticTokensFullDeltaRequest::METHOD,
+        json!({ "resultId": "2", "edits": [] }),
+    );
+    let again =
+        answer((t.s.manager).semantic_tokens(t.buffer.id(), t.buffer.version(), Some(&first)));
+    assert!(matches!(again, Ok(Some(_)) | Err(LspError::Retry)));
+    let methods: Vec<_> = (requests(&t.s.fake.records()).into_iter())
+        .map(|(method, _)| method)
+        .collect();
+    assert!(
+        !methods
+            .iter()
+            .any(|m| m == SemanticTokensFullDeltaRequest::METHOD)
+    );
+}
+
+#[test]
 fn semantic_token_capabilities_are_advertised() {
     let t = start(PositionEncodingKind::UTF16, delta());
     let init = (t.s.fake.records().into_iter())

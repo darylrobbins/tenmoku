@@ -150,6 +150,28 @@ fn hints_decode_in_bytes_of_the_version() {
 }
 
 #[test]
+fn hints_at_the_end_of_the_range_are_dropped() {
+    let h = start(PositionEncodingKind::UTF8, Some(false), TEXT);
+    let at = |offset: usize| position(TEXT, offset, h.utf16);
+    let later = TEXT.find("\nlet y").unwrap() + 1;
+    for range in [0..later, later..later] {
+        h.s.fake.set_reply(
+            InlayHintRequest::METHOD,
+            Scripted::now(Reply::Result(json!([
+                { "position": at(later), "label": ": i32", "kind": 1 },
+            ]))),
+        );
+        let found = answer(
+            h.s.manager
+                .inlay_hints(h.buffer.id(), h.buffer.version(), range),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(found.is_empty());
+    }
+}
+
+#[test]
 fn no_provider_sends_nothing() {
     let h = start(PositionEncodingKind::UTF16, None, TEXT);
     let found = answer(
