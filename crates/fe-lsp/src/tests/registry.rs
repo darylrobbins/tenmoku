@@ -894,6 +894,20 @@ impl ServerLauncher for MissingOrFake {
     }
 }
 
+/// The server that next reports it failed to launch `pyright`. Reads the
+/// server from the event, not from where the manager has placed a document,
+/// which moves off the old server only as the restart gets to it.
+fn next_failure(events: &Events) -> ServerId {
+    events.until("a server that fails to launch", |event| match event {
+        LspEvent::Status {
+            server,
+            status: ServerStatus::Stopped(Some(why)),
+            ..
+        } if why == "pyright not found" => Some(server),
+        _ => None,
+    })
+}
+
 #[test]
 fn a_fixed_command_brings_back_the_documents_of_a_failed_server() {
     let fake = FakeServer::new(Script::default());
@@ -935,12 +949,7 @@ fn a_fixed_command_brings_back_the_documents_of_a_failed_server() {
     let b_path = format!("{ROOT}/b.py");
     settings.servers.get_mut("pyright").unwrap().command = Some("missing".into());
     manager.update_settings(&settings);
-    let failed = manager.server_of(a.id()).unwrap();
-    assert_eq!(events.status(failed), ServerStatus::Starting);
-    assert_eq!(
-        events.status(failed),
-        ServerStatus::Stopped(Some("pyright not found".into()))
-    );
+    next_failure(&events);
     manager.register_spec(ServerSpec {
         languages: strings(&["python"]),
         ..ServerSpec::new("pyright", "host-pyright")
@@ -954,7 +963,9 @@ fn a_fixed_command_brings_back_the_documents_of_a_failed_server() {
             == 2
     });
     assert!(!records.is_empty());
-    assert_eq!(manager.server_of(a.id()), Some(server));
+    wait_until("the first document to move", || {
+        manager.server_of(a.id()) == Some(server)
+    });
 
     // Stopping a failed server, then closing its waiting document, lets go
     // of the document.
@@ -962,12 +973,7 @@ fn a_fixed_command_brings_back_the_documents_of_a_failed_server() {
         languages: strings(&["python"]),
         ..ServerSpec::new("pyright", "missing")
     });
-    let failed = manager.server_of(a.id()).unwrap();
-    assert_eq!(events.status(failed), ServerStatus::Starting);
-    assert_eq!(
-        events.status(failed),
-        ServerStatus::Stopped(Some("pyright not found".into()))
-    );
+    let failed = next_failure(&events);
     wait_until("the document to wait", || {
         manager.server_of(a.id()).is_none()
     });
