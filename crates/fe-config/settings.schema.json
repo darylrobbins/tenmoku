@@ -315,6 +315,150 @@
         }
       ]
     },
+    "DebugAdapterSettings": {
+      "description": "One adapter's settings. Each key left unset keeps the built-in value.",
+      "properties": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "command": {
+          "description": "The program: a bare name is looked up on the login shell's `PATH`.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Set on top of Tenmoku's environment.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "languages": {
+          "description": "The languages it debugs, by Tenmoku's names: rust, python, go and so\non.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Folders a bare `command` is looked up in before the login shell's\n`PATH`.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DebugTransport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How Tenmoku talks to the adapter. With tcp, an argument holds\n`${port}` for the port it listens on."
+        },
+        "types": {
+          "description": "The `type` strings of launch.json configurations it answers to.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "DebugSettings": {
+      "description": "Settings for the debugger.",
+      "properties": {
+        "adapters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DebugAdapterSettings"
+          },
+          "default": {},
+          "description": "Debug adapters by name: changes to the built-in lldb-dap, codelldb,\ndebugpy and delve, or adapters of your own, which need a `command`.\nA project file can't set them.",
+          "type": "object"
+        },
+        "log_payloads": {
+          "default": false,
+          "description": "Record whole protocol messages in the debug log, not only what kind\nthey are. They may hold secrets, such as a password in a variable. A\nproject file can't set it.",
+          "type": "boolean"
+        },
+        "timeouts": {
+          "$ref": "#/$defs/DebugTimeouts",
+          "default": {
+            "connect": 5000,
+            "launch": 30000,
+            "request": 10000
+          },
+          "description": "How long a debug adapter may take, in milliseconds. Applies to\nsessions started after it changes."
+        }
+      },
+      "type": "object"
+    },
+    "DebugTimeouts": {
+      "description": "A debug session's timeouts, in milliseconds.",
+      "properties": {
+        "connect": {
+          "default": 5000,
+          "description": "Connecting to an adapter that listens on a port.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "launch": {
+          "default": 30000,
+          "description": "Starting the program: the answer to launch or attach.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "request": {
+          "default": 10000,
+          "description": "A request's answer, such as a step's or a variable's.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "DebugTransport": {
+      "description": "How Tenmoku talks to an adapter of the user's.",
+      "oneOf": [
+        {
+          "const": "stdio",
+          "description": "Over its standard input and output.",
+          "type": "string"
+        },
+        {
+          "const": "tcp",
+          "description": "Over a connection to 127.0.0.1, on the port Tenmoku puts in its\narguments for `${port}`.",
+          "type": "string"
+        }
+      ]
+    },
     "DefaultColorDecorators": {
       "description": "`editor.default_color_decorators`, as VS Code's\n`editor.defaultColorDecorators`.",
       "oneOf": [
@@ -1920,6 +2064,19 @@
         "show_thinking": false
       },
       "description": "The AI chat."
+    },
+    "debug": {
+      "$ref": "#/$defs/DebugSettings",
+      "default": {
+        "adapters": {},
+        "log_payloads": false,
+        "timeouts": {
+          "connect": 5000,
+          "launch": 30000,
+          "request": 10000
+        }
+      },
+      "description": "The debugger. A project file can only set its timeouts."
     },
     "editor": {
       "$ref": "#/$defs/EditorSettings",

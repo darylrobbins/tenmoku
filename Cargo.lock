@@ -2327,7 +2327,9 @@ version = "0.1.6"
 dependencies = [
  "async-io",
  "async-process",
+ "fe-config",
  "fe-dap",
+ "fe-lsp",
  "futures",
  "kiln-l10n",
  "log",

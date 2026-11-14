@@ -27,6 +27,11 @@ doc = false
 async-io.workspace = true
 async-process.workspace = true
 futures.workspace = true
+# The registry (src/registry.rs): the user's `[debug]` settings it layers,
+# and the login shell's PATH that bare adapter commands are looked up on,
+# as language servers' are (fe_lsp::LoginPath).
+fe-config.workspace = true
+fe-lsp.workspace = true
 kiln-l10n.workspace = true
 log.workspace = true
 serde.workspace = true

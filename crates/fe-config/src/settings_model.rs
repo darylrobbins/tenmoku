@@ -256,7 +256,8 @@ impl SettingsModel {
     /// Whether a project's file may set `entry`: not [`PROJECT_CHAT`],
     /// [`PROJECT_TERMINAL_SHELL`] or [`PROJECT_VIM_USER_ONLY`]'s keys, not
     /// the theme's, and of `lsp` only `enabled` and `servers`, from which
-    /// only `enabled = false` applies (outside a trusted folder).
+    /// only `enabled = false` applies (outside a trusted folder), and of
+    /// `debug` only `timeouts`.
     ///
     /// [`PROJECT_CHAT`]: crate::PROJECT_CHAT
     /// [`PROJECT_TERMINAL_SHELL`]: crate::PROJECT_TERMINAL_SHELL
@@ -288,6 +289,8 @@ impl SettingsModel {
                 ]
             ),
             ["lsp", rest @ ..] => matches!(rest, ["enabled"] | ["servers", ..]),
+            // Only what `narrow_debug` keeps.
+            ["debug", rest @ ..] => matches!(rest, ["timeouts", ..]),
             _ => true,
         }
     }
@@ -422,6 +425,13 @@ fn applied_project(project: &Table) -> Table {
     }
     table.remove("chat");
     table.remove("theme");
+    // Of `debug`, only what `narrow_debug` keeps.
+    if let Some(toml::Value::Table(debug)) = table.remove("debug")
+        && let Some(timeouts) = debug.get("timeouts")
+    {
+        let kept = Table::from_iter([("timeouts".to_owned(), timeouts.clone())]);
+        table.insert("debug".into(), toml::Value::Table(kept));
+    }
     for (name, keys) in [
         ("terminal", &["shell", "shell_args"][..]),
         ("vim", &["shell", "remap"]),

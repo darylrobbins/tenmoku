@@ -22,6 +22,7 @@ use toml::{
 use crate::agent_settings::{
     PROJECT_AGENTS, PROJECT_PERMISSIONS_SET, drop_project_permissions, narrow_agents,
 };
+use crate::debug_settings::{PROJECT_DEBUG, narrow_debug};
 use crate::{
     diagnostic::{Diagnostic, Severity},
     layers::Layer,
@@ -60,6 +61,9 @@ pub struct Settings {
     /// AI agents. A project file can only tighten their permissions.
     #[serde(default)]
     pub agents: crate::agent_settings::AgentSettings,
+    /// The debugger. A project file can only set its timeouts.
+    #[serde(default)]
+    pub debug: crate::debug_settings::DebugSettings,
     /// Installed extensions. A project file can't set them.
     #[serde(default)]
     pub extensions: ExtensionsSettings,
@@ -1670,6 +1674,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("vim", drop_vim_user_only))
         .project_filter(ProjectFilter::new("chat", drop_chat))
         .project_filter(ProjectFilter::new("agents", narrow_agents))
+        .project_filter(ProjectFilter::new("debug", narrow_debug))
         .project_filter(ProjectFilter::new("extensions", drop_extensions))
         .project_filter(ProjectFilter::new("workbench", drop_workbench_user_only))
 }
@@ -1926,6 +1931,7 @@ pub(crate) fn project_warning(en_us: &str) -> String {
         PROJECT_CHAT => tr!("config-project-chat-ignored"),
         PROJECT_AGENTS => tr!("config-project-agents-ignored"),
         PROJECT_PERMISSIONS_SET => tr!("config-agents-project-permissions-set"),
+        PROJECT_DEBUG => tr!("config-project-debug-ignored"),
         PROJECT_TERMINAL_SHELL => tr!("config-project-terminal-shell-ignored"),
         PROJECT_VIM_USER_ONLY => tr!("config-project-vim-user-only"),
         PROJECT_ICON_THEME => tr!("config-project-icon-theme-ignored"),

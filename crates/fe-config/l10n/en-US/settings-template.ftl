@@ -436,6 +436,25 @@ settings-template-agents-claude_code-sandbox_allow_write = Extra paths Claude Co
 
 settings-template-agents-claude_code-mcp_servers = Let Claude Code run the MCP servers its own settings configure.
 
+settings-template-debug-log_payloads =
+    Record whole protocol messages in the debug log, not only what kind they
+    are. They may hold secrets, such as a password in a variable. A project
+    file can't set it.
+
+settings-template-debug-timeouts-request = A request's answer, such as a step's or a variable's, in milliseconds.
+
+settings-template-debug-timeouts-launch = Starting the program: the answer to launch or attach.
+
+settings-template-debug-timeouts-connect = Connecting to an adapter that listens on a port.
+
+settings-template-debug-adapters-codelldb =
+    Debug adapters are set per name under [debug.adapters]: changes to the
+    built-in lldb-dap, codelldb, debugpy and delve, or adapters of your own,
+    which need a command. A bare command is looked up in the adapter's path
+    folders, then on your login shell's PATH. With transport = "tcp", an
+    argument holds ${"{"}port{"}"} for the port it listens on. A project file can't
+    set them.
+
 settings-template-update-automatic_checks =
     Check for a newer Tenmoku in the background once a day and offer to install
     it. Check for Updates… always works.

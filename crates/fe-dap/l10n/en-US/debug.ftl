@@ -45,3 +45,11 @@ dap-reverse-unsupported = { $command } isn't supported
 
 dap-log-payloads-warning = This log records whole messages. Environment values and expanded { "${env:…}" } references are hidden, but it may still hold secrets of the program's own (its variables, output and evaluation results) and of the configuration's literal strings. Don't share it without reading it first.
 dap-log-no-initialized = the adapter sent no initialized event within { $seconds } s of its launch response: configuration counts as complete, and breakpoints go if it comes later
+
+# Why a debug adapter isn't found, and how to get it (src/registry.rs).
+
+dap-hint-lldb-dap = lldb-dap wasn't found on your login shell's PATH. It comes with LLVM, and with Xcode on macOS: install one, or set debug.adapters.lldb-dap.command to its path.
+dap-hint-codelldb = codelldb wasn't found on your login shell's PATH. It comes in the adapter folder of the CodeLLDB extension for VS Code: put that folder on your PATH, or set debug.adapters.codelldb.command to the program's path.
+dap-hint-debugpy = No Python was found for debugpy: not .venv in the folder, not $VIRTUAL_ENV, and no python3 on your login shell's PATH. Install Python 3 and debugpy (pip install debugpy), or set debug.adapters.debugpy.command to a Python that has it.
+dap-hint-delve = dlv wasn't found on your login shell's PATH. Install Delve with go install github.com/go-delve/delve/cmd/dlv@latest, or set debug.adapters.delve.command to its path.
+dap-hint-not-found = { $command } wasn't found on your login shell's PATH, or isn't a program. Install it, or set debug.adapters.{ $name }.command to its path.

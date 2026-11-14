@@ -294,6 +294,10 @@ fn project_warnings_are_their_constants_in_en_us() {
             "config-project-agents-ignored",
         ),
         (
+            crate::debug_settings::PROJECT_DEBUG,
+            "config-project-debug-ignored",
+        ),
+        (
             PROJECT_TERMINAL_SHELL,
             "config-project-terminal-shell-ignored",
         ),

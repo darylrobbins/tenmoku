@@ -15,3 +15,13 @@ reason = "Protocol types only, with no user-facing text: the lint reads the doc 
 [[file]]
 path = "src/log.rs"
 reason = "The protocol log's lines are DAP field names and values (seq=, command=, request_seq=, success=, error.id=) and JSON, for diagnosing adapters; its prose (the payload warning) goes through tr!"
+
+[[literal]]
+file = "src/registry/builtin.rs"
+text = "command script import {lookup}"
+reason = "An LLDB command (Rust's formatters in an adapter's initCommands), never shown to a user"
+
+[[literal]]
+file = "src/registry/builtin.rs"
+text = "command source {commands}"
+reason = "An LLDB command (Rust's formatters in an adapter's initCommands), never shown to a user"

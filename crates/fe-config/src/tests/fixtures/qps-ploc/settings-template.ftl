@@ -236,6 +236,16 @@ settings-template-agents-claude_code-sandbox_allow_write = ⟦settings-template-
 
 settings-template-agents-claude_code-mcp_servers = ⟦settings-template-agents-claude_code-mcp_servers⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
 
+settings-template-debug-log_payloads = ⟦settings-template-debug-log_payloads⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
+
+settings-template-debug-timeouts-request = ⟦settings-template-debug-timeouts-request⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
+
+settings-template-debug-timeouts-launch = ⟦settings-template-debug-timeouts-launch⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
+
+settings-template-debug-timeouts-connect = ⟦settings-template-debug-timeouts-connect⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
+
+settings-template-debug-adapters-codelldb = ⟦settings-template-debug-adapters-codelldb⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
+
 settings-template-update-automatic_checks = ⟦settings-template-update-automatic_checks⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
 
 settings-template-extensions-disabled = ⟦settings-template-extensions-disabled⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.

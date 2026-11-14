@@ -417,6 +417,38 @@
 # Let Claude Code run the MCP servers its own settings configure.
 # mcp_servers = false
 
+[debug]
+# Record whole protocol messages in the debug log, not only what kind they
+# are. They may hold secrets, such as a password in a variable. A project
+# file can't set it.
+# log_payloads = false
+
+[debug.timeouts]
+# A request's answer, such as a step's or a variable's, in milliseconds.
+# request = 10000
+# Starting the program: the answer to launch or attach.
+# launch = 30000
+# Connecting to an adapter that listens on a port.
+# connect = 5000
+
+# Debug adapters are set per name under [debug.adapters]: changes to the
+# built-in lldb-dap, codelldb, debugpy and delve, or adapters of your own,
+# which need a command. A bare command is looked up in the adapter's path
+# folders, then on your login shell's PATH. With transport = "tcp", an
+# argument holds ${port} for the port it listens on. A project file can't
+# set them.
+#
+# [debug.adapters.codelldb]
+# command = "/opt/codelldb/adapter/codelldb"
+#
+# [debug.adapters.my_adapter]
+# command = "my-adapter"
+# args = ["--listen", "${port}"]
+# transport = "tcp"
+# path = ["~/.local/my-adapter/bin"]
+# languages = ["zig"]
+# types = ["my-adapter"]
+
 [update]
 # Check for a newer Tenmoku in the background once a day and offer to install
 # it. Check for Updates… always works.

@@ -10,7 +10,12 @@
 //! - [`AdapterLauncher`]: the launch seam, and [`LocalLauncher`], which
 //!   starts an adapter in its own process group and, for a TCP adapter,
 //!   substitutes `${port}` and connects with retries on an injected
-//!   [`Clock`].
+//!   [`Clock`]; or, for an adapter the host started
+//!   ([`AdapterTransport::Port`]), only connects.
+//! - [`Registry`]: which adapter a configuration gets (§3, card D3): the
+//!   host's specs, the user's `[debug.adapters]`, extensions' and the
+//!   built-in lldb-dap, codelldb, debugpy and delve, found on the login
+//!   shell's `PATH`.
 //! - [`Session`]: a session's lifecycle (§2 items 1-3, 6, 7; card D2):
 //!   startup in each ordering, configuration with a `configurationDone`
 //!   timeout, restart, termination, request timeouts and `cancel`, and
@@ -30,6 +35,7 @@ pub mod l10n;
 pub mod launcher;
 pub mod log;
 pub mod protocol;
+pub mod registry;
 pub mod session;
 pub mod transport;
 
@@ -45,6 +51,7 @@ pub use launcher::{
 };
 pub use log::{EnvExpansion, LogEntry, LogMode};
 pub use protocol::Message;
+pub use registry::{Adapter, Context, HostOs, Registry, Runner, Source, Status, SystemRunner};
 pub use session::{
     DapEvent, EndReason, Ended, PendingRequest, RequestError, Session, SessionError,
     SessionOptions, SessionState, StartRequest, TerminalReply, TerminalStarted,

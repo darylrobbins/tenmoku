@@ -8,7 +8,10 @@
 //! [`LocalLauncher`] is the default: a local process in its own process
 //! group. Over [`AdapterTransport::Tcp`] it picks a free port, puts it in
 //! the arguments for `${port}`, and connects to `127.0.0.1` on it, retrying
-//! for up to [`CONNECT_TIMEOUT`] on its [`Clock`].
+//! for up to [`CONNECT_TIMEOUT`] on its [`Clock`]. Over
+//! [`AdapterTransport::Port`] it starts nothing: it connects, the same way,
+//! to the port of an adapter the host has already started (§13: jdtls's
+//! java-debug).
 
 use std::ffi::{OsStr, OsString};
 use std::future::Future;
@@ -82,6 +85,11 @@ pub enum AdapterTransport {
     /// Over a TCP connection to `127.0.0.1`, on the port the launcher puts
     /// in the arguments for [`PORT_PLACEHOLDER`].
     Tcp,
+    /// Over a TCP connection to `127.0.0.1` on this port, where an adapter
+    /// the host has already started listens (§13: the port jdtls gives for
+    /// java-debug). Nothing is launched, so `command`, `args` and `env` are
+    /// unused, and the adapter's process is the host's to stop.
+    Port(u16),
 }
 
 /// A running adapter's transport. Client → adapter bytes go to `input`.
@@ -224,6 +232,8 @@ impl Flag {
 ///   [`AdapterIo::stdout`], and the port is one the system just gave out
 ///   free. Another program could take it between that and the adapter's
 ///   bind, which shows as a failed connection.
+/// - Over [`AdapterTransport::Port`], nothing is started: it connects to
+///   the host's adapter on that port, with the same retries and limit.
 #[derive(Clone)]
 pub struct LocalLauncher {
     clock: Arc<dyn Clock>,
@@ -276,6 +286,9 @@ impl AdapterLauncher for LocalLauncher {
         if cancel.is_cancelled() {
             return Err(cancelled(spec));
         }
+        if let AdapterTransport::Port(port) = spec.transport {
+            return self.connect_to(spec, port, cancel);
+        }
         let spec_path = spec
             .env
             .iter()
@@ -295,6 +308,7 @@ impl AdapterLauncher for LocalLauncher {
         })?;
         let (args, port) = match spec.transport {
             AdapterTransport::Stdio => (spec.args.clone(), None),
+            AdapterTransport::Port(_) => unreachable!("connected to above"),
             AdapterTransport::Tcp => {
                 if !spec.args.iter().any(|arg| arg.contains(PORT_PLACEHOLDER)) {
                     return Err(io::Error::new(
@@ -388,6 +402,42 @@ pub const STARTUP_OUTPUT_LIMIT: usize = 1024 * 1024;
 type Output = Pin<Box<dyn AsyncRead + Send>>;
 
 impl LocalLauncher {
+    /// Connects to the host's adapter on `127.0.0.1:port`, with
+    /// [`connect_with`]'s retries and limit, as it may still be starting.
+    fn connect_to(
+        &self,
+        spec: &AdapterSpec,
+        port: u16,
+        cancel: &LaunchCancel,
+    ) -> io::Result<AdapterIo> {
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let stream = async_io::block_on(connect_with(
+            &*self.clock,
+            cancel,
+            spec,
+            port,
+            || false,
+            || Async::<TcpStream>::connect(address),
+        ))?;
+        let closed = Arc::new(Flag::default());
+        let process = Connection {
+            stream: stream.get_ref().try_clone().ok(),
+            closed: closed.clone(),
+        };
+        let (output, input) = stream.split();
+        Ok(AdapterIo {
+            input: Box::pin(input),
+            output: Box::pin(Closing {
+                inner: output,
+                closed,
+            }),
+            stderr: None,
+            stdout: None,
+            port: Some(port),
+            process: Box::new(process),
+        })
+    }
+
     /// Connects to `127.0.0.1:port` (see [`connect_with`]) while draining
     /// the adapter's stdout and stderr, which come back with what was read
     /// of them first.
@@ -631,14 +681,14 @@ fn candidates(dir: &Path, name: &Path) -> Vec<PathBuf> {
 }
 
 #[cfg(unix)]
-fn is_runnable(file: &Path) -> bool {
+pub(crate) fn is_runnable(file: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::metadata(file)
         .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(windows)]
-fn is_runnable(file: &Path) -> bool {
+pub(crate) fn is_runnable(file: &Path) -> bool {
     std::fs::metadata(file).is_ok_and(|meta| meta.is_file())
 }
 
@@ -649,6 +699,69 @@ fn exit_info(status: std::process::ExitStatus) -> ExitInfo {
         signal: status.signal(),
         #[cfg(not(unix))]
         signal: None,
+    }
+}
+
+/// The handle on an [`AdapterTransport::Port`] adapter, which isn't ours:
+/// [`kill`](AdapterProcess::kill) only closes the connection, and
+/// [`exited`](AdapterProcess::exited) resolves once the connection has
+/// closed, by that kill or from the adapter's end ([`Closing`]).
+struct Connection {
+    stream: Option<TcpStream>,
+    closed: Arc<Flag>,
+}
+
+/// A Port adapter's output, which marks its connection closed once a read
+/// finds its end or fails: the adapter has gone, as far as fe-dap can
+/// tell.
+struct Closing<R> {
+    inner: R,
+    closed: Arc<Flag>,
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for Closing<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
+        let ended = match &polled {
+            std::task::Poll::Ready(Ok(0)) => !buf.is_empty(),
+            std::task::Poll::Ready(Err(err)) => err.kind() != io::ErrorKind::Interrupted,
+            _ => false,
+        };
+        if ended {
+            self.closed.fire();
+        }
+        polled
+    }
+}
+
+impl AdapterProcess for Connection {
+    fn id(&self) -> Option<u32> {
+        None
+    }
+
+    fn exited(&mut self) -> Pin<Box<dyn Future<Output = ExitInfo> + Send + '_>> {
+        let closed = self.closed.receiver.clone();
+        Box::pin(async move {
+            let _ = closed.await;
+            ExitInfo::default()
+        })
+    }
+
+    fn kill(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+        self.closed.fire();
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 

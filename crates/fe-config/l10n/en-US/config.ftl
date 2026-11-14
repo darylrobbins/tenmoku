@@ -20,6 +20,7 @@ config-project-extensions-ignored = extensions settings in project files are ign
 config-project-chat-ignored = A project's settings can't set `chat`; set it in your own settings.toml
 config-project-agents-ignored = A project's settings can only tighten `agents.permissions` (levels, commands_ask, commands_deny); everything else under `agents` is ignored
 config-agents-project-permissions-set = agents.project_permissions can't be set in a file: a project's `agents.permissions` fill it, and you tighten through `agents.permissions`
+config-project-debug-ignored = A project's settings can only set `debug.timeouts`: a folder can't choose a debug adapter's command, arguments or environment, or turn on debug.log_payloads
 config-agents-task-budget = must be 0 (off) or at least 20000
 config-project-terminal-shell-ignored = terminal.shell and terminal.shell_args in project files are ignored: a folder can't choose the program its terminal runs
 config-project-vim-user-only = vim.shell and vim.remap in project files are ignored: a folder can't choose the program ! runs or type keys as you

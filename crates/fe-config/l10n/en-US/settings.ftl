@@ -9,12 +9,13 @@ settings-group-claude_code = Claude Code
 settings-group-permissions = Permissions
 settings-group-project_permissions = Project Permissions
 settings-group-chat = Chat
+settings-group-debug = Debug
+settings-group-timeouts = Timeouts
 settings-group-editor = Editor
 settings-group-minimap = Minimap
 settings-group-sticky_scroll = Sticky Scroll
 settings-group-extensions = Extensions
 settings-group-lsp = LSP
-settings-group-timeouts = Timeouts
 settings-group-status_bar = Status Bar
 settings-group-terminal = Terminal
 settings-group-theme = Theme
@@ -160,6 +161,28 @@ settings-chat-model = The Claude model new chats start with.
 settings-chat-show_thinking =
     Show a summary of Claude's reasoning above each reply. Applies to new
     chats.
+
+settings-debug = The debugger. A project file can only set its timeouts.
+
+settings-debug-adapters =
+    Debug adapters by name: changes to the built-in lldb-dap, codelldb,
+    debugpy and delve, or adapters of your own, which need a `command`.
+    A project file can't set them.
+
+settings-debug-log_payloads =
+    Record whole protocol messages in the debug log, not only what kind
+    they are. They may hold secrets, such as a password in a variable. A
+    project file can't set it.
+
+settings-debug-timeouts =
+    How long a debug adapter may take, in milliseconds. Applies to
+    sessions started after it changes.
+
+settings-debug-timeouts-connect = Connecting to an adapter that listens on a port.
+
+settings-debug-timeouts-launch = Starting the program: the answer to launch or attach.
+
+settings-debug-timeouts-request = A request's answer, such as a step's or a variable's.
 
 settings-editor = The text editor.
 

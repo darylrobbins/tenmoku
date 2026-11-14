@@ -18,6 +18,7 @@
 
 pub mod agent_settings;
 pub mod chat_models;
+pub mod debug_settings;
 pub mod editorconfig;
 pub mod first_run;
 pub mod harpoon;

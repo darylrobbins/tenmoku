@@ -6,6 +6,7 @@
 mod fake;
 mod launcher;
 mod protocol;
+mod registry;
 mod session_fairness;
 mod session_harness;
 mod session_log;
