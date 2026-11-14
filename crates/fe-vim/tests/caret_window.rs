@@ -15,6 +15,11 @@ use unicode_segmentation::UnicodeSegmentation;
 /// in windows.
 const REACH: usize = 16 * 1024;
 
+/// Units of `a b ` that, after a pad of about `REACH` bytes, make a row just
+/// past the four windows from which rows are read in windows (not `REACH`
+/// units, which is a third again as many bytes for each key to pass).
+const LONG_UNITS: usize = 3 * REACH / 4 + 64;
+
 /// What a key may take on the huge row: the row's copy and segmentation
 /// alone took far longer than this in release, and in debug builds.
 fn limit() -> Duration {
@@ -131,7 +136,7 @@ fn graphemes_joining_across_the_windows_edge_stay_whole() {
         "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} z",
         "\u{1f44d}\u{1f3fd} a\u{301}\u{301} \u{2764}\u{fe0f}\u{200d}\u{1f525} z",
     ];
-    let tail = "a b ".repeat(REACH);
+    let tail = "a b ".repeat(LONG_UNITS);
     for middle in sequences {
         for edge in REACH - middle.len() - 2..REACH + 6 {
             let short = padded(edge, middle) + "end " + &"a b ".repeat(8);
@@ -172,7 +177,7 @@ fn graphemes_joining_across_the_windows_left_edge_stay_whole() {
         "\u{1f1e6}\u{1f1e7}\u{1f1e8}\u{1f1e9}\u{1f1ea} z",
         "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467} z",
     ];
-    let head = "a b ".repeat(REACH);
+    let head = "a b ".repeat(LONG_UNITS);
     for middle in sequences {
         for edge in REACH - 4..REACH + middle.len() + 4 {
             let after = padded(edge, "");
@@ -253,7 +258,7 @@ fn same_near_the_edge(
     edges: std::ops::Range<usize>,
     keys: impl Fn(usize) -> Vec<String>,
 ) {
-    let tail = "a b ".repeat(REACH);
+    let tail = "a b ".repeat(LONG_UNITS);
     for edge in edges {
         let pad = padded(edge, "");
         let short = format!("{pad}{local}end a b a b");
@@ -277,7 +282,7 @@ fn number_increment_finds_its_number_past_the_windows_edge() {
 
 #[test]
 fn sentence_objects_and_motions_go_over_the_windows_edge() {
-    let tail = "Ab cd. ".repeat(REACH);
+    let tail = "Ab cd. ".repeat(3 * REACH / 7 + 64);
     for edge in REACH - 1..REACH + 4 {
         let pad = "Ab cd. ".repeat(edge / 7);
         let short = format!("{pad}Zz yy. Ab. Cd ee.  Ff.");
@@ -712,7 +717,7 @@ fn first_non_blanks_past_a_long_indent_land_as_past_a_short_one() {
         ("{pad}\nb", (0, 0), "=="),
     ];
     for blank in [" ", "\t"] {
-        let (short, long) = (blank.repeat(3), blank.repeat(400_000));
+        let (short, long) = (blank.repeat(3), blank.repeat(8 * REACH + 1_000));
         for (rows, caret, keys) in cases {
             // These indent anew, a tab's width in spaces.
             if blank == "\t" && ["==", "gqq", ":><CR>"].contains(&keys) {

@@ -10,7 +10,15 @@ fail-fast = false
 # The slow set runs after merge only (post_merge's test_all stage passes
 # --ignore-default-filter). List from the 2026-10-21 gate run
 # 01m5fxp99b1bhcpxe072zx1n1d (tests over 30 s; the fe-vim names are the
-# run's report names). Add a test here in the task that adds it; see TESTING.md.
+# run's report names). T380 (the Linux gate's test stage no longer finished)
+# added the fe-vim tests below the first three fe-vim ones, each over 10 s
+# alone in a debug build after its fixture was sized down, for the reason in
+# docs/decisions/*-fe-vim-long-row-tests.md (with every before and after
+# time): a window's edge is 16 KiB out and a visual or counted key walks all
+# of it (visual_counted_l, the two grapheme tests, columns_far_along,
+# sentence_objects), the 100 MB row is the claim (keys_from_the_middle), and
+# the put cap is 64 MiB written (regional caps, the two replay tests).
+# Add a test here in the task that adds it; see TESTING.md.
 default-filter = '''
 not (
   (package(fe-workbench) and test(=tests::m3_signoff::a_100k_file_project_end_to_end))
@@ -20,6 +28,15 @@ not (
   or (package(fe-vim) and test(=counted_replace_of_regional_indicators_stays_bounded))
   or (package(fe-vim) and test(=huge_virtual_counts_stay_bounded))
   or (package(fe-vim) and test(=a_huge_virtual_count_stays_bounded))
+  or (package(fe-vim) and test(=a_visual_counted_l_goes_over_the_windows_edge))
+  or (package(fe-vim) and test(=columns_far_along_a_huge_row_are_the_rows_own))
+  or (package(fe-vim) and test(=graphemes_joining_across_the_windows_edge_stay_whole))
+  or (package(fe-vim) and test(=graphemes_joining_across_the_windows_left_edge_stay_whole))
+  or (package(fe-vim) and test(=sentence_objects_and_motions_go_over_the_windows_edge))
+  or (package(fe-vim) and test(=keys_from_the_middle_of_a_100_mb_row_land_as_on_a_short_row))
+  or (package(fe-vim) and test(=counted_replace_of_regional_indicators_caps_at_max_put))
+  or (package(fe-vim) and test(=insert::keys::tests::counted_replay_of_an_oversized_register_is_refused))
+  or (package(fe-vim) and test(=insert::keys::tests::dot_replay_of_an_oversized_register_is_refused))
 )
 '''
 
