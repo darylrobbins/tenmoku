@@ -334,9 +334,14 @@ fn the_profile_holds_the_mode_tools_asks_deny_rules_and_sandbox() {
     assert_eq!(sandbox["failIfUnavailable"], json!(true));
     assert_eq!(sandbox["autoAllowBashIfSandboxed"], json!(false));
     assert_eq!(sandbox["allowUnsandboxedCommands"], json!(false));
+    // Passed as its real path, as the overlap check resolves it: on macOS
+    // /var is a link to /private/var.
+    let real = std::fs::canonicalize("/var/tmp")
+        .unwrap()
+        .join("agent-cache");
     assert_eq!(
         strings(&sandbox["filesystem"]["allowWrite"]),
-        ["/var/tmp/agent-cache"]
+        [path_text(&real)]
     );
 }
 
