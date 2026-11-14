@@ -58,8 +58,8 @@ pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, px};
 pub use gutter_annotations::{GutterAnnotation, GutterAnnotations};
 pub use hover::{
-    DefinitionFuture, HoverCardPart, HoverCardText, HoverContent, HoverDefinition, HoverFuture,
-    HoverProvider, MarkdownRenderer, PaintedHoverCard,
+    CALLER_COUNT_CAP, CallerCountFuture, DefinitionFuture, HoverCardPart, HoverCardText,
+    HoverContent, HoverDefinition, HoverFuture, HoverProvider, MarkdownRenderer, PaintedHoverCard,
 };
 pub use image_viewer::pane_item::status as image_status;
 pub use image_viewer::{

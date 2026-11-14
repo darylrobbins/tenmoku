@@ -75,6 +75,7 @@ mod git_log_b3;
 mod git_log_graph_width;
 mod git_sync_ui;
 mod gradle_custom_task;
+mod hover_callers;
 mod icon_theme_install;
 mod launch;
 pub(crate) mod lsp;

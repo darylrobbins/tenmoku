@@ -2264,6 +2264,15 @@ impl LspHover {
 }
 
 impl fe_gpui::HoverProvider for LspHover {
+    fn caller_count(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+    ) -> fe_gpui::CallerCountFuture {
+        self.callers(buffer, version, offset)
+    }
+
     fn hover(&self, buffer: BufferId, version: Version, offset: usize) -> fe_gpui::HoverFuture {
         let ignore = self.ignore_host(buffer);
         let assist = self.ignore.clone();
@@ -2289,6 +2298,42 @@ impl fe_gpui::HoverProvider for LspHover {
                 None => None,
             };
             crate::ignore_assist::merged_hover(server, matches)
+        })
+    }
+}
+
+impl LspHover {
+    /// How many call the symbol at `offset`: the call hierarchy prepared
+    /// there, then its first item's incoming calls counted. `None` from a
+    /// server without call hierarchy, with no item there, or that fails.
+    fn callers(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+    ) -> fe_gpui::CallerCountFuture {
+        let Some(manager) = self.manager.borrow().upgrade() else {
+            return Box::pin(std::future::ready(None));
+        };
+        // Sent under the lock; awaited without it.
+        let prepared = lock(&manager).prepare_call_hierarchy(buffer, version, offset);
+        Box::pin(async move {
+            let item = match prepared.await {
+                Ok(Some(items)) => items.into_iter().next()?,
+                Ok(None) => return None,
+                Err(error) => {
+                    log::debug!("no caller count: {error}");
+                    return None;
+                }
+            };
+            let counted = lock(&manager).caller_count(buffer, &item);
+            match counted.await {
+                Ok(count) => Some(count),
+                Err(error) => {
+                    log::debug!("no caller count: {error}");
+                    None
+                }
+            }
         })
     }
 }

@@ -3,6 +3,7 @@
 
 mod add_ons;
 mod admission;
+mod caller_count;
 mod cancel;
 mod catalogue;
 mod completion;

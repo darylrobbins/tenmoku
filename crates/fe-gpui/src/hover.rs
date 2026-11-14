@@ -111,6 +111,15 @@ pub struct HoverDefinition {
 /// A [`HoverProvider`]'s definition to come: `None` for not known.
 pub type DefinitionFuture = Pin<Box<dyn Future<Output = Option<HoverDefinition>>>>;
 
+/// A [`HoverProvider`]'s caller count to come: `None` for none to show (no
+/// call hierarchy, say), else how many call what the hover is about, at most
+/// [`CALLER_COUNT_CAP`].
+pub type CallerCountFuture = Pin<Box<dyn Future<Output = Option<usize>>>>;
+
+/// The most callers a count tells: [`CALLER_COUNT_CAP`] or more shows as
+/// "99+".
+pub const CALLER_COUNT_CAP: usize = 99;
+
 /// Where a view's hover text comes from, set by its host
 /// ([`EditorView::set_hover_provider`]): fe-gpui knows nothing of language
 /// servers.
@@ -122,6 +131,15 @@ pub trait HoverProvider {
     /// defined, for the card's footer: asked once the hover has answered
     /// with something to show. Not known, by default.
     fn definition(&self, buffer: BufferId, version: Version, offset: usize) -> DefinitionFuture {
+        let _ = (buffer, version, offset);
+        Box::pin(std::future::ready(None))
+    }
+
+    /// How many callers what's at byte `offset` of `buffer`, at its
+    /// `version`, has, for the card's footer: asked once the hover has
+    /// answered with something to show, and filled in when it arrives. None
+    /// by default. Dropped (so cancelled) when the pointer leaves.
+    fn caller_count(&self, buffer: BufferId, version: Version, offset: usize) -> CallerCountFuture {
         let _ = (buffer, version, offset);
         Box::pin(std::future::ready(None))
     }
@@ -167,6 +185,15 @@ struct Current {
     /// Where the provider says what it answered about is defined, once it
     /// has said.
     definition: Option<HoverDefinition>,
+    /// How many call it, once the provider has said (see
+    /// [`HoverProvider::caller_count`]).
+    callers: Option<usize>,
+    /// Whether the count has been asked for and hasn't come: the footer
+    /// holds the room it will take, so the card doesn't move or grow when
+    /// it arrives.
+    callers_pending: bool,
+    /// Whether the count was asked for at all, pending or not.
+    callers_asked: bool,
     /// The offset the provider was asked about, until the pointer moves on
     /// within what this covers: what a reply's range must hold.
     requested: usize,
@@ -900,6 +927,8 @@ impl EditorView {
                         .is_none_or(|range| range.contains(&offset) || range.start == offset);
                     if covers {
                         current.content = Some(content);
+                        current.callers_pending = true;
+                        current.callers_asked = true;
                         cx.notify();
                         return true;
                     } else if current.hovered.items.is_empty() {
@@ -916,20 +945,37 @@ impl EditorView {
             if !matches!(answered, Ok(true)) {
                 return;
             }
-            // Then where it's defined, for the footer.
-            let Some(definition) = provider.definition(buffer, version, offset).await else {
-                return;
+            // Then where it's defined and how many call it, for the footer,
+            // each filling in as it arrives.
+            let mut callers_cx = cx.clone();
+            let defined = async {
+                let definition = provider.definition(buffer, version, offset).await?;
+                view.update(cx, |view, cx| {
+                    let current_version = view.model.snapshot().version();
+                    if let Some(current) = (view.popover.current.as_mut())
+                        .filter(|current| current.content.is_some() && current_version == version)
+                    {
+                        current.definition = Some(definition);
+                        cx.notify();
+                    }
+                })
+                .ok()
             };
-            view.update(cx, |view, cx| {
-                let current_version = view.model.snapshot().version();
-                if let Some(current) = (view.popover.current.as_mut())
-                    .filter(|current| current.content.is_some() && current_version == version)
-                {
-                    current.definition = Some(definition);
-                    cx.notify();
-                }
-            })
-            .ok();
+            let called = async {
+                let count = provider.caller_count(buffer, version, offset).await;
+                view.update(&mut callers_cx, |view, cx| {
+                    let current_version = view.model.snapshot().version();
+                    if let Some(current) = (view.popover.current.as_mut())
+                        .filter(|current| current.content.is_some() && current_version == version)
+                    {
+                        current.callers = count.map(|count| count.min(CALLER_COUNT_CAP));
+                        current.callers_pending = false;
+                        cx.notify();
+                    }
+                })
+                .ok()
+            };
+            futures::future::join(defined, called).await;
         });
         self.popover.current = Some(Current {
             hovered,
@@ -938,6 +984,9 @@ impl EditorView {
             content,
             card: None,
             definition: None,
+            callers: None,
+            callers_pending: false,
+            callers_asked: false,
             requested: ask.unwrap_or(hovered_offset),
             _task: task,
             hiding: None,
@@ -1043,6 +1092,8 @@ impl EditorView {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
+        // Where the last frame drew it, for a card that mustn't move.
+        let drawn_at = self.popover.bounds.get().map(|bounds| bounds.origin);
         self.popover.bounds.set(None);
         #[cfg(test)]
         {
@@ -1068,7 +1119,13 @@ impl EditorView {
             }
         };
         let current = self.popover.current.as_ref()?;
-        let (at, scroll) = (current.at, current.scroll.clone());
+        // Once it's asked for the callers it stays where it was drawn: the
+        // count arriving, or not, doesn't change where the window fits it.
+        let at = match drawn_at {
+            Some(origin) if current.callers_asked => origin,
+            _ => current.at,
+        };
+        let scroll = current.scroll.clone();
         let line_height =
             (self.layout.as_ref()).map_or(px(20.), |layout| px(layout.frame.line_height));
         let theme = &self.theme;
@@ -1194,10 +1251,24 @@ impl EditorView {
                 let runs = vec![run(text.len(), small.clone(), faint)];
                 card_text(HoverCardPart::Footer, text, sizes.small, runs, cx)
             };
-            row = row.child(match footer.location {
-                Some(location) => piece(location, cx),
-                None => div(),
-            });
+            // Where it's defined, then how many call it, which may come late.
+            let mut left = div().flex().flex_row().gap_2();
+            if let Some(location) = footer.location {
+                left = left.child(piece(location, cx));
+            }
+            if let Some(callers) = footer.callers {
+                left = left.child(piece(callers, cx));
+            } else if let Some(widest) = footer.callers_room {
+                // Not drawn, but laid out.
+                let runs = vec![run(widest.len(), small.clone(), faint)];
+                left = left.child(
+                    div()
+                        .invisible()
+                        .text_size(sizes.small)
+                        .child(StyledText::new(widest).with_runs(runs)),
+                );
+            }
+            row = row.child(left);
             if let Some(hint) = footer.hint {
                 row = row.child(piece(hint, cx));
             }
@@ -1260,7 +1331,25 @@ impl EditorView {
             });
         let hint = (self.vim.is_some())
             .then(|| tr!("gpui-hover-go-to-definition", keys = VIM_DEFINITION_KEYS).to_string());
-        (location.is_some() || hint.is_some()).then_some(CardFooter { location, hint })
+        let callers = current.callers.map(|count| {
+            let shown = if count >= CALLER_COUNT_CAP {
+                format!("{CALLER_COUNT_CAP}+")
+            } else {
+                count.to_string()
+            };
+            let plural = if count >= CALLER_COUNT_CAP { 2 } else { count };
+            tr!("gpui-hover-callers", count = plural, shown = shown).to_string()
+        });
+        // While it's coming, room for the widest it can be.
+        let callers_room = (callers.is_none() && current.callers_pending)
+            .then(|| tr!("gpui-hover-callers", count = 2, shown = "99+").to_string());
+        (location.is_some() || callers.is_some() || callers_room.is_some() || hint.is_some())
+            .then_some(CardFooter {
+                location,
+                callers,
+                callers_room,
+                hint,
+            })
     }
 }
 
@@ -1357,6 +1446,10 @@ impl CardFonts {
 /// The footer's two sides.
 struct CardFooter {
     location: Option<String>,
+    /// "3 callers".
+    callers: Option<String>,
+    /// The widest the count can read, to hold its room while it's coming.
+    callers_room: Option<String>,
     hint: Option<String>,
 }
 

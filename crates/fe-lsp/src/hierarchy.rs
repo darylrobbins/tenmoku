@@ -45,6 +45,9 @@ use crate::requests::{first_that_answers, rank_list};
 /// The most edges (or items) one answer keeps.
 pub const MAX_EDGES: usize = 2_000;
 
+/// Where [`LspManager::caller_count`] stops counting: shown as "99+".
+pub const CALLER_COUNT_CAP: usize = 99;
+
 /// Where the session keeps that the server provides type hierarchy.
 const TYPE_PROVIDER: &str = "typeHierarchyProvider";
 
@@ -282,6 +285,29 @@ impl LspManager {
         self.call_edges::<Incoming>(server_of, item, "from")
     }
 
+    /// How many symbols call `item`, which came from open buffer
+    /// `server_of`, for a hover card's footer: its incoming calls counted,
+    /// at most [`CALLER_COUNT_CAP`] (so 99 means "99 or more"); a timeout is
+    /// an error, not zero. A host asks
+    /// [`prepare_call_hierarchy`](Self::prepare_call_hierarchy) at the
+    /// hovered symbol first; `Ok(None)` there (no call hierarchy) or no
+    /// item means no count.
+    pub fn caller_count(
+        &self,
+        server_of: BufferId,
+        item: &HierarchyItem,
+    ) -> impl Future<Output = Result<usize, LspError>> + Send + 'static + use<> {
+        // A timeout stays one: an unknown count isn't zero.
+        let sent = self.follow_up::<Incoming>(server_of, item, false);
+        let (encoding, from) = (item.encoding, item.from);
+        async move {
+            let calls = (sent.await?.into_iter())
+                .filter_map(|call| decode_call(call, "from", encoding, from))
+                .take(CALLER_COUNT_CAP);
+            Ok(calls.count())
+        }
+    }
+
     /// The calls out of `item`, which came from open buffer `server_of`.
     pub fn outgoing_calls(
         &self,
@@ -316,7 +342,7 @@ impl LspManager {
         key: &'static str,
     ) -> impl Future<Output = Result<Vec<CallEdge>, LspError>> + Send + 'static + use<R> {
         let (encoding, from) = (item.encoding, item.from);
-        let sent = self.follow_up::<R>(server_of, item);
+        let sent = self.follow_up::<R>(server_of, item, true);
         async move {
             Ok((sent.await?.into_iter())
                 .filter_map(|call| decode_call(call, key, encoding, from))
@@ -331,7 +357,7 @@ impl LspManager {
         item: &HierarchyItem,
     ) -> impl Future<Output = Result<Vec<HierarchyItem>, LspError>> + Send + 'static + use<R> {
         let (encoding, from) = (item.encoding, item.from);
-        let sent = self.follow_up::<R>(server_of, item);
+        let sent = self.follow_up::<R>(server_of, item, true);
         async move {
             Ok((sent.await?.into_iter())
                 .filter_map(|raw| decode(raw, encoding, from))
@@ -343,12 +369,13 @@ impl LspManager {
     /// Sends `item`'s raw JSON back, unchanged, to the server that produced
     /// it, if that session still has the buffer open as it was: otherwise
     /// `Unavailable("stale")`, with nothing sent. (An item with no owner
-    /// goes to the lead of `server_of`.) `null` and a timeout are an empty
-    /// list.
+    /// goes to the lead of `server_of`.) `null` is an empty list, and so is a timeout if
+    /// `timeout_is_empty`.
     fn follow_up<R: Request<Params = Value, Result = Option<Vec<Value>>> + 'static>(
         &self,
         server_of: BufferId,
         item: &HierarchyItem,
+        timeout_is_empty: bool,
     ) -> futures::future::BoxFuture<'static, Result<Vec<Value>, LspError>> {
         let from = item.from;
         let server = match from {
@@ -371,7 +398,7 @@ impl LspManager {
             match reply.await {
                 Ok(Some(reply)) => Ok(reply.result.unwrap_or_default()),
                 Ok(None) => Err(LspError::Unavailable(STALE.into())),
-                Err(LspError::Timeout) => Ok(Vec::new()),
+                Err(LspError::Timeout) if timeout_is_empty => Ok(Vec::new()),
                 Err(err) => Err(err),
             }
         }
