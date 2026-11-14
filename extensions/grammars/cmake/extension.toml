@@ -13,6 +13,7 @@ extensions = ["cmake"]
 file_names = ["CMakeLists.txt"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["config"]
 earlier_patterns_win = false
 line_comment = "#"
 block_comment = ["#[[", "]]"]

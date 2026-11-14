@@ -12,6 +12,7 @@ wasm = "tree-sitter-ocaml.wasm"
 extensions = ["ml"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["functional"]
 earlier_patterns_win = false
 block_comment = ["(*", "*)"]
 shebangs = ["ocaml"]

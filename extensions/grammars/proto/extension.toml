@@ -14,4 +14,5 @@ line_comment = "//"
 block_comment = ["/*", "*/"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["data", "config"]
 earlier_patterns_win = false

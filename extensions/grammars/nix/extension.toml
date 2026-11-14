@@ -12,6 +12,7 @@ wasm = "tree-sitter-nix.wasm"
 extensions = ["nix"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["infra"]
 earlier_patterns_win = true
 line_comment = "#"
 block_comment = ["/*", "*/"]

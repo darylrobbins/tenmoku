@@ -12,6 +12,7 @@ wasm = "tree-sitter-clojure.wasm"
 extensions = ["clj", "cljs", "cljc", "edn", "bb"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["functional", "jvm"]
 earlier_patterns_win = false
 line_comment = ";"
 shebangs = ["bb", "clojure"]

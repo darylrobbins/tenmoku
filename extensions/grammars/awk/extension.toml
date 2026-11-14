@@ -12,6 +12,7 @@ wasm = "tree-sitter-awk.wasm"
 extensions = ["awk", "gawk"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["shells"]
 earlier_patterns_win = true
 line_comment = "#"
 shebangs = ["awk", "gawk", "mawk", "nawk"]

@@ -13,6 +13,7 @@ extensions = ["ex", "exs"]
 file_names = ["mix.lock"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["functional", "web"]
 earlier_patterns_win = false
 line_comment = "#"
 shebangs = ["elixir"]

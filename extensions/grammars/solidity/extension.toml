@@ -12,6 +12,7 @@ wasm = "tree-sitter-solidity.wasm"
 extensions = ["sol"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["web"]
 earlier_patterns_win = false
 line_comment = "//"
 block_comment = ["/*", "*/"]

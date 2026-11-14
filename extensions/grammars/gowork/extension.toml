@@ -12,5 +12,6 @@ wasm = "tree-sitter-gowork.wasm"
 file_names = ["go.work"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["config"]
 earlier_patterns_win = true
 line_comment = "//"

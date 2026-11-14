@@ -14,6 +14,7 @@ wasm = "tree-sitter-fsharp.wasm"
 extensions = ["fs", "fsx"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["dotnet", "functional"]
 earlier_patterns_win = false
 line_comment = "//"
 block_comment = ["(*", "*)"]

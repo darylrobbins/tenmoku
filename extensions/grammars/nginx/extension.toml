@@ -13,5 +13,6 @@ extensions = ["nginx", "nginxconf"]
 file_names = ["nginx.conf"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["infra"]
 earlier_patterns_win = false
 line_comment = "#"

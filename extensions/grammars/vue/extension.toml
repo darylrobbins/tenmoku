@@ -12,6 +12,7 @@ wasm = "tree-sitter-vue.wasm"
 extensions = ["vue"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["web"]
 earlier_patterns_win = false
 block_comment = ["<!--", "-->"]
 license = "MIT"

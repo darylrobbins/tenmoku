@@ -13,4 +13,5 @@ extensions = ["blade.php"]
 highlights = "highlights.scm"
 injections = "injections.scm"
 block_comment = ["{{--", "--}}"]
+packs = ["web"]
 earlier_patterns_win = true

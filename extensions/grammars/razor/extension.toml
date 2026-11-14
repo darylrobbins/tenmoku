@@ -13,4 +13,5 @@ extensions = ["cshtml", "razor"]
 highlights = "highlights.scm"
 injections = "injections.scm"
 block_comment = ["@*", "*@"]
+packs = ["dotnet", "web"]
 earlier_patterns_win = false

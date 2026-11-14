@@ -12,5 +12,6 @@ wasm = "tree-sitter-gleam.wasm"
 extensions = ["gleam"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["functional"]
 earlier_patterns_win = false
 line_comment = "//"

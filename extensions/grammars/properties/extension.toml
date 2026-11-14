@@ -13,5 +13,6 @@ extensions = ["properties"]
 file_names = ["gradle.properties"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["jvm"]
 earlier_patterns_win = false
 line_comment = "#"

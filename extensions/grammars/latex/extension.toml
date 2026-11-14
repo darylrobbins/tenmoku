@@ -12,6 +12,7 @@ wasm = "tree-sitter-latex.wasm"
 extensions = ["tex", "sty", "cls", "ltx"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["docs"]
 earlier_patterns_win = false
 license = "MIT"
 line_comment = "%"

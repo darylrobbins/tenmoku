@@ -13,5 +13,6 @@ wasm = "tree-sitter-fortran.wasm"
 extensions = ["f90", "f95", "f03", "f08"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["systems"]
 earlier_patterns_win = false
 line_comment = "!"

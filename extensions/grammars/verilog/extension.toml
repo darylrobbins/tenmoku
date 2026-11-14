@@ -14,5 +14,6 @@ line_comment = "//"
 block_comment = ["/*", "*/"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["hardware"]
 earlier_patterns_win = false
 license = "MIT"

@@ -13,4 +13,5 @@ extensions = ["erb"]
 block_comment = ["<%#", "%>"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["web"]
 earlier_patterns_win = true

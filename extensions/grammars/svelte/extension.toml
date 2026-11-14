@@ -1,7 +1,7 @@
 id = "tenmoku.grammar_svelte"
 name = "Svelte syntax"
 version = "1.0.2"
-license = "MIT"
+license = "MIT AND Apache-2.0"
 
 [engine]
 tenmoku = "1.0"
@@ -12,5 +12,7 @@ wasm = "tree-sitter-svelte.wasm"
 extensions = ["svelte"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["web"]
 earlier_patterns_win = false
 block_comment = ["<!--", "-->"]
+license = "MIT"

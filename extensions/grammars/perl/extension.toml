@@ -12,6 +12,7 @@ wasm = "tree-sitter-perl.wasm"
 extensions = ["pl", "pm", "t", "psgi"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["scripting"]
 earlier_patterns_win = false
 line_comment = "#"
 shebangs = ["perl"]

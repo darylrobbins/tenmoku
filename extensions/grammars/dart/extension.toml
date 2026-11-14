@@ -12,6 +12,7 @@ wasm = "tree-sitter-dart.wasm"
 extensions = ["dart"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["mobile"]
 earlier_patterns_win = false
 line_comment = "//"
 block_comment = ["/*", "*/"]

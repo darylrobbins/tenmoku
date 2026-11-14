@@ -12,6 +12,7 @@ wasm = "tree-sitter-glsl.wasm"
 extensions = ["glsl", "vert", "frag", "geom", "comp", "tesc", "tese"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["shaders"]
 earlier_patterns_win = true
 line_comment = "//"
 block_comment = ["/*", "*/"]

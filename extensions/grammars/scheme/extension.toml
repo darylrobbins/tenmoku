@@ -15,4 +15,5 @@ block_comment = ["#|", "|#"]
 shebangs = ["guile", "chicken", "csi"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["functional"]
 earlier_patterns_win = false

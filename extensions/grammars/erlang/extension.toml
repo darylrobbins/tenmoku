@@ -13,6 +13,7 @@ extensions = ["erl", "hrl", "escript"]
 file_names = ["rebar.config"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["functional"]
 earlier_patterns_win = false
 line_comment = "%"
 shebangs = ["escript"]

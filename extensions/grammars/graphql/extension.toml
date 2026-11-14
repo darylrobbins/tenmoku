@@ -12,5 +12,6 @@ wasm = "tree-sitter-graphql.wasm"
 extensions = ["graphql", "gql", "graphqls"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["web"]
 earlier_patterns_win = false
 line_comment = "#"

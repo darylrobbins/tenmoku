@@ -12,6 +12,7 @@ wasm = "tree-sitter-d.wasm"
 extensions = ["d", "di"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["systems"]
 earlier_patterns_win = false
 license = "MIT"
 line_comment = "//"

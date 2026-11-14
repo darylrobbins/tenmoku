@@ -15,4 +15,5 @@ block_comment = ["<#", "#>"]
 shebangs = ["pwsh", "powershell"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["shells"]
 earlier_patterns_win = false

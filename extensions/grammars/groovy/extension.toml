@@ -16,4 +16,5 @@ block_comment = ["/*", "*/"]
 shebangs = ["groovy"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["jvm"]
 earlier_patterns_win = false

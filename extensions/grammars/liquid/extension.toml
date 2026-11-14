@@ -13,4 +13,5 @@ extensions = ["liquid"]
 block_comment = ["{% comment %}", "{% endcomment %}"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["web"]
 earlier_patterns_win = false

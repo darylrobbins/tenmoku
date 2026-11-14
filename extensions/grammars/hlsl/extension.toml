@@ -12,6 +12,7 @@ wasm = "tree-sitter-hlsl.wasm"
 extensions = ["hlsl", "hlsli", "fx", "fxh"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["shaders"]
 earlier_patterns_win = false
 license = "MIT"
 line_comment = "//"

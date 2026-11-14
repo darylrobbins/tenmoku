@@ -12,6 +12,7 @@ wasm = "tree-sitter-objc.wasm"
 extensions = ["m"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["mobile", "systems"]
 earlier_patterns_win = false
 line_comment = "//"
 block_comment = ["/*", "*/"]

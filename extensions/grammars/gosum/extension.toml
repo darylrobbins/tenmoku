@@ -12,4 +12,5 @@ wasm = "tree-sitter-gosum.wasm"
 file_names = ["go.sum", "go.work.sum"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["config"]
 earlier_patterns_win = true

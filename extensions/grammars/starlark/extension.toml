@@ -13,5 +13,6 @@ extensions = ["bzl", "star", "bazel", "sky"]
 file_names = ["BUILD", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel", "MODULE.bazel", "Tiltfile"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["infra"]
 earlier_patterns_win = false
 line_comment = "#"

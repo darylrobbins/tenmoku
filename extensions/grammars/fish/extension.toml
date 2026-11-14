@@ -12,6 +12,7 @@ wasm = "tree-sitter-fish.wasm"
 extensions = ["fish"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["shells"]
 earlier_patterns_win = true
 line_comment = "#"
 shebangs = ["fish"]

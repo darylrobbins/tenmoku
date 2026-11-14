@@ -13,6 +13,7 @@ extensions = ["vim", "vimrc"]
 file_names = ["vimrc", ".vimrc", "_vimrc", ".gvimrc", ".exrc"]
 highlights = "highlights.scm"
 injections = "injections.scm"
+packs = ["config"]
 earlier_patterns_win = false
 line_comment = "\""
 license = "MIT"
