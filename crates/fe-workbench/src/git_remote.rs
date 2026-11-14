@@ -1,10 +1,16 @@
 //! Talking to a remote: `git.fetch`, `git.pull`, `git.push` and
 //! `git.push_force_with_lease`, as VS Code's Git: Fetch, Pull, Push and Push
-//! (Force with Lease), routed here by `git_commands`.
+//! (Force with Lease), and `git.update_project`, as JetBrains' Update
+//! Project, routed here by `git_commands`.
 //!
 //! - **Fetch** leaves pruning to the repository's `fetch.prune`.
+//! - **Update Project** fetches the upstream's remote, never pruning whatever
+//!   the repository's config says, then fast-forwards HEAD's branch to its
+//!   upstream, as a pull does. A branch that has diverged from its upstream
+//!   says it can't fast-forward, and offers no merge or rebase; one with no
+//!   upstream fetches nothing.
 //! - **Pull** only fast-forwards, so the editor never starts a merge or
-//!   rebase unasked. It changes the index and the working tree, so it takes
+//!   rebase unasked. It, and Update Project, changes the index and the working tree, so it takes
 //!   its turn among the work that changes a repository (`git_stage`'s queue);
 //!   fetches and pushes touch neither, and don't hold that work up for as long
 //!   as the network takes. Once it's run, the open files are checked against
@@ -43,7 +49,7 @@ use std::{
 
 use fe_git::{Askpass, Head, PullMode, RemoteError, Repo};
 use gpui::{App, AppContext as _, AsyncApp, Context, EntityId, Global, SharedString, Window};
-use kiln_l10n::tr;
+use kiln_l10n::{tr, verbatim};
 
 use super::{
     super::{
@@ -327,13 +333,13 @@ impl Workbench {
             })
         };
         match command {
-            GitCommand::Pull => git_stage::mutate(cx, start),
+            GitCommand::Pull | GitCommand::UpdateProject => git_stage::mutate(cx, start),
             _ => start(cx).detach(),
         }
     }
 
     /// `command`, from `origin`, has run: reads git again, unless the root's
-    /// changed since, and after a pull (conflicts change files too) checks the
+    /// changed since, and after a pull or an update (conflicts change files too) checks the
     /// open files, which a new root keeps.
     fn remote_ran(
         &mut self,
@@ -345,7 +351,7 @@ impl Workbench {
         if self.git.entity_id() == origin.git {
             self.git.update(cx, |git, cx| git.refresh(cx));
         }
-        if command == GitCommand::Pull {
+        if matches!(command, GitCommand::Pull | GitCommand::UpdateProject) {
             self.check_open_files(window, cx);
         }
     }
@@ -386,14 +392,7 @@ fn force_target(repo: &Repo) -> Result<Target, RemoteError> {
         Head::Unborn(_) => return Err(failed(&no_commits())),
         Head::Detached(_) => return Err(RemoteError::Detached),
     };
-    let config = |key: &str| {
-        let key = format!("branch.{branch}.{key}");
-        git_read(repo, &["config", "--default", "", "--get", &key])
-    };
-    let (remote, merge) = (config("remote")?, config("merge")?);
-    if remote.is_empty() || merge.is_empty() {
-        return Err(RemoteError::NoUpstream);
-    }
+    let (remote, merge) = upstream_config(repo, &branch)?.ok_or(RemoteError::NoUpstream)?;
     let name = format!("refs/heads/{branch}^{{commit}}");
     let commit = git_read(repo, &["rev-parse", "--verify", &name])?;
     Ok(Target {
@@ -402,6 +401,17 @@ fn force_target(repo: &Repo) -> Result<Target, RemoteError> {
         remote,
         merge,
     })
+}
+
+/// `branch`'s configured upstream: its remote and the full name of the
+/// branch on it, if it has both.
+fn upstream_config(repo: &Repo, branch: &str) -> Result<Option<(String, String)>, RemoteError> {
+    let config = |key: &str| {
+        let key = format!("branch.{branch}.{key}");
+        git_read(repo, &["config", "--default", "", "--get", &key])
+    };
+    let (remote, merge) = (config("remote")?, config("merge")?);
+    Ok((!remote.is_empty() && !merge.is_empty()).then_some((remote, merge)))
 }
 
 /// What force-pushing to `target` asks first.
@@ -441,7 +451,7 @@ static AFTER_FORCE_CHECK: std::sync::Mutex<Vec<(PathBuf, ForceCheckHook)>> =
     std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
-type ForceCheckHook = Box<dyn FnOnce() + Send>;
+pub(crate) type ForceCheckHook = Box<dyn FnOnce() + Send>;
 
 #[cfg(test)]
 fn after_force_check(workdir: &Path) {
@@ -476,6 +486,7 @@ fn run_remote(
         GitCommand::Pull => (repo.pull(PullMode::FastForwardOnly))
             .map(|()| tr!("workbench-git-remote-pulled").into()),
         GitCommand::PushForceWithLease => force_push(&repo, confirmed),
+        GitCommand::UpdateProject => update_project(&repo),
         _ => match repo.push(false) {
             Err(RemoteError::NoUpstream) => publish(&repo),
             pushed => pushed.map(|()| tr!("workbench-git-remote-pushed").into()),
@@ -485,6 +496,175 @@ fn run_remote(
         Ok(done) => Outcome::Done(done),
         Err(error) => Outcome::Failed(error),
     }
+}
+
+/// Fetches the remote of HEAD's branch's upstream, never pruning, then
+/// fast-forwards the branch to its upstream; what its toast says. Both are
+/// pinned before the fetch: if HEAD's moved to another branch or the
+/// upstream's changed by the time it's fetched, nothing is merged.
+fn update_project(repo: &Repo) -> Result<String, RemoteError> {
+    let branch = head_branch(repo)?;
+    let (remote, _) = upstream_config(repo, &branch)?.ok_or(RemoteError::NoUpstream)?;
+    let (upstream, shown) = tracked(repo, &branch)?.ok_or(RemoteError::NoUpstream)?;
+    // A branch tracking another local one (`branch.<name>.remote` is `.`)
+    // has nothing to fetch.
+    if remote != "." {
+        git_remote(
+            repo,
+            &[
+                "fetch",
+                "-q",
+                "--no-write-fetch-head",
+                "--no-prune",
+                "--",
+                &remote,
+            ],
+        )?;
+    }
+    #[cfg(test)]
+    after_update_fetch(repo.workdir());
+    let still = head_branch(repo).ok().as_ref() == Some(&branch)
+        && tracked(repo, &branch)?.is_some_and(|(now, _)| now == upstream);
+    if !still {
+        return Err(failed(&tr!("workbench-git-remote-update-moved")));
+    }
+    let before = git_read(repo, &["rev-parse", "HEAD"])?;
+    // `--ff-only` never makes a commit, so never signs one; nor does it
+    // stash, whatever `merge.autoStash` says.
+    let merged = git_run(
+        repo,
+        &["merge", "-q", "--ff-only", "--no-autostash", &upstream],
+        &[],
+    )?;
+    if !merged.status.success() {
+        let stderr = String::from_utf8_lossy(&merged.stderr);
+        if stderr.contains("Not possible to fast-forward") {
+            return Err(RemoteError::NotFastForward);
+        }
+        return Err(failed(&output_text(&merged)));
+    }
+    let after = git_read(repo, &["rev-parse", "HEAD"])?;
+    let (branch, upstream) = (branch.as_str(), shown.as_str());
+    Ok(if before == after {
+        tr!(
+            "workbench-git-remote-up-to-date",
+            branch = branch,
+            upstream = upstream
+        )
+    } else {
+        tr!(
+            "workbench-git-remote-updated",
+            branch = branch,
+            upstream = upstream
+        )
+    }
+    .into())
+}
+
+/// HEAD's branch, if it's on one with commits.
+fn head_branch(repo: &Repo) -> Result<String, RemoteError> {
+    match repo.current_branch()? {
+        Head::Branch(branch) => Ok(branch),
+        Head::Unborn(_) => Err(failed(&no_commits())),
+        Head::Detached(_) => Err(RemoteError::Detached),
+    }
+}
+
+/// The full and short names of the ref `branch`'s upstream is fetched to,
+/// `refs/remotes/origin/main` and `origin/main`, if it has one. Blocks until
+/// git exits.
+fn tracked(repo: &Repo, branch: &str) -> Result<Option<(String, String)>, RemoteError> {
+    let full = format!("refs/heads/{branch}");
+    let format = verbatim!("--format=%(upstream) %(upstream:short)");
+    let line = git_read(repo, &["for-each-ref", format, &full])?;
+    Ok((line.split_once(' '))
+        .filter(|(upstream, _)| !upstream.is_empty())
+        .map(|(upstream, shown)| (upstream.to_owned(), shown.to_owned())))
+}
+
+/// What a test has happen in a working tree once an update has fetched.
+#[cfg(test)]
+pub(crate) static AFTER_UPDATE_FETCH: std::sync::Mutex<Vec<(PathBuf, ForceCheckHook)>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn after_update_fetch(workdir: &Path) {
+    let mut waiting = AFTER_UPDATE_FETCH.lock().unwrap();
+    let hook = (waiting.iter()).position(|(dir, _)| dir == workdir);
+    let hook = hook.map(|ix| waiting.remove(ix).1);
+    drop(waiting);
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
+/// What git's own messages say when a remote wants credentials it can't
+/// ask for here, as fe-git reads them.
+const AUTH_MARKERS: &[&str] = &[
+    verbatim!("Authentication failed"),
+    verbatim!("could not read Username"),
+    verbatim!("could not read Password"),
+    verbatim!("Permission denied ("),
+];
+
+/// Runs `git args` against a remote in `repo`'s working tree, never asking
+/// for credentials, as fe-git's fetch does. Blocks until git exits.
+fn git_remote(repo: &Repo, args: &[&str]) -> Result<(), RemoteError> {
+    // An empty GIT_ASKPASS also keeps git from falling back to SSH_ASKPASS;
+    // Git Credential Manager has its own switch.
+    let mut envs = vec![("GIT_ASKPASS", ""), ("GCM_INTERACTIVE", "never")];
+    let own_ssh = ["GIT_SSH_COMMAND", "GIT_SSH"]
+        .iter()
+        .any(|var| std::env::var_os(var).is_some())
+        || !git_read(
+            repo,
+            &["config", "--default", "", "--get", "core.sshCommand"],
+        )?
+        .is_empty();
+    if !own_ssh {
+        envs.push(("GIT_SSH_COMMAND", verbatim!("ssh -o BatchMode=yes")));
+    }
+    let output = git_run(repo, args, &envs)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let output = output_text(&output);
+    Err(
+        if stderr.contains("[rejected]") || stderr.contains("[remote rejected]") {
+            RemoteError::Rejected { output }
+        } else if AUTH_MARKERS.iter().any(|marker| stderr.contains(marker)) {
+            RemoteError::Auth { output }
+        } else {
+            RemoteError::Failed { output }
+        },
+    )
+}
+
+/// Runs `git args` in `repo`'s working tree with `envs` too, in the C
+/// locale, never prompting; whatever its exit status. Blocks until git
+/// exits.
+fn git_run(
+    repo: &Repo,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<std::process::Output, RemoteError> {
+    crate::process_group::no_window(&mut Command::new("git"))
+        .current_dir(repo.workdir())
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
+        .envs(envs.iter().copied())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| failed(&tr!("workbench-git-error", error = error.to_string())))
+}
+
+/// All a git run printed, trimmed.
+fn output_text(output: &std::process::Output) -> String {
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    text.trim().to_owned()
 }
 
 /// Publishes HEAD's branch, which has no upstream, to the remote to use; what
@@ -519,7 +699,7 @@ fn publish_remote(repo: &Repo) -> Result<String, RemoteError> {
 
 /// What `git args` prints in `repo`'s working tree, trimmed, for what fe-git
 /// doesn't offer. Blocks until `git` exits.
-fn git_read(repo: &Repo, args: &[&str]) -> Result<String, RemoteError> {
+pub(crate) fn git_read(repo: &Repo, args: &[&str]) -> Result<String, RemoteError> {
     let output = crate::process_group::no_window(&mut Command::new("git"))
         .current_dir(repo.workdir())
         .args(args)
@@ -543,6 +723,7 @@ fn progress(command: GitCommand) -> SharedString {
         GitCommand::Fetch => tr!("workbench-git-remote-fetching"),
         GitCommand::Pull => tr!("workbench-git-remote-pulling"),
         GitCommand::PushForceWithLease => tr!("workbench-git-remote-force-pushing"),
+        GitCommand::UpdateProject => tr!("workbench-git-remote-updating"),
         _ => tr!("workbench-git-remote-pushing"),
     }
 }
@@ -553,6 +734,7 @@ fn verb(command: GitCommand) -> &'static str {
         GitCommand::Fetch => "fetch",
         GitCommand::Pull => "pull",
         GitCommand::PushForceWithLease => "force-push",
+        GitCommand::UpdateProject => "update",
         _ => "push",
     }
 }

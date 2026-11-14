@@ -22,6 +22,8 @@
 //! file and the demo folders it opens are recorded in a throwaway
 //! `recent.toml`.
 
+#[path = "audit/branch_menu.rs"]
+mod branch_menu;
 #[path = "audit/changes.rs"]
 mod changes;
 #[path = "audit/chrome.rs"]
@@ -110,6 +112,7 @@ const SURFACES: &[&Surface] = &[
     &git_log_card::SURFACE,
     &project_tree_menu::SURFACE,
     &runs::SURFACE,
+    &branch_menu::SURFACE,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup

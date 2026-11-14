@@ -85,6 +85,7 @@ command-git-accept_both = Git: Accept Both Changes
 command-git-accept_current = Git: Accept Current Change
 command-git-accept_incoming = Git: Accept Incoming Change
 command-git-blame_line = Git: Show Line Blame
+command-git-branches_menu = Git: Branches…
 command-git-commit = Git: Commit Staged
 command-git-commit_amend = Git: Commit Staged (Amend)
 command-git-commit_box-commit = Commit from the Message Box
@@ -121,6 +122,7 @@ command-git-toggle_blame_annotations = Git: Toggle Blame Annotations
 command-git-toggle_line_blame = Git: Toggle Line Blame
 command-git-unstage_file = Git: Unstage File
 command-git-unstage_hunk = Git: Undo Stage Change
+command-git-update_project = Git: Update Project
 
 command-git_log-compare_with_working_tree = Git: Compare with Working Tree
 command-git_log-copy_commit_hash = Git: Copy Commit Hash

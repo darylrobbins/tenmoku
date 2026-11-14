@@ -72,6 +72,7 @@ pub(crate) enum GitCommand {
     OpenLineCommit,
     SwitchBranch,
     CreateBranch,
+    BranchesMenu,
     FileHistory,
     Log,
     LogAll,
@@ -83,6 +84,7 @@ pub(crate) enum GitCommand {
     Pull,
     Push,
     PushForceWithLease,
+    UpdateProject,
 }
 
 use GitCommand::*;
@@ -125,6 +127,7 @@ impl GitCommand {
             OpenLineCommit => "git.open_line_commit",
             SwitchBranch => "git.switch_branch",
             CreateBranch => "git.create_branch",
+            BranchesMenu => "git.branches_menu",
             FileHistory => "git.file_history",
             Log => "git.log",
             LogAll => "git.log_all",
@@ -136,6 +139,7 @@ impl GitCommand {
             Pull => "git.pull",
             Push => "git.push",
             PushForceWithLease => "git.push_force_with_lease",
+            UpdateProject => "git.update_project",
         }
     }
 
@@ -152,11 +156,11 @@ impl GitCommand {
             | RevertHunk => Feature::Stage,
             Commit | CommitAmend => Feature::Commit,
             ToggleLineBlame | ToggleBlameAnnotations | BlameLine | OpenLineCommit => Feature::Blame,
-            SwitchBranch | CreateBranch => Feature::Branch,
+            SwitchBranch | CreateBranch | BranchesMenu => Feature::Branch,
             FileHistory => Feature::History,
             Log | LogAll => Feature::Log,
             Stash | StashIncludeUntracked | StashPop | StashApply => Feature::Stash,
-            Fetch | Pull | Push | PushForceWithLease => Feature::Remote,
+            Fetch | Pull | Push | PushForceWithLease | UpdateProject => Feature::Remote,
         }
     }
 }

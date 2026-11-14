@@ -143,6 +143,11 @@ fn palette(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<
     workbench.read_with(cx, |workbench, _| workbench.palette)
 }
 
+/// Whether the branches menu shows.
+fn branches_menu(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+    workbench.read_with(cx, |workbench, cx| workbench.branches_menu(cx).is_some())
+}
+
 /// Dismisses whatever palette shows.
 fn escape(cx: &mut VisualTestContext) {
     cx.simulate_keystrokes("escape");
@@ -264,10 +269,11 @@ fn each_opens_what_the_spec_says(cx: &mut TestAppContext) {
     assert_eq!(palette(&workbench, cx), Some(Palette::Recent));
     escape(cx);
 
-    // The branch widget, the branch picker.
+    // The branch widget, the branches menu.
     click("title-branch", cx);
-    assert_eq!(mouse_runs(&seen), ["git.switch_branch"]);
+    assert_eq!(mouse_runs(&seen), ["git.branches_menu"]);
     assert_eq!(palette(&workbench, cx), Some(Palette::Branch));
+    assert!(branches_menu(&workbench, cx));
     escape(cx);
 
     // Search, Go to File, as its key does.
@@ -342,9 +348,9 @@ fn each_has_a_name_and_a_tooltip_with_its_key(cx: &mut TestAppContext) {
         assert_eq!(hover(selector, away, cx), format!("{title} {key}"));
     }
 
-    // Switch Branch has no key by default; bound, its tooltip names it. The
-    // demo's branch has no upstream, which the tooltip says.
-    assert_eq!(key("git.switch_branch", cx), None);
+    // The branches menu has no key by default; bound, its tooltip names it.
+    // The demo's branch has no upstream, which the tooltip says.
+    assert_eq!(key("git.branches_menu", cx), None);
     assert_eq!(
         hover("title-branch", away, cx),
         "No upstream: Push publishes this branch"
@@ -355,7 +361,7 @@ fn each_has_a_name_and_a_tooltip_with_its_key(cx: &mut TestAppContext) {
         r#"
         [[bindings]]
         keys = "alt-cmd-b"
-        command = "git.switch_branch"
+        command = "git.branches_menu"
         context = "workbench"
         "#,
         None,
@@ -427,6 +433,7 @@ fn long_names_give_way_and_both_widgets_still_open(cx: &mut TestAppContext) {
     assert_eq!(palette(&workbench, cx), Some(Palette::Recent));
     escape(cx);
     click("title-branch", cx);
-    assert_eq!(mouse_runs(&seen), ["git.switch_branch"]);
+    assert_eq!(mouse_runs(&seen), ["git.branches_menu"]);
     assert_eq!(palette(&workbench, cx), Some(Palette::Branch));
+    assert!(branches_menu(&workbench, cx));
 }

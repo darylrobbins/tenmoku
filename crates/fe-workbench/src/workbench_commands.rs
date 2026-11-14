@@ -550,6 +550,12 @@ impl Workbench {
         self.run_typed_git(GitCommand::CreateBranch, cx);
     }
 
+    /// Git: Branches…
+    #[command(id = "git.branches_menu")]
+    fn git_branches_menu(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::BranchesMenu, cx);
+    }
+
     /// Git: File History
     #[command(id = "git.file_history")]
     fn git_file_history(&mut self, cx: &mut Cx<Self>) {
@@ -614,6 +620,12 @@ impl Workbench {
     #[command(id = "git.push_force_with_lease")]
     fn git_push_force_with_lease(&mut self, cx: &mut Cx<Self>) {
         self.run_typed_git(GitCommand::PushForceWithLease, cx);
+    }
+
+    /// Git: Update Project
+    #[command(id = "git.update_project")]
+    fn git_update_project(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::UpdateProject, cx);
     }
 
     /// Check for Updates…

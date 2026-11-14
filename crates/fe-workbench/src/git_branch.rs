@@ -13,8 +13,8 @@
 //!   tooltip names the upstream. The git refresh ([`crate::git`]) sets it
 //!   each time it reads the status, which fetching, pulling, pushing,
 //!   committing and switching each have it do. A click runs
-//!   `git.switch_branch`. The status bar shows no branch (the design's
-//!   status bar row).
+//!   `git.branches_menu`, the branches menu ([`git_branch_menu`]). The
+//!   status bar shows no branch (the design's status bar row).
 //! - **Picker.** `git.switch_branch`, or `:Git switch` and `:Git checkout`
 //!   with no name, lists the branches in the background, then shows the
 //!   shared picker (kiln-shell's: `ctrl-n`/`ctrl-p`, up and down move):
@@ -60,9 +60,9 @@ use std::{
 use fe_git::{Branch, BranchRef, Head, Repo, SwitchError, Upstream};
 use fe_ui::ui_theme;
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable as _,
-    IntoElement as _, ParentElement as _, PromptButton, PromptLevel, SharedString, Styled as _,
-    Subscription, WeakEntity, Window, div,
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EntityId, FocusHandle,
+    Focusable as _, IntoElement as _, ParentElement as _, PromptButton, PromptLevel, SharedString,
+    Styled as _, Subscription, WeakEntity, Window, div,
 };
 use kiln_l10n::{text, tr};
 use kiln_shell::ModalEvent;
@@ -70,6 +70,7 @@ use kiln_shell::ModalEvent;
 use super::{
     Palette, RootChanged, Workbench,
     git_commands::{GitCommand, GitOp},
+    git_stage,
     toast::{self, Toast},
 };
 use crate::{
@@ -129,19 +130,37 @@ pub(super) fn run(
     };
     let name = op.args.trim().to_owned();
     match (op.command, name.is_empty()) {
+        (GitCommand::BranchesMenu, _) => {
+            if !workbench.close_branches_menu(window, cx) {
+                workbench.list_branches(origin, op, Shown::Menu, window, cx)
+            }
+        }
         (GitCommand::CreateBranch, true) => {
             let back = workbench.return_focus(window, cx);
-            workbench.ask_branch_name(origin, back, window, cx);
+            workbench.ask_branch_name(origin, NameFor::Head, back, window, cx);
         }
         (GitCommand::CreateBranch, false) => {
             workbench.start_switch(origin, Switch::Create(name), Some(op), window, cx)
         }
-        (_, true) => workbench.open_branch_picker(origin, op, window, cx),
+        (_, true) => workbench.list_branches(origin, op, Shown::Picker, window, cx),
         (_, false) => {
             let target = Target::Name(name);
             workbench.start_switch(origin, Switch::To(target), Some(op), window, cx)
         }
     }
+}
+
+/// A listing: none outside a repository; else the branches, and for the
+/// menu the recent ones, as indices into them.
+type Listed = Result<Option<(Vec<Branch>, Vec<usize>)>, fe_git::GitError>;
+
+/// What a branch listing is shown in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shown {
+    /// `git.switch_branch`'s picker.
+    Picker,
+    /// `git.branches_menu`'s menu.
+    Menu,
 }
 
 /// The root a branch command started in, and the git state that root's,
@@ -177,6 +196,9 @@ enum Switch {
     To(Target),
     /// To a new branch at HEAD, by its name.
     Create(String),
+    /// To a new branch, by its name, at a branch's tip, tracking it if it's
+    /// a remote-tracking one.
+    CreateFrom(String, BranchRef),
     /// Dropping the local changes in the way.
     Force(Target),
     /// Stashing the local changes first.
@@ -186,7 +208,7 @@ enum Switch {
 impl Switch {
     fn name(&self) -> String {
         match self {
-            Self::Create(name) => name.clone(),
+            Self::Create(name) | Self::CreateFrom(name, _) => name.clone(),
             Self::To(target) | Self::Force(target) | Self::Stash(target) => target.name(),
         }
     }
@@ -194,7 +216,7 @@ impl Switch {
     /// The branch it goes to, if it's there already.
     fn target(&self) -> Option<&Target> {
         match self {
-            Self::Create(_) => None,
+            Self::Create(_) | Self::CreateFrom(..) => None,
             Self::To(target) | Self::Force(target) | Self::Stash(target) => Some(target),
         }
     }
@@ -240,13 +262,14 @@ impl Workbench {
         }
     }
 
-    /// Lists the branches in the background, then shows the branch picker.
+    /// Lists the branches in the background, then shows them in `shown`.
     /// Shows nothing if the root's changed by then, another listing has
     /// started, or any modal has shown meanwhile.
-    fn open_branch_picker(
+    fn list_branches(
         &mut self,
         origin: Origin,
         op: GitOp,
+        shown: Shown,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -264,10 +287,15 @@ impl Workbench {
         let listing = self.git.update(cx, |git, _| git.start_branch_listing());
         let root = origin.root.clone();
         let load = cx.background_spawn(async move {
-            match Repo::discover(&root)? {
-                Some(repo) => repo.branches().map(Some),
-                None => Ok(None),
-            }
+            let Some(repo) = Repo::discover(&root)? else {
+                return Ok(None);
+            };
+            let branches = repo.branches()?;
+            let recent = match shown {
+                Shown::Picker => Vec::new(),
+                Shown::Menu => git_branch_menu::recent_branches(&repo, &branches),
+            };
+            Ok(Some((branches, recent)))
         });
         cx.spawn_in(window, async move |workbench, cx| {
             let branches = load.await;
@@ -278,24 +306,31 @@ impl Workbench {
                     if superseded.get() || !workbench.is_current(&origin) || !last {
                         return;
                     }
-                    workbench.branches_listed(origin, op, branches, window, cx)
+                    workbench.branches_listed(origin, op, shown, branches, window, cx)
                 })
                 .ok();
         })
         .detach();
     }
 
-    /// The branches listed for `op`, from `origin`.
+    /// The branches listed for `op`, from `origin`, with the recent ones
+    /// for the menu.
     fn branches_listed(
         &mut self,
         origin: Origin,
         op: GitOp,
-        branches: Result<Option<Vec<Branch>>, fe_git::GitError>,
+        shown: Shown,
+        branches: Listed,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match branches {
-            Ok(Some(branches)) => self.show_branch_picker(origin, branches, window, cx),
+            Ok(Some((branches, _))) if shown == Shown::Picker => {
+                self.show_branch_picker(origin, branches, window, cx)
+            }
+            Ok(Some((branches, recent))) => {
+                self.show_branches_menu(origin, branches, recent, window, cx)
+            }
             Ok(None) => self.fail_git_op(&op, no_repo(), cx),
             Err(error) => {
                 let toast = Toast::error(tr!("workbench-chrome-branch-cant-list"));
@@ -332,18 +367,26 @@ impl Workbench {
         self.show_branch_modal(picker, window, cx);
     }
 
-    /// Asks for a new branch's name, then creates it and switches to it.
-    /// Focus goes back to `back` once it's answered or dismissed.
+    /// Asks for a branch's name, then does what `purpose` says with it:
+    /// creates it and switches to it, or renames a branch to it, the old
+    /// name to start with. Focus goes back to `back` once it's answered or
+    /// dismissed.
     fn ask_branch_name(
         &mut self,
         origin: Origin,
+        purpose: NameFor,
         back: Option<FocusHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let first = match &purpose {
+            NameFor::Rename(old) => Some(old.clone()),
+            _ => None,
+        };
         let delegate = NamePicker {
             workbench: cx.entity().downgrade(),
             origin,
+            purpose,
             name: String::new(),
             valid: false,
             back,
@@ -358,7 +401,12 @@ impl Workbench {
                 cx,
             )
         });
-        self.show_branch_modal(picker, window, cx);
+        self.show_branch_modal(picker.clone(), window, cx);
+        if let Some(first) = first {
+            let input = picker.read(cx).input().clone();
+            input.update(cx, |input, cx| input.set_text(first.clone(), cx));
+            picker.update(cx, |picker, cx| picker.delegate.update_matches(first, cx));
+        }
     }
 
     /// Shows `picker`, focused, as [`Palette::Branch`], in place of any
@@ -406,8 +454,11 @@ impl Workbench {
         if let Ok(picker) = view.clone().downcast::<Picker<BranchPicker>>() {
             return picker.read(cx).delegate.back.clone();
         }
-        if let Ok(picker) = view.downcast::<Picker<NamePicker>>() {
+        if let Ok(picker) = view.clone().downcast::<Picker<NamePicker>>() {
             return picker.read(cx).delegate.back.clone();
+        }
+        if let Ok(menu) = view.downcast::<BranchMenu>() {
+            return menu.read(cx).back();
         }
         Some(match self.active_editor(cx) {
             Some(editor) => editor.focus_handle(cx),
@@ -431,16 +482,46 @@ impl Workbench {
         }
         let root = origin.root.clone();
         let run = switch.clone();
-        let outcome = cx.background_spawn(async move { run_switch(&root, &run) });
-        cx.spawn_in(window, async move |workbench, cx| {
-            let outcome = outcome.await;
-            workbench
-                .update_in(cx, |workbench, window, cx| {
-                    workbench.switched(origin, switch, op, outcome, window, cx)
-                })
+        self.queue_branch_work(
+            move || run_switch(&root, &run),
+            move |workbench, outcome, window, cx| {
+                workbench.switched(origin, switch, op, outcome, window, cx)
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Runs `work`, which changes the repository, on the background
+    /// executor once the work queued before it is done (`git_stage`'s
+    /// queue, which pulls and commits take their turns in too), then
+    /// `landed` with what it returned, in `window`, if it's still open; the
+    /// work queued after it waits until then.
+    fn queue_branch_work<T: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> T + Send + 'static,
+        landed: impl FnOnce(&mut Workbench, T, &mut Window, &mut Context<Workbench>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workbench = cx.weak_entity();
+        let window = window.window_handle();
+        git_stage::mutate(cx, move |cx| {
+            #[cfg(test)]
+            let gate = git_stage::test_gate(cx);
+            let ran = cx.background_spawn(async move {
+                #[cfg(test)]
+                gate.await;
+                work()
+            });
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                let ran = ran.await;
+                (cx.update_window(window, |_, window, cx| {
+                    (workbench.update(cx, |workbench, cx| landed(workbench, ran, window, cx))).ok();
+                }))
                 .ok();
-        })
-        .detach();
+            })
+        });
     }
 
     /// A switch from `origin` landed: nothing more if the root's changed
@@ -459,10 +540,7 @@ impl Workbench {
             return log::info!("switching to {name} landed after the root changed");
         }
         let error = match outcome {
-            Outcome::Done => {
-                self.git.update(cx, |git, cx| git.refresh(cx));
-                return self.check_open_files(window, cx);
-            }
+            Outcome::Done => return self.branches_changed(true, true, window, cx),
             Outcome::NoRepo => return self.answer_branch(op.as_ref(), no_repo(), cx),
             Outcome::Overwrite(paths, resolved) => match switch.target() {
                 Some(target) => {
@@ -489,7 +567,9 @@ impl Workbench {
             error => error.to_string(),
         };
         let message = match switch {
-            Switch::Create(_) => tr!("workbench-chrome-branch-cant-create", name = &name),
+            Switch::Create(_) | Switch::CreateFrom(..) => {
+                tr!("workbench-chrome-branch-cant-create", name = &name)
+            }
             _ => tr!("workbench-chrome-branch-cant-switch", name = &name),
         };
         toast::show(cx, Toast::error(message).detail(output));
@@ -528,6 +608,24 @@ impl Workbench {
                 .ok();
         })
         .detach();
+    }
+
+    /// The branches changed: with `git`, reads git again, and with `files`,
+    /// as after a switch or a merge, checks the open files against disk,
+    /// reloading those it changed.
+    fn branches_changed(
+        &mut self,
+        git: bool,
+        files: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if git {
+            self.git.update(cx, |git, cx| git.refresh(cx));
+        }
+        if files {
+            self.check_open_files(window, cx);
+        }
     }
 
     /// Answers `op` with the failure `text`, else shows it in a toast.
@@ -577,6 +675,7 @@ fn run_switch(root: &Path, switch: &Switch) -> Outcome {
     let mut resolved = None;
     let ran = match switch {
         Switch::Create(name) => repo.create_branch(name),
+        Switch::CreateFrom(name, start) => repo.create_branch_at(name, start, true),
         Switch::To(target) | Switch::Force(target) | Switch::Stash(target) => resolve(target)
             .and_then(|branch| {
                 let ran = match switch {
@@ -840,7 +939,7 @@ impl PickerDelegate for BranchPicker {
             let back = self.back.take();
             window.defer(cx, move |window, cx| {
                 (workbench.update(cx, |workbench, cx| {
-                    workbench.ask_branch_name(origin, back, window, cx)
+                    workbench.ask_branch_name(origin, NameFor::Head, back, window, cx)
                 }))
                 .ok();
             });
@@ -862,12 +961,25 @@ impl PickerDelegate for BranchPicker {
     }
 }
 
-/// `git.create_branch`'s picker: the name typed, and a row that creates it
-/// while git would take it.
+/// What a branch name is asked for.
+#[derive(Clone, Debug)]
+enum NameFor {
+    /// A new branch at HEAD, switched to.
+    Head,
+    /// A new branch at this one's tip, switched to.
+    From(BranchRef),
+    /// This local branch's new name.
+    Rename(String),
+}
+
+/// `git.create_branch`'s picker, and the branches menu's New Branch from
+/// and Rename: the name typed, and a row that creates the branch, or renames
+/// one, while git would take it.
 pub(crate) struct NamePicker {
     workbench: WeakEntity<Workbench>,
-    /// The root it creates the branch in.
+    /// The root it creates or renames the branch in.
     origin: Origin,
+    purpose: NameFor,
     /// The query, trimmed.
     name: String,
     /// Whether it's a name git would take.
@@ -893,7 +1005,26 @@ impl NamePicker {
 
 impl NamePicker {
     fn label(&self) -> String {
-        tr!("workbench-chrome-branch-create", name = &self.name).to_string()
+        let name = &self.name;
+        match &self.purpose {
+            NameFor::Head => tr!("workbench-chrome-branch-create", name = name),
+            NameFor::From(start) => {
+                let start = Target::Ref(start.clone()).name();
+                tr!(
+                    "workbench-git-branches-create-from",
+                    name = name,
+                    start = start
+                )
+            }
+            NameFor::Rename(old) => {
+                tr!(
+                    "workbench-git-branches-rename-to",
+                    old = old.as_str(),
+                    name = name
+                )
+            }
+        }
+        .to_string()
     }
 }
 
@@ -923,15 +1054,23 @@ impl PickerDelegate for NamePicker {
         self.label().into()
     }
 
-    /// Creates the branch and switches to it.
+    /// Creates the branch and switches to it, or renames the branch.
     fn confirm(&mut self, _: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let workbench = self.workbench.clone();
         let origin = self.origin.clone();
-        let switch = Switch::Create(self.name.clone());
+        let name = self.name.clone();
+        let purpose = self.purpose.clone();
         focus_back(self.back.take(), window, cx);
         window.defer(cx, move |window, cx| {
-            (workbench.update(cx, |workbench, cx| {
-                workbench.start_switch(origin, switch, None, window, cx)
+            (workbench.update(cx, |workbench, cx| match purpose {
+                NameFor::Head => {
+                    workbench.start_switch(origin, Switch::Create(name), None, window, cx)
+                }
+                NameFor::From(start) => {
+                    let switch = Switch::CreateFrom(name, start);
+                    workbench.start_switch(origin, switch, None, window, cx)
+                }
+                NameFor::Rename(old) => workbench.start_rename(origin, old, name, window, cx),
             }))
             .ok();
         });
@@ -946,6 +1085,10 @@ impl PickerDelegate for NamePicker {
         (!self.name.is_empty() && !self.valid).then(invalid_name)
     }
 }
+
+#[path = "git_branch_menu.rs"]
+mod git_branch_menu;
+pub(crate) use git_branch_menu::BranchMenu;
 
 #[cfg(test)]
 #[path = "git_branch_tests.rs"]

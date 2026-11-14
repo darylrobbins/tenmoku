@@ -8,8 +8,8 @@
 //!   which opens Open Recent (`workbench.open_recent`); and beside it, no
 //!   slash between them, the branch widget, HEAD's branch (its short id
 //!   when detached), its marks and ahead/behind counts (`git_branch`) and a
-//!   chevron, which opens the branch picker (`git.switch_branch`), shown
-//!   only in a repository; its tooltip names the branch's upstream.
+//!   chevron, which opens the branches menu under it (`git.branches_menu`),
+//!   shown only in a repository; its tooltip names the branch's upstream.
 //! - **Right**: search, which runs `quick_open.toggle` as its key does
 //!   (Go to File, and the palette by its prefixes), and a settings gear
 //!   (`workbench.open_settings_ui`).
@@ -19,14 +19,14 @@
 //! tooltip shows). A click runs its command as from the mouse, as the
 //! pane toolbar's buttons do, and leaves focus where it was.
 
-use std::{path::Path, rc::Rc};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
 use fe_command::Source;
 use fe_ui::{Button, Icon, IconButton, Tooltip};
 use gpui::{
-    AnyElement, App, AppContext as _, Empty, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, WeakEntity,
-    Window, div, px,
+    AnyElement, App, AppContext as _, Bounds, Empty, Global, InteractiveElement as _,
+    IntoElement as _, ParentElement as _, Pixels, SharedString, StatefulInteractiveElement as _,
+    Styled as _, WeakEntity, Window, WindowId, canvas, div, px,
 };
 use kiln_l10n::{Text, tr};
 use kiln_shell::{TitleBarItems, TitleBarSlot};
@@ -109,6 +109,19 @@ pub(crate) fn record_requests(cx: &mut gpui::App) {
         };
         REQUESTS.with_borrow_mut(|requests| requests.push(request));
     });
+}
+
+/// Where each window's bar last drew its branch widget, which the branches
+/// menu opens under.
+#[derive(Default)]
+struct BranchAnchors(HashMap<WindowId, Bounds<Pixels>>);
+
+impl Global for BranchAnchors {}
+
+/// Where `window`'s bar last drew its branch widget, if it has.
+pub(crate) fn branch_anchor(window: &Window, cx: &App) -> Option<Bounds<Pixels>> {
+    let anchors = &cx.try_global::<BranchAnchors>()?.0;
+    anchors.get(&window.window_handle().window_id()).copied()
 }
 
 /// The root folder's name, or Tenmoku with no root.
@@ -201,7 +214,7 @@ fn left(state: &State, cx: &App) -> AnyElement {
                 upstream = &upstream.name
             ),
             Tracking::None => tr!("workbench-git-sync-no-upstream"),
-            Tracking::Detached => tr!("workbench-chrome-switch-branch"),
+            Tracking::Detached => tr!("workbench-chrome-branches-menu"),
         };
         // The name gives way to the bar's width, ending in an ellipsis; the
         // counts between it and the chevron never do.
@@ -220,12 +233,33 @@ fn left(state: &State, cx: &App) -> AnyElement {
             branch,
             name,
             title,
-            "git.switch_branch",
+            "git.branches_menu",
         );
-        match counts {
+        let button = match counts {
             Some(counts) => button.after_icon(counts),
             None => button,
-        }
+        };
+        // Giving way as the button does, with its bounds noted as it's laid
+        // out, for the menu to open under.
+        div()
+            .relative()
+            .flex()
+            .flex_shrink(1.)
+            .min_w_0()
+            .child(button)
+            .child(
+                canvas(
+                    |bounds, window, cx| {
+                        let id = window.window_handle().window_id();
+                        cx.default_global::<BranchAnchors>().0.insert(id, bounds);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
     });
     div()
         .flex()

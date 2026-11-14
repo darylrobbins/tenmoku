@@ -56,10 +56,17 @@ workbench-git-remote-fetching = Fetching…
 workbench-git-remote-pulling = Pulling…
 workbench-git-remote-force-pushing = Force-pushing…
 workbench-git-remote-pushing = Pushing…
+workbench-git-remote-updating = Updating…
+# Update Project's outcome: $upstream is `origin/main`.
+workbench-git-remote-updated = Updated { $branch } from { $upstream }
+workbench-git-remote-up-to-date = { $branch } is already up to date with { $upstream }
+# Why Update Project merged nothing: the cause, after `Can't update: `.
+workbench-git-remote-update-moved = the branch or its upstream changed while it fetched, so nothing was merged; run it again
 workbench-git-remote-no-remote =
     Can't { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     }: there's no upstream or origin to use. Add a remote with git remote add origin <url>.
@@ -67,6 +74,7 @@ workbench-git-remote-no-upstream =
     Can't { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     }: the branch has no upstream. Run Git: Push to publish it first.
@@ -74,6 +82,7 @@ workbench-git-remote-detached =
     Can't { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     }: HEAD is detached. Switch to a branch first.
@@ -81,6 +90,7 @@ workbench-git-remote-conflicts =
     The { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     } stopped on conflicts in { $count ->
@@ -91,6 +101,7 @@ workbench-git-remote-diverged =
     Can't { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     }: the branch and its upstream have diverged, so it can't fast-forward. Merge or rebase them from a terminal.
@@ -98,6 +109,7 @@ workbench-git-remote-lease-rejected =
     Can't { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     }: the remote branch changed since your last fetch, or the remote refused it. Fetch, check what changed, and try again.
@@ -105,6 +117,7 @@ workbench-git-remote-rejected =
     Can't { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     }: the remote refused it, usually because it has commits you don't. Pull, then push again.
@@ -112,6 +125,7 @@ workbench-git-remote-auth =
     Can't { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     }: the remote wants credentials git can't ask for here, or refused them. Set up a credential helper or ssh key, then try again.
@@ -120,6 +134,7 @@ workbench-git-remote-cant =
     Can't { $verb ->
         [fetch] fetch
         [pull] pull
+        [update] update
         [force-push] force-push
        *[push] push
     }: { $cause }
@@ -130,6 +145,56 @@ workbench-git-remote-cant =
 workbench-git-askpass-title = Sign in to { $remote }
 # Under the masked field, whose placeholder is what git or ssh asked.
 workbench-git-askpass-status = { $remote } asks for this. Enter sends it to git, Escape cancels; it isn't saved.
+
+## The branches menu (git_branch_menu.rs), from the title bar's branch widget
+
+# Its accessible name.
+workbench-git-branches-menu = Git Branches
+# Its search row, before anything's typed.
+workbench-git-branches-search = Search branches
+workbench-git-branches-no-match = No branches match
+# The actions over the branches.
+workbench-git-branches-update = Update Project
+workbench-git-branches-commit = Commit…
+workbench-git-branches-push = Push
+# Push, for a branch with no upstream.
+workbench-git-branches-publish = Publish Branch
+workbench-git-branches-fetch = Fetch
+workbench-git-branches-new = New Branch…
+# The sections' titles.
+workbench-git-branches-recent = Recent
+workbench-git-branches-local = Local
+workbench-git-branches-remote = Remote
+# A branch's actions: $name is the branch, as `feat` or `origin/feat`;
+# $into is the branch checked out.
+workbench-git-branches-checkout = Checkout
+workbench-git-branches-new-from = New Branch from '{ $name }'…
+workbench-git-branches-merge = Merge '{ $name }' into '{ $into }'
+workbench-git-branches-rename = Rename…
+workbench-git-branches-delete = Delete
+workbench-git-branches-pull = Pull
+workbench-git-branches-update-branch = Update
+# The name's picker's row: $start is the branch it's made from.
+workbench-git-branches-create-from = Create branch '{ $name }' from '{ $start }' and switch to it
+workbench-git-branches-rename-to = Rename '{ $old }' to '{ $name }'
+# How they went.
+workbench-git-branches-merged = Merged { $name } into { $into }
+workbench-git-branches-merge-conflicts =
+    The merge stopped on conflicts in { $count ->
+        [one] 1 file
+       *[other] { $count } files
+    }. Resolve them, then commit.
+workbench-git-branches-merge-overwrite = Can't merge { $name }: it would overwrite local changes to these files. Commit or stash them first.
+workbench-git-branches-cant-merge = Can't merge { $name }
+workbench-git-branches-renamed = Renamed { $old } to { $name }
+workbench-git-branches-cant-rename = Can't rename { $old }
+workbench-git-branches-deleted = Deleted branch { $name }
+workbench-git-branches-cant-delete = Can't delete { $name }
+# The question before deleting a branch that isn't fully merged.
+workbench-git-branches-not-merged = { $name } isn't fully merged.
+workbench-git-branches-not-merged-detail = Deleting it loses the commits on it that aren't on its upstream, or on HEAD's branch if it has none.
+workbench-git-branches-delete-anyway = Delete
+workbench-git-branches-cancel = Cancel
 
 ## Stash (git_stash.rs)
 

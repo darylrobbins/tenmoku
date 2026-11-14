@@ -69,6 +69,7 @@ pub(crate) mod find_bar;
 mod find_bar_b3;
 mod find_keys;
 mod git_askpass;
+mod git_branch_menu;
 mod git_card_markdown;
 mod git_commit_box_size;
 mod git_log_b3;

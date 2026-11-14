@@ -658,3 +658,23 @@ reason = "A row's keyword badge's debug selector, for tests"
 file = "src/git_remote.rs"
 text = "git {}"
 reason = "A prompting fetch's, pull's or push's thread's name, shown only in debuggers"
+
+[[literal]]
+file = "src/git_branch_menu.rs"
+text = "git-branches-row:{ix}"
+reason = "A branches menu row's debug selector, for tests"
+
+[[literal]]
+file = "src/git_branch_menu.rs"
+text = "git-branches-chevron:{ix}"
+reason = "A branches menu row's chevron's debug selector, for tests"
+
+[[literal]]
+file = "src/git_remote.rs"
+text = "refs/heads/{branch}"
+reason = "A local branch's full ref name, passed to git for-each-ref"
+
+[[literal]]
+file = "src/git_branch_menu.rs"
+text = "refs/heads/{name}^{{commit}}"
+reason = "A revision, passed to git rev-parse"

@@ -261,13 +261,17 @@ fn title_bar_branch(cx: &mut TestAppContext) {
     git(&work, &["switch", "-q", "main"]);
     refresh(&workbench, wcx);
 
-    // A click opens the branch picker.
+    // A click opens the branches menu; Switch Branch, the branch picker.
     assert!(modal::<BranchPicker>(&workbench, wcx).is_none());
     let bounds = wcx
         .debug_bounds("title-branch")
         .expect("the widget is drawn");
     wcx.simulate_click(bounds.center(), Modifiers::none());
     draw(wcx);
+    let menu = workbench.read_with(wcx, |workbench, cx| workbench.branches_menu(cx));
+    assert!(menu.is_some(), "the branches menu shows");
+    assert!(modal::<BranchPicker>(&workbench, wcx).is_none());
+    run(&workbench, GitCommand::SwitchBranch, wcx);
     let picker = modal::<BranchPicker>(&workbench, wcx).expect("the branch picker shows");
     assert_eq!(rows(&picker, wcx)[0].0, CREATE_ROW);
 
