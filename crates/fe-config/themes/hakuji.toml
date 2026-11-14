@@ -185,6 +185,8 @@ find_match = "#f6e1b3"
 find_match_other = "#f1efe0"
 identifier_highlight = "#f1efe0"
 agent_lane = "#3a5f81"
+# Behind an agent's pending rows: its soft ground, agent.soft.
+agent_row = "#e8eff7"
 fold_hover = "#ebecef"
 # The minimap: the editor's ground; the slider in faint text at rising
 # strength; the selection the focused selection's rust tint; marks in the

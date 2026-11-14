@@ -230,6 +230,9 @@ colors! {
         identifier_highlight,
         /// The gutter's lane beside rows an agent wrote.
         agent_lane,
+        /// Behind the rows an agent's pending hunk replaces: the agent's soft
+        /// ground.
+        agent_row,
         /// Behind the fold chevron under the pointer.
         fold_hover,
         /// Behind the minimap.

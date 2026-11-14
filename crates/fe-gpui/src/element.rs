@@ -61,6 +61,7 @@ pub(crate) mod minimap;
 #[cfg(test)]
 pub(crate) use host_blocks::PaintedBlock;
 mod proposal;
+pub use proposal::DrawnProposalHeader;
 mod quick_scope;
 mod rulers;
 pub(crate) mod sticky_scroll;
@@ -106,7 +107,9 @@ pub(crate) struct FrameLayout {
     /// its fold's rows ([`hovered_fold`]).
     pub(crate) hovered_fold: Option<HoveredFold>,
     /// The agent lane's runs of rows, their tops and bottoms in frame
-    /// coordinates ([`annotation_column::agent_runs`]).
+    /// coordinates, by top and apart: the annotations' agent rows
+    /// ([`annotation_column::agent_runs`]) and the dotted decorations'
+    /// ([`agent_lane_runs`]).
     agent_runs: Vec<(f32, f32)>,
     /// What the gutter drew, for [`EditorView::drawn_gutter`].
     drawn_gutter: DrawnGutter,
@@ -1570,8 +1573,12 @@ impl Element for EditorElement {
         if !gutter {
             (layout.decorations.placed)
                 .retain(|placed| !matches!(placed.kind, DecorationKind::Gutter(_)));
+            layout.decorations.dotted.clear();
         }
-        layout.agent_runs = annotation_column::agent_runs(&layout.frame, view);
+        layout.agent_runs = agent_lane_runs(
+            annotation_column::agent_runs(&layout.frame, view),
+            mem::take(&mut layout.decorations.dotted),
+        );
         clear_bars_from_agent_runs(&mut layout);
         layout.indent_guides = indent_guides::layout(&mut layout, view, window);
         layout.rulers = rulers::layout(&mut layout, view, window);
@@ -1887,6 +1894,13 @@ impl Element for EditorElement {
                     window.paint_quad(fill(layout.bounds(line), theme.active_line));
                 }
             }
+            // An agent's rows, under the bands of its proposals' old rows.
+            window.with_content_mask(
+                Some(ContentMask {
+                    bounds: layout.bounds(frame.text_bounds()),
+                }),
+                |window| layout.decorations.paint(Layer::AgentRows, window, cx),
+            );
             proposal::paint_bands(&layout.proposals, &layout, window);
             let text_bounds = layout.bounds(frame.text_bounds());
             window.with_content_mask(
@@ -2106,7 +2120,7 @@ impl Element for EditorElement {
                 paint_lightbulb(bounds, kind, window);
             }
             layout.decorations.paint(Layer::Gutter, window, cx);
-            paint_agent_lane(&agent_dots, theme.agent_lane, window);
+            paint_agent_lane(&agent_dots, agent_lane_color(&theme), window);
             // Folded rows' chevrons always show; the rest only while the
             // pointer is in the gutter. The hovered one is at full strength
             // on a tile, and its fold's closing row has an up-chevron.
@@ -2862,8 +2876,9 @@ pub struct DrawnGutter {
     pub chevrons: Vec<DrawnChevron>,
     /// The problem dots: each one's buffer row, bounds and colour.
     pub dots: Vec<(u32, Bounds<Pixels>, Hsla)>,
-    /// The agent lane's dots.
+    /// The agent lane's dots, and their colour.
     pub agent_dots: Vec<Bounds<Pixels>>,
+    pub agent_dot_color: Hsla,
     /// The change bars, after the agent lane took its rows from them.
     pub bars: Vec<(Bounds<Pixels>, Hsla)>,
     /// The notches marking removed lines.
@@ -2960,6 +2975,23 @@ pub struct DrawnPill {
     pub text: DrawnText,
 }
 
+/// The agent lane's runs: those of the annotations' agent rows and of the
+/// dotted decorations, joined where they meet or overlap, so a row in both
+/// gets its dots once.
+fn agent_lane_runs(annotated: Vec<(f32, f32)>, dotted: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+    let mut runs = annotated;
+    runs.extend(dotted);
+    runs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut joined: Vec<(f32, f32)> = Vec::with_capacity(runs.len());
+    for (top, bottom) in runs {
+        match joined.last_mut() {
+            Some(last) if top <= last.1 => last.1 = last.1.max(bottom),
+            _ => joined.push((top, bottom)),
+        }
+    }
+    joined
+}
+
 /// Takes the agent lane's rows out of the change bars: an agent's rows show
 /// its lane instead.
 fn clear_bars_from_agent_runs(layout: &mut FrameLayout) {
@@ -3042,6 +3074,11 @@ fn agent_lane_dots(layout: &FrameLayout, window: &Window) -> Vec<Bounds<Pixels>>
     dots
 }
 
+/// The agent lane's colour: [`Tint::Agent`](fe_editor::decorations::Tint::Agent)'s.
+fn agent_lane_color(theme: &EditorTheme) -> Hsla {
+    decorations::tint_color(theme, fe_editor::decorations::Tint::Agent)
+}
+
 /// Paints the agent lane's `dots` in `color`.
 fn paint_agent_lane(dots: &[Bounds<Pixels>], color: Hsla, window: &mut Window) {
     for &dot in dots {
@@ -3091,6 +3128,7 @@ fn drawn_gutter(
         chevrons,
         dots: marks.to_vec(),
         agent_dots,
+        agent_dot_color: agent_lane_color(theme),
         bars: marks_of(GutterMark::Bar),
         notches: marks_of(GutterMark::Deletion),
         indent_guides: (layout.indent_guides.iter())

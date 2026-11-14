@@ -17,7 +17,11 @@
 //!   ([`EditorView::set_gutter_annotations_with_agent_lane`]) are drawn as
 //!   a dotted lane in the change bar instead, in the theme's `agent_lane`
 //!   (`docs/design/design-system.md#agent-provenance`); they follow edits
-//!   as the entries do.
+//!   as the entries do. A row a [`GutterMark::Dotted`] decoration also
+//!   covers, as the workbench's lane marks give every agent row, gets its
+//!   dots once: the frame joins the two lanes' runs.
+//!
+//! [`GutterMark::Dotted`]: fe_editor::decorations::GutterMark::Dotted
 
 use std::{ops::Range, rc::Rc};
 

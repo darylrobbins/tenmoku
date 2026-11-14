@@ -47,6 +47,9 @@ pub enum Tint {
     /// A `PERF` comment badge: a colour of its own, not the cursor's like
     /// [`Tint::Accent`].
     Perf,
+    /// An agent's work, never the accent: the agent's colour, or, as a
+    /// row's band, its soft ground.
+    Agent,
 }
 
 /// A mark in the gutter.
@@ -57,6 +60,9 @@ pub enum GutterMark {
     /// A short horizontal mark on the top edge of the first row covered:
     /// rows were removed just above it.
     Deletion,
+    /// The agent lane: dots down every display row covered, in the agent's
+    /// colour whatever the tint, in place of any bar on those rows.
+    Dotted,
 }
 
 /// How a decoration is drawn.

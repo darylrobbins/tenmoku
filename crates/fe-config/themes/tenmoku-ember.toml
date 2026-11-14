@@ -113,13 +113,15 @@ vim_mode_foreground = "#1c1814"
 bracket_1 = "#e5b45c"
 bracket_2 = "#c49bd1"
 bracket_3 = "#7fa6b8"
-# Find matches, the identifier under the caret and its uses, the agent's
-# gutter lane and a hovered fold's tile: what the editor computes today (the
-# foreground at 0.22, the cursor's at 0.22 for an agent's rows).
+# Find matches, the identifier under the caret and its uses, and a hovered
+# fold's tile: what the editor computes today (the foreground at 0.22).
 find_match = "#e3d6c338"
 find_match_other = "#e3d6c338"
 identifier_highlight = "#e3d6c338"
-agent_lane = "#f0a05038"
+# An agent's gutter lane: Kiln Dark's agent.base, never the accent.
+agent_lane = "#8d9bb0"
+# Behind an agent's pending rows: Kiln Dark's agent.soft.
+agent_row = "#8d9bb026"
 fold_hover = "#e3d6c338"
 # The minimap: its background, the slider over the visible rows (at rest,
 # hovered and dragged), and the marks for the selection, find matches,

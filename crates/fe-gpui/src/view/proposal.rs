@@ -12,11 +12,21 @@
 //!
 //! Proposals are shared, so several views of one buffer (splits) show the
 //! same one, and a hunk resolved through one goes from them all.
+//!
+//! The host may give a proposal a lane chip ([`ProposalBadge`],
+//! [`EditorView::set_proposal_badges`]), `lane 2 · pending`, shown in each
+//! of its blocks' header rows before the buttons. A pending hunk of a
+//! proposal with a chip whose old text another lane's pending hunk also
+//! replaces says `also changed by lane N` in its header.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::{Rc, Weak},
+};
 
 use fe_buffer::{HunkId, Origin, ProposalError, ProposedChange, TransactionId};
-use gpui::{Bounds, Context, EventEmitter, Pixels, Point};
+use fe_editor::lane::LaneId;
+use gpui::{Bounds, Context, EventEmitter, Pixels, Point, SharedString};
 
 use super::EditorView;
 
@@ -37,6 +47,19 @@ pub enum ProposalEvent {
 }
 
 impl EventEmitter<ProposalEvent> for EditorView {}
+
+/// A proposal's lane chip: the lane its agent is in, and what the chip
+/// says, as `lane 2 · pending`, in the agent's colour.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProposalBadge {
+    /// The proposal's lane, which another lane's hunks over the same text
+    /// name in their headers.
+    pub lane: LaneId,
+    pub text: SharedString,
+    /// The chip tells of stale hunks, and is drawn dimmed, as a stale
+    /// hunk's header is.
+    pub stale: bool,
+}
 
 /// A button in a hunk's block's header row.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -63,6 +86,32 @@ impl EditorView {
         });
         self.proposals = proposals;
         cx.notify();
+    }
+
+    /// Gives each proposal of `badges` its lane chip from the next frame, in
+    /// place of those given before. A proposal without one shows no chip.
+    pub fn set_proposal_badges(
+        &mut self,
+        badges: Vec<(Rc<RefCell<ProposedChange>>, ProposalBadge)>,
+        cx: &mut Context<Self>,
+    ) {
+        let badges: Vec<_> = (badges.into_iter())
+            .map(|(proposal, badge)| (Rc::downgrade(&proposal), badge))
+            .collect();
+        let same = badges.len() == self.proposal_badges.len()
+            && (badges.iter().zip(&self.proposal_badges))
+                .all(|((a, x), (b, y))| Weak::ptr_eq(a, b) && x == y);
+        if !same {
+            self.proposal_badges = badges;
+            cx.notify();
+        }
+    }
+
+    /// The lane chip of `proposal`, if the host gave it one.
+    pub fn proposal_badge(&self, proposal: &Rc<RefCell<ProposedChange>>) -> Option<&ProposalBadge> {
+        (self.proposal_badges.iter())
+            .find(|(shown, _)| std::ptr::eq(shown.as_ptr(), Rc::as_ptr(proposal)))
+            .map(|(_, badge)| badge)
     }
 
     /// Has a read-only view still show its proposals' Accept buttons, and

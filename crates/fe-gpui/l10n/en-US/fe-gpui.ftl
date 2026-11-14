@@ -196,6 +196,11 @@ gpui-hover-go-to-definition = { $keys } definition
 gpui-proposal-label = Proposed change
 gpui-proposal-accept = Accept
 gpui-proposal-reject = Reject
+# A pending hunk's header note: another lane's pending hunk replaces the
+# same text. $lane is that lane's number.
+gpui-proposal-also-changed = also changed by lane { $lane }
+# A hunk's header with a note after it.
+gpui-proposal-header-note = { $header } · { $note }
 
 ## The which-key popup
 

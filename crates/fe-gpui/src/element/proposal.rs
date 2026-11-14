@@ -4,8 +4,12 @@
 //! text a line a row on an "added" band, and its old rows under a full-width
 //! "removed" band. A hunk whose old rows a fold hides shows neither.
 //!
-//! The header row says what the hunk is, then has its buttons: Accept and
-//! Reject for a pending hunk, Reject alone for a stale one.
+//! The header row says what the hunk is, and, for a pending one another
+//! lane's pending hunk also replaces the old text of, `also changed by lane
+//! N`; then the proposal's lane chip if the host gave it one
+//! ([`crate::ProposalBadge`]), on the agent's soft ground (`agent_row`) in
+//! the agent's colour (`agent_lane`), and its buttons: Accept and Reject for
+//! a pending hunk, Reject alone for a stale one.
 //!
 //! The tints are the theme's diff tokens, as a diff view's ([`Tints`]): the
 //! block on `diff_added_row`, the old rows on `diff_removed_row`, and each
@@ -27,7 +31,7 @@ use gpui::{
 use kiln_l10n::tr;
 
 use super::{FrameLayout, GlyphWidths, Line, Shaper};
-use crate::{EditorTheme, EditorView, view::ProposalButton};
+use crate::{EditorTheme, EditorView, ProposalBadge, view::ProposalButton};
 
 /// Block ids from here on are the proposals' hunks, [`IDS`] plus the
 /// hunk's index in the frame's [`Hunk`]s; below are the host's.
@@ -54,6 +58,8 @@ pub(super) struct Hunk {
     range: Range<usize>,
     /// What its header row says.
     header: String,
+    /// Its proposal's lane chip.
+    badge: Option<ProposalBadge>,
     /// Its new text, a line a row, as [`Texts`] indexes it.
     new_text: Arc<str>,
     /// The header's and the new text's.
@@ -219,21 +225,38 @@ impl Texts {
 pub(super) fn hunks(view: &EditorView, texts: &mut Texts) -> Vec<Hunk> {
     let snapshot = view.model.snapshot();
     texts.start_frame();
+    let shown: Vec<_> = (view.proposals.iter())
+        .filter_map(|proposal| {
+            let badge = view.proposal_badge(proposal).cloned();
+            let proposal = proposal.borrow();
+            if proposal.buffer() != snapshot.id() || proposal.version() > snapshot.version() {
+                return None;
+            }
+            let hunks = proposal.hunks(snapshot);
+            // Only for a stale hunk's reason: a dry run applies the clean
+            // ones to a copy of the text.
+            let stale = hunks.iter().any(|hunk| hunk.status == HunkStatus::Stale);
+            let dry_run = stale.then(|| proposal.dry_run(snapshot));
+            Some((badge, hunks, dry_run))
+        })
+        .collect();
     let mut out = Vec::new();
-    for proposal in &view.proposals {
-        let proposal = proposal.borrow();
-        if proposal.buffer() != snapshot.id() || proposal.version() > snapshot.version() {
-            continue;
-        }
-        let hunks = proposal.hunks(snapshot);
-        // Only for a stale hunk's reason: a dry run applies the clean ones
-        // to a copy of the text.
-        let stale = hunks.iter().any(|hunk| hunk.status == HunkStatus::Stale);
-        let dry_run = stale.then(|| proposal.dry_run(snapshot));
+    for (ix, (badge, hunks, dry_run)) in shown.iter().enumerate() {
         for hunk in hunks {
             let header = match hunk.status {
                 // A pending hunk's header.
-                HunkStatus::Pending => tr!("gpui-proposal-label").to_string(),
+                HunkStatus::Pending => {
+                    let lane = badge.as_ref().map(|badge| badge.lane);
+                    let label = tr!("gpui-proposal-label").to_string();
+                    (also_changed_by(&shown, ix, lane, &hunk.range).into_iter()).fold(
+                        label,
+                        |header, other| {
+                            let note = tr!("gpui-proposal-also-changed", lane = other.get());
+                            tr!("gpui-proposal-header-note", header = header, note = note)
+                                .to_string()
+                        },
+                    )
+                }
                 HunkStatus::Stale => (dry_run.iter())
                     .flat_map(|dry_run| dry_run.hunks())
                     .find(|outcome| outcome.id == hunk.id)
@@ -247,15 +270,45 @@ pub(super) fn hunks(view: &EditorView, texts: &mut Texts) -> Vec<Hunk> {
             out.push(Hunk {
                 id: hunk.id,
                 status: hunk.status,
-                range: hunk.range,
+                range: hunk.range.clone(),
                 header,
+                badge: badge.clone(),
                 rows: 1 + texts.lines(&hunk.new_text),
-                new_text: hunk.new_text,
+                new_text: hunk.new_text.clone(),
             });
         }
     }
     texts.end_hunks();
     out
+}
+
+/// The other lanes, by number, whose shown proposals have a pending hunk
+/// replacing text `range` overlaps, for a pending hunk of `shown[ix]`, of
+/// lane `lane`: those with a chip of another lane.
+fn also_changed_by(
+    shown: &[(
+        Option<ProposalBadge>,
+        Vec<fe_buffer::HunkView>,
+        Option<fe_buffer::DryRun>,
+    )],
+    ix: usize,
+    lane: Option<fe_editor::lane::LaneId>,
+    range: &Range<usize>,
+) -> Vec<fe_editor::lane::LaneId> {
+    let mut lanes: Vec<_> = (shown.iter().enumerate())
+        .filter(|&(other, _)| other != ix)
+        .filter_map(|(_, (badge, hunks, _))| {
+            let other = badge.as_ref()?.lane;
+            let overlaps = (hunks.iter()).any(|hunk| {
+                hunk.status == HunkStatus::Pending
+                    && fe_editor::decorations::overlaps(&hunk.range, range)
+            });
+            (lane != Some(other) && overlaps).then_some(other)
+        })
+        .collect();
+    lanes.sort();
+    lanes.dedup();
+    lanes
 }
 
 /// The first and last buffer rows of `range`'s old text. A range ending at
@@ -368,6 +421,8 @@ pub(crate) struct Tints {
     accept: Hsla,
     /// Behind Reject: `diff_removed_word`.
     reject: Hsla,
+    /// Behind a lane chip: the agent's soft ground, `agent_row`.
+    chip: Hsla,
 }
 
 impl Tints {
@@ -378,6 +433,7 @@ impl Tints {
             band: theme.diff_removed_row,
             accept: theme.diff_added_word,
             reject: theme.diff_removed_word,
+            chip: theme.agent_row,
         }
     }
 
@@ -405,8 +461,51 @@ impl EditorView {
             band,
             accept,
             reject,
+            ..
         } = proposals.tints;
         Some([block, band, accept, reject])
+    }
+}
+
+/// A hunk's block's header row as the last frame laid it out: for tests
+/// outside the crate.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnProposalHeader {
+    pub hunk: HunkId,
+    /// What the header says, before its chip.
+    pub text: String,
+    /// The lane chip: what it says, its pill in window coordinates, the
+    /// pill's colour and its text's.
+    pub chip: Option<(SharedString, Bounds<Pixels>, Hsla, Hsla)>,
+    /// The buttons, left to right: each label and box, in window
+    /// coordinates.
+    pub buttons: Vec<(SharedString, Bounds<Pixels>)>,
+}
+
+impl EditorView {
+    /// The header rows the last frame laid out, of the blocks whose header
+    /// is in view: for tests outside the crate.
+    #[doc(hidden)]
+    pub fn drawn_proposal_headers(&self) -> Vec<DrawnProposalHeader> {
+        let Some(layout) = self.layout.as_ref() else {
+            return Vec::new();
+        };
+        let proposals = &layout.proposals;
+        (proposals.blocks.iter())
+            .filter(|block| !block.buttons.is_empty())
+            .map(|block| DrawnProposalHeader {
+                hunk: block.id,
+                text: block.header.clone(),
+                chip: block.chip.as_ref().map(|chip| {
+                    let bounds = layout.bounds(chip.rect);
+                    (chip.text.clone(), bounds, proposals.tints.chip, chip.color)
+                }),
+                buttons: (block.buttons.iter())
+                    .map(|button| (label(button.button), layout.bounds(button.rect)))
+                    .collect(),
+            })
+            .collect()
     }
 }
 
@@ -414,9 +513,10 @@ impl EditorView {
 struct Placed {
     id: HunkId,
     status: HunkStatus,
-    /// Which tests see.
-    #[cfg(test)]
+    /// What its header row says, which tests see.
     header: String,
+    /// Its lane chip, if it has one and its header is in view.
+    chip: Option<Chip>,
     /// In the frame.
     rect: Rect,
     /// The rows in view: the header's, then the new text's.
@@ -432,6 +532,16 @@ struct Row {
     /// As shaped, which tests see.
     #[cfg(test)]
     text: String,
+}
+
+/// A header row's lane chip, laid out.
+struct Chip {
+    /// Its pill in the frame.
+    rect: Rect,
+    label: Row,
+    /// What it says, and in what colour, which tests see.
+    text: SharedString,
+    color: Hsla,
 }
 
 /// A button in a header row, laid out.
@@ -483,19 +593,50 @@ fn label(button: ProposalButton) -> SharedString {
     }
 }
 
-/// The buttons of a hunk's header row with `status`, after its text
-/// `text_width` wide, shaped: each at x from the row's start and as wide as
-/// its label and padding. Then the row's width.
+/// The colour of a lane chip's text: the agent's, at full strength, dimmed
+/// for a chip of stale hunks as a stale header is.
+fn chip_color(badge: &ProposalBadge, theme: &EditorTheme) -> Hsla {
+    let color = theme.agent_lane.alpha(1.);
+    match badge.stale {
+        true => color.opacity(DIM_ALPHA),
+        false => color,
+    }
+}
+
+/// A header row's lane chip, shaped: its x from the row's start, its width
+/// and its label.
+type ShapedChip = (f32, f32, Line);
+
+/// A header row's button, shaped: which it is, its x from the row's start,
+/// its width and its label.
+type ShapedButton = (ProposalButton, f32, f32, Line);
+
+/// The lane chip `badge` and the buttons of a hunk's header row with
+/// `status`, after its text `text_width` wide, shaped: each at x from the
+/// row's start and as wide as its label and padding, the chip first. Then
+/// the row's width.
 fn header_buttons(
     status: HunkStatus,
     read_only: bool,
+    badge: Option<&ProposalBadge>,
     text_width: f32,
     line_height: f32,
     shaper: &mut Shaper,
     theme: &EditorTheme,
-) -> (Vec<(ProposalButton, f32, f32, Line)>, f32) {
+) -> (Option<ShapedChip>, Vec<ShapedButton>, f32) {
     let (pad, gap) = (line_height * BUTTON_PAD, line_height * BUTTON_GAP);
     let mut x = text_width;
+    let chip = badge.map(|badge| {
+        let runs = [StyleRun {
+            len: badge.text.len(),
+            style: chip_color(badge, theme),
+        }];
+        let line = shaper.shape(&badge.text, &runs);
+        let width = line.width() + pad * 2.;
+        let at = x + gap;
+        x = at + width;
+        (at, width, line)
+    });
     let shaped = (buttons(status, read_only).iter())
         .map(|&button| {
             let text = label(button);
@@ -506,7 +647,7 @@ fn header_buttons(
             (button, at, width, line)
         })
         .collect();
-    (shaped, x)
+    (chip, shaped, x)
 }
 
 /// The rows of the hunks' blocks `frame` shows that are in view: each
@@ -561,9 +702,10 @@ pub(super) fn widest(
             0 => {
                 let runs = runs(&hunk.header, true, hunk.status, theme);
                 let text_width = shaper.shape(&hunk.header, &runs).width();
-                let (_, width) = header_buttons(
+                let (_, _, width) = header_buttons(
                     hunk.status,
                     view.read_only && !view.accepts_when_read_only,
+                    hunk.badge.as_ref(),
                     text_width,
                     frame.line_height,
                     shaper,
@@ -606,8 +748,8 @@ pub(super) fn layout(
             Some(Placed {
                 id: hunk.id,
                 status: hunk.status,
-                #[cfg(test)]
                 header: hunk.header.clone(),
+                chip: None,
                 rect: laid.rect,
                 rows: Vec::new(),
                 buttons: Vec::new(),
@@ -624,9 +766,10 @@ pub(super) fn layout(
             0 => {
                 let runs = runs(&hunk.header, true, hunk.status, theme);
                 let text_width = shaper.shape(&hunk.header, &runs).width();
-                let (shaped, _) = header_buttons(
+                let (chip, shaped, _) = header_buttons(
                     hunk.status,
                     view.read_only && !view.accepts_when_read_only,
+                    hunk.badge.as_ref(),
                     text_width,
                     line_height,
                     shaper,
@@ -634,6 +777,27 @@ pub(super) fn layout(
                 );
                 let inset = line_height * BUTTON_INSET;
                 let pad = line_height * BUTTON_PAD;
+                if let (Some((at, width, line)), Some(badge)) = (chip, &hunk.badge) {
+                    block.chip = Some(Chip {
+                        rect: Rect {
+                            x: left + at,
+                            y: y + inset,
+                            width,
+                            height: line_height - inset * 2.,
+                        },
+                        label: Row {
+                            at: Vec2 {
+                                x: left + at + pad,
+                                y,
+                            },
+                            line,
+                            #[cfg(test)]
+                            text: badge.text.to_string(),
+                        },
+                        text: badge.text.clone(),
+                        color: chip_color(badge, theme),
+                    });
+                }
                 for (button, at, width, line) in shaped {
                     let rect = Rect {
                         x: left + at,
@@ -738,6 +902,13 @@ pub(super) fn paint(
         let bounds: Bounds<Pixels> = layout.bounds(block.rect);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, proposals.tints.block));
+            if let Some(chip) = &block.chip {
+                let rect = layout.bounds(chip.rect);
+                let corner = rect.size.height / 2.;
+                window.paint_quad(fill(rect, proposals.tints.chip).corner_radii(corner));
+                let label = &chip.label;
+                (label.line).paint(layout.to_window(label.at), line_height, window, cx);
+            }
             for button in &block.buttons {
                 let rect = layout.bounds(button.rect);
                 let corner = rect.size.height / 4.;

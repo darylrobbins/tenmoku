@@ -45,7 +45,10 @@ mod vim;
 pub use color_swatches::ColorSwatch;
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
 pub use diff_view::{DiffSide, DiffView};
-pub use element::{ChevronKind, DrawnAnnotations, DrawnChevron, DrawnGutter, DrawnPill, DrawnText};
+pub use element::{
+    ChevronKind, DrawnAnnotations, DrawnChevron, DrawnGutter, DrawnPill, DrawnProposalHeader,
+    DrawnText,
+};
 pub use fe_config::{
     EditorSettings, SettingsEvent, StickyScrollSettings,
     settings::{InlineDiagnostics, RenderWhitespace},
@@ -86,11 +89,11 @@ pub fn decoration_tint_color(theme: &EditorTheme, tint: fe_editor::decorations::
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 pub use view::GhostTextEvent;
-pub use view::ProposalEvent;
 pub use view::line_numbers;
 pub use view::minimap_options;
 pub use view::{GlyphKind, GutterGlyph};
 pub use view::{HostBlock, HostBlockKind, ReservedBlock};
+pub use view::{ProposalBadge, ProposalEvent};
 pub use vim::{
     apply_vim_reload, set_host_catalog, set_host_commands, set_vim_clipboard, set_vim_enabled,
     set_vim_highlight_yank, set_vim_inccommand, set_vim_incsearch, set_vim_jump_on_s,
@@ -239,8 +242,12 @@ pub struct EditorTheme {
     pub find_match_other: Hsla,
     /// Behind the symbol under the caret and its other uses.
     pub identifier_highlight: Hsla,
-    /// The gutter's lane beside rows an agent wrote.
+    /// The gutter's lane beside rows an agent wrote: the agent's colour,
+    /// [`Tint::Agent`](fe_editor::decorations::Tint::Agent)'s.
     pub agent_lane: Hsla,
+    /// Behind the rows an agent's pending hunk replaces: the agent's soft
+    /// ground, [`Tint::Agent`](fe_editor::decorations::Tint::Agent)'s band.
+    pub agent_row: Hsla,
     /// Behind the fold chevron under the pointer.
     pub fold_hover: Hsla,
     /// Behind the minimap.

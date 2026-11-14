@@ -121,6 +121,7 @@ impl EditorTheme {
             find_match_other: hsla(editor.find_match_other),
             identifier_highlight: hsla(editor.identifier_highlight),
             agent_lane: hsla(editor.agent_lane),
+            agent_row: hsla(editor.agent_row),
             fold_hover: hsla(editor.fold_hover),
             minimap_background: hsla(editor.minimap_background),
             minimap_slider: hsla(editor.minimap_slider),

@@ -292,3 +292,8 @@ reason = "A #[cfg(test)] note of a painted stage"
 file = "src/element/decorations.rs"
 text = "after line"
 reason = "A #[cfg(test)] note of a painted stage"
+
+[[literal]]
+file = "src/element/decorations.rs"
+text = "agent rows"
+reason = "A #[cfg(test)] note of a painted stage"

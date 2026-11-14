@@ -285,6 +285,11 @@ pub struct EditorView {
     pub(crate) key_flags: Vec<&'static str>,
     /// The proposed changes shown as diff blocks ([`proposal`]).
     pub(crate) proposals: Vec<std::rc::Rc<std::cell::RefCell<fe_buffer::ProposedChange>>>,
+    /// The lane chips of proposals shown ([`EditorView::set_proposal_badges`]).
+    pub(crate) proposal_badges: Vec<(
+        std::rc::Weak<std::cell::RefCell<fe_buffer::ProposedChange>>,
+        crate::ProposalBadge,
+    )>,
     /// The buttons in the proposals' blocks the last frame painted: the
     /// hunk, the button, and the part of its box shown, in window
     /// coordinates. A click there presses it.
@@ -528,6 +533,7 @@ impl EditorView {
             reserved: Vec::new(),
             key_flags: Vec::new(),
             proposals: Vec::new(),
+            proposal_badges: Vec::new(),
             proposal_buttons: Vec::new(),
             lens_providers: Vec::new(),
             lens_rows: Vec::new(),
@@ -2287,7 +2293,7 @@ pub use ghost_text::GhostTextEvent;
 pub use host::{EditorInputEvent, EditorViewEvent, HostBlock, HostBlockKind, ReservedBlock};
 pub use minimap::minimap_options;
 pub(crate) use proposal::ProposalButton;
-pub use proposal::ProposalEvent;
+pub use proposal::{ProposalBadge, ProposalEvent};
 pub(crate) use proposal_commands::{ProposalCommands, registry as proposal_registry};
 
 #[cfg(test)]

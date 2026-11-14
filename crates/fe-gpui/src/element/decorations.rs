@@ -75,12 +75,14 @@ pub(super) fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
         Tint::Yank => theme.vim_yank_highlight,
         Tint::Perf => theme.change_modified,
         Tint::Muted => theme.foreground,
+        Tint::Agent => theme.agent_lane,
     }
 }
 
 /// A diff tint's own colour as a row's band or a word's highlight, painted
 /// as the theme has it, unfaded: the words' over their row's are what set
-/// them apart. `None` for any other tint or kind.
+/// them apart. So is the agent's band, its soft ground (`agent_row`).
+/// `None` for any other tint or kind.
 pub(super) fn diff_color(theme: &EditorTheme, tint: Tint, kind: &DecorationKind) -> Option<Hsla> {
     match (tint, kind) {
         (Tint::DiffAdded, DecorationKind::RowBackground) => Some(theme.diff_added_row),
@@ -88,6 +90,7 @@ pub(super) fn diff_color(theme: &EditorTheme, tint: Tint, kind: &DecorationKind)
         (Tint::DiffAdded, DecorationKind::Highlight) => Some(theme.diff_added_word),
         (Tint::DiffRemoved, DecorationKind::Highlight) => Some(theme.diff_removed_word),
         (Tint::Yank, DecorationKind::Highlight) => Some(theme.vim_yank_highlight),
+        (Tint::Agent, DecorationKind::RowBackground) => Some(theme.agent_row),
         _ => None,
     }
 }
@@ -110,6 +113,7 @@ pub(crate) fn name_color(theme: &EditorTheme, name: &str) -> Option<Hsla> {
 #[derive(Clone)]
 pub(crate) struct Placed {
     pub(crate) kind: DecorationKind,
+    pub(crate) tint: Tint,
     /// In window coordinates. An underline's height is its thickness.
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) color: Hsla,
@@ -125,6 +129,9 @@ pub(crate) struct Placed {
 /// model hands them out.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum Layer {
+    /// An agent's row bands ([`Tint::Agent`]): under the proposals' bands,
+    /// which keep their own colours over them.
+    AgentRows,
     /// Row backgrounds, then highlights: under search matches and the
     /// selection.
     Backgrounds,
@@ -141,6 +148,11 @@ pub(super) enum Layer {
 pub(crate) struct Decorations {
     /// In paint order within each kind.
     pub(crate) placed: Vec<Placed>,
+    /// The dotted agent lane's runs ([`GutterMark::Dotted`]), in frame
+    /// coordinates: the top and bottom of each run of covered rows shown
+    /// one under the next. The frame paints them with the agent lane its
+    /// annotations give, once.
+    pub(crate) dotted: Vec<(f32, f32)>,
     line_height: Pixels,
 }
 
@@ -165,6 +177,7 @@ impl Decorations {
         let line_height = frame.line_height;
         let mut out = Self {
             placed: Vec::new(),
+            dotted: Vec::new(),
             line_height: px(line_height),
         };
         let (Some(first), Some(last)) = (frame.rows.first(), frame.rows.last()) else {
@@ -203,7 +216,7 @@ impl Decorations {
             };
             let range = decoration.range;
             let mut place = |rect: Rect, color: Hsla, text: Option<Line>| {
-                placed.push((decoration.kind.clone(), rect, color, text));
+                placed.push((decoration.kind.clone(), decoration.tint, rect, color, text));
             };
             let whole_row = |row: u32, x: f32, width: f32| Rect {
                 x,
@@ -242,6 +255,23 @@ impl Decorations {
                             height: run as f32 * line_height - 2. * BAR_INSET,
                         };
                         place(rect, tint.opacity(GUTTER_ALPHA), None);
+                    }
+                }
+                DecorationKind::Gutter(GutterMark::Dotted) => {
+                    // A run per rows shown one under the next, as a bar's.
+                    let screen_row = |row: &RowLayout<Line>| frame.block_map.screen_row(row.row);
+                    let mut at = 0;
+                    while at < rows.len() {
+                        let first = &rows[at];
+                        let mut run = 1;
+                        while (rows.get(at + run))
+                            .is_some_and(|row| screen_row(row) == screen_row(first) + run as u32)
+                        {
+                            run += 1;
+                        }
+                        at += run;
+                        let top = frame.row_top(first.row);
+                        out.dotted.push((top, top + run as f32 * line_height));
                     }
                 }
                 DecorationKind::Gutter(GutterMark::Deletion) => {
@@ -420,12 +450,13 @@ impl Decorations {
             }
         }
         out.placed = (placed.into_iter())
-            .map(|(kind, rect, color, text)| Placed {
+            .map(|(kind, tint, rect, color, text)| Placed {
                 corner_radius: match kind {
                     DecorationKind::Gutter(_) => px(rect.width.min(rect.height) / 2.),
                     _ => px(0.),
                 },
                 kind,
+                tint,
                 bounds: layout.bounds(rect),
                 color,
                 text,
@@ -441,8 +472,16 @@ impl Decorations {
         };
         let mut painted = false;
         match layer {
+            Layer::AgentRows => {
+                for placed in (self.placed.iter()).filter(|placed| agent_row(placed)) {
+                    window.paint_quad(fill(placed.bounds, placed.color));
+                    painted = true;
+                }
+            }
             Layer::Backgrounds => {
-                let backgrounds = of(|kind| *kind == DecorationKind::RowBackground);
+                let backgrounds = (self.placed.iter())
+                    .filter(|placed| placed.kind == DecorationKind::RowBackground)
+                    .filter(|placed| !agent_row(placed));
                 let highlights = of(|kind| *kind == DecorationKind::Highlight);
                 for placed in backgrounds.chain(highlights) {
                     window.paint_quad(fill(placed.bounds, placed.color));
@@ -487,6 +526,7 @@ impl Decorations {
         #[cfg(test)]
         if painted {
             note(match layer {
+                Layer::AgentRows => "agent rows",
                 Layer::Backgrounds => "backgrounds",
                 Layer::Underlines => "underlines",
                 Layer::AfterLine => "after line",
@@ -495,6 +535,27 @@ impl Decorations {
         }
         #[cfg(not(test))]
         let _ = painted;
+    }
+}
+
+/// Whether `placed` is an agent's row band, painted under the proposals'.
+fn agent_row(placed: &Placed) -> bool {
+    placed.kind == DecorationKind::RowBackground && placed.tint == Tint::Agent
+}
+
+impl EditorView {
+    /// The row bands the last frame laid out, in window coordinates, with
+    /// their tints and colours, in paint order but for an agent's, which
+    /// go under the proposals' bands: for tests outside the crate.
+    #[doc(hidden)]
+    pub fn drawn_row_backgrounds(&self) -> Vec<(Bounds<Pixels>, Tint, Hsla)> {
+        let Some(layout) = self.layout.as_ref() else {
+            return Vec::new();
+        };
+        (layout.decorations.placed.iter())
+            .filter(|placed| placed.kind == DecorationKind::RowBackground)
+            .map(|placed| (placed.bounds, placed.tint, placed.color))
+            .collect()
     }
 }
 

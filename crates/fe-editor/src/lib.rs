@@ -20,6 +20,7 @@ use fe_buffer::{
 use fe_display::{CharWidth, DisplayMap, ExpandedRow, LineNumbers, Monospace, WRAP_SLICE_BYTES};
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
+pub mod agent_rows;
 mod auto_indent;
 pub mod auto_save;
 mod case_transform;
@@ -66,6 +67,7 @@ mod trim_whitespace;
 mod typing;
 mod viewer;
 
+pub use agent_rows::{AgentRows, LaneMark};
 pub use auto_indent::IndentSuggestion;
 pub use changeset::{
     BufferSet, Changeset, ChangesetError, Counts, FileEntry, RevertOutcome, Summary,
