@@ -583,6 +583,14 @@ impl Workbench {
             },
         );
         self.toolbar_requests.insert(pane.entity_id(), requested);
+        let renames = cx.subscribe_in(
+            pane,
+            window,
+            |workbench, pane, request: &crate::find_bar::FindRename, window, cx| {
+                workbench.find_rename(pane, request, window, cx)
+            },
+        );
+        self.find_renames.insert(pane.entity_id(), renames);
         #[cfg(test)]
         {
             let dropped = cx
@@ -604,6 +612,7 @@ impl Workbench {
             WorkspaceEvent::PaneAdded(pane) => self.pane_added(pane, window, cx),
             WorkspaceEvent::PaneRemoved(id) => {
                 self.toolbar_requests.remove(id);
+                self.find_renames.remove(id);
                 #[cfg(test)]
                 self.drops.remove(id);
             }

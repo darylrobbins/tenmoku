@@ -68,6 +68,7 @@ mod file_icon_set_surfaces;
 pub(crate) mod find_bar;
 mod find_bar_b3;
 mod find_keys;
+mod find_rename;
 mod git_askpass;
 mod git_branch_menu;
 mod git_card_markdown;

@@ -164,6 +164,8 @@ pub struct Workbench {
     _workspace: [Subscription; 2],
     /// Per pane: its toolbar's requests.
     toolbar_requests: HashMap<EntityId, Subscription>,
+    /// Per pane: its find bar's rename questions and requests.
+    find_renames: HashMap<EntityId, Subscription>,
     /// Calls of [`Workbench::move_tab`] and tabs dropped on a pane, which
     /// the workspace moves.
     #[cfg(test)]
@@ -729,6 +731,7 @@ impl Workbench {
             template,
             _workspace: [workspace_events, workspace_changed],
             toolbar_requests: HashMap::new(),
+            find_renames: HashMap::new(),
             #[cfg(test)]
             moves: 0,
             #[cfg(test)]

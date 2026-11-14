@@ -2509,6 +2509,8 @@ impl EventEmitter<TabDropped> for Pane {}
 
 impl EventEmitter<ToolbarRequest> for Pane {}
 
+impl EventEmitter<crate::find_bar::FindRename> for Pane {}
+
 impl Focusable for Pane {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.state.focus().clone()
@@ -2689,6 +2691,15 @@ impl Pane {
     /// `find.show_replace`: before that, nothing else does anything.
     /// Closing it focuses the active editor.
     pub(crate) fn run_find(&mut self, op: FindOp, window: &mut Window, cx: &mut Context<Self>) {
+        if op == FindOp::RenameSymbol {
+            let editor = self.active_editor().cloned();
+            let request =
+                (self.find.as_ref()).and_then(|find| find.rename_request(editor.as_ref(), cx));
+            if let Some(request) = request {
+                cx.emit(request);
+            }
+            return;
+        }
         if matches!(op, FindOp::Show | FindOp::ShowReplace) && self.find.is_none() {
             self.find = Some(FindBar::new(&fe_ui::ui_theme(cx), cx));
         }

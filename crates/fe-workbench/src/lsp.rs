@@ -1030,6 +1030,7 @@ impl Workbench {
         }
         // The plugins' went with them: they're shown again.
         crate::plugin_diagnostics::reshow(cx);
+        self.forget_find_renames(cx);
         let lsp = &mut self.lsp;
         lsp.documents.clear();
         lsp.owners.clear();
@@ -1808,6 +1809,16 @@ impl Workbench {
         }));
     }
 
+    /// Has each pane's find bar ask the server again about its match.
+    pub(crate) fn forget_find_renames(&mut self, cx: &mut Context<Self>) {
+        for pane in self.panes(cx) {
+            pane.update(cx, |pane, cx| {
+                pane.update_find(|find, _, _| find.forget_rename(), cx);
+                cx.notify();
+            });
+        }
+    }
+
     fn lsp_event(&mut self, generation: u64, event: LspEvent, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
         #[cfg(test)]
@@ -1828,6 +1839,9 @@ impl Workbench {
                 );
                 lsp.messages.remove(&server);
                 lsp.servers.insert(server, (name, status));
+                // Whether a rename can be asked of it may have changed.
+                self.forget_find_renames(cx);
+                let lsp = &mut self.lsp;
                 if ended && lsp.drop_file_diagnostics(Some(server)) {
                     self.sync_problems(cx);
                 }

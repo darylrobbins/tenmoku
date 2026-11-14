@@ -121,7 +121,8 @@ impl TerminalFind {
             | FindOp::ToggleReplace
             | FindOp::ShowReplace
             | FindOp::ReplaceNext
-            | FindOp::ReplaceAll => {}
+            | FindOp::ReplaceAll
+            | FindOp::RenameSymbol => {}
         }
     }
 

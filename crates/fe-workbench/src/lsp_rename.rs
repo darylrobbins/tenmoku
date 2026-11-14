@@ -31,8 +31,9 @@ use gpui::{
 use kiln_l10n::{text, tr};
 
 use crate::{
-    Workbench,
+    Pane, Workbench,
     ai_changes_panel::OnApplied,
+    find_bar::FindRename,
     lsp::{RenameAnswer, RenameEdits},
     picker::{Picker, PickerDelegate},
     workbench::Palette,
@@ -134,6 +135,103 @@ impl Workbench {
         ));
     }
 
+    /// A find bar's request: whether a rename at its match renames exactly
+    /// it, to show Rename symbol, or the rename itself.
+    pub(crate) fn find_rename(
+        &mut self,
+        pane: &Entity<Pane>,
+        request: &FindRename,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match request {
+            FindRename::Probe(site) => {
+                let Some(prepared) =
+                    self.lsp_prepare_rename(site.buffer, site.version, site.range.start)
+                else {
+                    // Asked again when a server runs.
+                    pane.update(cx, |pane, cx| {
+                        pane.update_find(|find, _, _| find.forget_rename(), cx)
+                    });
+                    return;
+                };
+                let (pane, site) = (pane.downgrade(), site.clone());
+                cx.spawn(async move |_, cx| {
+                    let answer = prepared.await;
+                    let renames = matches!(&answer, Ok(Some(target)) if target.range == site.range);
+                    pane.update(cx, |pane, cx| {
+                        pane.update_find(|find, _, _| find.rename_answered(&site, renames), cx);
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            FindRename::Rename(site, name) => {
+                let Some(editor) = site.editor.upgrade() else {
+                    return;
+                };
+                self.rename_symbol_to(&editor, site.version, site.range.clone(), name, window, cx);
+            }
+        }
+    }
+
+    /// Renames the symbol that `range` is in `editor`, which the server
+    /// said a rename there renames exactly, to `name`: as the picker's
+    /// confirmation does, with no picker. Nothing for a blank name.
+    pub(crate) fn rename_symbol_to(
+        &mut self,
+        editor: &Entity<EditorView>,
+        version: Version,
+        range: Range<usize>,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if self.lsp.rename.upgrade().is_some() {
+            return self.say(&tr!("workbench-lsp-rename-running"), window, cx);
+        }
+        let (buffer, current, caret, old) = {
+            let model = editor.read(cx).model();
+            let buffer = model.buffer();
+            let caret = model.primary_selection().head();
+            let old = model.text().slice_to_string(range.clone());
+            (buffer.id(), buffer.version(), caret, old)
+        };
+        if current != version {
+            return self.say(&tr!("workbench-lsp-rename-stale"), window, cx);
+        }
+        let Some(asked) = self.lsp_rename(buffer, version, range.start, name.to_owned()) else {
+            return self.say(&tr!("workbench-lsp-no-server"), window, cx);
+        };
+        let guard = Rc::new(());
+        self.lsp.rename = Rc::downgrade(&guard);
+        cx.notify();
+        let request = Request {
+            editor: editor.downgrade(),
+            buffer,
+            version,
+            caret,
+            target: range,
+            name: old,
+        };
+        let name = name.to_owned();
+        cx.spawn_in(window, async move |workbench, cx| {
+            let answer = asked.await;
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    workbench.finish_rename(&request, &name, answer, window, cx)
+                })
+                .ok();
+            drop(guard);
+        })
+        .detach();
+    }
+
     /// The server's edits for the rename of `request` to `to`: applied (or
     /// previewed, to apply once reviewed), the caret then kept on the
     /// symbol, or said why not; the picker closes either way.
@@ -153,6 +251,19 @@ impl Workbench {
         });
         // First, so a preview shown keeps its focus.
         picker.update(cx, |picker, cx| picker.dismiss(window, cx));
+        self.finish_rename(request, to, answer, window, cx);
+    }
+
+    /// The server's edits for the rename of `request` to `to`, applied or
+    /// previewed, or said why not.
+    fn finish_rename(
+        &mut self,
+        request: &Request,
+        to: &str,
+        answer: RenameEdits,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // The server's edits were made for the version asked about: a
         // changed or closed source buffer discards all of them.
         let current = request

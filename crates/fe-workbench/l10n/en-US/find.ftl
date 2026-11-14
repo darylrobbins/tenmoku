@@ -21,6 +21,9 @@ workbench-find-toggle-replace = Toggle Replace
 workbench-find-preserve-case = Preserve Case
 workbench-find-replace = Replace
 workbench-find-replace-all = Replace All
+# Shown in place of Replace when the match is a whole symbol its language
+# server can rename: renames it to the replace field's text.
+workbench-find-rename-symbol = Rename Symbol
 
 ## The count beside the query
 

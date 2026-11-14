@@ -55,9 +55,13 @@
 //! [`KEY_CONTEXT`] and its inputs `text_input`, the replace input
 //! [`REPLACE_KEY_CONTEXT`] too, and none carries `vim.mode`, so with vim on keys typed there only type.
 
-use std::{cell::Cell, ops::Range, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    time::Duration,
+};
 
-use fe_buffer::{Anchor, BufferId, Origin, Text};
+use fe_buffer::{Anchor, Bias, BufferId, Origin, Text};
 use fe_editor::Movement;
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_ui::{
@@ -122,6 +126,37 @@ pub(crate) enum FindOp {
     ShowReplace,
     ReplaceNext,
     ReplaceAll,
+    /// Renames the symbol the match is, to the replace field's text.
+    RenameSymbol,
+}
+
+/// A match of an editor's text, at a version of it: what a rename is asked
+/// about.
+#[derive(Clone)]
+pub(crate) struct RenameSite {
+    pub(crate) editor: WeakEntity<EditorView>,
+    pub(crate) buffer: BufferId,
+    pub(crate) version: fe_buffer::Version,
+    pub(crate) range: Range<usize>,
+}
+
+impl RenameSite {
+    fn same(&self, other: &Self) -> bool {
+        self.editor == other.editor
+            && self.buffer == other.buffer
+            && self.version == other.version
+            && self.range == other.range
+    }
+}
+
+/// What a pane's find bar asks of the workbench, which has the language
+/// servers.
+pub(crate) enum FindRename {
+    /// Whether the server renames exactly the site, a whole symbol: the
+    /// answer goes to [`FindBar::rename_answered`].
+    Probe(RenameSite),
+    /// Rename the site's symbol to this name.
+    Rename(RenameSite, String),
 }
 
 /// How long after the last change to the query the count is announced:
@@ -164,6 +199,9 @@ pub(crate) struct FindBar {
     left_all: Option<(BufferId, Vec<Range<Anchor>>)>,
     /// The editor the bar set its pattern on, while it's open.
     editor: Option<WeakEntity<EditorView>>,
+    /// The match the server was asked about last, and whether it renames
+    /// exactly that, once known.
+    rename: RefCell<Option<(RenameSite, Option<bool>)>>,
     /// The Vim command's, kept across frames so the keyboard can move
     /// focus to it.
     vim_command_focus: FocusHandle,
@@ -224,6 +262,7 @@ impl FindBar {
             left: None,
             left_all: None,
             editor: None,
+            rename: RefCell::new(None),
             vim_command_focus: cx.focus_handle().tab_stop(true),
             announce: Cell::new(false),
             announce_after: None,
@@ -309,6 +348,8 @@ impl FindBar {
             FindOp::ToggleReplace => self.toggle_replace(window, cx),
             FindOp::ReplaceNext => self.replace_next(editor, cx),
             FindOp::ReplaceAll => self.replace_all(editor, cx),
+            // The pane asks the workbench: see `Pane::run_find`.
+            FindOp::RenameSymbol => {}
         }
     }
 
@@ -413,6 +454,102 @@ impl FindBar {
         if !self.replacing && self.replace_input.focus_handle(cx).is_focused(window) {
             window.focus(&self.input.focus_handle(cx), cx);
         }
+    }
+
+    /// The match the primary selection is, when it's a whole identifier
+    /// that a rename could be asked about: the replace row shows, the
+    /// pattern is valid with at most one group, the buffer is writable and
+    /// vim isn't moving a caret.
+    fn rename_site(&self, editor: Option<&Entity<EditorView>>, cx: &App) -> Option<RenameSite> {
+        if !self.open || !self.replacing {
+            return None;
+        }
+        let Some(Ok(pattern)) = &self.pattern else {
+            return None;
+        };
+        if pattern.group_count() > 1 {
+            return None;
+        }
+        let editor = editor?;
+        let view = editor.read(cx);
+        if view.is_read_only() || view.vim_mode().is_some() {
+            return None;
+        }
+        view.find_count()?.current?;
+        let model = view.model();
+        let range = model.primary_selection().range;
+        let text = model.text();
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        let inside = text.slice_to_string(range.clone());
+        // Whole characters either side, clipped to boundaries.
+        let (lo, hi) = (
+            text.clip_offset(range.start.saturating_sub(4), Bias::Right),
+            text.clip_offset((range.end + 4).min(text.len()), Bias::Left),
+        );
+        let before = text.slice_to_string(lo..range.start);
+        let after = text.slice_to_string(range.end..hi);
+        let whole = !inside.is_empty()
+            && inside.chars().all(word)
+            && !before.chars().next_back().is_some_and(word)
+            && !after.chars().next().is_some_and(word);
+        whole.then(|| RenameSite {
+            editor: editor.downgrade(),
+            buffer: model.buffer().id(),
+            version: model.buffer().version(),
+            range,
+        })
+    }
+
+    /// Whether the replace row shows Rename symbol in place of Replace, and
+    /// the question for the server if it's yet to be asked: once per
+    /// version of the buffer and match.
+    fn rename_shown(&self, editor: Option<&Entity<EditorView>>, cx: &mut Context<Pane>) -> bool {
+        let Some(site) = self.rename_site(editor, cx) else {
+            return false;
+        };
+        let mut known = self.rename.borrow_mut();
+        match known.as_ref() {
+            Some((asked, answer)) if asked.same(&site) => *answer == Some(true),
+            _ => {
+                *known = Some((site.clone(), None));
+                cx.emit(FindRename::Probe(site));
+                false
+            }
+        }
+    }
+
+    /// Drops what the server said, so the match is asked about again.
+    pub(crate) fn forget_rename(&self) {
+        *self.rename.borrow_mut() = None;
+    }
+
+    /// The server's answer for `site`: whether a rename there renames
+    /// exactly it. Said of a match that's no longer the one asked about,
+    /// it's dropped.
+    pub(crate) fn rename_answered(&self, site: &RenameSite, renames: bool) {
+        if let Some((asked, answer)) = self.rename.borrow_mut().as_mut()
+            && asked.same(site)
+        {
+            *answer = Some(renames);
+        }
+    }
+
+    /// The rename Rename symbol asks for: the match and the replace field's
+    /// text as the new name; none if there's no such match or the field is
+    /// empty.
+    pub(crate) fn rename_request(
+        &self,
+        editor: Option<&Entity<EditorView>>,
+        cx: &App,
+    ) -> Option<FindRename> {
+        let name = self.replace_input.read(cx).text().trim().to_owned();
+        if name.is_empty() {
+            return None;
+        }
+        let site = self.rename_site(editor, cx)?;
+        let known = self.rename.borrow();
+        let (asked, answer) = known.as_ref()?;
+        (asked.same(&site) && *answer == Some(true)).then(|| FindRename::Rename(site, name))
     }
 
     /// The replace input's text as a replacement for the query's matches.
@@ -896,6 +1033,7 @@ impl FindBar {
             return None;
         }
         let label = self.label(editor.map(|editor| editor.read(cx)));
+        let rename = self.rename_shown(editor, cx);
         self.announce_label(label.as_ref(), cx);
         let toggles =
             (self.field_toggles().into_iter().enumerate()).map(|(ix, (op, icon, name, on))| {
@@ -1026,12 +1164,20 @@ impl FindBar {
                     cx.notify();
                 })),
             );
-            let buttons = [
-                (
+            let first = match rename {
+                true => (
+                    FindOp::RenameSymbol,
+                    text!("workbench-find-rename-symbol"),
+                    "find-rename-symbol",
+                ),
+                false => (
                     FindOp::ReplaceNext,
                     text!("workbench-find-replace"),
                     "find-replace",
                 ),
+            };
+            let buttons = [
+                first,
                 (
                     FindOp::ReplaceAll,
                     text!("workbench-find-replace-all"),

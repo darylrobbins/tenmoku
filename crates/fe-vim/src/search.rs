@@ -592,6 +592,15 @@ impl Pattern {
         &self.key
     }
 
+    /// How many capture groups the pattern writes, not counting the whole
+    /// match.
+    pub fn group_count(&self) -> usize {
+        match &self.engine {
+            Engine::Regex { slots, .. } => slots.len().saturating_sub(1),
+            _ => 0,
+        }
+    }
+
     /// The first match starting at or after `from`, then row by row to the
     /// end and round to the start, wrapping once: [`Pattern::find`] going
     /// forward, but taking a match at `from`. Each row is searched once.
