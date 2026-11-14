@@ -149,7 +149,8 @@ const OVERDRAW: Pixels = px(240.);
 /// The settings the Common section shows under the theme cards, in order,
 /// by dotted key. With nothing searched for, they show there and not in
 /// their own groups.
-pub(crate) const COMMON: [&str; 4] = [
+pub(crate) const COMMON: [&str; 5] = [
+    "workbench.color_blind_mode",
     "workbench.rail",
     "editor.font_family",
     "editor.font_size",

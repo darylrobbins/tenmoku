@@ -638,6 +638,12 @@ pub struct WorkbenchSettings {
     /// says. High contrast strengthens every theme's borders, focus ring,
     /// selections, muted text and the editor's line numbers.
     pub contrast: ContrastSetting,
+    /// Colour-blind mode: the signals that tell green from red (added,
+    /// passed and INSERT; removed, failed and errors) are drawn in blue and
+    /// orange instead, with their soft grounds, in a theme that has
+    /// colour-blind colours, as Yohen and Hakuji do. Warnings, modified
+    /// and every glyph stay as they are. It applies at once.
+    pub color_blind_mode: bool,
 }
 
 /// `workbench.contrast`.
@@ -877,6 +883,7 @@ impl Default for WorkbenchSettings {
             rail: RailSide::default(),
             reduce_motion: ReduceMotion::default(),
             contrast: ContrastSetting::default(),
+            color_blind_mode: false,
             locale: LocaleSetting::default(),
         }
     }

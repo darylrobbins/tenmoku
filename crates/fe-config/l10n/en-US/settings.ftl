@@ -652,6 +652,13 @@ settings-vim-which_key_group =
 
 settings-workbench = The workbench: its panes and tabs.
 
+settings-workbench-color_blind_mode =
+    Colour-blind mode: the signals that tell green from red (added,
+    passed and INSERT; removed, failed and errors) are drawn in blue and
+    orange instead, with their soft grounds, in a theme that has
+    colour-blind colours, as Yohen and Hakuji do. Warnings, modified
+    and every glyph stay as they are. It applies at once.
+
 settings-workbench-contrast =
     Whether colours are drawn at high contrast: `system` follows the
     system's Increase Contrast option (System Settings › Accessibility ›

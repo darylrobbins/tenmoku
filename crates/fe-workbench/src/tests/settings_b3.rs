@@ -421,20 +421,21 @@ fn the_first_section_is_common(cx: &mut TestAppContext) {
     let (_workbench, editor, cx) = open_settings(cx, &dirs);
     let rows = row_texts(&editor, cx);
     assert_eq!(
-        rows[..5],
+        rows[..6],
         [
             "# Common",
+            "workbench.color_blind_mode",
             "workbench.rail",
             "editor.font_family",
             "editor.font_size",
             "vim.enabled"
         ]
     );
-    assert_eq!(COMMON.len(), 4);
+    assert_eq!(COMMON.len(), 5);
     let sections = editor.read_with(cx, |editor, _| editor.sections().to_vec());
     assert_eq!(
         (sections[0].title.as_str(), sections[0].count),
-        ("Common", 4)
+        ("Common", 5)
     );
     // Then the sections the most often changed first (the UI audit's SE1).
     let titles: Vec<&str> = sections.iter().map(|s| s.title.as_str()).collect();
@@ -469,7 +470,13 @@ fn the_first_section_is_common(cx: &mut TestAppContext) {
     }
     assert!(cards[0].top() >= heading.bottom(), "under the heading");
     let mut above = cards[0].bottom();
-    let labels = ["Rail position", "Editor font", "Font size", "Vim mode"];
+    let labels = [
+        "Colour-blind mode",
+        "Rail position",
+        "Editor font",
+        "Font size",
+        "Vim mode",
+    ];
     for (key, label) in COMMON.iter().zip(labels) {
         let row = bounds(&format!("settings-row-{key}"), cx);
         assert!(row.top() >= above, "{key} below what's before it");

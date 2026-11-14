@@ -308,6 +308,11 @@ settings-template-workbench-contrast =
     Increase Contrast option, "high" and "normal" decide it here, whatever the
     system says.
 
+settings-template-workbench-color_blind_mode =
+    Colour-blind mode: the signals that tell green from red (added, passed and
+    INSERT; removed, failed and errors) are drawn in blue and orange instead, in
+    a theme that has colour-blind colours, as Yohen and Hakuji do.
+
 settings-template-workbench-locale =
     The language of Tenmoku's own text: auto follows the system's preferred
     languages; a tag such as "de" or "pt-BR" picks a shipped one. Menus and

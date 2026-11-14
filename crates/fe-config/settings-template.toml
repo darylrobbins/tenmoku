@@ -293,6 +293,10 @@
 # Increase Contrast option, "high" and "normal" decide it here, whatever the
 # system says.
 # contrast = "system"
+# Colour-blind mode: the signals that tell green from red (added, passed and
+# INSERT; removed, failed and errors) are drawn in blue and orange instead, in
+# a theme that has colour-blind colours, as Yohen and Hakuji do.
+# color_blind_mode = false
 # The language of Tenmoku's own text: auto follows the system's preferred
 # languages; a tag such as "de" or "pt-BR" picks a shipped one. Menus and
 # panels change at once; macOS's own panels and the updater follow the

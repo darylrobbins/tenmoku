@@ -19,11 +19,24 @@
 //! appearance ([`EditorPalette::fastedit_dark`],
 //! [`EditorPalette::fastedit_light`]). Turning colours into GPUI's lives in
 //! the UI crates, so this stays GPUI-free.
+//!
+//! A theme may also have colour-blind colours, a `[color_blind]` table of
+//! kiln tokens and `[editor]` keys that `workbench.color_blind_mode` lays
+//! over it ([`color_blind`]):
+//!
+//! ```toml
+//! [color_blind.status]
+//! success = "#58b1f6"
+//!
+//! [color_blind.editor]
+//! change_added = "#58b1f6"
+//! ```
 
 use std::{path::Path, sync::LazyLock};
 
 use kiln_core::theme::{
-    Appearance, Contrast, HIGH_CONTRAST_TEXT, ThemeData, ThemeFile, at_least, over, room_for_text,
+    Appearance, Contrast, HIGH_CONTRAST_TEXT, TOKEN_KEYS, ThemeData, ThemeFile, at_least, over,
+    resolve, room_for_text,
 };
 use toml::{Table, Value};
 
@@ -31,7 +44,53 @@ pub use kiln_core::theme::Color;
 
 /// The app tables a Tenmoku theme file has, beside kiln's own keys: for
 /// [`ThemeFile::load`] and [`ThemeFile::parse`], and kiln's user theme.
-pub const EXTENSIONS: &[&str] = &["editor", "syntax", "terminal"];
+pub const EXTENSIONS: &[&str] = &["editor", "syntax", "terminal", COLOR_BLIND];
+
+/// The app table of a theme's colour-blind colours ([`color_blind`]).
+pub const COLOR_BLIND: &str = "color_blind";
+
+/// `theme` in colour-blind mode (`workbench.color_blind_mode`): its
+/// `[color_blind]` table laid over it, then taken out, so a theme it's
+/// been laid over is left as it is. The table's `editor` table replaces
+/// those keys of the theme's `[editor]` table; its other tables are kiln
+/// token groups (`status`, `vcs`…), whose tokens replace the theme's, and
+/// the tokens derived from them follow ([`resolve`]): `vcs.added` follows
+/// `status.success`. A theme without the table is returned as it is. A key
+/// that isn't a token, or a value that isn't a colour, is left out with a
+/// warning naming its dotted key; the `editor` table's are
+/// [`EditorPalette::for_theme`]'s to warn about.
+pub fn color_blind(theme: &ThemeData) -> (ThemeData, Vec<String>) {
+    let mut theme = theme.clone();
+    let Some(table) = theme.extensions.remove(COLOR_BLIND) else {
+        return (theme, Vec::new());
+    };
+    let mut warnings = Vec::new();
+    let mut tokens = Vec::new();
+    for (group, value) in &table {
+        let Value::Table(keys) = value else {
+            warnings.push(unknown_key([COLOR_BLIND, group].join(".")));
+            continue;
+        };
+        if group == "editor" {
+            let editor = theme.extensions.entry(group.clone()).or_default();
+            editor.extend(keys.iter().map(|(key, value)| (key.clone(), value.clone())));
+            continue;
+        }
+        for (key, value) in keys {
+            let token = [group.as_str(), key].join(".");
+            let dotted = [COLOR_BLIND, &token].join(".");
+            match TOKEN_KEYS.iter().find(|known| **known == token) {
+                None => warnings.push(unknown_key(dotted)),
+                Some(known) => match color(value) {
+                    Ok(color) => tokens.push((*known, color)),
+                    Err(message) => warnings.push(key_problem(&dotted, message)),
+                },
+            }
+        }
+    }
+    theme.tokens = resolve(tokens, Some(&theme.tokens));
+    (theme, warnings)
+}
 
 /// A table of named colours: the struct, and its keys for parsing.
 macro_rules! colors {

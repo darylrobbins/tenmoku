@@ -202,6 +202,34 @@ minimap_gutter_added = "#17773f"
 minimap_gutter_modified = "#1f68cf"
 minimap_gutter_deleted = "#a1100e"
 
+# Colour-blind mode (workbench.color_blind_mode): blue for celadon (added,
+# passed, INSERT) and orange for shinsha (removed, failed, errors, REPLACE):
+# Okabe-Ito's blue (#0072b2) and vermillion (#d55e00) moved in OKLab
+# lightness, at their hue and as much of their chroma as sRGB has there,
+# the blue darker than ruri and the orange darker than kiseto. Each clears
+# 4.5:1 on every surface and on its soft ground, and they're at least 0.05
+# apart in OKLab L. Their soft grounds and diff words are made as celadon's
+# and shinsha's are. Kiseto and ruri stay.
+[color_blind.status]
+success = "#014e7c"
+error = "#903d00"
+success_soft = "#e4f0fa"
+error_soft = "#fceae1"
+
+[color_blind.editor]
+error = "#903d00"
+change_added = "#014e7c"
+change_deleted = "#903d00"
+diff_added_row = "#e4f0fa"
+diff_removed_row = "#fceae1"
+diff_added_word = "#014e7c2c"
+diff_removed_word = "#903d002e"
+vim_mode_insert = "#014e7c"
+vim_mode_replace = "#903d00"
+minimap_error = "#903d00"
+minimap_gutter_added = "#014e7c"
+minimap_gutter_deleted = "#903d00"
+
 [terminal]
 # The same signals; the bright set one step lighter in hue but held to 4.5:1 on white.
 ansi_0 = "#1f2328"  # black

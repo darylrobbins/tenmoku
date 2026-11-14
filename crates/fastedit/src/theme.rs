@@ -4,7 +4,9 @@
 //! with fastedit's tables); this installs fastedit's bundled themes
 //! ([`fe_config::themes`]) for `theme.name` to choose by title, passes the
 //! choice on, and turns each active theme into the editor's palette
-//! ([`fe_gpui::set_editor_palette`]).
+//! ([`fe_gpui::set_editor_palette`]). With `workbench.color_blind_mode`
+//! on, the pair kiln sets is drawn in each theme's colour-blind colours
+//! ([`fe_config::theme::color_blind`]), chrome and editor alike.
 
 use kiln_l10n::tr;
 
@@ -17,14 +19,15 @@ use std::sync::Arc;
 
 use fe_config::{
     Diagnostic, EditorSettings, Settings, Severity, ThemeModeSetting, ThemeSettings,
-    theme::EditorPalette, themes,
+    theme::{COLOR_BLIND, EditorPalette, color_blind},
+    themes,
 };
 use fe_gpui::EditorTheme;
-use gpui::App;
+use gpui::{App, Global};
 use kiln::{
     GlobalSettings,
     core::theme::{Appearance, ThemeFile},
-    ui::{ActiveTheme as _, GlobalTheme, ThemeMode},
+    ui::{ActiveTheme as _, GlobalTheme, Theme, ThemeMode, set_themes},
 };
 use toml::de::{DeTable, DeValue};
 
@@ -43,7 +46,9 @@ pub(crate) fn mode(setting: ThemeModeSetting) -> ThemeMode {
 /// reload changes them, and sets the editor's palette from kiln's active
 /// theme, now and on every change. On a change, editors restored from a
 /// saved layout from then on open in the new colours
-/// ([`fe_gpui::set_restore_style`]). Call it after [`kiln::init`].
+/// ([`fe_gpui::set_restore_style`]). The pair is in colour-blind colours
+/// while `workbench.color_blind_mode` is on ([`follow_color_blind`]). Call
+/// it after [`kiln::init`].
 pub(crate) fn init(cx: &mut App) {
     let files: Vec<(&str, ThemeFile)> = (themes::bundled_themes().iter())
         .map(|theme| (theme.id, theme.file()))
@@ -57,14 +62,24 @@ pub(crate) fn init(cx: &mut App) {
     cx.observe_global::<GlobalSettings<Settings>>(|cx| {
         let global = cx.global::<GlobalSettings<Settings>>();
         let (now, before) = (&global.settings().theme, &global.previous().theme);
+        let color_blind_changed = global.settings().workbench.color_blind_mode
+            != global.previous().workbench.color_blind_mode;
         if (&now.name, &now.dark, &now.light) != (&before.name, &before.dark, &before.light) {
             let now = now.clone();
             select(&now, cx);
         }
+        if color_blind_changed {
+            follow_color_blind(cx);
+        }
     })
     .detach();
+    follow_color_blind(cx);
     apply(cx);
     cx.observe_global::<GlobalTheme>(|cx| {
+        if follow_color_blind(cx) {
+            // The pair just set notifies again: the palette follows then.
+            return;
+        }
         apply(cx);
         let settings = cx
             .try_global::<GlobalSettings<Settings>>()
@@ -175,6 +190,66 @@ fn name_position(source: &str) -> (usize, usize) {
         before.matches('\n').count() + 1,
         before[line_start..].chars().count() + 1,
     )
+}
+
+/// The themes [`follow_color_blind`] set, each with the one kiln set that
+/// it was made from, to put back once the mode's off.
+#[derive(Default)]
+struct ColorBlindThemes(Vec<(Theme, Theme)>);
+
+impl Global for ColorBlindThemes {}
+
+/// Draws kiln's dark and light pair in their colour-blind colours while
+/// `workbench.color_blind_mode` is on, and as kiln set them while it's
+/// off, setting the pair again if that changes it; true if it did. A
+/// theme without colour-blind colours stays as it is, and so does a theme
+/// set alone, not as a pair. Call it whenever the setting or the theme
+/// changes: kiln sets its own pair again on a reload, which this then
+/// swaps again.
+fn follow_color_blind(cx: &mut App) -> bool {
+    let on = cx
+        .try_global::<GlobalSettings<Settings>>()
+        .is_some_and(|global| global.settings().workbench.color_blind_mode);
+    let Some(global) = cx.try_global::<GlobalTheme>() else {
+        return false;
+    };
+    let (Some(mode), Some((dark, light))) = (global.mode(), global.themes()) else {
+        return false;
+    };
+    let current = [dark.clone(), light.clone()];
+    let swapped = cx.default_global::<ColorBlindThemes>();
+    // The pair as kiln set it: a theme swapped here is put back.
+    let plain = current.clone().map(|theme| {
+        (swapped.0.iter())
+            .find(|(shown, _)| *shown == theme)
+            .map_or(theme, |(_, plain)| plain.clone())
+    });
+    let wanted = match on {
+        true => plain.clone().map(|theme| swap(&theme)),
+        false => plain.clone(),
+    };
+    swapped.0 = (wanted.iter().cloned().zip(plain))
+        .filter(|(shown, plain)| shown != plain)
+        .collect();
+    if wanted == current {
+        return false;
+    }
+    let [dark, light] = wanted;
+    set_themes(cx, mode, dark, light);
+    true
+}
+
+/// `theme` in its colour-blind colours, logging what's wrong with them;
+/// `theme` itself if it has none.
+fn swap(theme: &Theme) -> Theme {
+    if theme.data().extension(COLOR_BLIND).is_none() {
+        return theme.clone();
+    }
+    let (data, warnings) = color_blind(theme.data());
+    for warning in warnings {
+        log::warn!(target: "fastedit", "theme {}: {warning}", theme.name);
+    }
+    Theme::new(data)
 }
 
 /// Sets the editor's palette from the active theme, logging what's wrong
@@ -321,6 +396,97 @@ mod tests {
         let mut expected = dark.clone();
         expected.editor.background = palette.editor.background;
         assert_eq!(*palette, expected);
+    }
+
+    /// `workbench.color_blind_mode` swaps the pair's colours, chrome and
+    /// editor, as soon as the file changes, through a mode switch and back,
+    /// and a theme without colour-blind colours keeps its own.
+    #[gpui::test]
+    fn color_blind_mode_applies_without_restart(cx: &mut TestAppContext) {
+        let state = tempfile::tempdir().unwrap();
+        let user = state.path().join("settings.toml");
+        fs::write(&user, "").unwrap();
+        let store = fe_config::SettingsStore::load(Some(user.clone()), None);
+        let (sender, batches) = batch_channel();
+        let config = Config::new("dev.fastedit.test", "fastedit")
+            .settings_store(store.into_inner())
+            .theme_mode(ThemeMode::Dark)
+            .theme_extensions(EXTENSIONS)
+            .watch_with(batches);
+        let diagnostics = cx.update(|cx| kiln::init(cx, config));
+        assert_eq!(diagnostics, []);
+        cx.update(init);
+        cx.run_until_parked();
+        let showing = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let theme = cx.theme();
+                let palette = (*fe_gpui::editor_palette(cx)).clone();
+                (theme.name.to_string(), theme.data().tokens, palette)
+            })
+        };
+        let swapped = |id| {
+            let (data, _) = bundled(id);
+            let (data, warnings) = color_blind(&data);
+            assert_eq!(warnings, [] as [String; 0], "{id}");
+            let (palette, warnings) = EditorPalette::for_theme(&data);
+            assert_eq!(warnings, [] as [String; 0], "{id}");
+            (data.tokens, palette)
+        };
+        let write = |cx: &mut TestAppContext, text: &str| {
+            fs::write(&user, text).unwrap();
+            sender.send(vec![user.clone()]);
+            cx.run_until_parked();
+        };
+        let (yohen, yohen_palette) = bundled("yohen");
+        let (hakuji, hakuji_palette) = bundled("hakuji");
+        assert_eq!(
+            showing(cx),
+            ("Yohen".into(), yohen.tokens, yohen_palette.clone())
+        );
+
+        write(cx, "[workbench]\ncolor_blind_mode = true\n");
+        let (tokens, palette) = swapped("yohen");
+        assert_ne!(tokens.status.success, yohen.tokens.status.success);
+        assert_ne!(
+            palette.editor.change_added,
+            yohen_palette.editor.change_added
+        );
+        assert_eq!(showing(cx), ("Yohen".into(), tokens, palette));
+
+        // A mode switch keeps it, in the other theme's colours.
+        cx.update(|cx| cx.set_theme_mode(ThemeMode::Light));
+        let (tokens, palette) = swapped("hakuji");
+        assert_ne!(palette, hakuji_palette);
+        assert_eq!(showing(cx), ("Hakuji".into(), tokens, palette));
+
+        // Off again: the themes' own colours.
+        write(cx, "[workbench]\ncolor_blind_mode = false\n");
+        assert_eq!(
+            showing(cx),
+            ("Hakuji".into(), hakuji.tokens, hakuji_palette)
+        );
+        cx.update(|cx| cx.set_theme_mode(ThemeMode::Dark));
+        assert_eq!(showing(cx), ("Yohen".into(), yohen.tokens, yohen_palette));
+
+        // A theme with no colour-blind colours keeps its own, mode on.
+        write(
+            cx,
+            "[theme]\nname = \"Dark Modern\"\n\n[workbench]\ncolor_blind_mode = true\n",
+        );
+        let (dark_modern, dark_modern_palette) = bundled("vscode-dark-modern");
+        assert_eq!(
+            showing(cx),
+            (
+                dark_modern.name.clone(),
+                dark_modern.tokens,
+                dark_modern_palette
+            )
+        );
+        // And the swap follows the theme chosen back.
+        write(cx, "[workbench]\ncolor_blind_mode = true\n");
+        let (tokens, palette) = swapped("yohen");
+        assert_eq!(showing(cx), ("Yohen".into(), tokens, palette));
+        cx.update(|cx| assert_eq!(kiln::platform::config::diagnostics(cx), []));
     }
 
     #[gpui::test]

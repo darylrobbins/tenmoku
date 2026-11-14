@@ -58,8 +58,9 @@ workbench-settings-appearance-light = light
 
 ## Each setting's label, by its dotted key with dashes for dots: the name
 ## its key ends in, as a title, but the Common section's, which the design
-## names (Rail position, Editor font, Font size, Vim mode). Looked up by key
-## (`workbench-settings-label-` is a dynamic prefix).
+## names (Colour-blind mode, Rail position, Editor font, Font size, Vim
+## mode). Looked up by key (`workbench-settings-label-` is a dynamic
+## prefix).
 
 workbench-settings-label-agents-claude_code-adapter = Adapter
 workbench-settings-label-agents-claude_code-claude = Claude
@@ -190,6 +191,7 @@ workbench-settings-label-vim-subword_motions = Subword Motions
 workbench-settings-label-vim-which_key = Which Key
 workbench-settings-label-vim-which_key_delay_ms = Which Key Delay Ms
 workbench-settings-label-vim-which_key_group = Which Key Group
+workbench-settings-label-workbench-color_blind_mode = Colour-blind mode
 workbench-settings-label-workbench-contrast = Contrast
 workbench-settings-label-workbench-icon_theme = Icon Theme
 workbench-settings-label-workbench-locale = Locale

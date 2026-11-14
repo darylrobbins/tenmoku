@@ -1776,6 +1776,11 @@
     "WorkbenchSettings": {
       "description": "Settings for the workbench.",
       "properties": {
+        "color_blind_mode": {
+          "default": false,
+          "description": "Colour-blind mode: the signals that tell green from red (added,\npassed and INSERT; removed, failed and errors) are drawn in blue and\norange instead, with their soft grounds, in a theme that has\ncolour-blind colours, as Yohen and Hakuji do. Warnings, modified\nand every glyph stay as they are. It applies at once.",
+          "type": "boolean"
+        },
         "contrast": {
           "$ref": "#/$defs/ContrastSetting",
           "default": "system",
@@ -2082,6 +2087,7 @@
     "workbench": {
       "$ref": "#/$defs/WorkbenchSettings",
       "default": {
+        "color_blind_mode": false,
         "contrast": "system",
         "icon_theme": "tenmoku",
         "locale": "auto",
