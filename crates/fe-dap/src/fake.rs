@@ -39,6 +39,7 @@
 //! `cancel` naming it, or the test ([`FakeAdapter::release`]).
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::future::poll_fn;
 use std::io;
 use std::path::Path;
 use std::pin::{Pin, pin};
@@ -48,7 +49,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::channel::{mpsc, oneshot};
-use futures::future::{Either, FutureExt as _, Shared as SharedFuture};
+use futures::future::{Either, FusedFuture as _, FutureExt as _, Shared as SharedFuture};
 use futures::{AsyncRead, AsyncWrite, StreamExt as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -185,6 +186,10 @@ pub enum Startup {
     InitializedFirst,
     /// `launch` is answered at once, and `initialized` follows it.
     LaunchResponseFirst,
+    /// `launch` is answered at once, and `initialized` waits for
+    /// [`FakeAdapter::release`]: an adapter slow to send it, or (never
+    /// released) one that never does.
+    InitializedOnRelease,
 }
 
 /// What goes wrong with one request.
@@ -553,6 +558,8 @@ struct Record {
 enum Control {
     Release,
     Kill,
+    Send(Box<Message>),
+    CloseOutput,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -604,6 +611,21 @@ impl FakeAdapter {
     /// Lets go every reply held for [`Trigger::Manual`].
     pub fn release(&self) {
         let _ = self.shared.controls.unbounded_send(Control::Release);
+    }
+
+    /// Sends `message` as its own, numbered in turn: an event or response
+    /// the script wouldn't send (a second `initialized`, a late reply).
+    pub fn send(&self, message: Message) {
+        let _ = self
+            .shared
+            .controls
+            .unbounded_send(Control::Send(Box::new(message)));
+    }
+
+    /// Closes its output once what it sent is written, and keeps running:
+    /// an adapter whose stdout closed.
+    pub fn close_output(&self) {
+        let _ = self.shared.controls.unbounded_send(Control::CloseOutput);
     }
 
     /// Stops it, as a kill would: it sends nothing more.
@@ -741,7 +763,12 @@ enum Target {
 
 struct Adapter<W> {
     script: Script,
-    writer: FrameWriter<W>,
+    /// Taken by [`run`](Self::run), which drives it beside everything else,
+    /// so a stalled write never keeps a kill from being seen.
+    writer: Option<FrameWriter<W>>,
+    /// Framed bodies to the writer; `None` once the fake is ending.
+    out: Option<mpsc::UnboundedSender<Vec<u8>>>,
+    bodies: Option<mpsc::UnboundedReceiver<Vec<u8>>>,
     shared: Arc<Shared>,
     seq: i64,
     run: Run,
@@ -773,9 +800,12 @@ struct Adapter<W> {
 
 impl<W: AsyncWrite + Unpin> Adapter<W> {
     fn new(script: Script, writer: FrameWriter<W>, shared: Arc<Shared>) -> Self {
+        let (out, bodies) = mpsc::unbounded();
         Self {
             script,
-            writer,
+            writer: Some(writer),
+            out: Some(out),
+            bodies: Some(bodies),
             shared,
             seq: 0,
             run: Run::NotStarted,
@@ -805,6 +835,10 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
         reader: FrameReader<R>,
         mut controls: mpsc::UnboundedReceiver<Control>,
     ) -> ExitInfo {
+        let (Some(writer), Some(bodies)) = (self.writer.take(), self.bodies.take()) else {
+            unreachable!("run takes the writer once");
+        };
+        let mut writing = pin!(write_all(writer, bodies).fuse());
         let mut reader = Some(reader);
         loop {
             while self.done.is_none()
@@ -813,17 +847,27 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
                 self.act(action).await;
             }
             if let Some(exit) = self.done {
-                let _ = self.writer.close().await;
-                return exit;
+                return self.finish(exit, writing, &mut controls).await;
             }
-            let input = match &mut reader {
-                Some(reader) => {
-                    match futures::future::select(pin!(reader.read()), controls.next()).await {
-                        Either::Left((read, _)) => Either::Left(read),
-                        Either::Right((control, _)) => Either::Right(control),
+            let input = {
+                let mut read = pin!(async {
+                    match reader.as_mut() {
+                        Some(reader) => reader.read().await,
+                        None => futures::future::pending().await,
                     }
-                }
-                None => Either::Right(controls.next().await),
+                });
+                poll_fn(|cx| {
+                    if let Poll::Ready(control) = controls.poll_next_unpin(cx) {
+                        return Poll::Ready(Either::Right(control));
+                    }
+                    // Writing goes on beside reading; when it stops (the
+                    // stream failed), later sends go nowhere.
+                    if !writing.is_terminated() {
+                        let _ = writing.as_mut().poll(cx);
+                    }
+                    read.as_mut().poll(cx).map(Either::Left)
+                })
+                .await
             };
             match input {
                 Either::Left(Ok(Some(message))) => {
@@ -849,14 +893,46 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
                 Either::Right(Some(Control::Release)) => {
                     self.release(|held| held.trigger == Trigger::Manual)
                 }
-                Either::Right(Some(Control::Kill)) => {
-                    self.done = Some(ExitInfo {
-                        code: None,
-                        signal: Some(9),
-                    });
-                }
+                Either::Right(Some(Control::Kill)) => self.done = Some(KILLED),
+                Either::Right(Some(Control::Send(message))) => self.send(*message).await,
+                // The writer writes the rest, then closes the stream.
+                Either::Right(Some(Control::CloseOutput)) => self.out = None,
                 // The shared state holds a sender, so this can't happen.
                 Either::Right(None) => {}
+            }
+        }
+    }
+
+    /// Ending: a killed fake drops its writer at once, without a close
+    /// that could stall; otherwise what was sent is written and the stream
+    /// closed, unless a kill comes first.
+    async fn finish(
+        &mut self,
+        exit: ExitInfo,
+        mut writing: Pin<&mut futures::future::Fuse<impl Future<Output = ()>>>,
+        controls: &mut mpsc::UnboundedReceiver<Control>,
+    ) -> ExitInfo {
+        if exit == KILLED {
+            return exit;
+        }
+        // Closing the queue lets the writer finish: the rest, then close.
+        self.out = None;
+        if writing.is_terminated() {
+            return exit;
+        }
+        loop {
+            match futures::future::select(writing.as_mut(), controls.next()).await {
+                Either::Left(_) => return exit,
+                Either::Right((Some(Control::Kill), _)) => return KILLED,
+                Either::Right((
+                    Some(Control::Release | Control::Send(_) | Control::CloseOutput),
+                    _,
+                )) => {}
+                // Can't happen (see run); the writer then decides.
+                Either::Right((None, _)) => {
+                    writing.as_mut().await;
+                    return exit;
+                }
             }
         }
     }
@@ -881,8 +957,13 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
             Message::Event(event) => event.seq = self.seq,
         }
         self.record(|record| record.sent.push(message.clone()));
-        if let Err(err) = self.writer.write(&message).await {
-            log::warn!("the fake adapter couldn't write: {err}");
+        match serde_json::to_vec(&message) {
+            Ok(body) => {
+                if let Some(out) = &self.out {
+                    let _ = out.unbounded_send(body);
+                }
+            }
+            Err(err) => log::warn!("the fake adapter couldn't serialise a message: {err}"),
         }
     }
 
@@ -1018,6 +1099,27 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
         self.handle(request).await;
         self.capturing.take().unwrap_or_default()
     }
+}
+
+/// How a killed fake ends.
+const KILLED: ExitInfo = ExitInfo {
+    code: None,
+    signal: Some(9),
+};
+
+/// The fake's writer: each body framed, in order, then (once the queue
+/// closes) the stream closed.
+async fn write_all<W: AsyncWrite + Unpin>(
+    mut writer: FrameWriter<W>,
+    mut bodies: mpsc::UnboundedReceiver<Vec<u8>>,
+) {
+    while let Some(body) = bodies.next().await {
+        if let Err(err) = writer.write_body(&body).await {
+            log::warn!("the fake adapter couldn't write: {err}");
+            return;
+        }
+    }
+    let _ = writer.close().await;
 }
 
 fn is_resume(command: &str) -> bool {
@@ -1240,6 +1342,16 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
             Startup::LaunchResponseFirst => {
                 self.answer_launch(&launch).await;
                 self.event::<event::Initialized>(&Empty::default()).await;
+            }
+            Startup::InitializedOnRelease => {
+                self.answer_launch(&launch).await;
+                self.held.push(Held {
+                    trigger: Trigger::Manual,
+                    request_seq: launch.seq,
+                    action: HeldAction::Steps(vec![Step::Send(Message::Event(
+                        EventMessage::new::<event::Initialized>(0, &Empty::default()),
+                    ))]),
+                });
             }
         }
         self.maybe_start().await;

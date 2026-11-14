@@ -11,6 +11,10 @@
 //!   starts an adapter in its own process group and, for a TCP adapter,
 //!   substitutes `${port}` and connects with retries on an injected
 //!   [`Clock`].
+//! - [`Session`]: a session's lifecycle (§2 items 1-3, 6, 7; card D2):
+//!   startup in each ordering, configuration with a `configurationDone`
+//!   timeout, restart, termination, request timeouts and `cancel`, and
+//!   the redacted protocol log ([`log`]).
 //! - `fake` (feature `test-support`): a scripted in-process adapter, and
 //!   the `fe-dap-fake` binary serving it over TCP.
 //!
@@ -24,7 +28,9 @@ pub mod clock;
 pub mod fake;
 pub mod l10n;
 pub mod launcher;
+pub mod log;
 pub mod protocol;
+pub mod session;
 pub mod transport;
 
 #[cfg(test)]
@@ -37,5 +43,10 @@ pub use launcher::{
     AdapterIo, AdapterLauncher, AdapterProcess, AdapterSpec, AdapterTransport, CONNECT_RETRY,
     CONNECT_TIMEOUT, ExitInfo, LaunchCancel, LocalLauncher, PORT_PLACEHOLDER,
 };
+pub use log::{EnvExpansion, LogEntry, LogMode};
 pub use protocol::Message;
+pub use session::{
+    DapEvent, EndReason, Ended, PendingRequest, RequestError, Session, SessionError,
+    SessionOptions, SessionState, StartRequest, TerminalReply, TerminalStarted,
+};
 pub use transport::{FrameReader, FrameWriter, MAX_BODY, ProtocolError, TransportError};

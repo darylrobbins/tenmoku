@@ -471,6 +471,31 @@ fn startup_orderings_without_configuration_done() {
     );
 }
 
+#[test]
+fn startup_initialized_on_release_holds_initialized_for_the_test() {
+    let mut client = client(Script {
+        startup: Startup::InitializedOnRelease,
+        ..Script::default()
+    });
+    client.send::<request::Initialize>(&InitializeArguments {
+        adapter_id: "fake".into(),
+        ..Default::default()
+    });
+    client.send::<request::Launch>(&Object::new());
+    client.wait_sent("response:launch");
+    assert_eq!(client.sent(), ["response:initialize", "response:launch"]);
+    client.fake.release();
+    client.wait_sent("event:initialized");
+    assert_eq!(
+        client.sent(),
+        [
+            "response:initialize",
+            "response:launch",
+            "event:initialized"
+        ]
+    );
+}
+
 /// What a `next` from the first stop sends, under `script`.
 fn step(script: Script) -> Vec<String> {
     let mut client = client(script);
@@ -1288,4 +1313,95 @@ fn configuration_done_after_terminate_starts_nothing() {
             .any(|l| l.starts_with("event:thread") || l.starts_with("event:stopped")),
         "{sent:?}"
     );
+}
+
+/// A writer that stalls: `write` (and `flush`) never finish when
+/// `writes_stall`, and `close` never does.
+struct Stalled {
+    writes_stall: bool,
+}
+
+impl AsyncWrite for Stalled {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.writes_stall {
+            std::task::Poll::Pending
+        } else {
+            std::task::Poll::Ready(Ok(buf.len()))
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.writes_stall {
+            std::task::Poll::Pending
+        } else {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    fn poll_close(
+        self: Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Pending
+    }
+}
+
+/// The fake on a stalled writer, and the client's writing end of its input.
+fn stalled(writes_stall: bool) -> (FakeAdapter, FrameWriter<crate::fake::PipeWriter>) {
+    let (fake_reads, client_writes) = crate::fake::pipe();
+    let fake = crate::fake::serve(Script::default(), fake_reads, Stalled { writes_stall });
+    (fake, FrameWriter::new(client_writes))
+}
+
+fn send_initialize(writer: &mut FrameWriter<crate::fake::PipeWriter>) {
+    let initialize = Message::Request(RequestMessage::new::<request::Initialize>(
+        1,
+        &InitializeArguments {
+            adapter_id: "fake".into(),
+            ..Default::default()
+        },
+    ));
+    async_io::block_on(writer.write(&initialize)).unwrap();
+}
+
+#[test]
+fn a_kill_ends_the_fake_while_its_write_stalls() {
+    let (fake, mut writer) = stalled(true);
+    send_initialize(&mut writer);
+    // The response is made (and recorded), but its write never finishes.
+    fake.wait_until("the initialize response", |_, sent| !sent.is_empty());
+    assert_eq!(fake.exit(), None);
+    fake.kill();
+    let exit = fake.wait_exit();
+    assert_eq!(exit.signal, Some(9));
+}
+
+#[test]
+fn a_kill_ends_the_fake_while_its_close_stalls() {
+    let (fake, mut writer) = stalled(false);
+    send_initialize(&mut writer);
+    fake.wait_until("the initialize response", |_, sent| !sent.is_empty());
+    // Its input ends, so it closes its output, which never finishes.
+    async_io::block_on(writer.close()).unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(fake.exit(), None, "the close didn't stall");
+    fake.kill();
+    assert_eq!(fake.wait_exit().signal, Some(9));
+}
+
+#[test]
+fn a_killed_fake_never_closes_its_writer() {
+    // Killed while idle: it ends at once, though close would stall.
+    let (fake, mut writer) = stalled(false);
+    send_initialize(&mut writer);
+    fake.wait_until("the initialize response", |_, sent| !sent.is_empty());
+    fake.kill();
+    assert_eq!(fake.wait_exit().signal, Some(9));
 }

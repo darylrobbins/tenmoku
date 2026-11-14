@@ -6,4 +6,11 @@
 mod fake;
 mod launcher;
 mod protocol;
+mod session_fairness;
+mod session_harness;
+mod session_log;
+mod session_requests;
+mod session_restart;
+mod session_startup;
+mod session_terminate;
 mod transport;

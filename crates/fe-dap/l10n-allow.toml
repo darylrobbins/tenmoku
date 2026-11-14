@@ -11,3 +11,7 @@ reason = "Test-support binary running the fake adapter; its usage text is for te
 [[file]]
 path = "src/protocol.rs"
 reason = "Protocol types only, with no user-facing text: the lint reads the doc comments inside the object!/markers! macro invocations, and serde's skip_serializing_if paths, as literals"
+
+[[file]]
+path = "src/log.rs"
+reason = "The protocol log's lines are DAP field names and values (seq=, command=, request_seq=, success=, error.id=) and JSON, for diagnosing adapters; its prose (the payload warning) goes through tr!"
