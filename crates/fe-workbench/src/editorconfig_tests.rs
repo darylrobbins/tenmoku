@@ -94,13 +94,15 @@ fn indent_and_tab_width(cx: &mut TestAppContext) {
 fn line_ending_and_none(cx: &mut TestAppContext) {
     let (dir, _workbench, editor, cx) =
         opened("[*.txt]\nend_of_line = crlf\n", "a.txt", "a\nb\n", cx);
-    assert_eq!(status(&editor, "line_ending", cx), "CRLF");
+    // The file opens as it is on disk; a save after an edit converts it.
+    assert_eq!(status(&editor, "line_ending", cx), "LF");
+    editor.update(cx, |e, _| e.model_mut().insert("a"));
     let saved = cx.update(|window, cx| editor.update(cx, |e, cx| e.save(window, cx)));
     cx.run_until_parked();
     drop(saved);
     assert_eq!(
         std::fs::read(dir.path().join("a.txt")).unwrap(),
-        b"a\r\nb\r\n"
+        b"aa\r\nb\r\n"
     );
 
     let (_dir, _workbench, editor, cx) =

@@ -57,9 +57,16 @@ fn charset_decides_ambiguous_bytes() {
 
     let bom = opened(dir, Some("utf-8-bom"), "c.txt", b"plain\n");
     assert_eq!(bom.text().to_string(), "plain\n");
-    assert_eq!(bom.encoding(), encoding("utf-8", true));
-    assert!(bom.is_dirty(), "the BOM it lacks needs saving");
-    assert_eq!(saved(&bom), b"\xEF\xBB\xBFplain\n");
+    assert_eq!(
+        bom.encoding(),
+        FileEncoding::UTF8,
+        "as on disk until a save"
+    );
+    assert!(!bom.is_dirty(), "opening leaves it clean");
+    assert_eq!(saved(&bom), b"plain\n", "unedited, a save changes nothing");
+    let mut bom = bom;
+    bom.edit([(0..0, "x")], fe_buffer::Origin::User);
+    assert_eq!(saved(&bom), b"\xEF\xBB\xBFxplain\n");
 
     // No .editorconfig: as detected, as before.
     let detected = opened(dir, None, "d.txt", utf8);

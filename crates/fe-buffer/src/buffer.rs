@@ -289,6 +289,14 @@ pub struct Buffer {
     /// The encoding as of the last save (or load); see
     /// [`Buffer::is_dirty`].
     saved_encoding: FileEncoding,
+    /// The line ending and encoding a save writes once the text has been
+    /// edited, while they differ from the live ones: see
+    /// [`Buffer::set_pending_format`].
+    /// Each is `(live value when set, value to write)`: it applies only
+    /// while the live value is still the first, so a temporary or explicit
+    /// change to the live one wins over it.
+    pending_line_ending: Option<(LineEnding, LineEnding)>,
+    pending_encoding: Option<(FileEncoding, FileEncoding)>,
     /// Invariant: outside this range (current coordinates) the text and
     /// `saved_text` are byte-identical; `None` means they're equal.
     changed_since_save: Option<Range<usize>>,
@@ -652,6 +660,8 @@ impl Buffer {
             saved_text: text.clone(),
             saved_line_ending: line_ending,
             saved_encoding: FileEncoding::UTF8,
+            pending_line_ending: None,
+            pending_encoding: None,
             changed_since_save: None,
             dirty: false,
             disk_stamp: None,
@@ -771,6 +781,35 @@ impl Buffer {
         self.line_ending = line_ending;
     }
 
+    /// Has saves write `line_ending` (or, with `None`, the buffer's own)
+    /// once the text differs from the last save, without making the
+    /// buffer dirty or changing [`Buffer::line_ending`]: for a format a
+    /// project's .editorconfig asks for, which a save converts to but
+    /// opening doesn't. Saving text that was never edited leaves the
+    /// file's bytes alone. It applies only while [`Buffer::line_ending`]
+    /// stays as it is now: a change to that wins.
+    pub fn set_pending_line_ending(&mut self, line_ending: Option<LineEnding>) {
+        self.pending_line_ending = line_ending
+            .filter(|&ending| ending != self.line_ending)
+            .map(|ending| (self.line_ending, ending));
+    }
+
+    /// As [`Buffer::set_pending_line_ending`], for [`Buffer::encoding`].
+    pub fn set_pending_encoding(&mut self, encoding: Option<FileEncoding>) {
+        self.pending_encoding = encoding
+            .filter(|&encoding| encoding != self.encoding)
+            .map(|encoding| (self.encoding, encoding));
+    }
+
+    /// Re-bases the pending formats on the live ones after they were
+    /// replaced by what a file holds, dropping one the file already has.
+    fn rebase_pending(&mut self) {
+        let ending = self.pending_line_ending.map(|(_, to)| to);
+        self.set_pending_line_ending(ending);
+        let encoding = self.pending_encoding.map(|(_, to)| to);
+        self.set_pending_encoding(encoding);
+    }
+
     /// Changes the line ending as one undoable step of `origin`: undo
     /// returns the previous ending, redo sets this one again. Returns
     /// `None`, recording nothing, if the buffer already has it.
@@ -797,6 +836,7 @@ impl Buffer {
             line_ending: Some((self.line_ending, line_ending)),
         });
         self.line_ending = line_ending;
+        self.pending_line_ending = None;
         self.trim_history(&origin, None);
         Some(id)
     }
@@ -894,12 +934,19 @@ impl Buffer {
 
     /// What saving now would write, to write on another thread. O(1).
     pub fn save_snapshot(&self) -> SaveSnapshot {
+        let edited = self.dirty || self.unsaved;
+        let line_ending = (self.pending_line_ending)
+            .filter(|&(from, _)| edited && from == self.line_ending)
+            .map(|(_, to)| to);
+        let encoding = (self.pending_encoding)
+            .filter(|&(from, _)| edited && from == self.encoding)
+            .map(|(_, to)| to);
         SaveSnapshot {
             buffer: self.id(),
             version: self.version(),
             text: self.snapshot.text.clone(),
-            line_ending: self.line_ending,
-            encoding: self.encoding,
+            line_ending: line_ending.unwrap_or(self.line_ending),
+            encoding: encoding.unwrap_or(self.encoding),
             replaced_on_read: self.replaced_on_read.then_some(self.encoding),
             write_mark: self.write_mark(),
         }
@@ -932,6 +979,7 @@ impl Buffer {
         let mark = self.write_mark();
         self.note_write(mark);
         self.mark_saved();
+        self.rebase_pending();
     }
 
     /// Marks the current text as the file's, as a save or a reload does.
@@ -955,6 +1003,15 @@ impl Buffer {
     pub fn did_save_snapshot(&mut self, snapshot: &SaveSnapshot, stamp: Option<DiskStamp>) {
         debug_assert_eq!(snapshot.buffer, self.id(), "another buffer's snapshot");
         self.note_write(snapshot.write_mark.clone());
+        // A pending format the snapshot wrote is the file's now.
+        if self.pending_line_ending.map(|(_, to)| to) == Some(snapshot.line_ending) {
+            self.pending_line_ending = None;
+            self.line_ending = snapshot.line_ending;
+        }
+        if self.pending_encoding.map(|(_, to)| to) == Some(snapshot.encoding) {
+            self.pending_encoding = None;
+            self.encoding = snapshot.encoding;
+        }
         if snapshot.version == self.version() {
             self.mark_saved();
             self.saved_line_ending = snapshot.line_ending;
@@ -1033,6 +1090,7 @@ impl Buffer {
         self.encoding = file.encoding;
         self.replaced_on_read = file.replaced;
         self.mark_saved();
+        self.rebase_pending();
         self.disk_stamp = Some(stamp);
         id
     }
@@ -2417,5 +2475,45 @@ mod encoding_tests {
             "the file had bytes that aren't valid UTF-8, shown as U+FFFD; \
              saving would replace them"
         );
+    }
+
+    #[test]
+    fn pending_formats_are_independent_and_survive_temporary_overrides() {
+        use fe_text::LineEnding;
+
+        use super::Origin;
+        let bom = FileEncoding {
+            bom: true,
+            ..FileEncoding::UTF8
+        };
+        let written = |buffer: &Buffer| {
+            let mut out = Vec::new();
+            buffer.write_to(&mut out).unwrap();
+            out
+        };
+        let mut buffer = Buffer::from_file_contents("a\n");
+        buffer.set_pending_encoding(Some(bom));
+        buffer.set_pending_line_ending(Some(LineEnding::CrLf));
+        // Neither setter touches the other's value.
+        buffer.set_pending_line_ending(Some(LineEnding::CrLf));
+        assert!(!buffer.is_dirty());
+        assert_eq!(written(&buffer), b"a\n");
+        buffer.edit([(0..0, "x")], Origin::User);
+        assert_eq!(written(&buffer), b"\xEF\xBB\xBFxa\r\n");
+
+        // A temporary override, as a save in another encoding makes, wins
+        // and leaves the pending one.
+        let latin1 = FileEncoding {
+            encoding: Encoding::for_label(b"windows-1252").unwrap(),
+            bom: false,
+        };
+        buffer.set_encoding(latin1);
+        assert_eq!(written(&buffer), b"xa\r\n");
+        buffer.set_encoding(FileEncoding::UTF8);
+        assert_eq!(written(&buffer), b"\xEF\xBB\xBFxa\r\n");
+
+        // The configuration dropping end_of_line clears only that one.
+        buffer.set_pending_line_ending(None);
+        assert_eq!(written(&buffer), b"\xEF\xBB\xBFxa\n");
     }
 }

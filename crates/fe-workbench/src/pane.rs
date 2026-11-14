@@ -2327,11 +2327,10 @@ fn apply_config(model: &mut EditorModel, config: &EditorConfig) {
     if let Some(width) = config.tab_width {
         model.set_tab_size(width);
     }
-    if let Some(ending) = config_line_ending(config)
-        && model.buffer().line_ending() != ending
-    {
-        model.buffer_mut().set_line_ending(ending);
-    }
+    // A save converts to it; opening leaves the tab clean. Without one, a
+    // conversion an earlier configuration asked for goes.
+    let ending = config_line_ending(config);
+    model.buffer_mut().set_pending_line_ending(ending);
 }
 
 /// A reveal applied to an editor: see [`Pane::revealed`].

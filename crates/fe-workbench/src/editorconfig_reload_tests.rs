@@ -130,7 +130,7 @@ fn disk_changes_reapply(cx: &mut TestAppContext) {
     changed(created(), cx);
     assert_eq!(indent(&js, cx), (spaces(2), 2));
     assert_eq!(indent(&working, cx), (spaces(2), 2));
-    assert_eq!(line_ending(&js, cx), LineEnding::CrLf);
+    assert_eq!(line_ending(&js, cx), LineEnding::Lf);
     let trim = SaveFixes {
         trim_trailing_whitespace: true,
         insert_final_newline: false,
@@ -158,7 +158,7 @@ fn disk_changes_reapply(cx: &mut TestAppContext) {
     assert_eq!(indent(&js, cx), (spaces(4), default_tab));
     assert_eq!(indent(&working, cx), (spaces(4), default_tab));
     assert_eq!(fixes(&js, cx), SaveFixes::default());
-    assert_eq!(line_ending(&js, cx), LineEnding::CrLf);
+    assert_eq!(line_ending(&js, cx), LineEnding::Lf);
 
     // A rescan reads it again.
     std::fs::write(&config, "[*.js]\nindent_size = 2\n").unwrap();

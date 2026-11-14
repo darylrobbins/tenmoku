@@ -689,7 +689,9 @@ impl Workbench {
                             )),
                     ));
                 }
-                (editor.model_mut().buffer_mut()).set_encoding(choice.encoding);
+                let mut buffer = editor.model_mut().buffer_mut();
+                buffer.set_encoding(choice.encoding);
+                buffer.set_pending_encoding(None);
                 cx.notify();
                 Ok(None)
             });

@@ -244,7 +244,7 @@ fn read_in_charset(file: File, path: &Path, charset: Charset) -> io::Result<Buff
     };
     match buffer {
         Some(mut buffer) => {
-            buffer.set_encoding(wanted);
+            buffer.set_pending_encoding(Some(wanted));
             Ok(buffer)
         }
         None => {
