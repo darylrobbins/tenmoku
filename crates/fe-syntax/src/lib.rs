@@ -45,6 +45,7 @@ mod outline;
 mod parse_limit;
 mod runtime;
 mod select;
+mod sniff;
 mod syntax;
 mod textobject;
 mod verbs;

@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 
 use crate::language::{built_in_name, language_name_for_path, language_names};
+use crate::sniff::language_name_by_content;
 
 /// Interpreter names and the language each one runs.
 const INTERPRETERS: &[(&str, &str)] = &[
@@ -153,12 +154,14 @@ fn is_shell_mode_line(line: &str) -> bool {
 }
 
 /// The language for a buffer: the path's if it names one, else the shebang or
-/// other first-line marker in `text_start`. Pass the first few hundred bytes, not the
-/// whole buffer.
+/// other first-line marker in `text_start`, else, for a path without an
+/// extension, XML or JSON by how the text starts. Pass the first few hundred
+/// bytes, not the whole buffer.
 pub fn detect_language_name(path: Option<&Path>, text_start: &str) -> Option<&'static str> {
     path.and_then(language_name_for_path)
         .or_else(|| language_name_for_shebang(text_start))
         .or_else(|| language_name_for_first_line(text_start))
+        .or_else(|| language_name_by_content(path, text_start))
 }
 
 /// What an `env` option takes after it.
