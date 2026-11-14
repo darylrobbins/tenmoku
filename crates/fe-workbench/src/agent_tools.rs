@@ -1509,7 +1509,8 @@ fn load(bytes: &[u8], real: &Path, stamp: Option<DiskStamp>) -> std::io::Result<
         );
         return detected();
     }
-    buffer.set_encoding(wanted);
+    // Opening leaves the buffer clean: a save converts to it, as the pane has it.
+    buffer.set_pending_encoding(Some(wanted));
     Ok(buffer)
 }
 
