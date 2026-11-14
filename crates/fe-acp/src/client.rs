@@ -23,6 +23,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::schema::{
@@ -463,11 +464,19 @@ impl AcpClient {
     /// always after it.
     pub async fn cancel(&self, session_id: impl Into<SessionId>) -> Result<()> {
         let session_id = session_id.into();
-        let connection = self.connection().await?;
-        self.pending.cancel_session(&session_id, || {
-            (connection.send_notification(CancelNotification::new(session_id.clone())))
-                .map_err(|error| normalized(&connection, "session/cancel", error))
-        })
+        // A connection that has ended still answers the session's pending
+        // requests `Cancelled`, then fails as a disconnect. The failure is
+        // normalized after those answers: the connection can't finish
+        // ending while they are unanswered.
+        let connection = self.connection().await;
+        let sent = self.pending.cancel_session(&session_id, || {
+            (connection.as_ref().map_err(Error::clone))?
+                .send_notification(CancelNotification::new(session_id.clone()))
+        });
+        match (sent, connection) {
+            (Err(error), Ok(connection)) => Err(normalized(&connection, "session/cancel", error)),
+            (sent, _) => sent,
+        }
     }
 
     /// Sends `session/set_config_option` and returns the session's
@@ -547,7 +556,10 @@ fn ending(connection: &ConnectionTo<Agent>) -> bool {
 /// while it tears down (a closed task or outgoing queue) carry no mark of
 /// their own.
 fn normalized(connection: &ConnectionTo<Agent>, method: &str, error: Error) -> Error {
-    if is_disconnect(&error) || ending(connection) {
+    if is_disconnect(&error)
+        || ending(connection)
+        || (is_local_channel_failure(&error) && ends_soon(connection))
+    {
         disconnected(method)
     } else {
         error
@@ -566,6 +578,46 @@ pub fn is_disconnect(error: &Error) -> bool {
             .as_ref()
             .and_then(|data| data.get("reason"))
             .is_some_and(|reason| reason == DISCONNECTED_REASON)
+}
+
+/// How long a channel-shaped error waits for the connection to be seen
+/// ending before it is taken for a live agent's own error.
+const LOCAL_FAILURE_GRACE: Duration = Duration::from_millis(500);
+
+/// Whether the connection is seen ending within [`LOCAL_FAILURE_GRACE`]: a
+/// real local channel failure is followed at once by the teardown, while a
+/// peer's error that only looks like one never is.
+fn ends_soon(connection: &ConnectionTo<Agent>) -> bool {
+    let deadline = Instant::now() + LOCAL_FAILURE_GRACE;
+    loop {
+        if ending(connection) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Whether `error` is the SDK's own failure to hand a message to its
+/// outgoing channel (agent-client-protocol 5.2.0): the outgoing actor fails
+/// a pending request with it, and `send_request`/`send_notification` return
+/// it, as the channel's receiver is dropped, which happens before the task
+/// queue closes or the termination is published. It carries no origin mark,
+/// so it is recognised by its shape: an internal error whose data is
+/// exactly the channel's message. A peer can send the same shape, so it is only
+/// a candidate: [`normalized`] corroborates it with the connection ending.
+fn is_local_channel_failure(error: &Error) -> bool {
+    error.code == agent_client_protocol::ErrorCode::INTERNAL_ERROR
+        && error
+            .data
+            .as_ref()
+            .and_then(|data| data.as_str())
+            .is_some_and(|data| {
+                data == "send failed because receiver is gone"
+                    || data.starts_with("failed to send outgoing request `")
+            })
 }
 
 /// A `session/request_permission` from the agent, waiting for an answer.
@@ -804,7 +856,9 @@ impl Pending {
         notify: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         let mut state = lock(&self.0);
-        notify()?;
+        // A failed notification still answers the session's requests
+        // `Cancelled`: a connection that went away won't carry an allow.
+        let sent = notify();
         if let Some(turns) = state.turns.get_mut(session_id) {
             turns.cancelled = turns.running.clone();
         }
@@ -815,7 +869,7 @@ impl Pending {
         for open in taken {
             respond(open.responder, RequestPermissionOutcome::Cancelled);
         }
-        Ok(())
+        sent
     }
 }
 
