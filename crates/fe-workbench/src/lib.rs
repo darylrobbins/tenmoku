@@ -26,6 +26,7 @@ mod ai_changes_buffers;
 mod ai_changes_panel;
 mod auto_save;
 mod chat_panel;
+mod chat_tool_loop;
 mod closed_editors;
 mod color_literals;
 mod config_problems;

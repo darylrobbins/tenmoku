@@ -675,6 +675,15 @@ reason = "Tool results, their headers and truncation lines, and the reasons a ca
 path = "src/agent_command.rs"
 reason = "run_command results, their status lines and truncation line, and the reasons a call failed are sent to the model, not shown to the user"
 
+# The API chat's tool loop (card AG10): the results it answers calls with
+# ("Denied by your settings", an unknown tool, invalid input) are the
+# model's text, as agent_tools.rs's are; the rows the user reads are
+# fe-chat-view's.
+
+[[file]]
+path = "src/chat_tool_loop.rs"
+reason = "Tool results it answers calls with, denials and invalid input, are sent to the model, not shown to the user"
+
 # The agents' audit log (card AG8): its JSONL lines are a state file's
 # records, the same whatever the locale.
 

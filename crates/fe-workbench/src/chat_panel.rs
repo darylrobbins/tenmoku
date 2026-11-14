@@ -8,7 +8,15 @@
 //! - **Grants** (record § 9): the chat is a first-party plugin holding
 //!   [`CHAT_CAPABILITIES`], granted without a prompt. Its provider is
 //!   [`AnthropicProvider::with_client`] over them, so fe-net reaches
-//!   `api.anthropic.com` only.
+//!   `api.anthropic.com` only; `process.spawn:*` is the ceiling its tool
+//!   loop's `run_command` runs under.
+//! - **Tools** (the agents record's § 6, `chat_tool_loop.rs`): each chat's
+//!   [`ToolLoop`] runs the calls its replies make, in trusted folders only.
+//!   A chat not yet sent is offered the tools as the root's trust stands;
+//!   once the root's trust is withdrawn, or the root changes, a chat's tools
+//!   are withdrawn first of all, ending a turn under way. Continue, under
+//!   the transcript, goes on with a turn that ended at the round or time
+//!   limit.
 //! - **The key** (record § 7): `ANTHROPIC_API_KEY` if set, and the header
 //!   then says so; else the keychain's [`KEY_ACCOUNT`] entry under the app
 //!   id, read on the background executor (the platform may ask the user),
@@ -85,6 +93,7 @@ use kiln_l10n::{Text, text, tr, verbatim};
 
 use crate::{
     DockPanel, RootChanged, TrustChanged, Workbench,
+    chat_tool_loop::ToolLoop,
     dock::DockOp,
     workbench::toast::{self, Toast},
 };
@@ -115,8 +124,11 @@ pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel 
 };
 
 /// What the built-in chat may do, in the plugin record's strings (record
-/// § 9): read buffers for context, and reach Anthropic's API.
-pub(crate) const CHAT_CAPABILITIES: [&str; 2] = ["buffer.read", "net:api.anthropic.com"];
+/// § 9): read buffers for context, run commands for its tool loop (each
+/// still decided by the agent permissions), and reach Anthropic's API. In
+/// the order grants list them.
+pub(crate) const CHAT_CAPABILITIES: [&str; 3] =
+    ["buffer.read", "process.spawn:*", "net:api.anthropic.com"];
 
 /// The environment variable a developer's key comes from (record § 7).
 pub(crate) const KEY_VARIABLE: &str = "ANTHROPIC_API_KEY";
@@ -436,6 +448,8 @@ pub(crate) struct ChatPanel {
     /// first draw.
     workbench: Option<WeakEntity<Workbench>>,
     view: Entity<ChatView>,
+    /// The current chat's tool loop, made and dropped with its view.
+    tool_loop: Entity<ToolLoop>,
     /// The current chat's options.
     options: ChatOptions,
     grants: Grants,
@@ -600,12 +614,15 @@ impl ChatPanel {
     /// window's workbench followed, when it first draws.
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let notice = notice_file(cx).is_none_or(|file| !file.exists());
-        let (view, options, view_subscriptions) = Self::chat_view(notice, None, window, cx);
+        let grants = chat_grants();
+        let (view, tool_loop, options, view_subscriptions) =
+            Self::chat_view(notice, None, &grants, window, cx);
         Self {
             workbench: None,
             view,
+            tool_loop,
             options,
-            grants: chat_grants(),
+            grants,
             key: None,
             current: None,
             reading: None,
@@ -643,14 +660,20 @@ impl ChatPanel {
     }
 
     /// A view of a new chat, from the settings now, with no provider until
-    /// the key is applied, and the subscriptions to its events, its gaining
-    /// focus and its changes.
+    /// the key is applied, its tool loop under `grants`, and the
+    /// subscriptions to its events, its gaining focus and its changes.
     fn chat_view(
         notice: bool,
         conversation: Option<Conversation>,
+        grants: &Grants,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Entity<ChatView>, ChatOptions, [Subscription; 3]) {
+    ) -> (
+        Entity<ChatView>,
+        Entity<ToolLoop>,
+        ChatOptions,
+        [Subscription; 3],
+    ) {
         let (settings, options) = new_chat_settings(cx);
         let notice = notice && conversation.is_none();
         let budget = kiln::platform::config::settings::<fe_config::Settings>(cx)
@@ -685,7 +708,8 @@ impl ChatPanel {
             this.note_turns(cx);
             this.note_send(cx);
         });
-        (view, options, [events, focused, changed])
+        let tool_loop = cx.new(|cx| ToolLoop::new(&view, grants.clone(), window, cx));
+        (view, tool_loop, options, [events, focused, changed])
     }
 
     /// The shown folder now: its root canonical, its chats' directory
@@ -1430,6 +1454,40 @@ impl ChatPanel {
             }))
     }
 
+    /// Continue, under the transcript, while the last turn ended at the
+    /// round or time limit with its results not yet sent.
+    fn render_continue(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let shown = self.key_form.is_none() && self.history.is_none() && !self.picker;
+        if !shown || !self.tool_loop.read(cx).can_continue(cx) {
+            return None;
+        }
+        let ui = ui_theme(cx);
+        let go_on = cx.listener(|this, _, _, cx| {
+            (this.tool_loop).update(cx, |tool_loop, cx| tool_loop.continue_turn(cx));
+        });
+        Some(
+            h_flex()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .items_center()
+                .border_t_1()
+                .border_color(ui.border)
+                .child(
+                    div()
+                        .flex_1()
+                        .text_color(ui.muted_text)
+                        .child(tr!("workbench-chat-continue-note").to_string()),
+                )
+                .child(
+                    Button::new(verbatim!("chat-continue"), text!("workbench-chat-continue"))
+                        .small()
+                        .debug_selector(|| "chat-continue".into())
+                        .on_click(go_on),
+                ),
+        )
+    }
+
     /// History: the chats, newest first, each a button that opens it.
     fn render_history(&self, rows: &[HistoryRow], cx: &mut Context<Self>) -> impl IntoElement {
         let ui = ui_theme(cx);
@@ -1577,8 +1635,16 @@ impl ChatPanel {
         self.history = None;
         self.picker = false;
         self.listing = None;
-        let (view, options, subscriptions) = Self::chat_view(self.notice, conversation, window, cx);
-        (self.view, self.options, self._view) = (view, options, subscriptions);
+        // The chat replaced ends its turn as Stop would, its work killed or
+        // cancelled, and still hands its proposals in.
+        (self.tool_loop).update(cx, |tool_loop, cx| tool_loop.shut_down(cx));
+        let (view, tool_loop, options, subscriptions) =
+            Self::chat_view(self.notice, conversation, &self.grants, window, cx);
+        (self.view, self.tool_loop, self.options, self._view) =
+            (view, tool_loop, options, subscriptions);
+        if let Some(workbench) = self.workbench() {
+            (self.tool_loop).update(cx, |tool_loop, cx| tool_loop.attach(&workbench, cx));
+        }
         // The old view's stopped reply tells nothing now.
         self.end_lane_turn(cx);
         self.applies.new_chat();
@@ -1674,6 +1740,7 @@ impl ChatPanel {
     /// its root or trust does.
     fn follow(&mut self, workbench: &Entity<Workbench>, cx: &mut Context<Self>) {
         self.workbench = Some(workbench.downgrade());
+        (self.tool_loop).update(cx, |tool_loop, cx| tool_loop.attach(workbench, cx));
         let folder = self.track_current(cx);
         self.adopt(folder, cx);
         self._workbench = vec![
@@ -1699,6 +1766,9 @@ impl ChatPanel {
     /// whether the panel shows or not, before the active file is vetted
     /// again.
     fn root_changed(&mut self, cx: &mut Context<Self>) {
+        // First of all: a chat's tools are withdrawn, and a turn under way
+        // ends, before anything gathered under the old root or trust lands.
+        (self.tool_loop).update(cx, |tool_loop, cx| tool_loop.folder_changed(cx));
         self.generation += 1;
         self.pending_send = None;
         // What the user attached under the old root or trust goes, being
@@ -1908,6 +1978,8 @@ impl ChatPanel {
                 self.end_lane_turn(cx);
                 self.remember_chat(cx);
             }
+            // The tool loop runs them.
+            ChatViewEvent::ToolCallsWaiting { .. } => {}
             ChatViewEvent::AttachFileRequested => {
                 let panel = cx.weak_entity();
                 window.defer(cx, move |window, cx| {
@@ -2014,7 +2086,8 @@ impl ChatPanel {
     }
 
     pub(crate) fn set_grants(&mut self, grants: Grants, cx: &mut Context<Self>) {
-        self.grants = grants;
+        self.grants = grants.clone();
+        (self.tool_loop).update(cx, |tool_loop, _| tool_loop.set_grants(grants));
         self.generation += 1;
         self.applies.stale();
         let (generation, read) = (self.generation, self.grants.allows(&Capability::BufferRead));
@@ -2144,7 +2217,8 @@ impl Render for ChatPanel {
                     None if self.picker => div().flex_1().min_h_0().child(self.render_picker(cx)),
                     None => div().flex_1().min_h_0().child(self.view.clone()),
                 },
-            });
+            })
+            .children(self.render_continue(cx));
         <Self as kiln::ViewCommands>::attach(root, cx)
     }
 }

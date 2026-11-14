@@ -7,9 +7,10 @@ use std::sync::Arc;
 
 use fe_buffer::{Buffer, BufferEvent, EditKind, Origin, Subscription as BufferSubscription};
 use fe_chat::{
-    Attachment, AttachmentKind, BlockKind, Budgeted, ChatEvent, ChatProvider, ChatSettings,
-    ContextItem, ContextKind, Conversation, Effort, ErrorKind, Fit, ProviderError, Turn, TurnState,
-    budget, build_request, render_user_content,
+    Attachment, AttachmentKind, BlockKind, Budgeted, ChatEvent, ChatProvider, ChatRequest,
+    ChatSettings, ContextItem, ContextKind, Conversation, Effort, ErrorKind, Fit, NotRun,
+    ProviderError, ToolResult, ToolSpec, Turn, TurnState, budget, build_request,
+    render_user_content, round_request,
 };
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, editor_palette};
@@ -80,6 +81,13 @@ pub enum ChatViewEvent {
     NoticeDismissed,
     /// A turn ended, however it did: done, stopped, refused or failed.
     TurnFinished,
+    /// Turn `turn`'s reply finished asking for tools, which the host runs:
+    /// it answers each of [`Conversation::pending_calls`] with
+    /// [`ChatView::add_tool_result`], then sends the next round
+    /// ([`ChatView::next_round`]) or ends the turn ([`ChatView::end_round`],
+    /// [`ChatView::withdraw_tools`]). Until then the turn is busy, as while
+    /// it streams, and Stop ends it.
+    ToolCallsWaiting { turn: usize },
     /// The user asked to attach a file: typed `@` at the start of a word,
     /// which the view takes back out, or pressed Attach.
     AttachFileRequested,
@@ -304,7 +312,8 @@ impl ChatView {
     /// Retry
     ///
     /// Sends the last turn again as a new turn, if it failed or was
-    /// refused.
+    /// refused. A later round's failure, the rounds before it sent, sends
+    /// that round's request again instead.
     #[command(id = "chat.retry")]
     pub fn retry_turn(&mut self, cx: &mut Cx<Self>) {
         if self.is_streaming() || self.provider.is_none() {
@@ -316,6 +325,16 @@ impl ChatView {
             .last()
             .filter(|turn| retryable(turn))
         else {
+            return;
+        };
+        // A later round's failure sends its request again, byte for byte:
+        // the rounds before it were sent.
+        let later = !turn.rounds.is_empty() && matches!(turn.state, TurnState::Failed(_));
+        if later && self.conversation.retry_round() {
+            self.stream_round(cx);
+            return;
+        }
+        let Some(turn) = self.conversation.turns.last() else {
             return;
         };
         // The context is rebuilt from what is authorized now, not copied
@@ -349,13 +368,18 @@ impl ChatView {
 
 impl ChatView {
     /// A view of `conversation` over `provider`.
+    ///
+    /// A turn of `conversation` still streaming (a copy taken mid-turn) has
+    /// no stream or host behind it here: it's stopped as Stop would stop
+    /// it, its finished text kept and its waiting calls answered.
     pub fn new(
         provider: Arc<dyn ChatProvider>,
-        conversation: Conversation,
+        mut conversation: Conversation,
         options: ChatOptions,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ChatView {
+        conversation.stop();
         let theme = EditorTheme::from_palette(&editor_palette(cx), &EditorSettings::default(), cx);
         let composer = cx.new(|cx| {
             let mut model = EditorModel::new(Buffer::new(""), None);
@@ -703,9 +727,10 @@ impl ChatView {
         self.block_states.get(&(turn, block))
     }
 
-    /// Whether a reply is streaming in.
+    /// Whether a turn is under way: its reply streaming in, or its calls
+    /// waiting for the host's results.
     pub fn is_streaming(&self) -> bool {
-        self.stream.is_some()
+        self.stream.is_some() || self.conversation.streaming_turn().is_some()
     }
 
     /// Whether turn `index`'s thinking is open.
@@ -874,6 +899,17 @@ impl ChatView {
         }
     }
 
+    /// The settings this view's requests are built with.
+    fn settings(&self) -> ChatSettings {
+        ChatSettings {
+            model: self.conversation.model.clone(),
+            effort: self.conversation.effort,
+            show_thinking: self.conversation.show_thinking,
+            max_tokens: self.options.max_tokens,
+            effort_message_models: self.effort_message_models,
+        }
+    }
+
     /// Begins a turn of `user_content`, made as `origin` says, and streams
     /// its reply.
     fn start_turn(
@@ -883,19 +919,32 @@ impl ChatView {
         attachments: Vec<Attachment>,
         cx: &mut Cx<Self>,
     ) {
+        if self.provider.is_none() {
+            return;
+        }
+        let settings = self.settings();
+        let request = build_request(&self.conversation, user_content.clone(), &settings);
+        self.origins.insert(self.conversation.turns.len(), origin);
+        // Its rounds, a resend or a Retry of a later one included, go with
+        // the settings its first request was built with.
+        (self.conversation).begin_turn_with(user_content, attachments, &settings);
+        self.stream(request, cx);
+    }
+
+    /// Streams the last turn's next round, or the same round again, as
+    /// [`round_request`] builds it.
+    fn stream_round(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings();
+        if let Some(request) = round_request(&mut self.conversation, &settings) {
+            self.stream(request, cx);
+        }
+    }
+
+    /// Streams `request`'s reply into the streaming turn.
+    fn stream(&mut self, request: ChatRequest, cx: &mut Context<Self>) {
         let Some(provider) = self.provider.clone() else {
             return;
         };
-        let settings = ChatSettings {
-            model: self.conversation.model.clone(),
-            effort: self.conversation.effort,
-            show_thinking: self.conversation.show_thinking,
-            max_tokens: self.options.max_tokens,
-            effort_message_models: self.effort_message_models,
-        };
-        let request = build_request(&self.conversation, user_content.clone(), &settings);
-        self.origins.insert(self.conversation.turns.len(), origin);
-        self.conversation.begin_turn(user_content, attachments);
         // The request is made and its stream polled on the background
         // executor, as connecting and checking certificates can block, and
         // the events come back over a channel. Dropping the task below
@@ -926,16 +975,120 @@ impl ChatView {
                 }
             }
             drop(pump);
-            this.update(cx, |this, cx| {
-                // A stream that ends without saying how was cut off.
-                let error = ProviderError::new(ErrorKind::Stream, REPLY_ENDED_EARLY.to_owned());
-                this.conversation.apply(ChatEvent::Failed(error));
-                this.stream = None;
-                this.end_turn(cx);
-            })
-            .ok();
+            this.update(cx, |this, cx| this.stream_ended(cx)).ok();
         }));
         cx.notify();
+    }
+
+    /// The reply's stream ended. A reply dropped for invalid tool input is
+    /// asked for again; one whose calls wait goes to the host; else a turn
+    /// still streaming was cut off.
+    fn stream_ended(&mut self, cx: &mut Context<Self>) {
+        self.stream = None;
+        if self.conversation.needs_resend() {
+            self.stream_round(cx);
+            return;
+        }
+        if !self.conversation.pending_calls().is_empty() {
+            let turn = self.conversation.turns.len() - 1;
+            cx.emit(ChatViewEvent::ToolCallsWaiting { turn });
+            cx.notify();
+            return;
+        }
+        // A stream that ends without saying how was cut off.
+        let error = ProviderError::new(ErrorKind::Stream, REPLY_ENDED_EARLY.to_owned());
+        self.conversation.apply(ChatEvent::Failed(error));
+        self.end_turn(cx);
+    }
+
+    /// Declares the chat's tools and task budget, as
+    /// [`Conversation::set_tools`] does: only before its first send. Whether
+    /// they were set.
+    pub fn set_tools(&mut self, tools: Vec<ToolSpec>, task_budget: u32) -> bool {
+        self.conversation.set_tools(tools, task_budget)
+    }
+
+    /// Adds a call's result to the streaming turn's round, as
+    /// [`Conversation::add_result`] does. Whether it was added: false for
+    /// a call no round waits on.
+    pub fn add_tool_result(&mut self, result: ToolResult, cx: &mut Context<Self>) -> bool {
+        let added = self.conversation.add_result(result);
+        if added {
+            cx.notify();
+        }
+        added
+    }
+
+    /// Commits the round, every call answered, and streams the next one
+    /// ([`Conversation::next_round`]). False, and nothing done, while a
+    /// call has no result, a reply streams, or there is no provider.
+    pub fn next_round(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.stream.is_some() || self.provider.is_none() || !self.conversation.next_round() {
+            return false;
+        }
+        self.stream_round(cx);
+        true
+    }
+
+    /// Ends the streaming turn whose calls wait without another round,
+    /// each call without a result answered as not run for `why`
+    /// ([`Conversation::end_round`]); its prompts close unanswered. At the
+    /// round or time limit, [`ChatView::continue_turn`] goes on with it.
+    /// Whether a turn was ended.
+    pub fn end_round(&mut self, why: NotRun, cx: &mut Context<Self>) -> bool {
+        if self.stream.is_some() || !self.conversation.end_round(why) {
+            return false;
+        }
+        self.withdraw_prompts(cx);
+        self.end_turn(cx);
+        true
+    }
+
+    /// Withdraws the chat's tools, as when the folder's trust was withdrawn
+    /// or its root changed ([`Conversation::withdraw_tools`]): a reply
+    /// streaming is dropped, the prompts waiting close unanswered, and a
+    /// turn under way ends stopped. The next turn sent carries the
+    /// `tool_removal` message.
+    pub fn withdraw_tools(&mut self, cx: &mut Context<Self>) {
+        let busy = self.is_streaming();
+        self.stream = None;
+        self.withdraw_prompts(cx);
+        self.conversation.withdraw_tools();
+        if busy {
+            self.end_turn(cx);
+        }
+        cx.notify();
+    }
+
+    /// Goes on with the last turn, which ended with its result message
+    /// last at the round or time limit: Continue sends that message
+    /// ([`Conversation::resume`]). Whether it went on.
+    pub fn continue_turn(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.is_streaming() || self.provider.is_none() || !self.conversation.resume() {
+            return false;
+        }
+        self.stream_round(cx);
+        true
+    }
+
+    /// Whether the last turn can go on with [`ChatView::continue_turn`]: it
+    /// ended with its result message last, at the round or time limit.
+    pub fn can_continue(&self) -> bool {
+        let Some(turn) = self.conversation.turns.last() else {
+            return false;
+        };
+        !self.is_streaming()
+            && !self.conversation.tools_withdrawn
+            && turn.state == TurnState::Done
+            && !turn.rounds.is_empty()
+            && turn.reply.is_empty()
+    }
+
+    /// Takes the prompts waiting away unanswered.
+    fn withdraw_prompts(&mut self, cx: &mut Context<Self>) {
+        for (turn, tool) in self.waiting_permissions() {
+            self.withdraw_permission(turn, &tool, cx);
+        }
     }
 
     /// Stop: closes the permission prompts waiting as refused, and stops

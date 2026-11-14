@@ -167,3 +167,10 @@ workbench-chat-inline-no-change = The reply changes nothing
 
 workbench-chat-ask-no-key = The draft is in the chat: set an API key to send it.
 workbench-chat-ask-untrusted = The draft is in the chat: this folder isn't trusted, so it isn't sent.
+
+## The tool loop (chat_tool_loop.rs)
+
+# Under the transcript when a turn stopped at the round or time limit, its
+# tools' results not yet sent.
+workbench-chat-continue-note = Stopped at the turn's limit.
+workbench-chat-continue = Continue

@@ -567,7 +567,14 @@ fn retry_after_trust_is_revoked_sends_no_attached_file(cx: &mut TestAppContext) 
     });
     cx.update(|window, cx| window.dispatch_action(Box::new(SendMessage), cx));
     draw(cx);
-    let sent = |request: &ChatRequest| format!("{:?}", request.messages.last().unwrap().content);
+    // The user's message: once trust is revoked the chat's tools are
+    // withdrawn, and the `tool_removal` message follows it.
+    let sent = |request: &ChatRequest| {
+        let user = (request.messages.iter().rev())
+            .find(|message| message.role == fe_chat::Role::User)
+            .expect("a user message");
+        format!("{:?}", user.content)
+    };
     assert!(sent(&provider.requests()[0]).contains("hunter2"));
 
     // The same authorization sends it again.
@@ -583,6 +590,17 @@ fn retry_after_trust_is_revoked_sends_no_attached_file(cx: &mut TestAppContext) 
     let retried = sent(&provider.requests()[2]);
     assert!(!retried.contains("hunter2"), "{retried}");
     assert!(retried.contains("What is in it?"));
+    let removal = provider.requests()[2]
+        .messages
+        .last()
+        .unwrap()
+        .removed_tools()
+        .len();
+    assert_eq!(
+        removal,
+        fe_chat::tool_set().len(),
+        "the tools are withdrawn last"
+    );
 }
 
 /// How many times [`flaky_open`] was called.
