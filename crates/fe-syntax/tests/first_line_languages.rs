@@ -51,10 +51,15 @@ fn near_misses_stay_undetected() {
         "<?XML version=\"1.0\"?>\n",
         "<!doctypesvg\n",
         "<!doctype\u{85}svg\n",
-        "#\u{85}-*- mode: shell-script -*-\n",
         "# -*- mode:\u{85}shell-script -*-\n",
         "x #cloud-config\n",
     ] {
         assert_eq!(detect_language_name(None, text), None, "{text:?}");
     }
+    // VS Code's pattern misses this, but it's an Emacs modeline: Emacs finds
+    // `-*-` anywhere on the line.
+    assert_eq!(
+        detect_language_name(None, "#\u{85}-*- mode: shell-script -*-\n"),
+        Some("bash")
+    );
 }

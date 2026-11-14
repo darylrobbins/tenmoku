@@ -24,6 +24,8 @@
 //!   every function's bytes, for motions between them.
 //!   [`symbols`] adds fields, enum variants and variables, for a tags index.
 //! - [`fence_language`] is the language a Markdown fence's info string names.
+//! - [`detect_language`] picks a buffer's language from a modeline
+//!   ([`language_name_for_modeline`]), its path, or how it starts.
 //! - [`suggest_indent`] suggests a row's indentation and [`closer_outdents`]
 //!   the row a `}` lines up with, from per-language indent queries.
 //!
@@ -41,6 +43,7 @@ mod indent;
 mod injection;
 pub mod l10n;
 mod language;
+mod modeline;
 mod outline;
 mod parse_limit;
 mod runtime;
@@ -54,7 +57,7 @@ pub use brackets::{
     BracketDepth, BracketPair, bracket_depths, bracket_pair, enclosing_bracket_pair,
 };
 pub use comment::{CommentTokens, auto_pairs, comment_tokens};
-pub use detect::{detect_language_name, language_name_for_shebang};
+pub use detect::{detect_language, detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
 pub use fence::fence_language;
 pub use fold::fold_candidate_closing;
@@ -67,6 +70,7 @@ pub use language::{
     Language, language_by_name, language_for_path, language_name_for_path, language_names,
     loaded_language,
 };
+pub use modeline::language_name_for_modeline;
 pub use outline::{
     MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineItem, OutlineJob, OutlineKind, outline,
     outline_job, outline_scopes, outline_supported, symbols, symbols_job, symbols_supported,

@@ -49,6 +49,10 @@ const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 /// no language.
 pub(crate) const DETECT_BYTES: usize = 512;
 
+/// How much of the buffer's end is read for a modeline, from the line start
+/// after the cut: plenty for its last five lines.
+pub(crate) const DETECT_TAIL_BYTES: usize = 1024;
+
 /// The most text written to the primary selection, in bytes.
 const PRIMARY_SELECTION_MAX: usize = 1 << 20;
 

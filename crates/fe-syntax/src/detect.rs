@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 
 use crate::language::{built_in_name, language_name_for_path, language_names};
+use crate::modeline::language_name_for_modeline;
 use crate::sniff::language_name_by_content;
 
 /// Interpreter names and the language each one runs.
@@ -153,12 +154,25 @@ fn is_shell_mode_line(line: &str) -> bool {
         })
 }
 
-/// The language for a buffer: the path's if it names one, else the shebang or
-/// other first-line marker in `text_start`, else, for a path without an
-/// extension, XML or JSON by how the text starts. Pass the first few hundred
-/// bytes, not the whole buffer.
+/// The language for a buffer, as [`detect_language`] picks it from its start
+/// alone.
 pub fn detect_language_name(path: Option<&Path>, text_start: &str) -> Option<&'static str> {
-    path.and_then(language_name_for_path)
+    detect_language(path, text_start, "")
+}
+
+/// The language for a buffer: the one a [modeline](language_name_for_modeline)
+/// in `text_start` or `text_end` names, else the path's if it names one, else
+/// the shebang or other first-line marker in `text_start`, else, for a path
+/// without an extension, XML or JSON by how the text starts. Pass the first
+/// few hundred bytes and the last kilobyte or so, from a line start, not the
+/// whole buffer.
+pub fn detect_language(
+    path: Option<&Path>,
+    text_start: &str,
+    text_end: &str,
+) -> Option<&'static str> {
+    language_name_for_modeline(text_start, text_end)
+        .or_else(|| path.and_then(language_name_for_path))
         .or_else(|| language_name_for_shebang(text_start))
         .or_else(|| language_name_for_first_line(text_start))
         .or_else(|| language_name_by_content(path, text_start))

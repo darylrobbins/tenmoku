@@ -812,13 +812,24 @@ impl EditorView {
         })
     }
 
-    /// Highlights the buffer in the language its path and first lines say,
-    /// unless it already is.
+    /// Highlights the buffer in the language a modeline in its first or last
+    /// lines, its path or its first lines say, unless it already is.
     pub fn detect_language(&mut self, cx: &mut Context<Self>) {
         let text = self.model.text();
         let start =
             text.slice_to_string(0..text.clip_offset(crate::view::DETECT_BYTES, Bias::Left));
-        let language = fe_syntax::detect_language_name(self.language_path(), &start);
+        // From the first line start in the last bytes: none, if they're all
+        // one long line.
+        let cut = text.offset_to_point(text.len().saturating_sub(crate::view::DETECT_TAIL_BYTES));
+        let tail_start = if cut.column == 0 {
+            text.row_start(cut.row)
+        } else if cut.row + 1 < text.row_count() {
+            text.row_start(cut.row + 1)
+        } else {
+            text.len()
+        };
+        let end = text.slice_to_string(tail_start..text.len());
+        let language = fe_syntax::detect_language(self.language_path(), &start, &end);
         let current = match self.syntax() {
             Some(syntax) => Some(syntax.language().name()),
             None if self.is_loading_language() => None,
