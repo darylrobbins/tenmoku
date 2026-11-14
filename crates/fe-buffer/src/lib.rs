@@ -62,8 +62,8 @@ pub use fe_text::{Bias, DecodedFile, Encoding, FileEncoding, LineEnding, Point, 
 pub use local_history::LocalHistory;
 pub use marker::{MarkerError, MarkerId, MarkerSet};
 pub use proposed::{
-    Conflict, DryRun, HunkId, HunkOutcome, HunkStatus, HunkView, Outcome, ProposalError,
-    ProposedChange,
+    Conflict, DetachedHunk, DetachedMismatch, DryRun, HunkId, HunkOutcome, HunkStatus, HunkView,
+    Outcome, ProposalError, ProposedChange,
 };
 pub use provenance::{Author, Provenance};
 pub use selection::{ResolvedSelection, Selection, SelectionSet};

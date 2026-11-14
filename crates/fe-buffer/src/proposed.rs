@@ -51,6 +51,25 @@ pub struct HunkView {
     pub status: HunkStatus,
 }
 
+/// One hunk of a proposal saved earlier, for [`ProposedChange::from_detached`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DetachedHunk {
+    /// Where the hunk's old text is in the text it is restored against, or
+    /// `None` if it couldn't be placed.
+    pub at: Option<Range<usize>>,
+    pub old_text: Arc<str>,
+    pub new_text: Arc<str>,
+    /// Saved as stale.
+    pub stale: bool,
+}
+
+/// A placed [`DetachedHunk`] whose old text isn't the text at its range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DetachedMismatch {
+    /// The hunk's index in the list given.
+    pub index: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProposalError {
     /// The text the hunk replaces has changed since the proposal was made.
@@ -114,6 +133,8 @@ struct Hunk {
     old_text: Arc<str>,
     new_text: Arc<str>,
     status: Status,
+    /// Restored as stale: never pending again, even after a reset.
+    sticky_stale: bool,
 }
 
 impl ProposedChange {
@@ -220,6 +241,69 @@ impl ProposedChange {
         Self::new(base, hunks, origin)
     }
 
+    /// Restores a proposal saved earlier, as hunks in `current`, in the order
+    /// given. A hunk with `at: None`, or saved `stale`, is
+    /// [`HunkStatus::Stale`] for good: shown and rejectable, never acceptable,
+    /// whatever the text does later. Any other hunk is pending at `at`, which
+    /// must hold its old text; it is never re-anchored elsewhere.
+    ///
+    /// # Errors
+    /// [`DetachedMismatch`] for the first placed, non-stale hunk whose range
+    /// isn't in `current` or doesn't hold its old text.
+    ///
+    /// # Panics
+    /// If two placed hunks overlap, or aren't in text order.
+    pub fn from_detached(
+        current: &BufferSnapshot,
+        hunks: Vec<DetachedHunk>,
+        origin: Origin,
+    ) -> Result<Self, DetachedMismatch> {
+        let text = current.text();
+        let mut prev_end = 0;
+        let mut rows = Vec::with_capacity(hunks.len());
+        for (index, hunk) in hunks.into_iter().enumerate() {
+            let stale = hunk.stale || hunk.at.is_none();
+            let range = match hunk.at {
+                Some(at) if !hunk.stale => {
+                    let held = clip_range(current, at.clone()) == at
+                        && at.start <= at.end
+                        && text.range_eq(at.clone(), &hunk.old_text);
+                    if !held {
+                        return Err(DetachedMismatch { index });
+                    }
+                    assert!(
+                        at.start >= prev_end,
+                        "detached hunks overlap or are unsorted"
+                    );
+                    prev_end = at.end;
+                    at
+                }
+                Some(at) => clip_range(current, at),
+                None => 0..0,
+            };
+            rows.push((
+                range,
+                hunk.old_text,
+                normalize_newlines(hunk.new_text),
+                stale,
+            ));
+        }
+        let mut change = Self::new(
+            current,
+            rows.iter()
+                .map(|(r, o, n, _)| (r.clone(), o.clone(), n.clone()))
+                .collect(),
+            origin,
+        );
+        for (hunk, (.., stale)) in change.hunks.iter_mut().zip(&rows) {
+            if *stale {
+                hunk.sticky_stale = true;
+                hunk.status.set(HunkStatus::Stale);
+            }
+        }
+        Ok(change)
+    }
+
     /// `hunks` are sorted, don't overlap and each changes something.
     fn new(
         base: &BufferSnapshot,
@@ -243,6 +327,7 @@ impl ProposedChange {
                     old_text,
                     new_text,
                     status: Status::new(HunkStatus::Pending),
+                    sticky_stale: false,
                 }
             })
             .collect();
@@ -446,7 +531,7 @@ impl ProposedChange {
     /// buffer isn't touched: for an accepted hunk the caller has undone its
     /// text, and the hunk is located by its old range again. If that text is
     /// not back in place, the next [`ProposedChange::hunks`] reports it stale.
-    /// A hunk already pending stays so.
+    /// A hunk already pending stays so. A hunk restored stale ([`ProposedChange::from_detached`]) goes back to stale.
     ///
     /// # Errors
     /// [`ProposalError::NotPending`] if the proposal has no such hunk.
@@ -459,7 +544,12 @@ impl ProposedChange {
             .get_mut(id.index as usize)
             .ok_or(ProposalError::NotPending)?;
         hunk.landed = None;
-        hunk.status.set(HunkStatus::Pending);
+        let status = if hunk.sticky_stale {
+            HunkStatus::Stale
+        } else {
+            HunkStatus::Pending
+        };
+        hunk.status.set(status);
         Ok(())
     }
 

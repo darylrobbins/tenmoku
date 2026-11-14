@@ -5,6 +5,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::*;
 
+mod detached_hunks;
 mod history_cap;
 mod ideal;
 mod invariants;
