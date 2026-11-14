@@ -153,6 +153,7 @@ mod status_bar_icons;
 mod symbol_icon_tints;
 mod tabs;
 mod terminal_b3;
+mod test_runner;
 mod title_bar;
 mod title_bar_b3;
 mod toast_b3;

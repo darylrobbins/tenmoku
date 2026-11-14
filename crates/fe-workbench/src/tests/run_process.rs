@@ -133,6 +133,7 @@ fn sh(script: &str, cwd: &Path) -> RunSpec {
         args: vec!["-c".into(), script.into()],
         cwd: cwd.to_owned(),
         env: vec![(OsString::from("PATH"), path)],
+        merged: false,
     }
 }
 
@@ -493,6 +494,7 @@ fn a_truncated_batch_replaces_the_older_output() {
         stream: Stream::Stdout,
         text,
         at: Duration::ZERO,
+        ends: true,
     };
     let mut output = RunOutput::default();
     output.extend([line("old".to_owned())]);
@@ -583,4 +585,134 @@ async fn nothing_starts_without_its_threads(cx: &mut TestAppContext) {
     }
     thread::sleep(Duration::from_millis(100));
     assert!(!ran.exists(), "the script ran");
+}
+
+/// A merged run's stdout and stderr are one pipe: their lines come in the
+/// order the program wrote them, all as stdout.
+#[gpui::test]
+async fn merged_streams_keep_their_order(cx: &mut TestAppContext) {
+    let (runs, dir) = setup(cx);
+    trust(dir.path(), true, cx);
+    let sink = Recorder::new();
+    let script = "i=0; while [ $i -lt 40 ]; do \
+                    echo out$i; echo err$i >&2; i=$((i + 1)); \
+                  done";
+    let spec = RunSpec {
+        merged: true,
+        ..sh(script, dir.path())
+    };
+    let process = start(spec, &sink, &runs, cx).await.unwrap();
+    assert_eq!(wait_to_end(&process, cx), RunEnd::Passed);
+
+    let seen: Vec<(Stream, String)> = (sink.record().lines.iter())
+        .map(|(stream, text, _)| (*stream, text.clone()))
+        .collect();
+    let expected: Vec<(Stream, String)> = (0..40)
+        .flat_map(|i| [format!("out{i}"), format!("err{i}")])
+        .map(|text| (Stream::Stdout, text))
+        .collect();
+    assert_eq!(seen, expected);
+    assert_eq!(kept(&process, cx), expected);
+}
+
+/// A sink that puts a long line's parts back together, and says at the end
+/// how many whole lines it read.
+#[derive(Clone, Default)]
+struct Joiner {
+    lines: Arc<Mutex<Vec<String>>>,
+    partial: String,
+    ended: Arc<AtomicBool>,
+}
+
+impl LineSink for Joiner {
+    fn line(&mut self, _: Stream, text: &str, _: Duration) -> Vec<RunUpdate> {
+        let line = std::mem::take(&mut self.partial) + text;
+        self.lines.lock().unwrap().push(line);
+        Vec::new()
+    }
+
+    fn fragment(&mut self, _: Stream, text: &str, _: Duration) -> Vec<RunUpdate> {
+        self.partial.push_str(text);
+        Vec::new()
+    }
+
+    fn end(&mut self) -> Vec<RunUpdate> {
+        self.ended.store(true, Ordering::SeqCst);
+        let lines = self.lines.lock().unwrap().len();
+        vec![RunUpdate::Summary(RunSummary::Tests {
+            passed: lines,
+            failed: 0,
+            total: Some(lines),
+        })]
+    }
+}
+
+/// A line longer than [`MAX_LINE`] comes in parts, each but the last a
+/// fragment; once the output's read, the sink's end has its say, and the
+/// run keeps what it said.
+#[gpui::test]
+async fn long_lines_come_in_parts_and_the_sink_has_the_last_word(cx: &mut TestAppContext) {
+    let (runs, dir) = setup(cx);
+    trust(dir.path(), true, cx);
+    let sink = Joiner::default();
+    let long = 2 * MAX_LINE + 10;
+    let script = format!("echo a; head -c {long} /dev/zero | tr '\\0' x; echo; echo b; exit 3");
+    let process = {
+        let (sink, runs) = (sink.clone(), runs.clone());
+        let spec = sh(&script, dir.path());
+        cx.update(|cx| RunProcess::start(spec, sink, runs, cx))
+            .await
+            .unwrap()
+    };
+    assert_eq!(wait_to_end(&process, cx), RunEnd::Failed { code: Some(3) });
+
+    let lines = sink.lines.lock().unwrap().clone();
+    assert_eq!(lines, ["a".to_owned(), "x".repeat(long), "b".to_owned()]);
+    let parts: Vec<(usize, bool)> = process.read_with(cx, |process, _| {
+        (process.output().lines())
+            .map(|line| (line.text.len(), line.ends))
+            .collect()
+    });
+    assert_eq!(
+        parts,
+        [
+            (1, true),
+            (MAX_LINE, false),
+            (MAX_LINE, false),
+            (10, true),
+            (1, true)
+        ]
+    );
+    assert!(sink.ended.load(Ordering::SeqCst));
+    // The end's summary, not the exit code's.
+    assert_eq!(
+        run_of(&process, &runs, cx).summary,
+        RunSummary::Tests {
+            passed: 3,
+            failed: 0,
+            total: Some(3),
+        }
+    );
+}
+
+/// A cancelled run's sink isn't asked for its end.
+#[gpui::test]
+async fn a_cancelled_run_has_no_end(cx: &mut TestAppContext) {
+    let (runs, dir) = setup(cx);
+    trust(dir.path(), true, cx);
+    let sink = Joiner::default();
+    let process = {
+        let (sink, runs) = (sink.clone(), runs.clone());
+        let spec = sh("echo a; sleep 30", dir.path());
+        cx.update(|cx| RunProcess::start(spec, sink, runs, cx))
+            .await
+            .unwrap()
+    };
+    wait_until(cx, "the first line", |_| {
+        !sink.lines.lock().unwrap().is_empty()
+    });
+    process.update(cx, |process, cx| process.cancel(cx));
+    assert_eq!(wait_to_end(&process, cx), RunEnd::Cancelled);
+    cx.run_until_parked();
+    assert!(!sink.ended.load(Ordering::SeqCst));
 }

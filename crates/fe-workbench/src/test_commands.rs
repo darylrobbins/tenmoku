@@ -52,7 +52,7 @@ fn no_file() -> String {
 }
 
 /// What the commands say with no folder open, whose trust a run needs.
-fn no_folder() -> String {
+pub(crate) fn no_folder() -> String {
     tr!("workbench-lsp-tests-no-folder").into()
 }
 
@@ -102,7 +102,7 @@ impl Global for LastTests {}
 
 /// What a run is of.
 #[derive(Clone, Copy)]
-enum Target {
+pub(crate) enum Target {
     /// The test at the caret.
     Cursor,
     /// The test at a row, as a lens gave it.
@@ -112,10 +112,10 @@ enum Target {
 }
 
 /// What the active editor has to run tests from.
-struct TestFile {
-    path: PathBuf,
-    language: &'static str,
-    runnable: Runnable,
+pub(crate) struct TestFile {
+    pub(crate) path: PathBuf,
+    pub(crate) language: &'static str,
+    pub(crate) runnable: Runnable,
 }
 
 impl Workbench {
@@ -166,7 +166,7 @@ impl Workbench {
 
     /// Whether every file the window edits is saved; if not, says the tests
     /// won't run. A save that failed has said why.
-    fn all_saved(&self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn all_saved(&self, cx: &mut Context<Self>) -> bool {
         let unsaved = self.file_editors(cx).into_iter().any(|editor| {
             let view = editor.read(cx);
             let model = view.model();
@@ -180,7 +180,11 @@ impl Workbench {
 
     /// The active editor's file and what in it to run: the test at the caret
     /// or the given row, else the whole file. Why there's none, in words.
-    fn test_file(&self, target: Target, cx: &mut Context<Self>) -> Result<TestFile, String> {
+    pub(crate) fn test_file(
+        &self,
+        target: Target,
+        cx: &mut Context<Self>,
+    ) -> Result<TestFile, String> {
         let editor = self.active_editor(cx).ok_or_else(no_file)?.clone();
         // The caret and the tree are both read from what this catches up.
         editor.update(cx, |view, _| view.model_mut().sync_display());
@@ -264,7 +268,7 @@ impl Workbench {
 
 /// Runs `run` on the workbench of the window the command was dispatched in,
 /// after the dispatch, which has the window out.
-fn on_workbench(
+pub(crate) fn on_workbench(
     cx: &mut App,
     run: impl FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
 ) {

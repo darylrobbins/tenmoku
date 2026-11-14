@@ -2761,6 +2761,7 @@ dependencies = [
  "fe-net",
  "fe-plugin",
  "fe-project",
+ "fe-runlog",
  "fe-syntax",
  "fe-terminal-view",
  "fe-text",

@@ -36,6 +36,8 @@ fe-markdown.workspace = true
 fe-markdown-view.workspace = true
 fe-nav.workspace = true
 fe-project.workspace = true
+# Test runs' output read into test events, and each test's history.
+fe-runlog = { path = "../fe-runlog" }
 fe-syntax.workspace = true
 # A viewer's text, to put its caret on a revealed row.
 fe-text.workspace = true

@@ -126,6 +126,7 @@ mod terminal_panel;
 mod test_commands;
 mod test_lens;
 pub mod test_runnables;
+pub mod test_runner;
 mod theme_picker;
 mod title_bar;
 pub mod todo_comments;
@@ -223,6 +224,7 @@ pub fn init(cx: &mut App) {
     agent_audit::init(cx);
     test_commands::init(cx);
     test_lens::init(cx);
+    test_runner::init(cx);
     lsp::init(cx);
     grammar_prompt::init(cx);
     kiln_shell::menu_bar::register(cx);

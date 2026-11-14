@@ -6,9 +6,14 @@
 //! [`RunProcess::start`] starts the program (its argv, folder and
 //! environment) only in a trusted folder, on a thread of its own, leading a
 //! process group of its own ([`crate::process_group`]) with stdin closed and
-//! stdout and stderr piped. Its lines go to a [`LineSink`] there, off the
-//! main thread, in batches of at most one per [`BATCH_INTERVAL`]; what the
-//! sink makes of them ([`RunUpdate`]s) is applied to the run once a batch.
+//! stdout and stderr piped, or both written to one pipe when
+//! [`RunSpec::merged`], so their lines keep the order they were written in.
+//! Its lines go to a [`LineSink`] there, off the main thread, in batches of
+//! at most one per [`BATCH_INTERVAL`]; what the sink makes of them
+//! ([`RunUpdate`]s) is applied to the run once a batch. A line longer than
+//! [`MAX_LINE`] comes as several, each but the last a
+//! [`LineSink::fragment`]. Once the program has exited and its output is
+//! read, the sink's [`LineSink::end`] has its say, before the run ends.
 //! Both streams' lines are kept, interleaved as they were read, for the
 //! Output view: up to [`OUTPUT_CAP`], past which the oldest go and
 //! [`RunOutput::truncated`] is set.
@@ -107,8 +112,23 @@ pub trait LineSink: Send + 'static {
     /// after the program started. Bytes that aren't UTF-8 are replaced.
     fn line(&mut self, stream: Stream, text: &str, at: Duration) -> Vec<RunUpdate>;
 
+    /// A part of a line longer than [`MAX_LINE`], the rest of which follows,
+    /// as [`line`](Self::line) gives it: the line's last part comes to
+    /// [`line`](Self::line). Unless a sink says otherwise, each part is a
+    /// line of its own.
+    fn fragment(&mut self, stream: Stream, text: &str, at: Duration) -> Vec<RunUpdate> {
+        self.line(stream, text, at)
+    }
+
     /// The end of a batch: every line read so far has been handed over.
     fn batch_end(&mut self) -> Vec<RunUpdate> {
+        Vec::new()
+    }
+
+    /// The program has exited and all its output has been handed over: what
+    /// the sink still has to say, before the run ends. Not called for a run
+    /// that's cancelled, or whose program never started.
+    fn end(&mut self) -> Vec<RunUpdate> {
         Vec::new()
     }
 }
@@ -127,6 +147,11 @@ pub struct RunSpec {
     /// Set over the workbench's own environment, with the login shell's
     /// `PATH` unless this has one.
     pub env: Vec<(OsString, OsString)>,
+    /// Whether stdout and stderr are one pipe, read in the order the program
+    /// wrote them, every line as [`Stream::Stdout`]: for a parser that reads
+    /// the two together, as `cargo test`'s does. Else they're read apart, and
+    /// two lines from different streams can come in either order.
+    pub merged: bool,
 }
 
 /// Why [`RunProcess::start`] started nothing.
@@ -153,6 +178,9 @@ pub struct OutputLine {
     pub text: String,
     /// How long after the program started it was read.
     pub at: Duration,
+    /// Whether the line ended here: false for a part of a line longer than
+    /// [`MAX_LINE`], whose next part follows.
+    pub ends: bool,
 }
 
 impl OutputLine {
@@ -517,6 +545,7 @@ impl RunProcess {
                 stream: Stream::Stderr,
                 text: said,
                 at: Duration::ZERO,
+                ends: true,
             }]),
             Message::Ended { end, code } => {
                 self.end = Some(end);
@@ -554,9 +583,34 @@ fn run_to_end(
     command
         .args(&spec.args)
         .current_dir(&spec.cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdin(Stdio::null());
+    // The merged pipe's reading end: its writing end is the program's, both
+    // its stdout and its stderr.
+    let merged = match spec.merged {
+        true => match merged_pipe(&mut command) {
+            Ok(reader) => Some(reader),
+            Err(error) => {
+                let program = spec.program.to_string_lossy().into_owned();
+                let error = error.to_string();
+                let said = tr!(
+                    "workbench-workbench-filter-cant-run",
+                    program = program,
+                    error = error
+                );
+                shared.finish();
+                send(Message::CantRun(said.into()));
+                send(Message::Ended {
+                    end: RunEnd::Failed { code: None },
+                    code: None,
+                });
+                return;
+            }
+        },
+        false => {
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
+            None
+        }
+    };
     process_group::lead_group(&mut command);
     if !spec.env.iter().any(|(name, _)| name == "PATH")
         && let Some(path) = fe_lsp::LoginPath::system().path()
@@ -577,6 +631,9 @@ fn run_to_end(
             Some(spawned)
         }
     };
+    // Its copies of the merged pipe's writing end: the reader sees the pipe
+    // close once the program's have.
+    drop(command);
     let mut child = match spawned {
         Some(Ok(child)) => child,
         Some(Err(error)) => {
@@ -606,7 +663,8 @@ fn run_to_end(
     };
     let (lines, read) = mpsc::sync_channel(LINES_IN_FLIGHT);
     read_lines(child.stdout.take(), Stream::Stdout, started, lines.clone());
-    read_lines(child.stderr.take(), Stream::Stderr, started, lines);
+    read_lines(child.stderr.take(), Stream::Stderr, started, lines.clone());
+    read_lines(merged, Stream::Stdout, started, lines);
     let mut pending: Vec<OutputLine> = Vec::new();
     let mut pending_size = 0;
     let mut delivered: Option<Instant> = None;
@@ -666,6 +724,22 @@ fn run_to_end(
             }
         }
         if over && pending.is_empty() {
+            if !shared.cancelled() {
+                let said = panic::catch_unwind(AssertUnwindSafe(|| sink.end()));
+                let Ok(updates) = said else {
+                    log::error!("a run's line sink panicked at its end: its run failed");
+                    shared.cancel();
+                    break RunEnd::Failed { code: None };
+                };
+                let batch = Message::Batch {
+                    lines: RunOutput::default(),
+                    updates,
+                };
+                if !publish(sender, batch, &shared) {
+                    shared.cancel();
+                    break RunEnd::Cancelled;
+                }
+            }
             let mut state = shared.state();
             if state.cancelled {
                 // The stopper has the group: it may have members left.
@@ -706,6 +780,14 @@ fn run_to_end(
     });
 }
 
+/// Has `command` write its stdout and its stderr to one pipe, and gives the
+/// pipe's reading end.
+fn merged_pipe(command: &mut Command) -> std::io::Result<std::io::PipeReader> {
+    let (reader, writer) = std::io::pipe()?;
+    command.stdout(writer.try_clone()?).stderr(writer);
+    Ok(reader)
+}
+
 /// Sends `message` to the main thread, waiting while it's behind, unless the
 /// run is cancelled meanwhile: false then, or if nobody's listening.
 fn publish(sender: &async_channel::Sender<Message>, message: Message, shared: &Shared) -> bool {
@@ -729,7 +811,10 @@ fn publish(sender: &async_channel::Sender<Message>, message: Message, shared: &S
 fn deliver(lines: Vec<OutputLine>, sink: &mut dyn LineSink) -> Message {
     let mut updates = Vec::new();
     for line in &lines {
-        updates.extend(sink.line(line.stream, &line.text, line.at));
+        updates.extend(match line.ends {
+            true => sink.line(line.stream, &line.text, line.at),
+            false => sink.fragment(line.stream, &line.text, line.at),
+        });
     }
     updates.extend(sink.batch_end());
     let mut kept = RunOutput::default();
@@ -764,14 +849,23 @@ fn read_lines(
                 Ok(_) => {}
             }
             let at = started.elapsed();
-            if bytes.last() == Some(&b'\n') {
+            let ends = bytes.last() == Some(&b'\n');
+            if ends {
                 bytes.pop();
                 if bytes.last() == Some(&b'\r') {
                     bytes.pop();
                 }
             }
+            // A part cut at `MAX_LINE`, or the last line, ending unended.
+            let ends = ends || bytes.len() < MAX_LINE;
             let text = String::from_utf8_lossy(&bytes).into_owned();
-            if lines.send(OutputLine { stream, text, at }).is_err() {
+            let line = OutputLine {
+                stream,
+                text,
+                at,
+                ends,
+            };
+            if lines.send(line).is_err() {
                 return;
             }
         }
