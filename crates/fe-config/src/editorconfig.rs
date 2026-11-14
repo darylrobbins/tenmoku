@@ -178,7 +178,7 @@ fn widen_header(line: &[u8], out: &mut Vec<u8>) {
 /// a root. `None` if there is none, or it was skipped.
 fn read_file(dir: &Path) -> Option<(Parsed, bool)> {
     let file = dir.join(".editorconfig");
-    let bytes = match std::fs::read(&file) {
+    let bytes = match read_regular(&file) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // A dangling symlink is a configuration that can't be read.
@@ -223,6 +223,46 @@ fn read_file(dir: &Path) -> Option<(Parsed, bool)> {
         sections,
     };
     Some((parsed, root))
+}
+
+/// The most an `.editorconfig` may hold; they are a few KB.
+const MAX_BYTES: u64 = 1024 * 1024;
+
+/// Reads `file` only if it is a regular file (after following symlinks) of at
+/// most `MAX_BYTES`. It is opened without blocking on unix, so a FIFO named
+/// `.editorconfig` can't hang the open, and its type is checked on the handle.
+fn read_regular(file: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind, Read};
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let handle = options.open(file)?;
+    let meta = handle.metadata()?;
+    if !meta.is_file() {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            kiln_l10n::verbatim!("not a regular file"),
+        ));
+    }
+    if meta.len() > MAX_BYTES {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            kiln_l10n::verbatim!("larger than 1 MiB"),
+        ));
+    }
+    let mut bytes = Vec::new();
+    handle.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            kiln_l10n::verbatim!("larger than 1 MiB"),
+        ));
+    }
+    Ok(bytes)
 }
 
 fn warn_skipped(file: &Path, error: &dyn std::fmt::Display) {
@@ -328,3 +368,7 @@ fn from_properties(props: &Properties) -> EditorConfig {
         max_line_length,
     }
 }
+
+#[cfg(test)]
+#[path = "editorconfig_special_files_tests.rs"]
+mod special_files_tests;
