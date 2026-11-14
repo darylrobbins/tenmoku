@@ -316,7 +316,7 @@
 60:34-35 punctuation.special "$"
 60:36-37 string "\""
 60:37-38 punctuation.delimiter ","
-60:39-47 variable "priority"
+60:39-47 property "priority"
 60:48-49 operator "="
 60:50-53 function "max"
 60:53-54 punctuation.bracket "("

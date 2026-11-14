@@ -392,6 +392,9 @@
 ; The constant patterns are broad, so they would also take over calls such as
 ; `TODO()` and `Foo.BAR()`. The crate's call patterns are therefore restated
 ; after them, unchanged, and a call keeps its function highlight.
+;
+; Ours, last: a named argument's name (`f(name = 1)`) labels a value, so it is
+; a `property`. A positional argument is not touched.
 
 ((simple_identifier) @constant
   (#match? @constant "^[A-Z][A-Z0-9_]*$"))
@@ -469,3 +472,7 @@
 		"with"
 		"synchronized"
 ))
+
+(value_argument
+  (simple_identifier) @property
+  "=")

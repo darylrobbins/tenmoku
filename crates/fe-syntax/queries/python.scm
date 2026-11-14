@@ -19,3 +19,7 @@
 (format_expression (format_specifier) @string.placeholder)
 
 (escape_interpolation) @escape
+
+; A name that labels a value is a property: a call's keyword argument. A
+; definition's `default_parameter` keeps its parameter highlight.
+(keyword_argument name: (identifier) @property)
