@@ -12,13 +12,17 @@
 //! Its tint is data too: [`FILE_NAMES`] and [`EXTENSIONS`] map a name to a
 //! token, a file neither names takes `file_icon.default`. [`FOLDER_NAMES`]
 //! maps a folder's name to its [`FolderRole`], a Lucide folder glyph and a
-//! token; any other folder is the plain folder in `file_icon.folder`. Every `file_icon` token is `list.icon` unless a theme
+//! token; any other folder is the plain folder in `file_icon.folder`. Where
+//! a [`FolderContext`] says more of a folder, [`TintedIcons::context_role`]
+//! gives modules and solutions their own role, and source, test and resource
+//! roots and build output theirs, from the build files and the names above
+//! it. Every `file_icon` token is `list.icon` unless a theme
 //! sets it, so under a theme that sets none the set draws in one colour.
 
 use std::{collections::HashMap, sync::LazyLock};
 
 use crate::{
-    Icon, IconRef, IconSet, file_icons,
+    FolderContext, Icon, IconRef, IconSet, file_icons,
     file_icons::{MAX_KEY, by_name, lookup, lucide_folder},
 };
 
@@ -704,10 +708,16 @@ pub(crate) enum FolderRole {
     Assets,
     /// Temporary files and caches.
     Temporary,
+    /// A module: a folder with a build tool's project file, never by name.
+    Module,
+    /// A solution or workspace: a folder with a file that lists modules,
+    /// never by name.
+    Solution,
 }
 
 impl FolderRole {
-    /// Every role.
+    /// Every role a name gives; [`FolderRole::Module`] and
+    /// [`FolderRole::Solution`] come only from a [`FolderContext`].
     #[cfg(test)]
     pub(crate) const ALL: &[FolderRole] = &[
         FolderRole::Source,
@@ -739,14 +749,15 @@ impl FolderRole {
             FolderRole::Scripts => Icon::FolderInput,
             FolderRole::Assets => Icon::FolderBookmark,
             FolderRole::Temporary => Icon::FolderClock,
+            FolderRole::Module | FolderRole::Solution => Icon::FolderRoot,
         }
     }
 
-    /// Its token: source, tests and docs their own, the rest the plain
-    /// folder's.
+    /// Its token: source, tests and docs their own, a module source's, the
+    /// rest the plain folder's.
     pub(crate) fn tint(self) -> &'static str {
         match self {
-            FolderRole::Source => FOLDER_SOURCE,
+            FolderRole::Source | FolderRole::Module => FOLDER_SOURCE,
             FolderRole::Tests => FOLDER_TESTS,
             FolderRole::Docs => FOLDER_DOCS,
             _ => FOLDER,
@@ -952,6 +963,77 @@ impl TintedIcons {
     pub fn folder_tint(name: &str) -> &'static str {
         Self::folder_role(name).map_or(FOLDER, FolderRole::tint)
     }
+
+    /// The role `context` gives a folder called `name`, over its name's:
+    /// `Some(None)` where the context says it has none, `None` where the
+    /// context says nothing and the name decides. In order:
+    ///
+    /// - its own build files: a solution (`settings.gradle(.kts)`, a
+    ///   `*.sln`/`*.slnx`, a `Cargo.toml` with `[workspace]`), else a module
+    ///   (any tool's project file);
+    /// - by the names above it, Maven's and Gradle's layout: `java`,
+    ///   `kotlin`, `scala` or `groovy` in `src/main` is a source root, `java`,
+    ///   `kotlin` or `scala` in `src/test` a test root, and `resources` in
+    ///   either is resources;
+    /// - by its parent's build files: `src` beside a `Cargo.toml` is a source
+    ///   root, as is a module's `src` holding no `main` or `test` folder,
+    ///   while one that holds them is only their container, a plain folder;
+    ///   `tests` and `benches` beside a `Cargo.toml` are test roots; `bin`
+    ///   and `obj` beside a .NET project, `build` beside a Gradle build and
+    ///   `target` beside a `Cargo.toml` are build output.
+    pub(crate) fn context_role(
+        name: &str,
+        context: &FolderContext<'_>,
+    ) -> Option<Option<FolderRole>> {
+        let is = |name: &str, names: &[&str]| names.iter().any(|n| name.eq_ignore_ascii_case(n));
+        let own = &context.own;
+        if own.solution() {
+            return Some(Some(FolderRole::Solution));
+        }
+        if own.module() {
+            return Some(Some(FolderRole::Module));
+        }
+        if context.grandparent.is_some_and(|name| is(name, &["src"])) {
+            match context.parent {
+                Some(parent) if is(parent, &["main"]) => {
+                    if is(name, &["java", "kotlin", "scala", "groovy"]) {
+                        return Some(Some(FolderRole::Source));
+                    }
+                    if is(name, &["resources"]) {
+                        return Some(Some(FolderRole::Assets));
+                    }
+                }
+                Some(parent) if is(parent, &["test"]) => {
+                    if is(name, &["java", "kotlin", "scala"]) {
+                        return Some(Some(FolderRole::Tests));
+                    }
+                    if is(name, &["resources"]) {
+                        return Some(Some(FolderRole::Assets));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let beside = &context.beside;
+        if is(name, &["src"]) {
+            if beside.cargo {
+                return Some(Some(FolderRole::Source));
+            }
+            if beside.module() {
+                return Some((!own.main_or_test).then_some(FolderRole::Source));
+            }
+        }
+        let output = (beside.dotnet && is(name, &["bin", "obj"]))
+            || (beside.gradle && is(name, &["build"]))
+            || (beside.cargo && is(name, &["target"]));
+        if output {
+            return Some(Some(FolderRole::Output));
+        }
+        if beside.cargo && is(name, &["tests", "benches"]) {
+            return Some(Some(FolderRole::Tests));
+        }
+        None
+    }
 }
 
 impl IconSet for TintedIcons {
@@ -967,6 +1049,14 @@ impl IconSet for TintedIcons {
         match Self::folder_role(name) {
             Some(role) => IconRef::Tinted(role.icon(), role.tint()),
             None => self.folder(expanded),
+        }
+    }
+
+    fn folder_in(&self, name: &str, context: &FolderContext<'_>, expanded: bool) -> IconRef {
+        match Self::context_role(name, context) {
+            Some(Some(role)) => IconRef::Tinted(role.icon(), role.tint()),
+            Some(None) => self.folder(expanded),
+            None => self.folder_named(name, expanded),
         }
     }
 }

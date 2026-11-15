@@ -56,9 +56,9 @@ pub use breadcrumbs::{Breadcrumbs, Crumb, CrumbKind, TOOLBAR_HEIGHT};
 pub use controls::{Button, ButtonSize, ButtonVariant, Checkbox, Switch};
 pub use controls::{ButtonLook, DISABLED_OPACITY, TOGGLE_ON_ALPHA, focus_ring};
 pub use file_icons::{
-    Icon, IconRef, IconSet, LucideIcons, file_icon, file_icon_path, file_icon_ref, folder_icon,
-    folder_icon_path, folder_icon_ref, folder_icon_ref_named, icon_set, reset_icon_set,
-    set_icon_set,
+    BuildFiles, FolderContext, Icon, IconRef, IconSet, LucideIcons, file_icon, file_icon_path,
+    file_icon_ref, folder_icon, folder_icon_path, folder_icon_ref, folder_icon_ref_in,
+    folder_icon_ref_named, icon_set, reset_icon_set, set_icon_set,
 };
 pub use file_icons_coloured::ColouredIcons;
 pub use file_icons_tinted::TintedIcons;

@@ -20,6 +20,10 @@
 //!   all kept under the project root ([`create_file`], [`create_dir`],
 //!   [`rename`], [`duplicate`], [`trash`], [`relative_path`]), and empties
 //!   a file in place ([`open_truncated`]).
+//! - [`Markers`] are the build files in a folder, for module and source-root
+//!   icons: found by a [`MarkerProbe`], one read of the folder's names
+//!   through a no-follow handle and at most [`MAX_STATS`] metadata calls,
+//!   cached by [`MarkerCache`] until a watcher batch names the folder.
 //! - [`check_ignore_file`] checks an ignore file's patterns against the project
 //!   with git's matching: unused, duplicate, shadowed and invalid lines.
 //!
@@ -31,6 +35,7 @@ mod docker_ignore;
 mod finder;
 #[doc(hidden)]
 pub mod fixture;
+mod folder_markers;
 pub mod fs_ops;
 mod ignore_check;
 pub mod l10n;
@@ -42,6 +47,7 @@ mod watcher;
 mod win;
 
 pub use finder::{FileSetDelta, FinderIndex, FinderMatch, FinderStats};
+pub use folder_markers::{MAX_READ, MAX_STATS, MarkerCache, MarkerProbe, Markers, Probed};
 pub use fs_ops::{
     NameError, create_dir, create_file, duplicate, open_truncated, relative_path, rename, trash,
     validate_name,

@@ -123,6 +123,7 @@ mod pane_toolbar_no_path_item;
 mod problems_b3;
 mod problems_detail;
 mod project_drag;
+mod project_folder_icons;
 mod project_menu;
 mod project_multi_select;
 mod project_new_menu;

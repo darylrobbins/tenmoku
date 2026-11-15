@@ -4,7 +4,8 @@
 //! Python, HTML, TOML, a Makefile, a justfile, a Dockerfile, `.gitignore` and
 //! Markdown; project files, `Cargo.toml`, `package.json` and `LICENSE`; and
 //! folders by role, `src/` expanded, `tests/`, `target/`, `.github/` and
-//! `node_modules/` closed.
+//! `node_modules/` closed; and a project role from build files, `core/`, a
+//! Gradle module (its `build.gradle`), closed.
 
 use std::fs;
 
@@ -41,7 +42,7 @@ pub(crate) fn check(cx: &mut VisualTestAppContext) -> Result<bool> {
     for (scene, theme, settings) in SCENES {
         let parent = tempfile::tempdir()?;
         let root = parent.path().join("demo");
-        for dir in ["src", "node_modules", "tests", "target", ".github"] {
+        for dir in ["src", "node_modules", "tests", "target", ".github", "core"] {
             fs::create_dir_all(root.join(dir))?;
         }
         for rel in [
@@ -54,6 +55,7 @@ pub(crate) fn check(cx: &mut VisualTestAppContext) -> Result<bool> {
             "tests/smoke.rs",
             "target/.rustc_info.json",
             ".github/CODEOWNERS",
+            "core/build.gradle",
             "Cargo.toml",
             "package.json",
             "LICENSE",

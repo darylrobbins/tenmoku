@@ -12,6 +12,7 @@ mod finder_backpressure;
 mod finder_delta;
 mod finder_followups;
 mod finder_walk_safety;
+mod folder_markers;
 mod large;
 mod search;
 mod tree;

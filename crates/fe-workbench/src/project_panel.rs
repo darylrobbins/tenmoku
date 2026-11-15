@@ -40,7 +40,7 @@
 //! move or copy them is in [`drag`].
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     io,
     ops::Range,
@@ -51,10 +51,13 @@ use std::{
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_git::ChangeKind;
 use fe_gpui::commands::RunCommand;
-use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
+use fe_project::{
+    EntryKind, FileTree, FsChange, Listed, MarkerCache, MarkerProbe, Markers, NodeId,
+    ProjectWatcher, TreeOptions,
+};
 use fe_ui::{
-    ActiveTheme as _, Icon, ROW_HEIGHT, Role, TreeRow, UI_BODY, file_icon_ref,
-    folder_icon_ref_named,
+    ActiveTheme as _, BuildFiles, FolderContext, Icon, IconRef, ROW_HEIGHT, Role, TreeRow, UI_BODY,
+    file_icon_ref, folder_icon_ref_in, folder_icon_ref_named,
 };
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
@@ -144,6 +147,43 @@ fn place_in_folder(
         .or_else(|| siblings[..hint].iter().position(|&node| node == id))?;
     hints.insert(folder, at);
     Some((at + 1, siblings.len()))
+}
+
+/// Listed folders' [`Markers`], as of tree version `version`.
+#[derive(Default)]
+struct ListedMarkers {
+    version: u64,
+    dirs: HashMap<NodeId, Option<Markers>>,
+}
+
+/// `markers` as the icon set takes them.
+fn build_files(markers: Markers) -> BuildFiles {
+    let Markers {
+        gradle,
+        gradle_settings,
+        maven,
+        dotnet,
+        dotnet_solution,
+        cargo,
+        cargo_workspace,
+        npm,
+        go,
+        python,
+        main_or_test,
+    } = markers;
+    BuildFiles {
+        gradle,
+        gradle_settings,
+        maven,
+        dotnet,
+        dotnet_solution,
+        cargo,
+        cargo_workspace,
+        npm,
+        go,
+        python,
+        main_or_test,
+    }
 }
 
 /// The project tree's actions, in the dock's header before ⋯ and —: `+`,
@@ -347,6 +387,9 @@ pub struct ProjectPanel {
     /// Each row the last frame drew dimmed as cut, by name.
     #[cfg(test)]
     drawn_cut: Vec<String>,
+    /// Each folder row the last frame built, by name, and its icon.
+    #[cfg(test)]
+    drawn_folders: Vec<(String, IconRef)>,
     /// The filter by name, while it's set.
     filter: Option<filter::Filter>,
     /// The right-click menu, while it's open.
@@ -355,6 +398,12 @@ pub struct ProjectPanel {
     new_menu: Option<new_menu::NewMenu>,
     /// A drag of the tree's rows, while it's under way.
     drag: Option<drag::Drag>,
+    /// Each folder's build files a probe found, for its icon and its
+    /// folders'.
+    markers: MarkerCache,
+    /// Listed folders' build files from their entries, as of a tree
+    /// version: the stand-in until a folder's probe lands.
+    listed_markers: RefCell<ListedMarkers>,
     _watch: Option<Task<()>>,
     /// Its text, and its open fields' placeholders, in a new language.
     _locale: gpui::Subscription,
@@ -416,10 +465,14 @@ impl ProjectPanel {
             history: undo::History::default(),
             #[cfg(test)]
             drawn_cut: Vec::new(),
+            #[cfg(test)]
+            drawn_folders: Vec::new(),
             filter: None,
             menu: None,
             new_menu: None,
             drag: None,
+            markers: MarkerCache::default(),
+            listed_markers: RefCell::default(),
             _watch: None,
             _locale: cx.observe_global::<kiln_platform::locale::ActiveLocale>(Self::follow_locale),
         };
@@ -569,6 +622,8 @@ impl ProjectPanel {
     }
 
     fn opened(&mut self, tree: io::Result<FileTree>, cx: &mut Context<Self>) {
+        self.markers.clear();
+        self.listed_markers.take();
         self.state = match tree {
             Ok(tree) => {
                 cx.emit(PanelEvent::Opened);
@@ -633,6 +688,12 @@ impl ProjectPanel {
     /// lists again any shown directory it says may have missed something.
     pub fn apply_fs_changes(&mut self, changes: &[FsChange], cx: &mut Context<Self>) {
         cx.emit(PanelEvent::FsChanged(changes.to_vec()));
+        // A folder's build files may change with no change to the tree's
+        // rows (in a folder not listed, or a `Cargo.toml`'s text): what's
+        // forgotten is drawn again, and probed again as it's drawn.
+        if self.markers.apply(changes) {
+            cx.notify();
+        }
         let State::Open(tree) = &mut self.state else {
             return;
         };
@@ -1215,6 +1276,10 @@ impl ProjectPanel {
         let mut drawn_selection = Vec::new();
         #[cfg(test)]
         let mut drawn_drop = Vec::new();
+        // Folders whose build files a probe is to find.
+        let mut probes = Vec::new();
+        #[cfg(test)]
+        let mut drawn_folders = Vec::new();
         let mut rows: Vec<gpui::AnyElement> = (shown.into_iter())
             .filter_map(|ix| Some((tree.rows(ix..ix + 1).next()?, ix)))
             .map(|(row, ix)| {
@@ -1230,7 +1295,13 @@ impl ProjectPanel {
                 }
                 let name = row.name.to_string_lossy();
                 let icon = match row.kind {
-                    EntryKind::Dir => folder_icon_ref_named(&name, row.expanded),
+                    EntryKind::Dir => {
+                        let (icon, wanted) = self.folder_icon(tree, id, &name, row.expanded);
+                        probes.extend(wanted);
+                        #[cfg(test)]
+                        drawn_folders.push((name.clone().into_owned(), icon.clone()));
+                        icon
+                    }
                     EntryKind::Symlink => Icon::FileSymlink.into(),
                     EntryKind::File => file_icon_ref(&name),
                 };
@@ -1308,6 +1379,11 @@ impl ProjectPanel {
                 element.into_any_element()
             })
             .collect();
+        for dir in probes {
+            if let Some(probe) = self.markers.request(&dir) {
+                self.probe_markers(probe, cx);
+            }
+        }
         if let Some((at, depth)) = field.filter(|(at, _)| range.contains(at)) {
             let icon = match self.edit.as_ref().map(|edit| edit.kind) {
                 // A folder or file with no name yet.
@@ -1319,6 +1395,7 @@ impl ProjectPanel {
         #[cfg(test)]
         {
             self.drawn_status.extend(drawn);
+            self.drawn_folders.extend(drawn_folders);
             self.drawn_cut.extend(drawn_cut);
             self.drawn_selection.extend(drawn_selection);
             self.drawn_drop.extend(drawn_drop);
@@ -1351,6 +1428,74 @@ impl ProjectPanel {
                 Some((kind, Some(git_panel::letter(kind))))
             }
         }
+    }
+
+    /// Folder row `id`'s icon, called `name`: by its name, unless its build
+    /// files, its parent's or the names above it say more (a module, a
+    /// source root). With it, the folders (its own and its parent) whose
+    /// build files want a probe: until one lands, the row has what's known.
+    fn folder_icon(
+        &self,
+        tree: &FileTree,
+        id: NodeId,
+        name: &str,
+        expanded: bool,
+    ) -> (IconRef, Vec<PathBuf>) {
+        let Some(path) = tree.path(id) else {
+            return (folder_icon_ref_named(name, expanded), Vec::new());
+        };
+        let listed = self.listed_markers(tree, id);
+        let parent_path = path.parent().unwrap_or(&path);
+        let parent = tree.find(parent_path);
+        let beside = parent.and_then(|parent| self.listed_markers(tree, parent));
+        // The names above it, below the root.
+        let relative = path.strip_prefix(tree.root_path()).unwrap_or(&path);
+        let mut above = relative.components().rev().skip(1).map(|c| match c {
+            Component::Normal(name) => name.to_str(),
+            _ => None,
+        });
+        let context = FolderContext {
+            parent: above.next().flatten(),
+            grandparent: above.next().flatten(),
+            own: build_files(self.markers.markers(&path, listed)),
+            beside: build_files(self.markers.markers(parent_path, beside)),
+        };
+        let icon = folder_icon_ref_in(name, &context, expanded);
+        let wanted = [parent_path, &path]
+            .into_iter()
+            .filter(|dir| self.markers.wants(dir))
+            .map(Path::to_owned)
+            .collect();
+        (icon, wanted)
+    }
+
+    /// Folder `id`'s build files from its entries, if it's listed: worked out
+    /// once per tree version.
+    fn listed_markers(&self, tree: &FileTree, id: NodeId) -> Option<Markers> {
+        let mut memo = self.listed_markers.borrow_mut();
+        if memo.version != tree.version() {
+            memo.version = tree.version();
+            memo.dirs.clear();
+        }
+        *(memo.dirs)
+            .entry(id)
+            .or_insert_with(|| Markers::of_listing(tree, id))
+    }
+
+    /// Runs `probe` in the background, and redraws with what it finds.
+    fn probe_markers(&self, probe: MarkerProbe, cx: &mut Context<Self>) {
+        let generation = self.generation;
+        let probed = cx.background_spawn(async move { probe.run() });
+        cx.spawn(async move |this, cx| {
+            let probed = probed.await;
+            (this.update(cx, |panel, cx| {
+                if panel.generation == generation && panel.markers.store(probed) {
+                    cx.notify();
+                }
+            }))
+            .ok();
+        })
+        .detach();
     }
 
     fn message(&self, text: String, cx: &App) -> gpui::AnyElement {
@@ -1552,6 +1697,7 @@ impl Render for ProjectPanel {
             self.drawn_status.clear();
             self.drawn_cut.clear();
             self.drawn_drop.clear();
+            self.drawn_folders.clear();
         }
         // A drag dropped elsewhere, or stopped; or rows moved under the
         // pointer.
@@ -1937,6 +2083,11 @@ impl ProjectPanel {
     /// Each row the last frame built, by name, and the status it drew.
     pub(crate) fn drawn_status(&self) -> Vec<(String, DrawnStatus)> {
         self.drawn_status.clone()
+    }
+
+    /// Each folder row the last frame built, by name, and its icon.
+    pub(crate) fn drawn_folders(&self) -> Vec<(String, IconRef)> {
+        self.drawn_folders.clone()
     }
 
     /// Each row the last frame drew dimmed as cut, by name.

@@ -243,6 +243,8 @@ icons! {
         FolderInput => "folder-input",
         FolderBookmark => "folder-bookmark",
         FolderClock => "folder-clock",
+        // Module and solution folders, from their build files.
+        FolderRoot => "folder-root",
     }
     // Tabler Icons 3.50.0: TintedIcons' marks for the languages and tools
     // Lucide has none for, brands and monograms.
@@ -633,6 +635,68 @@ pub trait IconSet: 'static {
     fn folder_named(&self, _name: &str, expanded: bool) -> IconRef {
         self.folder(expanded)
     }
+
+    /// The icon for a folder row called `name` where `context` says more of
+    /// it: its build files, its parent's and the names above it. By default
+    /// [`IconSet::folder_named`]'s, whatever the context.
+    fn folder_in(&self, name: &str, _context: &FolderContext<'_>, expanded: bool) -> IconRef {
+        self.folder_named(name, expanded)
+    }
+}
+
+/// The build files a folder holds, by the build tool they name.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BuildFiles {
+    /// `build.gradle` or `build.gradle.kts`.
+    pub gradle: bool,
+    /// `settings.gradle` or `settings.gradle.kts`.
+    pub gradle_settings: bool,
+    /// `pom.xml`.
+    pub maven: bool,
+    /// A `*.csproj`, `*.fsproj` or `*.vbproj`.
+    pub dotnet: bool,
+    /// A `*.sln` or `*.slnx`.
+    pub dotnet_solution: bool,
+    /// `Cargo.toml`.
+    pub cargo: bool,
+    /// A `Cargo.toml` with a `[workspace]` table.
+    pub cargo_workspace: bool,
+    /// `package.json`.
+    pub npm: bool,
+    /// `go.mod`.
+    pub go: bool,
+    /// `pyproject.toml`.
+    pub python: bool,
+    /// A `main` or `test` folder, Maven's and Gradle's layout under `src`.
+    pub main_or_test: bool,
+}
+
+impl BuildFiles {
+    /// Whether they make the folder a module: a project file of any tool.
+    pub fn module(&self) -> bool {
+        self.gradle || self.maven || self.dotnet || self.cargo || self.npm || self.go || self.python
+    }
+
+    /// Whether they make the folder a solution: a file that lists modules.
+    pub fn solution(&self) -> bool {
+        self.gradle_settings || self.dotnet_solution || self.cargo_workspace
+    }
+}
+
+/// What's known of a folder besides its name, for [`IconSet::folder_in`]:
+/// the names of the two folders above it and the build files in it and in
+/// its parent. The default, nothing known, gives the name's icon.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FolderContext<'a> {
+    /// The parent's name, `None` when it's the project root (or unknown).
+    pub parent: Option<&'a str>,
+    /// The parent's parent's name, `None` when it's the project root, or
+    /// above it.
+    pub grandparent: Option<&'a str>,
+    /// The folder's own build files, as far as they're known.
+    pub own: BuildFiles,
+    /// Its parent's build files.
+    pub beside: BuildFiles,
 }
 
 /// The default set: Lucide's icons through [`FILE_NAMES`] and [`EXTENSIONS`].
@@ -692,6 +756,12 @@ pub fn folder_icon_ref(expanded: bool) -> IconRef {
 /// pick by the name ([`IconSet::folder_named`]).
 pub fn folder_icon_ref_named(name: &str, expanded: bool) -> IconRef {
     icon_set().folder_named(name, expanded)
+}
+
+/// The installed set's icon for a folder row called `name` that `context`
+/// says more of ([`IconSet::folder_in`]).
+pub fn folder_icon_ref_in(name: &str, context: &FolderContext<'_>, expanded: bool) -> IconRef {
+    icon_set().folder_in(name, context, expanded)
 }
 
 /// The asset path of the installed set's icon for a file called `name`, for a
