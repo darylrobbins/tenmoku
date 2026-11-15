@@ -906,7 +906,7 @@ fn a_failed_write_is_tried_again_at_quit(cx: &mut TestAppContext) {
     assert!(!file.exists());
 
     fs::remove_file(&blocker).unwrap();
-    o.cx.quit();
+    quit(&mut o);
     assert_eq!(written(state.path(), &o), [line("a.txt", 3)]);
 }
 
@@ -917,11 +917,19 @@ fn quitting_before_the_rest_writes_the_last_change(cx: &mut TestAppContext) {
     toggle(&mut o, 2);
     rest(o.cx);
     toggle(&mut o, 4);
-    o.cx.quit();
+    quit(&mut o);
     assert_eq!(
         written(state.path(), &o),
         [line("a.txt", 3), line("a.txt", 5)]
     );
+}
+
+/// Quits the app as the platform does, through a clone of the app's
+/// context: `o.cx` is leaked by `into_mut` and freed by a quit callback,
+/// so quitting through it reads freed memory (a SIGSEGV on macOS).
+fn quit(o: &mut Opened) {
+    let app: TestAppContext = (**o.cx).clone();
+    app.quit();
 }
 
 /// Starts a save of the editor's text as it is now, to land later.
