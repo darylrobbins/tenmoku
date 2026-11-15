@@ -1512,6 +1512,13 @@ keys = "space r"
 command = "runs.show"
 context = "editor && vim.mode == normal && !vim.pending"
 
+# Rerun the failed tests of the run selected in Runs, else the newest test
+# run (`␣tf`): space, `t`, `f`, in the same places as `␣r`.
+[[bindings]]
+keys = "space t f"
+command = "runs.rerun_failed"
+context = "editor && vim.mode == normal && !vim.pending"
+
 # Neovim 0.11's unimpaired defaults: `]b` and `[b` step through the open
 # tabs as buffers, `]q` and `[q` through the quickfix list (`:cnext`,
 # `:cprevious`). The first and last (`[B`, `]Q`) aren't bound.

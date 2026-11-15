@@ -54,6 +54,8 @@ mod project_tree_menu;
 mod prompt;
 #[path = "audit/runs.rs"]
 mod runs;
+#[path = "audit/runs_tests.rs"]
+mod runs_tests;
 #[path = "audit/search_panel.rs"]
 mod search_panel;
 #[path = "audit/settings.rs"]
@@ -114,6 +116,7 @@ const SURFACES: &[&Surface] = &[
     &git_log_card::SURFACE,
     &project_tree_menu::SURFACE,
     &runs::SURFACE,
+    &runs_tests::SURFACE,
     &branch_menu::SURFACE,
     &inbox::SURFACE,
 ];

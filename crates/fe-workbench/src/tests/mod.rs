@@ -155,6 +155,7 @@ mod symbol_icon_tints;
 mod tabs;
 mod terminal_b3;
 mod terminal_plus;
+mod test_run_view;
 mod test_runner;
 mod title_bar;
 mod title_bar_b3;

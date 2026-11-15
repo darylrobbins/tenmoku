@@ -1,4 +1,5 @@
-//! `␣r` shows the Runs tool window (`runs.show`): space then `r` in an
+//! `␣r` shows the Runs tool window (`runs.show`), and `␣tf` reruns a test
+//! run's failed tests (`runs.rerun_failed`): space then `r` in an
 //! editor in vim's normal mode with nothing pending, on each platform. The
 //! which-key popup lists it after space, as it lists a chord's next keys
 //! (`Keymap::continuations`); space before any other key is handed back to
@@ -106,6 +107,56 @@ fn space_r_runs_show() {
             ] {
                 assert_eq!(run(&keymap, "space r", &stack), None, "{os:?} {stack:?}");
                 assert!(keymap.continuations(&[space], &stack).is_empty(), "{os:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn space_t_f_runs_rerun_failed() {
+    let space = Keystroke::parse("space").unwrap();
+    let t = Keystroke::parse("t").unwrap();
+    let f = Keystroke::parse("f").unwrap();
+    for (sources, os) in [
+        ([DEFAULT_MACOS, DEFAULT], Os::MacOs),
+        ([DEFAULT_LINUX, DEFAULT], Os::Linux),
+    ] {
+        for source in sources {
+            let keymap = keymap(source, os);
+            let normal = editor(Some("normal"), false);
+            assert_eq!(
+                run(&keymap, "space t f", &normal).as_deref(),
+                Some("runs.rerun_failed"),
+                "{os:?}"
+            );
+            // Space then `t` waits for `f`, and which-key lists it.
+            assert_eq!(outcome(&keymap, "space t", &normal), KeyOutcome::Pending);
+            let next = keymap.continuations(&[space, t], &normal);
+            let listed = next.iter().find(|next| next.next == f);
+            let listed = listed.expect("which-key lists f after space t");
+            assert_eq!(
+                listed.command.as_ref().map(|id| id.as_str()),
+                Some("runs.rerun_failed"),
+                "{os:?}"
+            );
+            // `␣r` is still `runs.show`, and space `t` before another key is
+            // vim's: all three are handed back.
+            assert_eq!(
+                run(&keymap, "space r", &normal).as_deref(),
+                Some("runs.show")
+            );
+            let x = Keystroke::parse("x").unwrap();
+            assert_eq!(
+                outcome(&keymap, "space t x", &normal),
+                KeyOutcome::Unmatched(vec![space, t, x]),
+                "{os:?}"
+            );
+            for stack in [
+                editor(Some("normal"), true),
+                editor(Some("insert"), false),
+                editor(None, false),
+            ] {
+                assert_eq!(run(&keymap, "space t f", &stack), None, "{os:?} {stack:?}");
             }
         }
     }

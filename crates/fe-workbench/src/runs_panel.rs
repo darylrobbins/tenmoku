@@ -27,11 +27,17 @@
 //! reader ([`Row::name`]). With no runs, a centred empty state names the
 //! command that runs a task.
 //!
+//! While a test run is selected, its detail ([`TestRunView`]: a split bar,
+//! the test tree, each test's last results) shows beside the list, which
+//! keeps [`LIST_FRACTION`] of the width, or, in a panel narrower than
+//! [`BESIDE_WIDTH`], under it, the list [`STACKED_ROWS`] rows tall.
+//!
 //! `runs.show` (`workbench_commands.rs`) shows it; the dock registers it
 //! ([`crate::dock`]) and its rail button, at the rail's foot after
 //! Problems'. Its text is the catalogue's (`l10n/en-US/runs.ftl`).
 
 use std::{
+    cell::Cell,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -44,13 +50,14 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Pixels, Render,
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Transformation,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px, radians, relative, svg,
+    WeakEntity, Window, canvas, div, prelude::FluentBuilder as _, px, radians, relative, svg,
 };
 use kiln_l10n::tr;
 
 use crate::{
     Workbench,
-    runs::{Run, RunId, RunStatus, RunSummary, Runs},
+    runs::{Run, RunId, RunKind, RunStatus, RunSummary, Runs},
+    test_run_view::TestRunView,
 };
 
 /// The tool window's id in the bottom dock, and its rail button's.
@@ -70,6 +77,17 @@ const VIM_FLAG: &str = "vim";
 
 /// The command the empty state's hint names: what starts a run.
 const START_COMMAND: &str = "tasks.run";
+
+/// Under this width the detail of a test run goes under the list, not
+/// beside it.
+pub(crate) const BESIDE_WIDTH: Pixels = px(600.);
+
+/// The share of the panel's width the list keeps beside a test run's
+/// detail.
+pub(crate) const LIST_FRACTION: f32 = 0.4;
+
+/// How many rows tall the list is over a test run's detail.
+pub(crate) const STACKED_ROWS: f32 = 3.;
 
 /// A running row's line along its bottom edge.
 pub(crate) const PROGRESS_HEIGHT: Pixels = px(2.);
@@ -255,6 +273,7 @@ pub(crate) fn summary_text(status: RunStatus, summary: RunSummary) -> SharedStri
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Row {
     pub(crate) id: RunId,
+    pub(crate) kind: RunKind,
     pub(crate) title: SharedString,
     pub(crate) status: RunStatus,
     pub(crate) summary: SharedString,
@@ -266,6 +285,7 @@ impl Row {
     fn of(run: &Run) -> Self {
         Self {
             id: run.id,
+            kind: run.kind,
             title: run.title.clone().into(),
             status: run.status,
             summary: summary_text(run.status, run.summary),
@@ -450,6 +470,11 @@ impl ListDelegate for RunRows {
 pub(crate) struct RunsPanel {
     runs: Entity<Runs>,
     list: Entity<List<RunRows>>,
+    /// The selected test run's detail.
+    detail: Entity<TestRunView>,
+    /// Whether the panel was last drawn wide enough for the detail beside
+    /// the list: so until it's drawn.
+    wide: Rc<Cell<bool>>,
     /// The redraw due in a [`TICK`], while a row is under a minute old.
     tick: Option<Task<()>>,
     _runs: Subscription,
@@ -464,6 +489,7 @@ impl RunsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let for_detail = workbench.clone();
         let open: Opener = Rc::new(move |run: RunId, window: &mut Window, cx: &mut App| {
             let workbench = workbench.clone();
             // Outside whatever update the click or key came in.
@@ -486,18 +512,26 @@ impl RunsPanel {
             frames_asked: Default::default(),
         };
         let list = cx.new(|cx| List::new(rows, cx));
-        let confirmed = cx.subscribe_in(&list, window, |_, list, event, window, cx| {
-            if let ListEvent::Confirmed(ix) = *event {
-                let delegate = list.read(cx).delegate();
-                if let Some(row) = delegate.rows.get(ix) {
-                    let (id, open) = (row.id, delegate.open.clone());
-                    open(id, window, cx);
+        let detail = cx.new(|cx| TestRunView::new(for_detail, window, cx));
+        let confirmed = cx.subscribe_in(
+            &list,
+            window,
+            |panel, list, event, window, cx| match *event {
+                ListEvent::Confirmed(ix) => {
+                    let delegate = list.read(cx).delegate();
+                    if let Some(row) = delegate.rows.get(ix) {
+                        let (id, open) = (row.id, delegate.open.clone());
+                        open(id, window, cx);
+                    }
                 }
-            }
-        });
+                ListEvent::Selected(_) => panel.show_detail(cx),
+            },
+        );
         let mut panel = Self {
             runs: runs.clone(),
             list,
+            detail,
+            wide: Rc::new(Cell::new(true)),
             tick: None,
             _runs: cx.observe(runs, |panel, _, cx| panel.list_runs(cx)),
             _list: confirmed,
@@ -510,6 +544,31 @@ impl RunsPanel {
     #[cfg(test)]
     pub(crate) fn list(&self) -> &Entity<List<RunRows>> {
         &self.list
+    }
+
+    /// The test run's detail, for tests.
+    #[cfg(test)]
+    pub(crate) fn detail(&self) -> &Entity<TestRunView> {
+        &self.detail
+    }
+
+    /// The run selected in the list, if any.
+    pub(crate) fn selected_run(&self, cx: &App) -> Option<RunId> {
+        let list = self.list.read(cx);
+        let ix = list.selected()?;
+        list.delegate().rows.get(ix).map(|row| row.id)
+    }
+
+    /// Shows the selected run's detail if it's a test run, else none.
+    fn show_detail(&mut self, cx: &mut Context<Self>) {
+        let list = self.list.read(cx);
+        let selected = (list.selected())
+            .and_then(|ix| list.delegate().rows.get(ix))
+            .filter(|row| row.kind == RunKind::Test)
+            .map(|row| row.id);
+        self.detail
+            .update(cx, |detail, cx| detail.show(selected, cx));
+        cx.notify();
     }
 
     /// Lists the runs again, newest first, keeping the selected run
@@ -532,7 +591,7 @@ impl RunsPanel {
                 list.keep_selected(at, cx);
             }
         });
-        cx.notify();
+        self.show_detail(cx);
     }
 
     /// Redraws the list in a [`TICK`] if a row is under a minute old and
@@ -597,6 +656,63 @@ impl RunsPanel {
     }
 }
 
+impl RunsPanel {
+    /// The list and the selected test run's detail: side by side if the
+    /// panel was last drawn [`BESIDE_WIDTH`] or wider, else the list over
+    /// the detail. A change of side redraws it.
+    fn render_with_detail(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let c = cx.theme().colors;
+        let wide = self.wide.get();
+        let (cell, panel) = (self.wide.clone(), cx.weak_entity());
+        let measure = canvas(
+            move |bounds, _, cx| {
+                let now = bounds.size.width >= BESIDE_WIDTH;
+                if cell.replace(now) != now {
+                    panel.update(cx, |_, cx| cx.notify()).ok();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+        let list = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .min_h_0()
+            .map(|list| match wide {
+                true => list.h_full().w(relative(LIST_FRACTION)).flex_none(),
+                false => list
+                    .w_full()
+                    .h(fe_ui::ROW_HEIGHT * STACKED_ROWS)
+                    .flex_none(),
+            })
+            .child(self.list.clone());
+        let detail = div()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .border_color(c.border.subtle)
+            .map(|detail| match wide {
+                true => detail.border_l_1(),
+                false => detail.border_t_1(),
+            })
+            .child(self.detail.clone());
+        div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .when(!wide, |both| both.flex_col())
+            .child(measure)
+            .child(list)
+            .child(detail)
+    }
+}
+
 impl Focusable for RunsPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.list.focus_handle(cx)
@@ -613,8 +729,11 @@ impl Render for RunsPanel {
         if fe_gpui::vim_enabled(cx) {
             context.add(VIM_FLAG);
         }
+        let detail = self.detail.read(cx).run().is_some();
         let body = if empty {
             self.render_empty(cx).into_any_element()
+        } else if detail {
+            self.render_with_detail(cx).into_any_element()
         } else {
             self.list.clone().into_any_element()
         };
@@ -653,6 +772,20 @@ impl Workbench {
         self.show_terminal_dock(window, cx);
         terminal.update(cx, |terminal, cx| terminal.activate(at, window, cx));
         true
+    }
+
+    /// Selects `run` in the Runs list, as a click would, showing its detail
+    /// if it's a test run. False if it isn't listed.
+    pub fn select_run(&mut self, run: RunId, cx: &mut Context<Self>) -> bool {
+        self.runs_panel.update(cx, |panel, cx| {
+            let list = panel.list.read(cx);
+            let rows = list.delegate().rows();
+            let Some(at) = rows.iter().position(|row| row.id == run) else {
+                return false;
+            };
+            panel.list.update(cx, |list, cx| list.select(at, cx));
+            true
+        })
     }
 
     /// The Runs tool window, for tests.

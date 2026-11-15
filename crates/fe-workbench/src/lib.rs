@@ -126,6 +126,7 @@ mod task_run;
 mod terminal_panel;
 mod test_commands;
 mod test_lens;
+mod test_run_view;
 pub mod test_runnables;
 pub mod test_runner;
 mod theme_picker;
@@ -227,6 +228,7 @@ pub fn init(cx: &mut App) {
     test_lens::init(cx);
     lane_marks::init(cx);
     test_runner::init(cx);
+    test_run_view::init(cx);
     lsp::init(cx);
     grammar_prompt::init(cx);
     kiln_shell::menu_bar::register(cx);

@@ -240,7 +240,7 @@ fn id(name: &str) -> TestId {
     TestId::new("p", name)
 }
 
-const TESTS: &str = "test -p p --lib --no-fail-fast";
+const TESTS: &str = "test -p p --lib --no-fail-fast --message-format json-render-diagnostics";
 
 #[gpui::test]
 fn a_file_run_reports_live_counts_and_finishes(cx: &mut TestAppContext) {
@@ -347,7 +347,10 @@ fn results_are_recorded_in_the_history(cx: &mut TestAppContext) {
         run.title,
         tr!("workbench-test-runs-project-title", folder = folder).to_string()
     );
-    assert_eq!(project.args()[1], "test --workspace --no-fail-fast");
+    assert_eq!(
+        project.args()[1],
+        "test --workspace --no-fail-fast --message-format json-render-diagnostics"
+    );
     project.wait_until("the second run to be saved", |project| {
         project.history().last8(&id(ADDS)).len() == 2
     });
@@ -412,7 +415,10 @@ fn nextest_is_used_when_the_root_configures_it(cx: &mut TestAppContext) {
     fs::remove_dir_all(&config).unwrap();
     project.run("runs.test_project");
     project.finished();
-    assert_eq!(project.args()[2], "test --workspace --no-fail-fast");
+    assert_eq!(
+        project.args()[2],
+        "test --workspace --no-fail-fast --message-format json-render-diagnostics"
+    );
 
     // Configured in the workspace's metadata: nextest.
     let manifest = "[package]\nname = \"p\"\n\n[workspace.metadata.nextest]\n";
