@@ -59,6 +59,7 @@ mod ignore_assist;
 mod ignore_diagnostics;
 mod inline_edit;
 pub mod l10n;
+mod lane_diff;
 mod lane_marks;
 mod lanes;
 mod language_picker;
@@ -234,6 +235,7 @@ pub fn init(cx: &mut App) {
     agent_audit::init(cx);
     test_commands::init(cx);
     test_lens::init(cx);
+    lane_diff::init(cx);
     lane_marks::init(cx);
     debug_breakpoints::init(cx);
     debug_session::init(cx);

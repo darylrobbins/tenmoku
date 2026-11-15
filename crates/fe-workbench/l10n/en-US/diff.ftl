@@ -95,3 +95,15 @@ workbench-diff-years-ago =
 workbench-diff-commit-summary = { $short }  { $summary }
 # Its second: the author, then how long ago.
 workbench-diff-commit-byline = { $author }, { $ago }
+
+## A lane's file diff (lane_diff.rs, agent lanes card 15).
+
+# The title of `agent.diff_lane_file`.
+command-agent-diff_lane_file = Show Lane Changes to Active File
+# The left header: the file as it is.
+workbench-lane-diff-before = Before
+# The right header, in the agent's colour: the file with lane $lane's pending
+# hunks applied.
+workbench-lane-diff-after = After · lane { $lane }
+# Said when the active file has no pending work of any lane.
+workbench-lane-diff-none = No lane has pending changes to this file

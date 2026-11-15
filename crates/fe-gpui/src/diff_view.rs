@@ -53,7 +53,7 @@ use fe_editor::{
 
 use fe_ui::{Icon, IconButton, Tooltip};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
+    AnyElement, AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, PromptLevel, Render,
     SharedString, Styled as _, Subscription, Task, Window, div, px,
 };
@@ -195,6 +195,9 @@ pub struct DiffSide {
     pub model: EditorModel,
     /// Whether the side refuses edits. The left side always does.
     pub read_only: bool,
+    /// Whether the side is an agent's work: its header's text takes the
+    /// theme's `agent_lane` colour (silver-blue), never the accent's.
+    pub agent: bool,
 }
 
 /// Sets the language of each of `views` with no path to go by, going by the
@@ -235,7 +238,15 @@ impl DiffSide {
             title: title.into(),
             model,
             read_only: false,
+            agent: false,
         }
+    }
+
+    /// Marks the side as an agent's work (`After · lane 2`), or not: its
+    /// header's text is drawn in the theme's `agent_lane` colour.
+    pub fn agent(mut self, agent: bool) -> Self {
+        self.agent = agent;
+        self
     }
 
     /// A side that refuses edits: a model over a fixed text, such as a
@@ -253,6 +264,8 @@ pub struct DiffView {
     /// title ([`DiffView::with_compared_path`]).
     compared_path: Option<PathBuf>,
     titles: [SharedString; 2],
+    /// Whether each side's header is an agent's ([`DiffSide::agent`]).
+    agent: [bool; 2],
     views: [Entity<EditorView>; 2],
     /// Each side's tints, registered on its model.
     tints: [Rc<RefCell<DiffTints>>; 2],
@@ -343,6 +356,7 @@ impl DiffView {
         let tints = [Tint::DiffRemoved, Tint::DiffAdded]
             .map(|tint| Rc::new(RefCell::new(DiffTints::new(tint))));
         let titles = [left.title, right.title];
+        let agent = [left.agent, right.agent];
         let mut view = |mut model: EditorModel, read_only: bool, tints: &Rc<RefCell<DiffTints>>| {
             model.own_row_changes();
             // Absolute numbers, whatever the editor split from shows.
@@ -398,6 +412,7 @@ impl DiffView {
             file_name,
             compared_path: None,
             titles,
+            agent,
             views,
             tints,
             diff: TextDiff::default(),
@@ -447,6 +462,18 @@ impl DiffView {
     pub fn detect_languages_again(&mut self, cx: &mut Context<Self>) {
         let views = self.views.clone();
         detect_side_languages(&views, Path::new(self.file_name.as_ref()), cx);
+    }
+
+    /// The text colour `side`'s (0 left, 1 right) header is drawn in, if it
+    /// isn't the header's usual: the theme's `agent_lane` for an agent's
+    /// ([`DiffSide::agent`]).
+    pub fn header_color(&self, side: usize, cx: &App) -> Option<Hsla> {
+        self.agent[side].then(|| self.views[0].read(cx).theme.agent_lane)
+    }
+
+    /// The sides' header titles, left then right.
+    pub fn titles(&self) -> [SharedString; 2] {
+        self.titles.clone()
     }
 
     pub fn left(&self) -> &Entity<EditorView> {
@@ -1031,8 +1058,12 @@ impl Render for DiffView {
         let theme = self.views[0].read(cx).theme.clone();
         let mut key_context = KeyContext::default();
         key_context.add(KEY_CONTEXT);
-        let header = |title: &SharedString, message: Option<SharedString>| {
-            div()
+        let header = |title: &SharedString, agent: bool, message: Option<SharedString>| {
+            let mut header = div();
+            if agent {
+                header = header.text_color(theme.agent_lane);
+            }
+            header
                 .flex_1()
                 .min_w_0()
                 .flex()
@@ -1073,8 +1104,8 @@ impl Render for DiffView {
                     .text_color(theme.gutter_active_foreground)
                     .text_size(theme.font_size)
                     .font_family(theme.font_family.clone())
-                    .children((!self.inline).then(|| header(&self.titles[0], None)))
-                    .child(header(&self.titles[1], self.status()))
+                    .children((!self.inline).then(|| header(&self.titles[0], self.agent[0], None)))
+                    .child(header(&self.titles[1], self.agent[1], self.status()))
                     .child(buttons),
             )
             .child(

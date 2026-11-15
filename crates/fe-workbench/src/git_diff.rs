@@ -1498,6 +1498,19 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let (left, right) = (fixed_side(left.0, &left.1), fixed_side(right.0, &right.1));
+        self.open_side_compare(left, right, language_of, window, cx);
+    }
+
+    /// [`Self::open_text_compare`] over ready sides, as `lane_diff.rs`'s
+    /// `After · lane N` one, whose header is the agent's.
+    pub(crate) fn open_side_compare(
+        &mut self,
+        left: DiffSide,
+        right: DiffSide,
+        language_of: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pane = self.active.downgrade();
         let compared = (language_of.to_owned(), None, false);
         let diff = self.new_diff(compared, left, Err(right), cx);
