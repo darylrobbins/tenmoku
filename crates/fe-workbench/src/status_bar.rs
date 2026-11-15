@@ -42,8 +42,8 @@ use fe_command::{
 use fe_gpui::{EditorView, commands::RunCommand, pane_item::status as built_in};
 use fe_ui::StatusBarFrame;
 use gpui::{
-    App, Context, Entity, Global, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Subscription, WeakEntity, Window, div,
+    App, AppContext as _, Context, Entity, Global, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, WeakEntity, Window, div,
 };
 use kiln_l10n::{tr, verbatim};
 use kiln_shell::{
@@ -51,7 +51,9 @@ use kiln_shell::{
     status::{self, StatusItems},
 };
 
-use crate::encoding_picker::CHANGE_ENCODING;
+use crate::{
+    encoding_picker::CHANGE_ENCODING, operations::Operations, operations_status::OperationsStatus,
+};
 
 pub(crate) use built_in::{language_label, plain_text};
 
@@ -148,6 +150,16 @@ pub(crate) fn bell_item(needs_you: usize) -> kiln_shell::StatusItem {
     .command(show)
 }
 
+/// The operations the bar shows, and their item.
+struct Running {
+    operations: Entity<Operations>,
+    item: Entity<OperationsStatus>,
+    /// Whether any were running at the last render: the bar redraws when
+    /// that changes, the item itself when what it says does.
+    shown: bool,
+    _observe: Subscription,
+}
+
 #[derive(Default)]
 pub struct StatusBar {
     /// The item followed: the active pane's active tab's.
@@ -159,6 +171,9 @@ pub struct StatusBar {
     /// How many notifications need the user, for the bell; no bell before
     /// the workbench says ([`StatusBar::set_bell`]).
     bell: Option<usize>,
+    /// The operation in progress, after the vim mode, while one runs
+    /// ([`StatusBar::set_operations`]).
+    operations: Option<Running>,
     line: vim_line::VimLine,
     _observe: Option<Subscription>,
     /// Each item drawn by the last render, in order: its side, id and text.
@@ -187,6 +202,43 @@ impl StatusBar {
             self.bell = Some(needs_you);
             cx.notify();
         }
+    }
+
+    /// Shows the operation in progress of `operations`, after the vim mode,
+    /// while one runs ([`crate::operations_status`]).
+    pub(crate) fn set_operations(
+        &mut self,
+        operations: Entity<Operations>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item = cx.new(|cx| OperationsStatus::new(operations.clone(), window, cx));
+        let shown = !operations.read(cx).list().is_empty();
+        let observe = cx.observe(&operations, |bar, operations, cx| {
+            let any = !operations.read(cx).list().is_empty();
+            if let Some(running) = bar.operations.as_mut()
+                && running.shown != any
+            {
+                running.shown = any;
+                cx.notify();
+            }
+        });
+        self.operations = Some(Running {
+            operations,
+            item,
+            shown,
+            _observe: observe,
+        });
+        cx.notify();
+    }
+
+    /// The operation item.
+    pub(crate) fn operations_item(&self) -> Entity<OperationsStatus> {
+        self.operations
+            .as_ref()
+            .expect("operations set")
+            .item
+            .clone()
     }
 
     /// Removes the host's item `id`; a built-in item it replaced comes back.
@@ -295,7 +347,35 @@ impl Render for StatusBar {
                 .map(|item| (item.side, item.id.clone(), item.text.clone()))
                 .collect();
         }
-        status::status_bar(items, cx).into_any_element()
+        let operation = self
+            .operations
+            .as_ref()
+            .filter(|running| !running.operations.read(cx).list().is_empty())
+            .map(|running| running.item.clone());
+
+        let Some(operation) = operation else {
+            return status::status_bar(items, cx).into_any_element();
+        };
+        // The operation goes after the vim mode and its recording.
+        let (left, right): (Vec<_>, Vec<_>) = items
+            .into_iter()
+            .partition(|item| item.side == StatusSide::Left);
+        let after = left
+            .iter()
+            .take_while(|item| {
+                item.id == StatusItem::VIM_MODE || item.id == StatusItem::VIM_RECORDING
+            })
+            .count();
+        let mut entries: Vec<gpui::AnyElement> = left
+            .into_iter()
+            .map(|item| status::status_entry(item, cx).into_any_element())
+            .collect();
+        entries.insert(after, operation.into_any_element());
+        let ui = fe_ui::ui_theme(cx);
+        StatusBarFrame::new(&ui)
+            .left(entries)
+            .right(right.into_iter().map(|item| status::status_entry(item, cx)))
+            .into_any_element()
     }
 }
 

@@ -109,6 +109,7 @@ mod notification_inbox_view;
 mod open_folder;
 mod open_settings;
 mod operations;
+mod operations_status;
 mod outline_detail;
 mod outline_kind_icons;
 mod outline_panel;

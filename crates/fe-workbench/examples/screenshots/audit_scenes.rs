@@ -42,6 +42,8 @@ mod git_log_card;
 mod hover;
 #[path = "audit/inbox.rs"]
 mod inbox;
+#[path = "audit/operations.rs"]
+mod operations;
 #[path = "audit/problems.rs"]
 mod problems;
 #[path = "audit/problems_detail.rs"]
@@ -122,6 +124,8 @@ const SURFACES: &[&Surface] = &[
     &runs_tests::SURFACE,
     &branch_menu::SURFACE,
     &inbox::SURFACE,
+    &operations::CLOSED,
+    &operations::LIST,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup

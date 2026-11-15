@@ -71,6 +71,7 @@ mod nav_picker;
 mod open;
 mod open_at;
 pub mod operations;
+mod operations_status;
 mod outline_panel;
 mod pane;
 mod pane_drag;

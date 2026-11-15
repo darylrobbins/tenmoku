@@ -656,6 +656,9 @@ impl Workbench {
             )
         });
         let operations = cx.new(|cx| crate::operations::Operations::new(&runs, cx));
+        status_bar.update(cx, |bar, cx| {
+            bar.set_operations(operations.clone(), window, cx)
+        });
         // A restored layout's panes are made like a pane of the workbench's.
         let template = Rc::new(RefCell::new(pane.downgrade()));
         let workspace = cx.new(|cx| {

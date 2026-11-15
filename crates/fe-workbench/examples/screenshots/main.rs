@@ -50,6 +50,13 @@ mod setup_scene;
 #[cfg(target_os = "macos")]
 mod token_probe;
 
+/// The operations scene's steps compile on every platform, so Linux checks
+/// them; its surfaces are Mac-only.
+#[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
+#[path = "audit/operations.rs"]
+mod operations_scene;
+
 use std::process::ExitCode;
 
 #[cfg(target_os = "macos")]

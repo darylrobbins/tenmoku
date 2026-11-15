@@ -15,3 +15,24 @@ workbench-status-select-encoding = Select Encoding
 # The mode pill before the line's `:`, `/` or `?`, in capitals as vim's
 # modes are.
 workbench-status-command-line-mode = COMMAND
+
+## The operation in progress (operations_status.rs)
+
+# The count in the item, from its message: $done of $total, such as 3/12.
+workbench-status-operation-count = { $done }/{ $total }
+# The others running, beside the primary operation. $count is how many.
+workbench-status-operation-more = +{ $count }
+# The item's accessible name: $label is the primary operation's, $count how
+# many others run.
+workbench-status-operation-name =
+    { $count ->
+        [0] { $label }
+        [one] { $label }, 1 more
+       *[other] { $label }, { $count } more
+    }
+# The list's accessible name, opened from the item.
+workbench-status-operations-title = Background operations
+# What a list row says an operation comes from, besides a language server's
+# own name: a task run, or other background work.
+workbench-status-operation-source-run = Task
+workbench-status-operation-source-other = Background

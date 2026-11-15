@@ -110,6 +110,16 @@ hooks.
 | Git log's commit card | It's a hoverable tooltip (`crates/fe-workbench/src/git_log.rs`, `hoverable_tooltip`), shown after GPUI's 500 ms tooltip delay, which the capture's settling doesn't wait for | A `#[doc(hidden)]` `GitLogPanel::show_card(ix, window, cx)`; the panel type is crate-private today, so also a `Workbench::git_log_panel()` accessor |
 | Problems panel with rows | Only the empty state is captured: diagnostics come from language servers and task runs | A `#[doc(hidden)]` `Workbench::set_diagnostics_for_audit(path, diagnostics)`, or reuse the peek hook's fake LSP |
 
+### Unrecorded scenes
+
+The operation in progress on the status bar (T388, Mac T1586) has two
+surfaces, `operations` (the item, list closed) and `operations_list` (the list
+open). Both are **unrecorded**: the Mac lead records them on the Mac, which
+is Metal-only, when the batch lands, and checks their probes then. Their
+steps (`audit/operations.rs`) compile on Linux too (`main.rs` includes the
+file there, without the surfaces), checked by
+`cargo check -p fe-workbench --examples`.
+
 ### Other crates' scenes
 
 Their existing goldens are the reference for the surfaces they draw; the audit
