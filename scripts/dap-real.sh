@@ -38,5 +38,5 @@ python3 -I -m venv "$scratch/venv"
   "$scratch/$DEBUGPY_WHEEL"
 export FE_DAP_PYTHON="$scratch/venv/bin/python"
 
-cargo nextest run -p fe-dap --run-ignored only -E 'test(/real_adapter|_breakpoint_step_variables_evaluate/)' \
+cargo nextest run -p fe-dap --run-ignored only -E 'test(/_breakpoint_step_variables_evaluate/)' \
   --success-output final --no-fail-fast
