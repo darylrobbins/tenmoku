@@ -6,8 +6,9 @@ use std::{cell::RefCell, rc::Rc};
 use fe_buffer::{Buffer, ResolvedSelection};
 use fe_editor::EditorModel;
 use gpui::{
-    Entity, Focusable as _, Hsla, Modifiers, Pixels, Point, SharedString, TestAppContext,
-    VisualTestContext,
+    AppContext as _, Context, Entity, Focusable as _, Hsla, IntoElement, Modifiers,
+    ParentElement as _, Pixels, Point, Render, SharedString, Styled as _, TestAppContext,
+    VisualTestContext, Window, div, px,
 };
 
 use crate::{hover::HOVER_DELAY, *};
@@ -305,4 +306,85 @@ fn edited_rows_go_blank_and_later_rows_follow(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(column(&view, cx), (0., text_left));
     assert!(painted(&view, cx).is_empty());
+}
+
+/// An editor `shift` px from the window's left edge, which a test moves.
+struct Movable {
+    editor: Entity<EditorView>,
+    shift: f32,
+}
+
+impl Render for Movable {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w_full()
+            .h_full()
+            .pl(px(self.shift))
+            .child(self.editor.clone())
+    }
+}
+
+/// An annotated, focused editor in a [`Movable`] at no shift.
+fn movable(
+    cx: &mut TestAppContext,
+) -> (Entity<Movable>, Entity<EditorView>, &mut VisualTestContext) {
+    cx.update(init);
+    let (host, cx) = cx.add_window_view(|_, cx| {
+        let mut model = EditorModel::new(Buffer::new(TEXT), None);
+        model.set_cursor(0);
+        let theme = EditorTheme::default_dark(cx);
+        let editor = cx.new(|cx| EditorView::new(model, theme, cx));
+        Movable { editor, shift: 0. }
+    });
+    let view = host.read_with(cx, |host, _| host.editor.clone());
+    cx.update(|window, cx| {
+        window.activate_window();
+        window.focus(&view.focus_handle(cx), cx);
+    });
+    cx.run_until_parked();
+    annotate_two(&view, cx);
+    (host, view, cx)
+}
+
+fn move_editor(host: &Entity<Movable>, shift: f32, cx: &mut VisualTestContext) {
+    host.update(cx, |host, cx| {
+        host.shift = shift;
+        cx.notify();
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn moving_the_editor_from_under_the_pointer_hides_a_shown_popover(cx: &mut TestAppContext) {
+    let (host, view, cx) = movable(cx);
+    let shown = |cx: &mut VisualTestContext| view.read_with(cx, |view, _| view.popover_text());
+    rest(slot(&view, cx, 1), cx);
+    assert_eq!(shown(cx).as_deref(), Some("entry 0 at row 1"));
+
+    // No mouse event: the column just isn't under the pointer any more.
+    move_editor(&host, 400., cx);
+    cx.executor().advance_clock(HOVER_DELAY);
+    cx.run_until_parked();
+    assert_eq!(shown(cx), None);
+    cx.executor().advance_clock(HOVER_DELAY * 4);
+    cx.run_until_parked();
+    assert_eq!(shown(cx), None, "it stays gone");
+}
+
+#[gpui::test]
+fn moving_the_editor_from_under_the_pointer_cancels_a_pending_popover(cx: &mut TestAppContext) {
+    let (host, view, cx) = movable(cx);
+    let shown = |cx: &mut VisualTestContext| view.read_with(cx, |view, _| view.popover_text());
+    let row_1 = slot(&view, cx, 1);
+    cx.simulate_mouse_move(row_1, None, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(shown(cx), None, "still waiting out the delay");
+
+    move_editor(&host, 400., cx);
+    cx.executor().advance_clock(HOVER_DELAY);
+    cx.run_until_parked();
+    assert_eq!(shown(cx), None);
+    cx.executor().advance_clock(HOVER_DELAY * 4);
+    cx.run_until_parked();
+    assert_eq!(shown(cx), None, "it never shows");
 }
