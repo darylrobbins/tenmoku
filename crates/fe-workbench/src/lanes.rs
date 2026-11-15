@@ -687,10 +687,34 @@ impl Workbench {
         let editors = self.open_editors(cx);
         self.follow_lane_editors(&editors, cx);
         let tally = self.tally(id, &editors, cx);
-        self.lanes.update(cx, |store, cx| {
+        self.update_lane(id, cx, |store, cx| {
             store.turn(id, event, tally);
             cx.notify();
         });
+    }
+
+    /// Runs `change` on the lane store for lane `id`; a lane it moves into
+    /// `PendingReview` says so in a toast, but for the chat's.
+    fn update_lane<R>(
+        &mut self,
+        id: LaneId,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut LaneStore, &mut Context<LaneStore>) -> R,
+    ) -> R {
+        let state_of = |store: &LaneStore| store.lane(id).map(|lane| lane.state);
+        let before = state_of(self.lanes.read(cx));
+        let result = self.lanes.update(cx, change);
+        let store = self.lanes.read(cx);
+        // The chat's own changes are reviewed in the chat.
+        if id != chat_lane()
+            && before != Some(LaneState::PendingReview)
+            && state_of(store) == Some(LaneState::PendingReview)
+            && let Some(summary) = store.summaries().into_iter().find(|s| s.id == id)
+        {
+            let files = summary.files.iter().filter(|(_, c)| c.pending > 0).count();
+            crate::workbench::toast::show_lane_review(cx, id, &summary.name, files);
+        }
+        result
     }
 
     /// Counts every lane's hunks again, following the open editors'
@@ -703,7 +727,7 @@ impl Workbench {
             .collect();
         for id in ids {
             let tally = self.tally(id, &editors, cx);
-            self.lanes.update(cx, |store, cx| {
+            self.update_lane(id, cx, |store, cx| {
                 if store.recount(id, tally) {
                     cx.notify();
                 }

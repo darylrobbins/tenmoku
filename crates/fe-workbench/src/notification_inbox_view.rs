@@ -434,7 +434,7 @@ impl NotificationInboxView {
         cx: &mut Context<Self>,
     ) {
         self.close(true, window, cx);
-        toast::run_action(command, source, window, cx);
+        toast::run_action(command, None, source, window, cx);
         (self.layer).update(cx, |layer, cx| {
             layer.resolve_notification(id, Resolution::Acted, cx)
         });

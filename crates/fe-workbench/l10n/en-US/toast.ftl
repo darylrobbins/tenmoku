@@ -11,3 +11,16 @@ workbench-toast-count =
         [one] ×{ $count }
        *[other] ×{ $count }
     }
+
+# An agent's toast when its lane is done and waits for review. $lane is the
+# lane's number, $name what the agent calls itself, $files how many files
+# have changes to review.
+workbench-toast-lane-done =
+    lane { $lane } · { $name } is done: { $files ->
+        [one] { $files } file
+       *[other] { $files } files
+    } to review
+# That toast's action: opens the lane's changes for review.
+workbench-toast-review-changes = Review changes
+# That toast's other button: leaves the changes for now.
+workbench-toast-later = Later

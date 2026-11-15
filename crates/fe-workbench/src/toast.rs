@@ -47,7 +47,7 @@ use std::{
 };
 
 use crate::workbench::git_commands::git_log::float_shadow;
-use fe_command::{CommandId, Invocation, Source};
+use fe_command::{CommandId, Invocation, Source, Value};
 use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, radius};
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, FocusHandle, HoverListenerMode,
@@ -61,6 +61,7 @@ use kiln_l10n::{Text, text, tr};
 #[path = "notification_inbox.rs"]
 pub(crate) mod notification_inbox;
 
+use crate::workbench::notification_inbox_view::source_icon;
 use notification_inbox::{NotificationId, NotificationInbox, NotificationSource, Resolution};
 
 /// How many toasts show at once.
@@ -164,6 +165,8 @@ pub(crate) struct Toast {
     pub action: Option<(String, CommandId)>,
     /// A question, with a button per answer.
     pub choices: Option<Choices>,
+    /// What the action's command is given, if anything.
+    pub action_args: Option<Value>,
     /// Who raised it, for the notification inbox: the app's own if none.
     pub source: Option<NotificationSource>,
 }
@@ -176,12 +179,12 @@ impl Toast {
             detail: None,
             action: None,
             choices: None,
+            action_args: None,
             source: None,
         }
     }
 
     /// Says who raised it, as the inbox shows.
-    #[cfg_attr(not(test), allow(dead_code, reason = "no caller yet"))]
     pub(crate) fn source(mut self, source: NotificationSource) -> Self {
         self.source = Some(source);
         self
@@ -227,9 +230,14 @@ impl Toast {
         self
     }
 
-    #[cfg_attr(not(test), allow(dead_code, reason = "no caller outside tests yet"))]
     pub(crate) fn action(mut self, label: impl Into<String>, command: CommandId) -> Self {
         self.action = Some((label.into(), command));
+        self
+    }
+
+    /// Gives the action's command `args`.
+    pub(crate) fn action_args(mut self, args: Value) -> Self {
+        self.action_args = Some(args);
         self
     }
 
@@ -502,6 +510,32 @@ pub(crate) fn show(cx: &mut App, toast: Toast) {
         return;
     };
     layer.update(cx, |layer, cx| layer.push(toast, cx));
+}
+
+/// Shows that lane `lane`, `name`, is done with `files` files to review:
+/// an agent's toast with a Review changes action, which runs
+/// `agent.review_lane` for the lane, and Later.
+pub(crate) fn show_lane_review(
+    cx: &mut App,
+    lane: fe_editor::lane::LaneId,
+    name: &str,
+    files: usize,
+) {
+    let message = tr!(
+        "workbench-toast-lane-done",
+        lane = lane.get(),
+        name = name,
+        files = files
+    );
+    let toast = Toast::info(message.to_string())
+        .source(NotificationSource::Agent)
+        .action(
+            tr!("workbench-toast-review-changes").to_string(),
+            CommandId::parse(crate::git_panel::REVIEW_LANE_COMMAND).expect("a valid command ID"),
+        )
+        .action_args(Value::from_iter([("lane", lane.get())]))
+        .choices(vec![tr!("workbench-toast-later").to_string()], |_| {});
+    show(cx, toast);
 }
 
 /// The layer of window `active` if it has one, else the first one open.
@@ -1073,7 +1107,12 @@ impl ToastLayer {
     ) -> impl IntoElement + use<> {
         let colors = cx.theme().colors;
         let look = card_look(&colors);
-        let (icon, level) = level_icon(entry.toast.level, &colors);
+        let (icon, level) = match entry.toast.source {
+            Some(source) => source_icon(source, entry.toast.level, &colors),
+            None => level_icon(entry.toast.level, &colors),
+        };
+        let action_tint = action_tint(entry.toast.source, &colors);
+        let action_args = entry.toast.action_args.clone();
         debug_assert!(
             entry.toast.action_count() <= MAX_ACTIONS,
             "a toast has room for {MAX_ACTIONS} actions: {:?}",
@@ -1208,6 +1247,9 @@ impl ToastLayer {
                 .child(
                     Button::new(("toast-action", ix), Text::verbatim(label))
                         .small()
+                        .when_some(action_tint, |button, tint| {
+                            button.text_color(tint).border_color(tint)
+                        })
                         .when_some(focus, |button, focus| button.focus_handle(&focus))
                         .on_click(move |event, window, cx| {
                             // Pressed from the keyboard, the command runs
@@ -1220,7 +1262,7 @@ impl ToastLayer {
                                 true => Source::Keyboard,
                                 false => Source::Mouse,
                             };
-                            run_action(command.clone(), source, window, cx);
+                            run_action(command.clone(), action_args.clone(), source, window, cx);
                             layer
                                 .update(cx, |layer, cx| layer.resolve(id, Resolution::Acted, cx))
                                 .ok();
@@ -1300,6 +1342,16 @@ impl ToastLayer {
             .children(action)
             .children(choices)
     }
+}
+
+/// The colour of an action's button edge and label: the agent's for an
+/// agent's toast, since silver-blue is only ever an agent signal; none for
+/// the rest, which keep the plain button.
+pub(crate) fn action_tint(
+    source: Option<NotificationSource>,
+    colors: &fe_ui::Tokens<gpui::Hsla>,
+) -> Option<gpui::Hsla> {
+    (source == Some(NotificationSource::Agent)).then_some(colors.agent.base)
 }
 
 /// A level's icon and its colour: shinsha for an error, kiseto for a
@@ -1468,9 +1520,18 @@ impl IntoElement for Placed {
 
 /// Runs `command` from where `window`'s focus is, in its context, as the
 /// command palette does once it's given focus back.
-pub(crate) fn run_action(command: CommandId, source: Source, window: &mut Window, cx: &mut App) {
+pub(crate) fn run_action(
+    command: CommandId,
+    args: Option<Value>,
+    source: Source,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let stack = kiln_platform::keys::context_stack(&window.context_stack(), cx);
-    let invocation = Invocation::new(command).source(source).context(stack);
+    let mut invocation = Invocation::new(command).source(source).context(stack);
+    if let Some(args) = args {
+        invocation = invocation.args(args);
+    }
     window.defer(cx, move |window, cx| {
         if let Err(error) =
             kiln_platform::command_actions::dispatch_invocation(invocation, window, cx)
@@ -1523,6 +1584,10 @@ mod tests {
 #[cfg(test)]
 #[path = "toast_tests.rs"]
 mod toast_tests;
+
+#[cfg(test)]
+#[path = "toast_agent_tests.rs"]
+mod toast_agent_tests;
 
 #[cfg(test)]
 #[path = "toast_routing_tests.rs"]
