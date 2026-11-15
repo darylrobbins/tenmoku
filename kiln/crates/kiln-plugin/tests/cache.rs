@@ -273,7 +273,10 @@ fn a_fifo_at_the_entry_is_a_miss() {
         sender.send(cache.compiled()).unwrap();
     });
     let compiled = received
-        .recv_timeout(Duration::from_secs(2))
+        // The load also compiles the component after the miss, which can take seconds on a
+        // loaded machine. A load that blocks on the FIFO never returns, so a long deadline
+        // still catches it.
+        .recv_timeout(Duration::from_secs(60))
         .expect("blocked on the FIFO");
     assert_eq!(compiled, 1);
 }
