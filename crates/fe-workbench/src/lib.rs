@@ -56,6 +56,7 @@ pub mod l10n;
 mod lane_marks;
 mod lanes;
 mod language_picker;
+pub mod launch_defs;
 mod line_ending_picker;
 pub mod loader;
 mod lsp;

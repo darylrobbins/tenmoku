@@ -19,6 +19,9 @@ fe-chat-view.workspace = true
 fe-net.workspace = true
 fe-command.workspace = true
 fe-config.workspace = true
+# Launch configurations (launch_defs.rs): the adapters an `adapter` or a
+# launch.json `type` names, through fe-dap's alias table.
+fe-dap.workspace = true
 fe-editor.workspace = true
 # Files too large to read open in a read-only view.
 fe-fileview.workspace = true

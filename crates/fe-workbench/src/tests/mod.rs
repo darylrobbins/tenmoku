@@ -81,6 +81,7 @@ mod gradle_custom_task;
 mod hover_callers;
 mod icon_theme_install;
 mod launch;
+mod launch_defs;
 pub(crate) mod lsp;
 mod lsp_aliases;
 mod lsp_aliases_language;

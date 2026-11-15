@@ -2749,6 +2749,7 @@ dependencies = [
  "fe-chat-anthropic",
  "fe-chat-view",
  "fe-config",
+ "fe-dap",
  "fe-editor",
  "fe-fileview",
  "fe-fonts",

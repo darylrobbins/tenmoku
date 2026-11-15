@@ -22,6 +22,7 @@ pub mod debug_settings;
 pub mod editorconfig;
 pub mod first_run;
 pub mod harpoon;
+pub mod jsonc;
 pub mod l10n;
 pub mod paths;
 pub mod recent;

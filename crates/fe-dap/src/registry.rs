@@ -236,6 +236,19 @@ fn kill_group(child: &mut async_process::Child) {
     let _ = child.kill();
 }
 
+/// Where the entry `name_or_type` names is among `entries`: by name, else
+/// the first answering to it as a VS Code `type`.
+fn position(entries: &[Entry], name_or_type: &str) -> Option<usize> {
+    entries
+        .iter()
+        .position(|entry| entry.spec.name == name_or_type)
+        .or_else(|| {
+            entries
+                .iter()
+                .position(|entry| entry.spec.types.iter().any(|ty| ty == name_or_type))
+        })
+}
+
 /// One adapter before resolution: its spec, and how to finish it.
 #[derive(Clone, Debug)]
 pub(crate) struct Entry {
@@ -382,16 +395,19 @@ impl Registry {
     /// resolved for `context`.
     pub fn find(&self, name_or_type: &str, context: &Context) -> Option<Adapter> {
         let entries = self.entries();
-        let index = entries
-            .iter()
-            .position(|entry| entry.spec.name == name_or_type)
-            .or_else(|| {
-                entries
-                    .iter()
-                    .position(|entry| entry.spec.types.iter().any(|ty| ty == name_or_type))
-            })?;
+        let index = position(&entries, name_or_type)?;
         let entry = entries.into_iter().nth(index)?;
         Some(self.resolve(entry, context))
+    }
+
+    /// The name of the adapter a configuration names, as
+    /// [`find`](Self::find) chooses it, without resolving it: nothing is
+    /// looked up or run, so a launch configuration's `type` can be mapped
+    /// (D4) wherever it is listed.
+    pub fn name_for(&self, name_or_type: &str) -> Option<String> {
+        let entries = self.entries();
+        let index = position(&entries, name_or_type)?;
+        entries.into_iter().nth(index).map(|entry| entry.spec.name)
     }
 
     /// The adapter for debugging `language` with no adapter named: the

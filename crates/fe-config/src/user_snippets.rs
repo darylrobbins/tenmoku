@@ -31,6 +31,7 @@ use std::{
 use kiln_l10n::{tr, verbatim};
 use serde_json::{Map, Value};
 
+use crate::jsonc::strip_jsonc;
 use crate::{Diagnostic, Severity};
 
 /// The directory of the user's snippet files, in the config directory.
@@ -524,89 +525,6 @@ pub fn example_file(language: Option<&str>) -> String {
     }
     text.push_str("}\n");
     text
-}
-
-/// `text` with its `//` and `/* */` comments, and any comma before a
-/// closing `}` or `]`, turned to spaces, keeping every line where it was.
-/// Strings are kept whole.
-fn strip_jsonc(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    // A comma written with nothing but space and comments after it yet.
-    let mut comma: Option<usize> = None;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        let next = bytes.get(i + 1).copied();
-        match b {
-            b'"' => {
-                comma = None;
-                out.push(b);
-                i += 1;
-                while i < bytes.len() {
-                    let c = bytes[i];
-                    out.push(c);
-                    i += 1;
-                    if c == b'\\' && i < bytes.len() {
-                        out.push(bytes[i]);
-                        i += 1;
-                    } else if c == b'"' || c == b'\n' {
-                        break;
-                    }
-                }
-            }
-            b'/' if next == Some(b'/') => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    out.push(blank(bytes[i]));
-                    i += 1;
-                }
-            }
-            b'/' if next == Some(b'*') => {
-                out.extend_from_slice(b"  ");
-                i += 2;
-                while i < bytes.len() && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/')) {
-                    out.push(blank(bytes[i]));
-                    i += 1;
-                }
-                if i < bytes.len() {
-                    out.extend_from_slice(b"  ");
-                    i += 2;
-                }
-            }
-            b',' => {
-                comma = Some(out.len());
-                out.push(b);
-                i += 1;
-            }
-            b'}' | b']' => {
-                if let Some(at) = comma.take() {
-                    out[at] = b' ';
-                }
-                out.push(b);
-                i += 1;
-            }
-            b' ' | b'\t' | b'\n' | b'\r' => {
-                out.push(b);
-                i += 1;
-            }
-            _ => {
-                comma = None;
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    // Strings are copied whole, and only ASCII is written in place of
-    // comments' bytes, so the text stays UTF-8.
-    String::from_utf8(out).unwrap_or_default()
-}
-
-/// A comment's byte as it's blanked: line breaks kept, the rest spaces.
-fn blank(b: u8) -> u8 {
-    match b {
-        b'\n' | b'\r' => b,
-        _ => b' ',
-    }
 }
 
 /// The keys of `json`'s top-level object, each with the byte it starts

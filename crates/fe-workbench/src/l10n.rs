@@ -32,5 +32,6 @@ kiln_l10n::resources! {
         "../l10n/en-US/runs.ftl",
         "../l10n/en-US/test_runs.ftl",
         "../l10n/en-US/inbox.ftl",
+        "../l10n/en-US/debug.ftl",
     ],
 }
