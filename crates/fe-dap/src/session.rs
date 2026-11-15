@@ -39,9 +39,10 @@
 //! on its own ends the session as [`EndReason::AdapterExited`], with no
 //! automatic restart.
 //!
-//! **Requests** ([`Session::request`]) time out on the injected clock:
-//! [`REQUEST_TIMEOUT`] by default, [`LAUNCH_TIMEOUT`] for `launch` and
-//! `attach`, none for `evaluate` in the `repl` context. A request future
+//! **Requests** ([`Session::request`]) time out on the injected clock,
+//! after the session's [`Timeouts`]: [`REQUEST_TIMEOUT`] by default,
+//! [`LAUNCH_TIMEOUT`] for `launch` and `attach`, none for `evaluate` in the
+//! `repl` context. A request future
 //! dropped before its reply sends `cancel` when the adapter supports it,
 //! and nothing waits for its reply after.
 //!
@@ -141,6 +142,25 @@ pub const EXIT_DRAIN: Duration = Duration::from_secs(1);
 /// each further page [`Session::frames`] fetches.
 pub const FRAME_PAGE: i64 = 20;
 
+/// How long the adapter may take to answer (the user's `debug.timeouts`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Timeouts {
+    /// Any request's, `configurationDone`'s too, but `launch`'s and
+    /// `attach`'s.
+    pub request: Duration,
+    /// `launch`'s and `attach`'s.
+    pub launch: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            request: REQUEST_TIMEOUT,
+            launch: LAUNCH_TIMEOUT,
+        }
+    }
+}
+
 /// What starts the debuggee.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StartRequest {
@@ -174,6 +194,8 @@ pub struct SessionOptions {
     /// debugpy, for one, answers with a running thread's stack after a
     /// short wait, and then only a `stopped` event ends Uncertain.
     pub stack_proves_stop: bool,
+    /// How long its requests may go unanswered.
+    pub timeouts: Timeouts,
 }
 
 /// Where a session is (§2's state machine).
@@ -235,14 +257,14 @@ pub enum SessionError {
     Launch(String),
     /// `initialize` failed, with the adapter's message.
     InitializeFailed(Option<String>),
-    /// `initialize` went unanswered.
-    InitializeTimeout,
+    /// `initialize` went unanswered for this long.
+    InitializeTimeout(Duration),
     /// `launch` or `attach` failed, with the adapter's message.
     StartFailed(Option<String>),
-    /// `launch` or `attach` went unanswered.
-    StartTimeout,
-    /// `configurationDone` went unanswered (§13 F10).
-    ConfigurationDoneTimeout,
+    /// `launch` or `attach` went unanswered for this long.
+    StartTimeout(Duration),
+    /// `configurationDone` went unanswered for this long (§13 F10).
+    ConfigurationDoneTimeout(Duration),
     /// The adapter broke the protocol.
     Transport(String),
 }
@@ -255,21 +277,19 @@ impl fmt::Display for SessionError {
                 Some(message) => tr!("dap-session-initialize-failed", why = message.as_str()),
                 None => tr!("dap-session-initialize-failed-bare"),
             },
-            SessionError::InitializeTimeout => tr!(
-                "dap-session-initialize-timeout",
-                seconds = REQUEST_TIMEOUT.as_secs()
-            ),
+            SessionError::InitializeTimeout(after) => {
+                tr!("dap-session-initialize-timeout", seconds = after.as_secs())
+            }
             SessionError::StartFailed(message) => match message {
                 Some(message) => tr!("dap-session-start-failed", why = message.as_str()),
                 None => tr!("dap-session-start-failed-bare"),
             },
-            SessionError::StartTimeout => tr!(
-                "dap-session-start-timeout",
-                seconds = LAUNCH_TIMEOUT.as_secs()
-            ),
-            SessionError::ConfigurationDoneTimeout => tr!(
+            SessionError::StartTimeout(after) => {
+                tr!("dap-session-start-timeout", seconds = after.as_secs())
+            }
+            SessionError::ConfigurationDoneTimeout(after) => tr!(
                 "dap-session-configuration-done-timeout",
-                seconds = CONFIGURATION_DONE_TIMEOUT.as_secs()
+                seconds = after.as_secs()
             ),
             SessionError::Transport(why) => tr!("dap-session-transport", why = why.as_str()),
         };

@@ -238,6 +238,8 @@ impl Flag {
 pub struct LocalLauncher {
     clock: Arc<dyn Clock>,
     path: Option<OsString>,
+    /// How long a TCP adapter has to start listening.
+    connect_timeout: Duration,
 }
 
 impl Default for LocalLauncher {
@@ -260,7 +262,15 @@ impl LocalLauncher {
         Self {
             clock: Arc::new(SystemClock),
             path: None,
+            connect_timeout: CONNECT_TIMEOUT,
         }
+    }
+
+    /// Giving a TCP adapter `timeout` to start listening, not
+    /// [`CONNECT_TIMEOUT`] (the user's `debug.timeouts.connect`).
+    pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = timeout;
+        self
     }
 
     /// Measuring its connection retries on `clock`.
@@ -403,7 +413,7 @@ type Output = Pin<Box<dyn AsyncRead + Send>>;
 
 impl LocalLauncher {
     /// Connects to the host's adapter on `127.0.0.1:port`, with
-    /// [`connect_with`]'s retries and limit, as it may still be starting.
+    /// [`connect_within`]'s retries and limit, as it may still be starting.
     fn connect_to(
         &self,
         spec: &AdapterSpec,
@@ -411,8 +421,9 @@ impl LocalLauncher {
         cancel: &LaunchCancel,
     ) -> io::Result<AdapterIo> {
         let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-        let stream = async_io::block_on(connect_with(
+        let stream = async_io::block_on(connect_within(
             &*self.clock,
+            self.connect_timeout,
             cancel,
             spec,
             port,
@@ -438,7 +449,7 @@ impl LocalLauncher {
         })
     }
 
-    /// Connects to `127.0.0.1:port` (see [`connect_with`]) while draining
+    /// Connects to `127.0.0.1:port` (see [`connect_within`]) while draining
     /// the adapter's stdout and stderr, which come back with what was read
     /// of them first.
     fn connect(
@@ -452,8 +463,9 @@ impl LocalLauncher {
     ) -> io::Result<(Async<TcpStream>, Option<Output>, Option<Output>)> {
         let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
         let (stream, stdout_kept, stderr_kept) = async_io::block_on(async {
-            let connect = connect_with(
+            let connect = connect_within(
                 &*self.clock,
+                self.connect_timeout,
                 cancel,
                 spec,
                 port,
@@ -552,14 +564,32 @@ async fn drain<P: AsyncRead + Unpin>(pipe: Option<&mut P>, kept: &mut Vec<u8>, n
     futures::future::pending::<()>().await
 }
 
-/// The connection loop: `attempt` until one succeeds, retrying every
-/// [`CONNECT_RETRY`]. It fails as `TimedOut` once [`CONNECT_TIMEOUT`] has
-/// passed on `clock` since it began, whether an attempt is in flight or
-/// not, and starts no attempt and keeps no connection after that; as `ConnectionRefused` once
-/// `exited` says the adapter has gone; and as `Interrupted` when `cancel`
-/// fires.
+/// [`connect_within`] with [`CONNECT_TIMEOUT`].
+#[cfg(test)]
 pub(crate) async fn connect_with<T, F>(
     clock: &dyn Clock,
+    cancel: &LaunchCancel,
+    spec: &AdapterSpec,
+    port: u16,
+    exited: impl FnMut() -> bool,
+    attempt: impl FnMut() -> F,
+) -> io::Result<T>
+where
+    F: Future<Output = io::Result<T>>,
+{
+    connect_within(clock, CONNECT_TIMEOUT, cancel, spec, port, exited, attempt).await
+}
+
+/// The connection loop: `attempt` until one succeeds, retrying every
+/// [`CONNECT_RETRY`]. It fails as `TimedOut` once `timeout` (by default
+/// [`CONNECT_TIMEOUT`], [`LocalLauncher::with_connect_timeout`]) has passed
+/// on `clock` since it began, whether an attempt is in flight or not, and
+/// starts no attempt and keeps no connection after that; as
+/// `ConnectionRefused` once `exited` says the adapter has gone; and as
+/// `Interrupted` when `cancel` fires.
+pub(crate) async fn connect_within<T, F>(
+    clock: &dyn Clock,
+    timeout: Duration,
     cancel: &LaunchCancel,
     spec: &AdapterSpec,
     port: u16,
@@ -570,7 +600,7 @@ where
     F: Future<Output = io::Result<T>>,
 {
     let start = clock.now();
-    let mut deadline = clock.sleep(CONNECT_TIMEOUT);
+    let mut deadline = clock.sleep(timeout);
     let mut fired = pin!(cancel.cancelled());
     let timed_out = || {
         io::Error::new(
@@ -579,7 +609,7 @@ where
                 "dap-launch-connect-timeout",
                 name = spec.name.as_str(),
                 port = port,
-                seconds = CONNECT_TIMEOUT.as_secs()
+                seconds = timeout.as_secs()
             )
             .to_string(),
         )
@@ -589,7 +619,7 @@ where
             return Err(cancelled(spec));
         }
         let elapsed = clock.now().saturating_duration_since(start);
-        if elapsed >= CONNECT_TIMEOUT {
+        if elapsed >= timeout {
             return Err(timed_out());
         }
         // The deadline and a cancel are polled first, and a connection
@@ -603,7 +633,7 @@ where
                 if cancel.is_cancelled() {
                     return Err(cancelled(spec));
                 }
-                if clock.now().saturating_duration_since(start) >= CONNECT_TIMEOUT {
+                if clock.now().saturating_duration_since(start) >= timeout {
                     return Err(timed_out());
                 }
                 return Ok(connected);
@@ -619,7 +649,7 @@ where
             ));
         }
         let elapsed = clock.now().saturating_duration_since(start);
-        let wait = CONNECT_RETRY.min(CONNECT_TIMEOUT.saturating_sub(elapsed));
+        let wait = CONNECT_RETRY.min(timeout.saturating_sub(elapsed));
         futures::future::select(clock.sleep(wait), fired.as_mut()).await;
     }
 }

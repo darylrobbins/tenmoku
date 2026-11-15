@@ -75,3 +75,84 @@ workbench-debug-breakpoints-unreadable = Breakpoints in { $file } can't be read,
 workbench-debug-breakpoints-not-an-object = not a JSON object
 # $error is why, as the system gives it.
 workbench-debug-breakpoints-save-failed = Breakpoints can't be saved: { $error }
+
+## Debug sessions (debug_session.rs, card D7).
+
+command-debug-start = Debug: Start Debugging
+command-debug-stop = Debug: Stop
+command-debug-rerun_last = Debug: Rerun Last Session
+command-debug-show_log = Debug: Show Adapter Log
+
+# Starting a configuration in a folder that isn't trusted, and the toast's
+# button.
+workbench-debug-untrusted = Trust this folder to debug its programs
+workbench-debug-trust-folder = Trust Folder
+# $name is the configuration's; $why the reasons it can't start, from the
+# launch configuration messages above, joined by semicolons.
+workbench-debug-cannot-start = { $name } can't start: { $why }
+# Resolving or launching failed: the toast's detail says why.
+workbench-debug-cant-start = Can't start { $name }
+# The pre-launch task, by its label, exited with a code other than 0: the
+# session doesn't start.
+workbench-debug-pre-launch-failed = Pre-launch task { $label } failed
+# A detected Cargo configuration's build named no program: $bin is the
+# binary target's name.
+workbench-debug-cargo-no-artifact = cargo built no program named { $bin }
+# $language is the configuration's language, or the adapter it names.
+workbench-debug-no-adapter-for = no debug adapter for { $language }
+# $adapter is the adapter's name; $hint how to get it.
+workbench-debug-adapter-not-found = { $adapter } isn't installed: { $hint }
+# A session that failed: the toast's detail says why. $name is the
+# configuration's.
+workbench-debug-session-failed = The debug session { $name } failed
+# The adapter, by its name, went away by itself mid-session.
+workbench-debug-adapter-exited = The debug adapter { $adapter } exited
+# Linux refused to let the debug adapter trace the program. $scope is
+# Yama's kernel.yama.ptrace_scope, as /proc/sys/kernel/yama/ptrace_scope has it.
+workbench-debug-ptrace-refused = Linux didn't let the debugger trace the program: kernel.yama.ptrace_scope is { $scope }. At 1 a debugger can launch programs; 2 needs CAP_SYS_PTRACE, and 3 forbids tracing.
+workbench-debug-ptrace-refused-unknown = Linux didn't let the debugger trace the program, which kernel.yama.ptrace_scope may forbid.
+# macOS refused to let the debug adapter attach to the program.
+workbench-debug-signing-refused = macOS didn't let the debugger attach to the program: one built with the hardened runtime needs the com.apple.security.get-task-allow entitlement, as Xcode's Debug configurations add.
+# What the adapter is told when its runInTerminal asks, on Windows, for
+# variables to be removed from the program's environment: $names, joined
+# by commas.
+workbench-debug-env-unremovable = can't remove { $names } from the program's environment on Windows
+# What the adapter is told when its runInTerminal can't be run.
+workbench-debug-session-over = the debug session is over
+workbench-debug-terminal-didnt-start = the terminal didn't start
+
+## Session changes, said to a screen reader.
+
+# $line is the stopped frame's line, from 1.
+workbench-debug-stopped-at-line = Stopped at line { $line }
+workbench-debug-running = Running
+workbench-debug-session-ended = Session ended
+
+## What the commands say.
+
+workbench-debug-none-run = No debug session has run yet
+workbench-debug-not-running = No debug session is running
+# Rerunning a configuration the launch files no longer have.
+workbench-debug-config-gone = There's no configuration { $name } any more
+# The protocol log's tab.
+workbench-debug-log-title = Debug Adapter Log
+# A debuggee tab's failure toast: start its configuration afresh.
+workbench-debug-debuggee-rerun = Rerun
+# The button, with its accessible name, beside a debuggee tab.
+workbench-debug-debuggee-rerun-session = Rerun Debug Session
+# A request that failed while the session carries on: a Continue, a step,
+# a breakpoint update. The toast's detail says why. $name is the
+# configuration's.
+workbench-debug-request-failed = The debug session { $name } couldn't do what was asked
+
+## The configuration picker (debug_session/picker.rs).
+
+workbench-debug-picker-placeholder = Start debugging…
+workbench-debug-picker-reading = Reading launch configurations…
+# Where a detected configuration comes from, in its row.
+workbench-debug-picker-detected = detected
+# A configuration that can't start: $source is where it's from; $why the
+# reasons, joined by semicolons.
+workbench-debug-picker-blocked = { $source } · { $why }
+# $file is .tenmoku/launch.toml.
+workbench-debug-picker-none = No launch configurations: add one to { $file }

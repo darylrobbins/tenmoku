@@ -337,6 +337,10 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("tasks.run", "Tasks: Run Task…", "workbench"),
     ("tasks.rerun_last", "Tasks: Rerun Last Task", "workbench"),
     ("tasks.run_build", "Tasks: Run Build Task", "workbench"),
+    ("debug.start", "Debug: Start Debugging", "workbench"),
+    ("debug.stop", "Debug: Stop", "workbench"),
+    ("debug.rerun_last", "Debug: Rerun Last Session", "workbench"),
+    ("debug.show_log", "Debug: Show Adapter Log", "workbench"),
     (
         "workbench.untrust_folder",
         "Untrust This Folder",

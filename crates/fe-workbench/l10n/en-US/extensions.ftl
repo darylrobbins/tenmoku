@@ -7,7 +7,7 @@ workbench-extensions-trust-question = Do you trust the authors of the files in t
 workbench-extensions-trust-detail =
     { $folder }
 
-    Trusting this folder lets Tenmoku start language servers in it, which can run the project's code: rust-analyzer runs build scripts and proc macros. Its subfolders are trusted too. Change this later with File > Trust This Folder or Untrust This Folder.
+    Trusting this folder lets Tenmoku start language servers in it and run its debug configurations, which can run the project's code: rust-analyzer runs build scripts and proc macros. Its subfolders are trusted too. Change this later with File > Trust This Folder or Untrust This Folder.
 
 ## Check for Updates (update_check.rs)
 

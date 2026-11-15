@@ -4,7 +4,8 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use fe_terminal::{
-    CommandStatus, GridSize, Terminal, TerminalEvent, TerminalMatch, TerminalOptions, TerminalQuery,
+    CommandStatus, GridSize, OutputTap, Terminal, TerminalEvent, TerminalMatch, TerminalOptions,
+    TerminalQuery,
 };
 use gpui::{
     App, Bounds, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -43,6 +44,9 @@ pub enum TerminalViewEvent {
 pub struct TerminalView {
     /// Taken when the session starts.
     options: Option<TerminalOptions>,
+    /// Hears the session's output from its first byte
+    /// ([`TerminalView::tap_output`]); taken when it starts.
+    tap: Option<OutputTap>,
     pub(crate) terminal: Option<Terminal>,
     pub(crate) style: TerminalStyle,
     pub(crate) focus: FocusHandle,
@@ -117,6 +121,7 @@ impl TerminalView {
         let activation = cx.observe_window_activation(window, |_, _, cx| cx.notify());
         Ok(Self {
             options: Some(options),
+            tap: None,
             terminal: None,
             style,
             focus,
@@ -143,6 +148,15 @@ impl TerminalView {
             _focus_reports: focus_reports,
             _activation: activation,
         })
+    }
+
+    /// Hands all the session's output, every byte as the pty reads it, to
+    /// `tap`, independent of the grid and its scrollback: set before the
+    /// session starts (on the view's first layout), else it hears nothing.
+    pub fn tap_output(&mut self, tap: OutputTap) {
+        if self.terminal.is_none() {
+            self.tap = Some(tap);
+        }
     }
 
     /// Turns the Linux primary selection on or off: while on, a selection
@@ -222,7 +236,7 @@ impl TerminalView {
         let Some(options) = self.options.take() else {
             return;
         };
-        match Terminal::spawn(options, size) {
+        match Terminal::spawn_tapped(options, size, self.tap.take()) {
             Ok((terminal, events)) => {
                 self.terminal = Some(terminal);
                 self.events = Some(cx.spawn(async move |this, cx| {

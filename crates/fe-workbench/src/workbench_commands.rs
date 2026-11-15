@@ -1480,6 +1480,30 @@ impl Workbench {
         self.run_build_task(cx.window, cx.cx);
     }
 
+    /// Debug: Start Debugging
+    #[command(id = "debug.start")]
+    fn debug_start_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_start(cx.window, cx.cx);
+    }
+
+    /// Debug: Stop
+    #[command(id = "debug.stop")]
+    fn debug_stop_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_stop(cx.cx);
+    }
+
+    /// Debug: Rerun Last Session
+    #[command(id = "debug.rerun_last")]
+    fn debug_rerun_last_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_rerun_last(cx.window, cx.cx);
+    }
+
+    /// Debug: Show Adapter Log
+    #[command(id = "debug.show_log")]
+    fn debug_show_log_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_show_log(cx.window, cx.cx);
+    }
+
     /// Quickfix: Next Item
     #[command(id = "quickfix.next")]
     fn quickfix_next(&mut self, cx: &mut Cx<Self>) {

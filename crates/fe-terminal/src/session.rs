@@ -27,6 +27,11 @@ use crate::shell::{CommandBlock, CommandStatus, ShellState, UNBOUNDED_HISTORY};
 use crate::snapshot::{self, Snapshot};
 use crate::vi;
 
+/// Hears the child's output as the pty reads it, every byte, before the
+/// grid parses it ([`Terminal::spawn_tapped`]): on the pty's thread, so it
+/// should be quick.
+pub type OutputTap = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
 /// What to run and how much history to keep.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalOptions {
@@ -303,6 +308,16 @@ impl Terminal {
         options: TerminalOptions,
         size: GridSize,
     ) -> io::Result<(Terminal, async_channel::Receiver<TerminalEvent>)> {
+        Self::spawn_tapped(options, size, None)
+    }
+
+    /// [`Terminal::spawn`], with `tap` hearing all the child's output from
+    /// its first byte, independent of what the grid and its scrollback keep.
+    pub fn spawn_tapped(
+        options: TerminalOptions,
+        size: GridSize,
+        tap: Option<OutputTap>,
+    ) -> io::Result<(Terminal, async_channel::Receiver<TerminalEvent>)> {
         let (events, receiver) = async_channel::unbounded();
         let window_size = size.window_size();
         let listener = Listener {
@@ -397,6 +412,7 @@ impl Terminal {
 
         let (event_loop, sender) =
             PtyLoop::new(term.clone(), shell.clone(), listener.clone(), pty)?;
+        let event_loop = event_loop.with_tap(tap);
         let _ = listener.pty.set(sender.clone());
         let handle = event_loop.spawn()?;
         // `PtyLoop::spawn` hands the pty back through the join handle, so the

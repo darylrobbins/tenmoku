@@ -20,7 +20,7 @@ use crate::fake::{Fault, FaultKind, Script, Startup};
 use crate::protocol::{Empty, EvaluateArguments, RunInTerminalBody, request};
 use crate::session::{
     DapEvent, EndReason, LAUNCH_TIMEOUT, PendingRequest, REQUEST_TIMEOUT, RequestError,
-    SessionError, SessionState, TerminalStarted,
+    SessionError, SessionState, TerminalStarted, Timeouts,
 };
 
 fn stopped(script: Script) -> Harness {
@@ -100,9 +100,39 @@ fn launch_times_out_after_30_s() {
     wait_requests(&fake, "launch", 1);
     advance_past(&harness.clock, LAUNCH_TIMEOUT);
     let ended = harness.wait_ended();
-    assert_eq!(ended.reason, EndReason::Failed(SessionError::StartTimeout));
+    assert_eq!(
+        ended.reason,
+        EndReason::Failed(SessionError::StartTimeout(LAUNCH_TIMEOUT))
+    );
     assert!(fake.killed());
     assert_eq!(LAUNCH_TIMEOUT, Duration::from_secs(30));
+}
+
+/// The user's `debug.timeouts` (D7): a session given a launch timeout of
+/// 2 s ends after 2 s, and says so.
+#[test]
+fn a_session_times_out_after_its_own_timeouts() {
+    let script = Script {
+        startup: Startup::LaunchResponseFirst,
+        faults: vec![Fault::new("launch", FaultKind::Unanswered)],
+        ..Script::default()
+    };
+    let mut options = options();
+    options.timeouts = Timeouts {
+        request: Duration::from_secs(1),
+        launch: Duration::from_secs(2),
+    };
+    let mut harness = start(script, options);
+    let fake = harness.fake(0);
+    wait_requests(&fake, "launch", 1);
+    advance_past(&harness.clock, Duration::from_secs(2));
+    let ended = harness.wait_ended();
+    let error = SessionError::StartTimeout(Duration::from_secs(2));
+    assert_eq!(ended.reason, EndReason::Failed(error.clone()));
+    assert_eq!(
+        error.to_string(),
+        tr!("dap-session-start-timeout", seconds = 2u64).to_string()
+    );
 }
 
 #[test]

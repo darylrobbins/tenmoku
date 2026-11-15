@@ -62,6 +62,6 @@ pub use registry::{Adapter, Context, HostOs, Registry, Runner, Source, Status, S
 pub use session::{
     Control, Controls, DapEvent, Disabled, EndReason, Ended, Epoch, FRAME_PAGE, PendingRequest,
     RequestError, Resume, Session, SessionError, SessionOptions, SessionState, StartRequest,
-    StopData, StopRef, TerminalReply, TerminalStarted,
+    StopData, StopRef, TerminalReply, TerminalStarted, Timeouts,
 };
 pub use transport::{FrameReader, FrameWriter, MAX_BODY, ProtocolError, TransportError};

@@ -25,8 +25,17 @@
 //! if it passed, and a toast says so if it didn't. Running its label again
 //! replaces a finished tab's session in place, or adds `label (2)` beside
 //! one that's still running. One that can't start leaves no tab.
+//!
+//! A debug session's program runs in a debugger-owned tab
+//! ([`TerminalPanel::add_debuggee`], docs/decisions/r1b9dw3g0g-debugger.md
+//! §5): a task tab's look, named for its configuration, kept after exit
+//! with its output, its check mark or failure toast. It isn't a task: it is
+//! never the last task, `tasks.rerun_last` never replays its argv (the
+//! adapter's one-shot launcher), and its rerun ([`DebuggeeRerun`]) asks the
+//! debugger for a fresh session of its configuration.
 
 use std::{
+    collections::BTreeMap,
     io,
     path::{Path, PathBuf},
 };
@@ -81,6 +90,29 @@ pub(crate) enum TerminalPanelEvent {
     /// A finished task's toast asked for its tab, now active: the workbench
     /// shows the dock.
     ShowRequested,
+}
+
+/// A debuggee tab's rerun: the debugger starts a fresh session of the
+/// configuration `name` of `root` (`debug.rerun_last`'s path), never
+/// replaying the tab's argv.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DebuggeeRerun {
+    pub name: String,
+    pub root: PathBuf,
+}
+
+/// What a debug session's `runInTerminal` asks to run
+/// ([`TerminalPanel::add_debuggee`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Debuggee {
+    /// The configuration's name, the tab's.
+    pub name: String,
+    /// Run directly, never through a shell.
+    pub argv: Vec<String>,
+    pub cwd: PathBuf,
+    /// What it sets in the environment it inherits; a `None` removes the
+    /// variable.
+    pub env: BTreeMap<String, Option<String>>,
 }
 
 /// One terminal in the panel.
@@ -157,6 +189,9 @@ struct TaskTab {
     /// rest as `label (2)` and on.
     ordinal: usize,
     run: TaskRun,
+    /// A debug session's program ([`TerminalPanel::add_debuggee`]), its
+    /// label the configuration's name: not a task to find, rerun or stop.
+    debuggee: bool,
 }
 
 impl TaskTab {
@@ -232,12 +267,17 @@ pub struct TerminalPanel {
     /// a test emits their exits itself.
     #[cfg(test)]
     pub(crate) fake_sessions: bool,
+    /// Whether a fake debuggee tab's program never starts, as one whose tab
+    /// isn't laid out: [`TerminalPanel::started_pid`] says so.
+    #[cfg(test)]
+    pub(crate) debuggees_unstarted: bool,
     /// The tabs the last frame drew: label and background.
     #[cfg(test)]
     drawn_tabs: Vec<(SharedString, gpui::Hsla)>,
 }
 
 impl EventEmitter<TerminalPanelEvent> for TerminalPanel {}
+impl EventEmitter<DebuggeeRerun> for TerminalPanel {}
 
 impl TerminalPanel {
     /// A panel whose sessions start in `cwd`, drawn in `theme`'s font and
@@ -271,6 +311,8 @@ impl TerminalPanel {
             started_options: Vec::new(),
             #[cfg(test)]
             fake_sessions: false,
+            #[cfg(test)]
+            debuggees_unstarted: false,
             #[cfg(test)]
             drawn_tabs: Vec::new(),
         }
@@ -451,7 +493,10 @@ impl TerminalPanel {
         };
         let finished = self.sessions.iter().position(|session| {
             (session.task.as_ref()).is_some_and(|tab| {
-                tab.label == task.label && tab.root == self.cwd && tab.run != TaskRun::Running
+                !tab.debuggee
+                    && tab.label == task.label
+                    && tab.root == self.cwd
+                    && tab.run != TaskRun::Running
             })
         });
         let kept = finished
@@ -471,8 +516,113 @@ impl TerminalPanel {
             started: self.runs_started,
             ordinal,
             run: TaskRun::Running,
+            debuggee: false,
         };
-        let ix = match finished {
+        self.put_task_tab(finished, view, tab, events, cx);
+        true
+    }
+
+    /// Runs a debug session's program, as its adapter's `runInTerminal`
+    /// asks, in the tab of its configuration, which it makes active: in
+    /// place of that tab's session if there is one (a running one is hung
+    /// up), else in a new tab. It is not a task: the last task stays as it
+    /// was, and nothing reruns its argv.
+    ///
+    /// # Errors
+    ///
+    /// When its directory isn't one or the argv is empty: no tab changed.
+    pub(crate) fn add_debuggee(
+        &mut self,
+        debuggee: &Debuggee,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> io::Result<Entity<TerminalView>> {
+        let options = debuggee_options(debuggee, self.settings.scrollback)?;
+        let reused = self.sessions.iter().position(|session| {
+            (session.task.as_ref()).is_some_and(|tab| {
+                tab.debuggee && tab.label == debuggee.name && tab.root == self.cwd
+            })
+        });
+        let kept = reused
+            .and_then(|ix| self.sessions[ix].task.as_ref())
+            .map(|tab| (tab.id, tab.ordinal));
+        let (id, ordinal) = kept.unwrap_or_else(|| {
+            self.last_task_id += 1;
+            (self.last_task_id, self.free_ordinal(&debuggee.name))
+        });
+        let view = self.new_view(options, true, window, cx);
+        let events = self.follow(&view, window, cx);
+        self.runs_started += 1;
+        let tab = TaskTab {
+            id,
+            label: debuggee.name.clone(),
+            root: self.cwd.clone(),
+            started: self.runs_started,
+            ordinal,
+            run: TaskRun::Running,
+            debuggee: true,
+        };
+        self.put_task_tab(reused, view.clone(), tab, events, cx);
+        Ok(view)
+    }
+
+    /// The process id a debuggee tab's `view` runs, once its session has
+    /// started: `None` until then, `Some(None)` for a test's fake session.
+    pub(crate) fn started_pid(&self, view: &Entity<TerminalView>, cx: &App) -> Option<Option<u32>> {
+        #[cfg(test)]
+        if self.fake_sessions {
+            return (!self.debuggees_unstarted).then_some(None);
+        }
+        let terminal = view.read(cx).terminal()?;
+        Some(Some(terminal.pid()))
+    }
+
+    /// The rerun of the debuggee tab showing `view`'s session: asks the
+    /// debugger for a fresh session of its configuration. Nothing for any
+    /// other tab.
+    pub(crate) fn rerun_debuggee(&mut self, view: EntityId, cx: &mut Context<Self>) {
+        let tab = (self.sessions.iter())
+            .find(|session| session.view.entity_id() == view)
+            .and_then(|session| session.task.as_ref())
+            .filter(|tab| tab.debuggee);
+        if let Some(tab) = tab {
+            let rerun = DebuggeeRerun {
+                name: tab.label.clone(),
+                root: tab.root.clone(),
+            };
+            cx.emit(rerun);
+        }
+    }
+
+    /// Closes the tab showing `view`'s session if its process hasn't
+    /// started (it starts on the tab's first layout), so it never will: a
+    /// debuggee tab whose session gave up on it. One that has started keeps
+    /// its tab, its output and its rerun.
+    pub(crate) fn close_unstarted(
+        &mut self,
+        view: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.position(view) else {
+            return;
+        };
+        if self.started_pid(&self.sessions[ix].view, cx).is_none() {
+            self.remove(ix, window, cx);
+        }
+    }
+
+    /// Shows `tab`'s session `view` in session `at`'s place, or in a new
+    /// session after the last, and makes it active.
+    fn put_task_tab(
+        &mut self,
+        at: Option<usize>,
+        view: Entity<TerminalView>,
+        tab: TaskTab,
+        events: Subscription,
+        cx: &mut Context<Self>,
+    ) {
+        let ix = match at {
             // Dropping the old view hangs up what's left of its session; its
             // exit has been told already.
             Some(ix) => {
@@ -497,7 +647,6 @@ impl TerminalPanel {
             }
         };
         self.session_added(ix, cx);
-        true
     }
 
     /// The lowest ordinal no open tab with `label` has.
@@ -604,7 +753,7 @@ impl TerminalPanel {
         } else {
             TaskRun::Failed
         };
-        let id = tab.id;
+        let (id, debuggee) = (tab.id, tab.debuggee);
         cx.notify();
         let message = match code {
             Some(0) => return,
@@ -616,17 +765,22 @@ impl TerminalPanel {
             None => tr!("workbench-terminal-task-killed", title = &title),
         };
         let (answer, answered) = futures::channel::oneshot::channel();
-        let show = tr!("workbench-terminal-task-show").to_string();
-        let toast = Toast::error(message).choices(vec![show], move |choice| {
+        let mut choices = vec![tr!("workbench-terminal-task-show").to_string()];
+        if debuggee {
+            choices.push(tr!("workbench-debug-debuggee-rerun").to_string());
+        }
+        let toast = Toast::error(message).choices(choices, move |choice| {
             answer.send(choice).ok();
         });
         toast::show(cx, toast);
         cx.spawn_in(window, async move |panel, cx| {
-            if answered.await != Ok(Some(0)) {
-                return;
-            }
+            let choice = answered.await;
             panel
-                .update_in(cx, |panel, window, cx| panel.show_task(id, window, cx))
+                .update_in(cx, |panel, window, cx| match choice {
+                    Ok(Some(0)) => panel.show_task(id, window, cx),
+                    Ok(Some(1)) => panel.rerun_task_tab(id, cx),
+                    _ => {}
+                })
                 .ok();
         })
         .detach();
@@ -654,13 +808,23 @@ impl TerminalPanel {
         }
     }
 
+    /// [`Self::rerun_debuggee`] for the tab `id`, if it's still open.
+    fn rerun_task_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        let view = (self.sessions.iter())
+            .find(|session| session.task.as_ref().is_some_and(|tab| tab.id == id))
+            .map(|session| session.view.entity_id());
+        if let Some(view) = view {
+            self.rerun_debuggee(view, cx);
+        }
+    }
+
     /// How the task `label` run from `root`, last went,
     /// whoever started it: running if any of its tabs is, else how its
     /// latest run ended; none if it has no tab.
     pub(crate) fn task_run(&self, root: &Path, label: &str) -> Option<TaskRun> {
         let tabs = (self.sessions.iter())
             .filter_map(|session| session.task.as_ref())
-            .filter(|tab| tab.label == label && tab.root == root);
+            .filter(|tab| !tab.debuggee && tab.label == label && tab.root == root);
         let mut latest: Option<&TaskTab> = None;
         for tab in tabs {
             if tab.run == TaskRun::Running {
@@ -684,7 +848,10 @@ impl TerminalPanel {
     ) {
         while let Some(ix) = self.sessions.iter().position(|session| {
             (session.task.as_ref()).is_some_and(|tab| {
-                tab.label == label && tab.root == root && tab.run == TaskRun::Running
+                !tab.debuggee
+                    && tab.label == label
+                    && tab.root == root
+                    && tab.run == TaskRun::Running
             })
         }) {
             self.remove(ix, window, cx);
@@ -946,6 +1113,29 @@ impl TerminalPanel {
             tr!("workbench-terminal-new"),
             tr!("workbench-terminal-kill"),
         );
+        // A debuggee tab's rerun: a fresh debug session of its
+        // configuration, never its argv again.
+        let debuggee = (self.sessions.get(self.active))
+            .filter(|session| session.task.as_ref().is_some_and(|tab| tab.debuggee))
+            .map(|session| session.view.entity_id());
+        let rerun = debuggee.map(|view| {
+            let title = tr!("workbench-debug-debuggee-rerun-session");
+            div()
+                .id("terminal-debuggee-rerun")
+                .debug_selector(|| "terminal-debuggee-rerun".to_owned())
+                .child(
+                    IconButton::new(
+                        "terminal-debuggee-rerun-button",
+                        Icon::RefreshCw,
+                        title.clone(),
+                        &ui,
+                    )
+                    .tooltip(tip(title, "debug.rerun_last"))
+                    .on_click(cx.listener(move |panel, _, _, cx| {
+                        panel.rerun_debuggee(view, cx);
+                    })),
+                )
+        });
         let actions = div()
             .flex_none()
             .flex()
@@ -956,6 +1146,7 @@ impl TerminalPanel {
             .bg(chrome)
             .border_b_1()
             .border_color(border)
+            .children(rerun)
             .child(
                 div()
                     .id("terminal-new")
@@ -1053,6 +1244,82 @@ pub(crate) fn task_options(task: &Task, scrollback: usize) -> io::Result<Termina
         env: task.env.clone(),
         ..TerminalOptions::new(&task.cwd)
     })
+}
+
+/// What runs `debuggee`: its argv directly, never through a shell, with its
+/// environment.
+///
+/// # Errors
+///
+/// When its directory isn't one, or its argv is empty.
+fn debuggee_options(debuggee: &Debuggee, scrollback: usize) -> io::Result<TerminalOptions> {
+    if !std::fs::metadata(&debuggee.cwd)?.is_dir() {
+        let path = debuggee.cwd.display().to_string();
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            tr!("workbench-terminal-task-not-a-directory", path = path).to_string(),
+        ));
+    }
+    let Some((program, args)) = debuggee.argv.split_first() else {
+        let error = tr!("workbench-terminal-task-no-command").to_string();
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, error));
+    };
+    let env = (debuggee.env.iter())
+        .filter_map(|(name, value)| Some((name.clone(), value.clone()?)))
+        .collect();
+    // A name with an `=` in it (or none) can't be a variable's.
+    let removed: Vec<&String> = (debuggee.env.iter())
+        .filter(|(name, value)| value.is_none() && !name.is_empty() && !name.contains('='))
+        .map(|(name, _)| name)
+        .collect();
+    Ok(TerminalOptions {
+        shell: Some(without_env(&removed, program, args)?),
+        scrollback,
+        env,
+        ..TerminalOptions::new(&debuggee.cwd)
+    })
+}
+
+/// What runs `program` with `args`, with the variables `removed` taken out
+/// of the environment it inherits: through `env -u`, which execs it, on
+/// Unix. A program whose path holds an `=`, which `env` would read as a
+/// variable to set, is exec'd from `/bin/sh -c 'exec "$0" "$@"'` after it:
+/// its path and arguments are passed as they are, never read by the shell.
+///
+/// # Errors
+///
+/// On Windows, which has no `env`, when there's anything to remove: the
+/// program mustn't run with what the adapter asked to be kept from it.
+fn without_env(
+    removed: &[&String],
+    program: &str,
+    args: &[String],
+) -> io::Result<(String, Vec<String>)> {
+    if removed.is_empty() {
+        return Ok((program.to_owned(), args.to_vec()));
+    }
+    if cfg!(windows) {
+        let names: Vec<&str> = removed.iter().map(|name| name.as_str()).collect();
+        let error = tr!("workbench-debug-env-unremovable", names = names.join(", "));
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            error.to_string(),
+        ));
+    }
+    let mut argv = Vec::new();
+    for name in removed {
+        argv.push(verbatim!("-u").to_owned());
+        argv.push((*name).clone());
+    }
+    argv.push(verbatim!("--").to_owned());
+    if program.contains('=') {
+        argv.extend(
+            [verbatim!("/bin/sh"), "-c", verbatim!("exec \"$0\" \"$@\"")].map(str::to_owned),
+        );
+    }
+    argv.push(program.to_owned());
+    argv.extend(args.iter().cloned());
+    Ok((verbatim!("/usr/bin/env").to_owned(), argv))
 }
 
 /// `/bin/sh -c line`.

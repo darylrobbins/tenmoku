@@ -26,6 +26,7 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::tty::{self, EventedPty, EventedReadWrite};
 use alacritty_terminal::vte::ansi::{Processor, Timeout};
 
+use crate::session::OutputTap;
 use crate::shell::{Found, MAX_ADVANCE, Scanner, ShellState};
 use crate::vi::{self, Hold};
 
@@ -100,6 +101,8 @@ pub(crate) struct PtyLoop<P, U: EventListener> {
     /// Locked after `terminal`.
     shell: Arc<Mutex<ShellState>>,
     events: U,
+    /// Hears every byte the child writes, as read, before it's parsed.
+    tap: Option<OutputTap>,
 }
 
 impl<P, U> PtyLoop<P, U>
@@ -126,8 +129,16 @@ where
             terminal,
             shell,
             events,
+            tap: None,
         };
         Ok((pty_loop, sender))
+    }
+
+    /// Hands every byte the child writes to `tap` as it's read, before the
+    /// grid parses it: what the child wrote, whatever the grid keeps.
+    pub(crate) fn with_tap(mut self, tap: Option<OutputTap>) -> Self {
+        self.tap = tap;
+        self
     }
 
     /// Runs the loop on its own thread. The pty comes back through the join
@@ -338,6 +349,9 @@ where
             };
 
             let bytes = &buf[..unprocessed];
+            if let Some(tap) = &self.tap {
+                tap(bytes);
+            }
             parsed |= feeder.feed(&mut lock(&self.shell), terminal, bytes, Instant::now());
             processed += unprocessed;
             unprocessed = 0;

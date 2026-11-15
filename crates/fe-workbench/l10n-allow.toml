@@ -66,6 +66,11 @@ text = "task-row-{}"
 reason = "A task row's element id"
 
 [[literal]]
+file = "src/debug_session/picker.rs"
+text = "debug-row-{}"
+reason = "A launch configuration row's element id"
+
+[[literal]]
 file = "src/task_commands.rs"
 text = "{} · {command}"
 reason = "A task row's detail: its source (a file or tool name) and its command line, joined by a middle dot"

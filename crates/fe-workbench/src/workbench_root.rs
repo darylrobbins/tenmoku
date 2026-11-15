@@ -325,6 +325,8 @@ impl Workbench {
             .set(event.settings.editor.semantic_highlighting);
         self.sync_save_hooks(cx);
         self.reload_lsp_settings(&event.settings.lsp, cx);
+        // For the sessions started from now on.
+        self.reload_debug_settings(&event.settings.debug, cx);
         self.reload_auto_save(&event.settings.editor, cx);
         self.reload_spell_squiggles(&event.settings.editor, cx);
         self.reload_todo_comments(&event.settings.editor, cx);

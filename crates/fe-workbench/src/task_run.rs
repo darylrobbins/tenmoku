@@ -16,8 +16,22 @@
 //! its exit code, cancelled if its tab closes while it runs. A rerun in the
 //! tab is a new run. The tab of each of its runs is known while it's open
 //! ([`Workbench::task_view_of_run`]), for the Runs panel to show.
+//!
+//! A run started by [`Workbench::run_task_reading`] hands its caller how its
+//! session exited and the lines of its output the caller keeps
+//! ([`TaskExit`]): the debugger's pre-launch builds, which read cargo's
+//! `compiler-artifact` messages (docs/decisions/r1b9dw3g0g-debugger.md §7).
+//! The lines come from the pty as the program wrote them
+//! ([`fe_terminal::OutputTap`]), whatever the grid wraps or its scrollback
+//! drops. Its tab is an ordinary task tab, matcher and all.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::PathBuf,
+    rc::Rc,
+    sync::{Arc, Mutex, PoisonError},
+};
 
 use fe_editor::diagnostics::{Problem, Severity};
 use fe_terminal_view::{TerminalView, TerminalViewEvent};
@@ -38,6 +52,95 @@ use crate::{
 /// ([`Workbench::run_task_then`]).
 pub(crate) type RunHeard =
     Box<dyn FnOnce(&mut Workbench, Vec<RunProblem>, &mut Context<Workbench>)>;
+
+/// How one run's session exited, as a caller reading it at exit hears it
+/// ([`Workbench::run_task_reading`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TaskExit {
+    /// `None` when a signal ended it or the code is unknown.
+    pub code: Option<i32>,
+    /// The lines of its output the reader keeps, in order, as the program
+    /// wrote them (a `\r` before the newline dropped).
+    pub lines: Vec<String>,
+}
+
+/// Which lines of a run's output a reader keeps.
+pub(crate) type KeepLine = fn(&str) -> bool;
+
+/// The longest line a [`Capture`] holds while it's written: a longer one
+/// is dropped whole.
+const MAX_LINE: usize = 16 << 20;
+
+/// The lines a reader keeps of a run's output, as the pty's tap hears it.
+struct Capture {
+    keep: KeepLine,
+    /// The line being written.
+    partial: Vec<u8>,
+    /// The line being written outgrew [`MAX_LINE`].
+    overflowed: bool,
+    lines: Vec<String>,
+}
+
+impl Capture {
+    fn new(keep: KeepLine) -> Self {
+        Self {
+            keep,
+            partial: Vec::new(),
+            overflowed: false,
+            lines: Vec::new(),
+        }
+    }
+
+    fn hear(&mut self, bytes: &[u8]) {
+        for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
+            let (body, ends) = match chunk.strip_suffix(b"\n") {
+                Some(body) => (body, true),
+                None => (chunk, false),
+            };
+            if self.partial.len() + body.len() > MAX_LINE {
+                self.overflowed = true;
+                self.partial.clear();
+            } else if !self.overflowed {
+                self.partial.extend_from_slice(body);
+            }
+            if ends {
+                self.end_line();
+            }
+        }
+    }
+
+    fn end_line(&mut self) {
+        if !self.overflowed {
+            let line = String::from_utf8_lossy(&self.partial);
+            let line = line.strip_suffix('\r').unwrap_or(&line);
+            if (self.keep)(line) {
+                self.lines.push(line.to_owned());
+            }
+        }
+        self.partial.clear();
+        self.overflowed = false;
+    }
+
+    /// The lines kept, the last one too if it had no newline.
+    fn take(&mut self) -> Vec<String> {
+        if !self.partial.is_empty() {
+            self.end_line();
+        }
+        std::mem::take(&mut self.lines)
+    }
+}
+
+/// A [`Capture`], shared with the pty's thread.
+type Captured = Arc<Mutex<Capture>>;
+
+/// What reads one run's exit ([`Workbench::run_task_reading`]): `None` if
+/// its tab closed, or its session was replaced, before it exited.
+pub(crate) type ExitHeard =
+    Box<dyn FnOnce(&mut Workbench, Option<TaskExit>, &mut Context<Workbench>)>;
+
+/// An [`ExitHeard`] until it's called: by the session's exit, or by its tab
+/// going first.
+type Reading = Rc<RefCell<Option<ExitHeard>>>;
 
 /// A problem one run found, as its caller hears it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +192,9 @@ struct TaskTab {
     /// What hears this session's problems, if its run was asked for by
     /// [`Workbench::run_task_then`]: not a rerun's.
     heard: Option<RunHeard>,
+    /// What reads this session's exit, if its run was asked for by
+    /// [`Workbench::run_task_reading`].
+    reading: Option<Reading>,
     /// The session's run in the workbench's [`Runs`].
     run: RunId,
     /// The runs of the sessions it showed before, oldest first: no more
@@ -222,6 +328,28 @@ fn source_problem(
     }
 }
 
+/// Tells `reading`, if it's still waiting, that its session went before it
+/// exited.
+fn hear_gone(reading: Option<Reading>, workbench: &mut Workbench, cx: &mut Context<Workbench>) {
+    let heard = reading.and_then(|reading| reading.borrow_mut().take());
+    if let Some(heard) = heard {
+        heard(workbench, None, cx);
+    }
+}
+
+/// The lines `captured` kept of `view`'s session (a test's fake session,
+/// which never starts, leaves [`FakeTaskOutput`]'s, if set).
+fn session_lines(view: &Entity<TerminalView>, captured: &Captured, cx: &App) -> Vec<String> {
+    let mut capture = captured.lock().unwrap_or_else(PoisonError::into_inner);
+    #[cfg(test)]
+    if view.read(cx).terminal().is_none() && cx.has_global::<FakeTaskOutput>() {
+        capture.hear(cx.global::<FakeTaskOutput>().0.as_bytes());
+    }
+    #[cfg(not(test))]
+    let _ = (view, cx);
+    capture.take()
+}
+
 impl Workbench {
     /// The builds, tests and scripts run here, newest first, for a panel to
     /// list and observe.
@@ -247,20 +375,62 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.run_task_with(task, heard, None, window, cx);
+    }
+
+    /// [`Workbench::run_task`], then once its session exits, hands `reading`
+    /// its exit code and the lines of all its output that `keep` keeps; or
+    /// `None` if its tab closes or reruns first. Nothing if it doesn't
+    /// start: whether it started.
+    pub(crate) fn run_task_reading(
+        &mut self,
+        task: Task,
+        keep: KeepLine,
+        reading: ExitHeard,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.run_task_with(task, None, Some((keep, reading)), window, cx)
+    }
+
+    fn run_task_with(
+        &mut self,
+        task: Task,
+        heard: Option<RunHeard>,
+        reading: Option<(KeepLine, ExitHeard)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if !self.root_trusted() {
             let trust = fe_command::CommandId::parse("workbench.trust_folder")
                 .expect("the command's id is valid");
             let toast = Toast::warning(untrusted_message())
                 .action(tr!("workbench-lsp-tasks-trust-folder"), trust);
-            return toast::show(cx, toast);
+            toast::show(cx, toast);
+            return false;
         }
         let terminal = self.terminal().clone();
         let before: Vec<EntityId> = (terminal.read(cx).views()).map(Entity::entity_id).collect();
         let started = terminal.update(cx, |terminal, cx| terminal.add_task(&task, window, cx));
         if started {
-            self.follow_task_tab(&task, &before, heard, cx);
+            // Before its first layout, when its session starts.
+            let reading = reading.map(|(keep, reading)| {
+                let captured: Captured = Arc::new(Mutex::new(Capture::new(keep)));
+                let tap = captured.clone();
+                if let Some(view) = terminal.read(cx).view().cloned() {
+                    view.update(cx, |view, _| {
+                        view.tap_output(Arc::new(move |bytes| {
+                            let mut capture = tap.lock().unwrap_or_else(PoisonError::into_inner);
+                            capture.hear(bytes);
+                        }));
+                    });
+                }
+                (captured, reading)
+            });
+            self.follow_task_tab(&task, &before, heard, reading, cx);
             self.show_terminal_dock(window, cx);
         }
+        started
     }
 
     /// Hears the session `task` just started in the active tab. If it took the
@@ -271,6 +441,7 @@ impl Workbench {
         task: &Task,
         before: &[EntityId],
         heard: Option<RunHeard>,
+        reading: Option<(Captured, ExitHeard)>,
         cx: &mut Context<Self>,
     ) {
         let terminal = self.terminal().clone();
@@ -289,23 +460,35 @@ impl Workbench {
         };
         let runs = self.runs.clone();
         let run = runs.update(cx, |runs, cx| runs.begin(run_kind(task), &task.label, cx));
-        let exited = cx.subscribe(
-            &view,
+        let (captured, reading) = match reading {
+            Some((captured, reading)) => (Some(captured), Some(reading)),
+            None => (None, None),
+        };
+        let reading: Option<Reading> = reading.map(|reading| Rc::new(RefCell::new(Some(reading))));
+        let exited = cx.subscribe(&view, {
+            let reading = reading.clone();
             move |workbench, view, event: &TerminalViewEvent, cx| {
                 if let TerminalViewEvent::Exited(code) = *event {
                     let (end, summary) = run_end(code);
                     (workbench.runs.clone())
                         .update(cx, |runs, cx| runs.finish(run, end, summary, cx));
                     workbench.read_task_output(&view, &reader, cx);
+                    let heard = reading
+                        .as_ref()
+                        .and_then(|reading| reading.borrow_mut().take());
+                    if let Some((heard, captured)) = heard.zip(captured.as_ref()) {
+                        let lines = session_lines(&view, captured, cx);
+                        heard(workbench, Some(TaskExit { code, lines }), cx);
+                    }
                 }
-            },
-        );
+            }
+        });
         let closing = cx.observe(&terminal, |workbench, _, cx| {
             workbench.forget_closed_task_tabs(cx);
         });
         let view = view.entity_id();
         let panel = self.dock().read(cx).problems().clone();
-        let replaced_run = panel.update(cx, |panel, _| {
+        let (replaced_run, unheard) = panel.update(cx, |panel, _| {
             let tabs = &mut panel.task_tabs;
             tabs.closing.get_or_insert(closing);
             let tab = (tabs.tabs.iter_mut()).find(|tab| Some(tab.view) == replaced);
@@ -315,12 +498,13 @@ impl Workbench {
                     tab._exited = exited;
                     tab._matching = None;
                     tab.heard = heard;
+                    let unheard = std::mem::replace(&mut tab.reading, reading);
                     let replaced = std::mem::replace(&mut tab.run, run);
                     tab.earlier.push(replaced);
                     if tab.earlier.len() > MAX_FINISHED {
                         tab.earlier.remove(0);
                     }
-                    Some(replaced)
+                    (Some(replaced), unheard)
                 }
                 None => {
                     let key = tabs.next_key;
@@ -331,13 +515,16 @@ impl Workbench {
                         _exited: exited,
                         _matching: None,
                         heard,
+                        reading,
                         run,
                         earlier: Vec::new(),
                     });
-                    None
+                    (None, None)
                 }
             }
         });
+        // The session it replaced never exits now.
+        hear_gone(unheard, self, cx);
         // The tab reruns once its session's done, so this is only for one
         // whose end went unheard.
         if let Some(replaced) = replaced_run {
@@ -448,16 +635,26 @@ impl Workbench {
             .map(Entity::entity_id)
             .collect();
         let panel = self.dock().read(cx).problems().clone();
-        let closed = panel.update(cx, |panel, _| {
-            let (closed, kept) = std::mem::take(&mut panel.task_tabs.tabs)
+        let (closed, unheard) = panel.update(cx, |panel, _| {
+            let (mut closed, kept) = std::mem::take(&mut panel.task_tabs.tabs)
                 .into_iter()
                 .partition::<Vec<_>, _>(|tab| !open.contains(&tab.view));
             panel.task_tabs.tabs = kept;
             for tab in &closed {
                 panel.clear_source(tab.key);
             }
-            closed.iter().map(|tab| tab.run).collect::<Vec<_>>()
+            let unheard: Vec<Reading> = (closed.iter_mut())
+                .filter_map(|tab| tab.reading.take())
+                .collect();
+            (
+                closed.iter().map(|tab| tab.run).collect::<Vec<_>>(),
+                unheard,
+            )
         });
+        // Their sessions never exit now.
+        for reading in unheard {
+            hear_gone(Some(reading), self, cx);
+        }
         // Those still running are cancelled: closing a tab ends its session.
         (self.runs.clone()).update(cx, |runs, cx| {
             for &run in &closed {

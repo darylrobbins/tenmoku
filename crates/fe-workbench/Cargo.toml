@@ -20,7 +20,8 @@ fe-net.workspace = true
 fe-command.workspace = true
 fe-config.workspace = true
 # Launch configurations (launch_defs.rs): the adapters an `adapter` or a
-# launch.json `type` names, through fe-dap's alias table.
+# launch.json `type` names, through fe-dap's alias table; and the debug
+# sessions (debug_session.rs).
 fe-dap.workspace = true
 fe-editor.workspace = true
 # Files too large to read open in a read-only view.
@@ -113,6 +114,8 @@ fe-command = { workspace = true, features = ["lint"] }
 fe-project = { workspace = true, features = ["test-support"] }
 # Card 1's fake server and its launcher, and the LSP types it speaks.
 fe-lsp = { workspace = true, features = ["test-support"] }
+# The fake debug adapter and its launcher (tests/debug_session.rs).
+fe-dap = { workspace = true, features = ["test-support"] }
 lsp-types.workspace = true
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 # The a11y recorder (a11y_announcer.rs).

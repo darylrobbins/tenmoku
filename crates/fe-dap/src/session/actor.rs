@@ -45,15 +45,14 @@ mod stops;
 
 use stops::{Fetch, Probe, Stops};
 
-/// How a request's timeout is chosen: [`super::LAUNCH_TIMEOUT`] for
+/// How a request's timeout is chosen from `timeouts`: `launch`'s for
 /// `launch` and `attach`, none for a `repl` evaluation (the user cancels
-/// it), [`super::REQUEST_TIMEOUT`] for everything else.
-fn timeout_for(command: &str, arguments: &Value) -> Option<Duration> {
+/// it), `request`'s for everything else, `configurationDone` included.
+fn timeout_for(command: &str, arguments: &Value, timeouts: &super::Timeouts) -> Option<Duration> {
     match command {
-        "launch" | "attach" => Some(super::LAUNCH_TIMEOUT),
+        "launch" | "attach" => Some(timeouts.launch),
         "evaluate" if arguments.get("context").and_then(Value::as_str) == Some("repl") => None,
-        "configurationDone" => Some(super::CONFIGURATION_DONE_TIMEOUT),
-        _ => Some(super::REQUEST_TIMEOUT),
+        _ => Some(timeouts.request),
     }
 }
 
@@ -382,7 +381,7 @@ impl Actor {
     fn send(&mut self, command: &str, arguments: Value, purpose: Purpose) -> i64 {
         self.g.seq += 1;
         let seq = self.g.seq;
-        let timeout = timeout_for(command, &arguments);
+        let timeout = timeout_for(command, &arguments, &self.options.timeouts);
         if let Some(timeout) = timeout {
             let sleep = self.clock.sleep(timeout);
             self.g.timers.arm(Timer::Request(seq), sleep);
@@ -718,7 +717,9 @@ impl Actor {
                     self.send_external(queued);
                 }
             }
-            Err(RequestError::Timeout { .. }) => self.abort(SessionError::InitializeTimeout),
+            Err(RequestError::Timeout { after, .. }) => {
+                self.abort(SessionError::InitializeTimeout(after))
+            }
             Err(err) => self.shut_down(
                 EndReason::Failed(SessionError::InitializeFailed(
                     err.message().map(str::to_owned),
@@ -739,7 +740,9 @@ impl Actor {
                 }
                 self.maybe_baseline();
             }
-            Err(RequestError::Timeout { .. }) => self.abort(SessionError::StartTimeout),
+            Err(RequestError::Timeout { after, .. }) => {
+                self.abort(SessionError::StartTimeout(after))
+            }
             Err(err) => self.shut_down(
                 EndReason::Failed(SessionError::StartFailed(err.message().map(str::to_owned))),
                 false,
@@ -864,8 +867,8 @@ impl Actor {
         match result {
             Ok(_) => {}
             // §13 F10: an adapter that never answers ends the session.
-            Err(RequestError::Timeout { .. }) => {
-                return self.abort(SessionError::ConfigurationDoneTimeout);
+            Err(RequestError::Timeout { after, .. }) => {
+                return self.abort(SessionError::ConfigurationDoneTimeout(after));
             }
             // Shown, if still current; the session carries on.
             Err(err) if round == self.g.startup.round => self.emit(DapEvent::Failed(err)),
@@ -1611,10 +1614,10 @@ fn error_kind(error: &SessionError) -> &'static str {
     match error {
         SessionError::Launch(_) => "launch_failed",
         SessionError::InitializeFailed(_) => "initialize_failed",
-        SessionError::InitializeTimeout => "initialize_timeout",
+        SessionError::InitializeTimeout(_) => "initialize_timeout",
         SessionError::StartFailed(_) => "start_failed",
-        SessionError::StartTimeout => "start_timeout",
-        SessionError::ConfigurationDoneTimeout => "configuration_done_timeout",
+        SessionError::StartTimeout(_) => "start_timeout",
+        SessionError::ConfigurationDoneTimeout(_) => "configuration_done_timeout",
         SessionError::Transport(_) => "transport",
     }
 }

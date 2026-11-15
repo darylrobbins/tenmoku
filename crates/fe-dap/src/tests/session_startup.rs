@@ -296,10 +296,12 @@ fn configuration_done_timeout_ends_the_session_with_a_named_error() {
     let ended = harness.wait_ended();
     assert_eq!(
         ended.reason,
-        EndReason::Failed(SessionError::ConfigurationDoneTimeout)
+        EndReason::Failed(SessionError::ConfigurationDoneTimeout(
+            CONFIGURATION_DONE_TIMEOUT
+        ))
     );
     assert_eq!(
-        SessionError::ConfigurationDoneTimeout.to_string(),
+        SessionError::ConfigurationDoneTimeout(CONFIGURATION_DONE_TIMEOUT).to_string(),
         tr!(
             "dap-session-configuration-done-timeout",
             seconds = CONFIGURATION_DONE_TIMEOUT.as_secs()
