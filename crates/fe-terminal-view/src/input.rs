@@ -242,6 +242,9 @@ impl TerminalView {
     /// Writes `text` as a paste, bracketed when the program asked for that.
     /// A paste leaves vi mode.
     pub(crate) fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         if self.is_vi_mode() {
             self.set_vi_mode(false, cx);
         }
@@ -261,6 +264,9 @@ impl TerminalView {
     /// Writes typed or pasted `bytes` to the pty, which scrolls to the
     /// bottom, and clears the selection.
     pub(crate) fn write(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let Some(terminal) = &self.terminal else {
             return;
         };
@@ -316,7 +322,7 @@ impl EntityInputHandler for TerminalView {
     /// Not in vi mode, whose keys are commands: an input method would take
     /// them as text before they reach the view.
     fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
-        !self.is_vi_mode()
+        !self.is_vi_mode() && !self.read_only
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
@@ -346,7 +352,7 @@ impl EntityInputHandler for TerminalView {
             cx.notify();
         }
         // Vi mode's keys aren't text.
-        if self.is_vi_mode() {
+        if self.is_vi_mode() || self.read_only {
             return;
         }
         self.write(text.as_bytes().to_vec(), cx);
@@ -360,7 +366,7 @@ impl EntityInputHandler for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.is_vi_mode() {
+        if self.is_vi_mode() || self.read_only {
             return;
         }
         let (text, selection) = compose(

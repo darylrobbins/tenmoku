@@ -91,6 +91,9 @@ pub struct TerminalView {
     pub(crate) vi: ViKeys,
     /// Where the last frame drew the vi search prompt.
     vi_prompt_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Whether the view drops everything meant for the pty: typed keys,
+    /// pastes, composed text and the reports of focus and the mouse.
+    pub(crate) read_only: bool,
     _focus_reports: [Subscription; 2],
     /// Redraws the cursor when the window gains or loses focus.
     _activation: Subscription,
@@ -145,6 +148,7 @@ impl TerminalView {
             record_paint: false,
             vi: ViKeys::default(),
             vi_prompt_bounds: Rc::default(),
+            read_only: false,
             _focus_reports: focus_reports,
             _activation: activation,
         })
@@ -163,6 +167,26 @@ impl TerminalView {
     /// made with the mouse is written to it and a middle click pastes from it.
     pub fn set_primary_selection(&mut self, on: bool) {
         self.primary_selection = on;
+    }
+
+    /// Makes the view read-only, or writable again: while read-only no key,
+    /// paste or composed text reaches the pty. Selection, copy, scrolling,
+    /// vi copy mode and find are the view's own, and still work.
+    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        if self.read_only != read_only {
+            self.read_only = read_only;
+            // Gestures begun the other way end with it.
+            self.reported_buttons.clear();
+            self.reported = None;
+            self.drag = None;
+            self.wheel = 0.;
+            cx.notify();
+        }
+    }
+
+    /// Whether the view drops input meant for the pty.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Whether the view has focus in an active window: what decides a filled
@@ -287,6 +311,9 @@ impl TerminalView {
     /// Sends `CSI I` or `CSI O` when the program asked to hear of focus,
     /// leaving the view where it is.
     fn report_focus(&self, focused: bool) {
+        if self.read_only {
+            return;
+        }
         let Some(terminal) = &self.terminal else {
             return;
         };

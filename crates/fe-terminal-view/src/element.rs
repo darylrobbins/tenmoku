@@ -265,6 +265,14 @@ impl Element for TerminalElement {
         });
         if let Some(snapshot) = &snapshot {
             frame.modes = snapshot.modes;
+            // A read-only view tells its program nothing: the mouse selects
+            // and scrolls the scrollback itself, whatever the program asked.
+            if self.view.read(cx).read_only {
+                frame.modes.mouse_report_click = false;
+                frame.modes.mouse_drag = false;
+                frame.modes.mouse_motion = false;
+                frame.modes.alternate_scroll = false;
+            }
             // Keep scrolling while the drag is held past an end there's more
             // history toward.
             let more = match drag_scroll {

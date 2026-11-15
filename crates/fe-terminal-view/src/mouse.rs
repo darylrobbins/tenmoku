@@ -299,6 +299,9 @@ impl TerminalView {
     /// the view is scrolled as they were: unlike typing, it isn't the user
     /// coming back to the prompt.
     fn write_report(&mut self, bytes: Vec<u8>, _cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let Some(terminal) = &self.terminal else {
             return;
         };

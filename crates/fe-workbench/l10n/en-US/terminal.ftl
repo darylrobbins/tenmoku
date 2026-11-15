@@ -14,6 +14,10 @@ workbench-terminal-task-numbered = { $label } ({ $ordinal })
 # A task's tab once it passed. $label is the tab's name.
 workbench-terminal-task-passed = { $label } ✓
 
+# An agent's terminal tab. $lane is the lane's number, $command what the
+# terminal runs.
+workbench-terminal-lane = lane { $lane } · { $command }
+
 ## The strip's buttons: their accessible names and tooltips
 
 workbench-terminal-new = New Terminal

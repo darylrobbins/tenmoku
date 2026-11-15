@@ -42,6 +42,7 @@ use std::{
 
 use fe_command::Source;
 use fe_config::TerminalSettings;
+use fe_editor::lane::LaneId;
 use fe_gpui::EditorTheme;
 use fe_terminal_view::{
     CommandStatus, TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent,
@@ -127,9 +128,21 @@ struct Session {
     task: Option<TaskTab>,
     /// Its shell's foreground command, as its view last told.
     status: CommandStatus,
+    /// The lane it belongs to, if it's one's terminal: an agent's, or the
+    /// terminal lane's own CLI agent. Its tab is silver-blue.
+    lane: Option<LaneId>,
+    /// Whether its view takes no typing: an agent's terminal, which the
+    /// user only watches. A terminal lane's own session is writable.
+    read_only: bool,
+    /// The command a lane's tab names: `lane 2 · <command>`.
+    command: Option<SharedString>,
     /// To its view's events: its shell's exit and its command's status.
     _events: Subscription,
 }
+
+/// The theme token of the agent's colour: silver-blue, only ever an agent's
+/// signal, never the accent.
+const AGENT_TOKEN: &str = "agent.base";
 
 impl Session {
     /// What its tab shows before its label: a task's run, or its shell's
@@ -163,11 +176,15 @@ enum TabMark {
 }
 
 impl TabMark {
-    fn icon(self) -> IconRef {
-        match self {
-            Self::Idle => IconRef::Bundled(Icon::FileTerminal),
-            Self::Running => IconRef::Bundled(Icon::LoaderCircle),
-            Self::Failed => IconRef::Tinted(Icon::CircleX, "status.error"),
+    /// The icon, in the agent's colour on a lane's tab: a failure keeps its
+    /// own hue there too.
+    fn icon(self, lane: bool) -> IconRef {
+        match (self, lane) {
+            (Self::Idle, false) => IconRef::Bundled(Icon::FileTerminal),
+            (Self::Running, false) => IconRef::Bundled(Icon::LoaderCircle),
+            (Self::Idle, true) => IconRef::Tinted(Icon::FileTerminal, AGENT_TOKEN),
+            (Self::Running, true) => IconRef::Tinted(Icon::LoaderCircle, AGENT_TOKEN),
+            (Self::Failed, _) => IconRef::Tinted(Icon::CircleX, "status.error"),
         }
     }
 }
@@ -274,6 +291,10 @@ pub struct TerminalPanel {
     /// The tabs the last frame drew: label and background.
     #[cfg(test)]
     drawn_tabs: Vec<(SharedString, gpui::Hsla)>,
+    /// The tabs the last frame drew: the text colour a lane's tab was given
+    /// and its icon.
+    #[cfg(test)]
+    drawn_tab_marks: Vec<(Option<gpui::Hsla>, IconRef)>,
 }
 
 impl EventEmitter<TerminalPanelEvent> for TerminalPanel {}
@@ -315,6 +336,8 @@ impl TerminalPanel {
             debuggees_unstarted: false,
             #[cfg(test)]
             drawn_tabs: Vec::new(),
+            #[cfg(test)]
+            drawn_tab_marks: Vec::new(),
         }
     }
 
@@ -461,6 +484,41 @@ impl TerminalPanel {
             name: None,
             task: None,
             status: CommandStatus::Idle,
+            lane: None,
+            read_only: false,
+            command: None,
+            _events: events,
+        });
+        self.next_number += 1;
+        self.session_added(self.sessions.len() - 1, cx);
+    }
+
+    /// Starts a session of `lane` running `options`, after the last, and
+    /// makes it active. Its tab is silver-blue; read-only, it's an agent's
+    /// terminal, named `lane 2 · <command>`, and takes no typing. Writable,
+    /// it's a terminal lane's own session.
+    #[allow(dead_code)] // Card 19 (`agent.new_terminal`) opens them.
+    pub(crate) fn add_lane_session(
+        &mut self,
+        lane: LaneId,
+        read_only: bool,
+        command: impl Into<SharedString>,
+        options: TerminalOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self.new_view(options, false, window, cx);
+        view.update(cx, |view, cx| view.set_read_only(read_only, cx));
+        let events = self.follow(&view, window, cx);
+        self.sessions.push(Session {
+            view,
+            number: self.next_number,
+            name: None,
+            task: None,
+            status: CommandStatus::Idle,
+            lane: Some(lane),
+            read_only,
+            command: Some(command.into()),
             _events: events,
         });
         self.next_number += 1;
@@ -641,6 +699,9 @@ impl TerminalPanel {
                     name: None,
                     task: Some(tab),
                     status: CommandStatus::Idle,
+                    lane: None,
+                    read_only: false,
+                    command: None,
                     _events: events,
                 });
                 self.sessions.len() - 1
@@ -1037,6 +1098,15 @@ impl TerminalPanel {
         if let Some(tab) = &session.task {
             return tab.title();
         }
+        if let (Some(lane), true, Some(command)) =
+            (session.lane, session.read_only, &session.command)
+        {
+            return tr!(
+                "workbench-terminal-lane",
+                lane = lane.get(),
+                command = command
+            );
+        }
         match session.view.read(cx).title() {
             Some(title) => title.to_owned().into(),
             None => tr!("workbench-terminal-numbered", number = session.number),
@@ -1058,6 +1128,7 @@ impl TerminalPanel {
         let ui = fe_ui::ui_theme(cx);
         let colors = &cx.theme().colors;
         let (chrome, border) = (colors.surface.chrome, colors.border.default);
+        let agent = colors.agent.base;
         #[cfg(test)]
         let (tab_active, tab_inactive) = (colors.tab.active, colors.tab.inactive);
         let tabs: Vec<_> = (0..self.sessions.len())
@@ -1065,6 +1136,11 @@ impl TerminalPanel {
                 let id = self.sessions[ix].view.entity_id();
                 let label = self.label(ix, cx);
                 let active = ix == self.active;
+                let lane = self.sessions[ix].lane.is_some();
+                let agent = lane.then_some(agent);
+                #[cfg(test)]
+                self.drawn_tab_marks
+                    .push((agent, self.sessions[ix].mark().icon(lane)));
                 #[cfg(test)]
                 self.drawn_tabs.push((
                     label.clone(),
@@ -1080,7 +1156,8 @@ impl TerminalPanel {
                     label,
                     &ui,
                 )
-                .icon(Some(self.sessions[ix].mark().icon()))
+                .icon(Some(self.sessions[ix].mark().icon(lane)))
+                .label_color(agent)
                 .active(active)
                 .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
                     if event.click_count() >= 2 {
@@ -1453,6 +1530,8 @@ impl Render for TerminalPanel {
         self.update_find(|find, view, cx| find.settle(view, cx), cx);
         #[cfg(test)]
         self.drawn_tabs.clear();
+        #[cfg(test)]
+        self.drawn_tab_marks.clear();
         let strip = self.tab_strip(cx);
         let view = self.view().cloned();
         let session = view.clone().map(IntoElement::into_any_element);
@@ -1509,6 +1588,11 @@ impl TerminalPanel {
         };
         let args = args.iter().map(|arg| (*arg).to_owned()).collect();
         self.shell = Some((shell.to_owned(), args));
+    }
+
+    /// The tabs the last frame drew: label and background.
+    pub(crate) fn drawn_tab_marks(&self) -> &[(Option<gpui::Hsla>, IconRef)] {
+        &self.drawn_tab_marks
     }
 
     /// The tabs the last frame drew: label and background.
@@ -1638,6 +1722,10 @@ mod terminal_rename_tests;
 #[cfg(test)]
 #[path = "terminal_tabs_tests.rs"]
 pub(crate) mod terminal_tabs_tests;
+
+#[cfg(test)]
+#[path = "terminal_lane_tests.rs"]
+mod terminal_lane_tests;
 
 #[cfg(test)]
 #[path = "terminal_tab_list_tests.rs"]

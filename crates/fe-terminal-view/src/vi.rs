@@ -314,6 +314,8 @@ impl TerminalView {
         };
         // The clipboard keys work in the search prompt too.
         match clipboard_key(keystroke) {
+            // Read-only, a paste is nothing: it doesn't leave vi mode either.
+            Some(KeyInput::Paste) if self.read_only => return,
             Some(KeyInput::Paste) => {
                 self.set_vi_mode(false, cx);
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
