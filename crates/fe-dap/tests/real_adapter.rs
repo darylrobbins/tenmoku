@@ -113,7 +113,13 @@ impl Client {
         let message = self
             .rx
             .recv_timeout(WAIT)
-            .unwrap_or_else(|_| panic!("adapter silent for {WAIT:?}; log: {:?}", self.log));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "adapter silent for {WAIT:?}; log: {:?}. On macOS, a native adapter hangs \
+                     on launch while Developer Mode is off (`DevToolsSecurity -status`)",
+                    self.log
+                )
+            });
         match &message {
             Message::Response(r) => self.log.push(format!("resp:{}", r.command)),
             Message::Event(e) => self.log.push(format!("evt:{}", e.event)),
@@ -181,14 +187,15 @@ impl Client {
                 _ => {}
             }
         }
-        let exit = async_io::block_on(async {
-            futures::future::select(
+        let exited = async_io::block_on(async {
+            let either = futures::future::select(
                 self.process.exited(),
                 Box::pin(async_io::Timer::after(Duration::from_secs(10))),
             )
-            .await
+            .await;
+            matches!(either, futures::future::Either::Left(_))
         });
-        if matches!(exit, futures::future::Either::Right(_)) {
+        if !exited {
             self.process.kill();
         }
     }
@@ -212,7 +219,10 @@ fn locals(client: &mut Client, thread: i64) -> (i64, i64, Vec<Variable>) {
     });
     let frame = stack.stack_frames.first().expect("no frames");
     let (frame_id, line) = (frame.id, frame.line);
-    let scopes = client.ok::<request::Scopes>(&ScopesArguments { frame_id });
+    let scopes = client.ok::<request::Scopes>(&ScopesArguments {
+        frame_id,
+        ..Default::default()
+    });
     let scope = scopes
         .scopes
         .iter()
