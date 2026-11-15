@@ -136,10 +136,12 @@ struct Stores(HashMap<PathBuf, Entity<BreakpointStore>>);
 
 impl Global for Stores {}
 
-/// `path` with its symlinks resolved, or as it is if that fails (it's
-/// gone, or not there yet).
+/// `path` with its symlinks resolved; for a file that's gone or not there
+/// yet, its directory's, so it keys and writes (relative to the root) as
+/// it would if it were there: a root reached through a symlink (macOS's
+/// `/var`, say) resolves to where it is, and so must its missing files.
 fn canonical(path: &Path) -> PathBuf {
-    dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+    crate::disk_sync::canonicalize(path)
 }
 
 /// The text of the file at `path` on disk, decoded as a buffer reads it,

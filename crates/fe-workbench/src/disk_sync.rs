@@ -588,7 +588,7 @@ fn matching(
 }
 
 /// `path` with its symlinks resolved; for a missing file, its directory's.
-fn canonicalize(path: &Path) -> PathBuf {
+pub(crate) fn canonicalize(path: &Path) -> PathBuf {
     if let Ok(canonical) = dunce::canonicalize(path) {
         return canonical;
     }
