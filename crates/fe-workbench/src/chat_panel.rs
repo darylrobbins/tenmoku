@@ -110,12 +110,13 @@ use chat_store_worker::{SaveState, Saved, Target, Worker, WorkerError};
 
 use chat_context::MAX_FILE;
 
-/// The AI chat in the sidebar: always on the rail, under Git Log; focused
-/// when shown, as the composer takes the keys.
+/// The AI chat in the sidebar: always on the rail, under Agents, a speech
+/// bubble (the robot head is the Agents panel's, which lists the chat as
+/// lane 1); focused when shown, as the composer takes the keys.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("chat"),
     name: verbatim!("Chat"),
-    icon: fe_ui::Icon::Bot,
+    icon: fe_ui::Icon::MessageSquare,
     show_command: "chat.open",
     show_op: DockOp::ShowChat,
     order: 47,
@@ -1170,6 +1171,13 @@ impl ChatPanel {
             return;
         }
         self.show_chat(chosen, window, cx);
+    }
+
+    /// Stops the turn as the chat's Stop button does: every permission
+    /// prompt waiting is refused and the reply stops, so lane 1's turn
+    /// ends.
+    pub(crate) fn stop_turn(&mut self, cx: &mut Context<Self>) {
+        self.view.update(cx, ChatView::stop_turn);
     }
 
     /// Stops a streaming reply, then keeps the chat as it is.

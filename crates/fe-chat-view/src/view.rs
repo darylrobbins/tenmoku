@@ -1091,6 +1091,14 @@ impl ChatView {
         }
     }
 
+    /// Stops the turn as the composer's Stop button does, for a host's own
+    /// Stop: closes every permission prompt waiting as refused and stops
+    /// the reply streaming in, keeping what came. [`ChatView::stop_reply`],
+    /// Escape's, denies only the first prompt.
+    pub fn stop_turn(&mut self, cx: &mut Context<Self>) {
+        self.stop(cx);
+    }
+
     /// Stop: closes the permission prompts waiting as refused, and stops
     /// the reply streaming in, keeping what came.
     fn stop(&mut self, cx: &mut Context<Self>) {

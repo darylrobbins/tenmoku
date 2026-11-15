@@ -536,6 +536,10 @@ impl Workbench {
         let rail = (cx.try_global::<kiln::GlobalSettings<fe_config::Settings>>())
             .map_or_else(Default::default, |global| global.settings().workbench.rail);
         let sidebar = crate::dock::rail_position(rail);
+        // Made before anything else reads them; the Agents panel lists them.
+        let lanes = cx.new(|_| crate::lanes::LaneStore::new());
+        let workbench = cx.weak_entity();
+        let agents = cx.new(|cx| crate::agents_panel::AgentsPanel::new(&lanes, workbench, cx));
         let dock = cx.new(|cx| {
             let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), cx));
             Dock::new(
@@ -544,6 +548,7 @@ impl Workbench {
                 search,
                 outline.clone(),
                 changes.clone(),
+                agents,
                 git_log,
                 chat,
                 references,
@@ -835,7 +840,7 @@ impl Workbench {
             auto_save,
             problem_landing: None,
             ai_changes: None,
-            lanes: cx.new(|_| crate::lanes::LaneStore::new()),
+            lanes,
             owned_editors: Vec::new(),
             diff_left: None,
             vim_keys: None,
@@ -1203,8 +1208,11 @@ impl Render for Workbench {
         // by `on_run_command`.
         let root = match self.setup {
             Some(_) => div().key_context(KEY_CONTEXT),
-            None => Self::attach_todo_commands(
-                Self::attach_picker_commands(Self::attach(div(), cx), cx),
+            None => Self::attach_agents_commands(
+                Self::attach_todo_commands(
+                    Self::attach_picker_commands(Self::attach(div(), cx), cx),
+                    cx,
+                ),
                 cx,
             ),
         };

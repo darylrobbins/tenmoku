@@ -22,6 +22,7 @@ mod agent_audit;
 mod agent_command;
 #[allow(dead_code, reason = "the API tool loop (card AG10) runs the tools")]
 mod agent_tools;
+mod agents_panel;
 mod ai_changes_buffers;
 mod ai_changes_panel;
 mod auto_save;

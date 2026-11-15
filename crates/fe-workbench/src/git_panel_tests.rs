@@ -231,6 +231,7 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
             Icon::Search,
             Icon::FileDiff,
             Icon::Bot,
+            Icon::MessageSquare,
             Icon::TriangleAlert,
             Icon::ListVideo,
             Icon::GitGraph,

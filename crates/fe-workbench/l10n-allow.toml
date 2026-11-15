@@ -720,3 +720,12 @@ reason = "A revision, passed to git rev-parse"
 file = "src/lanes.rs"
 text = "Chat"
 reason = "Lane 1's name as the lane record keeps it, as an agent names itself; not a translated label"
+
+# The Agents panel's name as its SidebarPanel const declares it, by which
+# the rail orders it and tests name it: the dock titles it
+# workbench-dock-agents-title (dock.rs).
+
+[[literal]]
+file = "src/agents_panel.rs"
+text = "Agents"
+reason = "The Agents panel's name in its SidebarPanel const, not shown: the dock titles it workbench-dock-agents-title"

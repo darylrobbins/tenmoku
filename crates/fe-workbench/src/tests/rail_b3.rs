@@ -1,5 +1,5 @@
 //! The activity rail in B3 (`docs/design/design-system.md`, Workbench
-//! anatomy): 42 px wide with 32 px items; Project, Search, Changes and
+//! anatomy): 42 px wide with 32 px items; Project, Search, Changes, Agents and
 //! Chat at the top, the panels shown on first use after them, Problems,
 //! Runs, the Git log and Terminal at the foot; the selection's bar on the edge
 //! facing the sidebar; Changes' and Problems' badges; and
@@ -137,8 +137,14 @@ fn top_and_foot_groups_in_order(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx, tempfile::tempdir().unwrap());
     let dock = dock(&workbench, cx);
     let names: Vec<_> = (DockPanel::ALL.iter()).map(|panel| panel.name()).collect();
-    assert_eq!(names, ["Project", "Search", "Changes", "Chat"]);
-    let top = [Icon::Files, Icon::Search, Icon::FileDiff, Icon::Bot];
+    assert_eq!(names, ["Project", "Search", "Changes", "Agents", "Chat"]);
+    let top = [
+        Icon::Files,
+        Icon::Search,
+        Icon::FileDiff,
+        Icon::Bot,
+        Icon::MessageSquare,
+    ];
     let foot = [
         Icon::TriangleAlert,
         Icon::ListVideo,

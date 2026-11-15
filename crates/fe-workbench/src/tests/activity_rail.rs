@@ -265,6 +265,7 @@ fn buttons_draw_lucide_icons(cx: &mut TestAppContext) {
         Icon::Search,
         Icon::FileDiff,
         Icon::Bot,
+        Icon::MessageSquare,
         Icon::TriangleAlert,
         Icon::ListVideo,
         Icon::GitGraph,

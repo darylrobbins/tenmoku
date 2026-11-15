@@ -1,4 +1,4 @@
-//! The Chat button on the rail from the start, under Git Log, and the key
+//! The Chat button on the rail from the start, under Agents, and the key
 //! not read until the chat shows.
 
 use std::sync::{
@@ -55,6 +55,7 @@ fn chat_is_on_the_rail_from_the_start(cx: &mut TestAppContext) {
         DockPanel::Explorer,
         DockPanel::Search,
         DockPanel::SourceControl,
+        DockPanel::Agents,
         DockPanel::Chat,
     ];
     assert_eq!(rail(&workbench, cx), base);
@@ -64,17 +65,18 @@ fn chat_is_on_the_rail_from_the_start(cx: &mut TestAppContext) {
         base.len() + 4,
         "the Problems, Runs, Git log and Terminal actions follow"
     );
-    assert_eq!(icons[3], Icon::Bot);
-    assert_eq!(icons[4], Icon::TriangleAlert);
-    assert_eq!(icons[5], Icon::ListVideo);
-    assert_eq!(icons[7], Icon::FileTerminal);
+    assert_eq!(icons[3], Icon::Bot, "Agents'");
+    assert_eq!(icons[4], Icon::MessageSquare);
+    assert_eq!(icons[5], Icon::TriangleAlert);
+    assert_eq!(icons[6], Icon::ListVideo);
+    assert_eq!(icons[8], Icon::FileTerminal);
 
     dispatch("git.file_history", cx);
     dispatch("nav.find_references", cx);
     let after = rail(&workbench, cx);
     assert!(after.contains(&DockPanel::History), "{after:?}");
     assert!(after.contains(&DockPanel::References), "{after:?}");
-    assert_eq!(after.iter().position(|p| *p == DockPanel::Chat), Some(3));
+    assert_eq!(after.iter().position(|p| *p == DockPanel::Chat), Some(4));
 }
 
 /// A workbench on a git repository with a committed `a.rs`, showing it.

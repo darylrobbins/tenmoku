@@ -101,6 +101,7 @@ fn rail(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<DockPa
                 (panels.into_iter())
                     .chain([
                         DockPanel::SourceControl,
+                        DockPanel::Agents,
                         DockPanel::Chat,
                         DockPanel::References,
                         DockPanel::Problems,
@@ -179,6 +180,7 @@ fn chat_open_shows_the_panel(cx: &mut TestAppContext) {
         DockPanel::Explorer,
         DockPanel::Search,
         DockPanel::SourceControl,
+        DockPanel::Agents,
         DockPanel::Chat,
     ];
     assert_eq!(rail(&workbench, cx), base);

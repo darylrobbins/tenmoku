@@ -4,13 +4,15 @@
 //! activity rail on the window's left edge, or its right
 //! (`workbench.rail`, [`rail_position`]), which stays when the dock hides.
 //! Switching keeps each panel's state. The rail's top group is Project
-//! (the Explorer), Search, Changes (Source Control) and Chat, then the
+//! (the Explorer), Search, Changes (Source Control), Agents (the lanes,
+//! [`agents_panel`]) and Chat, then the
 //! panels shown on first use; its foot is the bottom panel's tool windows,
 //! Problems, Runs, the Git log and Terminal ([`rail_actions`]), which the bottom
 //! dock shows under its own tab strip ([`BOTTOM_PANEL_HEIGHT`]): a click
 //! runs the tool window's command, or hides the bottom dock if it shows
 //! that one ([`DockEvent::Action`]). Changes' button counts the changed
-//! files ([`Dock::set_changed_files`]), Problems' has a dot while there
+//! files ([`Dock::set_changed_files`]), Agents' the lanes working or to
+//! review ([`Dock::follow_agents`]), Problems' has a dot while there
 //! are errors ([`Dock::set_errors`]). The Explorer is a
 //! [`ViewContainer`] of two views, the project tree (Folders), its lead,
 //! which the dock's header names ("Project") and carries the actions of,
@@ -54,6 +56,7 @@ use kiln_shell::{
 use crate::{
     ChatPanel, GitLogPanel, GitPanel, HierarchyPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH,
     ProjectPanel, ReferencesPanel,
+    agents_panel::{self, AgentsPanel},
     ai_changes_panel::AiChangesPanel,
     outline_panel::CaretSymbol,
     runs_panel::{self, RunsPanel},
@@ -85,6 +88,7 @@ impl DockPanel {
     pub const Explorer: DockPanel = crate::project_panel::SIDEBAR.panel;
     pub const Search: DockPanel = search_panel::SIDEBAR.panel;
     pub const SourceControl: DockPanel = source_control::SIDEBAR.panel;
+    pub const Agents: DockPanel = agents_panel::SIDEBAR.panel;
     pub const References: DockPanel = crate::references_panel::SIDEBAR.panel;
     /// The bottom panel's Problems, no longer the sidebar's: its id, which
     /// its rail button and badge go by.
@@ -99,7 +103,7 @@ impl DockPanel {
 impl DockPanel {
     /// The panels the rail always has, in its order; References, History
     /// and the others join the top group once they have shown.
-    pub const ALL: [DockPanel; 4] = always_on_rail();
+    pub const ALL: [DockPanel; 5] = always_on_rail();
 
     /// The panel registered as `id`, for a module's [`SidebarPanel`], or a
     /// bottom tool window's id ([`DockPanel::Problems`]).
@@ -165,6 +169,7 @@ const PANELS: &[&SidebarPanel] = &[
     &crate::project_panel::SIDEBAR,
     &search_panel::SIDEBAR,
     &source_control::SIDEBAR,
+    &agents_panel::SIDEBAR,
     &crate::chat_panel::SIDEBAR,
     &crate::references_panel::SIDEBAR,
     &crate::workbench::git_commands::git_history::SIDEBAR,
@@ -452,6 +457,11 @@ dock_item!(
     HistoryPanel::title
 );
 dock_item!(
+    AgentsPanel,
+    agents_panel::SIDEBAR,
+    |_: &AgentsPanel, _: &App| tr!("workbench-dock-agents-title")
+);
+dock_item!(
     ChatPanel,
     crate::chat_panel::SIDEBAR,
     |_: &ChatPanel, _: &App| tr!("workbench-dock-chat-title")
@@ -494,6 +504,8 @@ pub struct Dock {
     /// The git changes, its view.
     source_control: Entity<ViewContainer>,
     changes: Entity<GitPanel>,
+    /// The window's lanes.
+    agents: Entity<AgentsPanel>,
     references: Entity<ReferencesPanel>,
     /// The bottom dock's, kept here for the workbench's problems code.
     problems: Entity<ProblemsPanel>,
@@ -520,6 +532,8 @@ pub struct Dock {
     _explorer_changed: Subscription,
     /// Source Control's are too.
     _source_control_changed: Subscription,
+    /// Agents' badge follows its lanes.
+    _agents_changed: Subscription,
     /// Its text in a new language ([`Dock::follow_locale`]).
     _locale: Subscription,
 }
@@ -602,7 +616,8 @@ fn folders(project: &Entity<ProjectPanel>) -> ViewSpec {
 
 impl Dock {
     /// Shows the Explorer, of `project` and `outline`, first; Source
-    /// Control, of `changes`, follows search on the rail, and `chat` it.
+    /// Control, of `changes`, follows search on the rail, `agents` it and
+    /// `chat` that.
     /// At `position`, the rail's side. `git_log` and `problems` are the
     /// bottom dock's, which the workbench registers them in; the dock keeps
     /// them for the workbench's code that reaches them through it.
@@ -613,6 +628,7 @@ impl Dock {
         search: Entity<SearchPanel>,
         outline: Entity<OutlinePanel>,
         changes: Entity<GitPanel>,
+        agents: Entity<AgentsPanel>,
         git_log: Entity<GitLogPanel>,
         chat: Entity<ChatPanel>,
         references: Entity<ReferencesPanel>,
@@ -632,6 +648,8 @@ impl Dock {
         let source_control = source_control::container(&changes, cx);
         let source_control_changed = cx.observe(&source_control, |_, _, cx| cx.notify());
         state.add_panel(source_control.clone(), cx);
+        state.add_panel(agents.clone(), cx);
+        let agents_changed = cx.observe(&agents, |dock, _, cx| dock.follow_agents(cx));
         // Registered here, not after the References panel, as the rail
         // lists the panels in the order they were added.
         state.add_panel(chat.clone(), cx);
@@ -646,6 +664,7 @@ impl Dock {
             menu_side: position,
             source_control,
             changes,
+            agents,
             references,
             problems,
             history: None,
@@ -660,6 +679,7 @@ impl Dock {
             ops: Vec::new(),
             _explorer_changed: explorer_changed,
             _source_control_changed: source_control_changed,
+            _agents_changed: agents_changed,
             _locale: cx.observe_global::<ActiveLocale>(Self::follow_locale),
         }
     }
@@ -685,6 +705,7 @@ impl Dock {
         let (changed_files, errors) = (self.changed_files, self.errors);
         self.set_changed_files(changed_files, cx);
         self.set_errors(errors, cx);
+        self.follow_agents(cx);
         cx.notify();
     }
 
@@ -764,6 +785,20 @@ impl Dock {
             RailBadge::count(count, BadgeTone::Modified, name)
         });
         self.set_badge(DockPanel::SourceControl, badge, cx);
+    }
+
+    /// The Agents panel, of the window's lanes: the tests' to read.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn agents(&self) -> &Entity<AgentsPanel> {
+        &self.agents
+    }
+
+    /// Badges Agents' rail button with the lanes Working or with hunks
+    /// pending, in silver-blue ([`AgentsPanel::rail_badge`]); none at
+    /// none. Run as the panel redraws, its lanes having changed.
+    pub(crate) fn follow_agents(&mut self, cx: &mut Context<Self>) {
+        let badge = self.agents.read(cx).rail_badge(cx);
+        self.set_badge(DockPanel::Agents, badge, cx);
     }
 
     /// Badges Problems' rail button with a red dot while there are
@@ -1042,6 +1077,7 @@ impl Dock {
             DockPanel::References => return Some(self.references.focus_handle(cx)),
             DockPanel::History => return self.history.as_ref().map(|panel| panel.focus_handle(cx)),
             DockPanel::Chat => return self.chat.as_ref().map(|panel| panel.focus_handle(cx)),
+            DockPanel::Agents => return Some(self.agents.focus_handle(cx)),
             DockPanel::Quickfix => {
                 return self.quickfix.as_ref().map(|panel| panel.focus_handle(cx));
             }
@@ -1188,6 +1224,8 @@ pub(crate) enum DockOp {
     ShowQuickfix,
     /// The Chat button, and `chat.open` once it has made the panel.
     ShowChat,
+    /// The Agents button and `agent.show_panel`: shows the Agents panel.
+    ShowAgents,
     /// `ai.show_changes`, and a changeset set: shows the AI Changes panel.
     ShowAiChanges,
     /// `git.refresh`: reads the git status again, shown or not.

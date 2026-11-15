@@ -42,7 +42,7 @@ use fe_editor::{
     lane::{Backing, Hunks, Lane, LaneCounts, LaneEvent, LaneId, LaneKind, LaneState, Lanes},
 };
 use fe_gpui::{EditorView, ProposalEvent};
-use gpui::{Context, Entity, EntityId, Subscription, Window};
+use gpui::{Context, Entity, EntityId, Focusable as _, Subscription, Window};
 
 use crate::{
     Workbench,
@@ -96,13 +96,15 @@ impl LaneWork {
     }
 }
 
-/// A lane as the panels that list lanes read it.
-#[allow(dead_code)] // The Agents panel and the Changes panel (later cards) read it.
+/// A lane as the panels that list lanes read it: the Agents panel, and
+/// the Changes panel (a later card).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LaneSummary {
     pub(crate) id: LaneId,
     pub(crate) name: Arc<str>,
     pub(crate) state: LaneState,
+    /// Its undecided hunks, pending and stale, as last counted.
+    pub(crate) pending: usize,
     /// The files it has proposed to, with their hunks' counts.
     pub(crate) files: Vec<(PathBuf, Counts)>,
     /// Stale hunks not yet rejected.
@@ -169,6 +171,12 @@ impl Tally {
             self.written.push(path.clone());
         }
     }
+}
+
+/// `proposal`'s hunks recorded undecided: pending, or stale until
+/// rejected.
+fn undecided(proposal: &ProposedChange) -> usize {
+    proposal.status_count(HunkStatus::Pending) + proposal.status_count(HunkStatus::Stale)
 }
 
 /// Whether `entries` have nothing left to decide.
@@ -265,12 +273,11 @@ impl LaneStore {
         }
     }
 
-    #[allow(dead_code)] // The Agents panel, title bar and rail (later cards) read it.
+    #[allow(dead_code)] // The title bar (a later card) reads it.
     pub(crate) fn lanes(&self) -> &Lanes {
         &self.lanes
     }
 
-    #[allow(dead_code)] // The Agents panel, title bar and rail (later cards) read it.
     pub(crate) fn lane(&self, id: LaneId) -> Option<&Lane> {
         self.lanes.get(id)
     }
@@ -387,20 +394,17 @@ impl LaneStore {
 
     /// The title bar's and the rail's counts. An Abandoned lane counts in
     /// the rail only while it has hunks pending.
-    #[allow(dead_code)] // The Agents panel, title bar and rail (later cards) read it.
     pub(crate) fn counts(&self) -> LaneCounts {
         self.lanes.counts()
     }
 
     /// The rail's count: lanes with hunks pending, those Working among
     /// them ([`LaneCounts::pending`] holds both).
-    #[allow(dead_code)] // The Agents panel, title bar and rail (later cards) read it.
     pub(crate) fn rail_count(&self) -> usize {
         self.counts().pending
     }
 
     /// Every lane, in order of number, with its files as last counted.
-    #[allow(dead_code)] // The Agents panel, title bar and rail (later cards) read it.
     pub(crate) fn summaries(&self) -> Vec<LaneSummary> {
         (self.lanes.iter())
             .map(|lane| {
@@ -409,11 +413,22 @@ impl LaneStore {
                     id: lane.id,
                     name: lane.name.clone(),
                     state: lane.state,
+                    pending: lane.pending,
                     files: work.map(|work| work.files.clone()).unwrap_or_default(),
                     conflicts: work.map_or(0, |work| work.conflicts),
                 }
             })
             .collect()
+    }
+
+    /// Removes lane `id` and its work: only one that has ended (Accepted,
+    /// Rejected or Abandoned), never lane 1 ([`Lanes::clear`]). The caller
+    /// rejects an Abandoned lane's hunks first, having asked
+    /// ([`Workbench::reject_lane_work`]). Its number stays spent.
+    pub(crate) fn clear(&mut self, id: LaneId) -> Option<Lane> {
+        let lane = self.lanes.clear(id)?;
+        self.work.remove(&id);
+        Some(lane)
     }
 
     /// Each file a lane wrote, with the lanes that did: accepted hunks in
@@ -541,6 +556,129 @@ impl Workbench {
         self.lanes
             .update(cx, |store, _| store.adopt(id, buffer, path, proposal));
         self.sync_lanes(cx);
+    }
+
+    /// Rejects every undecided hunk of lane `id`'s work, kept turns and
+    /// loose proposals, as clearing an Abandoned lane does once the user
+    /// says so; no text is touched. A hunk whose buffer an editor holds is
+    /// rejected through it, so its counts follow; one whose buffer none
+    /// holds any more is rejected as recorded
+    /// ([`ProposedChange::reject_undecided`]). The open editors redraw and
+    /// the lane is counted again. Returns how many hunks are still
+    /// undecided after it: none, unless a rejection failed.
+    pub(crate) fn reject_lane_work(&mut self, id: LaneId, cx: &mut Context<Self>) -> usize {
+        let editors = self.open_editors(cx);
+        let remaining = self.lanes.update(cx, |store, cx| {
+            let Some(work) = store.work.get_mut(&id) else {
+                return 0;
+            };
+            let mut remaining = 0;
+            for turn in &mut work.turns {
+                let entries = with_editors(&editors, &mut turn.made, cx, |set| {
+                    // A file whose buffer is gone reports a conflict here,
+                    // and is rejected below.
+                    let _ = turn.changeset.reject_all(set);
+                    turn.changeset.files(set)
+                });
+                for entry in &entries {
+                    match turn.changeset.proposal(&entry.path) {
+                        Some((_, proposal)) => {
+                            let mut proposal = proposal.borrow_mut();
+                            proposal.reject_undecided();
+                            remaining += undecided(&proposal);
+                        }
+                        // A new file, rejected without a buffer.
+                        None => remaining += entry.counts.pending,
+                    }
+                }
+            }
+            for loose in &work.loose {
+                let mut proposal = loose.proposal.borrow_mut();
+                proposal.reject_undecided();
+                remaining += undecided(&proposal);
+            }
+            remaining
+        });
+        for editor in &editors {
+            editor.update(cx, |_, cx| cx.notify());
+        }
+        self.sync_lanes(cx);
+        remaining
+    }
+
+    /// Shows lane `id`'s undecided work for review: the AI Changes panel,
+    /// if it shows the lane's turn with hunks undecided; else the first of
+    /// its kept turns' files and its loose proposals (Apply's) with one,
+    /// in its editor, brought forward and focused, the caret on its first
+    /// undecided hunk. Whether it showed any. Only lane 1's work is
+    /// reviewed here; another lane's is `agent.review_lane`'s (card 19).
+    /// A refactor preview on the panel stays: the lane's turn under it is
+    /// kept work, reached through its editors.
+    pub(crate) fn review_lane(
+        &mut self,
+        id: LaneId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if id != chat_lane() {
+            return false;
+        }
+        let editors = self.open_editors(cx);
+        // A refactor preview on the panel is no lane's turn.
+        if let Some(state) = (self.ai_changes.as_mut()).filter(|state| state.lane == Some(id)) {
+            let entries = with_editors(&editors, &mut state.made, cx, |set| {
+                state.changeset.files(set)
+            });
+            if (entries.iter()).any(|entry| entry.counts.pending + entry.counts.stale > 0) {
+                self.ai_changes_panel(cx);
+                self.run_dock_op(crate::dock::DockOp::ShowAiChanges, window, cx);
+                return true;
+            }
+        }
+        let target = self.lanes.update(cx, |store, cx| {
+            let work = store.work.get_mut(&id)?;
+            for turn in &mut work.turns {
+                let entries = with_editors(&editors, &mut turn.made, cx, |set| {
+                    turn.changeset.files(set)
+                });
+                let found = (entries.iter())
+                    .filter(|entry| entry.counts.pending + entry.counts.stale > 0)
+                    .find_map(|entry| turn.changeset.proposal(&entry.path));
+                if found.is_some() {
+                    return found;
+                }
+            }
+            (work.loose.iter())
+                .find(|loose| undecided(&loose.proposal.borrow()) > 0)
+                .map(|loose| (loose.buffer, loose.proposal.clone()))
+        });
+        let Some((buffer, proposal)) = target else {
+            return false;
+        };
+        let shown = (self.pane_group(cx).panes().into_iter()).find_map(|pane| {
+            let at = (pane.read(cx).tabs().iter()).position(|tab| {
+                (tab.editor()).is_some_and(|editor| editor.read(cx).model().buffer().id() == buffer)
+            })?;
+            let editor = pane.read(cx).tabs()[at].editor().cloned()?;
+            Some((pane.clone(), at, editor))
+        });
+        let Some((pane, at, editor)) = shown else {
+            return false;
+        };
+        self.activate(pane.clone(), window, cx);
+        pane.update(cx, |pane, cx| pane.activate(at, window, cx));
+        editor.update(cx, |editor, cx| {
+            let hunks = proposal.borrow().hunks(editor.model().buffer().current());
+            let first = (hunks.iter())
+                .filter(|hunk| matches!(hunk.status, HunkStatus::Pending | HunkStatus::Stale))
+                .map(|hunk| hunk.range.start)
+                .min();
+            if let Some(at) = first {
+                editor.select_and_reveal(at..at, cx);
+            }
+        });
+        window.focus(&editor.focus_handle(cx), cx);
+        true
     }
 
     /// Lane `id`'s turn starts or ends (`event`): the chat's send, its

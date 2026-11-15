@@ -38,6 +38,8 @@ pub enum BadgeTone {
     Modified,
     /// A count with no meaning of its own.
     Neutral,
+    /// An agent's: its silver-blue, `agent.base`, never the accent.
+    Agent,
 }
 
 impl BadgeTone {
@@ -51,6 +53,7 @@ impl BadgeTone {
             BadgeTone::Info => c.status.info,
             BadgeTone::Modified => c.status.modified,
             BadgeTone::Neutral => c.text.muted,
+            BadgeTone::Agent => c.agent.base,
         };
         (fill, c.text.on_accent)
     }

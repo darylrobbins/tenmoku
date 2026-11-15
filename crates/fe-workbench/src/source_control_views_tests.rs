@@ -155,6 +155,7 @@ fn the_rail_has_one_source_control_button(cx: &mut TestAppContext) {
             DockPanel::Explorer.id(),
             DockPanel::Search.id(),
             DockPanel::SourceControl.id(),
+            DockPanel::Agents.id(),
             DockPanel::Chat.id(),
         ]
     );

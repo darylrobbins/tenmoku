@@ -25,7 +25,7 @@ fn base() -> [(
     Icon,
     &'static str,
     DockOp,
-); 9] {
+); 10] {
     [
         (
             DockPanel::Explorer,
@@ -52,10 +52,18 @@ fn base() -> [(
             DockOp::ShowChanges,
         ),
         (
+            DockPanel::Agents,
+            "Agents",
+            "agents",
+            Icon::Bot,
+            "agent.show_panel",
+            DockOp::ShowAgents,
+        ),
+        (
             DockPanel::Chat,
             "Chat",
             "chat",
-            Icon::Bot,
+            Icon::MessageSquare,
             "chat.open",
             DockOp::ShowChat,
         ),
@@ -211,7 +219,7 @@ fn each_panel_keeps_its_base_name_id_icon_and_show_command() {
 }
 
 #[test]
-fn the_rail_always_has_the_base_four() {
+fn the_rail_always_has_the_base_five() {
     // Problems is the bottom panel's now, a foot button (T1548).
     assert_eq!(
         DockPanel::ALL,
@@ -219,6 +227,7 @@ fn the_rail_always_has_the_base_four() {
             DockPanel::Explorer,
             DockPanel::Search,
             DockPanel::SourceControl,
+            DockPanel::Agents,
             DockPanel::Chat,
         ]
     );
@@ -239,6 +248,7 @@ fn the_rail_always_has_the_base_four() {
         [
             DockPanel::Search,
             DockPanel::SourceControl,
+            DockPanel::Agents,
             DockPanel::Chat,
             DockPanel::History,
             DockPanel::AiChanges,
@@ -256,7 +266,8 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
         (DockPanel::Explorer, Icon::Files),
         (DockPanel::Search, Icon::Search),
         (DockPanel::SourceControl, Icon::FileDiff),
-        (DockPanel::Chat, Icon::Bot),
+        (DockPanel::Agents, Icon::Bot),
+        (DockPanel::Chat, Icon::MessageSquare),
     ];
     // The foot's buttons are the bottom panel's (T1548), not panels.
     let foot: [(DockPanel, Icon); 0] = [];
@@ -307,6 +318,7 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
         DockPanel::Search,
         DockPanel::Explorer,
         DockPanel::SourceControl,
+        DockPanel::Agents,
         DockPanel::References,
         DockPanel::History,
         DockPanel::AiChanges,
@@ -390,6 +402,7 @@ mod git_log_rail_tests {
                 DockPanel::Explorer,
                 DockPanel::Search,
                 DockPanel::SourceControl,
+                DockPanel::Agents,
                 DockPanel::Chat,
             ]
         );

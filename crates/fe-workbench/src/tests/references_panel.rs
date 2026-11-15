@@ -301,6 +301,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         Icon::Search,
         Icon::FileDiff,
         Icon::Bot,
+        Icon::MessageSquare,
         Icon::TriangleAlert,
         Icon::ListVideo,
         Icon::GitGraph,
@@ -321,7 +322,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         Some("References to `helper`")
     );
     // References joins the top group, above the foot.
-    let after = [&rail[..4], &[Icon::FileSymlink], &rail[4..]].concat();
+    let after = [&rail[..5], &[Icon::FileSymlink], &rail[5..]].concat();
     assert_eq!(tabs(cx), (after, true));
 
     let focused = cx.update(|window, cx| panel.focus_handle(cx).is_focused(window));

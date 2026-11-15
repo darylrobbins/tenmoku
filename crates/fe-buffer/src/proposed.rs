@@ -511,6 +511,21 @@ impl ProposedChange {
         }
     }
 
+    /// Marks every hunk recorded pending or stale rejected, as
+    /// [`ProposedChange::reject`] does each; the buffer isn't touched, so
+    /// it needs no snapshot: for a host rejecting a proposal whose buffer
+    /// it no longer holds. Returns how many it rejected.
+    pub fn reject_undecided(&mut self) -> usize {
+        let mut rejected = 0;
+        for hunk in &self.hunks {
+            if matches!(hunk.status.get(), HunkStatus::Pending | HunkStatus::Stale) {
+                hunk.status.set(HunkStatus::Rejected);
+                rejected += 1;
+            }
+        }
+        rejected
+    }
+
     /// How many hunks the proposal has, whatever their status. Needs no
     /// snapshot.
     pub fn hunk_count(&self) -> usize {
