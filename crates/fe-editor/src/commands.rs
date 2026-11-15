@@ -8,7 +8,9 @@
 
 use std::ops::{Range, RangeInclusive};
 
-use fe_buffer::{BufferSnapshot, Origin, ResolvedSelection, Text, TransactionId, Version};
+use fe_buffer::{
+    BufferSnapshot, LineEnding, Origin, ResolvedSelection, Text, TransactionId, Version,
+};
 use fe_command::{
     Actor, CommandError, CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched,
     Effect, Registry,
@@ -567,7 +569,8 @@ fn run_as(
 }
 
 /// What a command can change that the view shows: the text, the
-/// selections, the folds and the wrap.
+/// selections, the folds, the wrap and the line ending (the status bar
+/// and the dirty indicator show it).
 #[derive(PartialEq)]
 struct Shown {
     text: ShownText,
@@ -575,6 +578,7 @@ struct Shown {
     folds: Vec<Fold>,
     soft_wrap: bool,
     rows: u32,
+    line_ending: LineEnding,
 }
 
 fn shown(model: &EditorModel) -> Shown {
@@ -584,6 +588,7 @@ fn shown(model: &EditorModel) -> Shown {
         folds: model.display().folds().to_vec(),
         soft_wrap: model.soft_wrap(),
         rows: model.display().row_count(),
+        line_ending: model.buffer().line_ending(),
     }
 }
 

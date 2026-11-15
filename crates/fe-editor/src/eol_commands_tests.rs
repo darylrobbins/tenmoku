@@ -95,3 +95,45 @@ fn saving_to_lf_writes_the_bytes_and_undo_is_dirty_against_it() {
     assert!(model.redo().unwrap().is_some());
     assert!(!model.buffer().is_dirty());
 }
+
+#[test]
+fn registry_dispatch_reports_the_change_for_convert_undo_and_redo() {
+    use fe_command::{Dispatched, Effect, Invocation, Value};
+
+    use crate::commands::{self, EditorTarget, HeadlessHost};
+
+    let mut model = parse("a\nb");
+    let mut host = HeadlessHost::new();
+    let mut run = |model: &mut EditorModel, command: &str| -> Dispatched<_> {
+        let invocation = Invocation::of(command)
+            .unwrap()
+            .args(Value::Null)
+            .context(commands::context());
+        commands::registry()
+            .dispatch(&mut EditorTarget::new(model, &mut host), &invocation)
+            .unwrap()
+    };
+    let mut effect = |model: &mut EditorModel, command: &str| run(model, command).effect;
+    assert_eq!(
+        effect(&mut model, "editor.set_end_of_line_crlf"),
+        Effect::Changed
+    );
+    assert_eq!(
+        effect(&mut model, "editor.set_end_of_line_crlf"),
+        Effect::Nothing,
+        "already CRLF"
+    );
+    assert_eq!(effect(&mut model, "editor.undo"), Effect::Changed);
+    assert_eq!(model.buffer().line_ending(), LineEnding::Lf);
+    assert_eq!(effect(&mut model, "editor.redo"), Effect::Changed);
+    assert_eq!(model.buffer().line_ending(), LineEnding::CrLf);
+    assert_eq!(
+        effect(&mut model, "editor.set_end_of_line_lf"),
+        Effect::Changed
+    );
+    assert_eq!(
+        effect(&mut model, "editor.set_end_of_line_lf"),
+        Effect::Nothing,
+        "already LF"
+    );
+}
