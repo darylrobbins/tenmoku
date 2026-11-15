@@ -15,19 +15,30 @@
 //! `problems.select_last` go to the first and the last of them.
 //!
 //! Its header (`docs/design/design-system.md#problems`) has a scope switch,
-//! This file (the active editor's file alone) or Project (every file), and a
-//! filter per severity that doubles as its count in the scope: errors,
-//! warnings, and information with hints, each a toggle, off hiding its
-//! problems. A file whose problems the scope or the filters hide all of isn't
-//! listed, and its row's count badge counts the problems shown. With nothing
-//! listed, the panel shows a centred empty state: an icon, a heading and one
-//! hint. Its text is the catalogue's (`l10n/en-US/problems.ftl`).
+//! This file (the active editor's file alone), Project (every file) or From
+//! agents (the files with a lane chip alone), and a filter per severity
+//! that doubles as its count in the scope: errors, warnings, and information
+//! with hints, each a toggle, off hiding its problems. A file whose problems
+//! the scope or the filters hide all of isn't listed, and its row's count
+//! badge counts the problems shown. With nothing listed, the panel shows a
+//! centred empty state: an icon, a heading and one hint. Its text is the
+//! catalogue's (`l10n/en-US/problems.ftl`).
+//!
+//! Lane chips (docs/designs/agent-lanes.md § Problems and tests), in the
+//! agent's colour on its soft ground: `written by lane 2` on the row of a
+//! file the lane wrote, with accepted hunks in its work
+//! ([`LaneStore::written_files`](crate::lanes::LaneStore::written_files))
+//! or, open, rows it's author of; `new, lane 2` on a problem on a row it's
+//! author of in an open buffer (its provenance's row authors, through
+//! [`Lanes::lane_for`]). A file with only pending hunks has no chip: its
+//! problems are of the user's text, which holds none of the lane's yet. A
+//! closed file has no provenance, so only its file chip.
 //!
 //! The workbench lists the problems again whenever an open editor changes,
-//! as a diagnostic arriving or clearing notifies it, and as tabs open and
-//! close ([`Workbench::sync_problems`]). It keeps the window's error and
-//! warning counts in a status bar item on the left, [`ITEM`], while there
-//! are any; a click on it runs `problems.show`.
+//! as a diagnostic arriving or clearing notifies it, as tabs open and
+//! close, and as the lanes change ([`Workbench::sync_problems`]). It keeps
+//! the window's error and warning counts in a status bar item on the left,
+//! [`ITEM`], while there are any; a click on it runs `problems.show`.
 //!
 //! `diagnostics.next` and `diagnostics.previous` put the active editor's
 //! caret at the start of the next or previous diagnostic, wrapping
@@ -74,9 +85,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use fe_buffer::{Author, Buffer};
 use fe_command::Invocation;
-use fe_editor::diagnostics::{
-    Diagnostic, DiagnosticCounts, FileProblems, Problem, RelatedInfo, Severity, group_problems,
+use fe_editor::{
+    diagnostics::{
+        Diagnostic, DiagnosticCounts, FileProblems, Problem, RelatedInfo, Severity, group_problems,
+    },
+    lane::{LaneId, Lanes},
 };
 use fe_gpui::{EditorTheme, EditorView, commands::RunCommand};
 use fe_lsp::{FileDiagnostic, PositionEncoding, decode_file_diagnostics};
@@ -175,18 +190,81 @@ pub(crate) enum Scope {
     /// Every file.
     #[default]
     Project,
+    /// The files with a lane chip alone: those a lane wrote.
+    FromAgents,
 }
 
 impl Scope {
     /// In the switch's order.
-    const ALL: [Scope; 2] = [Scope::ThisFile, Scope::Project];
+    pub(crate) const ALL: [Scope; 3] = [Scope::ThisFile, Scope::Project, Scope::FromAgents];
 
-    fn label(self) -> SharedString {
+    pub(crate) fn label(self) -> SharedString {
         match self {
             Scope::ThisFile => tr!("workbench-problems-scope-this-file"),
             Scope::Project => tr!("workbench-problems-scope-project"),
+            Scope::FromAgents => tr!("workbench-problems-scope-from-agents"),
         }
     }
+}
+
+/// A listed file's lanes: those that wrote it, for its chip, and the lane
+/// of each of its problems' rows, in its problems' order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct FileLanes {
+    /// In order of number.
+    wrote: Vec<LaneId>,
+    problems: Vec<Option<LaneId>>,
+}
+
+/// The rows of `buffer` an agent is author of, each run with the lane
+/// claiming the agent's session (an agent no lane claims, as Inline Edit,
+/// left out): its provenance's row authors, so a row stays the agent's
+/// while any of its text is. Only the rows the agents' spans reach are
+/// read.
+fn agent_rows(buffer: &Buffer, lanes: &Lanes) -> Vec<(Range<u32>, LaneId)> {
+    let provenance = buffer.provenance();
+    let reach = (provenance.spans().into_iter())
+        .filter(|(_, author)| matches!(author, Author::Ai { .. }))
+        .map(|(bytes, _)| bytes)
+        .reduce(|reach, bytes| reach.start.min(bytes.start)..reach.end.max(bytes.end));
+    let Some(reach) = reach else {
+        return Vec::new();
+    };
+    let text = buffer.text();
+    let rows = text.offset_to_point(reach.start).row..text.offset_to_point(reach.end).row + 1;
+    (provenance.row_authors(text, rows).into_iter())
+        .filter_map(|(rows, author)| match author? {
+            Author::Ai { agent, session } => Some((rows, lanes.lane_for(&agent, &session)?.id)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The lane of `row`, of `rows` an agent is author of.
+fn lane_at(rows: &[(Range<u32>, LaneId)], row: u32) -> Option<LaneId> {
+    (rows.iter()).find_map(|(rows, lane)| rows.contains(&row).then_some(*lane))
+}
+
+/// Each of `files`' lanes: those `written` gives it and those author of
+/// rows of its open buffer, by `agent_rows`, which give its problems'.
+fn file_lanes<'a>(
+    files: impl IntoIterator<Item = &'a FileProblems>,
+    written: &HashMap<PathBuf, Vec<LaneId>>,
+    agent_rows: &HashMap<PathBuf, Vec<(Range<u32>, LaneId)>>,
+) -> Vec<FileLanes> {
+    (files.into_iter())
+        .map(|file| {
+            let rows = agent_rows.get(&file.path).map_or(&[][..], Vec::as_slice);
+            let mut wrote = written.get(&file.path).cloned().unwrap_or_default();
+            wrote.extend(rows.iter().map(|(_, lane)| *lane));
+            wrote.sort();
+            wrote.dedup();
+            let problems = (file.problems.iter())
+                .map(|problem| lane_at(rows, problem.row))
+                .collect();
+            FileLanes { wrote, problems }
+        })
+        .collect()
 }
 
 /// A severity filter in the header, which shows its count and hides its
@@ -481,6 +559,8 @@ pub struct ProblemsPanel {
     files: Vec<FileProblems>,
     /// Each of `files`' diagnostics as sent, for one no editor shows.
     sent: Vec<Option<Sent>>,
+    /// Each of `files`' lanes.
+    lanes: Vec<FileLanes>,
     rows: Vec<Row>,
     /// A `Row::Problem`'s or a `Row::Related`'s index in `rows`.
     selected: Option<usize>,
@@ -502,6 +582,12 @@ pub struct ProblemsPanel {
     /// Each [`Filter`]'s, by its index: whether it's off, hiding its
     /// problems.
     off: [bool; 3],
+    /// Lists the problems again as the lanes change, once the workbench
+    /// first lists them.
+    lanes_followed: Option<Subscription>,
+    /// The lane chips the last frame drew: their text, ground and colour.
+    #[cfg(test)]
+    drawn_chips: Vec<(SharedString, Hsla, Hsla)>,
     /// The detail pane's: what it shows and the fix it found.
     detail: problems_detail::Detail,
     /// Rebuilds the status items in a new locale, for their tooltips.
@@ -532,6 +618,7 @@ impl ProblemsPanel {
             root: None,
             files: Vec::new(),
             sent: Vec::new(),
+            lanes: Vec::new(),
             rows: Vec::new(),
             selected: None,
             generation: 0,
@@ -543,6 +630,9 @@ impl ProblemsPanel {
             scope: Scope::default(),
             active: None,
             off: [false; 3],
+            lanes_followed: None,
+            #[cfg(test)]
+            drawn_chips: Vec::new(),
             detail: problems_detail::Detail::default(),
             _locale,
             #[cfg(test)]
@@ -605,13 +695,15 @@ impl ProblemsPanel {
     }
 
     /// Lists `files`, with paths relative to `root`, each with its
-    /// diagnostics as sent if no editor shows it, keeping the selected
-    /// problem selected if it's still listed ([`ProblemsPanel::relist`]).
-    /// The window's counts, if the status item doesn't show them yet.
+    /// diagnostics as sent if no editor shows it, and its lanes, keeping the
+    /// selected problem selected if it's still listed
+    /// ([`ProblemsPanel::relist`]). The window's counts, if the status item
+    /// doesn't show them yet.
     fn set_files(
         &mut self,
         root: Option<PathBuf>,
         files: Vec<(FileProblems, Option<Sent>)>,
+        lanes: Vec<FileLanes>,
         cx: &mut Context<Self>,
     ) -> Option<DiagnosticCounts> {
         let (files, sent): (Vec<_>, Vec<_>) = files.into_iter().unzip();
@@ -620,13 +712,14 @@ impl ProblemsPanel {
             self.item = Some(counts);
             counts
         });
-        if files == self.files && sent == self.sent && root == self.root {
+        if files == self.files && sent == self.sent && lanes == self.lanes && root == self.root {
             return item;
         }
         let was = self.selection();
         self.root = root;
         self.files = files;
         self.sent = sent;
+        self.lanes = lanes;
         self.relist(was, cx);
         item
     }
@@ -672,11 +765,12 @@ impl ProblemsPanel {
         Some((path.to_owned(), problem.clone(), related))
     }
 
-    /// Whether the scope lists the file listed as `path`.
-    fn in_scope(&self, path: &Path) -> bool {
+    /// Whether the scope lists file `ix`.
+    fn in_scope(&self, ix: usize) -> bool {
         match self.scope {
             Scope::Project => true,
-            Scope::ThisFile => self.active.as_deref() == Some(path),
+            Scope::ThisFile => self.active.as_deref() == Some(self.files[ix].path.as_path()),
+            Scope::FromAgents => !self.lanes[ix].wrote.is_empty(),
         }
     }
 
@@ -688,7 +782,9 @@ impl ProblemsPanel {
     /// How many problems of each [`Filter`]'s the scope has, shown or not.
     fn scope_counts(&self) -> [usize; 3] {
         let mut counts = [0; 3];
-        let files = self.files.iter().filter(|file| self.in_scope(&file.path));
+        let files = (self.files.iter().enumerate())
+            .filter(|(ix, _)| self.in_scope(*ix))
+            .map(|(_, file)| file);
         for problem in files.flat_map(|file| &file.problems) {
             counts[Filter::of(problem.severity) as usize] += 1;
         }
@@ -702,7 +798,7 @@ impl ProblemsPanel {
     fn relist(&mut self, was: Option<(PathBuf, Problem, Option<usize>)>, cx: &mut Context<Self>) {
         let mut rows = Vec::new();
         for (ix, file) in self.files.iter().enumerate() {
-            if !self.in_scope(&file.path) {
+            if !self.in_scope(ix) {
                 continue;
             }
             let header = rows.len();
@@ -902,7 +998,51 @@ impl ProblemsPanel {
                 tr!("workbench-problems-empty"),
                 tr!("workbench-problems-empty-hint"),
             ),
+            (false, Scope::FromAgents) => (
+                tr!("workbench-problems-empty"),
+                tr!("workbench-problems-empty-from-agents-hint"),
+            ),
         })
+    }
+
+    /// The lane chips row `row` shows: on a file's, `written by lane 2` for
+    /// each lane that wrote it; on a problem's, `new, lane 2` for its row's.
+    fn chips(&self, row: Row) -> Vec<SharedString> {
+        match row {
+            Row::File(file, _) => (self.lanes[file].wrote.iter())
+                .map(|lane| tr!("workbench-problems-lane-written", lane = lane.get()))
+                .collect(),
+            Row::Problem(file, problem) => (self.lanes[file].problems[problem].iter())
+                .map(|lane| tr!("workbench-problems-lane-new", lane = lane.get()))
+                .collect(),
+            Row::Related(..) => Vec::new(),
+        }
+    }
+
+    /// Row `row`'s lane chips, each in the agent's colour on its soft
+    /// ground.
+    fn render_chips(&mut self, row: Row, cx: &App) -> Vec<gpui::Div> {
+        let agent = cx.theme().colors.agent;
+        let chips = self.chips(row);
+        #[cfg(test)]
+        (self.drawn_chips).extend(
+            chips
+                .iter()
+                .map(|chip| (chip.clone(), agent.soft, agent.base)),
+        );
+        (chips.into_iter())
+            .map(|chip| {
+                div()
+                    .flex_none()
+                    .px(px(6.))
+                    .rounded(radius::CONTROL)
+                    .bg(agent.soft)
+                    .text_color(agent.base)
+                    .text_size(UI_SMALL.size)
+                    .line_height(UI_SMALL.line_height)
+                    .child(chip)
+            })
+            .collect()
     }
 
     /// The header: the scope switch, then the severity filters, each with
@@ -1026,7 +1166,9 @@ impl ProblemsPanel {
                     .gap_2()
                     .overflow_hidden()
                     .whitespace_nowrap();
-                let row = match *self.rows.get(ix)? {
+                let listed = *self.rows.get(ix)?;
+                let chips = self.render_chips(listed, cx);
+                let row = match listed {
                     Row::File(file, shown) => {
                         let path = &self.files[file].path;
                         let file_name = (path.file_name())
@@ -1048,6 +1190,7 @@ impl ProblemsPanel {
                                 .text_color(c.text.muted)
                                 .child(self.display_path(path)),
                         )
+                        .children(chips)
                         .child(
                             div()
                                 .debug_selector(move || badge_selector(ix))
@@ -1091,6 +1234,7 @@ impl ProblemsPanel {
                                     .text_color(c.text.primary)
                                     .child(first_line(&problem.message).to_owned()),
                             )
+                            .children(chips)
                             .when_some(problem.source.clone(), |row, source| {
                                 row.child(faint(source))
                             })
@@ -1257,6 +1401,8 @@ impl Render for ProblemsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
         let header = self.render_header(cx);
+        #[cfg(test)]
+        self.drawn_chips.clear();
         let detail = self.render_detail(cx);
         let body = match self.empty_state() {
             Some((heading, hint)) => Self::render_empty(heading, hint, cx).into_any_element(),
@@ -1291,14 +1437,22 @@ impl Render for ProblemsPanel {
 impl Workbench {
     /// Lists the open buffers' diagnostics in the Problems panel, once per
     /// file, with the servers' diagnostics for files no editor shows and the
-    /// finished tasks' problems, and shows their errors and warnings on the
-    /// status bar.
+    /// finished tasks' problems, each file with its lanes, and shows their
+    /// errors and warnings on the status bar.
     pub(crate) fn sync_problems(&mut self, cx: &mut Context<Self>) {
+        let panel = self.dock().read(cx).problems().clone();
+        if panel.read(cx).lanes_followed.is_none() {
+            let followed = cx.observe(&self.lanes, |workbench, _, cx| workbench.sync_problems(cx));
+            panel.update(cx, |panel, _| panel.lanes_followed = Some(followed));
+        }
         let mut listed = HashSet::new();
         // The open files' paths, as opened and as resolved.
         let mut shown = HashSet::new();
         // The text of each file listed that's known, for a task's columns.
         let mut texts = HashMap::new();
+        // The rows of each open file's buffer an agent is author of.
+        let mut agent_rows_of = HashMap::new();
+        let lanes = self.lanes.read(cx).lanes();
         let files = (self.open_editors(cx).into_iter())
             .filter_map(|editor| {
                 let model = editor.read(cx).model();
@@ -1307,6 +1461,8 @@ impl Workbench {
                 shown.extend(resolved.cloned().flatten());
                 shown.insert(path.clone());
                 (texts.entry(path.clone())).or_insert_with(|| model.buffer().text().clone());
+                (agent_rows_of.entry(path.clone()))
+                    .or_insert_with(|| agent_rows(&model.buffer(), lanes));
                 if listed.contains(&path) {
                     return None;
                 }
@@ -1334,15 +1490,16 @@ impl Workbench {
             };
             files.entry(path).or_insert((file, Some(sent)));
         }
-        let panel = self.dock().read(cx).problems().clone();
         merge_sources(&mut files, &panel.read(cx).sources, &texts);
-        let files = files.into_values().collect();
+        let files: Vec<_> = files.into_values().collect();
+        let written = self.lanes.read(cx).written_files();
+        let lanes = file_lanes(files.iter().map(|(file, _)| file), &written, &agent_rows_of);
         let root = self.root().map(Path::to_owned);
         let active = (self.active_editor(cx))
             .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
         let counts = panel.update(cx, |panel, cx| {
             panel.set_active_file(active, cx);
-            panel.set_files(root, files, cx)
+            panel.set_files(root, files, lanes, cx)
         });
         if let Some(counts) = counts {
             self.show_problem_counts(counts, cx);
@@ -1773,6 +1930,18 @@ impl ProblemsPanel {
 
     pub(crate) fn selected(&self) -> Option<usize> {
         self.selected
+    }
+
+    /// Each row's lane chips' text.
+    pub(crate) fn shown_chips(&self) -> Vec<Vec<String>> {
+        (self.rows.iter())
+            .map(|row| (self.chips(*row).iter()).map(ToString::to_string).collect())
+            .collect()
+    }
+
+    /// The lane chips the last frame drew: their text, ground and colour.
+    pub(crate) fn drawn_chips(&self) -> &[(SharedString, Hsla, Hsla)] {
+        &self.drawn_chips
     }
 
     /// The empty state's heading and hint, while it shows.

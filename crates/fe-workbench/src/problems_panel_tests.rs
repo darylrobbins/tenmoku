@@ -532,3 +532,389 @@ mod problems_related_tests;
 
 #[path = "problems_unopened_tests.rs"]
 mod unopened;
+
+/// Lane chips and the From agents scope (docs/designs/agent-lanes.md
+/// § Problems and tests): lanes 2 and 3 propose to open files, their
+/// problems put on the editors as a server's would be
+/// (`Workbench::set_diagnostics_for_audit`).
+mod lane_chips {
+    use std::{cell::RefCell, ops::Range, rc::Rc, time::SystemTime};
+
+    use fe_buffer::{HunkStatus, Origin, ProposedChange};
+    use fe_command::{ContextFrame, ContextStack, Invocation};
+    use fe_config::themes;
+    use fe_editor::{
+        diagnostics::{Diagnostic, Problem, Severity},
+        lane::{Backing, Lane, LaneId, LaneKind, LaneState},
+    };
+    use fe_gpui::{EditorView, commands::RunCommand};
+    use fe_ui::{Theme, ThemeData};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+
+    use crate::{
+        Workbench,
+        dock::problems_panel::{ColumnUnit, ProblemsPanel, Scope, ShownRow, SourceProblem},
+        lanes::LaneStore,
+        tests::find_bar::{draw, opened, pane},
+    };
+
+    /// `a.rs`: lane 2 rewrites its second row, `fn beta` to `fn gamma`,
+    /// and the user accepts it.
+    const A: &str = "fn alpha() {}\nfn beta() {}\n";
+    /// `b.rs`: lane 3 proposes over its first row, left pending.
+    const B: &str = "fn one() {}\nfn two() {}\n";
+    /// `c.rs`: no lane's.
+    const C: &str = "fn three() {}\n";
+
+    fn lane(number: u32, agent: &str, session: &str) -> Lane {
+        Lane {
+            id: LaneId::from_number(number).unwrap(),
+            name: agent.into(),
+            agent: agent.into(),
+            sessions: vec![session.into()],
+            kind: LaneKind::External { host: "acp".into() },
+            backing: Backing::Shared,
+            state: LaneState::Working,
+            started: SystemTime::now(),
+            revision: None,
+            pending: 0,
+        }
+    }
+
+    fn ai(agent: &str, session: &str) -> Origin {
+        Origin::Ai {
+            agent: agent.into(),
+            session: session.into(),
+        }
+    }
+
+    fn editor_of(
+        workbench: &Entity<Workbench>,
+        path: &std::path::Path,
+        cx: &mut VisualTestContext,
+    ) -> Entity<EditorView> {
+        workbench.read_with(cx, |workbench, cx| {
+            (workbench.open_editors(cx).into_iter())
+                .find(|editor| editor.read(cx).model().path() == Some(path))
+                .expect("the file is open")
+        })
+    }
+
+    /// `word`'s bytes in `text`.
+    fn word(text: &str, word: &str) -> Range<usize> {
+        let start = text.find(word).expect("the word is there");
+        start..start + word.len()
+    }
+
+    /// A proposal of `origin`'s replacing `range` of `path`'s text with
+    /// `text`, shown on its editor and adopted by the lane `origin` is in,
+    /// as Apply's is.
+    fn propose(
+        workbench: &Entity<Workbench>,
+        path: &std::path::Path,
+        range: Range<usize>,
+        text: &str,
+        origin: Origin,
+        cx: &mut VisualTestContext,
+    ) -> Entity<EditorView> {
+        let editor = editor_of(workbench, path, cx);
+        let (buffer, proposal) = editor.update(cx, |editor, cx| {
+            let edits = vec![(range, text.to_owned())];
+            let proposal = ProposedChange::from_edits(editor.model().snapshot(), edits, origin);
+            let proposal = Rc::new(RefCell::new(proposal));
+            let mut shown = editor.proposals().to_vec();
+            shown.push(proposal.clone());
+            editor.set_proposals(shown, cx);
+            (editor.model().buffer().id(), proposal)
+        });
+        let path = path.to_owned();
+        workbench.update(cx, |workbench, cx| {
+            workbench.adopt_proposal(buffer, Some(path), proposal, cx)
+        });
+        draw(cx);
+        editor
+    }
+
+    /// Accepts every pending hunk `editor` shows, as its Accept buttons do.
+    fn accept_all(editor: &Entity<EditorView>, cx: &mut VisualTestContext) {
+        let ids: Vec<_> = editor.read_with(cx, |editor, _| {
+            let snapshot = editor.model().buffer().snapshot();
+            (editor.proposals().iter())
+                .flat_map(|proposal| proposal.borrow().hunks(&snapshot))
+                .filter(|hunk| hunk.status == HunkStatus::Pending)
+                .map(|hunk| hunk.id)
+                .collect()
+        });
+        for id in ids {
+            editor.update(cx, |editor, cx| editor.accept_hunk(id, cx).unwrap());
+        }
+        draw(cx);
+    }
+
+    /// An error with `message`, over `range` of `path`'s text now.
+    fn problem_at(
+        workbench: &Entity<Workbench>,
+        path: &std::path::Path,
+        problems: Vec<(Range<usize>, &str)>,
+        cx: &mut VisualTestContext,
+    ) {
+        let diagnostics = (problems.into_iter())
+            .map(|(range, message)| (range, Diagnostic::new(Severity::Error, message)))
+            .collect();
+        workbench.update(cx, |workbench, cx| {
+            workbench.set_diagnostics_for_audit(path, diagnostics, cx)
+        });
+        draw(cx);
+    }
+
+    fn panel(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<ProblemsPanel> {
+        workbench.read_with(cx, |workbench, cx| {
+            workbench.dock().read(cx).problems().clone()
+        })
+    }
+
+    /// Each row as shown, with its lane chips.
+    fn rows(
+        panel: &Entity<ProblemsPanel>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<(ShownRow, Vec<String>)> {
+        panel.read_with(cx, |panel, _| {
+            (panel.shown_rows().into_iter())
+                .zip(panel.shown_chips())
+                .collect()
+        })
+    }
+
+    fn file(name: &str, count: usize, chips: &[&str]) -> (ShownRow, Vec<String>) {
+        let chips = chips.iter().map(|chip| chip.to_string()).collect();
+        (ShownRow::File(name.into(), count), chips)
+    }
+
+    fn error(message: &str, at: &str, chips: &[&str]) -> (ShownRow, Vec<String>) {
+        let chips = chips.iter().map(|chip| chip.to_string()).collect();
+        (
+            ShownRow::Problem("E", message.into(), None, at.into()),
+            chips,
+        )
+    }
+
+    /// A workbench showing `a.rs`, `b.rs` and `c.rs`, with lanes 2 and 3
+    /// besides the chat's; lane 2's rewrite of `a.rs` accepted, lane 3's
+    /// proposal on `b.rs` pending; a problem on each row of `a.rs` (the
+    /// second lane 2's), on `b.rs`'s first row and on `c.rs`; the
+    /// Problems panel shown.
+    fn setup(
+        cx: &mut TestAppContext,
+    ) -> (
+        tempfile::TempDir,
+        Entity<Workbench>,
+        Entity<ProblemsPanel>,
+        &mut VisualTestContext,
+    ) {
+        let (dir, workbench, cx) = opened(cx, &[("a.rs", A), ("b.rs", B), ("c.rs", C)]);
+        workbench.update(cx, |workbench, cx| {
+            workbench.lanes.update(cx, |store, cx| {
+                let record = vec![lane(2, "claude-code", "s2"), lane(3, "codex", "s3")];
+                *store = LaneStore::restore(record, Some(4));
+                cx.notify();
+            });
+        });
+        let root = dir.path();
+        let (a, b, c) = (root.join("a.rs"), root.join("b.rs"), root.join("c.rs"));
+        let beta = A.find("fn beta").unwrap();
+        let tab = propose(
+            &workbench,
+            &a,
+            beta..A.len(),
+            "fn gamma() {}\n",
+            ai("claude-code", "s2"),
+            cx,
+        );
+        accept_all(&tab, cx);
+        let written = "fn alpha() {}\nfn gamma() {}\n";
+        let one = B.find('\n').unwrap() + 1;
+        propose(
+            &workbench,
+            &b,
+            0..one,
+            "fn uno() {}\n",
+            ai("codex", "s3"),
+            cx,
+        );
+        let a_problems = vec![
+            (word(written, "alpha"), "a user's"),
+            (word(written, "gamma"), "a lane's"),
+        ];
+        problem_at(&workbench, &a, a_problems, cx);
+        problem_at(&workbench, &b, vec![(word(B, "one"), "b pending")], cx);
+        problem_at(&workbench, &c, vec![(word(C, "three"), "c user's")], cx);
+        let run = RunCommand(
+            Invocation::of("problems.show")
+                .unwrap()
+                .context(ContextStack::new().with(ContextFrame::new("workbench"))),
+        );
+        cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+        draw(cx);
+        let panel = panel(&workbench, cx);
+        (dir, workbench, panel, cx)
+    }
+
+    #[gpui::test]
+    fn a_file_a_lane_wrote_shows_written_by_and_one_only_pending_none(cx: &mut TestAppContext) {
+        let (dir, workbench, panel, cx) = setup(cx);
+        let rows_now = rows(&panel, cx);
+        assert_eq!(rows_now[0], file("a.rs", 2, &["written by lane 2"]));
+        // b.rs's lane 3 hunk is pending: its problems are of the user's
+        // text.
+        assert_eq!(rows_now[3], file("b.rs", 1, &[]));
+        assert_eq!(rows_now[5], file("c.rs", 1, &[]));
+
+        // Closed, a.rs keeps its chip, from the lane's accepted hunks; a
+        // task's problem on the row the lane wrote has no provenance to
+        // read, so no chip of its own.
+        let pane = pane(&workbench, cx);
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.close_matching(true, |item, cx| item.tab_title(cx) == "a.rs", window, cx);
+            })
+        });
+        draw(cx);
+        let a = dir.path().join("a.rs");
+        let source = SourceProblem {
+            path: a.clone(),
+            problem: Problem {
+                range: 0..0,
+                row: 1,
+                column: 3,
+                severity: Severity::Error,
+                message: "a task's".into(),
+                source: None,
+                related: Vec::new(),
+                code_href: None,
+            },
+            unit: ColumnUnit::Bytes,
+            file_column: 3,
+        };
+        panel.update(cx, |panel, _| panel.set_source(1, vec![source]));
+        workbench.update(cx, |workbench, cx| workbench.sync_problems(cx));
+        draw(cx);
+        let rows_now = rows(&panel, cx);
+        assert_eq!(rows_now[0], file("a.rs", 1, &["written by lane 2"]));
+        assert_eq!(rows_now[1], error("a task's", "2:4", &[]));
+    }
+
+    #[gpui::test]
+    fn a_problem_on_a_row_the_lane_wrote_shows_new_lane_n(cx: &mut TestAppContext) {
+        let (dir, workbench, panel, cx) = setup(cx);
+        let expected = vec![
+            file("a.rs", 2, &["written by lane 2"]),
+            error("a user's", "1:4", &[]),
+            error("a lane's", "2:4", &["new, lane 2"]),
+            file("b.rs", 1, &[]),
+            error("b pending", "1:4", &[]),
+            file("c.rs", 1, &[]),
+            error("c user's", "1:4", &[]),
+        ];
+        assert_eq!(rows(&panel, cx), expected);
+
+        // The user rewrites the lane's row whole: it's theirs, and the
+        // file's no lane's.
+        let tab = editor_of(&workbench, &dir.path().join("a.rs"), cx);
+        let written = "fn alpha() {}\nfn gamma() {}\n";
+        let row = written.find("fn gamma").unwrap()..written.len() - 1;
+        tab.update(cx, |tab, cx| {
+            let edit = (row, "fn delta() {}".to_owned());
+            tab.model_mut().buffer_mut().edit([edit], Origin::User);
+            cx.notify();
+        });
+        draw(cx);
+        let now = rows(&panel, cx);
+        assert_eq!(
+            now[2].1,
+            Vec::<String>::new(),
+            "the user's row: {:?}",
+            now[2]
+        );
+        // Still written by lane 2, by its accepted hunk.
+        assert_eq!(now[0].1, ["written by lane 2"]);
+    }
+
+    #[gpui::test]
+    fn the_scope_switch_is_this_file_project_from_agents(cx: &mut TestAppContext) {
+        let (dir, workbench, panel, cx) = setup(cx);
+        let labels: Vec<String> = (Scope::ALL.iter())
+            .map(|scope| scope.label().to_string())
+            .collect();
+        assert_eq!(labels, ["This file", "Project", "From agents"]);
+        for label in &labels {
+            let selector = format!("segment:{label}");
+            assert!(cx.debug_bounds(selector.leak()).is_some(), "{label} drawn");
+        }
+
+        let at = cx.debug_bounds("segment:From agents").unwrap();
+        cx.simulate_click(at.center(), gpui::Modifiers::none());
+        draw(cx);
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.scope()),
+            Scope::FromAgents
+        );
+        // a.rs alone: b.rs has only pending hunks, c.rs none.
+        assert_eq!(
+            rows(&panel, cx),
+            [
+                file("a.rs", 2, &["written by lane 2"]),
+                error("a user's", "1:4", &[]),
+                error("a lane's", "2:4", &["new, lane 2"]),
+            ]
+        );
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.filter_counts()),
+            [2, 0, 0]
+        );
+
+        // Lane 3's hunk accepted: b.rs is written by it, and listed.
+        let b = dir.path().join("b.rs");
+        let tab = editor_of(&workbench, &b, cx);
+        accept_all(&tab, cx);
+        let files: Vec<_> = (rows(&panel, cx).into_iter())
+            .filter(|(row, _)| matches!(row, ShownRow::File(..)))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                file("a.rs", 2, &["written by lane 2"]),
+                file("b.rs", 1, &["written by lane 3"]),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn lane_chips_take_the_agent_tokens_not_the_accent_in_both_themes(cx: &mut TestAppContext) {
+        let (_dir, _workbench, panel, cx) = setup(cx);
+        let mut agents = Vec::new();
+        for name in [themes::DEFAULT_DARK, themes::DEFAULT_LIGHT] {
+            let data = ThemeData::from_file(&themes::find(name).unwrap().file());
+            cx.update(|window, cx| {
+                fe_ui::set_theme(cx, Theme::new(data));
+                window.refresh();
+            });
+            panel.update(cx, |_, cx| cx.notify());
+            draw(cx);
+            let colors = cx.update(|_, cx| fe_ui::ActiveTheme::theme(cx).colors);
+            let (agent, accent) = (colors.agent, colors.accent.base);
+            assert_ne!(agent.base, accent, "{name}");
+            assert_ne!(agent.soft, accent, "{name}");
+            let drawn: Vec<_> = panel.read_with(cx, |panel, _| panel.drawn_chips().to_vec());
+            // A list measures its first row too, so a chip can be drawn twice.
+            let mut texts: Vec<String> = drawn.iter().map(|(text, ..)| text.to_string()).collect();
+            texts.sort();
+            texts.dedup();
+            assert_eq!(texts, ["new, lane 2", "written by lane 2"], "{name}");
+            for (text, ground, color) in drawn {
+                assert_eq!((ground, color), (agent.soft, agent.base), "{name}: {text}");
+            }
+            agents.push(agent.base);
+        }
+        assert_ne!(agents[0], agents[1], "each theme's own");
+    }
+}

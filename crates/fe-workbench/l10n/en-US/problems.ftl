@@ -13,6 +13,16 @@ workbench-problems-scope = Problems scope
 workbench-problems-scope-this-file = This file
 # Lists every file.
 workbench-problems-scope-project = Project
+# Lists the files a lane wrote alone: those with a lane chip.
+workbench-problems-scope-from-agents = From agents
+
+## Lane chips (docs/designs/agent-lanes.md § Problems and tests). $lane is
+## the lane's number.
+
+# On the row of a file the lane wrote: hunks of it the user accepted.
+workbench-problems-lane-written = written by lane { $lane }
+# On a problem on a row the lane wrote.
+workbench-problems-lane-new = new, lane { $lane }
 
 ## The header's severity filters: their accessible names and tooltips. Each
 ## shows its count beside its glyph and hides its severity while off.
@@ -40,6 +50,8 @@ workbench-problems-empty = No problems
 workbench-problems-empty-hint = Errors and warnings in the open files show here
 # This file is chosen and its file has none, or no file is active.
 workbench-problems-empty-this-file-hint = None in this file; Project lists every open file
+# From agents is chosen and no file a lane wrote has any.
+workbench-problems-empty-from-agents-hint = None in the files a lane wrote; Project lists every open file
 # Problems are there, and the filters hide every one.
 workbench-problems-hidden = No problems shown
 workbench-problems-hidden-hint = Turn a severity filter back on to list its problems

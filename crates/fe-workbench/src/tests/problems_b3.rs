@@ -1,6 +1,7 @@
 //! The Problems panel in B3 (`docs/design/design-system.md#problems`): the
 //! scope switch (This file lists the active editor's problems alone,
-//! Project every file's), the severity filters that show their counts and
+//! Project every file's, From agents those of the files a lane wrote), the
+//! severity filters that show their counts and
 //! hide their severity while off, rows grouped by file with a count badge,
 //! every problem row's severity glyph, the centred empty state, and the
 //! counts' plural messages under a fake locale. The problems are put on the
@@ -216,6 +217,28 @@ fn this_file_lists_the_active_editors_problems_and_project_every_files(cx: &mut 
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.filter_counts()),
         [2, 2, 2]
+    );
+
+    // From agents, the switch's third: no lane wrote either file.
+    click("segment:From agents".to_owned(), cx);
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.scope()),
+        Scope::FromAgents
+    );
+    assert!(rows(&panel, cx).is_empty());
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.filter_counts()),
+        [0, 0, 0]
+    );
+    let message = panel.read_with(cx, |panel, _| panel.message_text());
+    let message = message.map(|(heading, hint)| (heading.to_string(), hint.to_string()));
+    let expected = (
+        "No problems",
+        "None in the files a lane wrote; Project lists every open file",
+    );
+    assert_eq!(
+        message.as_ref().map(|(h, t)| (h.as_str(), t.as_str())),
+        Some(expected)
     );
 }
 
