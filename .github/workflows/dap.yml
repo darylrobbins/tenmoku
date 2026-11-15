@@ -1,0 +1,37 @@
+name: DAP
+
+# fe-dap against real debug adapters (scripts/dap-real.sh, TESTING.md's
+# "Real debug adapters"): debugpy and an LLDB adapter, on a Linux and a macOS
+# runner (docs/decisions/r1b9dw3g0g-debugger.md §13 Q5). On demand only, never
+# on PRs or a schedule, so the gate needs no Python wheel, network or adapter.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  real-adapters:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: Install lldb-dap (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lldb
+          dap=$(ls /usr/bin/lldb-dap* /usr/lib/llvm-*/bin/lldb-dap 2>/dev/null | head -n1 || true)
+          echo "FE_DAP_LLDB_DAP=$dap" >> "$GITHUB_ENV"
+      - name: Real-adapter tests
+        run: scripts/dap-real.sh
