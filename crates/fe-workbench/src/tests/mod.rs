@@ -162,6 +162,7 @@ mod symbol_icon_tints;
 mod tabs;
 mod terminal_b3;
 mod terminal_plus;
+mod test_ask_agent;
 mod test_failure_detail;
 mod test_run_view;
 mod test_run_view_module_keys;

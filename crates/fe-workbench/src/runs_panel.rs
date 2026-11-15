@@ -596,8 +596,7 @@ impl RunsPanel {
         &self.list
     }
 
-    /// The test run's detail, for tests.
-    #[cfg(test)]
+    /// The test run's detail.
     pub(crate) fn detail(&self) -> &Entity<TestRunView> {
         &self.detail
     }

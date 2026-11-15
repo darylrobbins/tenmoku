@@ -90,3 +90,17 @@ workbench-test-runs-failure-flaky = failed { $failed } of its last { $of ->
 }, likely flaky
 # The link in a failed test's detail that opens the test's function.
 workbench-test-runs-open-test = Open test
+# The button in a failed test's detail that opens the chat about it.
+workbench-test-runs-ask-agent = Ask an agent
+# Runs: Ask an Agent About This Failure, with no failed test selected.
+workbench-test-runs-ask-agent-none = Select a failed test to ask an agent about it
+# The chat's composer text. $name is the test's full name.
+workbench-test-runs-ask-agent-prompt = Why does { $name } fail?
+# The name of the attachment holding a failed test's assertion and output.
+workbench-test-runs-ask-agent-item = Test output
+# The assertion's two sides, in the attachment. $left and $right are the
+# values as the panic printed them.
+workbench-test-runs-ask-agent-assertion =
+    left: { $left }
+    right: { $right }
+command-runs-ask_agent_about_failure = Runs: Ask an Agent About This Failure

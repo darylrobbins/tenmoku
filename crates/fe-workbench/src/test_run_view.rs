@@ -35,9 +35,13 @@
 //!   with a plus, so neither rests on hue; the captured output below,
 //!   scrolling. A failure that isn't an assertion shows its output alone.
 //!   A test that failed some of its last runs ([`fe_runlog::Flaky`]) adds
-//!   the flaky note, and the action row after it is empty, for later cards,
-//!   but for `Open test`, which jumps to the test's function ([`test_source`]
-//!   finds it with the runnables of `test_runnables.rs`).
+//!   the flaky note, and the action row after it has `Ask an agent`
+//!   ([`failure_ask`]: the chat's composer prefilled, unsent, with the
+//!   assertion and the end of the output attached, and the test's function
+//!   when its file is in the root), and `Open test` jumps to the test's
+//!   function ([`test_source`] finds it with the runnables of
+//!   `test_runnables.rs`). `runs.ask_agent_about_failure` does the same
+//!   from the palette.
 //!
 //! `runs.rerun_failed` (`␣tf`, "Runs: Rerun Failed Tests") runs the failed
 //! tests of the run selected in the Runs list, else the newest test run,
@@ -54,8 +58,8 @@ use std::{
 use fe_gpui::EditorTheme;
 use fe_runlog::{Assertion, Outcome, TestId};
 use fe_ui::{
-    ActiveTheme as _, CODE_SMALL, FamilySlot, FontFamilies, Icon, List, ListDelegate, ListEvent,
-    ListRow, RowState, Tokens, UI_SMALL,
+    ActiveTheme as _, Button, CODE_SMALL, FamilySlot, FontFamilies, Icon, List, ListDelegate,
+    ListEvent, ListRow, RowState, Tokens, UI_SMALL,
 };
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Hsla, InteractiveElement as _, IntoElement,
@@ -64,10 +68,16 @@ use gpui::{
     prelude::FluentBuilder as _, px, relative, svg,
 };
 use kiln::Cx;
-use kiln_l10n::tr;
+use kiln_l10n::{text, tr, verbatim};
+
+use fe_chat::Rows;
 
 use crate::{
     Workbench,
+    chat_panel::{
+        agent_actions::{AgentAsk, rows_item, text_item},
+        chat_context::MAX_FILE,
+    },
     pane::Reveal,
     runs::{RunId, RunKind, RunStatus, RunSummary},
     runs_panel::summary_text,
@@ -88,6 +98,10 @@ impl TestRunViewCommands {
     /// Runs: Rerun Failed Tests
     #[command(id = "runs.rerun_failed")]
     fn runs_rerun_failed(&mut self, _: &mut Cx<Self>) {}
+
+    /// Runs: Ask an Agent About This Failure
+    #[command(id = "runs.ask_agent_about_failure")]
+    fn runs_ask_agent_about_failure(&mut self, _: &mut Cx<Self>) {}
 }
 
 /// How many results a test's row shows.
@@ -116,9 +130,14 @@ pub(crate) const OUTPUT_SELECTOR: &str = "test-run-output";
 pub(crate) const FLAKY_SELECTOR: &str = "test-run-flaky";
 pub(crate) const ACTIONS_SELECTOR: &str = "test-run-actions";
 pub(crate) const OPEN_TEST_SELECTOR: &str = "test-run-open-test";
+pub(crate) const ASK_AGENT_SELECTOR: &str = "test-run-ask-agent";
 
 /// The tallest the failure's detail gets, the output scrolling in it.
 const FAILURE_MAX_HEIGHT: Pixels = px(280.);
+
+/// The captured output's height, so that it scrolls and the action row
+/// below it stays in view, however long the output is.
+const FAILURE_OUTPUT_MAX_HEIGHT: Pixels = px(120.);
 
 /// Tree row `ix`'s test selector.
 pub(crate) fn tree_row_selector(ix: usize) -> String {
@@ -771,6 +790,88 @@ fn test_row_in(text: &str, path: &Path, name: &str, needle: &str) -> Option<u32>
         .or(Some(runnable.rows.start))
 }
 
+/// The most rows of a test's function the chat is given.
+const FUNCTION_ROWS: usize = 200;
+
+/// The test `id`'s function under `root`: its file as the chat shows paths,
+/// its rows (1-based) and their text.
+pub(crate) fn test_function(root: &Path, id: &TestId) -> Option<(String, Rows, String)> {
+    let (path, row) = test_source(root, id)?;
+    let text = fs::read_to_string(&path).ok()?;
+    let lines: Vec<&str> = text
+        .lines()
+        .skip(row as usize)
+        .take(FUNCTION_ROWS)
+        .collect();
+    let (mut depth, mut opened, mut count) = (0i32, false, 0);
+    for line in &lines {
+        count += 1;
+        for ch in line.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    opened = true;
+                }
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if opened && depth <= 0 {
+            break;
+        }
+    }
+    let count = count.max(1);
+    let rows = Rows {
+        first: row + 1,
+        last: row + count as u32,
+    };
+    let mut body = lines[..count.min(lines.len())].join("\n");
+    body.push('\n');
+    let shown = path.strip_prefix(root).unwrap_or(&path);
+    let shown = shown.to_string_lossy().replace('\\', "/");
+    Some((shown, rows, body))
+}
+
+/// The ask about the failed test `id`: the assertion and the end of its
+/// `output`, cut so the item fits the chat's limit, and its function.
+pub(crate) fn failure_ask(
+    id: &TestId,
+    output: &str,
+    function: Option<(String, Rows, String)>,
+) -> AgentAsk {
+    let head = match Assertion::parse(output) {
+        Some(assertion) => format!(
+            "{}\n\n",
+            tr!(
+                "workbench-test-runs-ask-agent-assertion",
+                left = assertion.left,
+                right = assertion.right
+            )
+        ),
+        None => String::new(),
+    };
+    let room = MAX_FILE.saturating_sub(head.len());
+    let mut start = output.len().saturating_sub(room);
+    while !output.is_char_boundary(start) {
+        start += 1;
+    }
+    let body = format!("{head}{}", &output[start..]);
+    let label = tr!("workbench-test-runs-ask-agent-item").to_string();
+    AgentAsk {
+        prompt: tr!(
+            "workbench-test-runs-ask-agent-prompt",
+            name = id.name.clone()
+        )
+        .to_string(),
+        context: function
+            .map(|(path, rows, text)| rows_item(&path, rows, &text))
+            .into_iter()
+            .collect(),
+        output: vec![text_item(&label, &body)],
+        send: false,
+    }
+}
+
 /// The run shown, as the view last read it.
 #[derive(Clone, Debug, PartialEq)]
 struct Shown {
@@ -1130,7 +1231,9 @@ impl TestRunView {
         let failure = failed.then(|| Failure::of(&test.output));
         let slot = div()
             .debug_selector(|| SLOT_SELECTOR.into())
-            .flex_none()
+            .flex_shrink(1.)
+            .min_h_0()
+            .overflow_hidden()
             .max_h(FAILURE_MAX_HEIGHT)
             .flex()
             .flex_col()
@@ -1151,11 +1254,31 @@ impl TestRunView {
                         .text_color(c.status.warning)
                         .child(note)
                 });
+                let ready = self
+                    .workbench
+                    .upgrade()
+                    .is_some_and(|workbench| workbench.read(cx).root_trusted());
                 let actions = div()
                     .debug_selector(|| ACTIONS_SELECTOR.into())
                     .flex_none()
                     .flex()
-                    .gap_2();
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_none()
+                            .debug_selector(|| ASK_AGENT_SELECTOR.into())
+                            .child(
+                                Button::new(
+                                    verbatim!("test-run-ask-agent"),
+                                    text!("workbench-test-runs-ask-agent"),
+                                )
+                                .small()
+                                .disabled(!ready)
+                                .on_click(
+                                    cx.listener(|view, _, window, cx| view.ask_agent(window, cx)),
+                                ),
+                            ),
+                    );
                 Self::failure(&failure, c, code, diff)
                     .children(note)
                     .child(actions)
@@ -1224,6 +1347,8 @@ impl TestRunView {
             .flex_col()
             .gap_1()
             .min_h_0()
+            .flex_shrink(1.)
+            .overflow_hidden()
             .children(above)
             .children(blocks)
             .child(
@@ -1231,6 +1356,7 @@ impl TestRunView {
                     .id("test-run-output-scroll")
                     .flex_1()
                     .min_h_0()
+                    .max_h(FAILURE_OUTPUT_MAX_HEIGHT)
                     .overflow_y_scroll()
                     .child(text(OUTPUT_SELECTOR, &failure.output)),
             )
@@ -1242,6 +1368,41 @@ impl TestRunView {
             Some(workbench) => workbench.read(cx).pane().read(cx).theme().clone(),
             None => EditorTheme::default_dark(cx),
         }
+    }
+
+    /// Opens the chat with the selected failed test's assertion and output
+    /// attached, and the test's function when its file is in the root, and
+    /// a prompt asking why it fails, unsent. The function is looked for off
+    /// the main thread.
+    pub(crate) fn ask_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(test) = self.selected_test() else {
+            return;
+        };
+        if test.outcome != TestOutcome::Failed {
+            return;
+        }
+        let (id, output) = (test.id.clone(), test.output.clone());
+        let Some(workbench) = self.workbench.upgrade() else {
+            return;
+        };
+        let root = workbench.read(cx).root().map(Path::to_owned);
+        cx.spawn_in(window, async move |_, cx| {
+            let function = match root {
+                Some(root) => {
+                    let id = id.clone();
+                    cx.background_spawn(async move { test_function(&root, &id) })
+                        .await
+                }
+                None => None,
+            };
+            let ask = failure_ask(&id, &output, function);
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    workbench.ask_agent(ask, window, cx)
+                })
+                .ok();
+        })
+        .detach();
     }
 
     /// Opens the selected test's function in the file that has it, if it's
@@ -1387,6 +1548,18 @@ pub(crate) fn init(cx: &mut App) {
             match workbench.rerun_target(cx) {
                 Some(run) => workbench.rerun_failed(run, window, cx),
                 None => toast::show(cx, Toast::info(tr!("workbench-test-runs-rerun-none"))),
+            }
+        });
+    });
+    cx.on_action(|_: &RunsAskAgentAboutFailure, cx| {
+        on_workbench(cx, |workbench, window, cx| {
+            let view = workbench.runs_panel.read(cx).detail().clone();
+            let failed = (view.read(cx).selected_test())
+                .is_some_and(|test| test.outcome == TestOutcome::Failed);
+            if failed {
+                view.update(cx, |view, cx| view.ask_agent(window, cx));
+            } else {
+                toast::show(cx, Toast::info(tr!("workbench-test-runs-ask-agent-none")));
             }
         });
     });
