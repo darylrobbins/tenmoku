@@ -110,6 +110,7 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | toml | tree-sitter-toml-ng | 0.7.0 | https://github.com/tree-sitter-grammars/tree-sitter-toml | MIT | `queries/toml.scm`³ |
 | go | tree-sitter-go | 0.25.0 | https://github.com/tree-sitter/tree-sitter-go | MIT | `HIGHLIGHTS_QUERY` |
 | printf | tree-sitter-printf | 0.5.1 | https://github.com/tree-sitter-grammars/tree-sitter-printf | ISC | parse only; verbs found by `src/verbs.rs` (ours); `queries/go-injections.scm` (idea from nvim-treesitter `queries/go/injections.scm`, Apache-2.0; patterns ours) |
+| regex | tree-sitter-regex | 0.25.0 | https://github.com/tree-sitter/tree-sitter-regex | MIT | injection only (hidden; JavaScript's and TypeScript's regex literals): `HIGHLIGHTS_QUERY`, then `queries/regex.scm` (ours) |
 | c | tree-sitter-c | 0.24.2 | https://github.com/tree-sitter/tree-sitter-c | MIT | `HIGHLIGHT_QUERY` |
 | cpp | tree-sitter-cpp | 0.23.4 | https://github.com/tree-sitter/tree-sitter-cpp | MIT | C's, then `HIGHLIGHT_QUERY` |
 | bash | tree-sitter-bash | 0.25.1 | https://github.com/tree-sitter/tree-sitter-bash | MIT | `HIGHLIGHT_QUERY` |

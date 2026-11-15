@@ -68,3 +68,4 @@ export const debug: boolean = process.env['CACHE_DEBUG'] === '1' && typeof windo
 let hitRatio: number | null = null;
 hitRatio = 0.75;
 export { hitRatio };
+export const isKey = (s: string): boolean => /^[a-z_]\w*$/i.test(s);

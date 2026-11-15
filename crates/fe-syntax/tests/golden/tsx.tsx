@@ -59,3 +59,4 @@ export default function Demo() {
     </StatusBar>
   );
 }
+const slug = (s: string) => s.replace(/[^\w-]+/g, '-');

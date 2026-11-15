@@ -695,6 +695,24 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: true,
     },
+    // Regular expressions, injected into JavaScript's and TypeScript's regex
+    // literals. Ours goes after the crate's query; see its header.
+    #[cfg(feature = "regex")]
+    Def {
+        name: "regex",
+        extensions: &[],
+        file_names: &[],
+        grammar: || tree_sitter_regex::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_regex::HIGHLIGHTS_QUERY,
+                include_str!("../queries/regex.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: true,
+    },
     #[cfg(feature = "c")]
     Def {
         name: "c",

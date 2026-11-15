@@ -562,14 +562,29 @@ fn unknown_injected_languages_stay_plain() {
         .map(|(text, highlight)| (text.to_string(), highlight))
     );
 
-    // Regex and JSDoc have no grammar here; the host's highlights stay.
+    // JSDoc has no grammar here; the host's highlights stay.
     let text = "/** @param {number} x */\nconst r = /ab+c/g;\nstyled.div`a`;\n";
     assert_includes(
         &spans("javascript", text),
+        &[("/** @param {number} x */", "comment"), ("`a`", "string")],
+    );
+}
+
+/// A regex literal's pattern is the regex grammar's, no longer the host's
+/// flat `string.special`; its flags stay the host's.
+#[cfg(all(feature = "regex", feature = "javascript"))]
+#[test]
+fn regex_literals_take_the_regex_grammar() {
+    let text = "const r = /ab+c/g;\n";
+    assert_includes(
+        &spans("javascript", text),
         &[
-            ("/** @param {number} x */", "comment"),
-            ("ab+c", "string.special"),
-            ("`a`", "string"),
+            ("/", "operator"),
+            ("ab", "string.special"),
+            ("+", "operator"),
+            ("c", "string.special"),
+            ("/", "operator"),
+            ("g", "string.special"),
         ],
     );
 }
