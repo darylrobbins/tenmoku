@@ -63,7 +63,7 @@ fn probe_is_bounded_cached_and_invalidated_by_watcher_batches() {
             "plain/notes.txt",
             "plain/deep/pom.xml",
             "Api/Service.csproj",
-            "Lib/Lib.fsproj",
+            "Fs/Lib.fsproj",
             "Vb/App.vbproj",
             "Shop/Shop.slnx",
             "lib/src/lib.rs",
@@ -83,7 +83,7 @@ fn probe_is_bounded_cached_and_invalidated_by_watcher_batches() {
     fs::write(root.join("ignored/.ignore"), "pyproject.toml\n").unwrap();
     let dir = |rel: &str| root.join(rel);
     let rels = [
-        "core", "core/src", "web", "plain", "ws", "Api", "Lib", "Vb", "Shop", "lib", "tool/src",
+        "core", "core/src", "web", "plain", "ws", "Api", "Fs", "Vb", "Shop", "lib", "tool/src",
         "ignored",
     ];
     let dirs: Vec<PathBuf> = rels.into_iter().map(dir).collect();
@@ -108,7 +108,9 @@ fn probe_is_bounded_cached_and_invalidated_by_watcher_batches() {
     let crate_ = with(|m| m.cargo = true);
     assert_eq!(markers(&cache, "lib"), crate_);
     // Every .NET project and solution, by any name.
-    for rel in ["Api", "Lib", "Vb"] {
+    // (`Fs`, not `Lib`: on a case-insensitive file system, macOS's, that
+    // is `lib`, and its `Lib.fsproj` would be `lib`'s.)
+    for rel in ["Api", "Fs", "Vb"] {
         assert_eq!(markers(&cache, rel), with(|m| m.dotnet = true), "{rel}");
     }
     assert_eq!(markers(&cache, "Shop"), with(|m| m.dotnet_solution = true));
