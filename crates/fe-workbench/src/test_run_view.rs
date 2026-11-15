@@ -28,7 +28,16 @@
 //!   a time, for each test as it comes, and for all again once the run's
 //!   ended, so they take in its own results.
 //! - **The detail slot**: selecting a test's row shows its name and binary
-//!   under the tree, where the failure's detail goes (a later card).
+//!   under the tree. For a failed test it goes on with the failure
+//!   ([`Failure`]), in code small: the panic's location and the assertion's
+//!   message above; the assertion's `left` and `right` as two blocks, left
+//!   on a shinsha-soft ground with a minus and right on a celadon-soft one
+//!   with a plus, so neither rests on hue; the captured output below,
+//!   scrolling. A failure that isn't an assertion shows its output alone.
+//!   A test that failed some of its last runs ([`fe_runlog::Flaky`]) adds
+//!   the flaky note, and the action row after it is empty, for later cards,
+//!   but for `Open test`, which jumps to the test's function ([`test_source`]
+//!   finds it with the runnables of `test_runnables.rs`).
 //!
 //! `runs.rerun_failed` (`␣tf`, "Runs: Rerun Failed Tests") runs the failed
 //! tests of the run selected in the Runs list, else the newest test run,
@@ -37,10 +46,13 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    fs,
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
-use fe_runlog::{Outcome, TestId};
+use fe_gpui::EditorTheme;
+use fe_runlog::{Assertion, Outcome, TestId};
 use fe_ui::{
     ActiveTheme as _, CODE_SMALL, FamilySlot, FontFamilies, Icon, List, ListDelegate, ListEvent,
     ListRow, RowState, Tokens, UI_SMALL,
@@ -56,9 +68,11 @@ use kiln_l10n::tr;
 
 use crate::{
     Workbench,
+    pane::Reveal,
     runs::{RunId, RunKind, RunStatus, RunSummary},
     runs_panel::summary_text,
     test_commands::on_workbench,
+    test_runnables::{RunnableKind, runnables},
     test_runner::{TestOutcome, TestResult, TestTrack, Tracks, test_tracks},
     workbench::toast::{self, Toast},
 };
@@ -93,6 +107,18 @@ const TEST_INDENT: Pixels = px(20.);
 pub(crate) const SPLIT_SELECTOR: &str = "test-run-split";
 pub(crate) const TREE_ROW_SELECTOR: &str = "test-run-row";
 pub(crate) const SLOT_SELECTOR: &str = "test-run-detail";
+/// The failure's blocks: the panic, the left value, the right, the output,
+/// the flaky note, the action row and `Open test`.
+pub(crate) const PANIC_SELECTOR: &str = "test-run-panic";
+pub(crate) const LEFT_SELECTOR: &str = "test-run-left";
+pub(crate) const RIGHT_SELECTOR: &str = "test-run-right";
+pub(crate) const OUTPUT_SELECTOR: &str = "test-run-output";
+pub(crate) const FLAKY_SELECTOR: &str = "test-run-flaky";
+pub(crate) const ACTIONS_SELECTOR: &str = "test-run-actions";
+pub(crate) const OPEN_TEST_SELECTOR: &str = "test-run-open-test";
+
+/// The tallest the failure's detail gets, the output scrolling in it.
+const FAILURE_MAX_HEIGHT: Pixels = px(280.);
 
 /// Tree row `ix`'s test selector.
 pub(crate) fn tree_row_selector(ix: usize) -> String {
@@ -567,6 +593,162 @@ impl ListDelegate for TestRows {
     }
 }
 
+/// What a failed test's output says, as the detail slot shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Failure {
+    /// The panic's own line, `thread 'x' panicked at src/lib.rs:7:5:`, when
+    /// the failure is an assertion.
+    pub(crate) location: Option<String>,
+    /// The failed `assert_eq!` or `assert_ne!`; none for another failure.
+    pub(crate) assertion: Option<Assertion>,
+    /// The captured output, whole.
+    pub(crate) output: String,
+}
+
+impl Failure {
+    pub(crate) fn of(output: &str) -> Self {
+        let assertion = Assertion::parse(output);
+        let location = assertion.as_ref().and_then(|_| {
+            output
+                .lines()
+                .find(|line| line.contains("panicked at"))
+                .map(str::to_owned)
+        });
+        Self {
+            location,
+            assertion,
+            output: output.to_owned(),
+        }
+    }
+}
+
+/// One of an assertion's two values, as its block shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Block {
+    pub(crate) selector: &'static str,
+    /// Minus for the left, plus for the right.
+    pub(crate) icon: Icon,
+    /// Shinsha for the left, celadon for the right.
+    pub(crate) glyph: Hsla,
+    /// Their soft grounds, the diff view's removed and added rows'.
+    pub(crate) ground: Hsla,
+    pub(crate) value: String,
+}
+
+/// `failure`'s assertion's blocks, left then right; none for another failure.
+pub(crate) fn blocks(failure: &Failure, c: &Tokens<Hsla>, diff: &EditorTheme) -> Vec<Block> {
+    let Some(assertion) = &failure.assertion else {
+        return Vec::new();
+    };
+    vec![
+        Block {
+            selector: LEFT_SELECTOR,
+            icon: Icon::Minus,
+            glyph: c.status.error,
+            ground: diff.diff_removed_row,
+            value: assertion.left.clone(),
+        },
+        Block {
+            selector: RIGHT_SELECTOR,
+            icon: Icon::Plus,
+            glyph: c.status.success,
+            ground: diff.diff_added_row,
+            value: assertion.right.clone(),
+        },
+    ]
+}
+
+/// The directories [`test_source`] doesn't look in.
+const SKIPPED_DIRS: [&str; 3] = ["target", "node_modules", "vendor"];
+/// The most files [`test_source`] reads.
+const SOURCE_FILES_LIMIT: usize = 20_000;
+
+/// The file under `root` that has the Rust test `id` names, and the row of
+/// its function. The runnables of each file that has the function's name
+/// are read (`test_runnables.rs`): the test is the one whose selector ends
+/// the test's name, and whose module path before it, if any, names the file
+/// or a folder above it.
+pub(crate) fn test_source(root: &Path, id: &TestId) -> Option<(PathBuf, u32)> {
+    if id.binary.starts_with("Doc-tests") {
+        return None;
+    }
+    let leaf = id.name.rsplit("::").next()?;
+    let needle = leaf;
+    let mut dirs = vec![root.to_owned()];
+    let mut seen = 0;
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                if !name.starts_with('.') && !SKIPPED_DIRS.contains(&name.as_ref()) {
+                    dirs.push(path);
+                }
+            } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+                seen += 1;
+                if seen > SOURCE_FILES_LIMIT {
+                    return None;
+                }
+                let Ok(text) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                if !text.contains(needle) {
+                    continue;
+                }
+                if let Some(row) = test_row_in(&text, &path, &id.name, needle) {
+                    return Some((path, row));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The row of the test `name`'s function in `text`, the Rust file at `path`.
+fn test_row_in(text: &str, path: &Path, name: &str, needle: &str) -> Option<u32> {
+    let buffer = fe_buffer::Buffer::new(text);
+    let mut syntax = fe_syntax::Syntax::new(fe_syntax::language_by_name("rust")?, buffer.current());
+    syntax.finish(syntax.parse_job().run());
+    let found = runnables("rust", &syntax, buffer.text());
+    let words: Vec<String> = path
+        .components()
+        .map(|part| {
+            let part = part.as_os_str().to_string_lossy();
+            part.strip_suffix(".rs").unwrap_or(&part).to_owned()
+        })
+        .collect();
+    let runnable = found.iter().find(|runnable| {
+        let Some(module) = name.strip_suffix(runnable.selector.as_str()) else {
+            return false;
+        };
+        let module = match module.strip_suffix("::") {
+            Some(module) => module,
+            None if module.is_empty() => module,
+            None => return false,
+        };
+        runnable.kind == RunnableKind::Test
+            && (module.split("::").filter(|word| !word.is_empty()))
+                .all(|word| words.contains(&word.to_owned()))
+    })?;
+    let lines: Vec<&str> = text.lines().collect();
+    (runnable.rows.clone())
+        .find(|row| {
+            lines
+                .get(*row as usize)
+                .is_some_and(|line| line.contains(needle))
+        })
+        .or(Some(runnable.rows.start))
+}
+
 /// The run shown, as the view last read it.
 #[derive(Clone, Debug, PartialEq)]
 struct Shown {
@@ -596,6 +778,9 @@ pub(crate) struct TestRunView {
     /// The split bar's drawn fractions, passed and failed, for tests.
     #[cfg(test)]
     pub(crate) drawn_split: Option<(f32, f32)>,
+    /// The failure's blocks as last drawn, for tests.
+    #[cfg(test)]
+    pub(crate) drawn_blocks: Vec<Block>,
     _tree: Subscription,
 }
 
@@ -649,6 +834,8 @@ impl TestRunView {
             tree,
             #[cfg(test)]
             drawn_split: None,
+            #[cfg(test)]
+            drawn_blocks: Vec::new(),
             _tree: events,
         }
     }
@@ -857,21 +1044,26 @@ impl TestRunView {
     }
 
     /// The detail slot, while a test's row is selected: its glyph, its name
-    /// and its binary.
-    fn slot(&self, c: &Tokens<Hsla>, code: SharedString) -> Option<gpui::Div> {
+    /// and its binary, and `Open test` if it failed; then the failure.
+    fn slot(
+        &self,
+        c: &Tokens<Hsla>,
+        code: SharedString,
+        diff: &EditorTheme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
         let test = self.selected_test()?;
-        let flaky = (self.tracks.get(&test.id)).is_some_and(|track| track.flaky.is_some());
-        let glyph = Glyph::of(test.outcome, flaky);
-        let slot = div()
-            .debug_selector(|| SLOT_SELECTOR.into())
+        let track = self.tracks.get(&test.id);
+        let flaky = track.and_then(|track| track.flaky);
+        let glyph = Glyph::of(test.outcome, flaky.is_some());
+        let failed = test.outcome == TestOutcome::Failed;
+        let header = div()
             .flex_none()
             .h(fe_ui::ROW_HEIGHT)
             .px_3()
             .flex()
             .items_center()
             .gap_2()
-            .border_t_1()
-            .border_color(c.border.subtle)
             .child(
                 svg()
                     .path(glyph.icon().path())
@@ -884,7 +1076,7 @@ impl TestRunView {
                     .flex_shrink(1.)
                     .min_w_0()
                     .truncate()
-                    .font_family(code)
+                    .font_family(code.clone())
                     .text_size(CODE_SMALL.size)
                     .line_height(CODE_SMALL.line_height)
                     .text_color(c.text.primary)
@@ -892,13 +1084,180 @@ impl TestRunView {
             )
             .child(
                 div()
-                    .flex_none()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
                     .text_size(UI_SMALL.size)
                     .line_height(UI_SMALL.line_height)
                     .text_color(c.text.muted)
                     .child(SharedString::from(test.id.binary.clone())),
-            );
+            )
+            .when(failed, |header| {
+                header.child(
+                    div()
+                        .id("test-run-open-test")
+                        .debug_selector(|| OPEN_TEST_SELECTOR.into())
+                        .flex_none()
+                        .cursor_pointer()
+                        .text_size(UI_SMALL.size)
+                        .line_height(UI_SMALL.line_height)
+                        .text_color(c.text.accent)
+                        .child(tr!("workbench-test-runs-open-test"))
+                        .on_click(cx.listener(|view, _, window, cx| view.open_test(window, cx))),
+                )
+            });
+        let failure = failed.then(|| Failure::of(&test.output));
+        let slot = div()
+            .debug_selector(|| SLOT_SELECTOR.into())
+            .flex_none()
+            .max_h(FAILURE_MAX_HEIGHT)
+            .flex()
+            .flex_col()
+            .border_t_1()
+            .border_color(c.border.subtle)
+            .child(header)
+            .children(failure.map(|failure| {
+                let note = flaky.map(|flaky| {
+                    let note = tr!(
+                        "workbench-test-runs-failure-flaky",
+                        failed = flaky.failed,
+                        of = flaky.of
+                    );
+                    (div().debug_selector(|| FLAKY_SELECTOR.into()))
+                        .flex_none()
+                        .text_size(UI_SMALL.size)
+                        .line_height(UI_SMALL.line_height)
+                        .text_color(c.status.warning)
+                        .child(note)
+                });
+                let actions = div()
+                    .debug_selector(|| ACTIONS_SELECTOR.into())
+                    .flex_none()
+                    .flex()
+                    .gap_2();
+                Self::failure(&failure, c, code, diff)
+                    .children(note)
+                    .child(actions)
+            }));
         Some(slot)
+    }
+
+    /// A failure's detail: see the module docs.
+    fn failure(
+        failure: &Failure,
+        c: &Tokens<Hsla>,
+        code: SharedString,
+        diff: &EditorTheme,
+    ) -> gpui::Div {
+        let text = |selector: &'static str, text: &str| {
+            div()
+                .debug_selector(|| selector.into())
+                .flex_none()
+                .font_family(code.clone())
+                .text_size(CODE_SMALL.size)
+                .line_height(CODE_SMALL.line_height)
+                .text_color(c.text.primary)
+                .child(SharedString::from(text.to_owned()))
+        };
+        // A value's block: its glyph, so it doesn't rest on hue, and its
+        // value, wrapping.
+        let side = |block: Block| {
+            div()
+                .debug_selector(|| block.selector.into())
+                .flex_none()
+                .flex()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .rounded(px(3.))
+                .bg(block.ground)
+                .child(
+                    svg()
+                        .path(block.icon.path())
+                        .size(px(12.))
+                        .flex_none()
+                        .mt(px(2.))
+                        .text_color(block.glyph),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .font_family(code.clone())
+                        .text_size(CODE_SMALL.size)
+                        .line_height(CODE_SMALL.line_height)
+                        .text_color(c.text.primary)
+                        .child(SharedString::from(block.value)),
+                )
+        };
+        let above = (failure.location.iter())
+            .map(|location| text(PANIC_SELECTOR, location))
+            .chain(failure.assertion.iter().filter_map(|assertion| {
+                (assertion.message.as_deref()).map(|message| text(PANIC_SELECTOR, message))
+            }));
+        let blocks = blocks(failure, c, diff).into_iter().map(side);
+        div()
+            .px_3()
+            .pb_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .min_h_0()
+            .children(above)
+            .children(blocks)
+            .child(
+                div()
+                    .id("test-run-output-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(text(OUTPUT_SELECTOR, &failure.output)),
+            )
+    }
+
+    /// The editor's theme, for the failure's grounds.
+    fn editor_theme(&self, cx: &App) -> EditorTheme {
+        match self.workbench.upgrade() {
+            Some(workbench) => workbench.read(cx).pane().read(cx).theme().clone(),
+            None => EditorTheme::default_dark(cx),
+        }
+    }
+
+    /// Opens the selected test's function in the file that has it, if it's
+    /// found: looked for off the main thread.
+    fn open_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(test) = self.selected_test() else {
+            return;
+        };
+        let id = test.id.clone();
+        let Some(workbench) = self.workbench.upgrade() else {
+            return;
+        };
+        let Some(root) = workbench.read(cx).root().map(Path::to_owned) else {
+            return;
+        };
+        cx.spawn_in(window, async move |view, cx| {
+            let found = cx
+                .background_spawn(async move { test_source(&root, &id) })
+                .await;
+            let Some((path, row)) = found else {
+                return;
+            };
+            view.update_in(cx, |_, window, cx| {
+                let Some(workbench) = workbench.read(cx).pane().clone().into() else {
+                    return;
+                };
+                let reveal = Reveal {
+                    row,
+                    columns: 0..0,
+                    within_row: true,
+                };
+                let pane: Entity<crate::pane::Pane> = workbench;
+                pane.update(cx, |pane, cx| pane.open_at(path, Some(reveal), window, cx));
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
@@ -911,7 +1270,15 @@ impl Render for TestRunView {
             return div().into_any_element();
         };
         let split = self.split_bar(&c);
-        let slot = self.slot(&c, code.clone());
+        let diff = self.editor_theme(cx);
+        #[cfg(test)]
+        {
+            let failed = (self.selected_test()).filter(|test| test.outcome == TestOutcome::Failed);
+            self.drawn_blocks = failed
+                .map(|test| blocks(&Failure::of(&test.output), &c, &diff))
+                .unwrap_or_default();
+        }
+        let slot = self.slot(&c, code.clone(), &diff, cx);
         div()
             .size_full()
             .min_w_0()

@@ -79,3 +79,14 @@ workbench-test-runs-rerun-other-folder = This run is from another folder: open i
 # test's binary was built from, so it can't be rerun alone. $binary is the
 # binary's name, as cargo test names it.
 workbench-test-runs-rerun-unknown-target = Can't tell which target { $binary } was built from: run its tests again, then rerun the failures
+
+## A failed test's detail (test_run_view.rs)
+
+# The note under a test that failed some of its last runs and passed others.
+# $failed is how many failed, $of how many runs it has the results of.
+workbench-test-runs-failure-flaky = failed { $failed } of its last { $of ->
+    [one] { $of } run
+   *[other] { $of } runs
+}, likely flaky
+# The link in a failed test's detail that opens the test's function.
+workbench-test-runs-open-test = Open test
