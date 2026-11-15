@@ -575,6 +575,8 @@ fn run_as(
 struct Shown {
     text: ShownText,
     selections: Vec<ResolvedSelection>,
+    /// Scrolling follows it, so moving only the primary is a change.
+    primary: ResolvedSelection,
     folds: Vec<Fold>,
     soft_wrap: bool,
     rows: u32,
@@ -585,6 +587,7 @@ fn shown(model: &EditorModel) -> Shown {
     Shown {
         text: ShownText(model.snapshot().version(), model.text().clone()),
         selections: model.selections(),
+        primary: model.primary_selection(),
         folds: model.display().folds().to_vec(),
         soft_wrap: model.soft_wrap(),
         rows: model.display().row_count(),

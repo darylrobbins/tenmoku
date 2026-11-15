@@ -104,3 +104,26 @@ fn wrapped_cmd_d_scrolls_to_the_match(cx: &mut TestAppContext) {
     assert_eq!(ranges(&view, cx), [(0, 3), (match_start, match_start + 3)]);
     assert!(visible_buffer_rows(&view, cx).contains(&400));
 }
+
+#[gpui::test]
+fn cursor_undo_of_only_the_primary_reveals_it(cx: &mut TestAppContext) {
+    let last = ROWS - 1;
+    let (view, cx) = editor(&file(last), last, cx);
+    let bottom = row_start(&view, last, cx);
+    // cmd-d wraps: two selections, the one on the first row primary.
+    keys("cmd-d", cx);
+    assert!(visible_buffer_rows(&view, cx).contains(&0));
+    // The same ranges with the last one primary, which is on screen.
+    view.update(cx, |view, cx| {
+        let same = view.model.selections();
+        view.model.set_selections(same);
+        view.changed(cx);
+    });
+    cx.run_until_parked();
+    assert!(visible_buffer_rows(&view, cx).contains(&last));
+    assert!(!visible_buffer_rows(&view, cx).contains(&0));
+    // Cursor Undo changes only the primary, back to the one offscreen.
+    keys("cmd-u", cx);
+    assert_eq!(ranges(&view, cx), [(0, 3), (bottom, bottom + 3)]);
+    assert!(visible_buffer_rows(&view, cx).contains(&0));
+}

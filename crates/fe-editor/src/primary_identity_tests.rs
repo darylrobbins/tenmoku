@@ -5,7 +5,7 @@
 use std::ops::Range;
 
 use fe_buffer::Origin;
-use fe_command::Invocation;
+use fe_command::{Effect, Invocation};
 
 use crate::{
     EditorModel, Movement,
@@ -17,13 +17,18 @@ const NEXT: &str = "select_next_occurrence";
 const MOVE: &str = "move_last_selection_to_next_find_match";
 
 fn run(model: &mut EditorModel, name: &str) {
+    dispatch(model, name);
+}
+
+fn dispatch(model: &mut EditorModel, name: &str) -> Effect {
     let mut host = HeadlessHost::new();
     let invocation = Invocation::of(&format!("editor.{name}"))
         .unwrap()
         .context(commands::context());
     commands::registry()
         .dispatch(&mut EditorTarget::new(model, &mut host), &invocation)
-        .unwrap();
+        .unwrap()
+        .effect
 }
 
 /// A change to the selections, by name.
@@ -218,4 +223,17 @@ fn cursor_undo_restores_identity() {
     model.cursor_undo();
     assert_eq!(render(&model), "| x [foo]");
     assert_eq!(primary(&model), 3..6);
+}
+
+#[test]
+fn dispatched_cursor_undo_redo_of_only_the_primary_changes() {
+    let mut model = wrapped();
+    let same = model.selections();
+    model.set_selections(same);
+    assert_eq!(primary(&model), 18..21);
+    // Same ranges before and after; only the primary differs.
+    assert_eq!(dispatch(&mut model, "cursor_undo"), Effect::Changed);
+    assert_eq!(primary(&model), 0..3);
+    assert_eq!(dispatch(&mut model, "cursor_redo"), Effect::Changed);
+    assert_eq!(primary(&model), 18..21);
 }
