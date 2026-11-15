@@ -54,6 +54,25 @@ workbench-problems-detail-apply-fix = Apply fix
 # The command the button and its key run.
 command-problems-apply_fix = Apply Fix
 
+# The buttons asking the chat agent about the problem: Ask an agent attaches
+# it and leaves the prompt to send, Explain sends at once.
+workbench-problems-detail-ask-agent = Ask an agent
+workbench-problems-detail-explain = Explain
+# Their tooltips while the agent can't be asked.
+workbench-problems-ask-untrusted = This folder isn't trusted, so the chat can't be asked.
+workbench-problems-ask-no-key = Set an API key in the chat to ask an agent.
+# `code · source`, in the prompts below.
+workbench-problems-origin = { $code } · { $source }
+# The prompts. $message is the problem's message; $origin is `code · source`.
+workbench-problems-ask-prompt = How do I fix this problem? { $message } ({ $origin })
+workbench-problems-ask-prompt-bare = How do I fix this problem? { $message }
+workbench-problems-explain-prompt = What does this problem mean, and why does it happen? { $message } ({ $origin })
+workbench-problems-explain-prompt-bare = What does this problem mean, and why does it happen? { $message }
+
+# The commands asking the chat agent about the selected problem.
+command-problems-ask_agent = Ask an Agent About This Problem
+command-problems-explain = Explain This Problem
+
 ## The status bar's items (the errors' and the warnings')
 
 # Both items' tooltip. $errors and $warnings are the window's counts.

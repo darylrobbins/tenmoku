@@ -39,24 +39,35 @@ use std::{
 };
 
 use fe_buffer::{BufferId, Version};
+use fe_chat::Rows;
 use fe_command::{CommandId, ContextFrame, ContextStack, Value};
 use fe_editor::diagnostics::Problem;
 use fe_gpui::EditorView;
 use fe_lsp::{CodeAction, EditTarget, FileEdits, code_action::CodeActionQuery};
 use fe_text::Text;
-use fe_ui::{ActiveTheme as _, Button, CODE_SMALL, FamilySlot, FontFamilies, UI_SMALL};
+use fe_ui::{ActiveTheme as _, Button, CODE_SMALL, FamilySlot, FontFamilies, Tooltip, UI_SMALL};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EntityId, InteractiveElement as _,
     IntoElement as _, ParentElement as _, Pixels, StatefulInteractiveElement as _, Styled as _,
     Task, WeakEntity, Window, canvas, div, prelude::FluentBuilder as _, px, relative, svg,
 };
 use kiln::Cx;
-use kiln_l10n::text;
+use kiln_l10n::{text, tr};
 
 use super::{KEY_CONTEXT, ProblemsPanel, read_text};
+use crate::chat_panel::agent_actions::{AgentAsk, rows_item};
 
 /// The command applying the suggested fix.
 pub(crate) const APPLY_FIX: &str = "problems.apply_fix";
+
+/// The Ask an agent button's element id and test selector.
+pub(crate) const ASK_SELECTOR: &str = "problems-detail-ask";
+
+/// The Explain button's element id and test selector.
+pub(crate) const EXPLAIN_SELECTOR: &str = "problems-detail-explain";
+
+/// The rows either side of the problem's the agent is given.
+const AGENT_CONTEXT_ROWS: u32 = 3;
 
 /// The kind of the actions a fix is one of.
 const QUICKFIX: &str = "quickfix";
@@ -148,6 +159,25 @@ impl ProblemsPanel {
     #[command(id = "problems.apply_fix")]
     fn apply_fix_command(&mut self, cx: &mut Cx<Self>) {
         self.apply_fix(cx.window, cx.cx);
+    }
+
+    /// Ask an Agent About This Problem
+    ///
+    /// Opens the chat with the selected problem and its surrounding rows
+    /// attached and a prompt asking how to fix it, for the user to add to
+    /// and send.
+    #[command(id = "problems.ask_agent")]
+    fn ask_agent_command(&mut self, cx: &mut Cx<Self>) {
+        self.ask_agent(false, cx.window, cx.cx);
+    }
+
+    /// Explain This Problem
+    ///
+    /// Asks the chat agent what the selected problem means and why it
+    /// happens, with the problem and its surrounding rows attached.
+    #[command(id = "problems.explain")]
+    fn explain_command(&mut self, cx: &mut Cx<Self>) {
+        self.ask_agent(true, cx.window, cx.cx);
     }
 }
 
@@ -334,6 +364,97 @@ impl ProblemsPanel {
             workbench.update(cx, |workbench, cx| {
                 workbench.apply_code_action(editor, version, action, window, cx)
             })
+        });
+    }
+
+    /// Why the agent can't be asked: the folder isn't trusted, or the chat
+    /// has no key. The conditions `ask_agent` reports.
+    pub(crate) fn agent_blocked(&self, cx: &App) -> Option<String> {
+        let workbench = self.workbench.upgrade()?;
+        let workbench = workbench.read(cx);
+        if workbench.root().is_some() && !workbench.root_trusted() {
+            return Some(tr!("workbench-problems-ask-untrusted").to_string());
+        }
+        let chat = workbench.dock().read(cx).chat().cloned()?;
+        chat.read(cx)
+            .keyless()
+            .then(|| tr!("workbench-problems-ask-no-key").to_string())
+    }
+
+    /// `problems.ask_agent` (`send` false) and `problems.explain` (true):
+    /// asks the agent about the selected problem, with its row and three
+    /// either side attached. Nothing without a problem or when the agent
+    /// can't be asked.
+    pub(crate) fn ask_agent(&mut self, send: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((shown, editor)) = self.detail_target(cx) else {
+            return;
+        };
+        if self.agent_blocked(cx).is_some() {
+            return;
+        }
+        let Some(workbench) = self.workbench.upgrade() else {
+            return;
+        };
+        let problem = &shown.problem;
+        let text = match &editor {
+            Some(editor) => Some(editor.read(cx).model().buffer().text().clone()),
+            None => match &self.detail.read {
+                Some((path, Some(text), _)) if *path == shown.path => text.clone(),
+                _ => None,
+            },
+        };
+        let context = text
+            .filter(|text| problem.row < text.row_count())
+            .map(|text| {
+                let first = problem.row.saturating_sub(AGENT_CONTEXT_ROWS);
+                let last = (problem.row + AGENT_CONTEXT_ROWS).min(text.row_count() - 1);
+                let body: String = (first..=last)
+                    .map(|row| text.row_to_string(row) + "\n")
+                    .collect();
+                // The chat counts rows from 1.
+                let rows = Rows {
+                    first: first + 1,
+                    last: last + 1,
+                };
+                rows_item(&self.display_path(&shown.path), rows, &body)
+            });
+        let origin = match (&problem.code, &problem.source) {
+            (Some(code), Some(source)) => tr!(
+                "workbench-problems-origin",
+                code = code.clone(),
+                source = source.clone()
+            )
+            .to_string(),
+            (Some(only), None) | (None, Some(only)) => only.clone(),
+            (None, None) => String::new(),
+        };
+        let message = problem.message.clone();
+        let prompt = match (send, origin.is_empty()) {
+            (false, false) => tr!(
+                "workbench-problems-ask-prompt",
+                message = message,
+                origin = origin
+            ),
+            (false, true) => tr!("workbench-problems-ask-prompt-bare", message = message),
+            (true, false) => {
+                tr!(
+                    "workbench-problems-explain-prompt",
+                    message = message,
+                    origin = origin
+                )
+            }
+            (true, true) => tr!("workbench-problems-explain-prompt-bare", message = message),
+        }
+        .to_string();
+        let ask = AgentAsk {
+            prompt,
+            context: context.into_iter().collect(),
+            output: Vec::new(),
+            send,
+        };
+        // Outside the panel's update: the workbench shows the chat.
+        window.defer(cx, move |window, cx| {
+            workbench.update(cx, |workbench, cx| workbench.ask_agent(ask, window, cx))
         });
     }
 
@@ -546,6 +667,50 @@ impl ProblemsPanel {
                 )
         });
 
+        // Ask an agent and Explain: always, disabled with the reason as
+        // their tooltip when the agent can't be asked.
+        let blocked = self.agent_blocked(cx);
+        let agent_button = |id: &'static str, tip: &'static str, label, send: bool| {
+            let button = Button::new(id, label)
+                .small()
+                .disabled(blocked.is_some())
+                .on_click(
+                    cx.listener(move |panel, _, window, cx| panel.ask_agent(send, window, cx)),
+                );
+            let wrapper = div()
+                .id(tip)
+                .flex_none()
+                .debug_selector(|| id.into())
+                .child(button);
+            match blocked.clone() {
+                Some(reason) => wrapper
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| Tooltip::new(reason.clone(), None::<&str>, &ui))
+                            .into()
+                    })
+                    .into_any_element(),
+                None => wrapper.into_any_element(),
+            }
+        };
+        let agent_row = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_2()
+            .whitespace_nowrap()
+            .child(agent_button(
+                ASK_SELECTOR,
+                "problems-detail-ask-tip",
+                text!("workbench-problems-detail-ask-agent"),
+                false,
+            ))
+            .child(agent_button(
+                EXPLAIN_SELECTOR,
+                "problems-detail-explain-tip",
+                text!("workbench-problems-detail-explain"),
+                true,
+            ));
+
         #[cfg(test)]
         {
             self.drawn_detail = Some(DrawnDetail {
@@ -594,7 +759,8 @@ impl ProblemsPanel {
             )
             .children(snippet)
             .children(fix)
-            .children(actions);
+            .children(actions)
+            .child(agent_row);
         Some(pane.into_any_element())
     }
 }

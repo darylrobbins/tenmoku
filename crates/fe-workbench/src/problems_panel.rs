@@ -101,7 +101,9 @@ use kiln_shell::{Icon, StatusItem, StatusSide, StatusTone};
 #[path = "problems_detail.rs"]
 mod problems_detail;
 #[cfg(test)]
-pub(crate) use problems_detail::{APPLY_SELECTOR, DETAIL_SELECTOR, DrawnDetail, FIX_SELECTOR};
+pub(crate) use problems_detail::{
+    APPLY_SELECTOR, ASK_SELECTOR, DETAIL_SELECTOR, DrawnDetail, EXPLAIN_SELECTOR, FIX_SELECTOR,
+};
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "problems_panel";

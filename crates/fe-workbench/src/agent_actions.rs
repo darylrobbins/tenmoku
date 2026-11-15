@@ -91,6 +91,11 @@ fn refusal(root: Option<&Path>, path: &str, text: &str) -> Option<String> {
 }
 
 impl ChatPanel {
+    /// Whether the key's been read and there's none: the chat can't send.
+    pub(crate) fn keyless(&self) -> bool {
+        self.key_read && self.current.is_none()
+    }
+
     /// Sends the composer's `prompt` if the chat has a key and the folder
     /// allows chat, and the composer still holds it; else leaves the draft
     /// and toasts why.
