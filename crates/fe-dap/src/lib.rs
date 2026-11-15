@@ -19,7 +19,10 @@
 //! - [`Session`]: a session's lifecycle (§2 items 1-3, 6, 7; card D2):
 //!   startup in each ordering, configuration with a `configurationDone`
 //!   timeout, restart, termination, request timeouts and `cancel`, and
-//!   the redacted protocol log ([`log`]).
+//!   the redacted protocol log ([`log`]); and its stops and resumes (§2
+//!   items 4-5, §13 F2 and F11; card D2b): stop [`Epoch`]s, lazily fetched
+//!   [`StopData`], the resume guard, Uncertain and its probe, Pause, and
+//!   the [`Controls`] a host's toolbar reads.
 //! - `fake` (feature `test-support`): a scripted in-process adapter, and
 //!   the `fe-dap-fake` binary serving it over TCP.
 //!
@@ -53,7 +56,8 @@ pub use log::{EnvExpansion, LogEntry, LogMode};
 pub use protocol::Message;
 pub use registry::{Adapter, Context, HostOs, Registry, Runner, Source, Status, SystemRunner};
 pub use session::{
-    DapEvent, EndReason, Ended, PendingRequest, RequestError, Session, SessionError,
-    SessionOptions, SessionState, StartRequest, TerminalReply, TerminalStarted,
+    Control, Controls, DapEvent, Disabled, EndReason, Ended, Epoch, FRAME_PAGE, PendingRequest,
+    RequestError, Resume, Session, SessionError, SessionOptions, SessionState, StartRequest,
+    StopData, StopRef, TerminalReply, TerminalStarted,
 };
 pub use transport::{FrameReader, FrameWriter, MAX_BODY, ProtocolError, TransportError};

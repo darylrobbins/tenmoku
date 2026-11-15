@@ -255,3 +255,32 @@ fn requests_fail_once_the_session_ends() {
         );
     }
 }
+
+#[test]
+fn the_sessions_own_commands_are_refused_as_raw_requests() {
+    let harness = super::session_harness::start_stopped(Script::default());
+    let fake = harness.fake(0);
+    let before = fake.commands().len();
+    for command in [
+        "initialize",
+        "launch",
+        "attach",
+        "configurationDone",
+        "restart",
+        "terminate",
+        "disconnect",
+    ] {
+        let refused = harness
+            .session
+            .raw_request::<serde_json::Value>(command, json!({}));
+        assert_eq!(
+            async_io::block_on(refused),
+            Err(RequestError::SessionOwned {
+                command: command.into()
+            })
+        );
+    }
+    round_trip(&harness);
+    assert_eq!(fake.commands()[before..], ["threads"]);
+    assert_eq!(harness.session.state(), SessionState::Stopped);
+}

@@ -49,9 +49,42 @@
 //! [`DapEvent::RunInTerminal`], whose [`TerminalReply`] answers it;
 //! `startDebugging` is refused, since child sessions aren't supported.
 //!
-//! The stop/resume half of §2 (stop epochs, the resume guard, Uncertain,
-//! pause) is card D2b, which adds its states to [`SessionState`]. Here a
-//! `stopped` event moves to Stopped and `continued` to Running.
+//! **Stops and resumes** (§2 items 4-5, §13 F2 and F11; card D2b). The
+//! [`Epoch`] names the current suspension: a `stopped` event, a
+//! `continued` event, sending a resume ([`Session::resume`]: `continue`,
+//! `next`, `stepIn`, `stepOut`) and sending `restart` each move it on, so
+//! every [`StopRef`] the host holds from an earlier one answers
+//! [`RequestError::Stale`] locally, and a fetch's reply that comes under
+//! another epoch is dropped. On each stop the session fetches lazily:
+//! `threads`, `stackTrace` for the stopped thread ([`FRAME_PAGE`] frames,
+//! more through [`Session::frames`]), `scopes` for the top frame, and
+//! `variables` for each scope not marked `expensive`, into
+//! [`Session::stop_data`]; deeper children only on request.
+//!
+//! A resume moves to [`SessionState::Resuming`] and is the *pending
+//! resume*; its completion applies only through the guard (still the
+//! pending resume, the same epoch, still Resuming, or Uncertain by its own
+//! timeout). Its success moves to Running with no `continued` needed, or,
+//! for a `continue` answered `allThreadsContinued: false`, to a stop on the
+//! threads left suspended, fetched again; its timeout `cancel`s it and
+//! moves to [`SessionState::Uncertain`]. Its failure, `"cancelled"`
+//! included, also leaves the session Uncertain (§13 F2, over §2's "returns
+//! to Stopped"), unless the adapter said `notStopped`, which is Running.
+//! The session then probes, `threads` and then `stackTrace` on one thread:
+//! an answer `notStopped` moves to Running, and a stack with frames proves
+//! a stop (at a new epoch, data fetched again) only with
+//! [`SessionOptions::stack_proves_stop`]; otherwise only a `stopped` event
+//! does. Stop data (`stackTrace`, `scopes`, `variables`, `evaluate`, …) is
+//! asked for only while Stopped, of a suspended thread, and every such
+//! request, typed or raw, is of the stop it went in; a frameless `evaluate`
+//! may go while running ([`RequestError::NotStopped`] otherwise).
+//!
+//! [`Session::pause`] targets the given thread, else the one that last
+//! stopped, else the first known (the startup baseline's), and with none
+//! known sends `threads` first. [`Session::controls`] says which of
+//! Continue, Pause, the steps, Restart and Stop are enabled and why not,
+//! for the host's toolbar and commands; once the user has stopped the
+//! session (§13 F11) none ever is again, whatever late event comes.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -75,11 +108,16 @@ use crate::clock::Clock;
 use crate::launcher::{AdapterLauncher, AdapterSpec, ExitInfo, LaunchCancel};
 use crate::log::{EnvExpansion, LogEntry, LogMode, ProtocolLog};
 use crate::protocol::{
-    BreakpointBody, Capabilities, ContinuedBody, ErrorMessage, EventMessage, Object, OutputBody,
-    Request, SourceBreakpoint, StoppedBody, Thread,
+    BreakpointBody, Capabilities, ContinuedBody, ErrorMessage, EvaluateArguments, EvaluateBody,
+    EventMessage, Object, OutputBody, Request, Scope, ScopesArguments, ScopesBody,
+    SourceBreakpoint, StackFrame, StackTraceArguments, StackTraceBody, StoppedBody, Thread,
+    Variable, VariablesArguments, VariablesBody, request,
 };
 
 mod actor;
+mod controls;
+
+pub use controls::{Control, Controls, Disabled};
 
 /// A request's timeout unless its command has its own.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -99,6 +137,9 @@ pub const EXIT_GRACE: Duration = Duration::from_secs(2);
 /// How long, once the adapter has exited, the session goes on reading what
 /// it sent before, from streams that stay open.
 pub const EXIT_DRAIN: Duration = Duration::from_secs(1);
+/// How many frames a `stackTrace` asks for: the stop's first page, and
+/// each further page [`Session::frames`] fetches.
+pub const FRAME_PAGE: i64 = 20;
 
 /// What starts the debuggee.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -128,12 +169,18 @@ pub struct SessionOptions {
     /// What each `${env:NAME}` in the configuration expanded to, for the
     /// log's redaction.
     pub expansions: Vec<EnvExpansion>,
+    /// The adapter answers `stackTrace` only for a suspended thread, so a
+    /// stack Uncertain's probe gets proves a stop (§13 F2). Off by default:
+    /// debugpy, for one, answers with a running thread's stack after a
+    /// short wait, and then only a `stopped` event ends Uncertain.
+    pub stack_proves_stop: bool,
 }
 
-/// Where a session is (§2's state machine, without D2b's resume states).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Where a session is (§2's state machine).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SessionState {
     /// Starting the adapter.
+    #[default]
     Launching,
     /// `initialize` sent; no `initialized` yet.
     Initializing,
@@ -142,6 +189,13 @@ pub enum SessionState {
     Configuring,
     Running,
     Stopped,
+    /// A resume (`continue`, `next`, `stepIn`, `stepOut`) is in flight: the
+    /// stop's data is retired, and stepping and Continue are disabled.
+    Resuming,
+    /// The program may be running or still stopped: a resume went
+    /// unanswered, or failed (§13 F2). Continue, Pause and Stop work;
+    /// stepping and fetching stop data don't, until a stop is proven.
+    Uncertain,
     /// A `restart` request is in flight.
     Restarting,
     /// Shutting down: late completions are ignored.
@@ -241,6 +295,17 @@ pub enum RequestError {
     Ended { command: String },
     /// The reply's body isn't the command's.
     BadBody { command: String, why: String },
+    /// Its [`StopRef`] is of a stop that's over (or its reply came after
+    /// that stop ended): answered locally, without a round trip.
+    Stale { command: String },
+    /// Not sent: the program may be running, so there is no stop data to
+    /// ask about (Resuming or Uncertain), or it isn't stopped (a resume
+    /// while running).
+    NotStopped { command: String },
+    /// Not sent: the session sends this command itself (startup,
+    /// [`Session::restart`], [`Session::stop`]), so its epochs and guards
+    /// hold.
+    SessionOwned { command: String },
 }
 
 impl RequestError {
@@ -279,6 +344,15 @@ impl fmt::Display for RequestError {
                 command = command.as_str(),
                 why = why.as_str()
             ),
+            RequestError::Stale { command } => {
+                tr!("dap-request-stale", command = command.as_str())
+            }
+            RequestError::NotStopped { command } => {
+                tr!("dap-request-not-stopped", command = command.as_str())
+            }
+            RequestError::SessionOwned { command } => {
+                tr!("dap-request-session-owned", command = command.as_str())
+            }
         };
         f.write_str(&text)
     }
@@ -305,6 +379,24 @@ pub enum DapEvent {
     Breakpoint(BreakpointBody),
     Stopped(StoppedBody),
     Continued(ContinuedBody),
+    /// The stop's frames for `thread_id`, fetched at `epoch`: the first
+    /// [`FRAME_PAGE`].
+    Frames {
+        epoch: Epoch,
+        thread_id: i64,
+        frames: Vec<StackFrame>,
+        total_frames: Option<i64>,
+    },
+    /// The top frame's scopes.
+    Scopes {
+        frame: StopRef,
+        scopes: Vec<Scope>,
+    },
+    /// A scope's variables (a scope not marked `expensive`).
+    Variables {
+        reference: StopRef,
+        variables: Vec<Variable>,
+    },
     /// The debuggee's exit code.
     Exited(i64),
     /// Program output (telemetry is dropped).
@@ -353,6 +445,95 @@ impl TerminalReply {
     }
 }
 
+/// Names one suspension of the debuggee (§2 item 4): `variablesReference`
+/// and `frameId` values are valid only within the epoch they came from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Epoch(u64);
+
+impl Epoch {
+    pub fn get(self) -> u64 {
+        self.0
+    }
+
+    fn next(self) -> Epoch {
+        Epoch(self.0 + 1)
+    }
+}
+
+/// An id from one stop, a frame's `id` or a `variablesReference`, with the
+/// epoch it came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StopRef {
+    pub epoch: Epoch,
+    pub id: i64,
+}
+
+impl StopRef {
+    pub fn new(epoch: Epoch, id: i64) -> Self {
+        Self { epoch, id }
+    }
+}
+
+/// What the session fetched for the current stop (§2 item 5).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StopData {
+    pub epoch: Epoch,
+    /// The `stopped` event's body; `None` for a stop the session proved
+    /// with a probe (§13 F2).
+    pub stopped: Option<StoppedBody>,
+    /// The thread whose frames these are, once known.
+    pub thread_id: Option<i64>,
+    /// The first [`FRAME_PAGE`] frames, top first.
+    pub frames: Vec<StackFrame>,
+    pub total_frames: Option<i64>,
+    /// The top frame's scopes.
+    pub scopes: Vec<Scope>,
+    /// By `variablesReference`: each scope's variables that was fetched
+    /// (those not marked `expensive`).
+    pub variables: BTreeMap<i64, Vec<Variable>>,
+}
+
+impl StopData {
+    /// Frame `id` (or any id) of this stop, as a [`StopRef`].
+    pub fn stop_ref(&self, id: i64) -> StopRef {
+        StopRef::new(self.epoch, id)
+    }
+
+    /// The top frame, as a [`StopRef`].
+    pub fn top_frame(&self) -> Option<StopRef> {
+        self.frames.first().map(|frame| self.stop_ref(frame.id))
+    }
+
+    /// The scope named `name` of the top frame, its reference as a
+    /// [`StopRef`].
+    pub fn scope(&self, name: &str) -> Option<StopRef> {
+        self.scopes
+            .iter()
+            .find(|scope| scope.name == name)
+            .map(|scope| self.stop_ref(scope.variables_reference))
+    }
+}
+
+/// A resume the user asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resume {
+    Continue,
+    Next,
+    StepIn,
+    StepOut,
+}
+
+impl Resume {
+    pub fn command(self) -> &'static str {
+        match self {
+            Resume::Continue => request::Continue::COMMAND,
+            Resume::Next => request::Next::COMMAND,
+            Resume::StepIn => request::StepIn::COMMAND,
+            Resume::StepOut => request::StepOut::COMMAND,
+        }
+    }
+}
+
 /// What the handle asks the actor.
 enum Command {
     Request(Outgoing),
@@ -360,6 +541,15 @@ enum Command {
     Abandon(u64),
     Stop,
     Restart,
+    /// The user's resume, asked while the view was at `epoch`.
+    Resume {
+        resume: Resume,
+        thread_id: Option<i64>,
+        epoch: Epoch,
+    },
+    Pause {
+        thread_id: Option<i64>,
+    },
 }
 
 /// A host request on its way to the actor.
@@ -367,6 +557,8 @@ struct Outgoing {
     token: u64,
     command: String,
     arguments: Value,
+    /// The stop its ids are of, if any: another epoch's answers `Stale`.
+    epoch: Option<Epoch>,
     reply: oneshot::Sender<Result<Value, RequestError>>,
 }
 
@@ -380,10 +572,21 @@ struct Shared {
     launch_cancel: Mutex<LaunchCancel>,
 }
 
-struct View {
-    state: SessionState,
-    capabilities: Capabilities,
-    threads: Vec<Thread>,
+/// What the handle reads: the actor's state, as it publishes it.
+#[derive(Default)]
+pub(crate) struct View {
+    pub(crate) state: SessionState,
+    pub(crate) capabilities: Capabilities,
+    pub(crate) threads: Vec<Thread>,
+    /// A `threads` reply has come in this run: an empty list is then the
+    /// program's own answer.
+    pub(crate) threads_answered: bool,
+    pub(crate) epoch: Epoch,
+    pub(crate) stop: Option<StopData>,
+    /// [`Session::resume`] asked for a resume the actor hasn't taken yet:
+    /// the controls are off from the call on, while the state it was asked
+    /// in (Stopped or Uncertain) lasts.
+    pub(crate) resume_requested: bool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -408,11 +611,7 @@ impl Session {
     ) -> io::Result<Session> {
         let (commands, receiver) = mpsc::unbounded();
         let shared = Arc::new(Shared {
-            view: Mutex::new(View {
-                state: SessionState::Launching,
-                capabilities: Capabilities::default(),
-                threads: Vec::new(),
-            }),
+            view: Mutex::new(View::default()),
             log: Mutex::new(ProtocolLog::new(options.log, &options.expansions)),
             stopping: AtomicBool::new(false),
             launch_cancel: Mutex::new(LaunchCancel::new()),
@@ -456,6 +655,127 @@ impl Session {
         lock(&self.shared.log).entries()
     }
 
+    /// The current stop epoch.
+    pub fn epoch(&self) -> Epoch {
+        lock(&self.shared.view).epoch
+    }
+
+    /// The current stop's data, as far as it has been fetched; `None` when
+    /// the program isn't stopped.
+    pub fn stop_data(&self) -> Option<StopData> {
+        lock(&self.shared.view).stop.clone()
+    }
+
+    /// Which controls are enabled now, and why the others aren't.
+    pub fn controls(&self) -> Controls {
+        let view = lock(&self.shared.view);
+        Controls::of(&view, self.shared.stopping.load(Ordering::SeqCst))
+    }
+
+    /// The user's Continue or step, on `thread_id` (by default the thread
+    /// that last stopped, else the first known). Refused, `false`, unless
+    /// [`controls`](Self::controls) has it enabled; from an accepted call
+    /// on, Continue and stepping are disabled.
+    pub fn resume(&self, resume: Resume, thread_id: Option<i64>) -> bool {
+        let mut view = lock(&self.shared.view);
+        let controls = Controls::of(&view, self.shared.stopping.load(Ordering::SeqCst));
+        let control = match resume {
+            Resume::Continue => controls.continue_,
+            Resume::Next | Resume::StepIn | Resume::StepOut => controls.step,
+        };
+        if !control.is_enabled() {
+            return false;
+        }
+        view.resume_requested = true;
+        let epoch = view.epoch;
+        // Sent under the lock, so commands go in the order they were
+        // allowed.
+        let _ = self.commands.unbounded_send(Command::Resume {
+            resume,
+            thread_id,
+            epoch,
+        });
+        true
+    }
+
+    /// The user's Pause, on `thread_id` (by default the thread that last
+    /// stopped, else the first known, else the first `threads` lists).
+    /// Refused, `false`, unless [`controls`](Self::controls) has it
+    /// enabled. It changes no state: the `stopped` event that follows does.
+    pub fn pause(&self, thread_id: Option<i64>) -> bool {
+        let view = lock(&self.shared.view);
+        let controls = Controls::of(&view, self.shared.stopping.load(Ordering::SeqCst));
+        if !controls.pause.is_enabled() {
+            return false;
+        }
+        let _ = self.commands.unbounded_send(Command::Pause { thread_id });
+        true
+    }
+
+    /// More of a stop's frames: [`FRAME_PAGE`] of `thread_id`'s from
+    /// `start_frame`, if the stop at `epoch` is still current.
+    pub fn frames(
+        &self,
+        epoch: Epoch,
+        thread_id: i64,
+        start_frame: i64,
+    ) -> PendingRequest<StackTraceBody> {
+        let arguments = StackTraceArguments {
+            thread_id,
+            start_frame: Some(start_frame),
+            levels: Some(FRAME_PAGE),
+            ..Default::default()
+        };
+        self.send_request(
+            request::StackTrace::COMMAND,
+            to_value(&arguments),
+            Some(epoch),
+        )
+    }
+
+    /// A frame's scopes, if its stop is still current.
+    pub fn scopes(&self, frame: StopRef) -> PendingRequest<ScopesBody> {
+        let arguments = ScopesArguments {
+            frame_id: frame.id,
+            ..Default::default()
+        };
+        self.send_request(
+            request::Scopes::COMMAND,
+            to_value(&arguments),
+            Some(frame.epoch),
+        )
+    }
+
+    /// A scope's or a variable's children, if its stop is still current.
+    pub fn variables(&self, reference: StopRef) -> PendingRequest<VariablesBody> {
+        let arguments = VariablesArguments {
+            variables_reference: reference.id,
+            ..Default::default()
+        };
+        self.send_request(
+            request::Variables::COMMAND,
+            to_value(&arguments),
+            Some(reference.epoch),
+        )
+    }
+
+    /// Evaluates in `frame` (its id replaces `arguments.frameId`), if its
+    /// stop is still current; with no frame, in the adapter's global
+    /// context, refused while Resuming or Uncertain.
+    pub fn evaluate(
+        &self,
+        arguments: &EvaluateArguments,
+        frame: Option<StopRef>,
+    ) -> PendingRequest<EvaluateBody> {
+        let mut arguments = arguments.clone();
+        arguments.frame_id = frame.map(|frame| frame.id);
+        self.send_request(
+            request::Evaluate::COMMAND,
+            to_value(&arguments),
+            frame.map(|frame| frame.epoch),
+        )
+    }
+
     /// Sends request `R`. The future resolves with its body, or why there
     /// is none; dropping it first sends `cancel` if the adapter supports
     /// it. Requests made before `initialize` is answered wait for it.
@@ -463,16 +783,38 @@ impl Session {
         self.raw_request(R::COMMAND, to_value(arguments))
     }
 
-    /// Sends a request by command name, with free-form arguments.
+    /// Sends a request by command name, with free-form arguments. A
+    /// resume sent this way (`continue`, `next`, `stepIn`, `stepOut`,
+    /// `goto`, `restartFrame`) is the session's pending resume, as
+    /// [`resume`](Self::resume)'s is.
     pub fn raw_request<T>(&self, command: &str, arguments: Value) -> PendingRequest<T> {
+        self.send_request(command, arguments, None)
+    }
+
+    fn send_request<T>(
+        &self,
+        command: &str,
+        arguments: Value,
+        epoch: Option<Epoch>,
+    ) -> PendingRequest<T> {
         let token = self.tokens.fetch_add(1, Ordering::Relaxed);
         let (reply, receiver) = oneshot::channel();
+        let view = lock(&self.shared.view);
+        // Stop data is of the stop it is asked in, bound here, before the
+        // actor takes it: a stop that ends meanwhile answers it `Stale`. A
+        // frameless evaluation asked while not stopped is about no stop.
+        let unbound =
+            is_frameless_evaluate(command, &arguments) && view.state != SessionState::Stopped;
+        let epoch = epoch.or_else(|| (is_stop_data(command) && !unbound).then_some(view.epoch));
+        // Sent under the lock, so the epoch read is the one it goes after.
         let _ = self.commands.unbounded_send(Command::Request(Outgoing {
             token,
             command: command.to_owned(),
             arguments,
+            epoch,
             reply,
         }));
+        drop(view);
         PendingRequest {
             receiver,
             token,
@@ -501,6 +843,42 @@ impl Drop for Session {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Whether `command` asks about the stopped program: stop data, sent only
+/// while stopped, and of one stop.
+pub(crate) fn is_stop_data(command: &str) -> bool {
+    matches!(
+        command,
+        "stackTrace"
+            | "scopes"
+            | "variables"
+            | "evaluate"
+            | "setVariable"
+            | "setExpression"
+            | "completions"
+            | "exceptionInfo"
+    )
+}
+
+/// Whether the session sends `command` itself: startup, restart and
+/// termination, never the host's to send.
+pub(crate) fn is_session_owned(command: &str) -> bool {
+    matches!(
+        command,
+        "initialize"
+            | "launch"
+            | "attach"
+            | "configurationDone"
+            | "restart"
+            | "terminate"
+            | "disconnect"
+    )
+}
+
+/// An `evaluate` naming no frame: some adapters answer it while running.
+pub(crate) fn is_frameless_evaluate(command: &str, arguments: &Value) -> bool {
+    command == request::Evaluate::COMMAND && arguments.get("frameId").is_none_or(Value::is_null)
 }
 
 fn to_value<T: Serialize>(value: &T) -> Value {

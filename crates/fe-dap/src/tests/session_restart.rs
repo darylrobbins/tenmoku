@@ -17,7 +17,7 @@ use crate::session::{DapEvent, EndReason, REQUEST_TIMEOUT, SessionState};
 fn stopped(script: Script) -> Harness {
     let mut harness = start(script, options_with_breakpoint());
     harness.wait_state(SessionState::Stopped);
-    wait_requests(&harness.fake(0), "threads", 1);
+    harness.wait_fetched(1);
     harness
 }
 
@@ -43,6 +43,7 @@ fn a_successful_restart_reaches_running_with_a_fresh_baseline_and_resends_breakp
         *state == SessionState::Stopped
     });
     wait_requests(&fake, "configurationDone", 2);
+    harness.wait_fetched(2);
     assert_eq!(
         states_from_restart(&harness),
         [
@@ -51,13 +52,18 @@ fn a_successful_restart_reaches_running_with_a_fresh_baseline_and_resends_breakp
             SessionState::Stopped
         ]
     );
+    // The fresh baseline, configuration again, and the new stop's fetch.
     assert_eq!(
         commands_after(&fake, "restart"),
         [
             "threads",
             "setBreakpoints",
             "setExceptionBreakpoints",
-            "configurationDone"
+            "configurationDone",
+            "threads",
+            "stackTrace",
+            "scopes",
+            "variables"
         ]
     );
     let restart = &wait_requests(&fake, "restart", 1)[0];
@@ -94,10 +100,11 @@ fn assert_fell_back(harness: &mut Harness) {
     harness.wait_state_times("the second stop", 2, |state| {
         *state == SessionState::Stopped
     });
-    wait_requests(&second, "threads", 1);
+    harness.wait_fetched(2);
     let after = commands_after(&first, "restart");
     assert_eq!(after, ["terminate", "disconnect"], "{after:?}");
     first.wait_exit();
+    // The baseline, then the stop's fetch.
     assert_eq!(
         second.commands(),
         [
@@ -106,7 +113,11 @@ fn assert_fell_back(harness: &mut Harness) {
             "setBreakpoints",
             "setExceptionBreakpoints",
             "configurationDone",
-            "threads"
+            "threads",
+            "threads",
+            "stackTrace",
+            "scopes",
+            "variables"
         ]
     );
     let states = states_from_restart(harness);
@@ -172,7 +183,7 @@ fn without_restart_support_restart_is_stop_and_start() {
     let first = harness.fake(0);
     assert!(!first.commands().contains(&"restart".to_owned()));
     assert_eq!(
-        commands_after(&first, "threads"),
+        commands_after(&first, "variables"),
         ["terminate", "disconnect"]
     );
     harness.session.stop();
@@ -251,35 +262,46 @@ fn an_earlier_baseline_reply_never_replaces_the_restarts() {
     let mut harness = start(script, options_with_breakpoint());
     harness.wait_state(SessionState::Stopped);
     let fake = harness.fake(0);
-    wait_requests(&fake, "threads", 1);
+    harness.wait_fetched(1);
     harness.session.restart();
     // The restart's baseline is answered at once, before the program
-    // starts again: no threads.
-    wait_requests(&fake, "threads", 2);
+    // starts again: no threads. Then the second stop's fetch lists one.
     harness.wait_state_times("the second stop", 2, |state| {
         *state == SessionState::Stopped
     });
+    harness.wait_fetched(2);
+    let listed = |events: &[DapEvent]| {
+        events
+            .iter()
+            .filter(|event| matches!(event, DapEvent::Threads(_)))
+            .count()
+    };
+    let before = listed(&harness.events);
+    let held = wait_requests(&fake, "threads", 1)[0].seq;
     fake.release();
     fake.wait_until("the held reply", |_, sent| {
-        sent.iter()
-            .filter(|message| {
-                matches!(
-                    message,
-                    crate::protocol::Message::Response(response) if response.command == "threads"
-                )
-            })
-            .count()
-            == 2
+        sent.iter().any(|message| {
+            matches!(
+                message,
+                crate::protocol::Message::Response(response) if response.request_seq == held
+            )
+        })
     });
     // Everything the fake sent before this has been handled once it is
     // answered.
     round_trip(&harness);
-    assert_eq!(harness.session.threads(), []);
-    let last = harness.events.iter().rev().find_map(|event| match event {
-        DapEvent::Threads(threads) => Some(threads.clone()),
-        _ => None,
-    });
-    assert_eq!(last, Some(Vec::new()));
+    harness.drain();
+    // The held reply changed nothing: the threads are the second stop's.
+    assert_eq!(listed(&harness.events), before);
+    assert_eq!(
+        harness
+            .session
+            .threads()
+            .iter()
+            .map(|thread| thread.id)
+            .collect::<Vec<_>>(),
+        [crate::fake::THREAD_ID]
+    );
     harness.session.stop();
     harness.wait_ended();
 }

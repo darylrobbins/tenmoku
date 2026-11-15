@@ -134,6 +134,19 @@ impl Harness {
         self.wait_state_times(&what, 1, |state| *state == wanted);
     }
 
+    /// Waits until the `nth` stop's fetch (from 1) is done: with the fake's
+    /// program, each stop's one non-expensive scope (`Locals`) has had its
+    /// variables.
+    pub(super) fn wait_fetched(&mut self, nth: usize) {
+        self.wait("the stop's data", |events| {
+            events
+                .iter()
+                .filter(|event| matches!(event, DapEvent::Variables { .. }))
+                .count()
+                >= nth
+        });
+    }
+
     /// Waits for the end, and how it went.
     pub(super) fn wait_ended(&mut self) -> Ended {
         self.wait_state_times("the end", 1, SessionState::is_ended);
@@ -237,6 +250,130 @@ pub(super) fn advance_past(clock: &ManualClock, left: Duration) {
         clock.sleeping()
     );
     clock.advance(short);
+}
+
+/// A session on `script` stopped at the breakpoint, its stop's data
+/// fetched.
+pub(super) fn start_stopped(script: Script) -> Harness {
+    start_stopped_with(script, options_with_breakpoint())
+}
+
+/// [`start_stopped`] with `options`.
+pub(super) fn start_stopped_with(script: Script, options: SessionOptions) -> Harness {
+    let mut harness = start(script, options);
+    harness.wait_state(SessionState::Stopped);
+    harness.wait_fetched(1);
+    harness
+}
+
+/// [`options_with_breakpoint`] for an adapter whose stack proves a stop
+/// (the fake gives one only while stopped).
+pub(super) fn trusting_stacks() -> SessionOptions {
+    SessionOptions {
+        stack_proves_stop: true,
+        ..options_with_breakpoint()
+    }
+}
+
+/// `script` on a program that runs at once (no breakpoints) into a busy
+/// loop, and sends no `thread` events.
+pub(super) fn spinning(script: Script) -> Script {
+    let line = |text: &str, spin: bool| crate::fake::Line {
+        text: text.into(),
+        function: "main".into(),
+        spin,
+    };
+    Script {
+        program: Program {
+            lines: vec![line("let x = 1;", false), line("loop {}", true)],
+            ..Program::default()
+        },
+        thread_events: false,
+        ..script
+    }
+}
+
+/// A `stopped` event naming no thread, for a test to send.
+pub(super) fn stopped_event_without_thread(reason: &str) -> Message {
+    Message::Event(crate::protocol::EventMessage::new::<
+        crate::protocol::event::Stopped,
+    >(
+        0,
+        &crate::protocol::StoppedBody {
+            reason: reason.into(),
+            ..Default::default()
+        },
+    ))
+}
+
+/// A request the fake answers in any state, awaited: everything the fake
+/// sent before its answer has been handled once it returns.
+pub(super) fn round_trip(harness: &Harness) {
+    let source = harness
+        .session
+        .request::<crate::protocol::request::SourceRequest>(&crate::protocol::SourceArguments {
+            source_reference: 1,
+            ..Default::default()
+        });
+    async_io::block_on(source).expect("source is answered");
+}
+
+/// The states from the `nth` (from 1) that `wanted` holds of on, that one
+/// included.
+pub(super) fn states_from(
+    harness: &Harness,
+    nth: usize,
+    wanted: impl Fn(&SessionState) -> bool,
+) -> Vec<SessionState> {
+    let states = harness.states();
+    let at = states
+        .iter()
+        .enumerate()
+        .filter(|(_, state)| wanted(state))
+        .nth(nth - 1)
+        .map(|(at, _)| at)
+        .unwrap_or_else(|| panic!("not {nth} such states in {states:?}"));
+    states[at..].to_vec()
+}
+
+/// The names of the stop's `Locals`, as fetched.
+pub(super) fn locals(data: &crate::session::StopData) -> Vec<String> {
+    let locals = data.scope("Locals").expect("a Locals scope");
+    data.variables
+        .get(&locals.id)
+        .expect("the locals were fetched")
+        .iter()
+        .map(|variable| variable.name.clone())
+        .collect()
+}
+
+/// A `stopped` event as the fake's own, for a test to send.
+pub(super) fn stopped_event(reason: &str) -> Message {
+    Message::Event(crate::protocol::EventMessage::new::<
+        crate::protocol::event::Stopped,
+    >(
+        0,
+        &crate::protocol::StoppedBody {
+            reason: reason.into(),
+            thread_id: Some(crate::fake::THREAD_ID),
+            all_threads_stopped: Some(true),
+            ..Default::default()
+        },
+    ))
+}
+
+/// A `continued` event as the fake's own, for a test to send.
+pub(super) fn continued_event() -> Message {
+    Message::Event(crate::protocol::EventMessage::new::<
+        crate::protocol::event::Continued,
+    >(
+        0,
+        &crate::protocol::ContinuedBody {
+            thread_id: crate::fake::THREAD_ID,
+            all_threads_continued: Some(true),
+            ..Default::default()
+        },
+    ))
 }
 
 /// The default script, with a breakpoint's program.

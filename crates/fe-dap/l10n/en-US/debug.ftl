@@ -53,3 +53,19 @@ dap-hint-codelldb = codelldb wasn't found on your login shell's PATH. It comes i
 dap-hint-debugpy = No Python was found for debugpy: not .venv in the folder, not $VIRTUAL_ENV, and no python3 on your login shell's PATH. Install Python 3 and debugpy (pip install debugpy), or set debug.adapters.debugpy.command to a Python that has it.
 dap-hint-delve = dlv wasn't found on your login shell's PATH. Install Delve with go install github.com/go-delve/delve/cmd/dlv@latest, or set debug.adapters.delve.command to its path.
 dap-hint-not-found = { $command } wasn't found on your login shell's PATH, or isn't a program. Install it, or set debug.adapters.{ $name }.command to its path.
+
+# Stops and resumes (src/session.rs, card D2b): requests answered locally,
+# and why a debugging control is disabled (its tooltip).
+
+dap-request-stale = { $command } wasn't sent: it refers to a stop that's over
+dap-request-not-stopped = { $command } wasn't sent: the program may be running
+dap-request-session-owned = { $command } wasn't sent: the debug session sends it itself
+dap-control-starting = the program is still starting
+dap-control-running = the program is running
+dap-control-already-stopped = the program is already stopped
+dap-control-resuming = waiting for the debug adapter to answer
+dap-control-uncertain = the program may be running: continue or pause it first
+dap-control-no-threads = the program reported no threads
+dap-control-restarting = the program is restarting
+dap-control-ending = the debug session is ending
+dap-control-ended = the debug session has ended

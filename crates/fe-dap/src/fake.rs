@@ -32,9 +32,11 @@
 //! | a program that runs with no `thread` events | [`thread_events`](Script::thread_events) |
 //! | unverified, then verified, breakpoints | [`verify_breakpoints_later`](Script::verify_breakpoints_later) |
 //! | the adapter exiting mid-request | [`faults`](Script::faults): [`FaultKind::Exit`] |
+//! | a request answered with a body of the test's (no threads) | [`faults`](Script::faults): [`FaultKind::Answer`] |
 //!
 //! A [`Fault`] applies to one request, by command and occurrence, so any
-//! request can fail, go unanswered, be held or end the adapter, and a held
+//! request can fail, go unanswered, be held, be answered as the test says
+//! or end the adapter, and a held
 //! reply is let go by a [`Trigger`]: the next resume, a terminate, a
 //! `cancel` naming it, or the test ([`FakeAdapter::release`]).
 
@@ -241,6 +243,10 @@ pub enum FaultKind {
     ReplyAfter(Trigger),
     /// The adapter exits with this code on receiving it, unanswered.
     Exit(i32),
+    /// Answered at once with `success: true` and this body; nothing runs.
+    /// For instance `threads` answering `{"threads": []}`: a program that
+    /// reports no threads.
+    Answer(Value),
 }
 
 /// What lets a held reply go.
@@ -1086,6 +1092,16 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
                     code: Some(code),
                     signal: None,
                 });
+            }
+            FaultKind::Answer(body) => {
+                let response = ResponseMessage {
+                    request_seq: request.seq,
+                    success: true,
+                    command: request.command.clone(),
+                    body: Some(body),
+                    ..Default::default()
+                };
+                self.send(Message::Response(response)).await;
             }
         }
     }

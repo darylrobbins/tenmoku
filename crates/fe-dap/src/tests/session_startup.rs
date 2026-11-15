@@ -36,7 +36,8 @@ fn initialized_then_configuration_then_launch_response() {
     let mut harness = start(script(), options_with_breakpoint());
     harness.wait_state(SessionState::Stopped);
     let fake = harness.fake(0);
-    wait_requests(&fake, "threads", 1);
+    harness.wait_fetched(1);
+    // The baseline, then the stop's fetch.
     assert_eq!(
         fake.commands(),
         [
@@ -45,7 +46,11 @@ fn initialized_then_configuration_then_launch_response() {
             "setBreakpoints",
             "setExceptionBreakpoints",
             "configurationDone",
-            "threads"
+            "threads",
+            "threads",
+            "stackTrace",
+            "scopes",
+            "variables"
         ]
     );
     // The adapter's order: `initialized` first, `launch` answered last.
@@ -90,7 +95,8 @@ fn launch_response_then_initialized() {
     let mut harness = start(script, options_with_breakpoint());
     harness.wait_state(SessionState::Stopped);
     let fake = harness.fake(0);
-    wait_requests(&fake, "threads", 1);
+    harness.wait_fetched(1);
+    // The baseline, then the stop's fetch.
     assert_eq!(
         fake.commands(),
         [
@@ -99,7 +105,11 @@ fn launch_response_then_initialized() {
             "setBreakpoints",
             "setExceptionBreakpoints",
             "configurationDone",
-            "threads"
+            "threads",
+            "threads",
+            "stackTrace",
+            "scopes",
+            "variables"
         ]
     );
     let launched = harness.log_index(&["response", "command=launch"]);
@@ -146,13 +156,16 @@ fn without_configuration_done_support_configuration_ends_on_the_last_reply() {
         // stops while one configuration reply is still to come.
         harness.wait_state(SessionState::Stopped);
         wait_requests(&fake, "setExceptionBreakpoints", 1);
-        assert!(
-            !fake.commands().iter().any(|command| command == "threads"),
+        // The stop's own fetch goes, but not the baseline.
+        harness.wait_fetched(1);
+        assert_eq!(
+            requests(&fake, "threads").len(),
+            1,
             "{startup:?}: the baseline went before the last configuration reply: {:?}",
             fake.commands()
         );
         fake.release();
-        wait_requests(&fake, "threads", 1);
+        wait_requests(&fake, "threads", 2);
         assert_eq!(
             fake.commands(),
             [
@@ -161,16 +174,23 @@ fn without_configuration_done_support_configuration_ends_on_the_last_reply() {
                 "setBreakpoints",
                 "setBreakpoints",
                 "setExceptionBreakpoints",
+                "threads",
+                "stackTrace",
+                "scopes",
+                "variables",
                 "threads"
             ],
             "{startup:?}"
         );
         // The baseline followed the held reply, the last one.
-        let held = harness
-            .log_lines()
+        let lines = harness.log_lines();
+        let held = lines
             .iter()
             .rposition(|line| line.contains("response") && line.contains("command=setBreakpoints"));
-        let baseline = harness.log_index(&["request", "command=threads"]);
+        let baseline = lines
+            .iter()
+            .rposition(|line| line.contains("request") && line.contains("command=threads"))
+            .unwrap();
         assert!(held.unwrap() < baseline, "{startup:?}");
         // It never went to Running over the stop.
         assert_eq!(
@@ -248,8 +268,9 @@ fn a_missing_initialized_counts_configuration_complete_after_5_s() {
     // stops at one.
     fake.release();
     harness.wait_state(SessionState::Stopped);
+    // Then the stop's fetch.
     assert_eq!(
-        fake.commands(),
+        fake.commands()[..6],
         [
             "initialize",
             "launch",

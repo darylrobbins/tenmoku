@@ -1405,3 +1405,38 @@ fn a_killed_fake_never_closes_its_writer() {
     fake.kill();
     assert_eq!(fake.wait_exit().signal, Some(9));
 }
+
+#[test]
+fn a_request_answered_with_the_tests_body() {
+    let script = Script {
+        faults: vec![Fault::new(
+            "threads",
+            FaultKind::Answer(json!({ "threads": [] })),
+        )],
+        ..Script::default()
+    };
+    let mut client = client(script);
+    client.start(&[point()]);
+    client.wait_sent("event:stopped(breakpoint)");
+    let threads = client.send::<request::Threads>(&Empty::default());
+    let response = client.response(threads);
+    assert!(response.success);
+    assert_eq!(
+        response.body::<request::Threads>().unwrap().threads,
+        Vec::new()
+    );
+    // Without the fault, the program's one thread.
+    let mut client = self::client(Script::default());
+    client.start(&[point()]);
+    client.wait_sent("event:stopped(breakpoint)");
+    let threads = client.send::<request::Threads>(&Empty::default());
+    let listed = client.response(threads).body::<request::Threads>().unwrap();
+    assert_eq!(
+        listed
+            .threads
+            .iter()
+            .map(|thread| thread.id)
+            .collect::<Vec<_>>(),
+        [THREAD_ID]
+    );
+}

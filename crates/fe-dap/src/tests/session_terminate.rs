@@ -5,16 +5,21 @@
 //! (or 2 s without it), and kills an adapter still running 2 s after the
 //! `disconnect`; the adapter's own `terminated` gets `disconnect` at once
 //! and no `terminate`; an adapter exiting by itself ends the session as
-//! `AdapterExited`, with no restart.
+//! `AdapterExited`, with no restart. After the user's Stop no late
+//! `stopped` or `continued` changes the state or enables a control (§13
+//! F11).
 
 use super::session_harness::{
-    Harness, TestProcess, advance_past, exited_process, frame, initialize_response, options,
-    options_with_breakpoint, requests, start, start_on, wait_requests,
+    Harness, TestProcess, advance_past, continued_event, exited_process, frame,
+    initialize_response, options, options_with_breakpoint, requests, start, start_on,
+    start_stopped, states_from, stopped_event, wait_requests,
 };
 use crate::fake::{Fault, FaultKind, Script};
 use crate::launcher::ExitInfo;
 use crate::protocol::request;
-use crate::session::{EXIT_GRACE, EndReason, SessionState, TERMINATED_GRACE};
+use crate::session::{
+    Controls, Disabled, EXIT_GRACE, EndReason, Resume, SessionState, TERMINATED_GRACE,
+};
 
 fn stopped(script: Script) -> Harness {
     let mut harness = start(script, options_with_breakpoint());
@@ -278,4 +283,88 @@ fn what_the_adapter_sent_before_exiting_is_still_read() {
     let ended = harness.wait_ended();
     assert_eq!(ended.reason, EndReason::Finished);
     assert_eq!(ended.exit_code, Some(7));
+}
+
+#[test]
+fn late_events_after_stop_enable_nothing() {
+    // `terminate` goes unanswered: the session stays Terminating until the
+    // grace runs out, for the late events to come in.
+    let script = Script {
+        faults: vec![Fault::new("terminate", FaultKind::Unanswered)],
+        ..Script::default()
+    };
+    let mut harness = start_stopped(script);
+    let fake = harness.fake(0);
+    assert!(harness.session.controls().continue_.is_enabled());
+    harness.session.stop();
+    // Off from the call on.
+    let ending = Controls::none(Disabled::Ending);
+    assert_eq!(harness.session.controls(), ending);
+    wait_requests(&fake, "terminate", 1);
+    harness.wait_state(SessionState::Terminating);
+
+    fake.send(stopped_event("breakpoint"));
+    fake.send(continued_event());
+    // Both are read, and logged.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !harness
+        .log_lines()
+        .iter()
+        .any(|line| line.contains("event=continued"))
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the events never came"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let stops = harness
+        .log_lines()
+        .iter()
+        .filter(|line| line.contains("event=stopped"))
+        .count();
+    assert_eq!(stops, 2);
+    harness.drain();
+    assert_eq!(harness.session.state(), SessionState::Terminating);
+    assert_eq!(harness.session.controls(), ending);
+    assert!(!harness.session.resume(Resume::Continue, None));
+    assert!(!harness.session.resume(Resume::Next, None));
+    assert!(!harness.session.pause(None));
+    assert_eq!(harness.session.stop_data(), None);
+    assert_eq!(
+        states_from(&harness, 1, |state| *state == SessionState::Terminating),
+        [SessionState::Terminating]
+    );
+
+    advance_past(&harness.clock, TERMINATED_GRACE);
+    let ended = harness.wait_ended();
+    assert_eq!(ended.reason, EndReason::Stopped);
+    assert_eq!(
+        states_from(&harness, 1, |state| *state == SessionState::Terminating),
+        [SessionState::Terminating, SessionState::Ended(ended)]
+    );
+    assert_eq!(harness.session.controls(), Controls::none(Disabled::Ended));
+    assert!(requests(&fake, "continue").is_empty());
+    assert!(requests(&fake, "pause").is_empty());
+}
+
+#[test]
+fn an_adapter_exiting_while_stopped_retires_the_stop() {
+    let mut harness = start_stopped(Script::default());
+    let stop = harness.session.stop_data().expect("stopped");
+    harness.fake(0).kill();
+    let ended = harness.wait_ended();
+    assert!(
+        matches!(ended.reason, EndReason::AdapterExited(_)),
+        "{ended:?}"
+    );
+    assert_eq!(harness.session.stop_data(), None);
+    assert!(harness.session.epoch() > stop.epoch);
+    assert_eq!(
+        async_io::block_on(harness.session.variables(stop.scope("Locals").unwrap())),
+        Err(crate::session::RequestError::Ended {
+            command: "variables".into()
+        })
+    );
+    assert_eq!(harness.session.controls(), Controls::none(Disabled::Ended));
 }

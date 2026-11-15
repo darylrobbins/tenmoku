@@ -26,8 +26,9 @@ use kiln_l10n::{tr, verbatim};
 use serde_json::{Value, json};
 
 use super::{
-    Command, DapEvent, EndReason, Ended, Outgoing, RequestError, SessionError, SessionOptions,
-    SessionState, Shared, StartRequest, TerminalReply, TerminalStarted, lock, to_value,
+    Command, DapEvent, EndReason, Ended, Epoch, Outgoing, RequestError, SessionError,
+    SessionOptions, SessionState, Shared, StartRequest, TerminalReply, TerminalStarted, lock,
+    to_value,
 };
 use crate::clock::Clock;
 use crate::launcher::{AdapterIo, AdapterLauncher, ExitInfo, LaunchCancel};
@@ -39,6 +40,10 @@ use crate::protocol::{
     StoppedBody, TerminateArguments, Thread, ThreadBody, ThreadsBody, event, request,
 };
 use crate::transport::{FrameReader, FrameWriter};
+
+mod stops;
+
+use stops::{Fetch, Probe, Stops};
 
 /// How a request's timeout is chosen: [`super::LAUNCH_TIMEOUT`] for
 /// `launch` and `attach`, none for a `repl` evaluation (the user cancels
@@ -54,10 +59,33 @@ fn timeout_for(command: &str, arguments: &Value) -> Option<Duration> {
 
 /// What a request in flight is for.
 enum Purpose {
-    /// The host's: answered through `reply`.
+    /// The host's: answered through `reply`, or `Stale` if its ids are of
+    /// `epoch` and the reply comes under another.
     External {
         token: u64,
         reply: oneshot::Sender<Result<Value, RequestError>>,
+        epoch: Option<Epoch>,
+    },
+    /// A resume (§2 item 4): the user's, or (with a `reply`) the host's
+    /// raw request. Its completion goes through the resume guard.
+    Resume {
+        token: Option<u64>,
+        reply: Option<oneshot::Sender<Result<Value, RequestError>>>,
+    },
+    /// Stop data the session fetches for the stop at `epoch`.
+    Fetch {
+        epoch: Epoch,
+        what: Fetch,
+    },
+    /// Uncertain's probe for a stop (§13 F2), sent at `epoch`.
+    Probe {
+        epoch: Epoch,
+        what: Probe,
+    },
+    Pause,
+    /// `threads` sent first for a Pause with no thread known, at `epoch`.
+    PauseThreads {
+        epoch: Epoch,
     },
     Initialize,
     /// `launch` or `attach`.
@@ -71,8 +99,10 @@ enum Purpose {
     ConfigurationDone {
         round: u32,
     },
-    /// The thread baseline: after startup, or after a restart.
-    Baseline,
+    /// The thread baseline, after startup or a restart, sent at `epoch`.
+    Baseline {
+        epoch: Epoch,
+    },
     Restart,
     Terminate,
     Disconnect,
@@ -237,6 +267,8 @@ pub(super) struct Actor {
     /// Host requests waiting for `initialize`'s answer.
     queued: Vec<Outgoing>,
     threads: Vec<Thread>,
+    /// The stop epoch and what hangs on it (card D2b).
+    s: Stops,
     g: Generation,
 }
 
@@ -263,6 +295,7 @@ impl Actor {
             exit_code: None,
             queued: Vec::new(),
             threads: Vec::new(),
+            s: Stops::default(),
             g: Generation::default(),
         }
     }
@@ -289,6 +322,8 @@ impl Actor {
             exit_code: self.exit_code,
             reason,
         };
+        // A resume asked for that the actor never took ends with it.
+        lock(&self.shared.view).resume_requested = false;
         self.set_state(SessionState::Ended(ended));
     }
 
@@ -352,7 +387,11 @@ impl Actor {
             let sleep = self.clock.sleep(timeout);
             self.g.timers.arm(Timer::Request(seq), sleep);
         }
-        if let Purpose::External { token, .. } = &purpose {
+        if let Purpose::External { token, .. }
+        | Purpose::Resume {
+            token: Some(token), ..
+        } = &purpose
+        {
             self.g.tokens.insert(*token, seq);
         }
         self.g.pending.insert(
@@ -397,6 +436,10 @@ impl Actor {
     /// Launches an adapter and drives it until it has gone.
     async fn generation(&mut self) -> Outcome {
         self.g = Generation::default();
+        // A new adapter: nothing of the old one's stops is valid.
+        self.s.new_adapter();
+        self.advance_epoch();
+        lock(&self.shared.view).resume_requested = false;
         self.exit_code = None;
         lock(&self.shared.view).capabilities = Capabilities::default();
         self.set_state(SessionState::Launching);
@@ -611,11 +654,7 @@ impl Actor {
     fn end_generation(&mut self) {
         let pending = std::mem::take(&mut self.g.pending);
         for (_, pending) in pending {
-            if let Purpose::External { reply, .. } = pending.purpose {
-                let _ = reply.send(Err(RequestError::Ended {
-                    command: pending.command,
-                }));
-            }
+            fail_ended(pending);
         }
         self.g.out = None;
         self.g.timers = Timers::default();
@@ -623,6 +662,10 @@ impl Actor {
         if !self.threads.is_empty() {
             self.set_threads(Vec::new());
         }
+        lock(&self.shared.view).threads_answered = false;
+        // However the adapter went, its stop is over.
+        self.s.new_run();
+        self.advance_epoch();
     }
 
     // Startup.
@@ -864,10 +907,11 @@ impl Actor {
         {
             self.g.timers.cancel(Timer::Request(old));
         }
+        let epoch = self.s.epoch;
         let seq = self.send(
             request::Threads::COMMAND,
             to_value(&Empty::default()),
-            Purpose::Baseline,
+            Purpose::Baseline { epoch },
         );
         self.g.baseline = Some(seq);
     }
@@ -907,7 +951,13 @@ impl Actor {
 
     fn response(&mut self, response: ResponseMessage) {
         let seq = response.request_seq;
-        let pending = self.g.pending.remove(&seq);
+        // A resume that timed out stays the pending resume: its late reply
+        // still goes through the guard.
+        let pending = self
+            .g
+            .pending
+            .remove(&seq)
+            .or_else(|| self.late_resume(seq, &response.command));
         let took = pending.as_ref().map(|pending| {
             self.clock
                 .now()
@@ -935,22 +985,53 @@ impl Actor {
     /// A request's reply, failure or timeout, by what it was for.
     fn complete(&mut self, seq: i64, pending: Pending, result: Result<Value, RequestError>) {
         match pending.purpose {
-            Purpose::External { token, reply } => {
+            Purpose::External {
+                token,
+                reply,
+                epoch,
+            } => {
                 self.g.tokens.remove(&token);
+                // A reply about a stop that has ended since is dropped (a
+                // new epoch answers such requests at once, so this is the
+                // guard's second line).
+                let result = match epoch {
+                    Some(epoch) if epoch != self.s.epoch => Err(RequestError::Stale {
+                        command: pending.command,
+                    }),
+                    _ => result,
+                };
                 let _ = reply.send(result);
             }
+            Purpose::Resume { token, reply } => {
+                if let Some(token) = token {
+                    self.g.tokens.remove(&token);
+                }
+                if let Some(reply) = reply {
+                    let _ = reply.send(result.clone());
+                }
+                self.resume_answered(seq, result);
+            }
+            Purpose::Fetch { epoch, what } => self.fetch_answered(seq, epoch, what, result),
+            Purpose::Probe { epoch, what } => self.probe_answered(seq, epoch, what, result),
+            Purpose::Pause => {
+                // Shown; the state stays as it was.
+                if let Err(err) = result {
+                    self.emit(DapEvent::Failed(err));
+                }
+            }
+            Purpose::PauseThreads { epoch } => self.pause_threads_answered(seq, epoch, result),
             Purpose::Initialize => self.initialize_answered(result),
             Purpose::Start => self.start_answered(result),
             Purpose::Configuration { round, path } => {
                 self.configuration_answered(round, path, result)
             }
             Purpose::ConfigurationDone { round } => self.configuration_done_answered(round, result),
-            Purpose::Baseline => match result {
+            Purpose::Baseline { epoch } => match result {
                 Ok(body) => {
                     let threads = parse::<ThreadsBody>(body)
                         .map(|body| body.threads)
                         .unwrap_or_default();
-                    self.set_threads(threads);
+                    self.threads_answered(seq, epoch, threads);
                 }
                 // The payload log has the reply itself, redacted.
                 Err(_) => log::warn!("the thread baseline failed"),
@@ -995,13 +1076,11 @@ impl Actor {
             }
             "stopped" => {
                 let body: StoppedBody = message.body::<event::Stopped>().unwrap_or_default();
-                self.set_state(SessionState::Stopped);
-                self.emit(DapEvent::Stopped(body));
+                self.stopped(body);
             }
             "continued" => {
                 let body: ContinuedBody = message.body::<event::Continued>().unwrap_or_default();
-                self.set_state(SessionState::Running);
-                self.emit(DapEvent::Continued(body));
+                self.continued(body);
             }
             "exited" => {
                 if let Ok(ExitedBody { exit_code, .. }) = message.body::<event::Exited>() {
@@ -1025,10 +1104,18 @@ impl Actor {
                                 });
                             }
                         }
-                        "exited" => threads.retain(|thread| thread.id != thread_id),
+                        "exited" => {
+                            threads.retain(|thread| thread.id != thread_id);
+                            self.s.thread_exited(thread_id);
+                        }
                         _ => return,
                     }
+                    // Newer than any `threads` reply still to come.
+                    self.s.threads_changed(self.g.seq);
                     self.set_threads(threads);
+                    if reason == "exited" {
+                        self.thread_gone(thread_id);
+                    }
                 }
             }
             "output" => {
@@ -1135,6 +1222,12 @@ impl Actor {
             Command::Abandon(token) => self.abandon(token),
             Command::Stop => self.stop(),
             Command::Restart => self.restart(),
+            Command::Resume {
+                resume,
+                thread_id,
+                epoch,
+            } => self.resume_command(resume, thread_id, epoch),
+            Command::Pause { thread_id } => self.pause_command(thread_id),
         }
     }
 
@@ -1143,9 +1236,45 @@ impl Actor {
             token,
             command,
             arguments,
+            epoch,
             reply,
         } = outgoing;
-        self.send(&command, arguments, Purpose::External { token, reply });
+        // Ids of a stop that's over: answered without a round trip; and
+        // one asked of no stop, while the program may run, isn't sent.
+        if let Some(epoch) = epoch {
+            if epoch != self.s.epoch {
+                let _ = reply.send(Err(RequestError::Stale { command }));
+                return;
+            }
+            if self.state != SessionState::Stopped {
+                let _ = reply.send(Err(RequestError::NotStopped { command }));
+                return;
+            }
+        }
+        if super::is_session_owned(&command) {
+            let _ = reply.send(Err(RequestError::SessionOwned { command }));
+            return;
+        }
+        if stops::is_resume(&command) {
+            return self.raw_resume(token, command, arguments, reply);
+        }
+        // Stop data is asked for only of a stop, and is of it (§13 F2).
+        let epoch = match self.stop_data_epoch(&command, &arguments, epoch) {
+            Ok(epoch) => epoch,
+            Err(()) => {
+                let _ = reply.send(Err(RequestError::NotStopped { command }));
+                return;
+            }
+        };
+        self.send(
+            &command,
+            arguments,
+            Purpose::External {
+                token,
+                reply,
+                epoch,
+            },
+        );
     }
 
     /// A host request's future was dropped: forget it, and `cancel` it if
@@ -1158,6 +1287,18 @@ impl Actor {
         let Some(seq) = self.g.tokens.remove(&token) else {
             return;
         };
+        // A resume stays the pending resume, its late reply still going
+        // through the guard: only its reply is given up, and the adapter
+        // asked to drop it.
+        if let Some(Pending {
+            purpose: Purpose::Resume { token, reply },
+            ..
+        }) = self.g.pending.get_mut(&seq)
+        {
+            *token = None;
+            *reply = None;
+            return self.cancel_request(seq);
+        }
         if self.g.pending.remove(&seq).is_none() {
             return;
         }
@@ -1227,6 +1368,9 @@ impl Actor {
                 arguments: Some(self.options.arguments.clone()),
                 ..Default::default()
             };
+            // The stop's ids are retired, and a pending resume given up.
+            self.s.new_run();
+            self.advance_epoch();
             let seq = self.send(
                 request::Restart::COMMAND,
                 to_value(&arguments),
@@ -1253,6 +1397,9 @@ impl Actor {
             Ok(_) => {
                 // A new run: the old one's threads go.
                 self.set_threads(Vec::new());
+                lock(&self.shared.view).threads_answered = false;
+                self.s.new_run();
+                self.s.threads_changed(self.g.seq);
                 self.send_baseline();
                 self.set_state(SessionState::Running);
             }
@@ -1324,12 +1471,11 @@ impl Actor {
         let pending = std::mem::take(&mut self.g.pending);
         for (seq, pending) in pending {
             self.g.timers.cancel(Timer::Request(seq));
-            if let Purpose::External { reply, .. } = pending.purpose {
-                let _ = reply.send(Err(RequestError::Ended {
-                    command: pending.command,
-                }));
-            }
+            fail_ended(pending);
         }
+        // No stop is current, and no resume pending, from here.
+        self.s.new_run();
+        self.advance_epoch();
         self.g.tokens.clear();
         for queued in std::mem::take(&mut self.queued) {
             let _ = queued.reply.send(Err(RequestError::Ended {
@@ -1377,11 +1523,7 @@ impl Actor {
         // Nothing will answer: give up the requests now.
         for (seq, pending) in std::mem::take(&mut self.g.pending) {
             self.g.timers.cancel(Timer::Request(seq));
-            if let Purpose::External { reply, .. } = pending.purpose {
-                let _ = reply.send(Err(RequestError::Ended {
-                    command: pending.command,
-                }));
-            }
+            fail_ended(pending);
         }
         self.g.tokens.clear();
     }
@@ -1475,6 +1617,20 @@ fn error_kind(error: &SessionError) -> &'static str {
         SessionError::ConfigurationDoneTimeout => "configuration_done_timeout",
         SessionError::Transport(_) => "transport",
     }
+}
+
+/// Answers a request's host, if it has one, that the session ended.
+fn fail_ended(pending: Pending) {
+    let reply = match pending.purpose {
+        Purpose::External { reply, .. } => reply,
+        Purpose::Resume {
+            reply: Some(reply), ..
+        } => reply,
+        _ => return,
+    };
+    let _ = reply.send(Err(RequestError::Ended {
+        command: pending.command,
+    }));
 }
 
 /// Parses a reply body as `T`; a missing body reads as `{}`.
