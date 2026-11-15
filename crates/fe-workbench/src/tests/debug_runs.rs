@@ -282,7 +282,7 @@ fn the_runs_panel_draws_a_debug_run(cx: &mut TestAppContext) {
     state(&debugger, SessionState::Stopped, cx);
     let [row] = rows(cx).try_into().unwrap();
     assert_eq!(row.icon, StatusIcon::Paused);
-    assert_eq!(row.icon.icon(), Icon::Bug);
+    assert_eq!(row.icon.icon(), Icon::Pause);
     assert_eq!(row.summary, tr!("workbench-debug-run-stopped"));
 
     state(&debugger, ended(Some(0), EndReason::Finished), cx);

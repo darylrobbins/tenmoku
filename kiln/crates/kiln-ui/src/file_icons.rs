@@ -177,6 +177,7 @@ icons! {
         FlaskConical => "flask-conical",
         LogOut => "log-out",
         PanelsTopLeft => "panels-top-left",
+        Pause => "pause",
         Play => "play",
         Redo => "redo",
         Save => "save",

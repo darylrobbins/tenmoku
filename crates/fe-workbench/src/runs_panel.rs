@@ -140,7 +140,7 @@ pub(crate) enum StatusIcon {
     Cancelled,
     /// A debug session that hasn't ended: the `bug`.
     Debugging,
-    /// One stopped at a breakpoint or step: the same icon, muted.
+    /// One stopped at a breakpoint or step: the `pause`, in the accent colour.
     Paused,
 }
 
@@ -168,7 +168,8 @@ impl StatusIcon {
 
     pub(crate) fn icon(self) -> Icon {
         match self {
-            Self::Debugging | Self::Paused => Icon::Bug,
+            Self::Debugging => Icon::Bug,
+            Self::Paused => Icon::Pause,
             Self::Spinner => Icon::LoaderCircle,
             Self::Passed => Icon::Check,
             Self::Failed => Icon::X,
@@ -181,7 +182,7 @@ impl StatusIcon {
     pub(crate) fn colour(self, c: &Tokens<Hsla>) -> Hsla {
         match self {
             Self::Spinner | Self::Debugging => c.text.primary,
-            Self::Paused => c.text.muted,
+            Self::Paused => c.accent.base,
             Self::Passed => c.status.success,
             Self::Failed => c.status.error,
             Self::Cancelled => c.text.muted,
@@ -364,6 +365,9 @@ pub(crate) struct RunRows {
     /// its colour, for tests.
     #[cfg(test)]
     pub(crate) drawn_lines: std::collections::BTreeMap<usize, (f32, Hsla)>,
+    /// Each drawn row's status icon and its tint, by row, for tests.
+    #[cfg(test)]
+    pub(crate) drawn_icons: std::collections::BTreeMap<usize, (Icon, Hsla)>,
     /// Each drawn spinner's angle, by row, for tests.
     #[cfg(test)]
     pub(crate) drawn_spins: std::collections::BTreeMap<usize, f32>,
@@ -432,6 +436,8 @@ impl ListDelegate for RunRows {
             Some(line) => self.drawn_lines.insert(ix, line),
             None => self.drawn_lines.remove(&ix),
         };
+        #[cfg(test)]
+        self.drawn_icons.insert(ix, (icon.icon(), icon.colour(&c)));
         let (id, open) = (row.id, self.open.clone());
         let body = ListRow::new(state)
             .relative()
@@ -548,6 +554,8 @@ impl RunsPanel {
             epoch: Instant::now(),
             #[cfg(test)]
             drawn_lines: Default::default(),
+            #[cfg(test)]
+            drawn_icons: Default::default(),
             #[cfg(test)]
             drawn_spins: Default::default(),
             #[cfg(test)]
@@ -836,3 +844,7 @@ impl Workbench {
         &self.runs_panel
     }
 }
+
+#[cfg(test)]
+#[path = "runs_panel_debug_paused_tests.rs"]
+mod debug_paused_tests;
