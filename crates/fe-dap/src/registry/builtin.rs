@@ -12,7 +12,9 @@ use super::{Entry, Hint, Program, Source};
 
 /// The built-in adapters, in the order a language's default is chosen:
 /// lldb-dap before codelldb for Rust, C and C++ (§13 Q3). js-debug waits
-/// for multi-session support (D23).
+/// for multi-session support (D23). Java's is java-debug inside jdtls
+/// (D21b): a [`Port`](AdapterTransport::Port) adapter whose port the host
+/// asks jdtls for at each start ([`JAVA`]).
 pub(super) fn entries() -> Vec<Entry> {
     let lldb = ["rust", "c", "cpp"];
     let spec = |name: &str, command: &str, args: &[&str], languages: &[&str], types: &[&str]| {
@@ -77,8 +79,29 @@ pub(super) fn entries() -> Vec<Entry> {
             Program::Command,
             Hint::Delve,
         ),
+        // java-debug, a bundle jdtls loads: the host starts it with
+        // `vscode.java.startDebugSession` and gives the port it answers in
+        // place of [`JAVA_PORT`]. There is no program to find.
+        entry(
+            AdapterSpec {
+                transport: AdapterTransport::Port(JAVA_PORT),
+                ..spec(JAVA, JDTLS, &[], &["java"], &[JAVA])
+            },
+            Program::Command,
+            Hint::Command,
+        ),
     ]
 }
+
+/// The built-in Java adapter's name, also its launch.json `type`.
+pub const JAVA: &str = "java";
+
+/// The port the built-in [`JAVA`] adapter's spec holds until the host has
+/// jdtls's: none, as no adapter listens on port 0.
+pub const JAVA_PORT: u16 = 0;
+
+/// The server that runs java-debug, named in the [`JAVA`] spec's command.
+const JDTLS: &str = "jdtls";
 
 const LLDB_DAP: &str = "lldb-dap";
 

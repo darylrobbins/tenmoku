@@ -29,6 +29,10 @@
 //!   executable cargo's `compiler-artifact` message names
 //!   ([`launch::cargo_artifact`]). A task whose tab closes first gives the
 //!   start up.
+//! - **Java** (D21b, [`crate::debug_java`]): a configuration of the `java`
+//!   adapter asks the root's jdtls for its main class and classpath, if it
+//!   doesn't give them, and for java-debug's port, which its session
+//!   connects to; the debugger finds java-debug's jar for jdtls.
 //! - **The program's terminal** (§5). An adapter's `runInTerminal` runs its
 //!   argv directly in the configuration's tab,
 //!   [`TerminalPanel::add_debuggee`](crate::TerminalPanel): a task tab's
@@ -310,6 +314,8 @@ pub struct Debugger {
     session: Option<Running>,
     /// The configuration last started, by name, for `debug.rerun_last`.
     last: Option<String>,
+    /// java-debug's jar, for jdtls (D21b).
+    pub(crate) java: crate::debug_java::JavaJar,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -621,10 +627,12 @@ pub(crate) fn init(cx: &mut App) {
             starting: None,
             session: None,
             last: None,
+            java: crate::debug_java::JavaJar::default(),
             _subscriptions: vec![trust, root, rerun],
         });
         let id = cx.entity_id();
         cx.default_global::<Debuggers>().0.insert(id, debugger);
+        workbench.find_java_jar(cx);
         cx.on_release(move |_, cx| {
             if cx.has_global::<Debuggers>() {
                 cx.global_mut::<Debuggers>().0.remove(&id);
@@ -683,6 +691,8 @@ impl Workbench {
     ) {
         if let Some(debugger) = self.debugger(cx) {
             debugger.update(cx, |debugger, _| debugger.settings = settings.clone());
+            // `[debug.adapters.java] path` may name another jar.
+            self.find_java_jar(cx);
         }
     }
 
@@ -699,12 +709,19 @@ impl Workbench {
             .unwrap_or_default();
         let language = (self.active_editor(cx))
             .and_then(|editor| editor.read(cx).syntax().map(|s| s.language().name()));
+        // Asked now, of the jdtls running for the root (D21b).
+        let java_mains = self.java_main_classes(&root, cx);
         cx.background_spawn(async move {
+            let java_mains = match java_mains {
+                Some(mains) => mains.await,
+                None => Vec::new(),
+            };
             let (tasks, _) = task_defs::load(&*files, &root);
             let registry = launch::registry(&specs, &settings, login);
             let project = launch_defs::Project::new(&*files, &root, &registry)
                 .with_tasks(&tasks)
-                .with_active_language(language);
+                .with_active_language(language)
+                .with_java_mains(&java_mains);
             let (configs, diagnostics) = launch_defs::load(&project);
             Listing {
                 configs,
@@ -992,6 +1009,19 @@ impl Workbench {
             user_home: std::env::var_os("HOME").map(PathBuf::from),
             env: std::env::vars().collect(),
         };
+        // A java configuration asks jdtls for its main class, classpath and
+        // java-debug's port first (D21b).
+        let java = match crate::debug_java::is_java(&config) {
+            true => match self.java_start(&root, &config, &values, cx) {
+                Ok(java) => Some(java),
+                Err(why) => {
+                    debugger.update(cx, |debugger, cx| debugger.give_up(id, cx));
+                    let message = tr!("workbench-debug-cant-start", name = config.name.as_str());
+                    return toast::show(cx, Toast::error(message).detail(why));
+                }
+            },
+            false => None,
+        };
         let settings = debugger.read(cx).settings.clone();
         let resolve = launch::Resolve {
             config: config.clone(),
@@ -1004,7 +1034,13 @@ impl Workbench {
             // Taken just before the launch.
             breakpoints: BTreeMap::new(),
         };
-        let resolving = cx.background_spawn(async move { launch::session_options(resolve) });
+        let resolving = cx.background_spawn(async move {
+            let java = match java {
+                Some(java) => Some(java.run().await?),
+                None => None,
+            };
+            launch::session_options_with(resolve, java)
+        });
         let work = cx.spawn(async move |workbench, cx| {
             let options = resolving.await;
             let resolved = Resolved {
@@ -1433,36 +1469,63 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pane().read(cx).position(&path).is_some() {
+        // A Save As holding the file: the stop opens it once that's let go,
+        // if it's still current, so the saving buffer is the one shown.
+        let saving = crate::open::any_reserved()
+            .then(|| {
+                let identity = crate::open::file_identity(&path);
+                crate::open::reserved(&path, identity.as_deref())
+            })
+            .flatten()
+            .map(|(_, over)| over);
+        if saving.is_none() && self.pane().read(cx).position(&path).is_some() {
             return self
                 .open_document_at(path, Some(line), None, window, cx)
                 .detach();
         }
         #[cfg(test)]
         let gate = cx.try_global::<StopOpenGate>().map(|gate| gate.0.clone());
-        let read = cx.background_spawn({
-            let path = path.clone();
-            async move {
-                #[cfg(test)]
-                if let Some(gate) = gate {
-                    gate.recv().await.ok();
+        let read = saving.is_none().then(|| {
+            cx.background_spawn({
+                let path = path.clone();
+                async move {
+                    #[cfg(test)]
+                    if let Some(gate) = gate {
+                        gate.recv().await.ok();
+                    }
+                    crate::loader::open(path)
                 }
-                crate::loader::open(path)
-            }
+            })
         });
         let navigation = cx.spawn_in(window, async move |workbench, cx| {
-            let result = read.await;
+            if let Some(over) = saving {
+                over.recv().await.ok();
+            }
+            let result = match read {
+                Some(read) => Some(read.await),
+                None => None,
+            };
             let landed = workbench.update_in(cx, |workbench, window, cx| {
                 if !workbench.stop_is_current(id, epoch, cx) {
                     return;
                 }
                 let pane = workbench.pane().clone();
                 if pane.read(cx).position(&path).is_none() {
+                    let Some(result) = result else {
+                        // The Save As is over and left no tab of the file:
+                        // read it now, as the stop's own navigation.
+                        return workbench.show_stop(id, epoch, path, line, window, cx);
+                    };
                     // The read lands now, in the tab it opens.
                     pane.update(cx, |pane, cx| {
                         pane.open_at(path.clone(), None, window, cx);
                         pane.file_read(path.clone(), result, window, cx);
                     });
+                    // A failed read opens no tab, and the stop's caret goes
+                    // nowhere: no read again outside the stop's guard.
+                    if pane.read(cx).position(&path).is_none() {
+                        return;
+                    }
                 }
                 (workbench.open_document_at(path, Some(line), None, window, cx)).detach();
             });

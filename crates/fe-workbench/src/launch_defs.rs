@@ -75,10 +75,27 @@
 //!   ([`Program::CargoArtifact`]): a guess at `target/debug/<bin>` would miss
 //!   `CARGO_TARGET_DIR`, profiles and workspaces. A workspace's members aren't
 //!   looked into.
+//! - The main classes jdtls lists for the root
+//!   (`vscode.java.resolveMainClass`, which the host asks before loading:
+//!   [`Project::with_java_mains`]): "Debug <class>" each, under the `java`
+//!   adapter, with `mainClass` and `projectName` as adapter arguments. The
+//!   class is named simply (`App`), or in full where two share the simple
+//!   name, and with its project where two projects share the class. The
+//!   start resolves its classpath and asks jdtls for java-debug's port
+//!   (`debug_java.rs`).
 //! - A Python file in the active editor: "Debug current file", `${file}`
 //!   under debugpy.
 //!
-//! Go's (D19) and Java's (D21b) come with their adapters.
+//! Go's (D19) comes with its adapter.
+//!
+//! # Java
+//!
+//! A configuration whose adapter is the built-in `java` (launch.json's
+//! `type: "java"` names it) keeps `mainClass`, `projectName`,
+//! `classPaths`, `modulePaths` and `vmArgs` among its adapter arguments, as
+//! java-debug reads them; a start fills in those jdtls can resolve. As
+//! vscode-java-debug allows, a launch.json `args` may be one string: it's
+//! passed as written.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
@@ -135,6 +152,17 @@ pub struct Project<'a> {
     pub active_language: Option<&'a str>,
     /// Whose sub-object of a `launch.json` configuration applies.
     pub os: HostOs,
+    /// The main classes jdtls lists for the root, for "Debug <class>".
+    pub java_mains: &'a [JavaMain],
+}
+
+/// A main class jdtls found (`vscode.java.resolveMainClass`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JavaMain {
+    /// Fully qualified: `com.example.App`.
+    pub class: String,
+    /// The project jdtls has it in, if it said.
+    pub project: Option<String>,
 }
 
 impl<'a> Project<'a> {
@@ -147,7 +175,14 @@ impl<'a> Project<'a> {
             tasks: &[],
             active_language: None,
             os: HostOs::current(),
+            java_mains: &[],
         }
+    }
+
+    #[must_use]
+    pub fn with_java_mains(mut self, mains: &'a [JavaMain]) -> Self {
+        self.java_mains = mains;
+        self
     }
 
     #[must_use]

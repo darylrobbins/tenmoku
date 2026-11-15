@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use fe_dap::HostOs;
+use fe_dap::registry::JAVA;
 use kiln_l10n::tr;
 use serde_json::{Map, Value};
 
@@ -110,12 +111,24 @@ pub(super) fn configs(
                 diagnostics.push(report(tr!("workbench-debug-launch-ignored-key", key = key)));
             }
         }
+        // java-debug reads `args` as one string, which vscode-java-debug
+        // lets a configuration give: passed as written.
+        let java = (entry.get("type").and_then(Value::as_str))
+            .and_then(|ty| project.adapters.name_for(ty))
+            .is_some_and(|name| name == JAVA);
+        let string_args = match entry.get("args") {
+            Some(Value::String(_)) if java => entry.remove("args"),
+            _ => None,
+        };
         match parse_common(&entry, &JSON_KEYS, project) {
             Ok(mut config) => {
                 config.adapter_args = entry
                     .into_iter()
                     .filter(|(key, _)| !TYPED.contains(&key.as_str()))
                     .collect();
+                if let Some(args) = string_args {
+                    config.adapter_args.insert("args".to_owned(), args);
+                }
                 if names.insert(config.name.clone()) {
                     configs.push(config);
                 } else {

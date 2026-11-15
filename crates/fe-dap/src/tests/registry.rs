@@ -21,8 +21,8 @@ use crate::launcher::{
     PORT_PLACEHOLDER,
 };
 use crate::registry::{
-    Context, HostOs, Lookup, Registry, Runner, Source, Status, XCRUN, lldb_dap_lookups,
-    python_interpreter, rust_init_commands,
+    Context, HostOs, JAVA, JAVA_PORT, Lookup, Registry, Runner, Source, Status, XCRUN,
+    lldb_dap_lookups, python_interpreter, rust_init_commands,
 };
 
 /// A folder of programs and a login shell whose `PATH` is `bin` (after a
@@ -242,9 +242,9 @@ fn resolution_order_is_host_user_extension_builtin() {
         // built-ins puts codelldb first.
         let names = registry.names();
         let expected = if has_host || has_user || has_extension {
-            ["codelldb", "lldb-dap", "debugpy", "delve"]
+            ["codelldb", "lldb-dap", "debugpy", "delve", "java"]
         } else {
-            ["lldb-dap", "codelldb", "debugpy", "delve"]
+            ["lldb-dap", "codelldb", "debugpy", "delve", "java"]
         };
         assert_eq!(names, expected, "{row}");
     }
@@ -286,7 +286,8 @@ fn resolution_order_is_host_user_extension_builtin() {
             "lldb-dap",
             "codelldb",
             "debugpy",
-            "delve"
+            "delve",
+            "java"
         ]
     );
     let context = fixture.context();
@@ -409,12 +410,14 @@ fn type_aliases_resolve() {
         // By name, too.
         ("codelldb", "codelldb"),
         ("delve", "delve"),
+        // java-debug in jdtls (D21b).
+        ("java", "java"),
     ] {
         let adapter = registry.find(ty, &context);
         assert_eq!(adapter.map(|a| a.spec.name).as_deref(), Some(name), "{ty}");
     }
     // js-debug's spec waits for multi-session support (D23).
-    for ty in ["pwa-node", "node", "js-debug", "java", ""] {
+    for ty in ["pwa-node", "node", "js-debug", ""] {
         assert_eq!(registry.find(ty, &context), None, "{ty}");
     }
     // The built-ins' data, as §3's table has it.
@@ -435,6 +438,17 @@ fn type_aliases_resolve() {
         assert_eq!(spec(name).languages, ["rust", "c", "cpp"], "{name}");
         assert_eq!(spec(name).transport, AdapterTransport::Stdio, "{name}");
     }
+    // java-debug runs in jdtls, which gives its port at each start: found
+    // with nothing looked up, its port a placeholder until then.
+    let java = registry.find(JAVA, &context).unwrap();
+    assert_eq!(java.status, Status::Found);
+    assert_eq!(java.spec.transport, AdapterTransport::Port(JAVA_PORT));
+    assert_eq!(java.spec.languages, ["java"]);
+    assert_eq!(java.spec.types, ["java"]);
+    assert_eq!(
+        registry.default_for("java", &context).map(|a| a.spec.name),
+        Some(JAVA.to_owned())
+    );
 
     // A name beats a `type`: a host adapter named "python" is the one
     // "python" names.
@@ -503,12 +517,14 @@ fn a_missing_program_is_listed_not_found_with_a_hint() {
         ("codelldb", "codelldb", not_found(tr!("dap-hint-codelldb"))),
         ("debugpy", "python3", not_found(tr!("dap-hint-debugpy"))),
         ("delve", "dlv", not_found(tr!("dap-hint-delve"))),
+        // jdtls gives java-debug's port: nothing to look for.
+        ("java", "jdtls", Status::Found),
     ]
     .into_iter()
     .map(|(name, command, status)| (name.to_owned(), PathBuf::from(command), status))
     .collect();
     assert_eq!(listed, expected);
-    for (_, _, status) in &listed {
+    for (_, _, status) in listed.iter().filter(|(name, ..)| name != JAVA) {
         let Status::NotFound { hint } = status else {
             unreachable!()
         };

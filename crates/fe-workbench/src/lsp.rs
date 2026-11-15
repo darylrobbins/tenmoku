@@ -932,6 +932,26 @@ fn untrusted_status(name: &str, root: &Path) -> (String, StatusTone, Option<Stri
 }
 
 impl Workbench {
+    /// The manager, if it's for `root`, resolved: what a host asks a
+    /// root's server through (java-debug's commands, D21b).
+    pub(crate) fn lsp_manager_at(&self, root: &Path) -> Option<Arc<Mutex<LspManager>>> {
+        let lsp = &self.lsp;
+        (lsp.root.as_deref() == Some(root))
+            .then(|| lsp.manager.clone())
+            .flatten()
+    }
+
+    /// Gives the manager's jdtls `bundles` from its next start at a root
+    /// (D21b's java-debug jar).
+    pub(crate) fn set_java_bundles(&mut self, bundles: Vec<PathBuf>) {
+        if let Some(manager) = &self.lsp.manager {
+            let reach = lock(manager).set_jdtls_bundles(bundles);
+            if !reach.stale.is_empty() || reach.refused.is_some() {
+                log::info!("jdtls bundles for debugging: {reach:?}");
+            }
+        }
+    }
+
     /// Starts following the language servers; call once, from `new`.
     pub(crate) fn start_lsp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         *self.lsp.hover.workbench.borrow_mut() = Some((cx.weak_entity(), cx.to_async()));
@@ -1091,6 +1111,8 @@ impl Workbench {
 
     /// Makes the manager for `root`, resolved, or for a window with none.
     fn start_lsp_manager(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
+        // java-debug for jdtls, as the debugger last found it (D21b).
+        let java_bundles = self.java_bundles(cx);
         let lsp = &mut self.lsp;
         lsp.root.clone_from(&root);
         lsp.watched_at = Some(std::time::SystemTime::now());
@@ -1158,6 +1180,9 @@ impl Workbench {
         };
         manager.set_extension_specs(extension_servers(cx));
         manager.update_settings(&lsp.settings);
+        if !java_bundles.is_empty() {
+            manager.set_jdtls_bundles(java_bundles);
+        }
         #[cfg(test)]
         {
             lsp.handed = Some(lsp.settings.clone());

@@ -16,13 +16,14 @@ use std::{
 
 use fe_config::debug_settings::DebugSettings;
 use fe_dap::{
-    AdapterSpec, Context as AdapterContext, EnvExpansion, HostOs, LogMode, Registry,
-    SessionOptions, StartRequest, Status, protocol::SourceBreakpoint,
+    AdapterSpec, AdapterTransport, Context as AdapterContext, EnvExpansion, HostOs, LogMode,
+    Registry, SessionOptions, StartRequest, Status, protocol::SourceBreakpoint, registry::JAVA,
 };
 use fe_lsp::LoginPath;
 use kiln_l10n::{tr, verbatim};
 use serde_json::{Map, Value};
 
+use crate::debug_java::{JavaLaunch, joined_args};
 use crate::launch_defs::{
     AdapterRef, Console, Cwd, LaunchConfig, Program,
     variables::{self, Values},
@@ -88,7 +89,19 @@ pub(crate) struct Resolve {
 ///
 /// In words, for a toast: no adapter, an adapter not found, or a variable
 /// that can't expand.
+#[cfg(test)]
 pub(crate) fn session_options(resolve: Resolve) -> Result<SessionOptions, String> {
+    session_options_with(resolve, None)
+}
+
+/// As [`session_options`], for a java configuration with what jdtls gave
+/// its start (D21b): java-debug's port for its `Port` adapter, and the
+/// launch arguments jdtls resolved, under the configuration's own. Its
+/// `args` and `vmArgs` go as java-debug reads them, one string each.
+pub(crate) fn session_options_with(
+    resolve: Resolve,
+    java: Option<JavaLaunch>,
+) -> Result<SessionOptions, String> {
     let Resolve {
         config,
         root,
@@ -153,7 +166,12 @@ pub(crate) fn session_options(resolve: Resolve) -> Result<SessionOptions, String
         )
         .into());
     }
-    let spec = adapter.spec;
+    let mut spec = adapter.spec;
+    if let Some(java) = &java
+        && let AdapterTransport::Port(_) = spec.transport
+    {
+        spec.transport = AdapterTransport::Port(java.port);
+    }
 
     let program = match (&config.program, program) {
         (_, Some(built)) => Some(built.to_string_lossy().into_owned()),
@@ -178,8 +196,11 @@ pub(crate) fn session_options(resolve: Resolve) -> Result<SessionOptions, String
     if let Some(program) = program {
         arguments.insert("program".into(), Value::String(program));
     }
-    let args = args.into_iter().map(Value::String).collect();
-    arguments.insert("args".into(), Value::Array(args));
+    let args = match java {
+        Some(_) => Value::String(joined_args(&args)),
+        None => Value::Array(args.into_iter().map(Value::String).collect()),
+    };
+    arguments.insert("args".into(), args);
     let cwd_text = cwd.to_string_lossy().into_owned();
     arguments.insert("cwd".into(), Value::String(cwd_text));
     if !env.is_empty() {
@@ -200,8 +221,24 @@ pub(crate) fn session_options(resolve: Resolve) -> Result<SessionOptions, String
         commands.extend(spec.init_commands.iter().cloned().map(Value::String));
         arguments.insert("initCommands".into(), Value::Array(commands));
     }
+    if let Some(java) = java {
+        arguments.extend(java.arguments);
+    }
     if let Value::Object(adapter_args) = adapter_args {
         arguments.extend(adapter_args);
+    }
+    if spec.name == JAVA
+        && let Some(Value::Array(vm_args)) = arguments.get(verbatim!("vmArgs"))
+    {
+        let words: Option<Vec<String>> = (vm_args.iter())
+            .map(|arg| arg.as_str().map(str::to_owned))
+            .collect();
+        if let Some(words) = words {
+            arguments.insert(
+                verbatim!("vmArgs").into(),
+                Value::String(joined_args(&words)),
+            );
+        }
     }
 
     Ok(SessionOptions {
@@ -291,6 +328,14 @@ fn console_key(spec: &AdapterSpec, console: Console) -> Option<(&'static str, Va
                 verbatim!("integrated").into()
             } else {
                 verbatim!("console").into()
+            }),
+        )),
+        JAVA => Some((
+            "console",
+            Value::String(if integrated {
+                verbatim!("integratedTerminal").into()
+            } else {
+                verbatim!("internalConsole").into()
             }),
         )),
         _ => None,

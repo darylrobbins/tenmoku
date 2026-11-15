@@ -13,7 +13,9 @@
 //!    the user's own with a `command`;
 //! 3. specs extensions contribute (D15): one named like a built-in
 //!    replaces it, as an installed codelldb (D14) does;
-//! 4. the built-in lldb-dap, codelldb, debugpy and delve ([`builtin`]).
+//! 4. the built-in lldb-dap, codelldb, debugpy, delve and java
+//!    ([`builtin`]); java is java-debug inside jdtls, a `Port` adapter
+//!    whose port the host gets from jdtls at each start (D21b).
 //!
 //! Each adapter sits in the layer that won it: a built-in or an
 //! extension's spec the user's settings change is the user's, so it comes
@@ -58,7 +60,8 @@ use crate::launcher::{AdapterSpec, AdapterTransport, is_runnable};
 pub mod builtin;
 
 pub use builtin::{
-    HostOs, Lookup, XCRUN, lldb_dap_lookups, python_interpreter, rust_init_commands,
+    HostOs, JAVA, JAVA_PORT, Lookup, XCRUN, lldb_dap_lookups, python_interpreter,
+    rust_init_commands,
 };
 
 /// Which layer an adapter's spec came from: the highest that set any of

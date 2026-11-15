@@ -3,12 +3,16 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use fe_dap::registry::JAVA;
 use kiln_l10n::{tr, verbatim};
-use serde_json::Map;
+use serde_json::{Map, Value};
 
-use super::{AdapterRef, Cwd, LaunchConfig, PreLaunch, Program, Project, Request, Source};
+use super::{
+    AdapterRef, Cwd, JavaMain, LaunchConfig, PreLaunch, Program, Project, Request, Source,
+};
 
-/// Cargo's binaries, then the active Python file's.
+/// Cargo's binaries, then jdtls's main classes, then the active Python
+/// file's.
 pub(super) fn configs(project: &Project<'_>) -> Vec<LaunchConfig> {
     let mut configs: Vec<LaunchConfig> = cargo_bins(project)
         .into_iter()
@@ -33,6 +37,7 @@ pub(super) fn configs(project: &Project<'_>) -> Vec<LaunchConfig> {
             }
         })
         .collect();
+    configs.extend(java_configs(project));
     if project.active_language == Some("python") {
         let adapter = "debugpy";
         configs.push(LaunchConfig {
@@ -48,6 +53,63 @@ pub(super) fn configs(project: &Project<'_>) -> Vec<LaunchConfig> {
         });
     }
     configs
+}
+
+/// "Debug <class>" for each main class jdtls listed, under the `java`
+/// adapter, each class once per project.
+fn java_configs(project: &Project<'_>) -> Vec<LaunchConfig> {
+    let mut mains: Vec<&JavaMain> = Vec::new();
+    for main in project.java_mains {
+        if !main.class.is_empty() && !mains.contains(&main) {
+            mains.push(main);
+        }
+    }
+    let simple = |class: &str| class.rsplit('.').next().unwrap_or(class).to_owned();
+    mains
+        .iter()
+        .map(|main| {
+            let shared_simple = (mains.iter()).any(|other| {
+                other.class != main.class && simple(&other.class) == simple(&main.class)
+            });
+            let shared_class = (mains.iter())
+                .any(|other| other.class == main.class && other.project != main.project);
+            let class = if shared_simple || shared_class {
+                main.class.clone()
+            } else {
+                simple(&main.class)
+            };
+            let name = match (&main.project, shared_class) {
+                (Some(project), true) => tr!(
+                    "workbench-debug-launch-detected-java-in",
+                    class = class.as_str(),
+                    project = project.as_str()
+                ),
+                _ => tr!(
+                    "workbench-debug-launch-detected-java",
+                    class = class.as_str()
+                ),
+            };
+            let mut adapter_args = Map::new();
+            adapter_args.insert(
+                verbatim!("mainClass").into(),
+                Value::String(main.class.clone()),
+            );
+            if let Some(name) = &main.project {
+                adapter_args.insert(verbatim!("projectName").into(), Value::String(name.clone()));
+            }
+            LaunchConfig {
+                adapter_args,
+                ..detected(
+                    name.into(),
+                    AdapterRef::Named {
+                        written: JAVA.to_owned(),
+                        name: project.adapters.name_for(JAVA),
+                    },
+                    project.root,
+                )
+            }
+        })
+        .collect()
 }
 
 fn detected(name: String, adapter: AdapterRef, root: &Path) -> LaunchConfig {

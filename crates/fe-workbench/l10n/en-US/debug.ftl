@@ -5,6 +5,12 @@
 
 # One per Cargo binary target: $bin is the binary's name.
 workbench-debug-launch-detected-bin = Debug { $bin }
+# A main class jdtls found: $class is its name, simple (App) unless two
+# share it.
+workbench-debug-launch-detected-java = Debug { $class }
+# The same, where two of jdtls's projects have the class: $project is
+# jdtls's name for this one's.
+workbench-debug-launch-detected-java-in = Debug { $class } ({ $project })
 # For the Python file in the active editor.
 workbench-debug-launch-current-file = Debug current file
 
@@ -170,6 +176,32 @@ workbench-debug-run-stopped = Stopped
 workbench-debug-run-adapter-exited = The debug adapter exited
 # A debug run's accessible name: its configuration, status and age.
 workbench-debug-run-row-name = Debug session { $title }, { $status }, { $age }
+
+## Java through jdtls (debug_java.rs). Each is a failed start's detail.
+
+# java-debug wasn't found: the hint at the end of what a failed start says.
+workbench-debug-java-no-jar = Java debugging needs java-debug, which Tenmoku doesn't include, and it wasn't found. Install the Debugger for Java extension in VS Code, or java-debug-adapter with Mason, or set debug.adapters.java.path to its com.microsoft.java.debug.plugin jar.
+# No jdtls runs for the folder: $root is the folder.
+workbench-debug-java-no-jdtls = Java debugging goes through jdtls, and none is running for { $root }. Open one of its Java files, let jdtls start, and try again.
+# jdtls runs without java-debug, as it started before java-debug was
+# found: $root is the folder.
+workbench-debug-java-restart = jdtls for { $root } started without java-debug, which it loads only as it starts. Restart it (lsp.restart in one of its Java files), then try again.
+# The user's [lsp.servers.jdtls] initialization_options can't take
+# java-debug.
+workbench-debug-java-options-not-table = java-debug can't be added to jdtls: [lsp.servers.jdtls] initialization_options isn't a table. Make it one, then restart jdtls.
+workbench-debug-java-bundles-not-list = java-debug can't be added to jdtls: the bundles in [lsp.servers.jdtls] initialization_options aren't a list. Make them one, then restart jdtls.
+# jdtls was given java-debug and still lacks its command: $jar is the jar,
+# $command the command.
+workbench-debug-java-not-loaded = jdtls has no { $command }: it didn't load java-debug from { $jar }.
+# A step's failure: $error is what jdtls said.
+workbench-debug-java-main-class-failed = jdtls couldn't list the main classes: { $error }
+workbench-debug-java-classpath-failed = jdtls couldn't resolve the classpath of { $class }: { $error }
+workbench-debug-java-start-failed = jdtls couldn't start java-debug: { $error }
+# What jdtls answered wasn't what was asked for: $command is the command.
+workbench-debug-java-bad-answer = jdtls's answer to { $command } wasn't one Tenmoku can read.
+workbench-debug-java-no-main-class = jdtls found no main class to debug. Name one with mainClass.
+# $classes are the classes, joined by commas.
+workbench-debug-java-main-classes = jdtls found several main classes: { $classes }. Name one with mainClass.
 
 ## A breakpoint's menu, a right click on its row's line number
 ## (debug_gutter.rs).

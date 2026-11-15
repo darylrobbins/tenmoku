@@ -150,9 +150,16 @@ fn a_server_port_adapter_connects_to_the_port_its_host_gives() {
         source,
         spec,
         status,
-    } = registry.find("java", &context).unwrap();
+    } = registry.find("java-debug", &context).unwrap();
     // Nothing to find: the host started it.
     assert_eq!((source, status), (Source::Host, Status::Found));
+    // The `java` type is the built-in java's by its name (D21b), which a
+    // name beats a type for.
+    let builtin = registry.find("java", &context).unwrap();
+    assert_eq!(
+        (builtin.source, builtin.spec.name.as_str()),
+        (Source::Builtin, "java")
+    );
     assert_eq!(spec.transport, AdapterTransport::Port(port));
     assert_eq!(spec.command, PathBuf::new());
 
