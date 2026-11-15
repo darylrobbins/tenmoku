@@ -125,6 +125,14 @@ impl SideText {
         &self.text
     }
 
+    /// Its rows joined by `\n`, then a row both sides end with so [`TextDiff`]
+    /// has no synthetic row (after a last line break, or in an empty text)
+    /// to match a real blank one; its hunks keep to this side's rows.
+    fn joined(&self) -> String {
+        let rows = (0..self.row_count()).map(|row| self.row(row));
+        rows.chain(["\0end"]).collect::<Vec<_>>().join("\n")
+    }
+
     /// How many rows it shows.
     pub(crate) fn row_count(&self) -> u32 {
         self.rows.len() as u32
@@ -171,9 +179,13 @@ impl Diffed {
     /// The diff of `left` and `right`, the texts of the file at `path`
     /// before and after.
     fn new(left: String, right: String, path: &Path) -> Self {
-        let diff = TextDiff::new(&left, &right);
-        let words = words(&diff, &left, &right);
         let rows = [left.as_str(), right.as_str()].map(|text| SideText::new(text.to_owned()));
+        // Diff the physical rows alone: TextDiff's synthetic row after a last
+        // line break (or in an empty text) could match a real blank row and
+        // lose its change.
+        let [joined_left, joined_right] = rows.each_ref().map(SideText::joined);
+        let diff = TextDiff::new(&joined_left, &joined_right);
+        let words = words(&diff, &joined_left, &joined_right);
         let lines = lines(&diff, rows.each_ref().map(SideText::row_count));
         let symbols = hunk_symbols(
             &diff,
@@ -406,7 +418,8 @@ pub(crate) struct CommitDiff {
     spans: Vec<Range<usize>>,
     /// The rows the view shows.
     viewport: Range<usize>,
-    /// The sections' reads under way.
+    /// The sections' reads under way, those of earlier loads still running
+    /// included.
     reading: usize,
     /// The last read's number: only the one a `Loading` names lands.
     requests: u64,
@@ -457,7 +470,6 @@ impl CommitDiff {
         let request = self.requests;
         self.listing = Listing::Loading(request);
         self.sections.clear();
-        self.reading = 0;
         self.relayout();
         let (repo, id) = (self.repo.clone(), self.commit.commit.id.clone());
         #[cfg(test)]
@@ -594,13 +606,15 @@ impl CommitDiff {
         read: Result<Read, String>,
         cx: &mut Context<Self>,
     ) {
-        let Some(section) = self.sections.get_mut(ix) else {
-            return;
-        };
-        if !matches!(section.texts, Texts::Loading(at) if at == request) {
-            return;
-        }
+        // Its slot frees whether or not it's still wanted: reads outlive a
+        // reload, and still count against [`READS`].
         self.reading -= 1;
+        let current = (self.sections.get(ix))
+            .is_some_and(|section| matches!(section.texts, Texts::Loading(at) if at == request));
+        if !current {
+            return self.schedule(cx);
+        }
+        let section = &mut self.sections[ix];
         section.texts = match read {
             Ok(Read::Texts(diffed)) => Texts::Read(Arc::from(diffed)),
             Ok(Read::NotShown(why)) => Texts::NotShown(why),

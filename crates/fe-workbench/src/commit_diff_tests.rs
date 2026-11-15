@@ -8,7 +8,7 @@ use fe_editor::text_diff::MAX_DIFF_BYTES;
 use fe_git::{ChangeKind, LogScope, Repo};
 use gpui::{AppContext as _, Entity, TestAppContext};
 
-use super::{CommitDiff, LOADING, Line, NotShown, Row, Texts};
+use super::{CommitDiff, LOADING, Line, NotShown, READS, Row, Texts};
 
 /// Runs `git` in `dir`, with the developer's own config shut out, and
 /// gives what it printed.
@@ -344,4 +344,57 @@ fn big(cx: &mut TestAppContext) {
     });
     assert_eq!(headers, 200);
     assert!(started < 20, "{started} of 200 sections read");
+}
+
+#[gpui::test]
+fn reloads_keep_to_the_read_limit(cx: &mut TestAppContext) {
+    use crate::workbench::Workbench;
+    let dir = many(12);
+    cx.update(Workbench::hold_git_work);
+    let diff = diff_of(cx, dir.path(), 0..8);
+    let started = |diff: &Entity<CommitDiff>, cx: &mut TestAppContext| {
+        diff.read_with(cx, |diff, _| diff.started().len())
+    };
+    // The listing, then the first reads, held in flight.
+    cx.update(|cx| Workbench::release_git_work(0, cx));
+    cx.run_until_parked();
+    assert_eq!(started(&diff, cx), READS);
+    assert_eq!(cx.update(Workbench::git_work_held), READS);
+
+    // Reloading twice, the new listings landing: the stale reads still hold
+    // every slot, so none starts beside them.
+    for _ in 0..2 {
+        diff.update(cx, |diff, cx| diff.reload(cx));
+        let last = cx.update(Workbench::git_work_held) - 1;
+        cx.update(|cx| Workbench::release_git_work(last, cx));
+        cx.run_until_parked();
+        assert_eq!(started(&diff, cx), READS);
+        assert_eq!(cx.update(Workbench::git_work_held), READS);
+    }
+
+    // A stale read landing frees its slot for the current work.
+    cx.update(|cx| Workbench::release_git_work(0, cx));
+    cx.run_until_parked();
+    assert_eq!(started(&diff, cx), READS + 1);
+    assert_eq!(cx.update(Workbench::git_work_held), READS);
+}
+
+#[gpui::test]
+fn blank_lines_beside_the_synthetic_row(cx: &mut TestAppContext) {
+    // A file added or deleted whose text starts with blank lines and has no
+    // final line break shows every row.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    write(root, "gone.txt", "\n\ny");
+    commit(root, "base");
+    fs::remove_file(root.join("gone.txt")).unwrap();
+    write(root, "add.txt", "\nx");
+    commit(root, "change");
+    let diff = diff_of(cx, root, 0..10);
+    cx.run_until_parked();
+    assert_eq!(
+        layout(&diff, cx),
+        ["# add.txt", "+ ", "+ x", "# gone.txt", "- ", "- ", "- y"]
+    );
 }
