@@ -30,7 +30,11 @@ type Answer = Result<Option<SemanticTokens>, LspError>;
 /// `token_type` with `modifiers`, as the name of a highlight the syntax
 /// colours use; `None` for a server's own type, which leaves the grammar's
 /// colour. Roslyn's `excludedCode` / `excluded code` (inactive `#if`
-/// branches) map to `comment`, so those rows are dimmed.
+/// branches) map to `comment`, so those rows are dimmed. Its XML doc comment
+/// types (`xmlDocCommentName` / `xml doc comment - name`, and so on) map to
+/// `tag`, `attribute`, `string`, `comment.documentation`, `comment`,
+/// `markup.raw`, `escape` and `keyword`, so a doc comment's markup is not
+/// left in comment colour.
 pub(super) fn highlight_name<M: AsRef<str>>(
     token_type: &str,
     modifiers: &[M],
@@ -76,6 +80,22 @@ pub(super) fn highlight_name<M: AsRef<str>>(
             }
         }
         "excludedCode" | "excluded code" => "comment",
+        "xmlDocCommentName" | "xml doc comment - name" => "tag",
+        "xmlDocCommentAttributeName" | "xml doc comment - attribute name" => "attribute",
+        "xmlDocCommentAttributeValue"
+        | "xml doc comment - attribute value"
+        | "xmlDocCommentAttributeQuotes"
+        | "xml doc comment - attribute quotes" => "string",
+        "xmlDocCommentDelimiter"
+        | "xml doc comment - delimiter"
+        | "xmlDocCommentText"
+        | "xml doc comment - text" => "comment.documentation",
+        "xmlDocCommentComment" | "xml doc comment - comment" => "comment",
+        "xmlDocCommentCDataSection" | "xml doc comment - cdata section" => "markup.raw",
+        "xmlDocCommentEntityReference" | "xml doc comment - entity reference" => "escape",
+        "xmlDocCommentProcessingInstruction" | "xml doc comment - processing instruction" => {
+            "keyword"
+        }
         "string" => "string",
         "formatSpecifier" => "string.placeholder",
         "escapeSequence" => "escape",
@@ -388,3 +408,7 @@ mod tests;
 #[cfg(test)]
 #[path = "lsp_semantic_tokens_inactive_tests.rs"]
 mod inactive_tests;
+
+#[cfg(test)]
+#[path = "lsp_semantic_tokens_xml_doc_tests.rs"]
+mod xml_doc_tests;
