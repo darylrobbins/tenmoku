@@ -37,16 +37,13 @@ use fe_gpui::EditorTheme;
 use fe_terminal_view::{
     CommandStatus, TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent,
 };
-use fe_ui::{
-    ActiveTheme as _, Button, Icon, IconButton, IconRef, TAB_HEIGHT, Tab, TabBar, Tooltip,
-};
+use fe_ui::{ActiveTheme as _, Icon, IconButton, IconRef, TAB_HEIGHT, Tab, TabBar, Tooltip};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
-    Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Window, div, px,
+    Render, ScrollHandle, SharedString, Styled as _, Subscription, Window, div, px,
 };
-use kiln_l10n::{Text, tr, verbatim};
+use kiln_l10n::{tr, verbatim};
 use kiln_shell::{DockItem, PanelId};
 
 use crate::{
@@ -939,7 +936,10 @@ impl TerminalPanel {
         let tip = move |title: SharedString, command: &'static str| {
             move |_: &mut Window, cx: &mut App| {
                 let key = pane_toolbar::shortcut(command, cx);
-                cx.new(|_| Tooltip::new(title.clone(), key, &ui)).into()
+                let tooltip = Tooltip::new(title.clone(), key, &ui);
+                #[cfg(test)]
+                LAST_TOOLTIP.replace(Some(tooltip.text()));
+                cx.new(|_| tooltip).into()
             }
         };
         let (new, kill) = (
@@ -960,12 +960,9 @@ impl TerminalPanel {
                 div()
                     .id("terminal-new")
                     .debug_selector(|| "terminal-new".to_owned())
-                    .tooltip(tip(new.clone(), "terminal.new"))
                     .child(
-                        Button::new("terminal-new-button", Text::verbatim("+"))
-                            .name(new)
-                            .ghost()
-                            .small()
+                        IconButton::new("terminal-new-button", Icon::Plus, new.clone(), &ui)
+                            .tooltip(tip(new, "terminal.new"))
                             .on_click(|_, window, cx| {
                                 pane_toolbar::dispatch("terminal.new", Source::Mouse, window, cx);
                             }),
@@ -1373,7 +1370,7 @@ impl PickerDelegate for RenameTerminal {
 mod terminal_rename_tests;
 #[cfg(test)]
 #[path = "terminal_tabs_tests.rs"]
-mod terminal_tabs_tests;
+pub(crate) mod terminal_tabs_tests;
 
 #[cfg(test)]
 #[path = "terminal_tab_list_tests.rs"]
@@ -1390,6 +1387,18 @@ mod terminal_shell_integration_tests;
 #[cfg(test)]
 #[path = "terminal_vi_mode_tests.rs"]
 mod terminal_vi_mode_tests;
+
+#[cfg(test)]
+thread_local! {
+    /// The text of the last strip-button tooltip built, for the tests.
+    static LAST_TOOLTIP: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The text of the last strip-button tooltip built on this thread.
+#[cfg(test)]
+pub(crate) fn last_strip_tooltip() -> Option<String> {
+    LAST_TOOLTIP.with_borrow(Clone::clone)
+}
 
 #[cfg(test)]
 #[path = "terminal_actions_tests.rs"]

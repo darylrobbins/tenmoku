@@ -380,11 +380,6 @@ file = "src/search_replace.rs"
 text = ".replace-{}-{}"
 reason = "A temporary file's name beside the one it replaces"
 
-[[literal]]
-file = "src/terminal_panel.rs"
-text = "terminal-new-button"
-reason = "The New Terminal button's element id"
-
 # The History panel's name as its SidebarPanel const declares it, by which
 # the rail orders it and tests name it: its title row is
 # workbench-git-log-history-title (HistoryPanel::title).
