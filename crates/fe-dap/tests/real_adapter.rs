@@ -110,16 +110,13 @@ impl Client {
 
     /// Reads one message from the adapter into the log and inbox.
     fn pump(&mut self) {
-        let message = self
-            .rx
-            .recv_timeout(WAIT)
-            .unwrap_or_else(|_| {
-                panic!(
-                    "adapter silent for {WAIT:?}; log: {:?}. On macOS, a native adapter hangs \
+        let message = self.rx.recv_timeout(WAIT).unwrap_or_else(|_| {
+            panic!(
+                "adapter silent for {WAIT:?}; log: {:?}. On macOS, a native adapter hangs \
                      on launch while Developer Mode is off (`DevToolsSecurity -status`)",
-                    self.log
-                )
-            });
+                self.log
+            )
+        });
         match &message {
             Message::Response(r) => self.log.push(format!("resp:{}", r.command)),
             Message::Event(e) => self.log.push(format!("evt:{}", e.event)),
@@ -277,7 +274,12 @@ fn record(adapter: &str, client: &Client, step_command: &str) {
         ),
         format!(
             "  {}",
-            rel(init_evt, launch_resp, "initialized event", "launch response")
+            rel(
+                init_evt,
+                launch_resp,
+                "initialized event",
+                "launch response"
+            )
         ),
         format!(
             "  {}",
@@ -334,7 +336,10 @@ fn run(io: AdapterIo, plan: Plan<'_>) {
     assert_eq!(set.breakpoints.len(), 1, "{set:?}");
     c.ok::<request::ConfigurationDone>(&Empty::default());
     let launch_response = c.response(launch);
-    assert!(launch_response.success, "launch failed: {launch_response:?}");
+    assert!(
+        launch_response.success,
+        "launch failed: {launch_response:?}"
+    );
 
     let stop = c.stopped();
     assert_eq!(stop.reason, "breakpoint", "{stop:?}");
@@ -377,7 +382,12 @@ fn run(io: AdapterIo, plan: Plan<'_>) {
     c.finish();
 }
 
-fn spec(name: &str, command: impl Into<PathBuf>, args: &[&str], t: AdapterTransport) -> AdapterSpec {
+fn spec(
+    name: &str,
+    command: impl Into<PathBuf>,
+    args: &[&str],
+    t: AdapterTransport,
+) -> AdapterSpec {
     AdapterSpec {
         transport: t,
         args: args.iter().map(|a| (*a).to_owned()).collect(),
