@@ -94,5 +94,6 @@ $total = <<<'SQL'
     SELECT count(*) AS total
     FROM tasks
     SQL;
+if (preg_match('/^task-[a-z]+$/i', $name, $m)) {}
 ?>
 <p>Done.</p>

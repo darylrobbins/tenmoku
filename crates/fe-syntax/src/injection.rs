@@ -303,6 +303,9 @@ struct Pattern {
     combined: bool,
     include_children: bool,
     include_gaps: bool,
+    trim_delimiters: bool,
+    /// Kinds of sibling that join a combined injection besides the content's.
+    also_kinds: Vec<Box<str>>,
 }
 
 impl InjectionQuery {
@@ -317,6 +320,13 @@ impl InjectionQuery {
                         "injection.combined" => pattern.combined = true,
                         "injection.include-children" => pattern.include_children = true,
                         "injection.include-gaps" => pattern.include_gaps = true,
+                        "injection.trim-delimiters" => pattern.trim_delimiters = true,
+                        "injection.combine-kinds" => {
+                            pattern.also_kinds = (property.value.as_deref().unwrap_or_default())
+                                .split_whitespace()
+                                .map(Box::from)
+                                .collect();
+                        }
                         _ => {}
                     }
                 }
@@ -609,6 +619,15 @@ impl Painter<'_> {
                     break;
                 }
             }
+            if pattern.trim_delimiters {
+                ranges = ranges
+                    .into_iter()
+                    .filter_map(|range| trim_delimiters(text, range))
+                    .collect();
+                if ranges.is_empty() {
+                    continue;
+                }
+            }
             // The nodes come in document order, so sorting only checks the
             // order, in time bounded by `MAX_LAYER_RANGES`.
             ranges.sort_by_key(|range| range.start);
@@ -789,7 +808,13 @@ fn match_ranges(
         let mut cursor = parent.walk();
         for sibling in parent.children(&mut cursor) {
             let collected = match gap(end, sibling.start_byte(), ranges) {
-                Collected::All if sibling.kind_id() == node.kind_id() => {
+                Collected::All
+                    if sibling.kind_id() == node.kind_id()
+                        || pattern
+                            .also_kinds
+                            .iter()
+                            .any(|kind| **kind == *sibling.kind()) =>
+                {
                     content_ranges(sibling, pattern.include_children, deadline, ranges)
                 }
                 Collected::All if out_of_time(deadline) => Collected::OutOfTime,
@@ -806,6 +831,39 @@ fn match_ranges(
         }
     }
     Collected::All
+}
+
+/// The longest delimited pattern `trim_delimiters` reads.
+const MAX_DELIMITED: usize = 4096;
+
+/// `range`, a PHP-style delimited pattern `/body/flags`, cut to `body`. The
+/// delimiter is the first byte, any punctuation but a backslash, and closes
+/// at its last occurrence (a bracket at its partner); a first byte that isn't
+/// one, a missing close, or text after it other than letters leaves `None`.
+fn trim_delimiters(text: &Text, range: Range<usize>) -> Option<Range<usize>> {
+    if range.len() < 2 || range.len() > MAX_DELIMITED {
+        return None;
+    }
+    let bytes: Vec<u8> = chunks(text, range.clone()).flatten().copied().collect();
+    let open = *bytes.first()?;
+    if !open.is_ascii_punctuation() || open == b'\\' {
+        return None;
+    }
+    let close = match open {
+        b'(' => b')',
+        b'{' => b'}',
+        b'[' => b']',
+        b'<' => b'>',
+        other => other,
+    };
+    let end = bytes
+        .iter()
+        .rposition(|&b| b == close)
+        .filter(|&at| at > 0)?;
+    bytes[end + 1..]
+        .iter()
+        .all(u8::is_ascii_alphabetic)
+        .then(|| range.start + 1..range.start + end)
 }
 
 /// Adds `range` to `ranges`, extending the last if it ends where `range`

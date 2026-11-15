@@ -14,6 +14,15 @@
 ; node of it, so `injection.include-gaps`, our own property, adds the body's
 ; bytes that no child covers. Without them the lines run together, and an
 ; SQL `--` comment swallows the next line.
+;
+; Regular expressions: the first argument of preg_match, preg_match_all,
+; preg_replace, preg_replace_callback, preg_split and preg_grep, when a plain
+; string, is injected as `regex` without its delimiters and flags
+; (`'/a+b/i'` injects `a+b`), through `injection.trim-delimiters`, our own
+; property. Limit: an escaped PHP string (single or double quoted) is injected
+; only when its content has no backslash, as only then does the host text equal
+; the regex text; `'\\d'` is two source characters. A double-quoted string
+; with an interpolation stays plain.
 
 ((comment) @injection.content
   (#set! injection.language "phpdoc"))
@@ -31,3 +40,17 @@
   (heredoc_end) @injection.language
   (#set! injection.combined)
   (#set! injection.include-gaps))
+
+(function_call_expression
+  function: (name) @_fn
+  arguments: (arguments
+    .
+    (argument
+      [
+        (string . (string_content) @injection.content .)
+        (encapsed_string . (string_content) @injection.content .)
+      ]))
+  (#any-of? @_fn "preg_match" "preg_match_all" "preg_replace" "preg_replace_callback" "preg_split" "preg_grep")
+  (#not-match? @injection.content "\\\\")
+  (#set! injection.language "regex")
+  (#set! injection.trim-delimiters))

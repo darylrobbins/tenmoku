@@ -709,6 +709,8 @@ fn combined_templates_stop_at_the_deadline() {
         combined: true,
         include_children: true,
         include_gaps: false,
+        trim_delimiters: false,
+        also_kinds: Vec::new(),
     };
     let collected = Cell::new(0);
     let mut collect = || {
@@ -1012,4 +1014,77 @@ fn go_format_scan_stops_at_the_deadline() {
         let (complete, _) = with_deadline_after(after, paint);
         assert!(!complete, "deadline after {after} checks");
     }
+}
+
+/// `injection.trim-delimiters` cuts `/body/flags` to `body`, with any
+/// punctuation delimiter and a bracket's partner; text that isn't a delimited
+/// pattern is left out.
+#[test]
+fn trim_delimiters_cuts_a_pattern_to_its_body() {
+    let trim = |s: &str| {
+        let buffer = Buffer::new(s);
+        let snapshot = buffer.current();
+        super::trim_delimiters(snapshot.text(), 0..s.len()).map(|range| s[range].to_string())
+    };
+    assert_eq!(trim("/a+b/i").as_deref(), Some("a+b"));
+    assert_eq!(trim("#x(y)#").as_deref(), Some("x(y)"));
+    assert_eq!(trim("{a|b}u").as_deref(), Some("a|b"));
+    assert_eq!(trim("/a/b/").as_deref(), Some("a/b"));
+    assert_eq!(trim("//").as_deref(), Some(""));
+    assert_eq!(trim("_a+b_i").as_deref(), Some("a+b"));
+    assert_eq!(trim("abc"), None);
+    assert_eq!(trim("/abc"), None);
+    assert_eq!(trim("/a/ b"), None);
+    assert_eq!(trim("/"), None);
+}
+
+/// The Ruby extension's injection query, run on the native grammar: a regex
+/// literal is a regex, escapes included, with its delimiters, flags and
+/// interpolations left to Ruby.
+#[test]
+#[cfg(all(feature = "ruby", feature = "regex"))]
+fn the_ruby_extension_query_injects_regex_literals() {
+    let language: &'static Language = Box::leak(Box::new(
+        Language::new(
+            "ruby-extension-test",
+            tree_sitter_ruby::LANGUAGE.into(),
+            tree_sitter_ruby::HIGHLIGHTS_QUERY,
+            false,
+            Some(include_str!(
+                "../../../../extensions/grammars/ruby/injections.scm"
+            )),
+        )
+        .map_err(|(_, error)| error)
+        .unwrap(),
+    ));
+    let text = "x = /\\d+[\\]a]/i\ny = %r{a|b}\nz = /a#{n}+b/\n";
+    let mut syntax = Syntax::new(language, Buffer::new(text).current());
+    syntax.finish(syntax.parse_job().run_until(|_| || false));
+    let found: Vec<_> = syntax
+        .highlights_compiling(0..text.len())
+        .into_iter()
+        .map(|span| (text[span.range].to_string(), span.highlight.name()))
+        .collect();
+    let has = |t: &str, h: &str| found.iter().any(|(a, b)| a == t && *b == h);
+    assert!(has("\\d", "escape"), "{found:?}");
+    assert!(has("+", "operator"), "{found:?}");
+    assert!(has("\\]", "escape"), "{found:?}");
+    assert!(has("|", "operator"), "{found:?}");
+    assert!(
+        has("/i", "string.special") || has("/", "string.special"),
+        "{found:?}"
+    );
+    // The interpolation stays Ruby: `n` is not a regex literal character.
+    assert!(
+        !found
+            .iter()
+            .any(|(t, h)| t == "n" && *h == "string.special"),
+        "{found:?}"
+    );
+    // Without the injection, `+` is plain string text.
+    let plain = spans("ruby", "x = /\\d+/i\n");
+    assert!(
+        !plain.iter().any(|(t, h)| t == "+" && *h == "operator"),
+        "{plain:?}"
+    );
 }

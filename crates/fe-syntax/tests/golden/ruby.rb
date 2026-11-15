@@ -82,3 +82,5 @@ if __FILE__ == $PROGRAM_NAME
   puts JSON.pretty_generate(book.to_h)
   puts book.balance("ABC-1") > 0 ? 'in stock' : "out"
 end
+puts 'ABC-1'.match?(/\A[A-Z]+-\d+\z/i)
+puts 'x'.sub(%r{a|b}, '')
