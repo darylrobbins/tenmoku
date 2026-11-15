@@ -66,6 +66,19 @@ impl Workbench {
             shell.set_title_bar_items(items, cx);
             shell.set_title_bar(shown, cx);
         });
+        self.own_title_bar = shown;
+        self.sync_agents_status(cx);
+    }
+
+    /// Sets or removes the `agents` status item to follow the lanes
+    /// Working: only where the platform draws the title bar, as the
+    /// unified one has the chip.
+    pub(crate) fn sync_agents_status(&mut self, cx: &mut Context<Self>) {
+        let working = self.lanes.read(cx).counts().working;
+        let shown = if self.own_title_bar { 0 } else { working };
+        self.status_bar()
+            .clone()
+            .update(cx, |bar, cx| bar.set_agents(shown, cx));
     }
 
     /// Presses the run widget's play, without the read it waits for.
@@ -82,6 +95,8 @@ impl Workbench {
             project: title_bar::name(self.root.as_deref()),
             branch: self.title_branch.clone(),
             tracking: self.title_upstream.clone(),
+            // Read from the lanes as the bar draws ([`title_bar::items`]).
+            working: 0,
         }
     }
 

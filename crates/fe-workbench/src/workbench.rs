@@ -293,6 +293,9 @@ pub struct Workbench {
     /// The upstream of the branch the title bar shows, which its tooltip
     /// names (`git_branch`).
     title_upstream: crate::title_bar::Tracking,
+    /// Whether the title bar is the unified one Tenmoku draws, which has
+    /// the agents chip; else the `agents` status item does.
+    own_title_bar: bool,
     /// What the active pane's symbol chain was last worked out for: the
     /// pane, the editor, its caret and the outline: `None` if none can come
     /// (plain text, an unsupported language, a file too large), `Some(None)`
@@ -822,6 +825,7 @@ impl Workbench {
             nav: NavButtons::default(),
             title_branch: None,
             title_upstream: crate::title_bar::Tracking::Detached,
+            own_title_bar: false,
             chain_key: None,
             _outline: cx.observe(&outline, |_, _, cx| cx.notify()),
             #[cfg(test)]
@@ -857,6 +861,12 @@ impl Workbench {
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
         title_bar::record_requests(cx);
+        // The chip and the status item follow the lanes Working.
+        cx.observe(&workbench.lanes, |workbench, _, cx| {
+            workbench.sync_agents_status(cx);
+            cx.notify();
+        })
+        .detach();
         workbench.pane_added(&pane, window, cx);
         workbench.track_editors(cx);
         workbench.follow_trust(window, cx);

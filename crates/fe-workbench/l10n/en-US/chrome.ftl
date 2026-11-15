@@ -15,6 +15,12 @@ workbench-chrome-branch = Branch: { $name }
 # The same with how far the branch is from its upstream: $counts is `↑2 ↓1`.
 workbench-chrome-branch-synced = Branch: { $name } { $counts }
 workbench-chrome-branches-menu = Branches…
+# The chip after the branch while agents work; a click shows the Agents panel.
+# $count is how many lanes are Working.
+workbench-chrome-agents-working = { $count ->
+    [one] { $count } agent working
+   *[other] { $count } agents working
+}
 workbench-chrome-go-to-file = Go to File
 workbench-chrome-settings = Settings
 

@@ -40,7 +40,7 @@ use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
 use fe_gpui::{EditorView, commands::RunCommand, pane_item::status as built_in};
-use fe_ui::StatusBarFrame;
+use fe_ui::{ActiveTheme as _, StatusBarFrame};
 use gpui::{
     App, AppContext as _, Context, Entity, Global, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Subscription, WeakEntity, Window, div,
@@ -122,9 +122,48 @@ impl StatusItem {
     /// The language's name, `Plain Text`, or `…` while it loads; a click
     /// runs `language.select`: priority 500.
     pub const LANGUAGE: &str = built_in::LANGUAGE;
+    /// `1 agent working` / `N agents working`, where the platform draws the
+    /// title bar (the unified one has the chip): on the left, priority
+    /// [`AGENTS_PRIORITY`], after the operation in progress.
+    pub const AGENTS: &str = verbatim!("agents");
     /// The notification bell, an icon with no text, last on the right; a
     /// click runs `notifications.show`: priority [`BELL_PRIORITY`].
     pub const NOTIFICATIONS: &str = verbatim!("notifications");
+}
+
+/// The agents item's priority: after vim's message, which the operation in
+/// progress precedes.
+pub(crate) const AGENTS_PRIORITY: i32 = 20;
+
+/// The agents item for `working` lanes Working, which opens the Agents
+/// panel: the robot head and the text in the theme's `agent.base`, on its
+/// soft ground, never the accent; none at zero.
+pub(crate) fn agents_item(
+    working: usize,
+    agent: gpui::Hsla,
+    soft: gpui::Hsla,
+) -> Option<kiln_shell::StatusItem> {
+    if working == 0 {
+        return None;
+    }
+    let text = tr!("workbench-status-agents-working", count = working);
+    let show = Invocation::of(crate::agents_panel::SHOW_COMMAND).expect("a valid command ID");
+    let fill = kiln::ui::StatusFill {
+        background: soft,
+        foreground: agent,
+    };
+    Some(
+        kiln_shell::StatusItem::new(
+            StatusItem::AGENTS,
+            StatusSide::Left,
+            AGENTS_PRIORITY,
+            text.clone(),
+        )
+        .icon(fe_ui::Icon::Bot)
+        .fill(fill)
+        .name(text)
+        .command(show),
+    )
 }
 
 /// The bell's priority: after every other item on the right.
@@ -171,6 +210,8 @@ pub struct StatusBar {
     /// How many notifications need the user, for the bell; no bell before
     /// the workbench says ([`StatusBar::set_bell`]).
     bell: Option<usize>,
+    /// The lanes Working, for the `agents` item ([`StatusBar::set_agents`]).
+    agents: usize,
     /// The operation in progress, after the vim mode, while one runs
     /// ([`StatusBar::set_operations`]).
     operations: Option<Running>,
@@ -200,6 +241,15 @@ impl StatusBar {
     pub(crate) fn set_bell(&mut self, needs_you: usize, cx: &mut Context<Self>) {
         if self.bell != Some(needs_you) {
             self.bell = Some(needs_you);
+            cx.notify();
+        }
+    }
+
+    /// Shows the `agents` item for `working` lanes Working, none at zero;
+    /// made as the bar renders, in the theme then.
+    pub(crate) fn set_agents(&mut self, working: usize, cx: &mut Context<Self>) {
+        if self.agents != working {
+            self.agents = working;
             cx.notify();
         }
     }
@@ -289,7 +339,9 @@ impl StatusBar {
     /// Every item to draw, sorted: the item's, with the editor's macro
     /// recording and the bell, and the host's over them.
     pub(crate) fn items(&self, cx: &App) -> Vec<kiln_shell::StatusItem> {
-        let bell = self.bell.map(bell_item);
+        let colors = &cx.theme().colors;
+        let agents = agents_item(self.agents, colors.agent.base, colors.agent.soft);
+        let bell = self.bell.map(bell_item).into_iter().chain(agents);
         let Some(item) = self.item.as_deref() else {
             return self.items.merged(bell);
         };

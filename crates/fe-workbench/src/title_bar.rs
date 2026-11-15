@@ -10,6 +10,10 @@
 //!   when detached), its marks and ahead/behind counts (`git_branch`) and a
 //!   chevron, which opens the branches menu under it (`git.branches_menu`),
 //!   shown only in a repository; its tooltip names the branch's upstream.
+//!   After the branch, while any agent lane is Working, the chip `N agents
+//!   working` in `agent.base` (never the accent), which shows the Agents
+//!   panel (`agent.show_panel`). Where the platform draws the title bar the
+//!   `agents` status item says the same ([`crate::status_bar::agents_item`]).
 //! - **Right**: search, which runs `quick_open.toggle` as its key does
 //!   (Go to File, and the palette by its prefixes), and a settings gear
 //!   (`workbench.open_settings_ui`).
@@ -66,6 +70,9 @@ pub(crate) struct State {
     pub(crate) branch: Option<SharedString>,
     /// How the branch stands with its upstream.
     pub(crate) tracking: Tracking,
+    /// The lanes Working ([`fe_editor::lane::LaneCounts::working`]): the
+    /// chip after the branch, none at zero.
+    pub(crate) working: usize,
 }
 
 /// Whether HEAD's branch has an upstream, and how far it is from it.
@@ -94,6 +101,8 @@ thread_local! {
     pub(crate) static LAST_TOOLTIP: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     /// Each button the bar last drew, left to right: its id and its
     /// accessible name.
+    /// The colour the agents chip last drew its text in.
+    pub(crate) static CHIP_COLOR: std::cell::Cell<Option<gpui::Hsla>> = const { std::cell::Cell::new(None) };
     pub(crate) static DRAWN: std::cell::RefCell<Vec<(&'static str, SharedString)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -137,7 +146,10 @@ pub(crate) fn name(root: Option<&Path>) -> SharedString {
 pub(crate) fn items(workbench: WeakEntity<Workbench>) -> TitleBarItems {
     let state = move |cx: &App| {
         let workbench = workbench.upgrade()?;
-        Some(workbench.read(cx).title_bar_state())
+        let workbench = workbench.read(cx);
+        let mut state = workbench.title_bar_state();
+        state.working = workbench.lanes.read(cx).counts().working;
+        Some(state)
     };
     let state = Rc::new(state);
     let left: TitleBarSlot = Rc::new({
@@ -274,9 +286,56 @@ fn left(state: &State, cx: &App) -> AnyElement {
                 .items_center()
                 .gap(GAP)
                 .child(project)
-                .children(branch),
+                .children(branch)
+                .children(chip(state.working, cx)),
         )
         .into_any_element()
+}
+
+/// The agents chip for `working` lanes Working, which shows the Agents
+/// panel; none at zero.
+fn chip(working: usize, cx: &App) -> Option<gpui::Stateful<gpui::Div>> {
+    use fe_ui::ActiveTheme as _;
+    if working == 0 {
+        return None;
+    }
+    let text = tr!("workbench-chrome-agents-working", count = working);
+    let colors = &cx.theme().colors;
+    let agent = colors.agent.base;
+    #[cfg(test)]
+    {
+        DRAWN.with_borrow_mut(|drawn| drawn.push(("title-agents", text.clone())));
+        CHIP_COLOR.set(Some(agent));
+    }
+    let hover = colors.state.hover;
+    let command = crate::agents_panel::SHOW_COMMAND;
+    Some(
+        div()
+            .id("title-agents")
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(4.))
+            .px(px(8.))
+            .h(px(24.))
+            .rounded(px(4.))
+            .cursor_pointer()
+            .whitespace_nowrap()
+            .text_size(px(12.))
+            .text_color(agent)
+            .hover(move |style| style.bg(hover))
+            .debug_selector(|| "title-agents".into())
+            .tooltip(tooltip(text.clone(), command))
+            .on_click(move |_, window, cx| run(command, window, cx))
+            .child(
+                gpui::svg()
+                    .path(Icon::Bot.path())
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(agent),
+            )
+            .child(text),
+    )
 }
 
 /// Search and the settings gear.

@@ -10,6 +10,13 @@ workbench-status-recording = recording @{ $register }
 # The encoding item's tooltip; a click opens the encoding picker.
 workbench-status-select-encoding = Select Encoding
 
+# The agents item, where the platform draws the title bar: the same count as
+# the title bar's chip. $count is how many lanes are Working.
+workbench-status-agents-working = { $count ->
+    [one] { $count } agent working
+   *[other] { $count } agents working
+}
+
 ## Vim's command line (vim_line.rs)
 
 # The mode pill before the line's `:`, `/` or `?`, in capitals as vim's
