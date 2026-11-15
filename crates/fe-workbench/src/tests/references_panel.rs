@@ -299,7 +299,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
     let rail = [
         Icon::Files,
         Icon::Search,
-        Icon::GitBranch,
+        Icon::FileDiff,
         Icon::Bot,
         Icon::TriangleAlert,
         Icon::ListVideo,

@@ -263,7 +263,7 @@ fn buttons_draw_lucide_icons(cx: &mut TestAppContext) {
     let icons = [
         Icon::Files,
         Icon::Search,
-        Icon::GitBranch,
+        Icon::FileDiff,
         Icon::Bot,
         Icon::TriangleAlert,
         Icon::ListVideo,

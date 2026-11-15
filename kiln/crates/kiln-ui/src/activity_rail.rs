@@ -3,12 +3,12 @@
 use gpui::{
     AnyView, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
     Pixels, RenderOnce, Role, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, deferred, div, prelude::FluentBuilder as _, px, svg,
+    Styled as _, Window, div, prelude::FluentBuilder as _, px, svg,
 };
 use kiln_l10n::tr;
 
 use crate::{
-    ActiveTheme as _, BADGE_OVERHANG, BADGE_RING, Badge, ClickHandler, Icon, States, UiTheme,
+    ActiveTheme as _, BADGE_OVERHANG, Badge, ClickHandler, Icon, States, UiTheme,
     controls::assert_named, node, node_with,
 };
 
@@ -29,10 +29,6 @@ const RAIL_PADDING: Pixels = px(4.);
 /// How far a badge's outer edge, its ring's, sits inside its button's
 /// right edge: clear of a left rail's selection bar.
 const BADGE_RIGHT: Pixels = px(3.);
-/// A count badge's fill's height and a dot's, inside their rings, as
-/// kiln-ui's `Badge` draws them.
-const BADGE_COUNT: Pixels = px(14.);
-const BADGE_DOT: Pixels = px(6.);
 
 type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView>;
 
@@ -280,28 +276,21 @@ impl RenderOnce for RailButton {
             true => colors.surface.chrome.blend(tint),
             false => colors.surface.chrome,
         };
-        // Its fill's top on the icon's bottom, its right edge
-        // `BADGE_RIGHT` inside the button's: below the glyph, never over
-        // it, its ring alone touching the icon's box. A count's runs into
-        // the space above the next button's icon, so it paints after the
-        // rail's buttons. `Badge` puts itself on its host's bottom-right
-        // corner, `BADGE_OVERHANG` past it.
+        // On the icon's bottom-right corner, its right edge `BADGE_RIGHT`
+        // inside the button's and its ring's bottom on the button's: it may
+        // cover the glyph's corner (the ring cuts it out) but never crosses
+        // into the next button. It's an ordinary child, painted in the
+        // button, so it stacks with the rail and not above the workbench's
+        // overlays. `Badge` puts itself on its host's bottom-right corner,
+        // `BADGE_OVERHANG` past it.
         let badge = self.badge.map(|badge| {
-            let fill = if badge.text().is_some() {
-                BADGE_COUNT
-            } else {
-                BADGE_DOT
-            };
-            let top = (Self::HEIGHT + ICON_SIZE) / 2. - BADGE_RING;
-            let bottom = top + fill + BADGE_RING * 2.;
-            let host = div()
+            div()
                 .absolute()
                 .top_0()
                 .left_0()
                 .w(RAIL_WIDTH - BADGE_RIGHT - BADGE_OVERHANG)
-                .h(bottom - BADGE_OVERHANG)
-                .child(badge.surface(surface));
-            deferred(host)
+                .h(Self::HEIGHT - BADGE_OVERHANG)
+                .child(badge.surface(surface))
         });
         let button = div()
             .id(self.id)

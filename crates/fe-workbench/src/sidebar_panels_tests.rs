@@ -47,7 +47,7 @@ fn base() -> [(
             DockPanel::SourceControl,
             "Changes",
             "scm",
-            Icon::GitBranch,
+            Icon::FileDiff,
             "git.show_changes",
             DockOp::ShowChanges,
         ),
@@ -71,7 +71,7 @@ fn base() -> [(
             DockPanel::History,
             "History",
             "history",
-            Icon::FileDiff,
+            Icon::FileClock,
             "git.file_history",
             DockOp::ShowHistory,
         ),
@@ -255,7 +255,7 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
     let top = [
         (DockPanel::Explorer, Icon::Files),
         (DockPanel::Search, Icon::Search),
-        (DockPanel::SourceControl, Icon::GitBranch),
+        (DockPanel::SourceControl, Icon::FileDiff),
         (DockPanel::Chat, Icon::Bot),
     ];
     // The foot's buttons are the bottom panel's (T1548), not panels.
@@ -282,7 +282,7 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
     assert_eq!(shown(&workbench, cx).1, DockPanel::References);
 
     dispatch("git.file_history", cx);
-    let history = (DockPanel::History, Icon::FileDiff);
+    let history = (DockPanel::History, Icon::FileClock);
     let with_history = [top.as_slice(), &[references, history], &foot].concat();
     assert_eq!(rail(&workbench, cx), with_history);
     assert_eq!(
@@ -394,7 +394,7 @@ mod git_log_rail_tests {
             ]
         );
         let icons = distinct(cx);
-        assert_eq!(icons[2], Icon::GitBranch);
+        assert_eq!(icons[2], Icon::FileDiff);
 
         dispatch("git.log", cx);
         distinct(cx);

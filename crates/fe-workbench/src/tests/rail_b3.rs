@@ -138,7 +138,7 @@ fn top_and_foot_groups_in_order(cx: &mut TestAppContext) {
     let dock = dock(&workbench, cx);
     let names: Vec<_> = (DockPanel::ALL.iter()).map(|panel| panel.name()).collect();
     assert_eq!(names, ["Project", "Search", "Changes", "Chat"]);
-    let top = [Icon::Files, Icon::Search, Icon::GitBranch, Icon::Bot];
+    let top = [Icon::Files, Icon::Search, Icon::FileDiff, Icon::Bot];
     let foot = [
         Icon::TriangleAlert,
         Icon::ListVideo,
@@ -246,20 +246,16 @@ fn changes_counts_the_changed_files(cx: &mut TestAppContext) {
     let expected = RailBadge::count(3, BadgeTone::Modified, "3 changed files");
     assert_eq!(badges(&dock, cx), [(CHANGES, expected)]);
 
-    // Below the icon's bottom-right corner, its fill clear of the glyph,
-    // inside the rail.
+    // On the icon's bottom-right corner, inside its own button.
     let changes = button(&dock, CHANGES, cx);
     let badge = cx.debug_bounds("badge").expect("drawn");
     let icon = cx
         .debug_bounds("rail-icon:dock-rail-2")
         .expect("Changes' icon");
-    let ring = fe_ui::BADGE_RING;
     assert!(changes.contains(&badge.origin), "{badge:?} in {changes:?}");
-    assert!(
-        badge.top() + ring >= icon.bottom(),
-        "{badge:?} under {icon:?}"
-    );
+    assert!(badge.bottom() <= changes.bottom());
     assert!(badge.right() > icon.right() && badge.right() < changes.right());
+    assert!(badge.center().y > icon.center().y);
 
     // Committed, there's no count.
     git(dir.path(), &["add", "-A"]);

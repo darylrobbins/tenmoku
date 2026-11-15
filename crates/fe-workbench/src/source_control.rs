@@ -19,7 +19,7 @@ use crate::GitPanel;
 pub(crate) const SIDEBAR: super::SidebarPanel = super::SidebarPanel {
     panel: crate::DockPanel::new("scm"),
     name: "Changes",
-    icon: fe_ui::Icon::GitBranch,
+    icon: fe_ui::Icon::FileDiff,
     show_command: "git.show_changes",
     show_op: super::DockOp::ShowChanges,
     order: 40,

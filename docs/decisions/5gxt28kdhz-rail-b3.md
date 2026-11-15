@@ -23,16 +23,7 @@ touched beyond its scope list, with why.
 - **Badges.** The host sets them (`DockState::set_badge` with a
   `kiln_shell::dock::RailBadge`), not each `DockItem`, because Changes is a
   `ViewContainer`, kiln-shell's own `DockItem`, which fastedit can't
-  extend. A badge's fill starts at the icon's bottom edge, its right edge
-  3 px inside the button's (clear of a left rail's 2 px bar), so no fill
-  covers the glyph (review F1, round 1: the first placement put a count's
-  fill over the icon's corner). A 32 px item has 8 px under a centred
-  16 px icon, so a count (14 px plus its ring) runs into the space above
-  the next button's icon, ending at that icon's box; it is painted
-  deferred, after the rail's buttons, so the next button's hover or
-  selection can't cover it. kiln-shell's `badges_stay_clear_of_the_glyphs`
-  renders 3, 42, 99+ and a dot on both sides and checks the fill against
-  the icon's box and the next icon's. Its ring is the chrome, blended
+  extend. **T1829 revises the placement:** the design system says a badge sits at the icon's bottom-right corner with a 2 px cut-out ring and "never on top of the glyph", which this reads as never over the glyph's middle; the ring exists to cut the corner. The ring's bottom now sits on the button's bottom edge and its right edge 3 px inside the button's, so a badge stays wholly inside its own button, never reaches the next one (the Changes count had read as the Chat button's), and stacked badges never touch. It is an ordinary child of the button, no longer deferred (T1540 F2: deferred painting put it above the setup wizard's scrim). Changes uses `Icon::FileDiff`. `badges_stay_clear_of_the_glyphs` and `rail_badge_placement` pin this. Its ring is the chrome, blended
   with the selection's tint under a highlighted button. Each badge is a named status node
   ("3 changed files", "2 errors").
 - **Accessibility.** Rail buttons are now `Role::Button` with the panel's

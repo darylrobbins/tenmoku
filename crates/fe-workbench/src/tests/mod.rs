@@ -130,6 +130,7 @@ mod project_undo;
 pub(crate) mod quick_open;
 mod quick_open_races;
 mod rail_b3;
+mod rail_badge_placement;
 mod references_landing;
 mod references_panel;
 mod restore_lsp_clean;

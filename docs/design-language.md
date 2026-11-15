@@ -527,7 +527,7 @@ By use, the literal sizes were 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and
 
 | Size | Where | Tint | Source |
 | --- | --- | --- | --- |
-| 16 | Activity rail (in a 32 box): top Files, Search, GitBranch, Bot, then the panels that join once shown (FileSymlink references, FileDiff AI changes, ListTree hierarchy, List quickfix); foot TriangleAlert (Problems), GitGraph, FileTerminal | `tab.active_text` highlighted, else `list.icon` | `kiln/crates/kiln-ui/src/activity_rail.rs:ICON_SIZE`, `RailButton` |
+| 16 | Activity rail (in a 32 box): top Files, Search, FileDiff (Changes), Bot, then the panels that join once shown (FileSymlink references, FileClock History, T1829 (AI Changes stays off the rail: its `DockItem` is registered `off_rail` in `dock.rs`), ListTree hierarchy, List quickfix); foot TriangleAlert (Problems), GitGraph, FileTerminal | `tab.active_text` highlighted, else `list.icon` | `kiln/crates/kiln-ui/src/activity_rail.rs:ICON_SIZE`, `RailButton` |
 | 16 | Tree rows | `list.icon`, `list.folder_icon`; chevron `list.chevron`; an unreadable row `status.error` | `kiln/crates/kiln-ui/src/tree_row.rs:ICON_SIZE`, `TreeRow` |
 | 16 | Icon buttons (in a 22 box) | `list.icon`, disabled `text.muted` | `kiln/crates/kiln-ui/src/icon_button.rs:IconButton` |
 | 14 | Status bar | The entry's | `kiln/crates/kiln-ui/src/status_bar.rs:ICON_SIZE` |
@@ -691,7 +691,7 @@ list for it; the hard-coded colours below are in things that scene doesn't draw.
   from `crates/fe-workbench/src/dock.rs` (Problems, Git log, Terminal). They differ from
   the design's rail (`docs/design/design-system.md`): there's no Runs button (the title
   bar's run widget, T1539, is the only entry point), the Agents button is the chat
-  panel's Bot, and Changes is a Git branch rather than its own glyph.
+  panel's Bot, and Changes is FileDiff (T1829).
 - ~~Strokes of mixed weight (Lucide's 2).~~ Closed by T1516: every icon is drawn at
   1.75, which a test enforces.
 - Icons sized by a bare literal at the use, beside those constants, as in

@@ -164,9 +164,9 @@ fn the_rail_has_one_source_control_button(cx: &mut TestAppContext) {
     // The Git log's is the rail action's alone, at the foot.
     let graphs = icons.iter().filter(|icon| **icon == Icon::GitGraph);
     assert_eq!(graphs.count(), 1, "{icons:?}");
-    let branches = icons.iter().filter(|icon| **icon == Icon::GitBranch);
+    let branches = icons.iter().filter(|icon| **icon == Icon::FileDiff);
     assert_eq!(branches.count(), 1, "{icons:?}");
-    assert_eq!(icons[2], Icon::GitBranch);
+    assert_eq!(icons[2], Icon::FileDiff);
     assert_eq!(DockPanel::SourceControl.name(), "Changes");
     assert_eq!(tooltip_title, "Changes");
 

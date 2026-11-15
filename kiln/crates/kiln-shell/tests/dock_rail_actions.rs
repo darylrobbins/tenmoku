@@ -395,14 +395,13 @@ fn badges_stay_clear_of_the_glyphs(cx: &mut TestAppContext) {
             let below = cx.debug_bounds("rail-icon:dock-rail-1").expect("log's icon");
             let at = format!("{position:?} {name}: {fill:?}, icon {icon:?}");
             assert_eq!(icon.size, gpui::size(px(16.), px(16.)), "{at}");
-            assert!(!overlap(fill, icon), "{at}");
             assert!(!overlap(outer, below), "{at}, next icon {below:?}");
-            // Bottom-right of the icon, inside the rail and clear of its
-            // selection bar on either side.
-            assert!(fill.right() > icon.center().x && fill.top() >= icon.bottom(), "{at}");
+            // Bottom-right of the icon (the ring may cut its corner), inside
+            // its own button and the rail, clear of the selection bar.
+            assert!(fill.right() > icon.center().x && fill.bottom() > icon.bottom(), "{at}");
+            assert!(outer.bottom() <= notes.bottom(), "{at}");
             assert!(outer.left() >= rail.left() + px(2.), "{at}");
             assert!(outer.right() <= rail.right() - px(2.), "{at}");
-            assert!(fill.top() < notes.bottom(), "{at}");
         }
     }
 }

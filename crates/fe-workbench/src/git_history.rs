@@ -62,7 +62,7 @@ use crate::{Pane, Workbench, dock::DockOp, git};
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("history"),
     name: "History",
-    icon: fe_ui::Icon::FileDiff,
+    icon: fe_ui::Icon::FileClock,
     show_command: "git.file_history",
     show_op: crate::dock::DockOp::ShowHistory,
     order: 70,
