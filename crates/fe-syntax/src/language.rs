@@ -892,7 +892,7 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
-        injections: None,
+        injections: Some(include_str!("../queries/java-injections.scm")),
         hidden: false,
     },
     // An extension by default (T427): built in only with the `ruby` feature.
@@ -964,7 +964,7 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
-        injections: None,
+        injections: Some(include_str!("../queries/csharp-injections.scm")),
         hidden: false,
     },
     // An extension by default (T427): built in only with the `scala` feature.

@@ -7,6 +7,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * Keeps the most recent events, dropping the oldest when full.
@@ -37,6 +38,7 @@ public final class EventLog<E extends EventLog.Event> implements Iterable<E> {
     private static final int DEFAULT_CAPACITY = 1_024;
 
     private final Deque<E> events = new ArrayDeque<>();
+    private static final Pattern LEVEL = Pattern.compile("warn|error+");
     private final int capacity;
     private volatile long dropped;
 

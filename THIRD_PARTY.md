@@ -118,11 +118,11 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | css | tree-sitter-css | 0.25.0 | https://github.com/tree-sitter/tree-sitter-css | MIT | `HIGHLIGHTS_QUERY` |
 | yaml | tree-sitter-yaml | 0.7.2, patched² | https://github.com/tree-sitter-grammars/tree-sitter-yaml | MIT | `HIGHLIGHTS_QUERY` |
 | markdown | tree-sitter-md | 0.5.3 | https://github.com/tree-sitter-grammars/tree-sitter-markdown | MIT | `HIGHLIGHT_QUERY_BLOCK`¹, then one pattern of ours⁹; `INJECTION_QUERY_BLOCK`. Inline grammar (`INLINE_LANGUAGE`, our `markdown_inline`): `HIGHLIGHT_QUERY_INLINE`¹; `INJECTION_QUERY_INLINE` |
-| java | tree-sitter-java | 0.23.5 | https://github.com/tree-sitter/tree-sitter-java | MIT | `HIGHLIGHTS_QUERY`, then `queries/java.scm` |
+| java | tree-sitter-java | 0.23.5 | https://github.com/tree-sitter/tree-sitter-java | MIT | `HIGHLIGHTS_QUERY`, then `queries/java.scm`; `queries/java-injections.scm` (ours) |
 | ruby | tree-sitter-ruby | 0.23.1 | https://github.com/tree-sitter/tree-sitter-ruby | MIT | `HIGHLIGHTS_QUERY`, then `queries/ruby.scm`⁴ |
 | lua | tree-sitter-lua | 0.5.0 | https://github.com/tree-sitter-grammars/tree-sitter-lua | MIT | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
 | php | tree-sitter-php | 0.24.2 | https://github.com/tree-sitter/tree-sitter-php | MIT | `HIGHLIGHTS_QUERY`; `queries/php-injections.scm`⁸ (grammar `LANGUAGE_PHP`) |
-| csharp | tree-sitter-c-sharp | 0.23.5 | https://github.com/tree-sitter/tree-sitter-c-sharp | MIT | `HIGHLIGHTS_QUERY` |
+| csharp | tree-sitter-c-sharp | 0.23.5 | https://github.com/tree-sitter/tree-sitter-c-sharp | MIT | `HIGHLIGHTS_QUERY`; `queries/csharp-injections.scm` (ours) |
 | scala | tree-sitter-scala | 0.26.2 | https://github.com/tree-sitter/tree-sitter-scala | MIT | `HIGHLIGHTS_QUERY` |
 | xml | tree-sitter-xml | 0.7.0 | https://github.com/tree-sitter-grammars/tree-sitter-xml | MIT | `XML_HIGHLIGHT_QUERY` (grammar `LANGUAGE_XML`), then `queries/xml.scm` |
 | swift | tree-sitter-swift | 0.7.3 | https://github.com/alex-pinkus/tree-sitter-swift | MIT | `HIGHLIGHTS_QUERY` |

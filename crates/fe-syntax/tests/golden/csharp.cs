@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace Golden.Metrics;
@@ -25,6 +26,8 @@ public sealed class WindowCounter<TKey> where TKey : notnull
     }
 
     public int Capacity { get; }
+
+    public static bool IsKey(string text) => Regex.IsMatch(text, @"^[a-z]\d+$");
 
     public bool Record(TKey key, DateTime? at = null)
     {
