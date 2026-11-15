@@ -176,12 +176,14 @@ pub struct Created {
 /// [`create_file`], or with `folder` [`create_dir`], saying what it made.
 ///
 /// **Known limit** (same-user races are outside fs_ops's threat model,
-/// as its create and copy cleanup and the Trash already assume; narrowing
-/// it is T1778): a folder's identity is looked up through its
-/// parent's handle right after `mkdir` makes it (as the cleanup should a
-/// create fail already does), so a folder another process of the same user
-/// swaps in at that instant is recorded as made. Undoing the create then
-/// moves that folder to the Trash: never deleted, and redo puts it back.
+/// as its create and copy cleanup and the Trash already assume): no call
+/// makes a folder and opens it at once, so a folder made is looked up by
+/// name right after `mkdir`, and counts as made only once a handle opened
+/// on it agrees and finds it empty; one that doesn't is never recorded, and
+/// the create fails ([`io::ErrorKind::AlreadyExists`]). A folder another
+/// process of the same user swaps in at that instant is still taken for
+/// the create's should it be empty too. Undoing the create then moves that
+/// folder to the Trash: never deleted, and redo puts it back.
 pub fn create_recorded(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<Created> {
     create_recorded_with(root, dir, name, b"", folder)
 }
@@ -251,15 +253,10 @@ fn create(
         for (at, name) in above.iter().enumerate().skip(existing) {
             match mkdir_at(&parent, name, 0o777) {
                 Ok(()) => {
-                    let id = listing::stat_at(&parent, name)?.id;
+                    reach(Point::Recording)?;
+                    let (id, dir) = confirm_made_dir(&parent, name)?;
                     first_made.get_or_insert((at, id));
                     made.push((parent, name, id));
-                    let (above, _, _) = made.last().expect("just pushed");
-                    reach(Point::Opening)?;
-                    let dir = open_subdir(above, name)?;
-                    if listing::identity(&dir)? != id {
-                        return Err(replaced());
-                    }
                     parent = dir;
                 }
                 // Made since it was looked for: use it, but it isn't ours.
@@ -272,7 +269,8 @@ fn create(
         reach(Point::Parents)?;
         if folder {
             mkdir_at(&parent, last, 0o777)?;
-            Ok(listing::stat_at(&parent, last)?.id)
+            reach(Point::Recording)?;
+            confirm_made_dir(&parent, last).map(|(id, _)| id)
         } else {
             let mut file = create_new_file(&parent, last, 0o666)?;
             let id = listing::identity(&file)?;
@@ -558,13 +556,21 @@ fn open_parent(path: &Path) -> io::Result<(File, &OsStr)> {
 /// or, if that's taken now, stays staged: it's never left where the record
 /// doesn't say.
 ///
+/// Once put back, what landed is checked to be the entry checked before
+/// it's reported put back. One that isn't, or can't be told to be, is left
+/// where it landed, never moved back into the Trash, and the restore fails
+/// ([`io::ErrorKind::NotFound`], or the error that kept it from being
+/// told), with `trashed` no longer following anything
+/// ([`Trashed::location`] is `None`): where the entry checked went isn't
+/// known.
+///
 /// **Known limit** (same-user races are outside fs_ops's threat model,
-/// as its create and copy cleanup and the Trash already assume; narrowing
-/// it is T1778): no call binds a rename to the entry checked, so
-/// another process of the same user that swaps the staged entry between
-/// its check and the move publishes its own entry instead. That's found
-/// where it lands and left alone there, and the restore fails
-/// ([`io::ErrorKind::NotFound`]); nothing is deleted.
+/// as its create and copy cleanup and the Trash already assume): no call
+/// binds a rename to the entry checked, so another process of the same
+/// user that swaps the staged entry between its check and the move
+/// publishes its own entry instead. That's what the check where it lands
+/// finds: it's left alone there, and the restore fails; nothing is
+/// deleted.
 pub fn restore(root: &Path, trashed: &mut Trashed) -> io::Result<PathBuf> {
     let at = trashed
         .at
@@ -610,11 +616,20 @@ pub fn restore(root: &Path, trashed: &mut Trashed) -> io::Result<PathBuf> {
         unstage(trashed);
         return Err(err);
     }
-    // Something put in its place in the staging folder in that instant
-    // went instead (whatever's there now is left alone): the entry wasn't
-    // put back, and isn't where the record says any more.
-    if (listing::stat_at(&target.parent, target.name)).is_ok_and(|stat| stat.id != trashed.id) {
-        return Err(gone());
+    let _ = reach(Point::Published);
+    // Something put in its place in the staging folder in that instant went
+    // instead, or took its place once it landed: the entry published isn't
+    // the one checked, or isn't known to be. Whatever is there is left
+    // where it is, never moved back into the Trash, and the record follows
+    // nothing any more: where the entry checked went isn't known.
+    let published = listing::stat_at(&target.parent, target.name);
+    if published.as_ref().ok().map(|stat| stat.id) != Some(trashed.id) {
+        trashed.at = None;
+        drop_private();
+        return Err(match published {
+            Err(err) if !is_missing(&err) => err,
+            _ => gone(),
+        });
     }
     drop_private();
     Ok(target.path)
@@ -632,10 +647,11 @@ fn is_missing(err: &io::Error) -> bool {
 /// a name another can't guess, and opens it: its name and handle.
 ///
 /// **Known limit** (same-user races are outside fs_ops's threat model,
-/// as its create and copy cleanup and the Trash already assume; narrowing
-/// it is T1778): it's checked to be the folder made by
-/// looking it up by name after `mkdir`, so one another process of the same
-/// user swaps in at that instant would be taken for it.
+/// as its create and copy cleanup and the Trash already assume): it's
+/// looked up by name after `mkdir` and checked through the handle opened on
+/// it to be that folder and empty, as [`open_made_dir`] checks, so only an
+/// empty folder another process of the same user swaps in at that instant
+/// would be taken for it.
 fn private_dir(dir: &File) -> io::Result<(OsString, File)> {
     use std::hash::{BuildHasher, Hasher};
     for _ in 0..100 {
@@ -647,11 +663,8 @@ fn private_dir(dir: &File) -> io::Result<(OsString, File)> {
         name.push(format!("{pid}-{key:016x}"));
         match mkdir_at(dir, &name, 0o700) {
             Ok(()) => {
-                let id = listing::stat_at(dir, &name)?.id;
-                let opened = open_subdir(dir, &name)?;
-                if listing::identity(&opened)? != id {
-                    return Err(replaced());
-                }
+                reach(Point::Recording)?;
+                let (_, opened) = confirm_made_dir(dir, &name)?;
                 return Ok((name, opened));
             }
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
@@ -674,6 +687,7 @@ mod test_trash;
 /// process's own unless the thread holds [`testing::real_trash`].
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
+    pub use super::seam::{Boundary, at, fail_at, reached};
     pub use super::test_trash::{RealTrash, real_trash, trash_dir, trashed};
 }
 
@@ -683,6 +697,10 @@ pub mod testing {
 enum Point {
     /// An entry to trash was checked for the last time and is about to move.
     Checked,
+    /// A folder or symlink was made (a create's folder, a copy's folder or
+    /// symlink, a restore's staging folder) and is about to be looked up and
+    /// recorded.
+    Recording,
     /// A folder was made and is about to be opened.
     Opening,
     /// `create` looked for the folders above its entry and is about to
@@ -695,6 +713,8 @@ enum Point {
     /// `restore` staged the entry and checked it, and is about to put it
     /// back.
     Staged,
+    /// `restore` put the entry back, and is about to check what landed.
+    Published,
     /// `open_truncated` opened the folder of its file and is about to open
     /// it.
     Truncating,
@@ -723,13 +743,15 @@ enum Point {
 /// step that follows.
 fn reach(point: Point) -> io::Result<()> {
     #[cfg(test)]
-    return race_tests::reach(point);
-    #[cfg(not(test))]
-    {
-        let _ = point;
-        Ok(())
-    }
+    race_tests::reach(point)?;
+    #[cfg(any(test, feature = "test-support"))]
+    seam::reach(point)?;
+    let _ = point;
+    Ok(())
 }
+
+#[cfg(any(test, feature = "test-support"))]
+mod seam;
 
 /// Trashes `target` with `NSFileManager`, which needs no Automation
 /// permission (the Finder would), through a file reference URL: it names the
@@ -1235,13 +1257,16 @@ pub fn duplicate(root: &Path, path: &Path) -> io::Result<PathBuf> {
 /// [`duplicate`], saying what the copy is: an entry the copy made.
 ///
 /// **Known limit** (same-user races are outside fs_ops's threat model,
-/// as its create and copy cleanup and the Trash already assume; narrowing
-/// it is T1778): a copied folder's or symlink's identity is
-/// looked up by name right after `mkdir` or `symlink` makes it (as the
-/// cleanup should a copy fail already does), so an entry another process
-/// of the same user swaps in at that instant is taken for the copy's.
-/// Undoing the copy then moves that entry to the Trash: never deleted, and
-/// redo puts it back.
+/// as its create and copy cleanup and the Trash already assume): a copied
+/// folder or symlink is looked up by name right after `mkdir` or `symlink`
+/// makes it, and is the copy's only once a handle opened on it agrees: an
+/// empty folder, or a link with no other name pointing where the copy's
+/// does (where the platform opens a link itself: macOS and Linux). One that
+/// doesn't is never taken for the copy's, and the copy fails
+/// ([`io::ErrorKind::AlreadyExists`]). An entry another process of the same
+/// user swaps in at that instant is still taken for the copy's should it be
+/// as new as the copy's. Undoing the copy then moves that entry to the
+/// Trash: never deleted, and redo puts it back.
 pub fn duplicate_recorded(root: &Path, path: &Path) -> io::Result<Placed> {
     let root = Root::open(root)?;
     let target = root.resolve(path)?;
@@ -1685,9 +1710,13 @@ fn copy_new(
             if !made(symlink_at(&link, to, to_name))? {
                 return Ok(Copied::Taken);
             }
-            // What it is is looked up after it was made: a link is never
-            // opened.
-            copying.owned.insert(listing::stat_at(to, to_name)?.id);
+            reach(Point::Recording)?;
+            // The copy's, to record and to remove should the copy fail, once
+            // a handle on the link itself agrees. Until then it's never
+            // removed: a file in its place unlinked would be lost.
+            let id = listing::stat_at(to, to_name)?.id;
+            check_made_link(to, to_name, &link, id)?;
+            copying.owned.insert(id);
         }
         EntryKind::File => {
             // A FIFO, socket or device counts as a file in a listing. Look
@@ -1726,15 +1755,22 @@ fn copy_new(
             }
             // What it is, once it is opened.
             let result = (|| {
-                // What it is, recorded before anything that can fail opens
-                // it. One that can't be looked up is not known to be ours,
-                // and is kept.
-                let id = listing::stat_at(to, to_name)?.id;
-                copying.owned.insert(id);
-                reach(Point::Opening)?;
+                reach(Point::Recording)?;
+                // What it is, by name, to confirm. One that can't be looked
+                // up is not known to be ours, and is kept.
+                let id = made_dir_id(to, to_name)?;
                 // Open to its owner until it is filled, whatever the source's
-                // mode, and whatever the umask took from `mkdirat`'s.
-                let copy = own_dir(to, to_name, Some(id))?;
+                // mode, and whatever the umask took from `mkdirat`'s: once
+                // the handle says it's the folder made. Until then it's
+                // neither recorded nor removed as the copy's.
+                let copy = reach(Point::Opening)
+                    .and_then(|()| own_made_dir(to, to_name, id))
+                    .inspect_err(|err| {
+                        if err.kind() != io::ErrorKind::AlreadyExists {
+                            drop_unconfirmed_dir(to, to_name, id);
+                        }
+                    })?;
+                copying.owned.insert(id);
                 reach(Point::Made)?;
                 let source = open_dir_at(from, name, Access::Read)?;
                 copy_xattrs(&source, &copy, name);
@@ -2203,6 +2239,137 @@ fn own_dir(dir: &File, name: &OsStr, expected: Option<Identity>) -> io::Result<F
     }
     set_mode(&folder, 0o700)?;
     Ok(folder)
+}
+
+/// Opens folder `name` in `dir`, which this operation just made and found
+/// by name to be `id`, and checks the handle is what was made: `id`, and
+/// still empty (nothing has been put in it yet). One that isn't fails with
+/// [`io::ErrorKind::AlreadyExists`], and is not to be counted as made.
+///
+/// This narrows, but can't close, the instant between `mkdir` and the
+/// lookup by name: no call makes a folder and opens it at once. Another
+/// process of the same user that swaps a folder in then is taken for this
+/// one only should its folder be as new as this one's: empty.
+fn open_made_dir(dir: &File, name: &OsStr, id: Identity) -> io::Result<File> {
+    // One its owner can't read (a umask that takes that, or another's in its
+    // place) can't be told empty: it fails as it is.
+    let folder = open_dir_at(dir, name, Access::Read)?;
+    check_made_dir(&folder, id)?;
+    Ok(folder)
+}
+
+/// Confirms folder `name` that `dir` just made, as [`open_made_dir`] does,
+/// and returns what it is and its handle. Should that fail, it's never
+/// recorded or used; one that isn't the folder made, or isn't known not to
+/// be, is left as it is ([`drop_unconfirmed_dir`]).
+fn confirm_made_dir(dir: &File, name: &OsStr) -> io::Result<(Identity, File)> {
+    let id = made_dir_id(dir, name)?;
+    reach(Point::Opening)
+        .and_then(|()| open_made_dir(dir, name, id))
+        .map(|folder| (id, folder))
+        .inspect_err(|err| {
+            if err.kind() != io::ErrorKind::AlreadyExists {
+                drop_unconfirmed_dir(dir, name, id);
+            }
+        })
+}
+
+/// What folder `name` that `dir` just made is, looked up by name: anything
+/// but a folder there now isn't the one made, and fails with
+/// [`io::ErrorKind::AlreadyExists`].
+fn made_dir_id(dir: &File, name: &OsStr) -> io::Result<Identity> {
+    let stat = listing::stat_at(dir, name)?;
+    if stat.kind != EntryKind::Dir {
+        return Err(replaced());
+    }
+    Ok(stat.id)
+}
+
+/// Removes folder `name` in `dir`, made by this operation and looked up by
+/// name to be `id`, whose confirmation failed for want of a resource or of
+/// access: should it still be that folder, and only should it be empty
+/// (`rmdir` removes nothing else). Nothing in it is removed, and its
+/// permissions never change. As far as it can: it fails silently.
+fn drop_unconfirmed_dir(dir: &File, name: &OsStr, id: Identity) {
+    let ours = |stat: listing::Stat| stat.kind == EntryKind::Dir && stat.id == id;
+    if listing::stat_at(dir, name).is_ok_and(ours) {
+        let _ = remove_at(dir, name, true);
+    }
+}
+
+/// Whether open `folder` is the folder just made, `id`, and still empty:
+/// [`io::ErrorKind::AlreadyExists`] if not.
+fn check_made_dir(folder: &File, id: Identity) -> io::Result<()> {
+    if listing::identity(folder)? != id || !listing::read_dir(folder)?.is_empty() {
+        return Err(replaced());
+    }
+    Ok(())
+}
+
+/// [`own_dir`] for folder `name` that a copy just made and found by name to
+/// be `id`: checked through the handle to be what was made, as
+/// [`open_made_dir`] checks it, before its permissions change. One that
+/// isn't fails with [`io::ErrorKind::AlreadyExists`], its permissions as
+/// they were (but for a folder its owner can't read, which Linux has to
+/// open for reading first).
+fn own_made_dir(dir: &File, name: &OsStr, id: Identity) -> io::Result<File> {
+    match open_dir_at(dir, name, Access::Read) {
+        Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+            let folder = own_closed_dir(dir, name, Some(id))?;
+            check_made_dir(&folder, id)?;
+            Ok(folder)
+        }
+        result => {
+            let folder = result?;
+            check_made_dir(&folder, id)?;
+            set_mode(&folder, 0o700)?;
+            Ok(folder)
+        }
+    }
+}
+
+/// Whether symlink `name` in `dir`, which a copy just made pointing to
+/// `link` and found by name to be `id`, is what was made: a handle on the
+/// link itself (where the platform opens one) is `id`, a symlink with no
+/// other name, and the name still leads to it, pointing to `link`. One that
+/// isn't fails with [`io::ErrorKind::AlreadyExists`], and is not the copy's.
+///
+/// As [`open_made_dir`] for a folder, this narrows the instant between
+/// `symlink` and the lookup by name without closing it: a link another
+/// process of the same user swaps in then is taken for the copy's only
+/// should it be a new link to the same place.
+fn check_made_link(dir: &File, name: &OsStr, link: &OsStr, id: Identity) -> io::Result<()> {
+    let made = made_link_is(dir, name, id)?
+        && read_link_at(dir, name)? == link
+        && listing::stat_at(dir, name)?.id == id;
+    if !made {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            tr!("project-io-path-no-longer-leads").to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Whether a handle opened on symlink `name` in `dir` itself, never
+/// following it, is `id`, a symlink, with one name.
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+fn made_link_is(dir: &File, name: &OsStr, id: Identity) -> io::Result<bool> {
+    #[cfg(target_os = "linux")]
+    let flags = libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    // Never blocking on a FIFO in its place.
+    #[cfg(target_vendor = "apple")]
+    let flags = libc::O_RDONLY | libc::O_SYMLINK | libc::O_NONBLOCK | libc::O_CLOEXEC;
+    let metadata = open_in(dir, name, flags, 0)?.metadata()?;
+    Ok(metadata.file_type().is_symlink()
+        && (metadata.dev(), metadata.ino()) == id
+        && metadata.nlink() == 1)
+}
+
+/// Nothing here opens a symlink itself: it's checked by name alone.
+#[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+fn made_link_is(_: &File, _: &OsStr, _: Identity) -> io::Result<bool> {
+    Ok(true)
 }
 
 fn replaced() -> io::Error {
