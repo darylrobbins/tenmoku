@@ -83,6 +83,7 @@ fn problem(row: u32, column: u32, severity: Severity) -> Problem {
         severity,
         message: format!("{row}:{column}"),
         source: None,
+        code: None,
         related: Vec::new(),
         code_href: None,
     }
@@ -126,4 +127,34 @@ fn grouped() {
     let problems = m.problems();
     assert_eq!((problems[0].row, problems[0].column), (1, 1));
     assert_eq!(problems[0].range, 6..8);
+}
+
+#[test]
+fn problems_carry_the_code_and_its_page() {
+    let mut model = EditorModel::new(Buffer::new("aaaa\nbbbb\n"), None);
+    let coded = Diagnostic {
+        source: Some("rustc".into()),
+        code: Some("E0308".into()),
+        code_href: Some("https://doc.rust-lang.org/error_codes/E0308.html".into()),
+        ..Diagnostic::new(Severity::Error, "mismatched types")
+    };
+    let plain = Diagnostic::new(Severity::Warning, "w");
+    let version = model.snapshot().version();
+    let items = vec![(6..8, coded), (1..2, plain)];
+    assert!(model.apply_diagnostics(1u32, ID, version, items, Some(ID)));
+    let problems = model.problems();
+    let codes: Vec<_> = (problems.iter())
+        .map(|p| (p.row, p.code.as_deref(), p.code_href.as_deref()))
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            (0, None, None),
+            (
+                1,
+                Some("E0308"),
+                Some("https://doc.rust-lang.org/error_codes/E0308.html")
+            ),
+        ]
+    );
 }

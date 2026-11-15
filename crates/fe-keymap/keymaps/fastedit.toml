@@ -1558,6 +1558,12 @@ keys = "enter"
 command = "problems.open"
 context = "problems_panel"
 
+# The detail pane's Apply fix: the selected problem's suggested fix.
+[[bindings]]
+keys = "alt-enter"
+command = "problems.apply_fix"
+context = "problems_panel"
+
 [[bindings]]
 keys = "k"
 command = "problems.select_previous"

@@ -33,6 +33,10 @@
 //! caret at the start of the next or previous diagnostic, wrapping
 //! ([`fe_editor::EditorModel::next_diagnostic`]), and reveal it.
 //!
+//! Below the list, the selected problem's detail pane (`problems_detail.rs`):
+//! its code and source, its message, a three-row snippet and the language
+//! server's suggested fix, with Apply fix (`problems.apply_fix`).
+//!
 //! With vim on, the panel's key context has the `vim` flag, for keys bound
 //! to its commands in vim's style; opening a problem leaves the editor in
 //! normal mode, the caret at the problem's start.
@@ -91,7 +95,13 @@ use gpui::{
 use kiln_l10n::tr;
 
 use crate::{Pane, Workbench, loader, pane::Reveal, task_run::TaskTabs};
+use kiln_platform::locale::ActiveLocale;
 use kiln_shell::{Icon, StatusItem, StatusSide, StatusTone};
+
+#[path = "problems_detail.rs"]
+mod problems_detail;
+#[cfg(test)]
+pub(crate) use problems_detail::{APPLY_SELECTOR, DETAIL_SELECTOR, DrawnDetail, FIX_SELECTOR};
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "problems_panel";
@@ -454,8 +464,9 @@ fn sent_problem(item: &FileDiagnostic, range: Range<usize>, row: u32, column: u3
         severity,
         message: item.message.clone(),
         source: item.source.clone(),
+        code: item.code.clone(),
         related: Vec::new(),
-        code_href: None,
+        code_href: item.code_description.as_ref().map(ToString::to_string),
     }
 }
 
@@ -489,12 +500,22 @@ pub struct ProblemsPanel {
     /// Each [`Filter`]'s, by its index: whether it's off, hiding its
     /// problems.
     off: [bool; 3],
+    /// The detail pane's: what it shows and the fix it found.
+    detail: problems_detail::Detail,
+    /// Rebuilds the status items in a new locale, for their tooltips.
+    _locale: Subscription,
+    #[cfg(test)]
+    drawn_detail: Option<problems_detail::DrawnDetail>,
 }
 
 impl ProblemsPanel {
     /// An empty panel, opening problems through `workbench`, its severities
     /// in `theme`'s colours.
-    pub(crate) fn new(workbench: WeakEntity<Workbench>, theme: &EditorTheme, cx: &mut App) -> Self {
+    pub(crate) fn new(
+        workbench: WeakEntity<Workbench>,
+        theme: &EditorTheme,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let colors = [
             Severity::Hint,
             Severity::Information,
@@ -502,6 +523,7 @@ impl ProblemsPanel {
             Severity::Error,
         ]
         .map(|severity| theme.diagnostic_color(severity));
+        let _locale = cx.observe_global::<ActiveLocale>(Self::follow_locale);
         Self {
             workbench,
             focus: cx.focus_handle(),
@@ -519,7 +541,25 @@ impl ProblemsPanel {
             scope: Scope::default(),
             active: None,
             off: [false; 3],
+            detail: problems_detail::Detail::default(),
+            _locale,
+            #[cfg(test)]
+            drawn_detail: None,
         }
+    }
+
+    /// Makes the status items again in the locale now active: their
+    /// tooltips are resolved as they're made.
+    fn follow_locale(&mut self, cx: &mut Context<Self>) {
+        let (Some(counts), Some(workbench)) = (self.item, self.workbench.upgrade()) else {
+            return;
+        };
+        // Outside the panel's update, which the workbench's may be in.
+        cx.defer(move |cx| {
+            workbench.update(cx, |workbench, cx| {
+                workbench.show_problem_counts(counts, cx)
+            })
+        });
     }
 
     /// Replaces source `key`'s problems with `problems`, for the next
@@ -1215,6 +1255,7 @@ impl Render for ProblemsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
         let header = self.render_header(cx);
+        let detail = self.render_detail(cx);
         let body = match self.empty_state() {
             Some((heading, hint)) => Self::render_empty(heading, hint, cx).into_any_element(),
             None => uniform_list(
@@ -1226,8 +1267,8 @@ impl Render for ProblemsPanel {
             .flex_1()
             .into_any_element(),
         };
-        div()
-            .track_focus(&self.focus)
+        let panel = div().track_focus(&self.focus);
+        <Self as kiln::ViewCommands>::attach(panel, cx)
             .key_context(self.key_context(cx))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
@@ -1241,7 +1282,7 @@ impl Render for ProblemsPanel {
             .text_color(ui.text)
             .text_size(px(12.))
             .child(header)
-            .child(body)
+            .child(self.with_detail(body, detail, cx))
     }
 }
 

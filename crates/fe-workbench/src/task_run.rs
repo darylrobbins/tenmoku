@@ -213,6 +213,7 @@ fn source_problem(
             severity,
             message: problem.message,
             source: Some(label.to_owned()),
+            code: None,
             related: Vec::new(),
             code_href: None,
         },

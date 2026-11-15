@@ -27,7 +27,7 @@
 use std::ops::Range;
 
 use fe_buffer::{BufferId, Version};
-use fe_editor::diagnostics::{DiagnosticTag, Severity};
+use fe_editor::diagnostics::{DiagnosticEntry, DiagnosticTag, Severity};
 use fe_gpui::EditorView;
 use fe_lsp::{CodeAction, LspError, code_action::CodeActionQuery};
 use fe_ui::{HighlightedLabel, char_ranges};
@@ -112,24 +112,7 @@ impl Workbench {
             let range = model.primary_selection().range;
             let diagnostics = (model.diagnostics().into_iter())
                 .filter(|entry| overlaps(&entry.range, &range))
-                .map(|entry| {
-                    let mut sent = fe_lsp::Diagnostic::new(entry.range.clone(), &entry.message);
-                    sent.severity = Some(match entry.severity {
-                        Severity::Error => fe_lsp::Severity::Error,
-                        Severity::Warning => fe_lsp::Severity::Warning,
-                        Severity::Information => fe_lsp::Severity::Information,
-                        Severity::Hint => fe_lsp::Severity::Hint,
-                    });
-                    sent.source = entry.source.clone();
-                    sent.code = entry.code.clone();
-                    sent.tags = (entry.tags.iter())
-                        .map(|tag| match tag {
-                            DiagnosticTag::Unnecessary => fe_lsp::DiagnosticTag::Unnecessary,
-                            DiagnosticTag::Deprecated => fe_lsp::DiagnosticTag::Deprecated,
-                        })
-                        .collect();
-                    sent
-                })
+                .map(|entry| sent_diagnostic(&entry))
                 .collect();
             (
                 model.buffer().id(),
@@ -227,6 +210,36 @@ impl Workbench {
         self.show_palette(Palette::CodeActions, picker, window, cx);
     }
 
+    /// Applies `action`, one of the actions `editor`'s server offered for its
+    /// buffer at `version`, as confirming it in the picker would, without
+    /// one: the Problems panel's Apply fix. Not while another action is
+    /// being asked for or applied; a buffer changed since is said, as the
+    /// picker says it.
+    pub(crate) fn apply_code_action(
+        &mut self,
+        editor: Entity<EditorView>,
+        version: Version,
+        action: CodeAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.palette == Some(Palette::CodeActions) || self.lsp.code_actioning.is_some() {
+            return;
+        }
+        let model = editor.read(cx).model();
+        let (buffer, range) = (model.buffer().id(), model.primary_selection().range);
+        let Some(actioner) = self.lsp_code_actioner(buffer) else {
+            return tell(&tr!("workbench-lsp-no-server"), window, cx);
+        };
+        let at = Asked {
+            editor,
+            buffer,
+            version,
+            range,
+        };
+        self.apply_alone(at, actioner, action, window, cx);
+    }
+
     /// Resolves `action`, applies its edits and has the server run its
     /// command, as confirming it in the picker would, without one.
     fn apply_alone(
@@ -306,6 +319,27 @@ fn kind_key(query: &CodeActionQuery) -> Option<&'static str> {
         "source" => Some("source"),
         _ => None,
     }
+}
+
+/// `entry`, one of an editor's diagnostics, as it's sent back to a server
+/// in a code action request.
+pub(crate) fn sent_diagnostic(entry: &DiagnosticEntry<'_>) -> fe_lsp::Diagnostic {
+    let mut sent = fe_lsp::Diagnostic::new(entry.range.clone(), &entry.message);
+    sent.severity = Some(match entry.severity {
+        Severity::Error => fe_lsp::Severity::Error,
+        Severity::Warning => fe_lsp::Severity::Warning,
+        Severity::Information => fe_lsp::Severity::Information,
+        Severity::Hint => fe_lsp::Severity::Hint,
+    });
+    sent.source = entry.source.clone();
+    sent.code = entry.code.clone();
+    sent.tags = (entry.tags.iter())
+        .map(|tag| match tag {
+            DiagnosticTag::Unnecessary => fe_lsp::DiagnosticTag::Unnecessary,
+            DiagnosticTag::Deprecated => fe_lsp::DiagnosticTag::Deprecated,
+        })
+        .collect();
+    sent
 }
 
 /// Whether a diagnostic's range is one `selection` is at: a caret is at

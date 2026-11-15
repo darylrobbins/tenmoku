@@ -44,6 +44,8 @@ mod hover;
 mod inbox;
 #[path = "audit/problems.rs"]
 mod problems;
+#[path = "audit/problems_detail.rs"]
+mod problems_detail;
 #[path = "audit/problems_panel.rs"]
 mod problems_panel;
 #[path = "audit/project_tree_git.rs"]
@@ -111,6 +113,7 @@ const SURFACES: &[&Surface] = &[
     &problems_panel::SURFACE,
     &hover::SURFACE,
     &problems::SURFACE,
+    &problems_detail::SURFACE,
     &terminal_session::SURFACE,
     &terminal::SURFACE,
     &git_log_card::SURFACE,

@@ -418,8 +418,11 @@ pub struct Problem {
     pub severity: Severity,
     pub message: String,
     pub source: Option<String>,
+    /// The diagnostic's code, as `E0308`: a number as its decimal digits.
+    pub code: Option<String>,
     /// Where else it points, rows and ranges as of the same text.
     pub related: Vec<RelatedInfo>,
+    /// A page describing `code`.
     pub code_href: Option<String>,
 }
 
@@ -499,6 +502,7 @@ impl EditorModel {
                     severity: entry.severity,
                     message: entry.message.clone(),
                     source: entry.source.clone(),
+                    code: entry.code.clone(),
                     related: entry.related.clone(),
                     code_href: entry.code_href.clone(),
                 }

@@ -400,13 +400,19 @@ kiln_l10n::__private::inventory::submit! { kiln_l10n::Registered(&FAKE_LOCALE) }
 #[gpui::test]
 fn the_counts_are_plural_messages(cx: &mut TestAppContext) {
     let (dir, workbench, _panel, cx) = opened(cx, true);
+    // The errors' item's tooltip; the warnings' has the same.
     let tooltip = |cx: &mut VisualTestContext| {
         let bar = workbench.read_with(cx, |workbench, _| workbench.status_bar().clone());
         let items = cx.read_entity(&bar, |bar, cx| bar.items(cx));
-        let item = (items.into_iter())
-            .find(|item| item.id.as_ref() == crate::dock::problems_panel::ITEM)
-            .expect("the errors' item");
-        item.tooltip.map(|tooltip| tooltip.to_string())
+        let of = |id: &str| {
+            let item = (items.iter())
+                .find(|item| item.id.as_ref() == id)
+                .unwrap_or_else(|| panic!("the {id} item"));
+            item.tooltip.as_ref().map(|tooltip| tooltip.to_string())
+        };
+        let errors = of(crate::dock::problems_panel::ITEM);
+        assert_eq!(errors, of(crate::dock::problems_panel::WARNINGS_ITEM));
+        errors
     };
     assert_eq!(tooltip(cx).as_deref(), Some("2 errors, 2 warnings"));
     assert_eq!(Filter::Errors.name(1).as_ref(), "1 error");
@@ -416,6 +422,8 @@ fn the_counts_are_plural_messages(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(Filter::Errors.name(1).as_ref(), "⟦1 érrör⟧");
     assert_eq!(Filter::Errors.name(2).as_ref(), "⟦2 érrörs⟧");
+    // The status items follow the locale at once, their counts unchanged.
+    assert_eq!(tooltip(cx).as_deref(), Some("⟦2 érrörs · 2 wärnings⟧"));
     // The status items' tooltip is made as the counts change: b.rs's
     // problems cleared, one of each is left.
     let b = dir.path().join("b.rs");
@@ -428,4 +436,5 @@ fn the_counts_are_plural_messages(cx: &mut TestAppContext) {
     cx.update(|_, cx| kiln_platform::locale::set_locale(cx, &[]));
     draw(cx);
     assert_eq!(Filter::Errors.name(1).as_ref(), "1 error");
+    assert_eq!(tooltip(cx).as_deref(), Some("1 error, 1 warning"));
 }

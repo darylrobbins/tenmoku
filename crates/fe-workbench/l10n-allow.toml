@@ -31,6 +31,11 @@ text = "spell-row-{}"
 reason = "A suggestion row's element id"
 
 [[literal]]
+file = "src/problems_detail.rs"
+text = "problems-detail-apply"
+reason = "The Problems detail pane's Apply fix button's element id, which Button::new takes first"
+
+[[literal]]
 file = "src/run_widget.rs"
 text = "Cargo.toml"
 reason = "A file name that defines tasks, matched against the watcher's paths"

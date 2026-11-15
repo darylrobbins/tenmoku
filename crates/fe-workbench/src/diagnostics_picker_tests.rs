@@ -84,6 +84,7 @@ fn opened(
             severity: Severity::Error,
             message: "c is broken".into(),
             source: Some("make".into()),
+            code: None,
             related: Vec::new(),
             code_href: None,
         },

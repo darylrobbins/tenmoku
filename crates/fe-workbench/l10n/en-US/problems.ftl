@@ -44,6 +44,16 @@ workbench-problems-empty-this-file-hint = None in this file; Project lists every
 workbench-problems-hidden = No problems shown
 workbench-problems-hidden-hint = Turn a severity filter back on to list its problems
 
+## The detail pane (problems_detail.rs), below the list for the selected
+## problem: code and source, the message, a snippet and the suggested fix
+
+# The button applying the language server's preferred quick fix for the
+# problem; its key (⌥↵) shows beside it.
+workbench-problems-detail-apply-fix = Apply fix
+
+# The command the button and its key run.
+command-problems-apply_fix = Apply Fix
+
 ## The status bar's items (the errors' and the warnings')
 
 # Both items' tooltip. $errors and $warnings are the window's counts.

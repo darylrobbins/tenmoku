@@ -96,6 +96,8 @@ pub struct FileDiagnostic {
     /// A number is given as its decimal digits.
     pub code: Option<String>,
     pub tags: Vec<DiagnosticTag>,
+    /// The `href` of `codeDescription`: a page describing the code.
+    pub code_description: Option<Url>,
 }
 
 impl FileDiagnostic {
@@ -109,6 +111,7 @@ impl FileDiagnostic {
             tags: (diagnostic.tags.into_iter().flatten())
                 .filter_map(tag)
                 .collect(),
+            code_description: diagnostic.code_description.map(|c| c.href),
         }
     }
 }
@@ -129,6 +132,7 @@ pub fn decode_file_diagnostics(
             diagnostic.source = item.source.clone();
             diagnostic.code = item.code.clone();
             diagnostic.tags = item.tags.clone();
+            diagnostic.code_description = item.code_description.clone();
             diagnostic
         })
         .collect()
@@ -299,5 +303,34 @@ fn tag(tag: lsp_types::DiagnosticTag) -> Option<DiagnosticTag> {
         T::UNNECESSARY => Some(DiagnosticTag::Unnecessary),
         T::DEPRECATED => Some(DiagnosticTag::Deprecated),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod code_tests {
+    use lsp_types::{CodeDescription, Position};
+
+    use super::*;
+
+    /// A file's diagnostic keeps its code, a number as its digits, and the
+    /// page describing it, decoded or not.
+    #[test]
+    fn file_diagnostics_keep_the_code_and_its_page() {
+        let href = Url::parse("https://example.com/codes/7").unwrap();
+        let mut sent = lsp_types::Diagnostic {
+            range: lsp_types::Range::new(Position::new(0, 1), Position::new(0, 3)),
+            message: "unused".into(),
+            code: Some(NumberOrString::Number(7)),
+            ..Default::default()
+        };
+        sent.code_description = Some(CodeDescription { href: href.clone() });
+        let item = FileDiagnostic::new(sent);
+        assert_eq!(item.code.as_deref(), Some("7"));
+        assert_eq!(item.code_description.as_ref(), Some(&href));
+        let decoded =
+            decode_file_diagnostics(&Text::new("abcd\n"), &[item], PositionEncoding::Utf8);
+        assert_eq!(decoded[0].range, 1..3);
+        assert_eq!(decoded[0].code.as_deref(), Some("7"));
+        assert_eq!(decoded[0].code_description, Some(href));
     }
 }
