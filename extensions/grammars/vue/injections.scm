@@ -7,8 +7,8 @@
 ;
 ; Changes:
 ; - Only languages fe-syntax has built in are injected: javascript,
-;   typescript, tsx, css and json. Dropped: comment, regex (<input pattern>),
-;   lit-html `${}` templates (#offset!), scss for lang="less", "postcss",
+;   typescript, tsx, css, json and regex (<input pattern>, restored). Dropped:
+;   comment, lit-html `${}` templates (#offset!), scss for lang="less", "postcss",
 ;   "sass" and "scss", and pug.
 ; - Dropped: css in a style attribute, which the built-in CSS reads as a
 ;   selector (`color: red` is the tag `color` and the pseudo-class `:red`),
@@ -85,6 +85,21 @@
   (raw_text) @injection.content)
   (#eq? @_type "module")
   (#set! injection.language "javascript"))
+
+; <input pattern="[0-9]"> or <input pattern=[0-9]>
+(element
+  (_
+    (tag_name) @_tagname
+    (#eq? @_tagname "input")
+    (attribute
+      (attribute_name) @_attr
+      [
+        (quoted_attribute_value
+          (attribute_value) @injection.content)
+        (attribute_value) @injection.content
+      ]
+      (#eq? @_attr "pattern"))
+    (#set! injection.language "regex")))
 
 ; <input type="checkbox" onchange="this.closest('form').elements.output.value = this.checked">
 (attribute

@@ -9,7 +9,7 @@
     <p v-else>Nothing to do.</p>
 
     <form @submit.prevent="add">
-      <input v-model.trim="draft" placeholder="What needs doing?" maxlength="80" />
+      <input v-model.trim="draft" placeholder="What needs doing?" maxlength="80" pattern="[a-z]+\d*" />
       <button type="submit" :disabled="draft.length === 0">Add</button>
     </form>
 

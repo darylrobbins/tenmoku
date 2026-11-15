@@ -68,3 +68,5 @@ cc_library(
         "//conditions:default": [],
     }),
 )
+
+_VALID = re.compile(r"^[a-z]+\d*$")

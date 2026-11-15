@@ -10,8 +10,10 @@
 ;; runtime/queries/svelte/injections.scm at the same commit.
 ;;
 ;; The differences from those files:
-;; - Only languages the editor has are injected: not comment, regex, scss
+;; - Only languages the editor has are injected: not comment, scss
 ;;   (for <style lang="scss">, "postcss", "less" or "stylus") or pug.
+;; - The <input pattern> regex injection is restored (regex is built in now).
+;; - <style lang="css"> is injected as css, as the vue extension does.
 ;; - A style="..." attribute isn't injected, as the built-in HTML doesn't
 ;;   inject it: CSS's grammar parses a stylesheet, where a bare declaration
 ;;   list such as "font-weight: bold" reads as a selector.
@@ -78,6 +80,21 @@
   (#eq? @_type "module")
   (#set! injection.language "javascript"))
 
+; <input pattern="[0-9]"> or <input pattern=[0-9]>
+(element
+  (_
+    (tag_name) @_tagname
+    (#eq? @_tagname "input")
+    (attribute
+      (attribute_name) @_attr
+      [
+        (quoted_attribute_value
+          (attribute_value) @injection.content)
+        (attribute_value) @injection.content
+      ]
+      (#eq? @_attr "pattern"))
+    (#set! injection.language "regex")))
+
 ; <input type="checkbox" onchange="this.closest('form').elements.output.value = this.checked">
 ((attribute
   (attribute_name) @_name
@@ -85,6 +102,18 @@
     (attribute_value) @injection.content))
   (#match? @_name "^on[a-z]+$")
   (#set! injection.language "javascript"))
+
+; <style lang="css">
+((style_element
+  (start_tag
+    (attribute
+      (attribute_name) @_attr
+      (quoted_attribute_value
+        (attribute_value) @_lang)))
+  (raw_text) @injection.content)
+  (#eq? @_attr "lang")
+  (#eq? @_lang "css")
+  (#set! injection.language "css"))
 
 ;;; Svelte (tree-sitter-svelte)
 

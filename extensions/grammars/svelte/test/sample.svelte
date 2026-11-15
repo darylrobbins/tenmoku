@@ -55,7 +55,7 @@
 <h1>{heading}</h1>
 
 <form onsubmit={(event) => { event.preventDefault(); add(draft); }}>
-  <input bind:value={draft} placeholder="What needs doing?" maxlength="80" />
+  <input bind:value={draft} placeholder="What needs doing?" maxlength="80" pattern="[a-z]+\d*" />
   <button type="submit" disabled={!draft}>Add</button>
 </form>
 
@@ -106,5 +106,11 @@
 
   .error::before {
     content: "\26A0  ";
+  }
+</style>
+
+<style lang="css">
+  .done {
+    opacity: 0.5;
   }
 </style>

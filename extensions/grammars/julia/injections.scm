@@ -1,7 +1,15 @@
 ; From tree-sitter-julia, https://github.com/tree-sitter/tree-sitter-julia,
 ; commit e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3, path queries/injections.scm,
-; license MIT (LICENSE). Changes: the comment and regex injections are
-; dropped, as the editor has neither language.
+; license MIT (LICENSE). Changes: the comment injection is dropped, as the
+; editor has no comment language. The r"..." regex injection is restored, now
+; that the built-in regex grammar exists.
+
+; Inject regex in r"..." and r"""...""" (e.g. r"hello\bworld")
+(prefixed_string_literal
+  prefix: (identifier) @_prefix
+  (content) @injection.content
+  (#eq? @_prefix "r")
+  (#set! injection.language "regex"))
 
 ; Inject markdown in docstrings
 ((string_literal
