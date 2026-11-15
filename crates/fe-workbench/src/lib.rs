@@ -32,6 +32,7 @@ mod closed_editors;
 mod color_literals;
 mod config_problems;
 pub mod debug_breakpoints;
+mod debug_runs;
 pub mod debug_session;
 mod diagnostic_owner;
 mod disk_sync;
@@ -234,6 +235,7 @@ pub fn init(cx: &mut App) {
     lane_marks::init(cx);
     debug_breakpoints::init(cx);
     debug_session::init(cx);
+    debug_runs::init(cx);
     test_runner::init(cx);
     test_run_view::init(cx);
     lsp::init(cx);

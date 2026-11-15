@@ -56,7 +56,7 @@ use kiln_l10n::tr;
 
 use crate::{
     Workbench,
-    runs::{Run, RunId, RunKind, RunStatus, RunSummary, Runs},
+    runs::{DebugPhase, Run, RunId, RunKind, RunStatus, RunSummary, Runs},
     test_run_view::TestRunView,
 };
 
@@ -138,6 +138,10 @@ pub(crate) enum StatusIcon {
     Passed,
     Failed,
     Cancelled,
+    /// A debug session that hasn't ended: the `bug`.
+    Debugging,
+    /// One stopped at a breakpoint or step: the same icon, muted.
+    Paused,
 }
 
 impl StatusIcon {
@@ -150,8 +154,21 @@ impl StatusIcon {
         }
     }
 
+    /// The icon of a run of `kind` that `status` and `summary` say where
+    /// it is: a debug session that hasn't ended has its own.
+    pub(crate) fn of_run(kind: RunKind, status: RunStatus, summary: RunSummary) -> Self {
+        match (kind, status, summary) {
+            (RunKind::Debug, RunStatus::Running { .. }, RunSummary::Debug(DebugPhase::Stopped)) => {
+                Self::Paused
+            }
+            (RunKind::Debug, RunStatus::Running { .. }, _) => Self::Debugging,
+            _ => Self::of(status),
+        }
+    }
+
     pub(crate) fn icon(self) -> Icon {
         match self {
+            Self::Debugging | Self::Paused => Icon::Bug,
             Self::Spinner => Icon::LoaderCircle,
             Self::Passed => Icon::Check,
             Self::Failed => Icon::X,
@@ -163,7 +180,8 @@ impl StatusIcon {
     /// cancelled.
     pub(crate) fn colour(self, c: &Tokens<Hsla>) -> Hsla {
         match self {
-            Self::Spinner => c.text.primary,
+            Self::Spinner | Self::Debugging => c.text.primary,
+            Self::Paused => c.text.muted,
             Self::Passed => c.status.success,
             Self::Failed => c.status.error,
             Self::Cancelled => c.text.muted,
@@ -237,6 +255,9 @@ pub(crate) fn summary_text(status: RunStatus, summary: RunSummary) -> SharedStri
             RunStatus::Cancelled => tr!("workbench-runs-summary-cancelled"),
         },
         RunSummary::Exit(code) => tr!("workbench-runs-summary-exit", code = code),
+        RunSummary::Debug(DebugPhase::Starting) => tr!("workbench-debug-run-starting"),
+        RunSummary::Debug(DebugPhase::Running) => tr!("workbench-debug-run-running"),
+        RunSummary::Debug(DebugPhase::Stopped) => tr!("workbench-debug-run-stopped"),
         RunSummary::Tests {
             passed,
             failed,
@@ -277,18 +298,28 @@ pub(crate) struct Row {
     pub(crate) title: SharedString,
     pub(crate) status: RunStatus,
     pub(crate) summary: SharedString,
+    /// The icon its kind, status and summary give it.
+    pub(crate) icon: StatusIcon,
+    /// Where it is, if it's a debug session that hasn't ended.
+    phase: Option<DebugPhase>,
     /// What its age counts from: when it ended, else when it began.
     since: Instant,
 }
 
 impl Row {
-    fn of(run: &Run) -> Self {
+    pub(crate) fn of(run: &Run) -> Self {
         Self {
             id: run.id,
             kind: run.kind,
             title: run.title.clone().into(),
             status: run.status,
-            summary: summary_text(run.status, run.summary),
+            summary: (run.note.clone().map(SharedString::from))
+                .unwrap_or_else(|| summary_text(run.status, run.summary)),
+            icon: StatusIcon::of_run(run.kind, run.status, run.summary),
+            phase: match (run.status, run.summary) {
+                (RunStatus::Running { .. }, RunSummary::Debug(phase)) => Some(phase),
+                _ => None,
+            },
             since: run.finished.unwrap_or(run.started),
         }
     }
@@ -299,6 +330,17 @@ impl Row {
 
     /// Its accessible name: "<title>, <status>, <age>".
     pub(crate) fn name(&self, now: Instant) -> SharedString {
+        if self.kind == RunKind::Debug {
+            return tr!(
+                "workbench-debug-run-row-name",
+                title = &self.title,
+                status = match self.phase {
+                    Some(phase) => summary_text(self.status, RunSummary::Debug(phase)),
+                    None => status_name(self.status),
+                },
+                age = age_name(self.age(now))
+            );
+        }
         tr!(
             "workbench-runs-row-name",
             title = &self.title,
@@ -373,7 +415,7 @@ impl ListDelegate for RunRows {
         let c = cx.theme().colors;
         let code = (cx.try_global::<FontFamilies>().cloned().unwrap_or_default())
             .family(FamilySlot::Code, cx);
-        let icon = StatusIcon::of(row.status);
+        let icon = row.icon;
         let line = progress_line(row.status, c.accent.base);
         let spin = match icon {
             StatusIcon::Spinner => self.spinner(window, cx),

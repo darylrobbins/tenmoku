@@ -18,7 +18,7 @@ use gpui::{Context, Entity, Subscription};
 use lsp_types::NumberOrString;
 
 use crate::Workbench;
-use crate::runs::{RunId, RunStatus, Runs, RunsEvent};
+use crate::runs::{RunId, RunKind, RunStatus, Runs, RunsEvent};
 
 /// One operation's identity, unique in its [`Operations`] while it runs.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -142,6 +142,25 @@ impl Operations {
         true
     }
 
+    /// Renames the operation `id`, begun with [`begin`](Self::begin). False
+    /// if it's not running, or not one begun so.
+    pub fn relabel(
+        &mut self,
+        id: &OperationId,
+        label: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !matches!(id, OperationId::Other(_)) {
+            return false;
+        }
+        let Some(operation) = self.list.iter_mut().find(|op| op.id == *id) else {
+            return false;
+        };
+        operation.label = label.into();
+        cx.notify();
+        true
+    }
+
     /// Ends the operation `id`, begun with [`begin`](Self::begin): it's
     /// listed no more. False if it wasn't running, or isn't one begun so:
     /// the others end where they come from.
@@ -252,6 +271,10 @@ fn running(runs: &Runs) -> Vec<Operation> {
     // `list` is newest first.
     let mut running: Vec<Operation> = (runs.list())
         .filter_map(|run| {
+            // A debug session is listed by [`crate::debug_runs`], by name.
+            if run.kind == RunKind::Debug {
+                return None;
+            }
             let RunStatus::Running { progress } = run.status else {
                 return None;
             };

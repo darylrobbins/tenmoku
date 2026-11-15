@@ -156,3 +156,17 @@ workbench-debug-picker-detected = detected
 workbench-debug-picker-blocked = { $source } · { $why }
 # $file is .tenmoku/launch.toml.
 workbench-debug-picker-none = No launch configurations: add one to { $file }
+
+## A session as a run (debug_runs.rs, runs_panel.rs) and as an operation.
+
+# The status bar's operation while a session launches: $name is the
+# configuration's.
+workbench-debug-operation = Debugging { $name }
+# A debug run's one line in the Runs panel.
+workbench-debug-run-starting = Starting…
+workbench-debug-run-running = Running
+workbench-debug-run-stopped = Stopped
+# A run's note when the adapter went away by itself.
+workbench-debug-run-adapter-exited = The debug adapter exited
+# A debug run's accessible name: its configuration, status and age.
+workbench-debug-run-row-name = Debug session { $title }, { $status }, { $age }

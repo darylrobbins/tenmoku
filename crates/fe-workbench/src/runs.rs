@@ -29,6 +29,9 @@ pub enum RunKind {
     Script,
     /// An agent's task, for the lanes.
     Agent,
+    /// A debug session ([`crate::debug_runs`]). The operations list shows
+    /// it by its own entry, not as a running run.
+    Debug,
 }
 
 /// Where a run is.
@@ -92,6 +95,19 @@ pub enum RunSummary {
         warnings: usize,
         errors: usize,
     },
+    /// A debug session that hasn't ended.
+    Debug(DebugPhase),
+}
+
+/// Where a debug session is, as its run's summary says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DebugPhase {
+    /// The adapter is starting, or the session being configured.
+    Starting,
+    /// The program runs.
+    Running,
+    /// The program is stopped, at a breakpoint or a step.
+    Stopped,
 }
 
 /// One build, test run, script or agent task.
@@ -106,6 +122,9 @@ pub struct Run {
     pub started: Instant,
     /// When it stopped running: none while it runs.
     pub finished: Option<Instant>,
+    /// A line of its own to show in place of the summary: why it failed.
+    /// Already in the user's language.
+    pub note: Option<String>,
 }
 
 impl Run {
@@ -153,6 +172,7 @@ impl Runs {
             summary: RunSummary::None,
             started: Instant::now(),
             finished: None,
+            note: None,
         });
         self.changed(id, cx);
         id
@@ -199,6 +219,25 @@ impl Runs {
         }
         self.finished.push_back(id);
         self.evict();
+        self.changed(id, cx);
+        true
+    }
+
+    /// As [`finish`](Self::finish), with `note` as the line it shows.
+    pub fn finish_with_note(
+        &mut self,
+        id: RunId,
+        end: RunEnd,
+        summary: Option<RunSummary>,
+        note: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.finish(id, end, summary, cx) {
+            return false;
+        }
+        if let Some(run) = self.runs.iter_mut().find(|run| run.id == id) {
+            run.note = Some(note);
+        }
         self.changed(id, cx);
         true
     }
