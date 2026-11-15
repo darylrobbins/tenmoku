@@ -139,7 +139,12 @@ rm -f "$dist/$name" "$dist/$name.sha256"
   find tenmoku.grammar_* -type f -exec chmod 644 {} +
   find tenmoku.grammar_* | sort >"$list"
   if tar --version 2>/dev/null | grep -q GNU; then
+    # --mtime and --sort repeat what the stage and list already give, in case
+    # touch doesn't stick (Windows). No --mode: GNU tar's applies to files and
+    # directories alike, so it can't give both 644 and 755 whatever bits the
+    # stage has; the chmod above sets them.
     tar --format=ustar --no-recursion --owner=0 --group=0 --numeric-owner \
+      --mtime='2000-01-01 00:00:00 UTC' --sort=name \
       -cf - -T "$list" | gzip -n >"$dist/$name.tmp"
   else
     tar --format ustar --no-recursion --uid 0 --gid 0 --numeric-owner \

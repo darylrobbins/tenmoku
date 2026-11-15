@@ -337,6 +337,37 @@ fn unknown_pack_fails_naming_it() {
     assert!(!fixture.dist().exists(), "it wrote an archive");
 }
 
+/// What differs between two archives: the first differing byte offset and
+/// `tar -tvzf` listings of both, for a CI log.
+fn describe_difference(
+    first: &std::path::Path,
+    second: &std::path::Path,
+    a: &[u8],
+    b: &[u8],
+) -> String {
+    let offset = a
+        .iter()
+        .zip(b)
+        .position(|(x, y)| x != y)
+        .unwrap_or(a.len().min(b.len()));
+    let listing = |path: &std::path::Path| match Command::new("tar").arg("-tvzf").arg(path).output()
+    {
+        Ok(out) => format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+        Err(err) => format!("tar failed to run: {err}"),
+    };
+    format!(
+        "first differing offset {offset} (lengths {} and {})\nfirst:\n{}\nsecond:\n{}",
+        a.len(),
+        b.len(),
+        listing(first),
+        listing(second)
+    )
+}
+
 /// The same inputs give byte-identical tarballs, whatever the clock, umask
 /// or time zone: with GNU tar here, with BSD tar on macOS.
 #[test]
@@ -360,9 +391,11 @@ fn same_inputs_give_identical_tarballs() {
         "Tenmoku-language-pack.tar.gz",
     ] {
         let bytes = fs::read(first.join(archive)).unwrap();
+        let other = fs::read(second.join(archive)).unwrap();
         assert!(
-            bytes == fs::read(second.join(archive)).unwrap(),
-            "{archive} differs between runs"
+            bytes == other,
+            "{archive} differs between runs: {}",
+            describe_difference(&first.join(archive), &second.join(archive), &bytes, &other)
         );
         let sums = format!("{archive}.sha256");
         assert_eq!(
