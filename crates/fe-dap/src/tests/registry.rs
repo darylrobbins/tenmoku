@@ -990,16 +990,19 @@ fn the_system_runner_stops_a_descendant_holding_its_stdout() {
     use std::time::{Duration, Instant};
 
     let fixture = Fixture::new();
+    // Spawning a script can take a while on a loaded machine: the cases
+    // that must finish get a generous deadline, only the cut-off ones a short one.
+    let patient = SystemRunner::with_timeout(Duration::from_secs(10));
     let runner = SystemRunner::with_timeout(Duration::from_millis(500));
     let printing = fixture.dir.join("printing");
     write_script(&printing, "echo /opt/rust");
-    assert_eq!(
-        runner.stdout(&printing, &[], &fixture.root).as_deref(),
-        Some("/opt/rust\n")
-    );
+    // A sibling test forking while the script was still open for writing makes
+    // Linux refuse the exec once (ETXTBSY), so allow a retry.
+    let printed = (0..3).find_map(|_| patient.stdout(&printing, &[], &fixture.root));
+    assert_eq!(printed.as_deref(), Some("/opt/rust\n"));
     let failing = fixture.dir.join("failing");
     write_script(&failing, "echo /opt/rust; exit 3");
-    assert_eq!(runner.stdout(&failing, &[], &fixture.root), None);
+    assert_eq!(patient.stdout(&failing, &[], &fixture.root), None);
 
     // It prints and exits at once, leaving a `sleep` with its stdout.
     let lingering = fixture.dir.join("lingering");
