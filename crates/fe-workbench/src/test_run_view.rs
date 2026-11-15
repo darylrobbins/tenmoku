@@ -244,43 +244,64 @@ pub(crate) fn duration_label(secs: f64) -> SharedString {
     }
 }
 
+/// A module's identity: its binary and its module path apart, so a library's
+/// `p` with `checks::x` and an integration target `p::checks` with `x` are
+/// two modules though they read alike.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct ModuleKey {
+    pub(crate) binary: String,
+    /// The path of its tests' names before their last `::`: empty for a
+    /// doc test's, and a top-level test's.
+    pub(crate) path: String,
+}
+
+impl ModuleKey {
+    /// How its row reads: the binary and the path joined by `::`, empty
+    /// when both are.
+    pub(crate) fn label(&self) -> String {
+        [self.binary.as_str(), self.path.as_str()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+}
+
 /// A module of a run's tests, and how its tests ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Module {
-    /// Its binary and the path of its tests' names before their last `::`,
-    /// joined by `::`: empty for tests whose binary and name say none.
-    pub(crate) path: String,
+    /// Its binary and the path of its tests' names before their last `::`.
+    pub(crate) key: ModuleKey,
     /// Its tests, as indices into the results, in the order they came.
     pub(crate) tests: Vec<usize>,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
 }
 
-/// `id`'s module path, as [`Module::path`], and its name in it: a doc
-/// test's name is a file and an item, not a path, so it's in its binary's.
-pub(crate) fn module_of(id: &TestId) -> (String, &str) {
+/// `id`'s module, and its name in it: a doc test's name is a file and an
+/// item, not a path, so it's in its binary's.
+pub(crate) fn module_of(id: &TestId) -> (ModuleKey, &str) {
     let (module, leaf) = match id.binary.starts_with("Doc-tests") {
         true => ("", id.name.as_str()),
         false => id.name.rsplit_once("::").unwrap_or(("", &id.name)),
     };
-    let path = [id.binary.as_str(), module]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("::");
-    (path, leaf)
+    let key = ModuleKey {
+        binary: id.binary.clone(),
+        path: module.to_owned(),
+    };
+    (key, leaf)
 }
 
 /// `results`' modules, in the order their first tests came.
 pub(crate) fn modules(results: &[TestResult]) -> Vec<Module> {
     let mut modules: Vec<Module> = Vec::new();
     for (ix, result) in results.iter().enumerate() {
-        let (path, _) = module_of(&result.id);
-        let at = match modules.iter().position(|module| module.path == path) {
+        let (key, _) = module_of(&result.id);
+        let at = match modules.iter().position(|module| module.key == key) {
             Some(at) => at,
             None => {
                 modules.push(Module {
-                    path,
+                    key,
                     tests: Vec::new(),
                     passed: 0,
                     failed: 0,
@@ -302,15 +323,15 @@ pub(crate) fn modules(results: &[TestResult]) -> Vec<Module> {
 /// Whether `module` shows its tests: one with a failed test does, unless
 /// it's been closed, and one without doesn't, unless it's been opened.
 /// Once opened or closed, it stays so, whatever its tests do after.
-pub(crate) fn expanded(module: &Module, opened: &HashMap<String, bool>) -> bool {
-    (opened.get(&module.path).copied()).unwrap_or(module.failed > 0)
+pub(crate) fn expanded(module: &Module, opened: &HashMap<ModuleKey, bool>) -> bool {
+    (opened.get(&module.key).copied()).unwrap_or(module.failed > 0)
 }
 
 /// What a tree row is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RowKey {
-    /// A module, by its path.
-    Module(String),
+    /// A module, by its key.
+    Module(ModuleKey),
     /// A test.
     Test(TestId),
 }
@@ -336,7 +357,7 @@ pub(crate) struct TreeRow {
 pub(crate) fn tree_rows(
     results: &[TestResult],
     tracks: &Tracks,
-    opened: &HashMap<String, bool>,
+    opened: &HashMap<ModuleKey, bool>,
 ) -> Vec<TreeRow> {
     let mut rows = Vec::new();
     for module in modules(results) {
@@ -354,9 +375,10 @@ pub(crate) fn tree_rows(
         } else {
             Glyph::Ignored
         };
-        let label: SharedString = match module.path.is_empty() {
+        let name = module.key.label();
+        let label: SharedString = match name.is_empty() {
             true => tr!("workbench-test-runs-module-top"),
-            false => module.path.clone().into(),
+            false => name.into(),
         };
         let (passed, failed) = (module.passed, module.failed);
         let name = match open {
@@ -374,7 +396,7 @@ pub(crate) fn tree_rows(
             ),
         };
         rows.push(TreeRow {
-            key: RowKey::Module(module.path.clone()),
+            key: RowKey::Module(module.key.clone()),
             expanded: Some(open),
             glyph,
             label,
@@ -447,7 +469,7 @@ pub(crate) struct DrawnBars {
 }
 
 /// What a click on a module's row does: opens or closes it.
-type Toggle = Rc<dyn Fn(String, &mut Window, &mut App)>;
+type Toggle = Rc<dyn Fn(ModuleKey, &mut Window, &mut App)>;
 
 /// The tree's rows.
 pub(crate) struct TestRows {
@@ -567,7 +589,7 @@ impl ListDelegate for TestRows {
                 body.child(Self::bars(&bars, flaky, &c))
             });
         let module = match &row.key {
-            RowKey::Module(path) => Some(path.clone()),
+            RowKey::Module(key) => Some(key.clone()),
             RowKey::Test(_) => None,
         };
         let toggle = self.toggle.clone();
@@ -771,7 +793,7 @@ pub(crate) struct TestRunView {
     /// Whether the run's been seen to end, and its tests asked for again.
     read_ended: bool,
     /// The modules opened (true) or closed by hand.
-    opened: HashMap<String, bool>,
+    opened: HashMap<ModuleKey, bool>,
     /// The row selected, kept as the rows change.
     selected: Option<RowKey>,
     tree: Entity<List<TestRows>>,
@@ -816,8 +838,8 @@ impl TestRunView {
                 .get(ix)
                 .map(|row| row.key.clone());
             view.selected = key.clone();
-            if let (ListEvent::Confirmed(_), Some(RowKey::Module(path))) = (event, key) {
-                view.toggle(&path, cx);
+            if let (ListEvent::Confirmed(_), Some(RowKey::Module(module))) = (event, key) {
+                view.toggle(&module, cx);
             }
             cx.notify();
         });
@@ -961,31 +983,30 @@ impl TestRunView {
         }));
     }
 
-    /// Opens the module at `path` if it's closed, else closes it, and keeps
-    /// it so.
-    pub(crate) fn toggle(&mut self, path: &str, cx: &mut Context<Self>) {
+    /// Opens `module` if it's closed, else closes it, and keeps it so.
+    pub(crate) fn toggle(&mut self, module: &ModuleKey, cx: &mut Context<Self>) {
         let rows = self.tree.read(cx).delegate().rows();
-        let key = RowKey::Module(path.to_owned());
+        let key = RowKey::Module(module.clone());
         let row = rows.iter().find(|row| row.key == key);
         let open = row.and_then(|row| row.expanded).unwrap_or(false);
-        self.opened.insert(path.to_owned(), !open);
+        self.opened.insert(module.clone(), !open);
         self.rebuild(cx);
     }
 
     /// Opens (`open`) or closes the selected module, if a module's
     /// selected and it isn't so already.
     fn open_selected(&mut self, open: bool, cx: &mut Context<Self>) -> bool {
-        let Some(RowKey::Module(path)) = self.selected.clone() else {
+        let Some(RowKey::Module(module)) = self.selected.clone() else {
             return false;
         };
         let rows = self.tree.read(cx).delegate().rows();
         let row = rows
             .iter()
-            .find(|row| row.key == RowKey::Module(path.clone()));
+            .find(|row| row.key == RowKey::Module(module.clone()));
         if row.and_then(|row| row.expanded) == Some(open) {
             return false;
         }
-        self.toggle(&path, cx);
+        self.toggle(&module, cx);
         true
     }
 

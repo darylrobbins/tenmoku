@@ -164,6 +164,7 @@ mod terminal_b3;
 mod terminal_plus;
 mod test_failure_detail;
 mod test_run_view;
+mod test_run_view_module_keys;
 mod test_runner;
 mod title_bar;
 mod title_bar_b3;
