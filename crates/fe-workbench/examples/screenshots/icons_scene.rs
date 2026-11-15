@@ -51,7 +51,7 @@ pub(crate) fn check(cx: &mut VisualTestAppContext) -> Result<bool> {
             "src/app.ts",
             "src/main.py",
             "src/index.html",
-            "node_modules/package.json",
+            "node_modules/.package-lock.json",
             "tests/smoke.rs",
             "target/.rustc_info.json",
             ".github/CODEOWNERS",
