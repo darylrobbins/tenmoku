@@ -18,7 +18,7 @@ criteria:
     required: true
     manual: false
   - id: "C4"
-    text: "Test tests::registry::a_server_port_adapter_connects_to_the_port_its_host_gives passes: a spec of the new Port launch kind (the adapter's port comes from a host, not ${port}) connects fe-dap to fe-dap-fake listening there"
+    text: "Test a_server_port_adapter_connects_to_the_port_its_host_gives in crates/fe-dap/tests/registry_host.rs (cargo nextest run -p fe-dap --test registry_host) passes: a spec of the new Port launch kind (the adapter's port comes from a host, not ${port}) connects fe-dap to fe-dap-fake listening there"
     required: true
     manual: false
   - id: "C5"
