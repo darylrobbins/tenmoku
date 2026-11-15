@@ -64,3 +64,14 @@ workbench-debug-launch-variable-unknown = unknown variable { $variable }
 # Expanding a configuration's variables as it starts.
 workbench-debug-launch-variable-no-editor = { $variable } needs an active editor
 workbench-debug-launch-variable-no-home = { $variable } needs a home folder
+
+## The breakpoint store (debug_breakpoints.rs): its state file's problems,
+## said in a toast.
+
+# The state file couldn't be read: it's left as it is until the next
+# change replaces it. $file is its path; $error why, as the system or
+# the JSON parser gives it, or the message below.
+workbench-debug-breakpoints-unreadable = Breakpoints in { $file } can't be read, and the next change replaces them: { $error }
+workbench-debug-breakpoints-not-an-object = not a JSON object
+# $error is why, as the system gives it.
+workbench-debug-breakpoints-save-failed = Breakpoints can't be saved: { $error }

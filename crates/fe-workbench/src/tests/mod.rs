@@ -61,6 +61,7 @@ mod caret_keys_lines;
 mod changes_b3;
 mod coloured_icon_surfaces;
 mod commit_diff_b3;
+mod debug_breakpoints;
 mod default_fonts;
 mod default_keymaps;
 mod dock_titles_locale;

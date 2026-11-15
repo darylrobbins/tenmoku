@@ -30,6 +30,7 @@ mod chat_tool_loop;
 mod closed_editors;
 mod color_literals;
 mod config_problems;
+pub mod debug_breakpoints;
 mod diagnostic_owner;
 mod disk_sync;
 mod dock;
@@ -228,6 +229,7 @@ pub fn init(cx: &mut App) {
     test_commands::init(cx);
     test_lens::init(cx);
     lane_marks::init(cx);
+    debug_breakpoints::init(cx);
     test_runner::init(cx);
     test_run_view::init(cx);
     lsp::init(cx);

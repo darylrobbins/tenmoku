@@ -23,6 +23,8 @@
 //!   items 4-5, §13 F2 and F11; card D2b): stop [`Epoch`]s, lazily fetched
 //!   [`StopData`], the resume guard, Uncertain and its probe, Pause, and
 //!   the [`Controls`] a host's toolbar reads.
+//! - [`Breakpoint`]: a source breakpoint as the user set it (§5, card
+//!   D5), which a host's store keeps and persists.
 //! - `fake` (feature `test-support`): a scripted in-process adapter, and
 //!   the `fe-dap-fake` binary serving it over TCP.
 //!
@@ -31,6 +33,7 @@
 //! dependency's type, apart from `futures`' I/O traits and `serde_json`'s
 //! values.
 
+pub mod breakpoint;
 pub mod clock;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
@@ -45,6 +48,7 @@ pub mod transport;
 #[cfg(test)]
 mod tests;
 
+pub use breakpoint::Breakpoint;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
