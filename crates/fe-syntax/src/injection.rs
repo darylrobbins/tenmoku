@@ -11,7 +11,16 @@
 //! pattern sets `injection.include-children`. A combined pattern that sets
 //! `injection.include-gaps`, our own property, also takes the bytes of the
 //! content's parent that no node covers: the line breaks a PHP heredoc's
-//! scanner skips between its pieces. Layers can hold
+//! scanner skips between its pieces. `injection.doc-prefix "///"`, also
+//! ours, is for doc comments the host grammar makes one node per line, prefix
+//! included, as C#'s `///` lines are: it injects only a content node whose
+//! text starts with the prefix but not with the prefix and its last character
+//! again (`////` isn't a `///` line), leaves the prefix out of the layer, and
+//! combines the node with the run of such siblings of its kind on the rows
+//! straight before and after it, so a `<summary>` over three lines is one
+//! layer. Another node between them, or a blank row, ends the run, so a
+//! plain `//` comment or the next member's doc comment never joins.
+//! Layers can hold
 //! injections of their own, up to [`MAX_DEPTH`] deep: Markdown's blocks hold
 //! inline markup, which holds HTML.
 //!
@@ -295,6 +304,8 @@ pub(crate) struct InjectionQuery {
     content: Option<u32>,
     language: Option<u32>,
     patterns: Vec<Pattern>,
+    /// Each pattern's `injection.doc-prefix`, if it has one.
+    doc_prefixes: Vec<Option<Box<str>>>,
 }
 
 #[derive(Default)]
@@ -333,7 +344,18 @@ impl InjectionQuery {
                 pattern
             })
             .collect();
+        let doc_prefixes = (0..query.pattern_count())
+            .map(|ix| {
+                query
+                    .property_settings(ix)
+                    .iter()
+                    .find(|property| &*property.key == "injection.doc-prefix")
+                    .and_then(|property| property.value.clone())
+                    .filter(|prefix| !prefix.is_empty())
+            })
+            .collect();
         Ok(Self {
+            doc_prefixes,
             local_patterns: (0..query.pattern_count()).all(|ix| !query.is_pattern_non_local(ix)),
             content: query.capture_index_for_name("injection.content"),
             language: query.capture_index_for_name("injection.language"),
@@ -599,14 +621,24 @@ impl Painter<'_> {
                 Injected::Unknown => continue,
             };
             let mut ranges = Vec::new();
-            let collected = match_ranges(
-                &content,
-                pattern_ix,
-                pattern,
-                &mut combined,
-                deadline,
-                &mut ranges,
-            );
+            let collected = match &query.doc_prefixes[pattern_ix] {
+                Some(prefix) => DocRun {
+                    text,
+                    prefix: prefix.as_bytes(),
+                    pattern_ix,
+                    include_children: pattern.include_children,
+                    deadline,
+                }
+                .add_all(&content, &mut combined, &mut ranges),
+                None => match_ranges(
+                    &content,
+                    pattern_ix,
+                    pattern,
+                    &mut combined,
+                    deadline,
+                    &mut ranges,
+                ),
+            };
             match collected {
                 Collected::All => {}
                 Collected::TooMany => {
@@ -833,6 +865,104 @@ fn match_ranges(
     Collected::All
 }
 
+/// How [`Painter::find`] collects the ranges of a pattern with an
+/// `injection.doc-prefix`, in place of [`match_ranges`].
+struct DocRun<'a> {
+    text: &'a Text,
+    prefix: &'a [u8],
+    pattern_ix: usize,
+    include_children: bool,
+    deadline: Option<Instant>,
+}
+
+impl DocRun<'_> {
+    /// Whether `node` is a doc line: its text starts with the prefix, not
+    /// followed by the prefix's last byte again.
+    fn is_line(&self, node: Node) -> bool {
+        let start = node.start_byte();
+        let end = node.end_byte().min(start + self.prefix.len() + 1);
+        let head: Vec<u8> = chunks(self.text, start..end).flatten().copied().collect();
+        head.starts_with(self.prefix) && head.get(self.prefix.len()) != self.prefix.last()
+    }
+
+    /// [`DocRun::add`] for each of a match's `content` nodes.
+    fn add_all(
+        &self,
+        content: &[Node],
+        combined: &mut HashSet<(usize, usize)>,
+        ranges: &mut Vec<Range<usize>>,
+    ) -> Collected {
+        for &node in content {
+            match self.add(node, combined, ranges) {
+                Collected::All => {}
+                stopped => return stopped,
+            }
+        }
+        Collected::All
+    }
+
+    /// Adds the bytes after the prefix of the run of doc lines holding
+    /// `node`: its siblings of its kind that are doc lines, each on the row
+    /// after the last, with no other node between. Nothing if `node` isn't a
+    /// doc line, or `combined` holds it, as an earlier match's run took it;
+    /// the run's lines go in `combined`. The parent's children are walked
+    /// from the first to the run's end, checking the deadline at each.
+    fn add(
+        &self,
+        node: Node,
+        combined: &mut HashSet<(usize, usize)>,
+        ranges: &mut Vec<Range<usize>>,
+    ) -> Collected {
+        if combined.contains(&(self.pattern_ix, node.id())) || !self.is_line(node) {
+            return Collected::All;
+        }
+        let mut run = Vec::new();
+        match node.parent() {
+            None => run.push(node),
+            Some(parent) => {
+                let mut found = false;
+                let mut cursor = parent.walk();
+                for sibling in parent.children(&mut cursor) {
+                    if out_of_time(self.deadline) {
+                        return Collected::OutOfTime;
+                    }
+                    let line = sibling.kind_id() == node.kind_id() && self.is_line(sibling);
+                    let next_row = run.last().is_some_and(|last: &Node| {
+                        last.end_position().row + 1 == sibling.start_position().row
+                    });
+                    if !(line && next_row) {
+                        if found {
+                            break;
+                        }
+                        run.clear();
+                    }
+                    if line {
+                        run.push(sibling);
+                        found |= sibling.id() == node.id();
+                    }
+                }
+                if !found {
+                    return Collected::All;
+                }
+            }
+        }
+        for line in run {
+            combined.insert((self.pattern_ix, line.id()));
+            let collected = content_ranges_after(
+                line,
+                self.prefix.len(),
+                self.include_children,
+                self.deadline,
+                ranges,
+            );
+            if collected != Collected::All {
+                return collected;
+            }
+        }
+        Collected::All
+    }
+}
+
 /// The longest delimited pattern `trim_delimiters` reads.
 const MAX_DELIMITED: usize = 4096;
 
@@ -891,10 +1021,21 @@ fn content_ranges(
     deadline: Option<Instant>,
     ranges: &mut Vec<Range<usize>>,
 ) -> Collected {
+    content_ranges_after(node, 0, include_children, deadline, ranges)
+}
+
+/// [`content_ranges`] without `node`'s first `skip` bytes.
+fn content_ranges_after(
+    node: Node,
+    skip: usize,
+    include_children: bool,
+    deadline: Option<Instant>,
+    ranges: &mut Vec<Range<usize>>,
+) -> Collected {
     if out_of_time(deadline) {
         return Collected::OutOfTime;
     }
-    let mut start = node.start_byte();
+    let mut start = (node.start_byte() + skip).min(node.end_byte());
     if !include_children {
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
@@ -992,6 +1133,9 @@ thread_local! {
     static QUERIED_ROOTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(all(test, feature = "csharp", feature = "xml"))]
+#[path = "injection/doc_prefix_tests.rs"]
+mod doc_prefix_tests;
 #[cfg(test)]
 mod root_traversal_tests;
 #[cfg(test)]

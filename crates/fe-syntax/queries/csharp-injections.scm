@@ -1,4 +1,10 @@
-; Ours. The regex grammar is injected into the pattern argument of the static
+; Ours. The WebAssembly C# extension's injections.scm is this file, kept equal
+; by wasm_parity's csharp_extension_is_as_built_in, so the extension gets these
+; regex injections too: the built-in regex grammar is hidden but present, and
+; the extension finds it by name. And XML is injected into /// doc comments
+; (below).
+;
+; The regex grammar is injected into the pattern argument of the static
 ; System.Text.RegularExpressions calls Regex.IsMatch, Match, Matches, Replace and
 ; Split (the second argument, the input comes first) and into the first argument
 ; of `new Regex(pattern)` / `new Regex(pattern, options)`. Plain `Regex.` only,
@@ -77,3 +83,19 @@
   (#eq? @_cls "Regex")
   (#not-match? @injection.content "\\\\")
   (#set! injection.language "regex"))
+
+; XML doc comments: a run of /// lines is one xml layer, each line without its
+; ///, which keeps the comment colour, as does the text between tags. Through
+; `injection.doc-prefix`, our own property: the grammar makes each line one
+; comment node, /// included, and the property cuts the prefix and combines
+; the lines on consecutive rows, so <summary> and </summary> on lines of
+; their own pair up. A blank line or any code between /// lines starts a new
+; layer.
+; Limits: /** */ doc comments are not injected, nor //// lines. A doc block
+; is a run of elements with no one root, which tree-sitter-xml parses with
+; error recovery; tags and attributes still colour. An unclosed or misnested
+; tag can leave the rest of its block plain.
+((comment) @injection.content
+  (#match? @injection.content "^///")
+  (#set! injection.language "xml")
+  (#set! injection.doc-prefix "///"))

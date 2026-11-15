@@ -1610,10 +1610,13 @@ fn kotlin_extension_is_as_built_in() {
 fn csharp_extension_is_as_built_in() {
     // Read at run time, not `include_str!`: this file builds against pre-fix code, which has no csharp.scm.
     let extra = read(&repository().join("crates/fe-syntax/queries/csharp.scm"));
+    // The extension's injections.scm is the built-in's, regex and XML doc
+    // comments both (T649); read at run time for the same reason.
+    let injections = read(&repository().join("crates/fe-syntax/queries/csharp-injections.scm"));
     assert_as_built_in(
         "csharp",
         &[tree_sitter_c_sharp::HIGHLIGHTS_QUERY, &extra],
-        None,
+        Some(&injections),
     );
 }
 

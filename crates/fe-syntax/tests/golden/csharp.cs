@@ -29,6 +29,11 @@ public sealed class WindowCounter<TKey> where TKey : notnull
 
     public static bool IsKey(string text) => Regex.IsMatch(text, @"^[a-z]\d+$");
 
+    /// <summary>
+    /// Records an event for <paramref name="key"/>.
+    /// </summary>
+    /// <param name="key">The key to count.</param>
+    /// <returns>Whether it stayed under <see cref="Capacity"/>.</returns>
     public bool Record(TKey key, DateTime? at = null)
     {
         var now = at ?? DateTime.UtcNow;
