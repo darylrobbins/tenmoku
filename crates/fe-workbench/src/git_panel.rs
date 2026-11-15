@@ -83,16 +83,33 @@
 //! the host commands its line and keys leave (`:wq`, `ZZ`, `:q!`) go to the
 //! workbench, which runs them in `git_commit`. `cc` in the panel focuses
 //! the box, and `ca` does with Amend checked, as fugitive's keys do.
+//!
+//! Under the user's groups is one group per lane with pending work
+//! (docs/designs/agent-lanes.md § Changes), from the window's
+//! [`LaneStore::summaries`](crate::lanes::LaneStore::summaries), listed
+//! again as the lanes change: its header, `lane 2 · claude-code`, and its
+//! `Review` link, which runs `agent.review_lane` for the lane, in the
+//! agent's colour (`agent.base`); its rows each a file with undecided
+//! hunks, its turns' or its loose proposals', with the lines they add and
+//! remove, as its open editor last showed them, and how many hunks are
+//! undecided. A lane row has no checkbox and no buttons, and neither the
+//! vim keys nor the palette's row commands stage, unstage or discard it, so
+//! a lane's pending work can't reach a commit; Enter, `o`, Alt-Enter or a
+//! click opens its file. What the user accepted is in their buffers and
+//! shows in their own groups as any change does.
 
 use std::{
     cell::Cell,
+    collections::HashMap,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
 };
 
-use fe_buffer::{Origin, Version};
-use fe_command::{CommandId, ContextFrame, ContextStack, Invocation, Value};
+use fe_buffer::{HunkStatus, Origin, Version};
+use fe_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
+use fe_editor::lane::LaneId;
 use fe_git::{ChangeKind, FileStatus, GitError, Repo, SplitStatus};
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_ui::{
@@ -167,7 +184,8 @@ pub enum GitPanelEvent {
     Listed,
 }
 
-/// A group of rows, as VS Code's Source Control groups them.
+/// A group of rows, as VS Code's Source Control groups them, then a
+/// lane's, in this order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Group {
     /// Conflicted files, until they're staged.
@@ -176,22 +194,44 @@ pub(crate) enum Group {
     Staged,
     /// How the working tree differs from the index, untracked files too.
     Changes,
+    /// A lane's files with pending work, which can't be staged.
+    Lane(LaneId),
 }
 
 impl Group {
-    /// Its header's title.
-    pub(crate) fn title(self) -> SharedString {
-        match self {
-            Group::Merge => tr!("workbench-changes-group-merge"),
-            Group::Staged => tr!("workbench-changes-group-staged"),
-            Group::Changes => tr!("workbench-changes-group-changes"),
-        }
-    }
-
     /// Whether its files are staged: what their checkboxes show.
     fn staged(self) -> bool {
         self == Group::Staged
     }
+}
+
+/// The command a lane group's Review runs, with the lane's number as
+/// `lane`. Card 19 of the agent lanes design registers it; until then it's
+/// dispatched to nothing.
+pub(crate) const REVIEW_LANE_COMMAND: &str = "agent.review_lane";
+
+/// One of a lane's files with undecided hunks, as its group lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LaneFile {
+    /// What a click opens.
+    path: PathBuf,
+    /// From the root, which the group is sorted by; the path as given
+    /// for a file outside it.
+    relative: PathBuf,
+    /// Lines its undecided hunks add and remove, as its open editor last
+    /// showed them.
+    added: usize,
+    removed: usize,
+    /// Its undecided hunks: pending, and stale until rejected.
+    pending: usize,
+}
+
+/// A lane with pending work, as its group lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LaneGroup {
+    id: LaneId,
+    name: Arc<str>,
+    files: Vec<LaneFile>,
 }
 
 /// Where the project root is in its repository, once found.
@@ -236,21 +276,24 @@ struct Changed {
     kind: ChangeKind,
 }
 
-/// A row of the list: a group's header, or a file, by its index in
-/// `entries`.
+/// A row of the list: a group's header, a file, by its index in
+/// `entries`, or a lane's file, by its index in its group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Row {
     Header(Group),
     File(usize),
+    LaneFile(LaneId, usize),
 }
 
-/// What a row's or a header's button or checkbox does.
+/// What a row's or a header's button, checkbox or link does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     OpenFile,
     Discard,
     Stage,
     Unstage,
+    /// A lane group's Review: runs [`REVIEW_LANE_COMMAND`] for its lane.
+    ReviewLane,
 }
 
 impl Action {
@@ -268,6 +311,7 @@ impl Action {
             (Action::Stage, true) => tr!("workbench-changes-stage-all"),
             (Action::Unstage, false) => tr!("workbench-changes-unstage"),
             (Action::Unstage, true) => tr!("workbench-changes-unstage-all"),
+            (Action::ReviewLane, _) => tr!("workbench-changes-review-lane"),
         }
     }
 
@@ -279,6 +323,7 @@ impl Action {
             Action::Discard => Icon::ArrowLeft,
             Action::Stage => Icon::Check,
             Action::Unstage => Icon::Minus,
+            Action::ReviewLane => Icon::Eye,
         }
     }
 
@@ -298,27 +343,30 @@ impl Action {
             Action::Discard => "discard",
             Action::Stage => "stage",
             Action::Unstage => "unstage",
+            Action::ReviewLane => "review",
         }
     }
 }
 
 /// The buttons a row of `group` has beside its checkbox, in order: "Open
 /// File" only for a file that's there, "Discard Changes" only on a Changes
-/// row.
+/// row, and none on a lane's, which has no checkbox either.
 fn row_actions(group: Group, deleted: bool) -> &'static [Action] {
     match (group, deleted) {
         (Group::Changes, false) => &[Action::OpenFile, Action::Discard],
         (Group::Changes, true) => &[Action::Discard],
         (Group::Merge | Group::Staged, false) => &[Action::OpenFile],
         (Group::Merge | Group::Staged, true) => &[],
+        (Group::Lane(_), _) => &[],
     }
 }
 
-/// The buttons a header of `group` has beside its checkbox.
+/// The buttons a header of `group` has beside its checkbox; a lane's has
+/// neither, only its Review link.
 fn header_actions(group: Group) -> &'static [Action] {
     match group {
         Group::Changes => &[Action::Discard],
-        Group::Merge | Group::Staged => &[],
+        Group::Merge | Group::Staged | Group::Lane(_) => &[],
     }
 }
 
@@ -453,7 +501,15 @@ pub struct GitPanel {
     staged: usize,
     /// Each listed file as the project tree shows it, sorted by path.
     files: Vec<Changed>,
-    /// The selected file's index in `entries`.
+    /// Each lane with pending work, in order of number, below `entries`.
+    lanes: Vec<LaneGroup>,
+    /// Lines each lane's undecided hunks add and remove in each file, as
+    /// last read from its open editor: a file closed keeps them.
+    lane_lines: HashMap<(LaneId, PathBuf), (usize, usize)>,
+    /// Lists the lanes again as they change, once the panel's drawn.
+    lanes_followed: Option<Subscription>,
+    /// The selected file's index in `entries`, or past them in the lanes'
+    /// files, in order ([`GitPanel::lane_file`]).
     selected: Option<usize>,
     /// Whether a run has started or been asked for: the first is when the
     /// project tree opens, or when the panel's first drawn if that's
@@ -501,6 +557,10 @@ pub struct GitPanel {
     /// The counter last drawn in the box's corner, its colour and family.
     #[cfg(test)]
     drawn_counter: std::cell::RefCell<Option<(SharedString, Hsla, SharedString)>>,
+    /// The lane headers' titles and Review links the last frames drew, with
+    /// their colours.
+    #[cfg(test)]
+    drawn_lane_text: std::cell::RefCell<Vec<(SharedString, Hsla)>>,
 }
 
 impl GitPanel {
@@ -522,6 +582,9 @@ impl GitPanel {
             merge: 0,
             staged: 0,
             files: Vec::new(),
+            lanes: Vec::new(),
+            lane_lines: HashMap::new(),
+            lanes_followed: None,
             selected: None,
             read: false,
             started: 0,
@@ -545,6 +608,8 @@ impl GitPanel {
             drawn_placeholder: Default::default(),
             #[cfg(test)]
             drawn_counter: Default::default(),
+            #[cfg(test)]
+            drawn_lane_text: Default::default(),
         }
     }
 
@@ -658,6 +723,7 @@ impl GitPanel {
     /// it found the root is kept even so, and the newer list listed again
     /// where the root is in it.
     pub(crate) fn landed(&mut self, seq: u64, found: Found, cx: &mut Context<Self>) {
+        self.follow_lanes(cx);
         self.running.take_if(|running| *running == seq);
         if seq <= self.shown {
             if let Ok(Some((located, _))) = found
@@ -744,6 +810,7 @@ impl GitPanel {
             let start = self.group_range(entry.group).start;
             Some((entry.path.clone(), entry.group, ix - start))
         });
+        let lane_selected = self.selected_lane_file();
         self.shown = seq;
         let Some(root) = &self.root else {
             return;
@@ -799,6 +866,9 @@ impl GitPanel {
                 .or_else(|| (!range.is_empty()).then(|| (range.start + at).min(range.end - 1)))
                 .or_else(|| self.entries.iter().position(same))
         });
+        if let Some(was) = lane_selected {
+            self.selected = self.reselect_lane(was);
+        }
         self.files = files;
         self.listed = statuses;
         if changed {
@@ -806,20 +876,192 @@ impl GitPanel {
         }
     }
 
-    /// The indices in `entries` of `group`'s files.
+    /// Lists `lanes`, each with pending work, below the user's groups,
+    /// keeping a lane file selected if it's still listed, else the one now
+    /// at its place in its group.
+    fn set_lanes(&mut self, lanes: Vec<LaneGroup>, cx: &mut Context<Self>) {
+        if lanes == self.lanes {
+            return;
+        }
+        let was = self.selected_lane_file();
+        self.lanes = lanes;
+        if let Some(was) = was {
+            self.selected = self.reselect_lane(was);
+        }
+        cx.notify();
+    }
+
+    /// Starts following the window's lanes, once nothing's being updated,
+    /// unless it has: on the first status landing, which the project
+    /// opening reads, or the first draw, whichever is sooner, so each
+    /// file's lines are read while its editor is open, the panel shown or
+    /// not.
+    fn follow_lanes(&mut self, cx: &mut Context<Self>) {
+        if self.lanes_followed.is_some() {
+            return;
+        }
+        let panel = cx.weak_entity();
+        cx.defer(move |cx| {
+            (panel.update(cx, |panel, cx| {
+                if panel.lanes_followed.is_none() {
+                    panel.list_lanes(cx);
+                }
+            }))
+            .ok();
+        });
+    }
+
+    /// Lists the window's lanes with pending work from its lane store,
+    /// each file's lines from the open editors' proposals and, for a new
+    /// file of the turn the AI Changes panel shows, its text, and follows
+    /// the store from then on. Nothing without a workbench.
+    fn list_lanes(&mut self, cx: &mut Context<Self>) {
+        let Some(workbench) = self.workbench(cx) else {
+            return;
+        };
+        let store = workbench.read(cx).lanes.clone();
+        if self.lanes_followed.is_none() {
+            self.lanes_followed = Some(cx.observe(&store, |panel, _, cx| panel.list_lanes(cx)));
+        }
+        let editors = workbench.read(cx).open_editors(cx);
+        let read = lane_lines(store.read(cx), &editors, cx);
+        self.lane_lines.extend(read);
+        // A pending new file has no proposal: all its text is added.
+        if let Some(shown) = workbench.read(cx).ai_changes.as_ref()
+            && let Some(id) = shown.lane
+        {
+            let summaries = store.read(cx).summaries();
+            let files = (summaries.iter())
+                .filter(|summary| summary.id == id)
+                .flat_map(|summary| &summary.files);
+            for (path, counts) in files {
+                if let Some(text) = shown.changeset.new_file_text(path)
+                    && counts.pending > 0
+                {
+                    let lines = (text.lines().count(), 0);
+                    self.lane_lines.insert((id, path.clone()), lines);
+                }
+            }
+        }
+        let root = self.root.clone();
+        let located = self.located.as_ref();
+        let lanes: Vec<LaneGroup> = (store.read(cx).summaries().into_iter())
+            .filter_map(|summary| {
+                let mut files: Vec<LaneFile> = (summary.files.into_iter())
+                    .filter(|(_, counts)| counts.pending + counts.stale > 0)
+                    .map(|(path, counts)| {
+                        let relative = (root.as_deref())
+                            .and_then(|root| relative_to(root, located, &path))
+                            .unwrap_or_else(|| path.clone());
+                        let lines = self.lane_lines.get(&(summary.id, path.clone()));
+                        let (added, removed) = lines.copied().unwrap_or_default();
+                        LaneFile {
+                            path,
+                            relative,
+                            added,
+                            removed,
+                            pending: counts.pending + counts.stale,
+                        }
+                    })
+                    .collect();
+                files.sort_by(|a, b| a.relative.cmp(&b.relative));
+                (!files.is_empty()).then_some(LaneGroup {
+                    id: summary.id,
+                    name: summary.name,
+                    files,
+                })
+            })
+            .collect();
+        // Only the files listed keep their lines.
+        let listed: std::collections::HashSet<(LaneId, &Path)> = (lanes.iter())
+            .flat_map(|lane| (lane.files.iter()).map(|file| (lane.id, file.path.as_path())))
+            .collect();
+        (self.lane_lines).retain(|(id, path), _| listed.contains(&(*id, path.as_path())));
+        self.set_lanes(lanes, cx);
+    }
+
+    /// How many files are listed: `entries`, then the lanes'.
+    fn file_count(&self) -> usize {
+        self.entries.len()
+            + (self.lanes.iter())
+                .map(|lane| lane.files.len())
+                .sum::<usize>()
+    }
+
+    /// File `ix`, past `entries`, as a lane's: its lane and its index in
+    /// its group.
+    fn lane_file(&self, ix: usize) -> Option<(LaneId, usize)> {
+        let mut at = ix.checked_sub(self.entries.len())?;
+        for lane in &self.lanes {
+            if at < lane.files.len() {
+                return Some((lane.id, at));
+            }
+            at -= lane.files.len();
+        }
+        None
+    }
+
+    /// Lane `id`'s file `at` in its group.
+    fn lane_file_entry(&self, id: LaneId, at: usize) -> Option<&LaneFile> {
+        let lane = self.lanes.iter().find(|lane| lane.id == id)?;
+        lane.files.get(at)
+    }
+
+    /// The selected file, if it's a lane's: its lane, its path and its
+    /// index in its group.
+    fn selected_lane_file(&self) -> Option<(LaneId, PathBuf, usize)> {
+        let (id, at) = self.lane_file(self.selected?)?;
+        Some((id, self.lane_file_entry(id, at)?.path.clone(), at))
+    }
+
+    /// The file to select in place of `was`, a lane's: the same lane's
+    /// file at the same path, else the one now at its place in its group,
+    /// else none.
+    fn reselect_lane(&self, (id, path, at): (LaneId, PathBuf, usize)) -> Option<usize> {
+        let range = self.group_range(Group::Lane(id));
+        let lane = self.lanes.iter().find(|lane| lane.id == id)?;
+        let same = lane.files.iter().position(|file| file.path == path);
+        let at = same.unwrap_or(at.min(lane.files.len().checked_sub(1)?));
+        Some(range.start + at)
+    }
+
+    /// The group file `ix` is in.
+    fn group_of(&self, ix: usize) -> Group {
+        match (self.entries.get(ix), self.lane_file(ix)) {
+            (Some(entry), _) => entry.group,
+            (None, Some((id, _))) => Group::Lane(id),
+            (None, None) => Group::Changes,
+        }
+    }
+
+    /// The indices of `group`'s files: in `entries`, or past them for a
+    /// lane's.
     fn group_range(&self, group: Group) -> Range<usize> {
         match group {
             Group::Merge => 0..self.merge,
             Group::Staged => self.merge..self.merge + self.staged,
             Group::Changes => self.merge + self.staged..self.entries.len(),
+            Group::Lane(id) => {
+                let mut start = self.entries.len();
+                for lane in &self.lanes {
+                    if lane.id == id {
+                        return start..start + lane.files.len();
+                    }
+                    start += lane.files.len();
+                }
+                start..start
+            }
         }
     }
 
-    /// The groups with a header, in order: Changes whenever anything is
-    /// listed, the others only with rows.
+    /// The groups with a header, in order: Changes whenever the user has
+    /// changes, the others only with rows, then each lane's.
     fn headed(&self) -> impl Iterator<Item = Group> + use<> {
         let (merge, staged) = (self.merge > 0, self.staged > 0);
         let any = !self.entries.is_empty();
+        let lanes: Vec<Group> = (self.lanes.iter())
+            .map(|lane| Group::Lane(lane.id))
+            .collect();
         [
             (Group::Merge, merge),
             (Group::Staged, staged),
@@ -827,15 +1069,13 @@ impl GitPanel {
         ]
         .into_iter()
         .filter_map(|(group, shown)| shown.then_some(group))
+        .chain(lanes)
     }
 
     /// How many rows the list has: each file's and each group's header,
     /// Staged Changes only if it has any, none if nothing's listed.
     fn row_count(&self) -> usize {
-        match self.entries.is_empty() {
-            true => 0,
-            false => self.entries.len() + self.headed().count(),
-        }
+        self.file_count() + self.headed().count()
     }
 
     /// The list's row `at`.
@@ -850,7 +1090,10 @@ impl GitPanel {
             }
             let range = self.group_range(group);
             if at <= range.len() {
-                return Some(Row::File(range.start + at - 1));
+                return Some(match group {
+                    Group::Lane(id) => Row::LaneFile(id, at - 1),
+                    _ => Row::File(range.start + at - 1),
+                });
             }
             at -= range.len() + 1;
         }
@@ -859,8 +1102,23 @@ impl GitPanel {
 
     /// The list's row of file `ix`.
     fn row_of(&self, ix: usize) -> usize {
-        let group = (self.entries.get(ix)).map_or(Group::Changes, |entry| entry.group);
+        let group = self.group_of(ix);
         ix + self.headed().take_while(|g| *g <= group).count()
+    }
+
+    /// Group `group`'s header's title: a lane's is its number and name.
+    fn title(&self, group: Group) -> SharedString {
+        match group {
+            Group::Merge => tr!("workbench-changes-group-merge"),
+            Group::Staged => tr!("workbench-changes-group-staged"),
+            Group::Changes => tr!("workbench-changes-group-changes"),
+            Group::Lane(id) => {
+                let name = (self.lanes.iter())
+                    .find(|lane| lane.id == id)
+                    .map_or_else(String::new, |lane| lane.name.to_string());
+                tr!("workbench-changes-group-lane", lane = id.get(), name = name)
+            }
+        }
     }
 
     fn selected_entry(&self) -> Option<&Entry> {
@@ -890,7 +1148,9 @@ impl GitPanel {
             Status::Reading => return None,
             Status::NotARepository => tr!("workbench-changes-not-a-repository").into(),
             Status::Failed(message) => message.clone(),
-            Status::Listed if self.entries.is_empty() => tr!("workbench-changes-none").into(),
+            Status::Listed if self.entries.is_empty() && self.lanes.is_empty() => {
+                tr!("workbench-changes-none").into()
+            }
             Status::Listed => return None,
         })
     }
@@ -911,6 +1171,10 @@ impl GitPanel {
     /// Selects file `ix` and opens its diff: a staged file's HEAD ↔ Index,
     /// a changed one's Index ↔ Working Tree.
     fn open_diff(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // A lane's file has no git diff of its pending work: it opens.
+        if self.lane_file(ix).is_some() {
+            return self.open_file(ix, cx);
+        }
         let Some(entry) = self.entries.get(ix) else {
             return;
         };
@@ -930,10 +1194,12 @@ impl GitPanel {
 
     /// Selects file `ix` and opens it, unless it's deleted.
     fn open_file(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(entry) = self.entries.get(ix) else {
-            return;
+        let lane = (self.lane_file(ix)).and_then(|(id, at)| self.lane_file_entry(id, at));
+        let open = match (self.entries.get(ix), lane) {
+            (Some(entry), _) => (entry.kind != ChangeKind::Deleted).then(|| entry.path.clone()),
+            (None, Some(file)) => Some(file.path.clone()),
+            (None, None) => return,
         };
-        let open = (entry.kind != ChangeKind::Deleted).then(|| entry.path.clone());
         self.select(ix, cx);
         if let Some(path) = open {
             cx.emit(GitPanelEvent::OpenFile(path));
@@ -977,8 +1243,17 @@ impl GitPanel {
         }
     }
 
-    /// Runs `action` on file `ix`.
+    /// Runs `action` on file `ix`. A lane's file opens or has its lane
+    /// reviewed, and nothing else: its pending work can't be staged or
+    /// discarded.
     fn act(&mut self, ix: usize, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((id, _)) = self.lane_file(ix) {
+            return match action {
+                Action::OpenFile => self.open_file(ix, cx),
+                Action::ReviewLane => self.review_lane(id, window, cx),
+                Action::Discard | Action::Stage | Action::Unstage => {}
+            };
+        }
         let Some(entry) = self.entries.get(ix) else {
             return;
         };
@@ -986,6 +1261,7 @@ impl GitPanel {
         let merge = entry.group == Group::Merge;
         match action {
             Action::OpenFile => self.open_file(ix, cx),
+            Action::ReviewLane => {}
             Action::Discard if merge => {}
             Action::Unstage if merge => {}
             Action::Discard => self.discard(vec![path], window, cx),
@@ -1003,11 +1279,17 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Group::Lane(id) = group {
+            if action == Action::ReviewLane {
+                self.review_lane(id, window, cx);
+            }
+            return;
+        }
         let paths: Vec<PathBuf> = (self.entries[self.group_range(group)].iter())
             .map(|entry| entry.path.clone())
             .collect();
         match action {
-            Action::OpenFile => {}
+            Action::OpenFile | Action::ReviewLane => {}
             Action::Discard | Action::Unstage if group == Group::Merge => {}
             Action::Discard => self.discard(paths, window, cx),
             Action::Stage if group == Group::Merge => self.stage_merge(paths, window, cx),
@@ -1035,7 +1317,7 @@ impl GitPanel {
                 self.pending_c = false;
                 if !after_g {
                     self.pending_g = true;
-                } else if !self.entries.is_empty() {
+                } else if self.file_count() > 0 {
                     self.select(0, cx);
                 }
                 cx.stop_propagation();
@@ -1059,7 +1341,7 @@ impl GitPanel {
             }
             return;
         }
-        if self.entries.is_empty() {
+        if self.file_count() == 0 {
             return;
         }
         let vim = fe_gpui::vim_enabled(cx);
@@ -1069,7 +1351,7 @@ impl GitPanel {
             (modifiers, "g") if vim && modifiers == Modifiers::shift() => "G",
             _ => return,
         };
-        let last = self.entries.len() - 1;
+        let last = self.file_count() - 1;
         match key {
             "up" => {
                 let ix = self.selected.map_or(0, |ix| ix.saturating_sub(1));
@@ -1096,7 +1378,8 @@ impl GitPanel {
                 let Some(ix) = self.selected else {
                     return;
                 };
-                let staged = self.entries[ix].group == Group::Staged;
+                // On a lane's file only `o` does anything (`act`).
+                let staged = self.group_of(ix) == Group::Staged;
                 match key {
                     "o" => self.open_diff(ix, window, cx),
                     "s" => self.act(ix, Action::Stage, window, cx),
@@ -1198,8 +1481,26 @@ impl GitPanel {
     fn run(&mut self, target: Row, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match target {
             Row::File(ix) => self.act(ix, action, window, cx),
+            Row::LaneFile(id, at) => {
+                let ix = self.group_range(Group::Lane(id)).start + at;
+                self.act(ix, action, window, cx)
+            }
             Row::Header(group) => self.act_on_all(group, action, window, cx),
         }
+    }
+
+    /// Runs [`REVIEW_LANE_COMMAND`] for lane `id`, as a click does.
+    fn review_lane(&mut self, id: LaneId, window: &mut Window, cx: &mut Context<Self>) {
+        let invocation = Invocation::of(REVIEW_LANE_COMMAND)
+            .expect("a valid command ID")
+            .args(Value::from_iter([("lane", id.get())]))
+            .source(Source::Mouse)
+            .context(
+                [ContextFrame::new(crate::KEY_CONTEXT)]
+                    .into_iter()
+                    .collect(),
+            );
+        window.dispatch_action(Box::new(RunCommand(invocation)), cx);
     }
 
     fn render_rows(
@@ -1234,13 +1535,23 @@ impl GitPanel {
                     .overflow_hidden()
                     .whitespace_nowrap();
                 let element = match row {
+                    Row::Header(Group::Lane(id)) => self.lane_header(at, id, base, cx),
+                    Row::LaneFile(id, file) => {
+                        let ix = self.group_range(Group::Lane(id)).start + file;
+                        let selected = self.selected == Some(ix);
+                        self.lane_row(base, id, file, cx)?
+                            .when(selected, |row| row.bg(selected_bg))
+                            .on_click(cx.listener(move |panel, _, window, cx| {
+                                panel.open_diff(ix, window, cx)
+                            }))
+                    }
                     Row::Header(group) => {
                         let count = self.group_range(group).len();
                         let checkbox = self.checkbox(at, row, group, cx);
                         let buttons = self.buttons(at, row, header_actions(group), cx);
                         base.font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(checkbox)
-                            .child(div().flex_1().min_w_0().child(group.title()))
+                            .child(div().flex_1().min_w_0().child(self.title(group)))
                             .child(
                                 div()
                                     .invisible()
@@ -1334,6 +1645,157 @@ impl GitPanel {
             })
             .collect()
     }
+
+    /// Row `at`, lane `id`'s header: `lane 2 · claude-code`, then its
+    /// Review link at the right, both in the agent's colour. No checkbox
+    /// and no buttons: the lane's work can't be staged.
+    fn lane_header(
+        &self,
+        at: usize,
+        id: LaneId,
+        base: gpui::Stateful<gpui::Div>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let agent = cx.theme().colors.agent.base;
+        let title = self.title(Group::Lane(id));
+        let review = tr!("workbench-changes-review");
+        #[cfg(test)]
+        (self.drawn_lane_text.borrow_mut())
+            .extend([(title.clone(), agent), (review.clone(), agent)]);
+        let target = Row::Header(Group::Lane(id));
+        let tooltip = Action::ReviewLane.tooltip(target);
+        let ui = fe_ui::ui_theme(cx);
+        let link = div()
+            .id(SharedString::from(self.button_id(at, Action::ReviewLane)))
+            .debug_selector(move || review_selector(id))
+            .flex_none()
+            .cursor(CursorStyle::PointingHand)
+            .text_color(agent)
+            .hover(|link| link.underline())
+            .tooltip(move |_, cx| {
+                cx.new(|_| Tooltip::new(tooltip.clone(), None::<&str>, &ui))
+                    .into()
+            })
+            .on_click(cx.listener(move |panel, _, window, cx| {
+                cx.stop_propagation();
+                panel.run(target, Action::ReviewLane, window, cx);
+            }))
+            .child(review);
+        base.font_weight(gpui::FontWeight::SEMIBOLD)
+            .child(
+                div()
+                    .debug_selector(move || format!("change-lane-title:{}", id.get()))
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_color(agent)
+                    .child(title),
+            )
+            .child(link)
+    }
+
+    /// Lane `id`'s file `at`'s row: its icon, name and directory, the lines
+    /// its undecided hunks add and remove in the added and removed hues,
+    /// and how many are undecided. No checkbox and no buttons.
+    fn lane_row(
+        &self,
+        base: gpui::Stateful<gpui::Div>,
+        id: LaneId,
+        at: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Stateful<gpui::Div>> {
+        let ui = fe_ui::ui_theme(cx);
+        let vcs = cx.theme().colors.vcs;
+        let file = self.lane_file_entry(id, at)?;
+        let name_text = (file.relative.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let directory = (file.relative.parent())
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default();
+        let icon = file_icon_ref(&name_text);
+        let icon = div()
+            .size(px(14.))
+            .flex_none()
+            .child(icon.element(px(14.), ui.icon));
+        let count =
+            |text: SharedString, color: Hsla| div().flex_none().text_color(color).child(text);
+        Some(
+            base.hover(move |row| row.bg(ui.row_hover))
+                .child(icon)
+                .child(
+                    div()
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(name_text),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .text_color(ui.muted_text)
+                        .child(directory),
+                )
+                .child(count(
+                    tr!("workbench-changes-lane-added", count = file.added),
+                    vcs.added,
+                ))
+                .child(count(
+                    tr!("workbench-changes-lane-removed", count = file.removed),
+                    vcs.deleted,
+                ))
+                .child(count(
+                    tr!("workbench-changes-lane-pending", count = file.pending),
+                    ui.muted_text,
+                )),
+        )
+    }
+}
+
+/// The debug selector of lane `id`'s Review link.
+fn review_selector(id: LaneId) -> String {
+    format!("change-review:{}", id.get())
+}
+
+/// Lines each lane's undecided hunks add and remove in each file `editors`
+/// show, by the lane `store` gives their proposals' origins: each proposal
+/// counted once, however many editors show it.
+fn lane_lines(
+    store: &crate::lanes::LaneStore,
+    editors: &[Entity<EditorView>],
+    cx: &App,
+) -> HashMap<(LaneId, PathBuf), (usize, usize)> {
+    let mut lines = HashMap::new();
+    let mut seen = std::collections::HashSet::new();
+    for editor in editors {
+        let editor = editor.read(cx);
+        let Some(path) = editor.model().path() else {
+            continue;
+        };
+        let snapshot = editor.model().buffer().snapshot();
+        for proposal in editor.proposals() {
+            if !seen.insert(Rc::as_ptr(proposal)) {
+                continue;
+            }
+            let proposal = proposal.borrow();
+            let Some(id) = store.lane_of(proposal.origin()) else {
+                continue;
+            };
+            let held = lines.entry((id, path.to_owned())).or_insert((0, 0));
+            for hunk in proposal.hunks(&snapshot) {
+                if matches!(hunk.status, HunkStatus::Pending | HunkStatus::Stale) {
+                    held.0 += hunk.new_text.lines().count();
+                    held.1 += hunk.old_text.lines().count();
+                }
+            }
+        }
+    }
+    lines
 }
 
 /// The commit message box: see the module docs.
@@ -1849,6 +2311,7 @@ impl GitPanel {
             None => box_rows(rows),
         };
         let height = line_height * rows + px(1.);
+        self.layout.rows.set(rows);
         let edge_rows = rows as usize;
         let message = (editor.vim_state())
             .and_then(|state| state.message())
@@ -2010,6 +2473,9 @@ impl GitPanel {
                     .w_full()
                     .h(height)
                     .overflow_hidden()
+                    // The box's wheel is its own, once its editor has taken
+                    // it: the panel around doesn't scroll as well.
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                     .border_1()
                     .border_color(ui.border)
                     .child(commit.editor.clone())
@@ -2308,6 +2774,8 @@ struct PanelLayout {
     area: Rc<Cell<Bounds<gpui::Pixels>>>,
     /// The box itself.
     editor: Rc<Cell<Bounds<gpui::Pixels>>>,
+    /// The rows the box was last drawn, clamped to what fits.
+    rows: Cell<f32>,
 }
 
 /// An element that records its bounds in `cell` as it's laid out, to be
@@ -2337,17 +2805,23 @@ impl Render for NoGhost {
 
 impl GitPanel {
     /// The most rows the box can be made, as the panel is drawn: the room
-    /// it has less what's under it and the list's least, and never less
-    /// than [`BOX_MIN_ROWS`].
+    /// it has less everything else the panel shows (the sync header, the
+    /// commit area's padding and borders, the box's own edges, what's
+    /// under it, a message over the list) and the list's least, and never
+    /// less than [`BOX_MIN_ROWS`].
     fn box_rows_limit(&self, line_height: f32) -> u32 {
         let (panel, content) = (self.layout.panel.get(), self.layout.content.get());
-        let (area, editor) = (self.layout.area.get(), self.layout.editor.get());
-        if panel.size.height <= px(0.) || editor.size.height <= px(0.) {
+        let (editor, drawn) = (self.layout.editor.get(), self.layout.rows.get());
+        if panel.size.height <= px(0.) || editor.size.height <= px(0.) || drawn <= 0. {
             return BOX_ROWS;
         }
-        let above = f32::from(area.top() - content.top());
-        let below = f32::from(area.bottom() - editor.bottom());
-        let room = f32::from(panel.size.height) - above - below - LIST_MIN_HEIGHT;
+        let list = self.scroll.0.borrow().base_handle.bounds();
+        // The content is the box, the list and the rest, in a column.
+        let rest = f32::from(content.size.height - editor.size.height - list.size.height);
+        // What the box measures beyond its rows: the extra pixel, less its
+        // borders.
+        let edges = f32::from(editor.size.height) - line_height * drawn;
+        let room = f32::from(panel.size.height) - rest - edges - LIST_MIN_HEIGHT;
         ((room / line_height).floor().max(0.) as u32).max(BOX_MIN_ROWS)
     }
 
@@ -2392,12 +2866,9 @@ impl GitPanel {
         let Some(line_height) = self.box_line_height(cx) else {
             return false;
         };
-        let editor = self.layout.editor.get();
-        let current = self.box_height.unwrap_or_else(|| {
-            (f32::from(editor.size.height) / line_height)
-                .round()
-                .max(0.) as u32
-        });
+        // From the rows shown, which a shorter window may have clamped the
+        // rows set to.
+        let current = self.layout.rows.get().floor().max(0.) as u32;
         let rows = match event.keystroke.key.as_str() {
             "down" => current + 1,
             "up" => current.saturating_sub(1),
@@ -2433,6 +2904,9 @@ impl Render for GitPanel {
         }
         if self.remote_watch.is_none() {
             self.remote_watch = Some(cx.observe_global::<git_remote::Running>(|_, cx| cx.notify()));
+        }
+        if self.lanes_followed.is_none() {
+            self.list_lanes(cx);
         }
         let sync = self.render_sync(cx);
         let commit_box = self.render_commit_box(window, cx);
@@ -2569,6 +3043,11 @@ impl TestHooks {
 #[cfg(test)]
 pub(crate) type ShownGroup = (String, usize, Vec<(&'static str, String)>);
 
+/// A lane group as shown: its lane, its header's title and link, and its
+/// rows' paths and counts.
+#[cfg(test)]
+pub(crate) type ShownLaneGroup = (LaneId, String, String, Vec<(String, String)>);
+
 /// A row as shown: its letter, name and directory, and whether it's dimmed.
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2632,20 +3111,70 @@ impl GitPanel {
     }
 
     /// Each group shown, in order: its title, its count, and its rows'
-    /// letters and paths from the root.
+    /// letters and paths from the root; a lane's rows have no letter.
     pub(crate) fn groups(&self) -> Vec<ShownGroup> {
         self.headed()
             .map(|group| {
                 let range = self.group_range(group);
-                let rows = (self.entries[range.clone()].iter())
-                    .map(|entry| {
-                        let shown = crate::tests::slashed(entry.relative.display().to_string());
-                        (letter(entry.kind), shown)
-                    })
-                    .collect();
-                (group.title().to_string(), range.len(), rows)
+                let rows = match group {
+                    Group::Lane(id) => (self.lanes.iter())
+                        .filter(|lane| lane.id == id)
+                        .flat_map(|lane| &lane.files)
+                        .map(|file| {
+                            let shown = file.relative.display().to_string();
+                            ("", crate::tests::slashed(shown))
+                        })
+                        .collect(),
+                    _ => (self.entries[range.clone()].iter())
+                        .map(|entry| {
+                            let shown = entry.relative.display().to_string();
+                            (letter(entry.kind), crate::tests::slashed(shown))
+                        })
+                        .collect(),
+                };
+                (self.title(group).to_string(), range.len(), rows)
             })
             .collect()
+    }
+
+    /// Each lane group shown, in order: its lane, its header's title and
+    /// link, and its rows' paths from the root, lines added and removed and
+    /// undecided count, as their text shows them.
+    pub(crate) fn lane_groups(&self) -> Vec<ShownLaneGroup> {
+        (self.lanes.iter())
+            .map(|lane| {
+                let rows = (lane.files.iter())
+                    .map(|file| {
+                        let path = crate::tests::slashed(file.relative.display().to_string());
+                        let added = tr!("workbench-changes-lane-added", count = file.added);
+                        let removed = tr!("workbench-changes-lane-removed", count = file.removed);
+                        let pending = tr!("workbench-changes-lane-pending", count = file.pending);
+                        let shown = format!("{added} {removed} {pending}");
+                        (path, shown)
+                    })
+                    .collect();
+                let title = self.title(Group::Lane(lane.id)).to_string();
+                let review = tr!("workbench-changes-review").to_string();
+                (lane.id, title, review, rows)
+            })
+            .collect()
+    }
+
+    /// The index of lane `id`'s file `at` among the files, as
+    /// [`Self::selected`] and [`Self::button_selector`] take it.
+    pub(crate) fn lane_file_index(&self, id: LaneId, at: usize) -> usize {
+        self.group_range(Group::Lane(id)).start + at
+    }
+
+    /// The debug selector of lane `id`'s Review link.
+    pub(crate) fn review_link_selector(&self, id: LaneId) -> String {
+        review_selector(id)
+    }
+
+    /// The lane headers' titles and Review links the last frames drew,
+    /// with their colours; and forgets them.
+    pub(crate) fn take_drawn_lane_text(&self) -> Vec<(SharedString, Hsla)> {
+        self.drawn_lane_text.take()
     }
 
     /// The debug selector of the button for `action` on file `ix`'s row, or
@@ -2668,6 +3197,10 @@ impl GitPanel {
             Action::OpenFile | Action::Discard => {
                 format!("icon-button:{}", self.button_id(at, action))
             }
+            Action::ReviewLane => match group {
+                Group::Lane(id) => review_selector(id),
+                _ => String::new(),
+            },
         }
     }
 
@@ -2683,8 +3216,11 @@ impl GitPanel {
     /// The buttons a row of file `ix`, or `group`'s header, has beside its
     /// checkbox.
     pub(crate) fn row_buttons(&self, ix: Option<usize>, group: Group) -> Vec<Action> {
-        match ix.and_then(|ix| self.entries.get(ix)) {
-            Some(entry) => row_actions(entry.group, entry.kind == ChangeKind::Deleted).to_vec(),
+        match ix.map(|ix| (ix, self.entries.get(ix))) {
+            Some((_, Some(entry))) => {
+                row_actions(entry.group, entry.kind == ChangeKind::Deleted).to_vec()
+            }
+            Some((ix, None)) => row_actions(self.group_of(ix), false).to_vec(),
             None => header_actions(group).to_vec(),
         }
     }
@@ -2799,6 +3335,12 @@ impl GitPanel {
     /// The list's viewport in the last frame.
     pub(crate) fn list_viewport(&self) -> gpui::Bounds<gpui::Pixels> {
         self.scroll.0.borrow().base_handle.bounds()
+    }
+
+    /// The panel's own viewport in the last frame, which scrolls as a
+    /// whole where the box and the list's least don't fit.
+    pub(crate) fn panel_viewport(&self) -> gpui::Bounds<gpui::Pixels> {
+        self.layout.panel.get()
     }
 
     /// Where the header of `group` was laid out in the last frame.

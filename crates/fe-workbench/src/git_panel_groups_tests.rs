@@ -1283,3 +1283,614 @@ mod merge;
 #[cfg(test)]
 #[path = "git_panel_merge_queue_tests.rs"]
 mod merge_queue;
+
+/// A lane's group (docs/designs/agent-lanes.md § Changes): lanes 2 and 3
+/// propose to the open files of a repository whose `c.rs` the user
+/// changed, lane 2 a turn's and a loose proposal, as Apply's is.
+mod lane_groups {
+    use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, time::SystemTime};
+
+    use fe_buffer::{HunkStatus, Origin, ProposedChange};
+    use fe_config::themes;
+    use fe_editor::{
+        Changeset,
+        lane::{Backing, Lane, LaneId, LaneKind, LaneState},
+    };
+    use fe_gpui::{EditorView, set_vim_enabled};
+    use fe_ui::{Theme, ThemeData};
+    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+    use serde_json::json;
+
+    use super::{
+        super::{Action, GitPanel, Group},
+        dispatch, draw, focus, git, keys, open, open_file, run_command, shown_groups, status,
+        write,
+    };
+    use crate::{
+        Launch, Workbench,
+        lanes::{LaneStore, chat_lane},
+    };
+
+    const A: &str = "fn alpha() {}\nfn beta() {}\n";
+    const B: &str = "fn one() {}\nfn two() {}\n";
+    /// `c.rs` as committed; the user's working tree has [`C_WORKING`].
+    const C: &str = "fn three() {}\n";
+    const C_WORKING: &str = "fn three() {}\nfn four() {}\n";
+
+    fn lane_id(number: u32) -> LaneId {
+        LaneId::from_number(number).unwrap()
+    }
+
+    fn lane(number: u32, agent: &str, session: &str) -> Lane {
+        Lane {
+            id: lane_id(number),
+            name: agent.into(),
+            agent: agent.into(),
+            sessions: vec![session.into()],
+            kind: LaneKind::External { host: "acp".into() },
+            backing: Backing::Shared,
+            state: LaneState::Working,
+            started: SystemTime::now(),
+            revision: None,
+            pending: 0,
+        }
+    }
+
+    fn ai(agent: &str, session: &str) -> Origin {
+        Origin::Ai {
+            agent: agent.into(),
+            session: session.into(),
+        }
+    }
+
+    /// `word`'s bytes in `text`.
+    fn word(text: &str, word: &str) -> Range<usize> {
+        let start = text.find(word).expect("the word is there");
+        start..start + word.len()
+    }
+
+    /// A proposal of `origin`'s replacing `range` of `editor`'s text with
+    /// `text`, shown on it, and its buffer.
+    fn show_proposal(
+        editor: &Entity<EditorView>,
+        range: Range<usize>,
+        text: &str,
+        origin: Origin,
+        cx: &mut VisualTestContext,
+    ) -> (fe_buffer::BufferId, Rc<RefCell<ProposedChange>>) {
+        editor.update(cx, |editor, cx| {
+            let edits = vec![(range, text.to_owned())];
+            let proposal = ProposedChange::from_edits(editor.model().snapshot(), edits, origin);
+            let proposal = Rc::new(RefCell::new(proposal));
+            let mut shown = editor.proposals().to_vec();
+            shown.push(proposal.clone());
+            editor.set_proposals(shown, cx);
+            (editor.model().buffer().id(), proposal)
+        })
+    }
+
+    /// As [`show_proposal`], adopted by the lane `origin` is in, as
+    /// Apply's is: a loose proposal.
+    fn propose_loose(
+        workbench: &Entity<Workbench>,
+        editor: &Entity<EditorView>,
+        path: &Path,
+        range: Range<usize>,
+        text: &str,
+        origin: Origin,
+        cx: &mut VisualTestContext,
+    ) {
+        let (buffer, proposal) = show_proposal(editor, range, text, origin, cx);
+        let path = path.to_owned();
+        workbench.update(cx, |workbench, cx| {
+            workbench.adopt_proposal(buffer, Some(path), proposal, cx)
+        });
+        draw(cx);
+    }
+
+    /// As [`show_proposal`], in a turn of lane `id`'s, kept in its work.
+    fn propose_turn(
+        workbench: &Entity<Workbench>,
+        editor: &Entity<EditorView>,
+        path: &Path,
+        range: Range<usize>,
+        text: &str,
+        (id, origin): (LaneId, Origin),
+        cx: &mut VisualTestContext,
+    ) {
+        let (buffer, proposal) = show_proposal(editor, range, text, origin.clone(), cx);
+        let mut changeset = Changeset::new("lane-turn", origin);
+        changeset.add_file(path, buffer, proposal);
+        cx.update(|window, cx| {
+            workbench.update(cx, |workbench, cx| {
+                LaneStore::set_changeset(workbench, id, changeset, None, window, cx)
+            })
+        });
+        draw(cx);
+    }
+
+    /// Accepts every pending hunk `editor` shows, as its Accept buttons do.
+    fn accept_all(editor: &Entity<EditorView>, cx: &mut VisualTestContext) {
+        let ids: Vec<_> = editor.read_with(cx, |editor, _| {
+            let snapshot = editor.model().buffer().snapshot();
+            (editor.proposals().iter())
+                .flat_map(|proposal| proposal.borrow().hunks(&snapshot))
+                .filter(|hunk| hunk.status == HunkStatus::Pending)
+                .map(|hunk| hunk.id)
+                .collect()
+        });
+        for id in ids {
+            editor.update(cx, |editor, cx| editor.accept_hunk(id, cx).unwrap());
+        }
+        draw(cx);
+    }
+
+    /// Each pending hunk's count over the proposals `editor` shows.
+    fn pending(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> usize {
+        editor.read_with(cx, |editor, _| {
+            let snapshot = editor.model().buffer().snapshot();
+            (editor.proposals().iter())
+                .flat_map(|proposal| proposal.borrow().hunks(&snapshot))
+                .filter(|hunk| hunk.status == HunkStatus::Pending)
+                .count()
+        })
+    }
+
+    struct Setup<'a> {
+        dir: tempfile::TempDir,
+        workbench: Entity<Workbench>,
+        panel: Entity<GitPanel>,
+        editors: [Entity<EditorView>; 3],
+        cx: &'a mut VisualTestContext,
+    }
+
+    /// A repository of `a.rs`, `b.rs` and `c.rs`, the user's change to
+    /// `c.rs` on disk, each open; lanes 2 (`claude-code`) and 3 (`codex`)
+    /// besides the chat's. Lane 2 has a turn rewriting `a.rs`'s second row
+    /// as two (+2 −1) and a loose proposal over `c.rs`'s second row (+1
+    /// −1), both pending; lane 3 one over `b.rs`'s first row, accepted.
+    fn setup(cx: &mut TestAppContext) -> Setup<'_> {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q"]);
+        for (file, text) in [("a.rs", A), ("b.rs", B), ("c.rs", C)] {
+            write(root, file, text);
+        }
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "init"]);
+        write(root, "c.rs", C_WORKING);
+        let (workbench, panel, cx) = open(cx, root);
+        workbench.update(cx, |workbench, cx| {
+            workbench.lanes.update(cx, |store, cx| {
+                let record = vec![lane(2, "claude-code", "s2"), lane(3, "codex", "s3")];
+                *store = LaneStore::restore(record, Some(4));
+                cx.notify();
+            });
+        });
+        let editors = ["a.rs", "b.rs", "c.rs"].map(|file| open_file(&workbench, root, file, cx));
+        let [a, b, c] = &editors;
+        let beta = A.find("fn beta").unwrap();
+        let lane_2 = (lane_id(2), ai("claude-code", "s2"));
+        let two_rows = "fn gamma() {}\nfn delta() {}\n";
+        propose_turn(
+            &workbench,
+            a,
+            &root.join("a.rs"),
+            beta..A.len(),
+            two_rows,
+            lane_2,
+            cx,
+        );
+        let four = C_WORKING.find("fn four").unwrap();
+        let c_path = root.join("c.rs");
+        let five = "fn five() {}\n";
+        let lane_2 = ai("claude-code", "s2");
+        propose_loose(
+            &workbench,
+            c,
+            &c_path,
+            four..C_WORKING.len(),
+            five,
+            lane_2,
+            cx,
+        );
+        let one = word(B, "fn one() {}");
+        let lane_3 = ai("codex", "s3");
+        propose_loose(
+            &workbench,
+            b,
+            &root.join("b.rs"),
+            one,
+            "fn uno() {}",
+            lane_3,
+            cx,
+        );
+        accept_all(b, cx);
+        draw(cx);
+        Setup {
+            dir,
+            workbench,
+            panel,
+            editors,
+            cx,
+        }
+    }
+
+    fn row(path: &str, counts: &str) -> (String, String) {
+        (path.to_owned(), counts.to_owned())
+    }
+
+    #[gpui::test]
+    fn a_lane_with_pending_work_has_a_group_under_the_users(cx: &mut TestAppContext) {
+        let Setup {
+            workbench,
+            panel,
+            editors,
+            cx,
+            ..
+        } = setup(cx);
+        // The user's group first, then lane 2's; lane 3 has nothing
+        // pending, and the chat no work.
+        let lane_rows = vec![("", "a.rs".to_owned()), ("", "c.rs".to_owned())];
+        assert_eq!(
+            shown_groups(&panel, cx),
+            [
+                ("Changes".to_owned(), 1, vec![("M", "c.rs".to_owned())]),
+                ("lane 2 · claude-code".to_owned(), 2, lane_rows),
+            ]
+        );
+        // Its rows: the turn's a.rs and the loose proposal's c.rs, each
+        // with the lines it adds and removes and its pending count.
+        let lanes = panel.read_with(cx, |panel, _| panel.lane_groups());
+        assert_eq!(
+            lanes,
+            [(
+                lane_id(2),
+                "lane 2 · claude-code".to_owned(),
+                "Review".to_owned(),
+                vec![
+                    row("a.rs", "+2 −1 1 pending"),
+                    row("c.rs", "+1 −1 1 pending")
+                ],
+            )]
+        );
+        // Drawn under the user's Changes, with Review at its right.
+        let lane_2 = Group::Lane(lane_id(2));
+        let (changes, header) = panel.read_with(cx, |panel, _| {
+            let header = |group| panel.header_bounds(group).expect("drawn");
+            (header(Group::Changes), header(lane_2))
+        });
+        assert!(changes.bottom() <= header.top(), "{changes:?} {header:?}");
+        let selector = panel.read_with(cx, |panel, _| panel.review_link_selector(lane_id(2)));
+        let review = cx.debug_bounds(selector.leak()).expect("Review drawn");
+        let title = cx.debug_bounds("change-lane-title:2").expect("title drawn");
+        assert!(title.right() <= review.left(), "{title:?} {review:?}");
+        assert!(
+            header.center().x < review.left(),
+            "at the right: {review:?}"
+        );
+        assert!(review.right() <= header.right(), "{review:?} {header:?}");
+        assert!(header.top() <= review.top() && review.bottom() <= header.bottom());
+
+        // Lane 3 proposes again, loose: its own group, after lane 2's.
+        let [a, b, _] = &editors;
+        let root = workbench.read_with(cx, |workbench, _| workbench.root().unwrap().to_owned());
+        let two = word("fn uno() {}\nfn two() {}\n", "fn two() {}");
+        let b_path = root.join("b.rs");
+        propose_loose(
+            &workbench,
+            b,
+            &b_path,
+            two,
+            "fn dos() {}",
+            ai("codex", "s3"),
+            cx,
+        );
+        let titles: Vec<String> = (shown_groups(&panel, cx).into_iter())
+            .map(|(title, ..)| title)
+            .collect();
+        assert_eq!(
+            titles,
+            ["Changes", "lane 2 · claude-code", "lane 3 · codex"]
+        );
+        let lanes = panel.read_with(cx, |panel, _| panel.lane_groups());
+        assert_eq!(lanes[1].3, [row("b.rs", "+1 −1 1 pending")]);
+
+        // Lane 2's turn decided: its group lists the loose proposal alone,
+        // and the accepted text is the user's, in their buffer.
+        accept_all(a, cx);
+        let lanes = panel.read_with(cx, |panel, _| panel.lane_groups());
+        assert_eq!(lanes[0].3, [row("c.rs", "+1 −1 1 pending")]);
+        let text = a.read_with(cx, |editor, _| editor.model().text().to_string());
+        assert_eq!(text, "fn alpha() {}\nfn gamma() {}\nfn delta() {}\n");
+    }
+
+    #[gpui::test]
+    fn lane_rows_offer_no_staging_and_review_runs_review_lane(cx: &mut TestAppContext) {
+        let Setup {
+            dir,
+            workbench,
+            panel,
+            editors,
+            cx,
+        } = setup(cx);
+        let root = dir.path();
+        let lane_2 = Group::Lane(lane_id(2));
+        // Lane 2's c.rs: the user changed the same file.
+        let c_row = panel.read_with(cx, |panel, _| panel.lane_file_index(lane_id(2), 1));
+        // No checkbox and no buttons, on its rows or its header, even under
+        // the pointer.
+        for ix in [Some(c_row - 1), Some(c_row), None] {
+            let buttons = panel.read_with(cx, |panel, _| panel.row_buttons(ix, lane_2));
+            assert_eq!(buttons, [], "{ix:?}");
+            let row = panel.read_with(cx, |panel, _| match ix {
+                Some(ix) => panel.row_bounds(ix),
+                None => panel.header_bounds(lane_2),
+            });
+            cx.simulate_mouse_move(row.expect("drawn").center(), None, Modifiers::none());
+            draw(cx);
+            for action in [
+                Action::Stage,
+                Action::Unstage,
+                Action::Discard,
+                Action::OpenFile,
+            ] {
+                let selector =
+                    panel.read_with(cx, |panel, _| panel.button_selector(ix, lane_2, action));
+                assert!(
+                    cx.debug_bounds(selector.clone().leak()).is_none(),
+                    "{ix:?} {action:?}: {selector}"
+                );
+            }
+        }
+        // The user's own c.rs row has its checkbox.
+        let user_c = panel.read_with(cx, |panel, _| {
+            panel.button_selector(Some(0), Group::Changes, Action::Stage)
+        });
+        assert!(cx.debug_bounds(user_c.leak()).is_some());
+
+        // Selected, by key: no key or row command stages, unstages or
+        // discards it, and the lane's hunk stays pending.
+        let before = status(root);
+        let unstaged = vec![("c.rs".to_owned(), None, Some(fe_git::ChangeKind::Modified))];
+        assert_eq!(before, unstaged);
+        let c = &editors[2];
+        focus(&panel, cx);
+        keys("down down down", cx);
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.selected()),
+            Some(c_row)
+        );
+        let commands = [
+            "git_panel.stage_row",
+            "git_panel.unstage_row",
+            "git_panel.discard_row",
+        ];
+        for command in commands
+            .into_iter()
+            .chain(["git.stage_file", "git.discard_file"])
+        {
+            run_command(command, cx);
+            assert!(!cx.has_pending_prompt(), "{command}");
+            assert_eq!(status(root), before, "{command}");
+        }
+        cx.update(|_, cx| set_vim_enabled(cx, true));
+        focus(&panel, cx);
+        for key in ["s", "u", "-", "shift-x"] {
+            keys(key, cx);
+            assert!(!cx.has_pending_prompt(), "{key}");
+            assert_eq!(status(root), before, "{key}");
+            assert_eq!(
+                panel.read_with(cx, |panel, _| panel.selected()),
+                Some(c_row)
+            );
+        }
+        assert_eq!(pending(c, cx), 1);
+        assert_eq!(
+            c.read_with(cx, |c, _| c.model().text().to_string()),
+            C_WORKING
+        );
+        // `o` opens its file.
+        keys("o", cx);
+        let active = workbench.read_with(cx, |workbench, cx| {
+            let editor = workbench.active_editor(cx).expect("an editor");
+            editor.read(cx).model().path().map(Path::to_owned)
+        });
+        assert_eq!(active, Some(root.join("c.rs")));
+        // On the user's row the same key stages: the keys reach the panel.
+        focus(&panel, cx);
+        keys("g g s", cx);
+        assert_eq!(status(root)[0].1, Some(fe_git::ChangeKind::Modified));
+
+        // Review runs agent.review_lane for its lane.
+        let selector = panel.read_with(cx, |panel, _| panel.review_link_selector(lane_id(2)));
+        let review = cx.debug_bounds(selector.leak()).expect("Review drawn");
+        cx.simulate_click(review.center(), Modifiers::none());
+        draw(cx);
+        let ran = workbench.read_with(cx, |workbench, _| workbench.commands_run.last().cloned());
+        let ran = ran.expect("a command ran");
+        assert_eq!(ran.command.as_str(), "agent.review_lane");
+        assert_eq!(ran.args, json!({ "lane": 2 }));
+    }
+
+    #[gpui::test]
+    fn the_lane_group_takes_the_agent_token_not_the_accent_in_both_themes(cx: &mut TestAppContext) {
+        let Setup { panel, cx, .. } = setup(cx);
+        let mut agents = Vec::new();
+        for name in [themes::DEFAULT_DARK, themes::DEFAULT_LIGHT] {
+            let data = ThemeData::from_file(&themes::find(name).unwrap().file());
+            cx.update(|window, cx| {
+                fe_ui::set_theme(cx, Theme::new(data));
+                window.refresh();
+            });
+            panel.update(cx, |panel, cx| {
+                panel.take_drawn_lane_text();
+                cx.notify();
+            });
+            draw(cx);
+            let colors = cx.update(|_, cx| fe_ui::ActiveTheme::theme(cx).colors);
+            let (agent, accent) = (colors.agent.base, colors.accent.base);
+            assert_ne!(agent, accent, "{name}");
+            let drawn = panel.read_with(cx, |panel, _| panel.take_drawn_lane_text());
+            // A list measures its first row too, so text can be drawn twice.
+            let mut texts: Vec<String> = drawn.iter().map(|(text, _)| text.to_string()).collect();
+            texts.sort();
+            texts.dedup();
+            assert_eq!(texts, ["Review", "lane 2 · claude-code"], "{name}");
+            for (text, color) in drawn {
+                assert_eq!(color, agent, "{name}: {text}");
+                assert_ne!(color, accent, "{name}: {text}");
+            }
+            agents.push(agent);
+        }
+        assert_ne!(agents[0], agents[1], "each theme's own");
+    }
+
+    /// A workbench for `root` in a headless window, the Changes panel not
+    /// shown, and the panel; once the project has opened and its status
+    /// landed.
+    fn open_hidden<'a>(
+        cx: &'a mut TestAppContext,
+        root: &Path,
+    ) -> (
+        Entity<Workbench>,
+        Entity<GitPanel>,
+        &'a mut VisualTestContext,
+    ) {
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            crate::init(cx);
+        });
+        let launch = Launch {
+            root: Some(root.to_owned()),
+            file: None,
+        };
+        let (workbench, cx) = cx.add_window_view(move |window, cx| {
+            let theme = fe_gpui::EditorTheme::default_dark(cx);
+            Workbench::new(
+                launch,
+                theme,
+                fe_gpui::EditorSettings::default(),
+                window,
+                cx,
+            )
+        });
+        cx.update(|window, _| window.activate_window());
+        draw(cx);
+        let panel = workbench.read_with(cx, |workbench, cx| {
+            workbench.dock().read(cx).changes().clone()
+        });
+        (workbench, panel, cx)
+    }
+
+    /// A committed repository of `a.rs`, `b.rs` and `c.rs`.
+    fn committed() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q"]);
+        for (file, text) in [("a.rs", A), ("b.rs", B), ("c.rs", C)] {
+            write(root, file, text);
+        }
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "init"]);
+        dir
+    }
+
+    #[gpui::test]
+    fn a_file_closed_before_the_panel_is_first_drawn_keeps_its_lines(cx: &mut TestAppContext) {
+        let dir = committed();
+        let root = dir.path();
+        let (workbench, panel, cx) = open_hidden(cx, root);
+        workbench.update(cx, |workbench, cx| {
+            workbench.lanes.update(cx, |store, cx| {
+                *store = LaneStore::restore(vec![lane(2, "claude-code", "s2")], Some(3));
+                cx.notify();
+            });
+        });
+        let a = open_file(&workbench, root, "a.rs", cx);
+        let beta = A.find("fn beta").unwrap();
+        let two_rows = "fn gamma() {}\nfn delta() {}\n";
+        let origin = ai("claude-code", "s2");
+        propose_loose(
+            &workbench,
+            &a,
+            &root.join("a.rs"),
+            beta..A.len(),
+            two_rows,
+            origin,
+            cx,
+        );
+        drop(a);
+        let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.close_matching(true, |item, cx| item.tab_title(cx) == "a.rs", window, cx);
+            })
+        });
+        draw(cx);
+        let open = workbench.read_with(cx, |workbench, cx| workbench.open_editors(cx).len());
+        assert_eq!(open, 0, "a.rs closed");
+
+        dispatch("git.show_changes", cx);
+        let lanes = panel.read_with(cx, |panel, _| panel.lane_groups());
+        assert_eq!(lanes.len(), 1, "{lanes:?}");
+        assert_eq!(lanes[0].3, [row("a.rs", "+2 −1 1 pending")]);
+    }
+
+    #[gpui::test]
+    fn a_pending_new_file_counts_its_text_as_added(cx: &mut TestAppContext) {
+        let dir = committed();
+        let root = dir.path();
+        let (workbench, panel, cx) = open(cx, root);
+        // As each chat does before it proposes.
+        workbench.update(cx, |workbench, cx| {
+            workbench
+                .lanes
+                .update(cx, |store, _| store.claim(chat_lane(), "chat".into()))
+        });
+        let origin = ai(crate::chat_panel::AGENT, "chat");
+        let mut changeset = Changeset::new("turn-1", origin.clone());
+        changeset.add_new_file(
+            root.join("new.rs"),
+            "fn one() {}\nfn two() {}\nfn three() {}\n",
+        );
+        cx.update(|window, cx| {
+            workbench.update(cx, |workbench, cx| {
+                LaneStore::set_changeset(workbench, chat_lane(), changeset, None, window, cx)
+            })
+        });
+        draw(cx);
+        let lanes = panel.read_with(cx, |panel, _| panel.lane_groups());
+        assert_eq!(
+            lanes,
+            [(
+                chat_lane(),
+                "lane 1 · Chat".to_owned(),
+                "Review".to_owned(),
+                vec![row("new.rs", "+3 −0 1 pending")],
+            )]
+        );
+
+        // A newer turn takes the AI Changes panel: the older one, kept in
+        // the lane's work, keeps its lines.
+        let b = open_file(&workbench, root, "b.rs", cx);
+        let one = word(B, "fn one() {}");
+        let (buffer, proposal) = show_proposal(&b, one, "fn uno() {}", origin.clone(), cx);
+        let mut newer = Changeset::new("turn-2", origin);
+        newer.add_file(root.join("b.rs"), buffer, proposal);
+        cx.update(|window, cx| {
+            workbench.update(cx, |workbench, cx| {
+                LaneStore::set_changeset(workbench, chat_lane(), newer, None, window, cx)
+            })
+        });
+        draw(cx);
+        let lanes = panel.read_with(cx, |panel, _| panel.lane_groups());
+        assert_eq!(
+            lanes[0].3,
+            [
+                row("b.rs", "+1 −1 1 pending"),
+                row("new.rs", "+3 −0 1 pending")
+            ]
+        );
+    }
+}

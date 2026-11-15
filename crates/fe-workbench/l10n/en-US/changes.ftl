@@ -14,6 +14,22 @@ workbench-changes-group-merge = Merge Changes
 workbench-changes-group-staged = Staged Changes
 workbench-changes-group-changes = Changes
 
+## A lane's group (docs/designs/agent-lanes.md § Changes): one per lane with
+## pending work, under the user's groups, its rows not stageable.
+
+# Its header. $lane is the lane's number, $name its name, such as
+# claude-code.
+workbench-changes-group-lane = lane { $lane } · { $name }
+# The link at the header's right, which reviews the lane's work.
+workbench-changes-review = Review
+# The link's tooltip and accessible name.
+workbench-changes-review-lane = Review the Lane's Changes
+# A row's lines its pending hunks add, and remove, as a diff counts them.
+workbench-changes-lane-added = +{ $count }
+workbench-changes-lane-removed = −{ $count }
+# A row's hunks still to decide.
+workbench-changes-lane-pending = { $count } pending
+
 ## A row's and a header's checkbox and buttons: their tooltips and
 ## accessible names
 

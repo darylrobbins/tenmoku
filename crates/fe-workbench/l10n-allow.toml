@@ -350,6 +350,16 @@ file = "src/git_panel.rs"
 text = "change-letter:{at}"
 reason = "A row's status letter's debug selector"
 
+[[literal]]
+file = "src/git_panel.rs"
+text = "change-lane-title:{}"
+reason = "A lane group's title's debug selector"
+
+[[literal]]
+file = "src/git_panel.rs"
+text = "change-review:{}"
+reason = "A lane group's Review link's debug selector"
+
 # The Search panel's name as its SidebarPanel const declares it, by which the
 # rail orders it and tests name it (the dock's header is workbench-dock-search-title).
 
