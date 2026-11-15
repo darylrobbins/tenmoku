@@ -38,16 +38,17 @@ default = [
     "json5",
     "csv",
 ]
-rust = ["dep:tree-sitter-rust"]
-python = ["dep:tree-sitter-python", "printf"]
+rust = ["dep:tree-sitter-rust", "regex"]
+python = ["dep:tree-sitter-python", "printf", "regex"]
 javascript = ["dep:tree-sitter-javascript", "regex"]
 # TypeScript's highlights extend JavaScript's, as upstream configures them.
 typescript = ["dep:tree-sitter-typescript", "dep:tree-sitter-javascript", "regex"]
 json = ["dep:tree-sitter-json"]
 toml = ["dep:tree-sitter-toml-ng"]
-go = ["dep:tree-sitter-go", "printf"]
+go = ["dep:tree-sitter-go", "printf", "regex"]
 printf = ["dep:tree-sitter-printf"]
-# Regular expressions, reached only through injections (JS/TS regex literals).
+# Regular expressions, reached only through injections (regex literals, and
+# regex strings in Python, Rust and Go).
 regex = ["dep:tree-sitter-regex"]
 c = ["dep:tree-sitter-c", "printf"]
 # C++'s highlights extend C's.

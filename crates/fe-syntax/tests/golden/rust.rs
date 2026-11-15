@@ -86,6 +86,7 @@ macro_rules! gap {
 
 pub fn greeting<'a>(name: Option<&'a str>) -> impl Display + 'a {
     let raw = r#"say "hi""#;
+    let word = Regex::new(r"\w+(?:-\w+)*").unwrap();
     match name {
         Some(name) if !name.is_empty() => gap!["hello, ", name, raw],
         _ => gap!["hello", b'!'.escape_ascii().to_string().as_str()],

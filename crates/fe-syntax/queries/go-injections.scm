@@ -3,6 +3,11 @@
 ; written afresh. Injecting SQL into Go strings by their content is also an
 ; idea nvim-treesitter's Go injections use; those patterns and the regex below
 ; are written afresh too.
+; The regex grammar is injected into the first argument of regexp.MustCompile,
+; Compile, MatchString and MustCompilePOSIX. Limit: raw strings (backticks) are
+; injected whole, without the backticks; an interpreted string only when its
+; content has no backslash. These names end in no f and are no SQL function, so
+; they stay disjoint from the printf and SQL sets below.
 ; The format is the first string argument of a Printf-style call, or the one
 ; after the writer, input or buffer argument for Fprintf, Fscanf, Sscanf
 ; and Appendf. The two
@@ -80,3 +85,28 @@
 ]
   (#match? @injection.content "(?s)\\A(?:\\s*--[^\\n]*\\n)*\\s*(?:SELECT\\b.*\\bFROM\\b|INSERT\\s+INTO\\b|UPDATE\\s+\\S+\\s+SET\\b|DELETE\\s+FROM\\b|WITH\\s+(?:RECURSIVE\\s+)?\\w+\\s*(?:\\([^)]*\\))?\\s*AS\\s*\\(|(?:CREATE|ALTER|DROP)\\s+(?:UNIQUE\\s+)?(?:TABLE|INDEX|VIEW)\\b|SELECT\\s+(?:[0-9*'(]|\\w+\\()|select\\b.*\\bfrom\\b|insert\\s+into\\b|update\\s+\\S+\\s+set\\b|delete\\s+from\\b|with\\s+(?:recursive\\s+)?\\w+\\s*(?:\\([^)]*\\))?\\s*as\\s*\\(|(?:create|alter|drop)\\s+(?:unique\\s+)?(?:table|index|view)\\b)")
   (#set! injection.language "sql"))
+
+; regexp.MustCompile(`\d+`)
+(call_expression
+  function: (selector_expression
+    operand: (identifier) @_pkg
+    field: (field_identifier) @_fn)
+  arguments: (argument_list
+    .
+    (raw_string_literal (raw_string_literal_content) @injection.content))
+  (#eq? @_pkg "regexp")
+  (#any-of? @_fn "MustCompile" "Compile" "MatchString" "MustCompilePOSIX")
+  (#set! injection.language "regex"))
+
+; regexp.MustCompile("a+b")
+(call_expression
+  function: (selector_expression
+    operand: (identifier) @_pkg
+    field: (field_identifier) @_fn)
+  arguments: (argument_list
+    .
+    (interpreted_string_literal . (interpreted_string_literal_content) @injection.content .))
+  (#eq? @_pkg "regexp")
+  (#any-of? @_fn "MustCompile" "Compile" "MatchString" "MustCompilePOSIX")
+  (#not-match? @injection.content "\\\\")
+  (#set! injection.language "regex"))

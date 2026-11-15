@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -13,6 +14,8 @@ import (
 const DefaultDelay = 50 * time.Millisecond
 
 var ErrClosed = errors.New("watch: debouncer closed")
+
+var pathPattern = regexp.MustCompile(`^[a-z]+/\d+$`)
 
 type Event struct {
 	Path string

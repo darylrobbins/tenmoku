@@ -4,6 +4,12 @@
 ; paint its interpolations twice. A variable on the left of `%`, or as
 ; `.format`'s receiver, injects nothing. Each string_content piece injects
 ; alone, so a directive an escape sequence splits paints nothing.
+;
+; The regex grammar is injected into the first argument of re.compile, search,
+; match, fullmatch, sub, subn, split, findall and finditer (plain `re.` only,
+; no aliases). Limit: raw strings (r"..", rb"..") are injected whole; an escaped
+; (non-raw) string only when its content has no backslash, as only then does
+; the host text equal the regex text. With a backslash it stays a plain string.
 
 ; "%s: %d" % args, b"%s" % x
 (binary_operator
@@ -54,3 +60,38 @@
   (#eq? @_method "log")
   (#not-match? @_start "[fF]")
   (#set! injection.language "format-py-percent"))
+
+; re.compile(r"\d+"): a raw string, whole
+(call
+  function: (attribute
+    object: (identifier) @_mod
+    attribute: (identifier) @_fn)
+  arguments: (argument_list
+    .
+    (string
+      (string_start) @_start
+      (string_content) @injection.content))
+  (#eq? @_mod "re")
+  (#any-of? @_fn "compile" "search" "match" "fullmatch" "sub" "subn" "split" "findall" "finditer")
+  (#match? @_start "^[bB]?[rR]")
+  (#not-match? @_start "[fF]")
+  (#set! injection.language "regex"))
+
+; re.search("a+b", s): an escaped string, only when it holds no backslash
+(call
+  function: (attribute
+    object: (identifier) @_mod
+    attribute: (identifier) @_fn)
+  arguments: (argument_list
+    .
+    (string
+      (string_start) @_start
+      .
+      (string_content) @injection.content
+      .
+      (string_end)))
+  (#eq? @_mod "re")
+  (#any-of? @_fn "compile" "search" "match" "fullmatch" "sub" "subn" "split" "findall" "finditer")
+  (#not-match? @_start "[rRfF]")
+  (#not-match? @injection.content "\\\\")
+  (#set! injection.language "regex"))
