@@ -72,6 +72,10 @@ settings; light is Tenmoku Light with `[theme] mode = "light"`.
 | `target/ui-audit/problems_panel_light.png` | Problems panel (empty state) | Tenmoku Light |
 | `target/ui-audit/hover_dark.png` | Hover popover: code block and prose | Tenmoku Dark |
 | `target/ui-audit/hover_light.png` | Hover popover | Tenmoku Light |
+| `target/ui-audit/operations_dark.png` | Status bar: an operation in progress (Indexing, its bar half full, `3/12`, `+2`), list closed | Tenmoku Dark |
+| `target/ui-audit/operations_light.png` | Status bar: an operation in progress, list closed | Tenmoku Light |
+| `target/ui-audit/operations_list_dark.png` | Status bar: the operations list open above the item | Tenmoku Dark |
+| `target/ui-audit/operations_list_light.png` | Status bar: the operations list open | Tenmoku Light |
 | `target/ui-audit/vscode-dark-modern.png` | Chrome scene | Dark Modern |
 | `target/ui-audit/vscode-2026-dark.png` | Chrome scene | Dark 2026 |
 | `target/ui-audit/vscode-2026-light.png` | Chrome scene | Light 2026 |
@@ -110,15 +114,17 @@ hooks.
 | Git log's commit card | It's a hoverable tooltip (`crates/fe-workbench/src/git_log.rs`, `hoverable_tooltip`), shown after GPUI's 500 ms tooltip delay, which the capture's settling doesn't wait for | A `#[doc(hidden)]` `GitLogPanel::show_card(ix, window, cx)`; the panel type is crate-private today, so also a `Workbench::git_log_panel()` accessor |
 | Problems panel with rows | Only the empty state is captured: diagnostics come from language servers and task runs | A `#[doc(hidden)]` `Workbench::set_diagnostics_for_audit(path, diagnostics)`, or reuse the peek hook's fake LSP |
 
-### Unrecorded scenes
+### Scenes recorded on the Mac
 
 The operation in progress on the status bar (T388, Mac T1586) has two
 surfaces, `operations` (the item, list closed) and `operations_list` (the list
-open). Both are **unrecorded**: the Mac lead records them on the Mac, which
-is Metal-only, when the batch lands, and checks their probes then. Their
-steps (`audit/operations.rs`) compile on Linux too (`main.rs` includes the
-file there, without the surfaces), checked by
-`cargo check -p fe-workbench --examples`.
+open). They were written on Linux and recorded on the Mac (Metal-only) when
+the batch landed: `operations_{dark,light}.png` and
+`operations_list_{dark,light}.png` in the table above, every probe passing
+(the status bar's `surface.chrome`, the list card's `surface.raised`, the
+editor's `surface.background`). Their steps (`audit/operations.rs`) compile on
+Linux too (`main.rs` includes the file there, without the surfaces), checked
+by `cargo check -p fe-workbench --examples`.
 
 ### Other crates' scenes
 

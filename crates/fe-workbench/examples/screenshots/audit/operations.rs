@@ -5,8 +5,8 @@
 //!
 //! The steps compile on every platform (`main.rs` includes this file on
 //! Linux too, without the surfaces), so they are checked there; the
-//! surfaces are captured on the Mac (Metal only) with the batch, and until
-//! then they are unrecorded (`docs/decisions/25w38k498b-ui-polish-audit.md`).
+//! surfaces are captured on the Mac (Metal only), recorded in
+//! `docs/decisions/25w38k498b-ui-polish-audit.md`.
 //!
 //! The status bar is the window's bottom 24 px, y = 576–600 at the audit's
 //! 1000 × 600; the item follows the bar's 8 px of padding, its spinner at
