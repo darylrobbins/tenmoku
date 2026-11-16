@@ -775,6 +775,25 @@ impl BreakpointStore {
         }
     }
 
+    /// Where `rows` (from 0) of the open buffer `buffer` of the file at
+    /// `path` are in the file on disk, as lines from 1, as the store places
+    /// a breakpoint added on them: the lines a session sends them on. Not
+    /// open there, the rows' own lines.
+    pub fn lines_on_disk_in(&self, path: &Path, buffer: BufferId, rows: &[u32]) -> Vec<u32> {
+        let path = self.key(path);
+        let open = (self.files.get(&path))
+            .and_then(|file| Some(&file.open[file.open_index(Some(buffer))?]));
+        let disk = match open {
+            Some(open) => {
+                let last = open.last_row();
+                let rows: Vec<u32> = rows.iter().map(|row| (*row).min(last)).collect();
+                open.disk_of_rows(&rows)
+            }
+            None => rows.to_vec(),
+        };
+        disk.into_iter().map(|row| row + 1).collect()
+    }
+
     /// The breakpoints of the file at `path` by their lines on disk, as
     /// last saved, whatever buffers of it hold unsaved.
     pub fn on_disk(&self, path: &Path) -> Vec<Breakpoint> {

@@ -15,6 +15,7 @@ mod session_pause;
 mod session_requests;
 mod session_restart;
 mod session_resume;
+mod session_resume_at;
 mod session_startup;
 mod session_terminate;
 mod session_threads;

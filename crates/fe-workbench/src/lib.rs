@@ -36,6 +36,7 @@ pub mod debug_gutter;
 pub mod debug_java;
 mod debug_runs;
 pub mod debug_session;
+mod debug_toolbar;
 mod diagnostic_owner;
 mod disk_sync;
 mod dock;

@@ -66,6 +66,9 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                 Some(
                     "workbench"
                         | "workbench && !terminal"
+                        | "workbench && debug_session"
+                        | "workbench && debug_running"
+                        | "workbench && debug_stopped"
                         | "zen_mode"
                         | "terminal"
                         | "picker"

@@ -180,6 +180,11 @@ icons! {
         Pause => "pause",
         Play => "play",
         Redo => "redo",
+        // The debug toolbar's Step Over, Step Into and Step Out; not mapped
+        // from names.
+        RedoDot => "redo-dot",
+        ArrowDownToDot => "arrow-down-to-dot",
+        ArrowUpFromDot => "arrow-up-from-dot",
         Save => "save",
         Settings => "settings",
         Terminal => "terminal",

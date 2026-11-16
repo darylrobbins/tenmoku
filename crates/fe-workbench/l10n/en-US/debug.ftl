@@ -210,3 +210,53 @@ workbench-debug-menu-add-breakpoint = Add Breakpoint
 workbench-debug-menu-disable-breakpoint = Disable Breakpoint
 workbench-debug-menu-enable-breakpoint = Enable Breakpoint
 workbench-debug-menu-remove-breakpoint = Remove Breakpoint
+
+## Stepping and breakpoint commands (debug_session/commands.rs, card D8).
+
+command-debug-continue = Debug: Continue
+command-debug-pause = Debug: Pause
+command-debug-step_over = Debug: Step Over
+command-debug-step_into = Debug: Step Into
+command-debug-step_out = Debug: Step Out
+command-debug-restart = Debug: Restart
+command-debug-run_to_cursor = Debug: Run to Cursor
+command-debug-start_with_args = Debug: Start with Arguments…
+command-debug-show_session = Debug: Show Session…
+command-debug-toggle_breakpoint = Debug: Toggle Breakpoint
+command-debug-toggle_breakpoint_enabled = Debug: Enable or Disable Breakpoint
+command-debug-remove_all_breakpoints = Debug: Remove All Breakpoints
+
+# A breakpoint command, or run to cursor, with no file's editor active.
+workbench-debug-no-file = Put the caret in a file first
+# Enable or Disable Breakpoint on a line that has none.
+workbench-debug-no-breakpoint-here = There's no breakpoint on this line
+
+# Start with Arguments' prompt: its input, then its one row.
+workbench-debug-args-placeholder = Arguments for the program…
+# $args is what was typed, as typed.
+workbench-debug-args-start = Start debugging with { $args }
+workbench-debug-args-none = Start debugging with no extra arguments
+# The typed arguments open a quote they don't close.
+workbench-debug-args-unclosed = Close the quote to start debugging
+# The typed arguments end in a backslash outside quotes, which escapes
+# nothing.
+workbench-debug-args-trailing-escape = Finish the escape at the end, or remove the backslash, to start debugging
+# Show Session's picker, over the window's sessions.
+workbench-debug-session-placeholder = Debug sessions
+
+## The floating debug toolbar (debug_toolbar.rs): its buttons' names, each
+## its tooltip too, then its session label's accessible name.
+
+workbench-debug-toolbar-continue = Continue
+workbench-debug-toolbar-pause = Pause
+workbench-debug-toolbar-step-over = Step Over
+workbench-debug-toolbar-step-into = Step Into
+workbench-debug-toolbar-step-out = Step Out
+workbench-debug-toolbar-restart = Restart
+workbench-debug-toolbar-stop = Stop Debugging
+# $name is the session's configuration; $line the stopped frame's line,
+# from 1.
+workbench-debug-toolbar-session-starting = Debug session: { $name }, starting
+workbench-debug-toolbar-session-running = Debug session: { $name }, running
+workbench-debug-toolbar-session-stopped = Debug session: { $name }, stopped
+workbench-debug-toolbar-session-stopped-at = Debug session: { $name }, stopped at line { $line }

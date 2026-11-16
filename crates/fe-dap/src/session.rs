@@ -697,7 +697,24 @@ impl Session {
     /// [`controls`](Self::controls) has it enabled; from an accepted call
     /// on, Continue and stepping are disabled.
     pub fn resume(&self, resume: Resume, thread_id: Option<i64>) -> bool {
+        self.resume_if(resume, thread_id, None)
+    }
+
+    /// [`resume`](Self::resume), but only from the stop at `epoch`: refused,
+    /// `false`, if the session's stop epoch has moved on, as a new stop or
+    /// a resume moves it. Checked under the lock the resume is sent under,
+    /// so no stop can come between the check and the resume: for a host's
+    /// resume that waited on a request since the user asked (run to
+    /// cursor's breakpoint).
+    pub fn resume_at(&self, resume: Resume, thread_id: Option<i64>, epoch: Epoch) -> bool {
+        self.resume_if(resume, thread_id, Some(epoch))
+    }
+
+    fn resume_if(&self, resume: Resume, thread_id: Option<i64>, at: Option<Epoch>) -> bool {
         let mut view = lock(&self.shared.view);
+        if at.is_some_and(|at| at != view.epoch) {
+            return false;
+        }
         let controls = Controls::of(&view, self.shared.stopping.load(Ordering::SeqCst));
         let control = match resume {
             Resume::Continue => controls.continue_,

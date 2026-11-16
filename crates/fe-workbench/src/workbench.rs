@@ -294,8 +294,10 @@ pub struct Workbench {
     /// names (`git_branch`).
     title_upstream: crate::title_bar::Tracking,
     /// Whether the title bar is the unified one Tenmoku draws, which has
-    /// the agents chip; else the `agents` status item does.
-    own_title_bar: bool,
+    /// the agents chip and the run widget; else the `agents` status item
+    /// does, and the debug toolbar floats over the panes
+    /// ([`crate::debug_toolbar`]).
+    pub(crate) own_title_bar: bool,
     /// What the active pane's symbol chain was last worked out for: the
     /// pane, the editor, its caret and the outline: `None` if none can come
     /// (plain text, an unsupported language, a file too large), `Some(None)`
@@ -1226,10 +1228,27 @@ impl Render for Workbench {
                 cx,
             ),
         };
-        let root = match crate::plugin_host::key_context(cx) {
-            Some(context) if self.setup.is_none() => root.key_context(context),
+        // With the flags of the plugin loads whose commands are listed, and
+        // the debugger's (§6: the F-keys while a session is stopped).
+        let debug_flags = (self.debugger(cx))
+            .map(|debugger| debugger.read(cx).key_flags())
+            .unwrap_or_default();
+        let plugins = crate::plugin_host::key_context(cx);
+        let root = match (plugins, self.setup.is_none()) {
+            (plugins, true) if plugins.is_some() || !debug_flags.is_empty() => {
+                let mut context = plugins.unwrap_or_else(|| {
+                    let mut context = gpui::KeyContext::default();
+                    context.add(KEY_CONTEXT);
+                    context
+                });
+                debug_flags.iter().for_each(|flag| context.add(*flag));
+                root.key_context(context)
+            }
             _ => root,
         };
+        let toolbar = (self.setup.is_none())
+            .then(|| crate::debug_toolbar::floating(self, cx))
+            .flatten();
         root.on_action(cx.listener(Self::on_run_command))
             // So a modifier pressed while a panel has focus reaches the
             // editors, for their cmd-click hover.
@@ -1272,6 +1291,8 @@ impl Render for Workbench {
                         style.bg(drop_wash).border_2().border_color(drop_border)
                     }),
             )
+            // Over the panes, under the sheet and the toasts.
+            .children(toolbar)
             .children(self.setup.clone())
             // Hidden while the inbox shows them, as its rows.
             .children((!inbox_open).then(|| {

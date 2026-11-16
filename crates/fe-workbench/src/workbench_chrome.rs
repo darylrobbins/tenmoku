@@ -68,6 +68,8 @@ impl Workbench {
         });
         self.own_title_bar = shown;
         self.sync_agents_status(cx);
+        // The debug toolbar floats only without it.
+        cx.notify();
     }
 
     /// Sets or removes the `agents` status item to follow the lanes

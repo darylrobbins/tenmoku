@@ -107,8 +107,17 @@ use crate::{
     workbench::toast::{self, Toast},
 };
 
+pub(crate) mod commands;
 pub(crate) mod launch;
 pub(crate) mod picker;
+
+/// The workbench root's key context flag while a session is starting or
+/// hasn't ended.
+pub const DEBUG_SESSION: &str = "debug_session";
+/// … while it's paused for the stepping keys ([`Debugger::is_paused`]).
+pub const DEBUG_STOPPED: &str = "debug_stopped";
+/// … while it's starting, running, restarting or ending.
+pub const DEBUG_RUNNING: &str = "debug_running";
 
 /// How long a debuggee's tab may take to start its program before the
 /// adapter is told it couldn't, and the tab closes.
@@ -269,6 +278,27 @@ struct FileSend {
     lines: Vec<u32>,
 }
 
+/// Run to cursor's hidden breakpoint (§5): sent with its file's set until
+/// the first stop after the one it was asked in, whatever that stop's
+/// reason, then taken out.
+pub(crate) struct OneShot {
+    /// The file's canonical path.
+    pub(crate) path: PathBuf,
+    /// Its line on disk, from 1.
+    pub(crate) line: u32,
+    /// The stop it was asked in.
+    pub(crate) epoch: Epoch,
+    /// Which run to cursor set it, so a reply to an earlier one's send
+    /// continues nothing.
+    pub(crate) token: u64,
+    /// Its run's sends not yet answered: its own file's, and those taking
+    /// earlier hidden breakpoints out ([`Running::unconfirmed`]). It
+    /// continues once all are answered.
+    pub(crate) pending: usize,
+    /// Whether one of them failed: then it doesn't continue.
+    pub(crate) failed: bool,
+}
+
 /// The window's session.
 struct Running {
     id: u64,
@@ -286,6 +316,13 @@ struct Running {
     verification: BTreeMap<PathBuf, Vec<Verification>>,
     /// Each file's last send.
     sent: BTreeMap<PathBuf, FileSend>,
+    /// Run to cursor's hidden breakpoint, while it's set.
+    one_shot: Option<OneShot>,
+    /// Files whose set the adapter may still hold an earlier hidden
+    /// breakpoint in: one taken out, until a send of the file without it
+    /// is answered. Run to cursor sends them again, and continues only
+    /// once they're answered.
+    unconfirmed: BTreeSet<PathBuf>,
     /// The number the next send gets.
     next_send: u64,
     /// Files whose breakpoints changed before the session was configured:
@@ -316,6 +353,13 @@ pub struct Debugger {
     last: Option<String>,
     /// java-debug's jar, for jdtls (D21b).
     pub(crate) java: crate::debug_java::JavaJar,
+    /// The extra arguments `debug.start_with_args` gave each configuration
+    /// at its last fresh start, by name, which its reruns
+    /// (`debug.rerun_last`, its debuggee tab's) add again.
+    extra_args: HashMap<String, Vec<String>>,
+    /// The arguments `debug.start_with_args` asked for, which the next
+    /// configuration picked from the picker starts with.
+    pending_args: Option<Vec<String>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -391,6 +435,41 @@ impl Debugger {
         &self.settings
     }
 
+    /// Whether the session is stopped for the stepping keys: Stopped, with
+    /// no resume asked for since, and not stopping, so stepping is enabled
+    /// (D2b's control-state query). F10 and F11 step only then (§6, §13
+    /// Q4): resuming or uncertain, Linux's menu bar and fullscreen keep
+    /// them.
+    pub fn is_paused(&self) -> bool {
+        (self.session.as_ref()).is_some_and(|running| {
+            running.live()
+                && running.state == SessionState::Stopped
+                && running.session.controls().step.is_enabled()
+        })
+    }
+
+    /// The workbench root's key context flags for the debugger (§6):
+    /// `debug_session` while a session is starting or hasn't ended, and
+    /// then `debug_stopped` while it [is paused](Self::is_paused), else
+    /// `debug_running`.
+    pub fn key_flags(&self) -> Vec<&'static str> {
+        if !self.is_active() {
+            return Vec::new();
+        }
+        let state = match self.is_paused() {
+            true => DEBUG_STOPPED,
+            false => DEBUG_RUNNING,
+        };
+        vec![DEBUG_SESSION, state]
+    }
+
+    /// Run to cursor's hidden breakpoint, while it's set: its file and line
+    /// on disk.
+    pub fn run_to_cursor_target(&self) -> Option<(&Path, u32)> {
+        let one_shot = self.session.as_ref()?.one_shot.as_ref()?;
+        Some((one_shot.path.as_path(), one_shot.line))
+    }
+
     fn current(&mut self, id: u64) -> Option<&mut Running> {
         self.session.as_mut().filter(|running| running.id == id)
     }
@@ -400,13 +479,18 @@ impl Debugger {
         (self.starting.as_ref()).is_some_and(|start| start.id == id)
     }
 
-    /// Begins a start of the configuration `name`, giving up any other and
-    /// stopping the session: its number.
-    fn begin_start(&mut self, name: &str, cx: &mut Context<Self>) -> u64 {
+    /// Begins a start of the configuration `name` with the extra
+    /// arguments `args`, giving up any other and stopping the session: its
+    /// number. They're the configuration's from now on, for its reruns.
+    fn begin_start(&mut self, name: &str, args: Vec<String>, cx: &mut Context<Self>) -> u64 {
         self.give_up_start(cx);
         self.stop_session(cx);
         self.next_id += 1;
         self.last = Some(name.to_owned());
+        match args.is_empty() {
+            true => self.extra_args.remove(name),
+            false => self.extra_args.insert(name.to_owned(), args),
+        };
         self.starting = Some(Starting {
             id: self.next_id,
             name: name.to_owned(),
@@ -602,7 +686,11 @@ pub(crate) fn init(cx: &mut App) {
             workbench.end_debugging(cx);
             // The last configuration was the old root's.
             if let Some(debugger) = workbench.debugger(cx) {
-                debugger.update(cx, |debugger, _| debugger.last = None);
+                debugger.update(cx, |debugger, _| {
+                    debugger.last = None;
+                    debugger.extra_args.clear();
+                    debugger.pending_args = None;
+                });
             }
         });
         let terminal = workbench.terminal().clone();
@@ -628,8 +716,21 @@ pub(crate) fn init(cx: &mut App) {
             session: None,
             last: None,
             java: crate::debug_java::JavaJar::default(),
+            extra_args: HashMap::new(),
+            pending_args: None,
             _subscriptions: vec![trust, root, rerun],
         });
+        // The toolbar gives way to modals (`debug_toolbar`).
+        let modals = workbench.shell().read(cx).modals().clone();
+        cx.observe(&modals, |_, _, cx| cx.notify()).detach();
+        // The toolbar and the root's key context follow the session: its
+        // start, state and stops, not its output.
+        cx.subscribe(&debugger, |_, _, event: &DebuggerEvent, cx| {
+            if !matches!(event, DebuggerEvent::Output(_)) {
+                cx.notify();
+            }
+        })
+        .detach();
         let id = cx.entity_id();
         cx.default_global::<Debuggers>().0.insert(id, debugger);
         workbench.find_java_jar(cx);
@@ -748,6 +849,7 @@ impl Workbench {
         if resumed == Some(true) {
             return;
         }
+        debugger.update(cx, |debugger, _| debugger.pending_args = None);
         let reading = self.read_launch_configs(cx);
         self.show_debug_picker(reading, window, cx);
     }
@@ -776,18 +878,53 @@ impl Workbench {
         }
     }
 
-    /// Starts the configuration `name` afresh, once the list is read again:
-    /// a start of its own from the reading on.
+    /// Starts the root's launch configuration `name` afresh, as
+    /// `debug.rerun_last` does, for a host that names it (the screenshot
+    /// audit's debug toolbar scene): only in a trusted folder.
+    pub fn start_debugging(
+        &mut self,
+        name: impl Into<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.root_trusted() {
+            return toast::show(cx, untrusted_toast());
+        }
+        self.start_named(name.into(), Some(Vec::new()), window, cx);
+    }
+
+    /// Reruns the configuration `name` afresh, once the list is read again,
+    /// with the extra arguments its last fresh start had: a start of its
+    /// own from the reading on.
     pub(crate) fn rerun_debug_named(
         &mut self,
         name: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.start_named(name, None, window, cx);
+    }
+
+    /// Starts the configuration `name` afresh, once the list is read again:
+    /// with the extra arguments `args`, or (`None`, a rerun) those its last
+    /// fresh start had.
+    fn start_named(
+        &mut self,
+        name: String,
+        args: Option<Vec<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(debugger) = self.debugger(cx) else {
             return;
         };
-        let id = debugger.update(cx, |debugger, cx| debugger.begin_start(&name, cx));
+        let args = args.unwrap_or_else(|| {
+            let extra = &debugger.read(cx).extra_args;
+            extra.get(&name).cloned().unwrap_or_default()
+        });
+        let id = debugger.update(cx, |debugger, cx| {
+            debugger.begin_start(&name, args.clone(), cx)
+        });
         let reading = self.read_launch_configs(cx);
         let work = cx.spawn_in(window, async move |workbench, cx| {
             let listing = reading.await;
@@ -800,7 +937,10 @@ impl Workbench {
                 }
                 let Listing { configs, tasks, .. } = listing;
                 match configs.into_iter().find(|config| config.name == name) {
-                    Some(config) => workbench.start_config(id, config, tasks, window, cx),
+                    Some(mut config) => {
+                        config.args.extend(args);
+                        workbench.start_config(id, config, tasks, window, cx);
+                    }
                     None => {
                         debugger.update(cx, |debugger, cx| debugger.give_up(id, cx));
                         let message = tr!("workbench-debug-config-gone", name = name.as_str());
@@ -843,10 +983,11 @@ impl Workbench {
 
     /// Starts `config`, one of the root's, whose pre-launch task is one of
     /// `tasks`: only in a trusted folder, and only if it can start. Stops
-    /// the session there is first.
+    /// the session there is first. The arguments `debug.start_with_args`
+    /// asked for, if it did, go after the configuration's.
     pub(crate) fn start_debug_configuration(
         &mut self,
-        config: LaunchConfig,
+        mut config: LaunchConfig,
         tasks: Vec<ProjectTask>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -854,10 +995,15 @@ impl Workbench {
         let Some(debugger) = self.debugger(cx) else {
             return;
         };
+        let args = debugger.update(cx, |debugger, _| debugger.pending_args.take());
         if !self.root_trusted() {
             return toast::show(cx, untrusted_toast());
         }
-        let id = debugger.update(cx, |debugger, cx| debugger.begin_start(&config.name, cx));
+        let args = args.unwrap_or_default();
+        config.args.extend(args.iter().cloned());
+        let id = debugger.update(cx, |debugger, cx| {
+            debugger.begin_start(&config.name, args, cx)
+        });
         self.start_config(id, config, tasks, window, cx);
     }
 
@@ -1151,6 +1297,8 @@ impl Workbench {
                 stop: None,
                 verification: BTreeMap::new(),
                 sent,
+                one_shot: None,
+                unconfirmed: BTreeSet::new(),
                 next_send: 1,
                 pending: BTreeSet::new(),
                 unstarted: Vec::new(),
@@ -1200,9 +1348,16 @@ impl Workbench {
         // after it; told once, with the state as it now is, unless the event
         // told the state itself.
         let told = matches!(event, DapEvent::State(_));
+        let stopped = matches!(
+            event,
+            DapEvent::Stopped(_) | DapEvent::State(SessionState::Stopped)
+        );
         let retired = self.note_epoch(id, cx);
         self.handle_dap_event(id, event, adapter, host, window, cx);
         let retired = self.note_epoch(id, cx) || retired;
+        if stopped {
+            self.retire_one_shot(id, cx);
+        }
         if retired && !told {
             debugger.update(cx, |debugger, cx| {
                 if let Some(running) = debugger.current(id) {
@@ -1340,6 +1495,7 @@ impl Workbench {
             let mut unstarted = Vec::new();
             if state.is_ended() {
                 running._store = None;
+                running.one_shot = None;
                 running.pending.clear();
                 unstarted = std::mem::take(&mut running.unstarted);
             }
@@ -1727,16 +1883,45 @@ impl Workbench {
     /// Sends the file at `path`'s enabled breakpoints to session `id`, and
     /// keeps what the adapter says of them, if no later send has gone.
     fn send_breakpoints(&mut self, id: u64, path: &Path, cx: &mut Context<Self>) {
+        self.send_breakpoints_then(id, path, None, cx);
+    }
+
+    /// [`Workbench::send_breakpoints`], then `then` with whether the adapter
+    /// answered the request (whatever it said of each breakpoint): unless
+    /// nothing was sent, as the session isn't live, which is the answer.
+    fn send_breakpoints_then(
+        &mut self,
+        id: u64,
+        path: &Path,
+        then: Option<SentThen>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(debugger) = self.debugger(cx) else {
-            return;
+            return false;
         };
         let pending = debugger.update(cx, |debugger, cx| {
             let running = debugger.current(id).filter(|running| running.live())?;
             let store = running.store.clone()?;
-            let breakpoints = source_breakpoints(&store.read(cx).enabled(path));
-            let lines: Vec<u32> = breakpoints.iter().map(|b| b.line as u32).collect();
+            let mut breakpoints = source_breakpoints(&store.read(cx).enabled(path));
+            let mut lines: Vec<u32> = breakpoints.iter().map(|b| b.line as u32).collect();
+            // Run to cursor's, in line order, unless a breakpoint of the
+            // user's is on its line already.
+            let one_shot = (running.one_shot.as_ref())
+                .filter(|one_shot| one_shot.path == path)
+                .map(|one_shot| one_shot.line);
+            let hidden = one_shot.filter(|line| !lines.contains(line)).map(|line| {
+                let at = lines.partition_point(|sent| *sent < line);
+                lines.insert(at, line);
+                let breakpoint = SourceBreakpoint {
+                    line: i64::from(line),
+                    ..SourceBreakpoint::default()
+                };
+                breakpoints.insert(at, breakpoint);
+                at
+            });
             let generation = running.next_send;
             running.next_send += 1;
+            let with_one_shot = one_shot.is_some();
             let send = FileSend {
                 generation,
                 lines: lines.clone(),
@@ -1756,10 +1941,10 @@ impl Workbench {
             let reply = running
                 .session
                 .request::<request::SetBreakpoints>(&arguments);
-            Some((reply, lines, generation))
+            Some((reply, lines, generation, hidden, with_one_shot))
         });
-        let Some((reply, lines, generation)) = pending else {
-            return;
+        let Some((reply, lines, generation, hidden, with_one_shot)) = pending else {
+            return false;
         };
         let path = path.to_owned();
         cx.spawn(async move |workbench, cx| {
@@ -1768,7 +1953,27 @@ impl Workbench {
                 .update(cx, |workbench, cx| {
                     let body = match reply {
                         Ok(body) => body,
-                        Err(error) => return workbench.request_failed(id, &error, cx),
+                        Err(error) => {
+                            // The adapter keeps the file's last set it took:
+                            // a hidden breakpoint this send was taking out
+                            // may still be in it.
+                            if let Some(debugger) = workbench.debugger(cx) {
+                                debugger.update(cx, |debugger, _| {
+                                    let Some(running) = debugger.current(id) else {
+                                        return;
+                                    };
+                                    let last = running.sent.get(&path).map(|send| send.generation);
+                                    if last == Some(generation) && !with_one_shot {
+                                        running.unconfirmed.insert(path.clone());
+                                    }
+                                });
+                            }
+                            workbench.request_failed(id, &error, cx);
+                            if let Some(then) = then {
+                                then(workbench, false, cx);
+                            }
+                            return;
+                        }
                     };
                     let Some(debugger) = workbench.debugger(cx) else {
                         return;
@@ -1782,15 +1987,36 @@ impl Workbench {
                         if last != Some(generation) {
                             return;
                         }
-                        running.verify(path.clone(), &lines, body.breakpoints);
+                        // The adapter holds the set as wanted now: with
+                        // run to cursor's breakpoint if it's still set, none
+                        // taken out.
+                        let wanted =
+                            (running.one_shot.as_ref()).is_some_and(|shot| shot.path == path);
+                        if wanted == with_one_shot {
+                            running.unconfirmed.remove(&path);
+                        }
+                        let mut lines = lines;
+                        let mut answered = body.breakpoints;
+                        if let Some(at) = hidden.filter(|at| *at < answered.len()) {
+                            lines.remove(at);
+                            answered.remove(at);
+                        }
+                        running.verify(path.clone(), &lines, answered);
                         cx.emit(DebuggerEvent::Breakpoints(path));
                     });
+                    if let Some(then) = then {
+                        then(workbench, true, cx);
+                    }
                 })
                 .ok();
         })
         .detach();
+        true
     }
 }
+
+/// What follows a breakpoint send: given whether the adapter answered it.
+type SentThen = Box<dyn FnOnce(&mut Workbench, bool, &mut Context<Workbench>)>;
 
 /// Holds each stopped file's read until the test sends: a file still
 /// loading when its stop ends.

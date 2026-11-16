@@ -428,6 +428,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                 || bindings[index].command.as_str().starts_with("git.")
                 || bindings[index].command.as_str().starts_with("chat.")
                 || bindings[index].command.as_str().starts_with("peek.")
+                || bindings[index].command.as_str().starts_with("debug.")
                 || matches!(
                     context.as_deref(),
                     Some(

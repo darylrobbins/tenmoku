@@ -744,3 +744,8 @@ reason = "Lane 1's name as the lane record keeps it, as an agent names itself; n
 file = "src/agents_panel.rs"
 text = "Agents"
 reason = "The Agents panel's name in its SidebarPanel const, not shown: the dock titles it workbench-dock-agents-title"
+
+[[literal]]
+file = "src/debug_toolbar.rs"
+text = "debug-toolbar-session"
+reason = "The debug toolbar's session label's element id"

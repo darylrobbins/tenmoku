@@ -241,7 +241,8 @@ const CASES: &[Case] = &[
 /// `blame_annotation_keys`. The Markdown preview keys (`cmd-shift-v`,
 /// `cmd-k v`) by its `markdown_preview_bindings`. Peek Definition's
 /// `alt-f12` by its `peek_keys`, and Peek References' `shift-f12` by its
-/// `peek_references_keys`.
+/// `peek_references_keys`. The debugger's `f9` (`debug.toggle_breakpoint`)
+/// by its `debug_bindings`, and fe-workbench's `debug_commands`.
 const DEDICATED: &[&str] = &[
     "cmd-s",
     "cmd-alt-]",
@@ -271,6 +272,7 @@ const DEDICATED: &[&str] = &[
     "cmd-k v",
     "alt-f12",
     "shift-f12",
+    "f9",
 ];
 
 fn run_case(case: &Case) {

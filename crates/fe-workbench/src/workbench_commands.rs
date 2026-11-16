@@ -1504,6 +1504,78 @@ impl Workbench {
         self.debug_show_log(cx.window, cx.cx);
     }
 
+    /// Debug: Continue
+    #[command(id = "debug.continue")]
+    fn debug_continue_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_resume(fe_dap::Resume::Continue, cx.cx);
+    }
+
+    /// Debug: Pause
+    #[command(id = "debug.pause")]
+    fn debug_pause_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_pause(cx.cx);
+    }
+
+    /// Debug: Step Over
+    #[command(id = "debug.step_over")]
+    fn debug_step_over_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_resume(fe_dap::Resume::Next, cx.cx);
+    }
+
+    /// Debug: Step Into
+    #[command(id = "debug.step_into")]
+    fn debug_step_into_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_resume(fe_dap::Resume::StepIn, cx.cx);
+    }
+
+    /// Debug: Step Out
+    #[command(id = "debug.step_out")]
+    fn debug_step_out_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_resume(fe_dap::Resume::StepOut, cx.cx);
+    }
+
+    /// Debug: Restart
+    #[command(id = "debug.restart")]
+    fn debug_restart_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_restart(cx.cx);
+    }
+
+    /// Debug: Run to Cursor
+    #[command(id = "debug.run_to_cursor")]
+    fn debug_run_to_cursor_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_run_to_cursor(cx.cx);
+    }
+
+    /// Debug: Start with Arguments…
+    #[command(id = "debug.start_with_args")]
+    fn debug_start_with_args_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_start_with_args(cx.window, cx.cx);
+    }
+
+    /// Debug: Show Session…
+    #[command(id = "debug.show_session")]
+    fn debug_show_session_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_show_session(cx.window, cx.cx);
+    }
+
+    /// Debug: Toggle Breakpoint
+    #[command(id = "debug.toggle_breakpoint")]
+    fn debug_toggle_breakpoint_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_toggle_breakpoint(cx.cx);
+    }
+
+    /// Debug: Enable or Disable Breakpoint
+    #[command(id = "debug.toggle_breakpoint_enabled")]
+    fn debug_toggle_breakpoint_enabled_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_toggle_breakpoint_enabled(cx.cx);
+    }
+
+    /// Debug: Remove All Breakpoints
+    #[command(id = "debug.remove_all_breakpoints")]
+    fn debug_remove_all_breakpoints_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_remove_all_breakpoints(cx.cx);
+    }
+
     /// Quickfix: Next Item
     #[command(id = "quickfix.next")]
     fn quickfix_next(&mut self, cx: &mut Cx<Self>) {

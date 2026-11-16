@@ -741,6 +741,58 @@ command = "menu_bar.open"
 context = "workbench"
 platform = "!macos"
 
+# The debugger's keys, as VS Code lays them out (the debugger record,
+# docs/decisions/r1b9dw3g0g-debugger.md §6). The workbench sets
+# `debug_session` while a session is starting or hasn't ended, then
+# `debug_stopped` while it's stopped with stepping enabled and
+# `debug_running` otherwise (resuming and uncertain too). F10 and F11 step only while stopped: they come
+# after the menu bar's F10 above, which they win over at the same depth,
+# and fullscreen's context-free F11, so Linux keeps both keys otherwise.
+[[bindings]]
+keys = "f5"
+command = "debug.start"
+context = "workbench"
+
+[[bindings]]
+keys = "shift-f5"
+command = "debug.stop"
+context = "workbench && debug_session"
+
+[[bindings]]
+keys = "secondary-shift-f5"
+command = "debug.restart"
+context = "workbench && debug_session"
+
+[[bindings]]
+keys = "f6"
+command = "debug.pause"
+context = "workbench && debug_running"
+
+[[bindings]]
+keys = "f9"
+command = "debug.toggle_breakpoint"
+context = "editor"
+
+[[bindings]]
+keys = "f10"
+command = "debug.step_over"
+context = "workbench && debug_stopped"
+
+[[bindings]]
+keys = "f11"
+command = "debug.step_into"
+context = "workbench && debug_stopped"
+
+[[bindings]]
+keys = "shift-f11"
+command = "debug.step_out"
+context = "workbench && debug_stopped"
+
+[[bindings]]
+keys = "secondary-f10"
+command = "debug.run_to_cursor"
+context = "workbench && debug_stopped"
+
 # A click on a word with secondary held: the editor places the caret there, then
 # runs this. Above f12, so menus and tooltips show f12, the later entry.
 [[bindings]]
