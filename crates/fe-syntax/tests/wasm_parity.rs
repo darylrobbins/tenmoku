@@ -406,9 +406,18 @@ fn every_extension_highlights_its_sample() {
     let modules = repository().join("target/grammar-wasm");
     let update = std::env::var_os("UPDATE_GOLDEN").is_some();
     let selected = selected(&all);
+    // A parser's WasmStore is per thread and its memory (128 MiB) only fills:
+    // after enough big grammars a shared one gives later languages no tree.
+    // Each language gets a thread, so a store, of its own.
     let failures: Vec<String> = (selected.iter())
         .filter_map(|language| {
-            let result = check_samples(&modules, language, update);
+            let result = std::thread::scope(|scope| {
+                (std::thread::Builder::new().name(language.clone()))
+                    .spawn_scoped(scope, || check_samples(&modules, language, update))
+                    .expect("spawn a thread")
+                    .join()
+                    .unwrap_or_else(|_| Err("panicked".to_owned()))
+            });
             result.err().map(|error| format!("{language}: {error}"))
         })
         .collect();
