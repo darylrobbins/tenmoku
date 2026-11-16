@@ -9,8 +9,8 @@ tenmoku = "1.0"
 [[contributes.grammars]]
 language = "ruby"
 wasm = "tree-sitter-ruby.wasm"
-extensions = ["rb", "gemspec", "rake", "ru", "podspec"]
-file_names = ["Gemfile", "Rakefile", "Podfile", "Vagrantfile", "Brewfile", "Guardfile", "Capfile", "Fastfile"]
+extensions = ["rb", "gemspec", "rake", "ru", "podspec", "jbuilder"]
+file_names = ["Gemfile", "Rakefile", "Podfile", "Vagrantfile", "Brewfile", "Guardfile", "Capfile", "Fastfile", "Dangerfile", "Appfile", "Matchfile", "Pluginfile", "Berksfile", "Thorfile", "Steepfile", ".irbrc", ".pryrc"]
 highlights = "highlights.scm"
 injections = "injections.scm"
 packs = ["web", "scripting"]

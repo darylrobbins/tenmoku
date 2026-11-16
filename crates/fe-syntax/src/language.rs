@@ -158,7 +158,7 @@ const PATH_SUFFIXES: &[(&str, &str)] = &[
 
 /// Files named by how their name starts, whatever follows: `(prefix, language)`,
 /// ignoring ASCII case. Checked last, so `.env.sh` stays a shell script.
-const FILE_NAME_PREFIXES: &[(&str, &str)] = &[(".env.", "dotenv")];
+const FILE_NAME_PREFIXES: &[(&str, &str)] = &[(".env.", "dotenv"), ("Procfile.", "yaml")];
 
 /// Whether `path` ends with the components of `tail`, ignoring ASCII case as
 /// file names do.
@@ -585,6 +585,7 @@ const DEFS: &[Def] = &[
             "babelrc",
             "code-workspace",
             "code-snippets",
+            "avsc",
         ],
         file_names: &[
             ".bowerrc",
@@ -818,6 +819,7 @@ const DEFS: &[Def] = &[
             "CITATION.cff",
             ".gemrc",
             ".yamllint",
+            "Procfile",
         ],
         grammar: || tree_sitter_yaml::LANGUAGE.into(),
         highlights: || {
@@ -834,7 +836,7 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "markdown")]
     Def {
         name: "markdown",
-        extensions: &["md", "markdown"],
+        extensions: &["md", "markdown", "mdx"],
         file_names: &[],
         grammar: || tree_sitter_md::LANGUAGE.into(),
         // The crate's query clears a fence's code with `@none`; we keep it
@@ -899,7 +901,7 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "ruby")]
     Def {
         name: "ruby",
-        extensions: &["rb", "gemspec", "rake", "ru", "podspec"],
+        extensions: &["rb", "gemspec", "rake", "ru", "podspec", "jbuilder"],
         file_names: &[
             "Gemfile",
             "Rakefile",
@@ -909,6 +911,15 @@ const DEFS: &[Def] = &[
             "Guardfile",
             "Capfile",
             "Fastfile",
+            "Dangerfile",
+            "Appfile",
+            "Matchfile",
+            "Pluginfile",
+            "Berksfile",
+            "Thorfile",
+            "Steepfile",
+            ".irbrc",
+            ".pryrc",
         ],
         grammar: || tree_sitter_ruby::LANGUAGE.into(),
         highlights: || {
@@ -1121,6 +1132,7 @@ const DEFS: &[Def] = &[
             ".ignore",
             ".rgignore",
             ".fdignore",
+            "CODEOWNERS",
         ],
         grammar: || tree_sitter_gitignore::LANGUAGE.into(),
         highlights: || &[include_str!("../queries/gitignore.scm")],
@@ -1187,7 +1199,9 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "ini")]
     Def {
         name: "ini",
-        extensions: &["ini", "cfg"],
+        extensions: &[
+            "ini", "cfg", "service", "timer", "socket", "mount", "path", "target",
+        ],
         file_names: &[
             ".editorconfig",
             ".npmrc",
