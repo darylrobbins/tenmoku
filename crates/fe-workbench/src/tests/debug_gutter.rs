@@ -102,6 +102,10 @@ fn debug_with(cx: &mut TestAppContext, script: impl FnOnce(Script) -> Script) ->
     fs::write(&main, MAIN).unwrap();
     fs::create_dir_all(root.join(".tenmoku")).unwrap();
     fs::write(root.join(".tenmoku/launch.toml"), LAUNCH).unwrap();
+    // Its Rust file would start a real rust-analyzer that outlives the test.
+    let settings = fe_config::project_settings_path(&root);
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(settings, "[lsp.servers.rust-analyzer]\nenabled = false\n").unwrap();
     let mut base = Script::default();
     base.program.path = main.to_string_lossy().into_owned();
     let script = script(base);
