@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Tenmoku
+GenericName=Text Editor
+Comment=Edit text and code
+Exec=tenmoku %F
+Icon=dev.tenmoku.tenmoku
+Terminal=false
+Categories=Utility;TextEditor;Development;IDE;
+MimeType=text/plain;
+StartupNotify=true
+StartupWMClass=dev.tenmoku.tenmoku
