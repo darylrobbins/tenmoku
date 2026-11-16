@@ -34,4 +34,7 @@ jobs:
           dap=$(ls /usr/bin/lldb-dap* /usr/lib/llvm-*/bin/lldb-dap 2>/dev/null | head -n1 || true)
           echo "FE_DAP_LLDB_DAP=$dap" >> "$GITHUB_ENV"
       - name: Real-adapter tests
+        env:
+          # A missing adapter fails rather than skips.
+          FE_DAP_REQUIRE_ADAPTERS: 1
         run: scripts/dap-real.sh

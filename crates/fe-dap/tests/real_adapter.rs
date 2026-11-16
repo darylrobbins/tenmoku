@@ -35,7 +35,8 @@ fn require() -> bool {
     std::env::var_os("FE_DAP_REQUIRE_ADAPTERS").is_some_and(|v| v == "1")
 }
 
-/// Skips (passes) with `reason`, or fails when adapters are required.
+/// Skips (passes) with `reason`, or fails when adapters are required: for a
+/// missing adapter.
 fn skip(reason: &str) {
     assert!(!require(), "required adapter unavailable: {reason}");
     eprintln!("skipped: {reason}");
@@ -241,11 +242,7 @@ fn expect_vars(vars: &[Variable], want: &[(&str, &str)]) {
             .iter()
             .find(|v| v.name == *name)
             .unwrap_or_else(|| panic!("no variable {name}: {vars:?}"));
-        assert!(
-            v.value.contains(value),
-            "{name} = {:?}, wanted {value}",
-            v.value
-        );
+        assert_eq!(v.value.trim(), *value, "{name}");
     }
 }
 
@@ -366,13 +363,15 @@ fn run(io: AdapterIo, plan: Plan<'_>) {
         context: Some("repl".into()),
         ..Default::default()
     });
-    assert!(
-        result.result.contains(plan.expected),
-        "{} = {:?}, wanted {}",
-        plan.expression,
-        result.result,
-        plan.expected
-    );
+    // lldb's repl formats a result as `(int) $0 = 4`: the value is what
+    // follows ` = `. debugpy's is the bare value.
+    let value = result.result.trim();
+    let value = if plan.adapter == "debugpy" {
+        value
+    } else {
+        value.rsplit_once(" = ").map_or(value, |(_, v)| v)
+    };
+    assert_eq!(value, plan.expected, "{}", plan.expression);
 
     record(plan.adapter, &c, "next");
     let _ = c.send::<request::Continue>(&ContinueArguments {
@@ -518,7 +517,9 @@ fn lldb_adapter() -> Option<AdapterSpec> {
 #[ignore = "real adapter: scripts/dap-real.sh"]
 fn lldb_breakpoint_step_variables_evaluate() {
     if let Some(reason) = ptrace_forbidden() {
-        return skip(&reason);
+        // Not a missing adapter: the kernel forbids it, so it skips even
+        // under FE_DAP_REQUIRE_ADAPTERS.
+        return eprintln!("skipped: {reason}");
     }
     let Some(adapter) = lldb_adapter() else {
         return skip("neither lldb-dap nor codelldb found (set FE_DAP_LLDB_DAP)");
