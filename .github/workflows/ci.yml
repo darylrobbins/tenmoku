@@ -14,6 +14,17 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+      # The debug test build plus the screenshots examples fill the runner's
+      # disk (ld: write() failed, errno=28). Remove preinstalled things this
+      # job never uses; df before and after shows the margin gained.
+      - name: Free runner disk
+        run: |
+          df -h /
+          rm -rf ~/Library/Android || true
+          sudo rm -rf /Users/runner/hostedtoolcache/CodeQL || true
+          sudo rm -rf /Users/runner/Library/Android || true
+          xcrun simctl delete all || true
+          df -h /
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
