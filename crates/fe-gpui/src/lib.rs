@@ -46,8 +46,8 @@ pub use color_swatches::ColorSwatch;
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
 pub use diff_view::{DiffSide, DiffView};
 pub use element::{
-    ChevronKind, DrawnAnnotations, DrawnChevron, DrawnGutter, DrawnPill, DrawnProposalHeader,
-    DrawnText,
+    BreakpointGlyph, ChevronKind, DrawnAnnotations, DrawnBreakpoint, DrawnChevron, DrawnGutter,
+    DrawnPill, DrawnProposalHeader, DrawnText,
 };
 pub use fe_config::{
     EditorSettings, SettingsEvent, StickyScrollSettings,
@@ -91,7 +91,10 @@ pub use view::EditorView;
 pub use view::GhostTextEvent;
 pub use view::line_numbers;
 pub use view::minimap_options;
-pub use view::{GlyphKind, GutterGlyph};
+pub use view::{
+    BreakpointHandlers, BreakpointMark, BreakpointMenuItem, BreakpointState, FrameArrow, GlyphKind,
+    GutterGlyph,
+};
 pub use view::{HostBlock, HostBlockKind, ReservedBlock};
 pub use view::{ProposalBadge, ProposalEvent};
 pub use vim::{
@@ -273,6 +276,18 @@ pub struct EditorTheme {
     /// Font style for each [`Highlight`], resolved like `syntax`; `None`
     /// is the plain face. Nothing draws it yet.
     pub syntax_styles: Vec<Option<fe_config::FontStyle>>,
+    /// A stopped debug session's current line: its opaque band,
+    /// [`Tint::DebugCurrent`](fe_editor::decorations::Tint::DebugCurrent)'s.
+    pub debug_current_line: Hsla,
+    /// A selected caller frame's band,
+    /// [`Tint::DebugFrame`](fe_editor::decorations::Tint::DebugFrame)'s.
+    pub debug_frame_line: Hsla,
+    /// An enabled breakpoint's glyph over the line numbers, verified or not.
+    pub debug_breakpoint: Hsla,
+    /// A disabled breakpoint's glyph.
+    pub debug_breakpoint_disabled: Hsla,
+    /// The frame arrows and the current line's band's edge: the accent.
+    pub debug_frame_arrow: Hsla,
 }
 
 impl EditorTheme {

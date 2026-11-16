@@ -50,6 +50,13 @@ pub enum Tint {
     /// An agent's work, never the accent: the agent's colour, or, as a
     /// row's band, its soft ground.
     Agent,
+    /// A debug session's current line, the stopped top frame's row: as a
+    /// row's band, opaque, in place of the cursor line, with a 2 px edge in
+    /// the accent at the code's left.
+    DebugCurrent,
+    /// A caller frame selected in a stopped session's call stack: as a
+    /// row's band, as [`Tint::DebugCurrent`]'s, its edge in muted text.
+    DebugFrame,
 }
 
 /// A mark in the gutter.

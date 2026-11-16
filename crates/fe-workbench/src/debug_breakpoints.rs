@@ -157,6 +157,16 @@ fn read_disk(path: &Path) -> Option<Text> {
     }
 }
 
+/// A breakpoint shown in a buffer ([`BreakpointStore::placements_in`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placement {
+    /// Its row in the buffer, from 0.
+    pub row: u32,
+    /// Its line on disk, from 1, which a session sends.
+    pub line: u32,
+    pub enabled: bool,
+}
+
 /// What a store tells as its breakpoints change, naming the file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BreakpointEvent {
@@ -730,6 +740,39 @@ impl BreakpointStore {
         (file.shown(file.open_index(buffer)).into_iter())
             .map(|(row, entry)| entry.breakpoint(path.clone(), row))
             .collect()
+    }
+
+    /// The breakpoints of the file at `path` in the open buffer `buffer`
+    /// (or on disk if that isn't open), as [`BreakpointStore::breakpoints_in`]
+    /// shows them, each with the line on disk a session sends it on: what
+    /// the session's verification of it is keyed by.
+    pub fn placements_in(&self, path: &Path, buffer: BufferId) -> Vec<Placement> {
+        let path = self.key(path);
+        let Some(file) = self.files.get(&path) else {
+            return Vec::new();
+        };
+        (file.shown(file.open_index(Some(buffer))).into_iter())
+            .map(|(row, entry)| Placement {
+                row,
+                line: entry.disk + 1,
+                enabled: entry.enabled,
+            })
+            .collect()
+    }
+
+    /// Where `lines` (from 1) of the file at `path` on disk are in the open
+    /// buffer `buffer`, as rows from 0, as the store places breakpoints:
+    /// by the buffer's text against the file's on disk. Not open there,
+    /// the lines' own rows.
+    pub fn rows_of_lines(&self, path: &Path, buffer: BufferId, lines: &[u32]) -> Vec<u32> {
+        let disk: Vec<u32> = lines.iter().map(|line| line.saturating_sub(1)).collect();
+        let path = self.key(path);
+        let open = (self.files.get(&path))
+            .and_then(|file| Some(&file.open[file.open_index(Some(buffer))?]));
+        match open {
+            Some(open) => open.rows_of_disk(&disk),
+            None => disk,
+        }
     }
 
     /// The breakpoints of the file at `path` by their lines on disk, as

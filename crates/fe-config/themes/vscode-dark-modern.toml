@@ -150,6 +150,17 @@ vim_mode_foreground = "#1F1F1F"
 bracket_1 = "#FFD700"
 bracket_2 = "#DA70D6"
 bracket_3 = "#179FFF"
+# The debugger: the stopped line's band (the cursor tinted toward the
+# accent) and a caller frame's (the cursor line's), an enabled breakpoint
+# (the error colour) and a disabled one (a grey apart in lightness from the
+# red), and the frame arrows (the accent, or the cursor where the accent is
+# too faint); each glyph 3:1 on the gutter, the cursor line and the hover
+# tile.
+debug_current_line = "#292929"
+debug_frame_line = "#282828"
+debug_breakpoint = "#f14c4c"
+debug_breakpoint_disabled = "#abb0b6"
+debug_frame_arrow = "#0078D4"
 # The minimap. dark_modern.json and its includes set no minimap or scrollbar
 # slider colour, so these are VS Code's dark defaults: minimap.background is
 # the editor's, minimapSlider.* scrollbarSlider.* at half alpha,

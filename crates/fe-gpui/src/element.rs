@@ -138,6 +138,9 @@ pub(crate) struct FrameLayout {
     /// The pattern ([`fe_vim::search::Pattern::regex_str`]) and text version
     /// of a frame whose highlighting ran out of time, until either changes.
     highlight_ran_out: Option<(String, fe_buffer::Version)>,
+    /// The current match's search ([`current_match`]): what it was asked,
+    /// and found, kept from frame to frame while that stays the same.
+    current_match_found: Option<(CurrentMatchKey, Option<Range<usize>>)>,
     /// The bracket pair at the caret to outline ([`bracket_rects`]).
     brackets: Vec<Rect>,
     /// A pending vim jump's backdrop and labels ([`jump_layout`]).
@@ -1537,6 +1540,7 @@ impl Element for EditorElement {
             current_match: Vec::new(),
             match_current: false,
             highlight_ran_out: None,
+            current_match_found: None,
             brackets: Vec::new(),
             jump: None,
             composition: composed,
@@ -1562,8 +1566,11 @@ impl Element for EditorElement {
         layout.annotation_hitbox = column;
         layout.clickable.extend(entries);
         layout.find_scope = find_scope_rects(&mut layout, view);
-        let current = current_match(view);
-        layout.matches = match_rects(&mut layout, view, current.as_ref());
+        // One search budget for the frame: the current match, then the
+        // rows' matches.
+        let mut deadline = search_deadline(view);
+        let current = current_match(&mut layout, view, &mut deadline);
+        layout.matches = match_rects(&mut layout, view, current.as_ref(), &mut deadline);
         layout.current_match = current_match_rects(&mut layout, view);
         layout.match_current = view.search_preview().is_some() || current.is_some();
         layout.brackets = bracket_rects(&mut layout, view);
@@ -1661,6 +1668,9 @@ impl Element for EditorElement {
             .is_a11y_active()
             .then(|| build_a11y_text(&mut layout, view, window.scale_factor()));
         view.a11y_text.borrow_mut().text = a11y;
+        let targets = breakpoint_targets(&layout, view);
+        self.view
+            .update(cx, |view, _| view.breakpoints.targets = targets);
         layout.prepaint_took = started.elapsed();
         Some(layout)
     }
@@ -1860,6 +1870,24 @@ impl Element for EditorElement {
         #[cfg(test)]
         let mut painted_inlay_hints = Vec::new();
         let mut drawn = DrawnAnnotations::default();
+        let drawn_breakpoints = breakpoint_glyphs(&layout, view);
+        // A row with a debugger's glyph draws no number: each number's
+        // buffer row, `None` for one that isn't drawn.
+        let glyph_rows: HashSet<u32> = drawn_breakpoints.iter().map(|drawn| drawn.row).collect();
+        let number_rows: Vec<Option<u32>> = (layout.frame.line_numbers.iter())
+            .map(|(origin, _)| number_row(&layout.frame, view.model.text(), origin.y))
+            .collect();
+        let shown_numbers: Vec<bool> = (number_rows.iter())
+            .map(|row| row.is_none_or(|row| !glyph_rows.contains(&row)))
+            .collect();
+        let drawn_numbers: Vec<u32> = (number_rows.iter().zip(&shown_numbers))
+            .filter_map(|(row, shown)| row.filter(|_| *shown))
+            .collect();
+        let number_tile = number_tile(&layout, view, column_hovered, window);
+        let band_edges: Vec<(Bounds<Pixels>, Hsla)> = (layout.decorations.band_edges(view.gutter))
+            .into_iter()
+            .map(|(edge, tint)| (edge, band_edge_color(&theme, tint, cx)))
+            .collect();
         #[cfg(test)]
         let mut painted_swatches = Vec::new();
 
@@ -2110,8 +2138,20 @@ impl Element for EditorElement {
                 #[cfg(test)]
                 &mut painted_annotations,
             );
-            for (origin, number) in &frame.line_numbers {
-                number.paint(layout.to_window(*origin), line_height, window, cx);
+            // With the debugger's handlers, the hovered row's number on the
+            // hover tile.
+            if let Some((_, tile, color)) = number_tile {
+                let radius = tile.size.height * NUMBER_TILE_RADIUS;
+                window.paint_quad(fill(tile, color).corner_radii(radius));
+            }
+            // A row with a debugger's glyph draws none.
+            for ((origin, number), shown) in frame.line_numbers.iter().zip(&shown_numbers) {
+                if *shown {
+                    number.paint(layout.to_window(*origin), line_height, window, cx);
+                }
+            }
+            for drawn in &drawn_breakpoints {
+                paint_breakpoint(drawn, theme.font_size, window);
             }
             for &(_, mark, color) in &marks {
                 window.paint_quad(fill(mark, color).corner_radii(mark.size.width / 2.));
@@ -2121,6 +2161,9 @@ impl Element for EditorElement {
             }
             layout.decorations.paint(Layer::Gutter, window, cx);
             paint_agent_lane(&agent_dots, agent_lane_color(&theme), window);
+            for &(edge, color) in &band_edges {
+                window.paint_quad(fill(edge, color));
+            }
             // Folded rows' chevrons always show; the rest only while the
             // pointer is in the gutter. The hovered one is at full strength
             // on a tile, and its fold's closing row has an up-chevron.
@@ -2170,6 +2213,11 @@ impl Element for EditorElement {
             minimap::paint(&layout, &theme, minimap_hover, minimap_dragged, window);
         });
         layout.drawn_gutter = drawn_gutter(&layout, &theme, &marks, agent_dots, drawn_chevrons);
+        layout.drawn_gutter.breakpoints = drawn_breakpoints;
+        layout.drawn_gutter.numbers = drawn_numbers;
+        layout.drawn_gutter.number_tile = number_tile;
+        layout.drawn_gutter.band_edges = band_edges;
+        layout.drawn_gutter.glyph = glyph.map(|(row, bounds, _)| (row, bounds));
         drawn.inline_diagnostics = inline_diagnostics.drawn();
         for placed in &layout.decorations.placed {
             match &placed.kind {
@@ -2885,6 +2933,45 @@ pub struct DrawnGutter {
     pub notches: Vec<(Bounds<Pixels>, Hsla)>,
     /// The indent guides, and whether each is a step brighter.
     pub indent_guides: Vec<(Bounds<Pixels>, bool)>,
+    /// The debugger's glyphs over the line numbers ([`EditorView::set_breakpoints`]).
+    pub breakpoints: Vec<DrawnBreakpoint>,
+    /// The buffer rows whose line numbers were drawn.
+    pub numbers: Vec<u32>,
+    /// The hover tile behind the line number under the pointer, with the
+    /// debugger's handlers: its buffer row, bounds and colour.
+    pub number_tile: Option<(u32, Bounds<Pixels>, Hsla)>,
+    /// The debugger's bands' edges at the code's left, and their colours.
+    pub band_edges: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The host's glyph ([`EditorView::set_gutter_glyph`]): its buffer row
+    /// and bounds.
+    pub glyph: Option<(u32, Bounds<Pixels>)>,
+}
+
+/// A debugger's glyph drawn over the line numbers.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnBreakpoint {
+    /// The buffer row it's on.
+    pub row: u32,
+    pub glyph: BreakpointGlyph,
+    pub bounds: Bounds<Pixels>,
+    pub color: Hsla,
+}
+
+/// Which glyph: a breakpoint's state's or a frame arrow.
+#[doc(hidden)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BreakpointGlyph {
+    /// An enabled breakpoint: a filled dot.
+    Dot,
+    /// An unverified one: a ring.
+    Ring,
+    /// A disabled one: a grey dot.
+    Disabled,
+    /// The current frame: a filled arrow.
+    CurrentArrow,
+    /// A caller frame: an outlined arrow.
+    CallerArrow,
 }
 
 /// A chevron drawn in the fold column.
@@ -3134,6 +3221,7 @@ fn drawn_gutter(
         indent_guides: (layout.indent_guides.iter())
             .map(|guide| (guide.bounds, guide.color == theme.indent_guide_active))
             .collect(),
+        ..DrawnGutter::default()
     }
 }
 
@@ -3165,8 +3253,8 @@ fn reconcile_fold_column(
 }
 
 /// Sets whether the pointer is over the gutter, at `position` if it is, and
-/// draws again when that changes or it moves onto another fold toggle than
-/// the one the last frame drew hovered.
+/// draws again when that changes or it moves onto another fold toggle, or
+/// another line number's hover tile, than the last frame drew hovered.
 fn set_gutter_hovered(
     view: &WeakEntity<EditorView>,
     position: Option<Point<Pixels>>,
@@ -3179,7 +3267,14 @@ fn set_gutter_hovered(
             .zip(layout)
             .and_then(|(position, layout)| toggle_under(&layout.frame, layout.origin, position));
         let drawn = layout.and_then(|layout| layout.hovered_fold.as_ref().map(|fold| fold.row));
-        if view.fold_column_hovered != hovered || (hovered && toggle != drawn) {
+        // With the debugger's handlers, the line number's hover tile
+        // follows the pointer from row to row.
+        let tile = position.and_then(|position| view.breakpoint_row_at(position));
+        let drawn_tile = layout.and_then(|layout| layout.drawn_gutter.number_tile.map(|t| t.0));
+        if view.fold_column_hovered != hovered
+            || (hovered && toggle != drawn)
+            || (hovered && tile != drawn_tile)
+        {
             view.fold_column_hovered = hovered;
             cx.notify();
         }
@@ -3209,6 +3304,208 @@ fn up_chevron_points(chevron: Bounds<Pixels>) -> [Point<Pixels>; 3] {
     let centre = chevron.center();
     let flip = |at: Point<Pixels>| point(at.x, centre.y * 2. - at.y);
     [flip(start), flip(tip), flip(end)]
+}
+
+/// The line-number column's click targets, with the debugger's handlers:
+/// each shown buffer row's, over all its display rows, in window
+/// coordinates, and its mark.
+fn breakpoint_targets(
+    layout: &FrameLayout,
+    view: &EditorView,
+) -> Vec<(u32, Bounds<Pixels>, Option<crate::BreakpointMark>)> {
+    if !view.gutter || !view.has_breakpoint_handlers() {
+        return Vec::new();
+    }
+    let marks = view.breakpoint_marks();
+    let frame = &layout.frame;
+    let column = crate::view::breakpoints::number_column(layout);
+    let mut out: Vec<(u32, Bounds<Pixels>, Option<crate::BreakpointMark>)> = Vec::new();
+    for row in &frame.rows {
+        let bounds = layout.bounds(Rect {
+            x: column.x,
+            y: frame.row_top(row.row),
+            width: column.width,
+            height: frame.line_height,
+        });
+        match out.last_mut() {
+            Some((last, shown, _)) if *last == row.buffer_row => *shown = shown.union(&bounds),
+            _ => {
+                let mark = (marks.binary_search_by_key(&row.buffer_row, |mark| mark.row))
+                    .ok()
+                    .map(|at| marks[at].clone());
+                out.push((row.buffer_row, bounds, mark));
+            }
+        }
+    }
+    out
+}
+
+/// The number hover tile's corner radius, of its height: the design's 4 px
+/// of 16.
+const NUMBER_TILE_RADIUS: f32 = 4. / 16.;
+
+/// The buffer row whose line number sits at frame `y`: the row starting a
+/// buffer row there.
+fn number_row(frame: &Frame<Line>, text: &Text, y: f32) -> Option<u32> {
+    (frame.rows.iter())
+        .find(|row| frame.row_top(row.row) == y && row.start == text.row_start(row.buffer_row))
+        .map(|row| row.buffer_row)
+}
+
+/// The debugger's glyphs to draw over the line numbers, in window
+/// coordinates: on each shown buffer row's first display row, the
+/// breakpoint's in its slot and the frame arrow in its own. None without a
+/// gutter.
+fn breakpoint_glyphs(layout: &FrameLayout, view: &EditorView) -> Vec<DrawnBreakpoint> {
+    use crate::view::breakpoints::{BreakpointState, FrameArrow, breakpoint_slot, frame_slot};
+    if !view.gutter {
+        return Vec::new();
+    }
+    let marks = view.breakpoint_marks();
+    if marks.is_empty() {
+        return Vec::new();
+    }
+    let frame = &layout.frame;
+    let text = view.model.text();
+    let theme = &view.theme;
+    let font_size = f32::from(theme.font_size);
+    let right = frame.problem_column.x;
+    let mut drawn = Vec::new();
+    for row in &frame.rows {
+        if row.start != text.row_start(row.buffer_row) {
+            continue;
+        }
+        let Ok(at) = marks.binary_search_by_key(&row.buffer_row, |mark| mark.row) else {
+            continue;
+        };
+        let mark = &marks[at];
+        let top = frame.row_top(row.row);
+        if let Some(state) = &mark.breakpoint {
+            let (glyph, color) = match state {
+                BreakpointState::Enabled => (BreakpointGlyph::Dot, theme.debug_breakpoint),
+                BreakpointState::Unverified { .. } => {
+                    (BreakpointGlyph::Ring, theme.debug_breakpoint)
+                }
+                BreakpointState::Disabled => {
+                    (BreakpointGlyph::Disabled, theme.debug_breakpoint_disabled)
+                }
+            };
+            let slot = breakpoint_slot(right, top, frame.line_height, font_size);
+            drawn.push(DrawnBreakpoint {
+                row: row.buffer_row,
+                glyph,
+                bounds: layout.bounds(slot),
+                color,
+            });
+        }
+        if let Some(arrow) = mark.frame {
+            let glyph = match arrow {
+                FrameArrow::Current => BreakpointGlyph::CurrentArrow,
+                FrameArrow::Caller => BreakpointGlyph::CallerArrow,
+            };
+            let slot = frame_slot(right, top, frame.line_height, font_size);
+            drawn.push(DrawnBreakpoint {
+                row: row.buffer_row,
+                glyph,
+                bounds: layout.bounds(slot),
+                // The accent, hare's fur.
+                color: theme.debug_frame_arrow,
+            });
+        }
+    }
+    drawn
+}
+
+/// With the debugger's handlers and the pointer over the line-number
+/// column, the hover tile behind its row's number: the numbers' width less
+/// the inset, 16 px tall at 13 px code, centred in the row's first display
+/// row.
+fn number_tile(
+    layout: &FrameLayout,
+    view: &EditorView,
+    hovered: bool,
+    window: &Window,
+) -> Option<(u32, Bounds<Pixels>, Hsla)> {
+    if !hovered || !view.has_breakpoint_handlers() {
+        return None;
+    }
+    let row = view.breakpoint_row_at(window.mouse_position())?;
+    let frame = &layout.frame;
+    let text = view.model.text();
+    let shown = (frame.rows.iter())
+        .find(|shown| shown.buffer_row == row && shown.start == text.row_start(row))?;
+    let font_size = f32::from(view.theme.font_size);
+    let column = crate::view::breakpoints::number_column(layout);
+    let inset = (GUTTER_INSET * font_size / GUTTER_DESIGN_SIZE).round();
+    let height = (16. * font_size / GUTTER_DESIGN_SIZE).round();
+    let rect = Rect {
+        x: column.x + inset,
+        y: frame.row_top(shown.row) + ((frame.line_height - height) / 2.).round(),
+        width: (column.width - inset).max(0.),
+        height,
+    };
+    Some((row, layout.bounds(rect), view.theme.fold_hover))
+}
+
+/// A debugger band's edge's colour: the accent on the current line, muted
+/// text on a caller frame's.
+fn band_edge_color(theme: &EditorTheme, tint: fe_editor::decorations::Tint, cx: &App) -> Hsla {
+    match tint {
+        fe_editor::decorations::Tint::DebugFrame => fe_ui::ui_theme(cx).muted_text,
+        _ => theme.debug_frame_arrow,
+    }
+}
+
+/// Paints a debugger's glyph: a dot or a ring for a breakpoint, an arrow
+/// pointing into the code for a frame, its strokes
+/// [`fe_ui::glyph::STROKE`] wide at 13 px code.
+fn paint_breakpoint(drawn: &DrawnBreakpoint, font_size: Pixels, window: &mut Window) {
+    let scale = f32::from(font_size) / GUTTER_DESIGN_SIZE;
+    let stroke = px((f32::from(fe_ui::glyph::STROKE) * scale).max(1.));
+    let bounds = drawn.bounds;
+    let radius = bounds.size.width / 2.;
+    match drawn.glyph {
+        BreakpointGlyph::Dot | BreakpointGlyph::Disabled => {
+            window.paint_quad(fill(bounds, drawn.color).corner_radii(radius));
+        }
+        BreakpointGlyph::Ring => {
+            let ring = outline(bounds, drawn.color, BorderStyle::Solid)
+                .border_widths(stroke)
+                .corner_radii(radius);
+            window.paint_quad(ring);
+        }
+        BreakpointGlyph::CurrentArrow | BreakpointGlyph::CallerArrow => {
+            let filled = drawn.glyph == BreakpointGlyph::CurrentArrow;
+            let half = px(f32::from(fe_ui::glyph::HALF) * scale);
+            let (left, top) = (bounds.left(), bounds.top());
+            let (right, bottom) = (bounds.right(), bounds.bottom());
+            let middle = bounds.center().y;
+            // A body half the glyph long and as tall, then the point.
+            let body = (half / 2.).min(bounds.size.height / 2.);
+            let neck = left + (bounds.size.width / 2.);
+            let points = [
+                point(left, middle - body),
+                point(neck, middle - body),
+                point(neck, top),
+                point(right, middle),
+                point(neck, bottom),
+                point(neck, middle + body),
+                point(left, middle + body),
+            ];
+            let mut path = match filled {
+                true => PathBuilder::fill(),
+                false => PathBuilder::stroke(stroke),
+            };
+            path.move_to(points[0]);
+            for &at in &points[1..] {
+                path.line_to(at);
+            }
+            path.close();
+            if let Ok(path) = path.build() {
+                window.paint_path(path, drawn.color);
+            }
+        }
+    }
 }
 
 /// The host's glyph's side, of the problem column's width.
@@ -3572,6 +3869,8 @@ thread_local! {
     /// How many match ranges the last [`match_rects`] on this thread kept:
     /// those reaching the displayed part of their row.
     pub(crate) static FOUND: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times [`current_match`] searched the text.
+    pub(crate) static CURRENT_MATCH_SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The rects of the search matches in the frame's displayed rows, at most
@@ -3607,6 +3906,7 @@ fn match_rects(
     layout: &mut FrameLayout,
     view: &EditorView,
     current: Option<&Range<usize>>,
+    deadline: &mut fe_vim::search::Deadline,
 ) -> Vec<(Rect, bool)> {
     // How many more ranges the frame may find: bounded for the find
     // pattern only.
@@ -3626,10 +3926,8 @@ fn match_rects(
     CANDIDATES.with(|n| n.set(0));
     #[cfg(test)]
     FOUND.with(|n| n.set(0));
-    let latched = view
-        .layout
-        .as_ref()
-        .and_then(|last| last.highlight_ran_out.as_ref());
+    let latched = (layout.highlight_ran_out.as_ref())
+        .or_else(|| view.layout.as_ref()?.highlight_ran_out.as_ref());
     if latched
         .is_some_and(|(key, version)| key == pattern.regex_str() && *version == layout.version)
     {
@@ -3648,16 +3946,6 @@ fn match_rects(
     let version = layout.version;
     let mut latch = None;
     let mut rects = Vec::new();
-    let limit = fe_vim::search::time_limit();
-    #[cfg(test)]
-    let limit = TEST_LIMIT.with(|l| l.get()).unwrap_or(limit);
-    // A preview's, which changes as the line is typed, as quickly as its
-    // match is found.
-    let limit = match previewed {
-        Some(_) => limit.min(fe_vim::search_preview_limit()),
-        None => limit,
-    };
-    let mut deadline = fe_vim::search::Deadline::after(limit);
     // A buffer row's matches that reach the text area on its displayed rows,
     // kept for its other wrapped rows: found once a frame, searched from the
     // row's start for its context but only as far as the last displayed part.
@@ -3709,7 +3997,7 @@ fn match_rects(
                     .is_none_or(|scope| EditorView::find_scope_window(text, scope, shown).is_some())
             })
             .collect();
-        let mut all = fe_vim::search::matches_across_until(text, &rows, pattern, &mut deadline);
+        let mut all = fe_vim::search::matches_across_until(text, &rows, pattern, deadline);
         deadline.expired();
         if deadline.ran_out() {
             latch = Some((pattern.regex_str().to_string(), version));
@@ -3736,7 +4024,7 @@ fn match_rects(
                         pattern,
                         scope,
                         budget,
-                        &mut deadline,
+                        deadline,
                     ),
                     None => Vec::new(),
                 },
@@ -3746,7 +4034,7 @@ fn match_rects(
                     window,
                     pattern,
                     budget,
-                    &mut deadline,
+                    deadline,
                 ),
             };
             // The clock is only read between regex calls, so a last call
@@ -3879,7 +4167,11 @@ fn find_scope_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
 /// from its start (from earlier rows too, for a pattern that spans rows) as
 /// far as the candidate, so neither the viewport nor the count's cap decides
 /// it. `None` past the search's time limit.
-fn current_match(view: &EditorView) -> Option<Range<usize>> {
+fn current_match(
+    layout: &mut FrameLayout,
+    view: &EditorView,
+    deadline: &mut fe_vim::search::Deadline,
+) -> Option<Range<usize>> {
     if view.previewed_pattern().is_some() {
         return None;
     }
@@ -3897,6 +4189,88 @@ fn current_match(view: &EditorView) -> Option<Range<usize>> {
     let text = view.model.text();
     let selection = view.model.primary_selection();
     let vim = view.vim.is_some();
+    let version = layout.version;
+    let regex = pattern.regex_str();
+    // A frame before ran out of time on this pattern and text: nothing is
+    // searched until either changes, as the rows' matches aren't.
+    let last = view.layout.as_ref();
+    let latched = last.and_then(|last| last.highlight_ran_out.as_ref());
+    if let Some((key, at)) = latched
+        && key == regex
+        && *at == version
+    {
+        layout.highlight_ran_out = latched.cloned();
+        return None;
+    }
+    let key = CurrentMatchKey {
+        pattern: regex.to_string(),
+        version,
+        selection: selection.range.clone(),
+        head: selection.head(),
+        vim,
+    };
+    let kept = last.and_then(|last| last.current_match_found.as_ref());
+    let found = match kept.filter(|(asked, _)| *asked == key) {
+        Some((_, found)) => found.clone(),
+        None => {
+            let found = search_current_match(text, &selection, vim, pattern, deadline);
+            deadline.expired();
+            if deadline.ran_out() {
+                // So the rows' matches aren't searched this frame either,
+                // nor anything in the frames after it.
+                layout.highlight_ran_out = Some((regex.to_string(), version));
+                return None;
+            }
+            found
+        }
+    };
+    layout.current_match_found = Some((key, found.clone()));
+    let found = found?;
+    // A find's scope leaves out what's outside it.
+    let scope = view.find_pattern().and_then(|_| view.find_scope());
+    match scope {
+        Some(scope) if !EditorView::in_find_scope(text, &scope, &found) => None,
+        _ => Some(found),
+    }
+}
+
+/// What [`current_match`] searched for: the pattern, the text, and the
+/// selection it looked at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CurrentMatchKey {
+    pattern: String,
+    version: fe_buffer::Version,
+    selection: Range<usize>,
+    head: usize,
+    vim: bool,
+}
+
+/// The frame's search budget: [`fe_vim::search::time_limit`], or a search
+/// line preview's shorter one, which changes as the line is typed.
+fn search_deadline(view: &EditorView) -> fe_vim::search::Deadline {
+    let limit = fe_vim::search::time_limit();
+    #[cfg(test)]
+    let limit = TEST_LIMIT.with(|l| l.get()).unwrap_or(limit);
+    let limit = match view.previewed_pattern() {
+        Some(_) => limit.min(fe_vim::search_preview_limit()),
+        None => limit,
+    };
+    fe_vim::search::Deadline::after(limit)
+}
+
+/// The match of `pattern` the primary `selection` is, or with vim on the
+/// one starting at its head: searched on the candidate's row from its
+/// start (from earlier rows too, for a pattern that spans rows) as far as
+/// the candidate, within `deadline`.
+fn search_current_match(
+    text: &Text,
+    selection: &fe_buffer::ResolvedSelection,
+    vim: bool,
+    pattern: &fe_vim::search::Pattern,
+    deadline: &mut fe_vim::search::Deadline,
+) -> Option<Range<usize>> {
+    #[cfg(test)]
+    CURRENT_MATCH_SEARCHES.with(|n| n.set(n.get() + 1));
     let start = match vim {
         true => selection.head(),
         false => selection.range.start,
@@ -3908,31 +4282,19 @@ fn current_match(view: &EditorView) -> Option<Range<usize>> {
         true => start..text.clip_offset((start + 1).min(text.len()), fe_buffer::Bias::Right),
         false => selection.range.clone(),
     };
-    let mut deadline = fe_vim::search::Deadline::after(fe_vim::search::time_limit());
     let found = match pattern.spans_rows() {
         true => {
             let shown = [(row, window)];
-            fe_vim::search::matches_across_until(text, &shown, pattern, &mut deadline)
+            fe_vim::search::matches_across_until(text, &shown, pattern, deadline)
         }
-        false => fe_vim::search::matches_reaching_until(
-            text,
-            row,
-            window,
-            pattern,
-            usize::MAX,
-            &mut deadline,
-        ),
+        false => {
+            fe_vim::search::matches_reaching_until(text, row, window, pattern, usize::MAX, deadline)
+        }
     };
-    let found = found.into_iter().find(|found| match vim {
+    found.into_iter().find(|found| match vim {
         true => found.start == start,
         false => *found == selection.range,
-    })?;
-    // A find's scope leaves out what's outside it.
-    let scope = view.find_pattern().and_then(|_| view.find_scope());
-    match scope {
-        Some(scope) if !EditorView::in_find_scope(text, &scope, &found) => None,
-        _ => Some(found),
-    }
+    })
 }
 
 /// The rects of the match a vim search line's preview shows
@@ -4379,3 +4741,121 @@ mod jump_wrap_tests;
 
 #[cfg(test)]
 mod bracket_tests;
+
+/// T1550 F5: the current match's search ([`current_match`]) shares the
+/// frame's time limit and its latch: once a frame has run out on a
+/// pattern and text, later frames search nothing for it, however the
+/// caret moves, on one row or across rows.
+#[cfg(test)]
+mod current_match_limit_tests {
+    use std::time::Duration;
+
+    use fe_buffer::Buffer;
+    use fe_command::Invocation;
+    use fe_editor::EditorModel;
+    use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+
+    use super::{CURRENT_MATCH_SEARCHES, TEST_LIMIT};
+    use crate::{EditorTheme, EditorView, commands::RunCommand, init, set_vim_enabled};
+
+    fn editor<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+    ) -> (Entity<EditorView>, &'a mut VisualTestContext) {
+        cx.update(init);
+        let text = text.to_owned();
+        let (view, cx) = cx.add_window_view(move |_, cx| {
+            EditorView::new(
+                EditorModel::new(Buffer::new(&text), None),
+                EditorTheme::default_dark(cx),
+                cx,
+            )
+        });
+        cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+        cx.update(|_, cx| set_vim_enabled(cx, true));
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    fn search(pattern: &str, cx: &mut VisualTestContext) {
+        cx.simulate_keystrokes("/");
+        let invocation = Invocation::of("vim.command_line_submit")
+            .unwrap()
+            .args(serde_json::json!({ "text": pattern }));
+        cx.update(|window, cx| window.dispatch_action(Box::new(RunCommand(invocation)), cx));
+        cx.run_until_parked();
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+
+    fn searches() -> usize {
+        CURRENT_MATCH_SEARCHES.with(|n| n.replace(0))
+    }
+
+    /// Runs out on the first frame with the caret late in a long row, then
+    /// counts the current match's searches over frames that move it.
+    fn latched_after_running_out(pattern: &str, text: &str, cx: &mut TestAppContext) {
+        let (view, cx) = editor(cx, text);
+        search(pattern, cx);
+        cx.simulate_keystrokes("$");
+        // Forget any frame the keys drew, and give this one no time at all.
+        view.update(cx, |view, _| {
+            let layout = view.layout.as_mut().unwrap();
+            layout.highlight_ran_out = None;
+            layout.current_match_found = None;
+        });
+        TEST_LIMIT.with(|l| l.set(Some(Duration::ZERO)));
+        searches();
+        draw(cx);
+        assert_eq!(searches(), 1, "the first frame searches");
+        let latched = view.read_with(cx, |view, _| {
+            view.layout.as_ref().unwrap().highlight_ran_out.is_some()
+        });
+        assert!(latched, "and runs out");
+        // Plenty of time from now on: only the latch keeps frames from
+        // searching.
+        TEST_LIMIT.with(|l| l.set(Some(Duration::from_secs(3600))));
+        for keys in ["h", "h", "0", "$"] {
+            cx.simulate_keystrokes(keys);
+            draw(cx);
+            draw(cx);
+        }
+        assert_eq!(searches(), 0, "nothing searched after running out");
+        // An edit lifts the latch.
+        view.update(cx, |view, _| view.model_mut().insert("b"));
+        draw(cx);
+        assert_eq!(searches(), 1);
+        TEST_LIMIT.with(|l| l.set(None));
+    }
+
+    #[gpui::test]
+    fn one_row(cx: &mut TestAppContext) {
+        let text = format!("{}\n", "a".repeat(5_000)).repeat(3);
+        latched_after_running_out(r"a.*z\|a", &text, cx);
+    }
+
+    #[gpui::test]
+    fn across_rows(cx: &mut TestAppContext) {
+        let text = format!("{}\n", "a".repeat(5_000)).repeat(3);
+        latched_after_running_out(r"a\_.*z\|a", &text, cx);
+    }
+
+    /// Unlatched, the found match is kept while the pattern, the text and
+    /// the selection stay, so a frame that changes none of them searches
+    /// nothing.
+    #[gpui::test]
+    fn kept_while_nothing_changes(cx: &mut TestAppContext) {
+        let (_view, cx) = editor(cx, "ab ab ab\n");
+        search("ab", cx);
+        draw(cx);
+        searches();
+        draw(cx);
+        draw(cx);
+        assert_eq!(searches(), 0);
+        cx.simulate_keystrokes("w");
+        draw(cx);
+        assert_eq!(searches(), 1);
+    }
+}

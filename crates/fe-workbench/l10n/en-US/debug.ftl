@@ -170,3 +170,11 @@ workbench-debug-run-stopped = Stopped
 workbench-debug-run-adapter-exited = The debug adapter exited
 # A debug run's accessible name: its configuration, status and age.
 workbench-debug-run-row-name = Debug session { $title }, { $status }, { $age }
+
+## A breakpoint's menu, a right click on its row's line number
+## (debug_gutter.rs).
+
+workbench-debug-menu-add-breakpoint = Add Breakpoint
+workbench-debug-menu-disable-breakpoint = Disable Breakpoint
+workbench-debug-menu-enable-breakpoint = Enable Breakpoint
+workbench-debug-menu-remove-breakpoint = Remove Breakpoint

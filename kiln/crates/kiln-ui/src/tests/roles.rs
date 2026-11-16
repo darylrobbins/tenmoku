@@ -6,8 +6,8 @@ use gpui::{TestAppContext, px};
 
 use crate::{
     BOTTOM_PANEL_DEFAULT, CODE, CODE_SMALL, FOCUS_RING, FamilySlot, FontFamilies, PAGE_TITLE,
-    SECTION_HEADING, SHADOW_FLOAT, TextRole, UI_BODY, UI_HEADING, UI_LABEL, UI_SMALL, height,
-    radius, space, width,
+    SECTION_HEADING, SHADOW_FLOAT, TextRole, UI_BODY, UI_HEADING, UI_LABEL, UI_SMALL, glyph,
+    height, radius, space, width,
 };
 
 fn role(family: FamilySlot, size: f32, line: f32, weight: u16) -> TextRole {
@@ -64,6 +64,22 @@ fn values_match_the_design_tables() {
         [42., 232., 248.].map(px)
     );
     assert_eq!(BOTTOM_PANEL_DEFAULT, px(250.));
+    // The debugger's (design-system.md, Debugger; D0's decision file).
+    assert_eq!(height::TOOLBAR, px(30.));
+    assert_eq!(
+        [width::TITLE_LABEL_MAX, width::CALL_STACK_DEFAULT],
+        [200., 280.].map(px)
+    );
+    assert_eq!(
+        [
+            glyph::ICON,
+            glyph::BREAKPOINT,
+            glyph::ARROW_HEIGHT,
+            glyph::HALF,
+            glyph::STROKE,
+        ],
+        [16., 12., 10., 6., 2.].map(px)
+    );
     assert_eq!(
         (
             SHADOW_FLOAT.y,

@@ -22,6 +22,16 @@ const UNCOLOURED: &[&str] = &[
     "variable",
 ];
 
+/// The TODO-comment badges' names.
+const BADGES: [&str; 6] = [
+    "comment.fixme",
+    "comment.hack",
+    "comment.note",
+    "comment.perf",
+    "comment.todo",
+    "comment.warn",
+];
+
 fn color(text: &str) -> Color {
     text.parse().unwrap()
 }
@@ -154,6 +164,17 @@ keyword = "#d00000"
     expected
         .syntax
         .push(("function.method".to_owned(), color("#123456")));
+    // With an `[editor]` table of its own, the debugger's colours follow
+    // its cursor line, error and gutter, and the TODO badges it doesn't
+    // name take their kinds' tints (crates/fe-config/tests/debug_tints.rs).
+    expected.editor.debug_current_line = light.editor.active_line;
+    expected.editor.debug_frame_line = light.editor.active_line;
+    expected.editor.debug_breakpoint = light.editor.error;
+    expected.editor.debug_breakpoint_disabled = light.editor.gutter_foreground;
+    expected.editor.debug_frame_arrow = light.editor.cursor;
+    expected
+        .syntax
+        .retain(|(name, _)| !BADGES.contains(&name.as_str()));
     assert_eq!(palette, expected);
     assert_eq!(palette.editor.cursor, light.editor.cursor);
     assert_eq!(

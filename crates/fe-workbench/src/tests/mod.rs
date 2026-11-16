@@ -62,6 +62,7 @@ mod changes_b3;
 mod coloured_icon_surfaces;
 mod commit_diff_b3;
 mod debug_breakpoints;
+mod debug_gutter;
 mod debug_runs;
 mod debug_session;
 mod default_fonts;

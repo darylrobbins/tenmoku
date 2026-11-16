@@ -155,6 +155,17 @@ agent_lane = "#8d9bb0"
 # Behind an agent's pending rows: Kiln Dark's agent.soft.
 agent_row = "#8d9bb026"
 fold_hover = "#F8F8F238"
+# The debugger: the stopped line's band (the cursor tinted toward the
+# accent) and a caller frame's (the cursor line's), an enabled breakpoint
+# (the error colour) and a disabled one (a grey apart in lightness from the
+# red), and the frame arrows (the accent, or the cursor where the accent is
+# too faint); each glyph 3:1 on the gutter, the cursor line and the hover
+# tile.
+debug_current_line = "#3e3f39"
+debug_frame_line = "#3e3d32"
+debug_breakpoint = "#fb7fac"
+debug_breakpoint_disabled = "#cececb"
+debug_frame_arrow = "#F8F8F0"
 # The minimap. The selection mark is the theme's minimap.selectionHighlight.
 # The rest are VS Code's defaults: minimap.background is the editor's,
 # minimapSlider.* scrollbarSlider.* at half alpha, minimap.errorHighlight

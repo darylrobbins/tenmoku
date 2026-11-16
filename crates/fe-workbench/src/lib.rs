@@ -32,6 +32,7 @@ mod closed_editors;
 mod color_literals;
 mod config_problems;
 pub mod debug_breakpoints;
+pub mod debug_gutter;
 mod debug_runs;
 pub mod debug_session;
 mod diagnostic_owner;
@@ -236,6 +237,7 @@ pub fn init(cx: &mut App) {
     debug_breakpoints::init(cx);
     debug_session::init(cx);
     debug_runs::init(cx);
+    debug_gutter::init(cx);
     test_runner::init(cx);
     test_run_view::init(cx);
     lsp::init(cx);

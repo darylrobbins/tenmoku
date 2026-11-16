@@ -146,6 +146,9 @@ pub mod height {
     pub const CONTROL_SMALL: Pixels = px(22.);
     /// Heights table: activity rail item, 32.
     pub const RAIL_ITEM: Pixels = px(32.);
+    /// Debugger: the floating debug toolbar, 30 (22 px buttons in 4 px
+    /// padding).
+    pub const TOOLBAR: Pixels = px(30.);
 }
 
 /// Widths table.
@@ -157,6 +160,27 @@ pub mod width {
     pub const SIDEBAR_MIN: Pixels = px(232.);
     /// Widths table: sidebar default, 248.
     pub const SIDEBAR_DEFAULT: Pixels = px(248.);
+    /// Debugger: the longest the run widget's label gets, 200.
+    pub const TITLE_LABEL_MAX: Pixels = px(200.);
+    /// Debugger: the Call Stack column's default width, 280.
+    pub const CALL_STACK_DEFAULT: Pixels = px(280.);
+}
+
+/// Debugger: the glyphs' sizes, at 13 px code where they sit in the
+/// editor's gutter (which scales them with the code, as its columns), and
+/// as they are in Call Stack and Breakpoints rows.
+pub mod glyph {
+    use gpui::{Pixels, px};
+    /// An icon in a debugger control, 16.
+    pub const ICON: Pixels = px(16.);
+    /// A breakpoint's dot or ring, 12 across.
+    pub const BREAKPOINT: Pixels = px(12.);
+    /// A frame arrow's height, 10; it's [`BREAKPOINT`] wide.
+    pub const ARROW_HEIGHT: Pixels = px(10.);
+    /// Half a glyph: a frame arrow's body and its point, each 6 long.
+    pub const HALF: Pixels = px(6.);
+    /// A ring's or an outlined arrow's stroke, 2.
+    pub const STROKE: Pixels = px(2.);
 }
 
 /// Widths table: bottom panel default height, 250.

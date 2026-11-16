@@ -401,6 +401,26 @@ mod tests {
         let mut expected = dark.clone();
         expected.styles.clear();
         expected.editor.background = palette.editor.background;
+        // A theme with an `[editor]` table of its own: the debugger's
+        // colours follow its cursor line, error and gutter, and the TODO
+        // badges it doesn't name take their kinds' tints (T1849,
+        // crates/fe-config/tests/debug_tints.rs).
+        expected.editor.debug_current_line = dark.editor.active_line;
+        expected.editor.debug_frame_line = dark.editor.active_line;
+        expected.editor.debug_breakpoint = dark.editor.error;
+        expected.editor.debug_breakpoint_disabled = dark.editor.gutter_foreground;
+        expected.editor.debug_frame_arrow = dark.editor.cursor;
+        expected.syntax.retain(|(name, _)| {
+            !matches!(
+                name.as_str(),
+                "comment.fixme"
+                    | "comment.hack"
+                    | "comment.note"
+                    | "comment.perf"
+                    | "comment.todo"
+                    | "comment.warn"
+            )
+        });
         assert_eq!(*palette, expected);
     }
 

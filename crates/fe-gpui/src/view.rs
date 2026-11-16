@@ -99,6 +99,9 @@ pub struct EditorView {
     /// The host's column left of the line numbers
     /// ([`EditorView::set_gutter_annotations`]).
     pub(crate) annotations: Option<crate::gutter_annotations::Annotated>,
+    /// A debugger's marks over the line numbers, and the column's clicks
+    /// ([`EditorView::set_breakpoints`]).
+    pub(crate) breakpoints: breakpoints::Breakpoints,
     /// The host's links ([`EditorView::set_link_ranges`]).
     pub(crate) links: crate::link_ranges::LinkRanges,
     /// How far the content is scrolled, in pixels (both ≥ 0).
@@ -462,6 +465,7 @@ impl EditorView {
             sticky_reveal: None,
             sticky_scopes: None,
             annotations: None,
+            breakpoints: Default::default(),
             links: Default::default(),
             scroll: Point::default(),
             autoscroll: true,
@@ -1181,6 +1185,12 @@ impl EditorView {
             self.drag = None;
             return;
         }
+        // The line-number column with a debugger's handlers: a click there
+        // toggles a breakpoint once released; a drag goes on from here.
+        if self.press_breakpoint(event) {
+            self.drag = None;
+            return;
+        }
         // The annotation column: a plain click on an entry is the host's;
         // nothing else happens there.
         if self.click_annotation(event, window, cx) {
@@ -1601,7 +1611,16 @@ impl EditorView {
         true
     }
 
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pressed = event.pressed_button == Some(MouseButton::Left);
+        if self.drag_breakpoint_press(event.position, pressed, window, cx) {
+            return;
+        }
         let Some(drag) = self.drag.clone() else {
             return;
         };
@@ -1675,7 +1694,10 @@ impl EditorView {
         (row, column + past)
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.release_breakpoint(event.position, window, cx) {
+            return;
+        }
         match self.drag.take() {
             // The slider goes back to its colour at rest.
             Some(Drag::Minimap(_)) => cx.notify(),
@@ -2032,6 +2054,7 @@ impl Render for EditorView {
             .cursor(CursorStyle::IBeam)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_middle_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -2054,6 +2077,8 @@ impl Render for EditorView {
             .child(crate::completion_menu::menu_layer(cx))
             .child(crate::signature_help::popover_layer(cx))
             .child(overlay_layer(cx))
+            .child(breakpoint_targets_layer(cx))
+            .children(self.breakpoint_menu_layer(window, cx))
             .children(crate::vim::which_key::popup_layer(self, cx))
     }
 }
@@ -2138,6 +2163,7 @@ fn read_primary_text(_: &App) -> Option<String> {
 }
 
 pub(crate) mod a11y_announce;
+pub(crate) mod breakpoints;
 mod change_bar;
 mod find;
 pub(crate) mod ghost_text;
@@ -2289,6 +2315,9 @@ impl EditorView {
     }
 }
 
+pub use breakpoints::{
+    BreakpointHandlers, BreakpointMark, BreakpointMenuItem, BreakpointState, FrameArrow,
+};
 pub use ghost_text::GhostTextEvent;
 pub use host::{EditorInputEvent, EditorViewEvent, HostBlock, HostBlockKind, ReservedBlock};
 pub use minimap::minimap_options;
@@ -2516,6 +2545,27 @@ mod gutter_tests {
             "{wrap} vs {gutter_wrap}"
         );
     }
+}
+
+/// The line-number column's rows, as the frame laid them out: each names
+/// its row for assistive technology and shows the same as a tooltip
+/// ([`breakpoints`]).
+fn breakpoint_targets_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
+    let view = cx.entity().downgrade();
+    let layer = canvas(
+        move |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.layout_breakpoint_targets(cx.entity().downgrade(), window, cx)
+            })
+            .ok()?
+        },
+        |_, targets, window, cx| {
+            if let Some(mut targets) = targets {
+                targets.paint(window, cx);
+            }
+        },
+    );
+    layer.absolute()
 }
 
 /// Where the view's overlay is drawn: over everything else in the window.

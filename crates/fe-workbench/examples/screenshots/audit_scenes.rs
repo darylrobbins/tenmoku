@@ -30,6 +30,8 @@ mod changes;
 mod chrome;
 #[path = "audit/command_palette.rs"]
 mod command_palette;
+#[path = "audit/debug_gutter.rs"]
+mod debug_gutter;
 #[path = "audit/file_finder.rs"]
 mod file_finder;
 #[path = "audit/find_bar.rs"]
@@ -126,6 +128,7 @@ const SURFACES: &[&Surface] = &[
     &inbox::SURFACE,
     &operations::CLOSED,
     &operations::LIST,
+    &debug_gutter::SURFACE,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup
@@ -148,6 +151,59 @@ pub(crate) struct Surface {
     pub(crate) setup: fn(&mut VisualTestAppContext, &Path),
     pub(crate) steps: fn(&Path) -> Vec<Step>,
     pub(crate) probes: &'static [Probe],
+    /// Points on fills of the editor's own colours, which no kiln token
+    /// has ([`EditorProbe`]).
+    pub(crate) editor_probes: &'static [EditorProbe],
+}
+
+/// A point of an audit scene, in logical pixels from the window's top
+/// left, on a flat fill of the theme's opaque `[editor]` colour `key`, as
+/// its editor palette has it: for the editor's colours that no kiln token
+/// has (the debugger's bands, a disabled breakpoint).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EditorProbe {
+    pub(crate) at: (f32, f32),
+    pub(crate) key: &'static str,
+}
+
+/// The probe of `[editor]` colour `key` at `(x, y)`.
+pub(crate) const fn editor_probe(x: f32, y: f32, key: &'static str) -> EditorProbe {
+    EditorProbe { at: (x, y), key }
+}
+
+/// Checks `image`, scene `scene` drawn with editor colours `palette`, at
+/// each of `probes`, as [`check_points`] checks tokens: exactly, at the
+/// capture's own scale. Prints each point that's off and returns whether
+/// all were on; fails on a key that isn't an opaque editor colour or a
+/// point outside the capture.
+fn check_editor_points(
+    scene: &str,
+    image: &kiln_platform::screenshots::RgbaImage,
+    palette: &fe_config::EditorPalette,
+    probes: &[EditorProbe],
+) -> Result<bool> {
+    let scale = image.width() as f32 / f32::from(SCENE_SIZE.width);
+    let mut passed = true;
+    for &EditorProbe { at: (x, y), key } in probes {
+        let want = (palette.editor.get(key))
+            .filter(|color| color.a() == 0xff)
+            .ok_or_else(|| format!("{scene}: no opaque editor colour {key}"))?;
+        let (px, py) = ((x * scale) as u32, (y * scale) as u32);
+        if px >= image.width() || py >= image.height() {
+            return Err(format!("{scene}: editor probe ({x}, {y}) is outside the capture").into());
+        }
+        let [r, g, b, _] = image.get_pixel(px, py).0;
+        if (r, g, b) != (want.r(), want.g(), want.b()) {
+            println!(
+                "FAILED  {scene} probe ({x}, {y}): #{r:02x}{g:02x}{b:02x}, but editor.{key} is {want}"
+            );
+            passed = false;
+        }
+    }
+    if passed && !probes.is_empty() {
+        println!("ok      {scene} editor probes ({})", probes.len());
+    }
+    Ok(passed)
 }
 
 /// What a surface leaves out: the demo's files open in a plain folder, no
@@ -160,6 +216,7 @@ pub(crate) const DEFAULT: Surface = Surface {
     setup: |_, _| {},
     steps: |_| Vec::new(),
     probes: &[],
+    editor_probes: &[],
 };
 
 /// The two appearances every surface is rendered in: the suffix, the
@@ -283,7 +340,9 @@ fn render(
     image.save(&path)?;
     println!("wrote {}", path.display());
     let (data, _) = bundled_theme(theme)?;
-    check_points(name, &image, &data, surface.probes)
+    let tokens = check_points(name, &image, &data, surface.probes)?;
+    let editor = check_editor_points(name, &image, &palette, surface.editor_probes)?;
+    Ok(tokens && editor)
 }
 
 /// Runs `steps` in `workbench`, one a frame from the next, each notifying it.

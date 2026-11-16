@@ -136,6 +136,11 @@ impl EditorTheme {
             minimap_gutter_deleted: hsla(editor.minimap_gutter_deleted),
             syntax: fe_syntax::resolve_theme(&syntax),
             syntax_styles: fe_syntax::resolve_theme(&styles),
+            debug_current_line: hsla(editor.debug_current_line),
+            debug_frame_line: hsla(editor.debug_frame_line),
+            debug_breakpoint: hsla(editor.debug_breakpoint),
+            debug_breakpoint_disabled: hsla(editor.debug_breakpoint_disabled),
+            debug_frame_arrow: hsla(editor.debug_frame_arrow),
         }
     }
 }

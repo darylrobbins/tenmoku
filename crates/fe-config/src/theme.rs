@@ -235,6 +235,21 @@ colors! {
         agent_row,
         /// Behind the fold chevron under the pointer.
         fold_hover,
+        /// A stopped debug session's current line, the top frame's row: an
+        /// opaque band in place of the cursor line. A theme without it
+        /// draws the band in its `active_line` ([`DEBUG_FALLBACKS`]).
+        debug_current_line,
+        /// A caller frame's row, selected in the call stack: a band as
+        /// `debug_current_line`'s. Falls back to `active_line`.
+        debug_frame_line,
+        /// An enabled breakpoint's glyph, verified or not, over the line
+        /// numbers. Falls back to `error`.
+        debug_breakpoint,
+        /// A disabled breakpoint's glyph. Falls back to `gutter_foreground`.
+        debug_breakpoint_disabled,
+        /// The frame arrows over the line numbers and the current line's
+        /// band's edge: the accent. Falls back to `cursor`.
+        debug_frame_arrow,
         /// Behind the minimap.
         minimap_background,
         /// The minimap's slider over the visible rows.
@@ -258,6 +273,44 @@ colors! {
         /// The minimap's mark where rows were deleted since the git base.
         minimap_gutter_deleted,
     }
+}
+
+/// The debugger's `[editor]` keys, each with the key whose colour a theme
+/// that has an `[editor]` table without it draws it in, the theme's own
+/// (or, if it lacks that too, the bundled palette's): its bands in its
+/// cursor line, its breakpoints in its error colour, a disabled one in its
+/// gutter's and its arrows in its cursor's
+/// (`docs/design/design-system.md`, Debugger, Colour roles).
+pub const DEBUG_FALLBACKS: &[(&str, &str)] = &[
+    ("debug_current_line", "active_line"),
+    ("debug_frame_line", "active_line"),
+    ("debug_breakpoint", "error"),
+    ("debug_breakpoint_disabled", "gutter_foreground"),
+    ("debug_frame_arrow", "cursor"),
+];
+
+/// The `[syntax]` names of the TODO-comment badges, each a keyword's
+/// colour. A theme that leaves one out has that badge in its kind's
+/// diagnostic tint, not the bundled palette's colour for it.
+const BADGE_NAMES: &[&str] = &[
+    "comment.fixme",
+    "comment.hack",
+    "comment.note",
+    "comment.perf",
+    "comment.todo",
+    "comment.warn",
+];
+
+/// Whether `table`, a `[syntax]` table, sets the dotted `name`: as a
+/// quoted key, or through nested tables (`comment.todo = …` unquoted).
+fn sets_name(table: &Table, name: &str) -> bool {
+    if table.get(name).is_some_and(|value| !value.is_table()) {
+        return true;
+    }
+    (name.match_indices('.')).any(|(at, _)| {
+        let (head, rest) = (&name[..at], &name[at + 1..]);
+        matches!(table.get(head), Some(Value::Table(inner)) if sets_name(inner, rest))
+    })
 }
 
 /// The editor's colours: a theme's `[editor]` and `[syntax]` tables laid
@@ -418,19 +471,43 @@ impl EditorPalette {
     /// warning naming its dotted key. The tables carry no line numbers, so
     /// the warnings don't either. A theme at [`Contrast::High`] gets the
     /// palette's high-contrast pass ([`EditorPalette::high_contrast`]).
+    ///
+    /// A theme with an `[editor]` table of its own has two kinds of colour
+    /// follow its own rather than the bundled palette's when it leaves them
+    /// out: the debugger's keys take its colours [`DEBUG_FALLBACKS`] names,
+    /// and a TODO-comment badge ([`BADGE_NAMES`]) its `[syntax]` table
+    /// doesn't name is left unlisted, so it's drawn in its kind's
+    /// diagnostic tint, the theme's. A theme without the table, as Kiln's
+    /// own, draws the editor in the bundled palette, these colours too.
     pub fn for_theme(theme: &ThemeData) -> (EditorPalette, Vec<String>) {
         let mut palette = Self::bundled(theme.appearance).clone();
         // Font styles are a theme's own: without a `[syntax_style]` a theme
         // has none, not the bundled palette's.
         palette.styles.clear();
+        let syntax = theme.extension("syntax");
+        let editor = theme.extension("editor");
+        if editor.is_some() {
+            palette.syntax.retain(|(name, _)| {
+                !BADGE_NAMES.contains(&name.as_str())
+                    || syntax.is_some_and(|syntax| sets_name(syntax, name))
+            });
+        }
         let warnings = palette.overlay(
-            theme.extension("editor"),
-            theme.extension("syntax"),
+            editor,
+            syntax,
             theme.extension("syntax_style"),
             theme.extension("terminal"),
         );
         if theme.contrast == Contrast::High {
             palette.high_contrast();
+        }
+        for (key, fallback) in DEBUG_FALLBACKS {
+            if editor.is_some_and(|editor| !editor.contains_key(*key))
+                && let Some(color) = palette.editor.get(fallback)
+                && let Some(slot) = palette.editor.get_mut(key)
+            {
+                *slot = color;
+            }
         }
         (palette, warnings)
     }

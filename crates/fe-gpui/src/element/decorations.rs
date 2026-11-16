@@ -76,13 +76,15 @@ pub(super) fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
         Tint::Perf => theme.change_modified,
         Tint::Muted => theme.foreground,
         Tint::Agent => theme.agent_lane,
+        Tint::DebugCurrent => theme.debug_current_line,
+        Tint::DebugFrame => theme.debug_frame_line,
     }
 }
 
 /// A diff tint's own colour as a row's band or a word's highlight, painted
 /// as the theme has it, unfaded: the words' over their row's are what set
-/// them apart. So is the agent's band, its soft ground (`agent_row`).
-/// `None` for any other tint or kind.
+/// them apart. So is the agent's band, its soft ground (`agent_row`), and
+/// the debugger's two, opaque. `None` for any other tint or kind.
 pub(super) fn diff_color(theme: &EditorTheme, tint: Tint, kind: &DecorationKind) -> Option<Hsla> {
     match (tint, kind) {
         (Tint::DiffAdded, DecorationKind::RowBackground) => Some(theme.diff_added_row),
@@ -91,6 +93,9 @@ pub(super) fn diff_color(theme: &EditorTheme, tint: Tint, kind: &DecorationKind)
         (Tint::DiffRemoved, DecorationKind::Highlight) => Some(theme.diff_removed_word),
         (Tint::Yank, DecorationKind::Highlight) => Some(theme.vim_yank_highlight),
         (Tint::Agent, DecorationKind::RowBackground) => Some(theme.agent_row),
+        // The debugger's bands are opaque, in place of the cursor line.
+        (Tint::DebugCurrent, DecorationKind::RowBackground) => Some(theme.debug_current_line),
+        (Tint::DebugFrame, DecorationKind::RowBackground) => Some(theme.debug_frame_line),
         _ => None,
     }
 }
@@ -479,11 +484,17 @@ impl Decorations {
                 }
             }
             Layer::Backgrounds => {
-                let backgrounds = (self.placed.iter())
-                    .filter(|placed| placed.kind == DecorationKind::RowBackground)
-                    .filter(|placed| !agent_row(placed));
+                // The debugger's opaque bands first, under every other
+                // band, highlight, match and the selection.
+                let bands = || {
+                    (self.placed.iter())
+                        .filter(|placed| placed.kind == DecorationKind::RowBackground)
+                        .filter(|placed| !agent_row(placed))
+                };
+                let debug = bands().filter(|placed| debug_band(placed));
+                let backgrounds = bands().filter(|placed| !debug_band(placed));
                 let highlights = of(|kind| *kind == DecorationKind::Highlight);
-                for placed in backgrounds.chain(highlights) {
+                for placed in debug.chain(backgrounds).chain(highlights) {
                     window.paint_quad(fill(placed.bounds, placed.color));
                     painted = true;
                 }
@@ -541,6 +552,40 @@ impl Decorations {
 /// Whether `placed` is an agent's row band, painted under the proposals'.
 fn agent_row(placed: &Placed) -> bool {
     placed.kind == DecorationKind::RowBackground && placed.tint == Tint::Agent
+}
+
+/// Whether `placed` is one of the debugger's bands, the current line's or a
+/// caller frame's.
+fn debug_band(placed: &Placed) -> bool {
+    placed.kind == DecorationKind::RowBackground
+        && matches!(placed.tint, Tint::DebugCurrent | Tint::DebugFrame)
+}
+
+/// A debugger band's edge: [`BAND_EDGE`] px wide.
+pub(crate) const BAND_EDGE: f32 = 2.;
+
+impl Decorations {
+    /// The debugger's bands' edges, one per display row a band is on, with
+    /// the band's tint: [`BAND_EDGE`] px at the code's left, in the last of
+    /// the gutter's gap to the code with a gutter (`gutter`), inside the
+    /// code's left edge without one.
+    pub(super) fn band_edges(&self, gutter: bool) -> Vec<(Bounds<Pixels>, Tint)> {
+        (self.placed.iter())
+            .filter(|placed| debug_band(placed))
+            .map(|placed| {
+                let edge = px(BAND_EDGE);
+                let left = match gutter {
+                    true => placed.bounds.left() - edge,
+                    false => placed.bounds.left(),
+                };
+                let bounds = Bounds::new(
+                    gpui::point(left, placed.bounds.top()),
+                    gpui::size(edge, placed.bounds.size.height),
+                );
+                (bounds, placed.tint)
+            })
+            .collect()
+    }
 }
 
 impl EditorView {

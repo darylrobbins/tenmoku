@@ -188,6 +188,16 @@ agent_lane = "#3a5f81"
 # Behind an agent's pending rows: its soft ground, agent.soft.
 agent_row = "#e8eff7"
 fold_hover = "#ebecef"
+# The debugger (design-system.md, Debugger): the stopped line's band and a
+# caller frame's, each with an edge in the accent or muted text at the
+# code's left; an enabled breakpoint (shinsha's value, its own role), a
+# disabled one, and the frame arrows and the current line's edge (hare's
+# fur, the accent).
+debug_current_line = "#fff4ed"
+debug_frame_line = "#f6f7f9"
+debug_breakpoint = "#a1100e"
+debug_breakpoint_disabled = "#7c828a"
+debug_frame_arrow = "#a84a16"
 # The minimap: the editor's ground; the slider in faint text at rising
 # strength; the selection the focused selection's rust tint; marks in the
 # signals (find matches kiseto, errors shinsha, warnings kiseto) and the

@@ -72,7 +72,7 @@ pub use prompt::{PROMPT_WIDTH, Prompt, prompt_renderer};
 pub use roles::{
     BOTTOM_PANEL_DEFAULT, CODE, CODE_SMALL, FOCUS_RING, FamilySlot, FocusRing, FontFamilies,
     PAGE_TITLE, SECTION_HEADING, SHADOW_FLOAT, Shadow, TextRole, UI_BODY, UI_HEADING, UI_LABEL,
-    UI_SMALL, height, radius, space, width,
+    UI_SMALL, glyph, height, radius, space, width,
 };
 pub use scroll_area::{SCROLLBAR_WIDTH, ScrollArea};
 pub use segmented::SegmentedControl;

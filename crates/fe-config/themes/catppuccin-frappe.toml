@@ -152,6 +152,17 @@ vim_mode_foreground = "#232634"
 bracket_1 = "#E78284"
 bracket_2 = "#EF9F76"
 bracket_3 = "#E5C890"
+# The debugger: the stopped line's band (the cursor tinted toward the
+# accent) and a caller frame's (the cursor line's), an enabled breakpoint
+# (the error colour) and a disabled one (a grey apart in lightness from the
+# red), and the frame arrows (the accent, or the cursor where the accent is
+# too faint); each glyph 3:1 on the gutter, the cursor line and the hover
+# tile.
+debug_current_line = "#3e3f50"
+debug_frame_line = "#3b3f52"
+debug_breakpoint = "#e78284"
+debug_breakpoint_disabled = "#c0c4d0"
+debug_frame_arrow = "#CA9EE6"
 # The minimap. The slider is the theme's minimapSlider.* and the selection
 # mark its minimap.selectionHighlight. The rest are VS Code's defaults:
 # minimap.background is the editor's, minimap.errorHighlight #FF1212B3,

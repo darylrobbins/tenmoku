@@ -80,6 +80,17 @@ agent_lane = "#8d9bb0"
 # Behind an agent's pending rows: Kiln Dark's agent.soft.
 agent_row = "#8d9bb026"
 fold_hover = "#c8ccd438"
+# The debugger: the stopped line's band (the cursor tinted toward the
+# accent) and a caller frame's (the cursor line's), an enabled breakpoint
+# (the error colour) and a disabled one (a grey apart in lightness from the
+# red), and the frame arrows (the accent, or the cursor where the accent is
+# too faint); each glyph 3:1 on the gutter, the cursor line and the hover
+# tile.
+debug_current_line = "#1c202a"
+debug_frame_line = "#1d1f24"
+debug_breakpoint = "#e06c75"
+debug_breakpoint_disabled = "#b4b7bd"
+debug_frame_arrow = "#7aa2f7"
 # The minimap: its background, the slider over the visible rows (at rest,
 # hovered and dragged), and the marks for the selection, find matches,
 # error and warning diagnostics and git changes. VS Code's default dark
