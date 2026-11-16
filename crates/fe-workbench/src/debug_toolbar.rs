@@ -73,18 +73,20 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// A button of the toolbar: its id, icon, name's key, command and control.
-struct Spec {
-    id: &'static str,
-    icon: Icon,
-    name: SharedString,
-    command: &'static str,
-    control: Control,
+/// A button of the toolbar, and of the title bar's run widget during a
+/// session (`run_widget_debug.rs`): its id, icon, name, command and
+/// control.
+pub(crate) struct Spec {
+    pub(crate) id: &'static str,
+    pub(crate) icon: Icon,
+    pub(crate) name: SharedString,
+    pub(crate) command: &'static str,
+    pub(crate) control: Control,
     /// The command whose key its tooltip shows: its own, or for Continue
     /// `debug.start`'s, F5, which continues while stopped.
-    key: &'static str,
+    pub(crate) key: &'static str,
     /// The key context flag that key is bound under.
-    flag: &'static str,
+    pub(crate) flag: &'static str,
 }
 
 /// Which of Continue and Pause show: by the session's state, a resume
@@ -101,7 +103,7 @@ fn continue_and_pause(debugger: &Debugger, controls: &Controls) -> (bool, bool) 
 }
 
 /// The buttons, in order, and where the gap goes (before the index).
-fn specs(debugger: &Debugger) -> (Vec<Spec>, usize) {
+pub(crate) fn specs(debugger: &Debugger) -> (Vec<Spec>, usize) {
     let controls = debugger.controls();
     let (show_continue, show_pause) = continue_and_pause(debugger, &controls);
     let mut specs = Vec::new();
@@ -179,7 +181,7 @@ fn specs(debugger: &Debugger) -> (Vec<Spec>, usize) {
 /// The first single key that runs `command` in the workbench with the
 /// debugger's `flag` set, as this platform prints it: read from the
 /// keymap now, so it follows reloads.
-fn key(command: &str, flag: &str, cx: &App) -> Option<String> {
+pub(crate) fn key(command: &str, flag: &str, cx: &App) -> Option<String> {
     let command = CommandId::parse(command).ok()?;
     let frame = ContextFrame::new(KEY_CONTEXT)
         .flag(DEBUG_SESSION)
@@ -193,7 +195,7 @@ fn key(command: &str, flag: &str, cx: &App) -> Option<String> {
 }
 
 /// The label's accessible name: the session, and its state.
-fn label_name(debugger: &Debugger, name: &str) -> SharedString {
+pub(crate) fn label_name(debugger: &Debugger, name: &str) -> SharedString {
     if debugger.starting().is_some() {
         return tr!("workbench-debug-toolbar-session-starting", name = name);
     }

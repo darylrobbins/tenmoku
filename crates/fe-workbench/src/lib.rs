@@ -110,6 +110,7 @@ mod quickfix_commands;
 mod quickfix_fill;
 mod references_panel;
 pub mod run_process;
+mod run_widget_debug;
 pub mod runs;
 mod runs_panel;
 mod save_commands;

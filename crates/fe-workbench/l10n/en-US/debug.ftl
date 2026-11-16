@@ -340,3 +340,28 @@ workbench-debug-panel-show-more-frames = { $count ->
     }
 # The same row when the adapter doesn't say how many frames there are.
 workbench-debug-panel-show-more-frames-unknown = Show more frames
+
+## The title bar's run widget debugging (run_widget_debug.rs, card D8b).
+
+# The label's accessible name with a launch configuration chosen: $name is
+# its name.
+workbench-debug-run-config = Debug configuration: { $name }
+# The button that starts the configuration chosen, and the one that shows
+# the configuration picker with a task chosen.
+workbench-debug-run-debug = Debug
+workbench-debug-run-debug-pick = Debug…
+# The Debug button's tooltip when the configuration can't start: $why is
+# what stops it, in launch_defs' words.
+workbench-debug-run-blocked = Can't debug: { $why }
+# The label's tooltip, once the root has launch configurations, and the
+# picker it opens: its placeholder and its two groups' headings.
+workbench-debug-run-choose = Choose Task or Configuration…
+workbench-debug-run-choose-placeholder = Choose task or configuration…
+workbench-debug-run-tasks = Tasks
+workbench-debug-run-configs = Debug configurations
+# The session label's tooltip and the menu it opens: its name, its
+# placeholder and its items (with workbench-debug-run-choose).
+workbench-debug-run-session-menu = Session Menu
+workbench-debug-run-session-placeholder = Debug session
+workbench-debug-run-show-debugger = Show Debugger
+workbench-debug-run-show-log = Show Adapter Log

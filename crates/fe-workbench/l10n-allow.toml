@@ -56,9 +56,14 @@ text = "title-run"
 reason = "The label button's element id"
 
 [[literal]]
-file = "src/run_widget.rs"
-text = "run-task-row-{}"
+file = "src/run_widget_debug.rs"
+text = "run-task-row-{task}"
 reason = "A task row's element id"
+
+[[literal]]
+file = "src/run_widget_debug.rs"
+text = "run-config-row-{config}"
+reason = "A launch configuration row's element id"
 
 [[literal]]
 file = "src/task_commands.rs"

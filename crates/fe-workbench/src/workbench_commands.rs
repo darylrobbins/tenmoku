@@ -1481,9 +1481,21 @@ impl Workbench {
     }
 
     /// Debug: Start Debugging
+    ///
+    /// With args `configuration`, a launch configuration's name, as the
+    /// title bar's run widget's Debug button sends it, starts that one
+    /// afresh; without, it continues a stopped session or shows the
+    /// configuration picker.
     #[command(id = "debug.start")]
     fn debug_start_command(&mut self, cx: &mut Cx<Self>) {
-        self.debug_start(cx.window, cx.cx);
+        let configuration = kiln::current_invocation(cx.cx).and_then(|invocation| {
+            let name = invocation.args.get("configuration")?.as_str()?;
+            Some(name.to_owned())
+        });
+        match configuration {
+            Some(name) => self.start_debugging(name, cx.window, cx.cx),
+            None => self.debug_start(cx.window, cx.cx),
+        }
     }
 
     /// Debug: Stop

@@ -34,6 +34,8 @@ mod command_palette;
 mod debug_gutter;
 #[path = "audit/debug_panel.rs"]
 mod debug_panel;
+#[path = "audit/debug_run_widget.rs"]
+mod debug_run_widget;
 #[path = "audit/debug_toolbar.rs"]
 mod debug_toolbar;
 #[path = "audit/file_finder.rs"]
@@ -135,6 +137,7 @@ const SURFACES: &[&Surface] = &[
     &debug_gutter::SURFACE,
     &debug_panel::SURFACE,
     &debug_toolbar::SURFACE,
+    &debug_run_widget::SURFACE,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup

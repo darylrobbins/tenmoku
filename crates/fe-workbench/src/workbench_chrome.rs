@@ -22,6 +22,7 @@ const BOTTOM_BUTTONS: [&str; 5] = [
     crate::dock::GIT_LOG_BUTTON,
     TERMINAL_BUTTON,
 ];
+use crate::run_widget_debug::RunChoice;
 use crate::title_bar;
 #[path = "run_widget.rs"]
 mod run_widget;
@@ -887,19 +888,25 @@ impl Workbench {
             .update(cx, |workspace, cx| workspace.save(cx));
     }
 
-    /// The task the run widget shows in `root`, as chosen there: its label.
-    pub(crate) fn run_task_choice(&self, root: &Path) -> Option<String> {
+    /// What the run widget shows in `root`, as chosen there: a task or a
+    /// launch configuration.
+    pub(crate) fn run_task_choice(&self, root: &Path) -> Option<RunChoice> {
         let root = root.to_str()?;
         self.layout_keys.run_tasks.borrow().get(root).cloned()
     }
 
-    /// Remembers `label` as the task the run widget shows in `root`, in the
+    /// Remembers `choice` as what the run widget shows in `root`, in the
     /// window's saved layout.
-    pub(crate) fn choose_run_task(&mut self, root: &Path, label: String, cx: &mut Context<Self>) {
+    pub(crate) fn choose_run_task(
+        &mut self,
+        root: &Path,
+        choice: RunChoice,
+        cx: &mut Context<Self>,
+    ) {
         let Some(root) = root.to_str() else {
             return;
         };
-        (self.layout_keys.run_tasks.borrow_mut()).insert(root.to_owned(), label);
+        (self.layout_keys.run_tasks.borrow_mut()).insert(root.to_owned(), choice);
         self.layout_keys_changed(cx);
         cx.notify();
     }
@@ -1140,7 +1147,7 @@ impl LayoutKeys {
         if !run_tasks.is_empty() {
             let tasks = run_tasks
                 .iter()
-                .map(|(root, label)| (root.clone(), Value::from(label.as_str())));
+                .map(|(root, choice)| (root.clone(), choice.to_value()));
             keys.push(("run_tasks", Value::Object(tasks.collect())));
         }
         keys
@@ -1198,7 +1205,7 @@ impl LayoutKeys {
         if let Some(saved) = entry.get("run_tasks").and_then(Value::as_object) {
             let tasks = saved
                 .iter()
-                .filter_map(|(root, label)| Some((root.clone(), label.as_str()?.to_owned())));
+                .filter_map(|(root, choice)| Some((root.clone(), RunChoice::from_value(choice)?)));
             *self.run_tasks.borrow_mut() = tasks.collect();
         }
     }

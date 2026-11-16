@@ -874,7 +874,11 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         if let Some(debugger) = self.debugger(cx) {
-            debugger.update(cx, |debugger, _| debugger.settings = settings.clone());
+            debugger.update(cx, |debugger, cx| {
+                debugger.settings = settings.clone();
+                // What the run widget lists can start depends on them.
+                cx.notify();
+            });
             // `[debug.adapters.java] path` may name another jar.
             self.find_java_jar(cx);
         }

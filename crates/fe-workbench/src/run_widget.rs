@@ -4,22 +4,32 @@
 //! per project for the life of the window); a play button that runs it; and,
 //! while it runs, a stop button that stops it. A running task shows the
 //! spinner icon, and one whose last run failed the error glyph, in place of
-//! the chevron. With no tasks the widget draws nothing.
+//! the chevron. With neither tasks nor launch configurations the widget
+//! draws nothing.
+//!
+//! It debugs too (card D8b, [`crate::run_widget_debug`]): the picker lists
+//! the root's launch configurations after its tasks, the choice may be one
+//! of them, a Debug button starts it (or, a task chosen, Debug… shows
+//! `debug.start`'s picker), and while a session runs the widget is the
+//! session's controls.
 //!
 //! The widget is an entity the title bar's right slot holds ([`install`]).
-//! It lists the workbench's root's tasks, read when the root changes and
-//! when the file watcher says a file that defines tasks did (and again, at
-//! once, as play and the picker use them). The choice is the workbench's, per
-//! root, saved with its layout (`run_tasks`); with none made it's the default
-//! build task, else the first. How the task goes is the terminal panel's:
-//! the status and stop follow any run of it, from play or from `tasks.run`,
-//! `tasks.run_build` or `tasks.rerun_last`, and a rerun stays tracked.
+//! It lists the workbench's root's tasks and launch configurations, read
+//! when the root changes and when the file watcher says a file that
+//! defines tasks or configurations did (and again, at once, as play and the
+//! picker use them). The choice is the workbench's, per root, saved with
+//! its layout (`run_tasks`); with none made it's the default build task,
+//! else the first task, else the first configuration. How the task goes is
+//! the terminal panel's: the status and stop follow any run of it, from
+//! play or from `tasks.run`, `tasks.run_build` or `tasks.rerun_last`, and a
+//! rerun stays tracked. How a session goes is the window's debugger's.
 
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
 };
 
+use fe_config::debug_settings::DebugSettings;
 use fe_project::FsChange;
 use fe_ui::{Button, Icon, IconButton, Tooltip};
 use gpui::{
@@ -28,19 +38,19 @@ use gpui::{
     WeakEntity, Window, div, px,
 };
 use kiln_l10n::{Text, tr};
-use kiln_shell::{ModalId, TitleBarItems, TitleBarSlot};
+use kiln_shell::{TitleBarItems, TitleBarSlot};
 
 use crate::{
-    RootChanged, Workbench, pane_toolbar,
-    picker::{Picker, PickerDelegate},
+    RootChanged, Workbench,
+    debug_session::debugger_of,
+    launch_defs::LaunchConfig,
+    pane_toolbar,
     project_panel::PanelEvent,
+    run_widget_debug::{self as debug, RunChoice},
     task_commands::{self, default_build},
     task_defs::Task,
     terminal_panel::{TaskRun, TerminalPanel},
 };
-
-/// The picker's name in the modal layer.
-const PICKER: ModalId = ModalId("run-widget-tasks");
 
 /// The label button's id.
 const LABEL_ID: &str = "title-run";
@@ -78,10 +88,45 @@ enum Action {
     Pick,
 }
 
+/// What the root's choice is, among what's read.
+enum Chosen<'a> {
+    Task(&'a Task),
+    Config(&'a LaunchConfig),
+}
+
+/// What the bar shows, to draw it again only when that changes.
+#[derive(Clone, Debug, PartialEq)]
+enum Look {
+    /// A task, how its run goes, and whether Debug… shows (the root has a
+    /// launch configuration).
+    Task(String, Run, bool),
+    /// A launch configuration, and why it can't start if it can't.
+    Config(String, Option<SharedString>),
+    /// A debug session: its label's name, whether it's stopped, and its
+    /// buttons and whether each is enabled.
+    Session(SharedString, bool, Vec<(&'static str, bool)>),
+}
+
 pub(crate) struct RunWidget {
     workbench: WeakEntity<Workbench>,
     /// The listed root's tasks, as last read.
     tasks: Vec<Task>,
+    /// Its launch configurations, as last read: read apart from the tasks,
+    /// so a slow read (jdtls's main classes) never holds up a task.
+    configs: Vec<LaunchConfig>,
+    /// The root `configs` are of.
+    configs_root: Option<PathBuf>,
+    config_reading: Option<gpui::Task<()>>,
+    /// The configuration loads started, and the newest one applied.
+    config_loads: u64,
+    config_applied: u64,
+    /// What the configurations depend on beside the files, as last read:
+    /// the active editor's language (detection lists the current Python
+    /// file) and the `[debug]` settings (the user's adapters).
+    inputs: Option<(Option<String>, DebugSettings)>,
+    /// The picker, while it shows, which configurations read after it
+    /// opened are handed to.
+    picker: Option<debug::RunPickerHandle>,
     /// The root `tasks` are of: nothing shows or runs while it isn't the
     /// workbench's.
     listed_root: Option<PathBuf>,
@@ -95,7 +140,7 @@ pub(crate) struct RunWidget {
     acting: Option<gpui::Task<()>>,
     actions: u64,
     /// What the bar last showed, to redraw it only when that changes.
-    shown: Option<(String, Run)>,
+    shown: Option<Look>,
     /// To the terminal panel, whose tabs say how runs go, whoever started
     /// them; to the workbench, for the choice (kept in its layout) and the
     /// root; and to the project panel's file watching.
@@ -113,6 +158,13 @@ pub(crate) fn install(
     let widget = cx.new(|cx| RunWidget {
         workbench: workbench.downgrade(),
         tasks: Vec::new(),
+        configs: Vec::new(),
+        configs_root: None,
+        config_reading: None,
+        config_loads: 0,
+        config_applied: 0,
+        inputs: None,
+        picker: None,
         listed_root: None,
         reading: None,
         loads: 0,
@@ -138,11 +190,22 @@ pub(crate) fn install(
     LATEST.with_borrow_mut(|latest| *latest = Some(widget.downgrade()));
     // The workbench is being updated now: it can't be read until then.
     let starting = widget.clone();
+    let workbench = workbench.clone();
     cx.defer(move |cx| {
-        starting.update(cx, |widget, cx| widget.root_changed(cx));
+        starting.update(cx, |widget, cx| {
+            // Its settings changing changes what can start.
+            if let Some(debugger) = debugger_of(&workbench, cx) {
+                let following = cx.observe(&debugger, |widget: &mut RunWidget, _, cx| {
+                    widget.changed(cx);
+                });
+                widget._following.push(following);
+            }
+            widget.root_changed(cx);
+        });
     });
     let rest = items.right.take();
     let slot: TitleBarSlot = Rc::new(move |window, cx| {
+        debug::drawing();
         let shown = widget.read(cx).element(&widget, cx);
         let rest = rest.as_ref().map(|rest| rest(window, cx));
         div()
@@ -177,8 +240,9 @@ pub(crate) fn press_play(window: &mut Window, cx: &mut App) {
 }
 
 /// Whether a batch from the file watcher touched a file that defines or
-/// implies tasks in `root`, the `.tenmoku` folder that holds the tasks file
-/// or a folder above it (made, removed or renamed), or lost track.
+/// implies tasks or launch configurations in `root`, the `.tenmoku` folder
+/// that holds the tasks and launch files, `.vscode/launch.json`, or a
+/// folder above them (made, removed or renamed), or lost track.
 fn touches_tasks(changes: &[FsChange], root: &Path) -> bool {
     const FILES: [&str; 12] = [
         "tasks.toml",
@@ -195,11 +259,17 @@ fn touches_tasks(changes: &[FsChange], root: &Path) -> bool {
         "bun.lock",
     ];
     let folder = root.join(".tenmoku");
+    let launch_json = root.join(crate::launch_defs::LAUNCH_JSON);
+    // Cargo's binary targets, which detection lists.
+    let (main, bins) = (root.join("src/main.rs"), root.join("src/bin"));
     changes.iter().any(|change| match change {
         FsChange::Rescan => true,
         FsChange::Path(path) => {
             path.starts_with(&folder)
                 || folder.starts_with(path)
+                || launch_json.starts_with(path)
+                || main.starts_with(path)
+                || path.starts_with(&bins)
                 || (path.parent() == Some(root))
                     && (path.file_name().and_then(|name| name.to_str()))
                         .is_some_and(|name| FILES.contains(&name))
@@ -212,6 +282,10 @@ impl RunWidget {
     /// once, the new root's are read, and its project panel is followed.
     fn root_changed(&mut self, cx: &mut Context<Self>) {
         self.tasks.clear();
+        self.configs.clear();
+        self.configs_root = None;
+        self.config_reading = None;
+        self.config_applied = self.config_loads;
         self.listed_root = None;
         self.reading = None;
         // A request for the old root's tasks acts on nothing.
@@ -247,7 +321,8 @@ impl RunWidget {
         true
     }
 
-    /// Reads the root's tasks, off the main thread.
+    /// Reads the root's tasks and, apart, its launch configurations, off
+    /// the main thread.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         if !Self::can_read(cx) {
             return;
@@ -260,6 +335,29 @@ impl RunWidget {
             let (tasks, _) = reading.await;
             widget
                 .update(cx, |widget, cx| widget.loaded(load, root, tasks, cx))
+                .ok();
+        }));
+        self.refresh_configs(cx);
+    }
+
+    /// Reads the root's launch configurations, off the main thread.
+    fn refresh_configs(&mut self, cx: &mut Context<Self>) {
+        if !Self::can_read(cx) {
+            return;
+        }
+        let (Some(root), Some(workbench)) = (self.root(cx), self.workbench.upgrade()) else {
+            return;
+        };
+        self.inputs = Some(self.config_inputs(cx));
+        self.config_loads += 1;
+        let load = self.config_loads;
+        let reading = debug::read_configs(&workbench, cx);
+        self.config_reading = Some(cx.spawn(async move |widget, cx| {
+            let configs = reading.await;
+            widget
+                .update(cx, |widget, cx| {
+                    widget.configs_loaded(load, root, configs, cx)
+                })
                 .ok();
         }));
     }
@@ -282,6 +380,38 @@ impl RunWidget {
         self.changed(cx);
     }
 
+    /// Takes the configurations of load `load` of `root`, unless the root
+    /// has changed or a newer load is in, and hands them to the picker if
+    /// it shows.
+    fn configs_loaded(
+        &mut self,
+        load: u64,
+        root: PathBuf,
+        configs: Vec<LaunchConfig>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.root(cx).as_ref() != Some(&root) || load <= self.config_applied {
+            return;
+        }
+        self.config_applied = load;
+        self.configs = configs;
+        self.configs_root = Some(root);
+        if let Some(picker) = &self.picker
+            && !debug::update_run_picker(picker, &self.configs, cx)
+        {
+            self.picker = None;
+        }
+        self.changed(cx);
+    }
+
+    /// The root's configurations, once read: none before.
+    fn configs(&self) -> &[LaunchConfig] {
+        match self.configs_root.is_some() && self.configs_root == self.listed_root {
+            true => &self.configs,
+            false => &[],
+        }
+    }
+
     /// Reads the root's tasks afresh, off the main thread, then does `what`
     /// with them if the root is still the same and no newer request has been
     /// made: a file written since the watcher's batch is in them.
@@ -298,6 +428,10 @@ impl RunWidget {
         let load = self.loads;
         let previous_focus = window.focused(cx);
         let reading = task_commands::read_tasks(Some(root.clone()), cx);
+        if let Action::Pick = what {
+            // The picker shows the configurations read so far, then these.
+            self.refresh_configs(cx);
+        }
         self.acting = Some(cx.spawn_in(window, async move |widget, cx| {
             let (tasks, _) = reading.await;
             widget
@@ -320,9 +454,28 @@ impl RunWidget {
         workbench.read(cx).root().map(ToOwned::to_owned)
     }
 
-    /// What the bar shows, if it changed, drawn again.
+    /// What the configurations depend on beside the files: the active
+    /// editor's language and the `[debug]` settings.
+    fn config_inputs(&self, cx: &App) -> (Option<String>, DebugSettings) {
+        let Some(workbench) = self.workbench.upgrade() else {
+            return Default::default();
+        };
+        let editor = workbench.read(cx).active_editor(cx);
+        let syntax = editor.and_then(|editor| editor.read(cx).syntax());
+        let language = syntax.map(|syntax| syntax.language().name().to_owned());
+        let settings = debugger_of(&workbench, cx)
+            .map(|debugger| debugger.read(cx).settings().clone())
+            .unwrap_or_default();
+        (language, settings)
+    }
+
+    /// What the bar shows, if it changed, drawn again; and the
+    /// configurations read again if what they depend on changed.
     fn changed(&mut self, cx: &mut Context<Self>) {
-        let now = self.view(cx).map(|(task, run)| (task.label.clone(), run));
+        if self.inputs.is_some() && self.inputs.as_ref() != Some(&self.config_inputs(cx)) {
+            self.refresh_configs(cx);
+        }
+        let now = self.look(cx);
         if now == self.shown {
             return;
         }
@@ -334,26 +487,41 @@ impl RunWidget {
         cx.notify();
     }
 
-    /// The task shown: the root's choice if it's still a task, else the
-    /// default build task, else the first. None until the root's tasks are
-    /// read.
-    fn choice(&self, cx: &App) -> Option<&Task> {
+    /// What's shown: the root's choice if it's still a task or a
+    /// configuration, else the default build task, else the first task,
+    /// else the first configuration. None until the root's are read.
+    fn choice(&self, cx: &App) -> Option<Chosen<'_>> {
         let workbench = self.workbench.upgrade()?;
         let workbench = workbench.read(cx);
         let root = workbench.root()?;
         if self.listed_root.as_deref() != Some(root) {
             return None;
         }
-        let chosen = workbench.run_task_choice(root);
-        let chosen = chosen.and_then(|label| self.tasks.iter().find(|task| task.label == label));
+        let chosen = match workbench.run_task_choice(root) {
+            Some(RunChoice::Task(label)) => (self.tasks.iter())
+                .find(|task| task.label == label)
+                .map(Chosen::Task),
+            Some(RunChoice::Debug(name)) => (self.configs().iter())
+                .find(|config| config.name == name)
+                .map(Chosen::Config),
+            None => None,
+        };
         chosen
-            .or_else(|| default_build(&self.tasks))
-            .or_else(|| self.tasks.first())
+            .or_else(|| default_build(&self.tasks).map(Chosen::Task))
+            .or_else(|| self.tasks.first().map(Chosen::Task))
+            .or_else(|| self.configs().first().map(Chosen::Config))
     }
 
-    /// The task shown and how it last went, whoever ran it.
-    fn view(&self, cx: &App) -> Option<(&Task, Run)> {
-        let task = self.choice(cx)?;
+    /// The task shown, if a task is.
+    fn chosen_task(&self, cx: &App) -> Option<&Task> {
+        match self.choice(cx)? {
+            Chosen::Task(task) => Some(task),
+            Chosen::Config(_) => None,
+        }
+    }
+
+    /// How the task `task` last went, whoever ran it.
+    fn run_of(&self, task: &Task, cx: &App) -> Option<Run> {
         let workbench = self.workbench.upgrade()?;
         let terminal = workbench.read(cx).terminal().read(cx);
         let run = match terminal.task_run(self.listed_root.as_deref()?, &task.label) {
@@ -361,7 +529,31 @@ impl RunWidget {
             Some(TaskRun::Failed) => Run::Failed,
             Some(TaskRun::Passed) | None => Run::Idle,
         };
-        Some((task, run))
+        Some(run)
+    }
+
+    /// What the bar shows: the session's controls while one runs, else the
+    /// choice.
+    fn look(&self, cx: &App) -> Option<Look> {
+        let workbench = self.workbench.upgrade()?;
+        if let Some(debugger) = debugger_of(&workbench, cx)
+            && let Some((name, stopped, buttons)) = debug::session_look(debugger.read(cx))
+        {
+            return Some(Look::Session(name, stopped, buttons));
+        }
+        match self.choice(cx)? {
+            Chosen::Task(task) => {
+                let run = self.run_of(task, cx)?;
+                Some(Look::Task(
+                    task.label.clone(),
+                    run,
+                    !self.configs().is_empty(),
+                ))
+            }
+            Chosen::Config(config) => {
+                Some(Look::Config(config.name.clone(), debug::blocked(config)))
+            }
+        }
     }
 
     /// Play: runs the task shown, as its file has it by the time it's read.
@@ -370,7 +562,7 @@ impl RunWidget {
     }
 
     fn play_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(task) = self.choice(cx).cloned() else {
+        let Some(task) = self.chosen_task(cx).cloned() else {
             return;
         };
         let Some(workbench) = self.workbench.upgrade() else {
@@ -385,7 +577,7 @@ impl RunWidget {
         let Some(root) = self.listed_root.clone() else {
             return;
         };
-        let Some(label) = self.choice(cx).map(|task| task.label.clone()) else {
+        let Some(label) = self.chosen_task(cx).map(|task| task.label.clone()) else {
             return;
         };
         let Some(workbench) = self.workbench.upgrade() else {
@@ -411,67 +603,134 @@ impl RunWidget {
         let Some(workbench) = self.workbench.upgrade() else {
             return;
         };
-        let delegate = TaskChoice {
-            widget: cx.entity().downgrade(),
-            root: self.root(cx),
-            labels: self.tasks.iter().map(|task| task.label.clone()).collect(),
-            matches: Vec::new(),
-            previous_focus,
-        };
-        let placeholder = kiln_l10n::text!("workbench-run-choose-placeholder");
-        let picker = cx.new(|cx| Picker::new(delegate, placeholder, fe_ui::ui_theme(cx), cx));
-        picker.update(cx, |picker, cx| {
-            picker.delegate.refilter(String::new());
-            picker.show(window, cx);
+        let widget = cx.entity().downgrade();
+        let root = self.root(cx);
+        let choose: debug::OnChoose = Rc::new(move |choice, _, cx| {
+            let root = root.clone();
+            widget
+                .update(cx, |widget, cx| {
+                    if widget.root(cx) == root
+                        && let (Some(root), Some(workbench)) = (root, widget.workbench.upgrade())
+                    {
+                        workbench.update(cx, |workbench, cx| {
+                            workbench.choose_run_task(&root, choice, cx)
+                        });
+                        widget.changed(cx);
+                    }
+                })
+                .ok();
         });
-        let shell = workbench.read(cx).shell().clone();
-        shell.update(cx, |shell, cx| shell.show_modal(PICKER, picker, window, cx));
+        self.picker = Some(debug::show_run_picker(
+            &workbench,
+            &self.tasks,
+            self.configs(),
+            choose,
+            previous_focus,
+            window,
+            cx,
+        ));
     }
 
-    /// The widget's elements, none with no tasks.
-    fn element(&self, entity: &Entity<Self>, cx: &App) -> Option<AnyElement> {
-        let (task, run) = self.view(cx)?;
-        let name = match run {
-            Run::Idle => tr!("workbench-run-task", name = &task.label),
-            Run::Running => tr!("workbench-run-task-running", name = &task.label),
-            Run::Failed => tr!("workbench-run-task-failed", name = &task.label),
+    /// The session label: the session menu, whose Choose Task or
+    /// Configuration… is the chevron's picker.
+    fn session_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workbench) = self.workbench.upgrade() else {
+            return;
         };
-        #[cfg(test)]
-        crate::title_bar::DRAWN.with_borrow_mut(|drawn| drawn.push(("title-run", name.clone())));
+        let widget = cx.entity().downgrade();
+        let choose = Rc::new(move |window: &mut Window, cx: &mut App| {
+            widget.update(cx, |widget, cx| widget.pick(window, cx)).ok();
+        });
+        debug::show_session_menu(&workbench, choose, window, cx);
+    }
+
+    /// The widget's elements, none with neither tasks nor configurations.
+    fn element(&self, entity: &Entity<Self>, cx: &App) -> Option<AnyElement> {
+        let look = self.look(cx)?;
         let widget = entity.downgrade();
-        let label = Button::new(LABEL_ID, Text::Verbatim(task.label.clone().into()))
-            .ghost()
-            .icon(run.icon())
-            .name(name)
+        if let Look::Session(..) = look {
+            let debugger = debugger_of(&self.workbench.upgrade()?, cx)?;
+            let on_label = move |window: &mut Window, cx: &mut App| {
+                (widget.update(cx, |widget, cx| widget.session_menu(window, cx))).ok();
+            };
+            let debugger = debugger.read(cx);
+            return Some(debug::session_element(
+                debugger,
+                on_label,
+                LABEL_MAX_WIDTH,
+                cx,
+            ));
+        }
+        let choose = match self.configs().is_empty() {
+            true => tr!("workbench-run-choose"),
+            false => tr!("workbench-debug-run-choose"),
+        };
+        let pick = {
+            let widget = widget.clone();
+            move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                widget.update(cx, |widget, cx| widget.pick(window, cx)).ok();
+            }
+        };
+        let (label, actions) = match &look {
+            Look::Task(task, run, debug) => {
+                let name = match run {
+                    Run::Idle => tr!("workbench-run-task", name = task),
+                    Run::Running => tr!("workbench-run-task-running", name = task),
+                    Run::Failed => tr!("workbench-run-task-failed", name = task),
+                };
+                #[cfg(test)]
+                crate::title_bar::DRAWN
+                    .with_borrow_mut(|drawn| drawn.push(("title-run", name.clone())));
+                let label = Button::new(LABEL_ID, Text::Verbatim(task.clone().into()))
+                    .ghost()
+                    .icon(run.icon())
+                    .name(name);
+                let running = *run == Run::Running;
+                let (id, icon, title) = match running {
+                    true => ("title-run-stop", Icon::Square, tr!("workbench-run-stop")),
+                    false => ("title-run-play", Icon::Play, tr!("workbench-run-play")),
+                };
+                #[cfg(test)]
+                crate::title_bar::DRAWN.with_borrow_mut(|drawn| drawn.push((id, title.clone())));
+                let action = IconButton::new(id, icon, title.clone(), &fe_ui::ui_theme(cx))
+                    .tooltip(tooltip(title, None))
+                    .on_click(move |_, window, cx| {
+                        widget
+                            .update(cx, |widget, cx| match running {
+                                true => widget.stop(window, cx),
+                                false => widget.play(window, cx),
+                            })
+                            .ok();
+                    });
+                let mut actions = vec![action.into_any_element()];
+                if *debug {
+                    actions.push(debug::debug_pick_button(cx));
+                }
+                (label, actions)
+            }
+            Look::Config(name, _) => {
+                let label_name = debug::config_label_name(name);
+                #[cfg(test)]
+                crate::title_bar::DRAWN
+                    .with_borrow_mut(|drawn| drawn.push(("title-run", label_name.clone())));
+                let label = Button::new(LABEL_ID, Text::Verbatim(name.clone().into()))
+                    .ghost()
+                    .icon(Run::Idle.icon())
+                    .after_icon(debug::label_bug(cx))
+                    .name(label_name);
+                let config = (self.configs().iter()).find(|config| &config.name == name)?;
+                (label, vec![debug::debug_button(config, cx)])
+            }
+            Look::Session(..) => return None,
+        };
+        let label = label
             .flex_row_reverse()
             .flex_shrink(1.)
             .min_w_0()
             .max_w(LABEL_MAX_WIDTH)
             .debug_selector(|| "title-run".into())
-            .tooltip(tooltip(tr!("workbench-run-choose"), Some("tasks.run")))
-            .on_click({
-                let widget = widget.clone();
-                move |_, window, cx| {
-                    widget.update(cx, |widget, cx| widget.pick(window, cx)).ok();
-                }
-            });
-        let running = run == Run::Running;
-        let (id, icon, title) = match running {
-            true => ("title-run-stop", Icon::Square, tr!("workbench-run-stop")),
-            false => ("title-run-play", Icon::Play, tr!("workbench-run-play")),
-        };
-        #[cfg(test)]
-        crate::title_bar::DRAWN.with_borrow_mut(|drawn| drawn.push((id, title.clone())));
-        let action = IconButton::new(id, icon, title.clone(), &fe_ui::ui_theme(cx))
-            .tooltip(tooltip(title, None))
-            .on_click(move |_, window, cx| {
-                widget
-                    .update(cx, |widget, cx| match running {
-                        true => widget.stop(window, cx),
-                        false => widget.play(window, cx),
-                    })
-                    .ok();
-            });
+            .tooltip(tooltip(choose, Some("tasks.run")))
+            .on_click(pick);
         Some(
             div()
                 .flex()
@@ -479,7 +738,7 @@ impl RunWidget {
                 .items_center()
                 .gap(GAP)
                 .child(label)
-                .child(action)
+                .children(actions)
                 .into_any_element(),
         )
     }
@@ -497,85 +756,5 @@ fn tooltip(
         #[cfg(test)]
         crate::title_bar::LAST_TOOLTIP.with_borrow_mut(|last| *last = Some(tooltip.text()));
         cx.new(|_| tooltip).into()
-    }
-}
-
-/// The picker over the root's tasks: confirming one chooses it.
-struct TaskChoice {
-    widget: WeakEntity<RunWidget>,
-    /// The root it opened on: a choice is the root's.
-    root: Option<PathBuf>,
-    labels: Vec<String>,
-    /// The labels' indices matching the query.
-    matches: Vec<usize>,
-    /// What was focused when it opened.
-    previous_focus: Option<gpui::FocusHandle>,
-}
-
-impl TaskChoice {
-    fn refilter(&mut self, query: String) {
-        let query = query.to_lowercase();
-        self.matches = (self.labels.iter().enumerate())
-            .filter(|(_, label)| label.to_lowercase().contains(&query))
-            .map(|(ix, _)| ix)
-            .collect();
-    }
-
-    fn restore_focus(&mut self, window: &mut Window, cx: &mut App) {
-        if let Some(focus) = self.previous_focus.take() {
-            window.focus(&focus, cx);
-        }
-    }
-}
-
-impl PickerDelegate for TaskChoice {
-    fn update_matches(&mut self, query: String, cx: &mut Context<Picker<Self>>) {
-        self.refilter(query);
-        cx.notify();
-        let picker = cx.entity();
-        // `Picker::matches_updated` borrows the picker, which is being
-        // updated now.
-        cx.defer(move |cx| picker.update(cx, |picker, cx| picker.matches_updated(true, cx)));
-    }
-
-    fn match_count(&self) -> usize {
-        self.matches.len()
-    }
-
-    fn match_id(&self, ix: usize) -> SharedString {
-        format!("run-task-row-{}", self.matches[ix]).into()
-    }
-
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
-        let label = self.labels[self.matches[ix]].clone();
-        div().truncate().child(label).into_any_element()
-    }
-
-    /// The task's label, as the row shows it.
-    fn match_label(&self, ix: usize, _: &App) -> SharedString {
-        self.labels[self.matches[ix]].clone().into()
-    }
-
-    fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
-        let label = self.labels[self.matches[ix]].clone();
-        self.restore_focus(window, cx);
-        let root = self.root.clone();
-        self.widget
-            .update(cx, |widget, cx| {
-                if widget.root(cx) == root
-                    && let (Some(root), Some(workbench)) = (root, widget.workbench.upgrade())
-                {
-                    workbench.update(cx, |workbench, cx| {
-                        workbench.choose_run_task(&root, label, cx)
-                    });
-                    widget.changed(cx);
-                }
-            })
-            .ok();
-        true
-    }
-
-    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.restore_focus(window, cx);
     }
 }

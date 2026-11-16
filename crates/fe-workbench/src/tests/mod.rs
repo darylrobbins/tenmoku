@@ -150,6 +150,7 @@ mod references_panel;
 mod restore_lsp_clean;
 mod run_process;
 mod run_widget_b3;
+mod run_widget_debug;
 mod runs_model;
 mod runs_panel;
 mod search_panel;
