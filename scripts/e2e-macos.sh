@@ -204,97 +204,129 @@ run() {
 # Process ownership. A run owns xcodebuild's process group, the runner (which testmanagerd
 # starts) and the app under test (which launchd starts), both outside that group and
 # matched by their paths in this run's build products and bundle, and every descendant
-# of any of them. A tracker records each one, as "pid start-time", every second while the
-# run lasts, so a descendant stays known after its parent has gone. Every recorded
-# process that is still the same process (pid and start time) is itself a root of the
-# next pass, so a child that an orphaned helper starts after its parent has exited is
-# found too (F1). Cleanup, which only the main shell runs, signals the recorded processes
-# that are still the same process.
+# of any of them. Ownership is kept across a parent's exit three ways:
+#   - every process found is recorded as "pid start-time", and a recorded process that is
+#     still the same process (pid and start time) stays owned, orphaned or not, so its
+#     later children are found too (F1);
+#   - a process group led by an owned process is owned: its members stay in it when the
+#     leader exits, so a child a process starts as it exits (on TERM, say) is still found;
+#   - before TERM, and before every KILL, the owned processes are frozen (SIGSTOP) and
+#     scanned again until a pass finds nothing new: a stopped process starts nothing and
+#     orphans nothing, so what is killed is the whole tree as it stands.
+# A scan is one `ps -A` snapshot, so it is cheap enough to repeat every 0.2 s while
+# cleanup waits. A tracker scans every second while the run lasts. Cleanup, which only the
+# main shell runs, signals only owned processes. What this can't follow, macOS having no
+# subreaper: a process that, between two scans, starts a child in a new session of its own
+# and exits, leaving the child neither its descendant nor in an owned group.
 run_pid=""
 watcher=""
 tail_pid=""
 tracker=""
 owned="$results/.owned-processes"
+owned_groups="$results/.owned-groups"
 
-roots() {
-	if [ -n "$run_pid" ]; then pgrep -g "$run_pid" 2>/dev/null || true; fi
-	pgrep -U "$(id -u)" -f "$derived/Build/Products/" 2>/dev/null || true
-	pgrep -U "$(id -u)" -f "$app/Contents/MacOS/tenmoku" 2>/dev/null || true
-	alive_owned
+# Prints the pids owned now, one per line, and records each new one in $owned (and each
+# group one leads in $owned_groups). Paths come through the environment, not argv, so the
+# awk can't match itself.
+# shellcheck disable=SC2016 # an awk program, its $ fields not the shell's
+scan_awk='
+BEGIN {
+	me = ENVIRON["E2E_SCAN_UID"]; group = ENVIRON["E2E_SCAN_GROUP"]
+	products = ENVIRON["E2E_SCAN_PRODUCTS"]; exe = ENVIRON["E2E_SCAN_EXE"]
+	rf = ENVIRON["E2E_SCAN_OWNED"]; gf = ENVIRON["E2E_SCAN_GROUPS"]
+	while ((getline line < rf) > 0) rec[line] = 1
+	close(rf)
+	while ((getline line < gf) > 0) grp[line] = 1
+	close(gf)
+}
+$5 !~ /^Z/ {
+	pid = $1; ppid[pid] = $2; pgid[pid] = $3; start[pid] = $6 " " $7 " " $8 " " $9 " " $10
+	n++; order[n] = pid
+	if ((group != "" && $3 == group) || ((pid " " start[pid]) in rec) ||
+	    ($4 == me && (($3 in grp) || index($0, products) || index($0, exe))))
+		own[pid] = 1
+}
+END {
+	do {
+		changed = 0
+		for (i = 1; i <= n; i++) {
+			p = order[i]
+			if (!(p in own) && (ppid[p] in own)) { own[p] = 1; changed = 1 }
+		}
+	} while (changed)
+	for (p in own) {
+		if (!((p " " start[p]) in rec)) print p " " start[p] >> rf
+		if (pgid[p] == p && !(p in grp)) print p >> gf
+		print p
+	}
+}'
+
+scan() {
+	ps -A -o pid= -o ppid= -o pgid= -o uid= -o stat= -o lstart= -o command= 2>/dev/null |
+		E2E_SCAN_UID=$(id -u) E2E_SCAN_GROUP=$run_pid \
+			E2E_SCAN_PRODUCTS="$derived/Build/Products/" E2E_SCAN_EXE="$app/Contents/MacOS/tenmoku" \
+			E2E_SCAN_OWNED="$owned" E2E_SCAN_GROUPS="$owned_groups" awk "$scan_awk" | sort -n
 }
 
-descendants() {
-	for child in $(pgrep -P "$1" 2>/dev/null || true); do
-		echo "$child"
-		descendants "$child"
+# Stops every owned process, then scans and stops again until a pass finds no process it
+# hasn't stopped; prints the owned pids, all stopped.
+freeze() {
+	frozen=""
+	passes=0
+	while [ "$passes" -lt 20 ]; do
+		passes=$((passes + 1))
+		now=$(scan)
+		if [ "$now" = "$frozen" ]; then break; fi
+		frozen=$now
+		# shellcheck disable=SC2086 # a list of pids
+		if [ -n "$frozen" ]; then kill -STOP $frozen 2>/dev/null || true; fi
 	done
+	printf '%s\n' "$frozen"
 }
 
-# A process's start time, spaces squeezed and trimmed (ps pads it); empty if it's gone.
-started_at() {
-	ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//'
-}
-
-record_owned() {
-	for owner in $(roots | sort -u); do
-		echo "$owner"
-		descendants "$owner"
-	done | sort -u | while read -r pid; do
-		started=$(started_at "$pid")
-		if [ -n "$started" ]; then echo "$pid $started"; fi
-	done >>"$owned"
-}
-
-# The recorded processes still alive (not zombies) with the start time recorded.
-alive_owned() {
-	[ -f "$owned" ] || return 0
-	sort -u "$owned" | while read -r pid started; do
-		state=$(ps -o stat= -p "$pid" 2>/dev/null) || continue
-		case "$state" in Z*) continue ;; esac
-		if [ "$(started_at "$pid")" = "$started" ]; then echo "$pid"; fi
-	done | sort -u
-}
-
-# TERM to every owned process still alive, then KILL to any left after $grace seconds,
-# and KILL again to any a killed process started meanwhile. Runs only in the main shell,
-# to the end, whatever xcodebuild does meanwhile.
+# Freezes the owned processes, sends them TERM and lets them go on; KILL, after another
+# freeze, to any left $grace seconds later; then KILL again, frozen first, to anything a
+# killed process left. Runs only in the main shell, to the end, whatever xcodebuild does
+# meanwhile.
 cleanup_run() {
 	if [ -n "$tracker" ]; then
 		kill "$tracker" 2>/dev/null || true
 		wait "$tracker" 2>/dev/null || true
 		tracker=""
 	fi
-	record_owned
-	pids=$(alive_owned)
-	# shellcheck disable=SC2086 # a list of pids
-	[ -z "$pids" ] || kill -TERM $pids 2>/dev/null || true
-	waited=0
-	while [ -n "$pids" ] && [ "$waited" -lt "$grace" ]; do
-		sleep 1
-		waited=$((waited + 1))
-		record_owned
-		pids=$(alive_owned)
+	pids=$(freeze)
+	if [ -n "$pids" ]; then
+		# shellcheck disable=SC2086 # a list of pids
+		kill -TERM $pids 2>/dev/null || true
+		# shellcheck disable=SC2086
+		kill -CONT $pids 2>/dev/null || true
+	fi
+	# By the clock, not by passes: on a loaded Mac a scan can take seconds.
+	deadline=$(($(date +%s) + grace))
+	while [ -n "$pids" ] && [ "$(date +%s)" -lt "$deadline" ]; do
+		sleep 0.2
+		pids=$(scan)
 	done
 	if [ -n "$pids" ]; then
+		pids=$(freeze)
 		# shellcheck disable=SC2086 # one line of pids
 		echo "e2e-macos: still running ${grace}s after TERM, sending KILL to:" $pids >&2
 		# shellcheck disable=SC2086
 		kill -KILL $pids 2>/dev/null || true
 	fi
 	tries=0
-	while [ -n "$pids" ] && [ "$tries" -lt 3 ]; do
-		sleep 1
+	while [ "$tries" -lt 3 ]; do
 		tries=$((tries + 1))
-		record_owned
-		pids=$(alive_owned)
-		if [ -n "$pids" ]; then
-			# shellcheck disable=SC2086 # one line of pids
-			echo "e2e-macos: still running after KILL, sending KILL again to:" $pids >&2
-			# shellcheck disable=SC2086
-			kill -KILL $pids 2>/dev/null || true
-		fi
+		sleep 0.5
+		pids=$(scan)
+		if [ -z "$pids" ]; then break; fi
+		pids=$(freeze)
+		# shellcheck disable=SC2086 # one line of pids
+		echo "e2e-macos: still running after KILL, sending KILL again to:" $pids >&2
+		# shellcheck disable=SC2086
+		kill -KILL $pids 2>/dev/null || true
 	done
-	rm -f "$owned"
+	rm -f "$owned" "$owned_groups"
 }
 
 on_signal() { # on_signal NAME STATUS
@@ -309,11 +341,12 @@ on_signal() { # on_signal NAME STATUS
 
 # Runs a command in a process group of its own, its output in $xcodebuild_log and shown
 # as it comes, then cleans up after it (cleanup_run). After $timeout seconds a watchdog
-# sends TERM, and KILL $grace seconds later, to the command's group, so the wait below
-# returns, and the status is 124. Everything else is cleanup_run's.
+# sends TERM, and KILL $grace seconds later (after a freeze), to the command's group, so
+# the wait below returns, and the status is 124. Everything else is cleanup_run's.
 run_watched() {
 	: >"$xcodebuild_log"
 	: >"$owned"
+	: >"$owned_groups"
 	set -m
 	"$@" >"$xcodebuild_log" 2>&1 &
 	run_pid=$!
@@ -322,7 +355,7 @@ run_watched() {
 	tail_pid=$!
 	(
 		while :; do
-			record_owned
+			scan >/dev/null
 			sleep 1
 		done
 	) &
@@ -344,7 +377,12 @@ run_watched() {
 			sleep 1
 			waited=$((waited + 1))
 		done
-		kill -KILL -- "-$run_pid" 2>/dev/null || true
+		# Frozen and recorded first, so a child the group's members started outside it
+		# stays owned once they're killed; cleanup_run deals with everything else.
+		if kill -0 -- "-$run_pid" 2>/dev/null; then
+			freeze >/dev/null
+			kill -KILL -- "-$run_pid" 2>/dev/null || true
+		fi
 	) &
 	watcher=$!
 	status=0
@@ -367,7 +405,9 @@ run_watched() {
 
 # The tests' own text attachments (ax-tree-*, launched-*, window-title-*, disk-*,
 # backups-*, pasteboard-*, scratch-*, tenmoku-log-* and so on, each named
-# <kind>-<test>-<iteration>), copied out of the export under the names the tests gave them.
+# <kind>-<test>-<iteration>-<n>, n counting the test's records of that kind, or
+# tenmoku-log-<test>-<iteration>), copied out of the export under the names the tests
+# gave them. Two attachments that would land on one name fail the copy.
 copy_named_attachments() {
 	manifest="$attachments/manifest.json"
 	[ -f "$manifest" ] || return 1
@@ -382,6 +422,10 @@ copy_named_attachments() {
 			*-test[A-Za-z0-9]*-[0-9][0-9][0-9]*)
 				# XCTest appends _<n>_<UUID> to a name; drop it and the extension.
 				base=$(printf '%s' "$name" | sed -E 's/(_[0-9]+_[0-9A-F-]{36})?(\.[a-z]+)?$//')
+				if [ -e "$results/$base.txt" ]; then
+					echo "e2e-macos: two attachments named $base" >&2
+					return 1
+				fi
 				cp "$attachments/$file" "$results/$base.txt" || return 1
 				;;
 			esac
@@ -470,6 +514,8 @@ run xcodegen generate --spec "$spec" --project "$e2e"
 # both sides of it).
 entitlements="$e2e/TenmokuE2E.entitlements"
 echo "+ write $(quote "$entitlements"): read-write exception for $(quote "$scratch/") only"
+# XML-escaped: a checkout or CARGO_TARGET_DIR may hold & or <.
+scratch_xml=$(printf '%s/' "$scratch" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
 if [ -z "$dry" ]; then
 	cat >"$entitlements" <<ENTITLEMENTS
 <?xml version="1.0" encoding="UTF-8"?>
@@ -478,11 +524,14 @@ if [ -z "$dry" ]; then
 <dict>
 	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
 	<array>
-		<string>$scratch/</string>
+		<string>$scratch_xml</string>
 	</array>
 </dict>
 </plist>
 ENTITLEMENTS
+	plutil -lint -s "$entitlements" || die "$entitlements is not a valid property list"
+	[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.temporary-exception.files.absolute-path.read-write:0' "$entitlements" 2>/dev/null)" = "$scratch/" ] ||
+		die "$entitlements does not grant $scratch/"
 fi
 
 only_args=""
@@ -560,16 +609,23 @@ if [ -z "$dry" ]; then
 		[ "$total" != "$tests" ] || [ "$summary_passed" != "$tests" ]; then
 		count_problem="expected $expected_runs passing test runs of $tests tests; the log shows $passed of $finished and the summary $summary_passed of $total"
 	fi
+	# Every launch record, a relaunch's second one included, must name only the bundle
+	# under test.
 	records=0
 	others=0
 	for record in "$results"/launched-*.txt; do
 		[ -f "$record" ] || continue
 		records=$((records + 1))
-		if grep '^pid ' "$record" | grep -qv " executable $app/Contents/MacOS/tenmoku "; then
+		if ! grep -q '^pid ' "$record" ||
+			grep '^pid ' "$record" | grep -qv " executable $app/Contents/MacOS/tenmoku "; then
 			others=$((others + 1))
+			echo "e2e-macos: $(basename "$record") names no process or another one: $(head -n 1 "$record")" >&2
 		fi
 	done
-	echo "launch records: $records, of which $others name a $e2e_id process other than $(quote "$app")"
+	echo "launch records: $records, of which $others name a $e2e_id process other than $(quote "$app"), or none"
+	if [ "$others" != 0 ] && [ -z "$count_problem" ]; then
+		count_problem="$others of $records launch records name no process or another one than the bundle under test"
+	fi
 fi
 echo "result bundle: $xcresult"
 echo "attachments: $attachments"

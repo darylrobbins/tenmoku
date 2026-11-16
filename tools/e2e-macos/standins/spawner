@@ -1,0 +1,11 @@
+#!/bin/sh
+# Ignores TERM. Every 0.5 s starts $1/loop-child in a new session, 120 at most (a minute,
+# so it's still at it when a run's cleanup kills it), then waits until killed.
+trap '' TERM
+n=0
+while [ "$n" -lt 120 ]; do
+	"$1/setsid" "$1/loop-child" &
+	n=$((n + 1))
+	sleep 0.5
+done
+while :; do sleep 1; done

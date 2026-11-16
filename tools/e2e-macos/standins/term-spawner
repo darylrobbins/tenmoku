@@ -1,0 +1,18 @@
+#!/bin/sh
+# Stand-in xcodebuild for review F1 (T1682): a child made during shutdown. It starts,
+# outside its own process group and at a path under the build products (as testmanagerd
+# starts the runner), MockTermSpawner-e2etest, which on TERM starts late-child (which
+# ignores TERM) and exits at once, so the child's parent is gone before the next scan.
+# MODE=hang: waits until TERM (default action). MODE=exit: exits 0 at 5 s.
+M=$(cd "$(dirname "$0")" && pwd)
+while [ $# -gt 0 ]; do
+	[ "$1" = -derivedDataPath ] && derived=$2
+	shift
+done
+dir="$derived/Build/Products/Debug"
+mkdir -p "$dir"
+cp "$M/spawn-on-term" "$dir/MockTermSpawner-e2etest"
+"$M/setsid" "$dir/MockTermSpawner-e2etest" "$M/late-child" &
+echo "stand-in: term-spawner started"
+if [ "$MODE" = exit ]; then sleep 5; exit 0; fi
+while :; do sleep 1; done

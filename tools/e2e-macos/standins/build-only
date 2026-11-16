@@ -1,0 +1,20 @@
+#!/bin/sh
+# Stand-in xcodebuild for review F3 (T1682): builds the test bundle for real, with the
+# script's project, derived data and CODE_SIGN_ENTITLEMENTS, but runs no test (no UI),
+# then prints the runner's read-write exception as signed, and exits 1 (nothing ran).
+project="" derived="" entitlements=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-project) project=$2; shift ;;
+	-derivedDataPath) derived=$2; shift ;;
+	CODE_SIGN_ENTITLEMENTS=*) entitlements=${1#CODE_SIGN_ENTITLEMENTS=} ;;
+	esac
+	shift
+done
+xcodebuild build-for-testing -project "$project" -scheme TenmokuE2E -destination platform=macOS \
+	-derivedDataPath "$derived" CODE_SIGN_ENTITLEMENTS="$entitlements" -quiet || exit 2
+echo "stand-in: built; runner's read-write exception as signed:"
+codesign -d --entitlements - --xml "$derived/Build/Products/Debug/TenmokuE2E-Runner.app" 2>/dev/null |
+	plutil -extract 'com\.apple\.security\.temporary-exception\.files\.absolute-path\.read-write' xml1 -o - - 2>/dev/null |
+	sed -n 's/.*<string>\(.*\)<\/string>.*/stand-in: \1/p'
+exit 1

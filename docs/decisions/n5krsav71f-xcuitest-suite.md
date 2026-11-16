@@ -84,11 +84,36 @@ The spike record's open item: `record_owned` walked down only from the current r
 paths), so a recorded helper orphaned when its parent exited, which then started a
 child, left that child running on every exit path.
 
-Fixed: `roots()` now also returns every recorded process that is still the same process
-(`alive_owned`: alive, not a zombie, with the start time recorded), so each tracker pass,
-every second while the run lasts, and each pass in `cleanup_run` walk down from them too.
-Cleanup sends TERM to every owned process, KILL to any left 10 s later, then checks again
-up to three times and sends KILL to anything a killed process started meanwhile.
+Fixed, in two rounds.
+
+1. Every recorded process that is still the same process (alive, not a zombie, with
+   the start time recorded) is itself a root, so each tracker pass and each cleanup pass
+   walk down from it too.
+2. Review round 1 (finding F1 of T1682's review) found two shutdown cases the first
+   round missed. A recorded process may handle TERM by starting a child and exiting
+   before the next scan, so no root leads to the child. And a child started just before
+   the KILL, whose parent is then killed, is never seen. The script now:
+   - owns every **process group led by an owned process**: a child stays in its parent's
+     group when the parent exits, so the TERM-time child is still found;
+   - **freezes before signalling**: before TERM, and before every KILL (the watchdog's
+     included), it sends SIGSTOP to every owned process and scans again until a pass
+     finds nothing new. A stopped process starts nothing and orphans nothing, so what
+     gets TERM or KILL is the whole tree as it stands. TERM is followed by CONT;
+   - scans with **one `ps -A` snapshot**, worked through in awk, instead of a `pgrep`
+     and a `ps` per process. That made the 0.2 s scans during the grace period
+     affordable. The first `spawn-loop` run took 149 s on the per-process scans. The
+     grace period is measured by the clock, not by passes, because one stand-in run on
+     the loaded Mac (load average 17, other lanes building) took 451 s with
+     pass-counted waits.
+
+Cleanup: freeze, TERM and CONT; scans every 0.2 s for up to 10 s; then freeze and KILL
+what is left; then up to three more scans, each freezing and killing anything a killed
+process left.
+
+**What it still can't follow:** macOS has no subreaper. A process that, between two
+scans, starts a child in a new session of its own and then exits leaves that child
+neither its descendant nor in an owned group. No stand-in covers this, because the
+script can't catch it. Neither the runner, the app nor xcodebuild's helpers do it.
 
 ### The stand-ins
 
@@ -115,25 +140,41 @@ e2e-macos: FAILED (timed out after 8s)
 exit 124; pgrep afterwards: 42799 /bin/sh …/tools/e2e-macos/standins/late-child
 ```
 
-**After the fix** (KILL lists include the stand-ins' own `sleep` children):
+**Before review round 1's fix** (the script at `b611b40d6`), `term-spawner`, `MODE=hang`,
+`--timeout 4`: the TERM-time child was left running.
 
-| Stand-in | Run | Result |
-|---|---|---|
-| `late-orphan`, `MODE=hang` | `--timeout 8` | `late-helper (pid 55781, parent gone) started late-child pid 56201`, `timed out after 8s`, `still running 10s after TERM, sending KILL to: 55781 56201 59306`, `FAILED (timed out after 8s)`, **exit 124**, nothing left |
-| `late-orphan`, `MODE=exit` (exits 0 at 8 s) | default | `started late-child pid 60856`, `sending KILL to: 60305 60856 63726`, `FAILED (xcodebuild exited 0, but these could not be exported: attachments, tests.json, summary.json, named attachments)`, **exit 1**, nothing left |
-| `late-orphan`, `MODE=hang` | SIGINT | `started late-child pid 65663`, `got SIGINT; stopping …`, `sending KILL to: 64826 65663 68119 68172`, `FAILED (SIGINT)`, **exit 130**, nothing left |
-| `late-orphan`, `MODE=hang` | SIGTERM | `started late-child pid 69575`, `got SIGTERM; stopping …`, `sending KILL to: 69095 69575 71338 71426`, `FAILED (SIGTERM)`, **exit 143**, nothing left |
-| `family`, `MODE=hang` | `--timeout 4` | `timed out after 4s`, `sending KILL to: 72181 72194 72195 74877 74984`, `FAILED (timed out after 4s)`, exit 124, nothing left (as in the spike record) |
-| `family`, `MODE=exit` | default | `sending KILL to: 75903 75909 75911 78875 78876`, `FAILED (xcodebuild exited 0, but these could not be exported: …)`, exit 1, nothing left (as before) |
-| `family`, `MODE=hang` | SIGINT | `got SIGINT; …`, `sending KILL to:` 6 pids, `FAILED (SIGINT)`, exit 130, nothing left (as before) |
-| `family`, `MODE=hang` | SIGTERM | `got SIGTERM; …`, `sending KILL to:` 6 pids, `FAILED (SIGTERM)`, exit 143, nothing left (as before) |
-| `hang-ignore-term` | `--timeout 3` | `FAILED (timed out after 3s)`, exit 124 after 18 s, nothing left (as before) |
-| `exit-zero` | default | `FAILED (xcodebuild exited 0, but these could not be exported: attachments, tests.json, summary.json, named attachments)`, exit 1 (as before) |
+```
+e2e-macos: timed out after 4s; stopping xcodebuild, the runner and the app
+stand-in: spawn-on-term got TERM, started pid 16727 and exits
+e2e-macos: FAILED (timed out after 4s)
+exit 124; pgrep afterwards: 16727 /bin/sh …/tools/e2e-macos/standins/late-child
+```
+
+**With the final script** (2026-11-16 08:18, after review round 1; KILL lists include the
+stand-ins' own `sleep` children). Every run ended with the expected status, and nothing
+was left on any of them: `pgrep -fl 'e2etest|standins/|helper-resist|helper-orphan'` found
+none each time.
+
+| Stand-in | `--timeout` | `MODE=exit` | SIGINT | SIGTERM |
+|---|---|---|---|---|
+| `term-spawner` (child made on TERM, parent exits at once) | `spawn-on-term got TERM, started pid 66591 and exits`, `sending KILL to: 66591 66854`, `FAILED (timed out after 4s)`, **124** | `started pid 67489`, `KILL to: 67489 67817`, `FAILED (xcodebuild exited 0, but these could not be exported: …)`, **1** | `started pid 68550`, `KILL to: 68550 68846`, `FAILED (SIGINT)`, **130** | `started pid 69379`, `KILL to: 69379 69654`, `FAILED (SIGTERM)`, **143** |
+| `spawn-loop` (new-session children up to the KILL) | `KILL to:` 55 pids, `FAILED (timed out after 4s)`, **124** | 55 pids, `FAILED (xcodebuild exited 0, …)`, **1** | 41 pids, `FAILED (SIGINT)`, **130** | 45 pids, `FAILED (SIGTERM)`, **143** |
+| `late-orphan` (F1: orphan's late child) | `late-helper (pid 74495, parent gone) started late-child pid 74534`, `KILL to: 74495 74534 74844 74845`, **124** | `started late-child pid 75576`, `KILL to: 75539 75576 …`, **1** | `started late-child pid 76494`, `KILL to: 76461 76494 …`, **130** | `started late-child pid 77362`, `KILL to: 77330 77362 …`, **143** |
+| `family` (the spike record's four runs) | `--timeout 4`, `KILL to:` 6 pids, **124** | 6 pids, **1** | 6 pids, **130** | 6 pids, **143** |
+
+The spike record's other stand-ins gave the same results as before: `hang-ignore-term`
+`--timeout 3` ended `FAILED (timed out after 3s)` with exit 124 after 19 s, and
+`exit-zero` ended `FAILED (xcodebuild exited 0, but these could not be exported:
+attachments, tests.json, summary.json, named attachments)` with exit 1. The four-path runs
+took 13 to 22 s each.
 
 `short-run`, with `MOCK_XCRESULT` set to the C7 run's result bundle (13 tests, all
 passed): `test runs: 2 passed of 2 finished, 13 expected; summary: 13 passed of 13 tests`,
 then `FAILED (expected 13 passing test runs of 13 tests; the log shows 2 of 2 and the
-summary 13 of 13)`, exit 1, as before.
+summary 13 of 13)`, exit 1, as before. With the final script it also reports `two
+attachments named window-title-testFirstRunWizardOnce-001`, because that bundle predates
+the record numbering (F2). The copy now refuses names that clash, and the run fails with
+`could not be exported: named attachments`, exit 1.
 
 ## Open questions from the spike record
 
@@ -200,6 +241,15 @@ and passes it to `xcodebuild test`. The runner stays sandboxed: it reads anywher
 writes only its container and that folder, never the repository or the fixtures.
 `testRunnerWritesOnlyItsScratch` checks both sides in every run: a write in the test's
 set works, and one in the scratch root beside this run's folder is refused.
+
+The path is XML-escaped (`&`, `<`, `>`) before it goes into the plist (review finding
+F3), and the script checks the file with `plutil -lint`, then that PlistBuddy reads back
+exactly the scratch path, or it stops. The generation step, given a scratch path holding
+`a&b <c>`, gives a valid plist granting that path. The `build-only` stand-in ran the
+script with `CARGO_TARGET_DIR=<tmp>/t&x` (a `release/tenmoku` link to the lane's binary).
+xcodegen, a real `xcodebuild build-for-testing` with the script's
+`CODE_SIGN_ENTITLEMENTS` and the signing all worked, and the runner came out signed with
+the exception `<tmp>/t&amp;x/e2e-macos/scratch/20261116-075924/` (`&` as XML gives it).
 
 At runtime it holds. In the first UI run (`--only testRunnerWritesOnlyItsScratch`,
 2026-11-16 05:03) the test's record reads:
@@ -308,9 +358,15 @@ option, and the log has exactly 39 finished runs). **Flakes: none.** The suite t
 | testVimClipboardUnnamedplus | 7.1 s | 7.0 s | 7.1 s |
 | testWindowTitleDirtyAndActive | 23.4 s | 24.4 s | 23.6 s |
 
-**The user's Tenmoku and the installed copies were untouched.** All 36 launch records
-(the 12 tests that launch the app, three times each) name only
-`<worktree>/target/e2e-macos/bundle/Tenmoku.app/Contents/MacOS/tenmoku`. None notes a
+**The user's Tenmoku and the installed copies were untouched.** The 36 exported launch
+records name only `<worktree>/target/e2e-macos/bundle/Tenmoku.app/Contents/MacOS/tenmoku`.
+That is one per launching test and iteration. Review finding F2 showed that the four
+relaunch tests' second launch records (12 in all) shared a name with their first, and
+only one copy survived the export. Each of those launches was still checked in the
+test itself: `recordLaunch()` asserts that the running `dev.tenmoku.tenmoku.e2e` is the
+bundle under test, and every test passed. Records are now numbered per kind
+(`launched-<test>-<iteration>-<n>`), the copy refuses two attachments with one name, and
+the script fails a run if any launch record names no process or another one. None notes a
 `dev.tenmoku.tenmoku` process: the user's own Tenmoku wasn't running during the run.
 `/Applications/Tenmoku.app/Contents/Info.plist` and
 `~/Applications/Tenmoku.app/Contents/Info.plist` are both from Nov 9 15:45, before the

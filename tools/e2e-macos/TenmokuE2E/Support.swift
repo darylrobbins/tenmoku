@@ -473,11 +473,17 @@ class E2ETestCase: XCTestCase {
 
     // MARK: Records
 
-    /// An attachment named <kind>-<test>-<slot>; the script copies it to its results
-    /// folder as <kind>-<test>-<slot>.txt.
+    /// How many records of each kind this test has made.
+    var recordCounts: [String: Int] = [:]
+
+    /// An attachment named <kind>-<test>-<slot>-<n>, n counting this test's records of that
+    /// kind (a relaunch test's second launch record is launched-…-2); the script copies it
+    /// to its results folder as <kind>-<test>-<slot>-<n>.txt, so none overwrites another.
     func record(_ kind: String, _ text: String) {
+        let count = (recordCounts[kind] ?? 0) + 1
+        recordCounts[kind] = count
         let attachment = XCTAttachment(string: text)
-        attachment.name = "\(kind)-\(shortName)-\(slot)"
+        attachment.name = "\(kind)-\(shortName)-\(slot)-\(count)"
         attachment.lifetime = .keepAlways
         add(attachment)
     }

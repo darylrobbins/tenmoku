@@ -1,0 +1,18 @@
+#!/bin/sh
+# Stand-in xcodebuild for review F1 (T1682): children made right up to the KILL. It
+# starts, outside its own process group and at a path under the build products,
+# MockSpawnLoop-e2etest, which ignores TERM and every 0.5 s starts another loop-child in a
+# session of its own (so neither its group nor, once it's killed, its parent leads to it),
+# 120 at most. MODE=hang: waits until TERM (default action). MODE=exit: exits 0 at 5 s.
+M=$(cd "$(dirname "$0")" && pwd)
+while [ $# -gt 0 ]; do
+	[ "$1" = -derivedDataPath ] && derived=$2
+	shift
+done
+dir="$derived/Build/Products/Debug"
+mkdir -p "$dir"
+cp "$M/spawner" "$dir/MockSpawnLoop-e2etest"
+"$M/setsid" "$dir/MockSpawnLoop-e2etest" "$M" &
+echo "stand-in: spawn-loop started"
+if [ "$MODE" = exit ]; then sleep 5; exit 0; fi
+while :; do sleep 1; done

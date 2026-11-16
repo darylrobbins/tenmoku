@@ -1,0 +1,4 @@
+#!/bin/sh
+# On TERM: starts $1 as a child, says so, and exits at once.
+trap '"$1" & echo "stand-in: spawn-on-term got TERM, started pid $! and exits"; exit 0' TERM
+while :; do sleep 1; done
