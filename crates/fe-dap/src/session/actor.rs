@@ -792,13 +792,16 @@ impl Actor {
             .clone()
             .unwrap_or_default();
         if !offered.is_empty() || !self.supports_configuration_done() {
-            let filters = self.options.exception_filters.clone().unwrap_or_else(|| {
-                offered
-                    .iter()
-                    .filter(|filter| filter.default == Some(true))
-                    .map(|filter| filter.filter.clone())
-                    .collect()
-            });
+            let chosen = lock(&self.shared.exception_filters).clone();
+            let filters = chosen
+                .or_else(|| self.options.exception_filters.clone())
+                .unwrap_or_else(|| {
+                    offered
+                        .iter()
+                        .filter(|filter| filter.default == Some(true))
+                        .map(|filter| filter.filter.clone())
+                        .collect()
+                });
             let arguments = SetExceptionBreakpointsArguments {
                 filters,
                 ..Default::default()

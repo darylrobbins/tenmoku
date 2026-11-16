@@ -81,15 +81,16 @@ use fe_dap::{
     HostOs, LocalLauncher, LogEntry, RequestError, Resume, Session, SessionError, SessionState,
     SystemClock, TerminalReply, TerminalStarted, Timeouts,
     protocol::{
-        Breakpoint as AdapterBreakpoint, BreakpointBody, BreakpointsBody, OutputBody,
-        SetBreakpointsArguments, Source, SourceBreakpoint, StackFrame, request,
+        Breakpoint as AdapterBreakpoint, BreakpointBody, BreakpointsBody,
+        ExceptionBreakpointsFilter, OutputBody, SetBreakpointsArguments,
+        SetExceptionBreakpointsArguments, Source, SourceBreakpoint, StackFrame, request,
     },
 };
 use fe_editor::EditorModel;
 use futures::{StreamExt as _, channel::mpsc};
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _,
-    Global, Subscription, Task, WeakEntity, Window,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable as _, Global, Subscription, Task, WeakEntity, Window,
 };
 use kiln_l10n::tr;
 
@@ -304,6 +305,8 @@ struct Running {
     id: u64,
     /// Its configuration's name.
     name: String,
+    /// Its adapter's name, which the exception filters chosen are kept by.
+    adapter: String,
     /// The canonical root it debugs.
     root: PathBuf,
     session: Session,
@@ -360,6 +363,10 @@ pub struct Debugger {
     /// The arguments `debug.start_with_args` asked for, which the next
     /// configuration picked from the picker starts with.
     pending_args: Option<Vec<String>>,
+    /// The exception filters turned on in the Debug tool window (D9), by
+    /// adapter: each of its sessions starts with them, rather than the
+    /// adapter's defaults, for the window's life.
+    chosen_filters: HashMap<String, Vec<String>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -412,6 +419,12 @@ impl Debugger {
         (self.session.as_ref())
             .and_then(|running| running.verification.get(path))
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// The session's number in the window, or the last one's: a restart
+    /// keeps it.
+    pub fn session_id(&self) -> Option<u64> {
+        self.session.as_ref().map(|running| running.id)
     }
 
     /// The configuration of the session, or of the last one.
@@ -468,6 +481,75 @@ impl Debugger {
     pub fn run_to_cursor_target(&self) -> Option<(&Path, u32)> {
         let one_shot = self.session.as_ref()?.one_shot.as_ref()?;
         Some((one_shot.path.as_path(), one_shot.line))
+    }
+
+    /// The exception filters the session's adapter offers, or the last
+    /// session's, each with whether it's on: as chosen in the Debug tool
+    /// window ([`Debugger::set_exception_filter`]), else as the adapter's
+    /// default has it. Empty with no session yet.
+    pub fn exception_filters(&self) -> Vec<(ExceptionBreakpointsFilter, bool)> {
+        let Some(running) = self.session.as_ref() else {
+            return Vec::new();
+        };
+        let offered = (running.session.capabilities())
+            .exception_breakpoint_filters
+            .unwrap_or_default();
+        let chosen = self.chosen_filters.get(&running.adapter);
+        (offered.into_iter())
+            .map(|filter| {
+                let on = match chosen {
+                    Some(chosen) => chosen.contains(&filter.filter),
+                    None => filter.default == Some(true),
+                };
+                (filter, on)
+            })
+            .collect()
+    }
+
+    /// Turns the exception filter `filter` on or off for the session's
+    /// adapter, its sessions from now on, and sends the filters on again
+    /// in a `setExceptionBreakpoints` (which replaces the set) while the
+    /// session hasn't ended.
+    pub fn set_exception_filter(&mut self, filter: &str, on: bool, cx: &mut Context<Self>) {
+        let filters: Vec<String> = (self.exception_filters().into_iter())
+            .filter(|(offered, was)| if offered.filter == filter { on } else { *was })
+            .map(|(offered, _)| offered.filter)
+            .collect();
+        let Some(running) = self.session.as_ref() else {
+            return;
+        };
+        // Every later configuration of this session sends them too: an
+        // emulated restart launches the adapter afresh.
+        running.session.set_exception_filters(filters.clone());
+        self.chosen_filters.insert(running.adapter.clone(), filters);
+        self.send_exception_filters(cx);
+        cx.notify();
+    }
+
+    /// Sends the exception filters chosen for the session's adapter, if
+    /// any were and the session is live: after a toggle, and after a
+    /// native restart (an emulated one configures with them itself).
+    fn send_exception_filters(&mut self, cx: &mut Context<Self>) {
+        let Some(running) = self.session.as_ref().filter(|running| running.live()) else {
+            return;
+        };
+        let Some(filters) = self.chosen_filters.get(&running.adapter).cloned() else {
+            return;
+        };
+        let arguments = SetExceptionBreakpointsArguments {
+            filters,
+            ..Default::default()
+        };
+        let reply = (running.session).request::<request::SetExceptionBreakpoints>(&arguments);
+        cx.spawn(async move |_, cx| {
+            if let Err(error) = reply.await
+                && worth_saying(&error)
+            {
+                let message = tr!("workbench-debug-exception-filters-failed");
+                cx.update(|cx| toast::show(cx, Toast::error(message).detail(error.to_string())));
+            }
+        })
+        .detach();
     }
 
     fn current(&mut self, id: u64) -> Option<&mut Running> {
@@ -718,6 +800,7 @@ pub(crate) fn init(cx: &mut App) {
             java: crate::debug_java::JavaJar::default(),
             extra_args: HashMap::new(),
             pending_args: None,
+            chosen_filters: HashMap::new(),
             _subscriptions: vec![trust, root, rerun],
         });
         // The toolbar gives way to modals (`debug_toolbar`).
@@ -1236,6 +1319,11 @@ impl Workbench {
         if !self.root_trusted() || self.root().map(canonical).as_ref() != Some(&root) {
             return give_up(untrusted_toast(), cx);
         }
+        // The exception filters chosen for its adapter, if any were.
+        let chosen = (debugger.read(cx).chosen_filters)
+            .get(&options.adapter.name)
+            .cloned();
+        options.exception_filters = chosen.or(options.exception_filters.take());
         // The store as it is now, and followed from now on.
         let store = self.breakpoint_store(cx);
         if let Some(store) = &store {
@@ -1252,6 +1340,7 @@ impl Workbench {
             })
             .collect();
         let adapter = options.adapter.clone();
+        let adapter_name = adapter.name.clone();
         let (events, mut received) = mpsc::unbounded();
         let launcher = host.launcher(&settings);
         let session = Session::start(options, launcher, host.clock.clone(), {
@@ -1290,6 +1379,7 @@ impl Workbench {
             debugger.session = Some(Running {
                 id,
                 name,
+                adapter: adapter_name,
                 root,
                 session,
                 state: SessionState::Launching,
@@ -1509,6 +1599,13 @@ impl Workbench {
         for path in flush {
             self.send_breakpoints(id, &path, cx);
         }
+        // A restart that launched the program afresh configured it with the
+        // filters it started with: the ones chosen since go again.
+        let restarted = was == SessionState::Restarting
+            && matches!(state, SessionState::Running | SessionState::Stopped);
+        if restarted {
+            debugger.update(cx, |debugger, cx| debugger.send_exception_filters(cx));
+        }
         match &state {
             SessionState::Running if was != SessionState::Running => {
                 announce(cx, tr!("workbench-debug-running"));
@@ -1607,7 +1704,7 @@ impl Workbench {
             return;
         }
         if let Some(path) = path {
-            self.show_stop(id, epoch, path, line, window, cx);
+            self.show_stop(id, epoch, path, line, None, window, cx);
         }
         announce(cx, tr!("workbench-debug-stopped-at-line", line = line));
     }
@@ -1616,12 +1713,17 @@ impl Workbench {
     /// at `epoch`: at once if it's in a tab, else once it's read off the
     /// main thread, and then only if that stop is still the session's. The
     /// read goes with the stop ([`Running::navigation`]).
+    ///
+    /// With `keep`, focus goes back there once the file is shown: a frame
+    /// selected in the call stack leaves the keys in it.
+    #[allow(clippy::too_many_arguments)]
     fn show_stop(
         &mut self,
         id: u64,
         epoch: Epoch,
         path: PathBuf,
         line: u32,
+        keep: Option<FocusHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1635,9 +1737,12 @@ impl Workbench {
             .flatten()
             .map(|(_, over)| over);
         if saving.is_none() && self.pane().read(cx).position(&path).is_some() {
-            return self
-                .open_document_at(path, Some(line), None, window, cx)
+            self.open_document_at(path, Some(line), None, window, cx)
                 .detach();
+            if let Some(keep) = keep {
+                window.focus(&keep, cx);
+            }
+            return;
         }
         #[cfg(test)]
         let gate = cx.try_global::<StopOpenGate>().map(|gate| gate.0.clone());
@@ -1670,7 +1775,7 @@ impl Workbench {
                     let Some(result) = result else {
                         // The Save As is over and left no tab of the file:
                         // read it now, as the stop's own navigation.
-                        return workbench.show_stop(id, epoch, path, line, window, cx);
+                        return workbench.show_stop(id, epoch, path, line, keep, window, cx);
                     };
                     // The read lands now, in the tab it opens.
                     pane.update(cx, |pane, cx| {
@@ -1684,6 +1789,9 @@ impl Workbench {
                     }
                 }
                 (workbench.open_document_at(path, Some(line), None, window, cx)).detach();
+                if let Some(keep) = keep {
+                    window.focus(&keep, cx);
+                }
             });
             landed.ok();
         });
@@ -1693,6 +1801,41 @@ impl Workbench {
                     running.navigation = Some(navigation);
                 }
             });
+        }
+    }
+
+    /// A frame of the stop at `epoch` that the call stack selected (D9),
+    /// if that stop is still the session's: gives up the opening of the
+    /// frame selected before, if it's still under way, then opens `path`, if
+    /// the frame has one, with the caret on 1-based `line`, as the stop
+    /// opened its own, the read going with the stop.
+    ///
+    /// With `keep`, focus goes back there once the file is shown.
+    pub(crate) fn show_debug_frame(
+        &mut self,
+        epoch: Epoch,
+        path: Option<PathBuf>,
+        line: u32,
+        keep: Option<FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(debugger) = self.debugger(cx) else {
+            return;
+        };
+        let Some(id) = debugger.read(cx).session.as_ref().map(|running| running.id) else {
+            return;
+        };
+        if !self.stop_is_current(id, epoch, cx) {
+            return;
+        }
+        debugger.update(cx, |debugger, _| {
+            if let Some(running) = debugger.current(id) {
+                running.navigation = None;
+            }
+        });
+        if let Some(path) = path {
+            self.show_stop(id, epoch, path, line, keep, window, cx);
         }
     }
 

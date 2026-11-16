@@ -73,7 +73,7 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                         | "terminal"
                         | "picker"
                         | "text_input"
-                        | "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit || vim_line || git_log_panel) && text_input"
+                        | "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit || vim_line || git_log_panel || debug_panel) && text_input"
                         | "search_panel"
                         | "search_panel && text_input"
                         | "find_bar"
@@ -106,8 +106,8 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                         | "completion"
                         | "ghost_text"
                         | "editor && proposal"
-                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || quickfix_panel || search_results || git_panel) && vim && !editor && !text_input"
-                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel) && vim && !editor && !text_input"
+                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
                 )
             )
     };

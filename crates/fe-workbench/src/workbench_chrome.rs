@@ -15,9 +15,10 @@ use super::toast;
 use super::{Launch, LayoutKeys, TERMINAL_BUTTON, Workbench, active_diff_view};
 
 /// The rail's foot buttons, each its bottom tool window's id.
-const BOTTOM_BUTTONS: [&str; 4] = [
+const BOTTOM_BUTTONS: [&str; 5] = [
     crate::dock::PROBLEMS_BUTTON,
     crate::dock::RUNS_BUTTON,
+    crate::dock::DEBUG_BUTTON,
     crate::dock::GIT_LOG_BUTTON,
     TERMINAL_BUTTON,
 ];
@@ -246,6 +247,7 @@ impl Workbench {
                 self.dock.read(cx).problems().focus_handle(cx)
             }
             id if id == crate::dock::RUNS_BUTTON => self.runs_panel.focus_handle(cx),
+            id if id == crate::dock::DEBUG_BUTTON => self.debug_panel.focus_handle(cx),
             id if id == crate::dock::GIT_LOG_BUTTON => match self.dock.read(cx).git_log() {
                 Some(git_log) => git_log.focus_handle(cx),
                 None => return false,
@@ -269,6 +271,7 @@ impl Workbench {
         let sidebar = self.dock.read(cx);
         self.terminal.read(cx).is_focused(window, cx)
             || (self.runs_panel.focus_handle(cx)).contains_focused(window, cx)
+            || (self.debug_panel.focus_handle(cx)).contains_focused(window, cx)
             || sidebar
                 .problems()
                 .focus_handle(cx)

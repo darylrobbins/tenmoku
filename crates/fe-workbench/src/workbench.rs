@@ -149,7 +149,7 @@ pub struct Workbench {
     /// up goes back there ([`crate::dock_leave`]): until focus leaves any
     /// of them, which the subscriptions hear.
     pub(crate) bottom_from_sidebar: bool,
-    _bottom_tools: [Subscription; 4],
+    _bottom_tools: [Subscription; 5],
     /// Reads the recent list again for a shown Start page when it changes.
     _recents: Subscription,
     /// The window's shell around the panes, which it keeps in step: their
@@ -279,6 +279,8 @@ pub struct Workbench {
     pub(crate) runs: Entity<crate::runs::Runs>,
     /// The bottom panel's list of them ([`crate::runs_panel`]).
     pub(crate) runs_panel: Entity<crate::runs_panel::RunsPanel>,
+    /// The bottom panel's Debug tool window ([`crate::debug_panel`]).
+    pub(crate) debug_panel: Entity<crate::debug_panel::DebugPanel>,
     /// What's going on in the background, the runs' among it
     /// ([`crate::operations`]).
     pub(crate) operations: Entity<crate::operations::Operations>,
@@ -483,6 +485,8 @@ impl Workbench {
         let workbench = cx.weak_entity();
         let runs_panel =
             cx.new(|cx| crate::runs_panel::RunsPanel::new(&runs, workbench, window, cx));
+        let workbench = cx.weak_entity();
+        let debug_panel = cx.new(|cx| crate::debug_panel::DebugPanel::new(workbench, cx));
         let terminal_dock = cx.new(|cx| {
             // Its tool windows are shown by the sidebar's foot buttons and
             // their commands, so it draws no rail of its own: its tabs, in
@@ -495,6 +499,7 @@ impl Workbench {
             let mut dock = kiln_shell::Dock::with_state(state);
             dock.add_panel(problems.clone(), cx);
             dock.add_panel(runs_panel.clone(), cx);
+            dock.add_panel(debug_panel.clone(), cx);
             dock.add_panel(terminal.clone(), cx);
             dock.add_panel(git_log.clone(), cx);
             dock.dock_mut().set_visible(false);
@@ -504,6 +509,7 @@ impl Workbench {
         let bottom_tools = [
             problems.focus_handle(cx),
             runs_panel.focus_handle(cx),
+            debug_panel.focus_handle(cx),
             terminal.focus_handle(cx),
             git_log.focus_handle(cx),
         ];
@@ -821,6 +827,7 @@ impl Workbench {
             inbox,
             runs,
             runs_panel,
+            debug_panel,
             operations,
             toolbar_picker,
             breadcrumbs: true,

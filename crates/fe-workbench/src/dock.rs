@@ -7,7 +7,8 @@
 //! (the Explorer), Search, Changes (Source Control), Agents (the lanes,
 //! [`agents_panel`]) and Chat, then the
 //! panels shown on first use; its foot is the bottom panel's tool windows,
-//! Problems, Runs, the Git log and Terminal ([`rail_actions`]), which the bottom
+//! Problems, Runs, the Git log and Terminal ([`rail_actions`]), and Debug after
+//! Runs once a session has started ([`Dock::join_debug`]), which the bottom
 //! dock shows under its own tab strip ([`BOTTOM_PANEL_HEIGHT`]): a click
 //! runs the tool window's command, or hides the bottom dock if it shows
 //! that one ([`DockEvent::Action`]). Changes' button counts the changed
@@ -58,6 +59,7 @@ use crate::{
     ProjectPanel, ReferencesPanel,
     agents_panel::{self, AgentsPanel},
     ai_changes_panel::AiChangesPanel,
+    debug_panel::{self, DebugPanel},
     outline_panel::CaretSymbol,
     runs_panel::{self, RunsPanel},
     search_panel::{self, SearchPanel},
@@ -245,6 +247,20 @@ pub(crate) const PROBLEMS_BUTTON: &str = DockPanel::Problems.0.0;
 /// The Runs tool window's id in the bottom dock, and its rail button's.
 pub(crate) const RUNS_BUTTON: &str = runs_panel::PANEL;
 
+/// The Debug tool window's id in the bottom dock, and its rail button's.
+pub(crate) const DEBUG_BUTTON: &str = debug_panel::PANEL;
+
+/// The Debug tool window's rail action, which joins the rail's foot after
+/// Runs' the first time a session starts ([`Dock::join_debug`]).
+pub(crate) fn debug_rail_action() -> RailAction {
+    RailAction {
+        id: DEBUG_BUTTON,
+        icon: debug_panel::ICON,
+        title: tr!("workbench-debug-panel-title"),
+        command: debug_panel::SHOW_COMMAND,
+    }
+}
+
 /// The Git log tool window's id in the bottom dock, and its rail button's:
 /// the id it had on the sidebar before it was Source Control's Graph, which
 /// layouts saved then name.
@@ -421,6 +437,30 @@ impl DockItem for RunsPanel {
     }
 }
 
+/// The bottom panel's Debug tool window, titled from the catalogue. A
+/// session shows it without taking focus; `debug.show_panels` focuses it.
+impl DockItem for DebugPanel {
+    fn id(&self) -> PanelId {
+        PanelId(DEBUG_BUTTON)
+    }
+
+    fn title(&self, _: &App) -> SharedString {
+        tr!("workbench-debug-panel-title")
+    }
+
+    fn icon(&self, _: &App) -> Icon {
+        debug_panel::ICON
+    }
+
+    fn show_command(&self) -> Option<&'static str> {
+        Some(debug_panel::SHOW_COMMAND)
+    }
+
+    fn focus_on_show(&self) -> bool {
+        false
+    }
+}
+
 /// The bottom panel's Git log tool window, its tab titled with what it
 /// lists ([`GitLogPanel::title`]), as Graph's header was.
 impl DockItem for GitLogPanel {
@@ -525,6 +565,10 @@ pub struct Dock {
     /// errors.
     changed_files: usize,
     errors: usize,
+    /// The Debug tool window's action has joined the rail, and whether a
+    /// session is stopped, which its dot says.
+    debug_joined: bool,
+    debug_stopped: bool,
     #[cfg(test)]
     ops: Vec<DockOp>,
     /// The explorer's views' collapse and weights are the dock's state,
@@ -675,6 +719,8 @@ impl Dock {
             ai_changes: None,
             changed_files: 0,
             errors: 0,
+            debug_joined: false,
+            debug_stopped: false,
             #[cfg(test)]
             ops: Vec::new(),
             _explorer_changed: explorer_changed,
@@ -690,6 +736,10 @@ impl Dock {
     fn follow_locale(&mut self, cx: &mut Context<Self>) {
         for action in rail_actions() {
             self.state.add_action(action);
+        }
+        if self.debug_joined {
+            self.state.add_action(debug_rail_action());
+            self.show_debug_badge();
         }
         self.state.set_menu(dock_menu(self.menu_side));
         let outline = outline_view(&self.outline, cx);
@@ -810,6 +860,34 @@ impl Dock {
             RailBadge::dot(BadgeTone::Error, name)
         });
         self.set_badge(DockPanel::Problems, badge, cx);
+    }
+
+    /// Has the Debug tool window's action join the rail's foot, after
+    /// Runs', if it hasn't: on the window's first session.
+    pub(crate) fn join_debug(&mut self, cx: &mut Context<Self>) {
+        if self.debug_joined {
+            return;
+        }
+        self.debug_joined = true;
+        self.state
+            .add_action_after(RUNS_BUTTON, debug_rail_action());
+        self.show_debug_badge();
+        cx.notify();
+    }
+
+    /// Dots the Debug action while a session is stopped: it needs you.
+    pub(crate) fn set_debug_stopped(&mut self, stopped: bool, cx: &mut Context<Self>) {
+        if self.debug_stopped != stopped {
+            self.debug_stopped = stopped;
+            self.show_debug_badge();
+            cx.notify();
+        }
+    }
+
+    fn show_debug_badge(&mut self) {
+        let badge = (self.debug_stopped && self.debug_joined)
+            .then(|| RailBadge::dot(BadgeTone::Accent, tr!("workbench-debug-panel-rail-stopped")));
+        self.state.set_badge(PanelId(DEBUG_BUTTON), badge);
     }
 
     /// Puts `badge` on `panel`'s rail button, redrawing if it changed.

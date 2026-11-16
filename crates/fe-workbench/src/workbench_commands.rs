@@ -1576,6 +1576,24 @@ impl Workbench {
         self.debug_remove_all_breakpoints(cx.cx);
     }
 
+    /// Debug: Select Caller Frame
+    #[command(id = "debug.frame_up")]
+    fn debug_frame_up_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_move_frame(1, cx.window, cx.cx);
+    }
+
+    /// Debug: Select Callee Frame
+    #[command(id = "debug.frame_down")]
+    fn debug_frame_down_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_move_frame(-1, cx.window, cx.cx);
+    }
+
+    /// Debug: Toggle Debug Tool Window
+    #[command(id = "debug.show_panels")]
+    fn debug_show_panels_command(&mut self, cx: &mut Cx<Self>) {
+        self.toggle_debug_panel(cx.window, cx.cx);
+    }
+
     /// Quickfix: Next Item
     #[command(id = "quickfix.next")]
     fn quickfix_next(&mut self, cx: &mut Cx<Self>) {

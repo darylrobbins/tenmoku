@@ -39,8 +39,10 @@
 //!   the gutter a buffer's rows.
 //! - **Persistence.** `<state dir>/debug/<layout_key(root)>.json`
 //!   ([`state_file`]), a `breakpoints` list and a `watches` list. The store
-//!   writes `watches` back as it read it, whatever it holds, for the Watch
-//!   view (D9), and keeps any other key too. It's written when the set or
+//!   writes `watches` back as it read it, whatever it holds, until the
+//!   Watch view (D9) sets its expressions
+//!   ([`BreakpointStore::set_watch_expressions`]), and keeps any other key
+//!   too. It's written when the set or
 //!   the lines on disk change: [`WRITE_REST`] after the last change,
 //!   through a temporary file renamed over the old one, off the UI thread
 //!   and in order. A write that fails is tried again with the next change
@@ -833,6 +835,31 @@ impl BreakpointStore {
     /// The state file's `watches`, as read and written back.
     pub fn watches(&self) -> Option<&Value> {
         self.watches.as_ref()
+    }
+
+    /// The Watch view's expressions (D9): the state file's `watches`, those
+    /// of them that are strings, in order.
+    pub fn watch_expressions(&self) -> Vec<String> {
+        match &self.watches {
+            Some(Value::Array(watches)) => (watches.iter())
+                .filter_map(|watch| watch.as_str().map(str::to_owned))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Makes `expressions` the Watch view's, written to the state file's
+    /// `watches` as a list of strings once changes rest, as the
+    /// breakpoints are.
+    pub fn set_watch_expressions(&mut self, expressions: Vec<String>, cx: &mut Context<Self>) {
+        if self.watch_expressions() == expressions && self.watches.is_some() {
+            return;
+        }
+        self.watches = Some(Value::Array(
+            expressions.into_iter().map(Value::String).collect(),
+        ));
+        self.schedule_write(cx);
+        cx.notify();
     }
 
     /// Adds a breakpoint on `row` (from 0) of the file at `path`, or

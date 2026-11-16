@@ -34,6 +34,7 @@ mod config_problems;
 pub mod debug_breakpoints;
 pub mod debug_gutter;
 pub mod debug_java;
+mod debug_panel;
 mod debug_runs;
 pub mod debug_session;
 mod debug_toolbar;
@@ -243,6 +244,7 @@ pub fn init(cx: &mut App) {
     debug_session::init(cx);
     debug_runs::init(cx);
     debug_gutter::init(cx);
+    debug_panel::init(cx);
     test_runner::init(cx);
     test_run_view::init(cx);
     lsp::init(cx);

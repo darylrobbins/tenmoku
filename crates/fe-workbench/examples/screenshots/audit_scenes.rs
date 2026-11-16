@@ -32,6 +32,8 @@ mod chrome;
 mod command_palette;
 #[path = "audit/debug_gutter.rs"]
 mod debug_gutter;
+#[path = "audit/debug_panel.rs"]
+mod debug_panel;
 #[path = "audit/debug_toolbar.rs"]
 mod debug_toolbar;
 #[path = "audit/file_finder.rs"]
@@ -131,6 +133,7 @@ const SURFACES: &[&Surface] = &[
     &operations::CLOSED,
     &operations::LIST,
     &debug_gutter::SURFACE,
+    &debug_panel::SURFACE,
     &debug_toolbar::SURFACE,
 ];
 

@@ -260,3 +260,83 @@ workbench-debug-toolbar-session-starting = Debug session: { $name }, starting
 workbench-debug-toolbar-session-running = Debug session: { $name }, running
 workbench-debug-toolbar-session-stopped = Debug session: { $name }, stopped
 workbench-debug-toolbar-session-stopped-at = Debug session: { $name }, stopped at line { $line }
+
+## The Debug tool window of the bottom panel (debug_panel.rs, card D9).
+
+command-debug-frame_up = Debug: Select Caller Frame
+command-debug-frame_down = Debug: Select Callee Frame
+command-debug-show_panels = Debug: Toggle Debug Tool Window
+
+# Its tab in the bottom panel, its rail button's tooltip and name.
+workbench-debug-panel-title = Debug
+# The rail button's dot while a session is stopped.
+workbench-debug-panel-rail-stopped = Debug, stopped
+workbench-debug-panel-tab-variables = Variables
+workbench-debug-panel-tab-breakpoints = Breakpoints
+# The trees' accessible names.
+workbench-debug-panel-call-stack = Call stack
+workbench-debug-panel-watch-tree = Watch
+workbench-debug-panel-variables = Variables
+workbench-debug-panel-breakpoints = Breakpoints
+# The Watch tree's heading.
+workbench-debug-panel-watch = Watch
+# The Add watch input's placeholder and accessible name.
+workbench-debug-panel-add-watch = Add a watch expression
+# A watch's ✕ button; $expression is the watch.
+workbench-debug-panel-remove-watch = Remove watch { $expression }
+# A watch whose evaluation failed: $error is the adapter's message.
+workbench-debug-panel-watch-failed = ✕ { $error }
+workbench-debug-panel-watch-failed-name = { $expression }, error: { $error }
+
+# Empty states.
+workbench-debug-panel-not-debugging = Not debugging.
+workbench-debug-panel-start = Start Debugging…
+workbench-debug-panel-running = Running. Pause to see variables and the call stack.
+# A session starting, or not stopped since it began.
+workbench-debug-panel-waiting = Waiting for the program to stop.
+workbench-debug-panel-no-variables = No variables in this frame.
+workbench-debug-panel-loading = Loading…
+
+# A thread row: $name is the thread's, $reason why it stopped (breakpoint,
+# step, pause, exception, entry), as the adapter says.
+workbench-debug-panel-thread-stopped-reason = { $name } · stopped: { $reason }
+workbench-debug-panel-thread-stopped = { $name } · stopped
+workbench-debug-panel-thread-paused = { $name } · paused
+# A thread the adapter hasn't named; $id is its id.
+workbench-debug-panel-thread = Thread { $id }
+# A frame row's place, faint at its right: $file is the file's name.
+workbench-debug-panel-frame-place = { $file }:{ $line }
+# A frame row's accessible name: $function, its file's name and line.
+workbench-debug-panel-frame-name = { $function }, { $file } line { $line }
+workbench-debug-panel-frame-name-current = { $function }, { $file } line { $line }, current frame
+workbench-debug-panel-frame-name-no-source-current = { $function }, current frame
+# Said when a frame is selected: $index of $count, from the top.
+workbench-debug-panel-frame-selected = Frame { $index } of { $count }: { $function }, line { $line }
+
+# A variable row's accessible name: its name, type and value.
+workbench-debug-panel-variable-name = { $name }, { $kind }, { $value }
+workbench-debug-panel-variable-name-untyped = { $name }, { $value }
+# The row under a node's first children; $count is how many more it shows.
+workbench-debug-panel-show-more = Show { $count } more
+
+# The Breakpoints tab.
+workbench-debug-panel-exception-filters = Exception filters
+workbench-debug-panel-no-filters = Exception filters show when a session starts.
+workbench-debug-panel-no-breakpoints = No breakpoints. Click a line number or press F9.
+# A file's group: $path relative to the root, $count its breakpoints.
+workbench-debug-panel-file-name = { $path }, { $count ->
+        [one] { $count } breakpoint
+       *[other] { $count } breakpoints
+    }
+# A breakpoint row: its line, and its checkbox's accessible name.
+workbench-debug-panel-line = line { $line }
+workbench-debug-panel-breakpoint-name = Breakpoint, { $file } line { $line }
+# setExceptionBreakpoints failed after a filter was turned on or off.
+workbench-debug-exception-filters-failed = The debugger didn't take the exception filters
+# The row under a thread's frames that fetches more; $count is how many.
+workbench-debug-panel-show-more-frames = { $count ->
+        [one] Show { $count } more frame
+       *[other] Show { $count } more frames
+    }
+# The same row when the adapter doesn't say how many frames there are.
+workbench-debug-panel-show-more-frames-unknown = Show more frames

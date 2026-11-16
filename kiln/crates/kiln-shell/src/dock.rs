@@ -1027,6 +1027,18 @@ impl DockState {
         }
     }
 
+    /// [`DockState::add_action`], but a new action goes right after the
+    /// action `after`, or last if there's none of that id: for an action
+    /// that joins the rail later, in its place among the others.
+    pub fn add_action_after(&mut self, after: &str, action: RailAction) {
+        if self.actions.iter().any(|(have, _)| have.id == action.id) {
+            return self.add_action(action);
+        }
+        let at = (self.actions.iter().position(|(have, _)| have.id == after))
+            .map_or(self.actions.len(), |ix| ix + 1);
+        self.actions.insert(at, (action, false));
+    }
+
     /// Draws the action `id` highlighted, or not. The host calls it as what
     /// the action's command toggles changes.
     pub fn set_action_highlighted(&mut self, id: &str, highlighted: bool) {
@@ -2069,6 +2081,12 @@ impl Dock {
     /// See [`DockState::add_action`].
     pub fn add_action(&mut self, action: RailAction, cx: &mut Context<Self>) {
         self.state.add_action(action);
+        cx.notify();
+    }
+
+    /// See [`DockState::add_action_after`].
+    pub fn add_action_after(&mut self, after: &str, action: RailAction, cx: &mut Context<Self>) {
+        self.state.add_action_after(after, action);
         cx.notify();
     }
 

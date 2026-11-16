@@ -590,6 +590,10 @@ struct Shared {
     stopping: AtomicBool,
     /// The cancel for the launch in progress.
     launch_cancel: Mutex<LaunchCancel>,
+    /// The exception filters the host chose since the start
+    /// ([`Session::set_exception_filters`]): each configuration from now on
+    /// sends them instead of [`SessionOptions::exception_filters`].
+    pub(crate) exception_filters: Mutex<Option<Vec<String>>>,
 }
 
 /// What the handle reads: the actor's state, as it publishes it.
@@ -635,6 +639,7 @@ impl Session {
             log: Mutex::new(ProtocolLog::new(options.log, &options.expansions)),
             stopping: AtomicBool::new(false),
             launch_cancel: Mutex::new(LaunchCancel::new()),
+            exception_filters: Mutex::new(None),
         });
         let mut name = String::from(verbatim!("fe-dap "));
         name.push_str(&options.adapter.name);
@@ -860,6 +865,15 @@ impl Session {
             done: false,
             body: PhantomData,
         }
+    }
+
+    /// Makes `filters` the exception filters every later configuration of
+    /// the session sends, a restart's included (an emulated restart
+    /// launches the adapter again and configures it afresh), instead of
+    /// those it started with. It sends nothing itself: the host sends
+    /// `setExceptionBreakpoints` for the configuration under way.
+    pub fn set_exception_filters(&self, filters: Vec<String>) {
+        *lock(&self.shared.exception_filters) = Some(filters);
     }
 
     /// The user's Stop: ends the session (§2 item 6), and gives up a launch

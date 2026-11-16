@@ -369,6 +369,17 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Debug: Remove All Breakpoints",
         "workbench",
     ),
+    ("debug.frame_up", "Debug: Select Caller Frame", "workbench"),
+    (
+        "debug.frame_down",
+        "Debug: Select Callee Frame",
+        "workbench",
+    ),
+    (
+        "debug.show_panels",
+        "Debug: Toggle Debug Tool Window",
+        "workbench",
+    ),
     (
         "workbench.untrust_folder",
         "Untrust This Folder",
