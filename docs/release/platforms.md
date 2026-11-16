@@ -66,7 +66,9 @@ tar -xzf Tenmoku-X.Y.Z-linux-x86_64.tar.gz -C ~/.local/opt
 three. Without it, run `./tenmoku` from the folder. Linux has no Gatekeeper or SmartScreen
 step: the archive keeps the binary executable.
 
-It needs a Vulkan driver (Mesa's on most distributions: `mesa-vulkan-drivers` on Debian and
-Ubuntu, `vulkan-radeon`/`vulkan-intel` on Arch), `libxkbcommon`, `fontconfig` and `freetype`,
-which desktop installs have. It runs on X11 and on Wayland. A distribution older than the
-release notes' glibc version cannot run it.
+The binary links only glibc, `libxcb` and `libxkbcommon` (with `libxkbcommon-x11`), which
+desktop installs have, and loads the Vulkan loader (`libvulkan1`) and a Vulkan driver when it
+starts: Mesa's on most distributions (`mesa-vulkan-drivers` on Debian and Ubuntu,
+`vulkan-radeon` or `vulkan-intel` on Arch). It runs on X11 and on Wayland. A distribution
+whose glibc is older than the release notes name cannot run it (0.2.x is built on Ubuntu
+24.04 and needs glibc 2.39: Ubuntu 24.04, Debian 13, Fedora 40 or later).
