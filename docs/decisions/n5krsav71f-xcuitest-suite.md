@@ -212,6 +212,11 @@ said "Automation Mode is disabled" before and after every run. So the authorizat
 cached apart from the mode itself: each session re-enables Automation Mode without asking
 while the cache lasts.
 
+A later run on the final script started at 11:52:43, 6 h 49 min after that
+authorization. It reached its first test 30 s after the script started, no slower than an
+unprompted start, so it didn't wait on a password. Whether the prompt appeared and was
+answered at once is **unanswered so far** (asked, not yet known).
+
 Not measured, by the user's decision (2026-11-16): whether it lasts the whole login
 session, or until a logout, a reboot or some timeout, and so whether a run started past
 that point blocks. A run that prompts with nobody at the Mac would presumably wait on the
@@ -327,7 +332,35 @@ it does):
   bug, for a follow-up:** a window restored behind the launch's trust alert may not give
   its editor focus once the alert closes.
 
-### C7: `scripts/e2e-macos.sh --no-build --iterations 3`
+### After review round 1: one flake under load
+
+The script changed in review round 1 (cleanup, record numbering, the launch audit). So
+`scripts/e2e-macos.sh --no-build --iterations 3` was run again on the final code at 11:52:43,
+with the user's go-ahead and the user at the Mac. It ended `FAILED (xcodebuild test exited
+65)`:
+
+```
+test runs: 38 passed of 39 finished, 39 expected; summary: 12 passed of 13 tests
+launch records: 48, of which 0 name a dev.tenmoku.tenmoku.e2e process other than <worktree>/target/e2e-macos/bundle/Tenmoku.app, or none
+```
+
+- **The flake, in order:** iterations 1 and 2 passed all 13. In iteration 3, 12 passed and
+  `testWindowTitleDirtyAndActive` failed (`no window titled "b.txt ● — Tenmoku": ["b.txt —
+  Tenmoku"]`, SmokeTests.swift:140). Its `typeText("y")`, just after a cmd-Z, spent 11.1 s in
+  XCTest's "Synthesize event" (12:04:02.0 to 12:04:13.1), against a few hundredths of a second
+  elsewhere, and the key never reached the app: `b.txt` was unchanged on disk and the title
+  stayed clean. The app's log shows nothing unusual. The Mac was at load average 26 to 35
+  (other lanes building), against 11 at 08:17, and every test ran slower than at 05:31
+  (`testWindowTitleDirtyAndActive` 23.6, 27.0 and 31.3 s). So the likely cause is load starving
+  event synthesis, which is not proven. The test doesn't retype on a failure: a retry would
+  hide flakiness, and C7 allows none.
+- **What it showed of the final script:** the numbered records exported without a clash.
+  The audit counted 48 launch records, the four relaunch tests' second launches included,
+  all naming only the e2e bundle. Cleanup and the exports worked.
+- A clean three-iteration run on the final script waits for the user's next session at the
+  Mac (the lead's decision, 2026-11-16).
+
+### C7: `scripts/e2e-macos.sh --no-build --iterations 3` (before review round 1)
 
 05:31:05 to 05:41:57, 10 min 52 s wall, ending:
 
