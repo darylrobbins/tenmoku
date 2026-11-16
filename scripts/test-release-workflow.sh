@@ -115,6 +115,11 @@ for j in macos-arm64 windows linux-x86_64; do
 	echo "$upload" | grep -q -x '          if-no-files-found: error' || fail "$j's upload allows no files"
 done
 job windows | grep -q -F "throw \"tenmoku.exe is for machine" || fail "the windows smoke step does not check the exe's machine"
+job windows | grep -q -x '          RUSTFLAGS: -C target-feature=+crt-static' ||
+	fail "the windows build does not link the C runtime statically"
+job windows | grep -q -F '& $dumpbin /nologo /dependents $exe' || fail "the windows smoke step does not list the exe's DLLs"
+job windows | grep -q -F "throw \"tenmoku.exe needs the Visual C++ runtime" ||
+	fail "the windows smoke step does not refuse a Visual C++ runtime import"
 linux_smoke=$(job linux-x86_64 | awk '/- name: Smoke test/ { on = 1 } on && /- name: Upload/ { exit } on')
 for word in 'Xvfb :99' 'DISPLAY=:99' 'sleep 5' 'kill -0 "$app"' "grep -n 'panicked'"; do
 	echo "$linux_smoke" | grep -q -F -- "$word" || fail "the linux smoke step lacks $word"
@@ -378,6 +383,23 @@ HOME="$home" XDG_DATA_HOME='' "$t/linux/Tenmoku-1.2.3-linux-x86_64/install.sh" -
 	fail "install.sh --uninstall exited non-zero"
 [ -z "$(find "$home" -type f -o -type l)" ] || fail "--uninstall left: $(find "$home" -type f -o -type l)"
 ok "install.sh installs for the user and --uninstall removes it"
+
+# A folder name with every character the Desktop Entry spec or sed treats specially: the Exec
+# line quotes the path ( \" \` \$ \\ ), doubles those backslashes, and writes % as %%.
+odd=$(printf 'A b&c|d"e%sf\\g%%h$i`j' "'")
+escaped=$(printf 'A b&c|d\\\\"e%sf\\\\\\\\g%%%%h\\\\$i\\\\`j' "'")
+mkdir -p "$t/odd/$odd"
+cp -R "$t/linux/Tenmoku-1.2.3-linux-x86_64" "$t/odd/$odd/"
+rm -rf "$home" && mkdir -p "$home"
+HOME="$home" XDG_DATA_HOME='' PATH=/usr/bin:/bin "$t/odd/$odd/Tenmoku-1.2.3-linux-x86_64/install.sh" >"$t/install.log" 2>&1 ||
+	{ cat "$t/install.log"; fail "install.sh in an oddly named folder exited non-zero"; }
+[ "$(readlink "$home/.local/bin/tenmoku")" = "$t/odd/$odd/Tenmoku-1.2.3-linux-x86_64/tenmoku" ] ||
+	fail "install.sh linked $(readlink "$home/.local/bin/tenmoku")"
+exec_line=$(grep '^Exec=' "$home/.local/share/applications/dev.tenmoku.tenmoku.desktop")
+[ "$exec_line" = "Exec=\"$t/odd/$escaped/Tenmoku-1.2.3-linux-x86_64/tenmoku\" %F" ] ||
+	fail "the Exec line for folder '$odd' is: $exec_line"
+[ -z "$(find "$home/.local/share/applications" -name '.*')" ] || fail "install.sh left its staged desktop entry"
+ok "install.sh escapes a folder named $odd for the desktop entry"
 
 [ -f "$root/crates/fastedit/tests/version_flag.rs" ] || fail "no crates/fastedit/tests/version_flag.rs"
 ok "crates/fastedit/tests/version_flag.rs covers the --version the smoke steps run"

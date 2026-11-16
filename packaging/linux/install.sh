@@ -24,10 +24,25 @@ case "${1:-}" in
 	;;
 esac
 
+case "$here" in
+*'
+'*)
+	echo "install.sh: a desktop entry cannot name a folder with a line break in it: move it first" >&2
+	exit 1
+	;;
+esac
+# The Exec line runs the binary by its absolute path, so the launcher finds it with ~/.local/bin
+# off its PATH, quoted as the Desktop Entry spec says: in a quoted argument " ` $ \ take a
+# backslash, the string-value escape doubles every backslash after that, and % is %%.
+exec_path=$(printf '%s\n' "$here/tenmoku" | sed -e 's/\\/\\\\\\\\/g' -e 's/["`$]/\\\\&/g' -e 's/%/%%/g')
+staged="$(dirname "$desktop")/.$id.desktop.$$"
 mkdir -p "$bin" "$(dirname "$desktop")" "$(dirname "$icon")"
+EXEC_PATH=$exec_path awk '
+	/^Exec=tenmoku / { sub(/^Exec=tenmoku /, ""); print "Exec=\"" ENVIRON["EXEC_PATH"] "\" " $0; next }
+	{ print }
+' "$here/$id.desktop" >"$staged" || { rm -f "$staged"; exit 1; }
+mv -f "$staged" "$desktop"
 ln -sf "$here/tenmoku" "$bin/tenmoku"
-# The absolute path, so the launcher finds it with ~/.local/bin off its PATH.
-sed "s|^Exec=tenmoku |Exec=\"$here/tenmoku\" |" "$here/$id.desktop" >"$desktop"
 cp "$here/$id.svg" "$icon"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$data/applications" || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q "$data/icons/hicolor" || true

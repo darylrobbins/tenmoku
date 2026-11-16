@@ -166,7 +166,12 @@ jobs:
         with:
           key: ${{ matrix.target }}
       # The target named, so an emulated x64 toolchain on the arm64 runner still builds arm64.
+      # The C runtime linked in (crt-static, for the C and C++ dependencies too through cc and
+      # cmake): the zip has no Visual C++ redistributable, which a fresh Windows lacks. Only the
+      # target's code: with --target, RUSTFLAGS skips build scripts.
       - name: Build the release binary
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release -p fastedit --locked --target ${{ matrix.target }}
       - name: Zip the binary and its checksum
         run: |
@@ -185,6 +190,16 @@ jobs:
           $bytes = [IO.File]::ReadAllBytes($exe)
           $machine = '{0:X4}' -f [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3C) + 4)
           if ($machine -ne '${{ matrix.machine }}') { throw "tenmoku.exe is for machine $machine, not ${{ matrix.machine }}" }
+          # The DLLs it imports, by dumpbin: none may be the Visual C++ runtime, which the runner
+          # has installed but a user's PC may not.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw 'no dumpbin.exe in the runner''s Visual Studio' }
+          $imports = & $dumpbin /nologo /dependents $exe | Where-Object { $_ -match '^\s+\S+\.dll$' } | ForEach-Object { $_.Trim() }
+          if (-not $imports) { throw "dumpbin listed no DLLs for tenmoku.exe" }
+          Write-Output "imports: $($imports -join ', ')"
+          $runtime = @($imports | Where-Object { $_ -match '^(vcruntime|msvcp|concrt|vcomp|ucrtbase|api-ms-win-crt-)' })
+          if ($runtime) { throw "tenmoku.exe needs the Visual C++ runtime: $($runtime -join ', ')" }
           # Captured, so it waits for the GUI-subsystem exe and reads its stdout from a pipe.
           $got = (& $exe --version | Out-String).Trim()
           if ($LASTEXITCODE -ne 0) { throw "tenmoku --version exited $LASTEXITCODE" }
