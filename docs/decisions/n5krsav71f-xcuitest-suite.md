@@ -161,7 +161,23 @@ Automation Mode disabled, so the UI tests can't drive the app. After the run,
 
 ### How long an authorization lasts
 
-AUTOMATION-DURATION
+**At least 28 minutes within one login session; longer gaps untested.** The user
+authorized the prompt once, at about 05:03:26 on 2026-11-16. Ten more UI runs followed,
+with `xcodebuild` starting about 10 s after each of 05:04:55, 05:10:25, 05:11:42, 05:12:57,
+05:14:16, 05:15:31, 05:16:50, 05:18:42, 05:25:34, 05:30:14 and 05:31:05 (the C7 run, which
+ended 05:41:57). The user, at the Mac throughout, reports the prompt never appeared again.
+No run stalled: each reached its first test within seconds. Yet `automationmodetool`
+said "Automation Mode is disabled" before and after every run. So the authorization is
+cached apart from the mode itself: each session re-enables Automation Mode without asking
+while the cache lasts.
+
+Not measured, by the user's decision (2026-11-16): whether it lasts the whole login
+session, or until a logout, a reboot or some timeout, and so whether a run started past
+that point blocks. A run that prompts with nobody at the Mac would presumably wait on the
+dialog (untested). If so, the script's `--timeout` watchdog ends it, with exit 124 and
+the cleanup the stand-ins exercise. For an
+unattended Mac or CI, `sudo automationmodetool enable-automationmode-without-authentication`
+removes the prompt. That is the user's step (E2E-2 for CI), never the agent's.
 
 ### Widening the runner's entitlements
 

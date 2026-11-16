@@ -131,9 +131,12 @@ Uses a human-run UI session: a UI run needs the user's go-ahead before it starts
   `testRunnerWritesOnlyItsScratch` checks it at runtime. A standalone sandboxed probe
   could not run from the agent's own sandboxed shell (SIGTRAP at sandbox init), so the
   runtime answer comes from the first UI run.
-- Waiting on the user at the Mac (blocked 2026-11-10, screen locked): the go-ahead for UI
-  runs, the Automation Mode prompt read word for word on the first run's fresh
-  enablement, and the authorization-duration observations (C6, C7). Plan once given: run
-  `scripts/e2e-macos.sh --no-build --only testRunnerWritesOnlyItsScratch` (no app
-  launch), then one iteration of the suite, fix what the real app does differently, then
-  `--iterations 3`; then `short-run` with that run's result bundle.
+- UI runs, 2026-11-16, after the user's go-ahead, with the user at the Mac: the
+  Automation Mode prompt captured word for word on the probe run, and never again within
+  the session (duration recorded as at least 28 minutes, longer gaps untested, by the
+  user's decision). The first suite runs found that `.firstMatch` never finds gpui-pre's
+  nodes, so gpui buttons resolve with `element(boundBy: 0)` by title. Four expectations
+  were corrected to what the app does (file launches record files only and restore no
+  layout; the preview keeps the source tab's title; the Save As caret). Then
+  `--no-build --iterations 3` passed 39 of 39. A possible app bug went to the record:
+  focus after the trust alert on a restored window.
