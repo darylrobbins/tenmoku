@@ -130,17 +130,22 @@ fn glyphs(drawn: &DrawnGutter) -> Vec<(u32, BreakpointGlyph)> {
         .collect()
 }
 
-/// the rendered node was given, toggles a breakpoint there, as a click
-/// does. A row without a node has none.
+/// A screen reader's Click on a row, through the Click the drawn row's node
+/// registered (kiln-ui's recorder), toggles a breakpoint there, as a click
+/// does. A row not drawn has none.
 #[gpui::test]
 fn a_screen_readers_click_on_a_row_toggles_it(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx);
     let toggled = host(&view, cx);
-    let click = view.read_with(cx, |view, _| view.a11y_click_of_breakpoint_row(4));
-    let nowhere = view.read_with(cx, |view, _| view.a11y_click_of_breakpoint_row(40));
-    assert!(nowhere.is_none());
-    let click = click.expect("row 4's node has a Click");
-    cx.update(|window, cx| click(window, cx));
+    let row = |row: usize| gpui::ElementId::from(("breakpoint-row", row));
+    let registered = cx.update(|window, cx| fe_ui::actions(window, cx));
+    let of = |id: &gpui::ElementId| registered.iter().find(|node| node.id == *id);
+    assert!(of(&row(40)).is_none());
+    let node = of(&row(4)).expect("row 4 registered actions");
+    assert!(node.actions.contains(&gpui::accesskit::Action::Click));
+    let performed =
+        cx.update(|window, cx| fe_ui::perform(window, &row(4), gpui::accesskit::Action::Click, cx));
+    assert!(performed);
     cx.run_until_parked();
     draw(cx);
     assert_eq!(*toggled.borrow(), [4]);

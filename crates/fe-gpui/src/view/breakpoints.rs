@@ -102,28 +102,6 @@ pub struct BreakpointHandlers {
     pub menu: Rc<dyn Fn(u32, &App) -> Vec<BreakpointMenuItem>>,
 }
 
-/// A screen reader's Click on a row's target toggles, as a click does; the
-/// pointer's own go through the editor. The handler is kept in `clicks`
-/// too, since a window only registers it once assistive technology is
-/// connected, which a test's never is.
-fn on_a11y_click<E: gpui::InteractiveElement + gpui::StatefulInteractiveElement>(
-    target: E,
-    row: u32,
-    this: WeakEntity<EditorView>,
-    clicks: &mut Vec<(u32, A11yClick)>,
-) -> E {
-    let click: A11yClick = Rc::new(move |window, cx| {
-        (this.update(cx, |view, cx| view.activate_breakpoint_row(row, window, cx))).ok();
-    });
-    clicks.push((row, click.clone()));
-    target.on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-        click(window, cx)
-    })
-}
-
-/// What a row's node does for an accessibility Click.
-type A11yClick = Rc<dyn Fn(&mut Window, &mut App)>;
-
 /// A row's open menu, for the text and marks it was opened on.
 struct OpenMenu {
     position: Point<Pixels>,
@@ -142,8 +120,6 @@ pub(crate) struct Breakpoints {
     /// Each mark, anchored at its row's start, and its target's row.
     marks: Vec<(Anchor, BreakpointMark, Option<Anchor>)>,
     handlers: Option<BreakpointHandlers>,
-    /// The Click each row's node in the last frame was given.
-    a11y_clicks: Vec<(u32, A11yClick)>,
     /// A press on the column waiting for its release: its row and event.
     pending: Option<(u32, MouseDownEvent)>,
     /// While a press that became a drag is handed on.
@@ -422,15 +398,6 @@ impl EditorView {
         row_label(row, marks.iter().find(|mark| mark.row == row))
     }
 
-    /// What the accessibility Click the last frame gave row `row`'s node
-    /// does, as a screen reader's request would run it, if it has a node.
-    /// For tests.
-    #[cfg(test)]
-    pub(crate) fn a11y_click_of_breakpoint_row(&self, row: u32) -> Option<A11yClick> {
-        (self.breakpoints.a11y_clicks.iter())
-            .find_map(|(at, click)| (*at == row).then(|| click.clone()))
-    }
-
     /// The open menu's items' titles. For tests outside the crate.
     #[doc(hidden)]
     pub fn breakpoint_menu(&self) -> Option<Vec<SharedString>> {
@@ -603,7 +570,6 @@ impl EditorView {
         cx: &mut App,
     ) -> Option<AnyElement> {
         let targets = &self.breakpoints.targets;
-        let mut clicks = Vec::new();
         let first = targets.first()?;
         let mut column = first.1;
         for (_, bounds, _) in targets {
@@ -631,14 +597,22 @@ impl EditorView {
                 // A screen reader's Click toggles, as a click does; the
                 // pointer's own go through the editor.
                 ;
-            let target = on_a11y_click(target, row, this.clone(), &mut clicks);
+            let target = fe_ui::on_action(
+                target,
+                window,
+                cx,
+                AccessibleAction::Click,
+                move |_, window, cx| {
+                    (this.update(cx, |view, cx| view.activate_breakpoint_row(row, window, cx)))
+                        .ok();
+                },
+            );
             let target = match label {
                 Some(label) => fe_ui::node(target, window, cx, fe_ui::Role::Button, label),
                 None => target,
             };
             children.push(target);
         }
-        self.breakpoints.a11y_clicks = clicks;
         let mut element = div()
             .w(column.size.width)
             .h(column.size.height)

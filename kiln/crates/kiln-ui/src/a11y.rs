@@ -139,6 +139,97 @@ pub fn node_with<E: StatefulInteractiveElement + gpui::Element>(
     }
 }
 
+/// An a11y action's listener, as GPUI takes one.
+#[cfg(any(test, feature = "test-support"))]
+type ListenerFn = dyn FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App);
+
+#[cfg(any(test, feature = "test-support"))]
+type Listener = std::rc::Rc<std::cell::RefCell<ListenerFn>>;
+
+/// `element` told to run `listener` when a screen reader requests `action`.
+/// GPUI registers it with the window only while assistive technology is
+/// connected, which a test window never has; under `test-support` the
+/// action and listener are also recorded against the element's id (see
+/// [`actions`] and [`perform`]).
+pub fn on_action<E: StatefulInteractiveElement + gpui::Element>(
+    element: E,
+    window: &Window,
+    cx: &mut App,
+    action: accesskit::Action,
+    listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
+) -> E {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        let _ = (&window, &cx);
+        let shared: Listener = std::rc::Rc::new(std::cell::RefCell::new(listener));
+        if let Some(id) = gpui::Element::id(&element) {
+            recorder::record_action(window, id, action, shared.clone(), cx);
+        }
+        element.on_a11y_action(action, move |data, window, cx| {
+            (shared.borrow_mut())(data, window, cx)
+        })
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        let _ = (window, &cx);
+        element.on_a11y_action(action, listener)
+    }
+}
+
+/// One element's registered a11y actions, as [`actions`] reports them.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionNode {
+    /// The view that drew the element: the same local id under two views
+    /// is two nodes.
+    pub view: gpui::EntityId,
+    pub id: ElementId,
+    /// Each registration, in order: an action registered twice is listed
+    /// twice, and a request runs both listeners, as GPUI does.
+    pub actions: Vec<accesskit::Action>,
+}
+
+/// Each element's actions [`on_action`] recorded for `window`, in draw
+/// order: a later draw replaces an earlier one.
+#[cfg(any(test, feature = "test-support"))]
+pub fn actions(window: &Window, cx: &App) -> Vec<ActionNode> {
+    recorder::actions_of(window.window_handle().window_id(), cx)
+}
+
+/// Runs the listeners recorded for `action` on the element `id` of the
+/// first view that drew one, as a screen reader's request would. False if
+/// there is none. [`perform_in`] names the view.
+#[cfg(any(test, feature = "test-support"))]
+pub fn perform(
+    window: &mut Window,
+    id: &ElementId,
+    action: accesskit::Action,
+    cx: &mut App,
+) -> bool {
+    let view = actions(window, cx)
+        .into_iter()
+        .find(|node| node.id == *id)
+        .map(|node| node.view);
+    view.is_some_and(|view| perform_in(window, view, id, action, cx))
+}
+
+/// [`perform`] for the element `id` drawn by `view`.
+#[cfg(any(test, feature = "test-support"))]
+pub fn perform_in(
+    window: &mut Window,
+    view: gpui::EntityId,
+    id: &ElementId,
+    action: accesskit::Action,
+    cx: &mut App,
+) -> bool {
+    let listeners =
+        recorder::listeners_of(window.window_handle().window_id(), view, id, action, cx);
+    for listener in &listeners {
+        (listener.borrow_mut())(None, window, cx);
+    }
+    !listeners.is_empty()
+}
+
 /// The nodes [`node`] recorded for `window`, in draw order, one per element
 /// id: a later draw replaces an earlier node.
 #[cfg(any(test, feature = "test-support"))]
@@ -158,7 +249,8 @@ mod recorder {
 
     use gpui::{App, EntityId, Global, Window, WindowId};
 
-    use super::Node;
+    use super::{ActionNode, Listener, Node};
+    use gpui::{ElementId, accesskit::Action};
 
     /// One window's nodes: those of the draw in progress or the last one.
     #[derive(Default)]
@@ -166,11 +258,16 @@ mod recorder {
         /// Each node with the view that drew it: the same local id under
         /// two views is two nodes.
         nodes: Vec<(EntityId, Node)>,
+        /// Each element's registrations, by drawing view, the same way.
+        actions: Vec<(EntityId, ElementId, Registered)>,
         /// Set once the draw ends, so the next draw's first node starts a
         /// new list rather than adding to this one.
         finished: Rc<Cell<bool>>,
         watching: bool,
     }
+
+    /// One element's actions with their listeners.
+    type Registered = Vec<(Action, Listener)>;
 
     #[derive(Default)]
     struct Recorded(HashMap<WindowId, Draw>);
@@ -183,6 +280,7 @@ mod recorder {
         let draw = cx.default_global::<Recorded>().0.entry(id).or_default();
         if draw.finished.replace(false) {
             draw.nodes.clear();
+            draw.actions.clear();
         }
         match draw
             .nodes
@@ -192,11 +290,17 @@ mod recorder {
             Some(slot) => slot.1 = node,
             None => draw.nodes.push((view, node)),
         }
+        watch(window, cx);
+    }
+
+    /// After this frame, whatever draws next is a new list. The callback
+    /// re-arms only when something records again.
+    fn watch(window: &Window, cx: &mut App) {
+        let id = window.window_handle().window_id();
+        let draw = cx.default_global::<Recorded>().0.entry(id).or_default();
         if !draw.watching {
             draw.watching = true;
             let finished = draw.finished.clone();
-            // After this frame, whatever draws next is a new list. The
-            // callback re-arms only when a node records again.
             window.defer(cx, move |_, cx| {
                 finished.set(true);
                 if let Some(draw) = cx.default_global::<Recorded>().0.get_mut(&id) {
@@ -204,6 +308,68 @@ mod recorder {
                 }
             });
         }
+    }
+
+    pub(super) fn record_action(
+        window: &Window,
+        element: ElementId,
+        action: Action,
+        listener: Listener,
+        cx: &mut App,
+    ) {
+        let id = window.window_handle().window_id();
+        let view = window.current_view();
+        let draw = cx.default_global::<Recorded>().0.entry(id).or_default();
+        if draw.finished.replace(false) {
+            draw.nodes.clear();
+            draw.actions.clear();
+        }
+        let slot = match draw
+            .actions
+            .iter()
+            .position(|(v, e, _)| *v == view && *e == element)
+        {
+            Some(at) => &mut draw.actions[at].2,
+            None => {
+                draw.actions.push((view, element, Vec::new()));
+                &mut draw.actions.last_mut().unwrap().2
+            }
+        };
+        slot.push((action, listener));
+        watch(window, cx);
+    }
+
+    pub(super) fn actions_of(window: WindowId, cx: &App) -> Vec<ActionNode> {
+        cx.try_global::<Recorded>()
+            .and_then(|r| r.0.get(&window))
+            .map(|d| {
+                (d.actions.iter())
+                    .map(|(view, id, registered)| ActionNode {
+                        view: *view,
+                        id: id.clone(),
+                        actions: registered.iter().map(|(a, _)| *a).collect(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(super) fn listeners_of(
+        window: WindowId,
+        view: EntityId,
+        element: &ElementId,
+        action: Action,
+        cx: &App,
+    ) -> Vec<Listener> {
+        let Some(draw) = cx.try_global::<Recorded>().and_then(|r| r.0.get(&window)) else {
+            return Vec::new();
+        };
+        (draw.actions.iter())
+            .filter(|(v, e, _)| *v == view && e == element)
+            .flat_map(|(_, _, registered)| registered)
+            .filter(|(a, _)| *a == action)
+            .map(|(_, l)| l.clone())
+            .collect()
     }
 
     pub(super) fn of(window: WindowId, cx: &App) -> Vec<Node> {
