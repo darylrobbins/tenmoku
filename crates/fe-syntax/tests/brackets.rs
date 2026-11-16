@@ -67,7 +67,7 @@ fn recovery_and_other_languages() {
 
 #[test]
 fn wide_parent_is_linear() {
-    // Best-of-5 times for an array of `count` children: (parse, first, later).
+    // Best-of-9 times for an array of `count` children: (parse, first, later).
     // Best of several runs: a load spike hits one sample, not the minimum of
     // all of them, while quadratic pairing would fail every run.
     let measure = |count: usize| {
@@ -78,7 +78,7 @@ fn wide_parent_is_linear() {
         let mut parse_time = Duration::MAX;
         let mut first_time = Duration::MAX;
         let mut pair_time = Duration::MAX;
-        for _ in 0..5 {
+        for _ in 0..9 {
             let mut syntax = Syntax::new(language_by_name("json").unwrap(), &snapshot);
             let started = Instant::now();
             syntax.finish(syntax.parse_job().run());
@@ -90,10 +90,14 @@ fn wide_parent_is_linear() {
             let found = pair(&syntax, 0);
             first_time = first_time.min(started.elapsed());
             assert_eq!(found, Some((0, text.len() - 1)));
-            let started = Instant::now();
-            let found = pair(&syntax, text.len() - 1);
-            pair_time = pair_time.min(started.elapsed());
-            assert_eq!(found, Some((0, text.len() - 1)));
+            // Later lookups take microseconds, so one preemption dwarfs them:
+            // take the best of many.
+            for _ in 0..200 {
+                let started = Instant::now();
+                let found = pair(&syntax, text.len() - 1);
+                pair_time = pair_time.min(started.elapsed());
+                assert_eq!(found, Some((0, text.len() - 1)));
+            }
         }
         (parse_time, first_time, pair_time)
     };
