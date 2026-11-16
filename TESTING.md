@@ -83,6 +83,7 @@ scripts/soak.sh                   # 50k cases per property, release (a few minut
                                   # run after changing undo/redo or anchor code
 scripts/check-syntax-features.sh  # fe-syntax with no languages, then each alone (CI runs it)
 scripts/lsp-real.sh               # fe-lsp against real language servers; see Real language servers
+scripts/dap-real.sh               # fe-dap against debugpy and lldb-dap; see Real debug adapters
 scripts/check-framework-standalone.sh    # kiln/ builds and tests outside this repo; see Kiln on its own
 scripts/prune-build-cache.sh --dry-run   # stale incremental dirs of this lane; see Disk
 scripts/test-prune-build-cache.sh        # fixture test for the prune script
@@ -198,6 +199,37 @@ status bar to show the server ready. Then:
   the combining accent.
 - Press F12 on the call of `hello`. It must open the greet file with the caret
   on `hello`.
+
+## Real debug adapters
+
+fe-dap's gate tests run against an in-process fake adapter. The slow group in
+`crates/fe-dap/tests/real_adapter.rs` runs real adapters instead: debugpy and
+an LLDB adapter, each through one breakpoint, a step, variables and an
+evaluate (docs/decisions/r1b9dw3g0g-debugger.md §11 D16).
+
+```zsh
+scripts/dap-real.sh                            # installs debugpy, runs the tests
+FE_DAP_REQUIRE_ADAPTERS=1 scripts/dap-real.sh  # a missing adapter fails instead of skipping
+FE_DAP_REAL_RECORD=/tmp/orders.txt scripts/dap-real.sh   # append the message orders seen
+```
+
+The script downloads the debugpy wheel pinned by SHA-256 in the script into a
+scratch directory outside the repo, checks the hash, installs it into a
+scratch venv, and runs `cargo nextest run -p fe-dap --run-ignored only -E
+'test(/_breakpoint_step_variables_evaluate/)'`.
+
+Each test is `#[ignore]`d, so `cargo nextest run --workspace` runs none of
+them. The LLDB test builds `tests/fixtures/real/rust/main.rs` with `rustc` and
+finds its adapter in this order: `FE_DAP_LLDB_DAP`, `lldb-dap` on `PATH`,
+`xcrun -f lldb-dap`, `FE_DAP_CODELLDB`, `codelldb` on `PATH`. `FE_DAP_PYTHON`
+names the Python with debugpy.
+
+A missing adapter prints `skipped: <reason>` and the test passes, unless
+`FE_DAP_REQUIRE_ADAPTERS=1`. On Linux the LLDB test also skips when
+`/proc/sys/kernel/yama/ptrace_scope` is 2 or more, naming
+`kernel.yama.ptrace_scope` and its value. The native half runs on the Mac and
+on GitHub runners only; `.github/workflows/dap.yml` runs the script on demand
+on `ubuntu-latest` and `macos-latest`.
 
 ## Kiln on its own
 
