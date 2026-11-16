@@ -7,7 +7,7 @@ name: DAP
 on:
   workflow_dispatch:
   push:
-    branches: [lane/5tx6vd4vty]
+    branches: [t1844-ci]
 
 env:
   CARGO_TERM_COLOR: always
