@@ -789,6 +789,7 @@ mod lane_chips {
                 severity: Severity::Error,
                 message: "a task's".into(),
                 source: None,
+                code: None,
                 related: Vec::new(),
                 code_href: None,
             },
