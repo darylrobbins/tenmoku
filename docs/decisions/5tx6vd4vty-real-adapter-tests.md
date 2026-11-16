@@ -33,12 +33,27 @@ req:configurationDone resp:configurationDone resp:launch evt:process evt:thread 
 req:stackTrace resp:stackTrace req:scopes evt:module x2 resp:scopes req:variables
 resp:variables req:next resp:next evt:continued evt:stopped req:stackTrace ... resp:evaluate`.
 
-## C2: lldb-dap on the Mac — NOT yet observed
+## C2/C3: lldb-dap on the Mac (Xcode lldb-dap, LLVM 21, 2026-11-16)
 
-On this Mac `lldb` itself prints "Developer mode is currently disabled." on `run`,
-and lldb-dap never answers `launch` (no response, no `initialized`). A human must
-enable it (`sudo DevToolsSecurity -enable` or System Settings > Privacy & Security >
-Developer Mode, then restart). The lldb test and its ordering record wait on that.
+Developer Mode was off on 2026-11-15 (lldb printed "Developer mode is currently
+disabled." and lldb-dap never answered `launch`); with it enabled,
+`PASS lldb_breakpoint_step_variables_evaluate [3.5 s]` (breakpoint at line 3 of the
+Rust fixture, `next` to line 4, locals `a`, `b`, `total`, evaluate `total + 1` = 4).
+
+Observed orders:
+
+- the `launch` response comes BEFORE the `configurationDone` response (the opposite of debugpy);
+- `initialized` comes AFTER the `launch` response (debugpy: before it), so a client must
+  not wait for `initialized` before reading the launch response, nor for the launch
+  response before `setBreakpoints` — it must accept both orders;
+- the step's `stopped` event comes AFTER the `next` response (`continued` between), as with debugpy;
+- many `module` events arrive between `configurationDone` and the first `stopped`.
+
+Full order: `req:initialize resp:initialize req:launch resp:launch evt:initialized
+req:setBreakpoints evt:module x2 resp:setBreakpoints req:configurationDone evt:breakpoint
+evt:capabilities evt:process resp:configurationDone (module/breakpoint events) evt:stopped
+req:stackTrace evt:output resp:stackTrace req:scopes resp:scopes req:variables resp:variables
+req:next resp:next evt:continued evt:stopped ... resp:evaluate`.
 
 ## C4: dap.yml run — not yet done
 
