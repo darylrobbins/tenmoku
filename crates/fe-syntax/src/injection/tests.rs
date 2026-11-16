@@ -1081,10 +1081,10 @@ fn the_ruby_extension_query_injects_regex_literals() {
             .any(|(t, h)| t == "n" && *h == "string.special"),
         "{found:?}"
     );
-    // Without the injection, `+` is plain string text.
-    let plain = spans("ruby", "x = /\\d+/i\n");
+    // The built-in Ruby language carries the same injection (T401).
+    let native = spans("ruby", "x = /\\d+/i\n");
     assert!(
-        !plain.iter().any(|(t, h)| t == "+" && *h == "operator"),
-        "{plain:?}"
+        native.iter().any(|(t, h)| t == "+" && *h == "operator"),
+        "{native:?}"
     );
 }

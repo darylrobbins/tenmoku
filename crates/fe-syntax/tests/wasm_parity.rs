@@ -1677,12 +1677,9 @@ fn ruby_extension_is_as_built_in() {
             tree_sitter_ruby::HIGHLIGHTS_QUERY,
             include_str!("../queries/ruby.scm"),
         ],
-        // The extension alone injects regex into regex literals (T637); the
-        // native language has no injection query. The query itself is run on the
-        // grammar by injection::tests::the_ruby_extension_query_injects_regex_literals.
-        Some(include_str!(
-            "../../../extensions/grammars/ruby/injections.scm"
-        )),
+        // Both inject regex into regex literals (T637, T401). The query itself
+        // is run on the grammar by injection::tests.
+        Some(include_str!("../queries/ruby-injections.scm")),
     );
 }
 

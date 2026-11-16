@@ -918,7 +918,7 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
-        injections: None,
+        injections: Some(include_str!("../queries/ruby-injections.scm")),
         hidden: false,
     },
     #[cfg(feature = "lua")]
