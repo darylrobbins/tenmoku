@@ -6,8 +6,6 @@ name: DAP
 # on PRs or a schedule, so the gate needs no Python wheel, network or adapter.
 on:
   workflow_dispatch:
-  push:
-    branches: [lane/5tx6vd4vty]
 
 env:
   CARGO_TERM_COLOR: always
