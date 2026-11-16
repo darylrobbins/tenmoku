@@ -280,12 +280,9 @@ fn buttons_have_accessible_names(cx: &mut TestAppContext) {
         let keys = fe_keymap::KeySequence::parse(keys).unwrap();
         fe_keymap::shortcut_label(&keys)
     };
-    let secondary = if cfg!(target_os = "macos") {
-        "cmd"
-    } else {
-        "ctrl"
-    };
-    let restart = label(&format!("{secondary}-shift-f5"));
+    // The test keymap is fe_gpui's DEFAULT_MACOS on every platform, so
+    // `secondary-` is cmd here, printed as Super off macOS.
+    let restart = label("cmd-shift-f5");
     let (f5, stop, f10, f11, step_out) = (
         label("f5"),
         label("shift-f5"),
