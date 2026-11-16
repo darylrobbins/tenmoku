@@ -64,7 +64,8 @@ final class SmokeTests: E2ETestCase {
         app.typeKey("a", modifierFlags: .command)
         app.typeText("a-copy.txt")
         app.typeKey(.return, modifierFlags: [])
-        expectText(copy, "copy A first file\n")
+        // Typed where the caret was left, after "A ".
+        expectText(copy, "A copy first file\n")
         expectText(a, "A first file\n")
         expectTitle(titled("a-copy.txt"))
     }
@@ -199,7 +200,11 @@ final class SmokeTests: E2ETestCase {
         // A backup has two slots, written in turn: the newest holds the whole text.
         XCTAssertGreaterThanOrEqual(holding, 1, "no backup holds the typed text: \(listing)")
 
-        launch(["notes.txt"])
+        // A folder launch reopens the root's saved windows, backups included; a file
+        // launch opens just the file (fastedit main.rs). The folder is undecided, so
+        // it asks about trust first.
+        launch([])
+        answerTrustPrompt("Don't Trust")
         expectTitle(titled("notes.txt", dirty: true))
         waitForTree()
         settle()
@@ -278,24 +283,26 @@ final class SmokeTests: E2ETestCase {
         XCTAssertEqual(bytes(trustFile), trusted, "the relaunch changed trust.toml")
     }
 
-    /// recent.toml records the folder and each file opened, most recent first, across
-    /// relaunches; File > Open Recent… opens one by name.
+    /// recent.toml records each file opened, most recent first, across relaunches;
+    /// File > Open Recent… opens one by name.
     func testOpenRecentAndRecentToml() throws {
         let recent = state.appendingPathComponent("recent.toml")
-        let folder = project.path, quiz = file("quiz.txt").path, notes = file("notes.txt").path
+        // A file launch records the file, not its folder ("a file's folder is only the
+        // root it opens in", workbench.rs); folders come from folder launches.
+        let quiz = file("quiz.txt").path, notes = file("notes.txt").path
         func lists(_ paths: String...) -> Bool {
             guard let toml = text(recent) else { return false }
             return paths.allSatisfy { toml.contains("\"\($0)\"") }
         }
         launchAndSettle(["quiz.txt"], title: titled("quiz.txt"))
-        XCTAssertTrue(eventually { lists(folder, quiz) }, "recent.toml: \(text(recent) ?? "none")")
+        XCTAssertTrue(eventually { lists(quiz) }, "recent.toml: \(text(recent) ?? "none")")
         record("recent-first", text(recent) ?? "none")
         quitByKey()
 
         launchAndSettle(["notes.txt"], title: titled("notes.txt"))
         XCTAssertTrue(
             eventually {
-                guard lists(folder, quiz, notes), let toml = text(recent),
+                guard lists(quiz, notes), let toml = text(recent),
                       let n = toml.range(of: "\"\(notes)\""), let q = toml.range(of: "\"\(quiz)\"")
                 else { return false }
                 return n.lowerBound < q.lowerBound
@@ -354,7 +361,7 @@ final class SmokeTests: E2ETestCase {
     // MARK: Labelled buttons: markdown preview (T1008) and the pane toolbar
 
     /// The preview buttons show on a markdown tab only; Open Preview swaps the tab to
-    /// the preview and back with Show Source, the source's unsaved state kept.
+    /// the preview (Show Source) and back, the title's unsaved mark kept throughout.
     func testMarkdownPreviewButtons() throws {
         let md = file("notes.md")
         let original = try Data(contentsOf: md)
@@ -375,10 +382,12 @@ final class SmokeTests: E2ETestCase {
         app.typeText("x")
         expectTitle(titled("notes.md", dirty: true))
 
+        // The preview shows in the tab's place, which keeps the source tab's title.
         clickButton("Open Preview")
-        expectTitle("Preview notes.md — \(Self.appName)")
         expectButton("Show Source", enabled: true)
+        expectNoButton("Open Preview")
         expectNoButton("Open Preview to the Side")
+        expectTitle(titled("notes.md", dirty: true))
         clickButton("Show Source")
         expectTitle(titled("notes.md", dirty: true))
         expectButton("Open Preview", enabled: true)

@@ -384,6 +384,16 @@ class E2ETestCase: XCTestCase {
         return titles
     }
 
+    /// Waits for the folder-trust alert a folder launch raises on an undecided folder,
+    /// and answers it with `answer` ("Trust Folder" or "Don't Trust").
+    func answerTrustPrompt(_ answer: String, file: StaticString = #filePath, line: UInt = #line) {
+        let button = nativeButton(answer)
+        XCTAssertTrue(
+            button.waitForExistence(timeout: Self.uiTimeout * 2), "a folder launch didn't ask about trust",
+            file: file, line: line)
+        button.click()
+    }
+
     /// A button of a native alert or sheet (AppKit's, not gpui's).
     func nativeButton(_ title: String) -> XCUIElement {
         button(title)
@@ -409,7 +419,7 @@ class E2ETestCase: XCTestCase {
     func expectBytes(_ url: URL, _ expected: Data, file: StaticString = #filePath, line: UInt = #line) {
         let met = eventually { bytes(url) == expected }
         let last = bytes(url)
-        record("disk-\(url.lastPathComponent)", "expected \(hex(expected))\nfound    \(last.map(hex) ?? "nothing")")
+        record("disk-\(url.lastPathComponent.replacingOccurrences(of: ".", with: "-"))", "expected \(hex(expected))\nfound    \(last.map(hex) ?? "nothing")")
         XCTAssertTrue(
             met, "\(url.lastPathComponent) is \(last.map(hex) ?? "missing"), expected \(hex(expected))",
             file: file, line: line)
