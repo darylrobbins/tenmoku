@@ -623,6 +623,9 @@ fn a_stop_opens_the_file_at_the_stopped_row_and_announces_it(cx: &mut TestAppCon
     debug.toggle(&main, 2);
     debug.start("main");
     let fake = debug.fake(0);
+    debug.until("the breakpoints to be sent", |_| {
+        !sent_lines(&fake, &main).is_empty()
+    });
     assert_eq!(sent_lines(&fake, &main), [vec![3]], "sent as it starts");
     debug.wait_state("the stop", |state| *state == SessionState::Stopped);
     debug.until("the file to open", |debug| {
