@@ -328,6 +328,9 @@ struct Running {
     unconfirmed: BTreeSet<PathBuf>,
     /// The number the next send gets.
     next_send: u64,
+    /// By canonical path: the generation of the send whose reply last set
+    /// the file's verification. A `breakpoint` event answers no send.
+    answered: BTreeMap<PathBuf, u64>,
     /// Files whose breakpoints changed before the session was configured:
     /// sent once it is.
     pending: BTreeSet<PathBuf>,
@@ -419,6 +422,36 @@ impl Debugger {
         (self.session.as_ref())
             .and_then(|running| running.verification.get(path))
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// The generation of the last `setBreakpoints` sent for the file at
+    /// canonical `path` this session (0 is the session's own, as it
+    /// configured).
+    pub fn send_generation(&self, path: &Path) -> Option<u64> {
+        (self.session.as_ref())
+            .and_then(|running| running.sent.get(path))
+            .map(|send| send.generation)
+    }
+
+    /// The generation of the send that will carry the file's latest change:
+    /// a file whose change waits for the session to be configured gets the
+    /// next one, else the last sent. Its reply, or a later one, answers
+    /// the change; an earlier send's doesn't.
+    pub fn awaited_generation(&self, path: &Path) -> Option<u64> {
+        let running = self.session.as_ref()?;
+        if running.pending.contains(path) {
+            return Some(running.next_send);
+        }
+        running.sent.get(path).map(|send| send.generation)
+    }
+
+    /// The generation of the send whose reply the file's
+    /// [`verification`](Self::verification) is, if any: a `breakpoint`
+    /// event changes the verification but answers no send.
+    pub fn answered_generation(&self, path: &Path) -> Option<u64> {
+        (self.session.as_ref())
+            .and_then(|running| running.answered.get(path))
+            .copied()
     }
 
     /// The session's number in the window, or the last one's: a restart
@@ -666,7 +699,14 @@ impl Running {
 
     /// The verification of a `setBreakpoints` reply for `path`, sent on
     /// `lines`.
-    fn verify(&mut self, path: PathBuf, lines: &[u32], answered: Vec<AdapterBreakpoint>) {
+    fn verify(
+        &mut self,
+        path: PathBuf,
+        generation: u64,
+        lines: &[u32],
+        answered: Vec<AdapterBreakpoint>,
+    ) {
+        self.answered.insert(path.clone(), generation);
         let verification = (lines.iter().zip(answered))
             .map(|(&line, answer)| Verification {
                 line,
@@ -1394,6 +1434,7 @@ impl Workbench {
                 one_shot: None,
                 unconfirmed: BTreeSet::new(),
                 next_send: 1,
+                answered: BTreeMap::new(),
                 pending: BTreeSet::new(),
                 unstarted: Vec::new(),
                 seen_epoch: Epoch::default(),
@@ -2018,7 +2059,7 @@ impl Workbench {
                 None => Vec::new(),
                 Some(_) => return Some(true),
             };
-            running.verify(path.clone(), &lines, breakpoints);
+            running.verify(path.clone(), 0, &lines, breakpoints);
             cx.emit(DebuggerEvent::Breakpoints(path.clone()));
             Some(false)
         });
@@ -2148,7 +2189,7 @@ impl Workbench {
                             lines.remove(at);
                             answered.remove(at);
                         }
-                        running.verify(path.clone(), &lines, answered);
+                        running.verify(path.clone(), generation, &lines, answered);
                         cx.emit(DebuggerEvent::Breakpoints(path));
                     });
                     if let Some(then) = then {

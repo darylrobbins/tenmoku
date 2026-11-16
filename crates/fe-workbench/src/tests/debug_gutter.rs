@@ -1076,4 +1076,5 @@ fn a_refused_replacement_leaves_a_ring(cx: &mut TestAppContext) {
 }
 
 mod frames_after_save;
+mod kept_ids;
 mod pending_verification;

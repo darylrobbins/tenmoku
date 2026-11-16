@@ -30,6 +30,7 @@
 //! | a resume's failure delayed until after another resume, or a terminate | [`faults`](Script::faults): [`FaultKind::FailAfter`] |
 //! | a `variables` reply delayed past a step | [`faults`](Script::faults): [`FaultKind::ReplyAfter`] |
 //! | a program that runs with no `thread` events | [`thread_events`](Script::thread_events) |
+//! | breakpoint ids kept across a replacement | [`keep_breakpoint_ids`](Script::keep_breakpoint_ids) |
 //! | unverified, then verified, breakpoints | [`verify_breakpoints_later`](Script::verify_breakpoints_later) |
 //! | the adapter exiting mid-request | [`faults`](Script::faults): [`FaultKind::Exit`] |
 //! | a request answered with a body of the test's (no threads) | [`faults`](Script::faults): [`FaultKind::Answer`] |
@@ -102,6 +103,9 @@ pub struct Script {
     /// `pending`), and a `breakpoint` event verifies it when the program
     /// starts.
     pub verify_breakpoints_later: bool,
+    /// `setBreakpoints` hands a line's earlier id back when the line is
+    /// sent again (the protocol allows it), instead of a fresh one.
+    pub keep_breakpoint_ids: bool,
     /// What goes wrong, request by request.
     pub faults: Vec<Fault>,
     /// The program's exit code, in `exited`.
@@ -153,6 +157,7 @@ impl Default for Script {
             stopped_before_step_response: false,
             thread_events: true,
             verify_breakpoints_later: false,
+            keep_breakpoint_ids: false,
             faults: Vec::new(),
             exit_code: 0,
             output: Vec::new(),
@@ -563,6 +568,7 @@ struct Record {
 
 enum Control {
     Release,
+    ReleaseOldest(usize),
     Kill,
     Send(Box<Message>),
     CloseOutput,
@@ -612,6 +618,15 @@ impl FakeAdapter {
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
+    }
+
+    /// Lets go the `n` oldest replies held for [`Trigger::Manual`], and no
+    /// others.
+    pub fn release_oldest(&self, n: usize) {
+        let _ = self
+            .shared
+            .controls
+            .unbounded_send(Control::ReleaseOldest(n));
     }
 
     /// Lets go every reply held for [`Trigger::Manual`].
@@ -789,6 +804,8 @@ struct Adapter<W> {
     function_breakpoints: BTreeMap<usize, Vec<i64>>,
     unverified: Vec<Breakpoint>,
     next_breakpoint: i64,
+    /// By line: the id last handed out, for `keep_breakpoint_ids`.
+    kept_ids: BTreeMap<i64, i64>,
     counts: HashMap<String, usize>,
     held: Vec<Held>,
     ready: VecDeque<HeldAction>,
@@ -822,6 +839,7 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
             function_breakpoints: BTreeMap::new(),
             unverified: Vec::new(),
             next_breakpoint: 1,
+            kept_ids: BTreeMap::new(),
             counts: HashMap::new(),
             held: Vec::new(),
             ready: VecDeque::new(),
@@ -899,6 +917,16 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
                 Either::Right(Some(Control::Release)) => {
                     self.release(|held| held.trigger == Trigger::Manual)
                 }
+                Either::Right(Some(Control::ReleaseOldest(n))) => {
+                    let mut left = n;
+                    self.release(|held| {
+                        let go = held.trigger == Trigger::Manual && left > 0;
+                        if go {
+                            left -= 1;
+                        }
+                        go
+                    })
+                }
                 Either::Right(Some(Control::Kill)) => self.done = Some(KILLED),
                 Either::Right(Some(Control::Send(message))) => self.send(*message).await,
                 // The writer writes the rest, then closes the stream.
@@ -931,7 +959,12 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
                 Either::Left(_) => return exit,
                 Either::Right((Some(Control::Kill), _)) => return KILLED,
                 Either::Right((
-                    Some(Control::Release | Control::Send(_) | Control::CloseOutput),
+                    Some(
+                        Control::Release
+                        | Control::ReleaseOldest(_)
+                        | Control::Send(_)
+                        | Control::CloseOutput,
+                    ),
                     _,
                 )) => {}
                 // Can't happen (see run); the writer then decides.
@@ -1001,7 +1034,7 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
     }
 
     /// Moves the held replies `which` picks to the ready queue, in order.
-    fn release(&mut self, which: impl Fn(&Held) -> bool) {
+    fn release(&mut self, mut which: impl FnMut(&Held) -> bool) {
         let (going, staying) = std::mem::take(&mut self.held)
             .into_iter()
             .partition(|held| which(held));
@@ -1473,8 +1506,17 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
         }
         let mut answered = Vec::new();
         for line in lines {
-            let id = self.next_breakpoint;
-            self.next_breakpoint += 1;
+            let kept = (self.script.keep_breakpoint_ids && ours)
+                .then(|| self.kept_ids.get(&line).copied())
+                .flatten();
+            let id = kept.unwrap_or_else(|| {
+                let id = self.next_breakpoint;
+                self.next_breakpoint += 1;
+                id
+            });
+            if self.script.keep_breakpoint_ids && ours {
+                self.kept_ids.insert(line, id);
+            }
             let exists = ours && (1..=self.script.program.lines.len() as i64).contains(&line);
             let mut breakpoint = Breakpoint {
                 verified: exists,

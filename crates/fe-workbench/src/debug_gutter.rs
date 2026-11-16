@@ -71,10 +71,12 @@ pub struct DebugGutter {
 #[derive(Default)]
 struct Pending {
     lines: BTreeSet<u32>,
-    /// The adapter ids it had said of the file when they began to wait. A
-    /// replacement's reply names new ones; a `breakpoint` event only names
-    /// these.
-    old: BTreeSet<i64>,
+    /// The generation of the send they wait on: the file's last when the
+    /// store's change was heard by the session, settled once that has
+    /// sent. Only the reply to it, or to a later send, answers them; a
+    /// `breakpoint` event or an earlier send's reply doesn't, whatever ids
+    /// the adapter reuses. `None` until settled.
+    waits: Option<u64>,
 }
 
 /// An editor's part.
@@ -279,19 +281,15 @@ impl DebugGutter {
                 self.refresh(cx);
             }
             DebuggerEvent::Breakpoints(path) => {
-                // Only a reply to the awaited replacement answers it: one
-                // naming ids the file hadn't. An event on an old id, or on
-                // an unrelated breakpoint, leaves it waiting.
+                // Only the reply to the send they wait on (or a later one)
+                // answers them: a `breakpoint` event, or an earlier send's
+                // reply, leaves them waiting.
                 let file = canonical(path);
                 let answered = self.debugger.upgrade().is_some_and(|debugger| {
-                    let said = debugger.read(cx).verification(&file);
+                    let debugger = debugger.read(cx);
                     self.pending.get(&file).is_none_or(|pending| {
-                        // An event names an id the file already had, so a
-                        // line's entry with none, or a new id, is a reply's.
-                        (pending.lines.iter()).any(|line| {
-                            (said.iter().find(|said| said.line == *line)).is_some_and(|said| {
-                                said.id.is_none_or(|id| !pending.old.contains(&id))
-                            })
+                        pending.waits.is_some_and(|waits| {
+                            (debugger.answered_generation(&file)).is_some_and(|got| got >= waits)
                         })
                     })
                 });
@@ -337,12 +335,22 @@ impl DebugGutter {
                 .is_some_and(|state| !state.is_ended())
         });
         if session && !fresh.is_empty() {
-            let ids = (debugger.as_ref())
-                .map(|debugger| debugger.read(cx).verification(&file).to_vec())
-                .unwrap_or_default();
-            let pending = self.pending.entry(file).or_default();
+            let pending = self.pending.entry(file.clone()).or_default();
             pending.lines.extend(fresh);
-            pending.old.extend(ids.iter().filter_map(|said| said.id));
+            pending.waits = None;
+            // The session sends from its own subscription to the store,
+            // before or after this one: settle once both have run.
+            let me = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                me.update(cx, |this, cx| {
+                    let last = (this.debugger.upgrade())
+                        .and_then(|debugger| debugger.read(cx).awaited_generation(&file));
+                    if let Some(pending) = this.pending.get_mut(&file) {
+                        pending.waits = Some(last.unwrap_or(0));
+                    }
+                })
+                .ok();
+            });
         }
     }
 
