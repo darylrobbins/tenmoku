@@ -2018,6 +2018,10 @@ impl Render for EditorView {
         for &flag in &self.key_flags {
             key_context.add(flag);
         }
+        if self.breakpoint_menu_open() {
+            // The open menu reads its keys itself.
+            key_context.add(kiln_platform::keys::HOLDS_KEYS);
+        }
         if self.completion_subscriptions.is_empty() {
             Self::close_completion_on_escape_and_blur(self, window, cx);
         }
@@ -2069,6 +2073,10 @@ impl Render for EditorView {
                 view.on_run_command(run, window, cx)
             }))
             .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
+                if view.breakpoint_menu_key(&event.keystroke, window, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 view.announced.key();
                 Self::on_vim_key(view, event, window, cx)
             }))

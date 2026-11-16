@@ -30,7 +30,7 @@ use std::{
     rc::Rc,
 };
 
-use fe_buffer::BufferId;
+use fe_buffer::{Anchor, BufferId, Version};
 use fe_dap::Epoch;
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, ProviderId, Tint};
 use fe_gpui::{
@@ -63,8 +63,18 @@ pub struct DebugGutter {
     /// file's breakpoints. Until it says again, its verification of those
     /// lines is an older breakpoint's.
     enabled: HashMap<PathBuf, BTreeSet<u32>>,
-    pending: HashMap<PathBuf, BTreeSet<u32>>,
+    pending: HashMap<PathBuf, Pending>,
     _debugger_events: Subscription,
+}
+
+/// A file's breakpoints waiting for the session's answer.
+#[derive(Default)]
+struct Pending {
+    lines: BTreeSet<u32>,
+    /// The adapter ids it had said of the file when they began to wait. A
+    /// replacement's reply names new ones; a `breakpoint` event only names
+    /// these.
+    old: BTreeSet<i64>,
 }
 
 /// An editor's part.
@@ -76,7 +86,26 @@ struct Shown {
     /// The file and buffer it was last shown for: a Save As, or a buffer
     /// swapped in, shows it again.
     seen: Option<(PathBuf, BufferId)>,
+    /// The text version it was last shown at: frame bands follow text
+    /// changes even when no breakpoint moves.
+    version: Option<Version>,
+    /// Where this stop's frames were first placed, as anchors in its
+    /// buffer, so a save or a split line leaves them on their text.
+    frames: Option<Frames>,
     _editor_changes: Subscription,
+}
+
+/// The frames of one stop, anchored in one buffer: each at the start of its
+/// row, after text inserted there. They outlive saves, which move the
+/// store's baseline, and are rebuilt for a new stop, file or buffer.
+#[derive(Clone)]
+struct Frames {
+    file: PathBuf,
+    buffer: BufferId,
+    epoch: Epoch,
+    stop: Option<Anchor>,
+    /// Each caller selected in the stop: its row on disk, and its anchor.
+    callers: Vec<(u32, Anchor)>,
 }
 
 /// Each window's, by its workbench.
@@ -219,7 +248,10 @@ impl DebugGutter {
         let changes = cx.observe(editor, |this: &mut DebugGutter, editor, cx| {
             let id = editor.entity_id();
             let now = identity(&editor, cx);
-            if (this.editors.get(&id)).is_some_and(|shown| shown.seen != now) {
+            let version = editor.read(cx).model().snapshot().version();
+            if (this.editors.get(&id)).is_some_and(|shown| {
+                shown.seen != now || (shown.frames.is_some() && shown.version != Some(version))
+            }) {
                 this.show(id, cx);
             }
         });
@@ -228,6 +260,8 @@ impl DebugGutter {
             bands,
             provider,
             seen: None,
+            version: None,
+            frames: None,
             _editor_changes: changes,
         }
     }
@@ -245,8 +279,25 @@ impl DebugGutter {
                 self.refresh(cx);
             }
             DebuggerEvent::Breakpoints(path) => {
-                // What it says now answers the file's last send.
-                self.pending.remove(&canonical(path));
+                // Only a reply to the awaited replacement answers it: one
+                // naming ids the file hadn't. An event on an old id, or on
+                // an unrelated breakpoint, leaves it waiting.
+                let file = canonical(path);
+                let answered = self.debugger.upgrade().is_some_and(|debugger| {
+                    let said = debugger.read(cx).verification(&file);
+                    self.pending.get(&file).is_none_or(|pending| {
+                        // An event names an id the file already had, so a
+                        // line's entry with none, or a new id, is a reply's.
+                        (pending.lines.iter()).any(|line| {
+                            (said.iter().find(|said| said.line == *line)).is_some_and(|said| {
+                                said.id.is_none_or(|id| !pending.old.contains(&id))
+                            })
+                        })
+                    })
+                });
+                if answered {
+                    self.pending.remove(&file);
+                }
                 self.refresh(cx);
             }
             // A new session sends every file afresh.
@@ -278,14 +329,20 @@ impl DebugGutter {
             (false, Some(seen)) => lines.difference(&seen).copied().collect(),
             _ => lines.iter().copied().collect(),
         };
-        let session = (self.debugger.upgrade()).is_some_and(|debugger| {
+        let debugger = self.debugger.upgrade();
+        let session = (debugger.as_ref()).is_some_and(|debugger| {
             debugger
                 .read(cx)
                 .state()
                 .is_some_and(|state| !state.is_ended())
         });
         if session && !fresh.is_empty() {
-            self.pending.entry(file).or_default().extend(fresh);
+            let ids = (debugger.as_ref())
+                .map(|debugger| debugger.read(cx).verification(&file).to_vec())
+                .unwrap_or_default();
+            let pending = self.pending.entry(file).or_default();
+            pending.lines.extend(fresh);
+            pending.old.extend(ids.iter().filter_map(|said| said.id));
         }
     }
 
@@ -319,6 +376,8 @@ impl DebugGutter {
             return;
         };
         shown.seen = identity(&editor, cx);
+        shown.version = Some(editor.read(cx).model().snapshot().version());
+        let old_frames = shown.frames.clone();
         let Some((path, buffer)) = shown.seen.clone() else {
             return;
         };
@@ -361,7 +420,7 @@ impl DebugGutter {
             let pending = self.pending.get(&canonical);
             let said: Vec<Option<&Verification>> = (placements.iter())
                 .map(|placement| {
-                    let waits = pending.is_some_and(|lines| lines.contains(&placement.line));
+                    let waits = pending.is_some_and(|wait| wait.lines.contains(&placement.line));
                     (verification.iter())
                         .find(|said| placement.enabled && !waits && said.line == placement.line)
                 })
@@ -407,14 +466,48 @@ impl DebugGutter {
             (debugger.as_ref()).and_then(|debugger| debugger.read(cx).stop_location().cloned());
         let epoch = stop.as_ref().map(|stop| stop.epoch);
         // Both are lines of the program, the file on disk: placed in this
-        // buffer's text as breakpoints are.
-        let stop = stop
+        // buffer's text as breakpoints are, once for the stop, and held as
+        // anchors after that.
+        let kept = old_frames.filter(|frames| {
+            frames.file == canonical && frames.buffer == buffer && Some(frames.epoch) == epoch
+        });
+        let anchor_at = |row: u32| -> Anchor {
+            let row = in_buffer(&[row + 1])[0].min(last);
+            snapshot.anchor_after(text.row_start(row))
+        };
+        let stop_anchor = (stop.as_ref())
             .filter(|stop| stop.path.as_deref().map(self::canonical) == Some(canonical.clone()))
-            .map(|stop| in_buffer(&[stop.row + 1])[0].min(last));
-        let caller = (self.caller.as_ref())
+            .map(|stop| {
+                (kept.as_ref())
+                    .and_then(|frames| frames.stop)
+                    .unwrap_or_else(|| anchor_at(stop.row))
+            });
+        // Every caller selected in this stop keeps its anchor, so selecting
+        // another, or none, and coming back finds it where its text is.
+        let mut callers = (kept.as_ref())
+            .map(|frames| frames.callers.clone())
+            .unwrap_or_default();
+        let selected = (self.caller.as_ref())
             .filter(|(file, _, at)| *file == canonical && Some(*at) == epoch)
-            .map(|(_, row, _)| in_buffer(&[row + 1])[0].min(last))
+            .map(|(_, row, _)| *row);
+        if let Some(row) = selected
+            && !callers.iter().any(|(at, _)| *at == row)
+        {
+            callers.push((row, anchor_at(row)));
+        }
+        let row_of =
+            |anchor: &Anchor| (text.offset_to_point(snapshot.resolve(anchor)).row).min(last);
+        let stop = stop_anchor.as_ref().map(row_of);
+        let caller = (selected.and_then(|row| callers.iter().find(|(at, _)| *at == row)))
+            .map(|(_, anchor)| row_of(anchor))
             .filter(|row| Some(*row) != stop);
+        let frames = epoch.map(|epoch| Frames {
+            file: canonical.clone(),
+            buffer,
+            epoch,
+            stop: stop_anchor,
+            callers,
+        });
         let mut bands = Vec::new();
         for (row, arrow, tint) in [
             (stop, FrameArrow::Current, Tint::DebugCurrent),
@@ -434,9 +527,10 @@ impl DebugGutter {
             let band = Decoration::new(start..end, DecorationKind::RowBackground, tint);
             bands.push(band);
         }
-        let Some(shown) = self.editors.get(&id) else {
+        let Some(shown) = self.editors.get_mut(&id) else {
             return;
         };
+        shown.frames = frames.filter(|frames| frames.stop.is_some() || !frames.callers.is_empty());
         let version = snapshot.version();
         shown.bands.borrow_mut().apply(&snapshot, version, bands);
         editor.update(cx, |view, cx| {

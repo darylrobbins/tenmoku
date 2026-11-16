@@ -269,12 +269,13 @@ fn lightness(color: Color) -> f32 {
 
 /// D0's contrast floor, in every bundled theme: each glyph (an enabled
 /// breakpoint, a disabled one, a frame arrow) at least 3:1 wherever it
-/// sits over the line numbers (the gutter, the cursor line and the hover
-/// tile), the arrow's colour 3:1 on the current line's band too, where it's
+/// sits over the line numbers (the gutter, the cursor line, the hover
+/// tile, and the tile over the cursor line), the arrow's colour 3:1 on the current line's band too, where it's
 /// the band's edge; and the disabled grey at least 0.1 OKLab L from the
 /// red, so they differ by more than hue.
 #[test]
 fn every_bundled_themes_glyphs_keep_the_contrast_floor() {
+    let mut failures = Vec::new();
     for (id, source) in BUNDLED {
         let (palette, _) = EditorPalette::for_theme(&parse(source));
         let e = &palette.editor;
@@ -283,6 +284,12 @@ fn every_bundled_themes_glyphs_keep_the_contrast_floor() {
             ("gutter", ground),
             ("cursor line", over(e.active_line, ground)),
             ("hover tile", over(e.fold_hover, ground)),
+            // The hovered row that is also the cursor line: the tile over
+            // the active-line fill, as the editor composites them.
+            (
+                "hover tile on the cursor line",
+                over(e.fold_hover, over(e.active_line, ground)),
+            ),
         ];
         let glyphs = [
             ("breakpoint", e.debug_breakpoint),
@@ -292,7 +299,9 @@ fn every_bundled_themes_glyphs_keep_the_contrast_floor() {
         for (glyph, color) in glyphs {
             for (name, under) in grounds {
                 let ratio = contrast_ratio(over(color, under), under);
-                assert!(ratio >= 3., "{id}: {glyph} on the {name}: {ratio:.2}:1");
+                if ratio < 3. {
+                    failures.push(format!("{id}: {glyph} on the {name}: {ratio:.3}:1"));
+                }
             }
         }
         let band = over(e.debug_current_line, ground);
@@ -304,4 +313,5 @@ fn every_bundled_themes_glyphs_keep_the_contrast_floor() {
             "{id}: disabled and enabled {apart:.3} OKLab L apart"
         );
     }
+    assert_eq!(failures, [] as [String; 0]);
 }

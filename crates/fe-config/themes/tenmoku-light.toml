@@ -88,9 +88,9 @@ fold_hover = "#383a4238"
 # tile.
 debug_current_line = "#edf2fb"
 debug_frame_line = "#f5f5f5"
-debug_breakpoint = "#d33d4a"
-debug_breakpoint_disabled = "#5c5d60"
-debug_frame_arrow = "#3b6fd4"
+debug_breakpoint = "#cb3b47"
+debug_breakpoint_disabled = "#535458"
+debug_frame_arrow = "#3a6dd0"
 # The minimap: its background, the slider over the visible rows (at rest,
 # hovered and dragged), and the marks for the selection, find matches,
 # error and warning diagnostics and git changes. VS Code's default light

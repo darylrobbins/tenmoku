@@ -163,8 +163,8 @@ fold_hover = "#F8F8F238"
 # tile.
 debug_current_line = "#3e3f39"
 debug_frame_line = "#3e3d32"
-debug_breakpoint = "#fb7fac"
-debug_breakpoint_disabled = "#cececb"
+debug_breakpoint = "#fca2c2"
+debug_breakpoint_disabled = "#e6e6e2"
 debug_frame_arrow = "#F8F8F0"
 # The minimap. The selection mark is the theme's minimap.selectionHighlight.
 # The rest are VS Code's defaults: minimap.background is the editor's,

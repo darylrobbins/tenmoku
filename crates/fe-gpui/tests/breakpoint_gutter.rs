@@ -352,16 +352,3 @@ fn they_coexist_with_the_diagnostic_dot_and_the_lightbulb(cx: &mut TestAppContex
         assert!(!glyph.bounds.intersects(&lightbulb.1));
     }
 }
-
-/// R2 F13: a screen reader's Click on a row's number (the action its node
-/// carries) toggles a breakpoint there, as a click does.
-#[gpui::test]
-fn a_screen_readers_click_on_a_row_toggles_it(cx: &mut TestAppContext) {
-    let (view, cx) = editor(cx);
-    let toggled = host(&view, cx);
-    cx.update(|window, cx| view.update(cx, |view, cx| view.activate_breakpoint_row(4, window, cx)));
-    cx.run_until_parked();
-    draw(cx);
-    assert_eq!(*toggled.borrow(), [4]);
-    assert_eq!(glyphs(&drawn(&view, cx)), [(4, BreakpointGlyph::Dot)]);
-}

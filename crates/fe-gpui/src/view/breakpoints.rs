@@ -31,6 +31,7 @@
 use std::{path::Path, rc::Rc};
 
 use fe_buffer::{Anchor, Bias, Version};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AccessibleAction, AnyElement, App, AppContext as _, AvailableSpace, Bounds, Context,
     InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
@@ -101,6 +102,28 @@ pub struct BreakpointHandlers {
     pub menu: Rc<dyn Fn(u32, &App) -> Vec<BreakpointMenuItem>>,
 }
 
+/// A screen reader's Click on a row's target toggles, as a click does; the
+/// pointer's own go through the editor. The handler is kept in `clicks`
+/// too, since a window only registers it once assistive technology is
+/// connected, which a test's never is.
+fn on_a11y_click<E: gpui::InteractiveElement + gpui::StatefulInteractiveElement>(
+    target: E,
+    row: u32,
+    this: WeakEntity<EditorView>,
+    clicks: &mut Vec<(u32, A11yClick)>,
+) -> E {
+    let click: A11yClick = Rc::new(move |window, cx| {
+        (this.update(cx, |view, cx| view.activate_breakpoint_row(row, window, cx))).ok();
+    });
+    clicks.push((row, click.clone()));
+    target.on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+        click(window, cx)
+    })
+}
+
+/// What a row's node does for an accessibility Click.
+type A11yClick = Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// A row's open menu, for the text and marks it was opened on.
 struct OpenMenu {
     position: Point<Pixels>,
@@ -109,6 +132,8 @@ struct OpenMenu {
     /// make its row and items stale, and it closes.
     version: Version,
     path: Option<std::path::PathBuf>,
+    /// The item the keyboard is on, from 0.
+    selected: usize,
 }
 
 /// The view's marks and what's under way with the pointer.
@@ -117,6 +142,8 @@ pub(crate) struct Breakpoints {
     /// Each mark, anchored at its row's start, and its target's row.
     marks: Vec<(Anchor, BreakpointMark, Option<Anchor>)>,
     handlers: Option<BreakpointHandlers>,
+    /// The Click each row's node in the last frame was given.
+    a11y_clicks: Vec<(u32, A11yClick)>,
     /// A press on the column waiting for its release: its row and event.
     pending: Option<(u32, MouseDownEvent)>,
     /// While a press that became a drag is handed on.
@@ -378,6 +405,7 @@ impl EditorView {
                     items,
                     version,
                     path,
+                    selected: 0,
                 });
                 window.focus(&view.focus, cx);
                 cx.notify();
@@ -394,6 +422,15 @@ impl EditorView {
         row_label(row, marks.iter().find(|mark| mark.row == row))
     }
 
+    /// What the accessibility Click the last frame gave row `row`'s node
+    /// does, as a screen reader's request would run it, if it has a node.
+    /// For tests.
+    #[cfg(test)]
+    pub(crate) fn a11y_click_of_breakpoint_row(&self, row: u32) -> Option<A11yClick> {
+        (self.breakpoints.a11y_clicks.iter())
+            .find_map(|(at, click)| (*at == row).then(|| click.clone()))
+    }
+
     /// The open menu's items' titles. For tests outside the crate.
     #[doc(hidden)]
     pub fn breakpoint_menu(&self) -> Option<Vec<SharedString>> {
@@ -406,6 +443,58 @@ impl EditorView {
         if self.breakpoints.menu.take().is_some() {
             cx.notify();
         }
+    }
+
+    /// A key while the menu is open: Up and Down move through its items,
+    /// Home and End to the first and last, Enter and Space choose, Escape
+    /// closes it. The editor doesn't see the keys it takes (the key context holds them from
+    /// the keymap); focus stays on
+    /// the editor, so closing leaves it where it was. Whether it took it.
+    pub(crate) fn breakpoint_menu_key(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(menu) = self.breakpoints.menu.as_mut() else {
+            return false;
+        };
+        // The platform modifier's keys stay the app's; every other key is
+        // the menu's while it's open, shifted or not, and the editor, vim
+        // included, doesn't see it.
+        if keystroke.modifiers.platform {
+            return false;
+        }
+        let last = menu.items.len().saturating_sub(1);
+        match keystroke.key.as_str() {
+            "escape" => self.close_breakpoint_menu(cx),
+            "down" => menu.selected = (menu.selected + 1).min(last),
+            "up" => menu.selected = menu.selected.saturating_sub(1),
+            "home" => menu.selected = 0,
+            "end" => menu.selected = last,
+            "enter" | "space" => {
+                let ix = menu.selected;
+                self.choose_breakpoint_menu_item(ix, window, cx);
+            }
+            // Typed text and the vim keys among it are the menu's, not the
+            // editor's, while it's open.
+            _ => {}
+        }
+        cx.notify();
+        true
+    }
+
+    /// Whether the menu is open: the editor's key context then holds its
+    /// keys (kiln's `HOLDS_KEYS`), so no binding runs for them and
+    /// [`EditorView::breakpoint_menu_key`] reads them.
+    pub(crate) fn breakpoint_menu_open(&self) -> bool {
+        self.breakpoints.menu.is_some()
+    }
+
+    /// The open menu's item the keyboard is on. For tests.
+    #[cfg(test)]
+    pub(crate) fn breakpoint_menu_selected(&self) -> Option<usize> {
+        Some(self.breakpoints.menu.as_ref()?.selected)
     }
 
     /// Chooses item `ix` of the open menu, closing it. For the menu's rows
@@ -449,6 +538,7 @@ impl EditorView {
         let menu = self.breakpoints.menu.as_ref()?;
         let colors = cx.theme().colors;
         let mut rows = Vec::with_capacity(menu.items.len());
+        let selected = menu.selected;
         for (ix, item) in menu.items.iter().enumerate() {
             let row = div()
                 .id(("breakpoint-menu-item", ix))
@@ -458,6 +548,7 @@ impl EditorView {
                 .px_3()
                 .rounded(fe_ui::radius::CONTROL)
                 .hover(|row| row.bg(colors.state.hover))
+                .when(ix == selected, |row| row.bg(colors.state.hover))
                 .child(item.title.clone())
                 .on_click(cx.listener(move |view, _, window, cx| {
                     cx.stop_propagation();
@@ -512,6 +603,7 @@ impl EditorView {
         cx: &mut App,
     ) -> Option<AnyElement> {
         let targets = &self.breakpoints.targets;
+        let mut clicks = Vec::new();
         let first = targets.first()?;
         let mut column = first.1;
         for (_, bounds, _) in targets {
@@ -538,16 +630,15 @@ impl EditorView {
                 })
                 // A screen reader's Click toggles, as a click does; the
                 // pointer's own go through the editor.
-                .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                    (this.update(cx, |view, cx| view.activate_breakpoint_row(row, window, cx)))
-                        .ok();
-                });
+                ;
+            let target = on_a11y_click(target, row, this.clone(), &mut clicks);
             let target = match label {
                 Some(label) => fe_ui::node(target, window, cx, fe_ui::Role::Button, label),
                 None => target,
             };
             children.push(target);
         }
+        self.breakpoints.a11y_clicks = clicks;
         let mut element = div()
             .w(column.size.width)
             .h(column.size.height)
@@ -666,3 +757,7 @@ pub(crate) fn row_label(row: u32, mark: Option<&BreakpointMark>) -> SharedString
     }
     parts.join("\n").into()
 }
+
+#[cfg(test)]
+#[path = "breakpoints_tests.rs"]
+mod tests;

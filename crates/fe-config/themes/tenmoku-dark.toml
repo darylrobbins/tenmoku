@@ -88,7 +88,7 @@ fold_hover = "#c8ccd438"
 # tile.
 debug_current_line = "#1c202a"
 debug_frame_line = "#1d1f24"
-debug_breakpoint = "#e06c75"
+debug_breakpoint = "#e16f78"
 debug_breakpoint_disabled = "#b4b7bd"
 debug_frame_arrow = "#7aa2f7"
 # The minimap: its background, the slider over the visible rows (at rest,

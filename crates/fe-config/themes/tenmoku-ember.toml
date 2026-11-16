@@ -131,8 +131,8 @@ fold_hover = "#e3d6c338"
 # tile.
 debug_current_line = "#292018"
 debug_frame_line = "#231f1b"
-debug_breakpoint = "#e0705f"
-debug_breakpoint_disabled = "#bab5b1"
+debug_breakpoint = "#e17665"
+debug_breakpoint_disabled = "#c4bfbb"
 debug_frame_arrow = "#d08b3e"
 # The minimap: its background, the slider over the visible rows (at rest,
 # hovered and dragged), and the marks for the selection, find matches,
