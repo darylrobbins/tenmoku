@@ -29,3 +29,19 @@ workbench-editor-lane-conflicts =
         [one] lane { $lane } · { $count } conflict
        *[other] lane { $lane } · { $count } conflicts
     }
+
+## The editor's right-click menu (editor_menu.rs): its items' titles, which
+## have no category, unlike the commands' titles in the palette.
+
+workbench-editor-menu-go-to-definition = Go to Definition
+workbench-editor-menu-peek-definition = Peek Definition
+workbench-editor-menu-go-to-implementation = Go to Implementation
+workbench-editor-menu-find-references = Find References
+workbench-editor-menu-peek-references = Peek References
+workbench-editor-menu-rename = Rename Symbol
+workbench-editor-menu-format-document = Format Document
+workbench-editor-menu-format-selection = Format Selection
+workbench-editor-menu-cut = Cut
+workbench-editor-menu-copy = Copy
+workbench-editor-menu-paste = Paste
+workbench-editor-menu-copy-path = Copy Path

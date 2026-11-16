@@ -8,7 +8,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
-use crate::{ActiveTheme as _, UiTheme};
+use crate::{ActiveTheme as _, Role, States, UiTheme, a11y::node_with, controls::Control};
 
 /// The menu bar's height.
 pub const MENU_BAR_HEIGHT: Pixels = px(28.);
@@ -133,12 +133,21 @@ pub enum MenuEntry {
 
 /// A menu's items, below its name in a [`MenuStrip`]: each with its
 /// shortcut, right-aligned, the highlighted one on the selection colour.
+/// Items can be [`disabled`](Self::disabled), and opt in to being
+/// [menu items for assistive technology](Self::item_nodes).
 #[derive(IntoElement)]
 pub struct MenuPanel {
     entries: Vec<MenuEntry>,
     highlighted: Option<usize>,
     on_click: Option<IndexHandler>,
     on_hover: Option<IndexHandler>,
+    /// The entries, by index, drawn muted and taking no click or hover.
+    disabled: Vec<usize>,
+    /// Whether each item is a `MenuItem` node.
+    item_nodes: bool,
+    /// Where the items' accessibility nodes go as they render, for tests.
+    #[cfg(test)]
+    a11y_sink: Option<Rc<std::cell::RefCell<Vec<gpui::accesskit::Node>>>>,
 }
 
 impl MenuPanel {
@@ -150,7 +159,37 @@ impl MenuPanel {
             highlighted: None,
             on_click: None,
             on_hover: None,
+            disabled: Vec::new(),
+            item_nodes: false,
+            #[cfg(test)]
+            a11y_sink: None,
         }
+    }
+
+    /// Disables the items at `entries` (indices in the entries): drawn in
+    /// the muted text colour, never highlighted, and given no click or
+    /// hover callback.
+    pub fn disabled(mut self, entries: impl IntoIterator<Item = usize>) -> Self {
+        self.disabled.extend(entries);
+        self
+    }
+
+    /// Makes each item a [`Role::MenuItem`] node named by its title, with
+    /// AccessKit's disabled flag on a [disabled](Self::disabled) one.
+    pub fn item_nodes(mut self) -> Self {
+        self.item_nodes = true;
+        self
+    }
+
+    /// Hands each item's accessibility node, as GPUI would build it once a
+    /// screen reader listens, to `sink` as it renders.
+    #[cfg(test)]
+    pub(crate) fn record_a11y(
+        mut self,
+        sink: Rc<std::cell::RefCell<Vec<gpui::accesskit::Node>>>,
+    ) -> Self {
+        self.a11y_sink = Some(sink);
+        self
     }
 
     pub fn highlighted(mut self, ix: Option<usize>) -> Self {
@@ -172,50 +211,61 @@ impl MenuPanel {
 }
 
 impl RenderOnce for MenuPanel {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let colors = &cx.theme().colors;
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = cx.theme().colors;
         let border = colors.border.default;
-        let rows = self
-            .entries
-            .into_iter()
-            .enumerate()
-            .map(|(ix, entry)| match entry {
-                MenuEntry::Separator => div().my_1().h_px().bg(border).into_any_element(),
-                MenuEntry::Item { title, shortcut } => {
-                    let on_click = self.on_click.clone();
-                    let on_hover = self.on_hover.clone();
-                    let selector = format!("menu-item:{title}");
-                    div()
-                        .id(("menu-item", ix))
-                        .debug_selector(move || selector)
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .gap_6()
-                        .h(px(24.))
-                        .px_3()
-                        .rounded_sm()
-                        .when(self.highlighted == Some(ix), |row| {
-                            row.bg(colors.list.row_selected)
-                                .text_color(colors.tab.active_text)
-                        })
-                        .child(title)
-                        .children(
-                            shortcut.map(|keys| div().text_color(colors.text.muted).child(keys)),
-                        )
-                        .when_some(on_click, |row, on_click| {
-                            row.on_click(move |_, window, cx| {
-                                cx.stop_propagation();
-                                on_click(ix, window, cx);
-                            })
-                        })
-                        .when_some(on_hover, |row, on_hover| {
-                            row.on_mouse_move(move |_, window, cx| on_hover(ix, window, cx))
-                        })
-                        .into_any_element()
+        let mut rows = Vec::with_capacity(self.entries.len());
+        for (ix, entry) in self.entries.into_iter().enumerate() {
+            let (title, shortcut) = match entry {
+                MenuEntry::Separator => {
+                    rows.push(div().my_1().h_px().bg(border).into_any_element());
+                    continue;
                 }
-            });
+                MenuEntry::Item { title, shortcut } => (title, shortcut),
+            };
+            let disabled = self.disabled.contains(&ix);
+            let on_click = self.on_click.clone().filter(|_| !disabled);
+            let on_hover = self.on_hover.clone().filter(|_| !disabled);
+            let selector = format!("menu-item:{title}");
+            let row = div()
+                .id(("menu-item", ix))
+                .debug_selector(move || selector)
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap_6()
+                .h(px(24.))
+                .px_3()
+                .rounded_sm()
+                .when(disabled, |row| row.text_color(colors.text.muted))
+                .when(!disabled && self.highlighted == Some(ix), |row| {
+                    row.bg(colors.list.row_selected)
+                        .text_color(colors.tab.active_text)
+                })
+                .child(title.clone())
+                .children(shortcut.map(|keys| div().text_color(colors.text.muted).child(keys)))
+                .when_some(on_click, |row, on_click| {
+                    row.on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        on_click(ix, window, cx);
+                    })
+                })
+                .when_some(on_hover, |row, on_hover| {
+                    row.on_mouse_move(move |_, window, cx| on_hover(ix, window, cx))
+                });
+            if !self.item_nodes {
+                rows.push(row.into_any_element());
+                continue;
+            }
+            let row = node_with(row, window, cx, Role::MenuItem, title, States::default());
+            let row = Control::new(row, disabled);
+            #[cfg(test)]
+            if let Some(sink) = &self.a11y_sink {
+                sink.borrow_mut().extend(row.a11y_node());
+            }
+            rows.push(row.into_any_element());
+        }
         div()
             .occlude()
             // A press in the panel is the panel's: the bar closes the menu on

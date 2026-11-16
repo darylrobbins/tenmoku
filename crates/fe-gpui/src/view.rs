@@ -102,6 +102,8 @@ pub struct EditorView {
     /// A debugger's marks over the line numbers, and the column's clicks
     /// ([`EditorView::set_breakpoints`]).
     pub(crate) breakpoints: breakpoints::Breakpoints,
+    /// The right-click menu in the text ([`context_menu`]).
+    pub(crate) editor_menu: context_menu::EditorMenu,
     /// The host's links ([`EditorView::set_link_ranges`]).
     pub(crate) links: crate::link_ranges::LinkRanges,
     /// How far the content is scrolled, in pixels (both ≥ 0).
@@ -441,6 +443,7 @@ enum Drag {
 enum Press {
     Left,
     Middle,
+    Right,
 }
 
 impl EditorView {
@@ -466,6 +469,7 @@ impl EditorView {
             sticky_scopes: None,
             annotations: None,
             breakpoints: Default::default(),
+            editor_menu: Default::default(),
             links: Default::default(),
             scroll: Point::default(),
             autoscroll: true,
@@ -1147,6 +1151,7 @@ impl EditorView {
                 match press {
                     Press::Left => view.on_mouse_down(&event, window, cx),
                     Press::Middle => view.on_middle_down(&event, window, cx),
+                    Press::Right => view.on_right_press(&event, window, cx),
                 }
                 view.press_settled = false;
             })
@@ -1816,7 +1821,8 @@ impl EditorView {
         }
     }
 
-    fn on_scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_scroll(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_editor_menu_in(window, cx);
         let line_height = self
             .layout
             .as_ref()
@@ -1991,6 +1997,7 @@ impl Render for EditorView {
         }
         self.sync_vim(cx);
         self.settle_which_key();
+        self.settle_editor_menu_focus(window, cx);
         // Vim left insert mode, or came on or went off, while composing.
         self.drop_stale_composition();
         self.sync_find(cx);
@@ -2058,7 +2065,7 @@ impl Render for EditorView {
             .cursor(CursorStyle::IBeam)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_middle_down))
-            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_press))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -2087,6 +2094,7 @@ impl Render for EditorView {
             .child(overlay_layer(cx))
             .child(breakpoint_targets_layer(cx))
             .children(self.breakpoint_menu_layer(window, cx))
+            .children(self.editor_menu_layer(window, cx))
             .children(crate::vim::which_key::popup_layer(self, cx))
     }
 }
@@ -2173,10 +2181,12 @@ fn read_primary_text(_: &App) -> Option<String> {
 pub(crate) mod a11y_announce;
 pub(crate) mod breakpoints;
 mod change_bar;
+pub(crate) mod context_menu;
 mod find;
 pub(crate) mod ghost_text;
 mod host;
 mod ime;
+mod menu_focus;
 mod minimap;
 mod proposal;
 mod proposal_commands;
@@ -2325,6 +2335,10 @@ impl EditorView {
 
 pub use breakpoints::{
     BreakpointHandlers, BreakpointMark, BreakpointMenuItem, BreakpointState, FrameArrow,
+};
+pub use context_menu::{
+    EditorMenuItem, EditorMenuProvider, EditorMenuRequest, EditorMenuTicket,
+    set_editor_menu_provider,
 };
 pub use ghost_text::GhostTextEvent;
 pub use host::{EditorInputEvent, EditorViewEvent, HostBlock, HostBlockKind, ReservedBlock};

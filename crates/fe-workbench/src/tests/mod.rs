@@ -71,6 +71,7 @@ mod debug_toolbar;
 mod default_fonts;
 mod default_keymaps;
 mod dock_titles_locale;
+mod editor_menu;
 mod editorconfig_clean_open;
 mod file_icon_set_surfaces;
 pub(crate) mod find_bar;

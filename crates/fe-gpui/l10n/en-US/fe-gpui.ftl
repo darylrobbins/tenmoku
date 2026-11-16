@@ -28,6 +28,8 @@ gpui-status-read-only = Read-only
 
 # The editor's group, around its text area (named for the file) and popovers.
 gpui-a11y-editor = Editor
+# The editor's right-click menu, for a screen reader.
+gpui-editor-menu = Editor menu
 # Vim's command line, by what it's for: `:`, `/` and `?`.
 gpui-a11y-command-line-ex = Command
 gpui-a11y-command-line-search-forward = Search forward

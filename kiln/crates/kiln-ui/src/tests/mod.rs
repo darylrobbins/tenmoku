@@ -16,6 +16,7 @@ mod file_icons;
 mod icon_stroke;
 mod layout;
 mod list;
+mod menu_panel;
 mod module_folder_icons;
 mod prompt;
 mod roles;

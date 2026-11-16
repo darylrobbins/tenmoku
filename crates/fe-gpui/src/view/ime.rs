@@ -237,9 +237,16 @@ impl EditorView {
     }
 
     /// Whether an input method may type, as vim's mode is now: with vim
-    /// off or in insert mode, in a view that isn't read-only. Otherwise a
-    /// composition goes, typing nothing.
+    /// off or in insert mode, in a view that isn't read-only, with no
+    /// right-click menu open. Otherwise a composition goes, typing nothing.
     fn takes_input(&mut self, cx: &mut Context<Self>) -> bool {
+        // The right-click menu has focus: a late call from before its first
+        // frame, while the platform still holds this view's handler, types
+        // nothing ([`super::context_menu`]).
+        if self.editor_menu_open() {
+            self.cancel_composition(cx);
+            return false;
+        }
         self.sync_vim(cx);
         self.drop_stale_composition();
         if self.read_only {

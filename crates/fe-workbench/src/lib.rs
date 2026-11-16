@@ -42,6 +42,7 @@ mod disk_sync;
 mod dock;
 mod dock_focus;
 mod dock_layout;
+mod editor_menu;
 mod encoding_picker;
 mod extension_install;
 mod extension_snippets;
@@ -246,6 +247,7 @@ pub fn init(cx: &mut App) {
     test_run_view::init(cx);
     lsp::init(cx);
     grammar_prompt::init(cx);
+    editor_menu::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
     kiln_shell::command_palette::register(cx);

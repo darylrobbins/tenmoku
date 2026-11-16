@@ -95,6 +95,10 @@ pub use view::{
     BreakpointHandlers, BreakpointMark, BreakpointMenuItem, BreakpointState, FrameArrow, GlyphKind,
     GutterGlyph,
 };
+pub use view::{
+    EditorMenuItem, EditorMenuProvider, EditorMenuRequest, EditorMenuTicket,
+    set_editor_menu_provider,
+};
 pub use view::{HostBlock, HostBlockKind, ReservedBlock};
 pub use view::{ProposalBadge, ProposalEvent};
 pub use vim::{
