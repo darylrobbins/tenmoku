@@ -25,13 +25,13 @@ buttons.
 | `testSaveAllAndSaveAs` | `two-files` | File > Save All writes both dirty tabs; File > Save As… through `NSSavePanel` writes `a-copy.txt`, leaves `a.txt`, retitles the tab | T251 (save half) |
 | `testSaveEncodingsByteForByte` | `encodings` | windows-1252 (guessed, no BOM), UTF-16LE with BOM, UTF-8 with BOM, UTF-8 CRLF: each edited at its start and saved is the original bytes plus the typed text in that encoding, BOM kept, Return written as CRLF | T251 (disk half) |
 | `testWindowTitleDirtyAndActive` | `two-files` | `●` after an edit, gone after undo back to the saved text, follows the active tab across cmd-shift-[ and ], gone after cmd-S; closing a dirty tab asks (Cancel, Discard), Cancel keeps it; closing the last tab leaves no file in the title | T526 (title), T251 (dirty marker) |
-| `testQuitByMenuHotExitAndRelaunch` | `plain` | Tenmoku > Quit Tenmoku with unsaved text: no question, `notes.txt` untouched, a backup holding the text, every backup file mode 0600; a relaunch on the same state restores the tab dirty (`notes.txt ● — Tenmoku`), and cmd-S writes the text | T526 (disk half) |
+| `testQuitByMenuHotExitAndRelaunch` | `plain` | Tenmoku > Quit Tenmoku with unsaved text: no question, `notes.txt` untouched, a backup holding the text, every backup file mode 0600; a folder relaunch on the same state (answering its trust alert) restores the tab dirty (`notes.txt ● — Tenmoku`), and File > Save All writes the text | T526 (disk half) |
 | `testFirstRunWizardOnce` | `plain`, fresh state | an empty state folder shows the wizard (`Skip setup`) and writes `outcome = "shown"`; Skip setup writes `"skipped"`; a relaunch shows nothing and leaves `setup.toml` byte for byte; Tenmoku > Set Up Tenmoku… shows it again, Escape skips | T1344 (disk half) |
 | `testTrustByMenu` | `plain` | a folder launch asks "Do you trust the authors…" (Trust Folder, Don't Trust); Don't Trust, then File > Trust This Folder, Untrust This Folder and Trust again each land in `trust.toml` as the canonical folder's `true`/`false`; a relaunch doesn't ask again and leaves the file | T197 |
-| `testOpenRecentAndRecentToml` | `recent` | `recent.toml` lists the folder and the file opened, then after a relaunch on another file lists that one first; File > Open Recent… with the query `quiz` and Return opens `quiz.txt` | T528 |
+| `testOpenRecentAndRecentToml` | `recent` | `recent.toml` lists the file opened, then after a relaunch on another file lists that one first (a file launch records no folder); File > Open Recent… with the query `quiz` and Return opens `quiz.txt` | T528 |
 | `testVimClipboardOff` | `vim`, `settings/off.toml` | `vim.clipboard = ""`: `yyP` then `:w` puts vim's own register (disk `alpha alpha beta`) and leaves the pasteboard as the test set it; `"+yy` writes it | T361 |
 | `testVimClipboardUnnamedplus` | `vim`, `settings/unnamedplus.toml` | `vim.clipboard = "unnamedplus"`: `yy` writes the pasteboard; text another app left there goes in with `P`, then `:w` (disk) | T361 |
-| `testMarkdownPreviewButtons` | `markdown` | Open Preview and Open Preview to the Side show on the markdown tab only (gone on `notes.txt`); Open Preview swaps the tab to `Preview notes.md`, Show Source back, the source still `●` and the file untouched | T1008 |
+| `testMarkdownPreviewButtons` | `markdown` | Open Preview and Open Preview to the Side show on the markdown tab only (gone on `notes.txt`); Open Preview swaps the tab to the preview (Show Source; the window keeps `notes.md ● — Tenmoku`), Show Source back, the file untouched | T1008 |
 | `testPaneToolbarEnabledState` | `lines` | Go Back and Go Forward disabled with no history, Split Right, Split Down and More Actions enabled; a go-to-line jump enables Back, Back and Forward swap their states; Split Right makes a second pane with its own buttons | (pane toolbar, record's last bullet) |
 | `testRunnerWritesOnlyItsScratch` | `plain` | the runner may write its run's scratch folder and nowhere beside it (see *Widening the runner's entitlements*) | T400, T526 (external edits, later) |
 
@@ -61,8 +61,10 @@ T1664's behaviour stays: the script exports a temporary `TENMOKU_STATE_DIR` and
 
 ### Waiting
 
-`waitForTree()` waits for `app.buttons["Split Right"]` with `waitForExistence` (the pane's
-tab-row button, there in every pane). Every check of a gpui node (`expectButton`,
+`waitForTree()` waits for the button titled `Split Right` (the pane's tab-row button, there
+in every pane) with `waitForExistence`, after an `exists` check. The button is resolved
+with `element(boundBy: 0)`, because `.firstMatch` never finds gpui-pre's nodes (see *The
+real run*). Every check of a gpui node (`expectButton`,
 `expectNoButton`, `expectButtonCount`, `clickButton`) goes through it first. Titles,
 menus, native alerts and panels wait with `waitForExistence` too, and the disk and the
 pasteboard are polled every 50 ms up to a timeout. The one fixed delay is `editorSettle`
@@ -128,7 +130,10 @@ exit 124; pgrep afterwards: 42799 /bin/sh …/tools/e2e-macos/standins/late-chil
 | `hang-ignore-term` | `--timeout 3` | `FAILED (timed out after 3s)`, exit 124 after 18 s, nothing left (as before) |
 | `exit-zero` | default | `FAILED (xcodebuild exited 0, but these could not be exported: attachments, tests.json, summary.json, named attachments)`, exit 1 (as before) |
 
-SHORT-RUN
+`short-run`, with `MOCK_XCRESULT` set to the C7 run's result bundle (13 tests, all
+passed): `test runs: 2 passed of 2 finished, 13 expected; summary: 13 passed of 13 tests`,
+then `FAILED (expected 13 passing test runs of 13 tests; the log shows 2 of 2 and the
+summary 13 of 13)`, exit 1, as before.
 
 ## Open questions from the spike record
 
@@ -180,7 +185,15 @@ writes only its container and that folder, never the repository or the fixtures.
 `testRunnerWritesOnlyItsScratch` checks both sides in every run: a write in the test's
 set works, and one in the scratch root beside this run's folder is refused.
 
-RUNTIME-ENTITLEMENTS
+At runtime it holds. In the first UI run (`--only testRunnerWritesOnlyItsScratch`,
+2026-11-16 05:03) the test's record reads:
+
+```
+inside …/target/e2e-macos/scratch/20261116-050317/testRunnerWritesOnlyItsScratch/001/home/runner-write-probe.txt: written
+outside …/target/e2e-macos/scratch/runner-write-probe-001.txt: refused, Error Domain=NSCocoaErrorDomain Code=513 "You don’t have permission to save the file “runner-write-probe-001.txt” in the folder “scratch”." … {Error Domain=NSPOSIXErrorDomain Code=1 "Operation not permitted"}
+```
+
+and it passed in every run since, all three C7 iterations included.
 
 What it unlocks: a test can now change a file behind the app's back, mid-test, which the
 spike record put out of reach. For T400 (very large files), the external-edit step: grow
@@ -193,4 +206,96 @@ is launchd's child, not the runner's) or Finder drops.
 
 ## The real run
 
-REAL-RUN
+All on 2026-11-16, with the user at the Mac and the screen unlocked, after their go-ahead.
+Every run used `--no-build`, because the release binary in the lane's target was built
+from the card's code (only the Swift tests changed afterwards, and `xcodebuild test`
+rebuilds those).
+
+### Fix-up runs
+
+| Time | Run | Result | What it showed |
+|---|---|---|---|
+| 05:03 | `--only testRunnerWritesOnlyItsScratch` | passed | The Automation Mode prompt (above); the widened runner works |
+| 05:05 | the suite, 1 iteration | 2 of 13 | Every check of a gpui node failed: `waitForTree()` never saw `Split Right` in 15 s, while the snapshot taken right after held it |
+| 05:10–05:16 | `--only testPaneToolbarEnabledState`, 5 times | 4 failed, 1 passed | Probes of the lookup (below); the fix |
+| 05:19 | the suite, 1 iteration | 9 of 13 | Four expectations wrong about the app (below) |
+| 05:26 | the suite, 1 iteration | 12 of 13 | cmd-S after the trust alert saved nothing |
+| 05:30 | `--only testQuitByMenuHotExitAndRelaunch` | passed | |
+| 05:31 | **`--iterations 3`** | **39 of 39** | C7, below |
+
+**`.firstMatch` never finds gpui-pre's nodes.** The spike recommended
+`app.buttons["Split Right"].waitForExistence`, but its runs only dumped the tree and never
+queried it. A probe at the moment of failure gave:
+
+```
+app.buttons[m].exists = true
+buttons(m).firstMatch.exists = false
+buttons(m).count = 1
+app.buttons.matching(title).firstMatch.exists = false
+app.buttons.element(matching: title).exists = true
+window.buttons.matching(title).count = 1
+app.buttons.matching(title).firstMatch.waitForExistence(1) = false
+```
+
+So `Support.swift` resolves every gpui button with `element(boundBy: 0)` of a query
+matching its title (gpui-pre's nodes have the label as the AX title and no
+identifier), and `.firstMatch` is kept for AppKit's own elements (windows, menus, alerts,
+the save panel), where it works. A `waitForExistence` also costs about 1.1 s even when the
+element is already there, so each wait is preceded by an `exists` check.
+
+**What the app does that the tests first assumed otherwise** (the tests now check what
+it does):
+
+- A file launch (`tenmoku <folder> <file>`) records the file in `recent.toml` but not its
+  folder ("A file's folder is only the root it opens in, not one opened",
+  `workbench.rs`); folders are recorded by folder launches.
+- A file launch opens only the file; a folder launch (or one with no argument) reopens
+  the root's saved windows, hot-exit backups included (`main.rs`). So the hot-exit
+  relaunch is a folder launch, which on an undecided folder first raises the trust
+  alert. The test answers Don't Trust.
+- Open Preview shows the preview in the tab's place, and the window keeps the source
+  tab's title, `●` included (`notes.md ● — Tenmoku`), rather than the preview item's
+  `Preview notes.md — Tenmoku`.
+- After the trust alert on that relaunch, cmd-S saved nothing: the restored editor
+  didn't have keyboard focus. The test saves with File > Save All instead. **Possible
+  bug, for a follow-up:** a window restored behind the launch's trust alert may not give
+  its editor focus once the alert closes.
+
+### C7: `scripts/e2e-macos.sh --no-build --iterations 3`
+
+05:31:05 to 05:41:57, 10 min 52 s wall, ending:
+
+```
+test runs: 39 passed of 39 finished, 39 expected; summary: 13 passed of 13 tests
+launch records: 36, of which 0 name a dev.tenmoku.tenmoku.e2e process other than <worktree>/target/e2e-macos/bundle/Tenmoku.app
+result bundle: <worktree>/target/e2e-macos/results/20261116-053105/TenmokuE2E.xcresult
+e2e-macos: passed
+```
+
+Every test passed in all three iterations, with no retries (the script passes no retry
+option, and the log has exactly 39 finished runs). **Flakes: none.** The suite took 208.3,
+207.2 and 203.4 s an iteration (`Executed 13 tests, with 0 failures`).
+
+| Test | Iteration 1 | 2 | 3 |
+|---|---|---|---|
+| testFirstRunWizardOnce | 15.3 s | 14.3 s | 14.2 s |
+| testMarkdownPreviewButtons | 15.9 s | 16.1 s | 15.7 s |
+| testOpenRecentAndRecentToml | 15.5 s | 15.2 s | 15.0 s |
+| testPaneToolbarEnabledState | 12.4 s | 11.6 s | 11.6 s |
+| testQuitByMenuHotExitAndRelaunch | 22.6 s | 22.7 s | 22.4 s |
+| testRunnerWritesOnlyItsScratch | 0.8 s | 0.6 s | 0.7 s |
+| testSaveAllAndSaveAs | 24.9 s | 23.9 s | 24.0 s |
+| testSaveEncodingsByteForByte | 22.7 s | 22.1 s | 22.0 s |
+| testSaveWithCmdSAndFileMenu | 19.4 s | 18.8 s | 19.0 s |
+| testTrustByMenu | 20.9 s | 20.7 s | 20.8 s |
+| testVimClipboardOff | 7.5 s | 9.9 s | 7.2 s |
+| testVimClipboardUnnamedplus | 7.1 s | 7.0 s | 7.1 s |
+| testWindowTitleDirtyAndActive | 23.4 s | 24.4 s | 23.6 s |
+
+**The user's Tenmoku and the installed copies were untouched.** All 36 launch records
+(the 12 tests that launch the app, three times each) name only
+`<worktree>/target/e2e-macos/bundle/Tenmoku.app/Contents/MacOS/tenmoku`. None notes a
+`dev.tenmoku.tenmoku` process: the user's own Tenmoku wasn't running during the run.
+`/Applications/Tenmoku.app/Contents/Info.plist` and
+`~/Applications/Tenmoku.app/Contents/Info.plist` are both from Nov 9 15:45, before the
+card. The vim tests put the pasteboard back as they found it.
