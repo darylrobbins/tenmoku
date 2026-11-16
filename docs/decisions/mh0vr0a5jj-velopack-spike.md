@@ -396,7 +396,8 @@ sources` passes.
 
 ## 10. Linux AppImage and Windows Setup.exe with this source
 
-Not run here; this is from the crate's source and vpk's help.
+Not run here; this is from the crate's source and vpk's help. T1909 built both:
+[q01csgae9p-installers.md](q01csgae9p-installers.md).
 
 - `SignedSource` and the feed signature are platform-neutral: an
   `UpdateSource` over any fetcher.

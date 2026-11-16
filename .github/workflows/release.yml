@@ -3,12 +3,17 @@ name: Release
 # A vX.Y.Z tag builds Tenmoku on four platforms, one job each, and the publish job attaches
 # their files to a GitHub Release: Tenmoku-<v>-macos-arm64.zip (Tenmoku.app),
 # Tenmoku-<v>-windows-x64.zip, Tenmoku-<v>-windows-arm64.zip and
-# Tenmoku-<v>-linux-x86_64.tar.gz, each with a .sha256, and Sparkle's appcast.xml. Each build
-# job runs its own binary before uploading it. macOS signing, notarization and the appcast run
-# only when the repository has the secrets; without them the app ships ad-hoc signed and with
-# no appcast. The Windows and Linux builds are unsigned. A manual run builds the same files as
-# workflow artifacts and publishes nothing. See docs/release/macos-signing.md, "Releasing", and
-# docs/release/platforms.md.
+# Tenmoku-<v>-linux-x86_64.tar.gz, each with a .sha256, and Sparkle's appcast.xml; and, packed by
+# Velopack (vpk), Tenmoku-<v>-windows-x64-Setup.exe, Tenmoku-<v>-windows-arm64-Setup.exe and
+# Tenmoku-<v>-linux-x86_64.AppImage, each with a .sha256, and the Velopack feed of each:
+# releases.<os>-<arch>-stable.json and the full .nupkg it lists. Each build job runs its own
+# binary, and installs or launches what vpk packed, before uploading it. macOS signing,
+# notarization and the appcast run only when the repository has the secrets; without them the
+# app ships ad-hoc signed and with no appcast. The Velopack feeds are signed (a .sig beside each)
+# only with the TENMOKU_UPDATE_PRIVATE_KEY secret and TENMOKU_UPDATE_PUBLIC_KEY variable; an
+# unsigned feed is one the app never takes. The Windows and Linux builds are not code signed. A
+# manual run builds the same files as workflow artifacts and publishes nothing. See
+# docs/release/macos-signing.md, "Releasing", and docs/release/platforms.md.
 
 on:
   push:
@@ -169,10 +174,14 @@ jobs:
       # The C runtime linked in (crt-static, for the C and C++ dependencies too through cc and
       # cmake): the zip has no Visual C++ redistributable, which a fresh Windows lacks. Only the
       # target's code: with --target, RUSTFLAGS skips build scripts.
+      # The feed and public key baked in are Check for Updates' through Velopack (the public key
+      # only once the variable is set); the feed signer is built beside the app.
       - name: Build the release binary
         env:
           RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --release -p fastedit --locked --target ${{ matrix.target }}
+          TENMOKU_UPDATE_FEED: ${{ vars.TENMOKU_UPDATE_FEED || format('https://github.com/{0}/releases/latest/download', github.repository) }}
+          TENMOKU_UPDATE_PUBLIC_KEY: ${{ vars.TENMOKU_UPDATE_PUBLIC_KEY }}
+        run: cargo build --release -p fastedit --locked --target ${{ matrix.target }} --bin tenmoku --example sign_update_feed
       - name: Zip the binary and its checksum
         run: |
           scripts/package-windows.ps1 -Arch ${{ matrix.arch }} -Version $env:VERSION `
@@ -205,7 +214,67 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "tenmoku --version exited $LASTEXITCODE" }
           Write-Output $got
           if ($got -ne "tenmoku $env:VERSION") { throw "--version printed '$got', not 'tenmoku $env:VERSION'" }
-      - name: Upload the zip as a workflow artifact
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install vpk at the velopack crate's pin
+        run: |
+          $pin = (Select-String -Path Cargo.toml -Pattern '^velopack = \{ version = "=([^"]+)"').Matches[0].Groups[1].Value
+          $tools = Join-Path $env:RUNNER_TEMP vpk
+          dotnet tool install vpk --version $pin --tool-path $tools
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content $env:GITHUB_PATH $tools
+      - name: Pack Setup.exe and the Velopack feed
+        env:
+          TENMOKU_UPDATE_PUBLIC_KEY: ${{ vars.TENMOKU_UPDATE_PUBLIC_KEY }}
+          TENMOKU_UPDATE_PRIVATE_KEY: ${{ secrets.TENMOKU_UPDATE_PRIVATE_KEY }}
+        run: |
+          $name = "Tenmoku-$env:VERSION-windows-${{ matrix.arch }}"
+          $unzipped = Join-Path $env:RUNNER_TEMP pack
+          Expand-Archive "dist/$name.zip" $unzipped
+          scripts/velopack-pack.ps1 -Arch ${{ matrix.arch }} -Version $env:VERSION -PackDir (Join-Path $unzipped $name) `
+            -Out dist -Signer target/${{ matrix.target }}/release/examples/sign_update_feed.exe
+          Get-Content "dist/$name-Setup.exe.sha256"
+      - name: Smoke test Setup.exe (per-user install, Start menu, --version, uninstall)
+        env:
+          TENMOKU_NO_IPC: 1
+        run: |
+          $setup = "dist/Tenmoku-$env:VERSION-windows-${{ matrix.arch }}-Setup.exe"
+          $root = Join-Path $env:LOCALAPPDATA Tenmoku
+          $installer = Start-Process -FilePath $setup -ArgumentList '--silent' -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "Setup.exe --silent exited $($installer.ExitCode)" }
+          # Setup starts the app once it has installed it.
+          Start-Sleep -Seconds 5
+          Get-Process tenmoku -ErrorAction SilentlyContinue | Stop-Process -Force
+          $exe = Join-Path $root 'current\tenmoku.exe'
+          if (-not (Test-Path $exe)) { throw "no per-user install at $exe" }
+          if (-not (Test-Path (Join-Path $root 'Update.exe'))) { throw "no Update.exe beside current\" }
+          $got = (& $exe --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "the installed tenmoku --version exited $LASTEXITCODE" }
+          Write-Output $got
+          if ($got -ne "tenmoku $env:VERSION") { throw "--version printed '$got', not 'tenmoku $env:VERSION'" }
+          $menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+          $shortcut = @(Get-ChildItem $menu -Filter 'Tenmoku*.lnk' -ErrorAction SilentlyContinue)
+          if (-not $shortcut) { throw "no Start menu shortcut in $menu" }
+          Write-Output "Start menu: $($shortcut.FullName -join ', ')"
+          # The Add/Remove Programs entry, per user (HKCU: no administrator prompt).
+          $uninstallKeys = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+          $entry = Get-ChildItem $uninstallKeys | Get-ItemProperty | Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq 'Tenmoku' }
+          if (-not $entry) { throw "no Tenmoku entry under $uninstallKeys" }
+          Write-Output "Add/Remove Programs: $($entry.DisplayName) $($entry.DisplayVersion), $($entry.QuietUninstallString)"
+          if ($entry.DisplayVersion -ne $env:VERSION) { throw "the entry's version is $($entry.DisplayVersion)" }
+          # What Add/Remove Programs runs, quietly.
+          if ($entry.QuietUninstallString -notmatch '^"([^"]+)"\s*(.*)$') { throw "unexpected QuietUninstallString: $($entry.QuietUninstallString)" }
+          $uninstaller = Start-Process -FilePath $Matches[1] -ArgumentList $Matches[2] -Wait -PassThru
+          if ($uninstaller.ExitCode -ne 0) { throw "the uninstall exited $($uninstaller.ExitCode)" }
+          Start-Sleep -Seconds 5
+          if (Test-Path $exe) { throw "the uninstall left $exe" }
+          if (@(Get-ChildItem $menu -Filter 'Tenmoku*.lnk' -ErrorAction SilentlyContinue)) { throw 'the uninstall left the Start menu shortcut' }
+          if (Get-ChildItem $uninstallKeys | Get-ItemProperty | Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq 'Tenmoku' }) {
+            throw 'the uninstall left the Add/Remove Programs entry'
+          }
+          Write-Output 'installed per user, ran, and uninstalled'
+      - name: Upload the zip, Setup.exe and feed as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
           name: Tenmoku-${{ needs.version.outputs.version }}-windows-${{ matrix.arch }}
@@ -231,8 +300,12 @@ jobs:
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # As on Windows: Velopack's feed and public key baked in, and the feed signer built.
       - name: Build the release binary
-        run: cargo build --release -p fastedit --locked
+        env:
+          TENMOKU_UPDATE_FEED: ${{ vars.TENMOKU_UPDATE_FEED || format('https://github.com/{0}/releases/latest/download', github.repository) }}
+          TENMOKU_UPDATE_PUBLIC_KEY: ${{ vars.TENMOKU_UPDATE_PUBLIC_KEY }}
+        run: cargo build --release -p fastedit --locked --bin tenmoku --example sign_update_feed
       - name: Pack the binary and its checksum
         id: package
         run: |
@@ -274,7 +347,58 @@ jobs:
             exit 1
           fi
           echo "the app is alive after 5 s with no panic"
-      - name: Upload the archive as a workflow artifact
+      - name: Install vpk's squashfs tools and FUSE for the AppImage
+        run: sudo apt-get install -y squashfs-tools fuse3 libfuse2t64
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install vpk at the velopack crate's pin
+        run: |
+          pin=$(sed -n 's/^velopack = { version = "=\([^"]*\)".*/\1/p' Cargo.toml)
+          [ -n "$pin" ] || { echo "::error::no pinned velopack version in Cargo.toml"; exit 1; }
+          dotnet tool install vpk --version "$pin" --tool-path "$RUNNER_TEMP/vpk"
+          echo "$RUNNER_TEMP/vpk" >>"$GITHUB_PATH"
+      - name: Pack the AppImage and the Velopack feed
+        env:
+          TENMOKU_UPDATE_PUBLIC_KEY: ${{ vars.TENMOKU_UPDATE_PUBLIC_KEY }}
+          TENMOKU_UPDATE_PRIVATE_KEY: ${{ secrets.TENMOKU_UPDATE_PRIVATE_KEY }}
+        run: |
+          unpacked="$RUNNER_TEMP/pack"
+          mkdir -p "$unpacked"
+          tar -xzf "dist/Tenmoku-$VERSION-linux-x86_64.tar.gz" -C "$unpacked"
+          scripts/velopack-pack.sh --linux --pack-dir "$unpacked/Tenmoku-$VERSION-linux-x86_64" \
+            --version "$VERSION" --out dist --signer target/release/examples/sign_update_feed
+          cat "dist/Tenmoku-$VERSION-linux-x86_64.AppImage.sha256"
+      - name: Smoke test the AppImage
+        env:
+          TENMOKU_NO_IPC: 1
+        run: |
+          appimage="$PWD/dist/Tenmoku-$VERSION-linux-x86_64.AppImage"
+          (cd dist && sha256sum -c "Tenmoku-$VERSION-linux-x86_64.AppImage.sha256")
+          got=$("$appimage" --version)
+          echo "$got"
+          [ "$got" = "tenmoku $VERSION" ] || { echo "::error::the AppImage's --version printed '$got', not 'tenmoku $VERSION'"; exit 1; }
+          # As the tar.gz's binary above: under Xvfb, alive after 5 s with no panic.
+          smoke="$RUNNER_TEMP/appimage-smoke"
+          mkdir -p "$smoke/config" "$smoke/state" "$smoke/project"
+          Xvfb :98 -screen 0 1280x800x24 &
+          xvfb=$!
+          sleep 1
+          env -u WAYLAND_DISPLAY DISPLAY=:98 XDG_CONFIG_HOME="$smoke/config" \
+            XDG_STATE_HOME="$smoke/state" RUST_LOG=info "$appimage" "$smoke/project" >"$smoke/app.log" 2>&1 &
+          app=$!
+          sleep 5
+          alive=0
+          kill -0 "$app" 2>/dev/null && alive=1
+          kill "$app" "$xvfb" 2>/dev/null || true
+          tail -n 40 "$smoke/app.log"
+          [ "$alive" = 1 ] || { echo "::error::the AppImage exited within 5 s of launching"; exit 1; }
+          if grep -n 'panicked' "$smoke/app.log"; then
+            echo "::error::the AppImage panicked"
+            exit 1
+          fi
+          echo "the AppImage is alive after 5 s with no panic"
+      - name: Upload the archive, AppImage and feed as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
           name: Tenmoku-${{ needs.version.outputs.version }}-linux-x86_64
@@ -311,9 +435,16 @@ jobs:
               echo "::error::$GITHUB_REF_NAME has an appcast.xml and this run made none: set SPARKLE_ED_PRIVATE_KEY, or delete that asset first"
               exit 1
             fi
+            # The same for each Velopack feed: a new feed under the old .sig fails every check.
+            for sig in $(printf '%s\n' "$assets" | grep -x 'releases\..*\.json\.sig' || true); do
+              if [ ! -e "dist/$sig" ]; then
+                echo "::error::$GITHUB_REF_NAME has $sig and this run made none: set TENMOKU_UPDATE_PRIVATE_KEY, or delete that asset first"
+                exit 1
+              fi
+            done
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
-            notes="Downloads: macOS on Apple Silicon (macos-arm64.zip), Windows on x64 or ARM64 (windows-x64.zip, windows-arm64.zip), Linux on x86_64 (linux-x86_64.tar.gz, needs glibc $GLIBC or later). How to install each, and to open a build the OS warns is unsigned: https://github.com/$GH_REPO/blob/$GITHUB_REF_NAME/docs/release/platforms.md"
+            notes="Downloads: macOS on Apple Silicon (macos-arm64.zip); Windows on x64 or ARM64, an installer (windows-x64-Setup.exe, windows-arm64-Setup.exe) or a portable zip (windows-x64.zip, windows-arm64.zip); Linux on x86_64, an AppImage (linux-x86_64.AppImage) or a portable archive (linux-x86_64.tar.gz), both needing glibc $GLIBC or later. The releases.*.json and .nupkg files are the Windows and Linux update feeds. How to install, update and uninstall each, and to open a build the OS warns is unsigned: https://github.com/$GH_REPO/blob/$GITHUB_REF_NAME/docs/release/platforms.md"
             gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes \
               --title "Tenmoku $GITHUB_REF_NAME" --notes "$notes"
           fi
