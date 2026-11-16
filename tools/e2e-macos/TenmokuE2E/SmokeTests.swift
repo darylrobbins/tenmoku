@@ -208,7 +208,9 @@ final class SmokeTests: E2ETestCase {
         expectTitle(titled("notes.txt", dirty: true))
         waitForTree()
         settle()
-        app.typeKey("s", modifierFlags: .command)
+        // Save All, not cmd-S: after the alert the restored editor needn't have focus
+        // (in the first run cmd-S here saved nothing), and Save All saves it anyway.
+        menu("File", "Save All")
         expectText(notes, typed)
         expectTitle(titled("notes.txt"))
     }
