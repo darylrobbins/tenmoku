@@ -244,14 +244,24 @@ class E2ETestCase: XCTestCase {
 
     // MARK: gpui-pre's accessibility tree
 
-    /// Waits until gpui-pre's tree is live: it answers the first query empty and
+    /// Waits until gpui-pre's tree is live: it answers the first request empty and
     /// builds a frame later, at a time that varies (T1661), so every check of a gpui
     /// node goes through here first. The marker is a labelled kiln icon button.
+    ///
+    /// gpui-pre's nodes must be looked up with `button(_:)`, never `.firstMatch`: in
+    /// this card's first runs `app.buttons[...].firstMatch` never found Split Right in
+    /// 15 s, while `element(boundBy:)`, `element(matching:)`, `count` and the subscript
+    /// itself all found it at the same moment (`.firstMatch` reported false). AppKit's
+    /// own elements (windows, menus, alerts, panels) are found either way.
     @discardableResult
     func waitForTree(file: StaticString = #filePath, line: UInt = #line) -> Bool {
-        let live = app.buttons[Self.treeMarker].firstMatch.waitForExistence(timeout: Self.treeTimeout)
+        let marker = button(Self.treeMarker)
+        let live = marker.exists || marker.waitForExistence(timeout: Self.treeTimeout)
         if !live {
-            record("ax-tree-no-tree", app.debugDescription)
+            let all = app.buttons.allElementsBoundByIndex.map {
+                "title \($0.title.debugDescription) label \($0.label.debugDescription) identifier \($0.identifier.debugDescription)"
+            }
+            record("ax-tree-no-tree", "app.buttons: \(all.count)\n\(all.joined(separator: "\n"))\n\n\(app.debugDescription)")
         }
         XCTAssertTrue(live, "gpui's accessibility tree never showed \(Self.treeMarker)", file: file, line: line)
         return live
@@ -260,7 +270,7 @@ class E2ETestCase: XCTestCase {
     /// A gpui-drawn button, once the tree is live.
     func gpuiButton(_ title: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         waitForTree(file: file, line: line)
-        return app.buttons[title].firstMatch
+        return button(title)
     }
 
     /// Fails unless the gpui button `title` shows, enabled or not as asked.
@@ -269,7 +279,7 @@ class E2ETestCase: XCTestCase {
     ) {
         let button = gpuiButton(title, file: file, line: line)
         XCTAssertTrue(
-            button.waitForExistence(timeout: Self.uiTimeout),
+            button.exists || button.waitForExistence(timeout: Self.uiTimeout),
             "no button \(title) in the tree: \(buttonTitles())", file: file, line: line)
         if let enabled {
             let met = holds(NSPredicate(format: "enabled == %@", NSNumber(value: enabled)), of: button)
@@ -283,14 +293,14 @@ class E2ETestCase: XCTestCase {
     func expectNoButton(_ title: String, file: StaticString = #filePath, line: UInt = #line) {
         let button = gpuiButton(title, file: file, line: line)
         XCTAssertTrue(
-            button.waitForNonExistence(timeout: Self.uiTimeout),
+            !button.exists || button.waitForNonExistence(timeout: Self.uiTimeout),
             "button \(title) is still in the tree: \(buttonTitles())", file: file, line: line)
     }
 
     /// Fails unless exactly `count` gpui buttons are titled `title`.
     func expectButtonCount(_ title: String, _ count: Int, file: StaticString = #filePath, line: UInt = #line) {
         waitForTree(file: file, line: line)
-        let query = app.buttons.matching(identifier: title)
+        let query = buttons(title)
         let met = holds(NSPredicate(format: "count == %d", count), of: query)
         XCTAssertTrue(met, "\(query.count) buttons titled \(title), expected \(count)", file: file, line: line)
     }
@@ -298,15 +308,28 @@ class E2ETestCase: XCTestCase {
     /// Clicks the gpui button `title`, once the tree shows it.
     func clickButton(_ title: String, file: StaticString = #filePath, line: UInt = #line) {
         expectButton(title, file: file, line: line)
-        app.buttons[title].firstMatch.click()
+        button(title).click()
+    }
+
+    /// The buttons named `name`: by title (gpui-pre's nodes carry their label as the AX
+    /// title, with no identifier), label or identifier (AppKit's alert buttons).
+    func buttons(_ name: String) -> XCUIElementQuery {
+        app.buttons.matching(
+            NSPredicate(format: "title == %@ OR label == %@ OR identifier == %@", name, name, name))
+    }
+
+    /// The first button named `name`, resolved from the whole tree (see `waitForTree`).
+    func button(_ name: String) -> XCUIElement {
+        buttons(name).element(boundBy: 0)
     }
 
     func buttonTitles() -> [String] {
         app.buttons.allElementsBoundByIndex.map { $0.title.isEmpty ? $0.identifier : $0.title }
     }
 
-    /// Waits up to `uiTimeout` for `predicate` to hold of `object`.
+    /// Waits up to `uiTimeout` for `predicate` to hold of `object`; at once if it holds.
     func holds(_ predicate: NSPredicate, of object: Any, timeout: TimeInterval = E2ETestCase.uiTimeout) -> Bool {
+        if predicate.evaluate(with: object) { return true }
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: object)
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
@@ -363,7 +386,7 @@ class E2ETestCase: XCTestCase {
 
     /// A button of a native alert or sheet (AppKit's, not gpui's).
     func nativeButton(_ title: String) -> XCUIElement {
-        app.buttons.matching(identifier: title).firstMatch
+        button(title)
     }
 
     // MARK: Disk and pasteboard
