@@ -41,6 +41,18 @@ const INTERPRETERS: &[(&str, &str)] = &[
 /// `#!/usr/bin/env -S node --flag` is JavaScript. A version suffix is ignored:
 /// `python3.12` is `python`.
 pub fn language_name_for_shebang(first_line: &str) -> Option<&'static str> {
+    let program = shebang_program(first_line)?;
+    built_in_interpreter(&program)
+        .map(|(_, language)| language)
+        .or_else(|| crate::runtime::name_for_interpreter(&program))
+}
+
+/// The base name of the program a `#!` line runs, by the rules
+/// [`language_name_for_shebang`] uses: `env` is looked through, past its
+/// options, `-S` strings and `NAME=value` assignments, to the command it
+/// runs, and an `env` invocation that runs no command is none. The version
+/// suffix is kept (`python3.12`).
+pub fn shebang_program(first_line: &str) -> Option<String> {
     let line = first_line.lines().next()?.strip_prefix("#!")?.trim_start();
     let (interpreter, args) = line.split_at(line.find(char::is_whitespace).unwrap_or(line.len()));
     let program = match base_name(interpreter) {
@@ -48,10 +60,7 @@ pub fn language_name_for_shebang(first_line: &str) -> Option<&'static str> {
         "env" => env_command(args)?,
         _ => interpreter.to_owned(),
     };
-    let name = base_name(&program);
-    built_in_interpreter(name)
-        .map(|(_, language)| language)
-        .or_else(|| crate::runtime::name_for_interpreter(name))
+    Some(base_name(&program).to_owned()).filter(|name| !name.is_empty())
 }
 
 /// Whether the interpreter called `interpreter` in a shebang table runs

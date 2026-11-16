@@ -10,6 +10,9 @@ mod config;
 mod grammar_install;
 #[cfg(test)]
 mod grammar_install_tests;
+mod grammar_registry;
+#[cfg(test)]
+mod grammar_registry_tests;
 mod ipc;
 #[cfg(unix)]
 mod log_file;
@@ -1004,6 +1007,9 @@ fn main() {
         if !velopack_update::start(perf, wait_launch, under_test, cx) {
             sparkle::start(perf, wait_launch, under_test, automatic_checks, cx);
         }
+        // The signed grammar index, refreshed in the background under the
+        // same consent as the update check.
+        grammar_registry::start(perf, wait_launch, under_test, automatic_checks, cx);
         // Commands, keys, menus, in-window prompts where there are no
         // native alerts, and the config files watched from here on: the
         // vimrc and `vim.remap` too, which give every editor its remaps.

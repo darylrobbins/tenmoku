@@ -20,6 +20,10 @@ path = "src/sparkle.rs"
 reason = "Why Sparkle didn't load, which is only ever logged"
 
 [[file]]
+path = "src/grammar_registry.rs"
+reason = "Why the grammar index or one of its entries wasn't taken, which is only ever logged (a refresh failure is never shown)"
+
+[[file]]
 path = "src/ipc.rs"
 reason = "Instance handoff's thread names, errors and logs: internal, never shown"
 

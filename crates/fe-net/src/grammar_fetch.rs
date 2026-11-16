@@ -1,6 +1,7 @@
 //! [`grammar_fetch`]: downloads a first-party grammar and returns its bytes
 //! only if they hash to what the app recorded (the decision record:
-//! `docs/decisions/c1pt00h80c-grammar-fetch.md`).
+//! `docs/decisions/c1pt00h80c-grammar-fetch.md`). [`fetch_bounded`] is the
+//! same fetch with no hash, for the signed grammar index (T1484).
 //!
 //! [`Client`] doesn't follow redirects, and a GitHub release asset answers
 //! with one to its storage host, so this follows a few for itself. Each hop is
@@ -129,6 +130,19 @@ pub async fn grammar_fetch(
     fetch_limited(client, url, expected_sha256, max_bytes, &limit).await
 }
 
+/// The body at `url`, following redirects as [`grammar_fetch`] does, once
+/// it's whole, with no hash to check: for a file whose own signature vouches
+/// for it, such as the grammar index. `max_bytes` bounds it as it bounds
+/// [`grammar_fetch`].
+pub async fn fetch_bounded(
+    client: &Client,
+    url: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, GrammarFetchError> {
+    let limit = ReadLimit::new(max_bytes.saturating_add(1));
+    read_bounded(client, url, max_bytes, &limit).await
+}
+
 async fn fetch_limited(
     client: &Client,
     url: &str,
@@ -142,6 +156,27 @@ async fn fetch_limited(
     if !is_sha256(expected_sha256) {
         return Err(GrammarFetchError::InvalidHash(expected_sha256.to_owned()));
     }
+    let bytes = read_bounded(client, url, max_bytes, limit).await?;
+    let actual = sha256_hex(&bytes);
+    if actual != expected_sha256 {
+        return Err(GrammarFetchError::HashMismatch {
+            expected: expected_sha256.to_owned(),
+            actual,
+        });
+    }
+    Ok(bytes)
+}
+
+/// The whole body at the end of `url`'s redirects, refused as
+/// [`GrammarFetchError::TooLarge`] once its `Content-Length` or the bytes
+/// read pass `max_bytes`, `limit` keeping the connection from reading more
+/// than one byte past it.
+async fn read_bounded(
+    client: &Client,
+    url: &str,
+    max_bytes: u64,
+    limit: &ReadLimit,
+) -> Result<Vec<u8>, GrammarFetchError> {
     let response = follow(client, url, limit).await?;
     if response.status != StatusCode::OK {
         return Err(GrammarFetchError::Status(response.status.as_u16()));
@@ -155,23 +190,14 @@ async fn fetch_limited(
     }
     let mut body = response.body;
     let mut bytes = Vec::new();
-    let mut hasher = Sha256::new();
     while let Some(chunk) = body.next().await {
         let chunk = chunk?;
         let received = (bytes.len() + chunk.len()) as u64;
         if received > max_bytes {
             return Err(GrammarFetchError::TooLarge { max_bytes });
         }
-        hasher.update(&chunk);
         bytes.extend_from_slice(&chunk);
         limit.set((max_bytes - received).saturating_add(1));
-    }
-    let actual = hex(hasher.finalize().as_slice());
-    if actual != expected_sha256 {
-        return Err(GrammarFetchError::HashMismatch {
-            expected: expected_sha256.to_owned(),
-            actual,
-        });
     }
     Ok(bytes)
 }

@@ -49,6 +49,9 @@ tempfile.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 velopack.workspace = true
+# The signed grammar index's types and its engine fields (grammar_registry).
+fe-registry.workspace = true
+tree-sitter.workspace = true
 
 # The Dock icon: unbundled, macOS shows the launching terminal's icon. Sparkle: loaded at run
 # time from the bundle, not linked.

@@ -144,6 +144,11 @@ impl kiln::platform::config::ConfigSource for Locale {
     }
 }
 
+/// The extension API version the app implements, which [`with_extensions`]
+/// gives kiln, and which a grammar in the registry's index must need no more
+/// than ([`crate::grammar_registry::EngineSupport`]). 1.1 added snippets.
+pub(crate) const EXTENSION_API: ApiVersion = ApiVersion { major: 1, minor: 1 };
+
 /// [`shipped`] with the user's `theme.toml` and `keymap.toml` (in the XDG
 /// layout, as they've always been), each watched and reloaded when it
 /// changes, `settings` from the user's file and the project's (which may
@@ -191,8 +196,7 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 /// off. It's the user's only: a workspace's plugin is dropped with a
 /// warning. A change to a plugin's component reloads it.
 pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
-    // 1.1 added snippets.
-    let api = ApiVersion { major: 1, minor: 1 };
+    let api = EXTENSION_API;
     let lsp = schemars::schema_for!(BTreeMap<String, LspServerSettings>).to_value();
     let grammars = schemars::schema_for!(Vec<ExtensionGrammar>).to_value();
     let snippets = schemars::schema_for!(Vec<ExtensionSnippet>).to_value();

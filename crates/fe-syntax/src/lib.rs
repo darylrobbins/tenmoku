@@ -57,7 +57,9 @@ pub use brackets::{
     BracketDepth, BracketPair, bracket_depths, bracket_pair, enclosing_bracket_pair,
 };
 pub use comment::{CommentTokens, auto_pairs, comment_tokens};
-pub use detect::{detect_language, detect_language_name, language_name_for_shebang};
+pub use detect::{
+    detect_language, detect_language_name, language_name_for_shebang, shebang_program,
+};
 pub use driver::{Spawner, SyntaxDriver};
 pub use fence::fence_language;
 pub use fold::fold_candidate_closing;

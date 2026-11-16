@@ -2160,6 +2160,7 @@ dependencies = [
  "fe-lsp",
  "fe-net",
  "fe-project",
+ "fe-registry",
  "fe-syntax",
  "fe-vim",
  "fe-workbench",
@@ -2182,6 +2183,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
+ "tree-sitter",
  "velopack",
  "windows-sys 0.61.2",
 ]
