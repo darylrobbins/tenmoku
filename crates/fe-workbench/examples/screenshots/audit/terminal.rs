@@ -9,7 +9,7 @@
 //! The probes are on the tabs, along the strip under the dock's own, 34 px
 //! each: the bottom panel is 250 px over the 24 px status bar, so the dock's
 //! strip is 326–360 and the panel's 360–394; it starts at the centre's
-//! left, after the 42 px rail and the 248 px sidebar. A tab labelled
+//! left, 282, after the 42 px rail and the 240 px sidebar. A tab labelled
 //! `Terminal <n>` is about 145 px wide: 12 px of padding, the icon, the
 //! label, then the close button's 16 px box (shown on the active tab alone)
 //! and 8 px of padding.
@@ -44,7 +44,7 @@ const STRIP_Y: f32 = 377.;
 
 const PROBES: &[Probe] = &[
     // The active tab, in its left padding.
-    probe(296., STRIP_Y, "tab.active"),
+    probe(288., STRIP_Y, "tab.active"),
     // The other two, where an inactive tab's close button hides.
     probe(563., STRIP_Y, "tab.inactive"),
     probe(708., STRIP_Y, "tab.inactive"),

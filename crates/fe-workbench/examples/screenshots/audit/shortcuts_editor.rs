@@ -13,8 +13,9 @@ pub(crate) const SURFACE: Surface = Surface {
 };
 
 const PROBES: &[Probe] = &[
-    // Below the search box, whose field is the panel's colour.
-    probe(900., 140., "surface.background"),
+    // Below the search box, whose field is the panel's colour, and below
+    // the focus ring round it (from 105 to 141, as the field has focus).
+    probe(900., 146., "surface.background"),
     // The table, between the header and the first row.
     probe(720., 160., "surface.background"),
     // The table, between two columns.

@@ -2,8 +2,7 @@
 //! rail and the status bar, with the demo's two files open. It's also the
 //! scene every bundled theme is captured in, so its probes hold for every
 //! theme. The title bar is `surface.chrome` (T1538), with no line under
-//! it, and so is the status bar (T1543); the tab strip is still
-//! `surface.panel`, which `surface.chrome` defaults to.
+//! it, and so are the status bar (T1543) and the tab strip (T1542).
 
 use crate::{
     audit_scenes::{DEFAULT, Surface},
@@ -27,7 +26,7 @@ const PROBES: &[Probe] = &[
     probe(996., 19., "surface.chrome"),
     probe(500., 37.5, "surface.chrome"),
     // The tab strip, right of the tabs.
-    probe(600., 45., "surface.panel"),
+    probe(600., 45., "surface.chrome"),
     // The editor, below the code.
     probe(400., 400., "surface.background"),
     // The project tree, below its last row.

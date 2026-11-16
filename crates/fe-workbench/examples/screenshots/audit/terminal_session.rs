@@ -21,8 +21,8 @@ pub(crate) const SURFACE: Surface = Surface {
 const PROBES: &[Probe] = &[
     // The terminal, right of its output.
     probe(600., 500., "surface.background"),
-    // The panel's header.
-    probe(600., 351., "surface.panel"),
+    // The dock's strip, right of its Terminal tab: chrome (T1548).
+    probe(600., 351., "surface.chrome"),
 ];
 
 /// The last text the session writes: once it shows, all of it has.

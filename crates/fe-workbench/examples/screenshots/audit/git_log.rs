@@ -17,10 +17,10 @@ pub(crate) const SURFACE: Surface = Surface {
 };
 
 const PROBES: &[Probe] = &[
-    // The card, over the sidebar, right of its copy button.
-    probe(250., 465., "surface.raised"),
-    // The panel, below the graph.
-    probe(174., 540., "surface.panel"),
+    // The card, over the bottom panel's list, right of its copy button.
+    probe(450., 487., "surface.raised"),
+    // The bottom panel, below the graph.
+    probe(800., 520., "surface.panel"),
 ];
 
 /// Shows commit `ix`'s card, as hovering its row shows it.

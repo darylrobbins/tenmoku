@@ -29,18 +29,21 @@ pub(crate) const SURFACE: Surface = Surface {
     ..DEFAULT
 };
 
+/// The panel is in the bottom dock (T1548), its list from the centre's
+/// left, 282, to the detail pane at about 678.
 const PROBES: &[Probe] = &[
-    // The panel, below its rows.
-    probe(174., 400., "surface.panel"),
+    // The panel's header row, between the scope switch and the severity
+    // filters.
+    probe(700., 376., "surface.panel"),
     // A problem row's indent, left of its glyph: `src/main.rs`'s warning.
-    probe(50., 212., "surface.panel"),
+    probe(290., 475., "surface.panel"),
     // README.md's count badge, left of its digit.
-    probe_over(253.5, 140., "list.row_hover", "surface.panel"),
+    probe_over(651., 403., "list.row_hover", "surface.panel"),
     // The selected row, the first problem (README.md's), focused: its
     // indent, left of its glyph.
-    probe_over(50., 164., "list.row_selected", "surface.panel"),
-    // The editor, below the code its squiggles mark.
-    probe(400., 400., "surface.background"),
+    probe_over(290., 427., "list.row_selected", "surface.panel"),
+    // The editor above it, right of the code's empty fourth line.
+    probe(700., 165., "surface.background"),
 ];
 
 /// The `nth` (from 0) `text` in `src/main.rs`, as bytes.

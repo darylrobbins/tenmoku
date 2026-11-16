@@ -17,8 +17,10 @@ pub(crate) const SURFACE: Surface = Surface {
 };
 
 const PROBES: &[Probe] = &[
-    // The empty message box, on its first row, right of its placeholder.
-    probe(180., 125., "surface.background"),
+    // The empty message box, below its first row (whose band is the
+    // editor's current line, `[editor] active_line`), right of its
+    // placeholder.
+    probe(180., 150., "surface.background"),
     // The panel, below the graph.
     probe(174., 500., "surface.panel"),
 ];
