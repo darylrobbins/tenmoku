@@ -55,6 +55,12 @@ evt:capabilities evt:process resp:configurationDone (module/breakpoint events) e
 req:stackTrace evt:output resp:stackTrace req:scopes resp:scopes req:variables resp:variables
 req:next resp:next evt:continued evt:stopped ... resp:evaluate`.
 
-## C4: dap.yml run — not yet done
+## C4: dap.yml run
 
-The workflow needs a push and a `workflow_dispatch`, and a human risk approval at review.
+`workflow_dispatch` only works for a workflow on the default branch, so the run
+used a temporary `push` trigger on the lane branch (commit "TEMP: run dap.yml on push",
+reverted before hand-in). Run 43844060279, both jobs green:
+https://github.com/darylrobbins/fastedit/actions/runs/43844060279
+(`real-adapters (ubuntu-latest)` and `real-adapters (macos-latest)`).
+
+`.github/workflows/dap.yml` is a new workflow file: it needs the human risk approval at review.
