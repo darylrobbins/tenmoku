@@ -521,9 +521,10 @@ fn mac_layout(exe: &Path, home: &Path) -> Option<VelopackLocatorConfig> {
 /// packages in `<root>\packages`. Setup.exe installs per user, so the root
 /// (`%LocalAppData%\<id>`) is the user's to write.
 fn windows_layout(exe: &Path) -> Option<VelopackLocatorConfig> {
-    let current = exe
-        .parent()
-        .filter(|dir| dir.file_name().is_some_and(|name| name.eq_ignore_ascii_case("current")))?;
+    let current = exe.parent().filter(|dir| {
+        dir.file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("current"))
+    })?;
     let root = current.parent()?;
     let update = root.join("Update.exe");
     let manifest = current.join("sq.version");
@@ -730,8 +731,13 @@ pub(crate) fn update_now(
             return 1;
         }
     };
+    // The feed file itself where this OS and arch has a release channel.
+    let checking = install.channel.map_or_else(
+        || feed.to_string(),
+        |channel| feed.file_url(&feed_file(channel)),
+    );
     say(&format!(
-        "installed {} at {}; checking {feed}",
+        "installed {} at {}; checking {checking}",
         manager.get_current_version_as_string(),
         install.config.RootAppDir.display()
     ));

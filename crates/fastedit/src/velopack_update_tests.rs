@@ -838,7 +838,10 @@ fn put(path: &Path, bytes: &[u8]) {
 fn windows_tree(root: &Path, channel: &str) -> PathBuf {
     let exe = root.join("current").join("tenmoku.exe");
     put(&exe, b"not run");
-    put(&root.join("current").join("sq.version"), manifest_xml(PACK_ID, channel).as_bytes());
+    put(
+        &root.join("current").join("sq.version"),
+        manifest_xml(PACK_ID, channel).as_bytes(),
+    );
     put(&root.join("Update.exe"), b"not run");
     exe
 }
@@ -850,7 +853,10 @@ fn appimage_tree(mount: &Path, file: &Path, channel: &str) -> PathBuf {
     let exe = bin.join("tenmoku");
     put(&exe, b"not run");
     put(&bin.join("UpdateNix"), b"not run");
-    put(&bin.join("sq.version"), manifest_xml(PACK_ID, channel).as_bytes());
+    put(
+        &bin.join("sq.version"),
+        manifest_xml(PACK_ID, channel).as_bytes(),
+    );
     put(file, b"an AppImage");
     exe
 }
@@ -861,7 +867,10 @@ fn mac_tree(dir: &Path, channel: &str) -> PathBuf {
     let exe = macos.join("tenmoku");
     put(&exe, b"not run");
     put(&macos.join("UpdateMac"), b"not run");
-    put(&macos.join("sq.version"), manifest_xml(PACK_ID, channel).as_bytes());
+    put(
+        &macos.join("sq.version"),
+        manifest_xml(PACK_ID, channel).as_bytes(),
+    );
     exe
 }
 
@@ -930,7 +939,10 @@ fn windows_install_is_located_beside_update_exe() {
 fn appimage_install_is_located_through_appimage() {
     let dir = tempfile::tempdir().unwrap();
     let mount = dir.path().join(".mount_TenmokXYZ");
-    let file = dir.path().join("Apps").join("Tenmoku-1.0.0-linux-x86_64.AppImage");
+    let file = dir
+        .path()
+        .join("Apps")
+        .join("Tenmoku-1.0.0-linux-x86_64.AppImage");
     let exe = appimage_tree(&mount, &file, "linux-x86_64-stable");
     let bin = mount.join("usr").join("bin");
     let locate = |arch: &str, exe: &Path, appimage: Option<&Path>| {
@@ -944,7 +956,9 @@ fn appimage_install_is_located_through_appimage() {
     assert_eq!(config.UpdateExePath, bin.join("UpdateNix"));
     assert_eq!(
         config.PackagesDir,
-        Path::new("/var/tmp/velopack").join(PACK_ID).join("packages")
+        Path::new("/var/tmp/velopack")
+            .join(PACK_ID)
+            .join("packages")
     );
     assert_eq!(config.ManifestPath, bin.join("sq.version"));
     assert_eq!(config.CurrentBinaryDir, bin);
@@ -959,7 +973,10 @@ fn appimage_install_is_located_through_appimage() {
     assert!(locate("x86_64", &exe, Some(dir.path())).is_none());
     assert!(locate("x86_64", &exe, Some(Path::new("Tenmoku.AppImage"))).is_none());
     // The binary outside usr/bin: the tar.gz's folder, say.
-    let unpacked = dir.path().join("Tenmoku-1.0.0-linux-x86_64").join("tenmoku");
+    let unpacked = dir
+        .path()
+        .join("Tenmoku-1.0.0-linux-x86_64")
+        .join("tenmoku");
     put(&unpacked, b"unpacked");
     assert!(locate("x86_64", &unpacked, Some(&file)).is_none());
     // No UpdateNix, then a garbled manifest.
@@ -1067,10 +1084,22 @@ fn unsigned_feed_is_refused_on_every_platform() {
     let linux = appimage_tree(&dir.path().join("mount"), &appimage, "linux-x86_64-stable");
     let mac = mac_tree(&dir.path().join("mac"), CHANNEL);
     let installs = [
-        ("windows x64", Install::locate_at(Os::Windows, "x86_64", &windows_x64, None, None)),
-        ("windows arm64", Install::locate_at(Os::Windows, "aarch64", &windows_arm64, None, None)),
-        ("linux x86_64", Install::locate_at(Os::Linux, "x86_64", &linux, Some(&appimage), None)),
-        ("macos", Install::locate_at(Os::Mac, "aarch64", &mac, None, Some(dir.path()))),
+        (
+            "windows x64",
+            Install::locate_at(Os::Windows, "x86_64", &windows_x64, None, None),
+        ),
+        (
+            "windows arm64",
+            Install::locate_at(Os::Windows, "aarch64", &windows_arm64, None, None),
+        ),
+        (
+            "linux x86_64",
+            Install::locate_at(Os::Linux, "x86_64", &linux, Some(&appimage), None),
+        ),
+        (
+            "macos",
+            Install::locate_at(Os::Mac, "aarch64", &mac, None, Some(dir.path())),
+        ),
     ];
     for (platform, install) in installs {
         let mut install = install.unwrap_or_else(|| panic!("{platform}: no install"));
@@ -1102,7 +1131,10 @@ fn unsigned_feed_is_refused_on_every_platform() {
             TargetFullRelease: asset.clone(),
             ..Default::default()
         };
-        assert!(manager.download_updates(&update, None).is_err(), "{platform}");
+        assert!(
+            manager.download_updates(&update, None).is_err(),
+            "{platform}"
+        );
         assert!(
             !install.config.PackagesDir.join(&asset.FileName).exists(),
             "{platform}: downloaded"
@@ -1112,7 +1144,10 @@ fn unsigned_feed_is_refused_on_every_platform() {
         std::fs::write(&sig_path, sign(&private, &json) + "\n").unwrap();
         match install.manager(&feed, &key).unwrap().check_for_updates() {
             Ok(UpdateCheck::UpdateAvailable(update)) => {
-                assert_eq!(update.TargetFullRelease.FileName, asset.FileName, "{platform}");
+                assert_eq!(
+                    update.TargetFullRelease.FileName, asset.FileName,
+                    "{platform}"
+                );
             }
             Ok(_) => panic!("{platform}: the signed feed offered no update"),
             Err(error) => panic!("{platform}: the signed feed was refused: {error}"),
