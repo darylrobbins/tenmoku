@@ -1,7 +1,11 @@
-//! Velopack, the spike updater beside Sparkle (T1427,
-//! docs/decisions/mh0vr0a5jj-velopack-spike.md). Off unless the build baked in
-//! a feed and a public key (`TENMOKU_UPDATE_FEED`, `TENMOKU_UPDATE_PUBLIC_KEY`,
-//! as `scripts/velopack-pack.sh` does) and the app is a Velopack install.
+//! Velopack: the installer and updater on Windows and Linux (T1909,
+//! docs/decisions/q01csgae9p-installers.md), and the spike beside Sparkle on
+//! macOS (T1427, docs/decisions/mh0vr0a5jj-velopack-spike.md). Off unless the
+//! build baked in a feed and a public key (`TENMOKU_UPDATE_FEED`,
+//! `TENMOKU_UPDATE_PUBLIC_KEY`, as `scripts/velopack-pack.sh` and the release
+//! workflow do) and the app is a Velopack install: Setup.exe's on Windows, an
+//! AppImage on Linux, a packed `.app` on macOS. A release build of Windows or
+//! Linux reads its OS and arch's own channel ([`release_channel`]).
 //!
 //! Velopack itself only checks each package's size and SHA-256 against the
 //! feed it was handed, so the feed is what we sign: [`SignedSource`] checks
@@ -22,7 +26,8 @@ use std::{
 use fe_workbench::update_check::{UpdaterHook, set_updater_hook};
 use gpui::App;
 use velopack::{
-    Error, UpdateCheck, UpdateInfo, UpdateManager, VelopackApp, VelopackAsset, VelopackAssetFeed,
+    Error, UpdateCheck, UpdateInfo, UpdateManager, UpdateOptions, VelopackApp, VelopackAsset,
+    VelopackAssetFeed,
     bundle::Manifest,
     locator::VelopackLocatorConfig,
     sources::{FileSource, HttpSource, UpdateSource},
@@ -78,6 +83,14 @@ impl Feed {
         }
     }
 
+    /// Where the feed's file `name` is: what the app fetches for it.
+    pub(crate) fn file_url(&self, name: &str) -> String {
+        match self {
+            Feed::Https(base) => join_url(base, name),
+            Feed::Dir(dir) => dir.join(name).display().to_string(),
+        }
+    }
+
     /// The fetcher for the feed's own files.
     fn fetcher(&self) -> Fetcher {
         match self {
@@ -93,6 +106,55 @@ impl std::fmt::Display for Feed {
             Feed::Https(url) => f.write_str(url),
             Feed::Dir(dir) => write!(f, "{}", dir.display()),
         }
+    }
+}
+
+/// `name` under the https base `base`.
+fn join_url(base: &str, name: &str) -> String {
+    format!("{}/{name}", base.trim_end_matches('/'))
+}
+
+/// The feed file of `channel`: `releases.<channel>.json`, with its signature
+/// beside it as `releases.<channel>.json.sig`.
+pub(crate) fn feed_file(channel: &str) -> String {
+    format!("releases.{channel}.json")
+}
+
+/// An OS, for its install layout and its release channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Os {
+    Mac,
+    Windows,
+    Linux,
+    Other,
+}
+
+impl Os {
+    /// The OS this binary was built for.
+    pub(crate) fn current() -> Os {
+        if cfg!(target_os = "macos") {
+            Os::Mac
+        } else if cfg!(target_os = "windows") {
+            Os::Windows
+        } else if cfg!(target_os = "linux") {
+            Os::Linux
+        } else {
+            Os::Other
+        }
+    }
+}
+
+/// The Velopack channel that the release of this OS and arch (a Rust
+/// `target_arch`) is packed on, named as its downloads are, so the three
+/// share one release's assets: `releases.<channel>.json` and the packages it
+/// lists. None where no release ships one: macOS stays on Sparkle, and its
+/// spike build reads the channel it was packed with.
+pub(crate) fn release_channel(os: Os, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        (Os::Windows, "x86_64") => Some("windows-x64-stable"),
+        (Os::Windows, "aarch64") => Some("windows-arm64-stable"),
+        (Os::Linux, "x86_64") => Some("linux-x86_64-stable"),
+        _ => None,
     }
 }
 
@@ -117,7 +179,9 @@ impl Policy {
         wait_launch: bool,
         under_test: bool,
     ) -> Policy {
-        let (Some(feed), Some(key)) = (feed, key) else {
+        // Actions passes a missing repository variable as an empty value.
+        let present = |value: Option<&str>| value.filter(|value| !value.trim().is_empty());
+        let (Some(feed), Some(key)) = (present(feed), present(key)) else {
             return Policy::Off(
                 "this build has no TENMOKU_UPDATE_FEED and TENMOKU_UPDATE_PUBLIC_KEY",
             );
@@ -129,7 +193,10 @@ impl Policy {
             return Policy::Off("the built-in public key is not the base64 of 32 bytes");
         };
         if !installed {
-            Policy::Off("this app is not a Velopack install (no UpdateMac and sq.version)")
+            Policy::Off(
+                "this app is not a Velopack install (no Update.exe, UpdateNix or UpdateMac beside \
+                 its sq.version)",
+            )
         } else if perf {
             Policy::Off("a --perf launch")
         } else if wait_launch {
@@ -159,7 +226,7 @@ impl Fetcher {
                 std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))
             }
             Fetcher::Https(base) => {
-                let url = format!("{}/{name}", base.trim_end_matches('/'));
+                let url = join_url(base, name);
                 velopack::download::download_url_as_string(
                     &url,
                     Some(&http_options(FEED_TIMEOUT_MS)),
@@ -238,7 +305,7 @@ impl<S: UpdateSource> SignedSource<S> {
     }
 
     fn fetch_verified(&self, channel: &str) -> Result<VelopackAssetFeed, Refusal> {
-        let name = format!("releases.{channel}.json");
+        let name = feed_file(channel);
         let sig_name = format!("{name}.sig");
         let bytes = self
             .fetcher
@@ -322,59 +389,74 @@ impl<S: UpdateSource> UpdateSource for SignedSource<S> {
     }
 }
 
-/// This app as a Velopack install: its bundle, found from the canonicalized
-/// executable, so a symlink's launch ('tenmoku' in PATH) counts as its
-/// bundle's.
+/// This app as a Velopack install, found from its executable: on macOS its
+/// `.app` bundle (from the canonicalized executable, so a symlink's launch,
+/// 'tenmoku' in PATH, counts as its bundle's); on Windows the folder Setup.exe
+/// installed, with `Update.exe` beside `current\`; on Linux the AppImage that
+/// `$APPIMAGE` names, mounted with `UpdateNix` beside the binary. Each is the
+/// layout velopack's own locator expects there.
 #[derive(Clone, Debug)]
 pub(crate) struct Install {
     pub(crate) config: VelopackLocatorConfig,
+    /// The channel checked, when this OS and arch has a release one; else the
+    /// one the install was packed with.
+    pub(crate) channel: Option<&'static str>,
 }
 
 impl Install {
     fn locate() -> Option<Install> {
-        if !cfg!(target_os = "macos") {
-            return None;
-        }
-        let exe = std::env::current_exe()
-            .and_then(std::fs::canonicalize)
-            .ok()?;
-        let macos = exe.parent().filter(|dir| dir.ends_with("Contents/MacOS"))?;
-        let contents = macos.parent()?;
-        let app = contents
-            .parent()
-            .filter(|app| app.extension().is_some_and(|ext| ext == "app"))?;
-        let update = macos.join("UpdateMac");
-        let manifest = [
-            macos.join("sq.version"),
-            contents.join("Resources/sq.version"),
-        ]
-        .into_iter()
-        .find(|path| path.is_file())?;
-        if !update.is_file() {
-            return None;
-        }
-        let text = std::fs::read_to_string(&manifest).ok()?;
-        let id = velopack::bundle::read_manifest_from_string(&text).ok()?.id;
-        // Where velopack's own macOS locator keeps them.
-        let packages = std::env::var_os("HOME")
-            .map(PathBuf::from)?
-            .join("Library/Caches/velopack")
-            .join(id)
-            .join("packages");
+        let os = Os::current();
+        let exe = std::env::current_exe().ok()?;
+        // Not on Windows, whose canonical paths take a `\\?\` prefix that
+        // velopack's own locator never sees.
+        let exe = if os == Os::Windows {
+            exe
+        } else {
+            std::fs::canonicalize(exe).ok()?
+        };
+        let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        Install::locate_at(
+            os,
+            std::env::consts::ARCH,
+            &exe,
+            appimage.as_deref(),
+            home.as_deref(),
+        )
+    }
+
+    /// The install that `exe` (the running binary) is part of on `os` and
+    /// `arch`, with `$APPIMAGE` and `$HOME` as given: None when it isn't one.
+    pub(crate) fn locate_at(
+        os: Os,
+        arch: &str,
+        exe: &Path,
+        appimage: Option<&Path>,
+        home: Option<&Path>,
+    ) -> Option<Install> {
+        let config = match os {
+            Os::Mac => mac_layout(exe, home?)?,
+            Os::Windows => windows_layout(exe)?,
+            Os::Linux => appimage_layout(exe, appimage?)?,
+            Os::Other => return None,
+        };
         Some(Install {
-            config: VelopackLocatorConfig {
-                RootAppDir: app.to_owned(),
-                UpdateExePath: update,
-                PackagesDir: packages,
-                ManifestPath: manifest,
-                CurrentBinaryDir: macos.to_owned(),
-                IsPortable: true,
-            },
+            config,
+            channel: release_channel(os, arch),
         })
     }
 
+    /// What the update manager is told: this install's release channel, if
+    /// it has one. A downgrade stays refused.
+    pub(crate) fn options(&self) -> UpdateOptions {
+        UpdateOptions {
+            ExplicitChannel: self.channel.map(str::to_owned),
+            ..Default::default()
+        }
+    }
+
     /// The update manager over our signed source.
-    fn manager(&self, feed: &Feed, key: &PublicKey) -> Result<UpdateManager, Error> {
+    pub(crate) fn manager(&self, feed: &Feed, key: &PublicKey) -> Result<UpdateManager, Error> {
         let fetcher = feed.fetcher();
         match feed {
             Feed::Https(url) => UpdateManager::new(
@@ -383,16 +465,102 @@ impl Install {
                     key.clone(),
                     HttpSource::new_with_options(url, http_options(PACKAGE_TIMEOUT_MS)),
                 ),
-                None,
+                Some(self.options()),
                 Some(self.config.clone()),
             ),
             Feed::Dir(dir) => UpdateManager::new(
                 SignedSource::new(fetcher, key.clone(), FileSource::new(dir)),
-                None,
+                Some(self.options()),
                 Some(self.config.clone()),
             ),
         }
     }
+}
+
+/// The id in the Velopack manifest at `path`.
+fn manifest_id(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(velopack::bundle::read_manifest_from_string(&text).ok()?.id)
+}
+
+/// `<x>.app/Contents/MacOS/<exe>`, with UpdateMac beside it and sq.version
+/// there or in Resources; packages in velopack's macOS cache under `home`.
+fn mac_layout(exe: &Path, home: &Path) -> Option<VelopackLocatorConfig> {
+    let macos = exe.parent().filter(|dir| dir.ends_with("Contents/MacOS"))?;
+    let contents = macos.parent()?;
+    let app = contents
+        .parent()
+        .filter(|app| app.extension().is_some_and(|ext| ext == "app"))?;
+    let update = macos.join("UpdateMac");
+    let manifest = [
+        macos.join("sq.version"),
+        contents.join("Resources/sq.version"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())?;
+    if !update.is_file() {
+        return None;
+    }
+    let id = manifest_id(&manifest)?;
+    // Where velopack's own macOS locator keeps them.
+    let packages = home
+        .join("Library/Caches/velopack")
+        .join(id)
+        .join("packages");
+    Some(VelopackLocatorConfig {
+        RootAppDir: app.to_owned(),
+        UpdateExePath: update,
+        PackagesDir: packages,
+        ManifestPath: manifest,
+        CurrentBinaryDir: macos.to_owned(),
+        IsPortable: true,
+    })
+}
+
+/// `<root>\current\<exe>`, with sq.version beside it and `<root>\Update.exe`;
+/// packages in `<root>\packages`. Setup.exe installs per user, so the root
+/// (`%LocalAppData%\<id>`) is the user's to write.
+fn windows_layout(exe: &Path) -> Option<VelopackLocatorConfig> {
+    let current = exe
+        .parent()
+        .filter(|dir| dir.file_name().is_some_and(|name| name.eq_ignore_ascii_case("current")))?;
+    let root = current.parent()?;
+    let update = root.join("Update.exe");
+    let manifest = current.join("sq.version");
+    if !update.is_file() {
+        return None;
+    }
+    manifest_id(&manifest)?;
+    Some(VelopackLocatorConfig {
+        RootAppDir: root.to_owned(),
+        UpdateExePath: update,
+        PackagesDir: root.join("packages"),
+        ManifestPath: manifest,
+        CurrentBinaryDir: current.to_owned(),
+        IsPortable: root.join(".portable").exists(),
+    })
+}
+
+/// `<mount>/usr/bin/<exe>`, with UpdateNix and sq.version beside it, and the
+/// AppImage file itself at `appimage` (`$APPIMAGE`), which UpdateNix replaces;
+/// packages in `/var/tmp/velopack/<id>/packages`, as velopack's own locator
+/// keeps them.
+fn appimage_layout(exe: &Path, appimage: &Path) -> Option<VelopackLocatorConfig> {
+    let bin = exe.parent().filter(|dir| dir.ends_with("usr/bin"))?;
+    let update = bin.join("UpdateNix");
+    let manifest = bin.join("sq.version");
+    if !update.is_file() || !appimage.is_absolute() || !appimage.is_file() {
+        return None;
+    }
+    let id = manifest_id(&manifest)?;
+    Some(VelopackLocatorConfig {
+        RootAppDir: appimage.to_owned(),
+        UpdateExePath: update,
+        PackagesDir: Path::new("/var/tmp/velopack").join(id).join("packages"),
+        ManifestPath: manifest,
+        CurrentBinaryDir: bin.to_owned(),
+        IsPortable: true,
+    })
 }
 
 /// The policy for this process, from the build's values.
@@ -601,7 +769,7 @@ impl Drop for Checking {
 /// Takes over Check for Updates… when [`Policy::decide`] says so, and says
 /// whether it did; when not, Sparkle (or GitHub) has it as before. The check
 /// and download run on the background executor; an update is then handed to
-/// UpdateMac, which waits for this process to exit, and the app quits as the
+/// velopack's updater (UpdateMac, Update.exe or UpdateNix), which waits for this process to exit, and the app quits as the
 /// Quit command does, asking about unsaved files.
 pub(crate) fn start(perf: bool, wait_launch: bool, under_test: bool, cx: &mut App) -> bool {
     let install = Install::locate();
@@ -635,7 +803,7 @@ fn check_in_background(install: Install, feed: Feed, key: PublicKey, cx: &mut Ap
                 check_and_download(&manager, packages, say)?.map(|update| (manager, update)),
             )
         })();
-        // Held until the main thread has handed any update to UpdateMac.
+        // Held until the main thread has handed any update to the updater.
         (checking, outcome)
     });
     cx.spawn(async move |cx| {
@@ -647,12 +815,12 @@ fn check_in_background(install: Install, feed: Feed, key: PublicKey, cx: &mut Ap
                 if let Err(error) =
                     manager.wait_exit_then_apply_updates(&target, false, true, Vec::<String>::new())
                 {
-                    log::warn!(target: "fastedit", "Velopack: could not start UpdateMac: {error}");
+                    log::warn!(target: "fastedit", "Velopack: could not start its updater: {error}");
                     return;
                 }
                 log::info!(
                     target: "fastedit",
-                    "Velopack: UpdateMac applies {} once the app quits",
+                    "Velopack: its updater applies {} once the app quits",
                     target.Version
                 );
                 cx.update(crate::quit);

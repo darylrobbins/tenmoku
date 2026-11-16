@@ -27,8 +27,8 @@ use crate::velopack_update::utf8_args;
 use crate::{
     update_signature::{PrivateKey, PublicKey, SignatureError, generate, sign},
     velopack_update::{
-        Feed, Fetcher, Install, Policy, Refusal, SignedSource, check_and_download, check_package,
-        download_checked, update_now,
+        Feed, Fetcher, Install, Os, Policy, Refusal, SignedSource, check_and_download,
+        check_package, download_checked, feed_file, release_channel, update_now,
     },
 };
 
@@ -706,6 +706,7 @@ fn excluded_launches_never_reach_the_check() {
     fixture.publish(std::slice::from_ref(&fixture.asset), &fixture.private);
     let install = Install {
         config: fixture.config.clone(),
+        channel: None,
     };
     let feed = fixture.feed_dir.to_str().unwrap();
     // A check writes velopack's staged-rollout id into the packages
@@ -815,4 +816,305 @@ fn installed_launch_with_a_non_utf8_argument_does_not_panic() {
     assert!(!odd_err.contains("panicked"), "{odd_err}");
     assert_eq!(odd.status.code(), Some(1), "{odd_err}");
     assert!(odd_err.contains("velopack: updates are off"), "{odd_err}");
+}
+
+/// A Velopack manifest of `id` at 1.0.0 on `channel`.
+fn manifest_xml(id: &str, channel: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><package><metadata><id>{id}</id>\
+         <version>1.0.0</version><channel>{channel}</channel><mainExe>tenmoku</mainExe>\
+         </metadata></package>"
+    )
+}
+
+/// Writes `path`, making its folders.
+fn put(path: &Path, bytes: &[u8]) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// What Setup.exe leaves in `%LocalAppData%\Tenmoku`, under `root`: the
+/// binary and its manifest in `current\`, and `Update.exe`. The binary's path.
+fn windows_tree(root: &Path, channel: &str) -> PathBuf {
+    let exe = root.join("current").join("tenmoku.exe");
+    put(&exe, b"not run");
+    put(&root.join("current").join("sq.version"), manifest_xml(PACK_ID, channel).as_bytes());
+    put(&root.join("Update.exe"), b"not run");
+    exe
+}
+
+/// A mounted AppImage under `mount` and the AppImage file at `file`: the
+/// binary, UpdateNix and the manifest in `usr/bin`. The binary's path.
+fn appimage_tree(mount: &Path, file: &Path, channel: &str) -> PathBuf {
+    let bin = mount.join("usr").join("bin");
+    let exe = bin.join("tenmoku");
+    put(&exe, b"not run");
+    put(&bin.join("UpdateNix"), b"not run");
+    put(&bin.join("sq.version"), manifest_xml(PACK_ID, channel).as_bytes());
+    put(file, b"an AppImage");
+    exe
+}
+
+/// A packed `Tenmoku.app` under `dir`. The binary's path.
+fn mac_tree(dir: &Path, channel: &str) -> PathBuf {
+    let macos = dir.join("Tenmoku.app").join("Contents").join("MacOS");
+    let exe = macos.join("tenmoku");
+    put(&exe, b"not run");
+    put(&macos.join("UpdateMac"), b"not run");
+    put(&macos.join("sq.version"), manifest_xml(PACK_ID, channel).as_bytes());
+    exe
+}
+
+#[test]
+fn windows_install_is_located_beside_update_exe() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Tenmoku");
+    let exe = windows_tree(&root, "windows-x64-stable");
+    let locate = |arch: &str, exe: &Path| Install::locate_at(Os::Windows, arch, exe, None, None);
+
+    let install = locate("x86_64", &exe).expect("the Windows install");
+    let config = &install.config;
+    assert_eq!(config.RootAppDir, root);
+    assert_eq!(config.UpdateExePath, root.join("Update.exe"));
+    assert_eq!(config.PackagesDir, root.join("packages"));
+    assert_eq!(config.ManifestPath, root.join("current").join("sq.version"));
+    assert_eq!(config.CurrentBinaryDir, root.join("current"));
+    assert!(!config.IsPortable);
+    assert_eq!(install.channel, Some("windows-x64-stable"));
+    assert_eq!(
+        locate("aarch64", &exe).unwrap().channel,
+        Some("windows-arm64-stable")
+    );
+    // Neither $APPIMAGE nor $HOME matters here.
+    assert!(
+        Install::locate_at(
+            Os::Windows,
+            "x86_64",
+            &exe,
+            Some(&dir.path().join("x")),
+            Some(dir.path())
+        )
+        .is_some()
+    );
+
+    // vpk's portable zip marks its root.
+    put(&root.join(".portable"), b"");
+    assert!(locate("x86_64", &exe).unwrap().config.IsPortable);
+    std::fs::remove_file(root.join(".portable")).unwrap();
+
+    // Not an install: the binary outside current\, or beside Update.exe (the
+    // launcher stub's place, which starts the one in current\).
+    let beside = root.join("tenmoku.exe");
+    put(&beside, b"stub");
+    assert!(locate("x86_64", &beside).is_none());
+    let elsewhere = dir.path().join("Downloads").join("tenmoku.exe");
+    put(&elsewhere, b"unzipped");
+    assert!(locate("x86_64", &elsewhere).is_none());
+    // A garbled manifest, then none, then no Update.exe.
+    let manifest = root.join("current").join("sq.version");
+    std::fs::write(&manifest, b"not a manifest").unwrap();
+    assert!(locate("x86_64", &exe).is_none());
+    std::fs::remove_file(&manifest).unwrap();
+    assert!(locate("x86_64", &exe).is_none());
+    windows_tree(&root, "windows-x64-stable");
+    std::fs::remove_file(root.join("Update.exe")).unwrap();
+    assert!(locate("x86_64", &exe).is_none());
+    // The same tree means nothing to the other OSes' layouts.
+    windows_tree(&root, "windows-x64-stable");
+    assert!(Install::locate_at(Os::Linux, "x86_64", &exe, Some(&exe), None).is_none());
+    assert!(Install::locate_at(Os::Mac, "aarch64", &exe, None, Some(dir.path())).is_none());
+    assert!(Install::locate_at(Os::Other, "x86_64", &exe, None, None).is_none());
+}
+
+#[test]
+fn appimage_install_is_located_through_appimage() {
+    let dir = tempfile::tempdir().unwrap();
+    let mount = dir.path().join(".mount_TenmokXYZ");
+    let file = dir.path().join("Apps").join("Tenmoku-1.0.0-linux-x86_64.AppImage");
+    let exe = appimage_tree(&mount, &file, "linux-x86_64-stable");
+    let bin = mount.join("usr").join("bin");
+    let locate = |arch: &str, exe: &Path, appimage: Option<&Path>| {
+        Install::locate_at(Os::Linux, arch, exe, appimage, None)
+    };
+
+    let install = locate("x86_64", &exe, Some(&file)).expect("the AppImage install");
+    let config = &install.config;
+    // UpdateNix replaces the AppImage file itself.
+    assert_eq!(config.RootAppDir, file);
+    assert_eq!(config.UpdateExePath, bin.join("UpdateNix"));
+    assert_eq!(
+        config.PackagesDir,
+        Path::new("/var/tmp/velopack").join(PACK_ID).join("packages")
+    );
+    assert_eq!(config.ManifestPath, bin.join("sq.version"));
+    assert_eq!(config.CurrentBinaryDir, bin);
+    assert!(config.IsPortable);
+    assert_eq!(install.channel, Some("linux-x86_64-stable"));
+    // No release ships for another arch: its own packed channel stands.
+    assert_eq!(locate("aarch64", &exe, Some(&file)).unwrap().channel, None);
+
+    // No $APPIMAGE, or one that isn't an absolute path to a file.
+    assert!(locate("x86_64", &exe, None).is_none());
+    assert!(locate("x86_64", &exe, Some(&dir.path().join("gone.AppImage"))).is_none());
+    assert!(locate("x86_64", &exe, Some(dir.path())).is_none());
+    assert!(locate("x86_64", &exe, Some(Path::new("Tenmoku.AppImage"))).is_none());
+    // The binary outside usr/bin: the tar.gz's folder, say.
+    let unpacked = dir.path().join("Tenmoku-1.0.0-linux-x86_64").join("tenmoku");
+    put(&unpacked, b"unpacked");
+    assert!(locate("x86_64", &unpacked, Some(&file)).is_none());
+    // No UpdateNix, then a garbled manifest.
+    std::fs::remove_file(bin.join("UpdateNix")).unwrap();
+    assert!(locate("x86_64", &exe, Some(&file)).is_none());
+    appimage_tree(&mount, &file, "linux-x86_64-stable");
+    std::fs::write(bin.join("sq.version"), b"not a manifest").unwrap();
+    assert!(locate("x86_64", &exe, Some(&file)).is_none());
+}
+
+#[test]
+fn mac_install_keeps_the_packed_channel() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = mac_tree(dir.path(), CHANNEL);
+    let install = Install::locate_at(Os::Mac, "aarch64", &exe, None, Some(dir.path())).unwrap();
+    assert_eq!(install.config.RootAppDir, dir.path().join("Tenmoku.app"));
+    assert_eq!(
+        install.config.PackagesDir,
+        dir.path()
+            .join("Library/Caches/velopack")
+            .join(PACK_ID)
+            .join("packages")
+    );
+    // macOS ships Sparkle: the spike reads the channel it was packed with.
+    assert_eq!(install.channel, None);
+    assert_eq!(install.options().ExplicitChannel, None);
+    assert!(Install::locate_at(Os::Mac, "aarch64", &exe, None, None).is_none());
+}
+
+#[test]
+fn feed_url_per_os_and_arch() {
+    let feed = Feed::Https("https://github.com/someone/tenmoku/releases/latest/download/".into());
+    let url = |os: Os, arch: &str| {
+        release_channel(os, arch).map(|channel| feed.file_url(&feed_file(channel)))
+    };
+    let base = "https://github.com/someone/tenmoku/releases/latest/download";
+    assert_eq!(
+        url(Os::Windows, "x86_64"),
+        Some(format!("{base}/releases.windows-x64-stable.json"))
+    );
+    assert_eq!(
+        url(Os::Windows, "aarch64"),
+        Some(format!("{base}/releases.windows-arm64-stable.json"))
+    );
+    assert_eq!(
+        url(Os::Linux, "x86_64"),
+        Some(format!("{base}/releases.linux-x86_64-stable.json"))
+    );
+    // No release on these: macOS ships Sparkle, and no build is made for the rest.
+    for (os, arch) in [
+        (Os::Mac, "aarch64"),
+        (Os::Mac, "x86_64"),
+        (Os::Windows, "x86"),
+        (Os::Linux, "aarch64"),
+        (Os::Other, "x86_64"),
+    ] {
+        assert_eq!(url(os, arch), None, "{os:?} {arch}");
+    }
+    assert_eq!(
+        Feed::Https("https://example.com/feed".into()).file_url("releases.x.json.sig"),
+        "https://example.com/feed/releases.x.json.sig"
+    );
+    // The install tells velopack that channel, so its check asks for that file.
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_tree(dir.path(), "windows-arm64-stable");
+    let install = Install::locate_at(Os::Windows, "aarch64", &exe, None, None).unwrap();
+    assert_eq!(
+        install.options().ExplicitChannel.as_deref(),
+        Some("windows-arm64-stable")
+    );
+    assert!(!install.options().AllowVersionDowngrade);
+}
+
+/// The package a feed on `channel` lists in `feed_dir`: 2.0.0, newer than
+/// every fixture install.
+fn channel_package(feed_dir: &Path, channel: &str) -> VelopackAsset {
+    let bytes = format!("the {channel} package");
+    let file = format!("{PACK_ID}-2.0.0-{channel}-full.nupkg");
+    put(&feed_dir.join(&file), bytes.as_bytes());
+    VelopackAsset {
+        PackageId: PACK_ID.into(),
+        Version: "2.0.0".into(),
+        Type: "Full".into(),
+        FileName: file,
+        SHA1: hex(digest(&SHA1_FOR_LEGACY_USE_ONLY, bytes.as_bytes()).as_ref()),
+        SHA256: hex(digest(&SHA256, bytes.as_bytes()).as_ref()),
+        Size: bytes.len() as u64,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn unsigned_feed_is_refused_on_every_platform() {
+    let (public, private) = generate();
+    let key = PublicKey::from_base64(&public).unwrap();
+    let private = PrivateKey::from_base64(&private).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let feed_dir = dir.path().join("feed");
+    let feed = Feed::Dir(feed_dir.clone());
+
+    // Each platform's install, packed on its channel (the macOS spike's own).
+    let windows_x64 = windows_tree(&dir.path().join("x64"), "windows-x64-stable");
+    let windows_arm64 = windows_tree(&dir.path().join("arm64"), "windows-arm64-stable");
+    let appimage = dir.path().join("Tenmoku.AppImage");
+    let linux = appimage_tree(&dir.path().join("mount"), &appimage, "linux-x86_64-stable");
+    let mac = mac_tree(&dir.path().join("mac"), CHANNEL);
+    let installs = [
+        ("windows x64", Install::locate_at(Os::Windows, "x86_64", &windows_x64, None, None)),
+        ("windows arm64", Install::locate_at(Os::Windows, "aarch64", &windows_arm64, None, None)),
+        ("linux x86_64", Install::locate_at(Os::Linux, "x86_64", &linux, Some(&appimage), None)),
+        ("macos", Install::locate_at(Os::Mac, "aarch64", &mac, None, Some(dir.path()))),
+    ];
+    for (platform, install) in installs {
+        let mut install = install.unwrap_or_else(|| panic!("{platform}: no install"));
+        // Kept in the test's folder: the AppImage's is under /var/tmp.
+        install.config.PackagesDir = dir.path().join(format!("{platform} packages"));
+        let channel = install.channel.unwrap_or(CHANNEL);
+        // The feed as vpk writes it, with no .sig: what the release job
+        // publishes until the signing key's secret exists.
+        let asset = channel_package(&feed_dir, channel);
+        let json = serde_json::to_vec(&VelopackAssetFeed {
+            Assets: vec![asset.clone()],
+        })
+        .unwrap();
+        let feed_path = feed_dir.join(feed_file(channel));
+        std::fs::write(&feed_path, &json).unwrap();
+        let sig_path = feed_dir.join(format!("{}.sig", feed_file(channel)));
+        std::fs::remove_file(&sig_path).ok();
+
+        let manager = install.manager(&feed, &key).unwrap();
+        let error = match manager.check_for_updates() {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("{platform}: an unsigned feed went through"),
+        };
+        assert!(
+            error.contains("the feed has no signature") && error.contains(&feed_file(channel)),
+            "{platform}: {error}"
+        );
+        let update = UpdateInfo {
+            TargetFullRelease: asset.clone(),
+            ..Default::default()
+        };
+        assert!(manager.download_updates(&update, None).is_err(), "{platform}");
+        assert!(
+            !install.config.PackagesDir.join(&asset.FileName).exists(),
+            "{platform}: downloaded"
+        );
+
+        // Signed, the same feed offers 2.0.0: the check read this channel's file.
+        std::fs::write(&sig_path, sign(&private, &json) + "\n").unwrap();
+        match install.manager(&feed, &key).unwrap().check_for_updates() {
+            Ok(UpdateCheck::UpdateAvailable(update)) => {
+                assert_eq!(update.TargetFullRelease.FileName, asset.FileName, "{platform}");
+            }
+            other => panic!("{platform}: the signed feed gave {other:?}"),
+        }
+    }
 }

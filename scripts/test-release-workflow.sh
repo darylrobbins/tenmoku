@@ -5,7 +5,9 @@
 # write permission appear, the Windows and Linux packaging scripts (a run of package-linux.sh on
 # a fixture binary), the signing script's hygiene, a run of the signing script with no
 # secrets against a fixture bundle (a copy of /usr/bin/true, as test-bundle-macos.sh does), the
-# Sparkle steps, and a run of make-appcast.sh on that bundle's zip.
+# Sparkle steps, a run of make-appcast.sh on that bundle's zip, and the Velopack (vpk) steps: vpk
+# at the crate's pin, the Setup.exe and AppImage packs (velopack-pack.sh --linux --dry-run runs),
+# their smoke steps, the feeds' signing key and the publish guard for their .sig files.
 # Prints one line per check and exits non-zero on the first failure. macOS only; needs
 # actionlint (brew install actionlint).
 set -eu
@@ -88,10 +90,10 @@ job "windows" | awk '
 	END { exit !(r["x64"] == "windows-2025" && t["x64"] == "x86_64-pc-windows-msvc" &&
 		r["arm64"] == "windows-11-arm" && t["arm64"] == "aarch64-pc-windows-msvc") }
 ' || fail "the windows matrix is not x64 on windows-2025 and arm64 on windows-11-arm"
-job_has windows "cargo build --release -p fastedit --locked --target \\\$\{\{ matrix.target \}\}$" "the arch's build"
+job_has windows "cargo build --release -p fastedit --locked --target \\\$\{\{ matrix.target \}\} --bin tenmoku --example sign_update_feed$" "the arch's build"
 job_has windows "scripts/package-windows.ps1 -Arch " "packaging"
 job_has linux-x86_64 "^    runs-on: ubuntu-24.04$" "x86_64 runner"
-job_has linux-x86_64 "run: cargo build --release -p fastedit --locked$" "the release build"
+job_has linux-x86_64 "run: cargo build --release -p fastedit --locked --bin tenmoku --example sign_update_feed$" "the release build"
 job_has linux-x86_64 "scripts/package-linux.sh " "packaging"
 job_has linux-x86_64 "mesa-vulkan-drivers xvfb$" "Xvfb and software Vulkan"
 ok "jobs version, macos-arm64, windows (x64 on windows-2025, arm64 on windows-11-arm), linux-x86_64 on ubuntu-24.04, publish"
@@ -127,6 +129,104 @@ done
 job linux-x86_64 | grep -q -F 'glibc=$glibc' || fail "the linux job does not output its minimum glibc"
 ok "each build job smoke-tests --version (linux also a 5 s launch under Xvfb) before uploading its artifact"
 
+# Velopack: vpk at the velopack crate's pin, in the Windows and Linux jobs, packing what the
+# portable smoke step checked into Setup.exe or the AppImage and its feed, then installing or
+# launching that before the upload.
+pin=$(sed -n 's/^velopack = { version = "=\([^"]*\)".*/\1/p' "$root/Cargo.toml")
+[ -n "$pin" ] || fail "no pinned velopack version in Cargo.toml"
+feed_default="\${{ vars.TENMOKU_UPDATE_FEED || format('https://github.com/{0}/releases/latest/download', github.repository) }}"
+# step JOB NAME prints that step of the job, from its name line to the next step.
+step() { job "$1" | awk -v n="      - name: $2" 'index($0, n) == 1 { on = 1; print; next } on && /^      - / { exit } on'; }
+for j in windows linux-x86_64; do
+	body=$(job "$j")
+	echo "$body" | grep -q -x '      - uses: actions/setup-dotnet@v5' || fail "$j does not set up .NET for vpk"
+	install=$(step "$j" "Install vpk at the velopack crate's pin")
+	echo "$install" | grep -q 'dotnet tool install vpk --version "\?\$pin"\? --tool-path ' || fail "$j does not install vpk at \$pin"
+	echo "$install" | grep -q 'velopack = ' || fail "$j does not read the pin from Cargo.toml"
+	build=$(step "$j" "Build the release binary")
+	echo "$build" | grep -q -F -- "TENMOKU_UPDATE_FEED: $feed_default" || fail "$j does not bake in the feed"
+	echo "$build" | grep -q -F -- 'TENMOKU_UPDATE_PUBLIC_KEY: ${{ vars.TENMOKU_UPDATE_PUBLIC_KEY }}' ||
+		fail "$j does not bake in the public key variable"
+	echo "$body" | awk '
+		/- name: Smoke test the (zipped|packed) binary/ && !p { p = NR }
+		/- name: Pack (Setup.exe|the AppImage)/ && !k { k = NR }
+		/- name: Smoke test (Setup.exe|the AppImage)/ && !s { s = NR }
+		/actions\/upload-artifact@/ && !u { u = NR }
+		END { exit !(p && k && s && u && p < k && k < s && s < u) }
+	' || fail "$j does not pack after the portable smoke step, then smoke-test the pack, then upload"
+	pack=$(echo "$body" | awk '/- name: Pack (Setup.exe|the AppImage)/ { on = 1; print; next } on && /^      - / { exit } on')
+	echo "$pack" | grep -q -F 'TENMOKU_UPDATE_PRIVATE_KEY: ${{ secrets.TENMOKU_UPDATE_PRIVATE_KEY }}' ||
+		fail "$j's pack step does not get the feed signing secret"
+	echo "$pack" | grep -q -F 'TENMOKU_UPDATE_PUBLIC_KEY: ${{ vars.TENMOKU_UPDATE_PUBLIC_KEY }}' ||
+		fail "$j's pack step does not get the public key to check the signer against"
+	echo "$pack" | grep -q 'sign_update_feed' || fail "$j's pack step does not pass the signer"
+	echo "$pack" | grep -q 'if:' && fail "$j's pack step is conditional: a dispatch must pack too"
+done
+step windows "Pack Setup.exe" | grep -q 'scripts/velopack-pack.ps1 -Arch \${{ matrix.arch }} ' || fail "the windows job does not run velopack-pack.ps1"
+step linux-x86_64 "Pack the AppImage" | grep -q 'scripts/velopack-pack.sh --linux ' || fail "the linux job does not run velopack-pack.sh --linux"
+setup_smoke=$(step windows "Smoke test Setup.exe")
+for word in "-ArgumentList '--silent'" '$env:LOCALAPPDATA Tenmoku' "current\\tenmoku.exe" '--version' \
+	'Start Menu\Programs' 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' \
+	'QuietUninstallString' "throw \"the uninstall left \$exe\"" 'the uninstall left the Add/Remove Programs entry'; do
+	printf "%s\n" "$setup_smoke" | grep -q -F -- "$word" || fail "the Setup.exe smoke step lacks $word"
+done
+appimage_smoke=$(step linux-x86_64 "Smoke test the AppImage")
+for word in 'sha256sum -c' '"$appimage" --version' 'Xvfb :98' 'DISPLAY=:98' 'sleep 5' 'kill -0 "$app"' "grep -n 'panicked'"; do
+	printf "%s\n" "$appimage_smoke" | grep -q -F -- "$word" || fail "the AppImage smoke step lacks $word"
+done
+job linux-x86_64 | grep -q 'apt-get install -y squashfs-tools fuse3 libfuse2t64' || fail "the linux job lacks vpk's mksquashfs or FUSE"
+ok "windows and linux install vpk $pin, bake in the feed and key, pack, then install or launch the pack before uploading"
+
+# The feeds' signing secret reaches only the two pack steps, through env:.
+[ "$(grep -c 'secrets\.TENMOKU_UPDATE_PRIVATE_KEY' "$wf")" -eq 2 ] ||
+	fail "secrets.TENMOKU_UPDATE_PRIVATE_KEY appears other than in the two pack steps"
+if grep -n 'TENMOKU_UPDATE_PRIVATE_KEY' "$wf" | grep -v -E '^[0-9]+:          TENMOKU_UPDATE_PRIVATE_KEY: \$\{\{ secrets\.TENMOKU_UPDATE_PRIVATE_KEY \}\}$' |
+	grep -v -F 'set TENMOKU_UPDATE_PRIVATE_KEY, or delete that asset first' | grep -v -E '^[0-9]+: *#'; then
+	fail "the lines above read the feed signing key in the workflow; only the pack scripts may"
+fi
+ok "TENMOKU_UPDATE_PRIVATE_KEY reaches the pack steps through env: only"
+
+# The channels: velopack-pack.sh and .ps1 pack on the ones the app reads (release_channel).
+rs="$root/crates/fastedit/src/velopack_update.rs"
+for c in windows-x64-stable windows-arm64-stable linux-x86_64-stable; do
+	grep -q -F "Some(\"$c\")" "$rs" || fail "velopack_update.rs does not read channel $c"
+done
+ps1="$here/velopack-pack.ps1"
+for word in '$channel = "windows-$Arch-stable"' "'--packId', 'Tenmoku'" "'--runtime', \"win-\$Arch\"" \
+	"'--shortcuts', 'StartMenuRoot'" "'--noPortable'" "'--delta', 'None'" 'Remove-Item Env:TENMOKU_UPDATE_PRIVATE_KEY' \
+	'$private | & $Signer sign $feed' 'if ($signed -ne $public)' '"Tenmoku-$Version-windows-$Arch-Setup.exe"'; do
+	grep -q -F -- "$word" "$ps1" || fail "velopack-pack.ps1 lacks $word"
+done
+ok "velopack-pack.ps1 packs Tenmoku per user with a Start menu shortcut on windows-<arch>-stable, the key on stdin only"
+
+# velopack-pack.sh --linux, dry: its vpk and signer commands, and its key checks.
+mkdir -p "$t/appdir/Licenses"
+cp /usr/bin/true "$t/appdir/tenmoku"
+linux_pack() { env -u TENMOKU_UPDATE_PRIVATE_KEY_FILE VPK=/opt/vpk "$here/velopack-pack.sh" --linux --pack-dir "$t/appdir" \
+	--version 1.2.3 --out "$t/vpkout" --dry-run "$@"; }
+TENMOKU_UPDATE_PRIVATE_KEY='' TENMOKU_UPDATE_PUBLIC_KEY='' linux_pack >"$t/vpk.log" 2>&1 ||
+	{ cat "$t/vpk.log"; fail "velopack-pack.sh --linux --dry-run exited non-zero"; }
+for word in "/opt/vpk " " pack --packId Tenmoku --packVersion 1.2.3 " " --mainExe tenmoku " \
+	" --channel linux-x86_64-stable --runtime linux-x64 " " --delta None " "releases.linux-x86_64-stable.json is left unsigned"; do
+	grep -q -F -- "$word" "$t/vpk.log" || fail "velopack-pack.sh --linux --dry-run lacks '$word': $(cat "$t/vpk.log")"
+done
+TENMOKU_UPDATE_PRIVATE_KEY=secretseed TENMOKU_UPDATE_PUBLIC_KEY=AbCd= linux_pack --signer /opt/sign_update_feed >"$t/vpk.log" 2>&1 ||
+	{ cat "$t/vpk.log"; fail "velopack-pack.sh --linux --dry-run with a key exited non-zero"; }
+grep -q -x -F "<private key from TENMOKU_UPDATE_PRIVATE_KEY> | /opt/sign_update_feed sign $t/vpkout/releases.linux-x86_64-stable.json" "$t/vpk.log" ||
+	fail "the feed is not signed with the key on stdin: $(cat "$t/vpk.log")"
+grep -q secretseed "$t/vpk.log" && fail "velopack-pack.sh printed the private key"
+if TENMOKU_UPDATE_PRIVATE_KEY=secretseed TENMOKU_UPDATE_PUBLIC_KEY='' linux_pack --signer /opt/s >"$t/vpk.log" 2>&1; then
+	fail "a private key with no public key was packed"
+fi
+if TENMOKU_UPDATE_PRIVATE_KEY=secretseed TENMOKU_UPDATE_PUBLIC_KEY=AbCd= linux_pack >"$t/vpk.log" 2>&1; then
+	fail "a private key with no --signer was packed"
+fi
+if TENMOKU_UPDATE_PRIVATE_KEY='' linux_pack --channel stable >"$t/vpk.log" 2>&1; then
+	fail "velopack-pack.sh --linux took another channel"
+fi
+shellcheck "$here/velopack-pack.sh" >/dev/null 2>&1 || ! command -v shellcheck >/dev/null || fail "shellcheck velopack-pack.sh"
+ok "velopack-pack.sh --linux packs Tenmoku on linux-x86_64-stable and signs the feed only with both keys"
+
 # Publish: after every build job, on tag pushes only, and the only job with gh release.
 publish_job=$(job publish)
 echo "$publish_job" | grep -q -x '    needs: \[version, macos-arm64, windows, linux-x86_64\]' || fail "publish does not need every build job"
@@ -138,7 +238,11 @@ for j in version macos-arm64 windows linux-x86_64; do
 	job "$j" | grep -q 'gh release' && fail "$j runs gh release: only publish may"
 done
 echo "$publish_job" | grep -q -F -- '--notes "$notes"' || fail "the release notes do not get the downloads text"
-echo "$publish_job" | grep -q -F 'needs glibc $GLIBC or later' || fail "the release notes do not name the minimum glibc"
+echo "$publish_job" | grep -q -F 'needs glibc $GLIBC or later' || echo "$publish_job" | grep -q -F 'needing glibc $GLIBC or later' ||
+	fail "the release notes do not name the minimum glibc"
+for word in windows-x64-Setup.exe windows-arm64-Setup.exe linux-x86_64.AppImage; do
+	echo "$publish_job" | grep -q -F "$word" || fail "the release notes do not name $word"
+done
 ok "publish needs all four builds, runs on tag pushes only, and is the only job that publishes"
 
 # No secret inside a run: block; each secret is an env-style KEY: \${{ secrets.KEY }} line.
@@ -167,7 +271,7 @@ ok "SPARKLE_ED_PRIVATE_KEY reaches one step through env: only"
 # skip test and the printf into the pipe.
 sign_line='signature=$(printf '"'"'%s'"'"' "$SPARKLE_ED_PRIVATE_KEY" | "$SPARKLE_TOOLS/sign_update" --ed-key-file - -p "dist/$name")'
 grep -q -F -- "$sign_line" "$wf" || fail "sign_update does not get the key on stdin as expected"
-[ "$(grep -c 'sign_update' "$wf")" -eq 1 ] || fail "sign_update appears other than once"
+[ "$(grep 'sign_update' "$wf" | grep -c -v 'sign_update_feed')" -eq 1 ] || fail "sign_update appears other than once"
 reads=$(grep -E '\$\{?SPARKLE_ED_PRIVATE_KEY' "$wf" | grep -v -F -- "$sign_line" |
 	grep -v -x -F -- '          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then' || true)
 [ -z "$reads" ] || fail "the private key is read other than on sign_update's stdin: $reads"
@@ -267,6 +371,24 @@ FAKE_ASSETS='Tenmoku-1.2.3-macos-arm64.zip'
 publish none || { cat "$t/publish.log"; fail "an unsigned rerun of an unsigned release failed"; }
 grep -q '^release upload v1.2.3 ' "$t/gh.log" || fail "the unsigned rerun: $(cat "$t/gh.log")"
 ok "an unsigned rerun of an unsigned release still uploads"
+
+# The same guard for a Velopack feed's .sig.
+FAKE_ASSETS='Tenmoku-1.2.3-macos-arm64.zip
+releases.linux-x86_64-stable.json
+releases.linux-x86_64-stable.json.sig'
+if publish none; then
+	fail "a rerun with no feed signature over a release that has one was not refused"
+fi
+grep -q 'has releases.linux-x86_64-stable.json.sig and this run made none' "$t/publish.log" ||
+	fail "no reason given: $(cat "$t/publish.log")"
+[ ! -s "$t/gh.log" ] || fail "the refused rerun still changed the release: $(cat "$t/gh.log")"
+: >"$t/run/dist/releases.linux-x86_64-stable.json.sig"
+(cd "$t/run" && PATH="$t/bin:$PATH" GITHUB_REF_NAME=v1.2.3 FAKE_GH_LOG="$t/gh.log" bash -e "$t/publish-step.sh") \
+	>"$t/publish.log" 2>&1 || { cat "$t/publish.log"; fail "a signed rerun of a signed feed failed"; }
+grep -q '^release upload v1.2.3 .*dist/releases.linux-x86_64-stable.json.sig .*--clobber' "$t/gh.log" ||
+	fail "the signed feed rerun: $(cat "$t/gh.log")"
+ok "a rerun with no feed .sig over a signed feed is refused; a signed one replaces it"
+FAKE_ASSETS='Tenmoku-1.2.3-macos-arm64.zip'
 
 FAKE_ASSETS_FAIL=1
 if publish none; then

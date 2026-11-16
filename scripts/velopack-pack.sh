@@ -1,5 +1,6 @@
 #!/bin/sh
-# Pack Tenmoku.app as a Velopack release and sign its feed (the T1427 spike). See --help.
+# Pack Tenmoku.app as a Velopack release and sign its feed (the T1427 spike), or, with --linux,
+# pack a built Linux release as an AppImage and its feed (T1909). See --help.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -10,6 +11,18 @@ usage() {
 	cat <<'EOF'
 Usage: scripts/velopack-pack.sh --version X.Y.Z --feed DIR|URL --out DIR
                                 [--channel NAME] [--pack-id ID] [--dry-run]
+       scripts/velopack-pack.sh --linux --pack-dir DIR --version X.Y.Z --out DIR
+                                [--signer FILE] [--dry-run]
+
+--linux: the release's AppImage (T1909). DIR is the unpacked linux-x86_64 tar.gz
+folder, whose tenmoku was built with TENMOKU_UPDATE_FEED (and TENMOKU_UPDATE_PUBLIC_KEY,
+when set) baked in; its tenmoku and Licenses/ are packed. No cargo run. vpk packs on
+channel linux-x86_64-stable, pack id Tenmoku, and the script leaves in --out:
+  Tenmoku-<v>-linux-x86_64.AppImage and its .sha256,
+  releases.linux-x86_64-stable.json, the full .nupkg it lists, and the feed's .sig when
+  signed: with TENMOKU_UPDATE_PRIVATE_KEY (or _FILE) and TENMOKU_UPDATE_PUBLIC_KEY set,
+  --signer (sign_update_feed) signs the feed. Without a private key the feed is left
+  unsigned, which the app refuses; a private key without the public one is refused.
 
 Builds Tenmoku with the feed and public key baked in, bundles it with
 scripts/bundle-macos.sh (no Sparkle, no SU* keys), packs it with vpk into DIR, and
@@ -55,6 +68,155 @@ die() {
 	exit 1
 }
 
+# The private key, from TENMOKU_UPDATE_PRIVATE_KEY or _FILE: sets key_from, or dies.
+private_key_source() {
+	if [ -n "${TENMOKU_UPDATE_PRIVATE_KEY:-}" ] && [ -n "${TENMOKU_UPDATE_PRIVATE_KEY_FILE:-}" ]; then
+		die "set TENMOKU_UPDATE_PRIVATE_KEY or TENMOKU_UPDATE_PRIVATE_KEY_FILE, not both"
+	elif [ -n "${TENMOKU_UPDATE_PRIVATE_KEY:-}" ]; then
+		key_from="TENMOKU_UPDATE_PRIVATE_KEY"
+	elif [ -n "${TENMOKU_UPDATE_PRIVATE_KEY_FILE:-}" ]; then
+		key_from="TENMOKU_UPDATE_PRIVATE_KEY_FILE"
+		[ -r "$TENMOKU_UPDATE_PRIVATE_KEY_FILE" ] ||
+			die "cannot read TENMOKU_UPDATE_PRIVATE_KEY_FILE: $TENMOKU_UPDATE_PRIVATE_KEY_FILE"
+	else
+		key_from=""
+	fi
+}
+
+# Signs feed file $2 with signer $1, the key on its stdin only, and checks its public half is
+# TENMOKU_UPDATE_PUBLIC_KEY: no .sig is left otherwise. Unsets the key variables first.
+sign_feed() {
+	private_key=${TENMOKU_UPDATE_PRIVATE_KEY:-}
+	private_key_file=${TENMOKU_UPDATE_PRIVATE_KEY_FILE:-}
+	unset TENMOKU_UPDATE_PRIVATE_KEY TENMOKU_UPDATE_PRIVATE_KEY_FILE
+	rm -f "$2.sig"
+	if [ "$key_from" = TENMOKU_UPDATE_PRIVATE_KEY ]; then
+		# printf is a builtin: the key reaches the signer's stdin and no argv.
+		signed=$(printf '%s' "$private_key" | "$1" sign "$2") || die "signing $2 failed"
+	else
+		signed=$("$1" sign "$2" <"$private_key_file") || die "signing $2 failed"
+	fi
+	if [ "$signed" != "$TENMOKU_UPDATE_PUBLIC_KEY" ]; then
+		rm -f "$2.sig"
+		die "the private key's public half is not TENMOKU_UPDATE_PUBLIC_KEY; no signature written"
+	fi
+}
+
+# The vpk in VPK, PATH or ~/.dotnet/tools, checked against the crate's pin unless dry ($1).
+find_vpk() {
+	pin=$(sed -n 's/^velopack = { version = "=\([^"]*\)".*/\1/p' "$root/Cargo.toml")
+	[ -n "$pin" ] || die "no pinned velopack version in $root/Cargo.toml"
+	vpk=${VPK:-}
+	if [ -z "$vpk" ]; then
+		vpk=$(command -v vpk || true)
+		[ -n "$vpk" ] || vpk="$HOME/.dotnet/tools/vpk"
+	fi
+	[ -z "$1" ] || return 0
+	# vpk is a .NET tool: a user-local SDK needs DOTNET_ROOT.
+	if [ -z "${DOTNET_ROOT:-}" ] && [ -x "$HOME/.dotnet/dotnet" ]; then
+		DOTNET_ROOT="$HOME/.dotnet"
+		export DOTNET_ROOT
+	fi
+	install_hint="dotnet tool install vpk --version $pin --tool-path ~/.dotnet/tools"
+	[ -x "$vpk" ] || die "no vpk at '$vpk'; install it with: $install_hint"
+	vpk_version=$("$vpk" -h 2>&1 | sed -n 's/.*Velopack CLI \([^ ]*\).*/\1/p' | head -n 1)
+	[ "$vpk_version" = "$pin" ] ||
+		die "vpk is '${vpk_version:-unknown}', not $pin as the velopack crate is pinned; install it with: $install_hint"
+}
+
+# --linux: the release's AppImage and feed from an unpacked tar.gz folder.
+pack_linux() {
+	version="" pack_dir="" out="" signer="" dry_run=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--version) need_arg "$@"; version=$2; shift 2 ;;
+		--pack-dir) need_arg "$@"; pack_dir=$2; shift 2 ;;
+		--out) need_arg "$@"; out=$2; shift 2 ;;
+		--signer) need_arg "$@"; signer=$2; shift 2 ;;
+		--dry-run) dry_run=1; shift ;;
+		-h | --help) usage; exit 0 ;;
+		*) die "unknown argument for --linux: $1 (see --help)" ;;
+		esac
+	done
+	[ -n "$version" ] || die "--version is required (see --help)"
+	[ -n "$pack_dir" ] || die "--pack-dir is required (see --help)"
+	[ -n "$out" ] || die "--out is required (see --help)"
+	case "$version" in
+	*[!0-9.]* | .* | *. | *..*) die "version must be dotted numbers, got '$version'" ;;
+	esac
+	[ -f "$pack_dir/tenmoku" ] || die "no tenmoku in $pack_dir"
+	[ -d "$pack_dir/Licenses" ] || die "no Licenses/ in $pack_dir"
+
+	channel=linux-x86_64-stable
+	feed_file="releases.$channel.json"
+	private_key_source
+	public_key=${TENMOKU_UPDATE_PUBLIC_KEY:-}
+	case "$public_key" in
+	*[!A-Za-z0-9+/=]*) die "TENMOKU_UPDATE_PUBLIC_KEY is not base64" ;;
+	esac
+	if [ -n "$key_from" ] && [ -z "$public_key" ]; then
+		die "a private key but no TENMOKU_UPDATE_PUBLIC_KEY: the app would have no key to check the feed with"
+	fi
+	if [ -n "$key_from" ]; then
+		[ -n "$signer" ] || die "--signer is required to sign the feed"
+		[ -n "$dry_run" ] || [ -x "$signer" ] || die "no signer at $signer"
+	fi
+	find_vpk "$dry_run"
+
+	work=$(mktemp -d)
+	# vpk cross-packs for Linux from another OS only with its [linux] directive.
+	set -- "$vpk"
+	[ "$(uname -s)" = Linux ] || set -- "$@" "[linux]"
+	set -- "$@" pack --packId Tenmoku --packVersion "$version" --packDir "$work/app" \
+		--mainExe tenmoku --channel "$channel" --runtime linux-x64 --packTitle Tenmoku \
+		--packAuthors Tenmoku --icon "$root/crates/fastedit/assets/icon/fastedit-1024.png" \
+		--categories 'Development;TextEditor;' --delta None --outputDir "$work/vpk"
+	if [ -n "$dry_run" ]; then
+		rm -rf "$work"
+		show "$@"
+		if [ -n "$key_from" ]; then
+			printf '%s | %s\n' "<private key from $key_from>" "$(show "$signer" sign "$out/$feed_file")"
+		else
+			echo "velopack-pack: note: no private key, so $feed_file is left unsigned" >&2
+		fi
+		exit 0
+	fi
+	trap 'rm -rf "$work"' EXIT
+	mkdir -p "$work/app" "$out"
+	cp "$pack_dir/tenmoku" "$work/app/tenmoku"
+	chmod 755 "$work/app/tenmoku"
+	cp -R "$pack_dir/Licenses" "$work/app/Licenses"
+	"$@" || die "vpk pack failed"
+
+	appimages=$(find "$work/vpk" -maxdepth 1 -name '*.AppImage')
+	[ "$(printf '%s\n' "$appimages" | grep -c .)" -eq 1 ] || die "vpk did not write one AppImage: $appimages"
+	nupkg="Tenmoku-$version-$channel-full.nupkg"
+	[ -f "$work/vpk/$feed_file" ] || die "vpk wrote no $feed_file"
+	[ -f "$work/vpk/$nupkg" ] || die "vpk wrote no $nupkg"
+	name="Tenmoku-$version-linux-x86_64.AppImage"
+	mv "$appimages" "$out/$name"
+	chmod 755 "$out/$name"
+	if command -v sha256sum >/dev/null 2>&1; then
+		(cd "$out" && sha256sum "$name" >"$name.sha256")
+	else
+		(cd "$out" && shasum -a 256 "$name" >"$name.sha256")
+	fi
+	cp "$work/vpk/$feed_file" "$work/vpk/$nupkg" "$out/"
+	if [ -n "$key_from" ]; then
+		sign_feed "$signer" "$out/$feed_file"
+	else
+		rm -f "$out/$feed_file.sig"
+		if [ -n "$public_key" ]; then
+			echo "velopack-pack: warning: no private key: $feed_file is unsigned, and this build's key refuses it" >&2
+		else
+			echo "velopack-pack: no private key or public key: $feed_file is unsigned, and the app has no key to take it with" >&2
+		fi
+	fi
+	for f in "$name" "$name.sha256" "$feed_file" "$nupkg"; do echo "$out/$f"; done
+	[ ! -f "$out/$feed_file.sig" ] || echo "$out/$feed_file.sig"
+	exit 0
+}
+
 need_arg() {
 	[ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value (see --help)"
 }
@@ -70,6 +232,11 @@ show() {
 	done
 	printf '%s\n' "$line"
 }
+
+if [ "${1:-}" = --linux ]; then
+	shift
+	pack_linux "$@"
+fi
 
 version=""
 feed=""
