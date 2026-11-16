@@ -134,7 +134,25 @@ SHORT-RUN
 
 ### The Automation Mode prompt, word for word
 
-AUTOMATION-PROMPT
+Captured 2026-11-16 on a fresh enablement. Before the run, `automationmodetool` said
+"Automation Mode is disabled. This device requires user authentication to enable
+Automation Mode." At 05:03:26, as `xcodebuild test` started the probe run
+(`scripts/e2e-macos.sh --no-build --only testRunnerWritesOnlyItsScratch`), macOS showed
+a system dialog with the Touch ID fingerprint icon badged "exec". The user, at the Mac,
+copied it word for word:
+
+> **XCTest is trying to Enable UI Automation.**
+>
+> Touch ID or enter your password to continue with XCTest.
+>
+> Buttons: **Use Password…** and **Cancel**
+
+The user authorized it (with Touch ID or the password; which was not noted), and the run
+went on and passed. This is the prompt the spike's run 1 saw but didn't capture. It is
+macOS's authentication dialog for Automation Mode, raised for XCTest, not a TCC
+(Accessibility) prompt, and nothing in System Settings was changed. Cancel leaves
+Automation Mode disabled, so the UI tests can't drive the app. After the run,
+`automationmodetool` again said "Automation Mode is disabled."
 
 ### How long an authorization lasts
 
