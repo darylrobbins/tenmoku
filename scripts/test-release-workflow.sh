@@ -1,7 +1,9 @@
 #!/bin/sh
 # Checks for the release workflow (.github/workflows/release.yml) and its signing script:
-# actionlint, the workflow's trigger, runner, tag check, build and publish steps, where its secrets and
-# write permission appear, the signing script's hygiene, a run of the signing script with no
+# actionlint, the workflow's trigger, its build jobs (runners, smoke steps, artifacts) and publish
+# job (needs, tag pushes only), tag check, build and publish steps, where its secrets and
+# write permission appear, the Windows and Linux packaging scripts (a run of package-linux.sh on
+# a fixture binary), the signing script's hygiene, a run of the signing script with no
 # secrets against a fixture bundle (a copy of /usr/bin/true, as test-bundle-macos.sh does), the
 # Sparkle steps, and a run of make-appcast.sh on that bundle's zip.
 # Prints one line per check and exits non-zero on the first failure. macOS only; needs
@@ -59,16 +61,85 @@ for tag in "v$version.1" "v9$version" "$version" "v$version-rc1" v "" v1.2; do
 done
 ok "a tag must be v plus Cargo.toml's version, checked before the build"
 
-# contents: write once, in the release job's own permissions (job keys sit at 4 spaces).
+# contents: write once, in the publish job's own permissions (job keys sit at 4 spaces).
 [ "$(grep -c 'contents: write' "$wf")" -eq 1 ] || fail "contents: write appears other than once"
 awk '
-	/^  [A-Za-z_-]+:/ { job = $1 }
-	/^    permissions:/ { perms = (job == "release:") ; next }
+	/^  [A-Za-z0-9_-]+:/ { job = $1 }
+	/^    permissions:/ { perms = (job == "publish:") ; next }
 	/^    [A-Za-z_-]+:/ { perms = 0 }
 	/contents: write/ { found = 1; if (!perms || $0 !~ /^      contents: write$/) bad = 1 }
 	END { exit !(found && !bad) }
-' "$wf" || fail "contents: write is not under jobs.release.permissions"
-ok "contents: write only in the release job's permissions"
+' "$wf" || fail "contents: write is not under jobs.publish.permissions"
+grep -q -x 'permissions:' "$wf" && grep -A1 -x 'permissions:' "$wf" | grep -q -x '  contents: read' ||
+	fail "the workflow's default permissions are not contents: read"
+ok "contents: write only in the publish job's permissions; the rest read"
+
+# The jobs: one per platform, then publish. job NAME prints that job's lines.
+job() { awk -v j="  $1:" '/^jobs:$/ { in_jobs = 1 } in_jobs && $0 == j { on = 1; next } on && /^  [^ ]/ { exit } on' "$wf"; }
+jobs=$(awk '/^jobs:$/ { on = 1; next } on && /^  [A-Za-z0-9_-]+:$/' "$wf" | tr -d ' :' | tr '\n' ' ')
+[ "$jobs" = "version macos-arm64 windows linux-x86_64 publish " ] || fail "the jobs are: $jobs"
+job_has() { job "$1" | grep -q -E -- "$2" || fail "job $1 lacks /$2/ ($3)"; }
+job_has macos-arm64 "^    runs-on: macos-latest$" "Apple Silicon runner"
+job_has windows "^    name: windows-\\\$\{\{ matrix.arch \}\}$" "a job per arch, named windows-<arch>"
+job_has windows "^    runs-on: \\\$\{\{ matrix.runner \}\}$" "the arch's runner"
+job "windows" | awk '
+	/- arch: x64$/ { a = "x64" } /- arch: arm64$/ { a = "arm64" }
+	/runner:/ { r[a] = $2 } /target:/ { t[a] = $2 }
+	END { exit !(r["x64"] == "windows-2025" && t["x64"] == "x86_64-pc-windows-msvc" &&
+		r["arm64"] == "windows-11-arm" && t["arm64"] == "aarch64-pc-windows-msvc") }
+' || fail "the windows matrix is not x64 on windows-2025 and arm64 on windows-11-arm"
+job_has windows "cargo build --release -p fastedit --locked --target \\\$\{\{ matrix.target \}\}$" "the arch's build"
+job_has windows "scripts/package-windows.ps1 -Arch " "packaging"
+job_has linux-x86_64 "^    runs-on: ubuntu-24.04$" "x86_64 runner"
+job_has linux-x86_64 "run: cargo build --release -p fastedit --locked$" "the release build"
+job_has linux-x86_64 "scripts/package-linux.sh " "packaging"
+job_has linux-x86_64 "mesa-vulkan-drivers xvfb$" "Xvfb and software Vulkan"
+ok "jobs version, macos-arm64, windows (x64 on windows-2025, arm64 on windows-11-arm), linux-x86_64 on ubuntu-24.04, publish"
+
+# Each build job needs the version, smoke-tests its binary before uploading, and uploads its
+# files as an artifact on every run, the dispatch included.
+for j in macos-arm64 windows linux-x86_64; do
+	body=$(job "$j")
+	echo "$body" | grep -q -x '    needs: version' || fail "$j does not need the version job"
+	smoke=$(echo "$body" | awk '/^      - name: Smoke test/ { on = 1; print; next } on && /^      - / { exit } on')
+	[ -n "$smoke" ] || fail "$j has no smoke step"
+	echo "$smoke" | grep -q -e '--version' || fail "$j's smoke step does not run --version"
+	echo "$smoke" | grep -q 'tenmoku $VERSION\|tenmoku $env:VERSION' || fail "$j's smoke step does not compare the version"
+	echo "$smoke" | grep -q 'if:' && fail "$j's smoke step is conditional"
+	echo "$body" | awk '/Smoke test/ && !s { s = NR } /actions\/upload-artifact@/ && !u { u = NR } END { exit !(s && u && s < u) }' ||
+		fail "$j does not smoke-test before uploading"
+	upload=$(echo "$body" | awk '/^      - name: Upload/ { on = 1 } on')
+	echo "$upload" | grep -q 'if:' && fail "$j's upload is conditional: a dispatch must upload too"
+	echo "$upload" | grep -q -E '^          name: Tenmoku-\$\{\{ (needs\.version|steps\.bundle)\.outputs\.version \}\}-' ||
+		fail "$j's artifact is not named Tenmoku-<v>-..."
+	echo "$upload" | grep -q -x '          if-no-files-found: error' || fail "$j's upload allows no files"
+done
+job windows | grep -q -F "throw \"tenmoku.exe is for machine" || fail "the windows smoke step does not check the exe's machine"
+job windows | grep -q -x '          RUSTFLAGS: -C target-feature=+crt-static' ||
+	fail "the windows build does not link the C runtime statically"
+job windows | grep -q -F '& $dumpbin /nologo /dependents $exe' || fail "the windows smoke step does not list the exe's DLLs"
+job windows | grep -q -F "throw \"tenmoku.exe needs the Visual C++ runtime" ||
+	fail "the windows smoke step does not refuse a Visual C++ runtime import"
+linux_smoke=$(job linux-x86_64 | awk '/- name: Smoke test/ { on = 1 } on && /- name: Upload/ { exit } on')
+for word in 'Xvfb :99' 'DISPLAY=:99' 'sleep 5' 'kill -0 "$app"' "grep -n 'panicked'"; do
+	echo "$linux_smoke" | grep -q -F -- "$word" || fail "the linux smoke step lacks $word"
+done
+job linux-x86_64 | grep -q -F 'glibc=$glibc' || fail "the linux job does not output its minimum glibc"
+ok "each build job smoke-tests --version (linux also a 5 s launch under Xvfb) before uploading its artifact"
+
+# Publish: after every build job, on tag pushes only, and the only job with gh release.
+publish_job=$(job publish)
+echo "$publish_job" | grep -q -x '    needs: \[version, macos-arm64, windows, linux-x86_64\]' || fail "publish does not need every build job"
+echo "$publish_job" | grep -q -x "    if: github.event_name == 'push' && github.ref_type == 'tag'" ||
+	fail "publish is not limited to tag pushes"
+echo "$publish_job" | grep -q 'actions/download-artifact@v8' || fail "publish does not download the build jobs' files"
+echo "$publish_job" | grep -q -x '          merge-multiple: true' || fail "publish does not merge the artifacts into dist/"
+for j in version macos-arm64 windows linux-x86_64; do
+	job "$j" | grep -q 'gh release' && fail "$j runs gh release: only publish may"
+done
+echo "$publish_job" | grep -q -F -- '--notes "$notes"' || fail "the release notes do not get the downloads text"
+echo "$publish_job" | grep -q -F 'needs glibc $GLIBC or later' || fail "the release notes do not name the minimum glibc"
+ok "publish needs all four builds, runs on tag pushes only, and is the only job that publishes"
 
 # No secret inside a run: block; each secret is an env-style KEY: \${{ secrets.KEY }} line.
 awk '
@@ -257,6 +328,81 @@ min=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/
 [ "$(appcast enclosure /@length)" = "$(wc -c <"$t/app.zip" | tr -d ' ')" ] ||
 	fail "the appcast's length is not the zip's size"
 ok "make-appcast.sh takes the version and minimum system from a real bundle's zip"
+
+# The Windows and Linux archives carry the licence texts bundle-macos.sh ships: each of its
+# ship lines appears in package-linux.sh as is and in package-windows.ps1 as a Join-Path.
+grep -E '^ship "\$root/' "$here/bundle-macos.sh" >"$t/ships"
+[ -s "$t/ships" ] || fail "no ship lines in bundle-macos.sh"
+while IFS= read -r line; do
+	grep -q -x -F -- "$line" "$here/package-linux.sh" || fail "package-linux.sh does not ship: $line"
+	src=$(echo "$line" | sed -E 's|^ship "\$root/([^"]*)" ([^ ]*)$|\1|' | tr / '\\')
+	as=$(echo "$line" | sed -E 's|^ship "\$root/([^"]*)" ([^ ]*)$|\2|' | tr / '\\')
+	grep -q -F -- "Ship (Join-Path \$root '$src') '$as'" "$here/package-windows.ps1" ||
+		fail "package-windows.ps1 does not ship $src as $as"
+done <"$t/ships"
+for f in "$here/package-linux.sh" "$here/package-windows.ps1"; do
+	grep -q 'vendor' "$f" && grep -q 'extensions' "$f" && grep -q 'OFL.txt' "$f" ||
+		fail "$(basename "$f") does not ship the grammars' and fonts' licences"
+done
+ok "package-linux.sh and package-windows.ps1 ship bundle-macos.sh's licence texts"
+
+# package-linux.sh on a fixture binary: one folder with the binary, desktop entry, icon,
+# installer and licences, and a .sha256 that checks.
+cp /usr/bin/true "$t/linux-tenmoku"
+"$here/package-linux.sh" --binary "$t/linux-tenmoku" --version 1.2.3 --out "$t/linux" >"$t/linux.log" 2>&1 ||
+	{ cat "$t/linux.log"; fail "package-linux.sh exited non-zero"; }
+[ "$(tail -n 1 "$t/linux.log")" = "$t/linux/Tenmoku-1.2.3-linux-x86_64.tar.gz" ] ||
+	fail "package-linux.sh did not print the archive: $(cat "$t/linux.log")"
+(cd "$t/linux" && shasum -a 256 -c Tenmoku-1.2.3-linux-x86_64.tar.gz.sha256 >/dev/null) || fail "the .sha256 does not check"
+tar -tzf "$t/linux/Tenmoku-1.2.3-linux-x86_64.tar.gz" >"$t/linux.list"
+grep -v -q '^Tenmoku-1.2.3-linux-x86_64/' "$t/linux.list" && fail "the archive has files outside its one folder"
+for f in tenmoku dev.tenmoku.tenmoku.desktop dev.tenmoku.tenmoku.svg install.sh Licenses/LICENSE \
+	Licenses/NOTICE Licenses/THIRD_PARTY.md Licenses/tree-sitter-LICENSE.txt; do
+	grep -q -x "Tenmoku-1.2.3-linux-x86_64/$f" "$t/linux.list" || fail "the archive lacks $f"
+done
+grep -q -E '^Tenmoku-1.2.3-linux-x86_64/Licenses/fonts/[^/]+/OFL.txt$' "$t/linux.list" || fail "the archive lacks the fonts' OFL.txt"
+tar -xzf "$t/linux/Tenmoku-1.2.3-linux-x86_64.tar.gz" -C "$t/linux"
+[ -x "$t/linux/Tenmoku-1.2.3-linux-x86_64/tenmoku" ] && [ -x "$t/linux/Tenmoku-1.2.3-linux-x86_64/install.sh" ] ||
+	fail "the binary or install.sh is not executable in the archive"
+grep -q -x 'Exec=tenmoku %F' "$root/packaging/linux/dev.tenmoku.tenmoku.desktop" || fail "the desktop entry's Exec line changed"
+grep -q -x 'StartupWMClass=dev.tenmoku.tenmoku' "$root/packaging/linux/dev.tenmoku.tenmoku.desktop" ||
+	fail "the desktop entry's window class is not the app id"
+ok "package-linux.sh packs one folder with the binary, desktop entry, icon, installer and licences"
+
+# install.sh into a fake home, then --uninstall.
+home="$t/home"
+mkdir -p "$home"
+HOME="$home" XDG_DATA_HOME='' PATH=/usr/bin:/bin "$t/linux/Tenmoku-1.2.3-linux-x86_64/install.sh" >"$t/install.log" 2>&1 ||
+	{ cat "$t/install.log"; fail "install.sh exited non-zero"; }
+[ "$(readlink "$home/.local/bin/tenmoku")" = "$t/linux/Tenmoku-1.2.3-linux-x86_64/tenmoku" ] ||
+	fail "install.sh did not link ~/.local/bin/tenmoku"
+grep -q -x -F "Exec=\"$t/linux/Tenmoku-1.2.3-linux-x86_64/tenmoku\" %F" "$home/.local/share/applications/dev.tenmoku.tenmoku.desktop" ||
+	fail "the installed desktop entry does not run the unpacked binary"
+[ -f "$home/.local/share/icons/hicolor/scalable/apps/dev.tenmoku.tenmoku.svg" ] || fail "install.sh did not install the icon"
+HOME="$home" XDG_DATA_HOME='' "$t/linux/Tenmoku-1.2.3-linux-x86_64/install.sh" --uninstall >/dev/null ||
+	fail "install.sh --uninstall exited non-zero"
+[ -z "$(find "$home" -type f -o -type l)" ] || fail "--uninstall left: $(find "$home" -type f -o -type l)"
+ok "install.sh installs for the user and --uninstall removes it"
+
+# A folder name with every character the Desktop Entry spec or sed treats specially: the Exec
+# line quotes the path ( \" \` \$ \\ ), doubles those backslashes, and writes % as %%.
+odd=$(printf 'A b&c|d"e%sf\\g%%h$i`j' "'")
+escaped=$(printf 'A b&c|d\\\\"e%sf\\\\\\\\g%%%%h\\\\$i\\\\`j' "'")
+mkdir -p "$t/odd/$odd"
+cp -R "$t/linux/Tenmoku-1.2.3-linux-x86_64" "$t/odd/$odd/"
+rm -rf "$home" && mkdir -p "$home"
+HOME="$home" XDG_DATA_HOME='' PATH=/usr/bin:/bin "$t/odd/$odd/Tenmoku-1.2.3-linux-x86_64/install.sh" >"$t/install.log" 2>&1 ||
+	{ cat "$t/install.log"; fail "install.sh in an oddly named folder exited non-zero"; }
+[ "$(readlink "$home/.local/bin/tenmoku")" = "$t/odd/$odd/Tenmoku-1.2.3-linux-x86_64/tenmoku" ] ||
+	fail "install.sh linked $(readlink "$home/.local/bin/tenmoku")"
+exec_line=$(grep '^Exec=' "$home/.local/share/applications/dev.tenmoku.tenmoku.desktop")
+[ "$exec_line" = "Exec=\"$t/odd/$escaped/Tenmoku-1.2.3-linux-x86_64/tenmoku\" %F" ] ||
+	fail "the Exec line for folder '$odd' is: $exec_line"
+[ -z "$(find "$home/.local/share/applications" -name '.*')" ] || fail "install.sh left its staged desktop entry"
+ok "install.sh escapes a folder named $odd for the desktop entry"
+
+[ -f "$root/crates/fastedit/tests/version_flag.rs" ] || fail "no crates/fastedit/tests/version_flag.rs"
+ok "crates/fastedit/tests/version_flag.rs covers the --version the smoke steps run"
 
 # C6: the Releasing section names the secrets and the tag format.
 doc="$root/docs/release/macos-signing.md"

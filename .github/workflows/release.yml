@@ -1,10 +1,14 @@
 name: Release
 
-# A vX.Y.Z tag builds Tenmoku.app on macOS arm64 and attaches a zip, its SHA-256 and Sparkle's
-# appcast.xml to a GitHub Release. Signing, notarization and the appcast run only when the
-# repository has the secrets; without them the app ships ad-hoc signed and with no appcast. A
-# manual run builds the same files as a workflow artifact and publishes nothing. See
-# docs/release/macos-signing.md, "Releasing".
+# A vX.Y.Z tag builds Tenmoku on four platforms, one job each, and the publish job attaches
+# their files to a GitHub Release: Tenmoku-<v>-macos-arm64.zip (Tenmoku.app),
+# Tenmoku-<v>-windows-x64.zip, Tenmoku-<v>-windows-arm64.zip and
+# Tenmoku-<v>-linux-x86_64.tar.gz, each with a .sha256, and Sparkle's appcast.xml. Each build
+# job runs its own binary before uploading it. macOS signing, notarization and the appcast run
+# only when the repository has the secrets; without them the app ships ad-hoc signed and with
+# no appcast. The Windows and Linux builds are unsigned. A manual run builds the same files as
+# workflow artifacts and publishes nothing. See docs/release/macos-signing.md, "Releasing", and
+# docs/release/platforms.md.
 
 on:
   push:
@@ -18,17 +22,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    # macos-latest is Apple Silicon, so the binary is arm64.
-    runs-on: macos-latest
-    permissions:
-      contents: write
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       # Check for Updates compares releases with the version built in from Cargo.toml.
       - name: Check the tag is Cargo.toml's version
         if: github.ref_type == 'tag'
         run: scripts/check-release-version.sh "$GITHUB_REF_NAME"
+      - name: Read Cargo.toml's version
+        id: version
+        run: |
+          version=$(awk '
+            /^\[/ { in_pkg = ($0 == "[workspace.package]") }
+            in_pkg && /^version[ \t]*=/ { gsub(/.*=[ \t]*"|".*/, ""); print; exit }
+          ' Cargo.toml)
+          [ -n "$version" ] || { echo "::error::no [workspace.package] version in Cargo.toml"; exit 1; }
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+  macos-arm64:
+    needs: version
+    # macos-latest is Apple Silicon, so the binary is arm64.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -56,6 +75,14 @@ jobs:
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
             target/bundle/Tenmoku.app/Contents/Info.plist)
           echo "version=$version" >>"$GITHUB_OUTPUT"
+      - name: Smoke test the bundled binary
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TENMOKU_NO_IPC: 1
+        run: |
+          got=$(target/bundle/Tenmoku.app/Contents/MacOS/tenmoku --version)
+          echo "$got"
+          [ "$got" = "tenmoku $VERSION" ] || { echo "::error::--version printed '$got', not 'tenmoku $VERSION'"; exit 1; }
       - name: Sign and notarize (skipped when the secrets are absent)
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -92,10 +119,189 @@ jobs:
           scripts/make-appcast.sh --zip "dist/$name" --version "$VERSION" \
             --download-url "${DOWNLOAD_URL_PREFIX%/}/$name" --signature "$signature" \
             --out dist/appcast.xml
+      - name: Upload the zip as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Tenmoku-${{ steps.bundle.outputs.version }}-macos-arm64
+          path: dist/
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    name: windows-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The images have MSVC and CMake (for wasmtime's C API) on PATH.
+          - arch: x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            machine: '8664'
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            machine: AA64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install rustup if the image has none
+        run: |
+          if (Get-Command rustup -ErrorAction SilentlyContinue) { rustup --version; exit 0 }
+          $init = Join-Path $env:RUNNER_TEMP rustup-init.exe
+          Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/${{ matrix.target }}/rustup-init.exe" -OutFile $init
+          & $init -y --default-toolchain none --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content $env:GITHUB_PATH (Join-Path $env:USERPROFILE .cargo\bin)
+      - name: Install toolchain from rust-toolchain.toml
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      # The target named, so an emulated x64 toolchain on the arm64 runner still builds arm64.
+      # The C runtime linked in (crt-static, for the C and C++ dependencies too through cc and
+      # cmake): the zip has no Visual C++ redistributable, which a fresh Windows lacks. Only the
+      # target's code: with --target, RUSTFLAGS skips build scripts.
+      - name: Build the release binary
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release -p fastedit --locked --target ${{ matrix.target }}
+      - name: Zip the binary and its checksum
+        run: |
+          scripts/package-windows.ps1 -Arch ${{ matrix.arch }} -Version $env:VERSION `
+            -Binary target/${{ matrix.target }}/release/tenmoku.exe -Out dist
+          Get-Content "dist/Tenmoku-$env:VERSION-windows-${{ matrix.arch }}.zip.sha256"
+      - name: Smoke test the zipped binary
+        env:
+          TENMOKU_NO_IPC: 1
+        run: |
+          $name = "Tenmoku-$env:VERSION-windows-${{ matrix.arch }}"
+          $out = Join-Path $env:RUNNER_TEMP smoke
+          Expand-Archive "dist/$name.zip" $out
+          $exe = Join-Path $out "$name/tenmoku.exe"
+          # The PE header's machine field: 8664 is x64, AA64 is arm64.
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          $machine = '{0:X4}' -f [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3C) + 4)
+          if ($machine -ne '${{ matrix.machine }}') { throw "tenmoku.exe is for machine $machine, not ${{ matrix.machine }}" }
+          # The DLLs it imports, by dumpbin: none may be the Visual C++ runtime, which the runner
+          # has installed but a user's PC may not.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw 'no dumpbin.exe in the runner''s Visual Studio' }
+          $imports = & $dumpbin /nologo /dependents $exe | Where-Object { $_ -match '^\s+\S+\.dll$' } | ForEach-Object { $_.Trim() }
+          if (-not $imports) { throw "dumpbin listed no DLLs for tenmoku.exe" }
+          Write-Output "imports: $($imports -join ', ')"
+          $runtime = @($imports | Where-Object { $_ -match '^(vcruntime|msvcp|concrt|vcomp|ucrtbase|api-ms-win-crt-)' })
+          if ($runtime) { throw "tenmoku.exe needs the Visual C++ runtime: $($runtime -join ', ')" }
+          # Captured, so it waits for the GUI-subsystem exe and reads its stdout from a pipe.
+          $got = (& $exe --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "tenmoku --version exited $LASTEXITCODE" }
+          Write-Output $got
+          if ($got -ne "tenmoku $env:VERSION") { throw "--version printed '$got', not 'tenmoku $env:VERSION'" }
+      - name: Upload the zip as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Tenmoku-${{ needs.version.outputs.version }}-windows-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+
+  linux-x86_64:
+    needs: version
+    runs-on: ubuntu-24.04
+    outputs:
+      glibc: ${{ steps.package.outputs.glibc }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install GPUI's libraries, and Xvfb and Mesa's Vulkan for the launch
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev libx11-xcb-dev \
+            libxcb1-dev libxcb-xkb-dev libasound2-dev libzstd-dev clang cmake \
+            mesa-vulkan-drivers xvfb
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the release binary
+        run: cargo build --release -p fastedit --locked
+      - name: Pack the binary and its checksum
+        id: package
+        run: |
+          scripts/package-linux.sh --version "$VERSION" --out dist
+          cat "dist/Tenmoku-$VERSION-linux-x86_64.tar.gz.sha256"
+          # The newest glibc symbol version the binary links against: the oldest glibc it runs on.
+          glibc=$(objdump -T target/release/tenmoku | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -n 1)
+          [ -n "$glibc" ] || { echo "::error::no GLIBC_ symbol versions in the binary"; exit 1; }
+          echo "needs glibc $glibc or later; built on $(getconf GNU_LIBC_VERSION); links:"
+          objdump -p target/release/tenmoku | grep NEEDED
+          echo "glibc=$glibc" >>"$GITHUB_OUTPUT"
+      - name: Smoke test the packed binary
+        env:
+          TENMOKU_NO_IPC: 1
+        run: |
+          smoke="$RUNNER_TEMP/smoke"
+          mkdir -p "$smoke/config" "$smoke/state" "$smoke/project"
+          tar -xzf "dist/Tenmoku-$VERSION-linux-x86_64.tar.gz" -C "$smoke"
+          bin="$smoke/Tenmoku-$VERSION-linux-x86_64/tenmoku"
+          got=$("$bin" --version)
+          echo "$got"
+          [ "$got" = "tenmoku $VERSION" ] || { echo "::error::--version printed '$got', not 'tenmoku $VERSION'"; exit 1; }
+          # The app under Xvfb with Mesa's software Vulkan, as ci.yml's launch check runs it:
+          # still running after 5 s, with no panic in its log.
+          Xvfb :99 -screen 0 1280x800x24 &
+          xvfb=$!
+          sleep 1
+          env -u WAYLAND_DISPLAY DISPLAY=:99 XDG_CONFIG_HOME="$smoke/config" \
+            XDG_STATE_HOME="$smoke/state" RUST_LOG=info "$bin" "$smoke/project" >"$smoke/app.log" 2>&1 &
+          app=$!
+          sleep 5
+          alive=0
+          kill -0 "$app" 2>/dev/null && alive=1
+          kill "$app" "$xvfb" 2>/dev/null || true
+          tail -n 40 "$smoke/app.log"
+          [ "$alive" = 1 ] || { echo "::error::the app exited within 5 s of launching"; exit 1; }
+          if grep -n 'panicked' "$smoke/app.log"; then
+            echo "::error::the app panicked"
+            exit 1
+          fi
+          echo "the app is alive after 5 s with no panic"
+      - name: Upload the archive as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Tenmoku-${{ needs.version.outputs.version }}-linux-x86_64
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    # Tag pushes only: a manual run leaves its files as the build jobs' artifacts.
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [version, macos-arm64, windows, linux-x86_64]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download every build job's files
+        uses: actions/download-artifact@v8
+        with:
+          pattern: Tenmoku-*
+          path: dist
+          merge-multiple: true
+      - name: List the release files
+        run: ls -l dist
       - name: Publish the GitHub Release
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GLIBC: ${{ needs.linux-x86_64.outputs.glibc }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             # --clobber replaces only what it is given. A rebuilt zip under the old appcast.xml
@@ -107,13 +313,7 @@ jobs:
             fi
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
+            notes="Downloads: macOS on Apple Silicon (macos-arm64.zip), Windows on x64 or ARM64 (windows-x64.zip, windows-arm64.zip), Linux on x86_64 (linux-x86_64.tar.gz, needs glibc $GLIBC or later). How to install each, and to open a build the OS warns is unsigned: https://github.com/$GH_REPO/blob/$GITHUB_REF_NAME/docs/release/platforms.md"
             gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes \
-              --title "Tenmoku $GITHUB_REF_NAME"
+              --title "Tenmoku $GITHUB_REF_NAME" --notes "$notes"
           fi
-      - name: Upload the zip as a workflow artifact
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v7
-        with:
-          name: Tenmoku-${{ steps.bundle.outputs.version }}-macos-arm64
-          path: dist/
-          if-no-files-found: error

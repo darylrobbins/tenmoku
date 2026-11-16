@@ -110,7 +110,9 @@ expected for local builds.
 
 ## Releasing
 
-`.github/workflows/release.yml` does the steps above on a GitHub macOS arm64 runner. To cut a
+`.github/workflows/release.yml` does the steps above on a GitHub macOS arm64 runner, beside
+jobs that build the Windows x64, Windows ARM64 and Linux x86_64 downloads
+([platforms.md](platforms.md)); one publish job attaches every job's files. To cut a
 release, set `version` under `[workspace.package]` in `Cargo.toml` to `X.Y.Z`, refresh
 `Cargo.lock` with `cargo check --workspace`, commit both, tag that commit `vX.Y.Z` and push the
 tag:
@@ -125,13 +127,14 @@ The tag minus its `v` becomes the app's version in `Info.plist`, while the binar
 workflow starts with `scripts/check-release-version.sh`, which refuses a tag that isn't exactly
 `v` plus `Cargo.toml`'s version: a release that got past it would offer itself as its own update.
 
-The workflow builds `cargo build --release -p fastedit --locked`, fetches Sparkle, bundles
-`Tenmoku.app` with it, runs `scripts/sign-notarize-macos.sh`, zips the app as
-`Tenmoku-X.Y.Z-macos-arm64.zip` with a `.sha256` beside it, signs the zip for Sparkle and writes
-`appcast.xml`, and attaches them all to the GitHub Release for the tag (creating it with
-generated notes, or replacing the files on a release that already exists). Running the
-workflow by hand (Actions > Release > Run workflow) builds the same files as a workflow
-artifact and publishes nothing.
+The macOS job builds `cargo build --release -p fastedit --locked`, fetches Sparkle, bundles
+`Tenmoku.app` with it, checks that its binary's `--version` is the release's, runs
+`scripts/sign-notarize-macos.sh`, zips the app as `Tenmoku-X.Y.Z-macos-arm64.zip` with a
+`.sha256` beside it, signs the zip for Sparkle and writes `appcast.xml`, and uploads them as a
+workflow artifact. Once every platform's job has passed, the publish job attaches all their
+files to the GitHub Release for the tag (creating it with generated notes, or replacing the
+files on a release that already exists). Running the workflow by hand (Actions > Release > Run
+workflow) builds the same files as workflow artifacts and publishes nothing.
 
 Signing and notarization use six repository secrets (Settings > Secrets and variables >
 Actions). Each stage runs only when its secrets are all set; otherwise the log says
