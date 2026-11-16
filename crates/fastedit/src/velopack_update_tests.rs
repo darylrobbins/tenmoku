@@ -1114,7 +1114,8 @@ fn unsigned_feed_is_refused_on_every_platform() {
             Ok(UpdateCheck::UpdateAvailable(update)) => {
                 assert_eq!(update.TargetFullRelease.FileName, asset.FileName, "{platform}");
             }
-            other => panic!("{platform}: the signed feed gave {other:?}"),
+            Ok(_) => panic!("{platform}: the signed feed offered no update"),
+            Err(error) => panic!("{platform}: the signed feed was refused: {error}"),
         }
     }
 }

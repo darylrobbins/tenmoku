@@ -180,8 +180,8 @@ impl Policy {
         under_test: bool,
     ) -> Policy {
         // Actions passes a missing repository variable as an empty value.
-        let present = |value: Option<&str>| value.filter(|value| !value.trim().is_empty());
-        let (Some(feed), Some(key)) = (present(feed), present(key)) else {
+        let present = |value: &&str| !value.trim().is_empty();
+        let (Some(feed), Some(key)) = (feed.filter(present), key.filter(present)) else {
             return Policy::Off(
                 "this build has no TENMOKU_UPDATE_FEED and TENMOKU_UPDATE_PUBLIC_KEY",
             );
