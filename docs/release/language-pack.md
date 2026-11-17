@@ -1,28 +1,53 @@
 # Tenmoku language pack
 
-One download with every first-party WebAssembly grammar (one for each directory
-under `extensions/grammars/`), for machines that can't reach GitHub from the app.
-The in-app **Install** action offers the same files online, each checked against
-the hash the app carries; use this pack only when that isn't possible.
+Offline tarballs of the grammars the Tenmoku registry publishes, for machines
+that can't reach GitHub from the app. The in-app **Install** action offers the
+same files online, each checked against the signed index; use a tarball only
+when that isn't possible. The registry, its index and how it's published are in
+[grammar-registry.md](grammar-registry.md).
 
-Each grammar release (`v*` tag) has, among its assets:
+The registry's `index` release
+(<https://github.com/tenmoku-editor/registry/releases/tag/index>) has:
 
-- `Tenmoku-language-pack.tar.gz`
-- `Tenmoku-language-pack.tar.gz.sha256`
-- each language's `tree-sitter-*.wasm` file
+- `Tenmoku-language-pack-<pack>.tar.gz` for each pack, with the languages in it
+  that pack lists, and its `.sha256`
+- `Tenmoku-language-pack.tar.gz`, every language, and its `.sha256`
+
+Each is at
+`https://github.com/tenmoku-editor/registry/releases/download/index/<file>`.
+The packs are those `extensions/grammars/registry.toml` defines: `shells`,
+`web`, `infra`, `functional`, `jvm`, `dotnet`, `systems`, `mobile`, `data`,
+`docs`, `shaders`, `hardware`, `config` and `scripting`.
 
 ## Verify
 
-In the directory you downloaded both files to:
+In the directory you downloaded the tarball and its `.sha256` to (here the
+`jvm` pack):
 
 ```sh
 # Linux
-sha256sum -c Tenmoku-language-pack.tar.gz.sha256
+sha256sum -c Tenmoku-language-pack-jvm.tar.gz.sha256
 # macOS
-shasum -a 256 -c Tenmoku-language-pack.tar.gz.sha256
+shasum -a 256 -c Tenmoku-language-pack-jvm.tar.gz.sha256
 ```
 
-It prints `Tenmoku-language-pack.tar.gz: OK`.
+It prints `Tenmoku-language-pack-jvm.tar.gz: OK`. The signed `index.json`
+records each pack tarball's SHA-256 too (its `tarball` entry), so to check the
+hash against a signed source, verify the index first
+([Checking a published index](grammar-registry.md#checking-a-published-index)):
+
+```sh
+base=https://github.com/tenmoku-editor/registry/releases/download/index
+curl -fsSLO "$base/index.json"
+curl -fsSLO "$base/index.json.sig"
+cargo run -q -p fe-registry --bin grammar-registry -- verify --index index.json
+cargo run -q -p fe-registry --bin grammar-registry -- tarballs --index index.json
+```
+
+`verify` prints `index.json verifies against …'s public_key`, and `tarballs`
+lists each pack tarball's name, size and SHA-256, which must match the
+`.sha256`. The
+all-languages tarball isn't in the index; check it against its `.sha256`.
 
 ## Install
 
@@ -41,7 +66,7 @@ an absolute path, and `$TENMOKU_STATE_DIR/extensions` overrides everything.
 case "$XDG_STATE_HOME" in /*) state="$XDG_STATE_HOME" ;; *) state="$HOME/.local/state" ;; esac
 dir="${TENMOKU_STATE_DIR:-$state/tenmoku}/extensions"
 mkdir -p "$dir"
-tar -xzf Tenmoku-language-pack.tar.gz -C "$dir"
+tar -xzf Tenmoku-language-pack-jvm.tar.gz -C "$dir"   # or Tenmoku-language-pack.tar.gz
 ```
 
 That makes `tenmoku.grammar_<language>/` for each language, as the in-app
@@ -52,7 +77,8 @@ disable it in the extensions picker.
 ## Building it
 
 `scripts/build-grammar-wasm.sh` builds the wasm into `target/grammar-wasm/`, then
-`scripts/package-language-pack.sh` writes `dist/Tenmoku-language-pack.tar.gz` and
-its `.sha256`. `.github/workflows/grammars.yml` runs both and uploads the results.
-Adding a language to the pack is adding its directory: see
-`extensions/grammars/README.md`.
+`scripts/package-language-pack.sh` writes the tarballs (all languages, or
+`--pack <name>`) and their `.sha256` files into `dist/`.
+`.github/workflows/grammars.yml` does this on every merge to main and
+publishes the result to the registry. Adding a language to a pack is adding its
+directory: see `extensions/grammars/README.md`.

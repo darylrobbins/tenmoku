@@ -796,3 +796,203 @@ fn an_install_is_done_once_written_whatever_it_injects(cx: &mut TestAppContext) 
     cx.run_until_parked();
     assert!(asked.get() > before, "still looking for jsoninner3");
 }
+
+/// A workbench over `root`, in a window of its own.
+fn window(
+    cx: &mut TestAppContext,
+    root: &Path,
+) -> (
+    gpui::Entity<fe_workbench::Workbench>,
+    gpui::VisualTestContext,
+) {
+    let launch = fe_workbench::Launch {
+        root: Some(root.to_owned()),
+        file: None,
+    };
+    let window = cx.add_window(move |window, cx| {
+        let theme = fe_gpui::EditorTheme::default_dark(cx);
+        let settings = fe_gpui::EditorSettings::default();
+        fe_workbench::Workbench::new(launch, theme, settings, window, cx)
+    });
+    let workbench = window.root(cx).unwrap();
+    (workbench, gpui::VisualTestContext::from_window(*window, cx))
+}
+
+fn draw(cx: &mut gpui::VisualTestContext) {
+    for _ in 0..2 {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+}
+
+/// The editor of `path`, opened in `workbench`, once its language has
+/// loaded, with that language's name.
+fn open(
+    workbench: &gpui::Entity<fe_workbench::Workbench>,
+    path: &Path,
+    cx: &mut gpui::VisualTestContext,
+) -> (gpui::Entity<fe_gpui::EditorView>, Option<&'static str>) {
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let path = path.to_owned();
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        draw(cx);
+        let editor = pane.read_with(cx, |pane, _| pane.active_editor().cloned());
+        if let Some(editor) = editor
+            && !editor.read_with(cx, |editor, _| editor.is_loading_language())
+        {
+            let language = editor.read_with(cx, |editor, _| {
+                editor.syntax().map(|syntax| syntax.language().name())
+            });
+            return (editor, language);
+        }
+        assert!(std::time::Instant::now() < deadline, "the file didn't open");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// `["[1]"]`: the string's text is JSON too, its number at 3..4.
+const INJECTING: &str = "[\"[1]\"]\n";
+
+/// Whether `editor` highlights the number in [`INJECTING`]'s string, which
+/// only the language it injects does.
+fn highlights_injected(
+    editor: &gpui::Entity<fe_gpui::EditorView>,
+    cx: &mut gpui::VisualTestContext,
+) -> bool {
+    editor.read_with(cx, |editor, _| {
+        (editor.syntax()).is_some_and(|syntax| {
+            (syntax.highlights(0..INJECTING.len()).iter()).any(|span| span.range == (3..4))
+        })
+    })
+}
+
+/// `files` with a highlights query that marks numbers.
+fn numbers(mut files: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)> {
+    for (name, bytes) in &mut files {
+        if name == "highlights.scm" {
+            *bytes = b"(number) @number\n".to_vec();
+        }
+    }
+    files
+}
+
+/// Two languages injecting one that registers only after the deadline: the
+/// installs are done once written, the watch for it warns and goes on, then
+/// the tabs of both, which opened while it hadn't registered, highlight what
+/// they inject.
+#[gpui::test]
+fn tabs_highlight_what_they_inject_once_it_registers_after_the_deadline(cx: &mut TestAppContext) {
+    // The project's watcher thread wakes the event loop.
+    cx.executor().allow_parking();
+    let state = tempfile::tempdir().unwrap();
+    let extensions = state.path().join("extensions");
+    // The app, its extension loader on a directory of its own: the test
+    // registers what's installed, when it chooses, as the loader would.
+    let user = state.path().join("settings.toml");
+    fs::write(&user, "").unwrap();
+    let (_sender, batches) = batch_channel();
+    let config = Config::new("dev.fastedit.test", "fastedit")
+        .commands(crate::config::register_commands)
+        .settings_store(SettingsStore::load(Some(user), None).into_inner())
+        .theme_mode(ThemeMode::Dark)
+        .watch_with(batches);
+    let config = crate::config::with_extensions(config, state.path().join("loaded"));
+    cx.update(|cx| kiln::init(cx, config));
+    cx.run_until_parked();
+
+    let injecting = "((string_content) @injection.content \
+                     (#set! injection.language \"onlya\"))\n";
+    let hosta = numbers(fixture_files("hosta", injecting));
+    let hostb = numbers(fixture_files("hostb", injecting));
+    let onlya = numbers(fixture_files("onlya", "; none\n"));
+    let catalog = Arc::new(catalog(vec![
+        ("hosta", entry("hosta", &hosta, &["hosta"], &[], engine())),
+        ("hostb", entry("hostb", &hostb, &["hostb"], &[], engine())),
+        ("onlya", entry("onlya", &onlya, &[], &[], engine())),
+    ]));
+    let mut all = served(&catalog, "hosta", &hosta);
+    all.extend(served(&catalog, "hostb", &hostb));
+    all.extend(served(&catalog, "onlya", &onlya));
+    let (fetch, _) = fetcher(all);
+    let registered: crate::grammar_install::Registered =
+        std::rc::Rc::new(|language: &str, _: &gpui::App| {
+            fe_syntax::language_names().any(|name| name == language)
+        });
+    let offers = index_offers_with(
+        catalog,
+        TEMPLATE.to_owned(),
+        IndexHooks { fetch, registered },
+        extensions.clone(),
+        None,
+    );
+    for language in ["hosta", "hostb"] {
+        let offer = (offers.catalog.iter())
+            .find(|offer| offer.language == language)
+            .unwrap()
+            .clone();
+        let fetching = cx.update(|cx| (offers.fetch)(&offer, cx));
+        let bundled = cx.foreground_executor().block_test(fetching).unwrap();
+        let writing = cx.update(|cx| (offers.install)(&offer, bundled, cx));
+        cx.foreground_executor().block_test(writing).unwrap();
+        cx.run_until_parked();
+    }
+    let register = |language: &str, claims: Vec<String>| {
+        let dir = extensions.join(format!("tenmoku.grammar_{language}"));
+        let spec = fe_syntax::GrammarSpec {
+            language: language.to_owned(),
+            wasm: dir.join("tree-sitter-json.wasm"),
+            extensions: claims,
+            highlights: Some(dir.join("highlights.scm")),
+            injections: Some(dir.join("injections.scm")),
+            ..fe_syntax::GrammarSpec::default()
+        };
+        fe_syntax::register_language(&spec).unwrap();
+    };
+    // The loader registers the two first.
+    register("hosta", vec!["hosta".into()]);
+    register("hostb", vec!["hostb".into()]);
+
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().canonicalize().unwrap();
+    let files = [("a.hosta", "hosta"), ("b.hostb", "hostb")];
+    for (file, _) in files {
+        fs::write(root.join(file), INJECTING).unwrap();
+    }
+    let (workbench, mut window_cx) = window(cx, &root);
+    let vcx = &mut window_cx;
+    let editors = files.map(|(file, language)| {
+        let (editor, opened) = open(&workbench, &root.join(file), vcx);
+        assert_eq!(opened, Some(language));
+        editor
+    });
+    for editor in &editors {
+        assert!(!highlights_injected(editor, vcx), "onlya isn't registered");
+    }
+
+    // Past the deadline, the watch goes on.
+    vcx.executor().advance_clock(Duration::from_secs(90));
+    draw(vcx);
+    for editor in &editors {
+        assert!(!highlights_injected(editor, vcx), "still waiting");
+    }
+
+    register("onlya", Vec::new());
+    vcx.executor().advance_clock(Duration::from_secs(2));
+    draw(vcx);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    for ((file, _), editor) in files.iter().zip(&editors) {
+        // A tab parses once it's shown.
+        let (shown, _) = open(&workbench, &root.join(file), vcx);
+        assert_eq!(&shown, editor);
+        while !highlights_injected(editor, vcx) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{file}: the injection never highlighted"
+            );
+            draw(vcx);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}

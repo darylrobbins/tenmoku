@@ -25,11 +25,7 @@ fastedit-theme-name-ignored = theme.name { $title } is ignored: theme.{ $appeara
 ## Grammar installs. $language is a language's name; $error another
 ## message's text.
 
-fastedit-grammar-file-not-wasm = { $language }'s file { $file } isn't a .wasm file's name
-fastedit-grammar-wasm-not-wasm = { $language }'s wasm { $file } isn't a .wasm file's name
 fastedit-grammar-manifest-error = { $language }'s extension manifest: { $error }
-fastedit-grammar-manifest-no-grammar = { $language }'s extension manifest has no grammar for it
-fastedit-grammar-manifest = the grammar manifest: { $error }
 fastedit-grammar-unknown-language = there's no first-party grammar for { $language }
 fastedit-grammar-bundle = the downloaded grammars: { $error }
 fastedit-grammar-removed = { $language }, which it injects, was removed while it downloaded: try again

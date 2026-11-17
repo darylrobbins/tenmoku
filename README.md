@@ -67,13 +67,11 @@ run without bundling, use `cargo run --release -p fastedit -- path/to/project`.
   Built in: Rust, Python, JavaScript, TypeScript and TSX, Go, C, Java, Lua,
   HTML, CSS, JSON, JSON5, TOML, YAML, XML, INI, CSV, Markdown, Bash,
   Dockerfile, Make, Just, diff and the git file formats.
-- **WebAssembly grammars**: the grammar sources for 56 more languages (C++,
-  C#, Kotlin, Swift, SQL, PHP, Ruby and others), one directory each under
-  [extensions/grammars/](extensions/grammars/), are not built in. The app
-  offers to install one only after the grammar release's hashes are recorded in
-  `extensions/grammars/pack.toml`, and checks a download against them. The
-  [language pack](docs/release/language-pack.md) is the same files in one
-  download for machines that can't reach GitHub.
+- **More languages**: Kotlin, C#, Swift, SQL, PHP, Ruby and many more, grouped
+  in packs such as JVM, Web, Mobile and Data, install from the
+  [Tenmoku registry](https://github.com/tenmoku-editor/registry) the first time
+  a file of one opens. The [language pack](docs/release/language-pack.md)
+  tarballs are the same files for machines that can't reach GitHub.
 - **Language servers**: rust-analyzer, pyright, typescript-language-server (or
   typescript-go), gopls, the CSS server, jdtls, kotlin-lsp and csharp-ls,
   found on your `PATH`, with diagnostics, hover, completion, go to definition,

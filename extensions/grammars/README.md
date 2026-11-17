@@ -9,21 +9,18 @@ directory is all a language takes: nothing lists the languages.
   `every_extension_highlights_its_sample`.
 - `wasm_parity.rs`'s `every_extension_is_well_formed`, in the gate, checks each
   directory (below).
-- `crates/fastedit/build.rs` compiles each directory's `extension.toml`,
-  `highlights.scm` and `injections.scm` into the app, which offers the language
-  for install (`crates/fastedit/src/grammar_install.rs`).
-- `scripts/package-language-pack.sh` packs each into the language pack, and
-  `scripts/record-grammar-hashes.sh` records each in `pack.toml` after a
-  release.
+- The app offers a language from the registry's signed index
+  (`crates/fastedit/src/grammar_registry.rs`, `grammar_install.rs`), not from
+  anything compiled in from these directories.
+- `scripts/package-language-pack.sh` packs each into the language pack.
 - `scripts/build-grammar-registry.sh`, after the wasm build, writes each
   language's registry artifact, the registry's `index.json` and each pack's
   tarball into `target/registry/` (`crates/fe-registry`, `registry.toml`
   below).
 
-`pack.toml` holds the release's URL and the entries that script recorded. A
-language with no entry isn't released yet: it's offered, and every install of
-it is refused, until the next grammar release is recorded. Don't add an entry
-by hand.
+Publishing happens on merge to main (`.github/workflows/grammars.yml`): it
+builds the wasm and publishes the registry's index and artifacts. Nothing is
+recorded in this repository.
 
 ## Adding a language
 
@@ -45,7 +42,7 @@ built-in language's), holding:
 Nothing else: no module (`*.wasm`), and no other file or directory. Then
 append the language's row to `THIRD_PARTY.md`'s "Grammars shipped as
 WebAssembly", giving the source as `grammar-source.toml` does and the licence.
-That's all: no script, test, workflow, Rust table or `pack.toml` changes.
+That's all: no script, test, workflow or Rust table changes.
 
 One grammar may back several languages: each gets its own directory, with the
 same `grammar-source.toml` source (`wasm_parity.rs` requires it) and its own
@@ -65,9 +62,9 @@ and a capture may come anywhere among its arguments), not by a capture's text, w
 until a file is parsed; otherwise nothing would ever install it.
 
 It's never offered on its own. Installing a first-party language, by the
-prompt, `install_first_party` or the language pack, also installs each
+prompt or the language pack, also installs each
 injection-only first-party language its `injections.scm` names (and theirs in
-turn) that's released and not yet installed, under the same consent; the
+turn) that's in the index and not yet installed, under the same consent; the
 offer's size counts those still to install. If one fails, the install fails
 with its error and writes nothing. The prompt's install finishes once every
 one the language needs has registered, so its tabs highlight with them; past
