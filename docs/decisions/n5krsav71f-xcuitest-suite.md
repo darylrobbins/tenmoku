@@ -357,8 +357,35 @@ launch records: 48, of which 0 name a dev.tenmoku.tenmoku.e2e process other than
 - **What it showed of the final script:** the numbered records exported without a clash.
   The audit counted 48 launch records, the four relaunch tests' second launches included,
   all naming only the e2e bundle. Cleanup and the exports worked.
-- A clean three-iteration run on the final script waits for the user's next session at the
+- A clean three-iteration run on the final script waited for the user's next session at the
   Mac (the lead's decision, 2026-11-16).
+
+### 2026-11-17: on main as of v0.2.2, rebuilt
+
+The branch was rebased onto main (296 commits past the binary the earlier runs used,
+the B3 chrome included), and the release binary was rebuilt from it (17:40 to 17:55).
+
+- **17:55, `--iterations 3`: 24 of 26 finished** (the third iteration didn't run after
+  a failed one). `testPaneToolbarEnabledState` failed in both iterations, the same way:
+  `no button Split Down in the tree`. The B3 tab strip's row is now Tab List, Split
+  Right and More Actions. Split Down moved to the pane's menu, and Go Back and Go
+  Forward moved to the title bar, where their enabled-state checks passed. The test now
+  checks the new row (commit `50ed563cb`). The other 12 tests passed both times.
+- **18:15, `--only testPaneToolbarEnabledState`: 1 of 1 passed** (13.1 s).
+- **18:16, `--iterations 3`: 38 of 39.** Iterations 1 and 2 passed all 13 (210.6 and
+  213.5 s). In iteration 3, `testSaveEncodingsByteForByte` failed on its last file:
+  `crlf.txt is 6c 69 6e 65 … (unchanged), expected 65 32 65 0d 0a …`. The typing had
+  landed (the title read `crlf.txt ● — Tenmoku`), but XCTest's "Synthesize event" for the
+  cmd-S that followed took 10.25 s (t = 19.67 to 29.92 s, against about 0.03 s for every
+  other key), and the save never came. The app's log shows nothing. The load average was
+  15 to 21, and `testSaveAllAndSaveAs` also ran slow in that iteration (34.5 s against
+  24). The 48 launch records all name the e2e bundle.
+
+**The two flakes share one signature.** The 11:52 run on 2026-11-16 (a `typeText` after a
+cmd-Z) and this one (a cmd-S): an event synthesis stalls about 10 to 11 s, then the key is
+lost. That is two in 117 test runs on the final code, both under load averages of about
+15 to 30. No run at the 05:31 load stalled. The cause looks to be on XCTest's side, its
+event synthesis under load, not the app's. The suite doesn't hide it with retries.
 
 ### C7: `scripts/e2e-macos.sh --no-build --iterations 3` (before review round 1)
 
