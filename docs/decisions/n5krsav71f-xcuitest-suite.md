@@ -32,7 +32,7 @@ buttons.
 | `testVimClipboardOff` | `vim`, `settings/off.toml` | `vim.clipboard = ""`: `yyP` then `:w` puts vim's own register (disk `alpha alpha beta`) and leaves the pasteboard as the test set it; `"+yy` writes it | T361 |
 | `testVimClipboardUnnamedplus` | `vim`, `settings/unnamedplus.toml` | `vim.clipboard = "unnamedplus"`: `yy` writes the pasteboard; text another app left there goes in with `P`, then `:w` (disk) | T361 |
 | `testMarkdownPreviewButtons` | `markdown` | Open Preview and Open Preview to the Side show on the markdown tab only (gone on `notes.txt`); Open Preview swaps the tab to the preview (Show Source; the window keeps `notes.md ● — Tenmoku`), Show Source back, the file untouched | T1008 |
-| `testPaneToolbarEnabledState` | `lines` | Go Back and Go Forward disabled with no history, Split Right, Split Down and More Actions enabled; a go-to-line jump enables Back, Back and Forward swap their states; Split Right makes a second pane with its own buttons | (pane toolbar, record's last bullet) |
+| `testPaneToolbarEnabledState` | `lines` | Go Back and Go Forward (in the title bar since B3) disabled with no history; the tab row's Tab List, Split Right and More Actions enabled; a go-to-line jump enables Back, and Back and Forward swap their states; Split Right makes a second pane with its own Split Right and More Actions | (pane toolbar, record's last bullet) |
 | `testRunnerWritesOnlyItsScratch` | `plain` | the runner may write its run's scratch folder and nowhere beside it (see *Widening the runner's entitlements*) | T400, T526 (external edits, later) |
 
 T361 is the one check the spike record retires fully: both `vim.clipboard` values, each

@@ -396,14 +396,17 @@ final class SmokeTests: E2ETestCase {
         XCTAssertEqual(bytes(md), original, "the preview round trip wrote notes.md")
     }
 
-    /// Back and forward are disabled with no history, follow a go-to-line jump and
-    /// each other, and Split Right makes a second pane with buttons of its own.
+    /// Back and forward (in the title bar) are disabled with no history, follow a
+    /// go-to-line jump and each other, and Split Right makes a second pane with tab-row
+    /// buttons of its own.
     func testPaneToolbarEnabledState() throws {
         launchAndSettle(["lines.txt"], title: titled("lines.txt"))
         expectButton("Go Back", enabled: false)
         expectButton("Go Forward", enabled: false)
+        // The tab row's buttons since the B3 tab strip: Tab List, Split Right and the
+        // pane's More Actions (Split Down moved to its menu).
+        expectButton("Tab List", enabled: true)
         expectButton("Split Right", enabled: true)
-        expectButton("Split Down", enabled: true)
         expectButton("More Actions", enabled: true)
 
         app.typeKey("g", modifierFlags: .control)
@@ -422,7 +425,7 @@ final class SmokeTests: E2ETestCase {
         expectButtonCount("Split Right", 1)
         clickButton("Split Right")
         expectButtonCount("Split Right", 2)
-        expectButtonCount("Split Down", 2)
+        expectButtonCount("More Actions", 2)
         expectTitle(titled("lines.txt"))
     }
 
