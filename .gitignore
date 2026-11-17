@@ -2,3 +2,4 @@
 .DS_Store
 .regatta/local.toml
 tools/lsp/node_modules/
+__pycache__/
