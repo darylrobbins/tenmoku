@@ -2004,6 +2004,7 @@ impl Render for EditorView {
         self.sync_vim(cx);
         self.settle_which_key();
         self.settle_editor_menu_focus(window, cx);
+        self.settle_breakpoint_menu_focus(window, cx);
         // Vim left insert mode, or came on or went off, while composing.
         self.drop_stale_composition();
         self.sync_find(cx);
@@ -2030,10 +2031,6 @@ impl Render for EditorView {
         }
         for &flag in &self.key_flags {
             key_context.add(flag);
-        }
-        if self.breakpoint_menu_open() {
-            // The open menu reads its keys itself.
-            key_context.add(kiln_platform::keys::HOLDS_KEYS);
         }
         if self.completion_subscriptions.is_empty() {
             Self::close_completion_on_escape_and_blur(self, window, cx);
@@ -2086,10 +2083,6 @@ impl Render for EditorView {
                 view.on_run_command(run, window, cx)
             }))
             .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
-                if view.breakpoint_menu_key(&event.keystroke, window, cx) {
-                    cx.stop_propagation();
-                    return;
-                }
                 view.announced.key();
                 Self::on_vim_key(view, event, window, cx)
             }))

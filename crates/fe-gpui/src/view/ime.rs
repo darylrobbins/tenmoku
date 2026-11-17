@@ -243,7 +243,7 @@ impl EditorView {
         // The right-click menu has focus: a late call from before its first
         // frame, while the platform still holds this view's handler, types
         // nothing ([`super::context_menu`]).
-        if self.editor_menu_open() {
+        if self.editor_menu_open() || self.breakpoint_menu_open() {
             self.cancel_composition(cx);
             return false;
         }

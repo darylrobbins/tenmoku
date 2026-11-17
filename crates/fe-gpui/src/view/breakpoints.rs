@@ -40,7 +40,14 @@ use gpui::{
 };
 use kiln_l10n::tr;
 
-use crate::{EditorView, element::FrameLayout};
+use crate::{
+    EditorView,
+    element::FrameLayout,
+    view::menu_focus::{self, FocusReturn, MenuFocus},
+};
+
+/// The open menu's key context, with kiln's `HOLDS_KEYS`: no binding names it.
+const MENU_KEY_CONTEXT: &str = "breakpoint_menu";
 
 /// How far a press on the column may move before it's a drag rather than a
 /// click.
@@ -112,6 +119,10 @@ struct OpenMenu {
     path: Option<std::path::PathBuf>,
     /// The item the keyboard is on, from 0.
     selected: usize,
+    /// Which opening this is, for its focus-out callback.
+    ticket: u64,
+    /// The menu's own focus, which it holds while open.
+    focus: MenuFocus,
 }
 
 /// The view's marks and what's under way with the pointer.
@@ -125,6 +136,10 @@ pub(crate) struct Breakpoints {
     /// While a press that became a drag is handed on.
     handing_on: bool,
     menu: Option<OpenMenu>,
+    /// The last ticket given out.
+    tickets: u64,
+    /// Focus a menu closed without a window gives back at the next render.
+    give_back: Option<FocusReturn>,
     /// The column's rows the last frame laid out, in window coordinates:
     /// each buffer row, all its display rows, and its mark.
     pub(crate) targets: Vec<(u32, Bounds<Pixels>, Option<BreakpointMark>)>,
@@ -148,15 +163,19 @@ impl EditorView {
             false => Vec::new(),
         };
         // Marks that changed make an open menu's items stale.
-        let shown: Vec<&BreakpointMark> = self
-            .breakpoints
-            .marks
-            .iter()
-            .map(|(_, mark, _)| mark)
-            .collect();
-        if shown.len() != marks.len() || shown.iter().zip(&marks).any(|(old, new)| *old != new) {
-            self.breakpoints.menu = None;
+        let changed = {
+            let shown: Vec<&BreakpointMark> = self
+                .breakpoints
+                .marks
+                .iter()
+                .map(|(_, mark, _)| mark)
+                .collect();
+            shown.len() != marks.len() || shown.iter().zip(&marks).any(|(old, new)| *old != new)
+        };
+        if changed {
+            self.drop_breakpoint_menu();
         }
+        let snapshot = self.model.snapshot();
         let text = self.model.text();
         let last = text.row_count().saturating_sub(1);
         self.breakpoints.marks = (marks.into_iter())
@@ -180,8 +199,9 @@ impl EditorView {
         self.breakpoints.handlers = handlers;
         if off {
             self.breakpoints.pending = None;
-            self.breakpoints.menu = None;
         }
+        // The open menu's items belong to the handlers that offered them.
+        self.drop_breakpoint_menu();
         cx.notify();
     }
 
@@ -376,14 +396,30 @@ impl EditorView {
             (view.update(cx, |view, cx| {
                 let version = view.model.snapshot().version();
                 let path = view.model.path().map(Path::to_owned);
+                // Settled here, not left to the editor's blur, which runs
+                // only in a draw of an active window.
+                view.cancel_composition(cx);
+                view.breakpoints.give_back = None;
+                view.breakpoints.tickets += 1;
+                let ticket = view.breakpoints.tickets;
+                let focus = MenuFocus::take(&view.focus, window, cx, move |view, window, cx| {
+                    if (view.breakpoints.menu.as_ref()).is_some_and(|menu| menu.ticket == ticket) {
+                        // Focus went elsewhere: it stays there.
+                        view.close_breakpoint_menu_in(window, cx);
+                        // Told in a draw's focus phase, which asks for no
+                        // frame: the next one takes the menu away.
+                        cx.defer_in(window, |_, _, cx| cx.notify());
+                    }
+                });
                 view.breakpoints.menu = Some(OpenMenu {
                     position,
                     items,
                     version,
                     path,
                     selected: 0,
+                    ticket,
+                    focus,
                 });
-                window.focus(&view.focus, cx);
                 cx.notify();
             }))
             .ok();
@@ -405,18 +441,45 @@ impl EditorView {
         Some(menu.items.iter().map(|item| item.title.clone()).collect())
     }
 
-    /// Closes the menu.
-    pub(crate) fn close_breakpoint_menu(&mut self, cx: &mut Context<Self>) {
-        if self.breakpoints.menu.take().is_some() {
+    /// Whether the menu is open: it has the focus, but until a frame is
+    /// drawn the platform may still hold the editor's input handler, so an
+    /// input method's late calls are refused.
+    pub(crate) fn breakpoint_menu_open(&self) -> bool {
+        self.breakpoints.menu.is_some()
+    }
+
+    /// Closes the menu, giving focus back to the editor if the menu has it.
+    pub(crate) fn close_breakpoint_menu_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(menu) = self.breakpoints.menu.take() {
+            menu.focus.give_back(window, cx);
             cx.notify();
+        }
+    }
+
+    /// Takes the menu away, leaving its focus to go back at the next
+    /// render. Whether there was one.
+    fn drop_breakpoint_menu(&mut self) -> bool {
+        let Some(menu) = self.breakpoints.menu.take() else {
+            return false;
+        };
+        self.breakpoints.give_back = Some(menu.focus.give_back_later());
+        true
+    }
+
+    /// Gives focus back for a menu closed without a window, if it still
+    /// has it. At the view's render.
+    pub(crate) fn settle_breakpoint_menu_focus(&mut self, window: &mut Window, cx: &mut App) {
+        if let Some(give_back) = self.breakpoints.give_back.take() {
+            give_back.finish(window, cx);
         }
     }
 
     /// A key while the menu is open: Up and Down move through its items,
     /// Home and End to the first and last, Enter and Space choose, Escape
-    /// closes it. The editor doesn't see the keys it takes (the key context holds them from
-    /// the keymap); focus stays on
-    /// the editor, so closing leaves it where it was. Whether it took it.
+    /// closes it. The menu has its own focus while it's open, so the
+    /// editor sees none of these keys, and no input method has a handler to
+    /// take them; closing gives focus back to the editor. Whether it took
+    /// it.
     pub(crate) fn breakpoint_menu_key(
         &mut self,
         keystroke: &gpui::Keystroke,
@@ -434,7 +497,7 @@ impl EditorView {
         }
         let last = menu.items.len().saturating_sub(1);
         match keystroke.key.as_str() {
-            "escape" => self.close_breakpoint_menu(cx),
+            "escape" => self.close_breakpoint_menu_in(window, cx),
             "down" => menu.selected = (menu.selected + 1).min(last),
             "up" => menu.selected = menu.selected.saturating_sub(1),
             "home" => menu.selected = 0,
@@ -449,13 +512,6 @@ impl EditorView {
         }
         cx.notify();
         true
-    }
-
-    /// Whether the menu is open: the editor's key context then holds its
-    /// keys (kiln's `HOLDS_KEYS`), so no binding runs for them and
-    /// [`EditorView::breakpoint_menu_key`] reads them.
-    pub(crate) fn breakpoint_menu_open(&self) -> bool {
-        self.breakpoints.menu.is_some()
     }
 
     /// The open menu's item the keyboard is on. For tests.
@@ -477,7 +533,10 @@ impl EditorView {
             return;
         };
         cx.notify();
-        if !self.menu_is_current(&menu) {
+        // Before the item runs, so one that moves focus keeps that move.
+        let current = self.menu_is_current(&menu);
+        menu.focus.give_back(window, cx);
+        if !current {
             return;
         }
         if let Some(item) = menu.items.get(ix) {
@@ -500,7 +559,7 @@ impl EditorView {
     ) -> Option<AnyElement> {
         use fe_ui::ActiveTheme as _;
         if (self.breakpoints.menu.as_ref()).is_some_and(|menu| !self.menu_is_current(menu)) {
-            self.breakpoints.menu = None;
+            self.close_breakpoint_menu_in(window, cx);
         }
         let menu = self.breakpoints.menu.as_ref()?;
         let colors = cx.theme().colors;
@@ -527,9 +586,18 @@ impl EditorView {
         let panel = div()
             .id("breakpoint-menu")
             .debug_selector(|| "breakpoint-menu".into())
+            .track_focus(menu.focus.handle())
+            .key_context(menu_focus::key_context(MENU_KEY_CONTEXT))
+            .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
+                if view.breakpoint_menu_key(&event.keystroke, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down_out(cx.listener(|view, _, _, cx| view.close_breakpoint_menu(cx)))
+            .on_mouse_down_out(
+                cx.listener(|view, _, window, cx| view.close_breakpoint_menu_in(window, cx)),
+            )
             .min_w(px(160.))
             .flex()
             .flex_col()

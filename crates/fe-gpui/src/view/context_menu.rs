@@ -160,7 +160,7 @@ impl EditorView {
         if !self.settle_press(event, Press::Right, window, cx) {
             return;
         }
-        self.close_breakpoint_menu(cx);
+        self.close_breakpoint_menu_in(window, cx);
         self.close_editor_menu_in(window, cx);
         self.cancel_composition(cx);
         self.drag = None;
@@ -278,7 +278,7 @@ impl EditorView {
         }
         // Settled here, not left to the editor's blur.
         self.cancel_composition(cx);
-        self.close_breakpoint_menu(cx);
+        self.close_breakpoint_menu_in(window, cx);
         let ticket = request.ticket;
         let focus = MenuFocus::take(&self.focus, window, cx, move |view, window, cx| {
             if (view.editor_menu.open.as_ref()).is_some_and(|menu| menu.ticket == ticket) {
