@@ -10,7 +10,8 @@
 //! to save the active editor, which then saves there.
 //! `window.new` opens a window on the same folder, and Open Folder in New
 //! Window one on the folder picked, through the host's opener
-//! ([`set_window_opener`]).
+//! ([`set_window_opener`]); Move to New Window one on the same folder with
+//! the tab's file in it ([`set_file_window_opener`]).
 
 use std::{
     cell::{Cell, RefCell},
@@ -25,7 +26,7 @@ use std::{
 };
 
 use fe_buffer::BufferId;
-use gpui::{App, Global, PathPromptOptions};
+use gpui::{App, Global, PathPromptOptions, Task};
 use kiln_l10n::tr;
 
 /// What an open command asks for: its `#[kiln::command]` method runs it
@@ -69,29 +70,175 @@ impl OpenOp {
     }
 }
 
-/// Opens a window on a folder, or with none: the host's.
-type Opener = Rc<dyn Fn(Option<PathBuf>, &mut App)>;
+/// A file a new window opens once it's up, with a single caret at 1-based
+/// `line` and `col`, as [`crate::Workbench::open_document_at`] puts it: Move
+/// to New Window's tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowFile {
+    pub path: PathBuf,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+}
 
-struct WindowOpener(Opener);
+/// Opens a window on a folder, or with none, and a file in it: the host's.
+/// Its task says whether the file landed in a tab there (true with no file
+/// once the window is open).
+type Opener = Rc<dyn Fn(Option<PathBuf>, Option<WindowFile>, &mut App) -> Task<bool>>;
+
+struct WindowOpener {
+    open: Opener,
+    /// Whether it opens the file it's handed: one set by
+    /// [`set_window_opener`] doesn't, so nothing moves to its windows.
+    files: bool,
+}
 
 impl Global for WindowOpener {}
 
 /// Has `window.new` and Open Folder in New Window open a window through
 /// `open`, given the folder it's on: the window's own, or the one picked.
-/// Until it's set, they do nothing but log.
+/// Until it's set, they do nothing but log. Move to New Window needs
+/// [`set_file_window_opener`].
 pub fn set_window_opener(cx: &mut App, open: impl Fn(Option<PathBuf>, &mut App) + 'static) {
-    cx.set_global(WindowOpener(Rc::new(open)));
+    cx.set_global(WindowOpener {
+        open: Rc::new(move |root, _, cx| {
+            open(root, cx);
+            Task::ready(true)
+        }),
+        files: false,
+    });
+}
+
+/// [`set_window_opener`], with `open` also handed the file the new window
+/// opens, if any: Move to New Window's tab ([`WindowFile`]). Its task ends
+/// once the file is in a tab of the new window, true, or has failed to be:
+/// no window opened, or the file didn't open in it. A window for a file is
+/// a fresh one, which restores no saved window's tabs. With no file, the
+/// task's answer isn't read.
+pub fn set_file_window_opener(
+    cx: &mut App,
+    open: impl Fn(Option<PathBuf>, Option<WindowFile>, &mut App) -> Task<bool> + 'static,
+) {
+    cx.set_global(WindowOpener {
+        open: Rc::new(open),
+        files: true,
+    });
 }
 
 /// Opens a window on `root` through the host's opener, once the current
 /// update is over.
 pub(crate) fn open_window(root: Option<PathBuf>, cx: &mut App) {
-    let Some(WindowOpener(open)) = cx.try_global::<WindowOpener>() else {
+    let Some(WindowOpener { open, .. }) = cx.try_global::<WindowOpener>() else {
         log::warn!("no window opener: the host opens one window");
         return;
     };
     let open = open.clone();
-    cx.defer(move |cx| open(root, cx));
+    cx.defer(move |cx| open(root, None, cx).detach());
+}
+
+/// Opens a window on `root` with `file` opened in it, through the host's
+/// opener, once the current update is over: whether the file landed in a
+/// tab there. `None`, and nothing opens, if there's no opener that opens
+/// files.
+pub(crate) fn open_window_with(
+    root: Option<PathBuf>,
+    file: WindowFile,
+    cx: &mut App,
+) -> Option<impl Future<Output = bool> + use<>> {
+    let open = match cx.try_global::<WindowOpener>() {
+        Some(WindowOpener { open, files: true }) => open.clone(),
+        _ => {
+            log::warn!("no window opener that opens files: nothing moves to a new window");
+            return None;
+        }
+    };
+    let (landed, lands) = async_channel::bounded(1);
+    cx.defer(move |cx| {
+        let opened = open(root, Some(file), cx);
+        cx.spawn(async move |_| _ = landed.send(opened.await).await)
+            .detach();
+    });
+    // A dropped sender is a window that never opened.
+    Some(async move { lands.recv().await.unwrap_or(false) })
+}
+
+/// How `path` stands in a workbench's tabs, for [`file_loaded`].
+enum Load {
+    /// Read from the file on disk.
+    Loaded,
+    /// An image still being read or decoded.
+    Decoding(gpui::Entity<fe_gpui::ImageViewer>),
+    /// In no tab, or not from the file: a missing file's new, empty
+    /// buffer, or an image that failed to decode.
+    Failed,
+}
+
+fn load_of(workbench: &crate::Workbench, path: &Path, cx: &App) -> Load {
+    let tab = (workbench.pane_group(cx).panes().iter()).find_map(|pane| {
+        (pane.read(cx).tabs().iter()).find(|tab| tab.path.as_deref() == Some(path))
+    });
+    let Some(tab) = tab else {
+        return Load::Failed;
+    };
+    if let Some(editor) = tab.editor() {
+        // A missing file opens as a new file's buffer, which has no stamp.
+        let read = editor.read(cx).model().buffer().disk_stamp().is_some();
+        return if read { Load::Loaded } else { Load::Failed };
+    }
+    if let Some(image) = tab.image_viewer() {
+        let viewer = image.read(cx);
+        return match (viewer.is_loading(), viewer.message()) {
+            (true, _) => Load::Decoding(image.clone()),
+            // What it says instead of a picture is why it can't show one.
+            (false, Some(_)) => Load::Failed,
+            (false, None) => Load::Loaded,
+        };
+    }
+    // A file too large to edit, in its viewer: open only once read.
+    if tab.viewer().is_some() {
+        Load::Loaded
+    } else {
+        Load::Failed
+    }
+}
+
+/// Whether `path` loaded in a tab of `window`'s workbench from the file on
+/// disk, once [`crate::Workbench::open_document_at`]'s task has ended: an
+/// editor read from it, not a missing file's new buffer; a large file's
+/// viewer; or an image decoded, which is waited for. False if it's in no
+/// tab, or the window closes first. For a host's
+/// [`set_file_window_opener`].
+pub fn file_loaded(
+    window: gpui::WindowHandle<crate::Workbench>,
+    path: PathBuf,
+    cx: &mut App,
+) -> Task<bool> {
+    cx.spawn(async move |cx| {
+        loop {
+            let Ok(load) = window.read_with(cx, |workbench, cx| load_of(workbench, &path, cx))
+            else {
+                return false;
+            };
+            let viewer = match load {
+                Load::Loaded => return true,
+                Load::Failed => return false,
+                Load::Decoding(viewer) => viewer,
+            };
+            // Woken when it changes or goes; asked again then. Nothing runs
+            // between the read above and these, so no change is missed.
+            let (changed, changes) = async_channel::bounded(1);
+            let gone = changed.clone();
+            let _watch = cx.update(|cx| {
+                (
+                    cx.observe(&viewer, move |_, _| _ = changed.try_send(())),
+                    cx.observe_release(&viewer, move |_, _| _ = gone.try_send(())),
+                )
+            });
+            drop(viewer);
+            if changes.recv().await.is_err() {
+                return false;
+            }
+        }
+    })
 }
 
 /// Where a path the system asked the app to open goes.

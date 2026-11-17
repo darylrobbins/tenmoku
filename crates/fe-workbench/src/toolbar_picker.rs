@@ -40,10 +40,11 @@ use crate::{
 /// The pane commands "…" lists, as `(command, title)`, the title a message:
 /// the design's (`docs/design/design-system.md`, Pane controls), in its
 /// order, then the rest. [`MAXIMIZE`] and [`PIN_TAB`] are in their places.
-const PANE_COMMANDS: [(&str, &str); 16] = [
+const PANE_COMMANDS: [(&str, &str); 17] = [
     ("pane.split_right", "workbench-pane-action-split-right"),
     ("pane.split_down", "workbench-pane-action-split-down"),
     MAXIMIZE,
+    MOVE_TO_NEW_WINDOW,
     ("pane.exchange", "workbench-pane-action-exchange"),
     PIN_TAB,
     (
@@ -77,6 +78,13 @@ const PANE_COMMANDS: [(&str, &str); 16] = [
 /// runs the same command.
 const MAXIMIZE: (&str, &str) = ("pane.toggle_maximize", "workbench-pane-action-maximize");
 const RESTORE: (&str, &str) = ("pane.toggle_maximize", "workbench-pane-action-restore");
+
+/// Moves the active tab to a new window: listed only while it's a file
+/// ([`Pane::movable_file`]).
+const MOVE_TO_NEW_WINDOW: (&str, &str) = (
+    "pane.move_to_new_window",
+    "workbench-pane-action-move-to-new-window",
+);
 
 /// Pins the active tab; while it's pinned, [`UNPIN_TAB`] is listed instead.
 const PIN_TAB: (&str, &str) = ("workbench.pin_tab", "workbench-pane-action-pin-tab");
@@ -187,18 +195,21 @@ impl ToolbarPicker {
 
     /// The pane commands' rows, each with the key that runs it where the
     /// pane's item had focus; Pin Tab is Unpin Tab while the active tab is
-    /// pinned, and Maximize is Restore while the pane is zoomed.
+    /// pinned, Maximize is Restore while the pane is zoomed, and Move to New
+    /// Window is listed only for a file's tab.
     fn command_rows(&self, cx: &App) -> Vec<CommandRow> {
         let pane = self.pane.upgrade();
         let pinned = pane.as_ref().is_some_and(|pane| {
             let state = pane.read(cx).pane();
             state.active().is_some_and(|ix| state.is_pinned(ix))
         });
+        let movable = (pane.as_ref()).is_some_and(|pane| pane.read(cx).movable_file(cx).is_some());
         let stack = pane.map_or_else(pane_toolbar::editor_context, |pane| {
             pane.read(cx).menu_context()
         });
         (PANE_COMMANDS.iter())
             .filter(|&&row| row != UNPIN_TAB && row != RESTORE)
+            .filter(|&&row| movable || row != MOVE_TO_NEW_WINDOW)
             .map(|&row| match row {
                 PIN_TAB if pinned => UNPIN_TAB,
                 MAXIMIZE if self.zoomed => RESTORE,

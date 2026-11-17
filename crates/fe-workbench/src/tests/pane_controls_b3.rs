@@ -314,6 +314,7 @@ fn pane_menu_lists_the_design_actions_with_their_keys(cx: &mut TestAppContext) {
         ("Split Right", keys("cmd-\\"), "pane.split_right"),
         ("Split Down", keys("cmd-k cmd-\\"), "pane.split_down"),
         ("Maximize", keys("cmd-k cmd-m"), "pane.toggle_maximize"),
+        ("Move to New Window", None, "pane.move_to_new_window"),
         ("Move to the Other Split", None, "pane.exchange"),
         ("Pin Tab", None, "workbench.pin_tab"),
         ("Close Other Tabs", None, "workbench.close_other_tabs"),
@@ -369,7 +370,7 @@ fn pane_menu_lists_the_design_actions_with_their_keys(cx: &mut TestAppContext) {
     click(action(&pane, 2, cx), cx);
     let rows = menu(&workbench, cx).expect("shown");
     assert_eq!(
-        (rows[4].0.as_str(), rows[4].2),
+        (rows[5].0.as_str(), rows[5].2),
         ("Unpin Tab", "workbench.unpin_tab")
     );
     assert!(!rows.iter().any(|row| row.2 == "workbench.pin_tab"));

@@ -38,6 +38,18 @@ workbench-pane-loading-for-editing = Loading { $name } for editing…
 # $name is the file's name, $error why it couldn't be read.
 workbench-pane-cannot-read = Cannot read { $name }: { $error }
 
+## Move to New Window
+
+# The command's title: the palette shows it as "Pane: Move to New Window".
+command-pane-move_to_new_window = Move to New Window
+# Asked before a tab with unsaved changes moves. $name is the file's name.
+workbench-pane-move-question = Save { $name } before moving it?
+workbench-pane-move-detail = The new window opens the file as it is saved, so it moves only once its changes are saved.
+workbench-pane-save-and-move = Save and Move
+# A toast: the new window couldn't load the file, so the tab stays. $name
+# is the file's name.
+workbench-pane-cant-move = Can't move { $name } to a new window
+
 ## The buttons after the tabs: their tooltips and accessible names
 
 # Lists the pane's tabs.
@@ -56,6 +68,7 @@ workbench-pane-action-split-right = Split Right
 workbench-pane-action-split-down = Split Down
 workbench-pane-action-maximize = Maximize
 workbench-pane-action-restore = Restore
+workbench-pane-action-move-to-new-window = Move to New Window
 workbench-pane-action-exchange = Move to the Other Split
 workbench-pane-action-pin-tab = Pin Tab
 workbench-pane-action-unpin-tab = Unpin Tab

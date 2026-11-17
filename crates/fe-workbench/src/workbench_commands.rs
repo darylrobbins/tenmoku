@@ -712,6 +712,19 @@ impl Workbench {
         }
     }
 
+    /// Move to New Window
+    #[command(id = "pane.move_to_new_window")]
+    fn move_to_new_window(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        // A window on the same folder, with the active tab's file open at
+        // its caret; the tab closes here ([`Pane::move_active_to_new_window`]).
+        let root = self.root().map(std::path::Path::to_owned);
+        let Cx { window, cx } = cx;
+        self.pane().clone().update(*cx, |pane, cx| {
+            pane.move_active_to_new_window(root, window, cx)
+        });
+    }
+
     /// Focus Next Pane
     #[command(id = "pane.focus_next")]
     fn focus_next(&mut self, cx: &mut Cx<Self>) {

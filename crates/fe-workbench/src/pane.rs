@@ -45,6 +45,7 @@ use crate::{
     find_bar::{FindBar, FindOp},
     loader::{self, Opened},
     nav::Place,
+    open::WindowFile,
     pane_drag::{DraggedTab, TabDropped},
     pane_toolbar::{self, Toolbar, ToolbarRequest},
     start_page::StartPageView,
@@ -155,6 +156,10 @@ pub struct Pane {
     navigations: u64,
     /// Set while a file's read lands, whose tab shown isn't a navigation.
     landing: bool,
+    /// The tabs Move to New Window is moving: asked to save, or waiting for
+    /// the new window to open their file. Asked again meanwhile, they don't
+    /// move twice.
+    moving: Vec<TabId>,
     /// Where focus goes once the file opened last lands, for an open made
     /// from a panel that keeps it. Dropped by any other open or navigation.
     keep_focus: Option<KeepFocus>,
@@ -329,6 +334,7 @@ impl Pane {
             open_serial: 0,
             navigations: 0,
             landing: false,
+            moving: Vec::new(),
             keep_focus: None,
             shown: None,
             shown_serial: 0,
@@ -1713,6 +1719,159 @@ impl Pane {
         // may keep it open while a pending open lands.
         self.navigations += 1;
         self.close_active_item(window, cx);
+    }
+
+    /// The active tab's file, for Move to New Window, with an editor's
+    /// caret as a 1-based line and column (in chars, as Go to Line counts
+    /// them); a viewer's moves to its start. `None` for a tab that isn't a
+    /// file (settings, a diff, an untitled buffer), or while a file being
+    /// opened or a read error shows.
+    pub(crate) fn movable_file(&self, cx: &App) -> Option<WindowFile> {
+        let id = self.active_item()?.id();
+        self.file_of(id, cx)
+    }
+
+    /// [`Pane::movable_file`] for the tab `id`.
+    fn file_of(&self, id: TabId, cx: &App) -> Option<WindowFile> {
+        let tab = self.tabs.iter().find(|tab| tab.id() == id)?;
+        let path = tab.path.clone()?;
+        let Some(editor) = tab.editor() else {
+            return Some(WindowFile {
+                path,
+                line: None,
+                col: None,
+            });
+        };
+        let editor = editor.read(cx);
+        let text = editor.model().text();
+        let caret = pane_toolbar::caret(editor).min(text.len());
+        let point = text.offset_to_point(caret);
+        let row_start = text.row_start(point.row);
+        let chars = text.slice_to_string(row_start..caret).chars().count();
+        Some(WindowFile {
+            path,
+            line: Some(point.row + 1),
+            col: Some(chars as u32 + 1),
+        })
+    }
+
+    /// Moves the active tab to a new window on `root`, which opens its file
+    /// at the same place, then closes it here as Close Tab does: a pane in
+    /// a split that it leaves empty closes, a window's last pane stays. It
+    /// closes only once the file is in a tab of the new window, and only if
+    /// it's still that file's and has no unsaved changes; else it stays. A
+    /// tab with unsaved changes asks first, Save and Move or Cancel, and
+    /// moves once saved: the new window reads the file, never the unsaved
+    /// buffer. Nothing moves for a tab that isn't a file, one already
+    /// moving, or with no host opener that opens files.
+    pub(crate) fn move_active_to_new_window(
+        &mut self,
+        root: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(file) = self.movable_file(cx) else {
+            return;
+        };
+        let Some(item) = self.active_item().map(ItemHandle::boxed_clone) else {
+            return;
+        };
+        let id = item.id();
+        if self.moving.contains(&id) {
+            return;
+        }
+        self.moving.push(id);
+        let asked = item.is_dirty(cx).then(|| {
+            let name = file_name(Some(&file.path));
+            let question = tr!("workbench-pane-move-question", name = name);
+            let detail = tr!("workbench-pane-move-detail");
+            let (save, cancel) = (
+                tr!("workbench-pane-save-and-move"),
+                tr!("workbench-pane-cancel"),
+            );
+            window.prompt(
+                PromptLevel::Warning,
+                &question,
+                Some(&detail),
+                &[save.as_ref(), cancel.as_ref()],
+                cx,
+            )
+        });
+        cx.spawn_in(window, async move |pane, cx| {
+            if let Some(answer) = asked {
+                let moved = async {
+                    if answer.await.ok() != Some(0) {
+                        return false;
+                    }
+                    let saving = pane.update_in(cx, |pane, window, cx| {
+                        // Gone meanwhile: nothing to save or move.
+                        pane.state.position(id)?;
+                        item.save(window, cx)
+                    });
+                    let Ok(Some(saving)) = saving else {
+                        return false;
+                    };
+                    match saving.await {
+                        Ok(()) => true,
+                        Err(error) => {
+                            log::info!(
+                                "not moving {}: the save failed: {error}",
+                                file.path.display()
+                            );
+                            false
+                        }
+                    }
+                };
+                if !moved.await {
+                    pane.update(cx, |pane, _| pane.moving.retain(|moving| *moving != id))
+                        .ok();
+                    return;
+                }
+            }
+            // The file as it is now: a save may have moved the caret.
+            let opened = pane.update(cx, |pane, cx| {
+                let file = pane.file_of(id, cx).filter(|_| !item.is_dirty(cx))?;
+                crate::open::open_window_with(root, file.clone(), cx).map(|opened| (file, opened))
+            });
+            let (file, landed) = match opened {
+                Ok(Some((file, opened))) => {
+                    let landed = opened.await;
+                    (file, landed)
+                }
+                _ => {
+                    pane.update(cx, |pane, _| pane.moving.retain(|moving| *moving != id))
+                        .ok();
+                    return;
+                }
+            };
+            pane.update_in(cx, |pane, window, cx| {
+                pane.moving.retain(|moving| *moving != id);
+                if !landed {
+                    log::info!(
+                        "not moving {}: it didn't load in a new window",
+                        file.path.display()
+                    );
+                    let name = file_name(Some(&file.path));
+                    toast::show(
+                        cx,
+                        Toast::error(tr!("workbench-pane-cant-move", name = name)),
+                    );
+                    return;
+                }
+                // Still that file's, with nothing unsaved: else it stays,
+                // as its changes do.
+                let ix = pane.state.position(id);
+                let same = (pane.tabs.iter().find(|tab| tab.id() == id))
+                    .is_some_and(|tab| tab.path.as_ref() == Some(&file.path));
+                if let Some(ix) = ix.filter(|_| same && !item.is_dirty(cx)) {
+                    pane.navigations += 1;
+                    pane.take_item(ix, window, cx);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Closes every tab but the active one and the pinned ones: Close Other

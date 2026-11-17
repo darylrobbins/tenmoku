@@ -186,6 +186,7 @@ pub use open::{
     ConfigDirOverride, DocumentRoute, file_identity, open_documents, path_of_url, route_document,
     set_window_opener,
 };
+pub use open::{WindowFile, file_loaded, set_file_window_opener};
 pub use outline_panel::OutlinePanel;
 pub use pane::{Pane, PaneEvent, Tab};
 pub use pane_group::{Axis, Direction, Member, Members, PaneGroup};

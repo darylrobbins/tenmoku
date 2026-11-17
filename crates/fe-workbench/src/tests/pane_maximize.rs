@@ -231,7 +231,7 @@ fn the_menu_row_reads_restore_while_zoomed(cx: &mut TestAppContext) {
     );
     assert!(!rows.iter().any(|row| row.0 == "Maximize"));
     assert_eq!(
-        (rows[3].0.as_str(), rows[3].1),
+        (rows[4].0.as_str(), rows[4].1),
         ("Move to the Other Split", "pane.exchange")
     );
     cx.simulate_input("restore");

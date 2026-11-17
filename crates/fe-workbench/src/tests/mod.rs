@@ -115,6 +115,7 @@ mod m3_signoff;
 mod memory_report;
 mod menu_bar;
 mod minimap_setting;
+mod move_to_new_window;
 mod nav;
 mod nav_click;
 mod nav_partial;

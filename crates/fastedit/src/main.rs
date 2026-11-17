@@ -633,17 +633,67 @@ fn watch_window(window: WindowHandle<Workbench>, settings: Arc<Settings>, cx: &m
 
 /// Opens a window on `root` (`window.new`, Open Folder in New Window): the
 /// root's newest saved window no live window holds, or else a fresh one,
-/// a little below and right of the active window.
-fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
-    open_window_at(root, cx);
+/// a little below and right of the active window. Move to New Window hands
+/// it `file` too: then the window is a fresh one, restoring no saved
+/// window's tabs, which opens the file at its line and column. The task
+/// says whether the file loaded there from disk
+/// ([`fe_workbench::file_loaded`]); if not, the window closes. With no file
+/// it's true once the window is open.
+fn open_window_on(
+    root: Option<PathBuf>,
+    file: Option<fe_workbench::WindowFile>,
+    cx: &mut App,
+) -> Task<bool> {
+    let Some(window) = open_window_in(root, file.is_some(), cx) else {
+        return Task::ready(false);
+    };
+    let Some(fe_workbench::WindowFile { path, line, col }) = file else {
+        return Task::ready(true);
+    };
+    let landing = window.update(cx, |workbench, window, cx| {
+        workbench.open_document_at(path.clone(), line, col, window, cx)
+    });
+    let Ok(landing) = landing else {
+        return Task::ready(false);
+    };
+    cx.spawn(async move |cx| {
+        // Over once the file is in its tab or has failed to open.
+        landing.await;
+        let loaded = cx.update(|cx| fe_workbench::file_loaded(window, path, cx));
+        if loaded.await {
+            return true;
+        }
+        // Opened for the file alone: it goes, and the tab stays where it was.
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .ok();
+        false
+    })
 }
 
 /// [`open_window_on`], giving the window it opened.
 fn open_window_at(root: Option<PathBuf>, cx: &mut App) -> Option<WindowHandle<Workbench>> {
+    open_window_in(root, false, cx)
+}
+
+/// [`open_window_at`], or with `fresh` a window that restores no saved
+/// window, under a new id in the root's layouts.
+fn open_window_in(
+    root: Option<PathBuf>,
+    fresh: bool,
+    cx: &mut App,
+) -> Option<WindowHandle<Workbench>> {
     let settings = current_settings(cx);
     let theme = theme::editor_theme(&settings.editor, cx);
     let capabilities = Capabilities::current();
     let (layout, entry) = match layout_store(root.as_deref()) {
+        Some(store) if fresh => match store.claim_new() {
+            Ok(claim) => (Some(WindowLayout::new(store, claim)), None),
+            Err(error) => {
+                log::error!(target: "fastedit", "can't keep this window's layout: {error}");
+                (None, None)
+            }
+        },
         Some(store) => match kiln::shell::layout::new_window(&store) {
             Some((layout, entry)) => (Some(layout), entry),
             None => (None, None),
@@ -1191,7 +1241,7 @@ fn main() {
         watch_window(window, settings.clone(), cx);
         // Once, for this first window.
         fe_workbench::offer_setup(window, setup, cx);
-        fe_workbench::set_window_opener(cx, open_window_on);
+        fe_workbench::set_file_window_opener(cx, open_window_on);
         if let Some(path) = a11y_dump_path() {
             install_a11y_dump(path, A11ySource::window(), cx);
         }
@@ -1400,6 +1450,152 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         };
         assert_eq!(tabs, [valid]);
+    }
+
+    /// Runs `cx` until `done` says so, the files' reads being real ones.
+    fn wait_for(cx: &mut TestAppContext, mut done: impl FnMut(&mut TestAppContext) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            cx.run_until_parked();
+            if done(cx) {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "timed out");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    /// Each pane's files, in `window`.
+    fn window_files(
+        window: gpui::WindowHandle<Workbench>,
+        cx: &mut TestAppContext,
+    ) -> Vec<Vec<std::path::PathBuf>> {
+        window
+            .read_with(cx, |workbench, cx| {
+                (workbench.pane_group(cx).panes().iter())
+                    .map(|pane| {
+                        (pane.read(cx).tabs().iter())
+                            .filter_map(|tab| tab.path.clone())
+                            .collect()
+                    })
+                    .collect()
+            })
+            .unwrap()
+    }
+
+    /// Whether [`super::open_window_on`] says `path`, handed it at `line`
+    /// and `col`, landed in the window it opened on `root`.
+    fn move_to_window(
+        cx: &mut TestAppContext,
+        root: &std::path::Path,
+        path: &std::path::Path,
+        line: Option<u32>,
+        col: Option<u32>,
+    ) -> bool {
+        let file = fe_workbench::WindowFile {
+            path: path.to_owned(),
+            line,
+            col,
+        };
+        let root = Some(root.to_owned());
+        let task = cx.update(|cx| super::open_window_on(root, Some(file), cx));
+        let landed = std::rc::Rc::new(std::cell::Cell::new(None));
+        let set = landed.clone();
+        cx.spawn(async move |_| set.set(Some(task.await))).detach();
+        wait_for(cx, |_| landed.get().is_some());
+        landed.get().unwrap()
+    }
+
+    /// Move to New Window's opener (T1606): its window is a fresh one, which
+    /// restores none of the root's saved windows, so the moved file is its
+    /// only tab, at the line and column given; its task says the file
+    /// loaded from disk (an image once decoded), and is false, the window
+    /// closed, for a missing file, an image that can't be decoded or a file
+    /// that can't be read.
+    #[gpui::test]
+    fn a_moved_file_opens_alone_in_a_fresh_window_at_its_place(cx: &mut TestAppContext) {
+        assert!(
+            std::env::var_os("TENMOKU_STATE_DIR").is_some(),
+            "needs the state dir nextest's setup script gives (scripts/nextest-isolate-state.sh)"
+        );
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
+        let (a, b) = (root.join("a.txt"), root.join("b.txt"));
+        fs::write(&a, "one\ntwo\n").unwrap();
+        fs::write(&b, "saved\n").unwrap();
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
+        });
+        WATCH.with(|w| w.set(Some(|_, _| None)));
+
+        // A window on the root showing b.txt, kept as the app quits: the
+        // saved window `window.new` would restore.
+        let saved = cx
+            .update(|cx| super::open_window_at(Some(root.clone()), cx))
+            .unwrap();
+        saved
+            .update(cx, |workbench, window, cx| {
+                workbench.open_document(b.clone(), window, cx)
+            })
+            .unwrap();
+        wait_for(cx, |cx| window_files(saved, cx) == [vec![b.clone()]]);
+        cx.update(kiln::shell::layout::mark_quitting);
+        saved
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        let store = super::layout_store(Some(&root)).unwrap();
+        wait_for(cx, |_| store.entries().len() == 1);
+
+        let windows = cx.windows().len();
+        assert!(move_to_window(cx, &root, &a, Some(2), Some(2)));
+        assert_eq!(cx.windows().len(), windows + 1);
+        let window = (cx.windows().into_iter())
+            .filter_map(|window| window.downcast::<Workbench>())
+            .find(|window| *window != saved)
+            .expect("a new window");
+        assert_eq!(window_files(window, cx), [vec![a.clone()]]);
+        let caret = window
+            .read_with(cx, |workbench, cx| {
+                let editor = workbench.active_editor(cx).unwrap().read(cx);
+                editor.model().primary_selection().range.clone()
+            })
+            .unwrap();
+        assert_eq!(caret, 5..5, "line 2, column 2");
+        // The saved window is still there for `window.new`.
+        assert!(store.newest_restorable().is_some());
+
+        // An image lands once decoded.
+        let image = root.join("icon.png");
+        fs::write(&image, include_bytes!("../assets/icon/fastedit-1024.png")).unwrap();
+        assert!(move_to_window(cx, &root, &image, None, None));
+        assert_eq!(cx.windows().len(), windows + 2);
+
+        // What doesn't load from disk doesn't land, and its window goes: a
+        // missing file, which opens as a new file's empty buffer; an image
+        // that can't be decoded; a file that can't be read.
+        let broken = root.join("broken.png");
+        fs::write(&broken, b"not a picture").unwrap();
+        let mut failing = vec![root.join("missing.txt"), broken];
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let locked = root.join("locked.txt");
+            fs::write(&locked, "locked\n").unwrap();
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+            failing.push(locked);
+        }
+        for path in failing {
+            assert!(
+                !move_to_window(cx, &root, &path, None, None),
+                "{}",
+                path.display()
+            );
+            assert_eq!(cx.windows().len(), windows + 2, "{}", path.display());
+        }
+        WATCH.with(|w| w.set(None));
     }
 
     /// Each window's editors keep undo history as its own root's settings
