@@ -65,6 +65,10 @@ const NOT_RELEASED: &[(&str, &str)] = &[
         "wgsl",
         "added on vps01; recorded by the Mac's next grammar release",
     ),
+    (
+        "wit",
+        "added on argon; recorded by the Mac's next grammar release",
+    ),
 ];
 
 fn table(path: &Path) -> toml::Table {

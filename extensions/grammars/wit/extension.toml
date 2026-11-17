@@ -1,0 +1,19 @@
+id = "tenmoku.grammar_wit"
+name = "WIT syntax"
+version = "0.1.0"
+license = "Apache-2.0 WITH LLVM-exception"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "wit"
+wasm = "tree-sitter-wit.wasm"
+extensions = ["wit"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+packs = ["systems"]
+earlier_patterns_win = false
+license = "Apache-2.0 WITH LLVM-exception"
+line_comment = "//"
+block_comment = ["/*", "*/"]

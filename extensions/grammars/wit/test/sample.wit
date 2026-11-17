@@ -1,0 +1,112 @@
+// From kiln/crates/kiln-plugin/wit/world.wit, types.wit, events.wit and
+// net.wit, and crates/fe-plugin/wit/buffer.wit; the last interface is written
+// for the sample.
+package kiln:extension@1.1.0;
+
+/// A plugin for any kiln app.
+world extension {
+    use types.{error};
+
+    import log;
+    import commands;
+
+    /// Called once after instantiation, before anything else. An error unloads the plugin.
+    export init: func() -> result<_, error>;
+    /// Called once before the host drops the plugin.
+    export shutdown: func();
+
+    export command-handler;
+}
+
+/// Types every kiln:extension interface shares.
+interface types {
+    /// A command's id, dotted by namespace: `git.blame`.
+    type command-id = string;
+
+    /// Names an open buffer for as long as it stays open.
+    type buffer-id = u64;
+
+    /// A half-open byte range `[start, end)` in a buffer's UTF-8 text.
+    record range {
+        start: u64,
+        end: u64,
+    }
+
+    enum severity {
+        error,
+        warning,
+        info,
+        hint,
+    }
+
+    /// Why a host import failed. Each case carries a message for the plugin's log.
+    variant error {
+        /// The plugin's grants do not allow this.
+        denied(string),
+        /// What the call named does not exist.
+        not-found(string),
+        /// The host tried and failed.
+        failed(string),
+    }
+}
+
+/// Events the host delivers to a plugin, in order.
+interface events {
+    use types.{buffer-id, range, error};
+
+    /// The kinds of event a plugin receives.
+    flags event-kinds {
+        buffer-opened,
+        buffer-changed,
+        config-reloaded,
+    }
+}
+
+/// HTTP requests, to the hosts the plugin's grants allow.
+interface net {
+    use types.{error};
+
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    fetch: func(request: request) -> result<response, error>;
+}
+
+/// Reading and editing the editor's buffers.
+interface buffer {
+    use kiln:extension/types@1.1.0.{buffer-id, range, error as host-error};
+
+    /// Replaces `range` with `text`.
+    record text-edit {
+        range: range,
+        text: string,
+    }
+
+    edit: func(buffer: buffer-id, edits: list<text-edit>) -> result<u64, host-error>;
+}
+
+/* Written for the sample: resources, feature gates and the rest. */
+@since(version = 1.1.0)
+interface hashing {
+    /** A running digest. */
+    resource hasher {
+        constructor(seed: option<u64>);
+        update: func(bytes: borrow<input>, chunk: list<u8, 64>);
+        finish: async func() -> tuple<list<u8, 32>, f64>;
+        from-key: static func(key: string) -> hasher;
+    }
+
+    resource input;
+
+    @unstable(feature = streaming)
+    digest-stream: func(chunks: stream<list<u8>>) -> future<result<_, s32>>;
+
+    @external-id("hashing:sha-256")
+    sha256: func(text: string) -> list<u8, 32>;
+
+    @deprecated(version = 1.0.0)
+    map-scores: func(scores: map<string, f32>) -> bool;
+}
