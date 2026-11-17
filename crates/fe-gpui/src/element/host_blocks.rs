@@ -152,12 +152,14 @@ pub(super) fn lens_layout(
 ) -> Vec<PlacedLens> {
     let (text, tab_size) = (view.model.text(), view.model.tab_size().max(1));
     let color = view.theme.gutter_foreground;
-    let run = |text: &str| {
+    let run_in = |text: &str, color| {
         [StyleRun {
             len: text.len(),
             style: color,
         }]
     };
+    let run = |text: &str| run_in(text, color);
+    let warning = view.theme.warning;
     let text_area = frame.text_bounds();
     let space = shaper.shape(" ", &run(" ")).width();
     // How far from column 0 the view reaches.
@@ -208,6 +210,7 @@ pub(super) fn lens_layout(
                 break;
             }
             let title = &item.title;
+            let item_color = if item.warning { warning } else { color };
             let (line, width, offset) = match title.len() > MAX_SHAPED_ROW_BYTES {
                 true => {
                     let widths = small_widths.get_or_insert_with(|| {
@@ -219,10 +222,11 @@ pub(super) fn lens_layout(
                     let left = text_area.x - x;
                     let (range, offset) = slice(title, frame, left, widths);
                     let shown = &title[range];
-                    (small.shape(shown, &run(shown)), width as f32, offset as f32)
+                    let runs = run_in(shown, item_color);
+                    (small.shape(shown, &runs), width as f32, offset as f32)
                 }
                 false => {
-                    let line = small.shape(title, &run(title));
+                    let line = small.shape(title, &run_in(title, item_color));
                     let width = line.width();
                     (line, width, 0.)
                 }
@@ -320,7 +324,9 @@ pub(super) fn paint_lenses(
             for item in &lens.items {
                 let origin = layout.to_window(item.at);
                 item.line.paint(origin, line_height, window, cx);
-                let Some(hitbox) = &item.hitbox else {
+                let Some(hitbox) =
+                    (item.hitbox.as_ref()).filter(|_| item.item.invocation.is_some())
+                else {
                     continue;
                 };
                 let over = lens_hovered(hitbox, window, cx);

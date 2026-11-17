@@ -999,13 +999,20 @@ pub(crate) fn set_history_dir(cx: &mut App, dir: PathBuf) {
 
 /// The state directory histories go under: the one set, or the user's.
 /// Under test, none unless one is set, so no test touches the user's.
-fn history_dir(cx: &App) -> Option<PathBuf> {
+pub(crate) fn history_dir(cx: &App) -> Option<PathBuf> {
     match cx.try_global::<HistoryDir>() {
         Some(HistoryDir(dir)) => Some(dir.clone()),
         None if cfg!(test) => None,
         None => fe_config::paths::state_dir(),
     }
 }
+
+/// How many runs' results have been saved to a history: set again each time
+/// one is, so what shows from a history (the code lenses') reads it again.
+#[derive(Default)]
+pub(crate) struct HistorySaved(pub(crate) u64);
+
+impl Global for HistorySaved {}
 
 /// The `PATH` the tests' programs are looked up on, in place of the login
 /// shell's.
@@ -1117,6 +1124,7 @@ impl TestRun {
             return;
         }
         let root = self.root.clone();
+        let (saved, written) = async_channel::bounded::<()>(1);
         queue_history_job(
             Box::new(move || {
                 let mut history = History::load(&state_dir, &root);
@@ -1126,9 +1134,19 @@ impl TestRun {
                         root.display()
                     );
                 }
+                saved.try_send(()).ok();
             }),
             cx,
         );
+        cx.spawn(async move |_, cx| {
+            if written.recv().await.is_ok() {
+                cx.update(|cx| {
+                    let runs = cx.try_global::<HistorySaved>().map_or(0, |saved| saved.0);
+                    cx.set_global(HistorySaved(runs + 1));
+                });
+            }
+        })
+        .detach();
     }
 }
 

@@ -1391,8 +1391,10 @@ impl EditorView {
             return false;
         };
         let item = (row.items.iter()).find(|(_, bounds)| bounds.contains(&position));
-        if let Some((item, _)) = item {
-            let action = RunCommand(item.invocation.clone().source(Source::Mouse));
+        if let Some((item, _)) = item
+            && let Some(invocation) = &item.invocation
+        {
+            let action = RunCommand(invocation.clone().source(Source::Mouse));
             let focus = self.focus.clone();
             window.defer(cx, move |window, cx| {
                 focus.dispatch_action(&action, window, cx)
@@ -1438,6 +1440,7 @@ impl EditorView {
         (crate::lens::join(all).into_iter())
             .filter(|lens| lens.row == row)
             .flat_map(|lens| lens.items)
+            .filter(|item| item.invocation.is_some())
             .collect()
     }
 

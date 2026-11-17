@@ -191,11 +191,14 @@ impl ConflictLenses {
                 let row = rows.offset_to_point(conflict.start.line.start).row;
                 let items = actions().into_iter().map(|(title, command)| LensItem {
                     title,
-                    invocation: Invocation::of(command)
-                        .expect("the accept commands are registered")
-                        .args(Value::Object(
-                            [("row".to_owned(), row.into())].into_iter().collect(),
-                        )),
+                    warning: false,
+                    invocation: Some(
+                        Invocation::of(command)
+                            .expect("the accept commands are registered")
+                            .args(Value::Object(
+                                [("row".to_owned(), row.into())].into_iter().collect(),
+                            )),
+                    ),
                 });
                 Lens {
                     row,

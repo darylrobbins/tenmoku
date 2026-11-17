@@ -117,7 +117,7 @@ fn lens(s: &Lsp) -> Option<fe_command::Invocation> {
         let snapshot = view.model().snapshot().clone();
         (view.lens_providers().iter())
             .flat_map(|provider| provider.borrow_mut().lenses(&snapshot))
-            .find_map(|lens| lens.items.first().map(|item| item.invocation.clone()))
+            .find_map(|lens| lens.items.first().and_then(|item| item.invocation.clone()))
     })
 }
 

@@ -19,12 +19,15 @@ use gpui::{Bounds, Pixels, SharedString};
 /// Between a lens row's items.
 pub(crate) const SEPARATOR: &str = " \u{b7} ";
 
-/// One clickable item of a lens row.
+/// One item of a lens row: clickable, or plain text.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LensItem {
     pub title: SharedString,
-    /// What a click runs, from the view, as a bound click's command.
-    pub invocation: Invocation,
+    /// What a click runs, from the view, as a bound click's command. None
+    /// for plain text, which a click, the pointer and the palette pass over.
+    pub invocation: Option<Invocation>,
+    /// Set in the warning colour, not the faint one a lens row is.
+    pub warning: bool,
 }
 
 /// Items over a row.

@@ -334,7 +334,8 @@ impl crate::LensProvider for EveryRow {
                 row,
                 items: vec![crate::LensItem {
                     title: "1 reference".into(),
-                    invocation: fe_command::Invocation::of("test.lens").unwrap(),
+                    warning: false,
+                    invocation: Some(fe_command::Invocation::of("test.lens").unwrap()),
                 }],
             })
             .collect()

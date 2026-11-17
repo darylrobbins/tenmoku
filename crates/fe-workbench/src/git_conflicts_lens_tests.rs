@@ -41,7 +41,8 @@ fn expected(row: u32) -> Lens {
         items: (TITLES.iter().zip(COMMANDS))
             .map(|(title, command)| fe_gpui::LensItem {
                 title: (*title).into(),
-                invocation: Invocation::of(command).unwrap().args(row_args(row)),
+                warning: false,
+                invocation: Some(Invocation::of(command).unwrap().args(row_args(row))),
             })
             .collect(),
     }
@@ -71,7 +72,7 @@ fn each_conflict_has_its_actions_above_it(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_lens_action_resolves_its_conflict(cx: &mut TestAppContext) {
     let (_dir, _workbench, editor, cx) = open_text(cx, TWO);
-    let invocation = lenses(&editor, cx)[1].items[1].invocation.clone();
+    let invocation = lenses(&editor, cx)[1].items[1].invocation.clone().unwrap();
     let context = ContextStack::new()
         .with(ContextFrame::new("workbench"))
         .with(ContextFrame::new("editor"));
@@ -111,7 +112,7 @@ fn accepting_splits_a_vim_insert_session(cx: &mut TestAppContext) {
     let typed = text(cx);
     assert!(typed.starts_with("<<<<<<< HEAD\nxa\n"), "{typed}");
 
-    let invocation = lenses(&editor, cx)[0].items[0].invocation.clone();
+    let invocation = lenses(&editor, cx)[0].items[0].invocation.clone().unwrap();
     let context = ContextStack::new()
         .with(ContextFrame::new("workbench"))
         .with(ContextFrame::new("editor"));

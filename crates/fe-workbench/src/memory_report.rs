@@ -573,7 +573,8 @@ impl Workbench {
                 row,
                 items: vec![LensItem {
                     title: tr!("workbench-memory-restart"),
-                    invocation: restart(&report.servers[ix]),
+                    warning: false,
+                    invocation: Some(restart(&report.servers[ix])),
                 }],
             })
             .collect();

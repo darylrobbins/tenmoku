@@ -190,6 +190,7 @@ mod terminal_plus;
 mod terminal_single_header;
 mod test_ask_agent;
 mod test_failure_detail;
+mod test_lens_history;
 mod test_run_view;
 mod test_run_view_module_keys;
 mod test_runner;

@@ -24,7 +24,8 @@ impl LensProvider for Targets {
         let text = snapshot.text();
         let item = |title: &'static str, command| LensItem {
             title: title.into(),
-            invocation: Invocation::of(command).unwrap(),
+            warning: false,
+            invocation: Some(Invocation::of(command).unwrap()),
         };
         (0..text.row_count())
             .filter(|&row| text.row_to_string(row).contains("target"))

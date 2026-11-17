@@ -621,7 +621,8 @@ mod lenses {
     fn item(title: &str, command: &str) -> LensItem {
         LensItem {
             title: title.to_owned().into(),
-            invocation: Invocation::of(command).unwrap(),
+            warning: false,
+            invocation: Some(Invocation::of(command).unwrap()),
         }
     }
 

@@ -132,6 +132,15 @@ impl History {
             .unwrap_or_default()
     }
 
+    /// The most recently run test named exactly `name` in one of
+    /// `binaries`.
+    pub fn find(&self, name: &str, binaries: &[String]) -> Option<&TestId> {
+        (self.tests.iter())
+            .filter(|(id, _)| id.name == name && binaries.contains(&id.binary))
+            .max_by_key(|(id, entry)| (entry.seq, std::cmp::Reverse(*id)))
+            .map(|(id, _)| id)
+    }
+
     /// `Some` when the test's window holds both a pass and a fail.
     pub fn flaky(&self, id: &TestId) -> Option<Flaky> {
         let window = &self.tests.get(id)?.window;

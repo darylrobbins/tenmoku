@@ -2538,6 +2538,9 @@ mod lens_picker {
             cx: &mut Context<Picker<Self>>,
         ) -> bool {
             let invocation = self.items[self.matches[ix]].invocation.clone();
+            let Some(invocation) = invocation else {
+                return true;
+            };
             if let Some(editor) = self.focus_editor(window, cx) {
                 let run = RunCommand(invocation.source(Source::Keyboard));
                 editor.focus_handle(cx).dispatch_action(&run, window, cx);

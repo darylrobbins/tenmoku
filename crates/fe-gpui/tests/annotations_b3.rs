@@ -303,7 +303,8 @@ fn code_lenses_are_ui_small_sans_faint_and_dot_separated(cx: &mut TestAppContext
     let (view, cx) = editor(|_| {}, cx);
     let item = |title: &str| LensItem {
         title: title.to_owned().into(),
-        invocation: Invocation::of("editor.select_all").expect("a command"),
+        warning: false,
+        invocation: Some(Invocation::of("editor.select_all").expect("a command")),
     };
     let lenses = Lenses(vec![Lens {
         row: 0,

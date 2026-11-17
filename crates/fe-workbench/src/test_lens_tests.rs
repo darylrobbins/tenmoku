@@ -12,7 +12,7 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use crate::{Launch, Workbench, task_commands::TestFiles, task_defs::ProjectFiles, tests::open};
 
-const LIB: &str = "\
+pub(crate) const LIB: &str = "\
 pub fn add(a: u32, b: u32) -> u32 {
     a + b
 }
@@ -40,14 +40,14 @@ impl ProjectFiles for Disk {
     }
 }
 
-struct Project<'a> {
-    workbench: Entity<Workbench>,
-    editor: Entity<EditorView>,
-    cx: &'a mut VisualTestContext,
+pub(crate) struct Project<'a> {
+    pub(crate) workbench: Entity<Workbench>,
+    pub(crate) editor: Entity<EditorView>,
+    pub(crate) cx: &'a mut VisualTestContext,
     _dir: tempfile::TempDir,
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(crate) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
@@ -55,7 +55,12 @@ fn draw(cx: &mut VisualTestContext) {
 
 /// A workbench showing `text` as `name` in a package's folder, the root
 /// trusted if `trusted`.
-fn project<'a>(cx: &'a mut TestAppContext, name: &str, text: &str, trusted: bool) -> Project<'a> {
+pub(crate) fn project<'a>(
+    cx: &'a mut TestAppContext,
+    name: &str,
+    text: &str,
+    trusted: bool,
+) -> Project<'a> {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"p\"\n").unwrap();
     fs::create_dir(dir.path().join("src")).unwrap();
@@ -91,7 +96,7 @@ fn project<'a>(cx: &'a mut TestAppContext, name: &str, text: &str, trusted: bool
 
 impl Project<'_> {
     /// The lenses every provider of the editor answers for its text.
-    fn lenses(&mut self) -> Vec<Lens> {
+    pub(crate) fn lenses(&mut self) -> Vec<Lens> {
         draw(self.cx);
         self.editor.update(self.cx, |editor, _| {
             let snapshot = editor.model().snapshot().clone();
@@ -108,11 +113,13 @@ impl Project<'_> {
         lenses
             .into_iter()
             .map(|lens| {
-                assert_eq!(lens.items.len(), 1);
-                let item = &lens.items[0];
-                assert_eq!(item.invocation.command.to_string(), "tests.run_row");
+                // The test history's plain text may follow (test_lens_history).
+                let click = &lens.items[0];
+                let invocation = click.invocation.as_ref().expect("a click target");
+                let item = click;
+                assert_eq!(invocation.command.to_string(), "tests.run_row");
                 assert_eq!(
-                    item.invocation.args.get("row").and_then(|r| r.as_u64()),
+                    invocation.args.get("row").and_then(|r| r.as_u64()),
                     Some(lens.row as u64)
                 );
                 (lens.row, item.title.to_string())
@@ -238,7 +245,7 @@ fn clicking_the_lens_runs_that_test_not_the_one_at_the_caret(cx: &mut TestAppCon
     let context = ContextStack::new()
         .with(ContextFrame::new("workbench"))
         .with(ContextFrame::new("editor"));
-    let invocation: Invocation = lens.items[0].invocation.clone();
+    let invocation: Invocation = lens.items[0].invocation.clone().unwrap();
     let run = RunCommand(invocation.context(context).source(Source::Mouse));
     project
         .cx

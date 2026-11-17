@@ -53,7 +53,8 @@ impl LensProvider for Shown {
                     .iter()
                     .map(|(title, id)| LensItem {
                         title: title.clone(),
-                        invocation: invocation(*id),
+                        warning: false,
+                        invocation: Some(invocation(*id)),
                     })
                     .collect(),
             })

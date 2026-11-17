@@ -22,7 +22,8 @@ impl LensProvider for Titled {
         let text = snapshot.text();
         let item = |title: &SharedString| LensItem {
             title: title.clone(),
-            invocation: Invocation::of("test.lens").unwrap(),
+            warning: false,
+            invocation: Some(Invocation::of("test.lens").unwrap()),
         };
         (0..text.row_count())
             .filter(|&row| text.row_to_string(row).contains("target"))

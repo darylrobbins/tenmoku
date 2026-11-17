@@ -81,7 +81,7 @@ fn the_fourth_lens_item_compares(cx: &mut TestAppContext) {
         assert_eq!(last.title, "Compare Changes");
         assert_eq!(
             last.invocation,
-            Invocation::of("git.compare_conflict").unwrap().args(args)
+            Some(Invocation::of("git.compare_conflict").unwrap().args(args))
         );
     }
 }

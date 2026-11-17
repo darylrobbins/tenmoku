@@ -151,6 +151,7 @@ fn click(s: &mut Lsp, editor: &Entity<EditorView>, item: usize) {
             .items[item]
             .invocation
             .clone()
+            .expect("a click target")
     });
     let context = ContextStack::new()
         .with(ContextFrame::new(crate::KEY_CONTEXT))

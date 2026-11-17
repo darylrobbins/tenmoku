@@ -289,8 +289,9 @@ fn language_servers_are_listed_with_their_processes_and_a_restart_lens(cx: &mut 
     assert_eq!(lenses.len(), 1);
     assert_eq!(lenses[0].row as usize, line);
     let item = &lenses[0].items[0];
+    let invocation = item.invocation.as_ref().expect("a click target");
     assert_eq!(item.title, "Restart");
-    assert_eq!(item.invocation.command.as_str(), "lsp.restart");
+    assert_eq!(invocation.command.as_str(), "lsp.restart");
     // Named by its instance and its manager, not its root, which needn't be
     // UTF-8.
     let server = (s.workbench)
@@ -298,7 +299,7 @@ fn language_servers_are_listed_with_their_processes_and_a_restart_lens(cx: &mut 
         .servers[0]
         .clone();
     assert_eq!(
-        item.invocation.args,
+        invocation.args,
         Value::Object(
             [
                 ("server".to_owned(), Value::from("rust-analyzer")),
@@ -325,7 +326,7 @@ fn language_servers_are_listed_with_their_processes_and_a_restart_lens(cx: &mut 
     );
     // Clicked, it restarts that server; clicked again, that instance has
     // gone, and nothing else restarts.
-    let invocation = item.invocation.clone();
+    let invocation = item.invocation.clone().expect("a click target");
     let click = |s: &mut Lsp| {
         let invocation = invocation.clone();
         s.cx.update(|window, cx| window.dispatch_action(Box::new(RunCommand(invocation)), cx));
@@ -356,7 +357,10 @@ fn report_restart(s: &mut Lsp) -> Invocation {
         let lenses = (editor.lens_providers().iter())
             .flat_map(|provider| provider.borrow_mut().lenses(&snapshot))
             .collect::<Vec<_>>();
-        lenses[0].items[0].invocation.clone()
+        lenses[0].items[0]
+            .invocation
+            .clone()
+            .expect("a click target")
     })
 }
 
