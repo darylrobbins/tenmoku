@@ -39,7 +39,7 @@ use fe_nav::Location;
 use fe_text::Text;
 use gpui::{
     AnyElement, App, AppContext as _, AvailableSpace, ContentMask, Context, Entity, FocusHandle,
-    Focusable as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    Focusable as _, Hsla, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
     ParentElement as _, Pixels, Render, SharedString, Size, StatefulInteractiveElement as _,
     Styled as _, Subscription, Task, WeakEntity, Window, canvas, div, prelude::FluentBuilder as _,
     px,
@@ -74,8 +74,14 @@ const LIST_WIDTH: Pixels = px(240.);
 /// The header's height.
 const HEADER_HEIGHT: Pixels = px(22.);
 
-/// The accent borders' width, above and below.
-const BORDER: Pixels = px(2.);
+/// The hairline borders' width, above and below.
+const BORDER: Pixels = px(1.);
+
+/// The frame's top and bottom edges: [`BORDER`] wide, in the neutral
+/// border colour the header and its dividers use.
+fn frame(ui: &fe_ui::UiTheme) -> (Pixels, Hsla) {
+    (BORDER, ui.border)
+}
 
 /// A peek open in a pane: [`Pane::peek`].
 pub(crate) struct Peek {
@@ -1536,6 +1542,7 @@ impl Render for PeekView {
             .items_center()
             .flex_shrink_0()
             .h(HEADER_HEIGHT)
+            .debug_selector(|| "peek-header".into())
             .px_2()
             .gap_2()
             .bg(ui.panel_background)
@@ -1605,6 +1612,7 @@ impl Render for PeekView {
         };
         div()
             .id("peek")
+            .debug_selector(|| "peek".into())
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
             .occlude()
@@ -1620,9 +1628,9 @@ impl Render for PeekView {
             .flex_col()
             .overflow_hidden()
             .bg(ui.background)
-            .border_t(BORDER)
-            .border_b(BORDER)
-            .border_color(ui.accent)
+            .border_t(frame(&ui).0)
+            .border_b(frame(&ui).0)
+            .border_color(frame(&ui).1)
             .child(header)
             .child(
                 div()
@@ -1635,6 +1643,7 @@ impl Render for PeekView {
                     .child(
                         div()
                             .id("peek-excerpt")
+                            .debug_selector(|| "peek-excerpt".into())
                             .flex_1()
                             .min_w_0()
                             .h_full()
@@ -1657,3 +1666,7 @@ impl Render for PeekView {
 #[cfg(test)]
 #[path = "peek_tests.rs"]
 mod peek_tests;
+
+#[cfg(test)]
+#[path = "peek_frame_tests.rs"]
+mod peek_frame_tests;

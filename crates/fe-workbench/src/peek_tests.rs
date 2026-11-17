@@ -26,7 +26,7 @@ use gpui::{
 use super::{BLOCK_ID, PeekView, ROWS};
 use crate::{Workbench, tests::open_root};
 
-const MAIN: &str = "mod util;\n\nfn main() {\n    util::helper();\n}\nfn other() {}\n";
+pub(super) const MAIN: &str = "mod util;\n\nfn main() {\n    util::helper();\n}\nfn other() {}\n";
 
 /// `helper` on row 20, so the excerpt scrolls to it.
 fn util() -> String {
@@ -96,17 +96,17 @@ fn definition(rel: &str, text: &str) -> Definition {
     }
 }
 
-struct Opened<'a> {
-    _dir: tempfile::TempDir,
-    root: PathBuf,
-    workbench: Entity<Workbench>,
-    answers: Arc<Mutex<Vec<Definition>>>,
+pub(super) struct Opened<'a> {
+    pub(super) _dir: tempfile::TempDir,
+    pub(super) root: PathBuf,
+    pub(super) workbench: Entity<Workbench>,
+    pub(super) answers: Arc<Mutex<Vec<Definition>>>,
     /// Makes the fake fail.
-    fails: Arc<AtomicBool>,
-    cx: &'a mut VisualTestContext,
+    pub(super) fails: Arc<AtomicBool>,
+    pub(super) cx: &'a mut VisualTestContext,
 }
 
-fn settle(cx: &mut VisualTestContext) {
+pub(super) fn settle(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
@@ -114,7 +114,7 @@ fn settle(cx: &mut VisualTestContext) {
 /// A workbench on `src/main.rs`, `src/util.rs` and `src/other.rs`, showing
 /// `main.rs` focused with its caret in `helper`, and the fake answering
 /// with `helper` in `util.rs`.
-fn opened(cx: &mut TestAppContext) -> Opened<'_> {
+pub(super) fn opened(cx: &mut TestAppContext) -> Opened<'_> {
     opened_on(cx, MAIN)
 }
 
@@ -160,20 +160,26 @@ fn opened_on<'a>(cx: &'a mut TestAppContext, main: &str) -> Opened<'a> {
     }
 }
 
-fn editor(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<EditorView> {
+pub(super) fn editor(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Entity<EditorView> {
     workbench
         .read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned())
         .expect("a file is shown")
 }
 
-fn peek(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<Entity<PeekView>> {
+pub(super) fn peek(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Option<Entity<PeekView>> {
     workbench.read_with(cx, |workbench, cx| {
         let pane = workbench.pane().read(cx);
         pane.peek.as_ref().map(|peek| peek.view.clone())
     })
 }
 
-fn excerpt(peek: &Entity<PeekView>, cx: &mut VisualTestContext) -> Entity<EditorView> {
+pub(super) fn excerpt(peek: &Entity<PeekView>, cx: &mut VisualTestContext) -> Entity<EditorView> {
     peek.read_with(cx, |peek, _| {
         peek.excerpt().cloned().ok_or(peek.error.clone())
     })
@@ -197,7 +203,7 @@ fn at(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (PathBuf, Ra
 }
 
 /// The caret's box at `offset` in `editor`'s last frame.
-fn caret_box(
+pub(super) fn caret_box(
     editor: &Entity<EditorView>,
     offset: usize,
     cx: &mut VisualTestContext,
@@ -209,7 +215,7 @@ fn caret_box(
     })
 }
 
-fn peek_definition(cx: &mut VisualTestContext) {
+pub(super) fn peek_definition(cx: &mut VisualTestContext) {
     cx.simulate_keystrokes("alt-f12");
     settle(cx);
 }
