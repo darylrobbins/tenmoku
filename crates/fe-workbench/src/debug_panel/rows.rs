@@ -119,7 +119,7 @@ impl ValueRow {
         }
     }
 
-    fn depth(&self) -> usize {
+    pub(super) fn depth(&self) -> usize {
         match self {
             ValueRow::Watch { .. } | ValueRow::Scope { .. } => 0,
             ValueRow::Variable { depth, .. }
@@ -412,7 +412,7 @@ impl DebugPanel {
     /// `reference`'s children under `path`, at `depth`, as far as shown:
     /// those this stop fetched, the expanded ones' below them.
     #[allow(clippy::too_many_arguments)]
-    fn walk(
+    pub(super) fn walk(
         &self,
         stop: &Stop,
         reference: i64,
@@ -597,7 +597,10 @@ impl DebugPanel {
         let c = cx.theme().colors;
         let count = self.watch_rows().0.len();
         let rows = self.render_value_rows(Part::Watch, 0..count, window, cx);
+        // Each child keeps its height: past its cap the tree scrolls, its
+        // rows don't shrink to fit.
         let heading = div()
+            .flex_none()
             .h(fe_ui::height::ROW)
             .px_2()
             .flex()
@@ -619,6 +622,7 @@ impl DebugPanel {
             .children(rows)
             .child(
                 div()
+                    .flex_none()
                     .h(fe_ui::height::ROW)
                     .px_2()
                     .flex()
@@ -641,7 +645,7 @@ impl DebugPanel {
     }
 
     /// A row's ground: the keys' row while the tree has them.
-    fn ground(
+    pub(super) fn ground(
         &self,
         part: Part,
         ix: usize,
@@ -820,6 +824,7 @@ impl DebugPanel {
                 };
                 let mut element = div()
                     .id(ElementId::NamedInteger(id.into(), ix as u64))
+                    .flex_none()
                     .h(fe_ui::height::ROW)
                     .w_full()
                     .pl(px(8. + 12. * depth as f32))
@@ -942,7 +947,7 @@ const WATCH_ID_ELEMENT: &str = super::WATCH_ID;
 const VARIABLES_ID_ELEMENT: &str = super::VARIABLES_ID;
 
 /// A tree row's chevron: right or down for a parent, room for one else.
-fn chevron(expanded: Option<bool>, color: Hsla) -> AnyElement {
+pub(super) fn chevron(expanded: Option<bool>, color: Hsla) -> AnyElement {
     let slot = div().w(px(12.)).flex_none();
     match expanded {
         Some(expanded) => {
@@ -964,7 +969,7 @@ pub(super) fn code_family(cx: &App) -> SharedString {
 }
 
 /// The editor theme's property colour, for variable names.
-fn property_color(panel: &DebugPanel, cx: &App) -> Option<Hsla> {
+pub(super) fn property_color(panel: &DebugPanel, cx: &App) -> Option<Hsla> {
     let theme = panel
         .workbench
         .upgrade()?

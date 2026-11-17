@@ -30,6 +30,8 @@ mod changes;
 mod chrome;
 #[path = "audit/command_palette.rs"]
 mod command_palette;
+#[path = "audit/debug_console.rs"]
+mod debug_console;
 #[path = "audit/debug_gutter.rs"]
 mod debug_gutter;
 #[path = "audit/debug_panel.rs"]
@@ -138,6 +140,7 @@ const SURFACES: &[&Surface] = &[
     &debug_panel::SURFACE,
     &debug_toolbar::SURFACE,
     &debug_run_widget::SURFACE,
+    &debug_console::SURFACE,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup

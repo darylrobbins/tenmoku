@@ -381,6 +381,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "workbench",
     ),
     (
+        "debug.show_console",
+        "Debug: Toggle Debug Console",
+        "workbench",
+    ),
+    (
         "workbench.untrust_folder",
         "Untrust This Folder",
         "workbench",

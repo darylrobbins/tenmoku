@@ -1606,6 +1606,12 @@ impl Workbench {
         self.toggle_debug_panel(cx.window, cx.cx);
     }
 
+    /// Debug: Toggle Debug Console
+    #[command(id = "debug.show_console")]
+    fn debug_show_console_command(&mut self, cx: &mut Cx<Self>) {
+        self.toggle_debug_console(cx.window, cx.cx);
+    }
+
     /// Quickfix: Next Item
     #[command(id = "quickfix.next")]
     fn quickfix_next(&mut self, cx: &mut Cx<Self>) {

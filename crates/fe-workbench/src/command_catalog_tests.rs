@@ -245,6 +245,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "debug.rerun_last",
     "debug.restart",
     "debug.run_to_cursor",
+    "debug.show_console",
     "debug.show_log",
     "debug.show_panels",
     "debug.show_session",

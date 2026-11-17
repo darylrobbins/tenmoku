@@ -65,6 +65,7 @@ mod completion_as_you_type;
 mod completion_words;
 mod debug_breakpoints;
 mod debug_commands;
+mod debug_console;
 mod debug_gutter;
 mod debug_java;
 mod debug_panel;

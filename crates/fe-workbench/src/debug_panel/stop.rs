@@ -180,7 +180,7 @@ impl Stop {
 }
 
 /// What a failed request shows: the adapter's message if it gave one.
-fn failure(error: &RequestError) -> SharedString {
+pub(super) fn failure(error: &RequestError) -> SharedString {
     match error.message() {
         Some(message) if !message.is_empty() => message.to_owned().into(),
         _ => error.to_string().into(),
@@ -258,7 +258,7 @@ impl DebugPanel {
     }
 
     /// The session, while the stop shown is still its current one.
-    fn live_session(
+    pub(super) fn live_session(
         &self,
         cx: &Context<Self>,
     ) -> Option<(Epoch, gpui::Entity<crate::debug_session::Debugger>)> {
@@ -370,6 +370,7 @@ impl DebugPanel {
     pub(super) fn fetch_expanded(&mut self, cx: &mut Context<Self>) {
         let (_, mut missing) = self.watch_rows();
         missing.extend(self.variable_rows().1);
+        missing.extend(self.console_rows().1);
         for (reference, counts) in missing {
             self.fetch_children(reference, counts, cx);
         }

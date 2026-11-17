@@ -20,9 +20,9 @@ use crate::{
     debug_panel::{DebugPanel, Part, StackRow, Tab, ValueRow},
 };
 
-const DEBUG: PanelId = PanelId(crate::dock::DEBUG_BUTTON);
+pub(super) const DEBUG: PanelId = PanelId(crate::dock::DEBUG_BUTTON);
 
-fn panel(debug: &mut Debug) -> Entity<DebugPanel> {
+pub(super) fn panel(debug: &mut Debug) -> Entity<DebugPanel> {
     debug
         .workbench
         .read_with(debug.cx, |workbench, _| workbench.debug_panel().clone())
@@ -91,7 +91,7 @@ fn click_stack(debug: &mut Debug, ix: usize) {
 }
 
 /// The variables requests the fake got for `reference`.
-fn fetches(fake: &FakeAdapter, reference: i64) -> Vec<Value> {
+pub(super) fn fetches(fake: &FakeAdapter, reference: i64) -> Vec<Value> {
     (requests(fake, "variables").into_iter())
         .filter(|arguments| arguments["variablesReference"] == reference)
         .collect()
@@ -555,7 +555,7 @@ fn foot(debug: &mut Debug) -> Vec<Icon> {
     icons[5..].to_vec()
 }
 
-fn bottom_shows(debug: &mut Debug) -> Option<PanelId> {
+pub(super) fn bottom_shows(debug: &mut Debug) -> Option<PanelId> {
     let workbench = debug.workbench.clone();
     debug.cx.update(|_, cx| {
         let dock = workbench.read(cx).terminal_dock().read(cx);
@@ -565,7 +565,7 @@ fn bottom_shows(debug: &mut Debug) -> Option<PanelId> {
     })
 }
 
-fn panel_focused(debug: &mut Debug) -> bool {
+pub(super) fn panel_focused(debug: &mut Debug) -> bool {
     let panel = panel(debug);
     debug
         .cx
@@ -845,12 +845,12 @@ fn dock_keys_leave_the_debug_panel() {
     }
 }
 
-fn tab_and_part(debug: &mut Debug) -> (Tab, Part) {
+pub(super) fn tab_and_part(debug: &mut Debug) -> (Tab, Part) {
     let panel = panel(debug);
     panel.read_with(debug.cx, |panel, _| panel.tab_and_part())
 }
 
-fn keys(debug: &mut Debug, keys: &str) {
+pub(super) fn keys(debug: &mut Debug, keys: &str) {
     debug.cx.simulate_keystrokes(keys);
     debug.draw();
 }
@@ -1648,4 +1648,70 @@ fn watch_keys_scroll_their_row_into_view(cx: &mut TestAppContext) {
     debug.draw();
     let last = value_rows(&mut debug, Part::Watch).len() + 1;
     assert!(watch_child_shown(&mut debug, last), "the Add watch row");
+    // Review T1852 F12: back from the input to Watch, by escape and by
+    // shift-tab, its selected row (point's y) scrolls into view again.
+    keys(&mut debug, "escape");
+    assert_eq!(tab_and_part(&mut debug), (Tab::Variables, Part::Watch));
+    debug.draw();
+    assert!(watch_child_shown(&mut debug, 3), "point's y after escape");
+    keys(&mut debug, "tab");
+    debug.draw();
+    assert!(
+        !watch_child_shown(&mut debug, 3),
+        "scrolled away to the input"
+    );
+    keys(&mut debug, "shift-tab");
+    assert_eq!(tab_and_part(&mut debug), (Tab::Variables, Part::Watch));
+    debug.draw();
+    assert!(
+        watch_child_shown(&mut debug, 3),
+        "point's y after shift-tab"
+    );
+}
+
+/// Review T1852 F14: a click on the Breakpoints tab while the Add watch
+/// input has focus moves focus to the tool window, so the keys reach the
+/// Breakpoints tree: space toggles its breakpoint.
+#[gpui::test]
+fn clicking_a_tab_moves_focus_off_the_input_it_hides(cx: &mut TestAppContext) {
+    let mut debug = trusted(cx, script);
+    let main = main_path(&debug.root);
+    debug.toggle(&main, 1);
+    debug.start("main");
+    debug.wait_stop_at(1);
+    debug.run("debug.show_panels");
+    debug.run("debug.show_panels");
+    keys(&mut debug, "tab tab");
+    assert_eq!(tab_and_part(&mut debug), (Tab::Variables, Part::WatchInput));
+    let panel = panel(&mut debug);
+    let input = panel.read_with(debug.cx, |panel, _| panel.watch_input().clone());
+    let tab = (debug.cx)
+        .debug_bounds(Tab::Breakpoints.selector())
+        .expect("the Breakpoints tab is drawn");
+    debug
+        .cx
+        .simulate_click(tab.center(), gpui::Modifiers::none());
+    debug.draw();
+    assert_eq!(
+        tab_and_part(&mut debug),
+        (Tab::Breakpoints, Part::Breakpoints)
+    );
+    let focus = panel.read_with(debug.cx, |panel, cx| panel.focus_handle(cx));
+    assert!(debug.cx.update(|window, _| focus.is_focused(window)));
+    assert!(
+        !debug
+            .cx
+            .update(|window, cx| input.focus_handle(cx).is_focused(window))
+    );
+    let row = panel.read_with(debug.cx, |panel, cx| {
+        (panel.breakpoint_rows(cx).iter())
+            .position(|row| matches!(row, crate::debug_panel::BreakpointRow::Breakpoint { .. }))
+            .unwrap()
+    });
+    // The first down selects the first row.
+    for _ in 0..=row {
+        keys(&mut debug, "down");
+    }
+    keys(&mut debug, "space");
+    assert_eq!(debug.breakpoints(&main), [(2, false)]);
 }

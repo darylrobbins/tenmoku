@@ -273,6 +273,7 @@ workbench-debug-panel-title = Debug
 workbench-debug-panel-rail-stopped = Debug, stopped
 workbench-debug-panel-tab-variables = Variables
 workbench-debug-panel-tab-breakpoints = Breakpoints
+workbench-debug-panel-tab-console = Console
 # The trees' accessible names.
 workbench-debug-panel-call-stack = Call stack
 workbench-debug-panel-watch-tree = Watch
@@ -365,3 +366,29 @@ workbench-debug-run-session-menu = Session Menu
 workbench-debug-run-session-placeholder = Debug session
 workbench-debug-run-show-debugger = Show Debugger
 workbench-debug-run-show-log = Show Adapter Log
+
+## The Debug tool window's Console tab (debug_panel/console.rs, card D10).
+
+command-debug-show_console = Debug: Toggle Debug Console
+
+# The output list's accessible name.
+workbench-debug-console-output = Console output
+# The input's placeholder, and its accessible name with no frame selected.
+workbench-debug-console-placeholder = Evaluate an expression
+# The input's accessible name: $frame is the selected frame's function.
+workbench-debug-console-input-name = Evaluate in { $frame }
+# With no session to evaluate in: the empty state, and the input's place.
+workbench-debug-console-no-session = Start a session to evaluate expressions.
+# An evaluation's first row: what was evaluated, after the prompt.
+workbench-debug-console-echo = › { $expression }
+# A result's accessible name and announcement: $value is the adapter's
+# text for it, $kind its type.
+workbench-debug-console-result-name = { $value }, { $kind }
+# A failed evaluation's accessible name and announcement: $error is the
+# adapter's message.
+workbench-debug-console-failed-name = Error: { $error }
+# Output rows' accessible names: an empty line, a line of the program's
+# error stream and one the adapter marks important; $text is the line.
+workbench-debug-console-blank = Blank line
+workbench-debug-console-stderr-name = { $text }, error output
+workbench-debug-console-important-name = { $text }, important

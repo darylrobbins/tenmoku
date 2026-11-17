@@ -1,18 +1,21 @@
 //! The Debug tool window of the bottom panel (docs/decisions/r1b9dw3g0g-debugger.md
 //! §5 "Panels", §13 "B3 design first"; `docs/design/design-system.md`,
 //! Debugger, "The Debug tool window"; card D9): Call Stack, Watch and
-//! Variables on its Variables tab, and the breakpoints and the adapter's
-//! exception filters on its Breakpoints tab.
+//! Variables on its Variables tab, the breakpoints and the adapter's
+//! exception filters on its Breakpoints tab, and the Debug Console on its
+//! Console tab ([`console`], card D10).
 //!
 //! - **Where.** One more tool window of the bottom dock, registered as Runs
 //!   is ([`crate::dock`]). Its rail button (Lucide `bug`) joins the rail's
 //!   foot right after Runs' the first time a session starts in the window
 //!   ([`Dock::join_debug`](crate::Dock::join_debug)), and carries a hare's
 //!   fur dot while a session is stopped. Each session shows the tool
-//!   window once, as it launches, without taking focus; its first stop
-//!   switches it to Variables unless a tab was picked since.
-//!   `debug.show_panels` toggles it: shown and focused, or hidden, focus
-//!   going back to the editor if it was in it.
+//!   window once, as it launches, on Console and without taking focus;
+//!   its first stop switches it to Variables unless a tab was picked
+//!   since. `debug.show_panels` toggles it: shown and focused, or hidden,
+//!   focus going back to the editor if it was in it; `debug.show_console`
+//!   shows it on Console, its input focused, or hides it if it shows
+//!   Console.
 //! - **Call Stack** ([`stop`]): the program's threads, the stopped one
 //!   holding its frames (the first page the session fetched), the others
 //!   fetching theirs when expanded. A frame row is the function in small
@@ -71,11 +74,15 @@ use crate::{
 use fe_dap::SessionState;
 
 mod breakpoints;
+mod console;
 mod rows;
 mod stop;
 
 #[cfg(test)]
 pub(crate) use breakpoints::{BreakpointRow, CodeReadGate};
+pub(crate) use console::ConsoleRow;
+#[cfg(test)]
+pub(crate) use console::{Category, HISTORY_MAX};
 #[cfg(test)]
 pub(crate) use rows::WATCH_MAX_HEIGHT;
 pub(crate) use rows::{StackRow, ValueRow};
@@ -107,6 +114,12 @@ pub(crate) enum Tab {
     #[default]
     Variables,
     Breakpoints,
+    Console,
+}
+
+impl Tab {
+    /// The tabs, in their row's order.
+    pub(crate) const ALL: [Tab; 3] = [Tab::Variables, Tab::Breakpoints, Tab::Console];
 }
 
 /// The parts the keys move between ([`DebugPanel::traverse`]): the row of
@@ -119,6 +132,10 @@ pub(crate) enum Part {
     WatchInput,
     Variables,
     Breakpoints,
+    /// The Console's output list.
+    Console,
+    /// The Console's input.
+    ConsoleInput,
 }
 
 impl Tab {
@@ -133,6 +150,7 @@ impl Tab {
                 Part::Variables,
             ],
             Tab::Breakpoints => &[Part::Tabs, Part::Breakpoints],
+            Tab::Console => &[Part::Tabs, Part::Console, Part::ConsoleInput],
         }
     }
 
@@ -141,6 +159,7 @@ impl Tab {
         match self {
             Tab::Variables => Part::Stack,
             Tab::Breakpoints => Part::Breakpoints,
+            Tab::Console => Part::Console,
         }
     }
 }
@@ -187,6 +206,8 @@ pub(crate) struct DebugPanel {
     window: Option<gpui::AnyWindowHandle>,
     values_scroll: UniformListScrollHandle,
     breakpoints_scroll: UniformListScrollHandle,
+    /// The Console tab's output, input and history.
+    console: console::Console,
     _store: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -207,6 +228,7 @@ impl DebugPanel {
                 panel.add_watch(expression, cx);
             }
         });
+        let console = console::Console::new(cx);
         Self {
             workbench,
             debugger: WeakEntity::new_invalid(),
@@ -228,29 +250,41 @@ impl DebugPanel {
             window: None,
             values_scroll: UniformListScrollHandle::new(),
             breakpoints_scroll: UniformListScrollHandle::new(),
+            console,
             _store: None,
             _subscriptions: vec![submitted],
         }
     }
 
     /// Shows `tab`, as a click on it does: picked, so a stop leaves it.
+    /// Focus leaves an input the tab hides for the panel (review T1852
+    /// F14).
     pub(crate) fn pick_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.picked = true;
         self.tab = tab;
         self.part = tab.first_tree();
+        self.leave_hidden_part(cx);
         cx.notify();
     }
 
-    /// Notes that the session `id` began: the first time for it, its stop
-    /// shows Variables again, and the caller shows the tool window. Whether
-    /// it's new: an emulated restart launches its adapter again in the same
-    /// session.
-    fn session_began(&mut self, id: u64) -> bool {
+    /// Notes that the session `id` began: the first time for it, the tool
+    /// window shows Console, emptied, until its first stop shows Variables,
+    /// and the caller shows the tool window. Whether it's new: an emulated
+    /// restart launches its adapter again in the same session.
+    fn session_began(&mut self, id: u64, cx: &mut Context<Self>) -> bool {
         if self.shown_for == Some(id) {
             return false;
         }
         self.shown_for = Some(id);
         self.picked = false;
+        self.console.clear();
+        self.selected.remove(&Part::Console);
+        self.tab = Tab::Console;
+        if !Tab::Console.parts().contains(&self.part) {
+            self.part = Tab::Console.first_tree();
+        }
+        self.leave_hidden_part(cx);
+        cx.notify();
         true
     }
 
@@ -337,9 +371,8 @@ impl DebugPanel {
                 }
             }
             DebuggerEvent::Breakpoints(_) => {}
-            DebuggerEvent::Starting(_) | DebuggerEvent::StartGivenUp | DebuggerEvent::Output(_) => {
-                return;
-            }
+            DebuggerEvent::Output(body) => return self.console_output(body, cx),
+            DebuggerEvent::Starting(_) | DebuggerEvent::StartGivenUp => {}
         }
         self.leave_hidden_part(cx);
         cx.notify();
@@ -417,10 +450,31 @@ impl DebugPanel {
             cx.stop_propagation();
             return cx.notify();
         }
+        // The Console's: enter evaluates, up and down recall the history.
+        if self.console.input.focus_handle(cx).is_focused(window) {
+            let handled = match keystroke.key.as_str() {
+                "enter" if plain => {
+                    (self.console.input).update(cx, |input, cx| input.submit(cx));
+                    true
+                }
+                "escape" if plain => {
+                    self.focus_part(Part::Console, window, cx);
+                    true
+                }
+                "up" if plain => self.recall(-1, cx),
+                "down" if plain => self.recall(1, cx),
+                _ => return,
+            };
+            if handled {
+                cx.stop_propagation();
+                cx.notify();
+            }
+            return;
+        }
         if !plain {
             return;
         }
-        if !self.visible_parts().contains(&self.part) {
+        if !self.visible_parts(cx).contains(&self.part) {
             self.part = Part::Tabs;
         }
         let handled = match (self.part, keystroke.key.as_str()) {
@@ -442,30 +496,45 @@ impl DebugPanel {
     }
 
     /// The parts the tab shown draws now: Variables' trees and its Add
-    /// watch input only while stopped, its empty state else.
-    fn visible_parts(&self) -> &'static [Part] {
+    /// watch input only while stopped, its empty state else; Console's
+    /// input only with a session to evaluate in, and its list only with
+    /// rows or the input.
+    fn visible_parts(&self, cx: &App) -> &'static [Part] {
         match (self.tab, self.stop.is_some()) {
             (Tab::Variables, false) => &[Part::Tabs],
+            (Tab::Console, _) if self.console_live(cx) => Tab::Console.parts(),
+            (Tab::Console, _) if !self.console_rows().0.is_empty() => &[Part::Tabs, Part::Console],
+            (Tab::Console, _) => &[Part::Tabs],
             (tab, _) => tab.parts(),
         }
     }
 
-    /// Moves the keys and focus from the Add watch input to the row of tabs
-    /// if it isn't drawn any more (the program ran on, or the session
-    /// ended). A tree that isn't drawn keeps the keys for the next stop to
-    /// give back; a key pressed before then goes to the tabs.
+    /// Moves the keys from an input that isn't drawn any more (the program
+    /// ran on, the session ended, or another tab shows) to the row of
+    /// tabs, and focus from it to the panel. A tree that isn't drawn keeps
+    /// the keys for the next stop to give back; a key pressed before then
+    /// goes to the tabs.
     fn leave_hidden_part(&mut self, cx: &mut Context<Self>) {
-        if self.part != Part::WatchInput || self.visible_parts().contains(&self.part) {
-            return;
+        let visible = self.visible_parts(cx);
+        let inputs = [Part::WatchInput, Part::ConsoleInput];
+        if inputs.contains(&self.part) && !visible.contains(&self.part) {
+            self.part = Part::Tabs;
         }
-        self.part = Part::Tabs;
-        let Some(window) = self.window else {
+        let hidden: Vec<FocusHandle> = [
+            (Part::WatchInput, &self.watch_input),
+            (Part::ConsoleInput, &self.console.input),
+        ]
+        .into_iter()
+        .filter(|(part, _)| !visible.contains(part))
+        .map(|(_, input)| input.focus_handle(cx))
+        .collect();
+        let Some(window) = self.window.filter(|_| !hidden.is_empty()) else {
             return;
         };
-        let (focus, typing) = (self.focus.clone(), self.watch_input.focus_handle(cx));
+        let focus = self.focus.clone();
         cx.defer(move |cx| {
             let moved = window.update(cx, |_, window, cx| {
-                if typing.is_focused(window) {
+                if hidden.iter().any(|typing| typing.is_focused(window)) {
                     window.focus(&focus, cx);
                 }
             });
@@ -476,7 +545,7 @@ impl DebugPanel {
     /// Tab (`by` 1) or shift-tab (-1): the keys go to the next or last part
     /// the tab shown draws, round from the row of tabs to its last tree.
     pub(crate) fn traverse(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let parts = self.visible_parts();
+        let parts = self.visible_parts(cx);
         let at = parts
             .iter()
             .position(|part| *part == self.part)
@@ -485,27 +554,60 @@ impl DebugPanel {
         self.focus_part(next, window, cx);
     }
 
-    /// Gives `part` the keys: the input its focus, a tree the panel's, its
-    /// first row selected if none is.
+    /// Gives `part` the keys: an input its focus, a tree the panel's, its
+    /// first row selected if none is, or its last if the selected one is
+    /// gone, scrolled into view (review T1852 F12).
     fn focus_part(&mut self, part: Part, window: &mut Window, cx: &mut Context<Self>) {
         self.part = part;
-        if part == Part::WatchInput {
-            // The Add watch row, last in Watch's scrolled list.
-            self.watch_scroll
-                .scroll_to_item(self.watch_rows().0.len() + 1);
-            window.focus(&self.watch_input.focus_handle(cx), cx);
-            return;
-        }
-        if part != Part::Tabs && !self.selected.contains_key(&part) && self.part_len(part, cx) > 0 {
-            self.selected.insert(part, 0);
+        match part {
+            Part::WatchInput => {
+                // The Add watch row, last in Watch's scrolled list.
+                self.watch_scroll
+                    .scroll_to_item(self.watch_rows().0.len() + 1);
+                return window.focus(&self.watch_input.focus_handle(cx), cx);
+            }
+            Part::ConsoleInput => {
+                return window.focus(&self.console.input.focus_handle(cx), cx);
+            }
+            Part::Tabs => {}
+            _ => {
+                let len = self.part_len(part, cx);
+                let at = self.selected.get(&part).copied();
+                let ix = match at {
+                    _ if len == 0 => None,
+                    None => Some(0),
+                    Some(at) => Some(at.min(len - 1)),
+                };
+                if let Some(ix) = ix {
+                    self.selected.insert(part, ix);
+                    self.reveal(part, ix);
+                }
+            }
         }
         window.focus(&self.focus, cx);
+    }
+
+    /// Scrolls row `ix` of tree `part` into view.
+    fn reveal(&self, part: Part, ix: usize) {
+        let scroll = match part {
+            // After Watch's heading.
+            Part::Watch => return self.watch_scroll.scroll_to_item(ix + 1),
+            Part::Console => {
+                let strategy = gpui::ScrollStrategy::Nearest;
+                return self.console.scroll.scroll_to_item(ix, strategy);
+            }
+            Part::Stack => &self.stack_scroll,
+            Part::Variables => &self.values_scroll,
+            Part::Breakpoints => &self.breakpoints_scroll,
+            Part::Tabs | Part::WatchInput | Part::ConsoleInput => return,
+        };
+        scroll.scroll_to_item(ix, gpui::ScrollStrategy::Top);
     }
 
     /// Left and right on the row of tabs: the other tab shows, as a click
     /// shows it, the keys staying on the row.
     fn cycle_tab(&mut self, by: isize, cx: &mut Context<Self>) -> bool {
-        let tabs = [Tab::Variables, Tab::Breakpoints];
+        let tabs = Tab::ALL;
         let at = tabs.iter().position(|tab| *tab == self.tab).unwrap_or(0) as isize;
         let next = tabs[(at + by).rem_euclid(tabs.len() as isize) as usize];
         self.pick_tab(next, cx);
@@ -513,16 +615,21 @@ impl DebugPanel {
         true
     }
 
-    /// The Add watch input's editing commands (`text_input.backspace` and
-    /// the like, which the input leaves to its host); others go on.
+    /// The Add watch and Console inputs' editing commands
+    /// (`text_input.backspace` and the like, which an input leaves to its
+    /// host), for the one with focus; others go on.
     pub(super) fn on_input_command(
         &mut self,
         run: &RunCommand,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let input = match self.console.input.focus_handle(cx).is_focused(window) {
+            true => self.console.input.clone(),
+            false => self.watch_input.clone(),
+        };
         match crate::picker::op(run, cx).and_then(crate::picker::PaletteOp::edit) {
-            Some(edit) => self.watch_input.update(cx, edit),
+            Some(edit) => input.update(cx, edit),
             None => cx.propagate(),
         }
     }
@@ -534,8 +641,9 @@ impl DebugPanel {
             Part::Watch => self.watch_rows().0.len(),
             Part::Variables => self.variable_rows().0.len(),
             Part::Breakpoints => self.breakpoint_rows(cx).len(),
-            Part::Tabs => 2,
-            Part::WatchInput => 0,
+            Part::Console => self.console_rows().0.len(),
+            Part::Tabs => Tab::ALL.len(),
+            Part::WatchInput | Part::ConsoleInput => 0,
         }
     }
 
@@ -550,19 +658,7 @@ impl DebugPanel {
             Some(at) => at.saturating_add_signed(by).min(len - 1),
         };
         self.selected.insert(self.part, next);
-        if self.part == Part::Watch {
-            // After Watch's heading.
-            self.watch_scroll.scroll_to_item(next + 1);
-        }
-        let scroll = match self.part {
-            Part::Stack => Some(&self.stack_scroll),
-            Part::Variables => Some(&self.values_scroll),
-            Part::Breakpoints => Some(&self.breakpoints_scroll),
-            Part::Watch | Part::Tabs | Part::WatchInput => None,
-        };
-        if let Some(scroll) = scroll {
-            scroll.scroll_to_item(next, gpui::ScrollStrategy::Top);
-        }
+        self.reveal(self.part, next);
         true
     }
 
@@ -595,6 +691,7 @@ impl DebugPanel {
                     _ => false,
                 }
             }
+            Part::Console => self.expand_console_row(ix, expand, cx),
             _ => false,
         }
     }
@@ -631,7 +728,16 @@ impl DebugPanel {
                 self.click_breakpoint_row(ix, window, cx);
                 true
             }
-            Part::Tabs | Part::WatchInput => false,
+            Part::Console => {
+                let expandable = (self.console_rows().0.get(ix)).is_some_and(|row| {
+                    row.expandable() || matches!(row, ConsoleRow::Child(ValueRow::More { .. }))
+                });
+                if expandable {
+                    self.click_console_row(ix, cx);
+                }
+                expandable
+            }
+            Part::Tabs | Part::WatchInput | Part::ConsoleInput => false,
         }
     }
 
@@ -674,8 +780,30 @@ impl Focusable for DebugPanel {
     }
 }
 
+impl Tab {
+    fn label(self) -> SharedString {
+        match self {
+            Tab::Variables => tr!("workbench-debug-panel-tab-variables"),
+            Tab::Breakpoints => tr!("workbench-debug-panel-tab-breakpoints"),
+            Tab::Console => tr!("workbench-debug-panel-tab-console"),
+        }
+    }
+
+    /// The selector tests find its tab by.
+    pub(crate) fn selector(self) -> &'static str {
+        match self {
+            Tab::Variables => TAB_VARIABLES_ID,
+            Tab::Breakpoints => TAB_BREAKPOINTS_ID,
+            Tab::Console => TAB_CONSOLE_ID,
+        }
+    }
+}
+
 /// The selectors tests find the parts by.
 pub(crate) const TAB_ID: &str = "debug-panel-tab";
+const TAB_VARIABLES_ID: &str = "debug-panel-tab-variables";
+const TAB_BREAKPOINTS_ID: &str = "debug-panel-tab-breakpoints";
+const TAB_CONSOLE_ID: &str = "debug-panel-tab-console";
 pub(crate) const STACK_ID: &str = "debug-panel-call-stack";
 pub(crate) const WATCH_ID: &str = "debug-panel-watch";
 pub(crate) const VARIABLES_ID: &str = "debug-panel-variables";
@@ -691,40 +819,35 @@ impl Render for DebugPanel {
         if fe_gpui::vim_enabled(cx) {
             context.add(VIM_FLAG);
         }
-        let tabs = [
-            (Tab::Variables, tr!("workbench-debug-panel-tab-variables")),
-            (
-                Tab::Breakpoints,
-                tr!("workbench-debug-panel-tab-breakpoints"),
-            ),
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(ix, (tab, label))| {
-            let shown = self.tab == tab;
-            let cursor = shown && self.part == Part::Tabs && self.focus.is_focused(window);
-            let element = div()
-                .id(gpui::ElementId::NamedInteger(TAB_ID.into(), ix as u64))
-                .h_full()
-                .px_2()
-                .flex()
-                .items_center()
-                .cursor_pointer()
-                .text_color(if shown { c.text.primary } else { c.text.muted })
-                .when(shown, |tab| tab.border_b_2().border_color(c.accent.base))
-                .when(cursor, |tab| {
-                    tab.rounded(fe_ui::radius::CONTROL).bg(ui.row_hover)
-                })
-                .hover(move |tab| tab.text_color(c.text.primary))
-                .on_click(cx.listener(move |panel, _, _, cx| panel.pick_tab(tab, cx)))
-                .child(label.clone());
-            let states = fe_ui::States {
-                selected: Some(shown),
-                ..Default::default()
-            };
-            fe_ui::node_with(element, window, cx, fe_ui::Role::Tab, label, states)
-        })
-        .collect::<Vec<_>>();
+        let tabs = (Tab::ALL.into_iter())
+            .map(|tab| (tab, tab.label()))
+            .enumerate()
+            .map(|(ix, (tab, label))| {
+                let shown = self.tab == tab;
+                let cursor = shown && self.part == Part::Tabs && self.focus.is_focused(window);
+                let element = div()
+                    .id(gpui::ElementId::NamedInteger(TAB_ID.into(), ix as u64))
+                    .debug_selector(move || tab.selector().to_owned())
+                    .h_full()
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .text_color(if shown { c.text.primary } else { c.text.muted })
+                    .when(shown, |tab| tab.border_b_2().border_color(c.accent.base))
+                    .when(cursor, |tab| {
+                        tab.rounded(fe_ui::radius::CONTROL).bg(ui.row_hover)
+                    })
+                    .hover(move |tab| tab.text_color(c.text.primary))
+                    .on_click(cx.listener(move |panel, _, _, cx| panel.pick_tab(tab, cx)))
+                    .child(label.clone());
+                let states = fe_ui::States {
+                    selected: Some(shown),
+                    ..Default::default()
+                };
+                fe_ui::node_with(element, window, cx, fe_ui::Role::Tab, label, states)
+            })
+            .collect::<Vec<_>>();
         let header = div()
             .flex_none()
             .h(fe_ui::height::CONTROL)
@@ -739,6 +862,7 @@ impl Render for DebugPanel {
         let body: AnyElement = match self.tab {
             Tab::Variables => self.render_variables_tab(window, cx),
             Tab::Breakpoints => self.render_breakpoints_tab(window, cx),
+            Tab::Console => self.render_console_tab(window, cx),
         };
         div()
             .id(verbatim!("debug-panel"))
@@ -870,7 +994,7 @@ impl Workbench {
         let session = (self.debugger(cx)).and_then(|debugger| debugger.read(cx).session_id());
         let began = *state == SessionState::Launching
             && session.is_some_and(|id| {
-                (self.debug_panel.clone()).update(cx, |panel, _| panel.session_began(id))
+                (self.debug_panel.clone()).update(cx, |panel, cx| panel.session_began(id, cx))
             });
         if began {
             self.dock().update(cx, |dock, cx| dock.join_debug(cx));

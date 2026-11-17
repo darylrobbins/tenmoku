@@ -504,6 +504,15 @@ impl TextInput {
         self
     }
 
+    /// Changes its accessible name, for a host whose input names what it
+    /// acts on: `None` goes back to the placeholder.
+    pub fn set_name(&mut self, name: Option<SharedString>, cx: &mut Context<Self>) {
+        if self.name != name {
+            self.name = name;
+            cx.notify();
+        }
+    }
+
     /// The name a screen reader reads now: the one [`TextInput::name`] set,
     /// else the placeholder in the active locale.
     pub fn accessible_name(&self) -> SharedString {
