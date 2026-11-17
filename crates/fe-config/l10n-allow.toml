@@ -31,6 +31,16 @@ text = ".{}.{}.tmp"
 reason = "A temporary file's name"
 
 [[literal]]
+file = "src/language_choices.rs"
+text = ".{}.{}.tmp"
+reason = "A temporary file's name"
+
+[[literal]]
+file = "src/language_choices.rs"
+text = "{key}.toml"
+reason = "A language choices file's name"
+
+[[literal]]
 file = "src/theme.rs"
 text = " Every key, in declaration order."
 reason = "A doc comment on the items the colors! macro generates"

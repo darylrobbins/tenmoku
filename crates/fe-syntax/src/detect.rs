@@ -105,13 +105,21 @@ pub(crate) fn built_in_interpreter_clash(interpreter: &str) -> Option<&'static s
 }
 
 /// The language VS Code's `firstLine` patterns pick for the first line of
-/// `first_line`, if it is compiled in: `<?xml`, `<svg` or `<!doctype svg`
-/// anywhere on the line is XML, `#cloud-config` at its start is YAML, and an
-/// Emacs `-*- mode: shell-script -*-` line is shell. All are case-sensitive.
+/// `first_line`, if it is compiled in or [registered](crate::register_language):
+/// `<?xml`, `<svg` or `<!doctype svg` anywhere on the line is XML,
+/// `#cloud-config` at its start is YAML, and an Emacs
+/// `-*- mode: shell-script -*-` line is shell, all case-sensitive; `<?php` at
+/// its start is PHP, and `<!DOCTYPE html` or `<html`, in any ASCII case, at its
+/// start is HTML. A start may follow whitespace.
 fn language_name_for_first_line(first_line: &str) -> Option<&'static str> {
     let line = first_line.lines().next()?;
+    let start = line.trim_start_matches(is_js_space);
     let language = if is_xml_line(line) {
         "xml"
+    } else if start.starts_with("<?php") {
+        "php"
+    } else if is_html_line(start) {
+        "html"
     } else if line.starts_with("#cloud-config") {
         "yaml"
     } else if is_shell_mode_line(line) {
@@ -130,6 +138,26 @@ fn is_js_space(c: char) -> bool {
 
 fn is_xml_line(line: &str) -> bool {
     line.contains("<?xml") || line.contains("<svg") || has_doctype_svg(line)
+}
+
+/// `<!DOCTYPE html` or `<html`, ignoring ASCII case, at the start of `start`,
+/// the tag's name ending there: `<htmlx` isn't HTML.
+fn is_html_line(start: &str) -> bool {
+    let tag_ends = |rest: &str| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '-');
+    if let Some(rest) = strip_prefix_ignore_case(start, "<html") {
+        return tag_ends(rest);
+    }
+    strip_prefix_ignore_case(start, "<!doctype").is_some_and(|rest| {
+        let html = rest.trim_start_matches(is_js_space);
+        html.len() < rest.len() && strip_prefix_ignore_case(html, "html").is_some_and(tag_ends)
+    })
+}
+
+/// `text` after `prefix`, an ASCII prefix matched ignoring ASCII case.
+fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &text[prefix.len()..])
 }
 
 /// `<!doctype`, whitespace, then `svg`.
@@ -171,10 +199,10 @@ pub fn detect_language_name(path: Option<&Path>, text_start: &str) -> Option<&'s
 
 /// The language for a buffer: the one a [modeline](language_name_for_modeline)
 /// in `text_start` or `text_end` names, else the path's if it names one, else
-/// the shebang or other first-line marker in `text_start`, else, for a path
-/// without an extension, XML or JSON by how the text starts. Pass the first
-/// few hundred bytes and the last kilobyte or so, from a line start, not the
-/// whole buffer.
+/// the shebang or other first-line marker in `text_start`, else XML or JSON by
+/// how the text starts. A path with an extension no language claims, or none,
+/// leaves it to the content, as no path does. Pass the first few hundred
+/// bytes and the last kilobyte or so, from a line start, not the whole buffer.
 pub fn detect_language(
     path: Option<&Path>,
     text_start: &str,
@@ -184,7 +212,7 @@ pub fn detect_language(
         .or_else(|| path.and_then(language_name_for_path))
         .or_else(|| language_name_for_shebang(text_start))
         .or_else(|| language_name_for_first_line(text_start))
-        .or_else(|| language_name_by_content(path, text_start))
+        .or_else(|| language_name_by_content(text_start))
 }
 
 /// What an `env` option takes after it.

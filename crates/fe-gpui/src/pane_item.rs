@@ -768,7 +768,7 @@ impl EditorView {
                     if in_encoding {
                         view.model.buffer_mut().set_encoding(written);
                     }
-                    view.detect_language(cx);
+                    view.resolve_language(cx);
                     queue_save_write(view, Some(window), undo_at_save, &saved_text, cx);
                     Ok(())
                 })??;
@@ -812,6 +812,35 @@ impl EditorView {
         })
     }
 
+    /// Highlights the buffer in the language the host's
+    /// [resolver](EditorView::set_language_resolver) says its path is, as
+    /// one chosen ([`EditorView::is_language_chosen`]), else in the one
+    /// [detected](EditorView::detect_language). What an editor opening a
+    /// file, or taking a new path, runs.
+    pub fn resolve_language(&mut self, cx: &mut Context<Self>) {
+        let Some(language) = self.resolved_language(cx) else {
+            self.detect_language(cx);
+            return;
+        };
+        if self.current_language() != Some(language.unwrap_or("")) {
+            self.set_language(language, cx);
+        } else {
+            self.chosen_language = language;
+        }
+        self.language_chosen = true;
+        cx.notify();
+    }
+
+    /// The buffer's language's name, `""` for plain text; `None` while one
+    /// loads.
+    fn current_language(&self) -> Option<&'static str> {
+        match self.syntax() {
+            Some(syntax) => Some(syntax.language().name()),
+            None if self.is_loading_language() => None,
+            None => Some(""),
+        }
+    }
+
     /// Highlights the buffer in the language a modeline in its first or last
     /// lines, its path or its first lines say, unless it already is.
     pub fn detect_language(&mut self, cx: &mut Context<Self>) {
@@ -830,11 +859,7 @@ impl EditorView {
         };
         let end = text.slice_to_string(tail_start..text.len());
         let language = fe_syntax::detect_language(self.language_path(), &start, &end);
-        let current = match self.syntax() {
-            Some(syntax) => Some(syntax.language().name()),
-            None if self.is_loading_language() => None,
-            None => Some(""),
-        };
+        let current = self.current_language();
         if current.is_none() || current != Some(language.unwrap_or("")) {
             self.set_language(language, cx);
         }
@@ -843,11 +868,13 @@ impl EditorView {
     }
 
     /// Highlights the buffer in the language `source` and its first lines say,
-    /// for a model with no path, as a file's text at a revision has. It's
-    /// detected, not chosen, so it can be detected again.
+    /// for a model with no path, as a file's text at a revision has, unless
+    /// the [resolver](EditorView::set_language_resolver) says `source`'s,
+    /// which is chosen. Detected, it isn't chosen, so it can be detected
+    /// again.
     pub fn detect_language_from(&mut self, source: PathBuf, cx: &mut Context<Self>) {
         self.language_source = Some(source);
-        self.detect_language(cx);
+        self.resolve_language(cx);
     }
 
     /// Queues a save of the buffer: the save running or waiting before it,

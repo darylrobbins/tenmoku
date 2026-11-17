@@ -24,6 +24,7 @@ pub mod first_run;
 pub mod harpoon;
 pub mod jsonc;
 pub mod l10n;
+pub mod language_choices;
 pub mod paths;
 pub mod recent;
 pub mod settings;

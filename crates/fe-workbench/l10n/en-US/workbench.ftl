@@ -14,6 +14,12 @@ workbench-workbench-theme-placeholder = Select a color theme…
 workbench-workbench-extensions-placeholder = Filter installed extensions…
 workbench-workbench-quick-open-placeholder = Go to file…
 
+## Change Language Mode.
+
+# Change Language Mode's first row: forget the language picked for the file
+# and detect it again from its name and content.
+workbench-workbench-language-auto-detect = Auto Detect
+
 ## Saving, auto save and files that changed on disk.
 
 # A toast: auto save didn't save a file that changed on disk since it was

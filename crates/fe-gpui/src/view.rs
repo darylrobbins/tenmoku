@@ -53,6 +53,17 @@ pub(crate) const DETECT_BYTES: usize = 512;
 /// after the cut: plenty for its last five lines.
 pub(crate) const DETECT_TAIL_BYTES: usize = 1024;
 
+/// What the host says a file's language is, ahead of detecting it: a
+/// language picked for the file before, say. `Some(Some(name))` is a
+/// language, `Some(None)` Plain Text and `None` no say.
+pub(crate) type LanguageResolver = dyn Fn(&Path, &App) -> Option<Option<String>>;
+
+/// The host's [`LanguageResolver`], set by
+/// [`EditorView::set_language_resolver`].
+struct LanguageResolverGlobal(std::rc::Rc<LanguageResolver>);
+
+impl gpui::Global for LanguageResolverGlobal {}
+
 /// The most text written to the primary selection, in bytes.
 const PRIMARY_SELECTION_MAX: usize = 1 << 20;
 
@@ -616,8 +627,34 @@ impl EditorView {
         })
         .detach();
         view.sync_vim(cx);
-        view.detect_language(cx);
+        view.resolve_language(cx);
         view
+    }
+
+    /// Has `resolve` say the language of each file an editor opens, or
+    /// takes a new path for, ahead of detection
+    /// ([`EditorView::resolve_language`]): `Some(Some(name))` a language,
+    /// `Some(None)` Plain Text, `None` no say. A name no language has
+    /// leaves it to detection. Replaces the one set before.
+    pub fn set_language_resolver(
+        cx: &mut App,
+        resolve: impl Fn(&Path, &App) -> Option<Option<String>> + 'static,
+    ) {
+        cx.set_global(LanguageResolverGlobal(std::rc::Rc::new(resolve)));
+    }
+
+    /// The language the [resolver](EditorView::set_language_resolver) says
+    /// the buffer's [path](EditorView::language_path) is: `Some(None)` for
+    /// Plain Text, `None` if it has no say or names no language there is.
+    pub(crate) fn resolved_language(&self, cx: &App) -> Option<Option<&'static str>> {
+        let path = self.language_path()?;
+        let resolve = cx.try_global::<LanguageResolverGlobal>()?.0.clone();
+        match resolve(path, cx)? {
+            None => Some(None),
+            Some(name) => fe_syntax::language_names()
+                .find(|&known| known == name)
+                .map(Some),
+        }
     }
 
     /// Tints the tab title in `tint`, or not; redraws only if that changed.

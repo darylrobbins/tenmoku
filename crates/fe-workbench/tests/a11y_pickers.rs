@@ -348,10 +348,11 @@ fn options_are_named_by_their_text_not_their_ids(cx: &mut TestAppContext) {
     assert_eq!(announced(&nodes), selected.first().cloned());
     press("escape", cx);
 
-    // Plain Text's id is empty.
+    // Plain Text's id is empty, Auto Detect's `*`.
     run("language.select", cx);
     let (labels, _) = options(&drawn(cx));
-    assert!(labels[0].starts_with("Plain Text"), "{labels:?}");
+    assert!(labels[0].starts_with("Auto Detect"), "{labels:?}");
+    assert!(labels[1].starts_with("Plain Text"), "{labels:?}");
     assert!(labels.iter().all(|l| !l.trim().is_empty()), "{labels:?}");
 }
 

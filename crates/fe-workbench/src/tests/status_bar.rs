@@ -300,10 +300,11 @@ fn language_picker_sets_the_language(cx: &mut TestAppContext) {
     draw(cx);
     assert!(open(&workbench, cx));
     let labels = picker.read_with(cx, |picker, _| picker.delegate.labels());
-    assert_eq!(labels[0], ("Plain Text".into(), false));
+    assert_eq!(labels[0], ("Auto Detect".into(), false));
+    assert_eq!(labels[1], ("Plain Text".into(), false));
     let current: Vec<_> = labels.iter().filter(|(_, current)| *current).collect();
     assert_eq!(current, [&("Rust".into(), true)]);
-    let names: Vec<_> = labels[1..]
+    let names: Vec<_> = labels[2..]
         .iter()
         .map(|(label, _)| label.to_lowercase())
         .collect();
@@ -320,10 +321,10 @@ fn language_picker_sets_the_language(cx: &mut TestAppContext) {
     assert!(!open(&workbench, cx));
     assert!(editor_focused(&editor, cx));
 
-    // Plain Text is first, so selected.
+    // Plain Text is second, after Auto Detect.
     dispatch("language.select", cx);
     assert!(open(&workbench, cx));
-    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("down enter");
     draw(cx);
     assert_eq!(syntax(cx), None);
     assert_eq!(language(&workbench, cx).as_deref(), Some("Plain Text"));

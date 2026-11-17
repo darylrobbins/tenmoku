@@ -325,7 +325,7 @@ impl Workbench {
             let shares = other != *editor
                 && (other.read(cx).model()).shares_buffer_with(editor.read(cx).model());
             if shares {
-                other.update(cx, |other, cx| other.detect_language(cx));
+                other.update(cx, |other, cx| other.resolve_language(cx));
             }
         }
         for pane in self.panes(cx) {
@@ -626,7 +626,7 @@ impl Workbench {
             }
         }
         for (editor, _) in &moved {
-            editor.update(cx, |editor, cx| editor.detect_language(cx));
+            editor.update(cx, |editor, cx| editor.resolve_language(cx));
         }
         for pane in self.panes(cx) {
             pane.update(cx, |pane, cx| pane.sync_paths(cx));

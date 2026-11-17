@@ -100,6 +100,7 @@ mod gradle_custom_task;
 mod hex_viewer;
 mod hover_callers;
 mod icon_theme_install;
+mod language_remembered;
 mod launch;
 mod launch_defs;
 pub(crate) mod lsp;

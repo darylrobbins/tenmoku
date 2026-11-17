@@ -259,6 +259,7 @@ pub fn init(cx: &mut App) {
     test_run_view::init(cx);
     lsp::init(cx);
     grammar_prompt::init(cx);
+    language_picker::init(cx);
     editor_menu::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.

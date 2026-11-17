@@ -181,10 +181,12 @@ impl Setup {
         self.dir.path().join("state").join(PROMPT_FILE)
     }
 
-    /// A file called `name` in the fixture's directory.
+    /// A file called `name` in the fixture's directory: JSON the content
+    /// sniff doesn't take for JSON, so it's plain until the fixture's
+    /// language, JSON's grammar, is installed.
     fn file(&self, name: &str) -> PathBuf {
         let path = self.dir.path().join(name);
-        fs::write(&path, "{\"a\": 1}\n").unwrap();
+        fs::write(&path, "\"a\"\n").unwrap();
         path
     }
 
@@ -907,7 +909,7 @@ fn the_sides_of_a_diff_tab_highlight_too(cx: &mut TestAppContext) {
     let path = setup.file(&name);
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
     let diff = cx.update(|_, cx| {
-        let model = |path: Option<PathBuf>| EditorModel::new(Buffer::new("{\"a\": 1}\n"), path);
+        let model = |path: Option<PathBuf>| EditorModel::new(Buffer::new("\"a\"\n"), path);
         let diff = cx.new(|cx| {
             let left = DiffSide::new("HEAD", model(None)).read_only();
             let right = DiffSide::new("Working Tree", model(Some(path.clone())));
@@ -1426,7 +1428,7 @@ fn a_tab_told_where_its_language_comes_from_highlights(cx: &mut TestAppContext) 
     let source = setup.file(&format!("a.{FIXTURE_EXTENSION}"));
     let editor = cx.update(|_, cx| {
         cx.new(|cx| {
-            let model = EditorModel::new(Buffer::new("{\"a\": 1}\n"), None);
+            let model = EditorModel::new(Buffer::new("\"a\"\n"), None);
             let mut view = EditorView::new(model, fe_gpui::EditorTheme::default_dark(cx), cx);
             view.detect_language_from(source, cx);
             view
@@ -1457,7 +1459,7 @@ fn plain_text_picked_on_a_diff_side_stays_after_an_install(cx: &mut TestAppConte
     let path = setup.file(&name);
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
     let diff = cx.update(|_, cx| {
-        let model = |path| EditorModel::new(Buffer::new("{\"a\": 1}\n"), path);
+        let model = |path| EditorModel::new(Buffer::new("\"a\"\n"), path);
         let diff = cx.new(|cx| {
             let left = DiffSide::new("HEAD", model(None)).read_only();
             let right = DiffSide::new("Working Tree", model(Some(path.clone())));

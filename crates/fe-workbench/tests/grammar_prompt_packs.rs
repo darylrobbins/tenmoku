@@ -610,9 +610,9 @@ fn pack_install_installs_each_missing_language_and_rehighlights_their_tabs(
     let (workbench, cx) = window(cx);
 
     // Two's tab is open and plain, its own offer put off.
-    let two = open(&workbench, setup.file("b.pktwo", "{\"a\": 1}\n"), cx);
+    let two = open(&workbench, setup.file("b.pktwo", "\"a\"\n"), cx);
     click(&workbench, "Not now", cx);
-    let one = open(&workbench, setup.file("a.pkone", "{\"a\": 1}\n"), cx);
+    let one = open(&workbench, setup.file("a.pkone", "\"a\"\n"), cx);
     assert_eq!((language_of(&one, cx), language_of(&two, cx)), (None, None));
 
     click(&workbench, "Install Duo pack (2 languages, 2.0 MB)", cx);
@@ -662,7 +662,7 @@ fn a_pack_member_failing_names_it_and_installs_the_rest(cx: &mut TestAppContext)
     );
     let (workbench, cx) = window(cx);
 
-    let first = open(&workbench, setup.file("a.pkfirst", "{\"a\": 1}\n"), cx);
+    let first = open(&workbench, setup.file("a.pkfirst", "\"a\"\n"), cx);
     click(&workbench, "Install Trio pack (3 languages, 3.0 MB)", cx);
 
     assert_eq!(

@@ -5,7 +5,7 @@
 //! buffer lines pickers), and the breadcrumbs and
 //! navigation buttons they read from.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use fe_gpui::EditorView;
 use gpui::{AppContext as _, Context, Entity, Focusable, WeakEntity, Window};
@@ -119,8 +119,9 @@ impl Workbench {
             self.dismiss_palette(window, cx);
         }
         let picker = self.language_picker.clone();
+        let root = self.root().map(Path::to_owned);
         picker.update(cx, |picker, cx| {
-            picker.delegate.opened(&editor, cx);
+            picker.delegate.opened(&editor, root.as_deref(), cx);
             picker.show(window, cx);
         });
         self.show_palette(Palette::Language, picker, window, cx);

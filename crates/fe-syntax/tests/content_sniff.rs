@@ -1,6 +1,6 @@
-//! A file whose path has no extension, or a buffer with no path, is XML or
-//! JSON when its content starts like one, after everything else has had its
-//! say.
+//! A file whose path names no language, by an extension none claims or by
+//! none, or a buffer with no path, is XML or JSON when its content starts
+//! like one, after everything else has had its say.
 
 #![cfg(all(feature = "xml", feature = "json"))]
 
@@ -54,7 +54,7 @@ fn xml_closes_within_the_head() {
 }
 
 #[test]
-fn unknown_extension_is_never_sniffed() {
+fn unknown_extension_is_sniffed() {
     for path in [
         "notes.unknownext",
         "build.log",
@@ -62,18 +62,17 @@ fn unknown_extension_is_never_sniffed() {
         "Project.mine",
         ".myapprc.bak",
     ] {
-        assert_eq!(detect(Some(path), "{\"a\": 1}"), None, "{path}");
-        assert_eq!(detect(Some(path), "<a><b/></a>"), None, "{path}");
+        assert_eq!(detect(Some(path), "{\"a\": 1}"), Some("json"), "{path}");
+        assert_eq!(detect(Some(path), "<a><b/></a>"), Some("xml"), "{path}");
+        assert_eq!(detect(Some(path), "plain text\n"), None, "{path}");
     }
 }
 
 #[test]
 fn html_and_plain_text_are_not_sniffed() {
+    // A first line of `<!DOCTYPE html` or `<html` makes it HTML, though
+    // (`first_line_languages.rs`); behind a comment it's nothing.
     for text in [
-        "<!DOCTYPE html>\n<html><body/></html>\n",
-        "<!doctype html>\n<p>hi</p>",
-        "<html lang=\"en\"><br/></html>",
-        "<HTML><BODY></BODY></HTML>",
         "<!-- page -->\n<html></html>",
         "hello <b>world</b>\n",
         "plain text\n{\"a\": 1}",

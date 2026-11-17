@@ -1,26 +1,17 @@
 //! Telling XML and JSON by how a file starts, for files nothing else names.
 
-use std::path::Path;
-
 use crate::language::built_in_name;
 
 /// How much of the text the sniff reads.
 const SNIFF_BYTES: usize = 512;
 
-/// The language a file's content says it is, when its path has no extension
-/// at all (`Pipfile`, `bin/config`) or there is no path: XML for an element,
-/// after any comments, whose closing tag or a `/>` is in the first
-/// [`SNIFF_BYTES`] of `text_start`, but not `<html`; JSON for `{` then `"` or
-/// `}`, or `[` then `{`, `"`, a digit, `-` or `]`, past whitespace. Only
-/// languages compiled in count. When unsure, `None`: a file with an
-/// extension, even an unknown one, is never sniffed.
-pub(crate) fn language_name_by_content(
-    path: Option<&Path>,
-    text_start: &str,
-) -> Option<&'static str> {
-    if path.is_some_and(|path| path.extension().is_some()) {
-        return None;
-    }
+/// The language a buffer's content says it is, for one whose path names no
+/// language ([`detect_language`](crate::detect_language) asks only then): XML
+/// for an element, after any comments, whose closing tag or a `/>` is in the
+/// first [`SNIFF_BYTES`] of `text_start`, but not `<html`; JSON for `{` then
+/// `"` or `}`, or `[` then `{`, `"`, a digit, `-` or `]`, past whitespace.
+/// Only languages compiled in count. When unsure, `None`.
+pub(crate) fn language_name_by_content(text_start: &str) -> Option<&'static str> {
     let head = head(text_start);
     let text = head.trim_start_matches(|c: char| c == '\u{feff}' || c.is_whitespace());
     let language = if is_json(text) {

@@ -1,10 +1,21 @@
-//! Change Language Mode (`language.select`): a [`Picker`] over Plain Text
-//! and every language compiled in, which sets an editor's language.
+//! Change Language Mode (`language.select`): a [`Picker`] over Auto Detect,
+//! Plain Text and every language there is, which sets an editor's language.
+//!
+//! A language picked, Plain Text too, is remembered for the file
+//! ([`fe_config::language_choices`]), in its project's list, and an editor
+//! opening the file later, in any window, takes it over what detection
+//! finds ([`init`]'s resolver). Auto Detect forgets it and detects the
+//! language again. A remembered language no longer there (its grammar
+//! uninstalled) leaves it to detection. Lists are written off the UI
+//! thread, in the order picked.
 
+use std::path::{Path, PathBuf};
+
+use fe_config::language_choices;
 use fe_gpui::EditorView;
 use gpui::{
-    AnyElement, App, Context, Focusable as _, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, WeakEntity, Window, div,
+    AnyElement, App, AppContext as _, Context, Focusable as _, Global, IntoElement as _,
+    ParentElement as _, SharedString, Styled as _, Task, WeakEntity, Window, div,
 };
 use kiln_shell::picker::joined_label;
 
@@ -15,16 +26,28 @@ use crate::{
     status_bar::{language_label, plain_text},
 };
 
-/// A row: the language's id, `None` for Plain Text, and its label.
-type Row = (Option<&'static str>, SharedString);
+/// What a row picks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pick {
+    /// Forget the file's language and detect it.
+    AutoDetect,
+    /// The language with this id, `None` for Plain Text.
+    Language(Option<&'static str>),
+}
+
+/// A row: what it picks, and its label.
+type Row = (Pick, SharedString);
 
 pub(crate) struct LanguagePicker {
-    /// Plain Text, then the languages by label, A–Z.
+    /// Auto Detect, Plain Text, then the languages by label, A–Z.
     rows: Vec<Row>,
     /// The rows matching the query, as indices into `rows`.
     matches: Vec<usize>,
     /// The editor it's opened for.
     editor: Option<WeakEntity<EditorView>>,
+    /// The root of the window it's opened in, whose project a pick is
+    /// remembered in.
+    root: Option<PathBuf>,
     /// That editor's language when it opened, `Some(None)` for Plain Text;
     /// `None` while a language loads, which marks no row.
     current: Option<Option<&'static str>>,
@@ -33,24 +56,38 @@ pub(crate) struct LanguagePicker {
 impl LanguagePicker {
     pub(crate) fn new() -> Self {
         let mut languages: Vec<Row> = fe_syntax::language_names()
-            .map(|id| (Some(id), language_label(id)))
+            .map(|id| (Pick::Language(Some(id)), language_label(id)))
             .collect();
         languages.sort_by_key(|(_, label)| label.to_lowercase());
-        let rows: Vec<Row> = [(None, plain_text())]
-            .into_iter()
-            .chain(languages)
-            .collect();
+        let rows: Vec<Row> = [
+            (
+                Pick::AutoDetect,
+                tr!("workbench-workbench-language-auto-detect"),
+            ),
+            (Pick::Language(None), plain_text()),
+        ]
+        .into_iter()
+        .chain(languages)
+        .collect();
         Self {
             matches: (0..rows.len()).collect(),
             rows,
             editor: None,
+            root: None,
             current: None,
         }
     }
 
-    /// The picker is opening for `editor`, whose language it marks current.
-    pub(crate) fn opened(&mut self, editor: &gpui::Entity<EditorView>, cx: &App) {
+    /// The picker is opening for `editor`, in a window on `root`, and
+    /// marks its language current.
+    pub(crate) fn opened(
+        &mut self,
+        editor: &gpui::Entity<EditorView>,
+        root: Option<&Path>,
+        cx: &App,
+    ) {
         self.editor = Some(editor.downgrade());
+        self.root = root.map(Path::to_owned);
         let editor = editor.read(cx);
         self.current = match editor.syntax() {
             Some(syntax) => Some(Some(syntax.language().name())),
@@ -65,7 +102,8 @@ impl LanguagePicker {
 
     /// Whether match `ix` is the editor's language, as it was on opening.
     fn is_current(&self, ix: usize) -> bool {
-        self.current == Some(self.row(ix).0)
+        self.current
+            .is_some_and(|current| self.row(ix).0 == Pick::Language(current))
     }
 
     /// Focuses the editor it's opened for, if it's still open.
@@ -94,9 +132,9 @@ impl PickerDelegate for LanguagePicker {
             .rows
             .iter()
             .enumerate()
-            .filter(|(_, (id, label))| {
+            .filter(|(_, (pick, label))| {
                 label.to_lowercase().contains(&query)
-                    || id.is_some_and(|id| id.to_lowercase().contains(&query))
+                    || matches!(pick, Pick::Language(Some(id)) if id.to_lowercase().contains(&query))
             })
             .map(|(ix, _)| ix)
             .collect();
@@ -111,9 +149,13 @@ impl PickerDelegate for LanguagePicker {
         self.matches.len()
     }
 
-    /// The language's id, or the empty string for Plain Text.
+    /// The language's id, the empty string for Plain Text, and for Auto
+    /// Detect `*`, which no language's id is.
     fn match_id(&self, ix: usize) -> SharedString {
-        self.row(ix).0.unwrap_or_default().into()
+        match self.row(ix).0 {
+            Pick::AutoDetect => "*".into(),
+            Pick::Language(id) => id.unwrap_or_default().into(),
+        }
     }
 
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
@@ -139,12 +181,23 @@ impl PickerDelegate for LanguagePicker {
         joined_label([Some(label), current].into_iter().flatten())
     }
 
-    /// Sets the editor's language to the row's, then focuses it. If the
-    /// editor has closed, the pick only dismisses the picker.
+    /// Sets the editor's language to the row's, remembering it for its
+    /// file, or for Auto Detect forgets it and detects the language again;
+    /// then focuses the editor. If the editor has closed, the pick only
+    /// dismisses the picker.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
-        let language = self.row(ix).0;
+        let pick = self.row(ix).0;
         if let Some(editor) = self.editor.as_ref().and_then(WeakEntity::upgrade) {
-            editor.update(cx, |editor, cx| editor.set_language(language, cx));
+            let path = editor.read(cx).model().path().map(Path::to_owned);
+            match pick {
+                Pick::AutoDetect => editor.update(cx, |editor, cx| editor.detect_language(cx)),
+                Pick::Language(language) => {
+                    editor.update(cx, |editor, cx| editor.set_language(language, cx))
+                }
+            }
+            if let Some(path) = path {
+                keep(self.root.clone(), path, pick, cx);
+            }
         }
         self.focus_editor(window, cx);
         true
@@ -153,4 +206,64 @@ impl PickerDelegate for LanguagePicker {
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.focus_editor(window, cx);
     }
+}
+
+/// Where the lists are kept, if not under the user's state directory.
+struct StateDir(PathBuf);
+
+impl Global for StateDir {}
+
+/// Keeps the lists under `dir` from now on.
+#[cfg(test)]
+pub(crate) fn set_state_dir(cx: &mut App, dir: PathBuf) {
+    cx.set_global(StateDir(dir));
+}
+
+/// The state directory the lists are kept in: the one set, or the user's.
+/// Under test, none unless one is set, so no test touches the user's.
+fn state_dir(cx: &App) -> Option<PathBuf> {
+    match cx.try_global::<StateDir>() {
+        Some(StateDir(dir)) => Some(dir.clone()),
+        None if cfg!(test) => None,
+        None => fe_config::paths::state_dir(),
+    }
+}
+
+/// The latest write to the lists, which waits for the one before.
+struct Writes(Task<()>);
+
+impl Global for Writes {}
+
+/// Remembers `pick` for the file at `path`, picked in a window on `root`,
+/// or for Auto Detect forgets the file's language, off the UI thread and
+/// after the writes asked before it.
+fn keep(root: Option<PathBuf>, path: PathBuf, pick: Pick, cx: &mut App) {
+    let Some(dir) = state_dir(cx) else {
+        return;
+    };
+    let before = cx
+        .try_global::<Writes>()
+        .is_some()
+        .then(|| cx.remove_global::<Writes>().0);
+    let write = cx.background_spawn(async move {
+        if let Some(before) = before {
+            before.await;
+        }
+        let root = root.as_deref();
+        let written = match pick {
+            Pick::AutoDetect => language_choices::forget(&dir, root, &path),
+            Pick::Language(language) => language_choices::remember(&dir, root, &path, language),
+        };
+        if let Err(error) = written {
+            log::warn!("can't keep the language of {}: {error}", path.display());
+        }
+    });
+    cx.set_global(Writes(write));
+}
+
+/// Has editors opening a file take the language remembered for it.
+pub(crate) fn init(cx: &mut App) {
+    EditorView::set_language_resolver(cx, |path, cx| {
+        language_choices::remembered(&state_dir(cx)?, path)
+    });
 }
