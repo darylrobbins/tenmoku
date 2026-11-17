@@ -47,7 +47,8 @@
 //! Enter, `o` and a click on a commit expand it: its files
 //! ([`Repo::commit_files`], against its first parent, read on the background
 //! executor, a `Loading…` row under it until they arrive and a muted row for
-//! an error) are listed under it, indented: each its file-type icon from the
+//! an error) are listed under it, indented 16 px past where a commit's text
+//! starts (`FILE_INDENT`, after the rail and its gap): each its file-type icon from the
 //! installed icon set, its name and, dimmed, its directory from the root (a
 //! rename's old path after it), then at the right edge its lines added and
 //! removed, muted green and red, once they're read beside the files
@@ -168,6 +169,11 @@ const LETTER_WIDTH: Pixels = px(12.);
 
 /// A lane's width in the graph cell.
 const LANE_WIDTH: Pixels = px(12.);
+
+/// How far an expanded commit's file rows (and its note row) start their
+/// icon or text past where the rail's gap leaves it, so files read apart
+/// from commits.
+const FILE_INDENT: Pixels = px(16.);
 
 /// A commit's dot's diameter.
 const DOT: Pixels = px(7.);
@@ -2309,7 +2315,9 @@ impl GitLogPanel {
                                     .on_click(cx.listener(move |panel, _, window, cx| {
                                         panel.click(line, 1, window, cx)
                                     })),
-                                lead().child(rail(commit)).child(ellipsized(text)),
+                                lead()
+                                    .child(rail(commit))
+                                    .child(ellipsized(text).ml(FILE_INDENT)),
                                 ix,
                                 seen.clone(),
                             )
@@ -2600,6 +2608,7 @@ fn file_cell(
 ) -> impl IntoElement {
     let icon = file_icon_ref(&parts.name);
     let icon_cell = (div().flex_shrink(LAST).min_w_0().overflow_hidden())
+        .ml(FILE_INDENT)
         .flex()
         .items_center()
         .child(icon.element(px(14.), colors.icon));

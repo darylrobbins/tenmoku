@@ -253,3 +253,26 @@ fn the_file_letters_room_at_the_right_edge_is_unchanged(cx: &mut TestAppContext)
     }
     assert_eq!(letters[0].right(), letters[1].right(), "one right edge");
 }
+
+#[gpui::test]
+fn an_expanded_commits_file_rows_are_indented_past_its_text(cx: &mut TestAppContext) {
+    let dir = branchy();
+    let (panel, mut cx) = open(cx, dir.path());
+    let cx = &mut cx;
+    let rows = graph(&panel, cx);
+    let commit = rows.iter().position(|row| reach(row) <= 3).unwrap();
+    panel.update_in(cx, |panel, window, cx| panel.open_row(commit, window, cx));
+    draw(cx);
+    let seen = panel.read_with(cx, |panel, _| panel.rows_seen());
+    let seen = seen.borrow();
+    let (file, commit_cell) = (commit + 1, seen.graph_cells[&commit]);
+    let rail = seen.graph_cells[&file];
+    assert_eq!(rail.size.width, commit_cell.size.width, "the rail's width");
+    let icon = seen.cells[&file][0].bounds.expect("an icon").left();
+    // The 8 px gap, then the 16 px indent.
+    assert!(
+        icon >= rail.right() + px(8. + 16.),
+        "icon at {icon:?}, rail right {:?}",
+        rail.right()
+    );
+}
