@@ -754,3 +754,16 @@ reason = "The Agents panel's name in its SidebarPanel const, not shown: the dock
 file = "src/debug_toolbar.rs"
 text = "debug-toolbar-session"
 reason = "The debug toolbar's session label's element id"
+
+# The offline language packs' file names (docs/release/language-pack.md),
+# which the offline install failure names.
+
+[[literal]]
+file = "src/grammar_prompt.rs"
+text = "Tenmoku-language-pack-{pack}.tar.gz"
+reason = "A release file's name"
+
+[[literal]]
+file = "src/grammar_prompt.rs"
+text = "Tenmoku-language-pack.tar.gz"
+reason = "A release file's name"

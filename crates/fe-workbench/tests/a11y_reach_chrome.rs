@@ -129,6 +129,8 @@ mod toasts {
             name: "Kotlin".into(),
             extensions: vec!["kt".into()],
             file_names: Vec::new(),
+            shebangs: Vec::new(),
+            packs: Vec::new(),
             size: 2_800_000,
             sha256: "ab".repeat(32),
         }
@@ -157,6 +159,8 @@ mod toasts {
         let never_file = dir.join(fe_workbench::PROMPT_FILE);
         let offers = GrammarOffers {
             catalog: vec![kotlin()],
+            packs: Vec::new(),
+            detect: None,
             installed: Rc::new(|_| false),
             fetch,
             install: Rc::new(|_, _, _| panic!("the fetch never ends")),
@@ -280,7 +284,7 @@ mod toasts {
         press("tab space tab tab space", cx);
         assert_eq!(*installs.borrow(), 0);
         let never = fs::read_to_string(&never_file).unwrap_or_default();
-        assert!(never.contains("kt"), "Never was answered: {never:?}");
+        assert!(never.contains("kotlin"), "Never was answered: {never:?}");
         assert!(bounds(INSTALL, cx).is_none());
         assert!(editor_focused(&workbench, cx), "focus is back");
     }

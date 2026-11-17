@@ -45,6 +45,8 @@ fn kotlin() -> GrammarOffer {
         name: "Kotlin".into(),
         extensions: vec!["kt".into()],
         file_names: Vec::new(),
+        shebangs: Vec::new(),
+        packs: Vec::new(),
         size: 2_800_000,
         sha256: "ab".repeat(32),
     }
@@ -77,6 +79,8 @@ fn give(dir: &Path, cx: &mut TestAppContext) -> (Rc<RefCell<u32>>, Arc<AtomicBoo
     };
     let offers = GrammarOffers {
         catalog: vec![kotlin()],
+        packs: Vec::new(),
+        detect: None,
         installed: Rc::new(|_| false),
         fetch,
         install: Rc::new(|_, _, _| panic!("the fetch never ends")),

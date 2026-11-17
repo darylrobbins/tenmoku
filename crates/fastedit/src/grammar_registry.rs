@@ -17,7 +17,8 @@
 //!   finds a language for a file that nothing installed claims
 //!   ([`Catalog::language_for`]).
 //!
-//! Nothing here is shown to the user: card 4 offers and installs from it.
+//! The grammar prompt offers and installs from the catalog
+//! (`crate::grammar_install::offers`); [`start`] hands it every catalog it has.
 
 use std::{
     fs, io,
@@ -60,6 +61,9 @@ const SIG_FILE: &str = "index.json.sig";
 /// can't interleave their writes or roll each other back.
 const LOCK_FILE: &str = "index.json.lock";
 
+/// How long a read of the cache waits for a commit to let go of the lock.
+const READ_LOCK_WAIT: Duration = Duration::from_secs(2);
+
 /// The last good pair, kept beside the cache while a commit replaces it.
 const KEPT_INDEX_FILE: &str = "index.json.kept";
 const KEPT_SIG_FILE: &str = "index.json.sig.kept";
@@ -70,7 +74,6 @@ const LOG: &str = "fastedit::grammar_registry";
 #[derive(Debug)]
 pub(crate) struct Baked {
     pub(crate) index_url: String,
-    #[cfg_attr(not(test), allow(dead_code, reason = "card 4 installs from it"))]
     pub(crate) url_template: String,
     pub(crate) public_key: PublicKey,
 }
@@ -185,8 +188,19 @@ impl Cache {
     /// The cached index, verified against `key` again: one that's missing,
     /// or that was changed on disk, is none. After a commit interrupted
     /// between its two renames, it's the last good pair the commit kept.
+    ///
+    /// It reads under a shared hold of the commit's lock ([`Cache::reading`]),
+    /// so no commit completes between reading the index and its signature, or
+    /// between the main pair and the kept one.
     pub(crate) fn load(&self, key: &PublicKey) -> Option<Index> {
-        verified(&self.index_path(), &self.sig_path(), key)
+        self.load_with(key, || {})
+    }
+
+    /// [`Cache::load`], calling `between` between reading the main pair's
+    /// index and its signature.
+    pub(crate) fn load_with(&self, key: &PublicKey, between: impl FnOnce()) -> Option<Index> {
+        let _reading = self.reading();
+        verified_with(&self.index_path(), &self.sig_path(), key, between)
             .or_else(|| verified(&self.kept_index_path(), &self.kept_sig_path(), key))
             .map(|(index, ..)| index)
     }
@@ -194,11 +208,51 @@ impl Cache {
     /// How long ago the cached index was written, if the cache holds a pair
     /// that verifies: none if it's missing, unreadable or doesn't verify, or
     /// if only a kept pair does, so that any of those is due a refresh. A
-    /// modification time in the future counts as just written.
+    /// modification time in the future counts as just written. Read as
+    /// [`Cache::load`] reads, so that the age is the verified index's.
     pub(crate) fn usable_age(&self, key: &PublicKey, now: SystemTime) -> Option<Duration> {
+        let _reading = self.reading();
         verified(&self.index_path(), &self.sig_path(), key)?;
         let modified = fs::metadata(self.index_path()).ok()?.modified().ok()?;
         Some(now.duration_since(modified).unwrap_or_default())
+    }
+
+    /// A shared hold of the lock a commit holds exclusively, released when
+    /// it's dropped. A commit holds it for milliseconds; one held past
+    /// [`READ_LOCK_WAIT`] is a launch stuck mid-commit, and the read goes
+    /// ahead without it, as it would if the lock can't be had at all, logged:
+    /// a pair it catches half replaced only fails to verify, and the kept
+    /// pair is still there while that commit hasn't finished. None, too, with
+    /// no cache directory, which has nothing to read.
+    fn reading(&self) -> Option<fs::File> {
+        if !self.dir.is_dir() {
+            return None;
+        }
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.dir.join(LOCK_FILE));
+        let lock = match lock {
+            Ok(lock) => lock,
+            Err(error) => {
+                log::warn!(target: LOG, "reading the cache unlocked: {error}");
+                return None;
+            }
+        };
+        let deadline = std::time::Instant::now() + READ_LOCK_WAIT;
+        loop {
+            match lock.try_lock_shared() {
+                Ok(()) => return Some(lock),
+                Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => {
+                    log::warn!(target: LOG, "reading the cache unlocked: {error}");
+                    return None;
+                }
+            }
+        }
     }
 
     /// Writes `index` and `sig`, an index with `serial` verified against
@@ -299,7 +353,19 @@ fn verified(
     sig_path: &Path,
     key: &PublicKey,
 ) -> Option<(Index, Vec<u8>, Vec<u8>)> {
+    verified_with(index_path, sig_path, key, || {})
+}
+
+/// [`verified`], calling `between` between reading the index and the
+/// signature.
+fn verified_with(
+    index_path: &Path,
+    sig_path: &Path,
+    key: &PublicKey,
+    between: impl FnOnce(),
+) -> Option<(Index, Vec<u8>, Vec<u8>)> {
     let bytes = fs::read(index_path).ok()?;
+    between();
     let sig = fs::read(sig_path).ok()?;
     match verify_index(&bytes, &String::from_utf8_lossy(&sig), key) {
         Ok(index) => Some((index, bytes, sig)),
@@ -399,66 +465,81 @@ impl Policy {
     }
 }
 
-/// Refreshes the cached index in the background if [`Policy::decide`] says
-/// so and it's missing or older than [`MAX_AGE`]. Never blocks the launch;
-/// a failure is logged and the cache kept.
+/// Hands `publish` the cached catalog, read and verified off the main
+/// thread (none without one), then, if [`Policy::decide`] says so and the
+/// cache is missing or older than [`MAX_AGE`], refreshes it in the background
+/// and hands `publish` the new one. Never blocks the launch; a failed refresh
+/// is logged and the cache kept.
 pub(crate) fn start(
     perf: bool,
     wait_launch: bool,
     under_test: bool,
     automatic_checks: bool,
+    publish: impl Fn(Option<Catalog>, &mut App) + 'static,
     cx: &mut App,
 ) {
     let policy = Policy::decide(perf, wait_launch, under_test, automatic_checks);
-    if policy == Policy::Off {
-        return;
-    }
     let Some(cache) = Cache::in_state_dir() else {
+        publish(None, cx);
         return;
     };
+    let baked = match baked() {
+        Ok(baked) => baked,
+        Err(error) => {
+            log::error!(target: LOG, "the compiled-in registry.toml: {error}");
+            publish(None, cx);
+            return;
+        }
+    };
     let executor = cx.background_executor().clone();
-    let timers = executor.clone();
-    executor
-        .spawn(async move {
-            let baked = match baked() {
-                Ok(baked) => baked,
-                Err(error) => {
-                    log::error!(target: LOG, "the compiled-in registry.toml: {error}");
-                    return;
-                }
-            };
-            // A cache that doesn't verify is as good as missing.
-            if !policy.due(cache.usable_age(&baked.public_key, SystemTime::now())) {
-                return;
-            }
-            let client = Client::new(&crate::grammar_install::grants());
-            let client = &client;
-            let fetched = refresh(
-                &cache,
-                &baked.index_url,
-                &baked.public_key,
-                |url, max_bytes| async move {
-                    fe_net::grammar_fetch::fetch_bounded(client, &url, max_bytes).await
-                },
-                |pause| timers.timer(pause),
-            )
+    cx.spawn(async move |cx| {
+        let (cached, due, baked, cache) = executor
+            .spawn(async move {
+                let cached = cache.load(&baked.public_key);
+                // A cache that doesn't verify is as good as missing.
+                let due = policy.due(cache.usable_age(&baked.public_key, SystemTime::now()));
+                (cached, due, baked, cache)
+            })
             .await;
-            match fetched {
-                Ok(index) => {
-                    let catalog = Catalog::new(index, &EngineSupport::running());
-                    log::info!(
-                        target: LOG,
-                        "grammar index {} cached: {} languages this app can load",
-                        catalog.index().serial,
-                        catalog.index().languages.len()
-                    );
-                }
-                Err(error) => {
-                    log::warn!(target: LOG, "kept the cached grammar index: {error}");
-                }
+        let engine = EngineSupport::running();
+        cx.update(|cx| publish(cached.map(|index| Catalog::new(index, &engine)), cx));
+        if !due {
+            return;
+        }
+        let timers = executor.clone();
+        let fetched = executor
+            .spawn(async move {
+                let client = Client::new(&crate::grammar_install::grants());
+                let client = &client;
+                refresh(
+                    &cache,
+                    &baked.index_url,
+                    &baked.public_key,
+                    |url, max_bytes| async move {
+                        fe_net::grammar_fetch::fetch_bounded(client, &url, max_bytes).await
+                    },
+                    |pause| timers.timer(pause),
+                )
+                .await
+            })
+            .await;
+        match fetched {
+            Ok(index) => {
+                let catalog = Catalog::new(index, &engine);
+                log::info!(
+                    target: LOG,
+                    "grammar index {} cached: {} languages this app can load",
+                    catalog.index().serial,
+                    catalog.index().languages.len()
+                );
+                cx.update(|cx| publish(Some(catalog), cx));
             }
-        })
-        .detach();
+            Err(error) => {
+                log::warn!(target: LOG, "kept the cached grammar index: {error}");
+            }
+        }
+    })
+    .detach();
 }
 
 /// What the running app can load: an index entry needing more isn't offered
@@ -525,14 +606,12 @@ pub(crate) struct Catalog {
 }
 
 /// A language of a [`Catalog`]: its key and its entry.
-#[cfg_attr(not(test), allow(dead_code, reason = "card 4 offers from it"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Entry<'a> {
     pub(crate) language: &'a str,
     pub(crate) entry: &'a Language,
 }
 
-#[cfg_attr(not(test), allow(dead_code, reason = "card 4 offers from it"))]
 impl Catalog {
     /// `index` without the languages `engine` refuses, each logged once
     /// here, and without them in its packs' lists. A pack left with none is
@@ -551,14 +630,6 @@ impl Catalog {
         }
         index.packs.retain(|_, pack| !pack.languages.is_empty());
         Catalog { index }
-    }
-
-    /// The cached index, if it verifies, as a catalog for this app.
-    #[allow(dead_code, reason = "card 4 offers from it")]
-    pub(crate) fn cached() -> Option<Catalog> {
-        let baked = baked().ok()?;
-        let index = Cache::in_state_dir()?.load(&baked.public_key)?;
-        Some(Catalog::new(index, &EngineSupport::running()))
     }
 
     pub(crate) fn index(&self) -> &Index {
@@ -630,6 +701,49 @@ impl Catalog {
         pick(path, by_shebang)
     }
 
+    /// The language the grammar prompt offers for `path`: as
+    /// [`Catalog::language_for`] finds it, with two of the prompt's rules from
+    /// before the index (T426, T1433). A whole file name matches in any ASCII
+    /// case (`GO.MOD` for a `go.mod` entry), still before any extension, for a
+    /// file no registered language claims. And for a file one does claim, an
+    /// extension is offered that the registered claim wouldn't keep once it's
+    /// installed ([`fe_syntax::Language::extension_would_take`]): Blade's
+    /// `blade.php` over the built-in PHP's `php` for `x.blade.php`.
+    pub(crate) fn language_to_offer(
+        &self,
+        path: &Path,
+        first_line: Option<&str>,
+        extensions: &Path,
+    ) -> Option<Entry<'_>> {
+        let candidates = || {
+            self.index
+                .languages
+                .iter()
+                .filter(|(language, _)| !crate::grammar_install::is_installed(language, extensions))
+        };
+        let name = path.file_name()?.to_str()?;
+        if fe_syntax::language_name_for_path(path).is_none() {
+            let by_name = candidates()
+                .filter(|(_, entry)| {
+                    (entry.file_names.iter()).any(|file| file.eq_ignore_ascii_case(name))
+                })
+                .map(|matched| (0, matched));
+            return pick(path, by_name).or_else(|| self.language_for(path, first_line, extensions));
+        }
+        let taking = candidates().filter_map(|matched| {
+            let longest = (matched.1.extensions.iter())
+                .filter(|extension| has_extension(name, extension))
+                .filter(|extension| {
+                    let extension = extension.to_ascii_lowercase();
+                    fe_syntax::Language::extension_would_take(path, &extension)
+                })
+                .map(String::len)
+                .max()?;
+            Some((usize::MAX - longest, matched))
+        });
+        pick(path, taking)
+    }
+
     /// The packs `language` is in, as its entry lists them: the first is its
     /// main pack. Empty for a language the catalog doesn't have.
     pub(crate) fn packs_of(&self, language: &str) -> &[String] {
@@ -653,7 +767,6 @@ impl Catalog {
 
 /// The best of `matches`, each with a rank (lower is better), in the index's
 /// order: the lowest rank, and of those the lowest name. A tie is logged.
-#[cfg_attr(not(test), allow(dead_code, reason = "card 4 offers from it"))]
 fn pick<'a>(
     path: &Path,
     matches: impl Iterator<Item = (usize, (&'a String, &'a Language))>,
@@ -681,7 +794,6 @@ fn pick<'a>(
 
 /// Whether the file `name` ends in `.extension`, ignoring ASCII case, with
 /// something before the dot.
-#[cfg_attr(not(test), allow(dead_code, reason = "card 4 offers from it"))]
 fn has_extension(name: &str, extension: &str) -> bool {
     let Some(cut) = name.len().checked_sub(extension.len() + 1) else {
         return false;
@@ -694,7 +806,6 @@ fn has_extension(name: &str, extension: &str) -> bool {
 
 /// Whether a shebang table's `interpreter` runs `program`: the same name,
 /// or it with a version suffix (`python3.12` for `python`).
-#[cfg_attr(not(test), allow(dead_code, reason = "card 4 offers from it"))]
 fn interpreter_matches(interpreter: &str, program: &str) -> bool {
     program.strip_prefix(interpreter).is_some_and(|suffix| {
         suffix.is_empty()
@@ -702,4 +813,69 @@ fn interpreter_matches(interpreter: &str, program: &str) -> bool {
                 .split('.')
                 .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
     })
+}
+
+/// Carried finding F5 of T1484: a reader overlapping a commit. These sit here
+/// rather than in `grammar_registry_tests.rs`, which T1485's scope doesn't
+/// cover.
+#[cfg(test)]
+mod cache_read_tests {
+    use std::{fs, sync::mpsc, thread, time::Duration};
+
+    use fe_registry::grammars::{Index, SCHEMA};
+
+    use super::{Cache, LOCK_FILE};
+    use crate::update_signature::{self, PrivateKey, PublicKey};
+
+    /// An empty index with `serial`, its bytes and its signature's.
+    fn signed(serial: u64, key: &PrivateKey) -> (Vec<u8>, Vec<u8>) {
+        let index = Index {
+            schema: SCHEMA,
+            serial,
+            url_template: "https://github.com/acme/registry/releases/download/{tag}/{file}".into(),
+            packs: Default::default(),
+            languages: Default::default(),
+        };
+        let bytes = index.to_json().into_bytes();
+        let sig = update_signature::sign(key, &bytes).into_bytes();
+        (bytes, sig)
+    }
+
+    /// A reader paused between the index and its signature, while another
+    /// commits a newer pair, still reads one pair whole: the commit waits for
+    /// it, and lands once it's done.
+    #[test]
+    fn a_commit_waits_for_a_reader_between_its_two_files() {
+        let (public, private) = update_signature::generate();
+        let (public, private) = (
+            PublicKey::from_base64(&public).unwrap(),
+            PrivateKey::from_base64(&private).unwrap(),
+        );
+        let state = tempfile::tempdir().unwrap();
+        let cache = Cache::new(state.path());
+        let (index, sig) = signed(5, &private);
+        cache.commit(&public, 5, &index, &sig).unwrap();
+        let (newer, newer_sig) = signed(7, &private);
+
+        let (done, committed) = mpsc::channel();
+        let mut writer = None;
+        let read = cache.load_with(&public, || {
+            // The reader holds the lock: no exclusive hold can be had.
+            let lock = fs::File::open(cache.dir.join(LOCK_FILE)).unwrap();
+            assert!(matches!(lock.try_lock(), Err(fs::TryLockError::WouldBlock)));
+            let (cache, public) = (cache.clone(), public.clone());
+            writer = Some(thread::spawn(move || {
+                cache.commit(&public, 7, &newer, &newer_sig).unwrap();
+                done.send(()).unwrap();
+            }));
+            assert!(
+                committed.recv_timeout(Duration::from_millis(200)).is_err(),
+                "the commit waits"
+            );
+        });
+
+        assert_eq!(read.map(|index| index.serial), Some(5));
+        writer.unwrap().join().unwrap();
+        assert_eq!(cache.load(&public).map(|index| index.serial), Some(7));
+    }
 }

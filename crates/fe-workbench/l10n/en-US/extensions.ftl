@@ -248,19 +248,28 @@ workbench-extensions-dev-linked-plugin-needs-preview = Linked from { $folder }: 
 ## The offer to install a language's syntax highlighting (grammar_prompt.rs)
 
 workbench-extensions-grammar-offer = Syntax highlighting for { $name } isn't installed
-# The Install button, with the download's size (`workbench-extensions-grammar-size`).
-workbench-extensions-grammar-install = Install ({ $size })
+# The Install button, with the language and the download's size (`workbench-extensions-grammar-size`).
+workbench-extensions-grammar-install = Install { $name } ({ $size })
+# The button installing the language's main pack: the languages of it not installed yet, and their size.
+workbench-extensions-grammar-install-pack =
+    { $count ->
+        [one] Install { $pack } pack ({ $count } language, { $size })
+       *[other] Install { $pack } pack ({ $count } languages, { $size })
+    }
 workbench-extensions-grammar-size = { $size } MB
 workbench-extensions-grammar-not-now = Not now
-# Never offer it again for files called `$name`, such as go.mod.
-workbench-extensions-grammar-never-file = Never for { $name }
-# Never offer it again for files with this extension, such as .kt.
-workbench-extensions-grammar-never-extension = Never for .{ $extension }
+# Never offer this language again.
+workbench-extensions-grammar-dont-ask = Don't ask for { $name }
 workbench-extensions-grammar-installing = Installing { $name } syntax…
+# A pack's languages install one after another: this is the `$done`th of `$count`.
+workbench-extensions-grammar-installing-pack = Installing { $pack } pack ({ $done } of { $count })…
+workbench-extensions-grammar-pack-installed = Installed { $pack } pack
+workbench-extensions-grammar-pack-partly = Installed { $done } of { $count } languages of the { $pack } pack
 workbench-extensions-grammar-not-loaded = Installed { $name } syntax, but it hasn't loaded: it may after a restart
 workbench-extensions-grammar-installed = Installed { $name } syntax
 workbench-extensions-grammar-failed = Couldn't install { $name } syntax: { $reason }.
-workbench-extensions-grammar-failed-offline = Couldn't install { $name } syntax: { $reason }. The language pack installs it without a connection.
+# `$tarball` is the offline language pack's file, such as Tenmoku-language-pack-jvm.tar.gz.
+workbench-extensions-grammar-failed-offline = Couldn't install { $name } syntax: { $reason }. The offline language pack { $tarball } installs it without a connection.
 
 ## Extensions' language servers' consents (lsp_consent.rs)
 

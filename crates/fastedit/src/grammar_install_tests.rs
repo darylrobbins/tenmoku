@@ -16,7 +16,7 @@ use gpui::TestAppContext;
 use kiln::{Config, platform::config::batch_channel, ui::ThemeMode};
 
 use crate::grammar_install::{
-    ExtensionFiles, GRANTED_HOSTS, Grammar, InstallError, Pack, fetch_from_release,
+    ExtensionFiles, GRANTED_HOSTS, InstallError, Pack, PackGrammar as Grammar, fetch_from_release,
     first_party_languages, grants, injected_languages, install_fetched, install_first_party,
     install_first_party_with, install_from_pack_dir, offers_with, publish, stage_extension,
     write_set,
@@ -285,7 +285,7 @@ fn nothing_staged_looks_like_an_extension() {
     let extensions = tempfile::tempdir().unwrap();
     let staging = tempfile::tempdir_in(extensions.path()).unwrap();
 
-    let staged = stage_extension(&grammar(), WASM, staging.path()).unwrap();
+    let staged = stage_extension("jsoni", &grammar().files_with(WASM), staging.path()).unwrap();
 
     assert_eq!(staged.parent(), Some(staging.path()));
     assert!(staged.join("extension.toml").exists());
@@ -306,7 +306,7 @@ fn publish_failing(
         .prefix(".staging-")
         .tempdir_in(extensions.path())
         .unwrap();
-    let staged = stage_extension(&grammar(), WASM, staging.path()).unwrap();
+    let staged = stage_extension("jsoni", &grammar().files_with(WASM), staging.path()).unwrap();
 
     let calls = std::cell::Cell::new(0);
     let rename = |from: &Path, to: &Path| {

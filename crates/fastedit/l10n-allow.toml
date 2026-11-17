@@ -47,11 +47,6 @@ reason = "A settings key path"
 
 [[literal]]
 file = "src/grammar_install.rs"
-text = "tenmoku.grammar_{}"
-reason = "An extension id"
-
-[[literal]]
-file = "src/grammar_install.rs"
 text = "tenmoku.grammar_{language}"
 reason = "An extension id"
 

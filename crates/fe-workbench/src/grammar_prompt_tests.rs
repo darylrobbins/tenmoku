@@ -40,6 +40,8 @@ fn kotlin() -> GrammarOffer {
         name: "Kotlin".into(),
         extensions: vec!["kt".into(), "kts".into()],
         file_names: Vec::new(),
+        shebangs: Vec::new(),
+        packs: Vec::new(),
         size: 2_800_000,
         sha256: "ab".repeat(32),
     }
@@ -60,6 +62,8 @@ fn swift() -> GrammarOffer {
         name: "Swift".into(),
         extensions: vec!["swift".into()],
         file_names: Vec::new(),
+        shebangs: Vec::new(),
+        packs: Vec::new(),
         size: 3_500_000,
         sha256: "cd".repeat(32),
     }
@@ -194,6 +198,8 @@ impl Setup {
         let (fetch, install) = installer(&self.calls, fake);
         let offers = GrammarOffers {
             catalog,
+            packs: Vec::new(),
+            detect: None,
             installed: Rc::new(installed),
             fetch,
             install,
@@ -324,7 +330,7 @@ fn offers_for_an_uninstalled_catalog_language(cx: &mut TestAppContext) {
     );
     assert_eq!(
         toasts[0].choices.as_ref().unwrap().titles(),
-        ["Install (2.8 MB)", "Not now", "Never for .kt"]
+        ["Install Kotlin (2.8 MB)", "Not now", "Don't ask for Kotlin"]
     );
     // The tab didn't wait for an answer.
     editor.update(cx, |view, cx| {
@@ -486,7 +492,7 @@ fn failure_is_one_readable_line(cx: &mut TestAppContext) {
     assert_eq!(
         toasts[0].message,
         "Couldn't install Kotlin syntax: no connection to the download. \
-         The language pack installs it without a connection."
+         The offline language pack Tenmoku-language-pack.tar.gz installs it without a connection."
     );
     assert!(editor.read_with(cx, |view, _| view.syntax().is_none()));
     dismiss(&workbench, cx);
@@ -544,16 +550,14 @@ fn not_now_is_per_session_and_never_is_remembered(
 
     let written: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(setup.never_file()).unwrap()).unwrap();
-    assert_eq!(written, serde_json::json!({ "never": ["kt"] }));
-
-    // Never is per extension: Kotlin's other one still asks.
-    open(&first, &setup.file("c.kts"), cx);
-    let toasts = shown(&first, cx);
-    assert_eq!(toasts.len(), 1, "{toasts:?}");
     assert_eq!(
-        toasts[0].choices.as_ref().unwrap().titles()[NEVER],
-        "Never for .kts"
+        written,
+        serde_json::json!({ "never_languages": ["kotlin"] })
     );
+
+    // Don't ask is per language: Kotlin's other extension doesn't ask either.
+    open(&first, &setup.file("c.kts"), cx);
+    assert_eq!(messages(&first, cx), Vec::<String>::new());
 
     // A new launch: its own app, with only the file to go by.
     setup.give(
@@ -680,10 +684,11 @@ fn a_compound_extension_offers_its_owner(cx: &mut TestAppContext) {
         cx,
     );
     let (workbench, cx) = workbench(cx);
-    let expect = |language: &str, extension: &str| {
+    // The extension it's offered for, which Don't ask no longer names.
+    let expect = |language: &str, _extension: &str| {
         Some((
             format!("Syntax highlighting for {language} isn't installed"),
-            format!("Never for .{extension}"),
+            format!("Don't ask for {language}"),
         ))
     };
 
@@ -760,7 +765,11 @@ fn a_file_name_offers_its_language_and_never_is_for_the_name(
     );
     assert_eq!(
         toasts[0].choices.as_ref().unwrap().titles(),
-        ["Install (2.8 MB)", "Not now", "Never for go.mod"]
+        [
+            "Install Go module (2.8 MB)",
+            "Not now",
+            "Don't ask for Go module"
+        ]
     );
     answer(&first, NEVER, cx);
 
@@ -768,7 +777,7 @@ fn a_file_name_offers_its_language_and_never_is_for_the_name(
     assert_eq!(messages(&first, cx), Vec::<String>::new());
     let written: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(setup.never_file()).unwrap()).unwrap();
-    assert_eq!(written, serde_json::json!({ "never": ["go.mod"] }));
+    assert_eq!(written, serde_json::json!({ "never_languages": ["gomod"] }));
 
     // A new launch, with only the file to go by.
     setup.give(
@@ -810,11 +819,11 @@ fn a_file_name_claim_beats_an_extension_claim(cx: &mut TestAppContext) {
 
     assert_eq!(
         offered_for(&setup, &workbench, "go.mod", cx),
-        expect("Go module", "Never for go.mod")
+        expect("Go module", "Don't ask for Go module")
     );
     assert_eq!(
         offered_for(&setup, &workbench, "x.mod", cx),
-        expect("Modula", "Never for .mod")
+        expect("Modula", "Don't ask for Modula")
     );
 }
 
@@ -947,7 +956,7 @@ fn open_together(
 }
 
 #[gpui::test]
-fn a_remembered_never_leaves_the_other_extension_to_ask(cx: &mut TestAppContext) {
+fn a_remembered_extension_silences_its_language(cx: &mut TestAppContext) {
     let setup = setup();
     setup.give(vec![kotlin()], nothing_installed, Fake::NeverRegisters, cx);
     fs::create_dir_all(setup.never_file().parent().unwrap()).unwrap();
@@ -956,11 +965,11 @@ fn a_remembered_never_leaves_the_other_extension_to_ask(cx: &mut TestAppContext)
 
     open_together(&workbench, &setup, &["a.kt", "b.kts"], cx);
 
-    assert_eq!(the_offer(&workbench, cx).titles()[NEVER], "Never for .kts");
+    assert_eq!(messages(&workbench, cx), Vec::<String>::new());
 }
 
 #[gpui::test]
-fn never_goes_on_to_the_other_extension_and_not_now_does_not(cx: &mut TestAppContext) {
+fn dont_ask_and_not_now_silence_every_extension_of_the_language(cx: &mut TestAppContext) {
     let setup = setup();
     setup.give(
         vec![kotlin(), swift()],
@@ -971,15 +980,15 @@ fn never_goes_on_to_the_other_extension_and_not_now_does_not(cx: &mut TestAppCon
     let (workbench, cx) = workbench(cx);
 
     open_together(&workbench, &setup, &["a.kt", "b.kts", "c.kt"], cx);
-    assert_eq!(the_offer(&workbench, cx).titles()[NEVER], "Never for .kt");
-    answer(&workbench, NEVER, cx);
-    draw(cx);
-    assert_eq!(the_offer(&workbench, cx).titles()[NEVER], "Never for .kts");
+    assert_eq!(
+        the_offer(&workbench, cx).titles()[NEVER],
+        "Don't ask for Kotlin"
+    );
     answer(&workbench, NEVER, cx);
     draw(cx);
     assert_eq!(messages(&workbench, cx), Vec::<String>::new());
 
-    // Not now is for the language, so nothing waiting asks after it.
+    // Not now is for the language too, so nothing waiting asks after it.
     fs::remove_file(setup.never_file()).unwrap();
     let dart = GrammarOffer {
         language: "dart".into(),

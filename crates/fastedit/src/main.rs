@@ -9,6 +9,8 @@ mod cli;
 mod config;
 mod grammar_install;
 #[cfg(test)]
+mod grammar_install_index_tests;
+#[cfg(test)]
 mod grammar_install_tests;
 mod grammar_registry;
 #[cfg(test)]
@@ -1007,9 +1009,21 @@ fn main() {
         if !velopack_update::start(perf, wait_launch, under_test, cx) {
             sparkle::start(perf, wait_launch, under_test, automatic_checks, cx);
         }
-        // The signed grammar index, refreshed in the background under the
-        // same consent as the update check.
-        grammar_registry::start(perf, wait_launch, under_test, automatic_checks, cx);
+        // Syntax highlighting to offer for files with none, from the signed
+        // grammar index: the cached one, read in the background, then a
+        // fresher one once the index is refreshed, which happens in the
+        // background under the same consent as the update check. Installs go
+        // where the extensions the loader reads are.
+        let extensions = fe_config::paths::app_paths().extensions_dir();
+        let never_file =
+            fe_config::paths::state_dir().map(|dir| dir.join(fe_workbench::PROMPT_FILE));
+        let publish = move |catalog: Option<grammar_registry::Catalog>, cx: &mut gpui::App| {
+            if let Some(extensions) = extensions.clone() {
+                let offers = grammar_install::offers(catalog, extensions, never_file.clone());
+                fe_workbench::set_grammar_offers(cx, offers);
+            }
+        };
+        grammar_registry::start(perf, wait_launch, under_test, automatic_checks, publish, cx);
         // Commands, keys, menus, in-window prompts where there are no
         // native alerts, and the config files watched from here on: the
         // vimrc and `vim.remap` too, which give every editor its remaps.
@@ -1052,13 +1066,6 @@ fn main() {
                     .detach();
             }
             fe_gpui::pane_item::set_undo_store(cx, Some(undo));
-        }
-        // Syntax highlighting to offer for files with none, kept where the
-        // extensions the loader reads are.
-        if let Some(extensions) = fe_config::paths::app_paths().extensions_dir() {
-            let never_file =
-                fe_config::paths::state_dir().map(|dir| dir.join(fe_workbench::PROMPT_FILE));
-            fe_workbench::set_grammar_offers(cx, grammar_install::offers(extensions, never_file));
         }
         kiln::init(cx, config(store).source(remaps));
         // The editor's colours, from kiln's theme from now on.

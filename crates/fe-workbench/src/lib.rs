@@ -166,6 +166,7 @@ pub use extension_snippets::{
 };
 pub use git_askpass::{git_askpass_helper, set_git_askpass};
 pub use git_panel::{GitPanel, GitPanelEvent};
+pub use grammar_prompt::{DetectGrammar, GrammarPack};
 pub use grammar_prompt::{
     FetchGrammar, GrammarInstallError, GrammarInstalled, GrammarOffer, GrammarOffers,
     InstallGrammar, PROMPT_FILE, set_grammar_offers,

@@ -33,6 +33,20 @@ fastedit-grammar-manifest = the grammar manifest: { $error }
 fastedit-grammar-unknown-language = there's no first-party grammar for { $language }
 fastedit-grammar-bundle = the downloaded grammars: { $error }
 fastedit-grammar-removed = { $language }, which it injects, was removed while it downloaded: try again
+# An index entry refused before anything is written: `$why` is one of the
+# fastedit-grammar-file-not-allowed … fastedit-grammar-files-differ messages.
+fastedit-grammar-refused = { $language }'s download from the grammar index: { $why }
+fastedit-grammar-file-not-allowed = it has a file { $file } that isn't one an extension's grammar may have
+fastedit-grammar-no-manifest = it has no extension.toml
+fastedit-grammar-manifest-other-id = its extension.toml is for { $id }
+fastedit-grammar-manifest-grammars =
+    { $count ->
+        [one] its extension.toml has { $count } grammar, not one
+       *[other] its extension.toml has { $count } grammars, not one
+    }
+fastedit-grammar-manifest-other-language = its extension.toml's grammar is for { $other }
+fastedit-grammar-manifest-other-wasm = its extension.toml names the wasm { $wasm }, which isn't its download's
+fastedit-grammar-files-differ = its files aren't the ones the index lists
 fastedit-grammar-io = { $path }: { $error }
 fastedit-grammar-not-restored = { $path }: { $error }; the previous version couldn't be put back ({ $restoring }) and is at { $previous }
 # A warning toast: $name is the language's name; $waiting the language it
