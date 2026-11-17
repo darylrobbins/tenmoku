@@ -38,9 +38,9 @@ are charged to X. ts_* is "tree-sitter (C)", wasmtime_*/wasm_* is
 (CoreText, AppKit, Metal, ...). Stacks with no attributable frame are
 "unattributed". --depth 2 splits crates by module. The total equals the
 input's. Stack logging adds overhead and the process is only read, not
-stopped. Whether an xctrace Allocations trace exports an allocations table is
-unverified: recording failed to attach on the Mac this was written on, so
-there is no --xctrace input (follow-up T1919).
+stopped. An xctrace Allocations recording
+could not be exported (the record hangs and leaves a trace with no template;
+see PERF.md), so there is no --xctrace input.
 """
 import argparse
 import os

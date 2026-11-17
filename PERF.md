@@ -498,19 +498,21 @@ framework row is "allocated inside the framework", whoever asked for it.
   included, so it exceeds the footprint (380 MB against 130 MB below).
 - **Inlining.** With LTO and one codegen unit many frames are inlined: the
   caller's crate gets the bytes unless line tables are on.
-- **`xctrace`.** Unverified. On this Mac (Xcode 27, SIP) recording the
-  Allocations template failed (`xctrace record --launch` reported "Failed to
-  attach to target process", for a copy of a system binary and for a small
-  compiled C program), so there is no successful trace to export;
-  `xctrace export --toc` on the failed trace printed nothing. Whether a
-  recorded Allocations trace exposes an allocations table is not known, and
-  the script has no xctrace input.
+- **`xctrace`.** Doesn't work on this Mac, so the script has no xctrace
+  input. Retried 2026-11-17 (Xcode 27.2, SIP) with `xctrace record
+  --template Allocations --launch -- target/debug/tenmoku <file>`: it no
+  longer fails to attach but never finishes. It ran past `--time-limit 15s`
+  and a 90 s `timeout` (SIGTERM ignored) and had to be killed, leaving a
+  trace with an empty `Trace1.run` and no template. The bench build
+  (`target/release/tenmoku`, line tables) behaves the same. `xctrace export --toc`
+  on it says "Document Missing Template Error", so there is no allocations
+  table to export. The earlier attempt (T1905) failed with "Failed to attach
+  to target process". Use `MallocStackLogging=lite` and `malloc_history`.
 
 Measured 2026-11-16 at `cb6ec28` plus the script: bench profile with
 line-tables-only, 1200×800 window, `MallocStackLogging=lite` (slows
-allocation), not scrolled (the tables are the state after open and a settle, not
-after the scrolling `--perf` does: that needs hand input this run could not
-send; follow-up T1919), top 16 rows. Empty window (footprint 130 MB:
+allocation), not scrolled (the first two tables are the state after open and a settle;
+the scrolled one follows them), top 16 rows. Empty window (footprint 130 MB:
 Malloc Small 33 MB, CG Image 32 MB, IOSurface 30 MB, Performance Tool Data
 16 MB from the logging itself):
 
@@ -557,6 +559,41 @@ Malloc Small 33 MB, CG Image 32 MB, IOSurface 30 MB, Performance Tool Data
 | libgermantok | 5030000 | 1.1% | 3 |
 | (others) | 37816448 | 8.3% | 128269 |
 | **total** | 456238048 | 100% | 268795 |
+
+After scrolling, 10k-line Rust file (2026-11-17, `--perf` programmatic scroll;
+a hand scroll was not measured). Method: the same bench build with
+`MallocStackLogging=lite TENMOKU_NO_IPC=1 target/release/tenmoku --perf
+ten_k.rs`, where `ten_k.rs` is the first 10000 lines of
+`crates/fe-workbench/src/**/*.rs` concatenated; right after `--perf` printed
+"memory after scrolling" (footprint 369 MB) the heap was captured with
+`leaks <pid> --outputGraph` and `malloc_history -allBySize`, then folded with
+`heap-by-crate.py`, top 16 rows. The Mac was under build load (smooth scroll
+8 fps), which doesn't change what is live.
+
+| crate | live bytes | % | allocations |
+|---|---:|---:|---:|
+| coreui | 168170304 | 42.5% | 306 |
+| libicucore | 36378752 | 9.2% | 151 |
+| CoreGraphics | 34754640 | 8.8% | 4474 |
+| liblangid | 27971984 | 7.1% | 4 |
+| Foundation | 20872618 | 5.3% | 774 |
+| CSStore | 19185664 | 4.8% | 1 |
+| libCoreFSCache | 16831488 | 4.3% | 133 |
+| tree-sitter (C) | 13595376 | 3.4% | 132199 |
+| libFontParser | 10279392 | 2.6% | 198 |
+| gpui | 6049824 | 1.5% | 4204 |
+| libgermantok | 5018129 | 1.3% | 3 |
+| fluent_syntax | 4951936 | 1.3% | 10674 |
+| ImageIO | 4206720 | 1.1% | 96 |
+| fe_gpui | 3800768 | 1.0% | 655 |
+| libobjc | 2400368 | 0.6% | 13190 |
+| kiln_l10n | 2132416 | 0.5% | 9138 |
+| (others) | 19261795 | 4.9% | |
+| **total** | 395862174 | 100% | 278927 |
+
+Scrolling adds little to the open-and-settle table above: tree-sitter's
+C allocations grew 13.0 to 13.6 MB (126k to 132k allocations), and
+`fe_workbench` fell out of the top rows.
 
 Most bytes are in framework images (CoreUI's 168 MB is one 117 MB and one
 36 MB region under `NSApplication run`, mapped asset data rather than
