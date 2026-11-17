@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_fluent"
+name = "Fluent syntax"
+version = "0.1.0"
+license = "Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "fluent"
+wasm = "tree-sitter-fluent.wasm"
+extensions = ["ftl"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+packs = ["docs"]
+earlier_patterns_win = false
+license = "Apache-2.0"
+line_comment = "#"

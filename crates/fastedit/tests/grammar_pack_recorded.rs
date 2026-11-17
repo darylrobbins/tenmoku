@@ -10,6 +10,10 @@ const NOT_RELEASED: &[(&str, &str)] = &[
         "added on neon after grammars-2; its wasm is recorded with the next grammar release",
     ),
     (
+        "fluent",
+        "added on argon; recorded by the Mac's next grammar release",
+    ),
+    (
         "gotmpl",
         "added on helium; recorded by the Mac's next grammar release",
     ),
