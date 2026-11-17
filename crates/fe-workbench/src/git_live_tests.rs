@@ -673,8 +673,18 @@ fn binary_new_files_have_no_base(cx: &mut TestAppContext) {
     write(dir.path(), "staged.bin", "a\0b\nc\n");
     git(dir.path(), &["add", "staged.bin"]);
     let (workbench, cx) = open(cx, dir.path());
-    let untracked = open_file(&workbench, &dir.path().join("blob.bin"), cx);
-    let staged = open_file(&workbench, &dir.path().join("staged.bin"), cx);
+    // A binary file opens in a hex viewer (T1895): Open as Text gives the
+    // editor, whose rows have no changes.
+    let as_text = |name: &str, cx: &mut VisualTestContext| {
+        let path = dir.path().join(name);
+        let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+        let opened = path.clone();
+        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open_as_text(opened, window, cx)));
+        draw(cx);
+        editor(&workbench, &path, cx)
+    };
+    let untracked = as_text("blob.bin", cx);
+    let staged = as_text("staged.bin", cx);
     assert!(row_changes(&untracked, cx).is_empty());
     assert!(row_changes(&staged, cx).is_empty());
 }

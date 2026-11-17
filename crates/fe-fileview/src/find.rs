@@ -3,7 +3,8 @@
 //! The viewer has no rope to run the editor's find over, and reading the file
 //! through [`FileView::read`] would push all of it through the 16 MiB chunk
 //! cache and evict what the screen shows. [`find`] reads [`FIND_BLOCK`] bytes
-//! at a time with `read_uncached` instead.
+//! at a time with `read_uncached` instead. [`find_bytes`] is the same scan
+//! for any bytes, which the hex view searches by.
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -59,7 +60,33 @@ pub fn find(
     stop: &AtomicBool,
 ) -> Result<FindOutcome, ReadError> {
     let needle = query.needle.as_bytes();
-    if needle.is_empty() || needle.iter().any(|&b| b == b'\n' || b == b'\r') {
+    if needle.iter().any(|&b| b == b'\n' || b == b'\r') {
+        return Ok(FindOutcome::NotFound);
+    }
+    find_bytes(
+        view,
+        needle,
+        query.case_sensitive,
+        within,
+        from,
+        direction,
+        stop,
+    )
+}
+
+/// [`find`] for any bytes, `\0`, `\n` and `\r` among them: a hex view's
+/// search. Without `case_sensitive`, ASCII letters match either case. An
+/// empty needle never matches.
+pub fn find_bytes(
+    view: &FileView,
+    needle: &[u8],
+    case_sensitive: bool,
+    within: Range<u64>,
+    from: u64,
+    direction: Direction,
+    stop: &AtomicBool,
+) -> Result<FindOutcome, ReadError> {
+    if needle.is_empty() {
         return Ok(FindOutcome::NotFound);
     }
     let end = within.end.min(view.len());
@@ -68,7 +95,7 @@ pub fn find(
     if end - start < n {
         return Ok(FindOutcome::NotFound);
     }
-    let matcher = Matcher::new(needle, query.case_sensitive);
+    let matcher = Matcher::new(needle, case_sensitive);
     let from = from.clamp(start, end);
     let scan = |lo, hi| match direction {
         Direction::Forward => scan_forward(view, &matcher, lo..hi, stop),

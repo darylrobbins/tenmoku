@@ -184,6 +184,14 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
             ("cmd-0".to_string(), "image.zoom_fit", false),
             ("cmd-1".to_string(), "image.zoom_actual", false),
         ])
+        // The hex viewer's.
+        .chain([
+            ("cmd-f".to_string(), "hex.find", false),
+            ("ctrl-g".to_string(), "hex.go_to_offset", false),
+            ("cmd-c".to_string(), "hex.copy", false),
+            ("cmd-g".to_string(), "hex.find_next", false),
+            ("cmd-shift-g".to_string(), "hex.find_previous", false),
+        ])
         .collect();
     assert_eq!(others, context_free);
     for binding in bindings {

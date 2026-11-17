@@ -146,6 +146,8 @@ command-history-show_local = Local History: Show History
 
 command-image-open_as_image = Open as Image
 command-image-open_as_text = Open as Text
+command-hex-open_as_hex = Open as Hex
+command-hex-open_as_text = Open as Text
 
 command-inline_edit-cancel = Cancel Inline Edit
 command-inline_edit-submit = Send Inline Edit

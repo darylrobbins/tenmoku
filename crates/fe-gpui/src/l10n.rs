@@ -10,6 +10,7 @@ kiln_l10n::resources! {
         "../l10n/en-US/diff.ftl",
         "../l10n/en-US/hover.ftl",
         "../l10n/en-US/debug.ftl",
+        "../l10n/en-US/hex.ftl",
     ],
 }
 
@@ -27,7 +28,7 @@ mod tests {
     /// Every command fe-gpui registers has a `command-<id>` title in its
     /// catalogue, and every `command-*` key there names one: those of the
     /// editor's list that aren't fe-editor's or fe-vim's (the editor's
-    /// own, the image viewer's and the diff view's), vim's app commands
+    /// own, the image viewer's, the hex viewer's and the diff view's), vim's app commands
     /// and the proposals'.
     #[gpui::test]
     fn commands_and_command_keys_match(cx: &mut gpui::TestAppContext) {
@@ -47,7 +48,7 @@ mod tests {
                 .collect::<Vec<_>>()
         }));
         ids.extend(crate::view::proposal_registry().commands().map(of));
-        assert_eq!(ids.len(), 29, "{ids:?}");
+        assert_eq!(ids.len(), 36, "{ids:?}");
         let errors = fe_command::l10n::check_command_keys(&super::RESOURCES, ids);
         assert!(errors.is_empty(), "{}", errors.join("\n"));
     }

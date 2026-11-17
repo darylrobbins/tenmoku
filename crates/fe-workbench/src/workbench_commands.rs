@@ -1897,6 +1897,41 @@ impl Workbench {
         });
     }
 
+    /// Open as Hex
+    ///
+    /// The active editor, large file's viewer or image viewer replaced by a
+    /// hex viewer of its file. (The large file's viewer sets the `editor` key
+    /// context too.)
+    #[command(id = "hex.open_as_hex", context = "editor || ImageViewer")]
+    fn open_as_hex_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(
+            verbatim!("editor || ImageViewer"),
+            cx,
+            |this, window, cx| {
+                let pane = this.pane().clone();
+                let path = hex_tab(&pane, false, cx);
+                if let Some(path) = path {
+                    pane.update(cx, |pane, cx| pane.open_as_hex(&path, window, cx));
+                }
+            },
+        );
+    }
+
+    /// Open as Text
+    ///
+    /// The active hex viewer replaced by an editor of its file, or by the
+    /// text viewer for a file too large to edit.
+    #[command(id = "hex.open_as_text", context = "HexViewer")]
+    fn open_hex_as_text_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(fe_gpui::HEX_VIEWER_CONTEXT, cx, |this, window, cx| {
+            let pane = this.pane().clone();
+            let path = hex_tab(&pane, true, cx);
+            if let Some(path) = path {
+                pane.update(cx, |pane, cx| pane.open_as_text(path, window, cx));
+            }
+        });
+    }
+
     /// Open Folder…
     #[command(id = "workbench.open_folder")]
     fn open_folder(&mut self, cx: &mut Cx<Self>) {
@@ -2261,6 +2296,23 @@ pub(crate) fn invoked_in(context: &str, cx: &App) -> bool {
         }
         _ => true,
     }
+}
+
+/// The path of `pane`'s active tab if it's a hex viewer (`hex`), or else an
+/// editor, a large file's viewer or an image viewer: `hex.open_as_text`
+/// and `hex.open_as_hex` do nothing on any other tab.
+fn hex_tab(
+    pane: &gpui::Entity<crate::Pane>,
+    hex: bool,
+    cx: &gpui::App,
+) -> Option<std::path::PathBuf> {
+    let pane = pane.read(cx);
+    let tab = pane.tabs().get(pane.active()?)?;
+    let shown = match hex {
+        true => tab.hex_viewer().is_some(),
+        false => tab.editor().is_some() || tab.viewer().is_some() || tab.image_viewer().is_some(),
+    };
+    shown.then(|| tab.path.clone()).flatten()
 }
 
 /// The path of `pane`'s active tab if it's an SVG's viewer (`viewer`) or

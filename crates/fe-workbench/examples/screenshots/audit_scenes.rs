@@ -50,6 +50,8 @@ mod find_bar;
 mod git_log;
 #[path = "audit/git_log_card.rs"]
 mod git_log_card;
+#[path = "audit/hex_viewer.rs"]
+mod hex_viewer;
 #[path = "audit/hover.rs"]
 mod hover;
 #[path = "audit/inbox.rs"]
@@ -144,6 +146,7 @@ const SURFACES: &[&Surface] = &[
     &debug_run_widget::SURFACE,
     &debug_console::SURFACE,
     &debug_hover::SURFACE,
+    &hex_viewer::SURFACE,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup

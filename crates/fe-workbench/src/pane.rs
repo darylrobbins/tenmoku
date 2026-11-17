@@ -21,8 +21,8 @@ use fe_config::{EditorConfig, EndOfLine, IndentKind, IndentSize};
 use fe_editor::{EditorModel, IndentStyle};
 use fe_fileview::{FileView, Freshness, LineIndex};
 use fe_gpui::{
-    DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, ImageViewer,
-    SettingsEvent, commands::RunCommand,
+    DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, HexViewer,
+    HexViewerEvent, ImageViewer, SettingsEvent, commands::RunCommand,
 };
 use fe_keymap::{KeyOutcome, Keymap, Matcher};
 use fe_ui::{
@@ -116,6 +116,11 @@ impl Tab {
     pub fn viewer(&self) -> Option<&Entity<FileViewer>> {
         self.item.downcast_ref()
     }
+
+    /// The tab's hex viewer, if it shows a file's bytes.
+    pub fn hex_viewer(&self) -> Option<&Entity<HexViewer>> {
+        self.item.downcast_ref()
+    }
 }
 
 pub struct Pane {
@@ -192,7 +197,8 @@ pub struct Pane {
     this: WeakEntity<Pane>,
     /// The keys typed in a Markdown preview shown in a tab, toward a Save.
     save_keys: Rc<RefCell<SaveKeys>>,
-    /// Hears each viewer tab's [`FileViewerEvent::EditRequested`].
+    /// Hears each viewer tab's [`FileViewerEvent::EditRequested`], and
+    /// each hex viewer tab's [`HexViewerEvent::CopyTooLarge`].
     viewer_events: HashMap<TabId, Subscription>,
     /// The item whose activation the vim buffer registry was last told of.
     logged_active: Option<TabId>,
@@ -618,6 +624,13 @@ impl Pane {
         self.add_item(Box::new(viewer), cx);
     }
 
+    /// Opens a hex viewer of `view`, a binary file, in a new tab and shows
+    /// it, without focusing it.
+    pub(crate) fn add_hex_viewer(&mut self, view: Arc<FileView>, cx: &mut Context<Self>) {
+        let viewer = self.new_hex_viewer(view, cx);
+        self.add_item(Box::new(viewer), cx);
+    }
+
     /// Opens a viewer of the image file `path` in a new tab and shows it,
     /// without focusing it.
     pub(crate) fn add_image_viewer(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -718,13 +731,15 @@ impl Pane {
             }
         }
         for tab in &self.tabs {
-            let Some(viewer) = tab.viewer() else {
+            if self.viewer_events.contains_key(&tab.id()) {
                 continue;
-            };
-            if !self.viewer_events.contains_key(&tab.id()) {
-                let subscription = self.hear_edit_requests(viewer, cx);
-                self.viewer_events.insert(tab.id(), subscription);
             }
+            let subscription = match (tab.viewer(), tab.hex_viewer()) {
+                (Some(viewer), _) => self.hear_edit_requests(viewer, cx),
+                (_, Some(viewer)) => hear_refused_copies(viewer, cx),
+                (None, None) => continue,
+            };
+            self.viewer_events.insert(tab.id(), subscription);
         }
     }
 
@@ -968,6 +983,19 @@ impl Pane {
             self.activate(ix, window, cx);
             return;
         }
+        // A hex viewer's file too large to edit, as it opened or as it is
+        // now, goes to the text viewer, unread, over the same view.
+        if let Some(ix) = self.position(&path)
+            && let Some(hex) = self.tabs[ix].hex_viewer()
+            && (hex.read(cx).view().len() >= loader::large_bytes(&path) || loader::is_large(&path))
+        {
+            self.text_reads.remove(&path);
+            let view = hex.read(cx).view().clone();
+            let index = Arc::new(loader::index(view.clone()));
+            let viewer = self.new_viewer(view, index, cx);
+            self.replace_in_place(ix, Box::new(viewer), window, cx);
+            return;
+        }
         // The tab to replace, which the read must still find as it was.
         let origin = self.position(&path).map(|ix| self.tabs[ix].id());
         let navigations = self.navigations;
@@ -1102,6 +1130,46 @@ impl Pane {
             .remove(path)
             .unwrap_or(fe_gpui::ImageZoom::Fit);
         let viewer = self.image_viewer_at(path.to_owned(), zoom, cx);
+        self.replace_in_place(ix, Box::new(viewer), window, cx);
+    }
+
+    /// Replaces the active tab of `path`, an editor, a large file's viewer
+    /// or an image viewer, with a hex viewer of the file, in place. An
+    /// editor with unsaved changes stays, with a toast saying why. For
+    /// `hex.open_as_hex`; ordinary opens go by [`loader::is_binary`].
+    pub fn open_as_hex(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.position(path) else {
+            return;
+        };
+        // A read for the way to the text is out of date now.
+        if self.text_reads.remove(path).is_some() {
+            cx.notify();
+        }
+        let tab = &self.tabs[ix];
+        if tab.editor().is_none() && tab.viewer().is_none() && tab.image_viewer().is_none() {
+            return;
+        }
+        if tab.item().is_dirty(cx) {
+            toast::show(cx, Toast::error(tr!("workbench-pane-save-before-hex")));
+            return;
+        }
+        // Opening reads nothing: the viewer reads the rows it shows.
+        let view = match FileView::open(path) {
+            Ok(view) => Arc::new(view),
+            Err(error) => {
+                let name = path.file_name().unwrap_or(path.as_os_str());
+                toast::show(
+                    cx,
+                    Toast::error(tr!(
+                        "workbench-pane-cant-open",
+                        name = name.to_string_lossy()
+                    ))
+                    .detail(error.to_string()),
+                );
+                return;
+            }
+        };
+        let viewer = self.new_hex_viewer(view, cx);
         self.replace_in_place(ix, Box::new(viewer), window, cx);
     }
 
@@ -1453,6 +1521,7 @@ impl Pane {
                         }
                         Opened::Large { view, index } => Box::new(self.new_viewer(view, index, cx)),
                         Opened::Image => Box::new(self.new_image_viewer(path.clone(), cx)),
+                        Opened::Binary { view } => Box::new(self.new_hex_viewer(view, cx)),
                     };
                     if preview {
                         return self.replace_preview(item, cx);
@@ -1910,6 +1979,14 @@ impl Pane {
         cx.new(|cx| FileViewer::new(view, index, banner, theme, cx))
     }
 
+    /// A hex viewer of `view`. It has no minimap, whatever the settings
+    /// say: [`Pane::sync_tabs`] and [`Pane::reload_settings`] give one to
+    /// editors only.
+    fn new_hex_viewer(&mut self, view: Arc<FileView>, cx: &mut Context<Self>) -> Entity<HexViewer> {
+        let theme = self.theme.clone();
+        cx.new(|cx| HexViewer::new(view, theme, cx))
+    }
+
     /// A viewer of the image file `path`, which decodes it off the main
     /// thread.
     fn new_image_viewer(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Entity<ImageViewer> {
@@ -1940,6 +2017,21 @@ impl Pane {
             .child(text)
             .into_any_element()
     }
+}
+
+/// Hears `viewer` refuse a copy over [`fe_editor::COPY_LIMIT`], and says
+/// so in a toast.
+fn hear_refused_copies(viewer: &Entity<HexViewer>, cx: &mut App) -> Subscription {
+    cx.subscribe(viewer, |_, event: &HexViewerEvent, cx| {
+        if let HexViewerEvent::CopyTooLarge { len } = event {
+            let message = tr!(
+                "workbench-pane-hex-copy-too-large",
+                size = fe_gpui::size_text(*len),
+                limit = fe_gpui::size_text(fe_editor::COPY_LIMIT as u64)
+            );
+            toast::show(cx, Toast::error(message));
+        }
+    })
 }
 
 /// Has every open editor, in any pane or window, re-read its file's
@@ -2690,6 +2782,26 @@ impl Pane {
     /// `find.show_replace`: before that, nothing else does anything.
     /// Closing it focuses the active editor.
     pub(crate) fn run_find(&mut self, op: FindOp, window: &mut Window, cx: &mut Context<Self>) {
+        // In a hex viewer's header input the find bar's keys are its own:
+        // the pane's find bar isn't open there.
+        let hex = (self.tabs.iter().filter_map(Tab::hex_viewer))
+            .find(|hex| hex.read(cx).input_focused(window, cx))
+            .cloned();
+        if let Some(hex) = hex {
+            use fe_gpui::HexInputCommand as Input;
+            let command = match op {
+                FindOp::Show => Some(Input::Show),
+                FindOp::Next => Some(Input::Next),
+                FindOp::Previous => Some(Input::Previous),
+                FindOp::Close => Some(Input::Close),
+                FindOp::ToggleCase => Some(Input::ToggleCase),
+                _ => None,
+            };
+            if let Some(command) = command {
+                hex.update(cx, |hex, cx| hex.run_input_command(command, window, cx));
+            }
+            return;
+        }
         if op == FindOp::RenameSymbol {
             let editor = self.active_editor().cloned();
             let request =

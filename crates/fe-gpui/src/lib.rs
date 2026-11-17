@@ -24,6 +24,7 @@ pub mod diff_view;
 mod element;
 mod file_viewer;
 mod gutter_annotations;
+mod hex_viewer;
 mod hover;
 mod image_viewer;
 pub mod inlay_hints;
@@ -62,6 +63,10 @@ use fe_syntax::Highlight;
 pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, px};
 pub use gutter_annotations::{GutterAnnotation, GutterAnnotations};
+pub use hex_viewer::{
+    HexColumn, HexViewer, HexViewerEvent, InputCommand as HexInputCommand,
+    KEY_CONTEXT as HEX_VIEWER_CONTEXT,
+};
 pub use hover::{
     CALLER_COUNT_CAP, CallerCountFuture, DefinitionFuture, HoverCardPart, HoverCardText,
     HoverContent, HoverDefinition, HoverFuture, HoverProvider, MarkdownRenderer, PaintedHoverCard,
@@ -118,6 +123,10 @@ pub use vim::{
 pub mod which_key {
     pub use crate::vim::which_key::command_title;
 }
+
+/// The id of the `Read-only` status item of the file and hex viewers: on
+/// the right, before the cursor.
+pub(crate) const READ_ONLY_STATUS: &str = "read_only";
 
 /// Key context active while an editor is focused: the `fe-command`
 /// context name, so keymap and command predicates agree.

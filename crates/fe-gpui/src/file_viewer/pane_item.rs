@@ -11,10 +11,10 @@ use gpui::{AnyView, App, AppContext as _, Context, Entity, SharedString, Task, W
 use kiln_shell::{Icon, PaneItem, StatusItem, StatusSide};
 
 use super::{FileViewer, RowTarget, open};
-use crate::pane_item::{file_name, restore_style, status};
-
-/// The id of the `Read-only` status item: on the right, before the cursor.
-pub(crate) const READ_ONLY_STATUS: &str = "read_only";
+use crate::{
+    READ_ONLY_STATUS,
+    pane_item::{file_name, restore_style, status},
+};
 
 /// The banner a restored viewer shows when its saved state has none:
 /// `Read only: too large to edit`.

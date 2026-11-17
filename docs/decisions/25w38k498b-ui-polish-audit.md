@@ -76,6 +76,8 @@ settings; light is Tenmoku Light with `[theme] mode = "light"`.
 | `target/ui-audit/operations_light.png` | Status bar: an operation in progress, list closed | Tenmoku Light |
 | `target/ui-audit/operations_list_dark.png` | Status bar: the operations list open above the item | Tenmoku Dark |
 | `target/ui-audit/operations_list_light.png` | Status bar: the operations list open | Tenmoku Light |
+| `target/ui-audit/hex_viewer_dark.png` | Hex viewer (T1895): a small binary file, its header strip, bytes 0x10–0x1F selected (the hex column's selection, the ASCII column's mirror) | Tenmoku Dark |
+| `target/ui-audit/hex_viewer_light.png` | Hex viewer: bytes 0x10–0x1F selected | Tenmoku Light |
 | `target/ui-audit/vscode-dark-modern.png` | Chrome scene | Dark Modern |
 | `target/ui-audit/vscode-2026-dark.png` | Chrome scene | Dark 2026 |
 | `target/ui-audit/vscode-2026-light.png` | Chrome scene | Light 2026 |

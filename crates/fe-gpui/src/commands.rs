@@ -179,6 +179,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         proposal: crate::view::proposal_registry(),
         diff: crate::diff_view::registry(),
         image: crate::image_viewer::registry(),
+        hex: crate::hex_viewer::registry(),
         app: app_registry(),
     })
 }
@@ -189,6 +190,7 @@ struct Catalog {
     proposal: Registry<crate::view::ProposalCommands>,
     diff: Registry<crate::diff_view::DiffCommands>,
     image: Registry<crate::image_viewer::ImageCommands>,
+    hex: Registry<crate::hex_viewer::HexCommands>,
     app: Registry<AppCommands>,
 }
 
@@ -196,12 +198,13 @@ struct Catalog {
 /// proposal commands', then the diff view's, then the app's.
 impl CommandCatalog for Catalog {
     fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
-        let checks: [&dyn CommandCatalog; 5] = [
+        let checks: [&dyn CommandCatalog; 6] = [
             &*self.editor,
             &*self.vim,
             &self.proposal,
             &self.diff,
             &self.image,
+            &self.hex,
         ];
         for catalog in checks {
             match catalog.check(command, args) {
@@ -220,10 +223,12 @@ pub fn command_list() -> Vec<CommandMeta> {
     let vim = vim::registry();
     let diff = crate::diff_view::registry();
     let image = crate::image_viewer::registry();
+    let hex = crate::hex_viewer::registry();
     (editor.commands().cloned())
         .chain(vim.commands().cloned())
         .chain(diff.commands().cloned())
         .chain(image.commands().cloned())
+        .chain(hex.commands().cloned())
         .collect()
 }
 

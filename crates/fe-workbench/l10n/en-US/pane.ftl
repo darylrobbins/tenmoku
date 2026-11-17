@@ -17,6 +17,10 @@ workbench-pane-cannot-open = Cannot open { $path }: { $error }
 # $name is the file's name; the toast's detail says why.
 workbench-pane-cant-open = Can't open { $name }
 workbench-pane-save-before-image = Save the file before opening it as an image
+workbench-pane-save-before-hex = Save the file before opening it as hex
+# A hex viewer's selection too large to copy. $size is its size, $limit the
+# most a copy takes, both as "12.3 MB".
+workbench-pane-hex-copy-too-large = Can't copy { $size }: a copy takes at most { $limit }
 
 ## A file too large to edit, in a read-only viewer
 

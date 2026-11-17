@@ -2872,6 +2872,34 @@ keys = "secondary-1"
 command = "image.zoom_actual"
 context = "ImageViewer"
 
+# The hex viewer's keys, only in its own key context: the editor's are
+# untouched. Find, Go to Offset (ctrl-g, as the editor's Go to Line), Copy,
+# and the editor's find.next and find.previous keys.
+[[bindings]]
+keys = "secondary-f"
+command = "hex.find"
+context = "HexViewer"
+
+[[bindings]]
+keys = "ctrl-g"
+command = "hex.go_to_offset"
+context = "HexViewer"
+
+[[bindings]]
+keys = "secondary-c"
+command = "hex.copy"
+context = "HexViewer"
+
+[[bindings]]
+keys = { macos = "cmd-g", default = "f3" }
+command = "hex.find_next"
+context = "HexViewer"
+
+[[bindings]]
+keys = { macos = "cmd-shift-g", default = "shift-f3" }
+command = "hex.find_previous"
+context = "HexViewer"
+
 # Inline Edit with AI: an input under the selection. Off macOS ctrl-i is
 # vim's <C-i> (jump forward) in its other modes, so it's bound as the other
 # editing keys are, in insert and replace mode.

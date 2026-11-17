@@ -42,6 +42,9 @@ pub enum Opened {
     /// An image file, unread: the image viewer reads and decodes it
     /// itself, off the main thread.
     Image,
+    /// A binary file ([`is_binary`]), unread but for its first
+    /// [`BINARY_PROBE`] bytes: the hex viewer reads the rows it shows.
+    Binary { view: Arc<FileView> },
 }
 
 impl std::fmt::Debug for Opened {
@@ -50,6 +53,7 @@ impl std::fmt::Debug for Opened {
             Opened::Text(buffer) => write!(f, "Text({:?} bytes)", buffer.as_ref().map(Buffer::len)),
             Opened::Large { view, .. } => write!(f, "Large({})", view.path().display()),
             Opened::Image => write!(f, "Image"),
+            Opened::Binary { view } => write!(f, "Binary({})", view.path().display()),
         }
     }
 }
@@ -60,11 +64,17 @@ impl From<Buffer> for Opened {
     }
 }
 
-/// Opens `path`: a file of [`LARGE_FILE_BYTES`] or more as a view whose
-/// index starts building, anything else as [`read`] does.
+/// Opens `path`: an image unread, a binary file ([`is_binary`]) as a view
+/// for the hex viewer, whatever its size, a file of [`LARGE_FILE_BYTES`] or
+/// more as a view whose index starts building, anything else as [`read`]
+/// does.
 pub fn open(path: PathBuf) -> io::Result<Opened> {
     if is_image(&path) {
         return Ok(Opened::Image);
+    }
+    if is_binary(&path) {
+        let view = Arc::new(FileView::open(&path)?);
+        return Ok(Opened::Binary { view });
     }
     if !is_large(&path) {
         return read(path).map(Opened::Text);
@@ -86,6 +96,36 @@ pub(crate) fn is_image(path: &Path) -> bool {
             .iter()
             .any(|image| ext.eq_ignore_ascii_case(image))
         })
+}
+
+/// How many bytes from a file's start [`is_binary`] looks at.
+pub const BINARY_PROBE: usize = 8 << 10;
+
+/// Whether the file at `path` is binary: a NUL in its first
+/// [`BINARY_PROBE`] bytes, unless it starts with a UTF-16 or UTF-32 byte
+/// order mark (`FF FE`, `FE FF`, `00 00 FE FF`), whose text holds NULs. A
+/// file that can't be read isn't: [`read`] reports why.
+pub(crate) fn is_binary(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    if !file.metadata().is_ok_and(|meta| meta.is_file()) {
+        return false;
+    }
+    let mut probe = Vec::with_capacity(BINARY_PROBE);
+    if file
+        .take(BINARY_PROBE as u64)
+        .read_to_end(&mut probe)
+        .is_err()
+    {
+        return false;
+    }
+    let bom = [&[0xFF, 0xFE][..], &[0xFE, 0xFF], &[0x00, 0x00, 0xFE, 0xFF]];
+    if bom.iter().any(|bom| probe.starts_with(bom)) {
+        return false;
+    }
+    probe.contains(&0)
 }
 
 /// Whether `path` is an uncompressed SVG (`.svg`, in any case), the one image
@@ -111,6 +151,12 @@ pub(crate) fn large_bytes(path: &Path) -> u64 {
 #[cfg(not(test))]
 fn threshold(_: &Path) -> u64 {
     LARGE_FILE_BYTES
+}
+
+/// Starts `view`'s index, as [`open`] starts a large file's: for a file
+/// opened another way first, such as in the hex viewer.
+pub(crate) fn index(view: Arc<FileView>) -> LineIndex {
+    build_index(view)
 }
 
 #[cfg(not(test))]

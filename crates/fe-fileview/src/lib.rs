@@ -25,7 +25,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-pub use find::{Direction, FIND_BLOCK, FindOutcome, FindQuery, find};
+pub use find::{Direction, FIND_BLOCK, FindOutcome, FindQuery, find, find_bytes};
 pub use index::{IndexState, LineIndex, Progress, STRIDE, Step};
 pub use source::FileText;
 use stamp::Stamp;
@@ -232,6 +232,14 @@ impl FileView {
             Ok(stamp) if stamp == self.stamp => Freshness::Unchanged,
             _ => Freshness::Changed,
         }
+    }
+
+    /// The raw bytes in `range`, clamped to the recorded length, through
+    /// the chunk cache. A file now shorter than recorded is
+    /// [`ReadError::Changed`].
+    pub fn bytes(&self, range: Range<u64>) -> Result<Vec<u8>, ReadError> {
+        let end = range.end.min(self.len());
+        self.read_bytes(range.start.min(end)..end)
     }
 
     /// The raw bytes in `range`, which lies within the recorded length.
