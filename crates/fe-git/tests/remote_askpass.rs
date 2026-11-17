@@ -162,7 +162,8 @@ fn fake_ssh(bin: &Path) {
          vanish)\n\
          \x20 SSH_ASKPASS_PROMPT=none \"$SSH_ASKPASS\" 'Confirm user presence for key /k/id' & notice=$!\n\
          \x20 \"$SSH_ASKPASS\" \"Enter passphrase for key '/k/id': \" >/dev/null & helper=$!\n\
-         \x20 sleep 1; kill $notice $helper 2>/dev/null; wait\n\
+         \x20 n=0; while [ ! -e ../helper-asked ] && [ $n -lt 600 ]; do sleep 0.1; n=$((n+1)); done\n\
+         \x20 sleep 0.2; kill $notice $helper 2>/dev/null; wait\n\
          \x20 exec sh -c \"$last\";;\n\
          esac\n\
          pass=$(ask) || {{ echo 'Permission denied (publickey).' >&2; exit 255; }}\n\
@@ -590,10 +591,13 @@ fn a_helper_gone_withdraws_its_request_and_a_notice_asks_nothing() {
     git(&fixture.work, &["remote", "add", "origin", &url]);
     let asked = Arc::new(Mutex::new(Vec::new()));
     let seen = asked.clone();
+    let fixture_dir = fixture.dir.path().to_owned();
     let askpass = Askpass::new(
         helper(),
         fixture.state.clone(),
         move |request, withdrawn| {
+            // Tell the fake ssh its helper has connected, so it can stop it.
+            let _ = fs::write(fixture_dir.join("helper-asked"), "");
             // An answer that never comes, until there's no one to take it.
             let start = std::time::Instant::now();
             while !withdrawn.is_withdrawn() && start.elapsed() < std::time::Duration::from_secs(10)
@@ -612,7 +616,7 @@ fn a_helper_gone_withdraws_its_request_and_a_notice_asks_nothing() {
 
     open(&fixture.work, Some(askpass)).fetch(false).unwrap();
     // Heard on the session's thread, which may be just behind.
-    for _ in 0..500 {
+    for _ in 0..6000 {
         if !asked.lock().unwrap().is_empty() {
             break;
         }
