@@ -216,6 +216,9 @@ pub struct StatusBar {
     /// ([`StatusBar::set_operations`]).
     operations: Option<Running>,
     line: vim_line::VimLine,
+    /// Which showing of the nav source item is current, so an earlier one's
+    /// expiry leaves a later one be ([`StatusBar::show_expiring`]).
+    expiring: u64,
     _observe: Option<Subscription>,
     /// Each item drawn by the last render, in order: its side, id and text.
     #[cfg(test)]
@@ -234,6 +237,30 @@ impl StatusBar {
     pub fn set_item(&mut self, item: impl Into<kiln_shell::StatusItem>, cx: &mut Context<Self>) {
         self.items.set(item.into());
         cx.notify();
+    }
+
+    /// Adds `item`, and removes it after `after` unless it was replaced by
+    /// another `show_expiring` or removed by then.
+    pub(crate) fn show_expiring(
+        &mut self,
+        item: kiln_shell::StatusItem,
+        after: std::time::Duration,
+        cx: &mut Context<Self>,
+    ) {
+        let id = item.id.clone();
+        self.expiring += 1;
+        let current = self.expiring;
+        self.set_item(item, cx);
+        cx.spawn(async move |bar, cx| {
+            cx.background_executor().timer(after).await;
+            bar.update(cx, |bar, cx| {
+                if bar.expiring == current {
+                    bar.remove_item(&id, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Shows the bell, for `needs_you` notifications waiting on the user.

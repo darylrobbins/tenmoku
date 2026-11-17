@@ -56,6 +56,10 @@ pub(crate) const HISTORY_LIMIT: usize = 100;
 /// The status bar item naming the provider of the last answer.
 pub(crate) const SOURCE_ITEM: &str = verbatim!("nav_source");
 
+/// How long the source item stays: it belongs to the answer just given, not
+/// to whatever the bar shows later.
+pub(crate) const SOURCE_SHOWN: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// A place to go back or forward to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Place {
@@ -439,7 +443,9 @@ pub(crate) fn show_source(status_bar: &Entity<StatusBar>, provider: &str, cx: &m
         text: tr!("workbench-navigation-source", provider = provider),
         command: None,
     };
-    status_bar.update(cx, |bar, cx| bar.set_item(item, cx));
+    status_bar.update(cx, |bar, cx| {
+        bar.show_expiring(item.into(), SOURCE_SHOWN, cx)
+    });
 }
 
 /// How a provider answered, as the nav statuses' `source` argument: `search`
