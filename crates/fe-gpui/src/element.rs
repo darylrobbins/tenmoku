@@ -666,6 +666,10 @@ pub(crate) trait HighlightStyle: Copy + PartialEq {
     -> Option<Self>;
     fn color(self) -> Hsla;
     fn with_color(self, color: Hsla) -> Self;
+    /// Whether it draws faces, so [`Self::bold`] can change anything.
+    const FACES: bool;
+    /// The same colour in the bold face.
+    fn bold(self) -> Self;
 }
 
 impl HighlightStyle for Hsla {
@@ -683,6 +687,12 @@ impl HighlightStyle for Hsla {
 
     fn with_color(self, color: Hsla) -> Self {
         color
+    }
+
+    const FACES: bool = false;
+
+    fn bold(self) -> Self {
+        self
     }
 }
 
@@ -706,6 +716,12 @@ impl HighlightStyle for SpanStyle {
 
     fn with_color(self, color: Hsla) -> Self {
         Self { color, ..self }
+    }
+
+    const FACES: bool = true;
+
+    fn bold(self) -> Self {
+        Self { bold: true, ..self }
     }
 }
 
@@ -4922,6 +4938,7 @@ fn styled_highlights<S: HighlightStyle>(
             })
         })
         .collect();
+    let spans = bold_definitions(spans, syntax, theme, &range);
     let spans = match syntax {
         Some(syntax) if theme.bracket_pair_colors => {
             let brackets = fe_syntax::bracket_depths(syntax, range.clone())
@@ -4939,6 +4956,103 @@ fn styled_highlights<S: HighlightStyle>(
         return spans;
     }
     fade_spans(spans, unnecessary, &range, S::plain(theme.foreground))
+}
+
+thread_local! {
+    // How many times, and over which bytes last, the outline was asked for
+    // definition names on this thread, for tests of that work.
+    static DEFINITION_LOOKUPS: std::cell::Cell<(usize, Range<usize>)> =
+        const { std::cell::Cell::new((0, 0..0)) };
+}
+
+/// `spans` with the names of the functions defined in `range` in the bold
+/// face when the theme gives `function.definition` one: each keeps the
+/// colour it has, or the foreground where no span colours it. The names are
+/// the outline's, found over `range` alone; none while the language has no
+/// outline query or its tree is behind the text.
+fn bold_definitions<S: HighlightStyle>(
+    spans: Vec<StyledSpan<S>>,
+    syntax: Option<&Syntax>,
+    theme: &EditorTheme,
+    range: &Range<usize>,
+) -> Vec<StyledSpan<S>> {
+    let Some(syntax) = syntax.filter(|_| S::FACES) else {
+        return spans;
+    };
+    let Some(highlight) = fe_syntax::Highlight::from_capture("function.definition") else {
+        return spans;
+    };
+    if !theme
+        .capture_style(highlight)
+        .1
+        .is_some_and(|face| face.bold)
+    {
+        return spans;
+    }
+    DEFINITION_LOOKUPS.with(|lookups| {
+        let (count, _) = lookups.take();
+        lookups.set((count + 1, range.clone()));
+    });
+    let Ok(names) = fe_syntax::definition_names(syntax, range.clone()) else {
+        return spans;
+    };
+    let plain = S::plain(theme.foreground);
+    let mut out = Vec::with_capacity(spans.len() + names.len() * 2);
+    let mut rest = spans.into_iter();
+    // The span being walked, which may reach past one name into the next.
+    let mut current = rest.next();
+    for name in names {
+        while let Some(span) = current.take() {
+            if span.range.end <= name.start {
+                out.push(span);
+                current = rest.next();
+                continue;
+            }
+            current = Some(span);
+            break;
+        }
+        let mut at = name.start;
+        while current
+            .as_ref()
+            .is_some_and(|span| span.range.start < name.end)
+        {
+            let span = current.take().expect("checked");
+            if span.range.start < at {
+                out.push(StyledSpan {
+                    range: span.range.start..at,
+                    style: span.style,
+                });
+            } else if at < span.range.start {
+                out.push(StyledSpan {
+                    range: at..span.range.start,
+                    style: plain.bold(),
+                });
+            }
+            let end = span.range.end.min(name.end);
+            out.push(StyledSpan {
+                range: span.range.start.max(at)..end,
+                style: span.style.bold(),
+            });
+            at = end;
+            if end < span.range.end {
+                current = Some(StyledSpan {
+                    range: end..span.range.end,
+                    style: span.style,
+                });
+                break;
+            }
+            current = rest.next();
+        }
+        if at < name.end {
+            out.push(StyledSpan {
+                range: at..name.end,
+                style: plain.bold(),
+            });
+        }
+    }
+    out.extend(current);
+    out.extend(rest);
+    out
 }
 
 /// The colours of the `Foreground` decorations among `decorations`, in paint
@@ -5046,6 +5160,28 @@ fn over<S: Copy>(
 }
 
 impl EditorView {
+    /// The spans the editor draws the text in over `range`, as a frame
+    /// styles them but for the decorations: for tests of the faces.
+    #[doc(hidden)]
+    pub fn styled_spans(&self, range: Range<usize>) -> Vec<(Range<usize>, SpanStyle)> {
+        let syntax = self.syntax().filter(|syntax| !syntax.failed());
+        styled_highlights::<SpanStyle>(syntax, &self.theme, &[], &[], range)
+            .into_iter()
+            .map(|span| (span.range, span.style))
+            .collect()
+    }
+
+    /// How many times the outline was asked for definition names on this
+    /// thread, and over which bytes last.
+    #[doc(hidden)]
+    pub fn definition_lookups() -> (usize, Range<usize>) {
+        DEFINITION_LOOKUPS.with(|lookups| {
+            let (count, range) = lookups.take();
+            lookups.set((count, range.clone()));
+            (count, range)
+        })
+    }
+
     /// The colour the last frame drew the text at buffer `offset` in: None
     /// before the first frame, or when `offset` wasn't drawn.
     pub fn drawn_color(&self, offset: usize) -> Option<Hsla> {

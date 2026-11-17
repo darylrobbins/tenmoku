@@ -132,3 +132,48 @@ fn matches_enumerated_do_not_grow_with_unrelated_siblings() {
         );
     }
 }
+
+/// `name_matches` over the last member of a container of `count` members.
+fn name_matches_past(
+    language: &str,
+    before: &str,
+    member: &str,
+    after: &str,
+    count: usize,
+) -> usize {
+    let mut text = String::from(before);
+    for i in 0..count {
+        text.push_str(&member.replace('N', &i.to_string()));
+    }
+    let start = text.len();
+    text.push_str(&member.replace('N', "last"));
+    let end = text.len();
+    text.push_str(after);
+    let syntax = parsed(language, &Buffer::new(&text));
+    name_matches(&syntax, start..end)
+}
+
+#[test]
+fn definition_names_do_not_enumerate_unrelated_siblings() {
+    for (language, before, member, after) in [
+        (
+            "rust",
+            "impl S {\n",
+            "    fn mN() {\n        x();\n    }\n",
+            "}\n",
+        ),
+        (
+            "python",
+            "class C:\n",
+            "    def mN(self):\n        x()\n",
+            "\n",
+        ),
+    ] {
+        let few = name_matches_past(language, before, member, after, 20);
+        let many = name_matches_past(language, before, member, after, 2_000);
+        assert_eq!(
+            few, many,
+            "{language}: {few} for 20 siblings, {many} for 2000"
+        );
+    }
+}

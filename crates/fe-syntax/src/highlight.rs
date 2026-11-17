@@ -22,6 +22,7 @@ const NAMES: &[&str] = &[
     "escape",
     "function",
     "function.builtin",
+    "function.definition",
     "function.macro",
     "function.method",
     "keyword",

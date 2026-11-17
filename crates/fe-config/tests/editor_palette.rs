@@ -15,6 +15,7 @@ const UNCOLOURED: &[&str] = &[
     "constant.builtin",
     "embedded",
     "function.builtin",
+    "function.definition",
     "function.method",
     "punctuation.bracket",
     "punctuation.delimiter",

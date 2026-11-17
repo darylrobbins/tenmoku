@@ -74,8 +74,9 @@ pub use language::{
 };
 pub use modeline::language_name_for_modeline;
 pub use outline::{
-    MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineItem, OutlineJob, OutlineKind, outline,
-    outline_job, outline_scopes, outline_supported, symbols, symbols_job, symbols_supported,
+    MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineItem, OutlineJob, OutlineKind, definition_names,
+    outline, outline_job, outline_scopes, outline_supported, symbols, symbols_job,
+    symbols_supported,
 };
 pub use parse_limit::TREE_BUDGET_BYTES;
 pub use runtime::{

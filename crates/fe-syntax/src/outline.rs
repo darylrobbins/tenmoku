@@ -232,6 +232,58 @@ pub fn outline_scopes(
     Ok(scopes_in(job, rows).0)
 }
 
+/// The name ranges of the functions and methods the outline lists whose
+/// names lie in `bytes`, sorted and not overlapping, for drawing a
+/// definition's name in a face of its own. The query runs only over
+/// `bytes`, so a file's other rows cost nothing, and there's no cap, as the
+/// outline's. A language without an outline query, or whose tree is behind
+/// the text, gives the [`NoOutline`] reason.
+pub fn definition_names(
+    syntax: &Syntax,
+    bytes: Range<usize>,
+) -> Result<Vec<Range<usize>>, NoOutline> {
+    let job = outline_job(syntax)?;
+    if bytes.start >= bytes.end {
+        return Ok(Vec::new());
+    }
+    let (found, _) = found_over(&job, bytes.clone());
+    let mut names: Vec<Range<usize>> = (found.into_iter())
+        .filter(|found| matches!(found.kind, OutlineKind::Function | OutlineKind::Method))
+        .map(|found| found.name_range)
+        .filter(|name| name.start < name.end && name.start < bytes.end && bytes.start < name.end)
+        .collect();
+    names.sort_by_key(|name| (name.start, name.end));
+    names.dedup();
+    // A name inside another's range is dropped, so the result doesn't overlap.
+    let mut out: Vec<Range<usize>> = Vec::with_capacity(names.len());
+    for name in names {
+        if out.last().is_none_or(|last| last.end <= name.start) {
+            out.push(name);
+        }
+    }
+    Ok(out)
+}
+
+/// The items whose nodes overlap `bytes`, and the matches enumerated finding
+/// them. The patterns that capture an item below a container run
+/// item-rooted ([`Rooted::contained`]), so a byte range in a big impl
+/// doesn't enumerate its other members; the rest run whole over the bytes.
+fn found_over(job: &OutlineJob, bytes: Range<usize>) -> (Vec<Found<'_>>, usize) {
+    let rooted = job.query.rooted(job.language);
+    let mut found = Vec::new();
+    let mut matches = 0;
+    for compiled in [Some(&rooted.query), rooted.contained.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        let what = Find::Overlapping(bytes.clone());
+        let (more, _, raw) = find_counted(job.language, compiled, &job.tree, &job.text, what);
+        found.extend(more);
+        matches += raw;
+    }
+    (found, matches)
+}
+
 /// [`outline_scopes`] for a language without headings, with the matches
 /// the queries gave, whether they were kept or not.
 ///
@@ -245,19 +297,15 @@ fn scopes_in(job: OutlineJob, rows: Range<u32>) -> (Vec<RangeInclusive<u32>>, us
         false => text.len(),
     };
     let bytes = text.row_start(rows.start)..end;
-    let rooted = job.query.rooted(job.language);
-    let mut found = Vec::new();
-    let mut matches = 0;
-    for compiled in [Some(&rooted.query), rooted.contained.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        let what = Find::Overlapping(bytes.clone());
-        let (more, _, raw) = find_counted(job.language, compiled, &job.tree, text, what);
-        found.extend(more);
-        matches += raw;
-    }
+    let (found, matches) = found_over(&job, bytes);
     (scopes_of(text, &found, rows), matches)
+}
+
+/// How many matches [`definition_names`] enumerates over `bytes`, for tests
+/// of its work.
+#[cfg(test)]
+pub(crate) fn name_matches(syntax: &Syntax, bytes: Range<usize>) -> usize {
+    found_over(&outline_job(syntax).unwrap(), bytes).1
 }
 
 /// How many matches [`outline_scopes`] enumerates for `rows`, for tests of
