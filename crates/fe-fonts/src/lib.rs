@@ -81,6 +81,12 @@ pub const FACES: &[Face] = &[
         true
     ),
     face!(
+        "spline-sans-mono/SplineSansMono-SemiBoldItalic.ttf",
+        CODE,
+        600,
+        true
+    ),
+    face!(
         "instrument-serif/InstrumentSerif-Regular.ttf",
         TITLE,
         400,

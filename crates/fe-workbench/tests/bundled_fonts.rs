@@ -184,16 +184,21 @@ fn bundled_families_resolve_at_each_weight() {
             }
         }
     }
-    // Spline Sans Mono's italic too.
-    let italic = FACES.iter().find(|f| f.italic).expect("an italic");
-    match platform.font_id(&styled(italic.family, italic.weight, true)) {
-        Ok(id) if same(&resolved(&*platform, id), &expected(italic.bytes)) => {}
-        Ok(id) => failures.push(format!(
-            "{}: resolved to {:?}",
-            italic.file,
-            which(&*platform, id).unwrap_or("a face fe-fonts doesn't ship")
-        )),
-        Err(e) => failures.push(format!("{}: not resolved: {e:#}", italic.file)),
+    // Spline Sans Mono's italics too, at 400 and 600.
+    for weight in [400, 600] {
+        let italic = FACES
+            .iter()
+            .find(|f| f.family == CODE && f.weight == weight && f.italic)
+            .unwrap_or_else(|| panic!("fe-fonts ships no {CODE} italic {weight}"));
+        match platform.font_id(&styled(italic.family, italic.weight, true)) {
+            Ok(id) if same(&resolved(&*platform, id), &expected(italic.bytes)) => {}
+            Ok(id) => failures.push(format!(
+                "{}: resolved to {:?}",
+                italic.file,
+                which(&*platform, id).unwrap_or("a face fe-fonts doesn't ship")
+            )),
+            Err(e) => failures.push(format!("{}: not resolved: {e:#}", italic.file)),
+        }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 

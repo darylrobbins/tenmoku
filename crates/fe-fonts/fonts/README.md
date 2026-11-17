@@ -7,7 +7,7 @@ License 1.1. Each family's `OFL.txt` is copied unmodified beside its files.
 | Directory | Upstream (`ofl/…` at that commit) | Files here |
 |---|---|---|
 | `instrument-sans/` | `instrumentsans/InstrumentSans[wdth,wght].ttf` (SHA-256 `b24f1812584816958afcf22e22d08e44318c5e51651e25d2438efdde389b33b1`) | `InstrumentSans-Regular.ttf`, `-Medium.ttf`, `-SemiBold.ttf`: static instances |
-| `spline-sans-mono/` | `splinesansmono/SplineSansMono[wght].ttf` (`e20c1df32aa2f886e828cfcc81ca5c405d3f3b160990f6b892923e2e449bf525`), `SplineSansMono-Italic[wght].ttf` (`073f111f37a86cc6d952b7870b3c1aebbfc78f4056dd3996db28bbc7166667a6`) | `SplineSansMono-Regular.ttf`, `-Medium.ttf`, `-SemiBold.ttf`, `-Italic.ttf`: static instances |
+| `spline-sans-mono/` | `splinesansmono/SplineSansMono[wght].ttf` (`e20c1df32aa2f886e828cfcc81ca5c405d3f3b160990f6b892923e2e449bf525`), `SplineSansMono-Italic[wght].ttf` (`073f111f37a86cc6d952b7870b3c1aebbfc78f4056dd3996db28bbc7166667a6`) | `SplineSansMono-Regular.ttf`, `-Medium.ttf`, `-SemiBold.ttf`, `-Italic.ttf`, `-SemiBoldItalic.ttf`: static instances |
 | `instrument-serif/` | `instrumentserif/InstrumentSerif-Regular.ttf` (`498efd461f6ddfcb7a111bf9a565709d2085d48201d501ead960d93e84ffbb88`) | `InstrumentSerif-Regular.ttf`, unmodified |
 
 ## Why static instances
@@ -34,6 +34,7 @@ $FT -o spline-sans-mono/SplineSansMono-Regular.ttf  'splinesansmono/SplineSansMo
 $FT -o spline-sans-mono/SplineSansMono-Medium.ttf   'splinesansmono/SplineSansMono[wght].ttf' wght=500
 $FT -o spline-sans-mono/SplineSansMono-SemiBold.ttf 'splinesansmono/SplineSansMono[wght].ttf' wght=600
 $FT -o spline-sans-mono/SplineSansMono-Italic.ttf   'splinesansmono/SplineSansMono-Italic[wght].ttf' wght=400
+$FT -o spline-sans-mono/SplineSansMono-SemiBoldItalic.ttf 'splinesansmono/SplineSansMono-Italic[wght].ttf' wght=600
 ```
 
 A new file goes in `crates/fe-fonts/src/lib.rs`'s `FACES`, and in
