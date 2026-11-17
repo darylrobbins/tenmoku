@@ -38,10 +38,10 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, DragMoveEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
-    Pixels, Point, Render, ScrollHandle, SharedString, Styled as _, Subscription, WeakEntity,
-    Window, canvas, div, point, px, size,
+    AnyElement, App, AppContext as _, Axis, Bounds, ClickEvent, Context, DragMoveEvent, Entity,
+    EntityId, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, Point, Render, ScrollHandle, SharedString, Styled as _,
+    Subscription, WeakEntity, Window, canvas, div, point, px, size,
 };
 use kiln_ui::{TAB_HEIGHT, TabBar, ui_theme};
 
@@ -128,6 +128,35 @@ impl DropZone {
             (true, true) => DropZone::Right,
             (true, false) if y < 0.5 => DropZone::Up,
             (true, false) => DropZone::Down,
+        }
+    }
+
+    /// [`DropZone::at`] along `axis` alone: the outer quarter at either end
+    /// of it splits that way, the rest is the centre, wherever `point` is
+    /// across it. For a row of side-by-side panes, which split only along
+    /// it, as a tabbed dock's groups do.
+    pub fn along(bounds: Bounds<Pixels>, point: Point<Pixels>, axis: Axis) -> Self {
+        let (at, length, before, after) = match axis {
+            Axis::Horizontal => (
+                point.x - bounds.left(),
+                bounds.size.width,
+                DropZone::Left,
+                DropZone::Right,
+            ),
+            Axis::Vertical => (
+                point.y - bounds.top(),
+                bounds.size.height,
+                DropZone::Up,
+                DropZone::Down,
+            ),
+        };
+        let at = f32::from(at) / f32::from(length);
+        if at < 0.25 {
+            before
+        } else if 1. - at < 0.25 {
+            after
+        } else {
+            DropZone::Centre
         }
     }
 

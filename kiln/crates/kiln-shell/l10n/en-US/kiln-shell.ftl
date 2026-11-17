@@ -44,6 +44,9 @@ kiln-shell-trust-dont = Don't Trust
 kiln-shell-dock-more = More actions
 # Hides the dock.
 kiln-shell-dock-hide = Hide
+# The border between two groups of a dock's tool windows side by side,
+# which drags to resize them.
+kiln-shell-dock-group-divider = Resize panel groups
 
 ## Landmarks: the names a screen reader gives the window's regions. A side
 ## dock's is its panel's title.

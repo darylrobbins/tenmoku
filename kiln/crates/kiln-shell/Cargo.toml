@@ -31,6 +31,8 @@ inventory.workspace = true
 kiln-command = { workspace = true, features = ["lint"] }
 kiln-l10n = { workspace = true, features = ["lint"] }
 kiln-platform = { workspace = true, features = ["test-support"] }
+# The accessibility recorder (`kiln_ui::a11y::nodes`), for the docks' landmarks.
+kiln-ui = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 
 # The platform's real text system, which paints glyphs; on Linux the

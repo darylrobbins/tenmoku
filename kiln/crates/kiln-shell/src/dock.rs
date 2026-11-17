@@ -75,6 +75,11 @@ use kiln_ui::{
 
 use crate::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
 
+mod groups;
+
+use groups::{DividerPress, DrawnGroup, Group};
+pub use groups::{DockDrop, DraggedDockTab, MoveTo};
+
 /// The narrowest a side dock's panel gets by dragging its edge.
 pub const MIN_DOCK_WIDTH: Pixels = px(160.);
 /// The shortest a bottom dock's panel gets by dragging its edge.
@@ -443,8 +448,27 @@ pub struct DrawnDock {
     column_drawn: Rc<Cell<bool>>,
     /// A tabbed dock's tabs, left to right, by their panels' ids.
     tabs: Rc<RefCell<Vec<PanelId>>>,
-    /// Its tab strip, which tracks each tab's bounds.
+    /// Its tab strip, which tracks each tab's bounds: the first drawn
+    /// group's.
     tab_strip: ScrollHandle,
+    /// The strips of the drawn groups after the first, kept for their
+    /// scroll.
+    strips: Rc<RefCell<Vec<ScrollHandle>>>,
+    /// The groups drawn, in order.
+    groups: Rc<RefCell<Vec<DrawnGroup>>>,
+    /// Whether the column has its groups' cells, each its strip's row and
+    /// its panel, for its title row and panel, as a tabbed dock's has.
+    grouped: Rc<Cell<bool>>,
+    /// The borders' handles between the drawn groups, by the group before
+    /// each.
+    dividers: Rc<RefCell<Vec<(usize, ScrollHandle)>>>,
+    /// The borders' cursor, if one was drawn.
+    divider_cursor: Rc<Cell<Option<CursorStyle>>>,
+    /// The drop indicator drawn for a hovering tab, and where.
+    drop_hint: Rc<Cell<Option<DockDrop>>>,
+    hint: Rc<Cell<Bounds<Pixels>>>,
+    /// The layer over the column the indicator is drawn in.
+    layer: Rc<Cell<Bounds<Pixels>>>,
 }
 
 impl DrawnDock {
@@ -494,8 +518,13 @@ impl DrawnDock {
     }
 
     /// Where the column's title row was laid out, if it showed.
+    /// With groups drawn, the first one's strip's row.
     pub fn title_bounds(&self) -> Option<Bounds<Pixels>> {
         self.column_bounds()?;
+        if self.grouped.get() {
+            let groups = self.groups.borrow();
+            return groups.first()?.cell.bounds_for_item(0);
+        }
         self.column.bounds_for_item(0)
     }
 
@@ -533,7 +562,9 @@ impl DrawnDock {
     /// column showed.
     pub fn handle_bounds(&self) -> Option<Bounds<Pixels>> {
         self.column_bounds()?;
-        self.column.bounds_for_item(2)
+        // After the title row and the panel, or the groups.
+        self.column
+            .bounds_for_item(if self.grouped.get() { 1 } else { 2 })
     }
 
     /// The cursor the handle shows, if the column showed.
@@ -542,15 +573,80 @@ impl DrawnDock {
     }
 
     /// The tabs a tabbed dock's last frame drew, left to right, by their
-    /// panels' ids: none while it's hidden.
+    /// panels' ids, group by group: none while it's hidden.
     pub fn tabs(&self) -> Vec<PanelId> {
         self.tabs.borrow().clone()
     }
 
     /// Where `panel`'s tab was laid out, if it was drawn.
     pub fn tab_bounds(&self, panel: PanelId) -> Option<Bounds<Pixels>> {
-        let ix = self.tabs.borrow().iter().position(|id| *id == panel)?;
-        self.tab_strip.bounds_for_item(ix)
+        let groups = self.groups.borrow();
+        let (group, ix) = groups.iter().find_map(|group| {
+            let ix = group.tabs.iter().position(|id| *id == panel)?;
+            Some((group, ix))
+        })?;
+        group.strip.bounds_for_item(ix)
+    }
+
+    fn group(&self, group: usize) -> Option<DrawnGroup> {
+        let groups = self.groups.borrow();
+        groups.iter().find(|drawn| drawn.group == group).cloned()
+    }
+
+    /// Where group `group` (as [`DockState::group_of`] counts them) was
+    /// laid out, its strip's row then its panel, if it was drawn.
+    pub fn group_bounds(&self, group: usize) -> Option<Bounds<Pixels>> {
+        Some(self.group(group)?.cell.bounds())
+    }
+
+    /// Where group `group`'s panel, below its strip, was laid out.
+    pub fn group_content_bounds(&self, group: usize) -> Option<Bounds<Pixels>> {
+        self.group(group)?.content()
+    }
+
+    /// Where group `group`'s tab strip was laid out.
+    pub fn group_strip_bounds(&self, group: usize) -> Option<Bounds<Pixels>> {
+        Some(self.group(group)?.strip.bounds())
+    }
+
+    /// The tabs group `group` drew, in order: none if it wasn't drawn.
+    pub fn group_tabs(&self, group: usize) -> Vec<PanelId> {
+        self.group(group)
+            .map(|group| group.tabs)
+            .unwrap_or_default()
+    }
+
+    /// The groups drawn, in order, as [`DockState::group_of`] counts them.
+    pub fn drawn_groups(&self) -> Vec<usize> {
+        self.groups
+            .borrow()
+            .iter()
+            .map(|group| group.group)
+            .collect()
+    }
+
+    /// Where the grab area of the border after group `group` was laid
+    /// out, if one was drawn: between it and the next drawn group.
+    pub fn divider_bounds(&self, group: usize) -> Option<Bounds<Pixels>> {
+        let dividers = self.dividers.borrow();
+        let (_, handle) = dividers.iter().find(|(before, _)| *before == group)?;
+        Some(handle.bounds())
+    }
+
+    /// The cursor the borders between groups show, if one was drawn.
+    pub fn divider_cursor(&self) -> Option<CursorStyle> {
+        self.divider_cursor.get()
+    }
+
+    /// The drop indicator the last frame drew for a hovering tab: where it
+    /// would drop.
+    pub fn drop_hint(&self) -> Option<DockDrop> {
+        self.drop_hint.get()
+    }
+
+    /// Where the last frame laid the drop indicator out, if it drew one.
+    pub fn drop_hint_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.drop_hint.get().map(|_| self.hint.get())
     }
 }
 
@@ -573,7 +669,10 @@ impl Render for NoGhost {
 pub struct DockState {
     position: DockPosition,
     panels: Vec<Box<dyn PanelHandle>>,
-    active: Option<PanelId>,
+    /// The panels' groups ([`groups`]), and the focused one, whose active
+    /// panel is the dock's.
+    groups: Vec<Group>,
+    focused: usize,
     visible: bool,
     /// Panels not always on the rail that have shown, which puts them on
     /// it.
@@ -622,6 +721,12 @@ pub struct DockState {
     opened: HashSet<PanelId>,
     /// The command — runs, if not hiding the dock itself.
     hide_command: Option<&'static str>,
+    /// Where a dock tab dragged over the column would drop.
+    hover: Cell<Option<DockDrop>>,
+    /// Where the drag of a border between groups started.
+    divider_press: Option<DividerPress>,
+    /// The panel focus was last seen in ([`DockState::follow_focus`]).
+    followed: Option<PanelId>,
     drawn: DrawnDock,
 }
 
@@ -632,7 +737,8 @@ impl DockState {
         Self {
             position,
             panels: Vec::new(),
-            active: None,
+            groups: vec![Group::new(Vec::new(), None, 1.)],
+            focused: 0,
             visible: true,
             joined: HashSet::new(),
             actions: Vec::new(),
@@ -654,6 +760,9 @@ impl DockState {
             tabs: false,
             opened: HashSet::new(),
             hide_command: None,
+            hover: Cell::new(None),
+            divider_press: None,
+            followed: None,
             drawn: DrawnDock::default(),
         }
     }
@@ -832,14 +941,13 @@ impl DockState {
         self.tabs
     }
 
-    /// The panels a tabbed dock has tabs for, in the order they were
-    /// added: those open in it, and the active one while the dock shows,
-    /// as a dock built shown shows its first panel.
+    /// The panels a tabbed dock has tabs for, group by group, each in its
+    /// tab order, which is the order they were added until a tab moves:
+    /// those open in it, and the active one while the dock shows, as a
+    /// dock built shown shows its first panel.
     pub fn open_panels(&self) -> Vec<PanelId> {
-        let shown = self.active.filter(|_| self.visible);
-        (self.panels.iter())
-            .map(|panel| panel.id())
-            .filter(|id| self.opened.contains(id) || shown == Some(*id))
+        (0..self.groups.len())
+            .flat_map(|group| self.open_panels_in(group))
             .collect()
     }
 
@@ -848,30 +956,9 @@ impl DockState {
     /// visibility changes, however it changes. A dock hidden since it was
     /// built opens none.
     fn open_shown(&mut self) {
-        if let Some(active) = self.active.filter(|_| self.visible) {
+        if let Some(active) = self.active().filter(|_| self.visible) {
             self.opened.insert(active);
         }
-    }
-
-    /// Closes `panel`'s tab. If it was the active panel, the next open
-    /// one shows in its place, else the one before; with none left open,
-    /// the dock hides. False if it had no tab.
-    pub fn close_tab(&mut self, panel: PanelId) -> bool {
-        let open = self.open_panels();
-        let Some(ix) = open.iter().position(|id| *id == panel) else {
-            return false;
-        };
-        self.opened.remove(&panel);
-        if self.active == Some(panel) {
-            let next = open
-                .get(ix + 1)
-                .or(ix.checked_sub(1).and_then(|ix| open.get(ix)));
-            match next {
-                Some(&next) => self.active = Some(next),
-                None => self.set_visible(false),
-            }
-        }
-        true
     }
 
     /// Builds it with its panel `size` across, its width at a side and its
@@ -1003,7 +1090,8 @@ impl DockState {
     /// Adds `panel` at the end of the rail, or, if a panel with its id is
     /// registered, puts it in that one's place, which keeps the dock's
     /// state: for a panel made anew, as a project tree is for a new folder.
-    /// The first panel added is the active one.
+    /// The first panel added is the active one. A new panel's tab goes at
+    /// the end of the first group's.
     pub fn add_panel<P: DockItem>(&mut self, panel: Entity<P>, cx: &App) {
         let id = panel.read(cx).id();
         let handle = Box::new(Panel { id, entity: panel });
@@ -1011,7 +1099,7 @@ impl DockState {
             Some(ix) => self.panels[ix] = handle,
             None => self.panels.push(handle),
         }
-        self.active.get_or_insert(id);
+        self.place(id);
     }
 
     /// Adds `action` to the rail's actions, or, if one has its id, puts it
@@ -1077,9 +1165,10 @@ impl DockState {
     }
 
     /// The panel shown while the dock is visible: the last shown, else the
-    /// first added.
+    /// first added. With groups, the focused group's: the group of the
+    /// panel last shown, clicked or focused.
     pub fn active(&self) -> Option<PanelId> {
-        self.active
+        self.groups.get(self.focused)?.active
     }
 
     pub fn is_visible(&self) -> bool {
@@ -1089,12 +1178,12 @@ impl DockState {
     /// The panel whose rail button is highlighted: the active one, while
     /// the dock shows.
     pub fn rail_highlighted(&self) -> Option<PanelId> {
-        self.active.filter(|_| self.visible)
+        self.active().filter(|_| self.visible)
     }
 
     /// The active panel's title, for the title row.
     pub fn title(&self, cx: &App) -> Option<SharedString> {
-        Some(self.handle(self.active?)?.title(cx))
+        Some(self.handle(self.active()?)?.title(cx))
     }
 
     /// Whether `panel` has a button on the rail.
@@ -1103,7 +1192,8 @@ impl DockState {
             .is_some_and(|handle| handle.always_on_rail(cx) || self.joined.contains(&panel))
     }
 
-    /// Shows the dock with `panel`, focusing it if it's
+    /// Shows the dock with `panel`, in its own group, which it focuses and
+    /// draws if it was collapsed, focusing the panel if it's
     /// [`DockItem::focus_on_show`]. False, doing nothing, if no such panel
     /// is registered.
     pub fn show(&mut self, panel: PanelId, window: &mut Window, cx: &mut App) -> bool {
@@ -1114,7 +1204,7 @@ impl DockState {
         let joins = handle.joins_rail_on_show(cx);
         // The one it showed keeps its tab.
         self.open_shown();
-        self.active = Some(panel);
+        self.set_active(panel);
         self.visible = true;
         self.opened.insert(panel);
         if joins {
@@ -1153,15 +1243,16 @@ impl DockState {
         }
     }
 
-    /// Whether a panel that isn't showing, the dock being hidden or showing
-    /// another, has focus, or the ⋯ menu's focus does without the menu
-    /// showing: its host then focuses something shown, such as the active
-    /// pane item.
+    /// Whether a panel that isn't showing, the dock being hidden, its
+    /// group collapsed or hidden or showing another, has focus, or the ⋯
+    /// menu's focus does without the menu showing: its host then focuses
+    /// something shown, such as the active pane item. Any drawn group's
+    /// active panel shows.
     pub fn hidden_panel_focused(&self, window: &Window, cx: &App) -> bool {
+        let shown = self.shown_panels();
         self.closed_menu_focused(window)
             || self.panels.iter().any(|panel| {
-                self.rail_highlighted() != Some(panel.id())
-                    && panel.focus_handle(cx).contains_focused(window, cx)
+                !shown.contains(&panel.id()) && panel.focus_handle(cx).contains_focused(window, cx)
             })
     }
 
@@ -1178,13 +1269,19 @@ impl DockState {
     /// panel, the panels that have joined the rail and its size, `"size"`
     /// at its position, `"side_size"` and `"bottom_size"` at each; and,
     /// if any panel saves state of its own ([`DockItem::save_state`]),
-    /// `"panels"`, each one's by its id.
+    /// `"panels"`, each one's by its id; and, unless they're one group of
+    /// the panels in the order added, `"groups"`: each one's `"panels"` in
+    /// tab order, `"active"` (null with no tab), `"weight"` and
+    /// `"collapsed"`.
     pub fn save(&self, cx: &App) -> Value {
         let size = |size: Pixels| Value::from(f64::from(f32::from(size)));
         let ids = |ids: Vec<PanelId>| Value::from_iter(ids.into_iter().map(|id| id.0));
         let mut saved = Value::from_iter([
             ("visible", Value::from(self.visible)),
-            ("active", self.active.map_or(Value::Null, |id| id.0.into())),
+            (
+                "active",
+                self.active().map_or(Value::Null, |id| id.0.into()),
+            ),
             ("joined", ids(self.joined())),
             ("size", size(self.current_size())),
             ("side_size", size(self.side_size)),
@@ -1197,6 +1294,9 @@ impl DockState {
         if !panels.is_empty() {
             saved["panels"] = Value::Object(panels);
         }
+        if let Some(groups) = self.save_groups() {
+            saved["groups"] = groups;
+        }
         saved
     }
 
@@ -1206,7 +1306,9 @@ impl DockState {
     /// least its least: `"side_size"` and `"bottom_size"`, else, saved
     /// before a dock had both, `"size"` at its position. Each registered
     /// panel saved under `"panels"` gets its state back
-    /// ([`DockItem::restore_state`]); the others are left as they are.
+    /// ([`DockItem::restore_state`]); the others are left as they are. The
+    /// groups come back as saved, for the registered panels, each one's
+    /// active panel with its tab: saved without, one group.
     pub fn restore(&mut self, saved: &Value, cx: &mut App) {
         let size = |key| {
             saved
@@ -1231,22 +1333,26 @@ impl DockState {
         if let Some(visible) = saved.get("visible").and_then(Value::as_bool) {
             self.visible = visible;
         }
-        if let Some(active) = saved
+        let active = saved
             .get("active")
             .and_then(Value::as_str)
-            .and_then(registered)
-        {
-            self.active = Some(active);
-        }
+            .and_then(registered);
         let joined: Vec<PanelId> = (saved.get("joined").and_then(Value::as_array))
             .into_iter()
             .flatten()
             .filter_map(|id| registered(id.as_str()?))
             .collect();
+        let restored = self.restore_groups(saved.get("groups"));
+        if let Some(active) = active {
+            match restored {
+                true => self.restore_active(active),
+                false => self.set_active(active),
+            }
+        }
         let joins =
             |id: PanelId| (self.handle(id)).is_none_or(|handle| handle.joins_rail_on_show(cx));
         let joined: Vec<PanelId> = joined.into_iter().filter(|&id| joins(id)).collect();
-        let active = self.active.filter(|&id| joins(id));
+        let active = self.active().filter(|&id| joins(id));
         self.joined.extend(joined);
         if let Some(active) = active {
             self.joined.insert(active);
@@ -1393,10 +1499,16 @@ impl DockState {
         )
     }
 
-    /// The title row's pane controls, right-aligned: `panel`'s actions, ⋯
-    /// if the dock has a menu, with the menu under it while open, and —.
-    fn controls<V: DockView>(&self, panel: &dyn PanelHandle, cx: &mut Context<V>) -> AnyElement {
-        self.drawn.controls.borrow_mut().clear();
+    /// The title row's pane controls, right-aligned: `panel`'s actions,
+    /// then, if `dock_wide`, as the one title row's or the last group's
+    /// strip's are, ⋯ if the dock has a menu, with the menu under it while
+    /// open, and —.
+    fn controls<V: DockView>(
+        &self,
+        panel: &dyn PanelHandle,
+        dock_wide: bool,
+        cx: &mut Context<V>,
+    ) -> AnyElement {
         let actions: Vec<_> = (panel.actions(cx).into_iter().enumerate())
             .map(|(ix, action)| {
                 let button = self.control(action.id, action.icon, action.title, action.command, cx);
@@ -1424,7 +1536,7 @@ impl DockState {
                 }
             })
             .collect();
-        let more = (!self.menu.is_empty()).then(|| {
+        let more = (dock_wide && !self.menu.is_empty()).then(|| {
             let button = self
                 .control(
                     MORE_BUTTON,
@@ -1448,15 +1560,16 @@ impl DockState {
                 .child(button)
                 .children(menu)
         });
-        let hide = self
-            .control(
+        let hide = dock_wide.then(|| {
+            self.control(
                 HIDE_BUTTON,
                 Icon::Minus,
                 tr!("kiln-shell-dock-hide"),
                 self.hide_command,
                 cx,
             )
-            .on_click(cx.listener(|view: &mut V, _, window, cx| view.hide_clicked(window, cx)));
+            .on_click(cx.listener(|view: &mut V, _, window, cx| view.hide_clicked(window, cx)))
+        });
         div()
             .flex_none()
             .flex()
@@ -1464,7 +1577,7 @@ impl DockState {
             .gap(px(2.))
             .children(actions)
             .children(more)
-            .child(hide)
+            .children(hide)
             .into_any_element()
     }
 
@@ -1540,20 +1653,27 @@ impl DockState {
         deferred(menu).with_priority(1).into_any_element()
     }
 
-    /// A tabbed dock's title row: a tab for each open panel, `active` the
-    /// one shown, then `controls` on the strip's ground, 34 px tall as the
-    /// editor's tab strip is.
+    /// A tabbed dock's title row, or group `group`'s strip: a tab for each
+    /// panel open in the group, `active` the one shown, which a drag
+    /// carries ([`DraggedDockTab`]), then `controls` on the strip's ground,
+    /// 34 px tall as the editor's tab strip is. `strip` tracks the tabs.
     fn tab_row<V: DockView>(
         &self,
+        group: usize,
         active: &dyn PanelHandle,
         controls: AnyElement,
+        strip: &ScrollHandle,
         cx: &mut Context<V>,
     ) -> gpui::Div {
-        let open = self.open_panels();
-        self.drawn.tabs.replace(open.clone());
+        let open = self.open_panels_in(group);
+        // Numbered on from the groups' before, each distinct in the view.
+        let first = self.drawn.tabs.borrow().len();
+        self.drawn.tabs.borrow_mut().extend(open.iter().copied());
         let tabs: Vec<_> = (open.into_iter().enumerate())
             .filter_map(|(ix, id)| {
+                let ix = first + ix;
                 let panel = self.handle(id)?;
+                let (dragged, title) = self.tab_drag(id, cx);
                 let tab = Tab::new(("dock-tab", ix), panel.title(cx), &ui_theme(cx))
                     .icon(Some(panel.icon(cx)))
                     .active(id == active.id())
@@ -1562,12 +1682,19 @@ impl DockState {
                     }))
                     .on_close(cx.listener(move |view: &mut V, _, window, cx| {
                         view.tab_closed(id, window, cx)
-                    }));
+                    }))
+                    .on_drag(dragged, move |_, _, _, cx| {
+                        Self::tab_ghost(title.clone(), cx)
+                    });
                 Some(tab)
             })
             .collect();
-        let bar = TabBar::new("dock-tabs", &ui_theme(cx))
-            .track_scroll(&self.drawn.tab_strip)
+        let bar = match first {
+            0 => TabBar::new("dock-tabs", &ui_theme(cx)),
+            _ => TabBar::new(("dock-tabs", group), &ui_theme(cx)),
+        };
+        let bar = bar
+            .track_scroll(strip)
             .focus_within(&active.focus_handle(cx))
             .children(tabs);
         let colors = &cx.theme().colors;
@@ -1687,9 +1814,30 @@ impl DockState {
         self.drawn.cursor.set(None);
         let (size, min) = (self.current_size(), self.min_size());
         self.drawn.no_rail.set(self.rail_hidden);
-        self.drawn
-            .column_drawn
-            .set(self.visible && self.active.is_some());
+        // The drop indicator, by the groups the last frame drew.
+        let indicator = self.tabs.then(|| self.drop_indicator(cx)).flatten();
+        self.drawn.groups.borrow_mut().clear();
+        self.drawn.dividers.borrow_mut().clear();
+        self.drawn.divider_cursor.set(None);
+        self.drawn.controls.borrow_mut().clear();
+        self.drawn.tabs.borrow_mut().clear();
+        let drawn = self.drawn_groups();
+        // Two groups or more draw side by side, each with its strip; one
+        // draws as a dock that was never split.
+        let split = self.tabs && drawn.len() > 1;
+        self.drawn.grouped.set(self.tabs);
+        // A tabbed dock's one group's cell, its strip's row and its panel.
+        let cell = ScrollHandle::new();
+        let single = match self.tabs {
+            false => self
+                .active()
+                .filter(|_| self.visible)
+                .map(|id| (self.focused, id)),
+            true if split => None,
+            true => (drawn.first()).and_then(|&group| Some((group, self.group_shown(group)?))),
+        };
+        let single = single.and_then(|(group, id)| Some((group, self.handle(id)?)));
+        self.drawn.column_drawn.set(single.is_some() || split);
         let (foot, top): (Vec<_>, Vec<_>) = (0..self.panels.len())
             .filter(|&ix| !self.rail_hidden && self.on_rail(self.panels[ix].id(), cx))
             .partition(|&ix| self.panels[ix].on_rail_foot(cx));
@@ -1707,21 +1855,29 @@ impl DockState {
                     self.action_button(ix, action, *highlighted, cx)
                 }),
         );
-        let active = self.active.and_then(|id| self.handle(id));
-        if active.is_none() || !self.visible {
-            self.drawn.controls.borrow_mut().clear();
-        }
-        self.drawn.tabs.borrow_mut().clear();
         // A tabbed dock's header is its tab strip and the controls, whole.
-        let body = active.filter(|_| self.visible).map(|panel| {
+        let body = single.map(|(group, panel)| {
             let title = panel.title(cx);
-            let controls = self.controls(panel, cx);
+            let controls = self.controls(panel, true, cx);
             let header = match self.tabs {
-                true => Header::Tabs(self.tab_row(panel, controls, cx)),
+                true => {
+                    self.drawn.groups.borrow_mut().push(DrawnGroup {
+                        group,
+                        tabs: self.open_panels_in(group),
+                        cell: cell.clone(),
+                        strip: self.drawn.tab_strip.clone(),
+                    });
+                    let strip = &self.drawn.tab_strip;
+                    Header::Tabs(self.tab_row(group, panel, controls, strip, cx))
+                }
                 false => Header::Title(Self::heading(title.clone(), cx), controls),
             };
             (panel.to_any_view(), title, header)
         });
+        // A tabbed dock's column follows its tabs' drags, and takes their
+        // drops in a layer over it, the indicator over that.
+        let tab_drag = self.tabs.then(|| self.on_tab_drag_move(cx));
+        let drop_layer = self.tabs.then(|| self.drop_layer(cx));
         let ui = &ui_theme(cx);
         // The panel's one heading, then its pane controls.
         let title_row = |heading, controls| -> gpui::Div {
@@ -1748,7 +1904,7 @@ impl DockState {
                 // The buttons, then the row's bottom border.
                 RailButton::HEIGHT + px(1.)
             };
-            self.drawn.rail_in_title.set(body.is_some());
+            self.drawn.rail_in_title.set(body.is_some() || split);
             let rail = div()
                 .id("dock-bottom-rail")
                 .flex_none()
@@ -1763,35 +1919,6 @@ impl DockState {
                 .flex()
                 .flex_col()
                 .track_scroll(&self.drawn.layout);
-            let Some((view, _, header)) = body else {
-                return match self.rail_hidden {
-                    true => dock.flex_none().into_any_element(),
-                    false => dock.flex_none().child(rail).into_any_element(),
-                };
-            };
-            let title = match header {
-                // The rail's buttons, if any, before the tabs.
-                Header::Tabs(tabs) => div()
-                    .flex_none()
-                    .flex()
-                    .h(TAB_HEIGHT)
-                    .bg(ui.panel_background)
-                    .when(!self.rail_hidden, |row| row.child(rail))
-                    .child(tabs.flex_1().min_w_0()),
-                Header::Title(heading, controls) => div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .h(row_height)
-                    .pr_1()
-                    .gap_2()
-                    .bg(ui.panel_background)
-                    .border_b_1()
-                    .border_color(ui.border)
-                    .when(!self.rail_hidden, |row| row.child(rail))
-                    .child(div().flex_1().min_w_0().flex().pl_3().child(heading))
-                    .child(controls),
-            };
             let column = div()
                 .id("dock-bottom-column")
                 .relative()
@@ -1803,12 +1930,50 @@ impl DockState {
                 .flex_col()
                 .border_t_1()
                 .border_color(ui.border)
-                .track_scroll(&self.drawn.column)
-                .child(title)
-                .child(div().flex_1().min_h_0().flex().child(view))
-                .child(self.edge_handle(cx));
+                .when_some(tab_drag, |column, listener| column.on_drag_move(listener))
+                .track_scroll(&self.drawn.column);
+            let column = if split {
+                let rail = (!self.rail_hidden).then(|| rail.into_any_element());
+                column
+                    .child(self.groups_row(&drawn, rail, cx))
+                    .child(self.edge_handle(cx))
+            } else {
+                let Some((view, label, header)) = body else {
+                    return match self.rail_hidden {
+                        true => dock.flex_none().into_any_element(),
+                        false => dock.flex_none().child(rail).into_any_element(),
+                    };
+                };
+                let title = match header {
+                    // The rail's buttons, if any, before the tabs.
+                    Header::Tabs(tabs) => div()
+                        .flex_none()
+                        .flex()
+                        .h(TAB_HEIGHT)
+                        .bg(ui.panel_background)
+                        .when(!self.rail_hidden, |row| row.child(rail))
+                        .child(tabs.flex_1().min_w_0()),
+                    Header::Title(heading, controls) => div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .h(row_height)
+                        .pr_1()
+                        .gap_2()
+                        .bg(ui.panel_background)
+                        .border_b_1()
+                        .border_color(ui.border)
+                        .when(!self.rail_hidden, |row| row.child(rail))
+                        .child(div().flex_1().min_w_0().flex().pl_3().child(heading))
+                        .child(controls),
+                };
+                let content = div().flex_1().min_h_0().flex().child(view);
+                column
+                    .children(self.single_group(title, content, label, &cell))
+                    .child(self.edge_handle(cx))
+            };
             let column = Landmark {
-                element: column,
+                element: column.children(drop_layer).children(indicator),
                 role: Role::Region,
                 label: tr!("kiln-shell-dock-panel"),
             };
@@ -1832,19 +1997,8 @@ impl DockState {
             .children(buttons)
             .footer(actions)
             .track(&self.drawn.rail);
-        let column = body.map(|(view, label, header)| {
-            let title = match header {
-                Header::Tabs(tabs) => tabs,
-                Header::Title(heading, controls) => title_row(heading, controls),
-            };
-            let title = title.map(|row| {
-                if left {
-                    row.border_r_1()
-                } else {
-                    row.border_l_1()
-                }
-            });
-            let column = div()
+        let column = || {
+            div()
                 .id("dock-column")
                 .relative()
                 .w(size)
@@ -1853,15 +2007,39 @@ impl DockState {
                 .min_w(min)
                 .flex()
                 .flex_col()
+                .when_some(tab_drag, |column, listener| column.on_drag_move(listener))
                 .track_scroll(&self.drawn.column)
-                .child(title)
-                .child(div().flex_1().min_h_0().flex().child(view))
-                .child(self.edge_handle(cx));
-            Landmark {
-                element: column,
-                role: Role::Complementary,
-                label,
+        };
+        let column = match split {
+            // Named by the focused group's panel.
+            true => {
+                let groups = self.groups_row(&drawn, None, cx);
+                Some((column().child(groups), self.title(cx).unwrap_or_default()))
             }
+            false => body.map(|(view, label, header)| {
+                let title = match header {
+                    Header::Tabs(tabs) => tabs,
+                    Header::Title(heading, controls) => title_row(heading, controls),
+                };
+                let title = title.map(|row| {
+                    if left {
+                        row.border_r_1()
+                    } else {
+                        row.border_l_1()
+                    }
+                });
+                let content = div().flex_1().min_h_0().flex().child(view);
+                let group = self.single_group(title, content, label.clone(), &cell);
+                (column().children(group), label)
+            }),
+        };
+        let column = column.map(|(column, label)| Landmark {
+            element: column
+                .child(self.edge_handle(cx))
+                .children(drop_layer)
+                .children(indicator),
+            role: Role::Complementary,
+            label,
         });
         let id = if left { "dock-left" } else { "dock" };
         let shown = column.is_some();
@@ -1883,6 +2061,40 @@ impl DockState {
             .children(column)
             .when(!self.rail_hidden, |dock| dock.child(rail))
             .into_any_element()
+    }
+}
+
+impl DockState {
+    /// A shown dock's `title` row and `content`, for its column: a tabbed
+    /// dock's in its one group's cell, tracked by `cell`, a `Group` named
+    /// `label`, its panel's title, as each of two groups is; otherwise
+    /// the column's own.
+    fn single_group(
+        &self,
+        title: gpui::Div,
+        content: gpui::Div,
+        label: SharedString,
+        cell: &ScrollHandle,
+    ) -> Vec<AnyElement> {
+        if !self.tabs {
+            return vec![title.into_any_element(), content.into_any_element()];
+        }
+        let element = div()
+            .id("dock-group")
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .track_scroll(cell)
+            .child(title)
+            .child(content);
+        let group = Landmark {
+            element,
+            role: Role::Group,
+            label,
+        };
+        vec![group.into_any_element()]
     }
 }
 
@@ -1958,6 +2170,19 @@ pub trait DockView: Render + Sized {
         cx.notify();
     }
 
+    /// A tab of this dock was dropped on it, at the pointer: by default,
+    /// moves it as [`DockState::drop_tab`] does.
+    fn tab_dropped(
+        &mut self,
+        dragged: DraggedDockTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let at = window.mouse_position();
+        self.dock_mut().drop_tab(&dragged, at, cx.entity_id());
+        cx.notify();
+    }
+
     /// `panel`'s tab's close button was clicked: by default, closes it, as
     /// [`DockState::close_tab`] does.
     fn tab_closed(&mut self, panel: PanelId, _: &mut Window, cx: &mut Context<Self>) {
@@ -1982,8 +2207,8 @@ pub trait DockView: Render + Sized {
 /// What a [`Dock`] tells its host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DockEvent {
-    /// A rail click hid the panel that had focus: the host focuses
-    /// something shown.
+    /// A rail or tab click, a tab's close or a tab's drop hid the panel
+    /// that had focus: the host focuses something shown.
     HidFocus,
 }
 
@@ -2145,6 +2370,22 @@ impl DockView for Dock {
         cx.notify();
     }
 
+    /// Moves the dropped tab, then tells the host if the panel it hid had
+    /// focus, as a tab made active over a focused one hides it.
+    fn tab_dropped(
+        &mut self,
+        dragged: DraggedDockTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let at = window.mouse_position();
+        self.state.drop_tab(&dragged, at, cx.entity_id());
+        if self.state.hidden_panel_focused(window, cx) {
+            cx.emit(DockEvent::HidFocus);
+        }
+        cx.notify();
+    }
+
     /// Closes the tab, then tells the host if the panel it hid had focus.
     fn tab_closed(&mut self, panel: PanelId, window: &mut Window, cx: &mut Context<Self>) {
         self.state.close_tab(panel);
@@ -2170,10 +2411,13 @@ impl DockView for Dock {
 }
 
 impl Render for Dock {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The group focus moved into is the focused one, which observers
+        // hear once this frame is drawn, as its active panel changed.
+        let followed = self.state.follow_focus(window, cx);
         // Panels registered without the dock: what changed in them before
         // it heard them is saved as it notifies.
-        if self.watch_panels(cx) {
+        if self.watch_panels(cx) || followed {
             let dock = cx.weak_entity();
             cx.defer(move |cx| _ = dock.update(cx, |_, cx| cx.notify()));
         }
