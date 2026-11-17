@@ -233,3 +233,44 @@ workbench-workbench-todo-too-big = This file is too big to look for TODO comment
 
 workbench-workbench-vim-what-quit = a quit
 workbench-workbench-vim-what-later = a command that finishes later
+
+## Show Memory Usage (memory_report.rs): the report tab and tenmoku --perf's
+## table. Sizes are in megabytes (MiB); "~" marks an estimate.
+
+workbench-memory-title = Memory Usage
+workbench-memory-tab-title = Memory Usage
+workbench-memory-column-module = Module
+workbench-memory-column-mb = MB
+workbench-memory-column-count = Count
+workbench-memory-not-measured = not measured
+workbench-memory-footprint = Physical footprint
+workbench-memory-graphics = Graphics footprint
+workbench-memory-resident = Resident
+workbench-memory-malloc = Malloc in use
+workbench-memory-buffer-text = Buffer text
+workbench-memory-undo = Undo history
+workbench-memory-syntax-trees = Syntax trees
+workbench-memory-wasm-stores = WebAssembly grammar stores
+workbench-memory-wasm-grammars = WebAssembly grammars loaded
+workbench-memory-symbol-index = Symbol index
+workbench-memory-project-tree = Project tree
+workbench-memory-finder = Quick open index
+workbench-memory-file-views = Large-file views
+workbench-memory-terminals = Terminal scrollback
+workbench-memory-lsp = Language server documents
+workbench-memory-minimap = Minimap tiles
+workbench-memory-unattributed = Unattributed
+workbench-memory-estimate-note = ~ marks an estimate. Counts are buffers, nodes, stores, grammars, symbols, entries, paths, views, terminals and documents.
+workbench-memory-unattributed-note = Unattributed is malloc in use less the rows above it; it is negative where their estimates overshoot.
+workbench-memory-servers = Language servers (processes of their own, not in the totals above)
+# A running server's line. $pid is its process id; $resident and $footprint
+# are megabytes, or "not measured".
+workbench-memory-server = { $name } (pid { $pid }): resident { $resident } MB, footprint { $footprint } MB, { $documents } documents, { $diagnostics } diagnostics for closed files
+# A process a server started, under its line.
+workbench-memory-child = { $name } (pid { $pid }): resident { $resident } MB, footprint { $footprint } MB
+# The lens over a server's line.
+workbench-memory-restart = Restart
+# rust-analyzer's breakdown didn't come in time.
+workbench-memory-no-answer = no answer within 10 seconds
+# A Restart lens on a report older than the server's last restart.
+workbench-memory-server-gone = { $name } has restarted since this report: show memory usage again

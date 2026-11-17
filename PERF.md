@@ -58,7 +58,8 @@ a shared runner; the fastest sample doesn't.
   which on Apple Silicon includes GPU memory, and its resident set; each with
   its peak over the process's life so far, which covers the background read.
   Printed at file shown, after settling (60 frames later, once a background
-  parse has had time to land) and after scrolling;
+  parse has had time to land) and after scrolling, then the
+  [memory by module](#memory-by-module) table;
 - **idle:** CPU used over 5 s with nothing happening, starting 2 s after the
   last scroll (GPUI keeps presenting for a second after fast input).
 
@@ -386,6 +387,76 @@ Game Memory template didn't finish a recording on this machine.
   showing ASCII in one font fills one A8 texture.
 - The path intermediate texture is created at the window's size but never
   rendered into (the editor draws no paths), so it costs nothing.
+
+### Memory by module
+
+Show Memory Usage (`memory.show` in the palette) opens a read-only tab
+with what each part of the app says it holds, beside the process's totals,
+and `--perf` prints the same table after its *memory after scrolling* line,
+each line as `memory by module: …` (`fe_workbench::memory_report`):
+
+- **Process totals first.** macOS: the physical footprint and its graphics
+  part (`task_info(TASK_VM_INFO)`'s `phys_footprint` and
+  `ledger_tag_graphics_footprint`: IOSurfaces, IOAccelerator, Metal), the
+  resident size and malloc's bytes in use (`malloc_zone_statistics`).
+  Linux: the resident set (`VmRSS`) and glibc's bytes in use
+  (`mallinfo2`'s `uordblks + hblkhd`). Windows: the working set. What a
+  platform can't say is "not measured".
+- **Then each module**, counted once a buffer however many editors show
+  it, `~` where the bytes are estimated: buffer text (the rope at 1.12× its
+  text, `fe-buffer`'s `load_memory` example), undo history (what its cap
+  charges), syntax trees (visible nodes × 110 B, [bytes per visible
+  node](#bytes-per-visible-node)), WebAssembly grammar stores and grammars
+  (counts only: a store's linear memory isn't exposed), the symbol index,
+  the project tree, quick open's index, large-file views' chunk caches
+  (exact), terminal scrollback (lines × columns × cell size), the language
+  servers' documents (count only) and minimap tiles (not measured).
+- **Unattributed last:** malloc in use less the modules' bytes, negative
+  where estimates overshoot. It's everything no module claims: GPUI's own
+  state, fonts and glyph caches, and on Linux the software renderer's
+  buffers.
+- **Language servers** follow, when any run: each server's process and its
+  children (rust-analyzer-proc-macro-srv) with resident memory and
+  footprint read by pid (macOS `proc_pid_rusage`, Linux `/proc`), not in
+  the totals, rust-analyzer's own `rust-analyzer/memoryUsage` text under
+  its line, and a Restart lens over each.
+
+One run on the 10k-line Rust file (0.3 MB, the golden sample repeated):
+neon (Linux x86_64, glibc 2.43, Intel Xeon E-2386G), Xvfb with Mesa's
+software Vulkan, release build at `d683aaf5` (T372), 2026-11-17, load
+average about 25 from other lanes (memory doesn't depend on it). The file
+launch roots the project tree at the file's folder; no language server ran.
+
+```text
+memory after scrolling: resident 237 MB, peak 237 MB; file 0 MB
+memory by module: Memory Usage
+memory by module: 
+memory by module: Module                                 MB       Count
+memory by module: Physical footprint           not measured
+memory by module: Graphics footprint           not measured
+memory by module: Resident                            237.1
+memory by module: Malloc in use                       120.0
+memory by module: Buffer text                          ~0.3           1
+memory by module: Undo history                         ~0.0           1
+memory by module: Syntax trees                        ~12.8      121709
+memory by module: WebAssembly grammar stores   not measured           0
+memory by module: WebAssembly grammars loaded  not measured           0
+memory by module: Symbol index                         ~0.0           0
+memory by module: Project tree                         ~0.0           5
+memory by module: Quick open index                     ~0.0           0
+memory by module: Large-file views                      0.0           0
+memory by module: Terminal scrollback                  ~0.0           0
+memory by module: Language server documents    not measured           0
+memory by module: Minimap tiles                not measured
+memory by module: Unattributed                       ~106.9
+memory by module: 
+memory by module: ~ marks an estimate. Counts are buffers, nodes, stores, grammars, symbols, entries, paths, views, terminals and documents.
+memory by module: Unattributed is malloc in use less the rows above it; it is negative where their estimates overshoot.
+```
+
+The tree is 12.8 MB, the one module that matters for this file; 107 of
+malloc's 120 MB are unattributed, most of it the software renderer and
+GPUI here.
 
 ## Heap by crate
 
@@ -1634,6 +1705,56 @@ rounded up, and never below 20 (HTML measured 18.5×), so that no limit passes
 - **XML repeated whole, prolog and all, measured 72×** against 46× clean:
   error recovery inflates a tree, so the bench measures only corpora that
   parse without errors and reports any that don't.
+
+#### Bytes per visible node
+
+Show Memory Usage (`memory.show`, [memory by module](#memory-by-module))
+estimates a tree's memory from its visible node count, which tree-sitter
+keeps at each node (`Node::descendant_count`, O(1)): `Syntax::tree_nodes`
+times `fe_syntax::TREE_BYTES_PER_NODE`. The bench prints each language's
+tree memory (as above) over its visible nodes, Rust, JSON and Markdown's too,
+on the same corpora. The constant is the median, **110 B**; hidden nodes and
+child arrays are what a visible node carries beyond its own record. Markdown
+gave no tree (its 4 MB corpus is over its parse limit), JSON5 none either.
+`crates/fe-syntax/tests/tree_memory_estimate.rs` checks the estimate is
+within 2× of malloc's growth for a 64 KB Rust sample (116 B a node, debug
+build).
+
+- **Machine:** neon (Linux x86_64, glibc 2.43, Intel Xeon E-2386G), release
+  build. **Commit:** `3bf06cdc` (T372). **Date:** 2026-11-17. Load average
+  (1 minute) about 27 from other lanes; memory doesn't depend on load.
+
+| Language | Tree memory per visible node |
+|---|---|
+| rust | 117 B |
+| python | 117 B |
+| javascript | 94 B |
+| typescript | 97 B |
+| tsx | 88 B |
+| json | 59 B |
+| toml | 123 B |
+| go | 96 B |
+| c | 92 B |
+| bash | 111 B |
+| html | 58 B |
+| css | 69 B |
+| yaml | 150 B |
+| java | 90 B |
+| lua | 110 B |
+| csharp | 145 B |
+| xml | 133 B |
+| dockerfile | 142 B |
+| make | 82 B |
+| gitignore | 117 B |
+| ini | 119 B |
+| dotenv | 122 B |
+| just | 99 B |
+| diff | 123 B |
+| csv | 102 B |
+| tsv | 102 B |
+
+The spread is 58 B (HTML) to 150 B (YAML), so a single file's row is good to
+about ±40%; the report marks it `~`.
 
 ## WebAssembly grammars (`cargo bench -p fe-syntax --bench wasm`)
 

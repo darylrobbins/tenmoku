@@ -21,6 +21,11 @@ use crate::{
     runtime::ThreadParser,
 };
 
+/// A parsed tree's memory per visible node ([`Syntax::tree_nodes`]): the
+/// median of `benches/tree_ratio.rs`' languages, which tree-sitter's hidden
+/// nodes and child arrays add to (PERF.md, Tree memory by language).
+pub const TREE_BYTES_PER_NODE: usize = 110;
+
 /// How much of a file over its language's [`Language::parse_limit`] is parsed around the visible
 /// text (see [`Syntax::window_job`]). At the densest measured tree, 96× its
 /// source, a window's tree stays near 3 MB.
@@ -378,6 +383,16 @@ impl Syntax {
 
     pub fn tree(&self) -> Option<&Tree> {
         self.tree.as_ref()
+    }
+
+    /// The visible nodes of the trees it holds, the whole file's and a
+    /// window's, for the memory report: tree-sitter keeps the count at each
+    /// node, so it's O(1). Injected languages' layers aren't counted. A
+    /// tree's memory is about [`TREE_BYTES_PER_NODE`] a node.
+    pub fn tree_nodes(&self) -> usize {
+        let count = |tree: &Tree| tree.root_node().descendant_count();
+        let window = self.window.as_ref().map_or(0, |(_, tree)| count(tree));
+        self.tree.as_ref().map_or(0, count) + window
     }
 
     /// The paired bracket children of `tree`'s node `id`, from `pair` the

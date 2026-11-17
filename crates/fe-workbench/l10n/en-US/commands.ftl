@@ -175,6 +175,8 @@ command-markdown-show_preview = Markdown: Open Preview
 command-markdown-show_preview_to_side = Markdown: Open Preview to the Side
 command-markdown-toggle_preview = Markdown: Toggle Preview
 
+command-memory-show = Show Memory Usage
+
 command-nav-back = Go Back
 command-nav-document_symbols = Go to Symbol in File…
 command-nav-find_references = Find All References

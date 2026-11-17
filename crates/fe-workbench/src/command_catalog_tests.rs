@@ -315,6 +315,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "language.select",
     "lsp.restart",
     "lsp.show_log",
+    "memory.show",
     "menu_bar.open",
     "nav.back",
     "nav.find_references",

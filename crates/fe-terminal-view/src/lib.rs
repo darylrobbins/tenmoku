@@ -21,7 +21,7 @@ pub use element::cell_size;
 #[doc(hidden)]
 pub use element::{PaintReport, PaintedCursor, PaintedText};
 pub use fe_terminal::{
-    CommandStatus, QueryError, TerminalMatch, TerminalOptions, TerminalQuery, ViMove,
+    CommandStatus, GridMemory, QueryError, TerminalMatch, TerminalOptions, TerminalQuery, ViMove,
 };
 pub use style::TerminalStyle;
 pub use view::{KEY_CONTEXT, TerminalView, TerminalViewEvent};

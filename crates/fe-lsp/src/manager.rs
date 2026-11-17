@@ -472,6 +472,24 @@ impl Route {
 }
 
 /// One of a document's configured servers ([`LspManager::route_servers`]).
+/// A server instance a manager runs, as [`LspManager::running_servers`]
+/// lists it for the memory report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningServer {
+    pub id: ServerId,
+    /// `id` as a number, to name the instance where a [`ServerId`] can't
+    /// go, such as a command's arguments: no other instance of the
+    /// manager's has it.
+    pub instance: u64,
+    pub name: String,
+    pub root: PathBuf,
+    /// Its session's process id, while a session runs, if its launcher
+    /// knows it ([`ServerProcess::pid`](crate::ServerProcess::pid)).
+    pub pid: Option<u32>,
+    /// The documents synced to it.
+    pub documents: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RouteServer {
     pub name: String,
@@ -1080,6 +1098,25 @@ impl LspManager {
             self.place_waiting(&specs, Some(&key));
         }
         Ok(Some(id))
+    }
+
+    /// Every server instance it runs, oldest first: started, starting or
+    /// waiting to restart.
+    pub fn running_servers(&self) -> Vec<RunningServer> {
+        let mut servers: Vec<RunningServer> = (self.servers.iter())
+            .map(|(&id, handle)| RunningServer {
+                id,
+                instance: id.0,
+                name: handle.name.clone(),
+                root: handle.root.clone(),
+                pid: lock(&handle.session).pid,
+                documents: (self.documents.keys())
+                    .filter(|&&buffer| self.servers_of(buffer).contains(&id))
+                    .count(),
+            })
+            .collect();
+        servers.sort_by_key(|server| server.id.0);
+        servers
     }
 
     /// The last 64 KiB of what the server `name` for the workspace at

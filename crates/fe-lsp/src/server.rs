@@ -341,6 +341,9 @@ pub(crate) struct Session {
     /// for again (`ServerSpec::repoll`): none before it initializes, or for
     /// a spec without one.
     pub(crate) repoll: Option<(Instant, Duration)>,
+    /// The session's process id, as its launcher gave it
+    /// ([`ServerProcess::pid`]), until the session ends.
+    pub(crate) pid: Option<u32>,
     /// How many orphans the actor holds, and the most it has held.
     #[cfg(test)]
     pub(crate) orphans: (usize, usize),
@@ -596,6 +599,7 @@ impl Server {
                 &self.root,
                 &carry.settings,
             )),
+            pid: process.pid(),
             ..Session::default()
         };
         let queue = Rc::new(Queue::default());
@@ -723,6 +727,7 @@ impl Server {
             stderr,
             pump,
         ));
+        lock(&self.session).pid = None;
         (ended, process)
     }
 }
@@ -760,6 +765,10 @@ impl ServerProcess for Watched {
     fn kill(&mut self) {
         self.killed = true;
         self.process.kill();
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.process.pid()
     }
 }
 

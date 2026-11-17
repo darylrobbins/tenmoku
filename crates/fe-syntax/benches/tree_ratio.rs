@@ -8,6 +8,11 @@
 //! parse, the median of three, each in a fresh [`Syntax`]. macOS and Linux
 //! with glibc only.
 //!
+//! It also prints each language's tree memory per visible node
+//! ([`Syntax::tree_nodes`]), Rust, JSON and Markdown's too, on the golden
+//! samples: what [`fe_syntax::TREE_BYTES_PER_NODE`] is set from (PERF.md,
+//! Tree memory by language).
+//!
 //! Run with `cargo bench -p fe-syntax --bench tree_ratio`.
 
 use std::{fs, path::PathBuf};
@@ -21,7 +26,8 @@ const SOURCE_BYTES: usize = 4 * 1024 * 1024;
 const MEASURED_ELSEWHERE: [&str; 3] = ["rust", "json", "markdown"];
 
 /// The golden sample for `name`: `<name>.<ext>`, not its `.golden` output.
-fn sample(name: &str) -> String {
+/// `None` for a language with none.
+fn sample(name: &str) -> Option<String> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     let path = fs::read_dir(&dir)
         .expect("tests/golden is readable")
@@ -29,9 +35,8 @@ fn sample(name: &str) -> String {
         .find(|path| {
             path.extension().is_some_and(|ext| ext != "golden")
                 && path.file_stem().is_some_and(|stem| stem == name)
-        })
-        .unwrap_or_else(|| panic!("{name}: no sample in tests/golden"));
-    fs::read_to_string(path).expect("the sample is UTF-8")
+        })?;
+    Some(fs::read_to_string(path).expect("the sample is UTF-8"))
 }
 
 /// Whole copies of `sample` within [`SOURCE_BYTES`], as one file that parses
@@ -71,11 +76,17 @@ fn main() {
         eprintln!("tree_ratio: not measured on this platform");
         return;
     }
-    for name in language_names().filter(|name| !MEASURED_ELSEWHERE.contains(name)) {
+    let mut per_node = Vec::new();
+    for name in language_names() {
         let language = language_by_name(name).expect("every listed language loads");
-        let text = corpus(name, &sample(name));
+        let Some(sample) = sample(name) else {
+            eprintln!("{name}: no sample in tests/golden");
+            continue;
+        };
+        let text = corpus(name, &sample);
         let buffer = Buffer::new(&text);
         let mut trees = Vec::new();
+        let mut nodes = 0;
         for _ in 0..3 {
             let mut syntax = Syntax::new(language, &buffer.snapshot());
             let before = support::allocated();
@@ -85,14 +96,31 @@ fn main() {
                 Some(parsed) if parsed.root_node().has_error() => {
                     eprintln!("{name}: the corpus has parse errors");
                 }
-                Some(_) => trees.push(tree),
+                Some(_) => {
+                    trees.push(tree);
+                    nodes = syntax.tree_nodes();
+                }
                 None => eprintln!("{name}: no tree (the parse overran or panicked)"),
             }
         }
         trees.sort_unstable();
-        match trees.get(trees.len() / 2) {
-            Some(&tree) => support::tree_memory(name, text.len(), tree),
-            None => eprintln!("{name}: not measured"),
+        let Some(&tree) = trees.get(trees.len() / 2) else {
+            eprintln!("{name}: not measured");
+            continue;
+        };
+        if !MEASURED_ELSEWHERE.contains(&name) {
+            support::tree_memory(name, text.len(), tree);
         }
+        let bytes = tree as f64 / nodes.max(1) as f64;
+        eprintln!("{name}: {nodes} visible nodes, {bytes:.0} bytes per node");
+        per_node.push(bytes);
+    }
+    per_node.sort_unstable_by(f64::total_cmp);
+    if let Some(median) = per_node.get(per_node.len() / 2) {
+        eprintln!(
+            "bytes per node: median {median:.0} over {} languages (TREE_BYTES_PER_NODE is {})",
+            per_node.len(),
+            fe_syntax::TREE_BYTES_PER_NODE
+        );
     }
 }

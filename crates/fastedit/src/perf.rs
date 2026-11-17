@@ -6,7 +6,8 @@
 //!    read beat it) and the first frame that shows the file; memory then,
 //!    and again once a background parse has had time to land.
 //! 2. Scroll: one scroll-wheel event per frame, first smoothly and then in
-//!    large jumps, timing every frame the editor paints.
+//!    large jumps, timing every frame the editor paints; then memory again,
+//!    and Show Memory Usage's table (`memory by module:` lines).
 //! 3. Soft wrap: alt-z, the window narrower by an em, wider by an em, and
 //!    alt-z again, each followed by the frames that wrap the pending rows
 //!    a slice at a time, timing every frame until none are pending.
@@ -19,7 +20,7 @@ use std::{
 };
 
 use fe_gpui::{EditorView, FrameTiming};
-use fe_workbench::Workbench;
+use fe_workbench::{Workbench, memory_report::MemoryReport};
 
 use gpui::{
     App, Entity, Keystroke, Modifiers, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
@@ -298,8 +299,22 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
         report("jump scroll", &state.frames);
         print_memory("after scrolling", state.file_bytes);
         state.frames.clear();
+        // Then soft wrap, once the table, with rust-analyzer's breakdown if
+        // it runs, is printed.
+        let report = MemoryReport::collect_with_breakdowns(state.workbench.read(cx), cx);
         drop(state);
-        wrap_step(run, 0, window, cx);
+        window
+            .spawn(cx, async move |cx| {
+                print_memory_by_module(&report.await);
+                cx.update(|window, cx| {
+                    // What was painted while the report came in (up to
+                    // rust-analyzer's 10 s) isn't soft wrap's to time.
+                    discard_frames(&run, cx);
+                    wrap_step(run, 0, window, cx);
+                })
+                .ok();
+            })
+            .detach();
         return;
     }
     state.frame += 1;
@@ -609,6 +624,23 @@ fn percentiles(samples: &mut [Duration]) -> String {
         at(0.99),
         at(1.)
     )
+}
+
+/// Drops the frames painted so far: those the run holds and those still
+/// in the editor's timings.
+fn discard_frames(run: &Rc<RefCell<Run>>, cx: &mut App) {
+    let mut state = run.borrow_mut();
+    state.frames.clear();
+    if let Some(editor) = state.editor.clone() {
+        editor.update(cx, |view, _| view.frame_timings_mut().clear());
+    }
+}
+
+/// Show Memory Usage's table, each line as `memory by module: …`.
+fn print_memory_by_module(report: &MemoryReport) {
+    for line in report.to_text().lines() {
+        say!("memory by module: {line}");
+    }
 }
 
 #[cfg(target_os = "macos")]

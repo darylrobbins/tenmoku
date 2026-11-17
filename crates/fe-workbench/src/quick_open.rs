@@ -292,6 +292,15 @@ impl QuickOpen {
         }));
     }
 
+    /// The project's paths indexed and the heap they hold, estimated, for
+    /// the memory report: none before the walk begins; `None` while a
+    /// batch is being applied, rather than wait.
+    pub(crate) fn index_memory(&self) -> Option<(usize, usize)> {
+        let index = self.index.try_lock().ok()?;
+        let held = (index.as_ref()).map(|index| (index.progress().0, index.heap_bytes_estimate()));
+        Some(held.unwrap_or_default())
+    }
+
     #[cfg(test)]
     pub(crate) fn index_progress(&self) -> Option<(usize, bool)> {
         lock(&self.index).as_ref().map(FinderIndex::progress)

@@ -837,6 +837,12 @@ impl Lsp {
         Some((server, name, status))
     }
 
+    /// Which manager [`Self::manager`] is: bumped each time one replaces
+    /// another (a new root), whose server ids start again.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
     /// The manager, if there is one.
     pub(crate) fn manager(&self) -> Option<Arc<Mutex<LspManager>>> {
         self.manager.clone()
@@ -2173,38 +2179,54 @@ impl Workbench {
             return;
         };
         let name = name.to_owned();
+        if !log {
+            return self.restart_server(server, name, root, cx);
+        }
+        let Some(manager) = lsp.manager.clone() else {
+            return;
+        };
+        let log = Buffer::from_file_contents(&lock(&manager).log(&name, &root));
+        self.pane()
+            .update(cx, |pane, cx| pane.add(EditorModel::new(log, None), cx));
+        let focus = gpui::Focusable::focus_handle(self, cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Restarts the server `name` running at `root`, `server` until now,
+    /// moving its documents to the new instance: `lsp.restart`, for the
+    /// active editor's or the one the memory report names.
+    pub(crate) fn restart_server(
+        &mut self,
+        server: ServerId,
+        name: String,
+        root: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let lsp = &mut self.lsp;
         let Some(manager) = lsp.manager.clone() else {
             return;
         };
         let mut manager = lock(&manager);
-        match log {
-            false => match manager.restart(&name, &root) {
-                Ok(Some(restarted)) => {
-                    // Until its own status comes.
-                    lsp.servers
-                        .insert(restarted, (name.clone(), ServerStatus::Starting));
-                    for document in lsp.documents.values_mut() {
-                        if document.server == Some(server) {
-                            document.server = Some(restarted);
-                        }
+        match manager.restart(&name, &root) {
+            Ok(Some(restarted)) => {
+                // Until its own status comes.
+                lsp.servers
+                    .insert(restarted, (name.clone(), ServerStatus::Starting));
+                for document in lsp.documents.values_mut() {
+                    if document.server == Some(server) {
+                        document.server = Some(restarted);
                     }
                 }
-                Ok(None) => log::info!("{name} isn't restarted: it doesn't apply here now"),
-                Err(error) => {
-                    log::error!("can't restart {name}: {error}");
-                    toast::show(
-                        cx,
-                        Toast::error(tr!("workbench-lsp-cant-restart", name = &name))
-                            .detail(error.to_string()),
-                    );
-                }
-            },
-            true => {
-                let log = Buffer::from_file_contents(&manager.log(&name, &root));
-                self.pane()
-                    .update(cx, |pane, cx| pane.add(EditorModel::new(log, None), cx));
-                let focus = gpui::Focusable::focus_handle(self, cx);
-                window.focus(&focus, cx);
+            }
+            Ok(None) => log::info!("{name} isn't restarted: it doesn't apply here now"),
+            Err(error) => {
+                log::error!("can't restart {name}: {error}");
+                toast::show(
+                    cx,
+                    Toast::error(tr!("workbench-lsp-cant-restart", name = &name))
+                        .detail(error.to_string()),
+                );
             }
         }
         cx.notify();

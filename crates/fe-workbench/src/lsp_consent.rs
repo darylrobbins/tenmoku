@@ -971,6 +971,10 @@ impl ServerProcess for Tracked {
     fn kill(&mut self) {
         self.inner.kill();
     }
+
+    fn pid(&self) -> Option<u32> {
+        self.inner.pid()
+    }
 }
 
 impl Drop for Tracked {

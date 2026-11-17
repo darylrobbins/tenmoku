@@ -10,6 +10,7 @@ mod history_cap;
 mod ideal;
 mod invariants;
 mod log_compaction;
+mod memory;
 
 fn ai() -> Origin {
     Origin::Ai {

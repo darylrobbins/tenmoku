@@ -367,6 +367,36 @@ impl CommandStatus {
     }
 }
 
+/// What a session's grid holds, for the memory report.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GridMemory {
+    /// Lines of scrollback above the screen.
+    pub history_lines: usize,
+    /// The screen's lines and the scrollback's, times the columns, times a
+    /// cell's size: an estimate, as a cell's extras (combining marks, a
+    /// hyperlink) are on the heap, and the grid's rows may hold more cells
+    /// than the columns after a narrowing resize. `None` while the
+    /// alternate screen shows: the primary grid, scrollback and all, is
+    /// kept but out of reach (alacritty doesn't expose the hidden grid).
+    pub bytes: Option<u64>,
+}
+
+impl crate::Terminal {
+    pub fn grid_memory(&self) -> GridMemory {
+        grid_memory(&self.term.lock())
+    }
+}
+
+fn grid_memory<T>(term: &Term<T>) -> GridMemory {
+    let grid = term.grid();
+    let lines = grid.history_size() + grid.screen_lines();
+    let shown = !term.mode().contains(TermMode::ALT_SCREEN);
+    GridMemory {
+        history_lines: grid.history_size(),
+        bytes: shown.then_some((lines * grid.columns() * size_of::<Cell>()) as u64),
+    }
+}
+
 /// The most command blocks a session keeps: past it the oldest goes.
 pub(crate) const MAX_BLOCKS: usize = 1_000;
 
@@ -1258,5 +1288,45 @@ mod tests {
             ShellEvent::PromptStart,
         ];
         assert_eq!(events, expected);
+    }
+
+    /// A terminal's scrollback is measured until a program takes the
+    /// alternate screen, which hides it; then it's not measured, rather
+    /// than a screenful.
+    #[test]
+    fn the_alternate_screen_leaves_the_grid_unmeasured() {
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::term::Config;
+        use alacritty_terminal::vte::ansi::Processor;
+
+        struct Size;
+        impl Dimensions for Size {
+            fn total_lines(&self) -> usize {
+                10
+            }
+            fn screen_lines(&self) -> usize {
+                10
+            }
+            fn columns(&self) -> usize {
+                20
+            }
+        }
+        let config = Config {
+            scrolling_history: 1000,
+            ..Config::default()
+        };
+        let mut term = Term::new(config, &Size, VoidListener);
+        let mut parser: Processor = Processor::new();
+        for line in 0..100 {
+            parser.advance(&mut term, format!("line {line}\r\n").as_bytes());
+        }
+        let memory = grid_memory(&term);
+        assert!(memory.history_lines >= 90, "{memory:?}");
+        let cells = (memory.history_lines + 10) * 20;
+        assert_eq!(memory.bytes, Some((cells * size_of::<Cell>()) as u64));
+        parser.advance(&mut term, b"\x1b[?1049h");
+        assert_eq!(grid_memory(&term).bytes, None);
+        parser.advance(&mut term, b"\x1b[?1049l");
+        assert_eq!(grid_memory(&term), memory);
     }
 }

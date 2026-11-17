@@ -283,6 +283,23 @@ impl FileTree {
         self.stats
     }
 
+    /// The heap the tree holds, estimated from its collections' capacities
+    /// and its names, for the memory report: a walk over the loaded nodes.
+    /// What the allocator rounds up, and errors' messages, aren't counted.
+    pub fn heap_bytes_estimate(&self) -> usize {
+        let nodes: usize = (self.slots.iter())
+            .filter_map(|slot| slot.node.as_ref())
+            .map(|node| {
+                let children = node.children.as_ref().map_or(0, Vec::capacity);
+                node.name.capacity() + children * size_of::<NodeId>()
+            })
+            .sum();
+        self.slots.capacity() * size_of::<Slot>()
+            + self.free.capacity() * size_of::<u32>()
+            + self.rows.capacity() * size_of::<(NodeId, usize)>()
+            + nodes
+    }
+
     /// The node at `path`, absolute under the root or relative to it, if it
     /// is loaded.
     pub fn find(&self, path: impl AsRef<Path>) -> Option<NodeId> {

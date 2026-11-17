@@ -33,6 +33,7 @@ mod keymap_remap_conflicts;
 pub mod l10n;
 pub mod lens;
 mod link_ranges;
+mod memory;
 pub mod menu;
 pub mod pane_item;
 mod server_folds;
@@ -71,6 +72,7 @@ pub use image_viewer::{
 };
 pub use inlay_hints::{InlayHint, InlayHintFuture, InlayHintHost, InlayHintKind};
 pub use lens::{Lens, LensItem, LensProvider};
+pub use memory::EditorMemory;
 
 pub use fe_display::minimap::MinimapOptions;
 pub use fe_vim::search::set_time_limit as set_vim_time_limit;

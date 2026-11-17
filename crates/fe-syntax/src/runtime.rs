@@ -21,7 +21,10 @@ use std::{
     io::{self, Read as _},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::{Condvar, Mutex, OnceLock, PoisonError, RwLock},
+    sync::{
+        Condvar, Mutex, OnceLock, PoisonError, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -275,6 +278,8 @@ pub fn register_language(spec: &GrammarSpec) -> Result<&'static Language, Gramma
                 }
             })?;
             language.wasm = Some(spec.wasm.clone());
+            // Kept for the process's life from here: counted once it is.
+            LOADED_GRAMMARS.fetch_add(1, Ordering::Relaxed);
             &*Box::leak(Box::new(language))
         }
     };
@@ -317,6 +322,31 @@ pub fn unregister_language(name: &str) -> bool {
 fn loading() -> std::sync::MutexGuard<'static, ()> {
     static LOADING: Mutex<()> = Mutex::new(());
     LOADING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The WebAssembly stores parsers hold, across threads: each thread's
+/// parser keeps the one it was given.
+static LIVE_STORES: AtomicUsize = AtomicUsize::new(0);
+/// The WebAssembly grammars [`register_language`] made a language of: each
+/// is kept for the process's life, withdrawn or not.
+static LOADED_GRAMMARS: AtomicUsize = AtomicUsize::new(0);
+
+/// How many WebAssembly stores and grammars the process holds, for the
+/// memory report. Their linear memory isn't measured: tree-sitter doesn't
+/// expose a store's memory.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WasmStats {
+    /// Stores in parsers, each instantiating the modules it parses.
+    pub stores: usize,
+    /// Grammars loaded by [`register_language`].
+    pub grammars: usize,
+}
+
+pub fn wasm_stats() -> WasmStats {
+    WasmStats {
+        stores: LIVE_STORES.load(Ordering::Relaxed),
+        grammars: LOADED_GRAMMARS.load(Ordering::Relaxed),
+    }
 }
 
 /// The grammar `wasm` holds, by its file name: see [`GrammarSpec::wasm`].
@@ -613,8 +643,16 @@ thread_local! {
 
 struct Cached {
     parser: Parser,
-    /// Whether it has a [`WasmStore`].
+    /// Whether it has a [`WasmStore`], counted in [`LIVE_STORES`].
     wasm: bool,
+}
+
+impl Drop for Cached {
+    fn drop(&mut self) {
+        if self.wasm {
+            LIVE_STORES.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
 }
 
 /// This thread's parser, back in its cache when dropped, reset to parse
@@ -672,6 +710,7 @@ impl ThreadParser {
                 })?;
             cached.parser.set_wasm_store(store)?;
             cached.wasm = true;
+            LIVE_STORES.fetch_add(1, Ordering::Relaxed);
         }
         self.wasm = Some(WasmLanguage {
             name: language.name(),
@@ -763,13 +802,44 @@ impl Drop for ThreadParser {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::{fs, io, path::Path};
 
-    use super::new_engine;
+    use super::{GrammarError, GrammarSpec, new_engine, register_language, wasm_stats};
 
     #[test]
     fn no_ticker_is_no_engine() {
         let error = new_engine(|_| Err(io::Error::other("refused"))).unwrap_err();
         assert_eq!(error, "no thread to enforce grammars' deadlines: refused");
+    }
+
+    /// A grammar whose query is refused isn't counted as held; one that
+    /// registers is, once.
+    #[test]
+    fn only_registered_grammars_are_counted() {
+        let manifest = std::env::var_os("CARGO_MANIFEST_DIR").expect("run by cargo");
+        let wasm = Path::new(&manifest).join("tests/fixtures/tree-sitter-json.wasm");
+        let dir = std::env::temp_dir().join(format!("fe-syntax-wasm-stats-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let bad = dir.join("bad.scm");
+        fs::write(&bad, "(no_such_node) @string\n").unwrap();
+        let good = dir.join("good.scm");
+        fs::write(&good, "(string) @string\n").unwrap();
+        let spec = |name: &str, highlights: &Path| GrammarSpec {
+            language: name.into(),
+            wasm: wasm.clone(),
+            extensions: vec![format!("{name}x")],
+            highlights: Some(highlights.to_owned()),
+            ..GrammarSpec::default()
+        };
+        let before = wasm_stats().grammars;
+        let refused = register_language(&spec("json_bad_query", &bad));
+        assert!(
+            matches!(refused, Err(GrammarError::Query { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(wasm_stats().grammars, before);
+        register_language(&spec("json_counted", &good)).unwrap();
+        assert_eq!(wasm_stats().grammars, before + 1);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

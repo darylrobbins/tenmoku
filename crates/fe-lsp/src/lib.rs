@@ -166,6 +166,7 @@ pub use linked_editing::LinkedEditing;
 pub use lsp_types::FileChangeType;
 pub use manager::{
     DEFAULT_MAX_FILE_BYTES, Feature, JdtlsBundles, KillSwitch, LspManager, Owner, RouteServer,
+    RunningServer,
 };
 pub use navigation::LspNavigation;
 pub use registry::{BundlesRefused, extension_spec, server_root};

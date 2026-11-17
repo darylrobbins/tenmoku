@@ -76,6 +76,7 @@ mod lsp_consent;
 mod lsp_consent_prompt;
 mod lsp_format;
 mod lsp_rename;
+pub mod memory_report;
 mod nav;
 mod nav_picker;
 mod open;

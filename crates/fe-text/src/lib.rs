@@ -112,6 +112,11 @@ impl BreakCounts {
     }
 }
 
+/// The heap a rope holds per byte of text: `fe-buffer`'s `load_memory`
+/// example measured 1.12× for a 100 MB buffer (Linux, release; its budget
+/// is 1.5×).
+const HEAP_BYTES_PER_TEXT_BYTE: f64 = 1.12;
+
 /// Rope-backed text. Cloning is O(1) and shares storage, so a clone doubles as
 /// an immutable snapshot that can be handed to a background thread.
 #[derive(Clone, Default)]
@@ -190,6 +195,14 @@ impl Text {
     /// Length in bytes.
     pub fn len(&self) -> usize {
         self.rope.len()
+    }
+
+    /// The heap the rope holds, estimated from its length: ropey has no
+    /// measure of its own. A snapshot shares the rope, so it's counted once
+    /// for all its clones; nodes an edit copied, held by an older snapshot
+    /// alone, aren't.
+    pub fn heap_bytes_estimate(&self) -> usize {
+        (self.rope.len() as f64 * HEAP_BYTES_PER_TEXT_BYTE) as usize
     }
 
     pub fn is_empty(&self) -> bool {

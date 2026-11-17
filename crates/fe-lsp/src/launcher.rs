@@ -183,6 +183,12 @@ pub trait ServerProcess: Send {
     fn exited(&mut self) -> Pin<Box<dyn Future<Output = ExitInfo> + Send + '_>>;
     /// Forcibly stops it (kill the process group, close the proxy …).
     fn kill(&mut self);
+    /// The id of the process it started on this machine, if it did and
+    /// it's known: the memory report reads its memory by it. None by
+    /// default, for a server behind a proxy or in a container.
+    fn pid(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// Hands fe-lsp a server's byte streams. A host implements it to sandbox,
@@ -906,6 +912,11 @@ impl ServerProcess for LocalProcess {
             job.kill();
         }
         let _ = self.child.kill();
+    }
+
+    /// Until it's seen to exit, when the id may go to another process.
+    fn pid(&self) -> Option<u32> {
+        self.exit.is_none().then(|| self.child.id())
     }
 }
 

@@ -1735,7 +1735,23 @@ impl Workbench {
     #[command(id = "lsp.restart")]
     fn restart_language_server(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
-        self.run_server_op(false, cx.window, cx.cx);
+        // The memory report's Restart lens names its server's instance.
+        let named = kiln::current_invocation(cx.cx).and_then(|invocation| {
+            let server = invocation.args.get("server")?.as_str()?;
+            let instance = invocation.args.get("instance")?.as_u64()?;
+            let generation = invocation.args.get("generation")?.as_u64()?;
+            Some((server.to_owned(), (generation, instance)))
+        });
+        match named {
+            Some((server, instance)) => self.restart_server_instance(&server, instance, cx.cx),
+            None => self.run_server_op(false, cx.window, cx.cx),
+        }
+    }
+
+    /// Show Memory Usage
+    #[command(id = "memory.show")]
+    fn show_memory_usage_command(&mut self, cx: &mut Cx<Self>) {
+        self.show_memory_usage(cx.window, cx.cx);
     }
 
     /// Language Server Log

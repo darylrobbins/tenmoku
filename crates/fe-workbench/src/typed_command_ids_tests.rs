@@ -281,6 +281,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("lsp.restart", "Restart Language Server", "workbench"),
     ("lsp.show_log", "Language Server Log", "workbench"),
+    ("memory.show", "Show Memory Usage", "workbench"),
     ("lsp.rename", "Rename Symbol…", "editor"),
     ("ai.inline_edit", "Inline Edit with AI", "editor"),
     ("inline_edit.submit", "Send Inline Edit", "inline_edit"),

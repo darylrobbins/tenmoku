@@ -111,6 +111,7 @@ mod lsp_resolve_retry;
 mod lsp_resolve_retry_pending;
 mod lsp_symlinks;
 mod m3_signoff;
+mod memory_report;
 mod menu_bar;
 mod minimap_setting;
 mod nav;

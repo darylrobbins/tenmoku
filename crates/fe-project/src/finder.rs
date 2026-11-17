@@ -505,6 +505,23 @@ impl FinderIndex {
         self.stats
     }
 
+    /// The heap the index holds, estimated from its items' capacities and
+    /// paths and its keys, for the memory report: a walk over the items.
+    /// Each key's map entry is charged its key, its value and a pointer of
+    /// the tree's own; what the allocator rounds up isn't counted.
+    pub fn heap_bytes_estimate(&self) -> usize {
+        let items: usize = (self.items.iter())
+            .map(|item| {
+                let real = item.real.as_ref().map_or(0, |real| real.as_os_str().len());
+                item.path.capacity() + real
+            })
+            .sum();
+        let keys: usize = (self.keys.keys())
+            .map(|key| key.len() + size_of::<(Box<[u8]>, u32)>() + size_of::<usize>())
+            .sum();
+        self.items.capacity() * size_of::<Item>() + items + keys
+    }
+
     /// The best `limit` paths for `text`, best first: by score, then shorter
     /// path (in chars), then path order. A match within the file name beats
     /// any match that spans directories. Matching ignores case, and every

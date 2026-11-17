@@ -332,6 +332,8 @@ struct State {
     /// Every message the fake has put on the wire to the client, in order,
     /// each with its launch.
     sent: Vec<(usize, Value)>,
+    /// The process id its launches report ([`ServerProcess::pid`]).
+    pid: Option<u32>,
 }
 
 /// Ends the fake's main loop.
@@ -398,6 +400,7 @@ impl FakeServer {
                     sync_errors: Vec::new(),
                     cancels: HashMap::new(),
                     sent: Vec::new(),
+                    pid: None,
                 }),
                 changed: Condvar::new(),
                 clock,
@@ -549,6 +552,12 @@ impl FakeServer {
     /// How many times the client killed it.
     pub fn kills(&self) -> usize {
         self.lock().kills
+    }
+
+    /// Has its launches from now on report `pid` as their process's id,
+    /// none by default: a real process's, for a host reading its memory.
+    pub fn set_pid(&self, pid: Option<u32>) {
+        self.lock().pid = pid;
     }
 
     /// Sets how the client's writes get through from now on, dropping any
@@ -1122,6 +1131,10 @@ impl ServerProcess for FakeProcess {
         }
         drop(state);
         self.session.end(KILLED);
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.fake.lock().pid
     }
 }
 

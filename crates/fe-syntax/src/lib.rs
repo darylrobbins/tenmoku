@@ -80,11 +80,11 @@ pub use outline::{
 };
 pub use parse_limit::TREE_BUDGET_BYTES;
 pub use runtime::{
-    Clash, GrammarDeadlines, GrammarError, GrammarSpec, MAX_GRAMMAR_BYTES, register_language,
-    set_grammar_deadlines, unregister_language,
+    Clash, GrammarDeadlines, GrammarError, GrammarSpec, MAX_GRAMMAR_BYTES, WasmStats,
+    register_language, set_grammar_deadlines, unregister_language, wasm_stats,
 };
 pub use select::larger_syntax_node;
-pub use syntax::{ParseJob, Parsed, Syntax};
+pub use syntax::{ParseJob, Parsed, Syntax, TREE_BYTES_PER_NODE};
 pub use textobject::{
     DefinitionKind, DefinitionObject, definition_objects, definition_objects_counted,
     function_bounds,

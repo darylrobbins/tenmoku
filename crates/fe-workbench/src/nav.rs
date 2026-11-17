@@ -230,6 +230,16 @@ impl Nav {
         &self.navigation
     }
 
+    /// The index's size, for the memory report: nothing before the first
+    /// nav command builds it; `None` while files are being written to it,
+    /// rather than wait.
+    pub(crate) fn index_stats(&self) -> Option<fe_nav::IndexStats> {
+        let Some(index) = &self.index else {
+            return Some(fe_nav::IndexStats::default());
+        };
+        Some(index.try_read().ok()?.stats())
+    }
+
     /// The index's files and whether it's complete, once it exists.
     #[cfg(test)]
     pub(crate) fn index_progress(&self) -> Option<(usize, bool)> {

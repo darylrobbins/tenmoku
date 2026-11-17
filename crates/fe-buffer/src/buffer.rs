@@ -1120,6 +1120,13 @@ impl Buffer {
         self.history_bytes.get(origin).copied().unwrap_or(0)
     }
 
+    /// [`Buffer::history_bytes`] summed over every origin: what the undo
+    /// history holds in all. The text in it is exact; the bookkeeping is
+    /// charged at a measured size a batch, edit and entry.
+    pub fn history_bytes_total(&self) -> usize {
+        self.history_bytes.values().sum()
+    }
+
     /// Makes `clock` the source of the times history entries are given
     /// from now on (see [`Buffer::history_times`]): milliseconds since the
     /// Unix epoch. The system's clock is the default.

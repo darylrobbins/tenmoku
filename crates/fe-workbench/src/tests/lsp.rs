@@ -146,6 +146,10 @@ impl ServerProcess for Watched {
     fn kill(&mut self) {
         self.inner.kill();
     }
+
+    fn pid(&self) -> Option<u32> {
+        self.inner.pid()
+    }
 }
 
 impl ServerLauncher for Switch {
