@@ -278,6 +278,13 @@ impl GitState {
         self.workbench.clone()
     }
 
+    /// Whether `path` is in the root's repository's working tree (not in
+    /// `.git`), as the last status read found the repository: false before
+    /// one has, or outside every repository.
+    pub(crate) fn in_repository(&self, path: &Path) -> bool {
+        (self.repo.as_ref()).is_some_and(|repo| relative(repo, path).is_some())
+    }
+
     /// Starts another branch listing, superseding those before: its number.
     pub(crate) fn start_branch_listing(&mut self) -> u64 {
         self.branch_listings += 1;

@@ -42,6 +42,8 @@ mod debug_panel;
 mod debug_run_widget;
 #[path = "audit/debug_toolbar.rs"]
 mod debug_toolbar;
+#[path = "audit/editor_menu.rs"]
+mod editor_menu;
 #[path = "audit/file_finder.rs"]
 mod file_finder;
 #[path = "audit/find_bar.rs"]
@@ -147,6 +149,8 @@ const SURFACES: &[&Surface] = &[
     &debug_console::SURFACE,
     &debug_hover::SURFACE,
     &hex_viewer::SURFACE,
+    &editor_menu::STARTING,
+    &editor_menu::CONTEXT,
 ];
 
 /// The surfaces captured after the bundled themes' chrome: their setup

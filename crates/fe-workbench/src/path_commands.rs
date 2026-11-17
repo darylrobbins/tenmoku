@@ -1,5 +1,6 @@
 //! The active file's path commands, VS Code's `copyPathOfActiveFile`,
-//! `copyRelativePathOfActiveFile` and `revealActiveFileInWindows`: the
+//! `copyRelativePathOfActiveFile` and `revealActiveFileInWindows`, and
+//! JetBrains' Copy Reference (`workbench.copy_reference`, `path:line`): the
 //! project tree has its own Copy Path and Reveal, on its selected row;
 //! these act on the active editor's tab.
 //!
@@ -39,6 +40,14 @@ impl PathCommands {
     /// Reveal Active File in File Manager
     #[command(id = "workbench.reveal_active_file_in_os")]
     fn reveal_active_file_in_os(&mut self, _: &mut Cx<Self>) {}
+
+    /// Copy Reference
+    ///
+    /// Copies the active file's path and the caret's line, `path:line`, or
+    /// `path:first-last` for a selection over several lines; the path as
+    /// Copy Relative Path gives it.
+    #[command(id = "workbench.copy_reference")]
+    fn copy_reference(&mut self, _: &mut Cx<Self>) {}
 }
 
 /// What reveals a path in the OS's file manager, if not GPUI's: set by
@@ -67,6 +76,43 @@ impl Workbench {
             _ => path.to_string_lossy().into_owned(),
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    /// Puts the active file's reference on the clipboard: its path as
+    /// [`Self::copy_active_file_path`] gives it relative, then `:` and the
+    /// primary selection's line from 1 (the caret's, for an empty one); for
+    /// a selection over several lines, its first and last, `first-last`. A
+    /// selection ending at the start of a line doesn't take that line in,
+    /// whichever way it was made. Leaves the clipboard alone
+    /// if no file is active.
+    pub(crate) fn copy_reference(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.active_editor(cx) else {
+            return;
+        };
+        let model = editor.read(cx).model();
+        let Some(path) = model.path() else {
+            return;
+        };
+        let path = match self.root() {
+            Some(root) => fs_ops::relative_path(root, path),
+            None => path.to_string_lossy().into_owned(),
+        };
+        let selection = model.primary_selection();
+        let text = model.text();
+        let (start, end) = (
+            text.offset_to_point(selection.range.start),
+            text.offset_to_point(selection.range.end),
+        );
+        let last = match end.column == 0 && end.row > start.row {
+            true => end.row - 1,
+            false => end.row,
+        };
+        // A caret's line is its own row; a selection's, the rows it covers.
+        let lines = match last > start.row {
+            true => format!("{}-{}", start.row + 1, last + 1),
+            false => (start.row + 1).to_string(),
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{lines}")));
     }
 
     /// Reveals the active file in the OS's file manager, if one is active.
@@ -112,5 +158,8 @@ pub(crate) fn init(cx: &mut App) {
     });
     cx.on_action(|_: &RevealActiveFileInOs, cx| {
         on_workbench(cx, |workbench, cx| workbench.reveal_active_file_in_os(cx));
+    });
+    cx.on_action(|_: &CopyReference, cx| {
+        on_workbench(cx, |workbench, cx| workbench.copy_reference(cx));
     });
 }

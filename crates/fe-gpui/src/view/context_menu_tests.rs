@@ -528,6 +528,49 @@ fn extend_inserts_after_its_anchor_and_keeps_the_highlight(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn extend_before_inserts_ahead_of_its_anchor_and_keeps_the_highlight(cx: &mut TestAppContext) {
+    let (view, cx, _) = editor(cx);
+    provide(cx, items());
+    right_click(&view, at("call_3"), cx);
+    cx.simulate_keystrokes("down");
+    assert_eq!(highlighted(&view, cx), Some(0), "on Cut");
+    let ticket = view.read_with(cx, |view, _| view.editor_menu_ticket().unwrap());
+
+    // A first group, ahead of the menu's first item.
+    view.update(cx, |view, cx| {
+        view.extend_editor_menu_before(
+            ticket,
+            "editor.cut",
+            vec![item("Fix", "test.fix", true), None],
+            cx,
+        )
+    });
+    let titles_now = titles(&view, cx).unwrap();
+    assert_eq!(
+        titles_now[..3],
+        [Some("Fix".into()), None, Some("Cut".into())]
+    );
+    assert_eq!(highlighted(&view, cx), Some(2), "still on Cut");
+
+    // No such item: a new last group, as for `extend_editor_menu`.
+    view.update(cx, |view, cx| {
+        view.extend_editor_menu_before(
+            ticket,
+            "test.none",
+            vec![item("Last", "test.last", true)],
+            cx,
+        )
+    });
+    let titles_now = titles(&view, cx).unwrap();
+    assert_eq!(
+        titles_now[titles_now.len() - 2..],
+        [None, Some("Last".into())]
+    );
+    draw(cx);
+    assert!(cx.debug_bounds("menu-item:Fix").is_some(), "drawn");
+}
+
+#[gpui::test]
 fn a_stale_ticket_extends_nothing(cx: &mut TestAppContext) {
     let (view, cx, _) = editor(cx);
     provide(cx, items());

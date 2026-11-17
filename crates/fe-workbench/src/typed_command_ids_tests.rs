@@ -547,6 +547,7 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Reveal Active File in File Manager",
         "workbench",
     ),
+    ("workbench.copy_reference", "Copy Reference", "workbench"),
     ("workbench.save_all", "Save All", "workbench"),
     (
         "workbench.save_without_formatting",

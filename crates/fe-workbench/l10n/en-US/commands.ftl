@@ -383,6 +383,7 @@ command-workbench-close_tab = Close Tab
 command-workbench-configure_snippets = Configure User Snippets
 command-workbench-copy_active_file_path = Copy Path of Active File
 command-workbench-copy_active_file_relative_path = Copy Relative Path of Active File
+command-workbench-copy_reference = Copy Reference
 command-workbench-harpoon_add = Harpoon: Add File
 command-workbench-harpoon_jump1 = Harpoon: Jump to File 1
 command-workbench-harpoon_jump2 = Harpoon: Jump to File 2

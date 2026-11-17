@@ -27,8 +27,9 @@
 //! - **Closing.** Scrolling the editor, an edit, a Save As, and focus
 //!   leaving the menu (the tab going away, another window) close it; a
 //!   stale menu runs nothing.
-//! - **Later items.** [`EditorView::extend_editor_menu`] adds items to the
-//!   menu a request opened, for answers that come after it opens.
+//! - **Later items.** [`EditorView::extend_editor_menu`] (after an item)
+//!   and [`EditorView::extend_editor_menu_before`] (before one) add items to
+//!   the menu a request opened, for answers that come after it opens.
 
 use std::{path::PathBuf, rc::Rc};
 
@@ -313,6 +314,33 @@ impl EditorView {
         items: Vec<Option<EditorMenuItem>>,
         cx: &mut Context<Self>,
     ) {
+        self.insert_into_editor_menu(ticket, after, 1, items, cx);
+    }
+
+    /// As [`Self::extend_editor_menu`], but inserts `items` right before
+    /// the item running command `before`: the way to put a group ahead of
+    /// the menu's first one (`items` ending in a separator).
+    pub fn extend_editor_menu_before(
+        &mut self,
+        ticket: EditorMenuTicket,
+        before: &str,
+        items: Vec<Option<EditorMenuItem>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_into_editor_menu(ticket, before, 0, items, cx);
+    }
+
+    /// Inserts `items` at `offset` from the item running `anchor`, or as a
+    /// new last group if there's none, into the open menu if it's
+    /// `ticket`'s; the highlight stays on its item.
+    fn insert_into_editor_menu(
+        &mut self,
+        ticket: EditorMenuTicket,
+        anchor: &str,
+        offset: usize,
+        items: Vec<Option<EditorMenuItem>>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(menu) = (self.editor_menu.open.as_mut()).filter(|menu| menu.ticket == ticket)
         else {
             return;
@@ -320,13 +348,13 @@ impl EditorView {
         if items.iter().all(Option::is_none) {
             return;
         }
-        let anchor = (menu.entries.iter()).position(|entry| {
+        let found = (menu.entries.iter()).position(|entry| {
             entry
                 .as_ref()
-                .is_some_and(|item| item.invocation.command.as_str() == after)
+                .is_some_and(|item| item.invocation.command.as_str() == anchor)
         });
-        let at = match anchor {
-            Some(ix) => ix + 1,
+        let at = match found {
+            Some(ix) => ix + offset,
             None => {
                 menu.entries.push(None);
                 menu.entries.len()

@@ -236,6 +236,22 @@ fn state(cx: &mut App) -> &mut BlameState {
     cx.default_global::<BlameState>()
 }
 
+impl Workbench {
+    /// Whether `git.toggle_blame_annotations` has annotated `editor`, so
+    /// another toggle takes the annotations away: from the toggle on, before
+    /// the first blame lands too.
+    pub(crate) fn blame_annotates(&self, editor: &Entity<EditorView>, cx: &App) -> bool {
+        (cx.try_global::<BlameState>())
+            .is_some_and(|state| state.columns.contains_key(&editor.entity_id()))
+    }
+
+    /// Whether `path` is in the window's Git repository, as its last status
+    /// read found it: the files blame can annotate.
+    pub(crate) fn in_git_repository(&self, path: &Path, cx: &App) -> bool {
+        self.git.read(cx).in_repository(path)
+    }
+}
+
 /// The line blame of the window `workbench` is the root of, if it's on.
 fn line(workbench: EntityId, cx: &mut App) -> Option<&mut LineBlame> {
     state(cx).windows.get_mut(&workbench)

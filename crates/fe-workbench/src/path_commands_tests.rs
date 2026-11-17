@@ -1,6 +1,6 @@
 //! The active file's path commands: `workbench.copy_active_file_path` and
 //! `workbench.copy_active_file_relative_path` put the active editor's path
-//! on the clipboard, and `workbench.reveal_active_file_in_os` hands it to
+//! on the clipboard, `workbench.copy_reference` its path and line, and `workbench.reveal_active_file_in_os` hands it to
 //! the reveal seam, which records it as the test platform reveals nothing.
 
 use std::{
@@ -153,6 +153,99 @@ fn copy_follows_the_focused_pane(cx: &mut TestAppContext) {
     draw(cx);
     run("workbench.copy_active_file_path", cx);
     assert_eq!(clipboard(cx), Some(renamed.to_string_lossy().into_owned()));
+}
+
+/// Selects `range` in the active editor, the caret at its end.
+fn select(
+    workbench: &Entity<Workbench>,
+    range: std::ops::Range<usize>,
+    cx: &mut VisualTestContext,
+) {
+    let editor = workbench.read_with(cx, |workbench, cx| {
+        workbench.active_editor(cx).unwrap().clone()
+    });
+    editor.update(cx, |view, cx| {
+        view.model_mut().select_range(range, false);
+        cx.notify();
+    });
+    draw(cx);
+}
+
+#[gpui::test]
+fn copy_reference_copies_path_and_line(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = opened(cx, false);
+    // No file: the clipboard stays.
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("sentinel"));
+
+    let path = dir.path().join("sub/c.txt");
+    fs::write(&path, "one\ntwo\nthree\n").unwrap();
+    open_file(&workbench, path, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("sub/c.txt:1"));
+
+    // The caret's line; a selection within one line gives that line.
+    select(&workbench, 9..9, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("sub/c.txt:3"));
+    select(&workbench, 4..6, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("sub/c.txt:2"));
+
+    // Outside the folder, the path is absolute.
+    let outside = tempfile::tempdir().unwrap();
+    let path = outside.path().join("o.txt");
+    fs::write(&path, "o\n").unwrap();
+    open_file(&workbench, path.clone(), cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx), Some(format!("{}:1", path.display())));
+
+    // An untitled buffer has none.
+    cx.write_to_clipboard(ClipboardItem::new_string("sentinel".into()));
+    new_file(&workbench, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("sentinel"));
+}
+
+#[gpui::test]
+fn copy_reference_gives_a_row_range_for_a_multi_row_selection(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = opened(cx, false);
+    let path = dir.path().join("c.txt");
+    fs::write(&path, "one\ntwo\nthree\nfour\n").unwrap();
+    open_file(&workbench, path, cx);
+
+    // From `ne` on line 1 to `th` on line 3.
+    select(&workbench, 1..10, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("c.txt:1-3"));
+
+    // Whole lines 2 and 3, ending at line 4's start: 4 isn't in it.
+    select(&workbench, 4..14, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("c.txt:2-3"));
+
+    // Reversed, the same rows.
+    let editor = workbench.read_with(cx, |workbench, cx| {
+        workbench.active_editor(cx).unwrap().clone()
+    });
+    let select_reversed = |range, cx: &mut VisualTestContext| {
+        editor.update(cx, |view, cx| {
+            view.model_mut().select_range(range, true);
+            cx.notify();
+        });
+        draw(cx);
+    };
+    select_reversed(4..10, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("c.txt:2-3"));
+
+    // Line 1 whole, ending at line 2's start, either way: line 1 alone.
+    select(&workbench, 0..4, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("c.txt:1"));
+    select_reversed(0..4, cx);
+    run("workbench.copy_reference", cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("c.txt:1"));
 }
 
 #[gpui::test]

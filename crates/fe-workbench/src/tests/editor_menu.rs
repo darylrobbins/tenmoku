@@ -23,7 +23,7 @@ use super::{
 const MAIN: &str = "fn helper() {}\n\nfn main() {\n    helper();\n}\n";
 
 /// A right press and release over `offset` in `editor`, then a frame.
-fn right_click(editor: &Entity<EditorView>, offset: usize, cx: &mut VisualTestContext) {
+pub(super) fn right_click(editor: &Entity<EditorView>, offset: usize, cx: &mut VisualTestContext) {
     let at = editor.update(cx, |editor, _| {
         editor.caret_bounds_at(offset).expect("on screen").center()
     });
@@ -34,7 +34,10 @@ fn right_click(editor: &Entity<EditorView>, offset: usize, cx: &mut VisualTestCo
 }
 
 /// The open menu's items, by group, as `(title, enabled)`.
-fn groups(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<Vec<(String, bool)>> {
+pub(super) fn groups(
+    editor: &Entity<EditorView>,
+    cx: &mut VisualTestContext,
+) -> Vec<Vec<(String, bool)>> {
     editor.read_with(cx, |editor, _| {
         let mut groups = vec![Vec::new()];
         for entry in editor.editor_menu_entries().expect("the menu is open") {
@@ -50,7 +53,7 @@ fn groups(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<Vec<(S
 }
 
 /// The open menu's titles, by group.
-fn titles(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<Vec<String>> {
+pub(super) fn titles(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<Vec<String>> {
     (groups(editor, cx).into_iter())
         .map(|group| group.into_iter().map(|(title, _)| title).collect())
         .collect()
@@ -91,10 +94,13 @@ const NAVIGATION: &[&str] = &[
     "Peek References",
 ];
 const CLIPBOARD: &[&str] = &["Cut", "Copy", "Paste"];
-const PATH: &[&str] = &["Copy Path"];
+const PATH: &[&str] = &["Copy Path", "Copy Reference"];
+/// The last group of a file with no test, outside a repository (T1898).
+const CONTEXT_LINE: &[&str] = &["Toggle Breakpoint", "Ask Agent About This Line"];
+const CONTEXT_SELECTION: &[&str] = &["Toggle Breakpoint", "Ask Agent About Selection"];
 
 /// Capabilities offering every item's provider.
-fn every_provider() -> ServerCapabilities {
+pub(super) fn every_provider() -> ServerCapabilities {
     ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
@@ -107,7 +113,7 @@ fn every_provider() -> ServerCapabilities {
 }
 
 /// rust-analyzer's fake answering `initialize` with `capabilities`.
-fn script(capabilities: ServerCapabilities) -> Script {
+pub(super) fn script(capabilities: ServerCapabilities) -> Script {
     let mut result = initialize_result(Some(PositionEncodingKind::UTF8));
     result.capabilities = capabilities;
     Script {
@@ -116,14 +122,14 @@ fn script(capabilities: ServerCapabilities) -> Script {
     }
 }
 
-fn lsp_editor(s: &mut Lsp) -> Entity<EditorView> {
+pub(super) fn lsp_editor(s: &mut Lsp) -> Entity<EditorView> {
     s.workbench
         .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
         .expect("a tab is shown")
 }
 
 /// Whether some server `editor`'s buffer is on has initialized.
-fn ready(s: &mut Lsp, editor: &Entity<EditorView>) -> bool {
+pub(super) fn ready(s: &mut Lsp, editor: &Entity<EditorView>) -> bool {
     let buffer = editor.read_with(&s.cx, |editor, _| editor.model().buffer().id());
     s.workbench.read_with(&s.cx, |w, _| {
         let Some(manager) = w.lsp.manager() else {
@@ -137,7 +143,10 @@ fn ready(s: &mut Lsp, editor: &Entity<EditorView>) -> bool {
 
 /// A trusted workbench over `MAIN`, its server offering `capabilities`,
 /// `src/main.rs` shown once its server has initialized.
-fn served(cx: &mut TestAppContext, capabilities: ServerCapabilities) -> (Lsp, Entity<EditorView>) {
+pub(super) fn served(
+    cx: &mut TestAppContext,
+    capabilities: ServerCapabilities,
+) -> (Lsp, Entity<EditorView>) {
     let mut s = Lsp::with_scripts(cx, script(capabilities), Script::default());
     s.set_trust(true);
     fs::write(s.path("src/main.rs"), MAIN).unwrap();
@@ -147,7 +156,7 @@ fn served(cx: &mut TestAppContext, capabilities: ServerCapabilities) -> (Lsp, En
     (s, editor)
 }
 
-fn select(editor: &Entity<EditorView>, range: Range<usize>, cx: &mut VisualTestContext) {
+pub(super) fn select(editor: &Entity<EditorView>, range: Range<usize>, cx: &mut VisualTestContext) {
     editor.update(cx, |editor, cx| {
         editor.model_mut().select_range(range, false);
         cx.notify();
@@ -168,6 +177,7 @@ fn lists_groups_in_order_with_their_shortcuts(cx: &mut TestAppContext) {
             &["Rename Symbol", "Format Document", "Format Selection"],
             CLIPBOARD,
             PATH,
+            CONTEXT_SELECTION,
         ])
     );
     let shown = groups(&editor, &mut s.cx);
@@ -191,7 +201,7 @@ fn read_only_editor_leaves_out_cut_and_paste(cx: &mut TestAppContext) {
     tab.update(cx, |tab, cx| tab.set_read_only(true, cx));
     draw(cx);
     right_click(&tab, 2, cx);
-    assert_eq!(titles(&tab, cx), strings(&[&["Copy"], PATH]));
+    assert_eq!(titles(&tab, cx), strings(&[&["Copy"], PATH, CONTEXT_LINE]));
 }
 
 #[gpui::test]
@@ -201,7 +211,10 @@ fn untitled_buffer_leaves_out_the_path_items(cx: &mut TestAppContext) {
     let tab = editor(&pane(&workbench, cx), cx);
     assert!(tab.read_with(cx, |tab, _| tab.model().path().is_none()));
     right_click(&tab, 0, cx);
-    assert_eq!(titles(&tab, cx), strings(&[CLIPBOARD]));
+    assert_eq!(
+        titles(&tab, cx),
+        strings(&[CLIPBOARD, &["Ask Agent About This Line"]])
+    );
 }
 
 #[gpui::test]
@@ -224,6 +237,7 @@ fn lsp_items_are_disabled_until_a_server_is_ready(cx: &mut TestAppContext) {
         &["Rename Symbol", "Format Document"],
         CLIPBOARD,
         PATH,
+        CONTEXT_LINE,
     ];
     assert_eq!(titles(&editor, &mut s.cx), strings(starting));
     let shown = groups(&editor, &mut s.cx);
@@ -262,6 +276,7 @@ fn lsp_items_follow_the_servers_capabilities(cx: &mut TestAppContext) {
             &["Rename Symbol"],
             CLIPBOARD,
             PATH,
+            CONTEXT_SELECTION,
         ])
     );
 }
@@ -273,7 +288,10 @@ fn plain_text_has_no_lsp_items(cx: &mut TestAppContext) {
     s.open("notes.txt");
     let editor = lsp_editor(&mut s);
     right_click(&editor, 2, &mut s.cx);
-    assert_eq!(titles(&editor, &mut s.cx), strings(&[CLIPBOARD, PATH]));
+    assert_eq!(
+        titles(&editor, &mut s.cx),
+        strings(&[CLIPBOARD, PATH, CONTEXT_LINE])
+    );
 }
 
 #[gpui::test]

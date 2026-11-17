@@ -7,9 +7,14 @@
 //!
 //! 1. Go to Definition, Peek Definition, Go to Implementation, Find
 //!    References, Peek References;
-//! 2. Rename Symbol, Format Document, Format Selection;
+//! 2. Rename Symbol, Code Actions… (once the server has offered some, and
+//!    elsewhere with the language server's items without Rename, first
+//!    with none: [`code_actions`]), Format Document, Format Selection;
 //! 3. Cut, Copy, Paste;
-//! 4. Copy Path.
+//! 4. Copy Path, Copy Reference;
+//! 5. Run Test (or Run Tests), Toggle Breakpoint, Annotate with Git Blame
+//!    (or Hide Git Blame), Ask Agent About Selection (or This Line): see
+//!    [`context`].
 //!
 //! - **Language server items (1, 2)** show when the buffer's language has a
 //!   configured server. While no server the buffer is on has initialized
@@ -18,7 +23,7 @@
 //!   format the buffer, as `lsp.format_document` would pick it. Format
 //!   Selection needs a selection that isn't empty.
 //! - **Cut and Paste** are left out of a read-only editor; Copy always shows.
-//! - **Copy Path** needs a buffer with a path.
+//! - **Copy Path and Copy Reference** need a buffer with a path.
 //!
 //! A right-click in a pane that isn't the active one makes it active first,
 //! so every item acts on the editor clicked. Other editors in the window (a
@@ -33,9 +38,17 @@ use fe_gpui::{EditorMenuItem, EditorMenuRequest, EditorView};
 use fe_lsp::LspManager;
 use gpui::{App, Context, Entity, SharedString, Window};
 use kiln_l10n::tr;
-use lsp_types::{ImplementationProviderCapability, OneOf, ServerCapabilities};
+use lsp_types::{
+    CodeActionProviderCapability, ImplementationProviderCapability, OneOf, ServerCapabilities,
+};
 
 use crate::Workbench;
+
+mod code_actions;
+mod context;
+
+#[cfg(test)]
+pub(crate) use code_actions::answered as code_actions_answered;
 
 /// Registers the workbench's items as every editor's right-click menu.
 pub(crate) fn init(cx: &mut App) {
@@ -75,6 +88,15 @@ enum Item {
     Copy,
     Paste,
     CopyPath,
+    CopyReference,
+    CodeActions,
+    RunTest,
+    RunTests,
+    ToggleBreakpoint,
+    AnnotateBlame,
+    HideBlame,
+    AskAboutSelection,
+    AskAboutLine,
 }
 
 impl Item {
@@ -92,6 +114,12 @@ impl Item {
             Item::Copy => "editor.copy",
             Item::Paste => "editor.paste",
             Item::CopyPath => "workbench.copy_active_file_path",
+            Item::CopyReference => "workbench.copy_reference",
+            Item::CodeActions => "lsp.code_actions",
+            Item::RunTest | Item::RunTests => "tests.run_at_cursor",
+            Item::ToggleBreakpoint => "debug.toggle_breakpoint",
+            Item::AnnotateBlame | Item::HideBlame => "git.toggle_blame_annotations",
+            Item::AskAboutSelection | Item::AskAboutLine => "chat.ask_about_selection",
         }
     }
 
@@ -110,6 +138,15 @@ impl Item {
             Item::Copy => tr!("workbench-editor-menu-copy"),
             Item::Paste => tr!("workbench-editor-menu-paste"),
             Item::CopyPath => tr!("workbench-editor-menu-copy-path"),
+            Item::CopyReference => tr!("workbench-editor-menu-copy-reference"),
+            Item::CodeActions => tr!("workbench-editor-menu-code-actions"),
+            Item::RunTest => tr!("workbench-editor-menu-run-test"),
+            Item::RunTests => tr!("workbench-editor-menu-run-tests"),
+            Item::ToggleBreakpoint => tr!("workbench-editor-menu-toggle-breakpoint"),
+            Item::AnnotateBlame => tr!("workbench-editor-menu-annotate-blame"),
+            Item::HideBlame => tr!("workbench-editor-menu-hide-blame"),
+            Item::AskAboutSelection => tr!("workbench-editor-menu-ask-about-selection"),
+            Item::AskAboutLine => tr!("workbench-editor-menu-ask-about-line"),
         }
     }
 
@@ -141,7 +178,22 @@ impl Item {
             Item::Rename => offered(&capabilities.rename_provider),
             Item::FormatDocument => offered(&capabilities.document_formatting_provider),
             Item::FormatSelection => offered(&capabilities.document_range_formatting_provider),
-            Item::Cut | Item::Copy | Item::Paste | Item::CopyPath => true,
+            Item::CodeActions => !matches!(
+                capabilities.code_action_provider,
+                None | Some(CodeActionProviderCapability::Simple(false))
+            ),
+            Item::Cut
+            | Item::Copy
+            | Item::Paste
+            | Item::CopyPath
+            | Item::CopyReference
+            | Item::RunTest
+            | Item::RunTests
+            | Item::ToggleBreakpoint
+            | Item::AnnotateBlame
+            | Item::HideBlame
+            | Item::AskAboutSelection
+            | Item::AskAboutLine => true,
         }
     }
 }
@@ -231,7 +283,18 @@ impl Workbench {
         clipboard(&mut entries, cx);
         if has_path {
             entries.push(None);
-            entries.push(Some(Item::CopyPath.entry(true, contexts, cx)));
+            for item in [Item::CopyPath, Item::CopyReference] {
+                entries.push(Some(item.entry(true, contexts, cx)));
+            }
+        }
+        entries.push(None);
+        entries.extend(
+            self.editor_menu_context(editor, contexts, cx)
+                .into_iter()
+                .map(Some),
+        );
+        if let Servers::Ready(capabilities) = &servers {
+            self.ask_editor_menu_code_actions(request, editor, capabilities, &entries, cx);
         }
         entries
     }
