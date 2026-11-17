@@ -100,8 +100,11 @@ use kiln_plugin::{
     compat::{self, World},
     engine::PluginEngine,
     fs::Workspace,
-    grants::{Decision, GrantRecord, GrantStore, ProgramIdentity, Prompt, resolve_program},
-    limits::{Limits, PROGRAM_DEADLINE, StoreLimiter},
+    grants::{
+        Decision, GrantRecord, GrantStore, ProgramIdentity, Prompt, evaluate_background,
+        resolve_program,
+    },
+    limits::{BackgroundLimits, Ceilings, Limits, PROGRAM_DEADLINE, StoreLimiter},
     manifest::{ExtensionOrigin, PluginManifest},
     runner::{Call, CallError, Diagnostic, LoadError, Reason, Reply},
     secrets::PluginSecrets,
@@ -700,6 +703,38 @@ pub(crate) fn set_plugins(cx: &mut App, found: Vec<Found>) {
     evaluate(cx, false);
 }
 
+/// The limits a plugin loads under: `base` for what the user waits on, its
+/// manifest's background limits, each over-ridden by the user's own
+/// `[extensions.plugin_limits]` for it, which win and need no prompt, then
+/// held to what this computer allows. A setting is a user's choice, so
+/// past a ceiling it is lowered to it, as a manifest's is.
+fn effective_limits(
+    base: Limits,
+    manifest: &BackgroundLimits,
+    user: Option<&fe_config::settings::PluginLimitsSettings>,
+    ceilings: &Ceilings,
+) -> (Limits, BackgroundLimits) {
+    let mut limits = base;
+    let mut background = *manifest;
+    if let Some(user) = user {
+        if let Some(ms) = user.call_deadline_ms {
+            let range = fe_config::settings::PLUGIN_CALL_DEADLINE_MS;
+            limits.call_deadline = Duration::from_millis(ms.clamp(*range.start(), *range.end()));
+        }
+        if let Some(bytes) = user.memory_bytes() {
+            let bytes = bytes.min(fe_config::settings::PLUGIN_MEMORY_MAX);
+            limits.memory_bytes = usize::try_from(bytes).unwrap_or(limits.memory_bytes);
+        }
+        if let Some(bytes) = user.background_memory_bytes() {
+            background.memory_bytes = bytes;
+        }
+        if let Some(secs) = user.background_wall_secs() {
+            background.wall = Duration::from_secs(secs);
+        }
+    }
+    (limits, ceilings.clamp(background).0)
+}
+
 /// The host's directories.
 #[derive(Clone, Debug)]
 struct Dirs {
@@ -1118,8 +1153,20 @@ fn decide(
             if let Err(error) = store.check_programs(&id) {
                 log::warn!("can't check plugin {id}'s programs: {error}");
             }
-            let decision = store.decide(&id, plugin.version, &plugin.capabilities, &path_var);
             let granted = record(&id);
+            let decision = decide_with_background(
+                store,
+                &id,
+                plugin.version,
+                &plugin.capabilities,
+                &plugin.background,
+                &path_var,
+            );
+            let granted = if matches!(decision, Ok(Decision::Load(_))) {
+                record(&id)
+            } else {
+                granted
+            };
             let outcome = match decision {
                 Ok(Decision::Load(grants)) => match read_component(&plugin.wasm) {
                     Ok(bytes) => Outcome::Load {
@@ -1151,6 +1198,26 @@ fn decide(
             (id, granted.granted, outcome)
         })
         .collect()
+}
+
+/// What `id`'s request comes to: its capabilities and its background
+/// limits together, decided on the record as it is. Nothing is narrowed or
+/// moved to `version` ([`GrantStore::decide`]) until the combined decision
+/// loads it, so a pending or declined request leaves the old version's
+/// record as it was.
+fn decide_with_background(
+    store: &GrantStore,
+    id: &str,
+    version: Version,
+    requested: &fe_command::Grants,
+    background: &BackgroundLimits,
+    path_var: &std::ffi::OsStr,
+) -> Result<Decision, kiln_plugin::grants::GrantStoreError> {
+    let record = store.get(id)?;
+    match evaluate_background(record.as_ref(), requested, background) {
+        Decision::Load(_) => store.decide(id, version, requested, path_var),
+        other => Ok(other),
+    }
 }
 
 /// The component at `path`, refused over the read limit.
@@ -1213,6 +1280,7 @@ fn apply(
                 dir: found.dir.clone(),
                 requested: plugin.capabilities.clone(),
                 programs,
+                background: Some((plugin.background, Ceilings::host())),
                 ask,
             })
         };
@@ -1443,6 +1511,9 @@ fn start_load(id: &str, cx: &mut App) {
     }
     let paint = plugin_paint::paint(cx);
     let formatting = plugin_format::formatting(cx);
+    let user_limits = cx
+        .try_global::<kiln::GlobalSettings<fe_config::Settings>>()
+        .and_then(|global| global.settings().extensions.plugin_limits.get(id).cloned());
     let host = cx.global_mut::<PluginHost>();
     let old = withdraw(id, host);
     let reload = old.is_some();
@@ -1452,11 +1523,23 @@ fn start_load(id: &str, cx: &mut App) {
             .as_ref()
             .map(|dirs| Arc::new(ComponentCache::new(dirs.cache.join(CACHE_DIR))));
     }
+    // The artifact's own manifest, not the newest one found: a version kept
+    // running while an update waits reloads with its own limits.
+    let manifest_background = match &host.slots.get(id).map(|slot| &slot.want) {
+        Some(Want::Load { artifact, .. }) => artifact.manifest.background,
+        _ => BackgroundLimits::default(),
+    };
+    let (limits, background) = effective_limits(
+        host.limits,
+        &manifest_background,
+        user_limits.as_ref(),
+        &Ceilings::host(),
+    );
     let context = LoadContext {
         cache: host.cache.clone(),
         commands: host.commands.clone().expect("made above"),
         bridge: host.bridge.clone().expect("made above"),
-        limits: host.limits,
+        limits,
         secrets: host.secrets.clone(),
         secrets_index: dirs
             .as_ref()
@@ -1501,13 +1584,17 @@ fn start_load(id: &str, cx: &mut App) {
         if let Some(old) = old {
             lock(&old.plugin).shutdown();
         }
-        context.load_with(
+        let started = context.load_with(
             &loading_artifact,
             identity_world,
             &grants,
             &cancel,
             &formatting,
-        )
+        );
+        if let Ok((plugin, ..)) = &started {
+            lock(plugin).background = background;
+        }
+        started
     });
     let id = id.to_owned();
     cx.spawn(async move |cx| {
@@ -2136,9 +2223,13 @@ fn answered(pending: PendingPluginGrant, answer: PluginAnswer, cx: &mut App) {
             PluginAnswer::Allowed { accept_wildcards } => {
                 grant_shown(&store, &pending, accept_wildcards, std::env::var_os("PATH")).map(drop)
             }
-            PluginAnswer::Declined => store
-                .decline(&pending.id, &pending.requested)
-                .map_err(|error| error.to_string()),
+            PluginAnswer::Declined => match pending.background {
+                Some((background, _)) => {
+                    store.decline_with_background(&pending.id, &pending.requested, background)
+                }
+                None => store.decline(&pending.id, &pending.requested),
+            }
+            .map_err(|error| error.to_string()),
             PluginAnswer::Pending => Ok(()),
         }
     });
@@ -2196,8 +2287,14 @@ fn grant_shown(
             &programs,
             accept_wildcards,
         )
-        .map(|_| true)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    // The limits the prompt named are accepted with the capabilities.
+    if let Some((background, _)) = pending.background {
+        store
+            .accept_background(&pending.id, background)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(true)
 }
 
 /// The programs `requested` names that resolve on `path` now, for the
@@ -2256,6 +2353,9 @@ pub(crate) struct HostedPlugin {
     channel: Option<Channel>,
     thread: Option<JoinHandle<()>>,
     inbox: Inbox,
+    /// What its background jobs may use: its manifest's, then the user's
+    /// `plugin_limits`, held to this computer's ceilings.
+    pub(crate) background: BackgroundLimits,
 }
 
 /// The caller's ends of the plugin thread's channels.
@@ -2385,6 +2485,7 @@ impl HostedPlugin {
             channel: Some(Channel { calls, replies }),
             thread: Some(thread),
             inbox,
+            background: BackgroundLimits::default(),
         })
     }
 
@@ -2963,6 +3064,7 @@ mod programs_tests {
             dir: dir.path().to_owned(),
             programs: programs(&requested, path.clone()).unwrap(),
             requested,
+            background: None,
             ask: PluginAsk::Install,
         };
         let store = GrantStore::new(dir.path().join("grants.json"));
@@ -2987,6 +3089,131 @@ mod programs_tests {
         };
         assert_eq!(grant_shown(&store, &pending, false, path), Ok(true));
         assert!(!store.get("acme.tool").unwrap().unwrap().granted.is_empty());
+    }
+
+    #[test]
+    fn a_lowered_user_limit_beats_the_manifest_and_a_raised_one_stops_at_the_ceiling() {
+        let manifest = BackgroundLimits {
+            memory_bytes: 1 << 30,
+            wall: Duration::from_secs(30 * 60),
+            data_bytes: None,
+        };
+        let ceilings = Ceilings::for_ram(16 << 30);
+        let user = |memory: &str, wall: &str| fe_config::settings::PluginLimitsSettings {
+            background_memory: Some(memory.into()),
+            background_wall: Some(wall.into()),
+            call_deadline_ms: Some(250),
+            memory: Some("128MiB".into()),
+        };
+
+        // No setting: the manifest's, held to the ceilings.
+        let (limits, background) = effective_limits(Limits::default(), &manifest, None, &ceilings);
+        assert_eq!(limits, Limits::default());
+        assert_eq!(background, manifest);
+
+        // Lowered: the user's value wins.
+        let lowered = user("512MiB", "5m");
+        let (limits, background) =
+            effective_limits(Limits::default(), &manifest, Some(&lowered), &ceilings);
+        assert_eq!(background.memory_bytes, 512 << 20);
+        assert_eq!(background.wall, Duration::from_secs(5 * 60));
+        assert_eq!(limits.call_deadline, Duration::from_millis(250));
+        assert_eq!(limits.memory_bytes, 128 << 20);
+
+        // Raised past this computer's ceilings: lowered to them.
+        let small = Ceilings::for_ram(2 << 30);
+        let raised = user("2GiB", "60m");
+        let (_, background) = effective_limits(Limits::default(), &manifest, Some(&raised), &small);
+        assert_eq!(background.memory_bytes, 512 << 20);
+        assert_eq!(background.wall, Duration::from_secs(60 * 60));
+    }
+
+    #[test]
+    fn raised_background_limits_ask_again_and_lowered_ones_do_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = GrantStore::new(dir.path().join("grants.json"));
+        let requested: fe_command::Grants = [Capability::parse("buffer.read").unwrap()]
+            .into_iter()
+            .collect();
+        let limits = |memory_mib: u64, wall_min: u64| BackgroundLimits {
+            memory_bytes: memory_mib << 20,
+            wall: Duration::from_secs(wall_min * 60),
+            data_bytes: None,
+        };
+        let decide = |background: &BackgroundLimits| {
+            decide_with_background(
+                &store,
+                "acme.tool",
+                (2, 0, 0),
+                &requested,
+                background,
+                std::ffi::OsStr::new(""),
+            )
+            .unwrap()
+        };
+        store
+            .grant("acme.tool", (1, 0, 0), &requested, &[], false)
+            .unwrap();
+        store
+            .accept_background("acme.tool", limits(512, 30))
+            .unwrap();
+
+        // More memory, or more time: asks, with no capability added.
+        for raised in [limits(1024, 30), limits(512, 60)] {
+            assert!(
+                matches!(decide(&raised), Decision::Escalation { ref added, .. } if added.is_empty())
+            );
+        }
+
+        // Declined, the same request isn't asked again; a different one is.
+        let raised = limits(1024, 30);
+        store
+            .decline_with_background("acme.tool", &requested, raised)
+            .unwrap();
+        assert!(matches!(decide(&raised), Decision::Declined));
+        assert!(matches!(
+            decide(&limits(2048, 30)),
+            Decision::Escalation { .. }
+        ));
+
+        // Pending or declined, the old version's record is as it was.
+        let kept = store.get("acme.tool").unwrap().unwrap();
+        assert_eq!(kept.version, Some((1, 0, 0)));
+        assert_eq!(kept.granted, requested);
+
+        // The same, or lower, loads (and moves the record to the new version).
+        assert!(matches!(decide(&limits(512, 30)), Decision::Load(_)));
+        assert!(matches!(decide(&limits(256, 10)), Decision::Load(_)));
+        store
+            .accept_background("acme.tool", limits(512, 30))
+            .unwrap();
+
+        // Accepted, it loads, and the record moves to the new version.
+        store.accept_background("acme.tool", raised).unwrap();
+        assert!(matches!(decide(&raised), Decision::Load(_)));
+        assert_eq!(
+            store.get("acme.tool").unwrap().unwrap().version,
+            Some((2, 0, 0))
+        );
+
+        // A declined install asks again when only its limits change.
+        let fresh = GrantStore::new(dir.path().join("fresh.json"));
+        fresh
+            .decline_with_background("new.tool", &requested, limits(256, 10))
+            .unwrap();
+        let again = |background: &BackgroundLimits| {
+            decide_with_background(
+                &fresh,
+                "new.tool",
+                (1, 0, 0),
+                &requested,
+                background,
+                std::ffi::OsStr::new(""),
+            )
+            .unwrap()
+        };
+        assert!(matches!(again(&limits(256, 10)), Decision::Declined));
+        assert!(matches!(again(&limits(512, 10)), Decision::Prompt(_)));
     }
 
     #[test]

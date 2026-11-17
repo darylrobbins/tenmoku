@@ -846,6 +846,14 @@
           },
           "type": "array"
         },
+        "plugin_limits": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PluginLimitsSettings"
+          },
+          "default": {},
+          "description": "Limits for one installed plugin, by its ID, over what its manifest\ndeclares: `background_memory` and `background_wall` for its jobs,\n`call_deadline_ms` and `memory` for what you wait on. A value past\nwhat this computer allows is lowered to it. A project file can't\nset them.",
+          "type": "object"
+        },
         "plugins_preview": {
           "default": false,
           "description": "Run code plugins (WebAssembly) from installed extensions. A preview:\ntheir API can change in any release. Each plugin still asks for what\nit may do before it runs.",
@@ -1349,6 +1357,46 @@
           "type": "string"
         }
       ]
+    },
+    "PluginLimitsSettings": {
+      "description": "One plugin's limits in `[extensions.plugin_limits.\"<id>\"]`: each unset\nkey leaves the manifest's value, or the default, as it is.",
+      "properties": {
+        "background_memory": {
+          "default": null,
+          "description": "The memory one background job may hold, as \"512MiB\" (KiB, MiB or\nGiB), from 1MiB up to 2GiB or a quarter of this computer's RAM.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "background_wall": {
+          "default": null,
+          "description": "How long one background job runs before it is cancelled, as \"30m\"\n(s or m), from 1s up to 60m.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "call_deadline_ms": {
+          "default": null,
+          "description": "How long one call may take of the plugin's own time, in\nmilliseconds, from 50 to 1000.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "memory": {
+          "default": null,
+          "description": "The memory the plugin holds for what you wait on, as \"128MiB\", up\nto 256MiB.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     },
     "ProjectPermissions": {
       "description": "`agents.project_permissions`: what a project file asks for. A level here\nonly takes effect if it is stricter than the user's.",
@@ -2290,6 +2338,7 @@
       "$ref": "#/$defs/ExtensionsSettings",
       "default": {
         "disabled": [],
+        "plugin_limits": {},
         "plugins_preview": false
       },
       "description": "Installed extensions. A project file can't set them."

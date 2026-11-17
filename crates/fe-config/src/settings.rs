@@ -135,6 +135,104 @@ pub struct ExtensionsSettings {
     /// their API can change in any release. Each plugin still asks for what
     /// it may do before it runs.
     pub plugins_preview: bool,
+    /// Limits for one installed plugin, by its ID, over what its manifest
+    /// declares: `background_memory` and `background_wall` for its jobs,
+    /// `call_deadline_ms` and `memory` for what you wait on. A value past
+    /// what this computer allows is lowered to it. A project file can't
+    /// set them.
+    pub plugin_limits: BTreeMap<String, PluginLimitsSettings>,
+}
+
+/// One plugin's limits in `[extensions.plugin_limits."<id>"]`: each unset
+/// key leaves the manifest's value, or the default, as it is.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PluginLimitsSettings {
+    /// The memory one background job may hold, as "512MiB" (KiB, MiB or
+    /// GiB), from 1MiB up to 2GiB or a quarter of this computer's RAM.
+    pub background_memory: Option<String>,
+    /// How long one background job runs before it is cancelled, as "30m"
+    /// (s or m), from 1s up to 60m.
+    pub background_wall: Option<String>,
+    /// How long one call may take of the plugin's own time, in
+    /// milliseconds, from 50 to 1000.
+    pub call_deadline_ms: Option<u64>,
+    /// The memory the plugin holds for what you wait on, as "128MiB", up
+    /// to 256MiB.
+    pub memory: Option<String>,
+}
+
+/// What a plugin's limits may be, whatever this computer's RAM: the most a
+/// background job's memory (`JOB_MEMORY_CAP`), its wall time
+/// (`BACKGROUND_WALL_CEILING`) and an interactive memory may be, and the
+/// call deadline's range. The host lowers the memory further to a quarter
+/// of the RAM.
+pub const PLUGIN_BACKGROUND_MEMORY_MAX: u64 = 2 << 30;
+
+/// The most memory one background job may have on a computer with
+/// `ram_bytes` of RAM: [`PLUGIN_BACKGROUND_MEMORY_MAX`] or a quarter of it.
+pub fn background_memory_ceiling(ram_bytes: u64) -> u64 {
+    PLUGIN_BACKGROUND_MEMORY_MAX.min(ram_bytes / 4)
+}
+
+/// What this computer's ceiling is, 4 GiB of RAM where it won't say.
+fn host_background_memory_ceiling() -> u64 {
+    background_memory_ceiling(kiln_core::platform::physical_ram_bytes().unwrap_or(4 << 30))
+}
+pub const PLUGIN_BACKGROUND_WALL_MAX_SECS: u64 = 60 * 60;
+pub const PLUGIN_MEMORY_MAX: u64 = 256 << 20;
+pub const PLUGIN_CALL_DEADLINE_MS: std::ops::RangeInclusive<u64> = 50..=1000;
+const PLUGIN_BACKGROUND_MEMORY_MIN: u64 = 1 << 20;
+const PLUGIN_MEMORY_MIN: u64 = 1 << 20;
+
+/// `text` as a whole number of `units`, each a suffix and its size.
+fn with_unit(text: &str, units: &[(&str, u64)]) -> Option<u64> {
+    let text = text.trim();
+    let (suffix, size) = units
+        .iter()
+        .filter(|(suffix, _)| text.ends_with(suffix))
+        .max_by_key(|(suffix, _)| suffix.len())?;
+    let digits = text[..text.len() - suffix.len()].trim_end();
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u64>().ok()?.checked_mul(*size)
+}
+
+/// A size such as "512MiB", in bytes.
+pub fn parse_plugin_size(text: &str) -> Option<u64> {
+    with_unit(
+        text,
+        &[
+            (kiln_l10n::verbatim!("KiB"), 1 << 10),
+            (kiln_l10n::verbatim!("MiB"), 1 << 20),
+            (kiln_l10n::verbatim!("GiB"), 1 << 30),
+        ],
+    )
+}
+
+/// A wall time such as "30m", in seconds.
+pub fn parse_plugin_wall_secs(text: &str) -> Option<u64> {
+    with_unit(text, &[("s", 1), ("m", 60)])
+}
+
+impl PluginLimitsSettings {
+    /// `background_memory` in bytes, if set (already checked on load).
+    pub fn background_memory_bytes(&self) -> Option<u64> {
+        self.background_memory
+            .as_deref()
+            .and_then(parse_plugin_size)
+    }
+
+    /// `background_wall` in seconds, if set.
+    pub fn background_wall_secs(&self) -> Option<u64> {
+        (self.background_wall.as_deref()).and_then(parse_plugin_wall_secs)
+    }
+
+    /// `memory` in bytes, if set.
+    pub fn memory_bytes(&self) -> Option<u64> {
+        self.memory.as_deref().and_then(parse_plugin_size)
+    }
 }
 
 /// Settings for the project tree.
@@ -1811,6 +1909,7 @@ fn options() -> SettingsOptions {
             PYTHON_SERVER_KEY,
             drop_bad_python_server,
         ))
+        .layer_filter(ProjectFilter::new("extensions", clamp_plugin_limits))
         .project_filter(ProjectFilter::new("formatters", drop_formatters))
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
         .project_filter(ProjectFilter::new("theme", drop_theme))
@@ -2356,6 +2455,133 @@ fn drop_extensions(layer: &mut Layer) {
     drop_table(layer, "extensions", PROJECT_EXTENSIONS);
 }
 
+/// Checks each `[extensions.plugin_limits."<id>"]` value: one that isn't
+/// valid is dropped with a warning, one past what the host allows is
+/// lowered to it with a warning, so the plugin still runs. An ID no plugin
+/// has is kept. A project layer's table is dropped by [`drop_extensions`].
+fn clamp_plugin_limits(layer: &mut Layer) {
+    clamp_plugin_limits_to(layer, host_background_memory_ceiling());
+}
+
+/// [`clamp_plugin_limits`], with `memory_ceiling` as a computer's most for
+/// one background job's memory.
+fn clamp_plugin_limits_to(layer: &mut Layer, memory_ceiling: u64) {
+    use kiln_l10n::tr;
+    let Some(toml::Value::Table(extensions)) = layer.table.get_mut("extensions") else {
+        return;
+    };
+    let Some(toml::Value::Table(plugins)) = extensions.get_mut("plugin_limits") else {
+        return;
+    };
+    // (id, key, message)
+    let mut problems: Vec<(String, String, String)> = Vec::new();
+    for (id, entry) in plugins.iter_mut() {
+        let toml::Value::Table(entry) = entry else {
+            continue;
+        };
+        let mut check = |key: &str,
+                         entry: &mut toml::Table,
+                         parse: &dyn Fn(&toml::Value) -> Option<u64>,
+                         range: (u64, u64),
+                         show: &dyn Fn(u64) -> String| {
+            let Some(value) = entry.get(key) else { return };
+            let Some(got) = parse(value) else {
+                entry.remove(key);
+                problems.push((
+                    id.clone(),
+                    key.to_owned(),
+                    tr!(
+                        "config-plugin-limit-invalid",
+                        key = key,
+                        example = show(range.1)
+                    )
+                    .to_string(),
+                ));
+                return;
+            };
+            let (min, max) = range;
+            if got < min || got > max {
+                let to = got.clamp(min, max);
+                let shown = show(to);
+                entry.insert(
+                    key.to_owned(),
+                    if key == "call_deadline_ms" {
+                        toml::Value::Integer(to as i64)
+                    } else {
+                        toml::Value::String(shown.clone())
+                    },
+                );
+                problems.push((
+                    id.clone(),
+                    key.to_owned(),
+                    tr!("config-plugin-limit-clamped", key = key, limit = shown).to_string(),
+                ));
+            }
+        };
+        let size = |value: &toml::Value| value.as_str().and_then(parse_plugin_size);
+        let wall = |value: &toml::Value| value.as_str().and_then(parse_plugin_wall_secs);
+        let millis = |value: &toml::Value| value.as_integer().and_then(|ms| u64::try_from(ms).ok());
+        let mib = |bytes: u64| {
+            if bytes.is_multiple_of(1 << 20) {
+                format!("{}{}", bytes >> 20, kiln_l10n::verbatim!("MiB"))
+            } else {
+                format!("{}{}", bytes.div_ceil(1 << 10), kiln_l10n::verbatim!("KiB"))
+            }
+        };
+        check(
+            "background_memory",
+            entry,
+            &size,
+            (PLUGIN_BACKGROUND_MEMORY_MIN, memory_ceiling),
+            &mib,
+        );
+        check(
+            "background_wall",
+            entry,
+            &wall,
+            (1, PLUGIN_BACKGROUND_WALL_MAX_SECS),
+            &|secs| format!("{secs}s"),
+        );
+        check(
+            "call_deadline_ms",
+            entry,
+            &millis,
+            (
+                *PLUGIN_CALL_DEADLINE_MS.start(),
+                *PLUGIN_CALL_DEADLINE_MS.end(),
+            ),
+            &|ms| ms.to_string(),
+        );
+        check(
+            "memory",
+            entry,
+            &size,
+            (PLUGIN_MEMORY_MIN, PLUGIN_MEMORY_MAX),
+            &mib,
+        );
+    }
+    let document = DeTable::parse(&layer.source).ok();
+    for (id, key, message) in problems {
+        let offset = document.as_ref().map_or(0, |document| {
+            key_offset(
+                document.get_ref(),
+                "extensions",
+                &["plugin_limits".to_owned(), id.clone(), key.clone()],
+            )
+        });
+        let warning = layer.diagnostic_at(
+            Severity::Warning,
+            Some(format!(
+                "{}.\"{id}\".{key}",
+                kiln_l10n::verbatim!("extensions.plugin_limits")
+            )),
+            offset,
+            message,
+        );
+        layer.diagnostics.push(warning);
+    }
+}
+
 /// The warning for a project file's `[chat]` table, in en-US.
 pub const PROJECT_CHAT: &str =
     "A project's settings can't set `chat`; set it in your own settings.toml";
@@ -2498,4 +2724,41 @@ pub(crate) fn key_offset(table: &DeTable<'_>, first: &str, rest: &[String]) -> u
         }
     }
     offset
+}
+
+#[cfg(test)]
+mod plugin_limit_ceiling_tests {
+    use super::*;
+
+    #[test]
+    fn background_memory_ceiling_follows_the_ram() {
+        assert_eq!(background_memory_ceiling(64 << 30), 2 << 30);
+        assert_eq!(background_memory_ceiling(8 << 30), 2 << 30);
+        assert_eq!(background_memory_ceiling(4 << 30), 1 << 30);
+        assert_eq!(background_memory_ceiling(2 << 30), 512 << 20);
+    }
+
+    #[test]
+    fn a_low_ram_ceiling_lowers_the_stored_memory_with_a_diagnostic() {
+        let source = "[extensions.plugin_limits.\"acme.cargo\"]\nbackground_memory = \"2GiB\"\n";
+        let mut layer =
+            kiln_core::layers::parse_layer(std::path::Path::new("s.toml"), source.into());
+        clamp_plugin_limits_to(&mut layer, background_memory_ceiling(4 << 30));
+        let stored = layer.table["extensions"]["plugin_limits"]["acme.cargo"]["background_memory"]
+            .as_str()
+            .unwrap();
+        assert_eq!(stored, "1024MiB");
+        assert_eq!(layer.diagnostics.len(), 1, "{:?}", layer.diagnostics);
+        let diagnostic = &layer.diagnostics[0];
+        assert_eq!(diagnostic.severity, Severity::Warning);
+        assert_eq!(
+            diagnostic.key.as_deref(),
+            Some("extensions.plugin_limits.\"acme.cargo\".background_memory")
+        );
+        assert!(
+            diagnostic.message.contains("1024MiB"),
+            "{}",
+            diagnostic.message
+        );
+    }
 }

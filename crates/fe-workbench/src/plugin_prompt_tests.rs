@@ -24,6 +24,7 @@ fn install(requested: &[&str]) -> PendingPluginGrant {
         dir: "/ext/acme-tool".into(),
         requested: grants(requested),
         programs: Vec::new(),
+        background: None,
         ask: PluginAsk::Install,
     }
 }
@@ -272,4 +273,32 @@ fn prompt_flags_cmd_exe_interpreter() {
     plain.programs = vec![program("tool", None)];
     let (_, detail) = plugin_prompt_text(&plain);
     assert!(!detail.contains("reads its arguments again"), "{detail}");
+}
+
+#[test]
+fn the_prompt_names_declared_background_limits_and_the_ceiling() {
+    use std::time::Duration;
+
+    use kiln_plugin::limits::{BackgroundLimits, Ceilings};
+
+    let (_, detail) = plugin_prompt_text(&install(&["buffer.read"]));
+    assert!(!detail.contains("background jobs"), "{detail}");
+
+    let declared = BackgroundLimits {
+        memory_bytes: 1 << 30,
+        wall: Duration::from_secs(30 * 60),
+        data_bytes: None,
+    };
+    let pending = PendingPluginGrant {
+        background: Some((declared, Ceilings::for_ram(16 << 30))),
+        ..install(&["buffer.read"])
+    };
+    let (_, detail) = plugin_prompt_text(&pending);
+    assert!(
+        detail.contains(
+            "Runs background jobs using up to 1 GB of memory and 30 minutes each \
+             (this computer allows up to 2 GB)."
+        ),
+        "{detail}"
+    );
 }

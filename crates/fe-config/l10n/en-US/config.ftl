@@ -109,3 +109,9 @@ config-snippets-example-fields =
     - description: what the completion menu and Insert Snippet say.
 config-snippets-example-scope = - scope: the languages it's offered in, by comma; every one if none.
 config-snippets-example-intro = For example:
+
+## `[extensions.plugin_limits."<id>"]`. $key is the setting's name, $limit
+## what it was lowered to, $example a value it could be.
+
+config-plugin-limit-clamped = { $key } is more than this computer allows, or less than it can run on; using { $limit }
+config-plugin-limit-invalid = { $key } isn't a valid value, such as { $example }; ignored

@@ -17,6 +17,7 @@ use gpui::{App, PromptLevel, SharedString, Task, Window};
 use kiln_l10n::tr;
 use kiln_plugin::{
     grants::{ProgramIdentity, Version, needs_wildcard_acceptance},
+    limits::{BackgroundLimits, Ceilings},
     warnings::{Warning, combination_warnings, describe},
 };
 
@@ -57,6 +58,9 @@ pub struct PendingPluginGrant {
     /// What each `process.spawn:<program>` it asks for resolves to now,
     /// for the warning about one that runs through an interpreter.
     pub programs: Vec<ProgramIdentity>,
+    /// The background limits its manifest declares, with what this
+    /// computer allows, when it declares any.
+    pub background: Option<(BackgroundLimits, Ceilings)>,
     pub ask: PluginAsk,
 }
 
@@ -205,6 +209,10 @@ pub fn plugin_prompt_text(pending: &PendingPluginGrant) -> (String, String) {
             )
         }
     };
+    if let Some((declared, ceilings)) = &pending.background {
+        detail.push('\n');
+        push_line(&mut detail, background_text(declared, ceilings));
+    }
     // The warnings are for everything it would hold, since what was
     // granted before can combine with what's added.
     let warnings = combination_warnings(&pending.requested);
@@ -263,6 +271,48 @@ fn full_access_prompt_text(pending: &PendingPluginGrant) -> (String, String) {
         tr!("workbench-extensions-plugin-full-access-footer"),
     );
     (question.into(), detail)
+}
+
+/// The line naming the background limits a manifest declares: each job's
+/// memory and wall time, and what this computer allows of the memory. A
+/// declaration past the ceiling shows as clamped.
+fn background_text(declared: &BackgroundLimits, ceilings: &Ceilings) -> SharedString {
+    let memory = declared.memory_bytes.min(ceilings.job_memory_bytes);
+    let wall = declared.wall.min(ceilings.wall).as_secs();
+    let wall = if wall.is_multiple_of(60) {
+        tr!(
+            "workbench-extensions-plugin-minutes",
+            count = (wall / 60).to_string()
+        )
+    } else {
+        tr!(
+            "workbench-extensions-plugin-seconds",
+            count = wall.to_string()
+        )
+    };
+    tr!(
+        "workbench-extensions-plugin-background",
+        memory = size_text(memory),
+        wall = wall.to_string(),
+        ceiling = size_text(ceilings.job_memory_bytes)
+    )
+}
+
+/// `bytes` in whole GB when it is, else MB.
+fn size_text(bytes: u64) -> String {
+    if bytes.is_multiple_of(1 << 30) {
+        tr!(
+            "workbench-extensions-plugin-gb",
+            count = (bytes >> 30).to_string()
+        )
+        .to_string()
+    } else {
+        tr!(
+            "workbench-extensions-plugin-mb",
+            count = (bytes >> 20).to_string()
+        )
+        .to_string()
+    }
 }
 
 /// Adds `line` to `text`, then a line break.

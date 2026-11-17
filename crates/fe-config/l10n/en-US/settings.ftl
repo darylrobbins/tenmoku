@@ -486,6 +486,13 @@ settings-extensions-disabled =
     "acme.solarized": they stay installed and listed. An ID no
     extension has is ignored.
 
+settings-extensions-plugin_limits =
+    Limits for one installed plugin, by its ID, over what its manifest
+    declares: `background_memory` and `background_wall` for its jobs,
+    `call_deadline_ms` and `memory` for what you wait on. A value past
+    what this computer allows is lowered to it. A project file can't
+    set them.
+
 settings-extensions-plugins_preview =
     Run code plugins (WebAssembly) from installed extensions. A preview:
     their API can change in any release. Each plugin still asks for what

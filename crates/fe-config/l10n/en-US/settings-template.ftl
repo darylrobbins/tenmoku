@@ -495,6 +495,15 @@ settings-template-extensions-plugins_preview =
     Run code plugins (WebAssembly) from installed extensions. A preview, off by
     default: their API can change in any release. A project file can't set it.
 
+settings-template-extensions-note-1 =
+    Limits for one installed plugin, over what its manifest declares, one table
+    per plugin ID. Past what this computer allows, a value is lowered to it. A
+    project file can't set them. Every key is optional: background_memory and
+    background_wall bound a background job ("1MiB" to "2GiB", "1s" to "60m"),
+    call_deadline_ms bounds a call (50 to 1000), memory what the plugin holds
+    for what you wait on (up to "256MiB").
+    As in [extensions.plugin_limits."acme.cargo"], then background_wall = "30m".
+
 settings-template-formatters-typescript =
     External formatters, one table per language, named as the language is
     (rust, python, typescript, go, ...). A project file can't set them. A table

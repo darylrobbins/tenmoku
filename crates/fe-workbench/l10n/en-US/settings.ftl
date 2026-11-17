@@ -155,6 +155,7 @@ workbench-settings-label-editor-todo_comments = Todo Comments
 workbench-settings-label-editor-wrap_column = Wrap Column
 workbench-settings-label-editor-wrap_mode = Wrap Mode
 workbench-settings-label-extensions-disabled = Disabled
+workbench-settings-label-extensions-plugin_limits = Plugin Limits
 workbench-settings-label-extensions-plugins_preview = Plugins Preview
 workbench-settings-label-lsp-enabled = Enabled
 workbench-settings-label-lsp-max_file_bytes = Max File Bytes
