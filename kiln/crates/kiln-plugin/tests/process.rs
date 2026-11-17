@@ -540,9 +540,16 @@ fn output_over_the_cap_and_runs_over_the_deadline_are_killed() {
     );
 
     // Output is cut at the cap. A megabyte fills the pipe and blocks: the program is killed at
-    // the cap, not left to the deadline, which would fail the call.
-    let mut state = State::new(record, &limits).with_deadline(Duration::from_millis(1500));
+    // the cap, not left to the deadline, which would fail the call. The deadline is far above any
+    // load-induced start-up delay; the cap ends the call, so it costs nothing when passing.
+    let mut state = State::new(record, &limits).with_deadline(Duration::from_secs(30));
+    let capped = Instant::now();
     let output = state.spawn("printf", &flood, None).unwrap();
+    assert!(
+        capped.elapsed() < Duration::from_secs(20),
+        "{:?}",
+        capped.elapsed()
+    );
     assert_eq!(output.stdout, b"0000000000000000");
     assert_eq!(output.status, None);
 }
