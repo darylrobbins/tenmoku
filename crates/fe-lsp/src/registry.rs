@@ -12,6 +12,7 @@ use fe_config::settings::{LspReadiness, LspServerSettings, LspSettings, Typescri
 use serde_json::Value;
 
 use crate::launcher::{PullDiagnostics, ReadinessMode, ServerSpec, UnversionedDiagnostics};
+use crate::rust_analyzer_defaults::{self, RUST_ANALYZER};
 
 /// The built-in servers, in the order a language's server is chosen.
 /// Root markers for the JVM servers; kotlin-lsp skips the leading pom.xml.
@@ -39,7 +40,7 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
             readiness: ReadinessMode::ServerStatus,
             ready_ignores_progress: vec!["rust-analyzer/flycheck/".into()],
             root_markers: markers(&["Cargo.lock", "Cargo.toml"]),
-            ..spec("rust-analyzer", "rust-analyzer", &[], &["rust"])
+            ..spec(RUST_ANALYZER, "rust-analyzer", &[], &["rust"])
         },
         ServerSpec {
             root_markers: markers(&[
@@ -234,6 +235,30 @@ impl Registry {
             (spec, Ok(())) => (spec, self.jdtls_bundles.clone()),
             (spec, Err(_)) => (spec, Vec::new()),
         }
+    }
+
+    /// As [`launched`](Self::launched), for an instance at `root`: the
+    /// built-in rust-analyzer's `initializationOptions` are its
+    /// memory-conscious defaults for `root` with the user's options
+    /// deep-merged on top (rust_analyzer_defaults.rs). A host's spec of
+    /// that name is the host's alone. Worked out at each start, so a
+    /// worktree made since counts from the next.
+    pub(crate) fn launched_at(&self, spec: ServerSpec, root: &Path) -> (ServerSpec, Vec<String>) {
+        let (spec, bundles) = self.launched(spec);
+        (self.with_root_defaults(spec, root), bundles)
+    }
+
+    /// `spec` with what [`launched_at`](Self::launched_at) adds for `root`
+    /// beside the bundles: the built-in rust-analyzer's defaults under the
+    /// user's options; any other spec unchanged.
+    pub(crate) fn with_root_defaults(&self, mut spec: ServerSpec, root: &Path) -> ServerSpec {
+        if spec.name == RUST_ANALYZER && !self.host.iter().any(|host| host.name == spec.name) {
+            let defaults = rust_analyzer_defaults::defaults(root);
+            let user = spec.initialization_options.take();
+            spec.initialization_options =
+                Some(rust_analyzer_defaults::merged_under(defaults, user));
+        }
+        spec
     }
 
     /// Why the host's bundles can't reach jdtls's next launch, if they

@@ -117,6 +117,7 @@ pub mod rename;
 mod requests;
 mod restart;
 mod router;
+mod rust_analyzer_defaults;
 mod semantic_tokens;
 mod server;
 pub mod signature_help;

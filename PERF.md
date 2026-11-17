@@ -485,6 +485,31 @@ footprint). Of Tenmoku's own code `fe_workbench`, `gpui`, `kiln_platform`
 and `fluent_syntax` (10.5k small allocations) lead on the empty window;
 opening the file adds tree-sitter's C allocator (13 MB in 126k allocations).
 
+## Language servers
+
+### rust-analyzer on fastedit (T1904)
+
+rust-analyzer 1.98.1 on the primary checkout (a virtual workspace with 5
+lane worktrees under `.worktrees/`). The figures are the rust-analyzer
+process's peak and settled footprint (`footprint -p`), its time to ready
+(quiescent, priming done), and the first go-to-definition into a crate with
+no open file. The method and every run are in
+[docs/decisions/ztdenw59dh-rust-analyzer-memory-defaults.md](docs/decisions/ztdenw59dh-rust-analyzer-memory-defaults.md).
+Measured 2026-11-17 with other lanes building (load 20–30).
+
+| Options | Peak footprint | Settled footprint | Ready | First go-to-definition |
+|---|---|---|---|---|
+| Before: none | 8.22 GB | 5.30 GB | 86 s | 44 ms |
+| After: `files.exclude` = `target` + nested worktrees (shipped) | 8.41 / 8.60 GB | 5.30 / 5.38 GB | 71 / 74 s | 21 / 25 ms |
+| Not shipped: + `cachePriming.enable = false` | 0.78 GB | 0.70 GB (3.78 GB after two navigations) | 11 s | 26 254 ms |
+| Not shipped: + `lru.capacity = 64` | 7.53 GB | 5.31 GB | 55 s | 13 ms |
+
+The excludes change nothing here: nothing under `.worktrees/` is in a
+package root of the virtual workspace, so it was never loaded. Turning
+priming off fails the 2 s go-to-definition bar, and lru 64 doesn't lower
+settled memory by the 15% the spec required, so both keep rust-analyzer's
+defaults.
+
 ## Buffer (`cargo bench -p fe-buffer`)
 
 M1's budgets, from the header of `crates/fe-buffer/benches/buffer.rs`: a

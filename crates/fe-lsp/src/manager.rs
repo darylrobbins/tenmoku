@@ -939,9 +939,10 @@ impl LspManager {
         let before = lock(&latest).clone();
         crate::server::latest(&latest, id, &ServerStatus::Starting);
         let unmade = latest.clone();
-        // Routed jdtls launches with the host's bundles (registry.rs).
+        // Routed jdtls launches with the host's bundles, and the built-in
+        // rust-analyzer with its defaults for the root (registry.rs).
         let (launched, bundles) = match routed {
-            true => self.registry.launched(spec.clone()),
+            true => self.registry.launched_at(spec.clone(), root),
             false => (spec.clone(), Vec::new()),
         };
         let thread = Server {
@@ -1657,11 +1658,13 @@ impl LspManager {
         }
         let key = (spec.name.clone(), root.clone());
         // What it launched with: jdtls with the bundles that reached it
-        // then, which don't count as a new spec.
+        // then, which don't count as a new spec, and rust-analyzer with its
+        // defaults for the root.
         let launched = match self.launched_bundles.get(&key) {
             Some(bundles) if spec.name == JDTLS => with_bundles(spec.clone(), bundles).0,
             _ => spec.clone(),
         };
+        let launched = self.registry.with_root_defaults(launched, &root);
         if let Some(crashes) = self.crashes.get(&key) {
             let mut crashes = lock(crashes);
             match &crashes.given_up {
