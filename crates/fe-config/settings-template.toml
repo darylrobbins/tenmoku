@@ -186,6 +186,30 @@
 # the first column. Their line numbers never scroll.
 # scroll_with_editor = true
 
+[editor.completion]
+# Open the completion menu by itself as you type a word. false: only
+# ctrl-space and a language server's trigger characters (such as .) open it.
+# auto_trigger = true
+# How long after the last key typed, in milliseconds, the menu is asked for,
+# 0 to 2000: another key typed sooner waits again.
+# delay_ms = 50
+# The fewest characters of the word before the caret that open the menu by
+# itself, 1 to 20.
+# min_word_chars = 1
+# Open the menu by itself in comments too.
+# in_comments = false
+# Open the menu by itself in strings too.
+# in_strings = false
+# What enter does while the menu shows: "explicit" accepts the selected item
+# only once you've moved the selection or opened the menu with ctrl-space, so
+# a menu that opened by itself never takes the new line; "always" accepts it;
+# "never" types a new line and closes the menu. tab accepts either way.
+# accept_on_enter = "explicit"
+# Where the menu's words come from, after a language server's items or alone
+# without one: "open_buffers" (this file and the open files in its language),
+# "current_buffer" or "off".
+# words = "open_buffers"
+
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.
 # enabled = false

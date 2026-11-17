@@ -246,3 +246,12 @@ command-proposal-accept_hunk = Accept Proposed Change
 command-proposal-reject_hunk = Reject Proposed Change
 command-proposal-accept_all = Accept All Proposed Changes
 command-proposal-reject_all = Reject All Proposed Changes
+
+## The completion menu's words from open files (completion_menu/words.rs)
+
+# The kind a word item shows, as a language server's text items do: lowercase, as en-US names kinds.
+gpui-completion-word-kind = text
+# The detail of a word only in another open file, `$file` its name.
+gpui-completion-word-in = Word in { $file }
+# The detail of a word only in an open file not saved yet.
+gpui-completion-word-untitled = Word in an untitled file

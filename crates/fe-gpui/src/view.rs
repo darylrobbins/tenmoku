@@ -257,6 +257,8 @@ pub struct EditorView {
     pub(crate) completion: Option<crate::completion_menu::Menu>,
     /// Where completions come from, if anywhere.
     pub(crate) completion_provider: Option<std::rc::Rc<dyn crate::CompletionProvider>>,
+    /// `[editor.completion]`, and the quick suggestion waiting out its delay.
+    pub(crate) completion_auto: crate::completion_menu::Auto,
     /// What runs before each save ([`crate::pane_item::SaveHook`]).
     pub(crate) save_hook: Option<std::rc::Rc<dyn crate::pane_item::SaveHook>>,
     /// What saving fixes in the text ([`crate::pane_item::SaveFixes`]).
@@ -527,6 +529,7 @@ impl EditorView {
             markdown_renderer: None,
             completion: None,
             completion_provider: None,
+            completion_auto: Default::default(),
             save_hook: None,
             save_fixes: Default::default(),
             completion_subscriptions: Vec::new(),
@@ -604,6 +607,7 @@ impl EditorView {
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
+        crate::completion_menu::register_words(&mut view, cx);
         // The minimap's tiles stay in the windows' atlases until dropped.
         cx.on_release(|view, cx| {
             for image in view.minimap_cache.get_mut().take_images() {
@@ -866,12 +870,14 @@ impl EditorView {
         }
     }
 
-    /// Takes `editor.wrap_column` and `editor.wrap_mode` from `settings`: for
+    /// Takes `editor.wrap_column`, `editor.wrap_mode` and
+    /// `[editor.completion]` from `settings`: for
     /// an editor made from them rather than applied to ([`EditorView::apply_settings`]
     /// does too). The frame loop wraps at the new width when it next draws.
     pub fn set_wrap_settings(&mut self, settings: &EditorSettings) {
         self.wrap_column = settings.effective_wrap_column();
         self.wrap_mode = settings.wrap_mode;
+        self.set_completion_settings(&settings.completion);
     }
 
     /// Sets the file's `.editorconfig` `max_line_length` (`None` for none, or

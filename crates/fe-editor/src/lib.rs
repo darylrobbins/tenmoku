@@ -66,6 +66,7 @@ mod transpose;
 mod trim_whitespace;
 mod typing;
 mod viewer;
+pub mod word_completion;
 
 pub use agent_rows::{AgentRows, LaneMark};
 pub use auto_indent::IndentSuggestion;

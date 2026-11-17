@@ -1023,6 +1023,10 @@ pub struct EditorSettings {
     /// Sticky scroll: the header rows of the scopes enclosing the top of the
     /// view stay pinned there, VS Code's `editor.stickyScroll.*`.
     pub sticky_scroll: StickyScrollSettings,
+    /// The completion menu as you type, and the words of open files it
+    /// offers, VS Code's `editor.quickSuggestions`,
+    /// `editor.acceptSuggestionOnEnter` and `editor.wordBasedSuggestions`.
+    pub completion: CompletionSettings,
     /// Draw the font's ligatures, such as `=>` as ⇒ and `->` as →. Off, as in
     /// VS Code's `editor.fontLigatures`.
     pub font_ligatures: bool,
@@ -1244,6 +1248,81 @@ impl Default for StickyScrollSettings {
     }
 }
 
+/// `[editor.completion]`: the completion menu opening by itself as a word
+/// is typed, VS Code's `editor.quickSuggestions`, and the words of open
+/// files it offers, `editor.wordBasedSuggestions`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct CompletionSettings {
+    /// Open the completion menu by itself as you type a word. Off, only
+    /// `ctrl-space` and a language server's trigger characters (such as `.`)
+    /// open it.
+    pub auto_trigger: bool,
+    /// How long after the last key typed, in milliseconds, the menu is asked
+    /// for: another key typed sooner waits again.
+    #[schemars(range(min = 0, max = 2000))]
+    pub delay_ms: u64,
+    /// The fewest characters of the word before the caret that open the menu
+    /// by itself.
+    #[schemars(range(min = 1, max = 20))]
+    pub min_word_chars: u32,
+    /// Open the menu by itself in comments too.
+    pub in_comments: bool,
+    /// Open the menu by itself in strings too.
+    pub in_strings: bool,
+    /// What `enter` does while the menu shows: `"explicit"` accepts the
+    /// selected item only once you've moved the selection or opened the menu
+    /// with `ctrl-space`, so a menu that opened by itself never takes the new
+    /// line; `"always"` accepts it; `"never"` types a new line and closes the
+    /// menu. `tab` accepts either way.
+    pub accept_on_enter: AcceptOnEnter,
+    /// Where the menu's words come from, after a language server's items or
+    /// alone without one: `"open_buffers"` (this file and the open files in
+    /// its language), `"current_buffer"` or `"off"`.
+    pub words: CompletionWords,
+}
+
+impl Default for CompletionSettings {
+    fn default() -> Self {
+        Self {
+            auto_trigger: true,
+            delay_ms: 50,
+            min_word_chars: 1,
+            in_comments: false,
+            in_strings: false,
+            accept_on_enter: AcceptOnEnter::default(),
+            words: CompletionWords::default(),
+        }
+    }
+}
+
+/// `editor.completion.accept_on_enter`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcceptOnEnter {
+    /// Only once the selection has moved, or the menu was opened with
+    /// `ctrl-space` or a trigger character.
+    #[default]
+    Explicit,
+    /// Whenever the menu shows.
+    Always,
+    /// Never: `enter` types a new line and closes the menu.
+    Never,
+}
+
+/// `editor.completion.words`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionWords {
+    /// This file's words, and those of the open files in its language.
+    #[default]
+    OpenBuffers,
+    /// This file's words only.
+    CurrentBuffer,
+    /// No words.
+    Off,
+}
+
 /// `editor.sticky_scroll.default_model`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1347,6 +1426,7 @@ impl Default for EditorSettings {
             bracket_pair_colors: true,
             minimap: MinimapSettings::default(),
             sticky_scroll: StickyScrollSettings::default(),
+            completion: CompletionSettings::default(),
             font_ligatures: false,
             render_whitespace: RenderWhitespace::default(),
             rulers: Vec::new(),

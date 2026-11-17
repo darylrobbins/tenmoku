@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "AcceptOnEnter": {
+      "description": "`editor.completion.accept_on_enter`.",
+      "oneOf": [
+        {
+          "const": "explicit",
+          "description": "Only once the selection has moved, or the menu was opened with\n`ctrl-space` or a trigger character.",
+          "type": "string"
+        },
+        {
+          "const": "always",
+          "description": "Whenever the menu shows.",
+          "type": "string"
+        },
+        {
+          "const": "never",
+          "description": "Never: `enter` types a new line and closes the menu.",
+          "type": "string"
+        }
+      ]
+    },
     "AgentLevel": {
       "description": "What happens when an agent wants to do something of a kind. Later is\nstricter.",
       "oneOf": [
@@ -295,6 +315,73 @@
       },
       "type": "object"
     },
+    "CompletionSettings": {
+      "description": "`[editor.completion]`: the completion menu opening by itself as a word\nis typed, VS Code's `editor.quickSuggestions`, and the words of open\nfiles it offers, `editor.wordBasedSuggestions`.",
+      "properties": {
+        "accept_on_enter": {
+          "$ref": "#/$defs/AcceptOnEnter",
+          "default": "explicit",
+          "description": "What `enter` does while the menu shows: `\"explicit\"` accepts the\nselected item only once you've moved the selection or opened the menu\nwith `ctrl-space`, so a menu that opened by itself never takes the new\nline; `\"always\"` accepts it; `\"never\"` types a new line and closes the\nmenu. `tab` accepts either way."
+        },
+        "auto_trigger": {
+          "default": true,
+          "description": "Open the completion menu by itself as you type a word. Off, only\n`ctrl-space` and a language server's trigger characters (such as `.`)\nopen it.",
+          "type": "boolean"
+        },
+        "delay_ms": {
+          "default": 50,
+          "description": "How long after the last key typed, in milliseconds, the menu is asked\nfor: another key typed sooner waits again.",
+          "format": "uint64",
+          "maximum": 2000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "in_comments": {
+          "default": false,
+          "description": "Open the menu by itself in comments too.",
+          "type": "boolean"
+        },
+        "in_strings": {
+          "default": false,
+          "description": "Open the menu by itself in strings too.",
+          "type": "boolean"
+        },
+        "min_word_chars": {
+          "default": 1,
+          "description": "The fewest characters of the word before the caret that open the menu\nby itself.",
+          "format": "uint32",
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "words": {
+          "$ref": "#/$defs/CompletionWords",
+          "default": "open_buffers",
+          "description": "Where the menu's words come from, after a language server's items or\nalone without one: `\"open_buffers\"` (this file and the open files in\nits language), `\"current_buffer\"` or `\"off\"`."
+        }
+      },
+      "type": "object"
+    },
+    "CompletionWords": {
+      "description": "`editor.completion.words`.",
+      "oneOf": [
+        {
+          "const": "open_buffers",
+          "description": "This file's words, and those of the open files in its language.",
+          "type": "string"
+        },
+        {
+          "const": "current_buffer",
+          "description": "This file's words only.",
+          "type": "string"
+        },
+        {
+          "const": "off",
+          "description": "No words.",
+          "type": "string"
+        }
+      ]
+    },
     "ContrastSetting": {
       "description": "`workbench.contrast`.",
       "oneOf": [
@@ -522,6 +609,19 @@
           "default": true,
           "description": "Draw a small square in the colour before each colour in the text\n(CSS, SCSS, Tailwind…), from a language server or found by Tenmoku,\nas `default_color_decorators` says. Off, there are none of either.",
           "type": "boolean"
+        },
+        "completion": {
+          "$ref": "#/$defs/CompletionSettings",
+          "default": {
+            "accept_on_enter": "explicit",
+            "auto_trigger": true,
+            "delay_ms": 50,
+            "in_comments": false,
+            "in_strings": false,
+            "min_word_chars": 1,
+            "words": "open_buffers"
+          },
+          "description": "The completion menu as you type, and the words of open files it\noffers, VS Code's `editor.quickSuggestions`,\n`editor.acceptSuggestionOnEnter` and `editor.wordBasedSuggestions`."
         },
         "cursor_line": {
           "default": true,
@@ -2088,6 +2188,15 @@
         "code_actions_on_save": [],
         "code_lens": true,
         "color_decorators": true,
+        "completion": {
+          "accept_on_enter": "explicit",
+          "auto_trigger": true,
+          "delay_ms": 50,
+          "in_comments": false,
+          "in_strings": false,
+          "min_word_chars": 1,
+          "words": "open_buffers"
+        },
         "cursor_line": true,
         "cursor_surrounding_lines": 3,
         "default_color_decorators": "auto",

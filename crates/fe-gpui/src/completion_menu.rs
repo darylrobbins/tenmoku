@@ -4,16 +4,24 @@
 //! fe-editor's [`CompletionSession`].
 //!
 //! - **Opening.** `editor.trigger_completion` (`ctrl-space`) asks at the
-//!   caret, and so does typing one of the provider's trigger characters.
-//!   The menu shows once an answer with items lands; an answer with none
-//!   (a timeout, say) closes it. Asking again replaces the request.
+//!   caret, and so does typing one of the provider's trigger characters,
+//!   and typing a word, once a short delay passes ([`auto`], quick
+//!   suggestions). The menu shows once an answer with items lands; an
+//!   answer with none (a timeout, say) closes it. Asking again replaces the
+//!   request.
+//! - **Words.** The words of the buffer and of the other open buffers in
+//!   its language follow the provider's items, those it didn't offer, or
+//!   stand alone without a provider ([`words`]), as
+//!   `editor.completion.words` says.
 //! - **Typing** word characters narrows it. Cutting the word back past
 //!   where it was asked, or typing more into an incomplete list, asks
 //!   again, the menu staying as it was until the answer.
 //! - **Keys**, in the `completion` key context while it shows:
 //!   `completion.select_prev` and `select_next`, `completion.accept` and
 //!   `completion.dismiss`. `escape`, or the caret leaving the word, closes
-//!   it without editing.
+//!   it without editing. `enter` on a menu that opened by itself, its
+//!   selection not moved, types its new line instead and closes it, as
+//!   `editor.completion.accept_on_enter` says.
 //! - **Vim's keyword completion** (`<C-n>`, `<C-p>`) shows its candidates in
 //!   the same rows, label only, the current one selected, at the typed
 //!   text's start. It asks the provider nothing, closes a language
@@ -40,6 +48,12 @@ use crate::{
     EditorView,
     hover::{Block, markdown_blocks},
 };
+
+mod auto;
+mod words;
+
+pub(crate) use auto::Auto;
+pub(crate) use words::register as register_words;
 
 /// `ctrl-space`: asks for completions at the caret.
 pub const TRIGGER: &str = "editor.trigger_completion";
@@ -120,6 +134,16 @@ pub(crate) struct Menu {
     /// The text's version and the caret it last filtered for: moving the
     /// caret back within what was typed since the request refilters too.
     filtered: Option<(Version, usize)>,
+    /// It opened by itself, as a word was typed ([`auto`]), not by
+    /// `ctrl-space` or a trigger character.
+    auto: bool,
+    /// Its selection has been moved, by `completion.select_prev` or
+    /// `select_next`.
+    moved: bool,
+    /// `completion.accept` ran where `enter` mustn't accept, and the
+    /// keystroke that ran it is yet to say whether it was `enter`
+    /// ([`EditorView::settle_held_accept`]).
+    held: bool,
 }
 
 /// What a screen reader is told of the menu: see
@@ -178,6 +202,9 @@ impl Menu {
             keyword,
             list: 0,
             filtered: None,
+            auto: false,
+            moved: false,
+            held: false,
         }
     }
 }
@@ -192,6 +219,23 @@ impl EditorView {
 
     pub fn completion_provider(&self) -> Option<&Rc<dyn CompletionProvider>> {
         self.completion_provider.as_ref()
+    }
+
+    /// The items matching the word while the menu shows, best first, as
+    /// its rows list them.
+    pub fn completion_matches(&self) -> Vec<CompletionItem> {
+        match &self.completion {
+            Some(menu) if self.completion_shown() => (menu.session.matches().iter())
+                .map(|&ix| menu.session.items()[ix].clone())
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether the menu shows having opened by itself as a word was typed
+    /// ([`auto`]), not by `ctrl-space` or a trigger character.
+    pub fn completion_opened_itself(&self) -> bool {
+        self.completion_shown() && self.completion.as_ref().is_some_and(|menu| menu.auto)
     }
 
     /// Whether the menu shows: there's an answer with items matching the
@@ -222,26 +266,51 @@ impl EditorView {
     }
 
     /// Asks the provider for completions at the caret, outside vim's
-    /// modes that take no text.
+    /// modes that take no text, as the user does.
     pub(crate) fn trigger_completion(
         &mut self,
         trigger: CompletionTrigger,
         cx: &mut Context<Self>,
     ) {
+        self.ask_completion(trigger, false, cx);
+    }
+
+    /// Asks the provider, and for the words ([`words`]), for completions
+    /// at the caret, outside vim's modes that take no text: by itself
+    /// ([`auto`]) if `auto`, which a menu open already keeps only if it
+    /// opened so too.
+    pub(crate) fn ask_completion(
+        &mut self,
+        trigger: CompletionTrigger,
+        auto: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.sync_vim(cx);
-        let Some(provider) = self.completion_provider.clone() else {
-            return;
-        };
+        self.drop_pending_completion();
         if !self.accepts_text() {
+            return;
+        }
+        let provider = self.completion_provider.clone();
+        let words = self.ask_words(&trigger, cx);
+        if provider.is_none() && words.is_none() {
             return;
         }
         let snapshot = self.model.snapshot().clone();
         let offset = self.model.primary_selection().head();
         let version = snapshot.version();
-        let reply = provider.completions(snapshot.id(), version, offset, trigger);
+        let reply = (provider.as_ref())
+            .map(|provider| provider.completions(snapshot.id(), version, offset, trigger));
         let base = snapshot.clone();
         let request = cx.spawn(async move |view, cx| {
-            let list = reply.await;
+            let list = match reply {
+                Some(reply) => reply.await,
+                None => None,
+            };
+            let words = match words {
+                Some(words) => words.await,
+                None => Vec::new(),
+            };
+            let list = fe_editor::word_completion::merge_words(list, words);
             view.update(cx, |view, cx| {
                 view.completions_landed(base, offset, list, cx)
             })
@@ -250,6 +319,7 @@ impl EditorView {
         if (self.completion.as_ref()).is_some_and(|menu| menu.keyword.is_some()) {
             self.completion = None;
         }
+        let fresh = self.completion.is_none();
         let menu = self.completion.get_or_insert_with(|| {
             Menu::new(
                 CompletionSession::new(snapshot, offset, CompletionList::default()),
@@ -257,21 +327,24 @@ impl EditorView {
                 None,
             )
         });
+        menu.auto = auto && (fresh || menu.auto);
         menu.asked = (version, offset);
         menu.request = Some(request);
     }
 
     /// Typing `text` asks for completions if it ends with a trigger
-    /// character.
+    /// character, and otherwise for a quick suggestion once the delay
+    /// passes ([`auto`]). Anything typed drops the one waiting.
     pub(crate) fn completion_typed(&mut self, text: &str, cx: &mut Context<Self>) {
-        let Some(provider) = &self.completion_provider else {
-            return;
-        };
+        self.drop_pending_completion();
         let buffer = self.model.buffer().id();
-        let trigger = (provider.trigger_characters(buffer).into_iter())
-            .find(|trigger| !trigger.is_empty() && text.ends_with(trigger.as_str()));
-        if let Some(trigger) = trigger {
-            self.trigger_completion(CompletionTrigger::Character(trigger), cx);
+        let trigger = (self.completion_provider.as_ref()).and_then(|provider| {
+            (provider.trigger_characters(buffer).into_iter())
+                .find(|trigger| !trigger.is_empty() && text.ends_with(trigger.as_str()))
+        });
+        match trigger {
+            Some(trigger) => self.trigger_completion(CompletionTrigger::Character(trigger), cx),
+            None => self.schedule_quick_suggestion(text, cx),
         }
     }
 
@@ -284,6 +357,7 @@ impl EditorView {
     ) {
         self.sync_vim(cx);
         let accepts_text = self.accepts_text();
+        let composing = self.composition().is_some();
         let Some(menu) = &mut self.completion else {
             return;
         };
@@ -291,6 +365,11 @@ impl EditorView {
             return;
         }
         menu.request = None;
+        // Asked for by itself, it doesn't open over a composition.
+        if composing && menu.auto {
+            self.close_completion(cx);
+            return;
+        }
         // Nothing, a timeout among others, closes it, even over items an
         // earlier answer gave.
         let Some(list) = list.filter(|list| accepts_text && !list.items.is_empty()) else {
@@ -329,6 +408,7 @@ impl EditorView {
     /// and asks again for more as an incomplete list is typed into.
     pub(crate) fn sync_completion(&mut self, cx: &mut Context<Self>) {
         self.sync_vim(cx);
+        self.drop_moved_pending_completion();
         let accepts_text = self.accepts_text();
         let Some(menu) = &mut self.completion else {
             return;
@@ -338,11 +418,13 @@ impl EditorView {
             return;
         }
         if !accepts_text || !menu.session.update(&self.model) {
-            // Cut back, or moved within the word: ask again there.
+            // Cut back, or moved within the word: ask again there, as it
+            // was asked.
             let again = accepts_text && menu.session.may_ask_again(&self.model);
+            let auto = menu.auto;
             self.close_completion(cx);
             if again {
-                self.trigger_completion(CompletionTrigger::Invoked, cx);
+                self.ask_completion(CompletionTrigger::Invoked, auto, cx);
             }
             return;
         }
@@ -357,7 +439,8 @@ impl EditorView {
             menu.list += 1;
         }
         if menu.asked != now && menu.session.is_incomplete() {
-            self.trigger_completion(CompletionTrigger::Incomplete, cx);
+            let auto = menu.auto;
+            self.ask_completion(CompletionTrigger::Incomplete, auto, cx);
         }
         self.scroll_to_selected();
         self.resolve_selected(cx);
@@ -388,28 +471,67 @@ impl EditorView {
             return;
         }
         let accepts_text = self.accepts_text();
+        // An input method composing has `enter` and `tab` to itself: a menu
+        // that opened by itself, or awaits its answer to, goes, and so does
+        // a quick suggestion waiting out its delay.
+        let composing = self.composition().is_some();
+        if composing {
+            self.drop_pending_completion();
+        }
         if (self.completion.as_ref()).is_some_and(|menu| {
-            menu.keyword.is_some() || !accepts_text || !menu.session.is_live(&self.model)
+            menu.keyword.is_some()
+                || !accepts_text
+                || composing && menu.auto
+                || !menu.session.is_live(&self.model)
         }) {
             self.completion = None;
         }
     }
 
     /// Has `escape` close the menu, or drop the request a menu waits on,
-    /// wherever it's pressed, before any binding takes it, and losing
-    /// focus close it too.
+    /// and a quick suggestion waiting out its delay, wherever it's pressed,
+    /// and losing focus close it too. Each keystroke in the focused editor
+    /// also drops a quick suggestion typed before the caret or text moved
+    /// on, and settles an accept it held ([`Self::settle_held_accept`]): the keymap, matching first,
+    /// has run `completion.accept` by then.
     pub(crate) fn close_completion_on_escape_and_blur(
         view: &mut EditorView,
         window: &mut gpui::Window,
         cx: &mut Context<EditorView>,
     ) {
         let this = cx.weak_entity();
-        let escape = cx.intercept_keystrokes(move |event, _, cx| {
-            if event.keystroke.key == "escape" {
-                this.update(cx, |view, cx| view.close_completion(cx)).ok();
+        let escape = cx.intercept_keystrokes(move |event, window, cx| {
+            let keystroke = &event.keystroke;
+            if keystroke.key == "escape" {
+                this.update(cx, |view, cx| {
+                    view.drop_pending_completion();
+                    view.close_completion(cx)
+                })
+                .ok();
+                return;
+            }
+            let enter = keystroke.key == "enter" && keystroke.modifiers.number_of_modifiers() == 0;
+            let retype = this
+                .update(cx, |view, cx| {
+                    if !view.focus.is_focused(window) {
+                        return false;
+                    }
+                    // A key that moved the caret, or changed the text,
+                    // drops a quick suggestion typed before it.
+                    view.drop_moved_pending_completion();
+                    view.settle_held_accept(enter, cx)
+                })
+                .unwrap_or(false);
+            if retype {
+                // The menu closed, `enter` is the editor's: a new line.
+                window.dispatch_keystroke(keystroke.clone(), cx);
+                cx.stop_propagation();
             }
         });
-        let blur = cx.on_blur(&view.focus, window, |view, _, cx| view.close_completion(cx));
+        let blur = cx.on_blur(&view.focus, window, |view, _, cx| {
+            view.drop_pending_completion();
+            view.close_completion(cx)
+        });
         view.completion_subscriptions = vec![escape, blur];
     }
 
@@ -429,6 +551,7 @@ impl EditorView {
                 if let Some(menu) = &mut self.completion
                     && menu.keyword.is_none()
                 {
+                    menu.moved = true;
                     menu.session.select_next(command == SELECT_PREV);
                     self.scroll_to_selected();
                     self.resolve_selected(cx);
@@ -437,12 +560,44 @@ impl EditorView {
             }
             ACCEPT => {
                 self.drop_stale_completion();
-                self.accept_completion(cx);
+                if self.completion_shown() && !self.enter_accepts_completion() {
+                    // Held for the keystroke that ran it, if one did, to
+                    // say whether it was `enter`; else accepted once this
+                    // dispatch is over.
+                    if let Some(menu) = &mut self.completion {
+                        menu.held = true;
+                    }
+                    let this = cx.weak_entity();
+                    cx.defer(move |cx| {
+                        this.update(cx, |view, cx| view.settle_held_accept(false, cx))
+                            .ok();
+                    });
+                } else {
+                    self.accept_completion(cx);
+                }
             }
             DISMISS => self.close_completion(cx),
             _ => return false,
         }
         true
+    }
+
+    /// Settles a `completion.accept` held on a menu `enter` mustn't accept
+    /// ([`Self::enter_accepts_completion`]), if there is one: for `enter`,
+    /// closes the menu and returns `true`, for the keystroke to be typed
+    /// again as the editor's; for anything else (`tab`, or no keystroke)
+    /// accepts.
+    fn settle_held_accept(&mut self, enter: bool, cx: &mut Context<Self>) -> bool {
+        let Some(menu) = self.completion.as_mut().filter(|menu| menu.held) else {
+            return false;
+        };
+        menu.held = false;
+        if enter {
+            self.close_completion(cx);
+            return true;
+        }
+        self.accept_completion(cx);
+        false
     }
 
     /// Closes the menu, applying its selected item, then runs the item's

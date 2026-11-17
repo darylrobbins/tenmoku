@@ -190,6 +190,33 @@ settings-template-editor-sticky_scroll-scroll_with_editor =
     The pinned rows' text scrolls sideways with the editor's; false keeps it at
     the first column. Their line numbers never scroll.
 
+settings-template-editor-completion-auto_trigger =
+    Open the completion menu by itself as you type a word. false: only
+    ctrl-space and a language server's trigger characters (such as .) open it.
+
+settings-template-editor-completion-delay_ms =
+    How long after the last key typed, in milliseconds, the menu is asked for,
+    0 to 2000: another key typed sooner waits again.
+
+settings-template-editor-completion-min_word_chars =
+    The fewest characters of the word before the caret that open the menu by
+    itself, 1 to 20.
+
+settings-template-editor-completion-in_comments = Open the menu by itself in comments too.
+
+settings-template-editor-completion-in_strings = Open the menu by itself in strings too.
+
+settings-template-editor-completion-accept_on_enter =
+    What enter does while the menu shows: "explicit" accepts the selected item
+    only once you've moved the selection or opened the menu with ctrl-space, so
+    a menu that opened by itself never takes the new line; "always" accepts it;
+    "never" types a new line and closes the menu. tab accepts either way.
+
+settings-template-editor-completion-words =
+    Where the menu's words come from, after a language server's items or alone
+    without one: "open_buffers" (this file and the open files in its language),
+    "current_buffer" or "off".
+
 settings-template-vim-enabled = Whether the editor starts in vim's normal mode, where keys run vim commands.
 
 settings-template-vim-clipboard = Set to "unnamedplus" to share yanks and puts with the system clipboard.

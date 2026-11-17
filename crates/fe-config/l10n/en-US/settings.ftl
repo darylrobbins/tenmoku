@@ -12,6 +12,7 @@ settings-group-chat = Chat
 settings-group-debug = Debug
 settings-group-timeouts = Timeouts
 settings-group-editor = Editor
+settings-group-completion = Completion
 settings-group-minimap = Minimap
 settings-group-sticky_scroll = Sticky Scroll
 settings-group-extensions = Extensions
@@ -221,6 +222,48 @@ settings-editor-color_decorators =
     Draw a small square in the colour before each colour in the text
     (CSS, SCSS, Tailwind…), from a language server or found by Tenmoku,
     as `default_color_decorators` says. Off, there are none of either.
+
+settings-editor-completion =
+    The completion menu as you type, and the words of open files it
+    offers, VS Code's `editor.quickSuggestions`,
+    `editor.acceptSuggestionOnEnter` and `editor.wordBasedSuggestions`.
+
+settings-editor-completion-accept_on_enter =
+    What `enter` does while the menu shows: `"explicit"` accepts the
+    selected item only once you've moved the selection or opened the menu
+    with `ctrl-space`, so a menu that opened by itself never takes the new
+    line; `"always"` accepts it; `"never"` types a new line and closes the
+    menu. `tab` accepts either way.
+    .explicit =
+        Only once the selection has moved, or the menu was opened with
+        `ctrl-space` or a trigger character.
+    .always = Whenever the menu shows.
+    .never = Never: `enter` types a new line and closes the menu.
+
+settings-editor-completion-auto_trigger =
+    Open the completion menu by itself as you type a word. Off, only
+    `ctrl-space` and a language server's trigger characters (such as `.`)
+    open it.
+
+settings-editor-completion-delay_ms =
+    How long after the last key typed, in milliseconds, the menu is asked
+    for: another key typed sooner waits again.
+
+settings-editor-completion-in_comments = Open the menu by itself in comments too.
+
+settings-editor-completion-in_strings = Open the menu by itself in strings too.
+
+settings-editor-completion-min_word_chars =
+    The fewest characters of the word before the caret that open the menu
+    by itself.
+
+settings-editor-completion-words =
+    Where the menu's words come from, after a language server's items or
+    alone without one: `"open_buffers"` (this file and the open files in
+    its language), `"current_buffer"` or `"off"`.
+    .open_buffers = This file's words, and those of the open files in its language.
+    .current_buffer = This file's words only.
+    .off = No words.
 
 settings-editor-cursor_line =
     Fill the caret's row with the theme's active-line colour, as VS

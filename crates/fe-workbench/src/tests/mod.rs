@@ -61,6 +61,8 @@ mod caret_keys_lines;
 mod changes_b3;
 mod coloured_icon_surfaces;
 mod commit_diff_b3;
+mod completion_as_you_type;
+mod completion_words;
 mod debug_breakpoints;
 mod debug_commands;
 mod debug_gutter;
