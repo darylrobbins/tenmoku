@@ -153,6 +153,10 @@ fn untrusted_with<'a>(
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
     }
+    // Its Rust file would start a real rust-analyzer that outlives the test.
+    let settings = fe_config::project_settings_path(&root);
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(settings, "[lsp.servers.rust-analyzer]\nenabled = false\n").unwrap();
     let launcher = Arc::new(FakeLauncher::new(script(&root)));
     let scope_reads = Arc::new(AtomicUsize::new(0));
     let host = DebugHost {
