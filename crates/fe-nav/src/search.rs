@@ -1574,8 +1574,8 @@ mod tests {
         let took = started.elapsed();
         assert_eq!(full.items[0].tier, Tier::SameFile);
 
-        // Out of time: answered without the text's syntax.
-        let nav = unbuilt(dir.path()).with_budget(Duration::from_millis(1));
+        // Out of time (a zero budget is spent before the request starts): answered without the text's syntax.
+        let nav = unbuilt(dir.path()).with_budget(Duration::ZERO);
         let late = nav.definitions(&req, &AtomicBool::new(false)).unwrap();
         assert_eq!(late.word.as_deref(), Some("helper"));
         assert!(late.items.is_empty());
