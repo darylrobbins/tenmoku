@@ -1,0 +1,11 @@
+   Compiling fe-runlog v0.1.5 (/home/daryl/code/fastedit-lanes/.worktrees/3dk530gq4m/crates/fe-runlog)
+warning: unused variable: `x`
+   --> crates/fe-runlog/src/lib.rs:143:26
+    |
+143 | fn _unused_probe() { let x = 1; }
+    |                          ^ help: if this is intentional, prefix it with an underscore: `_x`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `fe-runlog` (lib) generated 1 warning (run `cargo fix --lib -p fe-runlog` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.55s
