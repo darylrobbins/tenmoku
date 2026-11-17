@@ -1,0 +1,78 @@
+// A blog's schema, to show off Prisma's syntax.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["views"]
+}
+
+/// A person who can sign in and write posts.
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String?  @db.VarChar(255)
+  role      Role     @default(USER)
+  active    Boolean  @default(true)
+  karma     Int      @default(0)
+  posts     Post[]
+  profile   Profile?
+  address   Address?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Profile {
+  id     Int    @id @default(autoincrement())
+  bio    String @default("")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId Int    @unique
+}
+
+/// A post, published or still a draft.
+model Post {
+  id         Int        @id @default(autoincrement())
+  title      String     @db.VarChar(255)
+  content    String?
+  published  Boolean    @default(false)
+  rating     Float      @default(0)
+  author     User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId   Int
+  tags       String[]
+  categories Category[]
+
+  @@index([authorId, published])
+  @@unique([authorId, title])
+}
+
+model Category {
+  id    String @id @default(uuid())
+  name  String @unique
+  posts Post[]
+}
+
+// The roles a user can have.
+enum Role {
+  USER
+  EDITOR
+  ADMIN  @map("administrator")
+}
+
+/// Where a user lives: a composite type, embedded in a document.
+type Address {
+  street String
+  city   String
+  zip    String?
+}
+
+/// Each author's post count, read from a database view.
+view AuthorStats {
+  authorId  Int    @unique
+  name      String
+  postCount Int
+}

@@ -1,0 +1,18 @@
+id = "tenmoku.grammar_prisma"
+name = "Prisma syntax"
+version = "1.6.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "prisma"
+wasm = "tree-sitter-prisma.wasm"
+extensions = ["prisma"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+packs = ["web", "data"]
+earlier_patterns_win = false
+license = "MIT"
+line_comment = "//"
