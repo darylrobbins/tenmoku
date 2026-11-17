@@ -21,6 +21,8 @@ cargo build --release -p fastedit
 target/release/tenmoku --perf path/to/file       # open, scroll, memory, idle; then quits
 ```
 
+For where the malloc part of the memory goes, by crate, see [Heap by crate](#heap-by-crate).
+
 Close CPU-heavy jobs first (soak runs, builds): with the machine loaded,
 numbers come out several times worse and noisy.
 
@@ -384,6 +386,104 @@ Game Memory template didn't finish a recording on this machine.
   showing ASCII in one font fills one A8 texture.
 - The path intermediate texture is created at the window's size but never
   rendered into (the editor draws no paths), so it costs nothing.
+
+## Heap by crate
+
+Where the malloc part of the footprint goes, by Rust crate, C library and
+system framework, with no code change: `scripts/heap-by-crate.py` folds the
+live allocation stacks of a running process. `python3 scripts/heap-by-crate.py
+--help` has the same recipe.
+
+```zsh
+CARGO_PROFILE_BENCH_DEBUG=line-tables-only cargo build --profile bench -p fastedit
+# [profile.release] strips symbols; the bench profile keeps them and builds
+# into target/release/tenmoku. Without the env var, inlined frames are
+# charged to their caller.
+MallocStackLogging=lite target/release/tenmoku path/to/file   # a shell launch; `open` needs launchctl setenv
+python3 scripts/heap-by-crate.py --pid $(pgrep -n tenmoku) --footprint $(pgrep -n tenmoku)
+# or: malloc_history <pid> -allBySize > heap.txt ; heap-by-crate.py heap.txt
+# or: leaks <pid> --outputGraph=h.memgraph ; malloc_history h.memgraph -allBySize
+```
+
+Each allocation is charged to the first frame above the allocator that is not
+std plumbing (`alloc::`, `core::`, `std::`, `hashbrown::`, `smallvec::`);
+`--depth 2` splits crates by module, `--skip` adds plumbing prefixes. Frames
+in another image (CoreUI, ImageIO, …) are charged to that image, so a
+framework row is "allocated inside the framework", whoever asked for it.
+
+- **What each tool sees.** Malloc tools see allocations and VM regions made
+  through the allocator, not GPU memory. `footprint` sees categories
+  (IOSurface, CG Image, IOAccelerator, owned graphics, `__TEXT`) but not who
+  allocated them; `--footprint` prints it under the heap rows. The folded
+  total counts every logged live region, mapped and purgeable memory
+  included, so it exceeds the footprint (380 MB against 130 MB below).
+- **Inlining.** With LTO and one codegen unit many frames are inlined: the
+  caller's crate gets the bytes unless line tables are on.
+- **`xctrace`.** Unverified. On this Mac (Xcode 27, SIP) recording the
+  Allocations template failed (`xctrace record --launch` reported "Failed to
+  attach to target process", for a copy of a system binary and for a small
+  compiled C program), so there is no successful trace to export;
+  `xctrace export --toc` on the failed trace printed nothing. Whether a
+  recorded Allocations trace exposes an allocations table is not known, and
+  the script has no xctrace input.
+
+Measured 2026-11-16 at `cb6ec28` plus the script: bench profile with
+line-tables-only, 1200×800 window, `MallocStackLogging=lite` (slows
+allocation), not scrolled (the tables are the state after open and a settle, not
+after the scrolling `--perf` does: that needs hand input this run could not
+send; follow-up T1919), top 16 rows. Empty window (footprint 130 MB:
+Malloc Small 33 MB, CG Image 32 MB, IOSurface 30 MB, Performance Tool Data
+16 MB from the logging itself):
+
+| crate | live bytes | % | allocations |
+|---|---:|---:|---:|
+| coreui | 168235408 | 42.2% | 304 |
+| libicucore | 36367760 | 9.1% | 38 |
+| CoreGraphics | 34080144 | 8.6% | 1800 |
+| IOSurface | 31261568 | 7.8% | 4 |
+| Foundation | 20657120 | 5.2% | 761 |
+| CSStore | 19382272 | 4.9% | 1 |
+| libCoreFSCache | 16651152 | 4.2% | 131 |
+| libFontParser | 10290160 | 2.6% | 183 |
+| IOGPU | 6239504 | 1.6% | 106 |
+| kiln_platform | 5111424 | 1.3% | 2220 |
+| fluent_syntax | 4891520 | 1.2% | 10548 |
+| fe_workbench | 4598368 | 1.2% | 1235 |
+| notify | 4295872 | 1.1% | 30 |
+| ImageIO | 4223104 | 1.1% | 97 |
+| gpui | 3404096 | 0.9% | 2879 |
+| libobjc | 2352656 | 0.6% | 12785 |
+| (others) | 26286176 | 6.6% | 99520 |
+| **total** | 398328304 | 100% | 132642 |
+
+10k-line Rust file, 20 s after launch:
+
+| crate | live bytes | % | allocations |
+|---|---:|---:|---:|
+| coreui | 168235728 | 36.9% | 308 |
+| libicucore | 36397056 | 8.0% | 151 |
+| CoreGraphics | 34424672 | 7.5% | 3164 |
+| IOSurface | 31261568 | 6.9% | 4 |
+| liblangid | 27984512 | 6.1% | 4 |
+| Foundation | 20968816 | 4.6% | 774 |
+| CSStore | 19382272 | 4.2% | 1 |
+| libCoreFSCache | 16651152 | 3.6% | 131 |
+| tree-sitter (C) | 13005936 | 2.9% | 126454 |
+| IOGPU | 10466576 | 2.3% | 107 |
+| libFontParser | 10290864 | 2.3% | 189 |
+| fe_workbench | 6803392 | 1.5% | 1717 |
+| notify | 6446096 | 1.4% | 47 |
+| gpui | 5961152 | 1.3% | 5250 |
+| kiln_platform | 5111808 | 1.1% | 2222 |
+| libgermantok | 5030000 | 1.1% | 3 |
+| (others) | 37816448 | 8.3% | 128269 |
+| **total** | 456238048 | 100% | 268795 |
+
+Most bytes are in framework images (CoreUI's 168 MB is one 117 MB and one
+36 MB region under `NSApplication run`, mapped asset data rather than
+footprint). Of Tenmoku's own code `fe_workbench`, `gpui`, `kiln_platform`
+and `fluent_syntax` (10.5k small allocations) lead on the empty window;
+opening the file adds tree-sitter's C allocator (13 MB in 126k allocations).
 
 ## Buffer (`cargo bench -p fe-buffer`)
 
