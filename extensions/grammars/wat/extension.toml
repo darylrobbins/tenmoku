@@ -1,0 +1,19 @@
+id = "tenmoku.grammar_wat"
+name = "WebAssembly text syntax"
+version = "0.1.0"
+license = "Apache-2.0 WITH LLVM-exception"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "wat"
+wasm = "tree-sitter-wast.wasm"
+extensions = ["wat", "wast"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+packs = ["systems"]
+earlier_patterns_win = false
+license = "Apache-2.0 WITH LLVM-exception"
+line_comment = ";;"
+block_comment = ["(;", ";)"]
