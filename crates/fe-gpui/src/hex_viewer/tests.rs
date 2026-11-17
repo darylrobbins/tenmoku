@@ -43,7 +43,7 @@ pub(super) fn viewer<'a>(
     path: &Path,
 ) -> (Entity<HexViewer>, &'a mut VisualTestContext, Events) {
     let view = Arc::new(FileView::open(path).unwrap());
-    cx.update(crate::init);
+    cx.update(|cx| crate::init_with_keymap(cx, host_keymap()));
     let events = Events::default();
     let heard = events.clone();
     let (host, cx) = cx.add_window_view(move |_, cx| {
@@ -91,6 +91,19 @@ pub(super) fn selected(viewer: &Entity<HexViewer>, cx: &mut VisualTestContext) -
 /// The cells the last frame filled, as (column, offset, colour).
 fn highlighted(viewer: &Entity<HexViewer>, cx: &mut VisualTestContext) -> Vec<(Column, u64, Hsla)> {
     viewer.read_with(cx, |viewer, _| viewer.highlighted.clone())
+}
+
+/// The built-in keymap resolved for the host, as the app runs it: ctrl keys on
+/// Linux, cmd on macOS, so the keystrokes below are the real ones.
+pub(super) fn host_keymap() -> fe_keymap::Keymap {
+    let (layer, diagnostics) = fe_keymap::KeymapLayer::parse_for(
+        std::path::Path::new(fe_keymap::DEFAULT_KEYMAP_PATH),
+        fe_keymap::DEFAULT,
+        None,
+        kiln_core::Os::current(),
+    );
+    assert_eq!(diagnostics, []);
+    fe_keymap::Keymap::from_layers(vec![layer.unwrap()])
 }
 
 /// The secondary modifier's key name on this platform.

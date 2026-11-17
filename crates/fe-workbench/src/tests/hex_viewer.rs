@@ -61,7 +61,15 @@ fn open<'a>(
     root: &Path,
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
     cx.update(|cx| {
-        fe_gpui::init(cx);
+        let (layer, diagnostics) = fe_keymap::KeymapLayer::parse_for(
+            Path::new(fe_keymap::DEFAULT_KEYMAP_PATH),
+            fe_keymap::DEFAULT,
+            None,
+            kiln::core::Os::current(),
+        );
+        assert_eq!(diagnostics, []);
+        // The built-in keymap as the app runs it on this host.
+        fe_gpui::init_with_keymap(cx, fe_keymap::Keymap::from_layers(vec![layer.unwrap()]));
         crate::init(cx);
     });
     let launch = Launch {
@@ -176,7 +184,11 @@ fn a_binary_file_opens_in_hex(cx: &mut TestAppContext) {
     let pane = pane(&workbench, cx);
 
     click_row(&workbench, "tree.bin", cx);
-    cx.simulate_keystrokes("cmd-p");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-p"
+    } else {
+        "ctrl-p"
+    });
     cx.simulate_input("quick.dat");
     let picker = crate::tests::quick_open::picker(&workbench, cx);
     assert_eq!(crate::tests::quick_open::paths(&picker, cx)[0], "quick.dat");
