@@ -30,10 +30,10 @@ use crate::workbench::toast::{self, Toast, ToastLayer};
 
 /// The latest release: GitHub answers this directly, as `fe-net` follows no
 /// redirects.
-const LATEST_RELEASE: &str = "https://api.github.com/repos/darylrobbins/tenmoku/releases/latest";
+const LATEST_RELEASE: &str = "https://api.github.com/repos/tenmoku-editor/tenmoku/releases/latest";
 
 /// What a release's page must start with to be opened.
-const RELEASE_PAGES: &str = "https://github.com/darylrobbins/tenmoku/releases/";
+const RELEASE_PAGES: &str = "https://github.com/tenmoku-editor/tenmoku/releases/";
 
 /// What the real fetcher may reach.
 const CAPABILITY: &str = "net:api.github.com";

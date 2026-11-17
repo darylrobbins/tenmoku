@@ -20,7 +20,7 @@ use crate::{
     workbench::toast::{Choices, Level},
 };
 
-const PAGE: &str = "https://github.com/darylrobbins/tenmoku/releases/tag/v0.2.0";
+const PAGE: &str = "https://github.com/tenmoku-editor/tenmoku/releases/tag/v0.2.0";
 
 /// A window with its workbench focused, as the command runs from.
 fn window(cx: &mut TestAppContext) -> (Entity<Workbench>, VisualTestContext) {
@@ -65,7 +65,7 @@ fn ok(release: serde_json::Value) -> Result<Fetched, String> {
 fn release(tag: &str) -> serde_json::Value {
     json!({
         "tag_name": tag,
-        "html_url": format!("https://github.com/darylrobbins/tenmoku/releases/tag/{tag}"),
+        "html_url": format!("https://github.com/tenmoku-editor/tenmoku/releases/tag/{tag}"),
         "draft": false,
         "prerelease": false,
     })
@@ -446,6 +446,6 @@ fn tenmoku_release_page_is_opened(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(
         cx.opened_url().as_deref(),
-        Some("https://github.com/darylrobbins/tenmoku/releases/tag/v0.2.0")
+        Some("https://github.com/tenmoku-editor/tenmoku/releases/tag/v0.2.0")
     );
 }

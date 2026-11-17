@@ -1,15 +1,20 @@
 # Tenmoku
 
-Tenmoku is a native code editor for macOS, written in Rust on
-[GPUI](https://www.gpui.rs/) and rendered with Metal. It is a small, curated
+Tenmoku is a native code editor for macOS, Windows and Linux, written in Rust
+on [GPUI](https://www.gpui.rs/) (rendered with Metal on macOS). It is a small, curated
 editor with the parts of an IDE you reach for every day (a project tree,
-language-server features, git, a terminal) and no embedded web runtime. It is
+language-server features, git, a terminal) and no embedded web runtime. 69 languages come as grammar extensions, beside the
+built-in ones. More at [tenmoku.dev](https://tenmoku.dev). It is
 pre-1.0: expect rough edges, and settings and the plugin API may change.
 
 ## Install
 
-1. Download `Tenmoku-<version>-macos-arm64.zip` from the
-   [Releases page](https://github.com/darylrobbins/tenmoku/releases).
+Releases are built for four platforms: macOS on Apple Silicon, Windows x64,
+Windows ARM64 and Linux x86_64. See
+[docs/release/platforms.md](docs/release/platforms.md) for each download.
+
+1. On macOS, download `Tenmoku-<version>-macos-arm64.zip` from the
+   [Releases page](https://github.com/tenmoku-editor/tenmoku/releases).
 2. Unzip it and move `Tenmoku.app` to `/Applications`.
 3. A release is ad-hoc signed and not notarized unless its notes say
    otherwise, so macOS Gatekeeper blocks the first launch. Right-click the app
@@ -26,7 +31,8 @@ The executable inside the bundle is `Tenmoku.app/Contents/MacOS/tenmoku`.
 GitHub. A bundle that carries Sparkle and the update feed keys uses Sparkle
 instead once Sparkle has loaded and started, and then `update.automatic_checks`
 turns its daily background check on or off. If it doesn't start, or the build
-has no Sparkle, only the manual check exists. See
+has no Sparkle, only the manual check exists. When that check finds a newer release, its
+Download button opens the release page. See
 [docs/release/macos-signing.md](docs/release/macos-signing.md) for how
 releases are signed.
 
@@ -37,7 +43,7 @@ You need macOS on Apple Silicon, the Xcode command line tools and
 the Rust version, and rustup installs it on the first build.
 
 ```zsh
-git clone https://github.com/darylrobbins/tenmoku.git
+git clone https://github.com/tenmoku-editor/tenmoku.git
 cd tenmoku
 cargo build --release -p fastedit      # produces target/release/tenmoku
 scripts/bundle-macos.sh                # produces target/bundle/Tenmoku.app

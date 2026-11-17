@@ -158,7 +158,7 @@ The public key is `registry.toml`'s `public_key`, committed so that every
 build, including dev builds and tests, can verify. It's also the repository
 variable `TENMOKU_REGISTRY_PUBLIC_KEY`. The private key is the secret
 `TENMOKU_REGISTRY_PRIVATE_KEY` in the `registry` environment of
-`darylrobbins/tenmoku`, and nowhere else. This isn't the update feed's key:
+`tenmoku-editor/tenmoku`, and nowhere else. This isn't the update feed's key:
 each key signs one thing.
 
 `grammar-registry sign --index FILE [--registry-toml FILE]` reads the private

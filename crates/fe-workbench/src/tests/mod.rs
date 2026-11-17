@@ -183,6 +183,7 @@ mod toolbar_history;
 mod trash_isolation;
 mod tree_keys;
 mod tree_style;
+mod update_check_home;
 mod user_config_hermetic;
 mod vim_line;
 mod vim_ls_layout;

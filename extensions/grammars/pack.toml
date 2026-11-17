@@ -14,7 +14,7 @@
 # release, scripts/record-grammar-hashes.sh writes an entry for every
 # directory; don't edit them by hand.
 
-base_url = "https://github.com/darylrobbins/tenmoku/releases/download/grammars-2"
+base_url = "https://github.com/tenmoku-editor/tenmoku/releases/download/grammars-2"
 
 [languages.astro]
 file = "tree-sitter-astro.wasm"

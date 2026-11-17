@@ -121,3 +121,8 @@ starts: Mesa's on most distributions (`mesa-vulkan-drivers` on Debian and Ubuntu
 `vulkan-radeon` or `vulkan-intel` on Arch). It runs on X11 and on Wayland. A distribution
 whose glibc is older than the release notes name cannot run it (0.2.x is built on Ubuntu
 24.04 and needs glibc 2.39: Ubuntu 24.04, Debian 13, Fedora 40 or later).
+
+The Velopack feed URL is baked in at build time from `github.repository`
+(`https://github.com/<owner>/<repo>/releases/latest/download`), so builds made
+after the move to `tenmoku-editor/tenmoku` name it. Earlier builds name the old
+owner; velopack's `ureq` follows GitHub's redirect from it.
