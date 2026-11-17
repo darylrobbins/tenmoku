@@ -1606,6 +1606,18 @@ impl Workbench {
         self.toggle_debug_panel(cx.window, cx.cx);
     }
 
+    /// Debug: Evaluate Selection
+    #[command(id = "debug.evaluate")]
+    fn debug_evaluate_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_show_value(true, cx.cx);
+    }
+
+    /// Debug: Show Value at Cursor
+    #[command(id = "debug.hover")]
+    fn debug_hover_command(&mut self, cx: &mut Cx<Self>) {
+        self.debug_show_value(false, cx.cx);
+    }
+
     /// Debug: Toggle Debug Console
     #[command(id = "debug.show_console")]
     fn debug_show_console_command(&mut self, cx: &mut Cx<Self>) {

@@ -67,6 +67,7 @@ mod debug_breakpoints;
 mod debug_commands;
 mod debug_console;
 mod debug_gutter;
+mod debug_hover;
 mod debug_java;
 mod debug_panel;
 mod debug_runs;

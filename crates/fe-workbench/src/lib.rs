@@ -33,6 +33,7 @@ mod color_literals;
 mod config_problems;
 pub mod debug_breakpoints;
 pub mod debug_gutter;
+mod debug_hover;
 pub mod debug_java;
 mod debug_panel;
 mod debug_runs;

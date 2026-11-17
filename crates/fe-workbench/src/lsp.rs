@@ -1470,6 +1470,7 @@ impl Workbench {
         self.sync_folds(cx);
         self.sync_semantic_tokens(cx);
         self.sync_markdown_renderers(cx);
+        self.sweep_debug_hover(&editors, cx);
         self.lsp.hover.ignore.sync(&editors, cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
         let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
@@ -2284,13 +2285,22 @@ impl CodeActioner {
 /// completions add paths and hovers add a pattern's matches, server or none
 /// ([`crate::ignore_assist`]).
 #[derive(Default)]
-struct LspHover {
+pub(crate) struct LspHover {
     manager: RefCell<Weak<Mutex<LspManager>>>,
     /// The workbench, to read the editor asking for completions in.
     workbench: RefCell<Option<(WeakEntity<Workbench>, gpui::AsyncApp)>>,
     /// Runs the commands accepted completions have.
     executor: RefCell<Option<gpui::BackgroundExecutor>>,
     ignore: Rc<crate::ignore_assist::IgnoreAssist>,
+    /// The stops of the debugger's values the popovers may show, by buffer:
+    /// swept each frame, closing a popover whose stop is over
+    /// ([`crate::debug_hover`]).
+    pub(crate) debug_shown: Rc<RefCell<Vec<(BufferId, crate::debug_hover::StopId)>>>,
+    /// The `debug.hover` or `debug.evaluate` under way: the next replaces it.
+    pub(crate) debug_command: RefCell<Option<gpui::Task<()>>>,
+    /// A test's stand-in for the language server's answer.
+    #[cfg(test)]
+    pub(crate) server: RefCell<Option<Rc<dyn Fn() -> fe_gpui::HoverFuture>>>,
 }
 
 impl LspHover {
@@ -2315,16 +2325,37 @@ impl fe_gpui::HoverProvider for LspHover {
     fn hover(&self, buffer: BufferId, version: Version, offset: usize) -> fe_gpui::HoverFuture {
         let ignore = self.ignore_host(buffer);
         let assist = self.ignore.clone();
+        let host = self.workbench.borrow().clone();
+        let value = (host.clone()).map(|(workbench, cx)| {
+            crate::debug_hover::hover(workbench, cx, buffer, version, offset)
+        });
+        let shown = self.debug_shown.clone();
         // Sent under the lock; awaited without it.
         let reply = (self.manager.borrow().upgrade())
             .map(|manager| lock(&manager).hover(buffer, version, offset));
+        #[cfg(test)]
+        let stand_in = self.server.borrow().clone();
         Box::pin(async move {
+            // The debugger's value first: it answers at once or not at all,
+            // and the server's wait is not its.
+            let value = match value {
+                Some(value) => value.await,
+                None => None,
+            };
             let matches = match ignore {
                 Some((workbench, cx)) => assist.hover(workbench, cx, buffer, version, offset).await,
                 None => None,
             };
-            let server = match reply {
-                Some(reply) => match reply.await {
+            #[cfg(test)]
+            let stood_in = match stand_in {
+                Some(server) => Some(server().await),
+                None => None,
+            };
+            #[cfg(not(test))]
+            let stood_in: Option<Option<fe_gpui::HoverContent>> = None;
+            let server = match (stood_in, reply) {
+                (Some(server), _) => server,
+                (None, Some(reply)) => match reply.await {
                     Ok(hover) => hover.map(|hover| fe_gpui::HoverContent {
                         text: hover.text,
                         range: hover.range,
@@ -2334,9 +2365,20 @@ impl fe_gpui::HoverProvider for LspHover {
                         None
                     }
                 },
-                None => None,
+                (None, None) => None,
             };
-            crate::ignore_assist::merged_hover(server, matches)
+            let rest = crate::ignore_assist::merged_hover(server, matches);
+            // The value counts only if its stop still stands now: the
+            // server may have answered after the program ran on.
+            let mut shown_value = None;
+            if let (Some(value), Some((workbench, mut cx))) = (value, host)
+                && crate::debug_hover::current(&workbench, &mut cx, value.stop).await
+            {
+                shown.borrow_mut().push((buffer, value.stop));
+                shown_value = Some(value.content);
+            }
+            let value = shown_value;
+            crate::debug_hover::merged(value, rest)
         })
     }
 }
@@ -2807,3 +2849,10 @@ mod trust_tests;
 #[cfg(test)]
 #[path = "lsp_trusted_settings_tests.rs"]
 mod trusted_settings_tests;
+
+impl Workbench {
+    /// The state the hover provider shares with the debugger's hover.
+    pub(crate) fn hover_host(&self) -> &Rc<LspHover> {
+        &self.lsp.hover
+    }
+}

@@ -392,3 +392,21 @@ workbench-debug-console-failed-name = Error: { $error }
 workbench-debug-console-blank = Blank line
 workbench-debug-console-stderr-name = { $text }, error output
 workbench-debug-console-important-name = { $text }, important
+
+## Hover evaluation (debug_hover.rs, card D11).
+
+command-debug-evaluate = Debug: Evaluate Selection
+command-debug-hover = Debug: Show Value at Cursor
+
+# The last line of a value's children when there are more than the popover
+# lists: $count is how many are left out.
+workbench-debug-hover-more = { $count ->
+        [one] … { $count } more
+       *[other] … { $count } more
+    }
+workbench-debug-hover-not-stopped = The program isn't stopped
+workbench-debug-hover-unsupported = This debug adapter can't evaluate for hovers
+workbench-debug-hover-nothing = No identifier here to evaluate
+workbench-debug-hover-no-frame = The stopped thread has no frame in this file
+# $error is the adapter's message.
+workbench-debug-hover-failed = Couldn't evaluate: { $error }
