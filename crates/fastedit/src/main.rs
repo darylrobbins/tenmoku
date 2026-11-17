@@ -5,6 +5,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app_icon;
+#[cfg(test)]
+mod app_icon_tests;
 mod cli;
 mod config;
 mod grammar_install;

@@ -370,6 +370,14 @@ Game Memory template didn't finish a recording on this machine.
 | Shader library | about 0.75 MB (timed alone: footprint 4.2 → 4.9 MB across `new_library_with_source`) | | |
 | Malloc | 15 MB | 16 MB | 15 MB |
 
+- **CG Image, 32 MB in one region, was the Dock icon** (T1907).
+  `app_icon::set()` → `setApplicationIconImage:` →
+  `_updateIconImageFromOriginal` makes AppKit render a 32 MB bitmap
+  (`malloc_history` stack in `docs/decisions/gy5w96pera-cg-image-region.md`).
+  A bundle with `CFBundleIconFile` and its `.icns` no longer calls it.
+  Footprint CG Image line, dev binary in a bundle with the real Info.plist
+  and icns: 32 MB before, none after (footprint 102 → 71 MB); unbundled
+  32 MB before and after (the icon is still set there).
 - **Three quarters is Metal's per-process memory, not GPUI's resources.**
   Nothing GPUI allocates is 8 MB, and its own buffers and textures come to
   under 25 MB. The 8 MB regions arrive with the first present (the footprint
