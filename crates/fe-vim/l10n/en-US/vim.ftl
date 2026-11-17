@@ -400,6 +400,7 @@ vim-key-next-e = move line down
 
 vim-group-buffer = buffer
 vim-group-code = code
+vim-group-debug = debug
 vim-group-file-find = file/find
 vim-group-git = git
 vim-group-hunks = hunks

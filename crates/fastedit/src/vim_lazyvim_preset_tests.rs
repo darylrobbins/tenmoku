@@ -57,6 +57,23 @@ const TABLE: &[(&str, &str)] = &[
     ("]q", "quickfix.next"),
     ("[q", "quickfix.previous"),
     ("<leader>xt", "todo.list"),
+    ("<leader>db", "debug.toggle_breakpoint"),
+    ("<leader>dc", "debug.start"),
+    ("<leader>da", "debug.start_with_args"),
+    ("<leader>dC", "debug.run_to_cursor"),
+    ("<leader>di", "debug.step_into"),
+    ("<leader>do", "debug.step_out"),
+    ("<leader>dO", "debug.step_over"),
+    ("<leader>dj", "debug.frame_down"),
+    ("<leader>dk", "debug.frame_up"),
+    ("<leader>dl", "debug.rerun_last"),
+    ("<leader>dP", "debug.pause"),
+    ("<leader>dr", "debug.show_console"),
+    ("<leader>ds", "debug.show_session"),
+    ("<leader>dt", "debug.stop"),
+    ("<leader>dw", "debug.hover"),
+    ("<leader>du", "debug.show_panels"),
+    ("<leader>de", "debug.evaluate"),
     ("]t", "todo.next"),
     ("[t", "todo.previous"),
     ("<leader>-", "pane.split_down"),
@@ -80,7 +97,10 @@ const TABLE: &[(&str, &str)] = &[
 ];
 
 /// The visual-mode maps.
-const VISUAL: &[(&str, &str)] = &[("<leader>cf", "lsp.format_selection")];
+const VISUAL: &[(&str, &str)] = &[
+    ("<leader>cf", "lsp.format_selection"),
+    ("<leader>de", "debug.evaluate"),
+];
 
 fn preset() -> Preset {
     bundled(VimPreset::Lazyvim).unwrap()
@@ -153,11 +173,15 @@ fn listed_but_mapped(listed: &[String], text: &str) -> Vec<String> {
 #[test]
 fn unmapped_keys_are_listed_and_absent() {
     let listed = unmapped();
-    assert_eq!(listed.len(), 11, "{listed:?}");
+    assert_eq!(listed.len(), 13, "{listed:?}");
     assert_eq!(
         listed_but_mapped(&listed, preset().text),
         Vec::<String>::new()
     );
+
+    for key in ["<leader>dg", "<leader>dB"] {
+        assert!(listed.iter().any(|listed| listed == key), "{key}");
+    }
 
     // A listed key the file maps is caught.
     let both = format!(

@@ -67,6 +67,26 @@ nnoremap ]q <Cmd>fe:quickfix.next<CR>
 nnoremap [q <Cmd>fe:quickfix.previous<CR>
 nnoremap <leader>xt <Cmd>fe:todo.list<CR>
 
+" debug
+nnoremap <leader>db <Cmd>fe:debug.toggle_breakpoint<CR>
+nnoremap <leader>dc <Cmd>fe:debug.start<CR>
+nnoremap <leader>da <Cmd>fe:debug.start_with_args<CR>
+nnoremap <leader>dC <Cmd>fe:debug.run_to_cursor<CR>
+nnoremap <leader>di <Cmd>fe:debug.step_into<CR>
+nnoremap <leader>do <Cmd>fe:debug.step_out<CR>
+nnoremap <leader>dO <Cmd>fe:debug.step_over<CR>
+nnoremap <leader>dj <Cmd>fe:debug.frame_down<CR>
+nnoremap <leader>dk <Cmd>fe:debug.frame_up<CR>
+nnoremap <leader>dl <Cmd>fe:debug.rerun_last<CR>
+nnoremap <leader>dP <Cmd>fe:debug.pause<CR>
+nnoremap <leader>dr <Cmd>fe:debug.show_console<CR>
+nnoremap <leader>ds <Cmd>fe:debug.show_session<CR>
+nnoremap <leader>dt <Cmd>fe:debug.stop<CR>
+nnoremap <leader>dw <Cmd>fe:debug.hover<CR>
+nnoremap <leader>du <Cmd>fe:debug.show_panels<CR>
+nnoremap <leader>de <Cmd>fe:debug.evaluate<CR>
+xnoremap <leader>de <Cmd>fe:debug.evaluate<CR>
+
 " todo comments, as todo-comments.nvim jumps between them
 nnoremap ]t <Cmd>fe:todo.next<CR>
 nnoremap [t <Cmd>fe:todo.previous<CR>
@@ -100,6 +120,7 @@ nnoremap <leader>uw <Cmd>fe:editor.toggle_soft_wrap<CR>
 " icon drawn beside the group, after LazyVim's.
 fegroup <leader>b buffer icon=files
 fegroup <leader>c code icon=code
+fegroup <leader>d debug icon=bug
 fegroup <leader>f file/find icon=search
 fegroup <leader>g git icon=git-branch
 fegroup <leader>gh hunks icon=file-diff
@@ -122,3 +143,5 @@ fegroup <leader>x diagnostics/quickfix icon=triangle-alert
 "   <leader>bo  delete other buffers
 "   <leader><tab>  tab pages
 "   <leader>qs  sessions
+"   <leader>dg  go to line (no execute)
+"   <leader>dB  breakpoint condition

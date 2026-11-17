@@ -61,6 +61,7 @@ fn the_preset_names_every_group_it_has_maps_in() {
         [
             ("<leader>b".to_owned(), "buffer"),
             ("<leader>c".to_owned(), "code"),
+            ("<leader>d".to_owned(), "debug"),
             ("<leader>f".to_owned(), "file/find"),
             ("<leader>g".to_owned(), "git"),
             ("<leader>gh".to_owned(), "hunks"),
@@ -97,6 +98,7 @@ fn every_named_group_has_an_icon() {
         [
             ("buffer", "files"),
             ("code", "code"),
+            ("debug", "bug"),
             ("file/find", "search"),
             ("git", "git-branch"),
             ("hunks", "file-diff"),

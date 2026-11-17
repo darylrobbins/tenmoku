@@ -299,6 +299,52 @@ fn reload_applies_the_preset(cx: &mut TestAppContext) {
     assert_eq!(problems(Path::new("broken.vimrc"), cx), []);
 }
 
+#[gpui::test]
+fn lazyvim_debug_keys_load_through_the_settings(cx: &mut TestAppContext) {
+    let files = Files::new("[vim]\npreset = \"lazyvim\"\n", None);
+    start(&files, bundled, cx);
+    // The editors' set, built from what the settings loaded, drives a vim.
+    let in_use = in_use(cx);
+    let (set, issues) = RemapSet::new(&in_use.remaps, &in_use.leader);
+    assert_eq!(issues, []);
+    let set = std::sync::Arc::new(set);
+    let mut vim = fe_vim::HeadlessVim::new("one\ntwo", (0, 0));
+    vim.state_mut().set_remaps(set);
+    let taken = |vim: &mut fe_vim::HeadlessVim| {
+        vim.state_mut()
+            .take_remap_command()
+            .map(|command| command.0.command.to_string())
+    };
+    for (keys, id) in [
+        (" db", "toggle_breakpoint"),
+        (" dc", "start"),
+        (" da", "start_with_args"),
+        (" dC", "run_to_cursor"),
+        (" di", "step_into"),
+        (" do", "step_out"),
+        (" dO", "step_over"),
+        (" dj", "frame_down"),
+        (" dk", "frame_up"),
+        (" dl", "rerun_last"),
+        (" dP", "pause"),
+        (" dr", "show_console"),
+        (" ds", "show_session"),
+        (" dt", "stop"),
+        (" dw", "hover"),
+        (" du", "show_panels"),
+        (" de", "evaluate"),
+    ] {
+        vim.feed(keys).unwrap();
+        assert_eq!(taken(&mut vim), Some(format!("debug.{id}")), "{keys:?}");
+    }
+    // `<leader>de` evaluates the selection in visual mode too.
+    vim.feed("<Esc>v").unwrap();
+    vim.feed(" de").unwrap();
+    assert_eq!(taken(&mut vim).as_deref(), Some("debug.evaluate"));
+    assert!(vim.feed("<Esc> dp").is_err());
+    assert_eq!(taken(&mut vim), None, "no <leader>dp");
+}
+
 /// A preset with an insert map.
 fn jk(preset: VimPreset) -> Option<Preset> {
     (preset == VimPreset::Lazyvim).then_some(Preset {

@@ -703,6 +703,9 @@ fn line_column(source: &str, offset: usize) -> (usize, usize) {
 }
 
 #[cfg(test)]
+#[path = "vim_lazyvim_debug_tests.rs"]
+mod vim_lazyvim_debug_tests;
+#[cfg(test)]
 #[path = "vim_lazyvim_groups_tests.rs"]
 mod vim_lazyvim_groups_tests;
 #[cfg(test)]
