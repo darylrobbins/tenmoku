@@ -37,6 +37,31 @@ $FT -o spline-sans-mono/SplineSansMono-Italic.ttf   'splinesansmono/SplineSansMo
 $FT -o spline-sans-mono/SplineSansMono-SemiBoldItalic.ttf 'splinesansmono/SplineSansMono-Italic[wght].ttf' wght=600
 ```
 
+### Spline Sans Mono Italic's one-cell advances
+
+The Italic instance at 400 comes out with `a` and its ten accented forms
+(`aacute` … `atilde`, `aogonek`, `aringacute`) 1196 units wide, where every
+other one-cell glyph of every face is 1200: an italic `a` would pull the rest
+of its row 0.03 px left at 13 px, a little more with each, out of line with
+the plain rows (T1600, `crates/fe-gpui/tests/styled_spans.rs`,
+`every_face_has_the_same_advance`). Those advances are set to 1200 after
+instancing, their outlines left where they are; the two-cell ligature glyphs
+(2400) and zero-width marks keep theirs:
+
+```sh
+uvx --from fonttools==4.60.1 python -I - spline-sans-mono/SplineSansMono-Italic.ttf 1200 <<'PY'
+import sys
+from fontTools.ttLib import TTFont
+path, cell = sys.argv[1], int(sys.argv[2])
+font = TTFont(path, recalcTimestamp=False)
+metrics = font["hmtx"].metrics
+for name, (advance, lsb) in metrics.items():
+    if advance != cell and abs(advance - cell) <= cell // 100:
+        metrics[name] = (cell, lsb)
+font.save(path)
+PY
+```
+
 A new file goes in `crates/fe-fonts/src/lib.rs`'s `FACES`, and in
 THIRD_PARTY.md's Fonts table; `crates/fe-fonts/tests/fonts.rs` checks that
 every file here is listed under the family and weight its name table gives.

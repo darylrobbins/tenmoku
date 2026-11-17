@@ -49,6 +49,7 @@ pub use element::{
     BreakpointGlyph, ChevronKind, DrawnAnnotations, DrawnBreakpoint, DrawnChevron, DrawnGutter,
     DrawnPill, DrawnProposalHeader, DrawnText,
 };
+pub use element::{Faces, SpanStyle, text_runs};
 pub use fe_config::{
     EditorSettings, SettingsEvent, StickyScrollSettings,
     settings::{InlineDiagnostics, RenderWhitespace},

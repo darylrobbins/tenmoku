@@ -36,7 +36,9 @@ use gpui::{
     linear_gradient, px,
 };
 
-use super::{FrameLayout, Line, Shaper, foreground_spans, styled_highlights};
+use super::{
+    FrameLayout, Line, SpanStyle, StyledShaper, styled_foreground_spans, styled_highlights,
+};
 use crate::{EditorTheme, EditorView};
 
 /// The most rows the band pins, `editor.sticky_scroll.max_line_count`,
@@ -445,14 +447,15 @@ pub(crate) struct Placed {
 }
 
 /// Lays out the band of `pinned` rows ([`pinned`]) over `layout`'s frame,
-/// its rows shaped with `shaper`: `None` while it pins nothing.
+/// its rows shaped with `shaper`, in their spans' faces: `None` while it
+/// pins nothing.
 pub(crate) fn layout(
     layout: &mut FrameLayout,
     view: &EditorView,
     pinned: Vec<StickyRow>,
     syntax: Option<&Syntax>,
     unnecessary: &[Range<usize>],
-    shaper: &mut Shaper,
+    shaper: &mut StyledShaper,
     em: f32,
 ) -> Option<Placed> {
     if pinned.is_empty() {
@@ -483,19 +486,20 @@ pub(crate) fn layout(
     };
     let view_width = f64::from(text_bounds.width);
     let number_right = frame.problem_column.x;
-    // The text from `slice`, tabs expanded, shaped in the colours the text
-    // area gives it.
-    let shape = |shaper: &mut Shaper, slice: &RowSlice| {
+    // The text from `slice`, tabs expanded, shaped in the colours and faces
+    // the text area gives it.
+    let shape = |shaper: &mut StyledShaper, slice: &RowSlice| {
         let shown = slice.range.clone();
         let expanded = ExpandedRow::with_start_column(
             &text.slice_to_string(shown.clone()),
             slice.start_column,
             tab_size,
         );
-        let foreground = foreground_spans(&model.decorations(shown.clone()), theme);
+        let foreground = styled_foreground_spans(&model.decorations(shown.clone()), theme);
         let spans = styled_highlights(syntax, theme, unnecessary, &foreground, shown.clone());
         let first = spans.partition_point(|span| span.range.end <= shown.start);
-        let runs = row_runs(&expanded, shown.start, &spans[first..], &theme.foreground);
+        let text_style = SpanStyle::plain(theme.foreground);
+        let runs = row_runs(&expanded, shown.start, &spans[first..], &text_style);
         (shaper.shape(expanded.text(), &runs), expanded)
     };
     let mut rows = Vec::with_capacity(pinned.len());
@@ -554,7 +558,7 @@ pub(crate) fn layout(
                 len: number.len(),
                 style: color,
             };
-            let line = shaper.shape(&number, &[run]);
+            let line = shaper.plain().shape(&number, &[run]);
             let x = number_right - f32::from(line.layout.width);
             Some((x, line))
         });

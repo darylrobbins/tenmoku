@@ -92,6 +92,12 @@ harness = false
 name = "a11y_text"
 harness = false
 
+# Shaping highlighted rows with and without italic and bold spans (PERF.md,
+# "Italic and bold spans").
+[[bench]]
+name = "styled_shape"
+harness = false
+
 # Hand-checking proposed changes: diff blocks, buttons, undo and commands.
 [[example]]
 name = "proposal_demo"

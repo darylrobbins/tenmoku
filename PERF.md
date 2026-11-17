@@ -1717,3 +1717,40 @@ people; no CI check enforces them.
 To rerun: `scripts/build-grammar-wasm.sh kotlin`, then
 `cargo bench -p fe-syntax --bench wasm`, on a quiet machine if possible; the
 bench exits naming the script if the module is missing.
+
+## Italic and bold spans (`cargo bench -p fe-gpui --bench styled_shape`)
+
+Spans the theme sets in a face of their own (`[syntax_style]`: Yohen's and
+Hakuji's italic comments) change the row's shaping: `fe_gpui::text_runs` gives
+GPUI one font run per change of face, colours staying decoration runs, and a
+row with no styled span is one run as before (T1600). GPUI's CoreText shaping
+costs about a row's worth per font run, so a run of spaces alone, which draws
+nothing and is one cell in every face, takes the face before it (leading a row,
+the one after): an indented comment is one italic run.
+
+The bench shapes the first 1,000 rows of `crates/fe-gpui/src/element.rs`
+(highlighted by fe-syntax, 170 with a styled span, nearly all doc comments) as
+the text area does, `text_runs` then `layout_line`, in Spline Sans Mono 13 px
+with the macOS text system, each pass with a new window text system so no row
+comes from GPUI's line cache: once with the spans' faces and once with every
+run plain, in 200 alternating pairs, then the same for the 170 styled rows
+alone. Budget: styled within 15% of plain. Compare by the median pair ratio,
+which a change of load between pairs leaves out; the fastest pass and p50 swing
+at this load.
+
+Apple M3 Max, release, 2026-11-17, other lanes building at load 22 to 27; two
+runs.
+
+| Rows | Plain fastest / p50 | Styled fastest / p50 | Median pair |
+|---|---|---|---|
+| all 1,000 | 6.98 / 21.6 ms | 6.97 / 21.8 ms | **+0.1%** |
+| all 1,000 (second run) | 12.2 / 16.4 ms | 9.75 / 16.2 ms | **+0.6%** |
+| the 170 styled | 1.70 / 3.93 ms | 1.72 / 3.95 ms | **+0.4%** |
+| the 170 styled (second run) | 1.71 / 3.84 ms | 1.72 / 3.85 ms | **+0.4%** |
+
+Before spaces took a neighbouring face, an indented comment was a plain run of
+spaces then an italic run: the styled rows were +55.7% (median pair) and all
+1,000 rows +14.4%, inside the budget but only just. Caching the faces' font
+ids or the run lists per row, the fallback the card names, would not have
+helped: GPUI resolves a run's font with a hash lookup, and the cost is in
+shaping each run.

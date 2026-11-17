@@ -6,7 +6,9 @@
 //! It measures with the editor's [`GlyphWidths`]. The editor element's
 //! shaped line and shaper are private to it, so this file has its own: a
 //! line coloured by its style runs, as there, without the merging of
-//! same-coloured runs that syntax colours call for.
+//! same-coloured runs that syntax colours call for. Its runs are
+//! [`SpanStyle`]s, shaped in their faces as the editor's are
+//! ([`FaceShaping`]), though nothing here sets one yet.
 
 use std::{mem, sync::Arc};
 
@@ -19,13 +21,13 @@ use fe_display::{
 use fe_editor::ViewerModel;
 use gpui::{
     App, Bounds, ContentMask, Context, DecorationRun, Element, ElementId, Entity, Font, FontId,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, Pixels, Point,
-    Style, TextAlign, TextRun, Window, WindowTextSystem, fill, point, px, relative, size,
+    GlobalElementId, InspectorElementId, IntoElement, LayoutId, LineLayout, Pixels, Point, Style,
+    TextAlign, Window, WindowTextSystem, fill, point, px, relative, size,
 };
 
 use super::FileViewer;
 use crate::element::{
-    GlyphWidths,
+    FaceShaping, GlyphWidths, SpanStyle,
     a11y_text::{self, A11yText, RunKey},
 };
 
@@ -219,41 +221,33 @@ impl MeasuredLine for ViewerLine {
     }
 }
 
-/// Shapes text with the window's shaper, in the editor font.
+/// Shapes text with the window's shaper, in the editor font's faces.
 struct Shaper {
     text_system: Arc<WindowTextSystem>,
     font: Font,
     font_size: Pixels,
+    faces: FaceShaping,
 }
 
 impl TextMeasure for Shaper {
-    type Style = Hsla;
+    type Style = SpanStyle;
     type Line = ViewerLine;
 
-    fn shape(&mut self, text: &str, runs: &[StyleRun<Hsla>]) -> ViewerLine {
-        let whole = [TextRun {
-            len: text.len(),
-            font: self.font.clone(),
-            color: Hsla::default(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }];
+    fn shape(&mut self, text: &str, runs: &[StyleRun<SpanStyle>]) -> ViewerLine {
         let decorations = runs
             .iter()
             .filter(|run| run.len > 0)
             .map(|run| DecorationRun {
                 len: run.len as u32,
-                color: run.style,
+                color: run.style.color,
                 background_color: None,
                 underline: None,
                 strikethrough: None,
             })
             .collect();
+        let (text_system, font) = (&self.text_system, &self.font);
         ViewerLine {
-            layout: self
-                .text_system
-                .layout_line(text, self.font_size, &whole, None),
+            layout: (self.faces).layout(text_system, font, self.font_size, text, runs),
             decorations,
         }
     }
@@ -361,15 +355,16 @@ impl Element for FileViewerElement {
             line_height: line_height.into(),
             em,
             styles: FrameStyles {
-                text: theme.foreground,
-                line_number: theme.gutter_foreground,
-                active_line_number: theme.gutter_active_foreground,
+                text: SpanStyle::plain(theme.foreground),
+                line_number: SpanStyle::plain(theme.gutter_foreground),
+                active_line_number: SpanStyle::plain(theme.gutter_active_foreground),
             },
         };
         let mut shaper = Shaper {
             text_system,
             font,
             font_size,
+            faces: FaceShaping::default(),
         };
         let frame = layout::layout_frame(
             &input,

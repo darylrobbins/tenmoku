@@ -589,16 +589,22 @@ impl MeasuredLine for Line {
 /// The decoration runs that colour a row: the style runs with adjacent
 /// same-colour ones merged.
 fn decoration_runs(runs: &[StyleRun<Hsla>]) -> Vec<DecorationRun> {
+    colour_runs(runs)
+}
+
+/// [`decoration_runs`] of runs in any style: their colours.
+fn colour_runs<S: HighlightStyle>(runs: &[StyleRun<S>]) -> Vec<DecorationRun> {
     let mut out: Vec<DecorationRun> = Vec::with_capacity(runs.len());
     for run in runs {
         if run.len == 0 {
             continue;
         }
+        let color = run.style.color();
         match out.last_mut() {
-            Some(last) if last.color == run.style => last.len += run.len as u32,
+            Some(last) if last.color == color => last.len += run.len as u32,
             _ => out.push(DecorationRun {
                 len: run.len as u32,
-                color: run.style,
+                color,
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -608,7 +614,320 @@ fn decoration_runs(runs: &[StyleRun<Hsla>]) -> Vec<DecorationRun> {
     out
 }
 
+/// How a span of the text area's text is drawn: its colour, and whether its
+/// face is italic or bold, as the theme's `[syntax_style]` gives a capture.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpanStyle {
+    pub color: Hsla,
+    pub italic: bool,
+    pub bold: bool,
+}
+
+impl SpanStyle {
+    /// `color` in the plain face.
+    pub fn plain(color: Hsla) -> Self {
+        Self {
+            color,
+            italic: false,
+            bold: false,
+        }
+    }
+
+    /// `color` in the face `style` gives: `None` is the plain face.
+    pub fn new(color: Hsla, style: Option<fe_config::FontStyle>) -> Self {
+        let style = style.unwrap_or_default();
+        Self {
+            color,
+            italic: style.italic,
+            bold: style.bold,
+        }
+    }
+
+    /// Whether it's drawn in another face than the plain one.
+    pub fn changes_face(&self) -> bool {
+        self.italic || self.bold
+    }
+}
+
+impl From<Hsla> for SpanStyle {
+    fn from(color: Hsla) -> Self {
+        Self::plain(color)
+    }
+}
+
+/// What the highlights of a row are drawn in: [`SpanStyle`] for the text
+/// area, a colour alone for what draws no faces (the minimap).
+pub(crate) trait HighlightStyle: Copy + PartialEq {
+    fn plain(color: Hsla) -> Self;
+    /// In `color` and `style`; `None` when that's how the text is drawn
+    /// anyway: no colour of its own, and a face it doesn't draw or the
+    /// plain one.
+    fn styled(color: Option<Hsla>, style: Option<fe_config::FontStyle>, text: Hsla)
+    -> Option<Self>;
+    fn color(self) -> Hsla;
+    fn with_color(self, color: Hsla) -> Self;
+}
+
+impl HighlightStyle for Hsla {
+    fn plain(color: Hsla) -> Self {
+        color
+    }
+
+    fn styled(color: Option<Hsla>, _: Option<fe_config::FontStyle>, _: Hsla) -> Option<Self> {
+        color
+    }
+
+    fn color(self) -> Hsla {
+        self
+    }
+
+    fn with_color(self, color: Hsla) -> Self {
+        color
+    }
+}
+
+impl HighlightStyle for SpanStyle {
+    fn plain(color: Hsla) -> Self {
+        SpanStyle::plain(color)
+    }
+
+    fn styled(
+        color: Option<Hsla>,
+        style: Option<fe_config::FontStyle>,
+        text: Hsla,
+    ) -> Option<Self> {
+        let style = SpanStyle::new(color.unwrap_or(text), style);
+        (color.is_some() || style.changes_face()).then_some(style)
+    }
+
+    fn color(self) -> Hsla {
+        self.color
+    }
+
+    fn with_color(self, color: Hsla) -> Self {
+        Self { color, ..self }
+    }
+}
+
+/// The weight bold spans are drawn at: the bundled code family's heaviest,
+/// SemiBold, which a family with a Bold and no SemiBold matches with its
+/// Bold, as CSS font matching goes up from 600.
+const BOLD_WEIGHT: FontWeight = FontWeight::SEMIBOLD;
+
+/// The faces of a code font that spans are drawn in: the font itself, and
+/// its italic, bold and bold italic. A face drawn at another advance than
+/// the font's own (a family whose italic is wider, say) would put a row's
+/// columns out of line with the rest, so the font's own face draws it
+/// instead.
+#[derive(Clone, Debug)]
+pub struct Faces {
+    /// By [`Faces::index`].
+    fonts: [Font; 4],
+}
+
+impl Faces {
+    /// `font`'s faces as `text_system` resolves them at `font_size`.
+    pub fn new(text_system: &TextSystem, font: &Font, font_size: Pixels) -> Self {
+        let advance = |font: &Font| {
+            let id = text_system.resolve_font(font);
+            (text_system.advance(id, font_size, 'm').ok()).map(|advance| advance.width)
+        };
+        let own = advance(font);
+        let face = |italic: bool, bold: bool| {
+            let face = Font {
+                weight: if bold { BOLD_WEIGHT } else { font.weight },
+                style: if italic {
+                    gpui::FontStyle::Italic
+                } else {
+                    font.style
+                },
+                ..font.clone()
+            };
+            match advance(&face) == own {
+                true => face,
+                false => font.clone(),
+            }
+        };
+        Self {
+            fonts: [
+                font.clone(),
+                face(true, false),
+                face(false, true),
+                face(true, true),
+            ],
+        }
+    }
+
+    /// The font `style` is drawn in.
+    pub fn font(&self, style: &SpanStyle) -> &Font {
+        &self.fonts[Self::index(style)]
+    }
+
+    fn index(style: &SpanStyle) -> usize {
+        usize::from(style.italic) | (usize::from(style.bold) << 1)
+    }
+}
+
+/// The text runs `text` is shaped in, over `runs`, into `out`: one in the
+/// plain face while no run changes it, else one per change of face, colours
+/// left to the decoration runs, so a row is cut no more than its faces cut
+/// it. A run of spaces alone, which draws nothing and is as wide in every
+/// face, takes the face before it (the first, the face after it): an
+/// indented comment is one run, as each run costs the shaper about as much
+/// as a row. A face changes only between grapheme clusters: a cluster a run
+/// starts inside is drawn in the face of the run it starts in.
+pub fn text_runs(text: &str, runs: &[StyleRun<SpanStyle>], faces: &Faces, out: &mut Vec<TextRun>) {
+    let run = |len: usize, font: &Font| TextRun {
+        len,
+        font: font.clone(),
+        color: Hsla::default(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    out.clear();
+    if !runs
+        .iter()
+        .any(|run| run.len > 0 && run.style.changes_face())
+    {
+        out.push(run(text.len(), &faces.fonts[0]));
+        return;
+    }
+    // Each face's end, adjacent runs of one face as one.
+    let mut ends: Vec<(usize, usize)> = Vec::new();
+    let mut end = 0;
+    for run in runs.iter().filter(|run| run.len > 0) {
+        let start = end;
+        end += run.len;
+        let spaces = (text.get(start..end)).is_some_and(|run| run.bytes().all(|byte| byte == b' '));
+        let face = Faces::index(&run.style);
+        match ends.last_mut() {
+            Some((last, at)) if *last == face || spaces => *at = end,
+            // Leading spaces: the next face starts at the row's start.
+            None if spaces => {}
+            _ => ends.push((face, end)),
+        }
+    }
+    if ends.is_empty() {
+        out.push(run(text.len(), &faces.fonts[0]));
+        return;
+    }
+    let count = ends.len();
+    let mut start = 0;
+    let mut last_face = None;
+    for (ix, (face, end)) in ends.into_iter().enumerate() {
+        // The last ends with the text whatever the runs add up to.
+        let end = match ix + 1 == count {
+            true => text.len(),
+            false => cluster_end(text, end),
+        };
+        if end <= start {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if last_face == Some(face) => last.len += end - start,
+            _ => out.push(run(end - start, &faces.fonts[face])),
+        }
+        last_face = Some(face);
+        start = end;
+    }
+}
+
+/// `at`, or the end of the grapheme cluster it's inside of `text`.
+fn cluster_end(text: &str, at: usize) -> usize {
+    if at >= text.len() {
+        return text.len();
+    }
+    let mut at = at;
+    while !text.is_char_boundary(at) {
+        at += 1;
+    }
+    let mut cursor = unicode_segmentation::GraphemeCursor::new(at, text.len(), true);
+    match cursor.is_boundary(text, 0) {
+        Ok(false) => (cursor.next_boundary(text, 0).ok().flatten()).unwrap_or(text.len()),
+        _ => at,
+    }
+}
+
+/// Shapes text in its spans' faces ([`text_runs`]), resolving the faces
+/// once a row first draws one, so rows in the plain face alone cost what
+/// they did before there were faces.
+#[derive(Default)]
+pub(crate) struct FaceShaping {
+    faces: Option<Faces>,
+    runs: Vec<TextRun>,
+}
+
+impl FaceShaping {
+    /// `text` over `runs`, shaped by `text_system` in the faces of `font`.
+    pub(crate) fn layout(
+        &mut self,
+        text_system: &WindowTextSystem,
+        font: &Font,
+        font_size: Pixels,
+        text: &str,
+        runs: &[StyleRun<SpanStyle>],
+    ) -> Arc<LineLayout> {
+        let faces = match runs
+            .iter()
+            .any(|run| run.len > 0 && run.style.changes_face())
+        {
+            true => (self.faces).get_or_insert_with(|| Faces::new(text_system, font, font_size)),
+            false => {
+                let whole = [TextRun {
+                    len: text.len(),
+                    font: font.clone(),
+                    color: Hsla::default(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }];
+                return text_system.layout_line(text, font_size, &whole, None);
+            }
+        };
+        text_runs(text, runs, faces, &mut self.runs);
+        text_system.layout_line(text, font_size, &self.runs, None)
+    }
+}
+
+/// Shapes the text area's rows in their spans' faces ([`FaceShaping`]),
+/// with [`Shaper`]'s font as the plain one.
+pub(crate) struct StyledShaper {
+    shaper: Shaper,
+    faces: FaceShaping,
+}
+
+impl StyledShaper {
+    pub(crate) fn new(shaper: Shaper) -> Self {
+        Self {
+            shaper,
+            faces: FaceShaping::default(),
+        }
+    }
+
+    /// The shaper of colour runs alone, in the plain face.
+    pub(crate) fn plain(&mut self) -> &mut Shaper {
+        &mut self.shaper
+    }
+}
+
+impl TextMeasure for StyledShaper {
+    type Style = SpanStyle;
+    type Line = Line;
+
+    fn shape(&mut self, text: &str, runs: &[StyleRun<SpanStyle>]) -> Line {
+        let Shaper {
+            text_system,
+            font,
+            font_size,
+        } = &self.shaper;
+        let layout = (self.faces).layout(text_system, font, *font_size, text, runs);
+        self.shaper.line(text, layout, colour_runs(runs))
+    }
+}
+
 /// Measures text with the window's shaper, in the editor font.
+#[derive(Clone)]
 pub(crate) struct Shaper {
     text_system: Arc<WindowTextSystem>,
     font: Font,
@@ -671,13 +990,17 @@ impl TextMeasure for Shaper {
             underline: None,
             strikethrough: None,
         }];
-        Line::with_advances(
-            text,
-            self.text_system
-                .layout_line(text, self.font_size, &whole, None),
-            decoration_runs(runs),
-            |font_id, ch| char_advance(&self.text_system, font_id, self.font_size, ch),
-        )
+        let layout = (self.text_system).layout_line(text, self.font_size, &whole, None);
+        self.line(text, layout, decoration_runs(runs))
+    }
+}
+
+impl Shaper {
+    /// `text`, shaped as `layout`, coloured by `decorations`.
+    fn line(&self, text: &str, layout: Arc<LineLayout>, decorations: Vec<DecorationRun>) -> Line {
+        Line::with_advances(text, layout, decorations, |font_id, ch| {
+            char_advance(&self.text_system, font_id, self.font_size, ch)
+        })
     }
 }
 
@@ -1124,9 +1447,9 @@ impl Element for EditorElement {
             line_height: line_height.into(),
             em,
             styles: FrameStyles {
-                text: theme.foreground,
-                line_number: theme.gutter_foreground,
-                active_line_number: theme.gutter_active_foreground,
+                text: SpanStyle::plain(theme.foreground),
+                line_number: SpanStyle::plain(theme.gutter_foreground),
+                active_line_number: SpanStyle::plain(theme.gutter_active_foreground),
             },
         };
         // A tree for another version (never expected) would misplace colours.
@@ -1148,9 +1471,9 @@ impl Element for EditorElement {
             offset,
             // An inlay is one line.
             text: composition.text.replace(['\n', '\r'], " "),
-            style: theme.foreground,
+            style: SpanStyle::plain(theme.foreground),
         });
-        let inlay = inlay.or_else(|| Some(ghost_text::inlay(ghost.as_ref()?, view)));
+        let inlay = inlay.or_else(|| Some(plain_inlay(ghost_text::inlay(ghost.as_ref()?, view))));
         let blocks = block_map(view, &lenses, &hunks, ghost.as_ref());
         // A clicked sticky scroll header scrolls under the band its scopes
         // form, found once the syntax has parsed the text (the click may have
@@ -1178,16 +1501,20 @@ impl Element for EditorElement {
         // The design's UI small, which hints and lens rows are set in.
         let mut small = Shaper::ui_small(theme, shaper.text_system.clone(), cx);
         let space = glyph_widths.char_width(' ');
-        let mut hints = crate::inlay_hints::inlays(view, &mut small, space);
+        let mut hints: Vec<_> = (crate::inlay_hints::inlays(view, &mut small, space).into_iter())
+            .map(plain_inlay)
+            .collect();
         let first_swatch = hints.len();
-        hints.extend(crate::color_swatches::inlays(view));
+        hints.extend(crate::color_swatches::inlays(view).map(plain_inlay));
         let unnecessary = unnecessary_ranges(&model.diagnostics());
         let queried = decorations::Queried::default();
         // The colours of the frame's `Foreground` decorations, found once
         // the frame's rows are known.
-        let foreground: std::cell::RefCell<Vec<StyledSpan<Hsla>>> = Default::default();
+        let foreground: std::cell::RefCell<Vec<StyledSpan<SpanStyle>>> = Default::default();
         let columns = gutter_columns(font_size.into());
-        let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
+        // The text in its spans' faces; the rest below is in the plain one.
+        let mut styled = StyledShaper::new(shaper.clone());
+        let mut lay_out = |input: &FrameInput<SpanStyle>| match gutter {
             true => layout::layout_frame_with_gutter_and_hints(
                 input,
                 &columns,
@@ -1195,7 +1522,7 @@ impl Element for EditorElement {
                 &blocks,
                 inlay.as_ref(),
                 &hints,
-                &mut shaper,
+                &mut styled,
                 &mut long_rows,
                 &mut glyph_widths,
                 |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
@@ -1206,7 +1533,7 @@ impl Element for EditorElement {
                 &blocks,
                 inlay.as_ref(),
                 &hints,
-                &mut shaper,
+                &mut styled,
                 &mut long_rows,
                 &mut glyph_widths,
                 |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
@@ -1216,14 +1543,14 @@ impl Element for EditorElement {
         // decorations over its rows where they change the spans. The
         // providers are asked once for the rows' range, as the painted
         // decorations then are.
-        let mut settle = |input: &FrameInput<Hsla>| {
+        let mut settle = |input: &FrameInput<SpanStyle>| {
             let mut frame = lay_out(input);
             for _ in 0..2 {
                 let (Some(first), Some(last)) = (frame.rows.first(), frame.rows.last()) else {
                     break;
                 };
                 let decorations = queried.get(view, first.start..last.end);
-                let found = foreground_spans(&decorations, theme);
+                let found = styled_foreground_spans(&decorations, theme);
                 if found == *foreground.borrow() {
                     break;
                 }
@@ -1622,7 +1949,7 @@ impl Element for EditorElement {
             pinned,
             syntax,
             &unnecessary,
-            &mut shaper,
+            &mut styled,
             em,
         );
         // Once every highlight query of the frame, the minimap's and the
@@ -2743,15 +3070,18 @@ pub(crate) fn unnecessary_ranges(
 /// `spans` with the parts inside `fade` (sorted, merged) at
 /// [`UNNECESSARY_OPACITY`] of their alpha, and the parts of `fade` within
 /// `range` that they leave uncovered added in `text`, faded.
-fn fade_spans(
-    spans: Vec<StyledSpan<Hsla>>,
+fn fade_spans<S: HighlightStyle>(
+    spans: Vec<StyledSpan<S>>,
     fade: &[Range<usize>],
     range: &Range<usize>,
-    text: Hsla,
-) -> Vec<StyledSpan<Hsla>> {
-    let faded = |color: Hsla| Hsla {
-        a: color.a * UNNECESSARY_OPACITY,
-        ..color
+    text: S,
+) -> Vec<StyledSpan<S>> {
+    let faded = |style: S| {
+        let color = style.color();
+        style.with_color(Hsla {
+            a: color.a * UNNECESSARY_OPACITY,
+            ..color
+        })
     };
     let mut out = Vec::new();
     let mut covered = Vec::new();
@@ -4537,6 +4867,15 @@ fn next_grapheme(text: &Text, offset: usize, line_end: usize) -> Option<usize> {
     Some(offset + grapheme.len())
 }
 
+/// `inlay` in its colour, in the plain face.
+fn plain_inlay(inlay: layout::Inlay<Hsla>) -> layout::Inlay<SpanStyle> {
+    layout::Inlay {
+        offset: inlay.offset,
+        text: inlay.text,
+        style: SpanStyle::plain(inlay.style),
+    }
+}
+
 /// The buffer rows in `rows` that head a fold candidate of the syntax tree.
 fn fold_headers(
     syntax: Option<&Syntax>,
@@ -4560,23 +4899,25 @@ fn fold_headers(
     headers
 }
 
-/// The highlights in `range` that the theme colours, with bracket pairs in
-/// their depth's colour over them when the theme colours pairs, and the
-/// `Foreground` colours over those.
-fn styled_highlights(
+/// The highlights in `range` that the theme colours or sets in a face of
+/// their own (where `S` draws faces), with bracket pairs in their depth's
+/// colour over them when the theme colours pairs, and the `Foreground`
+/// colours over those.
+fn styled_highlights<S: HighlightStyle>(
     syntax: Option<&Syntax>,
     theme: &EditorTheme,
     unnecessary: &[Range<usize>],
-    foreground: &[StyledSpan<Hsla>],
+    foreground: &[StyledSpan<S>],
     range: Range<usize>,
-) -> Vec<StyledSpan<Hsla>> {
+) -> Vec<StyledSpan<S>> {
     let spans: Vec<_> = syntax
         .map(|syntax| syntax.highlights(range.clone()))
         .unwrap_or_default()
         .into_iter()
         .filter_map(|span| {
+            let (color, style) = theme.capture_style(span.highlight);
             Some(StyledSpan {
-                style: theme.syntax_color(span.highlight)?,
+                style: S::styled(color, style, theme.foreground)?,
                 range: span.range,
             })
         })
@@ -4586,7 +4927,7 @@ fn styled_highlights(
             let brackets = fe_syntax::bracket_depths(syntax, range.clone())
                 .into_iter()
                 .map(|bracket| StyledSpan {
-                    style: theme.bracket_color(bracket.depth),
+                    style: S::plain(theme.bracket_color(bracket.depth)),
                     range: bracket.range,
                 });
             over(spans, brackets)
@@ -4597,7 +4938,7 @@ fn styled_highlights(
     if unnecessary.is_empty() {
         return spans;
     }
-    fade_spans(spans, unnecessary, &range, theme.foreground)
+    fade_spans(spans, unnecessary, &range, S::plain(theme.foreground))
 }
 
 /// The colours of the `Foreground` decorations among `decorations`, in paint
@@ -4608,7 +4949,16 @@ fn foreground_spans(
     decorations: &[fe_editor::decorations::Decoration],
     theme: &EditorTheme,
 ) -> Vec<StyledSpan<Hsla>> {
-    let mut out: Vec<StyledSpan<Hsla>> = Vec::new();
+    styled_foreground_spans(decorations, theme)
+}
+
+/// [`foreground_spans`] in `S`: in the face the theme gives each name too,
+/// where `S` draws faces.
+fn styled_foreground_spans<S: HighlightStyle>(
+    decorations: &[fe_editor::decorations::Decoration],
+    theme: &EditorTheme,
+) -> Vec<StyledSpan<S>> {
+    let mut out: Vec<StyledSpan<S>> = Vec::new();
     for decoration in decorations {
         let DecorationKind::Foreground(name) = &decoration.kind else {
             continue;
@@ -4621,7 +4971,7 @@ fn foreground_spans(
         let Some(highlight) = fe_syntax::Highlight::from_capture(name) else {
             continue;
         };
-        let style = theme.syntax_color(highlight);
+        let (style, face) = theme.capture_style(highlight);
         // A coloured name the theme doesn't style itself (`comment.todo`
         // under a theme with only `comment`) takes its parent's colour. For
         // a decoration with a tint of its own, that is no colour: it falls
@@ -4631,12 +4981,12 @@ fn foreground_spans(
                 fe_syntax::Highlight::from_capture(parent)
                     .is_some_and(|parent| theme.syntax_color(parent) == style)
             });
-        let style = match unstyled {
+        let color = match unstyled {
             true => decorations::tint_color(theme, decoration.tint),
             false => style.unwrap_or(theme.foreground),
         };
         let span = StyledSpan {
-            style,
+            style: S::styled(Some(color), face, theme.foreground).unwrap_or(S::plain(color)),
             range: decoration.range.clone(),
         };
         match out.last() {
@@ -4648,7 +4998,7 @@ fn foreground_spans(
 }
 
 /// The part of the sorted, non-overlapping `spans` within `range`.
-fn clipped(spans: &[StyledSpan<Hsla>], range: &Range<usize>) -> Vec<StyledSpan<Hsla>> {
+fn clipped<S: Copy>(spans: &[StyledSpan<S>], range: &Range<usize>) -> Vec<StyledSpan<S>> {
     let first = spans.partition_point(|span| span.range.end <= range.start);
     spans[first..]
         .iter()
@@ -4662,10 +5012,10 @@ fn clipped(spans: &[StyledSpan<Hsla>], range: &Range<usize>) -> Vec<StyledSpan<H
 
 /// `spans` with `top` laid over them, cutting them where they overlap. Both
 /// are sorted and non-overlapping, and so is the result.
-fn over(
-    spans: Vec<StyledSpan<Hsla>>,
-    top: impl IntoIterator<Item = StyledSpan<Hsla>>,
-) -> Vec<StyledSpan<Hsla>> {
+fn over<S: Copy>(
+    spans: Vec<StyledSpan<S>>,
+    top: impl IntoIterator<Item = StyledSpan<S>>,
+) -> Vec<StyledSpan<S>> {
     let mut top = top.into_iter().peekable();
     let mut merged = Vec::with_capacity(spans.len());
     // Where the last span laid over them ends: a span it crosses is cut
@@ -4707,6 +5057,17 @@ impl EditorView {
         let shown = row.shown();
         row.line
             .color_at(row.expanded.to_display(offset - shown.start))
+    }
+
+    /// The font the last frame drew the glyph at buffer `offset` in: None
+    /// before the first frame, or when no glyph there was drawn.
+    pub fn drawn_font_id(&self, offset: usize) -> Option<FontId> {
+        let frame = &self.layout.as_ref()?.frame;
+        let row = (frame.rows.iter()).find(|row| row.shown().contains(&offset))?;
+        let index = row.expanded.to_display(offset - row.shown().start);
+        (row.line.layout.runs.iter())
+            .find(|run| run.glyphs.iter().any(|glyph| glyph.index == index))
+            .map(|run| run.font_id)
     }
 }
 

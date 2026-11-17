@@ -424,6 +424,13 @@ family's `OFL.txt`, copied unmodified, is beside its files, and
 `Contents/Resources/fonts/<family>/OFL.txt` (checked by
 `scripts/test-bundle-macos.sh`).
 
+`SplineSansMono-Italic.ttf` is modified past instancing (T1600): the advances
+of `a`, `aacute`, `abreve`, `acircumflex`, `adieresis`, `agrave`, `amacron`,
+`aogonek`, `aring`, `aringacute` and `atilde` go from 1196 to 1200 units, the
+one-cell width every other glyph of the family has, so italic text keeps the
+editor's columns; their outlines and every other table are unchanged. The
+fontTools step that does it is in `crates/fe-fonts/fonts/README.md`.
+
 ## Shipped MPL-2.0 dependencies (unmodified)
 
 MPL-2.0 requires telling recipients where to get the source of these crates.
