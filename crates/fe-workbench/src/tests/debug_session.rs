@@ -1447,9 +1447,10 @@ fn click_rerun(debug: &mut Debug, ix: usize) {
         terminal.update(cx, |terminal, cx| terminal.activate(ix, window, cx));
     });
     debug.draw();
+    // In the panel's row, or with one session the dock strip's.
     let button = debug
         .cx
-        .debug_bounds("terminal-debuggee-rerun")
+        .debug_bounds("icon-button:terminal-debuggee-rerun-button")
         .expect("the debuggee tab's rerun button");
     debug
         .cx

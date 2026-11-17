@@ -2,9 +2,12 @@
 //! (`TerminalPanel::open_with_session`): two finished commands, one that
 //! passed (exit 0) and one that failed (exit 1), and one still running, each
 //! marked by OSC 133 as a shell integration marks them, with ANSI colours.
-//! No user shell, profile or setting is in it.
+//! No user shell, profile or setting is in it. One session, so the dock's
+//! strip is its only header row, with its `+` and kill at the right.
 
 use std::time::{Duration, Instant};
+
+use kiln_shell::DockView as _;
 
 use crate::{
     audit_scenes::{DEFAULT, Step, Surface, fail, idle, run},
@@ -13,7 +16,7 @@ use crate::{
 
 pub(crate) const SURFACE: Surface = Surface {
     name: "terminal_session",
-    steps: |_| vec![open(), run("terminal.toggle"), wait(), idle()],
+    steps: |_| vec![open(), run("terminal.toggle"), wait(), one_header(), idle()],
     probes: PROBES,
     ..DEFAULT
 };
@@ -23,6 +26,9 @@ const PROBES: &[Probe] = &[
     probe(600., 500., "surface.background"),
     // The dock's strip, right of its Terminal tab: chrome (T1548).
     probe(600., 351., "surface.chrome"),
+    // Under it, the terminal: one session draws no strip of its own, the
+    // dock's is its only header row (T415).
+    probe(600., 377., "surface.background"),
 ];
 
 /// The last text the session writes: once it shows, all of it has.
@@ -83,5 +89,22 @@ fn wait() -> Step {
             std::thread::sleep(Duration::from_millis(20));
         }
         fail("the terminal session didn't write its output in 10 s".to_owned());
+    })
+}
+
+/// Checks the header the last frame drew: one session draws no strip of
+/// its own, so the dock's strip is the one header row and its trailing
+/// controls start with the panel's `+` and kill (T415). Fails the scene if
+/// they don't.
+fn one_header() -> Step {
+    Box::new(|workbench, _, cx| {
+        let dock = workbench.terminal_dock().read(cx);
+        let controls = dock.dock().drawn().controls();
+        let ids: Vec<_> = controls.iter().map(|(id, _)| id.as_str()).collect();
+        if !ids.starts_with(&["terminal-new-button", "terminal-kill"]) {
+            fail(format!(
+                "the dock strip doesn't carry + and kill with one session: {ids:?}"
+            ));
+        }
     })
 }

@@ -1,5 +1,5 @@
-//! The terminal panel's actions row: `+` and kill, with one session or
-//! several.
+//! The terminal panel's actions: `+` and kill, in the dock strip with one
+//! session and in the panel's own row with several.
 
 use gpui::{Modifiers, TestAppContext};
 
@@ -12,8 +12,11 @@ fn actions_show_with_one_session(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     toggle(cx);
     assert_eq!(sessions(&workbench, cx).len(), 1);
+    // With one, the dock strip's trailing controls carry them: the panel
+    // draws no row of its own.
+    assert!(cx.debug_bounds("terminal-new").is_none());
     let new = cx
-        .debug_bounds("terminal-new")
+        .debug_bounds("icon-button:terminal-new-button")
         .expect("+ shows with one session");
     let kill = cx
         .debug_bounds("icon-button:terminal-kill")
@@ -22,7 +25,7 @@ fn actions_show_with_one_session(cx: &mut TestAppContext) {
     assert!(kill.right() <= cx.update(|window, _| window.viewport_size().width));
     assert!(new.size.height <= fe_ui::TAB_HEIGHT);
 
-    // With two the row stays.
+    // With two the panel's row has them.
     new_session(&workbench, cx);
     assert!(cx.debug_bounds("terminal-new").is_some());
     assert!(cx.debug_bounds("icon-button:terminal-kill").is_some());
@@ -34,7 +37,7 @@ fn plus_adds_and_kill_closes(cx: &mut TestAppContext) {
     toggle(cx);
     super::terminal_tabs_tests::started(&sessions(&workbench, cx)[0], cx);
 
-    let new = cx.debug_bounds("terminal-new").unwrap();
+    let new = cx.debug_bounds("icon-button:terminal-new-button").unwrap();
     cx.simulate_click(new.center(), Modifiers::none());
     draw(cx);
     until(cx, "a second session", |cx| {

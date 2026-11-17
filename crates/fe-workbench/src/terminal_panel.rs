@@ -5,9 +5,10 @@
 //! ([`TerminalPanel::start`]) and keeps its sessions while the dock hides.
 //! `terminal.new` starts another after the last, `terminal.close` drops the
 //! active one, and `terminal.next` and `terminal.previous` cycle through
-//! them. Each is a tab in the panel's own strip
+//! them. From two, each is a tab in the panel's own strip
 //! (`docs/design/design-system.md#terminal`), which marks one whose command
-//! is running or failed ([`TabMark`]). A
+//! is running or failed ([`TabMark`]); one alone draws no strip, and the
+//! dock's carries its `+` and kill. A
 //! new session starts where the active one's shell last said it was (OSC 7;
 //! docs/terminal-shell-integration.md), and `terminal.previous_prompt` and
 //! `terminal.next_prompt` scroll the active one between the prompts its
@@ -38,9 +39,10 @@ use std::{
     collections::BTreeMap,
     io,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
-use fe_command::Source;
+use fe_command::{CommandId, Source, Value};
 use fe_config::TerminalSettings;
 use fe_editor::lane::LaneId;
 use fe_gpui::EditorTheme;
@@ -54,7 +56,7 @@ use gpui::{
     Render, ScrollHandle, SharedString, Styled as _, Subscription, Window, div, px,
 };
 use kiln_l10n::{tr, verbatim};
-use kiln_shell::{DockItem, PanelId};
+use kiln_shell::{DockItem, PaneAction, PanelId};
 
 use crate::{
     find_bar::FindOp,
@@ -271,6 +273,8 @@ pub struct TerminalPanel {
     last_task_id: u64,
     /// The runs started: see [`TaskTab::started`].
     runs_started: u64,
+    /// Itself, for the dock strip's actions ([`DockItem::actions`]).
+    this: gpui::WeakEntity<Self>,
     /// The shell a session runs instead of the user's.
     #[cfg(test)]
     shell: Option<(String, Vec<String>)>,
@@ -288,13 +292,17 @@ pub struct TerminalPanel {
     /// isn't laid out: [`TerminalPanel::started_pid`] says so.
     #[cfg(test)]
     pub(crate) debuggees_unstarted: bool,
-    /// The tabs the last frame drew: label and background.
+    /// Each session's tab as the last frame had it, drawn or not: label
+    /// and background.
     #[cfg(test)]
     drawn_tabs: Vec<(SharedString, gpui::Hsla)>,
-    /// The tabs the last frame drew: the text colour a lane's tab was given
-    /// and its icon.
+    /// Each session's tab as the last frame had it, drawn or not: the text
+    /// colour a lane's tab was given and its icon.
     #[cfg(test)]
     drawn_tab_marks: Vec<(Option<gpui::Hsla>, IconRef)>,
+    /// Whether the last frame drew the strip.
+    #[cfg(test)]
+    strip_drawn: bool,
 }
 
 impl EventEmitter<TerminalPanelEvent> for TerminalPanel {}
@@ -324,6 +332,7 @@ impl TerminalPanel {
             last_task: None,
             last_task_id: 0,
             runs_started: 0,
+            this: cx.weak_entity(),
             #[cfg(test)]
             shell: None,
             #[cfg(test)]
@@ -338,6 +347,8 @@ impl TerminalPanel {
             drawn_tabs: Vec::new(),
             #[cfg(test)]
             drawn_tab_marks: Vec::new(),
+            #[cfg(test)]
+            strip_drawn: false,
         }
     }
 
@@ -1124,13 +1135,19 @@ impl TerminalPanel {
     /// view as it changes. A tab and its handlers name its session by its
     /// view's id, so a click lands on the session that was drawn there or,
     /// if that's gone, on nothing.
+    ///
+    /// Drawn from two sessions ([`TerminalPanel::has_strip`]); with one the
+    /// dock's strip is the panel's only header, and carries the `+`, the
+    /// kill and a debuggee's rerun ([`DockItem::actions`]).
     fn tab_strip(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let ui = fe_ui::ui_theme(cx);
         let colors = &cx.theme().colors;
         let (chrome, border) = (colors.surface.chrome, colors.border.default);
         let agent = colors.agent.base;
         #[cfg(test)]
-        let (tab_active, tab_inactive) = (colors.tab.active, colors.tab.inactive);
+        {
+            self.strip_drawn = true;
+        }
         let tabs: Vec<_> = (0..self.sessions.len())
             .map(|ix| {
                 let id = self.sessions[ix].view.entity_id();
@@ -1138,14 +1155,6 @@ impl TerminalPanel {
                 let active = ix == self.active;
                 let lane = self.sessions[ix].lane.is_some();
                 let agent = lane.then_some(agent);
-                #[cfg(test)]
-                self.drawn_tab_marks
-                    .push((agent, self.sessions[ix].mark().icon(lane)));
-                #[cfg(test)]
-                self.drawn_tabs.push((
-                    label.clone(),
-                    if active { tab_active } else { tab_inactive },
-                ));
                 let kill = move |panel: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                     if let Some(ix) = panel.position(id) {
                         panel.remove(ix, window, cx);
@@ -1179,7 +1188,7 @@ impl TerminalPanel {
             .children(tabs);
         let tip = move |title: SharedString, command: &'static str| {
             move |_: &mut Window, cx: &mut App| {
-                let key = pane_toolbar::shortcut(command, cx);
+                let key = header_shortcut(command, cx);
                 let tooltip = Tooltip::new(title.clone(), key, &ui);
                 #[cfg(test)]
                 LAST_TOOLTIP.replace(Some(tooltip.text()));
@@ -1190,12 +1199,7 @@ impl TerminalPanel {
             tr!("workbench-terminal-new"),
             tr!("workbench-terminal-kill"),
         );
-        // A debuggee tab's rerun: a fresh debug session of its
-        // configuration, never its argv again.
-        let debuggee = (self.sessions.get(self.active))
-            .filter(|session| session.task.as_ref().is_some_and(|tab| tab.debuggee))
-            .map(|session| session.view.entity_id());
-        let rerun = debuggee.map(|view| {
+        let rerun = self.debuggee().map(|view| {
             let title = tr!("workbench-debug-debuggee-rerun-session");
             div()
                 .id("terminal-debuggee-rerun")
@@ -1252,6 +1256,22 @@ impl TerminalPanel {
             .child(actions)
     }
 
+    /// Whether the panel draws its own strip of session tabs: from two
+    /// sessions, a lane's among them. With one, or none, the dock's strip
+    /// is its only header row.
+    fn has_strip(&self) -> bool {
+        self.sessions.len() >= 2
+    }
+
+    /// The active session's view if it is a debuggee tab's, whose rerun the
+    /// header offers: a fresh debug session of its configuration, never
+    /// its argv again.
+    fn debuggee(&self) -> Option<EntityId> {
+        (self.sessions.get(self.active))
+            .filter(|session| session.task.as_ref().is_some_and(|tab| tab.debuggee))
+            .map(|session| session.view.entity_id())
+    }
+
     /// The task tabs behind the active one that haven't started, laid out
     /// beneath it at its size for the one frame that starts them. A session
     /// starts when it's laid out, and a task runs when it's asked to, not
@@ -1287,6 +1307,19 @@ impl TerminalPanel {
         let settings = &self.settings;
         (!settings.shell.is_empty()).then(|| (settings.shell.clone(), settings.shell_args.clone()))
     }
+}
+
+/// The key a header button's tooltip shows for `command`, as the dock
+/// strip's buttons show it (kiln-shell's `DockState`, whose contexts the
+/// workbench sets to these): the first sequence that runs it there, a chord
+/// too. So `+`, kill and a debuggee's rerun tell the same key in the
+/// panel's strip as in the dock's, where they are with one session.
+fn header_shortcut(command: &str, cx: &App) -> Option<String> {
+    let command = CommandId::parse(command).ok()?;
+    let keymap = fe_gpui::current_keymap(cx);
+    let stack = pane_toolbar::editor_context();
+    let found = fe_keymap::shortcuts(&keymap, &command, &Value::Null, &stack);
+    found.first().map(fe_keymap::shortcut_label)
 }
 
 /// What runs `task`, which only ever runs where it says: a shell line in
@@ -1514,6 +1547,54 @@ impl DockItem for TerminalPanel {
     fn focus_on_show(&self) -> bool {
         true
     }
+
+    /// With one session, which draws no strip of its own, the strip's
+    /// buttons, in its order and with its names, tooltips and commands: a
+    /// debuggee's rerun, `+` and kill. None from two, whose strip has them.
+    fn actions(&self, _: &App) -> Vec<PaneAction> {
+        if self.has_strip() {
+            return Vec::new();
+        }
+        let rerun = self.debuggee().map(|view| {
+            let this = self.this.clone();
+            PaneAction {
+                id: "terminal-debuggee-rerun-button",
+                icon: Icon::RefreshCw,
+                title: tr!("workbench-debug-debuggee-rerun-session"),
+                command: Some("debug.rerun_last"),
+                run: Rc::new(move |_, cx| {
+                    (this.update(cx, |panel, cx| panel.rerun_debuggee(view, cx))).ok();
+                }),
+                anchored: None,
+            }
+        });
+        let action = |id, icon, title, command: &'static str| PaneAction {
+            id,
+            icon,
+            title,
+            command: Some(command),
+            run: Rc::new(move |window, cx| {
+                pane_toolbar::dispatch(command, Source::Mouse, window, cx);
+            }),
+            anchored: None,
+        };
+        (rerun.into_iter())
+            .chain([
+                action(
+                    "terminal-new-button",
+                    Icon::Plus,
+                    tr!("workbench-terminal-new"),
+                    "terminal.new",
+                ),
+                action(
+                    "terminal-kill",
+                    Icon::X,
+                    tr!("workbench-terminal-kill"),
+                    "terminal.close",
+                ),
+            ])
+            .collect()
+    }
 }
 
 impl Render for TerminalPanel {
@@ -1529,10 +1610,8 @@ impl Render for TerminalPanel {
         // A query set before its session started is checked once it has.
         self.update_find(|find, view, cx| find.settle(view, cx), cx);
         #[cfg(test)]
-        self.drawn_tabs.clear();
-        #[cfg(test)]
-        self.drawn_tab_marks.clear();
-        let strip = self.tab_strip(cx);
+        self.record_tabs(cx);
+        let strip = self.has_strip().then(|| self.tab_strip(cx));
         let view = self.view().cloned();
         let session = view.clone().map(IntoElement::into_any_element);
         #[cfg(test)]
@@ -1557,7 +1636,7 @@ impl Render for TerminalPanel {
             .flex()
             .flex_col()
             .bg(self.style.background)
-            .child(strip)
+            .children(strip)
             .children(find)
             .child(
                 div()
@@ -1590,18 +1669,52 @@ impl TerminalPanel {
         self.shell = Some((shell.to_owned(), args));
     }
 
-    /// The tabs the last frame drew: label and background.
+    /// Notes each session's tab as this frame has it, whether or not the
+    /// strip draws (it does from two sessions): its label and background,
+    /// its label's colour and its icon.
+    fn record_tabs(&mut self, cx: &App) {
+        let colors = &cx.theme().colors;
+        let (agent, tab_active, tab_inactive) =
+            (colors.agent.base, colors.tab.active, colors.tab.inactive);
+        self.strip_drawn = false;
+        self.drawn_tabs.clear();
+        self.drawn_tab_marks.clear();
+        for ix in 0..self.sessions.len() {
+            let lane = self.sessions[ix].lane.is_some();
+            let icon = self.sessions[ix].mark().icon(lane);
+            self.drawn_tab_marks.push((lane.then_some(agent), icon));
+            let background = if ix == self.active {
+                tab_active
+            } else {
+                tab_inactive
+            };
+            self.drawn_tabs.push((self.label(ix, cx), background));
+        }
+    }
+
+    /// Each session's tab as the last frame had it, drawn or not: the
+    /// colour its label was given and its icon.
     pub(crate) fn drawn_tab_marks(&self) -> &[(Option<gpui::Hsla>, IconRef)] {
         &self.drawn_tab_marks
     }
 
-    /// The tabs the last frame drew: label and background.
+    /// Each session's tab as the last frame had it, drawn or not: label
+    /// and background.
     pub(crate) fn drawn_tabs(&self) -> &[(SharedString, gpui::Hsla)] {
         &self.drawn_tabs
     }
 
+    /// Whether the last frame drew the panel's strip of session tabs.
+    pub(crate) fn strip_drawn(&self) -> bool {
+        self.strip_drawn
+    }
+
     /// Where tab `ix` was drawn in the last frame, as the strip scrolled.
     pub(crate) fn tab_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
+        // The strip's handle keeps the bounds it was last laid out with.
+        if !self.has_strip() {
+            return None;
+        }
         let bounds = self.tabs.bounds_for_item(ix)?;
         Some(gpui::Bounds::new(
             bounds.origin + self.tabs.offset(),

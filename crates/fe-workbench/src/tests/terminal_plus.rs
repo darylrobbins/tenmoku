@@ -1,14 +1,18 @@
-//! The terminal panel's `+`: a 16 px icon button the size of kill.
+//! The terminal panel's `+`: a 16 px icon button the size of kill, in the
+//! dock strip with one session and the panel's row with two.
 
 use std::time::Duration;
 
 use gpui::{Modifiers, TestAppContext};
+use kiln_shell::DockView as _;
 
-use crate::terminal_panel::terminal_tabs_tests::{draw, opened, sessions, started, toggle, until};
+use crate::terminal_panel::terminal_tabs_tests::{
+    draw, new_session, opened, sessions, started, toggle, until,
+};
 
 #[gpui::test]
 fn plus_is_an_icon_button_the_size_of_kill(cx: &mut TestAppContext) {
-    let (_workbench, cx, _dir) = opened(cx);
+    let (workbench, cx, _dir) = opened(cx);
     toggle(cx);
     let plus = cx.debug_bounds("icon-button:terminal-new-button").unwrap();
     let kill = cx.debug_bounds("icon-button:terminal-kill").unwrap();
@@ -19,7 +23,16 @@ fn plus_is_an_icon_button_the_size_of_kill(cx: &mut TestAppContext) {
         .expect("the plus icon is drawn");
     assert_eq!(icon.size, gpui::size(gpui::px(16.), gpui::px(16.)));
     assert!(plus.right() <= kill.left(), "+ comes before kill");
-    // The wrapper the bounds tests read still wraps it.
+
+    // As the panel's own row has it from two sessions, in the wrapper the
+    // bounds tests read.
+    started(&sessions(&workbench, cx)[0], cx);
+    new_session(&workbench, cx);
+    let plus = cx.debug_bounds("icon-button:terminal-new-button").unwrap();
+    let kill = cx.debug_bounds("icon-button:terminal-kill").unwrap();
+    assert_eq!(plus.size, kill.size);
+    assert_eq!(plus.size.width, gpui::px(22.));
+    assert!(plus.right() <= kill.left(), "+ comes before kill");
     let wrapper = cx.debug_bounds("terminal-new").unwrap();
     assert!(wrapper.contains(&plus.center()));
 }
@@ -48,7 +61,11 @@ fn plus_keeps_its_name_tooltip_and_click(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_millis(500));
     draw(cx);
     let key = cx.update(|_, cx| crate::pane_toolbar::shortcut("terminal.new", cx));
-    let shown = crate::terminal_panel::last_strip_tooltip().expect("a tooltip showed");
+    // One session: the dock strip's button.
+    let dock = workbench.read_with(cx, |workbench, _| workbench.terminal_dock().clone());
+    let shown = dock
+        .read_with(cx, |dock, _| dock.dock().drawn().last_tooltip())
+        .expect("a tooltip showed");
     match key {
         Some(key) => assert_eq!(shown, format!("New Terminal {key}")),
         None => assert_eq!(shown, "New Terminal"),

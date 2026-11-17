@@ -131,6 +131,20 @@ fn mark(label: &str, cx: &mut VisualTestContext) -> &'static str {
     }
 }
 
+/// The icon a lone session's tab has, by name, as the last frame had it:
+/// one session draws no strip (its tab shows from a second), but its tab
+/// keeps its mark all the same.
+fn lone_mark(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> &'static str {
+    let (drawn, marks) = terminal(workbench, cx).read_with(cx, |terminal, _| {
+        (terminal.strip_drawn(), terminal.drawn_tab_marks().to_vec())
+    });
+    assert!(!drawn, "one session draws no strip");
+    let [(_, icon)] = &marks[..] else {
+        panic!("one session: {marks:?}")
+    };
+    icon.bundled().expect("a bundled icon").name()
+}
+
 /// Where the accent line of the tab labelled `label` was drawn, if it was.
 fn accent(label: &str, cx: &mut VisualTestContext) -> Option<Bounds<Pixels>> {
     cx.debug_bounds(format!("tab-accent:{label}").leak())
@@ -211,22 +225,22 @@ fn shell_marks_show_a_spinner_then_the_exit(cx: &mut TestAppContext) {
 
     // C with no D: the spinner.
     until(cx, "the spinner", |cx| {
-        mark("Terminal 1", cx) == "loader-circle"
+        lone_mark(&workbench, cx) == "loader-circle"
     });
     // D with 1: the error mark, which stays at the next prompt.
     type_in(&view, b"\r", cx);
     until(cx, "the error mark", |cx| {
-        mark("Terminal 1", cx) == "circle-x"
+        lone_mark(&workbench, cx) == "circle-x"
     });
     // The next command runs: the spinner again.
     type_in(&view, b"\r", cx);
     until(cx, "the spinner again", |cx| {
-        mark("Terminal 1", cx) == "loader-circle"
+        lone_mark(&workbench, cx) == "loader-circle"
     });
     // D with 0: neither, the terminal icon.
     type_in(&view, b"\r", cx);
     until(cx, "the terminal icon", |cx| {
-        mark("Terminal 1", cx) == "file-terminal"
+        lone_mark(&workbench, cx) == "file-terminal"
     });
 }
 
@@ -243,7 +257,7 @@ fn a_tab_behind_the_active_one_follows_its_command(cx: &mut TestAppContext) {
     run("terminal.toggle", cx);
     let first = views(&workbench, cx).remove(0);
     until(cx, "the spinner", |cx| {
-        mark("Terminal 1", cx) == "loader-circle"
+        lone_mark(&workbench, cx) == "loader-circle"
     });
 
     terminal.update(cx, |terminal, _| {
@@ -276,6 +290,9 @@ fn a_shell_without_marks_shows_the_terminal_icon(cx: &mut TestAppContext) {
             (view.terminal()).is_some_and(|t| t.snapshot().text().contains("ready"))
         })
     });
+    assert_eq!(lone_mark(&workbench, cx), "file-terminal");
+    // Drawn as a tab once there are two.
+    run("terminal.new", cx);
     assert_eq!(mark("Terminal 1", cx), "file-terminal");
 }
 

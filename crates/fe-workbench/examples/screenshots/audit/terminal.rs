@@ -13,8 +13,14 @@
 //! `Terminal <n>` is about 145 px wide: 12 px of padding, the icon, the
 //! label, then the close button's 16 px box (shown on the active tab alone)
 //! and 8 px of padding.
+//!
+//! From two sessions the panel's strip carries `+` and kill, so the dock's
+//! strip above it has none of the panel's buttons (T415); with one it has
+//! (`terminal_session`).
 
 use std::time::{Duration, Instant};
+
+use kiln_shell::DockView as _;
 
 use crate::{
     audit_scenes::{DEFAULT, Step, Surface, fail, idle, run},
@@ -32,6 +38,7 @@ pub(crate) const SURFACE: Surface = Surface {
             wait(),
             // From the last tab, round to the first: the running one.
             run("terminal.next"),
+            panel_header(),
             idle(),
         ]
     },
@@ -148,5 +155,21 @@ fn wait() -> Step {
             std::thread::sleep(Duration::from_millis(20));
         }
         fail("the terminal sessions didn't write their output in 10 s".to_owned());
+    })
+}
+
+/// Checks the header the last frame drew: with three sessions the panel's
+/// own strip carries `+` and kill, and the dock's strip none of the
+/// panel's buttons (T415). Fails the scene if it carries any.
+fn panel_header() -> Step {
+    Box::new(|workbench, _, cx| {
+        let dock = workbench.terminal_dock().read(cx);
+        let controls = dock.dock().drawn().controls();
+        let ids: Vec<_> = controls.iter().map(|(id, _)| id.as_str()).collect();
+        if ids.iter().any(|id| id.starts_with("terminal-")) {
+            fail(format!(
+                "the dock strip carries the panel's buttons with three sessions: {ids:?}"
+            ));
+        }
     })
 }
