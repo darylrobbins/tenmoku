@@ -180,6 +180,16 @@ pub(crate) struct TaskTabs {
     closing: Option<Subscription>,
 }
 
+impl TaskTabs {
+    /// A key for a source of problems of its own, which no task tab's takes:
+    /// a build run's ([`crate::build_runner`]).
+    pub(crate) fn new_key(&mut self) -> u64 {
+        let key = self.next_key;
+        self.next_key += 1;
+        key
+    }
+}
+
 struct TaskTab {
     /// Its source's key, kept by a rerun.
     key: u64,
@@ -507,8 +517,7 @@ impl Workbench {
                     (Some(replaced), unheard)
                 }
                 None => {
-                    let key = tabs.next_key;
-                    tabs.next_key += 1;
+                    let key = tabs.new_key();
                     tabs.tabs.push(TaskTab {
                         key,
                         view,

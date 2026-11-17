@@ -26,6 +26,7 @@ mod agents_panel;
 mod ai_changes_buffers;
 mod ai_changes_panel;
 mod auto_save;
+mod build_runner;
 mod chat_panel;
 mod chat_tool_loop;
 mod closed_editors;
@@ -251,6 +252,7 @@ pub fn init(cx: &mut App) {
     debug_gutter::init(cx);
     debug_panel::init(cx);
     test_runner::init(cx);
+    build_runner::init(cx);
     test_run_view::init(cx);
     lsp::init(cx);
     grammar_prompt::init(cx);
