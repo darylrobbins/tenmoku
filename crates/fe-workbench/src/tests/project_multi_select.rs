@@ -468,6 +468,9 @@ fn partial_failure_names_what_failed(cx: &mut TestAppContext) {
     click(&panel, &b, Modifiers::none(), cx);
     click(&panel, &c, shift(), cx);
     run("project_panel.delete", cx);
+    // Keep the old file linked while the new one is written, so the new one
+    // cannot be handed its freed inode (Linux reuses it at once).
+    fs::hard_link(root.join(&c), root.join(format!("{c}.kept"))).unwrap();
     fs::remove_file(root.join(&c)).unwrap();
     fs::write(root.join(&c), "again\n").unwrap();
     cx.simulate_prompt_answer("Move to Trash");
