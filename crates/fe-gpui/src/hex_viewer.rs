@@ -43,7 +43,7 @@ use gpui::{
     App, AppContext as _, BorderStyle, Bounds, ClipboardItem, Context, CursorStyle, Entity,
     EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
-    Pixels, Point, Render, ScrollWheelEvent, ShapedLine, SharedString,
+    Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, TextAlign, TextRun, Window,
     WindowId, canvas, div, fill, outline, point, px, size,
 };
@@ -322,6 +322,9 @@ pub struct HexViewer {
     /// The current find match the last frame outlined.
     #[cfg(test)]
     pub(crate) painted_match: Option<Range<u64>>,
+    /// What the last value tooltip drew.
+    #[cfg(test)]
+    pub(crate) tip_probe: std::rc::Rc<std::cell::RefCell<TipProbe>>,
 }
 
 impl EventEmitter<HexViewerEvent> for HexViewer {}
@@ -361,6 +364,8 @@ impl HexViewer {
             inspected: None,
             #[cfg(test)]
             inspect_reads: 0,
+            #[cfg(test)]
+            tip_probe: Default::default(),
             #[cfg(test)]
             painted: Vec::new(),
             #[cfg(test)]
@@ -422,6 +427,8 @@ impl HexViewer {
         let rows = self.inspection();
         let narrow = self.strip_narrow;
         let theme = &self.theme;
+        #[cfg(test)]
+        let tip_probe = self.tip_probe.clone();
         let label = match self.endian {
             Endian::Little => verbatim!("LE"),
             Endian::Big => verbatim!("BE"),
@@ -455,11 +462,18 @@ impl HexViewer {
                     .when(narrow, |item| item.flex_none().max_w_full())
                     .when(!narrow, |item| item.flex_shrink(1.).min_w(px(40.)))
                     .whitespace_nowrap()
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| ValueTip {
-                            lines: value_tip_lines(&full),
-                        })
-                        .into()
+                    .hoverable_tooltip({
+                        #[cfg(test)]
+                        let probe = tip_probe.clone();
+                        move |_, cx| {
+                            cx.new(|_| ValueTip {
+                                text: full.clone(),
+                                scroll: ScrollHandle::new(),
+                                #[cfg(test)]
+                                probe: probe.clone(),
+                            })
+                            .into()
+                        }
                     })
                     .child(
                         div()
@@ -1636,39 +1650,204 @@ fn thumb_bounds(
     ))
 }
 
-/// Chars in a line of a value's tooltip.
-const TIP_LINE_CHARS: usize = 40;
+/// The room a value's tooltip leaves at each of the window's edges, in a
+/// window with room for it.
+const TIP_MARGIN: Pixels = px(8.);
 
-/// `text` in lines of at most [`TIP_LINE_CHARS`], so a long float stays
-/// inside the window whole.
-fn value_tip_lines(text: &str) -> Vec<SharedString> {
-    let chars: Vec<char> = text.chars().collect();
-    chars
-        .chunks(TIP_LINE_CHARS)
-        .map(|chunk| SharedString::from(chunk.iter().collect::<String>()))
-        .collect()
+/// A value tooltip's text size.
+const TIP_TEXT: Pixels = px(12.);
+
+/// A value tooltip's padding across and down, and its border.
+const TIP_PAD_X: Pixels = px(8.);
+const TIP_PAD_Y: Pixels = px(4.);
+const TIP_BORDER: Pixels = px(1.);
+
+/// A pixel across so the widest line, shaped again on its own, doesn't
+/// overrun the box.
+const TIP_SLACK: Pixels = px(1.);
+
+/// How a value's tooltip fits a window: what it leaves at the edges, its
+/// padding and border, the most it can measure, and the width its text
+/// wraps to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TipFit {
+    margin: gpui::Size<Pixels>,
+    pad: gpui::Size<Pixels>,
+    border: Pixels,
+    /// The box's largest size: the window less the margins.
+    cap: gpui::Size<Pixels>,
+    /// The width the text wraps to.
+    room: Pixels,
 }
 
-/// The tooltip of an inspector value: all of its text, wrapped.
+impl TipFit {
+    /// The fit in a window of `viewport` for text whose widest glyph is
+    /// `glyph` and whose lines are `line` high. On each axis the margins go
+    /// first, then the padding and border, when the window has no room for
+    /// them and a glyph across or a line down; a window narrower or shorter
+    /// than that still shows the box whole, and the text scrolls.
+    fn new(viewport: gpui::Size<Pixels>, glyph: Pixels, line: Pixels) -> Self {
+        let tier = |avail: Pixels, pad: Pixels, need: Pixels| {
+            let chrome = (pad + TIP_BORDER) * 2.;
+            if avail >= TIP_MARGIN * 2. + chrome + need {
+                (TIP_MARGIN, pad, true)
+            } else if avail >= chrome + need {
+                (px(0.), pad, true)
+            } else {
+                (px(0.), px(0.), false)
+            }
+        };
+        let (margin_x, pad_x, border_x) = tier(viewport.width, TIP_PAD_X, glyph + TIP_SLACK);
+        let (margin_y, pad_y, border_y) = tier(viewport.height, TIP_PAD_Y, line);
+        let border = if border_x && border_y {
+            TIP_BORDER
+        } else {
+            px(0.)
+        };
+        let cap = size(
+            (viewport.width - margin_x * 2.).max(px(0.)),
+            (viewport.height - margin_y * 2.).max(px(0.)),
+        );
+        let room = (cap.width - (pad_x + border) * 2. - TIP_SLACK).max(px(0.));
+        Self {
+            margin: size(margin_x, margin_y),
+            pad: size(pad_x, pad_y),
+            border,
+            cap,
+            room,
+        }
+    }
+
+    /// The box's width for text whose widest line is `widest`.
+    fn width(&self, widest: Pixels) -> Pixels {
+        (widest + (self.pad.width + self.border) * 2. + TIP_SLACK).min(self.cap.width)
+    }
+}
+
+/// `text` in lines no wider than `room`, by `x_at`, the x of each byte
+/// index of `text` shaped on one line, each with its width. A line takes at
+/// least one char, so nothing is dropped however narrow the room.
+fn value_tip_lines(
+    text: &str,
+    room: Pixels,
+    x_at: impl Fn(usize) -> Pixels,
+) -> Vec<(SharedString, Pixels)> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (ix, ch) in text.char_indices() {
+        let end = ix + ch.len_utf8();
+        if ix > start && x_at(end) - x_at(start) > room {
+            lines.push((text[start..ix].to_owned().into(), x_at(ix) - x_at(start)));
+            start = ix;
+        }
+    }
+    if start < text.len() || lines.is_empty() {
+        let width = x_at(text.len()) - x_at(start);
+        lines.push((text[start..].to_owned().into(), width));
+    }
+    lines
+}
+
+/// The tooltip of an inspector value: all of its text, wrapped to fit the
+/// window less [`TIP_MARGIN`] across, and as tall as its text up to the
+/// window less the margin, scrolling beyond (see [`TipFit`] for windows
+/// too small for the margins). GPUI lays a tooltip out at its min-content
+/// size and only moves one that overflows the window, never shrinks it, so
+/// its width is set from its lines and both are capped here. It's
+/// hoverable, so the mouse can go in to scroll it.
 struct ValueTip {
-    lines: Vec<SharedString>,
+    text: SharedString,
+    scroll: ScrollHandle,
+    #[cfg(test)]
+    probe: std::rc::Rc<std::cell::RefCell<TipProbe>>,
+}
+
+/// What the tests see of the last value tooltip drawn.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TipProbe {
+    /// How many frames drew one.
+    pub(crate) drawn: usize,
+    /// Its lines.
+    pub(crate) lines: Vec<String>,
+    /// Each line's bounds, as last drawn.
+    pub(crate) line_bounds: Vec<Bounds<Pixels>>,
+    /// The scroll of its text.
+    pub(crate) scroll: Option<ScrollHandle>,
+}
+
+impl ValueTip {
+    /// How it fits `window`, and its lines, each with its width.
+    fn layout(&self, window: &Window) -> (TipFit, Vec<(SharedString, Pixels)>) {
+        let mut style = window.text_style();
+        style.font_size = TIP_TEXT.into();
+        let line = style.line_height_in_pixels(window.rem_size());
+        let run = style.to_run(self.text.len());
+        let shaped = window
+            .text_system()
+            .shape_line(self.text.clone(), TIP_TEXT, &[run], None);
+        let glyph = (self.text.char_indices())
+            .map(|(ix, ch)| shaped.x_for_index(ix + ch.len_utf8()) - shaped.x_for_index(ix))
+            .fold(px(0.), Pixels::max);
+        let fit = TipFit::new(window.viewport_size(), glyph, line);
+        let lines = value_tip_lines(&self.text, fit.room, |ix| shaped.x_for_index(ix));
+        (fit, lines)
+    }
 }
 
 impl Render for ValueTip {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = &cx.theme().colors;
-        div()
+        let (fit, lines) = self.layout(window);
+        let widest = lines.iter().map(|(_, w)| *w).fold(px(0.), Pixels::max);
+        #[cfg(test)]
+        {
+            let mut probe = self.probe.borrow_mut();
+            probe.lines = lines.iter().map(|(line, _)| line.to_string()).collect();
+            probe.scroll = Some(self.scroll.clone());
+        }
+        // As wide as its widest line, so a line wider than a tiny window
+        // scrolls across.
+        let text = div()
             .flex()
             .flex_col()
-            .px_2()
-            .py_1()
+            .items_start()
+            .min_w(widest)
+            .children(lines.into_iter().map(|(line, _)| div().child(line)));
+        #[cfg(test)]
+        let text = {
+            let probe = self.probe.clone();
+            text.on_children_prepainted(move |drawn, _, _| {
+                let mut probe = probe.borrow_mut();
+                probe.drawn += 1;
+                probe.line_bounds = drawn;
+            })
+        };
+        div()
+            .debug_selector(|| verbatim!("hex-value-tip").into())
+            .w(fit.width(widest))
+            .max_h(fit.cap.height)
+            .occlude()
+            .flex()
+            .flex_col()
+            .px(fit.pad.width)
+            .py(fit.pad.height)
             .rounded_sm()
             .bg(colors.surface.panel)
-            .border_1()
+            .border(fit.border)
             .border_color(colors.border.default)
-            .text_size(px(12.))
+            .text_size(TIP_TEXT)
             .text_color(colors.tab.active_text)
-            .children(self.lines.iter().cloned().map(|line| div().child(line)))
+            .whitespace_nowrap()
+            .child(
+                div()
+                    .id("hex-value-tip-text")
+                    .debug_selector(|| verbatim!("hex-value-tip-text").into())
+                    .min_h_0()
+                    .overflow_scroll()
+                    .track_scroll(&self.scroll)
+                    .child(text),
+            )
     }
 }
 
@@ -1774,6 +1953,9 @@ mod find_tests;
 
 #[cfg(test)]
 mod inspector_tests;
+
+#[cfg(test)]
+mod value_tip_tests;
 
 #[cfg(test)]
 mod pane_item_tests;

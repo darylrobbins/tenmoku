@@ -266,10 +266,21 @@ fn a_long_float_wraps_in_its_tooltip_whole() {
     let text = f64::MIN_POSITIVE.to_string();
     assert!(text.len() > 300);
     let full = format!("f64 {text}");
-    let lines = value_tip_lines(&full);
-    assert!(lines.iter().all(|line| line.chars().count() <= 40));
-    let joined: String = lines.iter().map(|line| line.as_ref()).collect();
+    // 7 px a char, 100 px a line: 14 chars, the last fewer.
+    let x_at = |ix: usize| px(7. * ix as f32);
+    let lines = value_tip_lines(&full, px(100.), x_at);
+    assert!(lines.len() > 20);
+    for (line, width) in &lines {
+        assert!(line.len() <= 14 && *width <= px(100.), "{line} {width:?}");
+        assert_eq!(*width, px(7. * line.len() as f32));
+    }
+    assert!(lines[..lines.len() - 1].iter().all(|(l, _)| l.len() == 14));
+    let joined: String = lines.iter().map(|(line, _)| line.as_ref()).collect();
     assert_eq!(joined, full, "nothing is cut");
+    // Narrower than a char, each line still takes one.
+    let lines = value_tip_lines(&full, px(1.), x_at);
+    assert_eq!(lines.len(), full.len());
+    assert_eq!(value_tip_lines("", px(100.), x_at), [("".into(), px(0.))]);
 }
 
 #[gpui::test]
