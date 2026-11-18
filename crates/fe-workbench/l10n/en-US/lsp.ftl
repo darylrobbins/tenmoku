@@ -135,6 +135,14 @@ workbench-lsp-status-indexing = { $name }: indexing { $title }
 workbench-lsp-status-restarting = { $name }: restarting ({ $attempt }/{ $attempts })
 workbench-lsp-status-stopped-error = { $name }: stopped: { $error }
 workbench-lsp-status-stopped = { $name }: stopped
+# The tab of a language server's log. $name is the server's.
+workbench-lsp-log-title = { $name } Log
+# Shown while the server has written no output, perhaps because it never
+# started. $status is its status text, $root the folder it runs in.
+workbench-lsp-log-empty =
+    { $name } has written no output.
+    Root: { $root }
+    Status: { $status }
 workbench-lsp-status-tooltip = Show Language Server Log
 workbench-lsp-status-untrusted = { $name }: folder not trusted
 # $root is the folder the server would start in.

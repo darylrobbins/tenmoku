@@ -1176,3 +1176,5 @@ fn host_launcher_replaces_local(cx: &mut TestAppContext) {
 
 #[path = "lsp_watched_files.rs"]
 mod watched_files;
+
+mod log_tab;

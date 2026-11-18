@@ -125,7 +125,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use fe_buffer::{Buffer, BufferEvent, BufferId, Version};
+use fe_buffer::{Buffer, BufferEvent, BufferId, Text, Version};
 use fe_command::Invocation;
 use fe_config::settings::{LspLayer, LspSettings};
 use fe_editor::completion::{CompletionItem, CompletionList, CompletionTrigger};
@@ -504,6 +504,8 @@ pub(crate) struct Lsp {
     /// Each server's latest `window/showMessage`, shown in place of its
     /// status until its next one.
     messages: HashMap<ServerId, String>,
+    /// The log tab open for each server name and root.
+    log_tabs: HashMap<(String, PathBuf), WeakEntity<fe_gpui::EditorView>>,
     /// Each server's diagnostics for files it doesn't have open, by the
     /// file's resolved path, as it sent them, until it sends none for the
     /// file, restarts or stops: the Problems panel lists them while no
@@ -767,6 +769,7 @@ impl Lsp {
             reserved: HashMap::new(),
             servers: HashMap::new(),
             messages: HashMap::new(),
+            log_tabs: HashMap::new(),
             file_diagnostics: HashMap::new(),
             unopened: Default::default(),
             settings: LspSettings::default(),
@@ -907,6 +910,22 @@ pub(crate) fn status_text(
         _ => return None,
     };
     Some((text.into(), tone))
+}
+
+/// What a log tab for server `name` at `root` shows: `output`, or, while
+/// the server has written none (it may never have started), a header with
+/// its root and `status`.
+fn log_text(name: &str, root: &Path, status: &str, output: &str) -> String {
+    if !output.is_empty() {
+        return output.to_owned();
+    }
+    tr!(
+        "workbench-lsp-log-empty",
+        name = name,
+        root = root.display().to_string(),
+        status = status
+    )
+    .into()
 }
 
 /// The language server's status item showing `text`.
@@ -2089,14 +2108,6 @@ impl Workbench {
         editors
     }
 
-    /// The code actions client of the server `buffer` is open on, if it
-    /// has one.
-    pub(crate) fn lsp_code_actioner(&self, buffer: BufferId) -> Option<CodeActioner> {
-        let manager = self.lsp.manager.as_ref()?;
-        lock(manager).server_of(buffer)?;
-        Some(CodeActioner(manager.clone()))
-    }
-
     /// Gives the active editor's server `status` and `message`, as its
     /// events would, and updates the item.
     #[cfg(test)]
@@ -2116,6 +2127,14 @@ impl Workbench {
             None => self.lsp.messages.remove(&server),
         };
         self.show_lsp_status(cx);
+    }
+
+    /// The code actions client of the server `buffer` is open on, if it
+    /// has one.
+    pub(crate) fn lsp_code_actioner(&self, buffer: BufferId) -> Option<CodeActioner> {
+        let manager = self.lsp.manager.as_ref()?;
+        lock(manager).server_of(buffer)?;
+        Some(CodeActioner(manager.clone()))
     }
 
     /// Sets the status item for the active editor's server, or removes it.
@@ -2175,21 +2194,77 @@ impl Workbench {
         let root = buffer
             .and_then(|buffer| lsp.documents.get(&buffer)?.root.clone())
             .or_else(|| lsp.root.clone());
-        let (Some((server, name, _)), Some(root)) = (lsp.server(buffer), root) else {
+        let (Some((server, name, status)), Some(root)) = (lsp.server(buffer), root) else {
             return;
         };
-        let name = name.to_owned();
+        let (name, status) = (name.to_owned(), status.clone());
+        let message = lsp.messages.get(&server).cloned();
         if !log {
             return self.restart_server(server, name, root, cx);
         }
         let Some(manager) = lsp.manager.clone() else {
             return;
         };
-        let log = Buffer::from_file_contents(&lock(&manager).log(&name, &root));
-        self.pane()
-            .update(cx, |pane, cx| pane.add(EditorModel::new(log, None), cx));
-        let focus = gpui::Focusable::focus_handle(self, cx);
-        window.focus(&focus, cx);
+        let status = status_text(&name, &status, message.as_deref())
+            .map_or_else(String::new, |(text, _)| text);
+        let output = lock(&manager).log(&name, &root);
+        let text = log_text(&name, &root, &status, &output);
+        self.show_log_tab(name, root, &text, window, cx);
+    }
+
+    /// Shows `text`, the log of server `name` running at `root`, in a
+    /// read-only tab titled for it: the one already open for the pair, with
+    /// its text refreshed, else a new one.
+    fn show_log_tab(
+        &mut self,
+        name: String,
+        root: PathBuf,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (name, root);
+        let pane = self.pane().clone();
+        let open = self.lsp.log_tabs.get(&key).and_then(WeakEntity::upgrade);
+        // The tab may be open in any split.
+        let open = open.and_then(|editor| {
+            self.panes(cx).into_iter().find_map(|pane| {
+                let ix =
+                    (pane.read(cx).tabs().iter()).position(|tab| tab.editor() == Some(&editor))?;
+                Some((editor.clone(), pane, ix))
+            })
+        });
+        let editor = match open {
+            Some((editor, owner, ix)) => {
+                // As a reload of a file: the text is the tab's saved one.
+                if let Ok(file) = Text::from_reader_detecting(text.as_bytes()) {
+                    editor.update(cx, |editor, cx| {
+                        editor.model_mut().reload(file, None);
+                        cx.notify();
+                    });
+                }
+                owner.update(cx, |pane, cx| pane.activate_at(ix, window, cx));
+                self.activate(owner, window, cx);
+                editor
+            }
+            None => {
+                let model = EditorModel::new(Buffer::from_file_contents(text), None);
+                let title = tr!("workbench-lsp-log-title", name = key.0.as_str());
+                let icon_by = key.0.clone() + verbatim!(".log");
+                let editor = pane.update(cx, |pane, cx| {
+                    let editor = pane.new_editor(model, cx);
+                    editor.update(cx, |editor, cx| {
+                        editor.set_read_only(true, cx);
+                        editor.set_tab_title(title, icon_by, cx);
+                    });
+                    pane.add_item(Box::new(editor.clone()), cx);
+                    editor
+                });
+                self.lsp.log_tabs.insert(key, editor.downgrade());
+                editor
+            }
+        };
+        window.focus(&gpui::Focusable::focus_handle(&editor, cx), cx);
         cx.notify();
     }
 
