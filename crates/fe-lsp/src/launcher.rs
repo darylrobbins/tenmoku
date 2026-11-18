@@ -65,6 +65,22 @@ pub struct ServerSpec {
     /// The package (npm or other) that provides `command`, which a
     /// missing add-on's notice names.
     pub package: Option<String>,
+    /// How to install `command`, such as `pip install pyrefly`, which the
+    /// status of a server that wasn't found names after what was looked
+    /// for. `None` (the default) names none.
+    pub install: Option<String>,
+    /// Whether the server runs only if its command is found, as the
+    /// launcher's [`finds`](ServerLauncher::finds) says just before each
+    /// launch: if it isn't, it's never launched and says nothing, no
+    /// status but `Stopped(None)`, which no host shows for an add-on, and
+    /// no error. ruff's, beside Python's server. `false` (the default)
+    /// launches it, and a missing one stops with why.
+    pub only_if_found: bool,
+    /// Whether the server is asked for completions, if it offers them:
+    /// `false` takes its `completionProvider` out of the capabilities it
+    /// initializes with. ruff's, whose language's main server has them.
+    /// `true` by default.
+    pub completion: bool,
     /// Globs, relative to the server's root, of the files whose changes on
     /// disk it's told of with no registration of its own: a permanent
     /// `workspace/didChangeWatchedFiles` registration of each session. A
@@ -124,6 +140,9 @@ impl ServerSpec {
             root_markers: Vec::new(),
             add_on: false,
             package: None,
+            install: None,
+            only_if_found: false,
+            completion: true,
             watch_files: Vec::new(),
             watch_excludes: Vec::new(),
             watch_files_from: None,
@@ -233,6 +252,18 @@ pub trait ServerLauncher: Send + Sync {
     /// watch it must bound its own launch time.
     fn launch(&self, spec: &ServerSpec, root: &Path, cancel: &LaunchCancel)
     -> io::Result<ServerIo>;
+
+    /// Whether `spec`'s command is there to launch at `root`, asked before
+    /// each launch of a server that runs only if it is
+    /// ([`ServerSpec::only_if_found`]). By default, whether
+    /// [`LocalLauncher`] would find it: an absolute or relative command
+    /// that is a file, or a bare one found in its Python environment's bin
+    /// or on its `PATH`, as [`LoginPath::system`] has it. A launcher that
+    /// runs servers elsewhere (a container) says where it would look.
+    /// May block, as a launch may (the login shell).
+    fn finds(&self, spec: &ServerSpec, root: &Path) -> bool {
+        finds_local(spec, root, LoginPath::system())
+    }
 }
 
 /// Asks a [`ServerLauncher::launch`] in progress to give up. fe-lsp makes
@@ -391,6 +422,61 @@ impl ServerLauncher for WithPath {
     ) -> io::Result<ServerIo> {
         launch_local(spec, root, &self.0, cancel)
     }
+
+    fn finds(&self, spec: &ServerSpec, root: &Path) -> bool {
+        finds_local(spec, root, &self.0)
+    }
+}
+
+/// Where [`launch_local`] looks for a spec's command, and what it finds.
+struct Resolved {
+    /// The spec's own `PATH`, from its `env`.
+    spec_path: Option<OsString>,
+    /// A Python server's environment, if it has one at the root.
+    python: Option<python_env::PythonEnv>,
+    /// Its bin, then the `PATH` the command is looked up on.
+    env_path: Option<OsString>,
+    /// What runs: `None` for a bare command not found.
+    program: Option<PathBuf>,
+}
+
+/// Looks `spec`'s command up as [`launch_local`] runs it: in a Python
+/// server's environment's bin first (python_env.rs), then on the spec's
+/// `PATH`, or `login`'s.
+fn resolve_local(spec: &ServerSpec, root: &Path, login: &LoginPath) -> Resolved {
+    let spec_path = spec
+        .env
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, path)| OsString::from(path));
+    let python = python_env::python_env(spec, root);
+    let env_path = python.as_ref().and_then(|env| {
+        let base = spec_path
+            .clone()
+            .or_else(|| login.path().map(OsStr::to_owned))
+            .or_else(|| std::env::var_os("PATH"));
+        prepend_path(&env.bin(), base.as_deref())
+    });
+    let program = login.resolve(
+        &spec.command,
+        env_path.as_deref().or(spec_path.as_deref()),
+        root,
+    );
+    Resolved {
+        spec_path,
+        python,
+        env_path,
+        program,
+    }
+}
+
+/// [`ServerLauncher::finds`] for a local launch looking bare commands up
+/// on `login`'s `PATH`: whether [`launch_local`] would have a file to run.
+pub(crate) fn finds_local(spec: &ServerSpec, root: &Path, login: &LoginPath) -> bool {
+    resolve_local(spec, root, login)
+        .program
+        .is_some_and(|program| program.is_file())
 }
 
 /// Resolves the command (which may run the login shell, within
@@ -402,37 +488,23 @@ fn launch_local(
     login: &LoginPath,
     cancel: &LaunchCancel,
 ) -> io::Result<ServerIo> {
-    let spec_path = spec
-        .env
-        .iter()
-        .rev()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, path)| OsString::from(path));
     // A Python server's environment's bin goes first, to look the command
     // up on and on the server's PATH (python_env.rs).
-    let python = python_env::python_env(spec, root);
-    let env_path = python.as_ref().and_then(|env| {
-        let base = spec_path
-            .clone()
-            .or_else(|| login.path().map(OsStr::to_owned))
-            .or_else(|| std::env::var_os("PATH"));
-        prepend_path(&env.bin(), base.as_deref())
-    });
-    let program = login
-        .resolve(
-            &spec.command,
-            env_path.as_deref().or(spec_path.as_deref()),
-            root,
-        )
-        .ok_or_else(|| {
-            python_env::not_found(spec, root, python.as_ref()).unwrap_or_else(|| {
-                let why = tr!(
-                    "lsp-server-not-found",
-                    name = spec.command.display().to_string()
-                );
-                io::Error::new(io::ErrorKind::NotFound, why.to_string())
-            })
-        })?;
+    let Resolved {
+        spec_path,
+        python,
+        env_path,
+        program,
+    } = resolve_local(spec, root, login);
+    let program = program.ok_or_else(|| {
+        python_env::not_found(spec, root, python.as_ref()).unwrap_or_else(|| {
+            let why = tr!(
+                "lsp-server-not-found",
+                name = spec.command.display().to_string()
+            );
+            io::Error::new(io::ErrorKind::NotFound, why.to_string())
+        })
+    })?;
     let mut command = std::process::Command::new(program);
     // Also for absolute commands: a server may run other programs off
     // its PATH (`#!/usr/bin/env node`).

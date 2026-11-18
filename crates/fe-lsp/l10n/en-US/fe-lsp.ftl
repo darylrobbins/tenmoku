@@ -57,6 +57,9 @@ lsp-server-not-found = { $name } not found
 lsp-server-not-found-in-env = { $command } not found in { $bin } or on PATH
 # The same with no Python environment at the server's root, a folder.
 lsp-server-not-found-no-env = { $command } not found on PATH, and { $root } has no Python environment (.venv or venv)
+# A server not found ($why, one of the three above), and the command that
+# installs it ($install, such as "pip install pyrefly"), not translated.
+lsp-server-not-found-install = { $why }; install it with { $install }
 lsp-server-stopped-before-initialize = { $name } stopped before answering initialize: { $why }
 lsp-server-exited-before-initialize =
     { $name } { $kind ->

@@ -510,9 +510,19 @@ settings-lsp-python_environment =
     a `bin/python`. A user setting: a project file's applies only in a
     trusted folder.
 
+settings-lsp-python_server =
+    Which built-in server Python files get: only that one runs, and
+    with it ruff, if it's installed. Unset, it's pyrefly, unless
+    `[lsp.servers.ty]` or `[lsp.servers.pyright]` is there: then that
+    one (ty first), so settings written for it keep it. A project
+    file's applies only in a trusted folder.
+    .pyrefly = pyrefly's `pyrefly lsp`.
+    .ty = ty's `ty server`.
+    .pyright = pyright's `pyright-langserver --stdio`.
+
 settings-lsp-servers =
-    Servers by name: changes to the built-in rust-analyzer, pyright,
-    typescript-language-server, typescript-go, gopls,
+    Servers by name: changes to the built-in rust-analyzer, pyrefly, ty,
+    pyright, ruff, typescript-language-server, typescript-go, gopls,
     vscode-css-language-server, jdtls, kotlin-lsp and csharp-ls, or servers of your own, which
     need a `command`.
 

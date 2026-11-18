@@ -1153,12 +1153,23 @@
             "null"
           ]
         },
+        "python_server": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PythonServer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which built-in server Python files get: only that one runs, and\nwith it ruff, if it's installed. Unset, it's pyrefly, unless\n`[lsp.servers.ty]` or `[lsp.servers.pyright]` is there: then that\none (ty first), so settings written for it keep it. A project\nfile's applies only in a trusted folder."
+        },
         "servers": {
           "additionalProperties": {
             "$ref": "#/$defs/LspServerSettings"
           },
           "default": {},
-          "description": "Servers by name: changes to the built-in rust-analyzer, pyright,\ntypescript-language-server, typescript-go, gopls,\nvscode-css-language-server, jdtls, kotlin-lsp and csharp-ls, or servers of your own, which\nneed a `command`.",
+          "description": "Servers by name: changes to the built-in rust-analyzer, pyrefly, ty,\npyright, ruff, typescript-language-server, typescript-go, gopls,\nvscode-css-language-server, jdtls, kotlin-lsp and csharp-ls, or servers of your own, which\nneed a `command`.",
           "type": "object"
         },
         "timeouts": {
@@ -1426,6 +1437,26 @@
         }
       },
       "type": "object"
+    },
+    "PythonServer": {
+      "description": "The built-in server for Python.",
+      "oneOf": [
+        {
+          "const": "pyrefly",
+          "description": "pyrefly's `pyrefly lsp`.",
+          "type": "string"
+        },
+        {
+          "const": "ty",
+          "description": "ty's `ty server`.",
+          "type": "string"
+        },
+        {
+          "const": "pyright",
+          "description": "pyright's `pyright-langserver --stdio`.",
+          "type": "string"
+        }
+      ]
     },
     "RailSide": {
       "description": "`workbench.rail`.",

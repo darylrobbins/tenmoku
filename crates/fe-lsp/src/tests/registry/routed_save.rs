@@ -100,7 +100,9 @@ fn a_handoff_keeps_the_save_of_the_caught_up_version() {
     assert_eq!(events.status(failed), ServerStatus::Starting);
     assert_eq!(
         events.status(failed),
-        ServerStatus::Stopped(Some("pyright not found".into()))
+        ServerStatus::Stopped(Some(
+            "pyright not found; install it with npm install -g pyright".into()
+        ))
     );
     wait_until("the documents to wait", || {
         manager.server_of(saved.id()).is_none() && manager.server_of(superseded.id()).is_none()

@@ -142,7 +142,7 @@ fn untrusted_roots_start_nothing() {
     assert_eq!(
         launched(&fake),
         [
-            ("pyright".into(), root.clone()),
+            ("pyrefly".into(), root.clone()),
             ("rust-analyzer".into(), root)
         ]
     );

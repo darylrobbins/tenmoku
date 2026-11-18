@@ -246,25 +246,34 @@ fn the_registry_hands_python_servers_the_setting() {
         ..LspSettings::default()
     };
     settings.servers.insert(
-        "ty".into(),
-        serde_json::from_value(json!({ "command": "ty", "languages": ["python"] })).unwrap(),
+        "pylsp".into(),
+        serde_json::from_value(json!({ "command": "pylsp", "languages": ["python"] })).unwrap(),
     );
     let mut registry = Registry::default();
     registry.set_settings(settings);
     let specs = registry.specs();
     let of = |name: &str| specs.iter().find(|spec| spec.name == name).unwrap();
     let set = Some(PathBuf::from("~/envs/app"));
-    assert_eq!(of("pyright").python_environment, set);
-    assert_eq!(of("ty").python_environment, set);
+    assert_eq!(of("pyrefly").python_environment, set);
+    assert_eq!(of("ruff").python_environment, set);
+    assert_eq!(of("pylsp").python_environment, set);
     assert_eq!(of("rust-analyzer").python_environment, None);
 
-    // Only pyright's built-in has an interpreter setting.
+    // Python's built-in main servers have an interpreter setting, each its
+    // own; ruff and a server of the user's have none.
     let hooked: Vec<_> = builtin_specs()
         .into_iter()
         .filter_map(|spec| Some((spec.name, spec.interpreter_setting?)))
         .collect();
-    assert_eq!(hooked, [("pyright".into(), "python.pythonPath".into())]);
-    assert_eq!(of("ty").interpreter_setting, None);
+    assert_eq!(
+        hooked,
+        [
+            ("pyrefly".into(), "python.pythonPath".into()),
+            ("ty".into(), "ty.configuration.environment.python".into()),
+            ("pyright".into(), "python.pythonPath".into()),
+        ]
+    );
+    assert_eq!(of("pylsp").interpreter_setting, None);
 }
 
 #[test]
@@ -544,7 +553,10 @@ fn a_python_server_not_found_says_where_it_looked() {
     let places = Places::new();
     let root = &places.root;
     let local = || Arc::new(LocalLauncher) as Arc<dyn ServerLauncher>;
-    // What the launcher's error and the server's status say.
+    // What the launcher's error and the server's status say, which also
+    // says how to install it.
+    let hint = "; install it with npm install -g pyright";
+    let installed = |text: &str| Some(format!("{text}{hint}"));
     let said = |spec: ServerSpec| {
         let err = LocalLauncher
             .launch(&spec, root, &LaunchCancel::new())
@@ -559,7 +571,7 @@ fn a_python_server_not_found_says_where_it_looked() {
         "pyright-langserver not found on PATH, and {} has no Python environment (.venv or venv)",
         root.display()
     );
-    assert_eq!(said(pyright()), (no_env.clone(), Some(no_env)));
+    assert_eq!(said(pyright()), (no_env.clone(), installed(&no_env)));
 
     make_env(&root.join(".venv"));
     let bin = root.join(".venv").join(PYTHON);
@@ -567,14 +579,14 @@ fn a_python_server_not_found_says_where_it_looked() {
         "pyright-langserver not found in {} or on PATH",
         bin.parent().unwrap().display()
     );
-    assert_eq!(said(pyright()), (in_env.clone(), Some(in_env)));
+    assert_eq!(said(pyright()), (in_env.clone(), installed(&in_env)));
 
     // A host's launcher, whose search fe-lsp doesn't know: the name, as
     // before.
     let host = stopped_with(Arc::new(NotFound), pyright(), root);
-    assert_eq!(host.as_deref(), Some("pyright not found"));
+    assert_eq!(host, installed("pyright not found"));
 
-    // Any other server's text is as it was.
+    // Any other server's text is as it was, with no install hint.
     make_env(&root.join("venv"));
     let rust = ServerSpec {
         languages: vec!["rust".into()],

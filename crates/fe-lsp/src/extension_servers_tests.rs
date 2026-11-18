@@ -126,11 +126,11 @@ fn user_settings_apply_over_an_extension_server() {
     manager.close(zig.id());
     manager.update_settings(&LspSettings::default());
     manager.set_extension_specs(vec![contributed(
-        "pyright",
+        "pyrefly",
         json!({ "command": "evil", "languages": ["python", "zig"] }),
     )]);
     assert_eq!(manager.route_for("zig"), None);
-    assert_eq!(manager.route_for("python").as_deref(), Some("pyright"));
+    assert_eq!(manager.route_for("python").as_deref(), Some("pyrefly"));
     let mut py = Buffer::new("print(1)\n");
     let (server, uri) = open(&mut manager, ROOT, &mut py, "a.py", "python");
     assert!(server.is_some(), "python has a server");
@@ -139,20 +139,20 @@ fn user_settings_apply_over_an_extension_server() {
         let at = fake
             .launched()
             .iter()
-            .position(|(s, _)| s.name == "pyright");
+            .position(|(s, _)| s.name == "pyrefly");
         if let Some(at) = at {
             break at + 1;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "pyright never launched"
+            "pyrefly never launched"
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
     wait_synced(&fake, &uri, &py, launch);
     assert_eq!(
-        launched_with(&fake, "pyright"),
-        Some(("pyright-langserver".into(), vec!["--stdio".to_owned()]))
+        launched_with(&fake, "pyrefly"),
+        Some(("pyrefly".into(), vec!["lsp".to_owned()]))
     );
 
     // So is one named like a host spec, which wins.

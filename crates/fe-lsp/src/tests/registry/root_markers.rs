@@ -72,10 +72,11 @@ fn root_markers_come_from_builtins_and_settings() {
         markers_of(&builtins, "pyright"),
         markers(&[
             "pyproject.toml",
+            "pyrefly.toml",
+            "ty.toml",
             "setup.py",
-            "setup.cfg",
+            "requirements.txt",
             "pyrightconfig.json",
-            "requirements.txt"
         ])
     );
     let ts = markers(&["tsconfig.json", "jsconfig.json", "package.json"]);

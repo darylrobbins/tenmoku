@@ -206,6 +206,31 @@ pub(crate) struct Lsp {
     pub(crate) config: Rc<tempfile::TempDir>,
 }
 
+/// `text`, a user settings file, with `lsp.python_server = "pyright"` and
+/// ruff off, unless it sets either: these tests' Python server is
+/// pyright, on its own fake ([`Switch`]), whatever is installed.
+fn pinned(text: &str) -> String {
+    let mut keys = String::new();
+    if !text.contains("python_server") {
+        keys.push_str("python_server = \"pyright\"\n");
+    }
+    if !text.contains("ruff") {
+        keys.push_str("servers.ruff.enabled = false\n");
+    }
+    // Under the file's own [lsp], which may follow none of these as a
+    // dotted key; else first, before any table.
+    match text.find("[lsp]\n") {
+        Some(at) => {
+            let at = at + "[lsp]\n".len();
+            format!("{}{keys}{}", &text[..at], &text[at..])
+        }
+        None => {
+            let dotted: String = keys.lines().map(|key| format!("lsp.{key}\n")).collect();
+            format!("{dotted}{text}")
+        }
+    }
+}
+
 /// The project: `src/main.rs`, `src/lib.rs`, `src/other.rs` and
 /// `tool.py`.
 fn project() -> tempfile::TempDir {
@@ -332,6 +357,8 @@ impl Lsp {
             root,
             config,
         };
+        // Read once the root is trusted.
+        lsp.write_user_settings("");
         lsp.draw();
         lsp
     }
@@ -397,10 +424,11 @@ impl Lsp {
     }
 
     /// Writes the user's `settings.toml`, which a trusted root's settings
-    /// are read from at the next reload.
+    /// are read from at the next reload, with Python's server pyright
+    /// ([`pinned`]).
     pub(crate) fn write_user_settings(&self, text: &str) {
         let path = self.config.path().join(fe_config::paths::SETTINGS_FILE);
-        fs::write(path, text).unwrap();
+        fs::write(path, pinned(text)).unwrap();
     }
 
     /// The path of `name`, relative to the root with `/` separators, as the
@@ -786,6 +814,18 @@ fn status_item_follows_the_server(cx: &mut TestAppContext) {
     assert_eq!(commands.last().unwrap().command.as_str(), "lsp.show_log");
     assert_eq!(tabs(&mut s), before + 1);
     assert_eq!(s.active_path(), None);
+}
+
+/// A Python server that isn't there says, in the status item, what was
+/// looked for and how to install it (T684).
+#[gpui::test]
+fn a_missing_python_server_says_how_to_install_it(cx: &mut TestAppContext) {
+    let mut s = Lsp::new(cx);
+    s.missing.store(true, Ordering::SeqCst);
+    s.open("tool.py");
+    s.wait_item(Some(
+        "pyright: stopped: pyright not found; install it with npm install -g pyright",
+    ));
 }
 
 #[gpui::test]

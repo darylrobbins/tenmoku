@@ -1460,6 +1460,13 @@ pub struct LspSettings {
     pub max_file_bytes: u64,
     /// Which built-in server TypeScript and JavaScript files get.
     pub typescript_server: TypescriptServer,
+    /// Which built-in server Python files get: only that one runs, and
+    /// with it ruff, if it's installed. Unset, it's pyrefly, unless
+    /// `[lsp.servers.ty]` or `[lsp.servers.pyright]` is there: then that
+    /// one (ty first), so settings written for it keep it. A project
+    /// file's applies only in a trusted folder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub python_server: Option<PythonServer>,
     /// The Python environment (a virtualenv) Python's language servers run
     /// in: a server's program is looked for in its bin before the `PATH`,
     /// and the server is told of its interpreter. An absolute path, one
@@ -1471,8 +1478,8 @@ pub struct LspSettings {
     pub python_environment: Option<String>,
     /// How long requests may take, in milliseconds, by method.
     pub timeouts: LspTimeouts,
-    /// Servers by name: changes to the built-in rust-analyzer, pyright,
-    /// typescript-language-server, typescript-go, gopls,
+    /// Servers by name: changes to the built-in rust-analyzer, pyrefly, ty,
+    /// pyright, ruff, typescript-language-server, typescript-go, gopls,
     /// vscode-css-language-server, jdtls, kotlin-lsp and csharp-ls, or servers of your own, which
     /// need a `command`.
     pub servers: BTreeMap<String, LspServerSettings>,
@@ -1484,10 +1491,26 @@ impl Default for LspSettings {
             enabled: true,
             max_file_bytes: 50 * 1024 * 1024,
             typescript_server: TypescriptServer::default(),
+            python_server: None,
             python_environment: None,
             timeouts: LspTimeouts::default(),
             servers: BTreeMap::new(),
         }
+    }
+}
+
+impl LspSettings {
+    /// The built-in server Python files get: `python_server`, or, unset,
+    /// the first of pyrefly, ty and pyright that `servers` has a table for
+    /// (turned on or off), else pyrefly. One with a table turned off is
+    /// still the one chosen, so none of them runs, as before the setting.
+    pub fn chosen_python_server(&self) -> PythonServer {
+        self.python_server.unwrap_or_else(|| {
+            PythonServer::ALL
+                .into_iter()
+                .find(|server| self.servers.contains_key(server.name()))
+                .unwrap_or_default()
+        })
     }
 }
 
@@ -1500,6 +1523,33 @@ pub enum TypescriptServer {
     /// typescript-go's `tsc --lsp`.
     #[default]
     TypescriptGo,
+}
+
+/// The built-in server for Python.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum PythonServer {
+    /// pyrefly's `pyrefly lsp`.
+    #[default]
+    Pyrefly,
+    /// ty's `ty server`.
+    Ty,
+    /// pyright's `pyright-langserver --stdio`.
+    Pyright,
+}
+
+impl PythonServer {
+    /// Every one, in the order the setting lists them.
+    pub const ALL: [PythonServer; 3] = [Self::Pyrefly, Self::Ty, Self::Pyright];
+
+    /// Its name: the setting's value, and its server's under `[lsp.servers]`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Pyrefly => "pyrefly",
+            Self::Ty => "ty",
+            Self::Pyright => "pyright",
+        }
+    }
 }
 
 /// Request timeouts, in milliseconds.
@@ -1757,6 +1807,10 @@ fn options() -> SettingsOptions {
         ))
         .layer_filter(ProjectFilter::new("formatters", drop_bad_formatters))
         .layer_filter(ProjectFilter::new(SPELL_SCOPES_KEY, drop_bad_spell_scopes))
+        .layer_filter(ProjectFilter::new(
+            PYTHON_SERVER_KEY,
+            drop_bad_python_server,
+        ))
         .project_filter(ProjectFilter::new("formatters", drop_formatters))
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
         .project_filter(ProjectFilter::new("theme", drop_theme))
@@ -1865,8 +1919,9 @@ impl LspLayer {
         if self.project {
             layer.table.remove("theme");
         }
-        // Only a warning to the store, so it can't reject the file here.
+        // Only warnings to the store, so they can't reject the file here.
         drop_bad_spell_scopes(&mut layer);
+        drop_bad_python_server(&mut layer);
         if toml::Value::Table(layer.table.clone())
             .try_into::<Settings>()
             .is_err()
@@ -2175,6 +2230,43 @@ fn drop_bad_formatters(layer: &mut Layer) {
         let warning = layer.diagnostic_at(Severity::Warning, Some(key), offset, message);
         layer.diagnostics.push(warning);
     }
+}
+
+/// `lsp.python_server`, as a diagnostic names it.
+const PYTHON_SERVER_KEY: &str = "lsp.python_server";
+
+/// Drops an `lsp.python_server` that isn't one of [`PythonServer`]'s
+/// values, with a warning at it, so it's unset (and the default applies)
+/// rather than the file rejected.
+fn drop_bad_python_server(layer: &mut Layer) {
+    let Some(toml::Value::Table(lsp)) = layer.table.get_mut("lsp") else {
+        return;
+    };
+    let Some(value) = lsp.get("python_server") else {
+        return;
+    };
+    let known = value.as_str().is_some_and(|value| {
+        PythonServer::ALL
+            .iter()
+            .any(|server| server.name() == value)
+    });
+    if known {
+        return;
+    }
+    let message =
+        kiln_l10n::tr!("config-python-server-unknown", value = value.to_string()).to_string();
+    lsp.remove("python_server");
+    let document = DeTable::parse(&layer.source).ok();
+    let offset = document.as_ref().map_or(0, |document| {
+        key_offset(document.get_ref(), "lsp", &["python_server".to_owned()])
+    });
+    let warning = layer.diagnostic_at(
+        Severity::Warning,
+        Some(PYTHON_SERVER_KEY.into()),
+        offset,
+        message,
+    );
+    layer.diagnostics.push(warning);
 }
 
 /// `editor.spell_check_scopes`, as a diagnostic names it.

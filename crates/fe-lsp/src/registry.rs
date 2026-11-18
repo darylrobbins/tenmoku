@@ -8,7 +8,9 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use fe_config::settings::{LspReadiness, LspServerSettings, LspSettings, TypescriptServer};
+use fe_config::settings::{
+    LspReadiness, LspServerSettings, LspSettings, PythonServer, TypescriptServer,
+};
 use serde_json::Value;
 
 use crate::launcher::{PullDiagnostics, ReadinessMode, ServerSpec, UnversionedDiagnostics};
@@ -43,18 +45,38 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: markers(&["Cargo.lock", "Cargo.toml"]),
             ..spec(RUST_ANALYZER, "rust-analyzer", &[], &["rust"])
         },
+        // Python's: the one `lsp.python_server` picks ([`python_server`]),
+        // installed into the project's environment or anywhere on the
+        // PATH. Each reads the interpreter it resolves imports with from
+        // its own key (python_env.rs).
         ServerSpec {
-            root_markers: markers(&[
-                "pyproject.toml",
-                "setup.py",
-                "setup.cfg",
-                "pyrightconfig.json",
-                "requirements.txt",
-            ]),
-            // pyright reads the interpreter it resolves imports with from
-            // python.pythonPath (python_env.rs).
+            root_markers: markers(&PYTHON_MARKERS),
             interpreter_setting: Some("python.pythonPath".into()),
-            ..spec("pyright", "pyright-langserver", &["--stdio"], &["python"])
+            install: Some("pip install pyrefly".into()),
+            ..spec(PYREFLY, "pyrefly", &["lsp"], &["python"])
+        },
+        ServerSpec {
+            root_markers: markers(&PYTHON_MARKERS),
+            interpreter_setting: Some("ty.configuration.environment.python".into()),
+            install: Some("uv tool install ty".into()),
+            ..spec(TY, "ty", &["server"], &["python"])
+        },
+        ServerSpec {
+            root_markers: markers(&PYTHON_MARKERS),
+            interpreter_setting: Some("python.pythonPath".into()),
+            install: Some("npm install -g pyright".into()),
+            ..spec(PYRIGHT, "pyright-langserver", &["--stdio"], &["python"])
+        },
+        // Lints, formats and fixes beside Python's server, whichever it is;
+        // it has no completions, and runs only if it's installed, saying
+        // nothing if it isn't.
+        ServerSpec {
+            root_markers: markers(&PYTHON_MARKERS),
+            add_on: true,
+            only_if_found: true,
+            completion: false,
+            install: Some("pip install ruff".into()),
+            ..spec("ruff", "ruff", &["server"], &["python"])
         },
         // Its pushes carry no version, so they're dropped (§4.1); its
         // diagnostics are pulled through tsserver instead.
@@ -120,6 +142,41 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
             ..spec("csharp-ls", "csharp-ls", &[], &["csharp"])
         },
     ]
+}
+
+/// The root markers of Python's servers, in the order they're tried.
+const PYTHON_MARKERS: [&str; 6] = [
+    "pyproject.toml",
+    "pyrefly.toml",
+    "ty.toml",
+    "setup.py",
+    "requirements.txt",
+    "pyrightconfig.json",
+];
+
+const PYREFLY: &str = "pyrefly";
+const TY: &str = "ty";
+const PYRIGHT: &str = "pyright";
+
+/// The built-in Python servers `lsp.python_server` doesn't pick
+/// ([`LspSettings::chosen_python_server`]), which never run: every one
+/// but the chosen.
+fn not_chosen_python_servers(settings: &LspSettings) -> Vec<&'static str> {
+    let chosen = settings.chosen_python_server();
+    PythonServer::ALL
+        .into_iter()
+        .filter(|server| *server != chosen)
+        .map(python_server)
+        .collect()
+}
+
+/// The built-in spec's name of `server`.
+fn python_server(server: PythonServer) -> &'static str {
+    match server {
+        PythonServer::Pyrefly => PYREFLY,
+        PythonServer::Ty => TY,
+        PythonServer::Pyright => PYRIGHT,
+    }
 }
 
 /// The built-in Java server, the one that takes the host's bundles
@@ -280,7 +337,12 @@ impl Registry {
     /// name), then those extensions contribute (in the order given), then
     /// servers only the host does (in the order registered).
     /// None while `lsp.enabled` is false; none that its settings turn off,
-    /// and only the TypeScript server `lsp.typescript_server` picks.
+    /// only the TypeScript server `lsp.typescript_server` picks, and only
+    /// the Python server `lsp.python_server` does
+    /// ([`LspSettings::chosen_python_server`]), even if the others have
+    /// settings of their own. An add-on that runs only if it's found is
+    /// left out while none of its languages has a main server
+    /// ([`beside_a_main`]).
     pub(crate) fn specs(&self) -> Vec<ServerSpec> {
         if !self.settings.enabled {
             return Vec::new();
@@ -307,9 +369,11 @@ impl Registry {
                     .filter(|name| !builtin(name) && !self.settings.servers.contains_key(name)),
             );
         let (_, not_chosen) = typescript_server(self.settings.typescript_server);
+        let not_chosen_python = not_chosen_python_servers(&self.settings);
         let python_environment = self.settings.python_environment.as_deref();
-        names
+        let specs: Vec<ServerSpec> = names
             .filter(|name| name != not_chosen)
+            .filter(|name| !not_chosen_python.contains(&name.as_str()))
             .filter_map(|name| self.spec(&name, &builtins, &extension))
             .map(|mut spec| {
                 // A Python server runs in the environment the setting names
@@ -319,6 +383,15 @@ impl Registry {
                 }
                 spec
             })
+            .collect();
+        let beside: Vec<bool> = specs
+            .iter()
+            .map(|spec| beside_a_main(spec, &specs))
+            .collect();
+        specs
+            .into_iter()
+            .zip(beside)
+            .filter_map(|(spec, kept)| kept.then_some(spec))
             .collect()
     }
 
@@ -363,6 +436,21 @@ impl Registry {
             (None, None) => None,
         }
     }
+}
+
+/// Whether `spec` may run among `specs`: unless it's an add-on that runs
+/// only if it's found (ruff), which runs only beside a main server of one
+/// of its languages. With none it's left out, so it never leads a
+/// document in their place, and a missing one never shows as its status.
+fn beside_a_main(spec: &ServerSpec, specs: &[ServerSpec]) -> bool {
+    if !(spec.add_on && spec.only_if_found) {
+        return true;
+    }
+    spec.languages.iter().any(|language| {
+        specs
+            .iter()
+            .any(|main| !main.add_on && main.languages.contains(language))
+    })
 }
 
 /// The spec of a server `settings` define on their own, as an extension's

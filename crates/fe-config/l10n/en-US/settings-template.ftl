@@ -523,3 +523,6 @@ settings-template-lsp-servers-my_linter =
     interpreter. It's $VIRTUAL_ENV, else the project's .venv or venv, unless
     {"["}lsp] python_environment, below, names one: a path under ~, or relative to
     the project. A project file can't set it, except in a trusted folder.
+    {"["}lsp] python_server picks Python's server: "pyrefly" (the default), "ty" or
+    "pyright"; only that one runs, and ruff with it when it's installed. Unset,
+    a [lsp.servers.ty] or [lsp.servers.pyright] table picks that one.

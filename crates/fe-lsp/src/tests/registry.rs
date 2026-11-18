@@ -131,9 +131,33 @@ fn builtin_specs() {
                 strings(&["rust-analyzer/flycheck/"]),
             ),
             (
+                "pyrefly",
+                "pyrefly",
+                strings(&["lsp"]),
+                strings(&["python"]),
+                ReadinessMode::Progress,
+                vec![],
+            ),
+            (
+                "ty",
+                "ty",
+                strings(&["server"]),
+                strings(&["python"]),
+                ReadinessMode::Progress,
+                vec![],
+            ),
+            (
                 "pyright",
                 "pyright-langserver",
                 strings(&["--stdio"]),
+                strings(&["python"]),
+                ReadinessMode::Progress,
+                vec![],
+            ),
+            (
+                "ruff",
+                "ruff",
+                strings(&["server"]),
                 strings(&["python"]),
                 ReadinessMode::Progress,
                 vec![],
@@ -208,7 +232,8 @@ fn builtin_specs() {
             .collect::<Vec<_>>(),
         [
             "rust-analyzer",
-            "pyright",
+            "pyrefly",
+            "ruff",
             "typescript-go",
             "gopls",
             "vscode-css-language-server",
@@ -224,7 +249,7 @@ fn builtin_specs() {
     }
     assert!(specs.iter().all(|s| s.name != "typescript-language-server"));
     assert_eq!(chosen(&specs, "rust").as_deref(), Some("rust-analyzer"));
-    assert_eq!(chosen(&specs, "python").as_deref(), Some("pyright"));
+    assert_eq!(chosen(&specs, "python").as_deref(), Some("pyrefly"));
     assert_eq!(chosen(&specs, "text"), None);
     registry.set_settings(LspSettings {
         typescript_server: TypescriptServer::TypescriptLanguageServer,
@@ -332,8 +357,9 @@ fn user_settings_and_host_specs() {
     assert_eq!(launched[0].0.command, Path::new("/host/rust-analyzer"));
     assert_eq!(launched[0].0.args, Vec::<String>::new());
 
-    // With lsp.enabled = false, or pyright turned off, a Python document
-    // launches nothing; turned back on, it gets its server.
+    // With lsp.enabled = false, or pyright turned off (its table picks it
+    // as Python's server, so pyrefly doesn't run in its place), a Python
+    // document launches nothing; with neither, it gets pyrefly.
     let mut off = LspSettings {
         enabled: false,
         ..LspSettings::default()
@@ -366,7 +392,7 @@ fn user_settings_and_host_specs() {
         let id = manager.server_of(buffer.id()).expect("a server now");
         let replica = fake.wait_for_document(&uri(&path), "didOpen", |r| r.is_some());
         assert_eq!(replica.unwrap().text, "# hi\nx = 1\n");
-        assert_eq!(names(&fake.launched()), ["pyright"]);
+        assert_eq!(names(&fake.launched()), ["pyrefly"]);
         let mut big = Buffer::new("y = 2\n");
         let big_path = format!("{ROOT}/big.py");
         assert_eq!(
@@ -388,24 +414,24 @@ fn lazy_start_per_server_and_root() {
     let mut b = Buffer::new("b = 2\n");
     let a_path = format!("{ROOT}/a.py");
     let b_path = format!("{ROOT}/pkg/b.py");
-    let pyright = open(&mut manager, root(), &mut a, &a_path, "python").unwrap();
-    assert_eq!(events.status(pyright), ServerStatus::Starting);
+    let pyrefly = open(&mut manager, root(), &mut a, &a_path, "python").unwrap();
+    assert_eq!(events.status(pyrefly), ServerStatus::Starting);
     fake.wait_initialized();
     assert_eq!(
         open(&mut manager, root(), &mut b, &b_path, "python"),
-        Some(pyright)
+        Some(pyrefly)
     );
     fake.wait_for_document(&uri(&b_path), "didOpen", |r| r.is_some());
-    barrier(&manager, pyright);
+    barrier(&manager, pyrefly);
     let launched = fake.launched();
-    assert_eq!(names(&launched), ["pyright"]);
+    assert_eq!(names(&launched), ["pyrefly"]);
     assert_eq!(launched[0].1, Path::new(ROOT));
 
-    // Closing every Python document leaves pyright running.
+    // Closing every Python document leaves pyrefly running.
     manager.close(a.id());
     manager.close(b.id());
     fake.wait_for_document(&uri(&b_path), "didClose", |r| r.is_some_and(|r| !r.open));
-    barrier(&manager, pyright);
+    barrier(&manager, pyrefly);
     assert!(
         !fake.records().iter().any(|r| r.method() == "shutdown"),
         "{:#?}",
@@ -424,7 +450,7 @@ fn lazy_start_per_server_and_root() {
         ),
         None
     );
-    barrier(&manager, pyright);
+    barrier(&manager, pyrefly);
     assert_eq!(fake.launches(), 1);
 
     // Another root gets its own instance.
@@ -441,10 +467,10 @@ fn lazy_start_per_server_and_root() {
         "python",
     )
     .unwrap();
-    assert_ne!(other_id, pyright);
+    assert_ne!(other_id, pyrefly);
     barrier(&manager, other_id);
     let launched = fake.launched();
-    assert_eq!(names(&launched), ["pyright", "pyright"]);
+    assert_eq!(names(&launched), ["pyrefly", "pyrefly"]);
     assert_eq!(launched[1].1, Path::new(other_root));
 }
 
@@ -903,7 +929,7 @@ fn next_failure(events: &Events) -> ServerId {
             server,
             status: ServerStatus::Stopped(Some(why)),
             ..
-        } if why == "pyright not found" => Some(server),
+        } if why.starts_with("pyright not found") => Some(server),
         _ => None,
     })
 }
@@ -924,7 +950,9 @@ fn a_fixed_command_brings_back_the_documents_of_a_failed_server() {
     assert_eq!(events.status(failed), ServerStatus::Starting);
     assert_eq!(
         events.status(failed),
-        ServerStatus::Stopped(Some("pyright not found".into()))
+        ServerStatus::Stopped(Some(
+            "pyright not found; install it with npm install -g pyright".into()
+        ))
     );
     // It waits, and edits meanwhile are drained as they're nudged.
     wait_until("the document to wait", || {
@@ -1231,13 +1259,13 @@ fn an_instance_stopped_before_it_launches_launches_nothing() {
     let mut settings = LspSettings::default();
     settings
         .servers
-        .insert("pyright".into(), server(json!({ "args": ["--next"] })));
+        .insert("pyrefly".into(), server(json!({ "args": ["--next"] })));
     manager.update_settings(&settings);
     release.send(()).unwrap();
     let replica = fake.wait_for_document(&uri(&a_path), "a opened", |r| r.is_some());
     assert_eq!(replica.unwrap().launch, 1);
     let launched = fake.launched();
-    assert_eq!(names(&launched), ["pyright"]);
+    assert_eq!(names(&launched), ["pyrefly"]);
     assert_eq!(launched[0].0.args, strings(&["--next"]));
 }
 
@@ -1293,12 +1321,12 @@ fn an_instance_stopped_while_it_launches_is_killed_before_initialize() {
     let mut settings = LspSettings::default();
     settings
         .servers
-        .insert("pyright".into(), server(json!({ "args": ["--next"] })));
+        .insert("pyrefly".into(), server(json!({ "args": ["--next"] })));
     manager.update_settings(&settings);
     release.send(()).unwrap();
     wait_until("the next spec launched", || fake.launched().len() == 2);
     let launched = fake.launched();
-    assert_eq!(launched[0].0.args, strings(&["--stdio"]));
+    assert_eq!(launched[0].0.args, strings(&["lsp"]));
     assert_eq!(launched[1].0.args, strings(&["--next"]));
     assert_eq!(fake.kills(), 1);
 }

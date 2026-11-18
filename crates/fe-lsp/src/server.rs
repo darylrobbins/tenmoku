@@ -462,7 +462,11 @@ impl Server {
             routes: self.routes.clone(),
             identities: self.identities.clone(),
         };
-        status.send(ServerStatus::Starting);
+        // One that runs only if it's found says nothing until it is.
+        let mut said = !self.spec.only_if_found;
+        if said {
+            status.send(ServerStatus::Starting);
+        }
         if let Some(mut after) = self.after.take() {
             // A stop or a kill first: one that came while waiting wins over
             // the end.
@@ -508,11 +512,28 @@ impl Server {
             last = None;
             // Found once for the launch: the launcher runs the server in
             // it, its settings name its interpreter, the host shows it.
+            let shown = lock(&self.session).python_env.clone();
             let python = self.find_python();
             let spec = ServerSpec {
                 python_env_choice: PythonEnvChoice::Chosen(python.clone()),
                 ..self.spec.clone()
             };
+            if spec.only_if_found && !self.launcher.finds(&spec, &self.root) {
+                log::info!(
+                    "{} isn't installed, so it doesn't run: {}",
+                    spec.name,
+                    spec.command.display()
+                );
+                carry.hand_over();
+                return status.send(ServerStatus::Stopped(None));
+            }
+            // The host reads the environment as it hears of the status, so
+            // it hears again once one other than the last is chosen, before
+            // a launch that may block: the status it shows names it.
+            if !said || python != shown {
+                status.send(ServerStatus::Starting);
+                said = true;
+            }
             let launched = self.launcher.launch(&spec, &self.root, &self.cancel);
             // A stop or kill that came while it launched (which may block: a
             // login shell, a container), which `cancel` asked it to cut
@@ -822,13 +843,22 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// What a failed launch stops the server with: "<name> not found" when
 /// there's nothing to run (Q2 (a)), or, for a server of Python's that
 /// [`LocalLauncher`](crate::LocalLauncher) didn't find, its command and
-/// where it looked (python_env.rs); else the launcher's error.
+/// where it looked (python_env.rs), either followed by how to install it
+/// if its spec says ([`ServerSpec::install`]); else the launcher's error.
 fn launch_error(spec: &ServerSpec, err: &io::Error) -> String {
-    if err.kind() == io::ErrorKind::NotFound {
-        python_env::searched(err)
-            .unwrap_or_else(|| tr!("lsp-server-not-found", name = spec.name.as_str()).to_string())
-    } else {
-        err.to_string()
+    if err.kind() != io::ErrorKind::NotFound {
+        return err.to_string();
+    }
+    let why = python_env::searched(err)
+        .unwrap_or_else(|| tr!("lsp-server-not-found", name = spec.name.as_str()).to_string());
+    match &spec.install {
+        Some(install) => tr!(
+            "lsp-server-not-found-install",
+            why = why,
+            install = install.as_str()
+        )
+        .to_string(),
+        None => why,
     }
 }
 
@@ -1765,8 +1795,14 @@ impl Actor {
         self.link.policy = SyncPolicy::from_capabilities(&result.capabilities);
         self.link.puller.set_capabilities(&result.capabilities);
         self.link.encoding = encoding;
+        let mut capabilities = result.capabilities;
+        // Never asked for them, whatever it offers (ruff, beside Python's
+        // server).
+        if !self.spec.completion {
+            capabilities.completion_provider = None;
+        }
         let mut session = lock(&self.session);
-        session.capabilities = Some(result.capabilities);
+        session.capabilities = Some(capabilities);
         session.encoding = Some(encoding);
     }
 

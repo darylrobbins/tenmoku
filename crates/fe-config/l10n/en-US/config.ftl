@@ -44,6 +44,10 @@ config-formatters-not-table = must be a table of languages; ignored
 config-spell-scope-unknown = { $scope } isn't a spell check scope: use "comments", "strings" or "text"; ignored
 config-spell-scopes-not-list = must be a list of "comments", "strings" and "text"; ignored
 
+## `lsp.python_server`. $value is the value as written, quotes and all.
+
+config-python-server-unknown = { $value } isn't a Python server: use "pyrefly", "ty" or "pyright"; ignored, so the default applies
+
 ## A settings file the Settings editor couldn't parse. $error is the TOML
 ## parser's.
 

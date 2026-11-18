@@ -80,7 +80,10 @@ fn prompt_text_lists_every_capability_and_warning() {
 fn stage3_capabilities_are_worded_and_lsp_says_whether_it_is_built_in() {
     let built_in = [
         "rust-analyzer",
+        "pyrefly",
+        "ty",
         "pyright",
+        "ruff",
         "typescript-language-server",
         "typescript-go",
         "vscode-css-language-server",
