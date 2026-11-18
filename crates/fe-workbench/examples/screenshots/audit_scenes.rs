@@ -74,6 +74,8 @@ mod project_tree_menu;
 mod prompt;
 #[path = "audit/runs.rs"]
 mod runs;
+#[path = "audit/runs_build.rs"]
+mod runs_build;
 #[path = "audit/runs_tests.rs"]
 mod runs_tests;
 #[path = "audit/search_panel.rs"]
@@ -138,6 +140,7 @@ const SURFACES: &[&Surface] = &[
     &project_tree_menu::SURFACE,
     &runs::SURFACE,
     &runs_tests::SURFACE,
+    &runs_build::SURFACE,
     &branch_menu::SURFACE,
     &inbox::SURFACE,
     &operations::CLOSED,

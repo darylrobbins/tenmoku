@@ -15,6 +15,7 @@
 //! durations are used for the ends instead.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -37,6 +38,13 @@ pub struct CrateSpan {
     /// It is a path dependency (a `path+file://` package id): the crate the
     /// user is editing, rather than one from a registry or git.
     pub local: bool,
+    /// A local crate's folder, the one its `Cargo.toml` is in: from its
+    /// package id, or from its `Compiling` line until one names it (a crate
+    /// that failed may never be named).
+    pub dir: Option<PathBuf>,
+    /// In a [`CargoParser::snapshot`], it's being compiled: its `Compiling`
+    /// line has come and its artifact hasn't. Never in a finished timeline.
+    pub running: bool,
 }
 
 impl CrateSpan {
@@ -92,6 +100,26 @@ struct Entry {
     /// For an unbound entry from a `Compiling` line: the path in its
     /// parentheses, which a path package id is matched on.
     path: Option<String>,
+}
+
+impl Entry {
+    /// Its span as the build's end leaves it: a crate that never got an
+    /// artifact failed, or was cut short, so it wasn't fresh; summed
+    /// `timing-info` durations give the end when there are some; a fresh
+    /// crate's span is zero-length.
+    fn finished(&self) -> CrateSpan {
+        let mut span = self.span.clone();
+        if !self.artifact {
+            span.fresh = false;
+        }
+        if let Some(end) = self.timed.and_then(|timed| span.start.checked_add(timed)) {
+            span.end = end;
+        }
+        if span.fresh {
+            span.end = span.start;
+        }
+        span
+    }
 }
 
 /// Reads a build's stdout and stderr lines, each with when it arrived, into a
@@ -197,6 +225,10 @@ impl CargoParser {
                 entry.span.fresh = false;
                 return;
             }
+            // A path package's line names its folder; a git one's, its url.
+            let dir = (path.as_deref())
+                .filter(|path| !path.contains("://"))
+                .map(PathBuf::from);
             self.entries.push(Entry {
                 span: CrateSpan {
                     name: name.to_owned(),
@@ -204,7 +236,9 @@ impl CargoParser {
                     start: at,
                     end: at,
                     fresh: false,
-                    local: false,
+                    local: dir.is_some(),
+                    dir,
+                    running: false,
                 },
                 timed: None,
                 artifact: false,
@@ -265,29 +299,24 @@ impl CargoParser {
         for message in &mut timeline.messages {
             message.rendered.truncate(message.rendered.trim_end().len());
         }
-        timeline.spans = self
-            .entries
-            .into_iter()
-            .map(
-                |Entry {
-                     mut span,
-                     timed,
-                     artifact,
-                     ..
-                 }| {
-                    // A crate that never got an artifact failed, or was cut short.
-                    if !artifact {
-                        span.fresh = false;
-                    }
-                    if let Some(end) = timed.and_then(|timed| span.start.checked_add(timed)) {
-                        span.end = end;
-                    }
-                    if span.fresh {
-                        span.end = span.start;
-                    }
-                    span
-                },
-            )
+        timeline.spans = (self.entries.iter())
+            .map(|entry| entry.finished())
+            .collect();
+        timeline
+    }
+
+    /// The build so far, for a waterfall that grows as it runs: the
+    /// timeline [`CargoParser::finish`] would return if the build ended
+    /// now, but that a crate whose `Compiling` line has come and whose
+    /// artifact hasn't is [`CrateSpan::running`], and a diagnostic still
+    /// being read may have more lines to come.
+    pub fn snapshot(&self) -> BuildTimeline {
+        let mut timeline = self.timeline.clone();
+        timeline.spans = (self.entries.iter())
+            .map(|entry| CrateSpan {
+                running: entry.compiling && !entry.artifact,
+                ..entry.finished()
+            })
             .collect();
         timeline
     }
@@ -299,7 +328,8 @@ impl CargoParser {
             return index;
         }
         let (name, version) = split_package_id(id);
-        let local = id.starts_with("path+file://");
+        let dir = path_package_dir(id);
+        let local = dir.is_some();
         let placeholder = self.entries.iter().position(|entry| {
             entry.id.is_none()
                 && entry.span.name == name
@@ -315,6 +345,8 @@ impl CargoParser {
                     end: at,
                     fresh: true,
                     local,
+                    dir: dir.clone(),
+                    running: false,
                 },
                 timed: None,
                 artifact: false,
@@ -327,6 +359,9 @@ impl CargoParser {
         let entry = &mut self.entries[index];
         entry.id = Some(id.to_owned());
         entry.span.local = local;
+        if dir.is_some() {
+            entry.span.dir = dir;
+        }
         self.by_id.insert(id.to_owned(), index);
         index
     }
@@ -397,6 +432,19 @@ fn source_matches(source: Option<&str>, id: &str) -> bool {
         },
         None => id.starts_with("registry+") || id.starts_with("sparse+"),
     }
+}
+
+/// A path package's folder, from its id (`path+file:///dir/x#0.1.5`): none
+/// for a registry or git one.
+fn path_package_dir(id: &str) -> Option<PathBuf> {
+    let url = id.split('#').next().unwrap_or(id);
+    let path = percent_decode(url.strip_prefix("path+file://")?);
+    // A Windows url's path: `/C:/dir`.
+    let path = match path.as_bytes() {
+        [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => &path[1..],
+        _ => &path,
+    };
+    Some(PathBuf::from(path))
 }
 
 /// `text` with its `%20`-style escapes decoded, as in a `file://` url's path.

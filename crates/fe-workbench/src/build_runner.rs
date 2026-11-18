@@ -18,10 +18,19 @@
 //! artifacts have come, and the warnings and errors rendered so far. Once
 //! the output ends the counts are the parser's. Its progress stays unknown.
 //! Its output, the rendered diagnostics among it, is kept by its
-//! [`RunProcess`] for the Output view ([`Workbench::build_process`]); the
-//! build as the parser read it, once it's ended, for the waterfall
-//! ([`Workbench::build_timeline`]). Both are dropped as
-//! [`Runs`](crate::runs::Runs) drops the run.
+//! [`RunProcess`] for the Output view ([`Workbench::build_process`],
+//! [`Workbench::build_output`]); the build as the parser read it, once it's
+//! ended, for the waterfall ([`Workbench::build_timeline`]), and, while it
+//! runs, as far as it's got, taken after each batch of lines that changed
+//! it ([`CargoParser::snapshot`], [`Workbench::build_shown`]). All are
+//! dropped as [`Runs`](crate::runs::Runs) drops the run. A build recorded
+//! for the screenshots ([`Workbench::record_build_run`]) has no program:
+//! its output and its timeline are given.
+//!
+//! A message is a crate's ([`message_crate`]) if cargo named its package,
+//! else if its file is in the crate's folder, the innermost one that has
+//! it. A crate row of the waterfall selects its messages in the Problems
+//! panel ([`Workbench::show_crate_problems`]).
 //!
 //! Once a build that wasn't cancelled ends, the messages the compiler gave a
 //! file and a line become problems in the Problems panel, as one source with
@@ -43,7 +52,7 @@ use std::{
 };
 
 use fe_editor::diagnostics::{Problem, Severity};
-use fe_runlog::{BuildMessage, BuildTimeline, CargoParser};
+use fe_runlog::{BuildMessage, BuildTimeline, CargoParser, CrateSpan};
 use fe_text::Text;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, Subscription, Task, Window};
 use kiln::Cx;
@@ -52,6 +61,7 @@ use kiln_l10n::{tr, verbatim};
 use crate::{
     Workbench,
     dock::problems_panel::{ColumnUnit, SourceProblem, byte_column, read_text},
+    dock::{DockOp, ProblemsOp},
     run_process::{LineSink, RunProcess, RunSpec, RunUpdate, Stream},
     runs::{RunEnd, RunId, RunKind, RunSummary, RunsEvent},
     task_commands::{Files, project_files},
@@ -101,6 +111,10 @@ pub(crate) struct Plan {
     /// The folders with a `Cargo.toml`, the root's first if it has one, then
     /// those above it, nearest first: where a relative file is looked for.
     pub(crate) manifest_dirs: Vec<PathBuf>,
+    /// Those, then each as the file system resolves it where that's
+    /// another path: what a crate's folder, which cargo gives resolved, is
+    /// compared with ([`message_crate`]).
+    pub(crate) crate_dirs: Vec<PathBuf>,
 }
 
 /// The build of `root`, its programs on `path` if one's given, else on the
@@ -147,9 +161,18 @@ pub(crate) fn plan(
         // The parser reads stdout's JSON and stderr's lines apart.
         merged: false,
     };
+    let mut crate_dirs = manifest_dirs.clone();
+    for dir in &manifest_dirs {
+        if let Ok(resolved) = dir.canonicalize()
+            && !crate_dirs.contains(&resolved)
+        {
+            crate_dirs.push(resolved);
+        }
+    }
     Ok(Plan {
         spec,
         manifest_dirs,
+        crate_dirs,
     })
 }
 
@@ -219,6 +242,10 @@ struct BuildSink {
     overlong: [bool; 2],
     /// Where the build goes once its output's ended.
     timeline: Timeline,
+    /// Where it goes as far as it's got, while it runs.
+    live: Timeline,
+    /// Whether a line's been fed since the last snapshot.
+    fed: bool,
 }
 
 fn stream_index(stream: Stream) -> usize {
@@ -229,7 +256,7 @@ fn stream_index(stream: Stream) -> usize {
 }
 
 impl BuildSink {
-    fn new(timeline: Timeline) -> Self {
+    fn new(timeline: Timeline, live: Timeline) -> Self {
         Self {
             parser: CargoParser::new(),
             built: HashSet::new(),
@@ -239,6 +266,8 @@ impl BuildSink {
             partial: Default::default(),
             overlong: [false; 2],
             timeline,
+            live,
+            fed: false,
         }
     }
 
@@ -246,6 +275,7 @@ impl BuildSink {
     /// parts before it.
     fn feed(&mut self, stream: Stream, text: &str, at: Duration) {
         let ix = stream_index(stream);
+        self.fed = true;
         if std::mem::take(&mut self.overlong[ix]) {
             self.partial[ix].clear();
             log::warn!("a build's line passed {MAX_MESSAGE_LINE} bytes: it's dropped");
@@ -315,7 +345,12 @@ impl LineSink for BuildSink {
         Vec::new()
     }
 
+    /// The counts, if they've changed, and the build so far, if a line
+    /// has come since it was last taken.
     fn batch_end(&mut self) -> Vec<RunUpdate> {
+        if std::mem::take(&mut self.fed) {
+            *lock(&self.live) = Some(self.parser.snapshot());
+        }
         self.updates()
     }
 
@@ -330,6 +365,7 @@ impl LineSink for BuildSink {
         let timeline = std::mem::take(&mut self.parser).finish();
         let summary = self.summary(timeline.warnings, timeline.errors);
         *lock(&self.timeline) = Some(timeline);
+        *lock(&self.live) = None;
         vec![RunUpdate::Summary(summary)]
     }
 }
@@ -372,12 +408,18 @@ fn problem_message(message: &BuildMessage) -> (Severity, String) {
 }
 
 /// The problems `messages` name a file and a line for, as the Problems panel
-/// lists them from source `title`: the files they name are read, so it's for
-/// a background thread. Each once; the first [`MAX_PROBLEMS`].
-fn build_problems(messages: &[BuildMessage], title: &str, dirs: &[PathBuf]) -> Vec<SourceProblem> {
+/// lists them from source `title`, each with the index of the first of
+/// `messages` that's it: the files they name are read, so it's for a
+/// background thread. Each once; the first [`MAX_PROBLEMS`].
+fn build_problems(
+    messages: &[BuildMessage],
+    title: &str,
+    dirs: &[PathBuf],
+) -> (Vec<SourceProblem>, Vec<usize>) {
     let mut texts: HashMap<PathBuf, Option<Text>> = HashMap::new();
     let mut problems: Vec<SourceProblem> = Vec::new();
-    for message in messages {
+    let mut of: Vec<usize> = Vec::new();
+    for (ix, message) in messages.iter().enumerate() {
         let (Some(file), Some(line)) = (&message.file, message.line) else {
             continue;
         };
@@ -410,13 +452,41 @@ fn build_problems(messages: &[BuildMessage], title: &str, dirs: &[PathBuf]) -> V
         };
         if !problems.contains(&problem) {
             problems.push(problem);
+            of.push(ix);
         }
         if problems.len() >= MAX_PROBLEMS {
             log::warn!("build {title}: listing its first {MAX_PROBLEMS} problems");
             break;
         }
     }
-    problems
+    (problems, of)
+}
+
+/// The crate in `spans` that `message` is of: the one cargo named, if it
+/// named one, else the local crate whose folder has its file, the innermost
+/// if they nest, a relative file being in one of `dirs` (the folders a
+/// relative file's looked for in). Nothing's read: a file in two of them
+/// goes to the innermost crate either has it in.
+pub(crate) fn message_crate(
+    message: &BuildMessage,
+    spans: &[CrateSpan],
+    dirs: &[PathBuf],
+) -> Option<usize> {
+    if !message.package.is_empty() {
+        let named = |span: &&CrateSpan| span.name == message.package;
+        let local = (spans.iter()).position(|span| span.local && named(&span));
+        return local.or_else(|| spans.iter().position(|span| named(&span)));
+    }
+    let file = Path::new(message.file.as_deref()?);
+    let candidates: Vec<PathBuf> = match file.is_absolute() {
+        true => vec![file.to_owned()],
+        false => dirs.iter().map(|dir| dir.join(file)).collect(),
+    };
+    (spans.iter().enumerate())
+        .filter_map(|(ix, span)| Some((ix, span.dir.as_deref()?)))
+        .filter(|(_, dir)| candidates.iter().any(|path| path.starts_with(dir)))
+        .max_by_key(|(_, dir)| dir.components().count())
+        .map(|(ix, _)| ix)
 }
 
 /// The `PATH` set for the tests' runs, under test.
@@ -435,17 +505,34 @@ fn runner_path(cx: &App) -> Option<OsString> {
 /// keeps its run.
 struct Build {
     run: RunId,
-    process: Entity<RunProcess>,
+    /// Its program: none for one recorded.
+    process: Option<Entity<RunProcess>>,
+    /// A recorded build's output and end.
+    recorded: Option<(Vec<String>, RunEnd)>,
     timeline: Timeline,
+    /// The build so far, while it runs.
+    live: Timeline,
     /// The root it built, and its plan's folders with a `Cargo.toml`.
     root: PathBuf,
     manifest_dirs: Vec<PathBuf>,
+    /// Its plan's [`Plan::crate_dirs`].
+    crate_dirs: Vec<PathBuf>,
     /// Its end has been seen.
     ended: bool,
     /// To its program, for its end.
     _ended: Subscription,
     /// Reading its problems' files.
     _listing: Option<Task<()>>,
+}
+
+impl Build {
+    fn end(&self, cx: &App) -> Option<RunEnd> {
+        match (&self.process, &self.recorded) {
+            (Some(process), _) => process.read(cx).end(),
+            (None, Some((_, end))) => Some(*end),
+            (None, None) => None,
+        }
+    }
 }
 
 /// The builds of each workbench's [`Runs`](crate::runs::Runs), by its
@@ -461,6 +548,8 @@ struct Kept {
     source: Option<u64>,
     /// The build whose problems it lists.
     listed: Option<RunId>,
+    /// The index of the message of the build each problem it lists is.
+    listed_messages: Vec<usize>,
     /// Drops the builds whose runs [`Runs`](crate::runs::Runs) no longer
     /// keeps, as it changes.
     _changed: Subscription,
@@ -544,10 +633,10 @@ impl Workbench {
 
     /// Starts `plan`'s program for a new run, kept here.
     fn begin_build(&mut self, plan: Plan, root: PathBuf, cx: &mut Context<Self>) {
-        let timeline = Timeline::default();
-        let sink = BuildSink::new(timeline.clone());
+        let (timeline, live) = (Timeline::default(), Timeline::default());
+        let sink = BuildSink::new(timeline.clone(), live.clone());
         let starting = RunProcess::start(plan.spec, sink, self.runs().clone(), cx);
-        let manifest_dirs = plan.manifest_dirs;
+        let (manifest_dirs, crate_dirs) = (plan.manifest_dirs, plan.crate_dirs);
         cx.spawn(async move |workbench, cx| {
             let started = starting.await;
             let kept = workbench.update(cx, |workbench, cx| match started {
@@ -558,10 +647,13 @@ impl Workbench {
                     });
                     let build = Build {
                         run,
-                        process,
+                        process: Some(process),
+                        recorded: None,
                         timeline,
+                        live,
                         root,
                         manifest_dirs,
+                        crate_dirs,
                         ended: false,
                         _ended: ended,
                         _listing: None,
@@ -589,6 +681,7 @@ impl Workbench {
                 builds: Vec::new(),
                 source: None,
                 listed: None,
+                listed_messages: Vec::new(),
                 _changed: app.subscribe(&runs, move |runs, _: &RunsEvent, cx| {
                     prune(key, &runs, cx);
                 }),
@@ -630,7 +723,7 @@ impl Workbench {
         let Some(build) = self.build(run, cx) else {
             return;
         };
-        let end = build.process.read(cx).end();
+        let end = build.end(cx);
         let Some(end) = end.filter(|_| !build.ended) else {
             return;
         };
@@ -654,9 +747,9 @@ impl Workbench {
         let listing = cx.spawn(async move |workbench, cx| {
             let reading =
                 cx.background_spawn(async move { build_problems(&messages, &title, &dirs) });
-            let problems = reading.await;
+            let (problems, messages) = reading.await;
             let listed = workbench.update(cx, |workbench, cx| {
-                workbench.list_build_problems(run, &root, problems, cx)
+                workbench.list_build_problems(run, &root, problems, messages, cx)
             });
             listed.ok();
         });
@@ -675,6 +768,7 @@ impl Workbench {
         run: RunId,
         root: &Path,
         problems: Vec<SourceProblem>,
+        messages: Vec<usize>,
         cx: &mut Context<Self>,
     ) {
         if self.root() != Some(root) {
@@ -694,6 +788,7 @@ impl Workbench {
         if let Some(kept) = self.kept_builds_mut(cx) {
             kept.source = Some(source);
             kept.listed = Some(run);
+            kept.listed_messages = messages;
         }
         panel.update(cx, |panel, _| panel.set_source(source, problems));
         self.sync_problems(cx);
@@ -703,7 +798,128 @@ impl Workbench {
     /// its rendered diagnostics among it, while
     /// [`Runs`](crate::runs::Runs) keeps it: none if it isn't one.
     pub fn build_process(&self, run: RunId, cx: &App) -> Option<Entity<RunProcess>> {
-        Some(self.build(run, cx)?.process.clone())
+        self.build(run, cx)?.process.clone()
+    }
+
+    /// What the Output view shows of the build `run`, while
+    /// [`Runs`](crate::runs::Runs) keeps it: the lines of its stderr,
+    /// cargo's own and the diagnostics it rendered, oldest first, a line
+    /// read in parts whole. None if it isn't one.
+    pub(crate) fn build_output(&self, run: RunId, cx: &App) -> Option<Vec<String>> {
+        let build = self.build(run, cx)?;
+        let Some(process) = &build.process else {
+            return build.recorded.as_ref().map(|(lines, _)| lines.clone());
+        };
+        let mut lines: Vec<String> = Vec::new();
+        let mut open = false;
+        for line in process.read(cx).output().lines() {
+            if line.stream != Stream::Stderr {
+                continue;
+            }
+            match lines.last_mut() {
+                Some(last) if open => last.push_str(&line.text),
+                _ => lines.push(line.text.clone()),
+            }
+            open = !line.ends;
+        }
+        Some(lines)
+    }
+
+    /// The build that made `run` as the waterfall shows it, while
+    /// [`Runs`](crate::runs::Runs) keeps it: as the parser read it once
+    /// its output's ended, else as far as it's got (empty before its first
+    /// line), and the folders a relative file of its messages is in and
+    /// its crates' folders are compared with ([`Plan::crate_dirs`]). None
+    /// if it isn't one.
+    pub(crate) fn build_shown(
+        &self,
+        run: RunId,
+        cx: &App,
+    ) -> Option<(BuildTimeline, Vec<PathBuf>)> {
+        let build = self.build(run, cx)?;
+        let timeline = (lock(&build.timeline).clone())
+            .or_else(|| lock(&build.live).clone())
+            .unwrap_or_default();
+        Some((timeline, build.crate_dirs.clone()))
+    }
+
+    /// Shows the Problems panel with the first problem it lists of the
+    /// crate `span` of the build `run` selected: the first of its messages
+    /// with a file and a line. False, and nothing shown, if the panel
+    /// doesn't list that build's problems or none is the crate's.
+    pub(crate) fn show_crate_problems(
+        &mut self,
+        run: RunId,
+        span: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((timeline, dirs)) = self.build_shown(run, cx) else {
+            return false;
+        };
+        let Some(kept) = self.kept_builds(cx).filter(|kept| kept.listed == Some(run)) else {
+            return false;
+        };
+        let first = (kept.listed_messages.iter().enumerate()).find(|&(_, &message)| {
+            (timeline.messages.get(message))
+                .and_then(|message| message_crate(message, &timeline.spans, &dirs))
+                == Some(span)
+        });
+        let Some((problem, _)) = first else {
+            return false;
+        };
+        let Some(source) = kept.source else {
+            return false;
+        };
+        self.run_dock_op(DockOp::Problems(ProblemsOp::Show), window, cx);
+        let panel = self.dock().read(cx).problems().clone();
+        panel.update(cx, |panel, cx| {
+            panel.select_source_problem(source, problem, cx)
+        })
+    }
+
+    /// Adds a finished build titled `title` that ended `end`, its timeline
+    /// `timeline` and its stderr `output`, as a runner other than the
+    /// workbench's ran it in the root: its messages with a file and a line
+    /// are listed in the Problems panel as a build's are. For the
+    /// screenshots, whose scenes run no builds.
+    pub fn record_build_run(
+        &mut self,
+        title: impl Into<String>,
+        timeline: BuildTimeline,
+        output: Vec<String>,
+        end: RunEnd,
+        cx: &mut Context<Self>,
+    ) -> RunId {
+        let crates = (timeline.spans.iter()).filter(|span| !span.running).count();
+        let summary = RunSummary::Build {
+            crates,
+            warnings: timeline.warnings,
+            errors: timeline.errors,
+        };
+        let title = title.into();
+        let run = self.runs().clone().update(cx, |runs, cx| {
+            let run = runs.begin(RunKind::Build, title, cx);
+            runs.finish(run, end, Some(summary), cx);
+            run
+        });
+        let root = self.root().map(Path::to_owned).unwrap_or_default();
+        let build = Build {
+            run,
+            process: None,
+            recorded: Some((output, end)),
+            timeline: Arc::new(Mutex::new(Some(timeline))),
+            live: Timeline::default(),
+            manifest_dirs: vec![root.clone()],
+            crate_dirs: vec![root.clone()],
+            root,
+            ended: false,
+            _ended: Subscription::new(|| {}),
+            _listing: None,
+        };
+        self.keep_build(build, cx);
+        self.build_changed(run, cx);
+        run
     }
 
     /// The build that made `run` as the parser read it, once its output has

@@ -30,7 +30,9 @@
 //! While a test run is selected, its detail ([`TestRunView`]: a split bar,
 //! the test tree, each test's last results) shows beside the list, which
 //! keeps [`LIST_FRACTION`] of the width, or, in a panel narrower than
-//! [`BESIDE_WIDTH`], under it, the list [`STACKED_ROWS`] rows tall.
+//! [`BESIDE_WIDTH`], under it, the list [`STACKED_ROWS`] rows tall. A build
+//! run's ([`BuildTimelineView`]: the crate waterfall, or the build's
+//! output) shows the same way.
 //!
 //! `runs.show` (`workbench_commands.rs`) shows it; the dock registers it
 //! ([`crate::dock`]) and its rail button, at the rail's foot after
@@ -56,6 +58,7 @@ use kiln_l10n::tr;
 
 use crate::{
     Workbench,
+    build_timeline_view::BuildTimelineView,
     runs::{DebugPhase, Run, RunId, RunKind, RunStatus, RunSummary, Runs},
     test_run_view::TestRunView,
 };
@@ -520,6 +523,8 @@ pub(crate) struct RunsPanel {
     list: Entity<List<RunRows>>,
     /// The selected test run's detail.
     detail: Entity<TestRunView>,
+    /// The selected build run's.
+    build: Entity<BuildTimelineView>,
     /// Whether the panel was last drawn wide enough for the detail beside
     /// the list: so until it's drawn.
     wide: Rc<Cell<bool>>,
@@ -538,6 +543,7 @@ impl RunsPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let for_detail = workbench.clone();
+        let for_build = workbench.clone();
         let open: Opener = Rc::new(move |run: RunId, window: &mut Window, cx: &mut App| {
             let workbench = workbench.clone();
             // Outside whatever update the click or key came in.
@@ -563,6 +569,7 @@ impl RunsPanel {
         };
         let list = cx.new(|cx| List::new(rows, cx));
         let detail = cx.new(|cx| TestRunView::new(for_detail, window, cx));
+        let build = cx.new(|cx| BuildTimelineView::new(for_build, window, cx));
         let confirmed = cx.subscribe_in(
             &list,
             window,
@@ -581,6 +588,7 @@ impl RunsPanel {
             runs: runs.clone(),
             list,
             detail,
+            build,
             wide: Rc::new(Cell::new(true)),
             tick: None,
             _runs: cx.observe(runs, |panel, _, cx| panel.list_runs(cx)),
@@ -601,6 +609,12 @@ impl RunsPanel {
         &self.detail
     }
 
+    /// The build run's detail, for tests.
+    #[cfg(test)]
+    pub(crate) fn build_detail(&self) -> &Entity<BuildTimelineView> {
+        &self.build
+    }
+
     /// The run selected in the list, if any.
     pub(crate) fn selected_run(&self, cx: &App) -> Option<RunId> {
         let list = self.list.read(cx);
@@ -608,15 +622,17 @@ impl RunsPanel {
         list.delegate().rows.get(ix).map(|row| row.id)
     }
 
-    /// Shows the selected run's detail if it's a test run, else none.
+    /// Shows the selected run's detail if it's a test or a build run, else
+    /// none.
     fn show_detail(&mut self, cx: &mut Context<Self>) {
         let list = self.list.read(cx);
         let selected = (list.selected())
             .and_then(|ix| list.delegate().rows.get(ix))
-            .filter(|row| row.kind == RunKind::Test)
-            .map(|row| row.id);
-        self.detail
-            .update(cx, |detail, cx| detail.show(selected, cx));
+            .map(|row| (row.id, row.kind));
+        let of = |kind: RunKind| selected.filter(|run| run.1 == kind).map(|run| run.0);
+        let (test, build) = (of(RunKind::Test), of(RunKind::Build));
+        self.detail.update(cx, |detail, cx| detail.show(test, cx));
+        self.build.update(cx, |detail, cx| detail.show(build, cx));
         cx.notify();
     }
 
@@ -706,7 +722,7 @@ impl RunsPanel {
 }
 
 impl RunsPanel {
-    /// The list and the selected test run's detail: side by side if the
+    /// The list and the selected test or build run's detail: side by side if the
     /// panel was last drawn [`BESIDE_WIDTH`] or wider, else the list over
     /// the detail. A change of side redraws it.
     fn render_with_detail(&self, cx: &mut Context<Self>) -> gpui::Div {
@@ -748,7 +764,10 @@ impl RunsPanel {
                 true => detail.border_l_1(),
                 false => detail.border_t_1(),
             })
-            .child(self.detail.clone());
+            .map(|detail| match self.build.read(cx).run() {
+                Some(_) => detail.child(self.build.clone()),
+                None => detail.child(self.detail.clone()),
+            });
         div()
             .relative()
             .flex_1()
@@ -778,7 +797,7 @@ impl Render for RunsPanel {
         if fe_gpui::vim_enabled(cx) {
             context.add(VIM_FLAG);
         }
-        let detail = self.detail.read(cx).run().is_some();
+        let detail = self.detail.read(cx).run().is_some() || self.build.read(cx).run().is_some();
         let body = if empty {
             self.render_empty(cx).into_any_element()
         } else if detail {

@@ -57,6 +57,7 @@ mod after_frame;
 mod bottom_panel_b3;
 mod breadcrumb_symbol_icons;
 mod build_runner;
+mod build_timeline_view;
 mod caret_keys_hosts;
 mod caret_keys_lines;
 mod changes_b3;

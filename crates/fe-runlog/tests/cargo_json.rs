@@ -6,9 +6,9 @@
 //! records, in cargo's shape, before each rebuilt crate's artifact: stable
 //! cargo can't emit them.
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
-use fe_runlog::{BuildTimeline, CargoParser};
+use fe_runlog::{BuildTimeline, CargoParser, CrateSpan};
 
 const BUILD: &str = include_str!("fixtures/cargo_build.jsonl");
 const STDERR: &str = include_str!("fixtures/cargo_build.stderr");
@@ -270,4 +270,74 @@ fn a_diagnostic_keeps_lines_that_start_with_a_capital() {
     let message = &parser.finish().messages[0];
     assert!(message.rendered.ends_with("Second line of the note"));
     assert!(!message.rendered.contains("Finished"));
+}
+
+#[test]
+fn a_snapshot_marks_the_crates_being_compiled() {
+    let mut parser = CargoParser::new();
+    let a = "path+file:///w/a#a@1.0.0";
+    parser.feed_stdout(&artifact(REG, true), ms(1));
+    parser.feed_stderr("   Compiling a v1.0.0 (/w/a)", ms(4));
+    parser.feed_stderr("   Compiling b v1.0.0 (/w/b)", ms(5));
+    let running = |timeline: &BuildTimeline| -> Vec<(String, bool)> {
+        (timeline.spans.iter())
+            .map(|span| (span.name.clone(), span.running))
+            .collect()
+    };
+    let snapshot = parser.snapshot();
+    assert_eq!(
+        running(&snapshot),
+        [
+            ("dup".to_owned(), false),
+            ("a".to_owned(), true),
+            ("b".to_owned(), true)
+        ]
+    );
+    assert!(snapshot.spans[0].fresh && !snapshot.spans[1].fresh);
+
+    parser.feed_stdout(&artifact(a, false), ms(9));
+    let snapshot = parser.snapshot();
+    assert_eq!(running(&snapshot)[1], ("a".to_owned(), false));
+    assert_eq!(
+        (snapshot.spans[1].start, snapshot.spans[1].end),
+        (ms(4), ms(9))
+    );
+    // A snapshot leaves the parser as it was.
+    let timeline = parser.finish();
+    assert!(timeline.spans.iter().all(|span| !span.running));
+    assert_eq!(
+        timeline.spans[1],
+        CrateSpan {
+            running: false,
+            ..snapshot.spans[1].clone()
+        }
+    );
+}
+
+#[test]
+fn a_local_crate_has_its_folder() {
+    let mut parser = CargoParser::new();
+    parser.feed_stdout(
+        &artifact("path+file:///w/my%20project/a#a@1.0.0", false),
+        ms(1),
+    );
+    parser.feed_stdout(&artifact(REG, false), ms(2));
+    parser.feed_stdout(&artifact(GIT, false), ms(3));
+    // One that failed has no artifact to name it: its line names its folder.
+    parser.feed_stderr("   Compiling c v0.1.0 (/w/c)", ms(4));
+    parser.feed_stderr("   Compiling d v0.1.0 (https://example.com/d#abc)", ms(5));
+    let timeline = parser.finish();
+    let dirs: Vec<(bool, Option<PathBuf>)> = (timeline.spans.iter())
+        .map(|span| (span.local, span.dir.clone()))
+        .collect();
+    assert_eq!(
+        dirs,
+        [
+            (true, Some(PathBuf::from("/w/my project/a"))),
+            (false, None),
+            (false, None),
+            (true, Some(PathBuf::from("/w/c"))),
+            (false, None),
+        ]
+    );
 }

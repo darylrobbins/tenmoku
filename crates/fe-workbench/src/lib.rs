@@ -27,6 +27,7 @@ mod ai_changes_buffers;
 mod ai_changes_panel;
 mod auto_save;
 mod build_runner;
+mod build_timeline_view;
 mod chat_panel;
 mod chat_tool_loop;
 mod closed_editors;

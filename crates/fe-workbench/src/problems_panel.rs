@@ -666,6 +666,49 @@ impl ProblemsPanel {
         self.sources.remove(&key);
     }
 
+    /// Selects the `ix`th of source `key`'s problems, as the panel lists
+    /// it, switching to Project and turning its severity's filter on if
+    /// they hide it, and scrolls to it. False if it isn't listed: the
+    /// workbench hasn't listed the source since it was set.
+    pub(crate) fn select_source_problem(
+        &mut self,
+        key: u64,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(source) = self.sources.get(&key).and_then(|problems| problems.get(ix)) else {
+            return false;
+        };
+        let (path, problem) = (source.path.clone(), source.problem.clone());
+        let target = Target::Position(path.clone(), problem.row, problem.column, source.unit);
+        let found = (self.files.iter().enumerate())
+            .filter(|(_, file)| file.path == path)
+            .find_map(|(file_ix, file)| {
+                let problem_ix = (file.problems.iter().enumerate()).position(|(i, p)| {
+                    *p == problem
+                        && (self.sent[file_ix].as_ref())
+                            .is_none_or(|sent| sent.targets.get(i) == Some(&target))
+                })?;
+                Some((file_ix, problem_ix))
+            });
+        let Some((file_ix, problem_ix)) = found else {
+            return false;
+        };
+        if !self.in_scope(file_ix) {
+            self.scope = Scope::Project;
+        }
+        self.off[Filter::of(problem.severity) as usize] = false;
+        self.relist(None, cx);
+        let row = Row::Problem(file_ix, problem_ix);
+        match self.rows.iter().position(|r| *r == row) {
+            Some(at) => {
+                self.select(at, cx);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Every problem listed, file by file in the panel's order, each with
     /// where opening it goes ([`Workbench::open_listed_problem`]): for the
     /// diagnostics picker.
