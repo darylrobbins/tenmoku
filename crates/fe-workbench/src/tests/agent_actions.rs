@@ -219,6 +219,8 @@ fn denied_files_are_refused_as_attachments(cx: &mut TestAppContext) {
         label: path.to_owned(),
         text: "hunter2".to_owned(),
     };
+    // `mut` is only used by the unix-only extend below.
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut items = vec![
         file(".env"),
         whole(".env"),

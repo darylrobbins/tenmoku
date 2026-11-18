@@ -418,6 +418,7 @@ fn trust_withdrawn_during_a_read(cx: &mut TestAppContext) {
     );
 }
 
+#[cfg(unix)]
 #[gpui::test]
 fn trust_withdrawn_during_a_running_command(cx: &mut TestAppContext) {
     // The command's runner is a real thread, which wakes the loop.
@@ -571,6 +572,7 @@ fn a_hand_in_under_way_ends_only_its_own_turn(cx: &mut TestAppContext) {
 /// F2: New Chat in the middle of a turn ends it as Stop would: its
 /// running command is killed (and its audit line written), and its
 /// finished proposal still reaches the AI Changes panel.
+#[cfg(unix)]
 #[gpui::test]
 fn a_chat_replaced_mid_turn_hands_in_and_kills_its_work(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
@@ -608,6 +610,7 @@ fn a_chat_replaced_mid_turn_hands_in_and_kills_its_work(cx: &mut TestAppContext)
 }
 
 /// Runs command `id` in the chat's context.
+#[cfg(unix)]
 fn dispatch_in_chat(id: &str, cx: &mut VisualTestContext) {
     let stack = (ContextStack::new())
         .with(ContextFrame::new(crate::KEY_CONTEXT))
@@ -664,6 +667,7 @@ fn edits_run_in_the_calls_order_whatever_is_answered_first(cx: &mut TestAppConte
 /// F4: a root change while a command runs kills it and still writes its
 /// audit line, though the chat is replaced and its loop gone before the
 /// command has ended.
+#[cfg(unix)]
 #[gpui::test]
 fn a_root_change_mid_command_still_records_the_kill(cx: &mut TestAppContext) {
     cx.executor().allow_parking();

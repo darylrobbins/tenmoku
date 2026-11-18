@@ -1738,6 +1738,7 @@ fn an_unopened_svg_is_proposed_to_as_text(cx: &mut TestAppContext) {
     assert_eq!(fs::read_to_string(&path).unwrap(), svg);
 }
 
+#[cfg(unix)]
 #[gpui::test]
 fn the_executors_never_open_a_fifo(cx: &mut TestAppContext) {
     let dir = folder();

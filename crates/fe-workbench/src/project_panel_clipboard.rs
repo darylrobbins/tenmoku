@@ -720,7 +720,7 @@ impl ProjectPanel {
         moving: Move,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<Moved, NotMoved> {
+    ) -> Result<Moved, Box<NotMoved>> {
         // An undo's or redo's entry, to revert again.
         let kept = match moving.of {
             MoveOf::Revert(_) => moving.identity.map(|identity| undo::Moved {
@@ -731,10 +731,10 @@ impl ProjectPanel {
             MoveOf::Clip(_) | MoveOf::Drop => None,
         };
         if let Some(busy) = self.move_busy(&moving, window, cx) {
-            return Err(NotMoved {
+            return Err(Box::new(NotMoved {
                 failure: busy,
                 kept,
-            });
+            }));
         }
         let entry = moving.entry_name();
         let found = undo::probe(&moving.from);
@@ -756,10 +756,10 @@ impl ProjectPanel {
                         (tr!("workbench-project-paste-raced", name = &entry), None)
                     }
                 };
-                return Err(NotMoved {
+                return Err(Box::new(NotMoved {
                     failure: ops::Failure::said(message),
                     kept,
-                });
+                }));
             }
         };
         // Planned while every spelling of the old path still resolves.
@@ -785,10 +785,10 @@ impl ProjectPanel {
             Ok(path) => path,
             Err(error) => {
                 let message = tr!("workbench-project-move-failed", name = &entry);
-                return Err(NotMoved {
+                return Err(Box::new(NotMoved {
                     failure: ops::Failure::error(message, &error),
                     kept,
-                });
+                }));
             }
         };
         let step = undo::Moved {

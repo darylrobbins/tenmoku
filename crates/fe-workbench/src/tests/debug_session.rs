@@ -31,6 +31,8 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln_l10n::tr;
 use serde_json::Value;
 
+#[cfg(unix)]
+use crate::terminal_panel::Debuggee;
 use crate::{
     Launch, TerminalPanel, Workbench,
     debug_breakpoints::BreakpointStore,
@@ -39,7 +41,6 @@ use crate::{
     task_commands::TestFiles,
     task_defs::{ProjectFiles, Source, Task, TaskCommand},
     task_run::{ExitHeard, FakeTaskOutput, TaskExit},
-    terminal_panel::Debuggee,
     workbench::toast::Level,
 };
 
