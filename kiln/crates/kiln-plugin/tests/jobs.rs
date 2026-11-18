@@ -482,7 +482,15 @@ fn jobs_root_not_open_is_refused() {
         &jobs.state(job)
     )));
     assert_eq!(plugin.deliver_jobs(), Ok(1));
-    assert_eq!(finished_logs(&logged), ["o", guest.as_str()]);
+    // The fixture logs at most 64 bytes of the root, and a long temp root
+    // (macOS's /private/var/folders/...) is cut.
+    let shown = guest
+        .char_indices()
+        .map(|(at, c)| at + c.len_utf8())
+        .take_while(|end| *end <= 64)
+        .last()
+        .map_or("", |end| &guest[..end]);
+    assert_eq!(finished_logs(&logged), ["o", shown]);
 
     // Without an fs grant reaching it, an open root is refused too.
     let (mut ungranted, _logged) = load(&host);

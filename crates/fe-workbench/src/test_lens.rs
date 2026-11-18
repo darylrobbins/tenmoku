@@ -151,6 +151,12 @@ fn module_dir(root: &Path) -> Option<PathBuf> {
     }
 }
 
+/// `path` with symlinks resolved (cargo reports `/private/var/...` for a
+/// `/var/...` temp root), else as given.
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+}
+
 /// The binary `file` is built into and the module path it has there:
 /// `file` is a target's root, or in the folder of the modules of exactly
 /// one target (the deepest folder; a root belongs to its own target alone).
@@ -159,14 +165,21 @@ fn module_dir(root: &Path) -> Option<PathBuf> {
 /// than another test's results. `#[path]` modules are found where they are,
 /// not where their `mod` says.
 fn identity_in(targets: &[TestTarget], file: &Path) -> Option<Identity> {
-    if let Some(target) = targets.iter().find(|target| target.root == file) {
+    let file = canonical(file);
+    let file = file.as_path();
+    let roots: Vec<PathBuf> = targets
+        .iter()
+        .map(|target| canonical(&target.root))
+        .collect();
+    if let Some((target, _)) = (targets.iter().zip(&roots)).find(|(_, root)| root.as_path() == file)
+    {
         return Some(Identity {
             binary: target.binary.clone(),
             module: String::new(),
         });
     }
-    let owned: Vec<(&TestTarget, PathBuf)> = (targets.iter())
-        .filter_map(|target| Some((target, module_dir(&target.root)?)))
+    let owned: Vec<(&TestTarget, PathBuf)> = (targets.iter().zip(&roots))
+        .filter_map(|(target, root)| Some((target, module_dir(root)?)))
         .filter(|(_, dir)| file.starts_with(dir))
         .collect();
     let deepest = owned

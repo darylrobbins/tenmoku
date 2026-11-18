@@ -140,9 +140,23 @@ pub fn choices_path(root: Option<&Path>) -> Option<PathBuf> {
     crate::paths::state_dir().map(|dir| choices_file(&dir, root))
 }
 
-/// How a list spells `file`: canonical where it exists, else as given.
+/// How a list spells `file`: canonical where it exists, else its nearest
+/// existing folder canonical and the rest as given (a symlinked temp root, as
+/// macOS has, must not leave a missing file spelt differently from its
+/// project's root), else as given.
 pub fn key(file: &Path) -> PathBuf {
-    fs::canonicalize(file).unwrap_or_else(|_| file.to_owned())
+    let mut rest = PathBuf::new();
+    let mut at = file;
+    loop {
+        if let Ok(canonical) = fs::canonicalize(at) {
+            return canonical.join(rest);
+        }
+        let (Some(parent), Some(name)) = (at.parent(), at.file_name()) else {
+            return file.to_owned();
+        };
+        rest = Path::new(name).join(rest);
+        at = parent;
+    }
 }
 
 /// The list a choice for `file` picked in a window on `root` goes in: the
