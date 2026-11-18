@@ -64,7 +64,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use kiln_l10n::{text, tr, verbatim};
-use kiln_shell::{DockView as _, PanelId};
+use kiln_shell::PanelId;
 
 use crate::{
     Workbench,
@@ -951,16 +951,11 @@ impl Workbench {
     }
 
     /// `debug.show_panels`: shows the Debug tool window in the bottom dock,
-    /// focused, or hides it if the dock shows it, focus going back to the
-    /// editor if it was in it.
+    /// focused, or hides it if the dock shows it, in any group, its group
+    /// alone if another shows beside it, focus going back to the editor if
+    /// it was in it.
     pub(crate) fn toggle_debug_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let shown = self.terminal_dock().read(cx).dock().rail_highlighted();
-        if shown == Some(PanelId(PANEL)) {
-            let focused = (self.debug_panel.focus_handle(cx)).contains_focused(window, cx);
-            self.hide_bottom_panel(cx);
-            if focused {
-                window.focus(&self.focus_handle(cx), cx);
-            }
+        if self.hide_bottom_tool(PanelId(PANEL), window, cx) {
             return;
         }
         self.dock().update(cx, |dock, cx| dock.join_debug(cx));

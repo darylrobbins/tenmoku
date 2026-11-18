@@ -368,23 +368,42 @@ impl DebugPanel {
             }
         }
         self.console.open = (!ends).then_some(category);
-        self.trim_console();
+        let gone = self.trim_console();
         if follow {
             self.console.scroll.scroll_to_bottom();
+        } else {
+            self.keep_console_anchor(gone);
         }
         cx.notify();
     }
 
+    /// Keeps the rows a reader scrolled up to where they were as `gone`
+    /// rows above them went: the list's offset moves up by their height.
+    /// Rows that went from view leave the list at its top.
+    fn keep_console_anchor(&self, gone: usize) {
+        if gone == 0 {
+            return;
+        }
+        let state = self.console.scroll.0.borrow();
+        let handle = &state.base_handle;
+        let offset = handle.offset();
+        // Each row is a line of small code tall.
+        let up = CODE_SMALL.line_height * gone as f32;
+        handle.set_offset(gpui::point(offset.x, (offset.y + up).min(px(0.))));
+    }
+
     /// Drops the oldest entries past [`MAX_ENTRIES`], the selected row
-    /// moving up with the rows.
-    fn trim_console(&mut self) {
+    /// moving up with the rows: how many rows went.
+    fn trim_console(&mut self) -> usize {
+        let mut gone_rows = 0;
         while self.console.entries.len() > MAX_ENTRIES {
             let Some(entry) = self.console.entries.front() else {
-                return;
+                return gone_rows;
             };
             let (mut rows, mut missing) = (Vec::new(), Vec::new());
             self.entry_rows(entry, &mut rows, &mut missing);
             let gone = rows.len();
+            gone_rows += gone;
             if let Some(Entry::Evaluation { id, .. }) = self.console.entries.pop_front() {
                 self.console.tasks.remove(&id);
             }
@@ -398,6 +417,7 @@ impl DebugPanel {
                 None => {}
             }
         }
+        gone_rows
     }
 
     /// Evaluates `expression` with context `repl` in the selected frame, or
@@ -454,13 +474,15 @@ impl DebugPanel {
                 .ok();
         });
         self.console.tasks.insert(id, task);
-        self.trim_console();
+        let _ = self.trim_console();
         self.console.scroll.scroll_to_bottom();
         cx.notify();
     }
 
     /// Evaluation `id` was answered: its result shows, read out as its
-    /// value, and its children are fetched if it's expanded already.
+    /// value, and its children are fetched if it's expanded already. In
+    /// the stop shown, which it may have changed, every node's children and
+    /// every watch are asked for again ([`DebugPanel::refresh_stop_data`]).
     fn evaluated(
         &mut self,
         id: u64,
@@ -468,12 +490,16 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         self.console.tasks.remove(&id);
+        let current = self.live_session(cx).map(|(current, _)| current);
         let follow = self.console.scroll.is_scrolled_to_end().unwrap_or(true);
         let entry = (self.console.entries.iter_mut())
             .find(|entry| matches!(entry, Entry::Evaluation { id: have, .. } if *have == id));
-        let Some(Entry::Evaluation { value, .. }) = entry else {
+        let Some(Entry::Evaluation { value, epoch, .. }) = entry else {
             return;
         };
+        // Evaluated in the stop shown, it may have changed the program's
+        // data there.
+        let in_stop = epoch.is_some() && *epoch == current;
         let said = match reply {
             Ok(body) => {
                 let said = result_name(&value_of(&body, false));
@@ -491,7 +517,10 @@ impl DebugPanel {
             }
         };
         fe_ui::announce(cx, said, fe_ui::Politeness::Polite);
-        self.fetch_expanded(cx);
+        match in_stop {
+            true => self.refresh_stop_data(cx),
+            false => self.fetch_expanded(cx),
+        }
         if follow {
             self.console.scroll.scroll_to_bottom();
         }
@@ -880,12 +909,17 @@ const CONSOLE_ID_ELEMENT: &str = CONSOLE_ID;
 
 impl Workbench {
     /// `debug.show_console`: shows the Debug tool window on its Console,
-    /// its input focused; if it shows the Console already, hides the
-    /// bottom panel, focus going back to the editor if it was in it.
+    /// its input focused; if it shows the Console already, hides the Debug
+    /// tool window as `debug.show_panels` does, focus going back to the
+    /// editor if it was in it.
     pub(crate) fn toggle_debug_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let panel = self.debug_panel.clone();
-        let shown = self.terminal_dock().read(cx).dock().rail_highlighted();
-        if shown == Some(PanelId(PANEL)) && panel.read(cx).tab == Tab::Console {
+        let shown = self
+            .terminal_dock()
+            .read(cx)
+            .dock()
+            .is_shown(PanelId(PANEL));
+        if shown && panel.read(cx).tab == Tab::Console {
             return self.toggle_debug_panel(window, cx);
         }
         self.dock().update(cx, |dock, cx| dock.join_debug(cx));
@@ -926,5 +960,104 @@ impl Workbench {
                     ConsoleRow::Child(ValueRow::Message { error: false, .. })
                 )
             })
+    }
+}
+
+/// T1853 F1: a reader scrolled up in a full console keeps the text they
+/// read where it was as new output evicts the oldest rows.
+#[cfg(test)]
+mod retention_tests {
+    use fe_buffer::Buffer;
+    use fe_command::{ContextFrame, ContextStack, Invocation};
+    use fe_dap::protocol::OutputBody;
+    use fe_gpui::commands::RunCommand;
+    use gpui::{Entity, Focusable as _, Pixels, TestAppContext, VisualTestContext, point, px};
+
+    use super::{ConsoleRow, MAX_ENTRIES};
+    use crate::{Launch, Workbench, debug_panel::DebugPanel};
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+
+    fn line(text: &str) -> OutputBody {
+        OutputBody {
+            output: format!("{text}\n"),
+            category: Some("stdout".to_owned()),
+            ..Default::default()
+        }
+    }
+
+    /// The console's row height, as last laid out.
+    fn row_height(panel: &DebugPanel) -> Pixels {
+        let state = panel.console.scroll.0.borrow();
+        let contents = state.last_item_size.expect("drawn").contents.height;
+        contents / panel.console_rows().0.len() as f32
+    }
+
+    /// The row at the top of the console's viewport, its text, and how far
+    /// up it's scrolled out of view.
+    fn top(panel: &Entity<DebugPanel>, cx: &mut VisualTestContext) -> (String, Pixels) {
+        panel.read_with(cx, |panel, _| {
+            let state = panel.console.scroll.0.borrow();
+            let height = row_height(panel);
+            let scrolled = -state.base_handle.offset().y;
+            let ix = (scrolled / height).floor() as usize;
+            let text = match &panel.console_rows().0[ix] {
+                ConsoleRow::Output { text, .. } => text.clone(),
+                row => panic!("{row:?}"),
+            };
+            (text, scrolled - height * ix as f32)
+        })
+    }
+
+    #[gpui::test]
+    fn eviction_keeps_a_scrolled_up_readers_rows_in_place(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "fn a() {}\n").unwrap();
+        let launch = Launch {
+            root: Some(dir.path().to_owned()),
+            file: Some((path, Some(Buffer::new("fn a() {}\n").into()))),
+        };
+        let (workbench, cx, _) = crate::tests::open(cx, launch);
+        cx.update(|window, _| window.activate_window());
+        cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+        let panel = workbench.read_with(cx, |workbench: &Workbench, _| {
+            workbench.debug_panel().clone()
+        });
+        panel.update(cx, |panel, cx| {
+            for ix in 0..MAX_ENTRIES {
+                panel.console_output(&line(&format!("line {ix}")), cx);
+            }
+        });
+        let stack = ContextStack::new().with(ContextFrame::new(crate::KEY_CONTEXT));
+        let run = RunCommand(Invocation::of("debug.show_console").unwrap().context(stack));
+        cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+        draw(cx);
+        draw(cx);
+
+        // Scrolled up into the middle of it, part way into a row.
+        panel.read_with(cx, |panel, _| {
+            let state = panel.console.scroll.0.borrow();
+            let height = row_height(panel);
+            let y = -(height * 2000.) - px(5.);
+            state.base_handle.set_offset(point(px(0.), y));
+        });
+        draw(cx);
+        let before = top(&panel, cx);
+        assert_eq!(before.0, "line 2000");
+
+        // Three lines in one event, then one more, each evicting rows.
+        panel.update(cx, |panel, cx| {
+            panel.console_output(&line("new 0\nnew 1\nnew 2"), cx);
+            panel.console_output(&line("new 3"), cx);
+        });
+        draw(cx);
+        let rows = panel.read_with(cx, |panel, _| panel.console_rows().0.len());
+        assert_eq!(rows, MAX_ENTRIES);
+        assert_eq!(top(&panel, cx), before);
     }
 }

@@ -155,6 +155,10 @@ pub(crate) struct Stop {
     pub(crate) children: HashMap<i64, Children>,
     /// The watches' values in the selected frame, by expression.
     pub(crate) watches: HashMap<String, Fetch<EvaluateBody>>,
+    /// Bumped as the program's data may have changed within the stop, by
+    /// an evaluation in the console ([`DebugPanel::refresh_stop_data`]):
+    /// children and watch values asked for before land nothing.
+    pub(crate) generation: u64,
     /// The requests under way: dropped with the stop, or with the frame
     /// they're of.
     pub(crate) frame_tasks: Vec<Task<()>>,
@@ -251,6 +255,7 @@ impl DebugPanel {
             scopes: Fetch::Pending,
             children: HashMap::new(),
             watches: HashMap::new(),
+            generation: 0,
             frame_tasks: Vec::new(),
             tasks: Vec::new(),
         });
@@ -315,6 +320,31 @@ impl DebugPanel {
     /// Evaluates each watch not yet evaluated in the selected frame, with
     /// context `watch`.
     pub(super) fn evaluate_watches(&mut self, cx: &mut Context<Self>) {
+        self.ask_watches(false, cx);
+    }
+
+    /// The program's data may have changed in the stop shown, as an
+    /// evaluation in the console can change it: every node's children are
+    /// fetched again as shown, and every watch evaluated again, its value
+    /// shown until the new one comes. What was asked for before lands
+    /// nothing. Nothing once the stop is over.
+    pub(super) fn refresh_stop_data(&mut self, cx: &mut Context<Self>) {
+        if self.live_session(cx).is_none() {
+            return;
+        }
+        let Some(stop) = self.stop.as_mut() else {
+            return;
+        };
+        stop.generation += 1;
+        stop.children.clear();
+        self.ask_watches(true, cx);
+        self.fetch_expanded(cx);
+        cx.notify();
+    }
+
+    /// Evaluates the watches in the selected frame, with context `watch`:
+    /// each one, if `all`, else those not evaluated yet.
+    fn ask_watches(&mut self, all: bool, cx: &mut Context<Self>) {
         let Some((epoch, debugger)) = self.live_session(cx) else {
             return;
         };
@@ -325,8 +355,9 @@ impl DebugPanel {
         let Some(frame) = stop.selected_frame().map(|frame| frame.id) else {
             return;
         };
+        let generation = stop.generation;
         for expression in watches {
-            if stop.watches.contains_key(&expression) {
+            if !all && stop.watches.contains_key(&expression) {
                 continue;
             }
             let arguments = EvaluateArguments {
@@ -339,12 +370,16 @@ impl DebugPanel {
             let Some(request) = request else {
                 return;
             };
-            stop.watches.insert(expression.clone(), Fetch::Pending);
+            // Asked again, it keeps its value until the new one comes.
+            (stop.watches)
+                .entry(expression.clone())
+                .or_insert(Fetch::Pending);
             let task = cx.spawn(async move |panel, cx| {
                 let reply = request.await;
                 panel
                     .update(cx, |panel, cx| {
-                        let Some(stop) = panel.stop.as_mut().filter(|stop| stop.epoch == epoch)
+                        let Some(stop) = (panel.stop.as_mut())
+                            .filter(|stop| stop.epoch == epoch && stop.generation == generation)
                         else {
                             return;
                         };
@@ -427,6 +462,7 @@ impl DebugPanel {
         let Some(paged) = stop.children.get(&reference).map(|children| children.paged) else {
             return;
         };
+        let generation = stop.generation;
         let debugger = debugger.read(cx);
         let Some(session) = debugger.session() else {
             return;
@@ -455,7 +491,9 @@ impl DebugPanel {
             let reply = request.await;
             panel
                 .update(cx, |panel, cx| {
-                    let Some(stop) = panel.stop.as_mut().filter(|stop| stop.epoch == epoch) else {
+                    let Some(stop) = (panel.stop.as_mut())
+                        .filter(|stop| stop.epoch == epoch && stop.generation == generation)
+                    else {
                         return;
                     };
                     let Some(children) = stop.children.get_mut(&reference) else {

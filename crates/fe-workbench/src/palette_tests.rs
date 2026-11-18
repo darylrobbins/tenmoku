@@ -88,11 +88,17 @@ fn the_palette_runs_a_command_in_the_editor(cx: &mut TestAppContext) {
         "{rows:?}"
     );
 
+    // The palette lists what matches in title order: the bottom panel's
+    // Split Panel Right, then Split Right.
     cx.simulate_input("split right");
     draw(cx);
-    let first = picker.read_with(cx, |picker, _| picker.delegate.matches()[0].title.clone());
-    assert_eq!(first.as_ref(), "Split Right");
-    cx.simulate_keystrokes("enter");
+    let first: Vec<_> = picker.read_with(cx, |picker, _| {
+        (picker.delegate.matches().iter().take(2))
+            .map(|entry| entry.title.to_string())
+            .collect()
+    });
+    assert_eq!(first, ["Split Panel Right", "Split Right"]);
+    cx.simulate_keystrokes("down enter");
     draw(cx);
     assert!(palette(&workbench, cx).is_none());
     let panes = workbench.read_with(cx, |workbench, cx| workbench.pane_group(cx).panes().len());

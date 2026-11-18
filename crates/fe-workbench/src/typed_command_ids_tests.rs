@@ -116,6 +116,23 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("dock.grow", "Grow Dock", "workbench"),
     ("dock.shrink", "Shrink Dock", "workbench"),
+    ("dock.split_panel_right", "Split Panel Right", "workbench"),
+    (
+        "dock.move_panel_to_next_group",
+        "Move Tool Window to Next Group",
+        "workbench",
+    ),
+    (
+        "dock.move_panel_to_previous_group",
+        "Move Tool Window to Previous Group",
+        "workbench",
+    ),
+    ("dock.join_panel_groups", "Join Panel Groups", "workbench"),
+    (
+        "dock.focus_next_panel_group",
+        "Focus Next Panel Group",
+        "workbench",
+    ),
     (
         "terminal.move_to_bottom",
         "Move Terminal to Bottom",

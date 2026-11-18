@@ -46,6 +46,7 @@ use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
     PaneView as _, PanelId, Shell, Workspace, WorkspaceEvent,
     close::{self, Items, LiveItems},
+    dock::MoveTo,
     layout::{self, WindowLayout},
 };
 
@@ -212,12 +213,12 @@ impl Workbench {
             },
         );
         // Each foot button is lit while the bottom dock shows its tool
-        // window.
+        // window, in any of its groups.
         let shown = cx.observe(dock, |workbench, dock, cx| {
-            let shown = dock.read(cx).dock().rail_highlighted();
+            let shown = dock.read(cx).dock().shown_panels();
             workbench.dock.update(cx, |dock, cx| {
                 for id in BOTTOM_BUTTONS {
-                    dock.set_action_highlighted(id, shown == Some(PanelId(id)), cx)
+                    dock.set_action_highlighted(id, shown.contains(&PanelId(id)), cx)
                 }
             });
         });
@@ -235,8 +236,8 @@ impl Workbench {
             .update(cx, |dock, cx| dock.show(panel, window, cx));
     }
 
-    /// Focuses the tool window the bottom dock shows, wherever it is, true
-    /// if it shows one.
+    /// Focuses the tool window the bottom dock shows, its focused group's,
+    /// wherever it is, true if it shows one.
     pub(crate) fn focus_bottom_panel(
         &mut self,
         window: &mut Window,
@@ -268,6 +269,152 @@ impl Workbench {
         })
     }
 
+    /// The bottom tool window the panel-group commands act on: the shown
+    /// one that holds focus, else the one the bottom dock's focused group
+    /// shows. None while the dock is hidden.
+    fn bottom_tool_in_play(&self, window: &Window, cx: &App) -> Option<PanelId> {
+        let dock = self.terminal_dock.read(cx).dock();
+        let focused = (dock.shown_panels().into_iter()).find(|&panel| {
+            (self.bottom_tool_focus(panel, cx))
+                .is_some_and(|focus| focus.contains_focused(window, cx))
+        });
+        focused.or(dock.rail_highlighted())
+    }
+
+    /// Hides the bottom dock's tool window `panel` if it shows: its group
+    /// alone collapses if another group shows, else the whole dock hides
+    /// ([`DockState::hide_panel`]). Focus that was in what it hid goes to
+    /// the active editor. False, doing nothing, if it isn't shown.
+    pub(crate) fn hide_bottom_tool(
+        &mut self,
+        panel: PanelId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let focused = self.bottom_panel_focused(window, cx);
+        let hid = self.terminal_dock.update(cx, |dock, cx| {
+            let hid = dock.dock_mut().hide_panel(panel);
+            cx.notify();
+            hid
+        });
+        if hid
+            && focused
+            && self
+                .terminal_dock
+                .read(cx)
+                .dock()
+                .hidden_panel_focused(window, cx)
+        {
+            window.focus(&self.focus_handle(cx), cx);
+        }
+        hid
+    }
+
+    /// `dock.split_panel_right`: moves the bottom tool window in play
+    /// ([`Workbench::bottom_tool_in_play`]) into a new group just after its
+    /// own, if its group keeps another tab, focused.
+    pub(crate) fn split_panel_right(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_bottom_tool(window, cx, |dock, panel| {
+            let group = dock.group_of(panel)?;
+            (dock.open_panels_in(group).len() > 1).then_some(MoveTo::After(group))
+        });
+    }
+
+    /// `dock.move_panel_to_next_group` (`by` 1) and
+    /// `dock.move_panel_to_previous_group` (-1): moves the bottom tool
+    /// window in play to the end of the drawn group after (before) its own,
+    /// active and focused there, a group it empties going away.
+    pub(crate) fn move_panel_to_group(
+        &mut self,
+        by: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_bottom_tool(window, cx, |dock, panel| {
+            let drawn = drawn_groups(dock);
+            let at = drawn
+                .iter()
+                .position(|&group| dock.group_of(panel) == Some(group))?;
+            let to = at.checked_add_signed(by).and_then(|ix| drawn.get(ix))?;
+            Some(MoveTo::Group {
+                group: *to,
+                index: usize::MAX,
+            })
+        });
+    }
+
+    /// Moves the bottom tool window in play where `to` says, if it says,
+    /// keeping the dock shown and focusing it.
+    fn move_bottom_tool(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        to: impl FnOnce(&DockState, PanelId) -> Option<MoveTo>,
+    ) {
+        let Some(panel) = self.bottom_tool_in_play(window, cx) else {
+            return;
+        };
+        let Some(to) = to(self.terminal_dock.read(cx).dock(), panel) else {
+            return;
+        };
+        let moved = self.terminal_dock.update(cx, |dock, cx| {
+            let moved = dock.dock_mut().move_panel(panel, to);
+            cx.notify();
+            moved
+        });
+        if moved && let Some(focus) = self.bottom_tool_focus(panel, cx) {
+            window.focus(&focus, cx);
+        }
+    }
+
+    /// `dock.join_panel_groups`: puts the bottom dock's tool windows back
+    /// in one group, the one in play shown and focused. Nothing with one
+    /// group.
+    pub(crate) fn join_panel_groups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = self.bottom_tool_in_play(window, cx);
+        let dock = self.terminal_dock.read(cx).dock();
+        let Some(panel) = panel.filter(|_| dock.group_count() > 1) else {
+            return;
+        };
+        self.terminal_dock.update(cx, |dock, cx| {
+            dock.dock_mut().join_groups();
+            dock.show(panel, window, cx);
+        });
+        if let Some(focus) = self.bottom_tool_focus(panel, cx) {
+            window.focus(&focus, cx);
+        }
+    }
+
+    /// `dock.focus_next_panel_group`: focuses the tool window of the drawn
+    /// group after the one in play's, wrapping. Nothing with one drawn.
+    pub(crate) fn focus_next_panel_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.bottom_tool_in_play(window, cx) else {
+            return;
+        };
+        let dock = self.terminal_dock.read(cx).dock();
+        let drawn = drawn_groups(dock);
+        let Some(at) = drawn
+            .iter()
+            .position(|&group| dock.group_of(panel) == Some(group))
+        else {
+            return;
+        };
+        let Some(next) = (drawn.len() > 1).then(|| drawn[(at + 1) % drawn.len()]) else {
+            return;
+        };
+        let Some(shown) =
+            (dock.shown_panels().into_iter()).find(|&id| dock.group_of(id) == Some(next))
+        else {
+            return;
+        };
+        self.terminal_dock.update(cx, |dock, cx| {
+            dock.show(shown, window, cx);
+        });
+        if let Some(focus) = self.bottom_tool_focus(shown, cx) {
+            window.focus(&focus, cx);
+        }
+    }
+
     /// Hides the bottom dock. Focus in it stays: the caller moves it.
     pub(crate) fn hide_bottom_panel(&mut self, cx: &mut Context<Self>) {
         self.terminal_dock.update(cx, |dock, cx| {
@@ -291,9 +438,9 @@ impl Workbench {
     }
 
     /// A click on the rail's foot button `id`, which runs `command`: hides
-    /// the bottom dock if it shows that tool window, the active editor
-    /// taking focus if it was in it, else runs the command, as its key
-    /// would.
+    /// that tool window if the bottom dock shows it, in any group
+    /// ([`Workbench::hide_bottom_tool`]), the active editor taking focus if
+    /// it was in it, else runs the command, as its key would.
     pub(crate) fn bottom_button_clicked(
         &mut self,
         id: &'static str,
@@ -301,30 +448,26 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let shown = self.terminal_dock.read(cx).dock().rail_highlighted();
-        if shown != Some(PanelId(id)) {
+        if !self.hide_bottom_tool(PanelId(id), window, cx) {
             // Once this update is over: the command is the workbench's.
             window.defer(cx, move |window, cx| {
                 kiln_shell::dock::run_action(command, window, cx)
             });
-            return;
-        }
-        let focused = self.bottom_panel_focused(window, cx);
-        self.hide_bottom_panel(cx);
-        if focused {
-            window.focus(&self.focus_handle(cx), cx);
         }
     }
 
     /// `terminal.toggle`: shows the bottom dock with the terminal, focused,
     /// starting a session if none runs; focuses the terminal if the dock
-    /// shows but focus is elsewhere; hides the dock and focuses the active
-    /// editor if the terminal has focus.
+    /// shows but focus is elsewhere; hides the terminal and focuses the
+    /// active editor if the terminal has focus: its group alone if another
+    /// shows beside it, else the dock.
     pub(crate) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let shown = self.terminal_dock.read(cx).is_visible();
         if shown && self.terminal.read(cx).is_focused(window, cx) {
             self.terminal_dock.update(cx, |dock, cx| {
-                dock.dock_mut().set_visible(false);
+                if !dock.dock_mut().hide_panel(TERMINAL) {
+                    dock.dock_mut().set_visible(false);
+                }
                 cx.notify();
             });
             window.focus(&self.focus_handle(cx), cx);
@@ -1033,14 +1176,24 @@ impl Workbench {
     }
 }
 
+/// The groups of the bottom dock drawn, in order: those not collapsed
+/// with a tab, while it shows.
+fn drawn_groups(dock: &DockState) -> Vec<usize> {
+    (0..dock.group_count())
+        .filter(|&group| dock.is_visible() && !dock.is_collapsed(group))
+        .filter(|&group| !dock.open_panels_in(group).is_empty())
+        .collect()
+}
+
 /// The bottom panel's sizes in its saved state ([`DockState::save`]),
 /// and, as `"shown"`, the tool window it shows if that's Problems, Runs or
-/// the Git log: the terminal comes back hidden, with no session.
+/// the Git log: the terminal comes back hidden, with no session. Split
+/// into groups, its `"groups"` too, as saved.
 fn terminal_dock_sizes(dock: &DockState, cx: &App) -> Value {
     let saved = dock.save(cx);
     let size = |key: &'static str| Some((key, saved.get(key)?.clone()));
     let mut kept = Value::from_iter(
-        ["size", "side_size", "bottom_size"]
+        ["size", "side_size", "bottom_size", "groups"]
             .into_iter()
             .filter_map(size),
     );
@@ -1048,6 +1201,31 @@ fn terminal_dock_sizes(dock: &DockState, cx: &App) -> Value {
         kept["shown"] = Value::from(shown.0);
     }
     kept
+}
+
+/// What [`DockState::restore`] takes to put back the bottom panel's saved
+/// `groups` ([`terminal_dock_sizes`]): each group's active tool window
+/// only if it's [`restorable`], so a group the terminal showed comes back
+/// with no tab, in its place; and, if a group not collapsed then shows
+/// one, the dock shown with `shown` (else that first one) active.
+fn restored_groups(groups: &Value, shown: Option<PanelId>) -> Value {
+    let mut groups = groups.clone();
+    let mut first = None;
+    for group in groups.as_array_mut().into_iter().flatten() {
+        let active = (group.get("active").and_then(Value::as_str))
+            .and_then(|id| RESTORABLE.into_iter().find(|kept| *kept == id));
+        group["active"] = active.map_or(Value::Null, Value::from);
+        let collapsed = (group.get("collapsed").and_then(Value::as_bool)).unwrap_or(false);
+        if !collapsed && first.is_none() {
+            first = active;
+        }
+    }
+    let mut restored = Value::from_iter([("groups", groups)]);
+    if let Some(active) = shown.map(|id| id.0).or(first) {
+        restored["visible"] = Value::from(true);
+        restored["active"] = Value::from(active);
+    }
+    restored
 }
 
 /// `panel` if the bottom panel shows it again on a restore: Problems, Runs
@@ -1197,6 +1375,16 @@ impl LayoutKeys {
             let shown = saved.get("shown").and_then(Value::as_str);
             let shown = RESTORABLE.into_iter().find(|id| shown == Some(*id));
             bottom = shown.map(PanelId).or(bottom);
+            // Split into groups, each comes back in its place, showing
+            // what it showed if that comes back.
+            if let Some(groups) = saved.get("groups") {
+                let restored = restored_groups(groups, shown.map(PanelId));
+                self.terminal.update(cx, |dock, cx| {
+                    dock.dock_mut().restore(&restored, cx);
+                    cx.notify();
+                });
+                bottom = None;
+            }
         }
         if let Some(panel) = bottom {
             self.terminal.update(cx, |dock, cx| {

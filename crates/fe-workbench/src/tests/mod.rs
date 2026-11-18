@@ -55,6 +55,7 @@ pub(crate) fn slashed(shown: impl Into<String>) -> String {
 mod activity_rail;
 mod after_frame;
 mod bottom_panel_b3;
+mod bottom_panel_groups;
 mod breadcrumb_symbol_icons;
 mod build_runner;
 mod build_timeline_view;
@@ -68,6 +69,7 @@ mod completion_words;
 mod debug_breakpoints;
 mod debug_commands;
 mod debug_console;
+mod debug_console_refresh;
 mod debug_gutter;
 mod debug_hover;
 mod debug_java;

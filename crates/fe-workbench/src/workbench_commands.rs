@@ -816,6 +816,41 @@ impl Workbench {
         self.resize_focused_dock(-dock_layout::STEP, cx.window, cx.cx);
     }
 
+    /// Split Panel Right
+    #[command(id = "dock.split_panel_right")]
+    fn split_panel_right_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.split_panel_right(cx.window, cx.cx);
+    }
+
+    /// Move Tool Window to Next Group
+    #[command(id = "dock.move_panel_to_next_group")]
+    fn move_panel_to_next_group(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.move_panel_to_group(1, cx.window, cx.cx);
+    }
+
+    /// Move Tool Window to Previous Group
+    #[command(id = "dock.move_panel_to_previous_group")]
+    fn move_panel_to_previous_group(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.move_panel_to_group(-1, cx.window, cx.cx);
+    }
+
+    /// Join Panel Groups
+    #[command(id = "dock.join_panel_groups")]
+    fn join_panel_groups_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.join_panel_groups(cx.window, cx.cx);
+    }
+
+    /// Focus Next Panel Group
+    #[command(id = "dock.focus_next_panel_group")]
+    fn focus_next_panel_group_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_next_panel_group(cx.window, cx.cx);
+    }
+
     /// Move Terminal to Bottom
     #[command(id = "terminal.move_to_bottom")]
     fn move_terminal_to_bottom(&mut self, cx: &mut Cx<Self>) {
