@@ -269,9 +269,10 @@ impl LaneDirs {
             &dirs.worktree_admin_dir,
             &dirs.root_admin_dir,
         ] {
-            let text = dir
-                .to_str()
-                .ok_or_else(|| git_failure(format!("{} isn't a UTF-8 path", dir.display())))?;
+            if dir.to_str().is_none() {
+                return Err(git_failure(format!("{} isn't a UTF-8 path", dir.display())));
+            }
+            let text = path_text(dir);
             if text.contains(GLOB_SYNTAX) {
                 return Err(git_failure(format!(
                     "{text} has glob characters, which Claude Code's sandbox and permission rules read as a pattern"
@@ -324,7 +325,9 @@ enum RevParse {
 }
 
 /// `git -C <dir> rev-parse --path-format=absolute <args>`: one existing
-/// directory per line, made canonical.
+/// directory per line, made canonical (on Windows without the verbatim
+/// `\\?\` prefix where the path doesn't need it, as git and Claude Code
+/// write paths).
 async fn rev_parse(git: &Path, dir: &Path, args: &[&str]) -> Result<Vec<PathBuf>, RevParse> {
     let mut command = async_process::Command::new(git);
     command
@@ -368,7 +371,7 @@ async fn rev_parse(git: &Path, dir: &Path, args: &[&str]) -> Result<Vec<PathBuf>
         .lines()
         .map(|line| {
             let path = PathBuf::from(line);
-            std::fs::canonicalize(&path)
+            dunce::canonicalize(&path)
                 .map_err(|err| RevParse::Failed(format!("{} doesn't exist: {err}", path.display())))
         })
         .collect()
@@ -463,12 +466,61 @@ pub fn profile(settings: &AgentSettings, dirs: &LaneDirs) -> Meta {
 }
 
 /// A path as the profile writes it.
+#[cfg(not(windows))]
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// A path as the profile writes it: on Windows in the POSIX form Claude
+/// Code matches its permission rules against, `C:\Users\me` as
+/// `/c/Users/me` (a verbatim `\\?\C:` prefix the same way), so `//` anchors
+/// a rule at the drive's root as it does at `/` elsewhere. A UNC share is
+/// `//server/share`. Separators are `/` whichever way the path was joined.
+#[cfg(windows)]
+fn path_text(path: &Path) -> String {
+    use std::path::{Component, Prefix};
+    let mut text = String::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => match prefix.kind() {
+                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
+                    text.push('/');
+                    text.push(char::from(drive.to_ascii_lowercase()));
+                }
+                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                    text.push_str("//");
+                    text.push_str(&server.to_string_lossy());
+                    text.push('/');
+                    text.push_str(&share.to_string_lossy());
+                }
+                Prefix::Verbatim(name) | Prefix::DeviceNS(name) => {
+                    text.push_str("//");
+                    text.push_str(&name.to_string_lossy());
+                }
+            },
+            Component::RootDir => {}
+            Component::CurDir => text.push_str("/."),
+            Component::ParentDir => text.push_str("/.."),
+            Component::Normal(name) => {
+                text.push('/');
+                text.push_str(&name.to_string_lossy());
+            }
+        }
+    }
+    if text.is_empty() {
+        text.push('/');
+    }
+    text
+}
+
 /// Characters the sandbox's path syntax gives a meaning (glob patterns).
+#[cfg(not(windows))]
 const GLOB_SYNTAX: [char; 7] = ['*', '?', '[', ']', '{', '}', '\\'];
+/// Characters the sandbox's path syntax gives a meaning (glob patterns).
+/// On Windows `\` is the path separator, written as `/` in the profile
+/// ([`path_text`]).
+#[cfg(windows)]
+const GLOB_SYNTAX: [char; 6] = ['*', '?', '[', ']', '{', '}'];
 
 /// The `sandbox_allow_write` entries the profile passes, resolved: absolute
 /// paths whose real location (`..` and symlinks resolved, as far as they
@@ -497,7 +549,7 @@ fn allowed_writes(paths: &[String], dirs: &LaneDirs) -> Vec<String> {
                         .iter()
                         .any(|dir| real.starts_with(dir) || dir.starts_with(real))
                 })
-                .and_then(|real| real.to_str().map(str::to_owned))
+                .and_then(|real| real.to_str().is_some().then(|| path_text(&real)))
                 // A link can lead to a folder whose name has glob syntax,
                 // which the sandbox would read as a pattern: what's passed is
                 // checked, not only what was written.
@@ -527,14 +579,20 @@ fn resolve(path: &Path) -> Option<PathBuf> {
     let mut real = PathBuf::new();
     for component in path.components() {
         match component {
-            Component::Prefix(_) | Component::RootDir => real.push(component.as_os_str()),
+            // A drive or share alone isn't a place to canonicalize (`C:` is
+            // that drive's current directory).
+            Component::Prefix(_) => {
+                real.push(component.as_os_str());
+                continue;
+            }
+            Component::RootDir => real.push(component.as_os_str()),
             Component::CurDir => continue,
             Component::ParentDir => {
                 real.pop();
             }
             Component::Normal(name) => real.push(name),
         }
-        match std::fs::canonicalize(&real) {
+        match dunce::canonicalize(&real) {
             Ok(canonical) => real = canonical,
             // Nothing there, not even a dangling link: kept as written.
             Err(err)

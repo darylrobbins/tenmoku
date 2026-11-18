@@ -65,7 +65,9 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        let base = std::fs::canonicalize(dir.path()).unwrap();
+        // Without Windows' verbatim `\\?\` prefix, where git can't add a
+        // worktree.
+        let base = dunce::canonicalize(dir.path()).unwrap();
         let repo = base.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
@@ -79,7 +81,7 @@ impl Fixture {
     }
 
     fn base(&self) -> PathBuf {
-        std::fs::canonicalize(self.dir.path()).unwrap()
+        dunce::canonicalize(self.dir.path()).unwrap()
     }
 
     /// A linked worktree of the main checkout at `<base>/<name>`.
@@ -237,6 +239,35 @@ fn path_text(path: &Path) -> String {
     path.to_str().unwrap().to_owned()
 }
 
+/// A path as the profile writes it: as it's written, except on Windows,
+/// where it's `/c/Users/…`, the POSIX form Claude Code matches rules
+/// against.
+#[cfg(not(windows))]
+fn profile_text(path: &Path) -> String {
+    path_text(path)
+}
+
+/// A path as the profile writes it: as it's written, except on Windows,
+/// where it's `/c/Users/…`, the POSIX form Claude Code matches rules
+/// against.
+#[cfg(windows)]
+fn profile_text(path: &Path) -> String {
+    let text = path_text(path).replace('\\', "/");
+    let (drive, rest) = text.split_once(":/").expect("a path on a drive");
+    format!("/{}/{rest}", drive.to_ascii_lowercase())
+}
+
+/// An existing directory outside the fixture, as a user would write it:
+/// `/var/tmp` (on macOS a link to `/private/var/tmp`), or the temp
+/// directory on Windows.
+fn outside_dir() -> PathBuf {
+    if cfg!(windows) {
+        std::env::temp_dir()
+    } else {
+        PathBuf::from("/var/tmp")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The profile on new, load and resume
 
@@ -287,7 +318,7 @@ fn the_profile_holds_the_mode_tools_asks_deny_rules_and_sandbox() {
     let lane = fixture.lane();
     let mut settings = AgentSettings::default();
     settings.claude_code.sandbox_allow_write = vec![
-        "/var/tmp/agent-cache".into(),
+        path_text(&outside_dir().join("agent-cache")),
         // Inside the root, relative, and inside .git: never passed.
         path_text(&fixture.repo.join("src")),
         "relative/path".into(),
@@ -323,7 +354,7 @@ fn the_profile_holds_the_mode_tools_asks_deny_rules_and_sandbox() {
     for anchor in [&lane.root, &lane.worktree] {
         for rule in ["Read", "Edit"] {
             for pattern in ["**/.env*", "**/id_*", "**/*.pem", "**/*.key", "**/.git/**"] {
-                let expected = format!("{rule}(/{}/{pattern})", path_text(anchor));
+                let expected = format!("{rule}(/{}/{pattern})", profile_text(anchor));
                 assert!(expected.starts_with(&format!("{rule}(//")));
                 assert!(deny.contains(&expected), "{expected} in {deny:?}");
             }
@@ -336,12 +367,12 @@ fn the_profile_holds_the_mode_tools_asks_deny_rules_and_sandbox() {
     assert_eq!(sandbox["allowUnsandboxedCommands"], json!(false));
     // Passed as its real path, as the overlap check resolves it: on macOS
     // /var is a link to /private/var.
-    let real = std::fs::canonicalize("/var/tmp")
+    let real = dunce::canonicalize(outside_dir())
         .unwrap()
         .join("agent-cache");
     assert_eq!(
         strings(&sandbox["filesystem"]["allowWrite"]),
-        [path_text(&real)]
+        [profile_text(&real)]
     );
 }
 
@@ -522,8 +553,8 @@ fn a_main_checkout_root_denies_the_common_and_lane_admin_dirs() {
     assert_eq!(
         strings(&options(&meta)["sandbox"]["filesystem"]["denyWrite"]),
         [
-            path_text(&fixture.repo.join(".git")),
-            path_text(&fixture.repo.join(".git/worktrees/lane"))
+            profile_text(&fixture.repo.join(".git")),
+            profile_text(&fixture.repo.join(".git/worktrees/lane"))
         ]
     );
 }
@@ -1953,17 +1984,22 @@ fn sandbox_allow_write_refuses_glob_patterns() {
         format!("{base}/[r]epo"),
         format!("{base}/{{repo,cache}}"),
         format!("{base}/**"),
-        format!("{base}/re\\po"),
         // One outside it is refused too: a pattern can't be bounded.
         format!("{base}/cache/*"),
         // A plain path outside passes.
         format!("{base}/cache/plain"),
     ];
+    // On Windows `\\` is the path separator, not an escape.
+    #[cfg(not(windows))]
+    settings
+        .claude_code
+        .sandbox_allow_write
+        .push(format!("{base}/re\\po"));
     let dirs = async_io::block_on(LaneDirs::resolve(Path::new("git"), &lane)).expect("dirs");
     let meta = claude::profile(&settings, &dirs);
     assert_eq!(
         strings(&options(&meta)["sandbox"]["filesystem"]["allowWrite"]),
-        [format!("{base}/cache/plain")]
+        [profile_text(&fixture.base().join("cache/plain"))]
     );
 }
 

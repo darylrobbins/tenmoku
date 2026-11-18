@@ -2228,6 +2228,7 @@ dependencies = [
  "agent-client-protocol",
  "async-io",
  "async-process",
+ "dunce",
  "fe-config",
  "futures",
  "log",

@@ -57,7 +57,9 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        let base = std::fs::canonicalize(dir.path()).unwrap();
+        // Without Windows' verbatim `\\?\` prefix, where git can't add a
+        // worktree.
+        let base = dunce::canonicalize(dir.path()).unwrap();
         let repo = base.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
