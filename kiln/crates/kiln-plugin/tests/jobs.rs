@@ -8,7 +8,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver},
     },
@@ -459,7 +459,7 @@ fn jobs_root_not_open_is_refused() {
     let root: PathBuf =
         std::env::temp_dir().join(format!("kiln-plugin-jobs-root-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let root = root.canonicalize().unwrap();
+    let root = kiln_core::platform::canonicalize(&root).unwrap();
     let guest = kiln_plugin::paths::root(&root, kiln_plugin::paths::Rules::HOST).unwrap();
     host.set_roots(vec![root.clone()]);
 
@@ -781,6 +781,23 @@ impl Waits {
     }
 }
 
+/// Ends whatever fetch still waits in [`Hanging`], so a test's sends don't outlive it.
+impl Drop for Waits {
+    fn drop(&mut self) {
+        self.released.store(true, Ordering::SeqCst);
+    }
+}
+
+/// One net test at a time: the cap on sends left running ([`net::job_sends`]) is this
+/// process's, and `cargo test` runs a file's tests side by side in one process, so one test's
+/// waiting sends would count against another's. Each starts once the last one's sends are gone.
+fn serially() -> MutexGuard<'static, ()> {
+    static SERIAL: Mutex<()> = Mutex::new(());
+    let guard = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+    assert!(wait_for(Duration::from_secs(10), || net::job_sends() == (0, 0)));
+    guard
+}
+
 const WAITING: [&str; 3] = ["invoke", "net", "process"];
 
 /// The fixture with what `invoke`, `net` and `process` need, their imports waiting on `waits`.
@@ -825,6 +842,7 @@ fn load_waiting_under(
 
 #[test]
 fn jobs_cancel_ends_imports_already_waiting() {
+    let _serial = serially();
     for name in WAITING {
         let host = job_host();
         let waits = Waits::new(name);
@@ -858,6 +876,7 @@ fn jobs_cancel_ends_imports_already_waiting() {
 
 #[test]
 fn jobs_unload_ends_imports_already_waiting() {
+    let _serial = serially();
     for name in WAITING {
         let host = job_host();
         let waits = Waits::new(name);
@@ -961,6 +980,7 @@ fn jobs_a_trap_diagnostic_past_a_full_quota_is_dropped() {
 
 #[test]
 fn jobs_wall_time_ends_a_fetch_already_waiting() {
+    let _serial = serially();
     let host = job_host();
     let waits = Waits::new("net-wall");
     let wall = Duration::from_secs(1);
@@ -988,6 +1008,7 @@ fn jobs_wall_time_ends_a_fetch_already_waiting() {
 
 #[test]
 fn jobs_sends_left_running_by_cancelled_jobs_are_capped() {
+    let _serial = serially();
     let host = job_host();
     // A backend slow to give its sends up: the cap holds whatever the backend does.
     let waits = Waits::new("net-cap");
@@ -1027,6 +1048,7 @@ fn jobs_sends_left_running_by_cancelled_jobs_are_capped() {
 
 #[test]
 fn jobs_cancel_calls_off_a_send_the_backend_lets_go_of() {
+    let _serial = serially();
     let host = job_host();
     let mut waits = Waits::new("net-watching");
     waits.watching = true;
