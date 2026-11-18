@@ -132,7 +132,7 @@ fn one_heading_above_the_first_tree_row_ending_in_the_pane_controls(cx: &mut Tes
     assert_eq!(
         names,
         [
-            "New…",
+            "Add to Project",
             "Reveal Active File in Project",
             "Collapse All Folders",
             "More actions",

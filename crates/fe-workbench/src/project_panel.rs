@@ -332,6 +332,8 @@ pub struct ProjectPanel {
     /// The ancestor the reveal waits to have listed.
     revealing: Option<NodeId>,
     focus: FocusHandle,
+    /// The empty state's Open Folder… button's.
+    open_folder_focus: FocusHandle,
     scroll: UniformListScrollHandle,
     /// Changed files' statuses, by path from the root.
     git_files: HashMap<PathBuf, ChangeKind>,
@@ -436,6 +438,7 @@ impl ProjectPanel {
             reveal: None,
             revealing: None,
             focus: cx.focus_handle(),
+            open_folder_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             git_files: HashMap::new(),
             git_dirs: HashMap::new(),
@@ -1498,6 +1501,35 @@ impl ProjectPanel {
         .detach();
     }
 
+    /// The empty state: what's missing, and the button that starts a
+    /// project, `workbench.open_folder`, with its key.
+    fn no_folder(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let stack = menu::tree_context(cx);
+        let mut button = fe_ui::Button::new(
+            verbatim!("project-open-folder"),
+            text!("workbench-project-open-folder"),
+        )
+        .primary()
+        .focus_handle(&self.open_folder_focus)
+        .debug_selector(|| "project-open-folder".into());
+        if let Some(keys) = crate::pane_toolbar::menu_shortcut(new_menu::OPEN_FOLDER, &stack, cx) {
+            button = button.shortcut(keys);
+        }
+        let panel = cx.entity().downgrade();
+        let button = button.on_click(move |_, window, cx| {
+            (panel.update(cx, |panel, cx| panel.open_folder(window, cx))).ok();
+        });
+        let _ = window;
+        div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_2()
+            .child(self.message(tr!("workbench-project-no-folder").into(), cx))
+            .child(div().px_3().child(button))
+            .into_any_element()
+    }
+
     fn message(&self, text: String, cx: &App) -> gpui::AnyElement {
         div()
             .px_3()
@@ -1738,7 +1770,7 @@ impl Render for ProjectPanel {
         });
         let field = self.list_field().is_some();
         let body = match &self.state {
-            State::NoFolder => self.message(tr!("workbench-project-no-folder").into(), cx),
+            State::NoFolder => self.no_folder(window, cx),
             State::Opening => div().into_any_element(),
             State::Failed(message) => self.message(message.resolve().into(), cx),
             State::Open(_) => {

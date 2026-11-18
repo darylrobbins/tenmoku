@@ -7,6 +7,8 @@ use std::{fs, path::Path};
 
 use gpui::{Bounds, Entity, Focusable as _, Modifiers, Pixels, TestAppContext, VisualTestContext};
 
+mod no_folder;
+
 use super::{open_root, panel, rows};
 use crate::{
     ProjectPanel, Workbench,
@@ -138,7 +140,7 @@ fn plus_is_the_first_pane_action(cx: &mut TestAppContext) {
     let first = &actions[0];
     assert_eq!(
         (first.id, first.icon, first.title.as_ref()),
-        (NEW_BUTTON, fe_ui::Icon::Plus, "New…")
+        (NEW_BUTTON, fe_ui::Icon::Plus, "Add to Project")
     );
     assert!(first.anchored.is_some(), "it opens a menu under itself");
     let ids: Vec<_> = actions.iter().map(|action| action.id).collect();

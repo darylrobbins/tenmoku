@@ -173,7 +173,10 @@ workbench-project-menu = File actions
 ## The header's New menu (project_panel_new_menu.rs, project_new_templates.rs)
 
 # The + at the left of the dock's header: its tooltip and accessible name.
-workbench-project-new = New…
+workbench-project-new = Add to Project
+# The Open Folder… button in the empty panel, and the + menu's only entry
+# with no folder open.
+workbench-project-open-folder = Open Folder…
 # What a screen reader calls the menu the + opens.
 workbench-project-new-menu = New
 # The menu's first entries: a new file of any name, and a new folder.

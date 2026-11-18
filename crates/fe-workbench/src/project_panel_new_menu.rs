@@ -26,7 +26,10 @@ use gpui::{
 use kiln_l10n::tr;
 
 use super::templates::{self, FileType};
-use super::{PanelOp, ProjectPanel, menu};
+use super::{PanelOp, ProjectPanel, State, menu};
+
+/// The command the empty panel's button and the `+` with no folder run.
+pub(super) const OPEN_FOLDER: &str = "workbench.open_folder";
 
 /// An entry of the New menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub(crate) enum NewItem {
     File,
     Folder,
     Typed(FileType),
+    /// With no folder open: the one way to start a project.
+    OpenFolder,
 }
 
 impl NewItem {
@@ -43,6 +48,7 @@ impl NewItem {
             NewItem::File => tr!("workbench-project-new-file"),
             NewItem::Folder => tr!("workbench-project-new-folder"),
             NewItem::Typed(file_type) => file_type.title(),
+            NewItem::OpenFolder => tr!("workbench-project-open-folder"),
         }
     }
 
@@ -52,6 +58,7 @@ impl NewItem {
             NewItem::File => Some(menu::MenuItem::NewFile.command()),
             NewItem::Folder => Some(menu::MenuItem::NewFolder.command()),
             NewItem::Typed(_) => None,
+            NewItem::OpenFolder => Some(OPEN_FOLDER),
         }
     }
 }
@@ -102,6 +109,9 @@ impl ProjectPanel {
             return;
         }
         let Some(tree) = self.tree() else {
+            if matches!(self.state, State::NoFolder) {
+                self.open_no_folder_menu(anchor, window, cx);
+            }
             return;
         };
         let root = tree.root();
@@ -134,6 +144,49 @@ impl ProjectPanel {
             _focus_out: focus_out,
         });
         cx.notify();
+    }
+
+    /// With no folder open the `+` offers the one way to start: Open Folder….
+    fn open_no_folder_menu(
+        &mut self,
+        anchor: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let back = (window.focused(cx)).filter(|_| !self.focus.contains_focused(window, cx));
+        self.menu = None;
+        window.focus(&self.focus, cx);
+        let focus_out = cx.on_focus_out(&self.focus, window, |panel, _, _, cx| {
+            panel.close_menu(cx);
+        });
+        self.new_menu = Some(NewMenu {
+            entries: vec![Some(NewItem::OpenFolder)],
+            highlighted: None,
+            anchor,
+            back,
+            _focus_out: focus_out,
+        });
+        cx.notify();
+    }
+
+    /// Runs `workbench.open_folder` from the panel's focus, once this event
+    /// is over.
+    pub(super) fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The button's own focus is outside the panel's key context.
+        window.focus(&self.focus, cx);
+        window.defer(cx, |window, cx| {
+            let Ok(invocation) = fe_command::Invocation::of(OPEN_FOLDER) else {
+                return;
+            };
+            let stack = kiln::platform::keys::context_stack(&window.context_stack(), cx);
+            if let Err(error) = kiln::platform::command_actions::dispatch_invocation(
+                invocation.context(stack),
+                window,
+                cx,
+            ) {
+                log::warn!("{error}");
+            }
+        });
     }
 
     /// Closes the New menu, choosing nothing, and gives focus back to
@@ -194,6 +247,7 @@ impl ProjectPanel {
         }
         cx.notify();
         match item {
+            NewItem::OpenFolder => self.open_folder(window, cx),
             NewItem::File => self.run_op(PanelOp::NewFile, window, cx),
             NewItem::Folder => self.run_op(PanelOp::NewFolder, window, cx),
             NewItem::Typed(file_type) => {
