@@ -98,6 +98,8 @@ fn source_name(source: Source) -> &'static str {
         Source::Dotnet => "dotnet",
         Source::Make => "make",
         Source::Just => "just",
+        Source::Python => "python",
+        Source::Uv => "uv",
     }
 }
 

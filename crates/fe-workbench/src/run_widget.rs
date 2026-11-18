@@ -241,10 +241,11 @@ pub(crate) fn press_play(window: &mut Window, cx: &mut App) {
 
 /// Whether a batch from the file watcher touched a file that defines or
 /// implies tasks or launch configurations in `root`, the `.tenmoku` folder
-/// that holds the tasks and launch files, `.vscode/launch.json`, or a
-/// folder above them (made, removed or renamed), or lost track.
+/// that holds the tasks and launch files, `.vscode/launch.json`, a Python
+/// project's `tests/` or the scripts its `.venv` holds, or a folder above
+/// them (made, removed or renamed), or lost track.
 fn touches_tasks(changes: &[FsChange], root: &Path) -> bool {
-    const FILES: [&str; 12] = [
+    const FILES: [&str; 20] = [
         "tasks.toml",
         "Cargo.toml",
         "package.json",
@@ -257,11 +258,32 @@ fn touches_tasks(changes: &[FsChange], root: &Path) -> bool {
         "yarn.lock",
         "bun.lockb",
         "bun.lock",
+        "pyproject.toml",
+        "uv.lock",
+        "main.py",
+        "setup.py",
+        "requirements.txt",
+        "pytest.ini",
+        "setup.cfg",
+        "conftest.py",
     ];
     let folder = root.join(".tenmoku");
     let launch_json = root.join(crate::launch_defs::LAUNCH_JSON);
     // Cargo's binary targets, which detection lists.
     let (main, bins) = (root.join("src/main.rs"), root.join("src/bin"));
+    // pytest runs when `tests/` has anything in it; the interpreter and the
+    // `[project.scripts]` are looked for in the environment's own folder,
+    // not the packages under it.
+    let tests = root.join("tests");
+    let venv_bin = root.join(".venv").join(if cfg!(windows) {
+        kiln_l10n::verbatim!("Scripts")
+    } else {
+        "bin"
+    });
+    let test_file = |name: &str| {
+        name.strip_suffix(".py")
+            .is_some_and(|stem| stem.starts_with("test_") || stem.ends_with("_test"))
+    };
     changes.iter().any(|change| match change {
         FsChange::Rescan => true,
         FsChange::Path(path) => {
@@ -270,9 +292,12 @@ fn touches_tasks(changes: &[FsChange], root: &Path) -> bool {
                 || launch_json.starts_with(path)
                 || main.starts_with(path)
                 || path.starts_with(&bins)
+                || path.starts_with(&tests)
+                || venv_bin.starts_with(path)
+                || path.parent() == Some(&venv_bin)
                 || (path.parent() == Some(root))
                     && (path.file_name().and_then(|name| name.to_str()))
-                        .is_some_and(|name| FILES.contains(&name))
+                        .is_some_and(|name| FILES.contains(&name) || test_file(name))
         }
     })
 }
@@ -756,5 +781,53 @@ fn tooltip(
         #[cfg(test)]
         crate::title_bar::LAST_TOOLTIP.with_borrow_mut(|last| *last = Some(tooltip.text()));
         cx.new(|_| tooltip).into()
+    }
+}
+
+#[cfg(test)]
+mod touches_tasks_tests {
+    use std::path::Path;
+
+    use fe_project::FsChange;
+
+    use super::touches_tasks;
+
+    fn touches(path: &str) -> bool {
+        let root = Path::new("/project");
+        touches_tasks(&[FsChange::Path(root.join(path))], root)
+    }
+
+    #[test]
+    fn python_project_files_reread_the_tasks() {
+        let bin = if cfg!(windows) { "Scripts" } else { "bin" };
+        for path in [
+            "pyproject.toml",
+            "uv.lock",
+            "main.py",
+            "pytest.ini",
+            "setup.cfg",
+            "conftest.py",
+            "setup.py",
+            "requirements.txt",
+            "test_app.py",
+            "app_test.py",
+            "tests",
+            "tests/test_x.py",
+            ".venv",
+            &format!(".venv/{bin}"),
+            &format!(".venv/{bin}/python"),
+            &format!(".venv/{bin}/serve"),
+        ] {
+            assert!(touches(path), "{path} rereads");
+        }
+        for path in [
+            "app.py",
+            "src/main.py",
+            "tests_old.txt",
+            ".venv/lib/python3.12/site-packages/x.py",
+            &format!(".venv/{bin}/sub/x"),
+        ] {
+            assert!(!touches(path), "{path} doesn't reread");
+        }
     }
 }

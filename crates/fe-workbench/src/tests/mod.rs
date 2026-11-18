@@ -180,6 +180,7 @@ mod status_bar_go_to_line;
 mod status_bar_icons;
 mod symbol_icon_tints;
 mod tabs;
+mod task_defs_python;
 mod terminal_b3;
 mod terminal_plus;
 mod terminal_single_header;

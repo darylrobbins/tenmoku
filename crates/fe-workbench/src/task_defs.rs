@@ -51,6 +51,17 @@
 //! - `GNUmakefile`, `makefile` or `Makefile`, the first of them as `make`
 //!   picks: each target as `make <target>`, by a scan of its lines.
 //! - `justfile` or `Justfile`: each public recipe as `just <recipe>`.
+//! - Python, for a root with `main.py`, `pyproject.toml`, `setup.py`,
+//!   `requirements.txt` or `uv.lock`, by the project's interpreter
+//!   (`<root>/.venv/bin/python`, else `python3`, as
+//!   [`fe_dap::registry::python_interpreter`] picks): `<python> main.py`
+//!   when there's a `main.py`; `<python> -m pytest` when the root has a
+//!   non-empty `tests/`, a `test_*.py` or `*_test.py`, `conftest.py`,
+//!   `pytest.ini`, `[tool.pytest.ini_options]` in `pyproject.toml` or
+//!   `[tool:pytest]` in `setup.cfg`; and each `[project.scripts]` name, as
+//!   `<root>/.venv/bin/<name>` when the environment holds it. With a
+//!   `uv.lock` they're all `uv run main.py`, `uv run pytest` and
+//!   `uv run <name>` instead.
 //!
 //! Detected commands are always argument lists, so a name in a project's file
 //! never reaches a shell. A build file that doesn't parse just yields nothing:
@@ -65,8 +76,9 @@
 //! File tasks come first, then detected ones, and a file task replaces the
 //! detected one with its label. Each of the groups has at most one default:
 //! the first marked, with a diagnostic for any later one. Failing that, the
-//! build and test groups fall to the first detected Cargo, npm, Gradle, Maven or .NET task named
-//! so, in that order, so Gradle's default beats Maven's when a root has both. `default` on a task with no group has nothing to apply to, so it's
+//! build and test groups fall to the first detected Cargo, npm, Gradle,
+//! Maven, .NET, Python or uv task named so, in that order, so Gradle's
+//! default beats Maven's when a root has both. `default` on a task with no group has nothing to apply to, so it's
 //! cleared with a diagnostic.
 
 use std::collections::{BTreeMap, HashSet};
@@ -205,6 +217,10 @@ pub enum Source {
     Dotnet,
     Make,
     Just,
+    /// The project's Python, by its interpreter or `.venv`.
+    Python,
+    /// The project's Python through `uv run`, for a root with a `uv.lock`.
+    Uv,
 }
 
 /// A problem with the tasks file.
@@ -492,6 +508,8 @@ fn choose_defaults(tasks: &mut [Task], diagnostics: &mut Vec<TaskDiagnostic>) {
                             | Source::Gradle
                             | Source::Maven
                             | Source::Dotnet
+                            | Source::Python
+                            | Source::Uv
                     )
             });
             if let Some(task) = by_name {
@@ -507,6 +525,7 @@ fn detected_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
     tasks.extend(gradle_tasks(files, root));
     tasks.extend(maven_tasks(files, root));
     tasks.extend(dotnet_tasks(files, root));
+    tasks.extend(python_tasks(files, root));
     if let Some(text) = first_readable(files, root, &MAKEFILES) {
         tasks.extend(
             make_targets(&text)
@@ -711,6 +730,202 @@ fn dotnet_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
         }
     }
     tasks
+}
+
+/// What makes a root a Python project.
+const PYTHON_MARKERS: [&str; 5] = [
+    "main.py",
+    "pyproject.toml",
+    "setup.py",
+    "requirements.txt",
+    "uv.lock",
+];
+
+/// The Python tasks: the main file, pytest and each `[project.scripts]`
+/// name, run through `uv` with a `uv.lock`, else through the project's
+/// interpreter; see the module's docs.
+fn python_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
+    let has = |name: &str| files.exists(&root.join(name));
+    if !PYTHON_MARKERS.iter().any(|name| has(name)) {
+        return Vec::new();
+    }
+    let pyproject = files
+        .read_to_string(&root.join("pyproject.toml"))
+        .ok()
+        .and_then(|text| toml::from_str::<PyProject>(&text).ok())
+        .unwrap_or_default();
+    let uv = has("uv.lock");
+    let main = has("main.py");
+    let pytest = has_python_tests(files, root, &pyproject);
+    let mut tasks = Vec::new();
+    if uv {
+        let uv_run = |words: &[&str], group| {
+            let argv: Vec<&str> = ["uv", "run"]
+                .into_iter()
+                .chain(words.iter().copied())
+                .collect();
+            detected(Source::Uv, group, &argv, root)
+        };
+        if main {
+            tasks.push(uv_run(&["main.py"], Some(Group::Run)));
+        }
+        if pytest {
+            tasks.push(uv_run(&["pytest"], Some(Group::Test)));
+        }
+        for name in &pyproject.scripts() {
+            tasks.push(uv_run(&[name], None));
+        }
+        return tasks;
+    }
+    let python = fe_dap::registry::python_interpreter(root, None, |path| files.exists(path));
+    let Some(python) = python.to_str() else {
+        return Vec::new();
+    };
+    if main {
+        tasks.push(detected(
+            Source::Python,
+            Some(Group::Run),
+            &[python, "main.py"],
+            root,
+        ));
+    }
+    if pytest {
+        tasks.push(detected(
+            Source::Python,
+            Some(Group::Test),
+            &[python, "-m", "pytest"],
+            root,
+        ));
+    }
+    for name in &pyproject.scripts() {
+        let script = venv_script(root, name);
+        if files.exists(&script)
+            && let Some(script) = script.to_str()
+        {
+            tasks.push(detected(Source::Python, None, &[script], root));
+        }
+    }
+    tasks
+}
+
+/// Where a `.venv` installs the script `name`: `bin/<name>`, or
+/// `Scripts\<name>.exe` on Windows.
+fn venv_script(root: &Path, name: &str) -> PathBuf {
+    let venv = root.join(".venv");
+    if cfg!(windows) {
+        venv.join(verbatim!("Scripts"))
+            .join([name, ".exe"].concat())
+    } else {
+        venv.join("bin").join(name)
+    }
+}
+
+/// Whether the root has tests for pytest to run; see the module's docs.
+fn has_python_tests(files: &dyn ProjectFiles, root: &Path, pyproject: &PyProject) -> bool {
+    if files.exists(&root.join("conftest.py"))
+        || files.exists(&root.join("pytest.ini"))
+        || pyproject.configures_pytest()
+        || !files.list_dir(&root.join("tests")).is_empty()
+    {
+        return true;
+    }
+    let test_file = files.list_dir(root).into_iter().any(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".py"))
+            .is_some_and(|stem| stem.starts_with("test_") || stem.ends_with("_test"))
+            && files.exists(&path)
+    });
+    test_file
+        || files
+            .read_to_string(&root.join("setup.cfg"))
+            .is_ok_and(|text| {
+                text.lines()
+                    .filter_map(ini_section)
+                    .any(|name| name == "tool:pytest")
+            })
+}
+
+/// The section a line of an INI file opens, as pytest's `iniconfig` reads
+/// `setup.cfg`: a header starts the line, `#` or `;` starts a comment after
+/// it, and what's left ends with `]`. An indented line continues a value.
+fn ini_section(line: &str) -> Option<&str> {
+    let line = line.strip_prefix('[')?;
+    let line = line.split(['#', ';']).next().unwrap_or(line).trim_end();
+    line.strip_suffix(']')
+}
+
+/// The part of a `pyproject.toml` detection reads.
+#[derive(Default, Deserialize)]
+struct PyProject {
+    #[serde(default)]
+    project: PyProjectTable,
+    #[serde(default)]
+    tool: toml::Table,
+}
+
+#[derive(Default, Deserialize)]
+struct PyProjectTable {
+    #[serde(default)]
+    scripts: EntryPoints,
+}
+
+impl PyProject {
+    /// The `[project.scripts]` names that can be run by name: not empty,
+    /// and no path, so `uv run` and the `.venv` lookup stay on the script.
+    fn scripts(&self) -> Vec<String> {
+        (self.project.scripts.0.iter())
+            .filter(|name| {
+                !name.is_empty()
+                    && !matches!(name.as_str(), "." | "..")
+                    && !name.contains(['/', '\\', '\0'])
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn configures_pytest(&self) -> bool {
+        (self.tool.get("pytest"))
+            .and_then(|pytest| pytest.get("ini_options"))
+            .is_some_and(toml::Value::is_table)
+    }
+}
+
+/// A `[project.scripts]` table's names, in the file's order: the
+/// deserializer sorts a table's keys, so they're put back by where each is
+/// in the text. An entry that isn't a string isn't a script.
+#[derive(Default)]
+struct EntryPoints(Vec<String>);
+
+impl<'de> Deserialize<'de> for EntryPoints {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct NamesVisitor;
+
+        impl<'de> Visitor<'de> for NamesVisitor {
+            type Value = EntryPoints;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(verbatim!("a table of scripts"))
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<EntryPoints, A::Error> {
+                let mut names = Vec::new();
+                while let Some((name, script)) =
+                    map.next_entry::<toml::Spanned<String>, toml::Value>()?
+                {
+                    if script.is_str() {
+                        names.push((name.span().start, name.into_inner()));
+                    }
+                }
+                names.sort();
+                Ok(EntryPoints(
+                    names.into_iter().map(|(_, name)| name).collect(),
+                ))
+            }
+        }
+
+        deserializer.deserialize_map(NamesVisitor)
+    }
 }
 
 fn npm_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
