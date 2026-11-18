@@ -277,10 +277,7 @@ fn leader_and_worker(dir: &Path, worker: &str) -> (ProcessTree, BufReader<ChildS
     let leader = script(
         dir,
         "leader.sh",
-        &format!(
-            "trap 'exit 0' TERM\nsh '{}' &\nwhile :; do sleep 0.05; done\n",
-            worker.display()
-        ),
+        &format!("trap 'exit 0' TERM\nsh '{}' &\nwait\n", worker.display()),
     );
     let mut tree = ProcessTree::spawn(&mut command(&leader)).unwrap();
     let mut stdout = BufReader::new(tree.take_stdout().unwrap());
@@ -331,7 +328,9 @@ fn process_tree_unix_what_the_program_left_is_killed_when_the_grace_is_up() {
         dir.path(),
         "trap '' TERM\necho \"worker ready $$\"\nwhile :; do sleep 0.05; done\n",
     );
-    let grace = Duration::from_millis(300);
+    // Long enough that the program's trap runs well inside it even on a loaded machine; only
+    // the worker, which ignores SIGTERM, outlasts it.
+    let grace = Duration::from_secs(2);
     let started = Instant::now();
     let status = tree.cancel_within(grace).unwrap();
     let took = started.elapsed();
