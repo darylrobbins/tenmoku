@@ -135,7 +135,7 @@ use fe_editor::{
 };
 use fe_lsp::{
     FileDiagnostic, KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager,
-    LspNavigation, PositionEncoding, ServerId, ServerLauncher, ServerSpec, ServerStatus,
+    LspNavigation, PositionEncoding, PythonEnv, ServerId, ServerLauncher, ServerSpec, ServerStatus,
 };
 use gpui::{App, AppContext as _, Context, Global, Subscription, Task, WeakEntity, Window};
 
@@ -149,6 +149,10 @@ use kiln_shell::{Icon, StatusSide, StatusTone};
 
 /// The status bar item's id.
 pub(crate) const ITEM: &str = "lsp";
+
+/// The language whose servers run in a Python environment, which the
+/// status item names.
+const PYTHON: &str = "python";
 
 /// [`LspNavigation`]'s precedence in the workbench's navigation (§5).
 pub(crate) const PRECEDENCE: i32 = 100;
@@ -541,8 +545,8 @@ pub(crate) struct Lsp {
     /// What the watcher would send a change to.
     #[cfg(test)]
     project_changed: Option<async_channel::Sender<()>>,
-    /// The item's text as last set, and its tooltip if it isn't the log's.
-    shown: Option<(String, StatusTone, Option<String>)>,
+    /// The item's text, tone and tooltip as last set.
+    shown: Option<(String, StatusTone, ItemTooltip)>,
     /// The manager was made with fe-lsp's own launcher.
     #[cfg(test)]
     local: bool,
@@ -833,6 +837,18 @@ impl Lsp {
         }
     }
 
+    /// The Python environment `buffer`'s server, `server`, was launched in,
+    /// for a Python file on a server of Python's with one: the one its
+    /// session runs with, from fe-lsp. `None` for a file in any other
+    /// language, though its server may serve Python too.
+    fn python_env(&self, buffer: Option<BufferId>, server: ServerId) -> Option<PythonEnv> {
+        let document = self.documents.get(&buffer?)?;
+        if document.language != PYTHON {
+            return None;
+        }
+        lock(self.manager.as_ref()?).python_env(server)
+    }
+
     /// The active editor's server's name and status, if it has one.
     fn server(&self, buffer: Option<BufferId>) -> Option<(ServerId, &str, &ServerStatus)> {
         let server = self.documents.get(&buffer?)?.server?;
@@ -940,13 +956,24 @@ pub(crate) fn lsp_status_item(text: String, tone: StatusTone) -> kiln_shell::Sta
     item
 }
 
+/// The status item's tooltip, and whether a click shows the log.
+#[derive(Clone, Debug, PartialEq)]
+enum ItemTooltip {
+    /// The log's: a click shows it.
+    Log,
+    /// The Python environment the server runs in; a click shows the log.
+    PythonEnv(String),
+    /// Why the server doesn't start; a click does nothing.
+    Untrusted(String),
+}
+
 /// The status item for a file whose server `name` doesn't start because
 /// its marker root, `root`, isn't inside a trusted folder.
-fn untrusted_status(name: &str, root: &Path) -> (String, StatusTone, Option<String>) {
+fn untrusted_status(name: &str, root: &Path) -> (String, StatusTone, ItemTooltip) {
     (
         tr!("workbench-lsp-status-untrusted", name = name).into(),
         StatusTone::Warning,
-        Some(
+        ItemTooltip::Untrusted(
             tr!(
                 "workbench-lsp-status-untrusted-detail",
                 root = root.display().to_string()
@@ -954,6 +981,35 @@ fn untrusted_status(name: &str, root: &Path) -> (String, StatusTone, Option<Stri
             .into(),
         ),
     )
+}
+
+/// The status item for server `name` in `status`, with `message`, running
+/// in the Python environment `env`: its name has the environment's
+/// (`pyright (.venv): starting…`), it says when the server is ready, and
+/// its tooltip has the environment's path.
+fn python_status(
+    name: &str,
+    env: &PythonEnv,
+    status: &ServerStatus,
+    message: Option<&str>,
+) -> (String, StatusTone, ItemTooltip) {
+    let name: String = tr!(
+        "workbench-lsp-status-python-env-name",
+        name = name,
+        env = env.name()
+    )
+    .into();
+    let (text, tone) = status_text(&name, status, message).unwrap_or_else(|| {
+        (
+            tr!("workbench-lsp-status-ready", name = name.as_str()).into(),
+            StatusTone::Default,
+        )
+    });
+    let tooltip = tr!(
+        "workbench-lsp-status-python-env-tooltip",
+        path = env.dir().display().to_string()
+    );
+    (text, tone, ItemTooltip::PythonEnv(tooltip.into()))
 }
 
 impl Workbench {
@@ -1784,6 +1840,8 @@ impl Workbench {
         if handed_over {
             cx.notify();
         }
+        // The item reads the manager too.
+        drop(manager);
         self.show_lsp_status(cx);
     }
 
@@ -2148,7 +2206,11 @@ impl Workbench {
             Some((name, root)) => Some(untrusted_status(&name, &root)),
             None => lsp.server(buffer).and_then(|(server, name, status)| {
                 let message = lsp.messages.get(&server).map(String::as_str);
-                status_text(name, status, message).map(|(text, tone)| (text, tone, None))
+                match lsp.python_env(buffer, server) {
+                    Some(env) => Some(python_status(name, &env, status, message)),
+                    None => status_text(name, status, message)
+                        .map(|(text, tone)| (text, tone, ItemTooltip::Log)),
+                }
             }),
         };
         if shown == self.lsp.shown {
@@ -2156,8 +2218,11 @@ impl Workbench {
         }
         self.lsp.shown.clone_from(&shown);
         self.status_bar().clone().update(cx, |bar, cx| match shown {
-            Some((text, tone, None)) => bar.set_item(lsp_status_item(text, tone), cx),
-            Some((text, tone, Some(tooltip))) => {
+            Some((text, tone, ItemTooltip::Log)) => bar.set_item(lsp_status_item(text, tone), cx),
+            Some((text, tone, ItemTooltip::PythonEnv(tooltip))) => {
+                bar.set_item(lsp_status_item(text, tone).tooltip(tooltip), cx)
+            }
+            Some((text, tone, ItemTooltip::Untrusted(tooltip))) => {
                 let item = kiln_shell::StatusItem::new(ITEM, StatusSide::Right, 0, text)
                     .icon(Icon::Server)
                     .tone(tone)
@@ -2946,6 +3011,10 @@ mod trust_tests;
 #[cfg(test)]
 #[path = "lsp_trusted_settings_tests.rs"]
 mod trusted_settings_tests;
+
+#[cfg(test)]
+#[path = "lsp_python_env_tests.rs"]
+mod python_env_tests;
 
 impl Workbench {
     /// The state the hover provider shares with the debugger's hover.

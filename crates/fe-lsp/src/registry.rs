@@ -12,6 +12,7 @@ use fe_config::settings::{LspReadiness, LspServerSettings, LspSettings, Typescri
 use serde_json::Value;
 
 use crate::launcher::{PullDiagnostics, ReadinessMode, ServerSpec, UnversionedDiagnostics};
+use crate::python_env::serves_python;
 use crate::rust_analyzer_defaults::{self, RUST_ANALYZER};
 
 /// The built-in servers, in the order a language's server is chosen.
@@ -50,6 +51,9 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
                 "pyrightconfig.json",
                 "requirements.txt",
             ]),
+            // pyright reads the interpreter it resolves imports with from
+            // python.pythonPath (python_env.rs).
+            interpreter_setting: Some("python.pythonPath".into()),
             ..spec("pyright", "pyright-langserver", &["--stdio"], &["python"])
         },
         // Its pushes carry no version, so they're dropped (§4.1); its
@@ -303,9 +307,18 @@ impl Registry {
                     .filter(|name| !builtin(name) && !self.settings.servers.contains_key(name)),
             );
         let (_, not_chosen) = typescript_server(self.settings.typescript_server);
+        let python_environment = self.settings.python_environment.as_deref();
         names
             .filter(|name| name != not_chosen)
             .filter_map(|name| self.spec(&name, &builtins, &extension))
+            .map(|mut spec| {
+                // A Python server runs in the environment the setting names
+                // (python_env.rs); a change to it restarts the server.
+                if serves_python(&spec) && spec.python_environment.is_none() {
+                    spec.python_environment = python_environment.map(PathBuf::from);
+                }
+                spec
+            })
             .collect()
     }
 

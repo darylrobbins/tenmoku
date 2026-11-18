@@ -105,6 +105,7 @@ use crate::launcher::{
     UnversionedDiagnostics,
 };
 use crate::pull::{Pulled, Puller};
+use crate::python_env::{self, PythonEnv, PythonEnvChoice};
 use crate::readiness::Readiness;
 use crate::registration::{Registrations, StaticWatch};
 use crate::requests::{Issue, Orphans, Out, Settled};
@@ -344,6 +345,9 @@ pub(crate) struct Session {
     /// The session's process id, as its launcher gave it
     /// ([`ServerProcess::pid`]), until the session ends.
     pub(crate) pid: Option<u32>,
+    /// The Python environment the server is launched in, or is being, for
+    /// a server of Python's with one ([`python_env`](crate::python_env())).
+    pub(crate) python_env: Option<PythonEnv>,
     /// How many orphans the actor holds, and the most it has held.
     #[cfg(test)]
     pub(crate) orphans: (usize, usize),
@@ -502,7 +506,14 @@ impl Server {
             // launched: it has exited, and once its group has gone too, its
             // id may be reused, so a later kill mustn't signal it.
             last = None;
-            let launched = self.launcher.launch(&self.spec, &self.root, &self.cancel);
+            // Found once for the launch: the launcher runs the server in
+            // it, its settings name its interpreter, the host shows it.
+            let python = self.find_python();
+            let spec = ServerSpec {
+                python_env_choice: PythonEnvChoice::Chosen(python.clone()),
+                ..self.spec.clone()
+            };
+            let launched = self.launcher.launch(&spec, &self.root, &self.cancel);
             // A stop or kill that came while it launched (which may block: a
             // login shell, a container), which `cancel` asked it to cut
             // short. Nothing has been sent to what it started, so that's
@@ -523,11 +534,11 @@ impl Server {
                 // trying again is for the user (`lsp.restart`).
                 Err(err) => {
                     carry.hand_over();
-                    return status
-                        .send(ServerStatus::Stopped(Some(launch_error(&self.spec, &err))));
+                    let why = launch_error(&self.spec, &err);
+                    return status.send(ServerStatus::Stopped(Some(why)));
                 }
             };
-            let (ended, process) = self.session(io, session_id, &folder, &status, carry);
+            let (ended, process) = self.session(io, session_id, &folder, &status, python, carry);
             let process = last.insert(process);
             let (why, at, kept) = match ended {
                 Ended::Stopped => return process.reap(),
@@ -572,6 +583,16 @@ impl Server {
         }
     }
 
+    /// The Python environment of the launch about to be made, if the
+    /// server is one of Python's and one is at its root (python_env.rs),
+    /// noted in the session for the host. Found again each launch, so one
+    /// made or removed since counts from the next.
+    fn find_python(&self) -> Option<PythonEnv> {
+        let python = python_env::python_env(&self.spec, &self.root);
+        lock(&self.session).python_env.clone_from(&python);
+        python
+    }
+
     /// Runs one session on `io`, until it stops or crashes, and hands its
     /// process back.
     fn session(
@@ -580,6 +601,7 @@ impl Server {
         session_id: SessionId,
         folder: &WorkspaceFolder,
         status: &StatusSink,
+        python: Option<PythonEnv>,
         mut carry: Carry,
     ) -> (Ended, Watched) {
         let ServerIo {
@@ -594,6 +616,7 @@ impl Server {
             switch: self.switch.clone(),
         };
         *lock(&self.session) = Session {
+            python_env: python.clone(),
             registrations: Registrations::with_watch(StaticWatch::new(
                 &self.spec,
                 &self.root,
@@ -603,7 +626,11 @@ impl Server {
             ..Session::default()
         };
         let queue = Rc::new(Queue::default());
-        let settings = Rc::new(RefCell::new(carry.settings.clone()));
+        let settings = Rc::new(RefCell::new(python_env::with_interpreter(
+            carry.settings.clone(),
+            self.spec.interpreter_setting.as_deref(),
+            python.as_ref(),
+        )));
         let readiness = Arc::new(Mutex::new(Readiness::new(&self.spec)));
         let signal = Rc::new(Signal::default());
         let refresh = Rc::new(Signal::default());
@@ -682,6 +709,7 @@ impl Server {
             status: status.clone(),
             spec: self.spec.clone(),
             settings,
+            python,
             folder: folder.clone(),
             root: self.root.clone(),
             clock: self.clock.clone(),
@@ -792,10 +820,13 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// What a failed launch stops the server with: "<name> not found" when
-/// there's nothing to run (Q2 (a)), else the launcher's error.
+/// there's nothing to run (Q2 (a)), or, for a server of Python's that
+/// [`LocalLauncher`](crate::LocalLauncher) didn't find, its command and
+/// where it looked (python_env.rs); else the launcher's error.
 fn launch_error(spec: &ServerSpec, err: &io::Error) -> String {
     if err.kind() == io::ErrorKind::NotFound {
-        tr!("lsp-server-not-found", name = spec.name.as_str()).to_string()
+        python_env::searched(err)
+            .unwrap_or_else(|| tr!("lsp-server-not-found", name = spec.name.as_str()).to_string())
     } else {
         err.to_string()
     }
@@ -832,8 +863,13 @@ struct Actor {
     _end: EndSession,
     status: StatusSink,
     spec: ServerSpec,
-    /// The spec's `settings` as they are now, shared with the router.
+    /// The spec's `settings` as they are now, with the Python environment's
+    /// interpreter in them ([`configured`](Self::configured)), shared with
+    /// the router.
     settings: Rc<RefCell<serde_json::Value>>,
+    /// The Python environment the session's server runs in, if it's one of
+    /// Python's and found one at launch.
+    python: Option<PythonEnv>,
     folder: WorkspaceFolder,
     /// The folder it runs in, which its static watch is under.
     root: PathBuf,
@@ -940,6 +976,17 @@ enum Step {
 }
 
 impl Actor {
+    /// `settings`, new settings for the spec, as the server is given them:
+    /// with the Python environment's interpreter at the spec's
+    /// `interpreter_setting`, unless they set it.
+    fn configured(&self, settings: serde_json::Value) -> serde_json::Value {
+        python_env::with_interpreter(
+            settings,
+            self.spec.interpreter_setting.as_deref(),
+            self.python.as_ref(),
+        )
+    }
+
     async fn run(
         mut self,
         process: &mut dyn ServerProcess,
@@ -1212,8 +1259,9 @@ impl Actor {
                 documents: self.handed.documents(),
             }),
             Command::Configure(settings) => {
-                self.settings.replace(settings.clone());
                 self.carry.settings = settings.clone();
+                let settings = self.configured(settings);
+                self.settings.replace(settings.clone());
                 // The static watch's pointers are read again first, so the
                 // next change on disk is filtered by the new settings.
                 let watch = StaticWatch::new(&self.spec, &self.root, &settings);
@@ -1628,7 +1676,7 @@ impl Actor {
                     // So a configuration request during the start gets
                     // them; the notification waits.
                     Some(Command::Configure(settings)) => {
-                        self.settings.replace(settings.clone());
+                        self.settings.replace(self.configured(settings.clone()));
                         self.backlog.push_back(Command::Configure(settings));
                     }
                     Some(command) => self.backlog.push_back(command),

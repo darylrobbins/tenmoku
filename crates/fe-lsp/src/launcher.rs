@@ -31,6 +31,8 @@ use futures::channel::oneshot;
 use futures::future::{FutureExt, Shared};
 use futures::{AsyncRead, AsyncWrite};
 
+use crate::python_env::{self, PythonEnvChoice};
+
 /// What to start: from settings or supplied by the host.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerSpec {
@@ -81,6 +83,26 @@ pub struct ServerSpec {
     /// that changes with no edit ([`LspManager::repoll_due`](crate::LspManager::repoll_due)).
     /// `None` (the default) never.
     pub repoll: Option<Duration>,
+    /// For a server of Python's (`languages` holding `python`), the
+    /// `lsp.python_environment` setting: the Python environment it runs
+    /// in, absolute, under `~`, or relative to its root. Unset, the
+    /// environment is `$VIRTUAL_ENV`, `<root>/.venv` or `<root>/venv`, the
+    /// first with an interpreter (python_env.rs).
+    pub python_environment: Option<PathBuf>,
+    /// The dotted key in `settings` that `workspace/configuration` answers
+    /// a Python server's environment's interpreter at, such as pyright's
+    /// `python.pythonPath`, unless `settings` has a value there. `None`
+    /// (the default) adds nothing.
+    pub interpreter_setting: Option<String>,
+    /// The Python environment of this launch: on the spec fe-lsp hands a
+    /// launcher, [`Chosen`](PythonEnvChoice::Chosen), the one it found for
+    /// a server of Python's just before the launch (none, for any other).
+    /// The server's settings name its interpreter and its host shows it
+    /// ([`LspManager::python_env`](crate::LspManager::python_env)), so a
+    /// launcher runs the server in it, as [`LocalLauncher`] does, rather
+    /// than looking again. [`Find`](PythonEnvChoice::Find) (the default,
+    /// on specs from settings or a host) has [`LocalLauncher`] find one.
+    pub python_env_choice: PythonEnvChoice,
 }
 
 impl ServerSpec {
@@ -107,6 +129,9 @@ impl ServerSpec {
             watch_files_from: None,
             watch_excludes_from: None,
             repoll: None,
+            python_environment: None,
+            interpreter_setting: None,
+            python_env_choice: PythonEnvChoice::Find,
         }
     }
 }
@@ -383,17 +408,30 @@ fn launch_local(
         .rev()
         .find(|(name, _)| name == "PATH")
         .map(|(_, path)| OsString::from(path));
+    // A Python server's environment's bin goes first, to look the command
+    // up on and on the server's PATH (python_env.rs).
+    let python = python_env::python_env(spec, root);
+    let env_path = python.as_ref().and_then(|env| {
+        let base = spec_path
+            .clone()
+            .or_else(|| login.path().map(OsStr::to_owned))
+            .or_else(|| std::env::var_os("PATH"));
+        prepend_path(&env.bin(), base.as_deref())
+    });
     let program = login
-        .resolve(&spec.command, spec_path.as_deref(), root)
+        .resolve(
+            &spec.command,
+            env_path.as_deref().or(spec_path.as_deref()),
+            root,
+        )
         .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                tr!(
+            python_env::not_found(spec, root, python.as_ref()).unwrap_or_else(|| {
+                let why = tr!(
                     "lsp-server-not-found",
                     name = spec.command.display().to_string()
-                )
-                .to_string(),
-            )
+                );
+                io::Error::new(io::ErrorKind::NotFound, why.to_string())
+            })
         })?;
     let mut command = std::process::Command::new(program);
     // Also for absolute commands: a server may run other programs off
@@ -407,6 +445,10 @@ fn launch_local(
         .args(&spec.args)
         .current_dir(root)
         .envs(spec.env.iter().map(|(k, v)| (k, v)));
+    // Over the spec's own, as an activated environment's shell has them.
+    if let (Some(env), Some(path)) = (&python, &env_path) {
+        command.env("PATH", path).env("VIRTUAL_ENV", env.dir());
+    }
     #[cfg(unix)]
     command.process_group(0);
     // No console window for the server; its children go in a job (below).
@@ -454,6 +496,36 @@ fn launch_local(
     })
 }
 
+/// `dir`, then `path`'s entries, as a `PATH`; `None` (with a warning) if
+/// `dir` can't go in one, holding the list separator.
+fn prepend_path(dir: &Path, path: Option<&OsStr>) -> Option<OsString> {
+    let entries =
+        std::iter::once(dir.to_owned()).chain(path.into_iter().flat_map(std::env::split_paths));
+    std::env::join_paths(entries)
+        .inspect_err(|err| {
+            log::warn!(
+                "the Python environment's {} can't go on a PATH, so it isn't searched: {err}",
+                dir.display()
+            );
+        })
+        .ok()
+}
+
+/// The home directory, `$HOME` (`%USERPROFILE%` on Windows, where `HOME`
+/// is seldom set), if it's absolute: what a leading `~` stands for.
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| {
+            if cfg!(windows) {
+                std::env::var_os("USERPROFILE")
+            } else {
+                None
+            }
+        })
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+}
+
 /// How long the login shell may take to print its `PATH`.
 pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -490,17 +562,7 @@ impl LoginPath {
     /// The `PATH` the login shell `shell` prints, with `$HOME` as `~`
     /// (`%USERPROFILE%` on Windows, where `HOME` is seldom set).
     pub fn new(shell: impl Into<PathBuf>) -> Self {
-        let home = std::env::var_os("HOME")
-            .or_else(|| {
-                if cfg!(windows) {
-                    std::env::var_os("USERPROFILE")
-                } else {
-                    None
-                }
-            })
-            .map(PathBuf::from)
-            .filter(|home| home.is_absolute());
-        Self::with_home(shell, home)
+        Self::with_home(shell, home_dir())
     }
 
     /// As [`new`](Self::new), with `home` as `~`, or no `~` at all.
@@ -604,7 +666,7 @@ impl LoginPath {
 
 /// A name with no `/`, such as `rust-analyzer`: one looked up on a `PATH`,
 /// as `execvp` would.
-fn is_bare(command: &Path) -> bool {
+pub(crate) fn is_bare(command: &Path) -> bool {
     !command
         .as_os_str()
         .as_encoded_bytes()

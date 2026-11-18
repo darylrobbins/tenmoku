@@ -135,6 +135,14 @@ workbench-lsp-status-indexing = { $name }: indexing { $title }
 workbench-lsp-status-restarting = { $name }: restarting ({ $attempt }/{ $attempts })
 workbench-lsp-status-stopped-error = { $name }: stopped: { $error }
 workbench-lsp-status-stopped = { $name }: stopped
+workbench-lsp-status-ready = { $name }: ready
+# A Python server's name in the item: $name is the server's, $env the
+# Python environment's folder name, such as .venv.
+workbench-lsp-status-python-env-name = { $name } ({ $env })
+# $path is the Python environment's folder.
+workbench-lsp-status-python-env-tooltip =
+    Python environment: { $path }
+    Show Language Server Log
 # The tab of a language server's log. $name is the server's.
 workbench-lsp-log-title = { $name } Log
 # Shown while the server has written no output, perhaps because it never

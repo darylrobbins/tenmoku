@@ -501,6 +501,15 @@ settings-lsp-max_file_bytes =
     The largest file, in bytes, synced to a language server. Applies to
     files opened after it changes.
 
+settings-lsp-python_environment =
+    The Python environment (a virtualenv) Python's language servers run
+    in: a server's program is looked for in its bin before the `PATH`,
+    and the server is told of its interpreter. An absolute path, one
+    under `~`, or one relative to the server's project root. Unset, it's
+    `$VIRTUAL_ENV`, else the project's `.venv` or `venv`: the first with
+    a `bin/python`. A user setting: a project file's applies only in a
+    trusted folder.
+
 settings-lsp-servers =
     Servers by name: changes to the built-in rust-analyzer, pyright,
     typescript-language-server, typescript-go, gopls,

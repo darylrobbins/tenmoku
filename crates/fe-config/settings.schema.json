@@ -1146,6 +1146,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "python_environment": {
+          "description": "The Python environment (a virtualenv) Python's language servers run\nin: a server's program is looked for in its bin before the `PATH`,\nand the server is told of its interpreter. An absolute path, one\nunder `~`, or one relative to the server's project root. Unset, it's\n`$VIRTUAL_ENV`, else the project's `.venv` or `venv`: the first with\na `bin/python`. A user setting: a project file's applies only in a\ntrusted folder.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "servers": {
           "additionalProperties": {
             "$ref": "#/$defs/LspServerSettings"

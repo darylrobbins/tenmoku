@@ -65,6 +65,9 @@
 //!   run one of its own commands (`workspace/executeCommand`), with its
 //!   reply as JSON; [`LspManager::set_jdtls_bundles`] gives jdtls bundles
 //!   to load, such as java-debug's.
+//! - A server of Python's runs in the project's Python environment
+//!   ([`python_env`]): its bin first on the `PATH`, its interpreter in the
+//!   server's settings.
 //! - [`LspNavigation`] answers fe-nav's go-to-definition, references and
 //!   workspace symbols from a manager's servers, once each is ready.
 //!
@@ -110,6 +113,7 @@ mod manager;
 mod navigation;
 mod notify;
 mod pull;
+mod python_env;
 mod readiness;
 mod registration;
 mod registry;
@@ -169,6 +173,7 @@ pub use manager::{
     RunningServer,
 };
 pub use navigation::LspNavigation;
+pub use python_env::{PythonEnv, PythonEnvChoice, find_python_env, python_env, serves_python};
 pub use registry::{BundlesRefused, extension_spec, server_root};
 pub use requests::{ORPHANS_MAX, Reply};
 pub use semantic_tokens::{SemanticToken, SemanticTokens};

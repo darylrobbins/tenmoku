@@ -1460,6 +1460,15 @@ pub struct LspSettings {
     pub max_file_bytes: u64,
     /// Which built-in server TypeScript and JavaScript files get.
     pub typescript_server: TypescriptServer,
+    /// The Python environment (a virtualenv) Python's language servers run
+    /// in: a server's program is looked for in its bin before the `PATH`,
+    /// and the server is told of its interpreter. An absolute path, one
+    /// under `~`, or one relative to the server's project root. Unset, it's
+    /// `$VIRTUAL_ENV`, else the project's `.venv` or `venv`: the first with
+    /// a `bin/python`. A user setting: a project file's applies only in a
+    /// trusted folder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub python_environment: Option<String>,
     /// How long requests may take, in milliseconds, by method.
     pub timeouts: LspTimeouts,
     /// Servers by name: changes to the built-in rust-analyzer, pyright,
@@ -1475,6 +1484,7 @@ impl Default for LspSettings {
             enabled: true,
             max_file_bytes: 50 * 1024 * 1024,
             typescript_server: TypescriptServer::default(),
+            python_environment: None,
             timeouts: LspTimeouts::default(),
             servers: BTreeMap::new(),
         }
@@ -2375,6 +2385,10 @@ fn drop_workbench_user_only(layer: &mut Layer) {
         layer.diagnostics.push(warning);
     }
 }
+
+#[cfg(test)]
+#[path = "settings_python_env_tests.rs"]
+mod python_env_tests;
 
 /// Where the key at `first` then `rest` is in the source, or where the
 /// deepest of its tables found is.

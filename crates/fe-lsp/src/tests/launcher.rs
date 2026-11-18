@@ -14,6 +14,9 @@ use super::{manager, wait_until};
 use crate::LocalLauncher;
 use crate::{LaunchCancel, LspError, ServerIo, ServerLauncher, ServerSpec, ServerStatus};
 
+#[cfg(unix)]
+mod python_env;
+
 #[test]
 // A Unix process group, of /bin/sh and what it starts.
 #[cfg(unix)]

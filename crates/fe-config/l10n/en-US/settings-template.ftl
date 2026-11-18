@@ -517,3 +517,9 @@ settings-template-lsp-servers-my_linter =
     changes on disk to those files under its root, except under watch_excludes,
     even if it never asks. repoll_ms asks it again that often for the colours,
     hints, lenses and links of the files shown (0 or unset: never).
+
+    Python's servers run in the project's Python environment (a virtualenv):
+    one is looked for in its bin before the PATH, and is told of its
+    interpreter. It's $VIRTUAL_ENV, else the project's .venv or venv, unless
+    {"["}lsp] python_environment, below, names one: a path under ~, or relative to
+    the project. A project file can't set it, except in a trusted folder.

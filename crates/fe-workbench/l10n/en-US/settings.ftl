@@ -158,6 +158,7 @@ workbench-settings-label-extensions-disabled = Disabled
 workbench-settings-label-extensions-plugins_preview = Plugins Preview
 workbench-settings-label-lsp-enabled = Enabled
 workbench-settings-label-lsp-max_file_bytes = Max File Bytes
+workbench-settings-label-lsp-python_environment = Python Environment
 workbench-settings-label-lsp-servers = Servers
 workbench-settings-label-lsp-timeouts-code_action = Code Action
 workbench-settings-label-lsp-timeouts-completion = Completion
