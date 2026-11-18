@@ -373,7 +373,7 @@ impl Render for CredentialPrompt {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 impl CredentialPrompt {
     /// What it says: its name, its status, and the field's placeholder.
     pub(crate) fn shown_text(&self, cx: &App) -> [String; 3] {
@@ -396,7 +396,7 @@ impl CredentialPrompt {
 }
 
 /// The prompt showing or hidden, if any, and how many wait behind it.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn prompts(cx: &mut App) -> (Option<Entity<CredentialPrompt>>, usize) {
     let prompts = cx.default_global::<Prompts>();
     (prompts.current.clone(), prompts.waiting.len())

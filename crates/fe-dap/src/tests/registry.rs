@@ -8,18 +8,26 @@
 //! Programs are found on a fake login shell's `PATH`, a temporary folder
 //! of stand-in scripts, never on the `PATH` this test runs with.
 
+#[cfg(unix)]
 use std::collections::BTreeMap;
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::sync::{Arc, Mutex, PoisonError};
 
+#[cfg(unix)]
 use fe_config::debug_settings::{DebugAdapterSettings, DebugSettings, DebugTransport};
+#[cfg(unix)]
 use fe_lsp::LoginPath;
+#[cfg(unix)]
 use kiln_l10n::tr;
 
+#[cfg(unix)]
+use crate::launcher::PORT_PLACEHOLDER;
 use crate::launcher::{
     AdapterIo, AdapterLauncher, AdapterSpec, AdapterTransport, LaunchCancel, LocalLauncher,
-    PORT_PLACEHOLDER,
 };
+#[cfg(unix)]
 use crate::registry::{
     Context, HostOs, JAVA, JAVA_PORT, Lookup, Registry, Runner, Source, Status, XCRUN,
     lldb_dap_lookups, python_interpreter, rust_init_commands,
@@ -27,6 +35,7 @@ use crate::registry::{
 
 /// A folder of programs and a login shell whose `PATH` is `bin` (after a
 /// directory that doesn't exist), with a project root beside them.
+#[cfg(unix)]
 struct Fixture {
     _dir: tempfile::TempDir,
     dir: PathBuf,
@@ -34,6 +43,7 @@ struct Fixture {
     root: PathBuf,
 }
 
+#[cfg(unix)]
 impl Fixture {
     fn new() -> Self {
         let tempdir = tempfile::tempdir().unwrap();
@@ -89,6 +99,7 @@ impl Fixture {
 }
 
 /// Writes a shell script at `path` running `body`, made executable.
+#[cfg(unix)]
 fn write_script(path: &Path, body: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -100,6 +111,7 @@ fn write_script(path: &Path, body: &str) {
 }
 
 /// A stand-in program at `path`, never run.
+#[cfg(unix)]
 fn program(path: &Path) -> PathBuf {
     write_script(path, "exit 0");
     path.to_owned()
@@ -107,12 +119,14 @@ fn program(path: &Path) -> PathBuf {
 
 /// A [`Runner`] answering from a table, by the program's file name, and
 /// recording what it was asked.
+#[cfg(unix)]
 #[derive(Default)]
 struct FakeRunner {
     answers: BTreeMap<String, String>,
     calls: Mutex<Vec<(PathBuf, Vec<String>, PathBuf)>>,
 }
 
+#[cfg(unix)]
 impl FakeRunner {
     fn answering(answers: &[(&str, &str)]) -> Arc<Self> {
         Arc::new(Self {
@@ -132,6 +146,7 @@ impl FakeRunner {
     }
 }
 
+#[cfg(unix)]
 impl Runner for FakeRunner {
     fn stdout(&self, program: &Path, args: &[&str], cwd: &Path) -> Option<String> {
         self.calls
@@ -147,6 +162,7 @@ impl Runner for FakeRunner {
     }
 }
 
+#[cfg(unix)]
 fn settings(adapters: &[(&str, DebugAdapterSettings)]) -> DebugSettings {
     DebugSettings {
         adapters: adapters
@@ -158,10 +174,12 @@ fn settings(adapters: &[(&str, DebugAdapterSettings)]) -> DebugSettings {
 }
 
 /// (host, user, extension) → source, program, arguments.
+#[cfg(unix)]
 type OrderRow<'a> = ((bool, bool, bool), Source, &'a Path, &'a [&'a str]);
 
 /// Host adapters, the user's settings and extension adapters → which
 /// adapter `lldb` names, from which layer.
+#[cfg(unix)]
 type CollisionRow<'a> = (
     &'a [&'a str],
     &'a [(&'a str, DebugAdapterSettings)],
@@ -170,8 +188,10 @@ type CollisionRow<'a> = (
 );
 
 /// (.venv's, $VIRTUAL_ENV's, python3 on the PATH) → the interpreter.
+#[cfg(unix)]
 type PythonRow<'a> = ((bool, bool, bool), Option<&'a Path>);
 
+#[cfg(unix)]
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|item| (*item).to_owned()).collect()
 }

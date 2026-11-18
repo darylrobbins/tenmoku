@@ -32,12 +32,13 @@ use kiln_l10n::tr;
 use serde_json::Value;
 
 #[cfg(unix)]
+use crate::launch_defs::LaunchConfig;
+#[cfg(unix)]
 use crate::terminal_panel::Debuggee;
 use crate::{
     Launch, TerminalPanel, Workbench,
     debug_breakpoints::BreakpointStore,
     debug_session::{DebugHost, Debugger, DebuggerEvent, launch, picker::ShownRow, set_debug_host},
-    launch_defs::LaunchConfig,
     task_commands::TestFiles,
     task_defs::{ProjectFiles, Source, Task, TaskCommand},
     task_run::{ExitHeard, FakeTaskOutput, TaskExit},
@@ -1442,6 +1443,7 @@ fn the_debug_timeouts_apply_to_the_next_session(cx: &mut TestAppContext) {
 
 /// Clicks the active debuggee tab's rerun button, the debuggee tab being
 /// the `ix`th.
+#[cfg(unix)]
 fn click_rerun(debug: &mut Debug, ix: usize) {
     let terminal = debug.terminal();
     debug.cx.update(|window, cx| {
@@ -1569,6 +1571,7 @@ fn stand_in(path: &Path, body: &str) {
 }
 
 /// A launch file configuration `name` in the root, to start from.
+#[cfg(unix)]
 fn config_named(name: &str) -> LaunchConfig {
     use crate::launch_defs::{AdapterRef, Cwd, Request, Source as ConfigSource};
     LaunchConfig {
@@ -1593,6 +1596,7 @@ fn config_named(name: &str) -> LaunchConfig {
 
 /// What `config` of the project at `root` resolves with: no active editor,
 /// no settings, bare commands on `login`.
+#[cfg(unix)]
 fn resolve(
     config: LaunchConfig,
     root: &Path,

@@ -89,7 +89,7 @@ pub(crate) struct Resolve {
 ///
 /// In words, for a toast: no adapter, an adapter not found, or a variable
 /// that can't expand.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn session_options(resolve: Resolve) -> Result<SessionOptions, String> {
     session_options_with(resolve, None)
 }
