@@ -1578,7 +1578,11 @@ impl LspManager {
                 continue;
             };
             let only = (name, root.to_owned());
-            self.place_waiting(&specs, Some(&only));
+            for (waiting, name) in self.waiting_for(Some(&only)) {
+                if let Some(place) = self.running_place(waiting, &name) {
+                    self.set_place(waiting, &name, place);
+                }
+            }
         }
         // Where the lead was placed, even if it has failed since.
         Ok(on_lead)

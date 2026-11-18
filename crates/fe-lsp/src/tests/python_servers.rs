@@ -4,6 +4,8 @@
 //! gets the environment's interpreter at its own key; one not found says
 //! how to install it; and the root markers they share.
 
+mod one_launch;
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
