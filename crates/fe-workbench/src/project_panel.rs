@@ -398,6 +398,9 @@ pub struct ProjectPanel {
     menu: Option<menu::TreeMenu>,
     /// The header's New menu, while it's open.
     new_menu: Option<new_menu::NewMenu>,
+    /// Frames left before `project_panel.new_menu` opens it, with the dock
+    /// just shown ([`new_menu`]).
+    pending_new_menu: u8,
     /// A drag of the tree's rows, while it's under way.
     drag: Option<drag::Drag>,
     /// Each folder's build files a probe found, for its icon and its
@@ -473,6 +476,7 @@ impl ProjectPanel {
             filter: None,
             menu: None,
             new_menu: None,
+            pending_new_menu: 0,
             drag: None,
             markers: MarkerCache::default(),
             listed_markers: RefCell::default(),
@@ -1721,6 +1725,7 @@ impl ProjectPanel {
 
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.draw_pending_new_menu(window, cx);
         #[cfg(test)]
         {
             self.built.clear();

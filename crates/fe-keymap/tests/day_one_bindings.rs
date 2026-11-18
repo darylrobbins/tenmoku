@@ -185,6 +185,11 @@ fn card(os: Os) -> Vec<(&'static str, &'static str, ContextStack)> {
         ("o", "search.open_selected", search_results(true)),
         ("f2", "project_panel.rename", tree(false)),
         (
+            keys("cmd-alt-n", "ctrl-alt-n"),
+            "project_panel.new_file",
+            tree(false),
+        ),
+        (
             keys("cmd-backspace", "ctrl-backspace"),
             "project_panel.delete",
             tree(false),

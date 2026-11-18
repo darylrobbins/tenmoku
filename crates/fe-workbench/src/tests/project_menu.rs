@@ -228,7 +228,10 @@ fn folder_menu_lists_new_and_delete(cx: &mut TestAppContext) {
         "its key, right-aligned"
     );
     assert!(key("Cut").is_some(), "{drawn:?}");
-    assert_eq!(key("New File…"), None, "no key runs it without vim");
+    assert!(
+        key("New File…").is_some(),
+        "a key runs it without vim: {drawn:?}"
+    );
     for title in titles {
         let selector: &'static str = Box::leak(format!("menu-item:{title}").into_boxed_str());
         assert!(cx.debug_bounds(selector).is_some(), "{title} is drawn");

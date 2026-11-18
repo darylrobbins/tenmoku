@@ -122,6 +122,23 @@ pub fn track_centre() -> impl IntoElement {
         .size_full()
 }
 
+/// The bounds each window's menu-opening [`PaneAction`] buttons were last
+/// drawn at, by action id.
+#[derive(Default)]
+struct DrawnActions(HashMap<(WindowId, &'static str), Bounds<Pixels>>);
+
+impl Global for DrawnActions {}
+
+/// Where the [`PaneAction`] `id`'s button (one with `anchored`) was last
+/// drawn in `window`, in the window: for a key that opens its menu.
+pub fn drawn_action_bounds(window: &Window, id: &'static str, cx: &App) -> Option<Bounds<Pixels>> {
+    let drawn = cx.try_global::<DrawnActions>()?;
+    drawn
+        .0
+        .get(&(window.window_handle().window_id(), id))
+        .copied()
+}
+
 /// Forgets the centre of `window`, which has gone.
 pub(crate) fn forget_centre(window: WindowId, cx: &mut App) {
     if cx
@@ -1523,9 +1540,25 @@ impl DockState {
                     Some(anchored) => {
                         let drawn = ScrollHandle::new();
                         let at = drawn.clone();
+                        let id = action.id;
+                        let record = canvas(
+                            move |bounds, window: &mut Window, cx: &mut App| {
+                                let at = window.window_handle().window_id();
+                                cx.default_global::<DrawnActions>()
+                                    .0
+                                    .insert((at, id), bounds);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full();
                         div()
                             .id(("dock-action-anchor", ix))
+                            .relative()
                             .track_scroll(&drawn)
+                            .child(record)
                             .child(
                                 button.on_click(move |_, window, cx| {
                                     anchored(at.bounds(), window, cx)

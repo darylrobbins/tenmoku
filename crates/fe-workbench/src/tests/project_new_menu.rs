@@ -7,6 +7,7 @@ use std::{fs, path::Path};
 
 use gpui::{Bounds, Entity, Focusable as _, Modifiers, Pixels, TestAppContext, VisualTestContext};
 
+mod keys;
 mod no_folder;
 
 use super::{open_root, panel, rows};

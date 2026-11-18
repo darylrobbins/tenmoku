@@ -95,6 +95,40 @@ impl ProjectPanel {
         }
     }
 
+    /// Opens the New menu under the `+` as last drawn, or toggles it shut
+    /// if it's open. With no `+` drawn it hangs from the window's top left.
+    fn open_new_menu_from_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let anchor = kiln_shell::dock::drawn_action_bounds(window, super::NEW_BUTTON, cx)
+            .unwrap_or_else(|| Bounds::new(point(px(8.), px(8.)), gpui::size(px(0.), px(24.))));
+        self.toggle_new_menu(anchor, window, cx);
+    }
+
+    /// Has the next frames open the New menu under the `+`, once the dock's
+    /// header has drawn it: see [`Self::draw_pending_new_menu`].
+    pub(super) fn open_new_menu_when_drawn(&mut self, cx: &mut Context<Self>) {
+        self.pending_new_menu = 2;
+        cx.notify();
+    }
+
+    /// Called as the panel renders: counts a wait for the `+` down, a frame
+    /// each, then opens the menu from the render's end.
+    pub(super) fn draw_pending_new_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.pending_new_menu {
+            0 => {}
+            1 => {
+                self.pending_new_menu = 0;
+                let panel = cx.entity().downgrade();
+                window.defer(cx, move |window, cx| {
+                    (panel.update(cx, |panel, cx| panel.open_new_menu_from_key(window, cx))).ok();
+                });
+            }
+            _ => {
+                self.pending_new_menu -= 1;
+                cx.notify();
+            }
+        }
+    }
+
     /// Opens the New menu under `anchor`, focused; nothing with no tree.
     /// A name field open meanwhile closes, naming nothing, as does the
     /// right-click menu; nothing while its operation runs or a rename
@@ -373,5 +407,21 @@ impl ProjectPanel {
     /// The `+`'s bounds the open New menu is drawn under.
     pub(crate) fn new_menu_anchor(&self) -> Option<Bounds<Pixels>> {
         Some(self.new_menu.as_ref()?.anchor)
+    }
+}
+
+impl crate::Workbench {
+    /// `project_panel.new_menu`, from the keyboard or the palette, wherever
+    /// focus is: shows the Project dock, focused, and opens the New menu
+    /// under its `+`; unless the tree has focus, once its header has been drawn
+    /// ([`ProjectPanel::open_new_menu_when_drawn`]).
+    pub(crate) fn show_new_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Only a tree that already has focus is known to be drawn, its `+` too.
+        let drawn = self.panel().read(cx).focus.contains_focused(window, cx);
+        self.run_dock_op(crate::dock::DockOp::ShowProject, window, cx);
+        self.panel().update(cx, |panel, cx| match drawn {
+            true => panel.open_new_menu_from_key(window, cx),
+            false => panel.open_new_menu_when_drawn(cx),
+        });
     }
 }

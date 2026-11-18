@@ -951,6 +951,13 @@ impl Workbench {
         self.in_context(crate::KEY_CONTEXT, cx, |this, _, cx| this.reveal_active(cx));
     }
 
+    /// New…
+    #[command(id = "project_panel.new_menu")]
+    fn project_new_menu(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.show_new_menu(cx.window, cx.cx);
+    }
+
     /// Find All References
     #[command(id = "nav.find_references")]
     fn find_all_references(&mut self, cx: &mut Cx<Self>) {

@@ -1302,6 +1302,45 @@ keys = "f2"
 command = "project_panel.rename"
 context = "project_panel"
 
+# The New menu under the dock header's `+`, and its File and Folder entries,
+# without vim: alt-n off macOS (kiln has no insert key), cmd-n (a new file, elsewhere)
+# in the tree on macOS.
+[[bindings]]
+keys = "cmd-n"
+command = "project_panel.new_menu"
+context = "project_panel"
+platform = "macos"
+
+[[bindings]]
+keys = "alt-n"
+command = "project_panel.new_menu"
+context = "project_panel"
+platform = "!macos"
+
+[[bindings]]
+keys = "cmd-alt-n"
+command = "project_panel.new_file"
+context = "project_panel"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-n"
+command = "project_panel.new_file"
+context = "project_panel"
+platform = "!macos"
+
+[[bindings]]
+keys = "cmd-alt-shift-n"
+command = "project_panel.new_folder"
+context = "project_panel"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-shift-n"
+command = "project_panel.new_folder"
+context = "project_panel"
+platform = "!macos"
+
 [[bindings]]
 keys = "secondary-backspace"
 command = "project_panel.delete"
