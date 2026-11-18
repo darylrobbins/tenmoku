@@ -51,3 +51,7 @@ gpui-hex-find-odd = An odd number of hex digits
 gpui-hex-find-not-hex = Not a hex digit: { $digit }
 gpui-hex-find-wrapped = Wrapped
 gpui-hex-find-not-found = Not found
+
+## The byte inspector strip under the rows: its two commands.
+command-hex-toggle_inspector = Toggle Byte Inspector
+command-hex-toggle_endian = Toggle Inspector Byte Order

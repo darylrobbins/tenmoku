@@ -48,7 +48,7 @@ mod tests {
                 .collect::<Vec<_>>()
         }));
         ids.extend(crate::view::proposal_registry().commands().map(of));
-        assert_eq!(ids.len(), 36, "{ids:?}");
+        assert_eq!(ids.len(), 38, "{ids:?}");
         let errors = fe_command::l10n::check_command_keys(&super::RESOURCES, ids);
         assert!(errors.is_empty(), "{}", errors.join("\n"));
     }

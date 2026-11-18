@@ -38,6 +38,7 @@ use fe_command::{
 };
 use fe_fileview::{Direction, FileView, Freshness};
 use fe_ui::{ActiveTheme as _, TextInput, TextInputEvent, ToggleButton};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext as _, BorderStyle, Bounds, ClipboardItem, Context, CursorStyle, Entity,
     EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext,
@@ -51,9 +52,11 @@ use kiln_l10n::{tr, verbatim};
 use crate::{EditorTheme, commands::RunCommand, pane_item::file_name};
 
 mod find;
+mod inspector;
 pub(crate) mod model;
 mod pane_item;
 
+use inspector::{Endian, INSPECT_BYTES, inspect};
 pub use model::Column as HexColumn;
 use model::{Column, Columns, ROW_BYTES};
 
@@ -74,6 +77,10 @@ pub(crate) const COPY: &str = "hex.copy";
 pub(crate) const COPY_AS_HEX: &str = "hex.copy_as_hex";
 /// Copies the selection as text.
 pub(crate) const COPY_AS_TEXT: &str = "hex.copy_as_text";
+/// Shows or hides the byte inspector strip.
+pub(crate) const TOGGLE_INSPECTOR: &str = "hex.toggle_inspector";
+/// Flips the byte inspector between little and big endian.
+pub(crate) const TOGGLE_ENDIAN: &str = "hex.toggle_endian";
 /// `hex.open_as_text`: the workbench's, which the header's Text button
 /// runs.
 pub(crate) const OPEN_AS_TEXT: &str = "hex.open_as_text";
@@ -85,6 +92,9 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(2);
 /// (`find.next` on Enter, `find.previous` on Shift-Enter, `find.close` on
 /// Escape, and the text input's editing keys) apply in them.
 const INPUT_CONTEXT: &str = "find_bar";
+
+/// Below this width the inspector strip puts its floats on a second row.
+const INSPECTOR_NARROW: Pixels = px(600.);
 
 /// The space left of the offsets.
 const PAD: Pixels = px(8.);
@@ -109,6 +119,8 @@ pub(crate) fn registry() -> Registry<HexCommands> {
         COPY,
         COPY_AS_HEX,
         COPY_AS_TEXT,
+        TOGGLE_INSPECTOR,
+        TOGGLE_ENDIAN,
     ];
     let mut registry = Registry::new();
     for id in commands {
@@ -285,6 +297,19 @@ pub struct HexViewer {
     find_error: Option<SharedString>,
     find_said: Option<FindSaid>,
     find: find::FindState,
+    /// Whether the byte inspector strip shows.
+    inspector_shown: bool,
+    /// The strip's arrangement: floats on a second row, in a pane under
+    /// [`INSPECTOR_NARROW`]. Prepaint sets it from the pane's width and asks
+    /// for a frame when it changes.
+    strip_narrow: bool,
+    endian: Endian,
+    /// The bytes the strip reads, from the selection's start: read once per
+    /// selection change, not per frame.
+    inspected: Option<(u64, Vec<u8>)>,
+    /// How many times the strip read the file, for tests.
+    #[cfg(test)]
+    pub(crate) inspect_reads: usize,
     /// The rows the last frame painted.
     #[cfg(test)]
     pub(crate) painted: Vec<PaintedRow>,
@@ -330,6 +355,12 @@ impl HexViewer {
             find_error: None,
             find_said: None,
             find: Default::default(),
+            inspector_shown: true,
+            strip_narrow: false,
+            endian: Endian::Little,
+            inspected: None,
+            #[cfg(test)]
+            inspect_reads: 0,
             #[cfg(test)]
             painted: Vec::new(),
             #[cfg(test)]
@@ -339,6 +370,150 @@ impl HexViewer {
             #[cfg(test)]
             painted_match: None,
         }
+    }
+
+    /// Whether the byte inspector strip shows.
+    pub fn inspector_shown(&self) -> bool {
+        self.inspector_shown
+    }
+
+    /// Puts back the strip's saved state.
+    pub(crate) fn set_inspector(&mut self, shown: bool, endian: Endian) {
+        self.inspector_shown = shown;
+        self.endian = endian;
+    }
+
+    /// Shows or hides the byte inspector strip.
+    pub(crate) fn toggle_inspector(&mut self, cx: &mut Context<Self>) {
+        self.inspector_shown = !self.inspector_shown;
+        cx.notify();
+    }
+
+    /// Flips the inspector's byte order.
+    pub(crate) fn toggle_endian(&mut self, cx: &mut Context<Self>) {
+        self.endian = self.endian.flipped();
+        cx.notify();
+    }
+
+    /// The inspector's values and text, as the strip shows them: the
+    /// bytes at the selection's start, read again only when it moved.
+    pub(crate) fn inspection(&mut self) -> [(&'static str, Option<String>); 10] {
+        let start = self.selected().start;
+        if self.view.is_empty() {
+            self.inspected = None;
+        } else if self.inspected.as_ref().is_none_or(|(at, _)| *at != start) {
+            let end = (start + INSPECT_BYTES as u64).min(self.view.len());
+            #[cfg(test)]
+            {
+                self.inspect_reads += 1;
+            }
+            let bytes = self.view.bytes(start..end).unwrap_or_default();
+            self.inspected = Some((start, bytes));
+        }
+        let bytes = self.inspected.as_ref().map_or(&[][..], |(_, b)| b);
+        inspect(bytes, self.endian).rows()
+    }
+
+    /// The strip under the rows: each type's value, and the byte order
+    /// button. From [`INSPECTOR_NARROW`] up it's one row; below, the floats
+    /// go on a second. A value too long for its cell ends in an ellipsis and
+    /// shows in full in a tooltip.
+    fn inspector(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let rows = self.inspection();
+        let narrow = self.strip_narrow;
+        let theme = &self.theme;
+        let label = match self.endian {
+            Endian::Little => verbatim!("LE"),
+            Endian::Big => verbatim!("BE"),
+        };
+        let items: Vec<_> = rows
+            .into_iter()
+            .map(|(name, value)| {
+                let text = value.unwrap_or_else(|| verbatim!("—").to_string());
+                let selector = match name {
+                    "u8" => verbatim!("hex-inspect-u8"),
+                    "i8" => verbatim!("hex-inspect-i8"),
+                    "u16" => verbatim!("hex-inspect-u16"),
+                    "i16" => verbatim!("hex-inspect-i16"),
+                    "u32" => verbatim!("hex-inspect-u32"),
+                    "i32" => verbatim!("hex-inspect-i32"),
+                    "u64" => verbatim!("hex-inspect-u64"),
+                    "i64" => verbatim!("hex-inspect-i64"),
+                    "f32" => verbatim!("hex-inspect-f32"),
+                    _ => verbatim!("hex-inspect-f64"),
+                };
+                let full = SharedString::from([name, verbatim!(" "), &text].join(""));
+                let item = div()
+                    .id(selector)
+                    .debug_selector(move || selector.into())
+                    .flex()
+                    .gap(px(4.))
+                    .overflow_hidden()
+                    // Wide: the cells share the row and shrink to an
+                    // ellipsis. Narrow: they keep their size and wrap, a
+                    // cell wider than the pane cut to it.
+                    .when(narrow, |item| item.flex_none().max_w_full())
+                    .when(!narrow, |item| item.flex_shrink(1.).min_w(px(40.)))
+                    .whitespace_nowrap()
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| ValueTip {
+                            lines: value_tip_lines(&full),
+                        })
+                        .into()
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.gutter_foreground)
+                            .child(name),
+                    )
+                    .child(div().min_w_0().truncate().child(text));
+                (name.starts_with('f'), item)
+            })
+            .collect();
+        let (floats, ints): (Vec<_>, Vec<_>) = items.into_iter().partition(|(float, _)| *float);
+        let toggle = button(theme, verbatim!("hex-viewer-endian"), label.into())
+            .on_click(cx.listener(|viewer, _, _, cx| viewer.toggle_endian(cx)));
+        let line = || {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_x(px(12.))
+                .gap_y(px(2.))
+                .min_w_0()
+                .overflow_hidden()
+                .when(narrow, |line| line.flex_wrap())
+        };
+        let ints = ints.into_iter().map(|(_, item)| item);
+        let floats = floats.into_iter().map(|(_, item)| item);
+        let content = if narrow {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(line().children(ints).child(toggle))
+                .child(line().children(floats))
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .child(line().children(ints).children(floats).child(toggle))
+        };
+        content
+            .id("hex-viewer-inspector")
+            .debug_selector(|| verbatim!("hex-viewer-inspector").into())
+            .flex_none()
+            .px(PAD)
+            .py(px(2.))
+            .bg(theme.popover_background)
+            .border_t_1()
+            .border_color(theme.popover_border)
+            .text_color(theme.gutter_active_foreground)
+            .text_size(theme.font_size)
+            .font_family(theme.font_family.clone())
+            .whitespace_nowrap()
+            .overflow_hidden()
     }
 
     /// The file the viewer shows.
@@ -531,6 +706,7 @@ impl HexViewer {
         self.find.stop();
         self.view = Arc::new(view);
         self.find.current = None;
+        self.inspected = None;
         self.put_back(anchor, head, Some(top));
         self.banner = None;
         self.changed_sent = false;
@@ -798,6 +974,8 @@ impl HexViewer {
             COPY => self.copy(self.column == Column::Hex, cx),
             COPY_AS_HEX => self.copy(true, cx),
             COPY_AS_TEXT => self.copy(false, cx),
+            TOGGLE_INSPECTOR => self.toggle_inspector(cx),
+            TOGGLE_ENDIAN => self.toggle_endian(cx),
             id if InputCommand::of(id)
                 .is_some_and(|command| self.run_input_command(command, window, cx)) => {}
             _ => {
@@ -1206,6 +1384,11 @@ impl HexViewer {
             .map(|advance| advance.width)
             .or_else(|_| text_system.em_advance(font_id, font_size))
             .unwrap_or(font_size * 0.6);
+        let narrow = bounds.size.width < INSPECTOR_NARROW;
+        if narrow != self.strip_narrow {
+            self.strip_narrow = narrow;
+            cx.notify();
+        }
         let scrollbar_width = fe_ui::SCROLLBAR_WIDTH;
         let rows = Bounds::new(
             bounds.origin,
@@ -1453,6 +1636,42 @@ fn thumb_bounds(
     ))
 }
 
+/// Chars in a line of a value's tooltip.
+const TIP_LINE_CHARS: usize = 40;
+
+/// `text` in lines of at most [`TIP_LINE_CHARS`], so a long float stays
+/// inside the window whole.
+fn value_tip_lines(text: &str) -> Vec<SharedString> {
+    let chars: Vec<char> = text.chars().collect();
+    chars
+        .chunks(TIP_LINE_CHARS)
+        .map(|chunk| SharedString::from(chunk.iter().collect::<String>()))
+        .collect()
+}
+
+/// The tooltip of an inspector value: all of its text, wrapped.
+struct ValueTip {
+    lines: Vec<SharedString>,
+}
+
+impl Render for ValueTip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = &cx.theme().colors;
+        div()
+            .flex()
+            .flex_col()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(colors.surface.panel)
+            .border_1()
+            .border_color(colors.border.default)
+            .text_size(px(12.))
+            .text_color(colors.tab.active_text)
+            .children(self.lines.iter().cloned().map(|line| div().child(line)))
+    }
+}
+
 /// A header button, as the image viewer's Text button.
 fn button(theme: &EditorTheme, id: &'static str, label: SharedString) -> gpui::Stateful<gpui::Div> {
     div()
@@ -1482,6 +1701,7 @@ impl Render for HexViewer {
         let mut key_context = KeyContext::default();
         key_context.add(KEY_CONTEXT);
         let header = self.header(cx);
+        let inspector = self.inspector_shown.then(|| self.inspector(cx));
         let viewer = cx.entity();
         let rows = div()
             .id("hex-viewer-rows")
@@ -1539,6 +1759,7 @@ impl Render for HexViewer {
             .on_key_down(cx.listener(Self::on_key_down))
             .child(header)
             .child(rows)
+            .children(inspector)
     }
 }
 
@@ -1550,6 +1771,9 @@ mod tests;
 
 #[cfg(test)]
 mod find_tests;
+
+#[cfg(test)]
+mod inspector_tests;
 
 #[cfg(test)]
 mod pane_item_tests;

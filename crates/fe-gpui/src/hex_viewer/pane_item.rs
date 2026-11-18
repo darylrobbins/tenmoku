@@ -11,7 +11,7 @@ use fe_fileview::FileView;
 use gpui::{AnyView, App, AppContext as _, Context, Entity, SharedString, Task, Window};
 use kiln_shell::{Icon, PaneItem, StatusItem, StatusSide};
 
-use super::HexViewer;
+use super::{HexViewer, inspector::Endian};
 use crate::{
     READ_ONLY_STATUS,
     pane_item::{file_name, restore_style, status},
@@ -68,10 +68,12 @@ impl PaneItem for HexViewer {
     fn split(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Self>> {
         let (view, theme) = (self.view.clone(), self.theme.clone());
         let (anchor, head, top, column) = (self.anchor, self.head, self.top_row, self.column);
+        let (shown, endian) = (self.inspector_shown, self.endian);
         Some(cx.new(|cx| {
             let mut viewer = HexViewer::new(view, theme, cx);
             viewer.put_back(anchor, head, Some(top));
             viewer.column = column;
+            viewer.set_inspector(shown, endian);
             viewer
         }))
     }
@@ -85,6 +87,14 @@ impl PaneItem for HexViewer {
             ("anchor", Value::from(self.anchor)),
             ("head", Value::from(self.head)),
             ("top_row", Value::from(self.top_row)),
+            ("inspector", Value::Bool(self.inspector_shown)),
+            (
+                "endian",
+                Value::from(match self.endian {
+                    Endian::Little => "little",
+                    Endian::Big => "big",
+                }),
+            ),
         ]))
     }
 
@@ -124,7 +134,17 @@ impl PaneItem for HexViewer {
 
 /// Puts `viewer`'s selection and top row where `state` says, clipped to its
 /// file.
-fn place(viewer: &mut HexViewer, state: &Value, cx: &mut Context<HexViewer>) {
+pub(super) fn place(viewer: &mut HexViewer, state: &Value, cx: &mut Context<HexViewer>) {
+    // A state saved before the inspector has neither: shown, little-endian.
+    let shown = state
+        .get("inspector")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let endian = match state.get("endian").and_then(Value::as_str) {
+        Some("big") => Endian::Big,
+        _ => Endian::Little,
+    };
+    viewer.set_inspector(shown, endian);
     let head = state.get("head").and_then(Value::as_u64);
     let anchor = state.get("anchor").and_then(Value::as_u64).or(head);
     let (Some(anchor), Some(head)) = (anchor, head) else {
