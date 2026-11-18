@@ -448,3 +448,137 @@ fn escape_leaves_an_empty_quickfix_panel(cx: &mut TestAppContext) {
         assert!(editor_focused(&workbench, cx), "escape after {show}");
     }
 }
+
+/// The bottom panel with Problems, the terminal and the Git log in three
+/// groups, left to right, the Git log's the one focused: their focus
+/// handles.
+fn three_groups(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> [FocusHandle; 3] {
+    use crate::dock::{GIT_LOG_BUTTON, PROBLEMS_BUTTON};
+    use kiln_shell::{DockView as _, PanelId, dock::MoveTo};
+
+    let problems = PanelId(PROBLEMS_BUTTON);
+    let git_log = PanelId(GIT_LOG_BUTTON);
+    let terminal = PanelId(crate::dock::TERMINAL_BUTTON);
+    workbench.update_in(cx, |workbench, window, cx| {
+        for panel in [problems, terminal, git_log] {
+            workbench.show_bottom_panel(panel, window, cx);
+        }
+        workbench.terminal_dock().update(cx, |dock, _| {
+            let dock = dock.dock_mut();
+            assert!(dock.move_panel(terminal, MoveTo::After(0)));
+            let at = dock.group_of(terminal).unwrap();
+            assert!(dock.move_panel(git_log, MoveTo::After(at)));
+        });
+    });
+    draw(cx);
+    let handles = workbench.read_with(cx, |workbench, cx| {
+        [problems, terminal, git_log].map(|panel| workbench.bottom_tool_focus(panel, cx).unwrap())
+    });
+    focus(&handles[2], cx);
+    handles
+}
+
+#[gpui::test]
+fn ctrl_w_h_and_l_move_between_bottom_panel_groups(cx: &mut TestAppContext) {
+    let (workbench, cx, _dir) = opened(cx);
+    let [problems, terminal, git_log] = three_groups(&workbench, cx);
+    let tree = focus_tree(&workbench, cx);
+    focus(&problems, cx);
+
+    press("ctrl-w l", cx);
+    assert!(focused(&terminal, cx), "right of Problems");
+    press("ctrl-w ctrl-l", cx);
+    assert!(focused(&git_log, cx), "right of the terminal");
+    // The sidebar is on the right.
+    press("ctrl-w l", cx);
+    assert!(
+        focused(&tree, cx),
+        "the sidebar right of the rightmost group"
+    );
+
+    focus(&git_log, cx);
+    press("ctrl-w h", cx);
+    assert!(focused(&terminal, cx));
+    press("ctrl-w h", cx);
+    assert!(focused(&problems, cx));
+    press("ctrl-w h", cx);
+    assert!(
+        focused(&problems, cx),
+        "nothing left of it, the sidebar being right"
+    );
+
+    // The sidebar on the left: it's left of the leftmost group.
+    run("dock.move_sidebar_left", cx);
+    draw(cx);
+    focus(&git_log, cx);
+    press("ctrl-w l", cx);
+    assert!(
+        focused(&git_log, cx),
+        "nothing right of the rightmost group"
+    );
+    focus(&problems, cx);
+    press("ctrl-w h", cx);
+    assert!(focused(&tree, cx), "the sidebar left of the leftmost group");
+}
+
+#[gpui::test]
+fn ctrl_w_k_from_any_group_goes_up_and_j_comes_back_to_it(cx: &mut TestAppContext) {
+    let (workbench, cx, _dir) = opened(cx);
+    let [_problems, terminal, git_log] = three_groups(&workbench, cx);
+
+    focus(&git_log, cx);
+    press("ctrl-w k", cx);
+    assert!(
+        editor_focused(&workbench, cx),
+        "the editor above the groups"
+    );
+    press("ctrl-w j", cx);
+    assert!(focused(&git_log, cx), "back to the group it left");
+
+    press("ctrl-w h", cx);
+    assert!(focused(&terminal, cx));
+    press("ctrl-w k", cx);
+    assert!(editor_focused(&workbench, cx));
+    press("ctrl-w j", cx);
+    assert!(focused(&terminal, cx), "the group last focused");
+    press("ctrl-w j", cx);
+    assert!(focused(&terminal, cx), "nothing below");
+
+    // From the sidebar: up goes back to it.
+    let tree = focus_tree(&workbench, cx);
+    press("ctrl-w j", cx);
+    assert!(focused(&terminal, cx), "below the sidebar");
+    press("ctrl-w k", cx);
+    assert!(focused(&tree, cx), "back to the sidebar");
+}
+
+#[gpui::test]
+fn ctrl_w_j_and_k_walk_groups_stacked_in_a_side_dock(cx: &mut TestAppContext) {
+    let (workbench, cx, _dir) = opened(cx);
+    let [problems, terminal, git_log] = three_groups(&workbench, cx);
+    workbench.update(cx, |workbench, cx| {
+        workbench.move_terminal(kiln_shell::DockPosition::Left, cx)
+    });
+    draw(cx);
+
+    focus(&problems, cx);
+    press("ctrl-w j", cx);
+    assert!(focused(&terminal, cx), "below Problems");
+    press("ctrl-w ctrl-j", cx);
+    assert!(focused(&git_log, cx));
+    press("ctrl-w j", cx);
+    assert!(focused(&git_log, cx), "nothing below the last");
+    press("ctrl-w k", cx);
+    assert!(focused(&terminal, cx));
+    press("ctrl-w k", cx);
+    assert!(focused(&problems, cx));
+    press("ctrl-w k", cx);
+    assert!(focused(&problems, cx), "nothing above the first");
+
+    // Toward the panes, as before.
+    press("ctrl-w l", cx);
+    assert!(
+        editor_focused(&workbench, cx),
+        "the panes right of the dock"
+    );
+}

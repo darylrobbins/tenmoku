@@ -2566,52 +2566,52 @@ context = "editor && vim.mode == normal"
 [[bindings]]
 keys = "ctrl-w h"
 command = "dock.focus_left"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w ctrl-h"
 command = "dock.focus_left"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w j"
 command = "dock.focus_down"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w ctrl-j"
 command = "dock.focus_down"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w k"
 command = "dock.focus_up"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w ctrl-k"
 command = "dock.focus_up"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w l"
 command = "dock.focus_right"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w ctrl-l"
 command = "dock.focus_right"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w p"
 command = "dock.focus_editor"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-w w"
 command = "dock.focus_editor"
-context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
+context = "(project_panel || outline_panel || ReferencesPanel || problems_panel || runs_panel || debug_panel || quickfix_panel || search_results || git_panel || git_log_panel || terminal_panel) && vim && !editor && !text_input"
 
 [[bindings]]
 keys = "ctrl-h"

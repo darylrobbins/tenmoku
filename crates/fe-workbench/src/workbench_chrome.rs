@@ -8,7 +8,10 @@ use std::{
 };
 
 use fe_config::TerminalSettings;
-use gpui::{AnyView, App, AppContext as _, Context, Entity, Focusable, Subscription, Window, px};
+use gpui::{
+    AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable, Subscription, Window,
+    px,
+};
 
 #[cfg(test)]
 use super::toast;
@@ -243,20 +246,26 @@ impl Workbench {
         let Some(panel) = dock.dock().rail_highlighted() else {
             return false;
         };
-        let focus = match panel.0 {
+        let Some(focus) = self.bottom_tool_focus(panel, cx) else {
+            return false;
+        };
+        window.focus(&focus, cx);
+        true
+    }
+
+    /// The focus of the bottom dock's tool window `panel`, if it exists.
+    pub(crate) fn bottom_tool_focus(&self, panel: PanelId, cx: &App) -> Option<FocusHandle> {
+        Some(match panel.0 {
             id if id == crate::dock::PROBLEMS_BUTTON => {
                 self.dock.read(cx).problems().focus_handle(cx)
             }
             id if id == crate::dock::RUNS_BUTTON => self.runs_panel.focus_handle(cx),
             id if id == crate::dock::DEBUG_BUTTON => self.debug_panel.focus_handle(cx),
-            id if id == crate::dock::GIT_LOG_BUTTON => match self.dock.read(cx).git_log() {
-                Some(git_log) => git_log.focus_handle(cx),
-                None => return false,
-            },
+            id if id == crate::dock::GIT_LOG_BUTTON => {
+                self.dock.read(cx).git_log()?.focus_handle(cx)
+            }
             _ => self.terminal.focus_handle(cx),
-        };
-        window.focus(&focus, cx);
-        true
+        })
     }
 
     /// Hides the bottom dock. Focus in it stays: the caller moves it.

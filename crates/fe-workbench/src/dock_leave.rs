@@ -32,6 +32,9 @@ enum Neighbour {
     Editor,
     Sidebar,
     Terminal,
+    /// The shown tool window of the next (`1`) or previous (`-1`) bottom
+    /// panel group.
+    Group(isize),
     /// Up from the terminal's dock at the bottom: the sidebar if a window
     /// key brought focus from it, else the editor.
     Back,
@@ -50,7 +53,7 @@ impl Workbench {
         let Some(from) = self.focused_dock(window, cx) else {
             return;
         };
-        match self.neighbour(from, direction, cx) {
+        match self.neighbour(from, direction, window, cx) {
             Some(Neighbour::Editor) => self.focus_editor_from_dock(window, cx),
             Some(Neighbour::Sidebar) => {
                 self.focus_sidebar(window, cx);
@@ -59,6 +62,13 @@ impl Workbench {
                 self.focus_bottom_panel(window, cx);
                 // Kept until focus leaves the tool window, whichever it is.
                 self.bottom_from_sidebar = from == Focused::Sidebar;
+            }
+            Some(Neighbour::Group(by)) => {
+                self.terminal_dock().clone().update(cx, |dock, cx| {
+                    // Focus may have come to a group since the last draw.
+                    dock.dock_mut().follow_focus(window, cx);
+                    dock.dock_mut().focus_next_group(by, window, cx);
+                });
             }
             Some(Neighbour::Back) => {
                 let back = self.bottom_from_sidebar && self.focus_sidebar(window, cx);
@@ -102,13 +112,24 @@ impl Workbench {
     }
 
     /// What lies `direction` of `from`, wherever the docks have been moved.
-    fn neighbour(&self, from: Focused, direction: Direction, cx: &App) -> Option<Neighbour> {
+    fn neighbour(
+        &self,
+        from: Focused,
+        direction: Direction,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Neighbour> {
         let sidebar = self.dock().read(cx);
         let terminal = self.terminal_dock().read(cx);
         let at = match from {
             Focused::Sidebar => sidebar.state().position(),
             Focused::Terminal => terminal.dock().position(),
         };
+        if from == Focused::Terminal
+            && let Some(by) = self.group_step(at, direction, window, cx)
+        {
+            return Some(Neighbour::Group(by));
+        }
         let side = match direction {
             Direction::Left => DockPosition::Left,
             Direction::Right => DockPosition::Right,
@@ -121,6 +142,32 @@ impl Workbench {
         let sidebar_there = sidebar.is_visible() && sidebar.state().position() == side;
         (from == Focused::Terminal && at == DockPosition::Bottom && sidebar_there)
             .then_some(Neighbour::Sidebar)
+    }
+}
+
+impl Workbench {
+    /// Which way along the bottom panel's groups `direction` goes, if its
+    /// groups lie along it and one is drawn that way: left and right at the
+    /// bottom, up and down at a side.
+    fn group_step(
+        &self,
+        at: DockPosition,
+        direction: Direction,
+        window: &Window,
+        cx: &App,
+    ) -> Option<isize> {
+        let by = match (at == DockPosition::Bottom, direction) {
+            (true, Direction::Left) | (false, Direction::Up) => -1,
+            (true, Direction::Right) | (false, Direction::Down) => 1,
+            _ => return None,
+        };
+        let panels = self.terminal_dock().read(cx).dock().shown_panels();
+        let here = panels.iter().position(|&panel| {
+            (self.bottom_tool_focus(panel, cx))
+                .is_some_and(|focus| focus.contains_focused(window, cx))
+        })?;
+        let there = here.checked_add_signed(by)?;
+        (there < panels.len()).then_some(by)
     }
 }
 
