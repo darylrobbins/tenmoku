@@ -19,19 +19,21 @@ use std::io;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Target};
 use kiln_core::platform::{OutputDrain, ProcessTree, StdinFeed};
-use kiln_l10n::tr;
+use kiln_l10n::{tr, verbatim};
 
 use crate::bindings::kiln::extension::process::{Host, Output};
 use crate::bindings::{Error, HostState};
 use crate::grants::{
     self, GrantRecord, GrantStore, ProgramIdentity, Suspended, SuspensionWrite, SuspensionWriter,
 };
+use crate::jobs::{self, JobControl};
 use crate::limits::{Limits, PROGRAM_DEADLINE};
 
 /// What the program runs of the call now running have used of its share, and what is left.
@@ -207,6 +209,25 @@ impl State {
         left: Option<Duration>,
         entered: Instant,
     ) -> Result<Output, SpawnError> {
+        self.spawn_watching(program, args, stdin, left, entered, None)
+    }
+
+    /// [`Self::spawn_from`], in a job whose `stop` it watches: once the job is being stopped,
+    /// the run is killed and the spawn is [`SpawnError::Cancelled`].
+    fn spawn_watching(
+        &mut self,
+        program: &str,
+        args: &[String],
+        stdin: Option<&[u8]>,
+        left: Option<Duration>,
+        entered: Instant,
+        stop: Option<&JobControl>,
+    ) -> Result<Output, SpawnError> {
+        if stop.is_some_and(JobControl::is_cancelled) {
+            return Err(SpawnError::Cancelled {
+                program: program.to_owned(),
+            });
+        }
         self.start_writer();
         let share_ends = left.map(|left| entered.checked_add(left));
         // What is left of the share now, if there is one: none is no limit but the run's own.
@@ -225,22 +246,32 @@ impl State {
         if share().is_some_and(|share| share.is_zero()) {
             return Err(timed_out(Duration::ZERO));
         }
-        // Reading the program, and waiting for a suspension to be recorded, stop at its end too.
+        // Reading the program, and waiting for a suspension to be recorded, stop at its end too,
+        // and in a job once the job is being stopped.
         let ends = share_ends.flatten();
-        let checked = match ends {
-            Some(ends) => grants::check_program_by(&identity, ends),
-            None => Ok(grants::check_program(&identity)),
+        let cancelled = || SpawnError::Cancelled {
+            program: program.to_owned(),
         };
-        match checked {
-            Err(grants::CheckTimedOut) => return Err(timed_out(share().unwrap_or_default())),
-            Ok(Err(suspended)) => {
-                self.suspend(program, &identity, suspended, ends);
+        match check_watching(&identity, ends, stop) {
+            Checked::TimedOut => return Err(timed_out(share().unwrap_or_default())),
+            Checked::Cancelled => return Err(cancelled()),
+            Checked::NoThread => {
+                return Err(SpawnError::Io {
+                    path: identity.path.clone(),
+                    source: io::Error::other(TOO_MANY_CHECKS),
+                });
+            }
+            Checked::Done(Err(suspended)) => {
+                self.suspend(program, &identity, suspended, ends, stop);
+                if stop.is_some_and(JobControl::is_cancelled) {
+                    return Err(cancelled());
+                }
                 return Err(SpawnError::Suspended {
                     program: program.to_owned(),
                     suspended,
                 });
             }
-            Ok(Ok(())) => {}
+            Checked::Done(Ok(())) => {}
         }
         let mut command = Command::new(&identity.path);
         command
@@ -254,7 +285,7 @@ impl State {
         let own_end = now + self.deadline;
         let ends_at = ends.map_or(own_end, |ends| ends.min(own_end));
         let deadline = ends_at.saturating_duration_since(now);
-        run(command, stdin, self.max_output, ends_at).map_err(|failure| match failure {
+        run(command, stdin, self.max_output, ends_at, stop).map_err(|failure| match failure {
             Failure::Io(source) => SpawnError::Io {
                 path: identity.path.clone(),
                 source,
@@ -262,6 +293,9 @@ impl State {
             Failure::TimedOut => SpawnError::TimedOut {
                 program: program.to_owned(),
                 deadline,
+            },
+            Failure::Cancelled => SpawnError::Cancelled {
+                program: program.to_owned(),
             },
         })
     }
@@ -275,6 +309,7 @@ impl State {
         identity: &ProgramIdentity,
         suspended: Suspended,
         by: Option<Instant>,
+        stop: Option<&JobControl>,
     ) {
         log::warn!("process.spawn:{program}: {suspended}");
         self.record.suspend(program, suspended.reason);
@@ -293,10 +328,19 @@ impl State {
             return;
         };
         let by = by.unwrap_or_else(|| Instant::now() + self.deadline);
-        let left = by.saturating_duration_since(Instant::now());
-        if written.recv_timeout(left).is_err() {
-            log::warn!("process.spawn:{program}: its suspension isn't recorded yet");
+        // In a job, it looks at the job every so often.
+        let poll = stop.map(|_| jobs::STOP_POLL);
+        loop {
+            let left = by.saturating_duration_since(Instant::now());
+            let waited = written.recv_timeout(poll.map_or(left, |poll| poll.min(left)));
+            match waited {
+                Ok(_) | Err(RecvTimeoutError::Disconnected) => return,
+                Err(RecvTimeoutError::Timeout)
+                    if Instant::now() < by && !stop.is_some_and(JobControl::is_cancelled) => {}
+                Err(RecvTimeoutError::Timeout) => break,
+            }
         }
+        log::warn!("process.spawn:{program}: its suspension isn't recorded yet");
     }
 
     /// Gives a writer that couldn't start another chance at what is queued for it.
@@ -348,11 +392,13 @@ impl Host for HostState {
         // A run isn't charged to the call: its wall time moves the call's deadline back, and
         // the call's runs share the budget the runner armed.
         let started = Instant::now();
-        let ran = self.process.spawn_within(
+        let ran = self.process.spawn_watching(
             &program,
             &args,
             stdin.as_deref(),
             self.program_runs.remaining(),
+            started,
+            self.jobs.control(),
         );
         let taken = started.elapsed();
         let charged = self.program_runs.charge(taken);
@@ -364,6 +410,7 @@ impl Host for HostState {
                 Error::Denied(error.to_string())
             }
             SpawnError::TimedOut { .. } | SpawnError::Io { .. } => Error::Failed(error.to_string()),
+            SpawnError::Cancelled { .. } => Error::Failed(jobs::CANCELLED.to_owned()),
         })
     }
 }
@@ -382,6 +429,8 @@ pub enum SpawnError {
     /// It ran past its deadline and was killed, or the call's share of program time ended
     /// before it started: then nothing ran.
     TimedOut { program: String, deadline: Duration },
+    /// It ran in a job that is being stopped, and was killed, or never started.
+    Cancelled { program: String },
     Io {
         path: PathBuf,
         #[source]
@@ -404,6 +453,7 @@ impl std::fmt::Display for SpawnError {
                 program = program,
                 deadline = format!("{deadline:?}")
             ),
+            Self::Cancelled { .. } => return f.write_str(jobs::CANCELLED),
             Self::Io { path, source } => tr!(
                 "kiln-plugin-spawn-failed",
                 path = path.display().to_string(),
@@ -424,11 +474,108 @@ pub fn minimal_environment(
 enum Failure {
     Io(io::Error),
     TimedOut,
+    /// The job it ran in is being stopped.
+    Cancelled,
 }
 
 impl From<io::Error> for Failure {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+/// What [`check_watching`] found.
+enum Checked {
+    Done(Result<(), Suspended>),
+    /// The share ended before the program was read through.
+    TimedOut,
+    /// The job is being stopped.
+    Cancelled,
+    /// No thread could check it: [`MAX_JOB_CHECKS`] are reading, or none started.
+    NoThread,
+}
+
+/// How many jobs' program checks may be reading at once, those of stopped jobs still finishing
+/// among them.
+pub const MAX_JOB_CHECKS: usize = 8;
+
+/// `failed`: past [`MAX_JOB_CHECKS`], or no thread to check on.
+pub const TOO_MANY_CHECKS: &str = verbatim!("too many program checks of jobs running");
+
+/// Jobs' program checks reading now.
+static JOB_CHECKS: AtomicUsize = AtomicUsize::new(0);
+
+/// How many jobs' program checks are reading now: a check goes on, on its own thread, until it
+/// is done or its deadline passes, after its job has stopped waiting for it too.
+pub fn job_checks() -> usize {
+    JOB_CHECKS.load(Ordering::Acquire)
+}
+
+/// One of jobs' program checks reading, until dropped.
+struct JobCheck;
+
+impl JobCheck {
+    fn start() -> Option<Self> {
+        (JOB_CHECKS.fetch_update(Ordering::AcqRel, Ordering::Acquire, |checks| {
+            (checks < MAX_JOB_CHECKS).then_some(checks + 1)
+        }))
+        .ok()
+        .map(|_| Self)
+    }
+}
+
+impl Drop for JobCheck {
+    fn drop(&mut self) {
+        JOB_CHECKS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Checks `identity`'s program, stopping at `ends`. In a job (`stop`) it is read on a thread of
+/// its own while this one watches the job and `ends`: once the job is being stopped this
+/// returns [`Checked::Cancelled`], and once `ends` passes [`Checked::TimedOut`], and the
+/// reading ends on its own, by `ends`, counted against [`MAX_JOB_CHECKS`] until it does.
+fn check_watching(
+    identity: &ProgramIdentity,
+    ends: Option<Instant>,
+    stop: Option<&JobControl>,
+) -> Checked {
+    let check = move |identity: &ProgramIdentity| match ends {
+        Some(ends) => grants::check_program_by(identity, ends),
+        None => Ok(grants::check_program(identity)),
+    };
+    let done = |checked: Result<Result<(), Suspended>, grants::CheckTimedOut>| match checked {
+        Ok(checked) => Checked::Done(checked),
+        Err(grants::CheckTimedOut) => Checked::TimedOut,
+    };
+    let Some(stop) = stop else {
+        return done(check(identity));
+    };
+    let Some(reading) = JobCheck::start() else {
+        return Checked::NoThread;
+    };
+    let (sender, checked) = mpsc::channel();
+    let identity = identity.clone();
+    let spawned = thread::Builder::new().spawn(move || {
+        sender.send(check(&identity)).ok();
+        drop(reading);
+    });
+    if spawned.is_err() {
+        return Checked::NoThread;
+    }
+    loop {
+        let wait = ends.map_or(jobs::STOP_POLL, |ends| {
+            ends.saturating_duration_since(Instant::now())
+                .min(jobs::STOP_POLL)
+        });
+        match checked.recv_timeout(wait) {
+            Ok(checked) => return done(checked),
+            Err(RecvTimeoutError::Timeout) if stop.is_cancelled() => return Checked::Cancelled,
+            Err(RecvTimeoutError::Timeout) if ends.is_some_and(|ends| Instant::now() >= ends) => {
+                return Checked::TimedOut;
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Checked::NoThread,
+        }
     }
 }
 
@@ -450,6 +597,7 @@ fn run(
     stdin: Option<&[u8]>,
     max_output: usize,
     deadline: Instant,
+    stop: Option<&JobControl>,
 ) -> Result<Output, Failure> {
     let mut feed = match stdin {
         Some(bytes) => {
@@ -470,6 +618,10 @@ fn run(
     crate::tests::seams::during_setup();
     if Instant::now() >= deadline {
         return Err(Failure::TimedOut);
+    }
+    // A job stopped while it was set up starts nothing.
+    if stop.is_some_and(JobControl::is_cancelled) {
+        return Err(Failure::Cancelled);
     }
     #[cfg(test)]
     crate::tests::seams::launching();
@@ -515,8 +667,77 @@ fn run(
         if now >= deadline {
             return Err(Failure::TimedOut);
         }
+        // Returning kills it, and what it started.
+        if stop.is_some_and(JobControl::is_cancelled) {
+            return Err(Failure::Cancelled);
+        }
         if !moved {
             thread::sleep(IDLE.min(deadline - now));
         }
+    }
+}
+
+#[cfg(test)]
+mod watching_tests {
+    use std::time::Duration;
+
+    use kiln_command::Grants;
+
+    use super::*;
+    use crate::grants::{GrantStore, resolve_program};
+    use crate::jobs::Stop;
+    use crate::tests::seams;
+
+    #[test]
+    fn a_job_cancelled_while_its_suspension_waits_to_be_written_stops_at_once() {
+        let _programs = crate::tests::programs();
+        let dir = std::env::temp_dir().join(format!(
+            "kiln-plugin-watching-{}-suspension",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        // This test's own program, granted as it isn't: its size is off by one, so the check
+        // finds it changed and suspends it.
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap().to_str().unwrap().to_owned();
+        let mut identity = resolve_program(&name, exe.parent().unwrap().as_os_str()).unwrap();
+        identity.size += 1;
+        let granted: Grants = [Capability::ProcessSpawn(Target::Named(name.clone()))]
+            .into_iter()
+            .collect();
+        let record = GrantRecord {
+            version: Some((1, 0, 0)),
+            granted,
+            programs: [(name.clone(), identity)].into_iter().collect(),
+            ..GrantRecord::default()
+        };
+        let store = GrantStore::new(dir.join("state/plugin-grants.toml"));
+        let mut state =
+            State::new(record, &Limits::default()).recorded_in(store.clone(), "acme.tool");
+        // Its writer holds every write for a minute.
+        seams::store(store.path(), |store| {
+            store.held_until = Some(Instant::now() + Duration::from_secs(60));
+        });
+
+        let job = JobControl::default();
+        let stopped = std::thread::scope(|scope| {
+            let spawning = scope.spawn(|| {
+                let share = Some(Duration::from_secs(60));
+                state.spawn_watching(&name, &[], None, share, Instant::now(), Some(&job))
+            });
+            std::thread::sleep(Duration::from_millis(200));
+            let cancelled = Instant::now();
+            job.stop(Stop::Cancelled);
+            let spawned = spawning.join().unwrap();
+            (spawned, cancelled.elapsed())
+        });
+        let (spawned, took) = stopped;
+        assert!(
+            matches!(spawned, Err(SpawnError::Cancelled { .. })),
+            "{spawned:?}"
+        );
+        assert!(took < Duration::from_secs(2), "{took:?}");
+        seams::store(store.path(), |store| store.held_until = None);
     }
 }

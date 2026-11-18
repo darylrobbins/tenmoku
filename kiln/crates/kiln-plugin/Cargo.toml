@@ -20,13 +20,20 @@ sha2.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 url = "2.5"
-wasmtime.workspace = true
+# The call hook renews a background job's slice of wasm on each return from the host (§3.2 of
+# the plugins stage 3 design).
+wasmtime = { workspace = true, features = ["call-hook"] }
 wasmtime-wasi.workspace = true
+# Reads a jobs plugin's canonical options at load (src/jobs.rs): wasmtime's own version.
+wasmparser = "0.254.2"
 
 [dev-dependencies]
 # The catalogue checks (tests/l10n.rs).
 kiln-l10n = { workspace = true, features = ["lint"] }
 wasmtime = { workspace = true, features = ["wat"] }
+# The jobs tests load their fixture as a binary, as a jobs plugin must be (tests/jobs.rs).
+wat = "1.262.0"
+
 
 [lints]
 workspace = true

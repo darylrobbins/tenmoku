@@ -11,6 +11,7 @@ pub mod engine;
 pub mod events;
 pub mod fs;
 pub mod grants;
+pub mod jobs;
 pub mod l10n;
 pub mod limits;
 pub mod manifest;

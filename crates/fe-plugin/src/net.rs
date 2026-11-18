@@ -25,7 +25,8 @@ use http::{HeaderMap, Uri};
 use kiln_command::Grants;
 use kiln_plugin::bindings::Error;
 use kiln_plugin::bindings::kiln::extension::net::Method;
-use kiln_plugin::net::{NetBackend, Outgoing, Received};
+use kiln_plugin::jobs::CANCELLED;
+use kiln_plugin::net::{NetBackend, Outgoing, Received, SendCancel};
 
 /// Request headers a plugin may not send: those that frame or route the request, which
 /// fe-net sets, cookies, and `Accept-Encoding`, since nothing decodes a compressed body.
@@ -66,6 +67,33 @@ impl FeNet {
 
 impl NetBackend for FeNet {
     fn send(&mut self, request: &Outgoing) -> Result<Received, Error> {
+        self.send_until(request, None)
+    }
+
+    fn cancellable(&self) -> bool {
+        true
+    }
+
+    /// The request is dropped, and its connection with it, within [`CANCEL_POLL`] of `cancel`.
+    fn send_cancellable(
+        &mut self,
+        request: &Outgoing,
+        cancel: &SendCancel,
+    ) -> Result<Received, Error> {
+        self.send_until(request, Some(cancel))
+    }
+}
+
+/// How often a cancellable send looks at whether it was called off.
+const CANCEL_POLL: Duration = Duration::from_millis(10);
+
+impl FeNet {
+    /// Sends `request`, until its timeout or, with `cancel`, until that is cancelled.
+    fn send_until(
+        &mut self,
+        request: &Outgoing,
+        cancel: Option<&SendCancel>,
+    ) -> Result<Received, Error> {
         let peer = peer(&request.url)?;
         let headers = request_headers(&request.headers)?;
         let response = self.client.request(
@@ -76,7 +104,7 @@ impl NetBackend for FeNet {
         );
         let max_body_bytes = request.max_body_bytes;
         let url = request.url.as_str();
-        async_io::block_on(timeout(request.timeout, url, async move {
+        let sent = timeout(request.timeout, url, async move {
             let response = response.await.map_err(|error| net_error(url, error))?;
             let mut body = Vec::new();
             let mut chunks = response.body;
@@ -95,7 +123,21 @@ impl NetBackend for FeNet {
                 body,
                 peer,
             })
-        }))
+        });
+        let Some(cancel) = cancel else {
+            return async_io::block_on(sent);
+        };
+        let cancelled = async {
+            while !cancel.is_cancelled() {
+                async_io::Timer::after(CANCEL_POLL).await;
+            }
+        };
+        async_io::block_on(async {
+            match select(pin!(sent), pin!(cancelled)).await {
+                Either::Left((sent, _)) => sent,
+                Either::Right(_) => Err(Error::Failed(CANCELLED.to_owned())),
+            }
+        })
     }
 }
 
@@ -183,5 +225,50 @@ async fn timeout<T>(
     match select(pin!(future), async_io::Timer::after(duration)).await {
         Either::Left((result, _)) => result,
         Either::Right(_) => Err(Error::Failed(format!("{url} timed out"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    use kiln_command::Capability;
+
+    use super::*;
+
+    #[test]
+    fn a_cancelled_send_ends_at_once_without_an_answer() {
+        // A server that takes the connection and never answers.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let grants: Grants = [Capability::parse("net:127.0.0.1").unwrap()]
+            .into_iter()
+            .collect();
+        let request = Outgoing {
+            method: Method::Get,
+            url: format!("http://127.0.0.1:{port}/x"),
+            host: "127.0.0.1".to_owned(),
+            headers: Vec::new(),
+            body: None,
+            timeout: Duration::from_secs(60),
+            max_body_bytes: 1 << 20,
+        };
+        let cancel = SendCancel::default();
+        let sending = cancel.clone();
+        let sent = std::thread::spawn(move || {
+            let mut backend = FeNet::new(&grants);
+            backend.send_cancellable(&request, &sending)
+        });
+        let (_connection, _) = listener.accept().unwrap();
+        let cancelled = Instant::now();
+        cancel.cancel();
+        let sent = sent.join().unwrap();
+        assert_eq!(sent, Err(Error::Failed(CANCELLED.to_owned())));
+        assert!(
+            cancelled.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            cancelled.elapsed()
+        );
     }
 }

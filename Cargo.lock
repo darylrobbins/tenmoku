@@ -5599,8 +5599,10 @@ dependencies = [
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "url",
+ "wasmparser 0.254.2",
  "wasmtime",
  "wasmtime-wasi",
+ "wat",
 ]
 
 [[package]]

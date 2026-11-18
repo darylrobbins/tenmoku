@@ -1,0 +1,111 @@
+package kiln:extension@1.1.0;
+
+/// Background jobs: work longer than an interactive call may take, run in a worker store (a
+/// second instance of the plugin, without `init`) on a thread of its own, under the background
+/// limits. Linked only for a plugin with the `jobs` capability, which grants nothing else: a
+/// job's imports need their own grants.
+interface jobs {
+    use types.{error};
+
+    type job-id = u64;
+
+    enum job-kind {
+        build,
+        test,
+        index,
+        other,
+    }
+
+    record job-spec {
+        /// What the worker's `run-job` is told to do: at most 64 bytes.
+        name: string,
+        /// At most 1 MiB. Larger input goes through the plugin's data store.
+        args: string,
+        /// Shown in the Runs list: "cargo check", "Indexing TODOs". At most 200 characters.
+        title: string,
+        kind: job-kind,
+        /// Whether the user may cancel it from the Runs list.
+        cancellable: bool,
+        /// The open root it works on, as a guest path: it must be the root of an open window
+        /// that the plugin's fs grant reaches, else `invalid-argument`. `run-job` is told it;
+        /// none for work about no root.
+        root: option<string>,
+    }
+
+    /// Why a queued job hasn't started: another job holds its place, or the memory all running
+    /// jobs may hold together is taken.
+    enum waiting {
+        concurrency,
+        memory,
+    }
+
+    record progress {
+        fraction: option<f32>,
+        /// At most 200 characters reach the UI.
+        message: option<string>,
+    }
+
+    /// What `state` says. A finished job's result is not here: it is handed over once, to
+    /// `job-finished`, and then dropped.
+    variant job-status {
+        queued(waiting),
+        running(progress),
+        succeeded,
+        failed,
+        cancelled,
+        timed-out,
+        unknown,
+    }
+
+    /// How a job ended, as `job-finished` is told.
+    variant job-state {
+        finished(result<string, error>),
+        cancelled,
+        timed-out,
+    }
+
+    /// Queues a job; it starts when the concurrency and memory limits allow, queued jobs in
+    /// order. Fails with `failed` past the queue limits (8 queued and running jobs per plugin,
+    /// 32 in all, 8 MiB of queued specs per plugin) and `invalid-argument` past the spec limits.
+    /// Only the interactive instance starts jobs: a worker is `denied`.
+    start: func(spec: job-spec) -> result<job-id, error>;
+
+    /// Cancels a queued job (it never starts) or a running one: `job-context.cancelled` turns
+    /// true, and a job still running 2 s later is stopped. Either way it ends `cancelled`.
+    cancel: func(job: job-id) -> result<_, error>;
+
+    /// `unknown` once the job's end has been delivered, and for an id this load of the plugin
+    /// didn't start.
+    state: func(job: job-id) -> job-status;
+}
+
+/// What a worker store's job reads of its own run. In the interactive instance, `report` does
+/// nothing and `cancelled` is false.
+interface job-context {
+    use jobs.{job-id, progress};
+
+    /// Shown on the job's Run. The latest wins.
+    report: func(progress: progress);
+
+    /// True once the job is being cancelled, or has run past its wall time.
+    cancelled: func() -> bool;
+}
+
+/// Exported: run in a worker store, background tier. The job ends when it returns: at most
+/// 16 MiB of result, kept by the host only until `job-finished` has it. 5 s of wasm without
+/// entering a host import ends the job, not the plugin.
+interface job-runner {
+    use types.{error};
+    use jobs.{job-id};
+
+    run-job: func(job: job-id, name: string, args: string, root: option<string>) -> result<string, error>;
+}
+
+/// Exported: run in the interactive store, interactive tier.
+interface job-handler {
+    use jobs.{job-id, job-state};
+
+    /// Told once how each job ended. A result that doesn't fit the 32 MiB of undelivered results
+    /// a plugin may hold arrives as `failed("result dropped: too many undelivered")`.
+    job-finished: func(job: job-id, state: job-state);
+}

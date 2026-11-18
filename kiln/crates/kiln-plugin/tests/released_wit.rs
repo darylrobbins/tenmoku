@@ -201,8 +201,8 @@ fn additions_and_layout_pass_the_check() {
     // A new interface, in a file of its own.
     let mut added = current.clone();
     added.insert(
-        "jobs.wit".into(),
-        "package kiln:extension@1.1.0;\n\ninterface jobs {\n    run: func();\n}\n".into(),
+        "later.wit".into(),
+        "package kiln:extension@1.1.0;\n\ninterface later {\n    run: func();\n}\n".into(),
     );
     assert_eq!(released::changes(&current, &added), []);
 }

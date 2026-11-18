@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use wasmtime::component::{HasSelf, Linker};
 
-use crate::{commands, events, fs, net, process, secrets};
+use crate::{commands, events, fs, jobs, net, process, secrets};
 
 wasmtime::component::bindgen!({
     world: "extension",
@@ -34,6 +34,27 @@ pub mod v1_0 {
         with: {
             "kiln:extension": crate::bindings::kiln::extension,
         },
+    });
+}
+
+/// The `jobs-extension` world of `wit/`: the current world with the jobs interfaces, which a
+/// plugin with the `jobs` capability links and is checked against. Its `extension` interfaces
+/// are the current ones; only the jobs interfaces are generated here.
+pub mod jobs_world {
+    wasmtime::component::bindgen!({
+        world: "jobs-extension",
+        path: "wit",
+        with: {
+            "kiln:extension/types": crate::bindings::kiln::extension::types,
+            "kiln:extension/log": crate::bindings::kiln::extension::log,
+            "kiln:extension/commands": crate::bindings::kiln::extension::commands,
+            "kiln:extension/events": crate::bindings::kiln::extension::events,
+            "kiln:extension/fs": crate::bindings::kiln::extension::fs,
+            "kiln:extension/process": crate::bindings::kiln::extension::process,
+            "kiln:extension/net": crate::bindings::kiln::extension::net,
+            "kiln:extension/secrets": crate::bindings::kiln::extension::secrets,
+        },
+        additional_derives: [PartialEq],
     });
 }
 
@@ -57,6 +78,7 @@ pub struct HostState {
     pub process: process::State,
     pub net: net::State,
     pub secrets: secrets::State,
+    pub jobs: jobs::State,
 }
 
 impl HostState {
@@ -72,6 +94,7 @@ impl HostState {
             process: process::State::default(),
             net: net::State::default(),
             secrets: secrets::State::default(),
+            jobs: jobs::State::default(),
         }
     }
 }
@@ -92,12 +115,23 @@ impl Default for HostState {
     }
 }
 
-/// Adds every `kiln:extension` import to `linker`, run against the [`HostState`] `get` returns.
+/// Adds every `kiln:extension` import of the `extension` world to `linker`, run against the
+/// [`HostState`] `get` returns.
 pub fn add_to_linker<T: 'static>(
     linker: &mut Linker<T>,
     get: fn(&mut T) -> &mut HostState,
 ) -> wasmtime::Result<()> {
     Extension::add_to_linker::<T, HasSelf<HostState>>(linker, get)
+}
+
+/// Adds the imports `jobs-extension` adds to `extension` (`jobs` and `job-context`) to `linker`:
+/// only for a plugin with the `jobs` capability, so one without it can't link them.
+pub fn add_jobs_to_linker<T: 'static>(
+    linker: &mut Linker<T>,
+    get: fn(&mut T) -> &mut HostState,
+) -> wasmtime::Result<()> {
+    jobs_world::kiln::extension::jobs::add_to_linker::<T, HasSelf<HostState>>(linker, get)?;
+    jobs_world::kiln::extension::job_context::add_to_linker::<T, HasSelf<HostState>>(linker, get)
 }
 
 /// The error an import returns until its card implements it. `import` names it as

@@ -26,14 +26,19 @@
 //! - A response body over [`Limits::max_read_bytes`](crate::limits::Limits) is an error.
 
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use kiln_command::capability::{Capability, Grants, Target};
-use kiln_l10n::tr;
+use kiln_l10n::{tr, verbatim};
 use url::{Host as UrlHost, Url};
 
 use crate::bindings::kiln::extension::net::{Host, Method, Request, Response};
 use crate::bindings::{Error, HostState};
+use crate::jobs::{self, JobControl};
 use crate::limits::{Limits, MAX_READ_BYTES};
 
 /// How many redirects one fetch follows; one more is an error.
@@ -83,6 +88,40 @@ pub struct Received {
 /// Sends a plugin's requests: one request and its response, redirects returned as they are.
 pub trait NetBackend: Send {
     fn send(&mut self, request: &Outgoing) -> Result<Received, Error>;
+
+    /// [`Self::send`], given up as soon as it can be once `cancel` is cancelled, which fails it
+    /// with `failed("cancelled")`. The host cancels a job's send when the job is being stopped
+    /// or the fetch's deadline passes, and doesn't wait for it; the send's thread, and the
+    /// request it holds, last until this returns. The default doesn't watch `cancel`.
+    fn send_cancellable(
+        &mut self,
+        request: &Outgoing,
+        cancel: &SendCancel,
+    ) -> Result<Received, Error> {
+        let _ = cancel;
+        self.send(request)
+    }
+
+    /// Whether [`Self::send_cancellable`] gives a send up once it is cancelled: only such a
+    /// backend fetches for a background job. The default is false.
+    fn cancellable(&self) -> bool {
+        false
+    }
+}
+
+/// Whether the host has called a send off: see [`NetBackend::send_cancellable`]. Clones share
+/// one flag.
+#[derive(Clone, Debug, Default)]
+pub struct SendCancel(Arc<AtomicBool>);
+
+impl SendCancel {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
 }
 
 /// The network slice of [`HostState`]: the plugin's grants and the backend that sends for it.
@@ -91,6 +130,16 @@ pub struct State {
     grants: Grants,
     max_body_bytes: usize,
     backend: Option<Box<dyn NetBackend>>,
+    /// In a job, a send that timed out before its backend returned: the backend comes back
+    /// through it, to the next fetch.
+    pending: Option<Receiver<Sent>>,
+}
+
+/// What a job's send thread hands back: the backend, and, unless the send was called off by
+/// then, what it received and the request, counted as in flight until they are dropped.
+struct Sent {
+    backend: Box<dyn NetBackend>,
+    reply: Option<(Result<Received, Error>, Outgoing, JobSend)>,
 }
 
 impl Default for State {
@@ -99,6 +148,7 @@ impl Default for State {
             grants: Grants::new(),
             max_body_bytes: MAX_READ_BYTES,
             backend: None,
+            pending: None,
         }
     }
 }
@@ -109,6 +159,7 @@ impl fmt::Debug for State {
             .field("grants", &self.grants)
             .field("max_body_bytes", &self.max_body_bytes)
             .field("backend", &self.backend.is_some())
+            .field("pending", &self.pending.is_some())
             .finish()
     }
 }
@@ -121,6 +172,7 @@ impl State {
             grants: grants.clone(),
             max_body_bytes: limits.max_read_bytes,
             backend: Some(backend),
+            pending: None,
         }
     }
 
@@ -136,15 +188,29 @@ impl State {
         request: Request,
         share: Option<Duration>,
     ) -> Result<Response, Error> {
+        self.fetch_watching(request, share, None)
+    }
+
+    /// [`Self::fetch_within`], in a job whose `stop` it watches: once the job is being stopped,
+    /// it fails as cancelled, whatever the backend is still waiting for.
+    fn fetch_watching(
+        &mut self,
+        request: Request,
+        share: Option<Duration>,
+        stop: Option<&JobControl>,
+    ) -> Result<Response, Error> {
+        if stop.is_some_and(JobControl::is_cancelled) {
+            return Err(Error::Failed(jobs::CANCELLED.to_owned()));
+        }
         let timeout = request
             .timeout_ms
             .map_or(DEFAULT_TIMEOUT, |ms| Duration::from_millis(ms.into()));
         let timeout = share.map_or(timeout, |share| share.min(timeout));
         let deadline = Instant::now() + timeout;
         let (mut url, host) = check(&self.grants, &request.url)?;
-        let Some(backend) = &mut self.backend else {
-            return Err(Error::Failed(tr!("kiln-plugin-net-none").to_string()));
-        };
+        if self.backend.is_none() && self.pending.is_none() {
+            return Err(no_backend());
+        }
         let mut outgoing = Outgoing {
             method: request.method,
             url: url.to_string(),
@@ -162,7 +228,10 @@ impl State {
                     tr!("kiln-plugin-net-timed-out", url = &request.url).to_string(),
                 ));
             }
-            let received = backend.send(&outgoing)?;
+            let timed_out =
+                || Error::Failed(tr!("kiln-plugin-net-timed-out", url = &request.url).to_string());
+            let received;
+            (received, outgoing) = self.send(outgoing, deadline, timed_out, stop)?;
             if Instant::now() > deadline {
                 return Err(Error::Failed(
                     tr!("kiln-plugin-net-timed-out", url = &request.url).to_string(),
@@ -248,13 +317,209 @@ impl State {
     }
 }
 
+/// What sends for a plugin with no backend answers.
+fn no_backend() -> Error {
+    Error::Failed(tr!("kiln-plugin-net-none").to_string())
+}
+
+/// How many of jobs' sends may be in flight at once, those of stopped jobs still finishing
+/// among them.
+pub const MAX_JOB_SENDS: usize = 16;
+
+/// The most bytes of request (URL, headers and body) jobs' sends in flight hold together.
+pub const MAX_JOB_SEND_BYTES: usize = 32 << 20;
+
+/// `failed`: a job's fetch through a backend that can't give a send up
+/// ([`NetBackend::cancellable`]).
+pub const NOT_CANCELLABLE: &str = verbatim!("this backend can't fetch for a background job");
+
+/// `failed`: past [`MAX_JOB_SENDS`] or [`MAX_JOB_SEND_BYTES`].
+pub const TOO_MANY_SENDS: &str = verbatim!("too many fetches of jobs in flight");
+
+/// Jobs' sends in flight, and the request bytes they hold.
+static JOB_SENDS: Mutex<(usize, usize)> = Mutex::new((0, 0));
+
+/// How many of jobs' sends are in flight, and the request bytes they hold: a send stays in
+/// flight, on its own thread, until its backend returns, after its job has stopped waiting too.
+pub fn job_sends() -> (usize, usize) {
+    *JOB_SENDS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// One of jobs' sends in flight, until dropped.
+struct JobSend(usize);
+
+impl JobSend {
+    /// Counts a send of `bytes` of request, if it fits.
+    fn start(bytes: usize) -> Option<Self> {
+        let mut sends = JOB_SENDS.lock().unwrap_or_else(PoisonError::into_inner);
+        if sends.0 >= MAX_JOB_SENDS || sends.1.saturating_add(bytes) > MAX_JOB_SEND_BYTES {
+            return None;
+        }
+        sends.0 += 1;
+        sends.1 += bytes;
+        Some(Self(bytes))
+    }
+}
+
+impl Drop for JobSend {
+    fn drop(&mut self) {
+        let mut sends = JOB_SENDS.lock().unwrap_or_else(PoisonError::into_inner);
+        sends.0 -= 1;
+        sends.1 -= self.0;
+    }
+}
+
+/// The most headers a job's request carries.
+pub const MAX_JOB_HEADERS: usize = 256;
+
+/// `invalid-argument`: past [`MAX_JOB_HEADERS`].
+pub const TOO_MANY_HEADERS: &str = verbatim!("too many headers");
+
+/// The bytes `outgoing` holds, its containers' spare room among them.
+fn request_bytes(outgoing: &Outgoing) -> usize {
+    let headers: usize = (outgoing.headers.iter())
+        .map(|(name, value)| name.capacity() + value.capacity())
+        .sum();
+    std::mem::size_of::<Outgoing>()
+        + outgoing.url.capacity()
+        + outgoing.host.capacity()
+        + outgoing.headers.capacity() * std::mem::size_of::<(String, String)>()
+        + headers
+        + outgoing.body.as_ref().map_or(0, Vec::capacity)
+}
+
+/// How waiting on a job's send ended.
+enum Waited {
+    Sent(Box<Sent>),
+    /// The job is being stopped; the send goes on.
+    Stopped(Receiver<Sent>),
+    /// Its deadline passed; the send goes on.
+    TimedOut(Receiver<Sent>),
+    /// Its thread ended without handing the backend back.
+    Gone,
+}
+
+/// Waits on `sent` until it hands the backend back, `stop` is cancelled or `deadline` passes.
+fn wait(sent: Receiver<Sent>, deadline: Instant, stop: &JobControl) -> Waited {
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match sent.recv_timeout(left.min(jobs::STOP_POLL)) {
+            Ok(back) => return Waited::Sent(Box::new(back)),
+            Err(RecvTimeoutError::Timeout) if stop.is_cancelled() => return Waited::Stopped(sent),
+            Err(RecvTimeoutError::Timeout) if Instant::now() >= deadline => {
+                return Waited::TimedOut(sent);
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Waited::Gone,
+        }
+    }
+}
+
+impl State {
+    /// Sends `outgoing` through the backend, and hands it back with what was received. In a job
+    /// (`stop`), the backend sends on a thread of its own while this one waits until the job is
+    /// being stopped, which fails it as cancelled, or `deadline`, which is `timed_out`. Either
+    /// way the send is called off ([`NetBackend::send_cancellable`]) and left to end on its
+    /// thread, holding the backend, which the next fetch waits for, within its own deadline,
+    /// before it sends. Those threads, and the requests they
+    /// hold, are capped ([`MAX_JOB_SENDS`], [`MAX_JOB_SEND_BYTES`]) whatever the jobs' slots,
+    /// and a job's request carries at most [`MAX_JOB_HEADERS`].
+    fn send(
+        &mut self,
+        outgoing: Outgoing,
+        deadline: Instant,
+        timed_out: impl Fn() -> Error,
+        stop: Option<&JobControl>,
+    ) -> Result<(Received, Outgoing), Error> {
+        let Some(stop) = stop else {
+            return match &mut self.backend {
+                Some(backend) => Ok((backend.send(&outgoing)?, outgoing)),
+                None => Err(no_backend()),
+            };
+        };
+        let cancelled = || Err(Error::Failed(jobs::CANCELLED.to_owned()));
+        if stop.is_cancelled() {
+            return cancelled();
+        }
+        if outgoing.headers.len() > MAX_JOB_HEADERS {
+            return Err(Error::InvalidArgument(TOO_MANY_HEADERS.to_owned()));
+        }
+        // A send that timed out before may still hold the backend.
+        if self.backend.is_none()
+            && let Some(pending) = self.pending.take()
+        {
+            match wait(pending, deadline, stop) {
+                Waited::Sent(back) => self.backend = Some(back.backend),
+                Waited::Stopped(pending) => {
+                    self.pending = Some(pending);
+                    return cancelled();
+                }
+                Waited::TimedOut(pending) => {
+                    self.pending = Some(pending);
+                    return Err(timed_out());
+                }
+                Waited::Gone => return Err(no_backend()),
+            }
+        }
+        if !self
+            .backend
+            .as_ref()
+            .is_some_and(|backend| backend.cancellable())
+        {
+            return Err(Error::Failed(NOT_CANCELLABLE.to_owned()));
+        }
+        let Some(in_flight) = JobSend::start(request_bytes(&outgoing)) else {
+            return Err(Error::Failed(TOO_MANY_SENDS.to_owned()));
+        };
+        let Some(mut backend) = self.backend.take() else {
+            return Err(no_backend());
+        };
+        let (sender, sent) = mpsc::channel();
+        let cancel = SendCancel::default();
+        let sending = cancel.clone();
+        thread::Builder::new()
+            .spawn(move || {
+                let received = backend.send_cancellable(&outgoing, &sending);
+                // Called off, nobody reads what came: it goes now, with its count.
+                let reply = (!sending.is_cancelled()).then_some((received, outgoing, in_flight));
+                drop(sender.send(Sent { backend, reply }));
+            })
+            .map_err(|error| Error::Failed(error.to_string()))?;
+        // A send this stops waiting for is called off, so a backend that watches for that
+        // gives its thread and request back at once.
+        let waited = wait(sent, deadline, stop);
+        if !matches!(waited, Waited::Sent(_)) {
+            cancel.cancel();
+        }
+        match waited {
+            Waited::Sent(back) => {
+                let Sent { backend, reply } = *back;
+                self.backend = Some(backend);
+                match reply {
+                    Some((received, outgoing, _in_flight)) => Ok((received?, outgoing)),
+                    None => cancelled(),
+                }
+            }
+            Waited::Stopped(sent) => {
+                self.pending = Some(sent);
+                cancelled()
+            }
+            Waited::TimedOut(sent) => {
+                self.pending = Some(sent);
+                Err(timed_out())
+            }
+            Waited::Gone => Err(no_backend()),
+        }
+    }
+}
+
 impl Host for HostState {
     fn fetch(&mut self, request: Request) -> Result<Response, Error> {
         // A fetch isn't charged to the call: its wall time moves the call's deadline back and
         // counts against the call's program share, which also caps its timeout.
         let started = Instant::now();
         let share = self.program_runs.remaining();
-        let fetched = self.net.fetch_within(request, share);
+        let fetched = self.net.fetch_watching(request, share, self.jobs.control());
         if share.is_some() {
             let charged = self.program_runs.charge(started.elapsed());
             self.deadline = self
@@ -389,4 +654,147 @@ fn is_loopback(host: &str) -> bool {
 
 fn is_one_of(name: &str, names: &[&str]) -> bool {
     names.iter().any(|known| name.eq_ignore_ascii_case(known))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use kiln_command::capability::Capability;
+
+    use super::*;
+
+    /// Answers each request `200` after the next of its delays.
+    struct Slow(VecDeque<Duration>);
+
+    impl NetBackend for Slow {
+        fn cancellable(&self) -> bool {
+            true
+        }
+
+        fn send(&mut self, request: &Outgoing) -> Result<Received, Error> {
+            thread::sleep(self.0.pop_front().unwrap_or_default());
+            Ok(Received {
+                status: 200,
+                headers: Vec::new(),
+                body: Vec::new(),
+                peer: request.host.clone(),
+            })
+        }
+    }
+
+    fn slow(delays: &[u64]) -> State {
+        let grants: Grants = [Capability::parse("net:example.com").unwrap()]
+            .into_iter()
+            .collect();
+        let delays = delays.iter().map(|&ms| Duration::from_millis(ms));
+        State::new(
+            &grants,
+            &Limits::default(),
+            Box::new(Slow(delays.collect())),
+        )
+    }
+
+    fn get(timeout_ms: u32, headers: usize) -> Request {
+        Request {
+            method: Method::Get,
+            url: "https://example.com/".to_owned(),
+            headers: vec![("cookie".to_owned(), String::new()); headers],
+            body: None,
+            timeout_ms: Some(timeout_ms),
+        }
+    }
+
+    #[test]
+    fn a_job_fetch_after_one_that_timed_out_gets_the_backend_back() {
+        let mut state = slow(&[300, 0]);
+        let job = JobControl::default();
+        // The backend answers after 300 ms: past this fetch's 50.
+        let first = state.fetch_watching(get(50, 0), None, Some(&job));
+        assert!(matches!(first, Err(Error::Failed(_))), "{first:?}");
+        // The next waits for the backend, within its own timeout, and sends.
+        let second = state.fetch_watching(get(5_000, 0), None, Some(&job));
+        assert_eq!(second.map(|response| response.status), Ok(200));
+        assert!(no_sends_in_flight(), "{:?}", job_sends());
+    }
+
+    /// Waits up to 10 s for no job's send to be in flight.
+    fn no_sends_in_flight() -> bool {
+        let until = Instant::now() + Duration::from_secs(10);
+        while job_sends() != (0, 0) && Instant::now() < until {
+            thread::sleep(Duration::from_millis(10));
+        }
+        job_sends() == (0, 0)
+    }
+
+    #[test]
+    fn a_timed_out_send_keeps_nothing_but_the_backend() {
+        let mut state = slow(&[300]);
+        let job = JobControl::default();
+        let first = state.fetch_watching(get(50, 0), None, Some(&job));
+        assert!(matches!(first, Err(Error::Failed(_))), "{first:?}");
+        // The job goes on without fetching again: once the backend returns, nothing of the
+        // request or its answer is held, only the backend, waiting for the next fetch.
+        assert!(no_sends_in_flight(), "{:?}", job_sends());
+        assert!(state.pending.is_some());
+    }
+
+    /// A backend that can't give a send up.
+    struct Plain;
+
+    impl NetBackend for Plain {
+        fn send(&mut self, request: &Outgoing) -> Result<Received, Error> {
+            Ok(Received {
+                status: 200,
+                headers: Vec::new(),
+                body: Vec::new(),
+                peer: request.host.clone(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_backend_that_cant_give_a_send_up_doesnt_fetch_for_a_job() {
+        let grants: Grants = [Capability::parse("net:example.com").unwrap()]
+            .into_iter()
+            .collect();
+        let mut state = State::new(&grants, &Limits::default(), Box::new(Plain));
+        let job = JobControl::default();
+        let refused = state.fetch_watching(get(5_000, 0), None, Some(&job));
+        assert_eq!(refused, Err(Error::Failed(NOT_CANCELLABLE.to_owned())));
+        // An interactive call's fetch is waited for, and goes through it.
+        let fetched = state.fetch_watching(get(5_000, 0), None, None);
+        assert_eq!(fetched.map(|response| response.status), Ok(200));
+    }
+
+    #[test]
+    fn a_job_request_with_too_many_headers_is_refused() {
+        let mut state = slow(&[]);
+        let job = JobControl::default();
+        let refused = state.fetch_watching(get(5_000, MAX_JOB_HEADERS + 1), None, Some(&job));
+        assert_eq!(
+            refused,
+            Err(Error::InvalidArgument(TOO_MANY_HEADERS.to_owned()))
+        );
+        let sent = state.fetch_watching(get(5_000, MAX_JOB_HEADERS), None, Some(&job));
+        assert_eq!(sent.map(|response| response.status), Ok(200));
+    }
+
+    #[test]
+    fn a_request_is_counted_with_its_containers_and_spare_room() {
+        let mut headers = Vec::with_capacity(1000);
+        headers.extend((0..10).map(|_| ("cookie".to_owned(), String::new())));
+        let outgoing = Outgoing {
+            method: Method::Get,
+            url: String::with_capacity(4096),
+            host: "example.com".to_owned(),
+            headers,
+            body: Some(Vec::with_capacity(1 << 20)),
+            timeout: Duration::ZERO,
+            max_body_bytes: 0,
+        };
+        let bytes = request_bytes(&outgoing);
+        let containers = 1000 * std::mem::size_of::<(String, String)>();
+        assert!(bytes >= 4096 + containers + (1 << 20) + 10 * 6, "{bytes}");
+    }
 }

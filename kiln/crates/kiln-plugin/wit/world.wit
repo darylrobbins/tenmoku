@@ -25,3 +25,16 @@ world extension {
     export command-handler;
     export event-handler;
 }
+
+/// A plugin that runs background jobs: the extension world, with the jobs interfaces. Its
+/// imports link only for a plugin with the `jobs` capability, and a plugin with it is checked
+/// against this world, so it exports both handlers.
+world jobs-extension {
+    include extension;
+
+    import jobs;
+    import job-context;
+
+    export job-runner;
+    export job-handler;
+}
